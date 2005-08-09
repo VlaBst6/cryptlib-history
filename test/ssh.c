@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib SSH Test Routines						*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2005					*
 *																			*
 ****************************************************************************/
 
@@ -537,7 +537,6 @@ static const C_STR ssh2Info[] = {
 	TEXT( "sorrel.humboldt.edu:222" ),
 	TEXT( "www.ssh.com" ),
 	TEXT( "www.openssh.com" ),
-	TEXT( "10.0.0.33" ),
 	NULL
 	};
 

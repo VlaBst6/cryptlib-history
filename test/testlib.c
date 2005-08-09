@@ -375,6 +375,18 @@ static void updateConfigCert( void )
 
 void testKludge( void )
 	{
+#if 0
+	int value, status;
+
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, CRYPT_ALGO_AES );
+	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, &value );
+#endif
+
+	/* Create test key databases */
+#if 0
+	checkCreateDatabaseKeysets();
+#endif /* 0 */
+
 	/* Performance-testing test harness */
 #if 0
 	void performanceTests( const CRYPT_DEVICE cryptDevice );
@@ -881,6 +893,8 @@ int main( int argc, char **argv )
 		if( !testSessionSSHv1() )
 			goto errorExit;
 		if( !testSessionSSH() )
+			goto errorExit;
+		if( !testSessionSSHClientCert() )
 			goto errorExit;
 		if( !testSessionSSHPortforward() )
 			goto errorExit;

@@ -27,9 +27,9 @@
 
 #define TEST_INITIALISE_CARD	0
 
-/* If the device is very slow (e.g. a smart card), clear the following to 
-   not test the keygen capabilities of the device.  You can set this once 
-   initially to generate the test keys and then re-clear it to use the 
+/* If the device is very slow (e.g. a smart card), clear the following to
+   not test the keygen capabilities of the device.  You can set this once
+   initially to generate the test keys and then re-clear it to use the
    initially-generated keys from then on */
 
 #define TEST_KEYGEN				1
@@ -44,8 +44,8 @@
 
 #define TEST_ALGORITHMS			1
 
-/* The device code will produce a large number of warnings because of ASCII 
-   <-> Unicode issues, since there aren't any PKCS #11 drivers for WinCE 
+/* The device code will produce a large number of warnings because of ASCII
+   <-> Unicode issues, since there aren't any PKCS #11 drivers for WinCE
    it's not worth adding a mountain of special-case code to handle this so
    we no-op it out under WinCE */
 
@@ -66,11 +66,11 @@
    updateConfig() function in testlib.c, see the code comments there for more
    details.
 
-   The ActivCard driver is so broken that it's incredible it works at all, 
+   The ActivCard driver is so broken that it's incredible it works at all,
    it's more of a PKCS #11-like API that only works if you use it in exactly
    the same way as the single test case that ActivCard must have used to
-   evaluate it.  The Telesec driver is even more broken than that (it's so 
-   bad that it doesn't even work with Netscape), it just fakes a PKCS #11 
+   evaluate it.  The Telesec driver is even more broken than that (it's so
+   bad that it doesn't even work with Netscape), it just fakes a PKCS #11
    API while doing something completely different.
 
    The SEIS EID cards name their private key objects slightly differently
@@ -79,13 +79,13 @@
    alternate name.
 
    The Rainbow iKey uses Datakey drivers, so the Datakey test below will work
-   for both Datakey cards/keys and iKeys.  The newer Rainbow USB tokens 
-   (using DataKey 232 drivers) can't be usefully initialised via PKCS #11 
-   but have to be initialised using the vendor utility or operations fail in 
-   strange and illogical ways.  In addition the driver partially ignores 
-   user-specified key attributes such as encrypt-only or sign-only and uses 
-   its own internal defaults.  Finally, operations with these keys then fail 
-   with a key-type-inconsistent error even though there's nothing wrong with 
+   for both Datakey cards/keys and iKeys.  The newer Rainbow USB tokens
+   (using DataKey 232 drivers) can't be usefully initialised via PKCS #11
+   but have to be initialised using the vendor utility or operations fail in
+   strange and illogical ways.  In addition the driver partially ignores
+   user-specified key attributes such as encrypt-only or sign-only and uses
+   its own internal defaults.  Finally, operations with these keys then fail
+   with a key-type-inconsistent error even though there's nothing wrong with
    them.  The solution to these problems is to use the Datakey 201 drivers
    (intended for Entrust compatibility, which means they actually test them
    properly), which work properly.
@@ -96,28 +96,28 @@
 
    To reset the Rainbow card after it locks up and stops responding to
    commands, run /samples/cryptoki20/sample.exe, enter 1 CR, 4 CR, 5 CR,
-   7 CR 2 CR "rainbow" CR, g CR "test" CR q CR (you need to follow that 
+   7 CR 2 CR "rainbow" CR, g CR "test" CR q CR (you need to follow that
    sequence exactly for it to work).
 
-   To (try to) get the Eracom 3.09 CProv to work, delete the /cryptoki 
-   directory (where it dumps all its config data, ignoring the settings in 
+   To (try to) get the Eracom 3.09 CProv to work, delete the /cryptoki
+   directory (where it dumps all its config data, ignoring the settings in
    cryptoki.ini), run ctconf.exe to set up a new device config, then
    run ctconf -v -n0.  Then set TEST_INITIALISE_CARD to a nonzero value
    and things should run OK (as with the Rainbow tests, you need to follow
-   this exactly for it to work).  Re-running the test with the initialised 
+   this exactly for it to work).  Re-running the test with the initialised
    device, or trying to re-run the initialisation, both fail.  The re-init
    reports that no login is required for the token, returns an already-
    logged-in error if an attempt is made to log in, and returns a not-logged-
    in error of an attempt is made to do anything that needs a login.  The
    re-use of the initialised device fails with an invalid object handle
    for every object that's created (that is, it's possible to create any
-   object, but any attempt to use it returns an invalid object handle 
+   object, but any attempt to use it returns an invalid object handle
    error).  The Eracom 2.10 CProv works OK (it may be necessary to manually
    initialise the token using ctinit after the initial install).
 
    The Spyrus USB drivers don't get on with various drivers for other USB
    devices such as USB printers (basic devices like USB storage keys are
-   OK).  To get the Spyrus driver to see the USB token, it may be necessary 
+   OK).  To get the Spyrus driver to see the USB token, it may be necessary
    to completely remove (not just disable) other USB device drivers.  The
    Rosetta cards/USB tokens are very flaky, in general it's only possible
    to safely generate new keys and add certs to a freshly-initialised token,
@@ -126,16 +126,16 @@
    objects isn't possible, the delete call succeeds but the object isn't
    touched.  In addition with most versions of the Spyrus drivers data
    isn't persisted to the token correctly, so some information (and even
-   complete objects) are only visible for the duration of the session that 
+   complete objects) are only visible for the duration of the session that
    created them.
 
    The presence of a device entry in this table doesn't necessarily mean
    that the PKCS #11 driver that it comes with functions correctly, or at
-   all.  In particular the iButton driver is still in beta so it has some 
-   features unimplemented, and the Utimaco driver apparently has some really 
-   strange bugs, as well as screwing up Windows power management so that 
-   suspends either aren't possible any more or will crash apps.  At the 
-   other end of the scale the Datakey (before Rainbow got to them), Eracom 
+   all.  In particular the iButton driver is still in beta so it has some
+   features unimplemented, and the Utimaco driver apparently has some really
+   strange bugs, as well as screwing up Windows power management so that
+   suspends either aren't possible any more or will crash apps.  At the
+   other end of the scale the Datakey (before Rainbow got to them), Eracom
    (usually), iD2, and nCipher drivers are pretty good */
 
 typedef struct {
@@ -352,7 +352,7 @@ static BOOLEAN createKey( const CRYPT_DEVICE cryptDevice,
 	/* Dump the resulting cert for debugging */
 	if( dumpName != NULL )
 		{
-		status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength, 
+		status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 				isCA ? CRYPT_CERTFORMAT_CERTIFICATE : CRYPT_CERTFORMAT_CERTCHAIN,
 				cryptCert );
 		if( cryptStatusOK( status ) )
@@ -402,8 +402,8 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 		printf( "Device label is '%s'.\n", tokenLabel );
 		}
 
-	/* Check whether the device corresponds to a known device.  We do this 
-	   because some devices require specific test passwords and whatnot in 
+	/* Check whether the device corresponds to a known device.  We do this
+	   because some devices require specific test passwords and whatnot in
 	   order to work */
 	if( isAutoDetect )
 		{
@@ -412,11 +412,11 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 		for( i = 1; pkcs11DeviceInfo[ i ].name != NULL; i++ )
 			if( tokenLabelSize == \
 							( int ) strlen( pkcs11DeviceInfo[ i ].name ) && \
-				!memcmp( pkcs11DeviceInfo[ i ].name, tokenLabel, 
+				!memcmp( pkcs11DeviceInfo[ i ].name, tokenLabel,
 						 tokenLabelSize ) )
 				{
 				printf( "Found a match for pre-defined device '%s',\n"
-						"  using pre-set parameters.\n", 
+						"  using pre-set parameters.\n",
 						pkcs11DeviceInfo[ i ].description );
 				deviceInfo = &pkcs11DeviceInfo[ i ];
 				break;
@@ -424,7 +424,7 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 			}
 
 	/* See if we need to authenticate ourselves */
-	status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN, 
+	status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN,
 								&loggedOn );
 	if( cryptStatusError( status ) )
 		{
@@ -446,7 +446,7 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 							strlen( deviceInfo->password ) );
 	if( status == CRYPT_ERROR_INITED )
 		{
-		/* Some devices may not require any login, in which case we're 
+		/* Some devices may not require any login, in which case we're
 		   done */
 		puts( " device is already logged in." );
 		return( deviceInfo );
@@ -472,7 +472,7 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 				"login" : "initialisation/setup", status, __LINE__ );
 		if( status == CRYPT_ERROR_WRONGKEY && willInitialise )
 			{
-			/* If we're going to initialise the card, being in the wrong (or 
+			/* If we're going to initialise the card, being in the wrong (or
 			   even totally uninitialised) state isn't an error */
 			puts( "This may be because the device isn't in the user-"
 				  "initialised state, in which\n  case the standard user "
@@ -490,10 +490,10 @@ static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevic
 	}
 
 /* Initialise a device.  Note that when doing this with a Fortezza card,
-   these operations have to be done in a more or less continuous sequence 
-   (i.e. without an intervening device open call) because it's not possible 
+   these operations have to be done in a more or less continuous sequence
+   (i.e. without an intervening device open call) because it's not possible
    to escape from some of the states if the card is closed and reopened in
-   between.  In addition the PKCS #11 interface maps some of the 
+   between.  In addition the PKCS #11 interface maps some of the
    initialisation steps differently than the CI interface, so we have to
    special-case this below */
 
@@ -509,7 +509,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 	const char *userPIN = deviceInfo->password;
 	int status;
 
-	/* PKCS #11 doesn't distinguish between zeroisation and initialisation, 
+	/* PKCS #11 doesn't distinguish between zeroisation and initialisation,
 	   so we only perform the zeroise test if it's a Fortezza card */
 	if( deviceType == CRYPT_DEVICE_FORTEZZA )
 		{
@@ -519,7 +519,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 						strlen( FORTEZZA_ZEROISE_PIN ) );
 		if( cryptStatusError( status ) )
 			{
-			printf( "\nZeroise failed with error code %d, line %d.\n", 
+			printf( "\nZeroise failed with error code %d, line %d.\n",
 					status, __LINE__ );
 			return( FALSE );
 			}
@@ -528,22 +528,22 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 
 	/* Initialise the device and set the SO PIN.   */
 	printf( "Initialising device..." );
-	status = cryptSetAttributeString( cryptDevice, CRYPT_DEVINFO_INITIALISE, 
+	status = cryptSetAttributeString( cryptDevice, CRYPT_DEVINFO_INITIALISE,
 									  defaultSSOPIN, strlen( defaultSSOPIN ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "\nCouldn't initialise device, status = %d, line %d.\n", 
+		printf( "\nCouldn't initialise device, status = %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
 		}
 	puts( " succeeded." );
 	printf( "Setting SO PIN to '%s'...", ssoPIN );
-	status = cryptSetAttributeString( cryptDevice, 
+	status = cryptSetAttributeString( cryptDevice,
 									  CRYPT_DEVINFO_SET_AUTHENT_SUPERVISOR,
 									  ssoPIN, strlen( ssoPIN ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "\nCouldn't set SO PIN, status = %d, line %d.\n", status, 
+		printf( "\nCouldn't set SO PIN, status = %d, line %d.\n", status,
 				__LINE__ );
 		return( FALSE );
 		}
@@ -551,9 +551,9 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 
 	/* If it's a Fortezza card, create a CA root key and install its cert.
 	   We have to do it at this point because the operation is only allowed
-	   in the SSO initialised state.  In addition we can't use the card for 
-	   this operation because cert slot 0 is a data-only slot (that is, it 
-	   can't correspond to a key held on the card), so we create a dummy 
+	   in the SSO initialised state.  In addition we can't use the card for
+	   this operation because cert slot 0 is a data-only slot (that is, it
+	   can't correspond to a key held on the card), so we create a dummy
 	   external cert and use that */
 	if( deviceType == CRYPT_DEVICE_FORTEZZA )
 		{
@@ -563,7 +563,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 		printf( "Loading PAA certificate..." );
 		if( !loadDSAContexts( CRYPT_UNUSED, &signContext, NULL ) )
 			return( FALSE );
-		cryptCreateCert( &cryptCert, CRYPT_UNUSED, 
+		cryptCreateCert( &cryptCert, CRYPT_UNUSED,
 						 CRYPT_CERTTYPE_CERTIFICATE );
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
@@ -593,7 +593,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 
 	/* Set the user PIN and log on as the user */
 	printf( "Setting user PIN to '%s'...", userPIN );
-	status = cryptSetAttributeString( cryptDevice, 
+	status = cryptSetAttributeString( cryptDevice,
 									  CRYPT_DEVINFO_SET_AUTHENT_USER,
 									  userPIN, strlen( userPIN ) );
 	if( cryptStatusOK( status ) )
@@ -603,7 +603,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 		/* Some devices automatically log the user in when they set the user
 		   password, so we check to see if it's necessary to log in before we
 		   actually do it */
-		status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN, 
+		status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN,
 									&loggedOn );
 		if( cryptStatusError( status ) )
 			{
@@ -611,7 +611,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 			return( FALSE );
 			}
 		if( !loggedOn )
-			status = cryptSetAttributeString( cryptDevice, 
+			status = cryptSetAttributeString( cryptDevice,
 											  CRYPT_DEVINFO_AUTHENT_USER,
 											  userPIN, strlen( userPIN ) );
 		}
@@ -649,8 +649,8 @@ static BOOLEAN testDeviceCapabilities( const CRYPT_DEVICE cryptDevice,
 			{
 			testCount++;
 			if( !testLowlevel( cryptDevice, cryptAlgo, isWriteProtected ) )
-				/* The test failed, we don't exit at this point but only 
-				   remember that there was a problem since we want to test 
+				/* The test failed, we don't exit at this point but only
+				   remember that there was a problem since we want to test
 				   every possible algorithm */
 				failCount++;
 			}
@@ -694,7 +694,7 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 
 			/* Read back the CA key for use in generating end entity certs */
 			status = cryptGetPrivateKey( cryptDevice, &sigKeyContext,
-										 CRYPT_KEYID_NAME, 
+										 CRYPT_KEYID_NAME,
 										 TEXT( "Test CA key" ), NULL );
 			}
 		else
@@ -712,8 +712,8 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 			}
 
 		/* Create end-entity certificate(s) for keys using the previously-
-		   generated CA key.  If it's a Fortezza card and we're using KEA we 
-		   have to generate two sets of keys/certs, one for signing and one 
+		   generated CA key.  If it's a Fortezza card and we're using KEA we
+		   have to generate two sets of keys/certs, one for signing and one
 		   for encryption */
 		status = createKey( cryptDevice, cryptAlgo, "user",
 							( deviceType == CRYPT_DEVICE_PKCS11 ) ? \
@@ -734,13 +734,13 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 	/* See whether there are any existing keys or certs.  Some tokens have
 	   these built in and don't allow anything new to be created, after this
 	   point the handling is somewhat special-case but we can at least report
-	   their presence.  Although generally we can re-use a private key 
-	   context for both public and private operations, some devices or drivers 
-	   (and by logical extension thereof the cryptlib kernel) don't allow 
-	   public-key ops with private keys so we have to eplicitly handle public 
-	   and private keys.  This gets somewhat messy because some devices don't 
-	   have public keys but allow public-key ops with their private keys, 
-	   while others separate public and private keys and don't allow the 
+	   their presence.  Although generally we can re-use a private key
+	   context for both public and private operations, some devices or drivers
+	   (and by logical extension thereof the cryptlib kernel) don't allow
+	   public-key ops with private keys so we have to eplicitly handle public
+	   and private keys.  This gets somewhat messy because some devices don't
+	   have public keys but allow public-key ops with their private keys,
+	   while others separate public and private keys and don't allow the
 	   private key to do public-key ops */
 	status = cryptGetPublicKey( cryptDevice, &pubKeyContext,
 								CRYPT_KEYID_NAME, keyLabel );
@@ -757,12 +757,12 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 			{
 			/* It's a self-signed cert/cert chain, make sure that it's
 			   valid.  Because it's probably not trusted, we make it
-			   temporarily implicitly trusted in order for the sig.check to 
+			   temporarily implicitly trusted in order for the sig.check to
 			   succeed */
-			status = cryptGetAttribute( pubKeyContext, 
+			status = cryptGetAttribute( pubKeyContext,
 								CRYPT_CERTINFO_TRUSTED_IMPLICIT, &value );
 			if( cryptStatusOK( status ) )
-				status = cryptSetAttribute( pubKeyContext, 
+				status = cryptSetAttribute( pubKeyContext,
 									CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
 			if( cryptStatusOK( status ) )
 				status = cryptCheckCert( pubKeyContext, CRYPT_UNUSED );
@@ -772,7 +772,7 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 						"line %d.\n", __LINE__ );
 				return( FALSE );
 				}
-			cryptSetAttribute( pubKeyContext, 
+			cryptSetAttribute( pubKeyContext,
 							   CRYPT_CERTINFO_TRUSTED_IMPLICIT, value );
 			}
 		}
@@ -902,7 +902,7 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 	   fully */
 	if( deviceType == CRYPT_DEVICE_PKCS11 || deviceType == CRYPT_DEVICE_FORTEZZA )
 		{
-		deviceInfo = checkLogonDevice( cryptDevice, deviceType, deviceInfo, 
+		deviceInfo = checkLogonDevice( cryptDevice, deviceType, deviceInfo,
 									   isAutoDetect, TEST_INITIALISE_CARD );
 		if( deviceInfo == NULL )
 			{
@@ -912,7 +912,7 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 		}
 
 	/* Write-protected devices won't allow contexts to be created in them,
-	   before we try the general device capabilities test we make sure that 
+	   before we try the general device capabilities test we make sure that
 	   we can actually perform the operation */
 	if( deviceType == CRYPT_DEVICE_PKCS11 )
 		{
@@ -939,11 +939,11 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 	isWriteProtected = TRUE; */
 	if( !isWriteProtected && TEST_KEYGEN )
 		{
-		/* If it's a device that we can initialise, go through a full 
+		/* If it's a device that we can initialise, go through a full
 		   initialisation */
 		if( deviceType != CRYPT_DEVICE_CRYPTOAPI && TEST_INITIALISE_CARD )
 			{
-			status = initialiseDevice( cryptDevice, deviceType, 
+			status = initialiseDevice( cryptDevice, deviceType,
 									   deviceInfo );
 			if( status == FALSE )
 				{
@@ -953,8 +953,8 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 			}
 		else
 			{
-			/* There may be test keys lying around from an earlier run, in 
-			   which case we try to delete them to make sure they won't 
+			/* There may be test keys lying around from an earlier run, in
+			   which case we try to delete them to make sure they won't
 			   interfere with the current one */
 			deleteTestKey( cryptDevice, "Test CA key", "CA" );
 			deleteTestKey( cryptDevice, deviceInfo->keyLabel, "user" );
@@ -1065,13 +1065,13 @@ int testDevices( void )
 *																			*
 ****************************************************************************/
 
-/* The following code takes two unitialised devices and turns one into a 
-   fully initialised CA device, which then runs a PnP PKI session that turns 
+/* The following code takes two unitialised devices and turns one into a
+   fully initialised CA device, which then runs a PnP PKI session that turns
    the other into a fully initialised user device.
-   
+
    The following configuration options can be used to change the beaviour of
    the self-test, for example to run it on the local machine in loopback mode
-   vs. running on two distinct machines.  Defining an IP address (or host 
+   vs. running on two distinct machines.  Defining an IP address (or host
    name) for SERVER_MACHINE_ADDRESS will have the client connect to that
    address instead of running a local loopback test */
 
@@ -1103,13 +1103,13 @@ int testDevices( void )
 #define SSO_PIN			"0000"
 #define USER_PIN		"0000"
 
-/* Set up a client/server to connect locally (usually) or to a custom 
-   address and port if we're running on distinct machines.  For the client 
-   this simply tells it where to connect, for the server in loopback mode 
-   this binds it to the local address so that we don't inadvertently open 
+/* Set up a client/server to connect locally (usually) or to a custom
+   address and port if we're running on distinct machines.  For the client
+   this simply tells it where to connect, for the server in loopback mode
+   this binds it to the local address so that we don't inadvertently open
    up outside ports */
 
-static BOOLEAN setConnectInfo( const CRYPT_SESSION cryptSession, 
+static BOOLEAN setConnectInfo( const CRYPT_SESSION cryptSession,
 							   const char *address, const int port,
 							   const int timeout )
 	{
@@ -1123,10 +1123,10 @@ static BOOLEAN setConnectInfo( const CRYPT_SESSION cryptSession,
 									CRYPT_SESSINFO_SERVER_PORT, port );
 	if( cryptStatusOK( status ) && timeout != CRYPT_USE_DEFAULT )
 		{
-		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 						   NET_TIMEOUT );
-		status = cryptSetAttribute( cryptSession, 
-									CRYPT_OPTION_NET_WRITETIMEOUT, 
+		status = cryptSetAttribute( cryptSession,
+									CRYPT_OPTION_NET_WRITETIMEOUT,
 									NET_TIMEOUT );
 		}
 	if( cryptStatusError( status ) )
@@ -1151,10 +1151,10 @@ static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
 	do
 		{
 		/* Activate the connection */
-		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, 
+		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE,
 									TRUE );
 		if( status == CRYPT_ERROR_READ && connectionActive )
-			/* The other side closed the connection after a previous 
+			/* The other side closed the connection after a previous
 			   successful transaction, this isn't an error */
 			return( CRYPT_OK );
 
@@ -1166,7 +1166,7 @@ static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
 			int serverNameLength, serverPort, nameStatus;
 
 			time( &theTime );
-			nameStatus = cryptGetAttributeString( cryptSession, 
+			nameStatus = cryptGetAttributeString( cryptSession,
 											CRYPT_SESSINFO_CLIENT_NAME,
 											serverName, &serverNameLength );
 			if( cryptStatusOK( nameStatus ) )
@@ -1174,7 +1174,7 @@ static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
 				serverName[ serverNameLength ] = '\0';
 				cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CLIENT_PORT,
 								   &serverPort );
-				printf( "Connect attempt from %s, port %d, on %s", 
+				printf( "Connect attempt from %s, port %d, on %s",
 						serverName, serverPort, ctime( &theTime ) );
 				}
 			}
@@ -1183,11 +1183,11 @@ static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
 			char userID[ CRYPT_MAX_TEXTSIZE ];
 			int userIDsize, requestType;
 
-			status = cryptGetAttribute( cryptSession, 
+			status = cryptGetAttribute( cryptSession,
 										CRYPT_SESSINFO_CMP_REQUESTTYPE,
 										&requestType );
 			if( cryptStatusOK( status ) )
-				status = cryptGetAttributeString( cryptSession, 
+				status = cryptGetAttributeString( cryptSession,
 											CRYPT_SESSINFO_USERNAME,
 											userID, &userIDsize );
 			if( cryptStatusError( status ) )
@@ -1196,12 +1196,12 @@ static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
 			else
 				{
 				userID[ userIDsize ] = '\0';
-				printf( "CA operation type was %d, user '%s'.\n", 
+				printf( "CA operation type was %d, user '%s'.\n",
 						requestType, userID );
 				}
 			}
 
-		/* Check whether the connection is still active.  If it is, we 
+		/* Check whether the connection is still active.  If it is, we
 		   recycle the session so that we can process another request */
 		cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
 						   &connectionActive );
@@ -1251,7 +1251,7 @@ static int createCACert( const CRYPT_DEVICE cryptDevice )
 				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL, 
+	status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 									  "CA key", strlen( "CA key" ) );
 	if( cryptStatusOK( status ) )
 		status = cryptGenerateKey( cryptContext );
@@ -1301,7 +1301,7 @@ static int createCACert( const CRYPT_DEVICE cryptDevice )
 
 /* Connect to a device */
 
-static int connectDevice( CRYPT_DEVICE *cryptDevice, CRYPT_DEVICE_TYPE type, 
+static int connectDevice( CRYPT_DEVICE *cryptDevice, CRYPT_DEVICE_TYPE type,
 						  const int slotNo )
 	{
 	char buffer[ 128 ];
@@ -1355,7 +1355,7 @@ static int logonDevice( const CRYPT_DEVICE cryptDevice, const char *userPIN )
 		}
 
 	/* See if we need to authenticate ourselves */
-	status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN, 
+	status = cryptGetAttribute( cryptDevice, CRYPT_DEVINFO_LOGGEDIN,
 								&loggedOn );
 	if( cryptStatusError( status ) )
 		{
@@ -1377,7 +1377,7 @@ static int logonDevice( const CRYPT_DEVICE cryptDevice, const char *userPIN )
 								strlen( userPIN ) );
 	if( status == CRYPT_ERROR_INITED )
 		{
-		/* Some devices may not require any login, in which case we're 
+		/* Some devices may not require any login, in which case we're
 		   done */
 		puts( " device is already logged in." );
 		return( TRUE );
@@ -1400,13 +1400,13 @@ static int logonDevice( const CRYPT_DEVICE cryptDevice, const char *userPIN )
 
 /* Initialise a device */
 
-static int initDevice( const CRYPT_DEVICE cryptDevice, 
-					   const char *defaultSSOPIN, const char *ssoPIN, 
+static int initDevice( const CRYPT_DEVICE cryptDevice,
+					   const char *defaultSSOPIN, const char *ssoPIN,
 					   const char *userPIN )
 	{
 	int status;
 
-	/* PKCS #11 doesn't distinguish between zeroisation and initialisation, 
+	/* PKCS #11 doesn't distinguish between zeroisation and initialisation,
 	   so we need to zeroise the device if it's a Fortezza card */
 	if( CLIENT_DEVICE_TYPE == CRYPT_DEVICE_FORTEZZA )
 		{
@@ -1416,7 +1416,7 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 						strlen( FORTEZZA_ZEROISE_PIN ) );
 		if( cryptStatusError( status ) )
 			{
-			printf( "\nCouldn't zeroise device, status = %d, line %d.\n", 
+			printf( "\nCouldn't zeroise device, status = %d, line %d.\n",
 					status, __LINE__ );
 			return( FALSE );
 			}
@@ -1424,24 +1424,24 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 		}
 
 	/* Initialise the device and set the SO PIN */
-	printf( "Initialising device with default SO PIN '%s'...", 
+	printf( "Initialising device with default SO PIN '%s'...",
 			defaultSSOPIN );
-	status = cryptSetAttributeString( cryptDevice, CRYPT_DEVINFO_INITIALISE, 
+	status = cryptSetAttributeString( cryptDevice, CRYPT_DEVINFO_INITIALISE,
 									  defaultSSOPIN, strlen( defaultSSOPIN ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "\nCouldn't initialise device, status = %d, line %d.\n", 
+		printf( "\nCouldn't initialise device, status = %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
 		}
 	puts( " done." );
 	printf( "Setting SO PIN to '%s'...", ssoPIN );
-	status = cryptSetAttributeString( cryptDevice, 
+	status = cryptSetAttributeString( cryptDevice,
 									  CRYPT_DEVINFO_SET_AUTHENT_SUPERVISOR,
 									  ssoPIN, strlen( ssoPIN ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "\nCouldn't set SO PIN, status = %d, line %d.\n", status, 
+		printf( "\nCouldn't set SO PIN, status = %d, line %d.\n", status,
 				__LINE__ );
 		return( FALSE );
 		}
@@ -1449,9 +1449,9 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 
 	/* If it's a Fortezza card, create a dummy PAA key and install its cert.
 	   We have to do it at this point because the operation is only allowed
-	   in the SSO initialised state.  In addition we can't use the card for 
-	   this operation because cert slot 0 is a data-only slot (that is, it 
-	   can't correspond to a key held on the card), so we create a dummy 
+	   in the SSO initialised state.  In addition we can't use the card for
+	   this operation because cert slot 0 is a data-only slot (that is, it
+	   can't correspond to a key held on the card), so we create a dummy
 	   external cert and use that */
 	if( CLIENT_DEVICE_TYPE == CRYPT_DEVICE_FORTEZZA )
 		{
@@ -1461,7 +1461,7 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 		printf( "Loading PAA certificate..." );
 		if( !loadDSAContexts( CRYPT_UNUSED, &signContext, NULL ) )
 			return( FALSE );
-		cryptCreateCert( &cryptCert, CRYPT_UNUSED, 
+		cryptCreateCert( &cryptCert, CRYPT_UNUSED,
 						 CRYPT_CERTTYPE_CERTIFICATE );
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
@@ -1489,18 +1489,18 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 		puts( " done." );
 		}
 
-	/* Set the user PIN and log on as the user.  Some devices automatically 
-	   log the user in when they set the user password, however, for some 
-	   devices this is a pseudo-login for which any subsequent operations 
-	   fail with a not-logged-in error or something similar, so rather than 
-	   relying on the existing login we always (re-)log in, which performs 
+	/* Set the user PIN and log on as the user.  Some devices automatically
+	   log the user in when they set the user password, however, for some
+	   devices this is a pseudo-login for which any subsequent operations
+	   fail with a not-logged-in error or something similar, so rather than
+	   relying on the existing login we always (re-)log in, which performs
 	   an explicit logoff if we're already logged in at the time */
 	printf( "Setting user PIN to '%s'...", userPIN );
-	status = cryptSetAttributeString( cryptDevice, 
+	status = cryptSetAttributeString( cryptDevice,
 									  CRYPT_DEVINFO_SET_AUTHENT_USER,
 									  userPIN, strlen( userPIN ) );
 	if( cryptStatusOK( status ) )
-		status = cryptSetAttributeString( cryptDevice, 
+		status = cryptSetAttributeString( cryptDevice,
 										  CRYPT_DEVINFO_AUTHENT_USER,
 										  userPIN, strlen( userPIN ) );
 	if( cryptStatusError( status ) )
@@ -1545,7 +1545,7 @@ static int openCertStore( CRYPT_KEYSET *cryptCertStore )
 
 /* Add a PKI user to a cert store */
 
-static int initUserInfo( const CRYPT_KEYSET cryptCertStore, 
+static int initUserInfo( const CRYPT_KEYSET cryptCertStore,
 						 const char *userName )
 	{
 	CRYPT_CERTIFICATE cryptPKIUser;
@@ -1562,7 +1562,7 @@ static int initUserInfo( const CRYPT_KEYSET cryptCertStore,
 				status, __LINE__ );
 		return( FALSE );
 		}
-	status = cryptSetAttributeString( cryptPKIUser, 
+	status = cryptSetAttributeString( cryptPKIUser,
 									  CRYPT_CERTINFO_COMMONNAME, userName,
 									  strlen( userName ) );
 	if( cryptStatusError( status ) )
@@ -1664,19 +1664,19 @@ static int getUserInfo( char *userID, char *issuePW )
 
 /* Run the PnP PKI server */
 
-static int pnpServer( const CRYPT_DEVICE cryptDevice, 
+static int pnpServer( const CRYPT_DEVICE cryptDevice,
 					  const CRYPT_KEYSET cryptCertStore )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CONTEXT cryptPrivateKey;
 	int caCertTrusted, status;
 
-	/* Perform a cleanup action to remove any leftover requests from 
+	/* Perform a cleanup action to remove any leftover requests from
 	   previous runs */
 	cryptCACertManagement( NULL, CRYPT_CERTACTION_CLEANUP, cryptCertStore,
 						   CRYPT_UNUSED, CRYPT_UNUSED );
 
-	/* Get the CA's key from the device and make it trusted for PKIBoot 
+	/* Get the CA's key from the device and make it trusted for PKIBoot
 	   functionality.  If we're running the test in loopback mode with the
 	   Fortezza interface we can't have both the client and server using
 	   Fortezza cards due to Spyrus driver bugs, and also can't have the
@@ -1689,7 +1689,7 @@ static int pnpServer( const CRYPT_DEVICE cryptDevice,
 								CA_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 	else
 #endif /* CLIENT_ID */
-		status = cryptGetPrivateKey( cryptDevice, &cryptPrivateKey, 
+		status = cryptGetPrivateKey( cryptDevice, &cryptPrivateKey,
 									 CRYPT_KEYID_NAME, "CA key", NULL );
 	if( cryptStatusError( status ) )
 		{
@@ -1697,7 +1697,7 @@ static int pnpServer( const CRYPT_DEVICE cryptDevice,
 				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	cryptGetAttribute( cryptPrivateKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT, 
+	cryptGetAttribute( cryptPrivateKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT,
 					   &caCertTrusted );
 	cryptSetAttribute( cryptPrivateKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
 	puts( " done." );
@@ -1718,9 +1718,9 @@ static int pnpServer( const CRYPT_DEVICE cryptDevice,
 		status = cryptSetAttribute( cryptSession,
 							CRYPT_SESSINFO_KEYSET, cryptCertStore );
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptSession, "cryptSetAttribute()", 
+		return( attrErrorExit( cryptSession, "cryptSetAttribute()",
 							   status, __LINE__ ) );
-	if( !setConnectInfo( cryptSession, SERVER_MACHINE_ADDRESS, 
+	if( !setConnectInfo( cryptSession, SERVER_MACHINE_ADDRESS,
 						 SERVER_MACHINE_PORT, NET_TIMEOUT ) )
 		return( FALSE );
 	puts( " done." );
@@ -1734,21 +1734,21 @@ static int pnpServer( const CRYPT_DEVICE cryptDevice,
 	/* Clean up */
 	cryptDestroySession( cryptSession );
 	if( !caCertTrusted )
-		cryptSetAttribute( cryptPrivateKey, 
+		cryptSetAttribute( cryptPrivateKey,
 						   CRYPT_CERTINFO_TRUSTED_IMPLICIT, 0 );
-	
+
 	return( TRUE );
 	}
 
 /* Run the PnP PKI client */
 
-static int pnpClient( const CRYPT_DEVICE cryptDevice, const char *userID, 
+static int pnpClient( const CRYPT_DEVICE cryptDevice, const char *userID,
 					  const char *issuePW )
 	{
 	CRYPT_SESSION cryptSession;
 	int status;
 
-	/* Create the CMP session and set up the information we need for the 
+	/* Create the CMP session and set up the information we need for the
 	   plug-and-play PKI process */
 	printf( "Creating CMP client session..." );
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
@@ -1776,7 +1776,7 @@ static int pnpClient( const CRYPT_DEVICE cryptDevice, const char *userID,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	if( !setConnectInfo( cryptSession, SERVER_MACHINE_ADDRESS, 
+	if( !setConnectInfo( cryptSession, SERVER_MACHINE_ADDRESS,
 						 SERVER_MACHINE_PORT, NET_TIMEOUT ) )
 		return( FALSE );
 	puts( " done." );
@@ -1858,7 +1858,7 @@ static int testClient( void )
 	/* Open the device and get the user ID and password from the cert store.
 	   Normally this would be communicated directly, for our test purposes
 	   we cheat and get it from the cert store */
-	status = connectDevice( &cryptDevice, CLIENT_DEVICE_TYPE, 
+	status = connectDevice( &cryptDevice, CLIENT_DEVICE_TYPE,
 							CLIENT_TOKEN_SLOT );
 	if( status )
 		status = getUserInfo( userID, issuePW );
@@ -1870,7 +1870,7 @@ static int testClient( void )
 	status = initDevice( cryptDevice, DEFAULT_SSO_PIN, SSO_PIN, USER_PIN );
 	cryptDeviceClose( cryptDevice );
 	if( status )
-		status = connectDevice( &cryptDevice, CLIENT_DEVICE_TYPE, 
+		status = connectDevice( &cryptDevice, CLIENT_DEVICE_TYPE,
 								CLIENT_TOKEN_SLOT );
 	if( status )
 		status = logonDevice( cryptDevice, USER_PIN );
@@ -1956,7 +1956,7 @@ int testUser( void )
 
 	/* Log in as primary SO using the zeroisation password.  Because of the
 	   above situation this currently performs an implicit zeroise */
-	status = cryptLogin( &cryptUser, TEXT( "Security officer" ), 
+	status = cryptLogin( &cryptUser, TEXT( "Security officer" ),
 						 TEXT( "zeroised" ) );
 	if( cryptStatusError( status ) )
 		{
@@ -1967,7 +1967,7 @@ int testUser( void )
 
 	/* Set the SO password */
 	status = cryptSetAttributeString( cryptUser, CRYPT_USERINFO_PASSWORD,
-									  TEXT( "password" ), 
+									  TEXT( "password" ),
 									  paramStrlen( TEXT( "password" ) ) );
 	if( cryptStatusError( status ) )
 		{
@@ -1986,7 +1986,7 @@ int testUser( void )
 				status, __LINE__ );
 		return( FALSE );
 		}
-	status = cryptLogin( &cryptUser, TEXT( "Security officer" ), 
+	status = cryptLogin( &cryptUser, TEXT( "Security officer" ),
 						 TEXT( "password" ) );
 	if( cryptStatusError( status ) )
 		{

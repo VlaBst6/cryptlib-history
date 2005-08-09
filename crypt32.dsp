@@ -320,6 +320,10 @@ SOURCE=.\context\ctx_md5.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\context\ctx_misc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\ctx_rc2.c
 # End Source File
 # Begin Source File
@@ -940,11 +944,7 @@ SOURCE=.\zlib\deflate.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\zlib\infblock.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\zlib\infcodes.c
+SOURCE=.\zlib\gvmat32c.c
 # End Source File
 # Begin Source File
 
@@ -960,15 +960,15 @@ SOURCE=.\zlib\inftrees.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\zlib\infutil.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\zlib\trees.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\zlib\zutil.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\zlib\gvmat32.obj
 # End Source File
 # End Group
 # Begin Source File
@@ -1033,6 +1033,10 @@ SOURCE=.\cert\cert.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\consts.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\context.h
 # End Source File
 # Begin Source File
@@ -1061,6 +1065,10 @@ SOURCE=.\envelope\envelope.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\int_api.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\kernel\kernel.h
 # End Source File
 # Begin Source File
@@ -1070,6 +1078,10 @@ SOURCE=.\keyset\keyset.h
 # Begin Source File
 
 SOURCE=.\misc\misc_rw.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\os_spec.h
 # End Source File
 # Begin Source File
 
@@ -1094,10 +1106,6 @@ SOURCE=.\session\ssl.h
 # Begin Source File
 
 SOURCE=.\io\stream.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\kernel\thread.h
 # End Source File
 # End Group
 # Begin Group "Resource Files"

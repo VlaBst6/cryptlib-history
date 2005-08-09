@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Certificate Handling Test Routines				*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2005					*
 *																			*
 ****************************************************************************/
 
@@ -30,10 +30,10 @@
    standard doesn't say they can't */
 
 #if defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
-  #define CERTTIME_DATETEST	( 0x38000000L + 2082844800L )
+  #define CERTTIME_DATETEST	( 0x3A000000L + 2082844800L )
   #define CERTTIME_Y2KTEST	( 0x46300C01L + 2082844800L )
 #else
-  #define CERTTIME_DATETEST	0x38000000L
+  #define CERTTIME_DATETEST	0x3A000000L
   #define CERTTIME_Y2KTEST	0x46300C01L
 #endif /* Macintosh-specific weird epoch */
 
@@ -1744,10 +1744,10 @@ int testComplexCRL( void )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		const time_t invalidityDate = 0x37000000L;
+		const time_t invalidityDate = CERTTIME_DATETEST - 0x01000000L;
 
-		/* The private key was invalid quite some time ago (1999).  We can't
-		   go back too far because the cryptlib kernel won't allow
+		/* The private key was invalid quite some time ago (mid-2000).  We 
+		   can't go back too far because the cryptlib kernel won't allow
 		   suspiciously old dates */
 		status = cryptSetAttributeString( cryptCRL,
 					CRYPT_CERTINFO_INVALIDITYDATE, &invalidityDate,
@@ -2760,7 +2760,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 21; i++ )
+	for( i = 1; i <= 24; i++ )
 		if( !certImport( i, FALSE ) )
 			return( FALSE );
 	return( TRUE );
@@ -3614,9 +3614,11 @@ void xxxCertImport( const char *fileName )
 	filePtr = fopen( fileName, "rb" );
 	assert( filePtr != NULL );
 	count = fread( buffer, 1, BUFFER_SIZE, filePtr );
+	assert( count < BUFFER_SIZE );
 	fclose( filePtr );
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED, &cryptCert );
 	assert( cryptStatusOK( status ) );
+	printCertInfo( cryptCert );
 	cryptDestroyCert( cryptCert );
 	}
 

@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Wed Feb 23 23:17:33 2005, filesize = 82355.
+'"cryptlib.h" dated Mon Jul 18 02:47:56 2005, filesize = 82445.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -390,8 +390,8 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     ' Certificate attributes 
     '************************
 
-'      Because there are so many cert attributes, we break them down into 
-'      blocks to minimise the number of values that change if a new one is 
+'      Because there are so many cert attributes, we break them down into
+'      blocks to minimise the number of values that change if a new one is
 '      added halfway through 
 
 '      Pseudo-information on a cert object or meta-information which is used
@@ -404,9 +404,6 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
         CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT
     CRYPT_CERTINFO_FINGERPRINT_SHA
     CRYPT_CERTINFO_CURRENT_CERTIFICATE ' Cursor mgt: Rel.pos in chain/CRL/OCSP 
-    CRYPT_CERTINFO_CURRENT_EXTENSION ' Cursor mgt: Rel.pos.or abs.extension 
-    CRYPT_CERTINFO_CURRENT_FIELD    ' Cursor mgt: Rel.pos.or abs.field in ext 
-    CRYPT_CERTINFO_CURRENT_COMPONENT ' Cursor mgt: Rel.pos in multival.field 
     CRYPT_CERTINFO_TRUSTED_USAGE    ' Usage that cert is trusted for 
     CRYPT_CERTINFO_TRUSTED_IMPLICIT ' Whether cert is implicitly trusted 
     CRYPT_CERTINFO_SIGNATURELEVEL   ' Amount of detail to include in sigs.
@@ -464,7 +461,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_IPADDRESS                ' iPAddress 
     CRYPT_CERTINFO_REGISTEREDID             ' registeredID 
 
-'      X.509 certificate extensions.  Although it would be nicer to use names 
+'      X.509 certificate extensions.  Although it would be nicer to use names
 '      that match the extensions more closely (e.g.
 '      CRYPT_CERTINFO_BASICCONSTRAINTS_PATHLENCONSTRAINT), these exceed the
 '      32-character ANSI minimum length for unique names, and get really
@@ -805,7 +802,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_CMS_NONCE                ' randomNonce 
 
 '      SCEP attributes:
-'      2 16 840 1 113733 1 9 2 messageType 
+'      2 16 840 1 113733 1 9 2 messageType
 '      2 16 840 1 113733 1 9 3 pkiStatus
 '      2 16 840 1 113733 1 9 4 failInfo
 '      2 16 840 1 113733 1 9 5 senderNonce
@@ -1118,7 +1115,7 @@ End Enum
 '  objects 
 
 Public Enum CRYPT_SIGNATURELEVEL_TYPE
- 
+
     CRYPT_SIGNATURELEVEL_NONE       ' Include only signature 
     CRYPT_SIGNATURELEVEL_SIGNERCERT ' Include signer cert 
     CRYPT_SIGNATURELEVEL_ALL        ' Include all relevant info 
@@ -1322,7 +1319,7 @@ REM  CRYPT_HANDLE = Long
 
 Public Type CRYPT_QUERY_INFO 
     ' Algorithm information 
-    algoName(CRYPT_MAX_TEXTSIZE-1) As Byte' Algorithm name 
+    algoName(CRYPT_MAX_TEXTSIZE-1) As C_CHR' Algorithm name 
     blockSize As Long                  ' Block size of the algorithm 
     minKeySize As Long                 ' Minimum key size in bytes 
     keySize As Long                    ' Recommended key size in bytes 
@@ -1670,7 +1667,7 @@ Public Declare Function cryptCheckSignatureEx Lib "CL32.DLL" ( ByVal signature A
 Public Declare Function cryptKeysetOpen Lib "CL32.DLL" ( ByRef keyset As Long, _
  ByVal cryptUser As Long, _
  ByVal keysetType As CRYPT_KEYSET_TYPE, _
- ByVal name As String, _
+ ByVal name As C_STR, _
  ByVal options As CRYPT_KEYOPT_TYPE) As Long
 
 Public Declare Function cryptKeysetClose Lib "CL32.DLL" ( ByVal keyset As Long) As Long
@@ -1681,13 +1678,13 @@ Public Declare Function cryptKeysetClose Lib "CL32.DLL" ( ByVal keyset As Long) 
 Public Declare Function cryptGetPublicKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByRef cryptContext As Long, _
  ByVal keyIDtype As CRYPT_KEYID_TYPE, _
- ByVal keyID As String) As Long
+ ByVal keyID As C_STR) As Long
 
 Public Declare Function cryptGetPrivateKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByRef cryptContext As Long, _
  ByVal keyIDtype As CRYPT_KEYID_TYPE, _
- ByVal keyID As String, _
- ByVal password As String) As Long
+ ByVal keyID As C_STR, _
+ ByVal password As C_STR) As Long
 
 
 ' Add/delete a key to/from a keyset 
@@ -1697,11 +1694,11 @@ Public Declare Function cryptAddPublicKey Lib "CL32.DLL" ( ByVal keyset As Long,
 
 Public Declare Function cryptAddPrivateKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByVal cryptKey As Long, _
- ByVal password As String) As Long
+ ByVal password As C_STR) As Long
 
 Public Declare Function cryptDeleteKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByVal keyIDtype As CRYPT_KEYID_TYPE, _
- ByVal keyID As String) As Long
+ ByVal keyID As C_STR) As Long
 
 
 '****************************************************************************
@@ -1719,7 +1716,7 @@ Public Declare Function cryptCreateCert Lib "CL32.DLL" ( ByRef certificate As Lo
 Public Declare Function cryptDestroyCert Lib "CL32.DLL" ( ByVal certificate As Long) As Long
 
 
-'  Get/add/delete certificate extensions.  These are direct data insertion 
+'  Get/add/delete certificate extensions.  These are direct data insertion
 '  functions whose use is discouraged, so they fix the string at char *
 '  rather than C_STR 
 
@@ -1774,12 +1771,12 @@ Public Declare Function cryptCAGetItem Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByRef certificate As Long, _
  ByVal certType As CRYPT_CERTTYPE_TYPE, _
  ByVal keyIDtype As CRYPT_KEYID_TYPE, _
- ByVal keyID As String) As Long
+ ByVal keyID As C_STR) As Long
 
 Public Declare Function cryptCADeleteItem Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByVal certType As CRYPT_CERTTYPE_TYPE, _
  ByVal keyIDtype As CRYPT_KEYID_TYPE, _
- ByVal keyID As String) As Long
+ ByVal keyID As C_STR) As Long
 
 Public Declare Function cryptCACertManagement Lib "CL32.DLL" ( ByRef certificate As Long, _
  ByVal action As CRYPT_CERTACTION_TYPE, _
@@ -1839,7 +1836,7 @@ Public Declare Function cryptPopData Lib "CL32.DLL" ( ByVal envelope As Long, _
 Public Declare Function cryptDeviceOpen Lib "CL32.DLL" ( ByRef device As Long, _
  ByVal cryptUser As Long, _
  ByVal deviceType As CRYPT_DEVICE_TYPE, _
- ByVal name As String) As Long
+ ByVal name As C_STR) As Long
 
 Public Declare Function cryptDeviceClose Lib "CL32.DLL" ( ByVal device As Long) As Long
 
@@ -1867,8 +1864,8 @@ Public Declare Function cryptDeviceCreateContext Lib "CL32.DLL" ( ByVal device A
 ' Log on and off (create/destroy a user object) 
 
 Public Declare Function cryptLogin Lib "CL32.DLL" ( ByRef user As Long, _
- ByVal name As String, _
- ByVal password As String) As Long
+ ByVal name As C_STR, _
+ ByVal password As C_STR) As Long
 
 Public Declare Function cryptLogout Lib "CL32.DLL" ( ByVal user As Long) As Long
 

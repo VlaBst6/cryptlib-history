@@ -209,7 +209,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 					 const int numericEnvInfo )
 	{
 	BOOLEAN isRestartable = FALSE;
-	int status, bytesIn;
+	int bytesIn, contentType, status;
 
 	/* Push in the data */
 	status = cryptPushData( envelope, buffer, length, &bytesIn );
@@ -391,6 +391,10 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 				bytesIn, length, __LINE__ );
 		return( SENTINEL );
 		}
+	status = cryptGetAttribute( envelope, CRYPT_ENVINFO_CONTENTTYPE, 
+								&contentType );
+	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_DATA )
+		printf( "Nested content type = %d.\n", contentType );
 
 	/* Flush the data */
 	status = cryptFlushData( envelope );

@@ -1,6 +1,6 @@
 #****************************************************************************
 #*																			*
-#*							Makefile for cryptlib 3.2						*
+#*							Makefile for cryptlib 3.2.1						*
 #*						Copyright Peter Gutmann 1995-2005					*
 #*																			*
 #****************************************************************************
@@ -17,7 +17,9 @@
 # At least it doesn't pipe itself through sed yet.
 #
 # (Note that as of 3.1 beta 3, it does pipe itself through sed on non-Unix
-#  systems to retarget Unix-specific files to OS-specific ones).
+#  systems to retarget Unix-specific files to OS-specific ones and perform
+#  various other operations that aren't easily possible by adding another
+#  level of recursion).
 #
 # The self-test program pulls in parts of cryptlib to ensure that the self-
 # configuration works.  Because this is handled by the makefile, you can't
@@ -30,7 +32,7 @@
 
 MAJ		= 3
 MIN		= 2
-PLV		= 0
+PLV		= 1
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
@@ -79,13 +81,18 @@ DEBUG_FLAGS	= -Wall -Wno-switch -Wshadow -Wpointer-arith -Wcast-align -Wstrict-p
 # Compiler options.  The IRIX cc doesn't recognise -fPIC, but generates PIC
 # by default anyway, so to make this work under IRIX just remove the -fPIC.
 # The PHUX compiler requires +z for PIC.  OS X generates PIC by default, but
-# doesn't mind having -fPIC specified anyway.  The only difference between
-# -fpic and -fPIC is that the latter generates large-displacement jumps
-# while the former doesn't, bailing out with an error if a large-
-# displacement jump would be required.  As a side-effect, -fPIC code is
-# slightly less efficient because of the use of large-displacement jumps,
-# so if you're tuning the code for size/speed you can try -fpic to see if
-# you get any improvement.
+# doesn't mind having -fPIC specified anyway.  gcc under Cygwin (and
+# specifically Cygwin-native, not a cross-development toolchain hosted under
+# Cygwin) generates PIC by default but also doesn't allow -fPIC to be
+# explicitly specified, so you need to remove the -fPIC to compile under
+# Cygwin native.
+#
+# For the PIC options, the only difference between -fpic and -fPIC is that
+# the latter generates large-displacement jumps while the former doesn't,
+# bailing out with an error if a large-displacement jump would be required.
+# As a side-effect, -fPIC code is slightly less efficient because of the use
+# of large-displacement jumps, so if you're tuning the code for size/speed
+# you can try -fpic to see if you get any improvement.
 #
 # By default this builds the release version of the code, to build the debug
 # version (which is useful for finding compiler bugs and system-specific
@@ -165,9 +172,7 @@ PALMSDK_PATH	= "d:/Palm\\\ SDK/sdk-6"
 #*																			*
 #****************************************************************************
 
-# The object files that make up cryptlib.  When building the Java version,
-# $(OBJPATH)cryptjni.o should be added to the OBJS line to replace the
-# cryptapi.o used to provide the C interface.
+# The object files that make up cryptlib.
 
 ASMOBJS		= $(OBJPATH)md5asm.o $(OBJPATH)rmdasm.o $(OBJPATH)sha1asm.o
 
@@ -203,9 +208,9 @@ CTXOBJS		= $(OBJPATH)kg_dlp.o $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o \
 			  $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_hmd5.o \
 			  $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_idea.o \
 			  $(OBJPATH)ctx_md2.o $(OBJPATH)ctx_md4.o $(OBJPATH)ctx_md5.o \
-			  $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o \
-			  $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o \
-			  $(OBJPATH)ctx_sha2.o $(OBJPATH)ctx_skip.o
+			  $(OBJPATH)ctx_misc.o $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o \
+			  $(OBJPATH)ctx_rc5.o $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o \
+			  $(OBJPATH)ctx_sha.o $(OBJPATH)ctx_sha2.o $(OBJPATH)ctx_skip.o
 
 DEVOBJS		= $(OBJPATH)fortezza.o $(OBJPATH)pkcs11.o $(OBJPATH)system.o
 
@@ -223,9 +228,9 @@ IOOBJS		= $(OBJPATH)cmp_tcp.o $(OBJPATH)dns.o $(OBJPATH)file.o \
 KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_issue.o \
 			  $(OBJPATH)ca_misc.o $(OBJPATH)ca_rev.o $(OBJPATH)dbx_misc.o \
 			  $(OBJPATH)dbx_rd.o $(OBJPATH)dbx_wr.o $(OBJPATH)http_crt.o \
-			  $(OBJPATH)ldap.o $(OBJPATH)mysql.o $(OBJPATH)odbc.o \
-			  $(OBJPATH)pgp.o $(OBJPATH)pkcs12.o $(OBJPATH)pkcs15.o \
-			  $(OBJPATH)pkcs15_rd.o $(OBJPATH)pkcs15_wr.o
+			  $(OBJPATH)ldap.o $(OBJPATH)odbc.o $(OBJPATH)pgp.o \
+			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_rd.o \
+			  $(OBJPATH)pkcs15_wr.o
 
 KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
 			  $(OBJPATH)int_msg.o $(OBJPATH)key_acl.o $(OBJPATH)mech_acl.o \
@@ -242,8 +247,9 @@ MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_rw.o $(OBJPATH)mech_drv.o \
 			  $(OBJPATH)obj_qry.o $(OBJPATH)sign.o $(OBJPATH)sign_rw.o
 
 MISCOBJS	= $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o $(OBJPATH)asn1_wr.o \
-			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)misc_rw.o \
-			  $(OBJPATH)os_spec.o $(OBJPATH)random.o $(OBJPATH)unix.o
+			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)java_jni.o \
+			  $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o $(OBJPATH)random.o \
+			  $(OBJPATH)unix.o
 
 SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_rd.o \
 			  $(OBJPATH)cmp_wr.o $(OBJPATH)ocsp.o $(OBJPATH)pnppki.o \
@@ -255,9 +261,8 @@ SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_rd.o \
 			  $(OBJPATH)ssl_cry.o $(OBJPATH)ssl_rw.o $(OBJPATH)ssl_svr.o \
 			  $(OBJPATH)tsp.o
 
-ZLIBOBJS	= $(OBJPATH)adler32.o $(OBJPATH)deflate.o $(OBJPATH)infblock.o \
-			  $(OBJPATH)infcodes.o $(OBJPATH)inffast.o $(OBJPATH)inflate.o \
-			  $(OBJPATH)inftrees.o $(OBJPATH)infutil.o $(OBJPATH)trees.o \
+ZLIBOBJS	= $(OBJPATH)adler32.o $(OBJPATH)deflate.o $(OBJPATH)inffast.o \
+			  $(OBJPATH)inflate.o $(OBJPATH)inftrees.o $(OBJPATH)trees.o \
 			  $(OBJPATH)zutil.o
 
 OBJS		= $(BNOBJS) $(CERTOBJS) $(CRYPTOBJS) $(CTXOBJS) $(DEVOBJS) \
@@ -278,7 +283,8 @@ IO_DEP = io/stream.h misc/misc_rw.h
 
 ASN1_DEP = $(IO_DEP) misc/asn1.h misc/asn1_ext.h misc/ber.h
 
-CRYPT_DEP	= cryptlib.h cryptini.h crypt.h cryptkrn.h
+CRYPT_DEP	= cryptlib.h crypt.h cryptkrn.h misc/config.h misc/consts.h \
+			  misc/int_api.h misc/os_spec.h
 
 KERNEL_DEP	= kernel/acl.h kernel/kernel.h kernel/thread.h
 
@@ -308,7 +314,9 @@ ZLIB_DEP = zlib/zconf.h zlib/zlib.h zlib/zutil.h
 # instead of the major version.  The alternative command oslevel reports the
 # full version number, which we can extract in the standard manner.
 # Similarly, QNX uses -v instead of -r for the version, and also has a broken
-# 'cut'.
+# 'cut'.  PHUX returns the version as something like 'B.11.11', so we have
+# to carefully extract the thing that looks most like a version number from
+# this.
 #
 # The MVS USS c89 compiler has a strict ordering of options.  That ordering
 # can be relaxed with the _C89_CCMODE environment variable to accept options
@@ -340,11 +348,11 @@ default:
 		'HP-UX') \
 			if gcc -v > /dev/null 2>&1 ; then \
 				make CC=gcc CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
+					-DOSVERSION=`uname -r | sed 's/^[A-Z]\.//' | cut -d'.' -f1`" \
 					$(OSNAME) ; \
 			else \
 				make CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
+					-DOSVERSION=`uname -r | sed 's/^[A-Z]\.//' | cut -d'.' -f1`" \
 					$(OSNAME) ; \
 			fi ;; \
 		'QNX')\
@@ -482,10 +490,10 @@ $(OBJPATH)cryptses.o:	$(CRYPT_DEP) cryptses.c
 $(OBJPATH)cryptusr.o:	$(CRYPT_DEP) cryptusr.c
 						$(CC) $(CFLAGS) cryptusr.c -o $(OBJPATH)cryptusr.o
 
-# Additional modules that need to be explicitly enabled by the user
+# Additional modules whose use needs to be explicitly enabled by the user.
 
-$(OBJPATH)cryptjni.o:	$(CRYPT_DEP) cryptjni.h cryptjni.c
-						$(CC) $(CFLAGS) cryptjni.c -o $(OBJPATH)cryptjni.o
+$(OBJPATH)java_jni.o:	$(CRYPT_DEP) bindings/java_jni.c
+						$(CC) $(CFLAGS) bindings/java_jni.c -o $(OBJPATH)java_jni.o
 
 # bn subdirectory
 
@@ -669,6 +677,9 @@ $(OBJPATH)ctx_md4.o:	$(CRYPT_DEP) context/context.h crypt/md4.h context/ctx_md4.
 $(OBJPATH)ctx_md5.o:	$(CRYPT_DEP) context/context.h crypt/md5.h context/ctx_md5.c
 						$(CC) $(CFLAGS) context/ctx_md5.c -o $(OBJPATH)ctx_md5.o
 
+$(OBJPATH)ctx_misc.o:	$(CRYPT_DEP) context/context.h context/ctx_misc.c
+						$(CC) $(CFLAGS) context/ctx_misc.c -o $(OBJPATH)ctx_misc.o
+
 $(OBJPATH)ctx_rc2.o:	$(CRYPT_DEP) context/context.h crypt/rc2.h context/ctx_rc2.c
 						$(CC) $(CFLAGS) context/ctx_rc2.c -o $(OBJPATH)ctx_rc2.o
 
@@ -807,8 +818,7 @@ $(OBJPATH)fortezza.o:	$(CRYPT_DEP) device/device.h device/fortezza.c
 $(OBJPATH)pkcs11.o:		$(CRYPT_DEP) device/device.h device/pkcs11.c
 						$(CC) $(CFLAGS) device/pkcs11.c -o $(OBJPATH)pkcs11.o
 
-$(OBJPATH)system.o:		$(CRYPT_DEP) device/device.h device/capabil.h context/libs.h \
-						device/system.c
+$(OBJPATH)system.o:		$(CRYPT_DEP) device/device.h device/capabil.h device/system.c
 						$(CC) $(CFLAGS) device/system.c -o $(OBJPATH)system.o
 
 # envelope subdirectory
@@ -849,10 +859,10 @@ $(OBJPATH)res_env.o:	$(CRYPT_DEP) envelope/envelope.h envelope/res_env.c
 $(OBJPATH)cmp_tcp.o:	$(CRYPT_DEP) io/cmp_tcp.c
 						$(CC) $(CFLAGS) io/cmp_tcp.c -o $(OBJPATH)cmp_tcp.o
 
-$(OBJPATH)dns.o:		$(CRYPT_DEP) io/dns.c
+$(OBJPATH)dns.o:		$(CRYPT_DEP) io/tcp.h io/dns.c
 						$(CC) $(CFLAGS) io/dns.c -o $(OBJPATH)dns.o
 
-$(OBJPATH)file.o:		$(CRYPT_DEP) $(ASN1_DEP) io/file.c
+$(OBJPATH)file.o:		$(CRYPT_DEP) $(ASN1_DEP) io/file.h io/file.c
 						$(CC) $(CFLAGS) io/file.c -o $(OBJPATH)file.o
 
 $(OBJPATH)http.o:		$(CRYPT_DEP) io/http.c
@@ -861,13 +871,13 @@ $(OBJPATH)http.o:		$(CRYPT_DEP) io/http.c
 $(OBJPATH)memory.o:		$(CRYPT_DEP) $(ASN1_DEP) io/memory.c
 						$(CC) $(CFLAGS) io/memory.c -o $(OBJPATH)memory.o
 
-$(OBJPATH)net.o:		$(CRYPT_DEP) $(ASN1_DEP) io/net.c
+$(OBJPATH)net.o:		$(CRYPT_DEP) $(ASN1_DEP) io/tcp.h io/net.c
 						$(CC) $(CFLAGS) io/net.c -o $(OBJPATH)net.o
 
 $(OBJPATH)stream.o:		$(CRYPT_DEP) $(ASN1_DEP) io/stream.c
 						$(CC) $(CFLAGS) io/stream.c -o $(OBJPATH)stream.o
 
-$(OBJPATH)tcp.o:		$(CRYPT_DEP) io/tcp.c
+$(OBJPATH)tcp.o:		$(CRYPT_DEP) io/tcp.h io/tcp.c
 						$(CC) $(CFLAGS) io/tcp.c -o $(OBJPATH)tcp.o
 
 # kernel subdirectory
@@ -942,9 +952,6 @@ $(OBJPATH)ldap.o:		$(CRYPT_DEP) keyset/keyset.h keyset/ldap.c
 
 $(OBJPATH)odbc.o:		$(CRYPT_DEP) keyset/keyset.h keyset/odbc.c
 						$(CC) $(CFLAGS) keyset/odbc.c -o $(OBJPATH)odbc.o
-
-$(OBJPATH)mysql.o:		$(CRYPT_DEP) keyset/keyset.h keyset/mysql.c
-						$(CC) $(CFLAGS) keyset/mysql.c -o $(OBJPATH)mysql.o
 
 $(OBJPATH)pgp.o:		$(CRYPT_DEP) envelope/pgp.h keyset/pgp.c
 						$(CC) $(CFLAGS) keyset/pgp.c -o $(OBJPATH)pgp.o
@@ -1122,31 +1129,17 @@ $(OBJPATH)adler32.o:	$(ZLIB_DEP) zlib/adler32.c
 $(OBJPATH)deflate.o:	$(ZLIB_DEP) zlib/deflate.c
 						$(CC) $(CFLAGS) zlib/deflate.c -o $(OBJPATH)deflate.o
 
-$(OBJPATH)infblock.o:	$(ZLIB_DEP) zlib/infblock.h zlib/inftrees.h \
-						zlib/infcodes.h zlib/infutil.h zlib/infblock.c
-						$(CC) $(CFLAGS) zlib/infblock.c -o $(OBJPATH)infblock.o
-
-$(OBJPATH)infcodes.o:	$(ZLIB_DEP) zlib/infblock.h zlib/inffast.h \
-						zlib/inftrees.h zlib/infcodes.h zlib/infutil.h \
-						zlib/infcodes.c
-						$(CC) $(CFLAGS) zlib/infcodes.c -o $(OBJPATH)infcodes.o
-
-$(OBJPATH)inffast.o:	$(ZLIB_DEP) zlib/infblock.h zlib/inffast.h \
-						zlib/inftrees.h zlib/infcodes.h zlib/infutil.h \
-						zlib/inffast.c
+$(OBJPATH)inffast.o:	$(ZLIB_DEP) zlib/inffast.h zlib/inffixed.h \
+						zlib/inftrees.h zlib/inffast.c
 						$(CC) $(CFLAGS) zlib/inffast.c -o $(OBJPATH)inffast.o
 
-$(OBJPATH)inflate.o:	$(ZLIB_DEP) zlib/infblock.h zlib/inflate.c
+$(OBJPATH)inflate.o:	$(ZLIB_DEP) zlib/inflate.c
 						$(CC) $(CFLAGS) zlib/inflate.c -o $(OBJPATH)inflate.o
 
 $(OBJPATH)inftrees.o:	$(ZLIB_DEP) zlib/inftrees.h zlib/inftrees.c
 						$(CC) $(CFLAGS) zlib/inftrees.c -o $(OBJPATH)inftrees.o
 
-$(OBJPATH)infutil.o:	$(ZLIB_DEP) zlib/infblock.h zlib/inffast.h \
-						zlib/inftrees.h zlib/infcodes.h zlib/infutil.c
-						$(CC) $(CFLAGS) zlib/infutil.c -o $(OBJPATH)infutil.o
-
-$(OBJPATH)trees.o:		$(ZLIB_DEP) zlib/trees.c
+$(OBJPATH)trees.o:		$(ZLIB_DEP) zlib/trees.h zlib/trees.c
 						$(CC) $(CFLAGS) zlib/trees.c -o $(OBJPATH)trees.o
 
 $(OBJPATH)zutil.o:		$(ZLIB_DEP) zlib/zutil.c
@@ -1282,9 +1275,6 @@ asm_sparc:				bn/sparcv8plus.S
 
 # The test code
 
-certinst.o:				cryptlib.h crypt.h test/test.h test/certinst.c
-						$(CC) $(CFLAGS) test/certinst.c
-
 utils.o:				cryptlib.h crypt.h test/test.h test/utils.c
 						$(CC) $(CFLAGS) test/utils.c
 
@@ -1407,7 +1397,7 @@ get_libs:
 			@case $(OSNAME) in \
 				'AIX') \
 					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS ="$(OSLIBS_AIX)" ;; \
+						OS_LIBS="$(OSLIBS_AIX)" ;; \
 				'BeOS') \
 					if [ -f /system/lib/libbind.so ] ; then \
 						make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
@@ -1698,11 +1688,6 @@ stestlib:		$(TESTOBJS)
 				fi
 				@rm -f $(LINKFILE)
 
-certinst:		$(LIBNAME) certinst.o
-				@make linkfile OBJS=certinst.o
-				@make get_libs LINK_TARGET=link OUT=certinst LIB=-l$(PROJ)
-				@rm -f $(LINKFILE)
-
 #****************************************************************************
 #*																			*
 #*								Unix OS Targets								*
@@ -1834,12 +1819,30 @@ Convex:
 CRAY:
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -h nomessage=256:265 -O2"
 
-# Cygwin32: cc is gcc
+# Cygwin32: cc is gcc, but without allowing -fPIC (see the SCFLAGS comment
+#			for more details), so we remove the -fPIC in SCFLAGS (without
+#			removing it anywhere else).  Note that this has to be done very
+#			carefully: The grep checks for the original SCFLAGS with -fPIC,
+#			the sed then changes the full string in SCFLAGS, being itself
+#			changed by the command but not affecting the preceding grep, and
+#			then on future runs the -fPIC grep doesn't match any more and no
+#			further changes are made.
 
 CYGWIN_NT-5.0:
-	@make CC=gcc $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mcpu=pentium -D__CYGWIN__ -I/usr/local/include"
+	@- if grep "-fPIC -c" makefile > /dev/null ; then \
+		sed s/"-fPIC -c -D__UNIX__"/"-c -D__UNIX__"/g makefile > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	@make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
+		CFLAGS="$(CFLAGS) -O3 -D__CYGWIN__ -I/usr/local/include"
+
 CYGWIN_NT-5.1:
-	@make CC=gcc $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mcpu=pentium -D__CYGWIN__ -I/usr/local/include"
+	@- if grep "-fPIC -c" makefile > /dev/null ; then \
+		sed s/"-fPIC -c"//g makefile > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	@make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
+		CFLAGS="$(CFLAGS) -O3 -D__CYGWIN__ -I/usr/local/include"
 
 # DGUX: cc is a modified gcc.
 
@@ -1918,6 +1921,10 @@ dgux:
 #		the start (in the internal self-test), disable the use of the asm
 #		code and rebuild.
 #
+#		In addition pa_risc2.s is written using the HP as syntax rather than
+#		gas syntax, so we can only build it if we're using the PHUX native
+#		development tools.
+#
 #		Finally, the default PHUX system ships with a non-C compiler (C++)
 #		with most of the above bugs, but that can't process standard C code
 #		either.  To detect this we feed it a C-compiler option and check for
@@ -1931,13 +1938,12 @@ HP-UX:
 	@if [ `$(CC) +O3 endian.c 2>&1 | grep -c "ANSI C product"` = '1' ] ; then \
 		echo "Warning: This system appears to be running the HP bundled C++ compiler as" ; \
 		echo "         its cc.  You need to install a proper C compiler to build cryptlib." ; \
-		echo "" \
+		echo "" ; \
 		fi
 	@rm -f a.out
 	@if [ `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` -eq 11 ] ; then \
 		if [ $(CC) = "gcc" ] ; then \
 			if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-				make asm_phux OBJPATH=$(OBJPATH) || exit 1 ; \
 				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0" ; \
 			else \
 				make $(DEFINES) CFLAGS="$(CFLAGS) -O3" ; \
@@ -2414,7 +2420,7 @@ target-xmk-mb:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=XMK CC=mb-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -DOSVERSION=3 -D__XMK__ \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=3 -D__XMK__ \
 		-fomit-frame-pointer -O3"
 
 target-xmk-ppc:
@@ -2424,10 +2430,22 @@ target-xmk-ppc:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=XMK CC=powerpc-eabi-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -DOSVERSION=3 -D__XMK__ \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=3 -D__XMK__ \
 		-fomit-frame-pointer -O3"
 
-# Kadak AMX: Gnu toolchain under Unix or Cygwin.
+# VxWorks: VxWorks toolchain under Windows.
+
+target-vxworks:
+	@make directories
+	@if grep "unix\.o" makefile > /dev/null ; then \
+		sed s/unix\.o/vxworks\.o/g makefile | sed s/unix\.c/vxworks\.c/g > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	make $(XDEFINES) OSNAME=VxWorks CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__VXWORKS__ -O3"
+
+# Kadak AMX: Gnu toolchain under Unix or Cygwin or ARM cc for ARM CPUs.  The
+# entry below is for the ARM toolchain.
 
 target-amx:
 	@make directories
@@ -2435,8 +2453,32 @@ target-amx:
 		sed s/unix\.o/amx\.o/g makefile | sed s/unix\.c/amx\.c/g > makefile.tmp || exit 1 ; \
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
-	make $(XDEFINES) OSNAME=AMX CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_BIGENDIAN -DOSVERSION=1 -D__AMX__ -O2"
+	make $(XDEFINES) OSNAME=AMX CC=armcc CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__AMX__ -O2"
+
+# uC/OS-II: Generic toolchain for various architectures, the entry below is
+#			for x86..
+
+target-ucos:
+	@make directories
+	@if grep "unix\.o" makefile > /dev/null ; then \
+		sed s/unix\.o/ucos\.o/g makefile | sed s/unix\.c/ucos\.c/g > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	make $(XDEFINES) OSNAME=UCOS CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=2 -D__UCOS__ -O3"
+
+# ChorusOS: Generic toolchain for various architectures, the entry below is
+#			for x86..
+
+target-chorus:
+	@make directories
+	@if grep "unix\.o" makefile > /dev/null ; then \
+		sed s/unix\.o/chorus\.o/g makefile | sed s/unix\.c/chorus\.c/g > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	make $(XDEFINES) OSNAME=CHORUS CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=5 -D__CHORUS__ -O3"
 
 #****************************************************************************
 #*																			*

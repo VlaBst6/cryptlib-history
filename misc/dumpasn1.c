@@ -14,7 +14,7 @@
    representative of my normal coding style.
 
    Available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.c.
-   Last updated 22 February 2003 (version 20030222, if you prefer it that
+   Last updated 18 July 2005 (version 20050718, if you prefer it that
    way).  To build under Windows, use 'cl /MD dumpasn1.c'.  To build on OS390
    or z/OS, use '/bin/c89 -D OS390 -o dumpasn1 dumpasn1.c'.
 
@@ -49,7 +49,7 @@
 
 /* The update string, printed as part of the help screen */
 
-#define UPDATE_STRING	"22 February 2003"
+#define UPDATE_STRING	"18 July 2005"
 
 /* Useful defines */
 
@@ -556,7 +556,7 @@ static int readLine( FILE *file, char *buffer )
 			break;
 			}
 
-		/* Make sure the line is of the correct length */
+		/* Make sure that the line is of the correct length */
 		if( bufCount > MAX_LINESIZE )
 			{
 			printf( "Config file line %d too long.\n", lineNo );
@@ -672,8 +672,8 @@ static int readConfig( const char *path, const int isDefaultConfig )
 		/* Check for an attribute tag */
 		if( !strncmp( buffer, "OID = ", 6 ) )
 			{
-			/* Make sure all the required attributes for the current OID are
-			   present */
+			/* Make sure that all of the required attributes for the current 
+			   OID are present */
 			if( oidPtr->description == NULL )
 				{
 				printf( "OID ending on config file line %d has no "
@@ -966,7 +966,7 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 	if( noBytes > 128 && !printAllData )
 		noBytes = 128;	/* Only output a maximum of 128 bytes */
 	if( level > maxLevel )
-		level = maxLevel;	/* Make sure we don't go off edge of screen */
+		level = maxLevel;	/* Make sure that we don't go off edge of screen */
 	printable[ 8 ] = printable[ 0 ] = '\0';
 	for( i = 0; i < noBytes; i++ )
 		{
@@ -1164,7 +1164,7 @@ static void displayString( FILE *inFile, long length, int level,
 	if( !doTimeStr && length <= 40 )
 		fprintf( output, " '" );		/* Print string on same line */
 	if( level > maxLevel )
-		level = maxLevel;	/* Make sure we don't go off edge of screen */
+		level = maxLevel;	/* Make sure that we don't go off edge of screen */
 	for( i = 0; i < noBytes; i++ )
 		{
 		int ch;
@@ -1555,7 +1555,7 @@ static int checkForText( FILE *inFile, const int length )
 	if( isdigit( buffer[ 0 ] ) && ( length == 13 || length == 15 ) && \
 		buffer[ length - 1 ] == 'Z' )
 		{
-		/* It looks like a time string, make sure it really is one */
+		/* It looks like a time string, make sure that it really is one */
 		for( i = 0; i < length - 1; i++ )
 			if( !isdigit( buffer[ i ] ) )
 				break;
@@ -1641,8 +1641,8 @@ static void dumpHeader( FILE *inFile, const ASN1_ITEM *item )
 	   data, which means it won't always work on streams */
 	if( extraLen > 0 && doDumpHeader > 1 )
 		{
-		/* Make sure we don't print too much data.  This doesn't work for
-		   indefinite-length data, we don't try and guess the length with
+		/* Make sure that we don't print too much data.  This doesn't work 
+		   for indefinite-length data, we don't try and guess the length with
 		   this since it involves picking apart what we're printing */
 		if( extraLen > item->length && !item->indefinite )
 			extraLen = ( int ) item->length;
@@ -2111,7 +2111,7 @@ int printAsn1( FILE *inFile, const int level, long length,
 void usageExit( void )
 	{
 	puts( "DumpASN1 - ASN.1 object dump/syntax check program." );
-	puts( "Copyright Peter Gutmann 1997 - 2002.  Last updated " UPDATE_STRING "." );
+	puts( "Copyright Peter Gutmann 1997 - 2005.  Last updated " UPDATE_STRING "." );
 	puts( "" );
 	puts( "Usage: dumpasn1 [-acdefhlprstuxz] <file>" );
 	puts( "       - = Take input from stdin (some options may not work properly)" );
@@ -2324,8 +2324,8 @@ int main( int argc, char *argv[] )
 		long length;
 		int i, status;
 
-		/* Make sure there's something there, and that it has a definite
-		   length */
+		/* Make sure that there's something there, and that it has a 
+		   definite length */
 		status = getItem( inFile, &item );
 		if( status == -1 )
 			{
@@ -2353,6 +2353,28 @@ int main( int argc, char *argv[] )
 		fseek( inFile, offset, SEEK_SET );
 		}
 	printAsn1( inFile, 0, LENGTH_MAGIC, 0 );
+	if( !useStdin && offset == 0 )
+		{
+		unsigned char buffer[ 16 ];
+		long position = ftell( inFile );
+
+		/* If we're dumping a standalone ASN.1 object and there's further 
+		   data appended to it, warn the user of its existence.  This is a
+		   bit hit-and-miss since there may or may not be additional EOCs
+		   present, dumpasn1 always stops once it knows that the data should 
+		   end (without trying to read any trailing EOCs) because data from 
+		   some sources has the EOCs truncated, and most apps know that they 
+		   have to stop at min( data_end, EOCs ).  To avoid false positives, 
+		   we skip at least 4 EOCs worth of data and if there's still more 
+		   present, we complain */
+		fread( buffer, 1, 8, inFile );	/* Skip 4 EOCs */
+		if( !feof( inFile ) )
+			{
+			fprintf( output, "Warning: Further data follows ASN.1 data at "
+					 "position %d.\n", position );
+			noWarnings++;
+			}
+		}
 	fclose( inFile );
 
 	/* Print a summary of warnings/errors if it's required or appropriate */

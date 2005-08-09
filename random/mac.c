@@ -85,7 +85,7 @@ void fastPoll( void )
 	   stack space, the last QuickDraw error code */
 /*	addRandomValue( randomState, GetAlertStage() );
 	count = BatteryCount();
-	while( count-- )
+	while( count-- > 0 )
 		{
 		addRandomValue( randomState,
 				   GetBatteryVoltage( count ) );
@@ -335,7 +335,7 @@ void slowPoll( void )
 		   version -- OBSOLETE
 		CountAppFiles( &dummy, &count );
 		addRandomValue( randomState, count );
-		while( count )
+		while( count > 0 )
 			{
 			AppFile theFile;
 			GetAppFiles( count, &theFile );
@@ -436,7 +436,7 @@ void slowPoll( void )
 		   devices handler and storage area */
 #if !defined CALL_NOT_IN_CARBON || CALL_NOT_IN_CARBON
 		count = CountADBs();
-		while( count-- )
+		while( count-- > 0 )
 			{
 			ADBDataBlock adbInfo;
 

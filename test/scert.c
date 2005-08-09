@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Cert Management Session Test Routines				*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2005					*
 *																			*
 ****************************************************************************/
 
@@ -20,6 +20,11 @@
 #if defined( __ILEC400__ )
   #pragma convert( 0 )
 #endif /* IBM medium iron */
+
+/* If we're running the test with a crypto device, we have to set an extended
+   timeout because of the long time it takes many devices to generate keys */
+
+#define NET_TIMEOUT		180
 
 /****************************************************************************
 *																			*
@@ -425,11 +430,11 @@ typedef struct {
 
 static const SCEP_INFO scepInfo[] = {
 	{ NULL },	/* Dummy so index == SCEP_NO */
-	{ /*1*/ "cryptlib", TEXT( "http://localhost" ), NULL, NULL, NULL },
-	{ /*2*/ "SSH", TEXT( "http://pki.ssh.com:8080/scep/" ), TEXT( "ssh" ), TEXT( "ssh" ),
+	{ /*1*/ "cryptlib", TEXT( "http://localhost/pkiclient.exe" ), NULL, NULL, NULL },
+	{ /*2*/ "SSH", TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe" ), TEXT( "ssh" ), TEXT( "ssh" ),
 			TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe?operation=GetCACert&message=test-ca1.ssh.com" ) },
-	{ /*3*/ "OpenSCEP", TEXT( "http://openscep.othello.ch/" ), TEXT( "????" ), TEXT( "????" ), NULL },
-	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/" ), TEXT( "????" ), TEXT( "????" ), NULL },
+	{ /*3*/ "OpenSCEP", TEXT( "http://openscep.othello.ch/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
+	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
 	};
 
 /* Cert request data for the cert from the SCEP server.  Note that we have
@@ -1783,7 +1788,7 @@ int testSessionCMP( void )
 
 /* Test the plug-and-play PKI functionality */
 
-static int connectPNPPKI( const BOOLEAN isCaUser )
+static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_KEYSET cryptKeyset;
@@ -1802,16 +1807,50 @@ static int connectPNPPKI( const BOOLEAN isCaUser )
 		return( FALSE );
 		}
 
-	/* Create the keyset to contain the keys */
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
-							  CRYPT_KEYSET_FILE, isCaUser ? \
-									PNPCA_PRIVKEY_FILE : PNP_PRIVKEY_FILE,
-							  CRYPT_KEYOPT_CREATE );
-	if( cryptStatusError( status ) )
+	/* Open the device/create the keyset to contain the keys.  This doesn't 
+	   perform a full device.c-style auto-configure but assumes that it's
+	   talking to a device that's already been initialised and is ready to
+	   go */
+	if( useDevice )
 		{
-		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		status = cryptDeviceOpen( &cryptKeyset, CRYPT_UNUSED, 
+								  CRYPT_DEVICE_PKCS11, "[Autodetect]" );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Crypto device open failed with error code %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		status = cryptSetAttributeString( cryptKeyset, 
+										  CRYPT_DEVINFO_AUTHENT_USER, 
+										  "test", 4 );
+		if( cryptStatusError( status ) )
+			{
+			printf( "\nDevice login failed with error code %d, line %d.\n",
+					status, __LINE__ );
+			return( FALSE );
+			}
+		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
+							"Signature key" ) == CRYPT_OK )
+			puts( "(Deleted a signature key object, presumably a leftover "
+				  "from a previous run)." );
+		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
+							"Encryption key" ) == CRYPT_OK )
+			puts( "(Deleted an encryption key object, presumably a leftover "
+				  "from a previous run)." );
+		}
+	else
+		{
+		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
+								  CRYPT_KEYSET_FILE, isCaUser ? \
+										PNPCA_PRIVKEY_FILE : PNP_PRIVKEY_FILE,
+								  CRYPT_KEYOPT_CREATE );
+		if( cryptStatusError( status ) )
+			{
+			printf( "User keyset create failed with error code %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
 		}
 
 	/* Wait for the server to finish initialising */
@@ -1846,7 +1885,20 @@ static int connectPNPPKI( const BOOLEAN isCaUser )
 		status = cryptSetAttribute( cryptSession,
 									CRYPT_SESSINFO_CMP_PRIVKEYSET,
 									cryptKeyset );
-	cryptKeysetClose( cryptKeyset );
+	if( cryptStatusOK( status ) && useDevice )
+		{
+		/* Keygen on a device can take an awfully long time for some devices,
+		   so we set an extended timeout to allow for this */
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+						   NET_TIMEOUT );
+		status = cryptSetAttribute( cryptSession, 
+									CRYPT_OPTION_NET_WRITETIMEOUT, 
+									NET_TIMEOUT );
+		}
+	if( useDevice )
+		cryptDeviceClose( cryptKeyset );
+	else
+		cryptKeysetClose( cryptKeyset );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Addition of session information failed with error code %d, "
@@ -1915,13 +1967,14 @@ static int connectPNPPKI( const BOOLEAN isCaUser )
 
 int testSessionPNPPKI( void )
 	{
-	return( connectPNPPKI( FALSE ) );
+	return( connectPNPPKI( FALSE, FALSE ) );
 	}
 
 /* Test the CMP server */
 
 static int cmpServerSingleIteration( const CRYPT_CONTEXT cryptPrivateKey,
-									 const CRYPT_KEYSET cryptCertStore )
+									 const CRYPT_KEYSET cryptCertStore,
+									 const BOOLEAN useDevice )
 	{
 	CRYPT_SESSION cryptSession;
 	int status;
@@ -1940,6 +1993,16 @@ static int cmpServerSingleIteration( const CRYPT_CONTEXT cryptPrivateKey,
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttribute( cryptSession,
 							CRYPT_SESSINFO_KEYSET, cryptCertStore );
+	if( cryptStatusOK( status ) && useDevice )
+		{
+		/* Keygen on a device can take an awfully long time for some devices,
+		   so we set an extended timeout to allow for this */
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+						   NET_TIMEOUT );
+		status = cryptSetAttribute( cryptSession, 
+									CRYPT_OPTION_NET_WRITETIMEOUT, 
+									NET_TIMEOUT );
+		}
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 							   status, __LINE__ ) );
@@ -2005,7 +2068,7 @@ int testSessionCMPServer( void )
 	for( i = 0; i < NO_CA_REQUESTS; i++ )
 		{
 		printf( "SVR: Running server iteration %d.\n", i + 1 );
-		if( !cmpServerSingleIteration( cryptCAKey, cryptCertStore ) )
+		if( !cmpServerSingleIteration( cryptCAKey, cryptCertStore, FALSE ) )
 			{
 #ifdef SERVER_IS_CRYPTLIB
 			/* If we're running the loopback test and this is the second
@@ -2079,7 +2142,8 @@ int testSessionCMPServer( void )
 #ifdef WINDOWS_THREADS
 
 static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
-						 const BOOLEAN isIntermediateCA )
+						 const BOOLEAN isIntermediateCA, 
+						 const BOOLEAN useDevice )
 	{
 	CRYPT_CONTEXT cryptCAKey;
 	CRYPT_KEYSET cryptCertStore;
@@ -2120,7 +2184,7 @@ static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
 	releaseMutex();
 
 	/* Run the server once to handle the plug-and-play PKI process */
-	if( !cmpServerSingleIteration( cryptCAKey, cryptCertStore ) )
+	if( !cmpServerSingleIteration( cryptCAKey, cryptCertStore, useDevice ) )
 		return( FALSE );
 
 	/* Clean up */
@@ -2171,7 +2235,7 @@ int testSessionCMPClientServer( void )
 
 unsigned __stdcall cmpPKIBootServerThread( void *dummy )
 	{
-	pnppkiServer( TRUE, FALSE, FALSE );
+	pnppkiServer( TRUE, FALSE, FALSE, FALSE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -2206,7 +2270,10 @@ int testSessionCMPPKIBootClientServer( void )
 
 unsigned __stdcall cmpPnPPKIServerThread( void *dummy )
 	{
-	pnppkiServer( FALSE, FALSE, FALSE );
+	/* Call with the third parameter set to TRUE to use a chain of CA certs
+	   (i.e. an intermediate CA between the root and end user) rather than
+	   a single CA cert directly issuing the cert to the end user */
+	pnppkiServer( FALSE, FALSE, FALSE, FALSE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -2224,7 +2291,36 @@ int testSessionPNPPKIClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( FALSE );
+	status = connectPNPPKI( FALSE, FALSE );
+	waitForThread( hThread );
+	destroyMutex();
+	return( status );
+	}
+
+unsigned __stdcall cmpPnPPKIDeviceServerThread( void *dummy )
+	{
+	/* Call with the third parameter set to TRUE to use a chain of CA certs
+	   (i.e. an intermediate CA between the root and end user) rather than
+	   a single CA cert directly issuing the cert to the end user */
+	pnppkiServer( FALSE, FALSE, FALSE, TRUE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
+int testSessionPNPPKIDeviceClientServer( void )
+	{
+	HANDLE hThread;
+	unsigned threadID;
+	int status;
+
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPnPPKIDeviceServerThread,
+										 NULL, 0, &threadID );
+	Sleep( 1000 );
+
+	/* Connect to the local server with PKIBoot enabled */
+	status = connectPNPPKI( FALSE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2232,7 +2328,7 @@ int testSessionPNPPKIClientServer( void )
 
 unsigned __stdcall cmpPnPPKICaServerThread( void *dummy )
 	{
-	pnppkiServer( FALSE, TRUE, FALSE );
+	pnppkiServer( FALSE, TRUE, FALSE, FALSE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -2250,7 +2346,7 @@ int testSessionPNPPKICAClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( TRUE );
+	status = connectPNPPKI( TRUE, FALSE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2258,7 +2354,7 @@ int testSessionPNPPKICAClientServer( void )
 
 unsigned __stdcall cmpPnPPKIIntermedCaServerThread( void *dummy )
 	{
-	pnppkiServer( FALSE, FALSE, TRUE );
+	pnppkiServer( FALSE, FALSE, TRUE, FALSE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -2276,7 +2372,7 @@ int testSessionPNPPKIIntermedCAClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( FALSE );
+	status = connectPNPPKI( FALSE, FALSE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );

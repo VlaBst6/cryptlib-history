@@ -40,23 +40,23 @@
 	Server 2: Generic test server.
 	Server 3: ~40K data returned.
 	Server 4: Sends zero-length blocks (actually a POP server).
-	Server 5: Novell GroupWise, requires CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
+	Server 5: Novell GroupWise, requires CRYPT_OPTION_CERT_COMPLIANCELEVEL =
 			  CRYPT_COMPLIANCELEVEL_OBLIVIOUS due to b0rken certs.
-	Server 6: (Causes MAC failure during handshake when called from PMail, 
+	Server 6: (Causes MAC failure during handshake when called from PMail,
 			   works OK when called here).
-	Server 7: Can only do crippled crypto (not even conventional crippled 
-			  crypto but RC4-56) and instead of sending an alert for this 
+	Server 7: Can only do crippled crypto (not even conventional crippled
+			  crypto but RC4-56) and instead of sending an alert for this
 			  just drops the connection (this may be caused by the NetApp
-			  NetCache it's using).  This site is also running an Apache 
-			  server that claims it's optimised for MSIE, and that the page 
+			  NetCache it's using).  This site is also running an Apache
+			  server that claims it's optimised for MSIE, and that the page
 			  won't work properly for non-MSIE browsers.  The mind boggles...
-	Server 8: Server ("Hitachi Web Server 02-00") can only do SSL, when 
-			  cryptlib is set to perform a TLS handshake (i.e. cryptlib is 
-			  told to expect TLS but falls back to SSL), goes through the 
+	Server 8: Server ("Hitachi Web Server 02-00") can only do SSL, when
+			  cryptlib is set to perform a TLS handshake (i.e. cryptlib is
+			  told to expect TLS but falls back to SSL), goes through the
 			  full handshake, then returns a handshake failure alert.  The
 			  same occurs for other apps (e.g. MSIE) when TLS is enabled.
 	Server 9: Buggy older IIS that can only do crippled crypto and drops
-			  the connection as soon as it sees the client hello advertising 
+			  the connection as soon as it sees the client hello advertising
 			  strong crypto only.
 	Server 10: Newer IIS (certificate is actually for akamai.net, so the SSL
 			   may not be Microsoft's at all).
@@ -71,7 +71,11 @@
 	Server 17: Can't handle TLS 1.1 handshake (drops connection).  Both of
 			   these servers are sitting behind NetApp NetCache's (see also
 			   server 7), which could be the cause of the problem.
-	Server 18: Generic OpenSSL server */
+	Server 18: Generic OpenSSL server.
+	Server 19: Crippled crypto using NS Server 3.6.
+	Server 20: Apache with Thawte certs, requires 
+			   CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
+			   CRYPT_COMPLIANCELEVEL_REDUCED due to b0rken certs */
 
 #define SSL_SERVER_NO	2
 #define TLS_SERVER_NO	2
@@ -100,6 +104,8 @@ static const struct {
 	/* 16 */ { TEXT( "https://olb.westpac.com.au/" ), "/" },
 	/* 17 */ { TEXT( "https://www.hertz.com/" ), "/" },
 	/* 18 */ { TEXT( "https://www.openssl.org/" ), "/" },
+	/* 19 */ { TEXT( "https://secureads.ft.com/" ), "/" },
+	/* 20 */ { TEXT( "https://mail.maine.edu/" ), "/" },
 	{ NULL, NULL }
 	};
 
@@ -107,24 +113,24 @@ static const struct {
 
 	Server 1: SMTP: mailbox.ucsd.edu:25 (132.239.1.57) requires a client cert.
 	Server 2: POP: pop.cae.wisc.edu:1110 (144.92.240.11) OK.
-	Server 3: SMTP: smtpauth.cae.wisc.edu:25 (144.92.12.93) requires a client 
+	Server 3: SMTP: smtpauth.cae.wisc.edu:25 (144.92.12.93) requires a client
 			  cert.
-	Server 4: SMTP: send.columbia.edu:25 (128.59.59.23) returns invalid cert 
+	Server 4: SMTP: send.columbia.edu:25 (128.59.59.23) returns invalid cert
 			  (lower compliance level to fix).
-	Server 5: POP: pop3.myrealbox.com:110 (192.108.102.201) returns invalid 
+	Server 5: POP: pop3.myrealbox.com:110 (192.108.102.201) returns invalid
 			  cert (lower compliance level to fix).
-	Server 6: Encrypted POP: securepop.t-online.de:995 (194.25.134.46) direct 
+	Server 6: Encrypted POP: securepop.t-online.de:995 (194.25.134.46) direct
 			  SSL connect.
-	Server 7: FTP: ftp.windsorchapel.net:21 (68.38.166.195) sends redundant 
+	Server 7: FTP: ftp.windsorchapel.net:21 (68.38.166.195) sends redundant
 			  client cert request with invalid length.
 	Server 8: POP: webmail.chm.tu-dresden.de:110 (141.30.198.37), another
 			  GroupWise server (see the server comments above) with b0rken
 			  certs.
 
-			  To test FTP with SSL/TLS manually: Disable auto-login with FTP, 
-			  then send an RFC 2389 FEAT command to check security facilities.  
-			  If this is supported, one of the responses will be either 
-			  AUTH SSL or AUTH TLS, use this to turn on SSL/TLS.  If FEAT 
+			  To test FTP with SSL/TLS manually: Disable auto-login with FTP,
+			  then send an RFC 2389 FEAT command to check security facilities.
+			  If this is supported, one of the responses will be either
+			  AUTH SSL or AUTH TLS, use this to turn on SSL/TLS.  If FEAT
 			  isn't supported, AUTH TLS should usually work:
 
 				ftp -n ftp.windsorchapel.net
@@ -134,12 +140,16 @@ static const struct {
 			  or just:
 
 				telnet ftp.windsorchapel.net 21
-				auth ssl */
+				auth ssl
+
+	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message 
+			  as a discrete packet, providing a nice test of cryptlib's on-
+			  demand buffer refill */
 
 #define STARTTLS_SERVER_NO	2
 
-typedef enum { PROTOCOL_NONE, PROTOCOL_SMTP, PROTOCOL_POP, 
-			   PROTOCOL_IMAP, PROTOCOL_POP_DIRECT, PROTOCOL_FTP 
+typedef enum { PROTOCOL_NONE, PROTOCOL_SMTP, PROTOCOL_POP,
+			   PROTOCOL_IMAP, PROTOCOL_POP_DIRECT, PROTOCOL_FTP
 			 } PROTOCOL_TYPE;
 
 static const struct {
@@ -156,6 +166,7 @@ static const struct {
 	/* 6 */	{ "194.25.134.46", 995, PROTOCOL_POP_DIRECT },
 	/* 7 */	{ "68.38.166.195", 21, PROTOCOL_FTP },
 	/* 8 */	{ "141.30.198.37", 110, PROTOCOL_POP },
+	/* 9 */ { "134.76.10.26", 25, PROTOCOL_SMTP },
 	{ NULL, 0 }
 	};
 
@@ -170,7 +181,7 @@ static int checksumData( const void *data, const int dataLength )
 	int sum1 = 0, sum2 = 0, i;
 
 	/* Calculate a 16-bit Fletcher-like checksum of the data (it doesn't
-	   really matter if it's not exactly right, as long as the behaviour is 
+	   really matter if it's not exactly right, as long as the behaviour is
 	   the same for all data) */
 	for( i = 0; i < dataLength; i++ )
 		{
@@ -220,7 +231,7 @@ static int readLine( SOCKET netSocket, char *buffer )
 
 	for( bufPos = 0; \
 		 status >= 0 && bufPos < 1024 && \
-			( bufPos < 1 || buffer[ bufPos -1 ] != '\n' ); 
+			( bufPos < 1 || buffer[ bufPos -1 ] != '\n' );
 		 bufPos++ )
 		status = recv( netSocket, buffer + bufPos, 1, 0 );
 	while( bufPos > 1 && isspace( buffer[ bufPos - 1 ] ) )
@@ -244,7 +255,7 @@ static int negotiateSTARTTLS( int *protocol )
 	puts( "Negotiating SMTP/POP/IMAP/FTP session through to TLS start..." );
 	*protocol = starttlsInfo[ STARTTLS_SERVER_NO ].protocol;
 
-	/* Connect to a generally-available server to test STARTTLS/STLS 
+	/* Connect to a generally-available server to test STARTTLS/STLS
 	   functionality */
 	memset( &serverAddr, 0, sizeof( struct sockaddr_in ) );
 	serverAddr.sin_family = AF_INET;
@@ -296,7 +307,7 @@ static int negotiateSTARTTLS( int *protocol )
 			break;
 
 		case PROTOCOL_IMAP:
-			/* It's possible for some servers that we may need to explicitly 
+			/* It's possible for some servers that we may need to explicitly
 			   send a CAPABILITY command first to enable STARTTLS:
 				a001 CAPABILITY
 				> CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED
@@ -351,7 +362,7 @@ static int negotiateSTARTTLS( int *protocol )
 static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 						  const int version, const BOOLEAN useClientCert,
 						  const BOOLEAN localSession,
-						  const BOOLEAN bulkTransfer, 
+						  const BOOLEAN bulkTransfer,
 						  const BOOLEAN localSocket,
 						  const BOOLEAN sharedKey )
 	{
@@ -359,7 +370,9 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_SSL_SERVER ) ? \
 							   TRUE : FALSE;
 	const char *versionStr[] = { "SSL", "TLS", "TLS 1.1" };
-	const C_STR serverName = ( version == 0 ) ? \
+	const C_STR serverName = ( localSocket ) ? \
+								starttlsInfo[ STARTTLS_SERVER_NO ].name : \
+							 ( version == 0 ) ? \
 								sslInfo[ SSL_SERVER_NO ].name : \
 							 ( version == 1 ) ? \
 								sslInfo[ TLS_SERVER_NO ].name : \
@@ -419,12 +432,12 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		if( !setLocalConnect( cryptSession, 443 ) )
 			return( FALSE );
 		status = getPrivateKey( &privateKey, SERVER_PRIVKEY_FILE,
-								USER_PRIVKEY_LABEL, 
+								USER_PRIVKEY_LABEL,
 								TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( cryptSession,
-										CRYPT_SESSINFO_PRIVATEKEY, 
+										CRYPT_SESSINFO_PRIVATEKEY,
 										privateKey );
 			cryptDestroyContext( privateKey );
 			}
@@ -451,10 +464,10 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		if( localSocket )
 			{
 			/* Testing this fully requires a lot of OS-specific juggling so
-			   unless we're running under Windows we just supply the handle 
-			   to stdin, which will return a read/write error during the 
-			   connect.  This checks that the handle has been assigned 
-			   corectly without requiring a lot of OS-specific socket 
+			   unless we're running under Windows we just supply the handle
+			   to stdin, which will return a read/write error during the
+			   connect.  This checks that the handle has been assigned
+			   corectly without requiring a lot of OS-specific socket
 			   handling code.  Under Windows, we use a (very cut-down) set
 			   of socket calls to set up a minimal socket.  Since there's
 			   very little error-checking done, we don't treat a failure
@@ -464,12 +477,12 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 
 			if( WSAStartup( 2, &wsaData ) )
 				{
-				printf( "Couldn't initialise sockets interface, line %d.\n", 
+				printf( "Couldn't initialise sockets interface, line %d.\n",
 						__LINE__ );
 				return( FALSE );
 				}
 
-			/* Try and negotiate a STARTTLS session.  We don't treat most 
+			/* Try and negotiate a STARTTLS session.  We don't treat most
 			   types of failure as fatal since there are a great many minor
 			   things that can go wrong that we don't want to have to handle
 			   without writing half an MUA */
@@ -493,7 +506,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 							CRYPT_SESSINFO_NETWORKSOCKET, netSocket );
 #elif defined( DDNAME_IO )
 			/* The fileno() function doesn't work for DDNAMEs */
-			status = cryptSetAttribute( cryptSession, 
+			status = cryptSetAttribute( cryptSession,
 							CRYPT_SESSINFO_NETWORKSOCKET, 0 );
 #elif defined( _WIN32_WCE )
 			status = cryptSetAttribute( cryptSession,
@@ -528,6 +541,11 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				cryptDestroyContext( privateKey );
 				}
 			}
+#if 0	/* Optional proxy for net access */
+		status = cryptSetAttributeString( CRYPT_UNUSED,
+								CRYPT_OPTION_NET_HTTP_PROXY, "[Autodetect]",
+								12 );
+#endif /* 0 */
 		}
 	if( cryptStatusOK( status ) && sharedKey )
 		{
@@ -545,16 +563,16 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			   to test the ability of the session cache to store multiple
 			   shared secrets */
 			status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ), 
+									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ),
 									paramStrlen( TEXT( "0000" ) ) );
 			if( cryptStatusOK( status ) )
 				status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_PASSWORD, TEXT( "0000" ), 
+									CRYPT_SESSINFO_PASSWORD, TEXT( "0000" ),
 									paramStrlen( TEXT( "0000" ) ) );
 			if( cryptStatusOK( status ) && \
 				cryptStatusOK( \
 					cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ), 
+									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ),
 									paramStrlen( TEXT( "0000" ) ) ) ) )
 				{
 				printf( "SVR: Addition of duplicate entry to SSL session "
@@ -573,11 +591,11 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 
 				sprintf( userName, "user%04d", i );
 				status = cryptSetAttributeString( cryptSession,
-										CRYPT_SESSINFO_USERNAME, userName, 
+										CRYPT_SESSINFO_USERNAME, userName,
 										paramStrlen( userName ) );
 				if( cryptStatusOK( status ) )
 					status = cryptSetAttributeString( cryptSession,
-										CRYPT_SESSINFO_PASSWORD, userName, 
+										CRYPT_SESSINFO_PASSWORD, userName,
 										paramStrlen( userName ) );
 				if( cryptStatusError( status ) )
 					{
@@ -598,8 +616,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			closesocket( netSocket );
 			WSACleanup();
 #else
-			/* Creating a socket in a portable manner is too difficult so 
-			   we've passed in a stdio handle, this should return an error 
+			/* Creating a socket in a portable manner is too difficult so
+			   we've passed in a stdio handle, this should return an error
 			   since it's not a blocking socket */
 			return( TRUE );
 #endif /* __WINDOWS__ && !_WIN32_WCE */
@@ -609,14 +627,14 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		return( FALSE );
 		}
 #if ( SSL_SERVER_NO == 5 ) || ( STARTTLS_SERVER_NO == 8 )
-	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL, 
+	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &version );
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL, 
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
 #endif /* SSL servers with b0rken certs */
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 #if ( SSL_SERVER_NO == 5 ) || ( STARTTLS_SERVER_NO == 8 )
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL, 
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   version );
 #endif /* SSL server with b0rken certs */
 	if( isServer )
@@ -634,8 +652,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			closesocket( netSocket );
 			WSACleanup();
 #else
-			/* If we're using a dummy local socket, we'll get a R/W error at 
-			   this point since it's not connected to anything, so we 
+			/* If we're using a dummy local socket, we'll get a R/W error at
+			   this point since it's not connected to anything, so we
 			   intercept it before it gets any further */
 			if( status == CRYPT_ERROR_READ || status == CRYPT_ERROR_WRITE )
 				{
@@ -645,7 +663,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* __WINDOWS__ && !_WIN32_WCE */
 			}
 		sprintf( strBuffer, "%sAttempt to activate %s%s session",
-				 isServer ? "SVR: " : "", localSession ? "local " : "", 
+				 isServer ? "SVR: " : "", localSession ? "local " : "",
 				 versionStr[ version ] );
 		printExtError( cryptSession, strBuffer, status, __LINE__ );
 		cryptDestroySession( cryptSession );
@@ -665,7 +683,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	/* Report the session security info */
 	if( !printSecurityInfo( cryptSession, isServer, !sharedKey ) )
 		return( FALSE );
-	if( ( !localSession && !isServer ) || 
+	if( ( !localSession && !isServer ) ||
 		( localSession && isServer && useClientCert ) )
 		{
 		CRYPT_CERTIFICATE cryptCertificate;
@@ -675,7 +693,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		if( cryptStatusError( status ) )
 			{
 			printf( "%sCouldn't get %s certificate, status %d, line %d.\n",
-					isServer ? "SVR: " : "", isServer ? "client" : "server", 
+					isServer ? "SVR: " : "", isServer ? "client" : "server",
 					status, __LINE__ );
 			return( FALSE );
 			}
@@ -690,7 +708,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		int length;
 
 		status = cryptGetAttributeString( cryptSession,
-										  CRYPT_SESSINFO_USERNAME, 
+										  CRYPT_SESSINFO_USERNAME,
 										  userNameBuffer, &length );
 		if( cryptStatusError( status ) )
 			{
@@ -713,10 +731,10 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #if SSL_SERVER_NO == 3
 	/* This server has a large amount of data on it, used to test high-
 	   latency bulk transfers, so we set a larger timeout for the read */
-	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 								15 );
 #else
-	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 								bulkTransfer ? 0 : 5 );
 #endif /* SSL_SERVER_NO == 3 */
 	if( bulkTransfer )
@@ -728,7 +746,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			do
 				{
 				status = cryptPushData( cryptSession, bulkBuffer + byteCount,
-										BULKDATA_BUFFER_SIZE - byteCount, 
+										BULKDATA_BUFFER_SIZE - byteCount,
 										&bytesCopied );
 				byteCount += bytesCopied;
 				}
@@ -737,16 +755,16 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				   byteCount < BULKDATA_BUFFER_SIZE );
 			if( cryptStatusError( status ) )
 				{
-				printExtError( cryptSession, 
-							   "SVR: Send of bulk data to client", status, 
+				printExtError( cryptSession,
+							   "SVR: Send of bulk data to client", status,
 							   __LINE__ );
 				return( FALSE );
 				}
 			status = cryptFlushData( cryptSession );
 			if( cryptStatusError( status ) )
 				{
-				printExtError( cryptSession, 
-							   "SVR: Flush of bulk data to client", status, 
+				printExtError( cryptSession,
+							   "SVR: Flush of bulk data to client", status,
 							   __LINE__ );
 				return( FALSE );
 				}
@@ -764,7 +782,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			do
 				{
 				status = cryptPopData( cryptSession, bulkBuffer + byteCount,
-									   BULKDATA_BUFFER_SIZE - byteCount, 
+									   BULKDATA_BUFFER_SIZE - byteCount,
 									   &bytesCopied );
 				byteCount += bytesCopied;
 				}
@@ -777,8 +795,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 
 				sprintf( strBuffer, "Read of bulk data from server aborted "
 									"after %d of %d bytes were read\n(last "
-									"read = %d bytes), transfer", 
-									byteCount, BULKDATA_BUFFER_SIZE, 
+									"read = %d bytes), transfer",
+									byteCount, BULKDATA_BUFFER_SIZE,
 									bytesCopied );
 				printExtError( cryptSession, strBuffer, status, __LINE__ );
 				return( FALSE );
@@ -800,10 +818,10 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		free( bulkBuffer );
 		}
 	else
-		/* It's a standard transfer, send/receive and HTTP request/response.  
+		/* It's a standard transfer, send/receive and HTTP request/response.
 		   We clean up if we exit due to an error, if we're running a local
 		   loopback test the client and server threads can occasionally lose
-		   sync, which isn't a fatal error but can turn into a 
+		   sync, which isn't a fatal error but can turn into a
 		   CRYPT_ERROR_INCOMPLETE once all the tests are finished */
 		if( isServer )
 			{
@@ -836,7 +854,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* IBM medium iron */
 
 			/* Print the text of the request from the client */
-			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE, 
+			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE,
 								   &bytesCopied );
 			if( cryptStatusError( status ) )
 				{
@@ -867,7 +885,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				return( FALSE );
 				}
 
-			/* Wait for the data to be flushed through to the client before 
+			/* Wait for the data to be flushed through to the client before
 			   we close the session */
 			delayThread( 1 );
 			}
@@ -891,13 +909,13 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 							strcpy( fetchString, "USER test\r\n" );
 				}
 			else
-				sprintf( fetchString, "GET %s HTTP/1.0\r\n\r\n", 
+				sprintf( fetchString, "GET %s HTTP/1.0\r\n\r\n",
 						 sslInfo[ SSL_SERVER_NO ].path );
 			fetchStringLen = strlen( fetchString );
 #if defined( __MVS__ ) || defined( __VMCMS__ )
 			ebcdicToAscii( fetchString, fetchStringLen );
 #endif /* EBCDIC systems */
-			status = cryptPushData( cryptSession, fetchString, 
+			status = cryptPushData( cryptSession, fetchString,
 									fetchStringLen, &bytesCopied );
 			if( cryptStatusOK( status ) )
 				status = cryptFlushData( cryptSession );
@@ -910,7 +928,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				}
 
 			/* Print the text of the reply from the server */
-			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE, 
+			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE,
 								   &bytesCopied );
 			if( cryptStatusError( status ) )
 				{
@@ -921,7 +939,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				}
 			if( bytesCopied == 0 )
 				{
-				/* We've set a 5s timeout, we should get at least some 
+				/* We've set a 5s timeout, we should get at least some
 				   data */
 				puts( "Server returned no data in response to our request." );
 				cryptDestroySession( cryptSession );
@@ -940,15 +958,15 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			puts( "---- End of output ----" );
 
 #if SSL_SERVER_NO == 3
-			/* If we're reading a lot of data, more may have arrived in the  
+			/* If we're reading a lot of data, more may have arrived in the
 			   meantime */
-			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE, 
+			status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE,
 								   &bytesCopied );
 			if( cryptStatusError( status ) )
 				{
 				if( status == CRYPT_ERROR_READ )
-					/* Since this is HTTP, the other side can close the 
-					   connection with no further warning, even though SSL 
+					/* Since this is HTTP, the other side can close the
+					   connection with no further warning, even though SSL
 					   says you shouldn't really do this */
 					puts( "Remote system closed connection." );
 				else
@@ -965,7 +983,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #if defined( __MVS__ ) || defined( __VMCMS__ )
 				asciiToEbcdic( buffer, bytesCopied );
 #endif /* EBCDIC systems */
-				printf( "---- Server sent further %d bytes ----\n", 
+				printf( "---- Server sent further %d bytes ----\n",
 						bytesCopied );
 				puts( buffer );
 				puts( "---- End of output ----" );
@@ -987,7 +1005,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #if defined( __MVS__ ) || defined( __VMCMS__ )
 				ebcdicToAscii( fetchString, fetchStringLen );
 #endif /* EBCDIC systems */
-				status = cryptPushData( cryptSession, fetchString, 
+				status = cryptPushData( cryptSession, fetchString,
 										fetchStringLen, &bytesCopied );
 				if( cryptStatusOK( status ) )
 					status = cryptFlushData( cryptSession );
@@ -998,7 +1016,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 					cryptDestroySession( cryptSession );
 					return( FALSE );
 					}
-				status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE, 
+				status = cryptPopData( cryptSession, buffer, FILEBUFFER_SIZE,
 									   &bytesCopied );
 				if( cryptStatusError( status ) )
 					{
@@ -1064,10 +1082,10 @@ int testSessionSSLServerCached( void )
 	int status;
 
 	/* Run the server twice to check session cacheing.  Testing this requires
-	   manual reconnection with a browser to localhost, since it's too 
+	   manual reconnection with a browser to localhost, since it's too
 	   complex to handle easily via a loopback test.  Note that with MSIE
-	   this will require three lots of connects rather than two, because it 
-	   handles an unknown cert by doing a resume, which consumes two lots of 
+	   this will require three lots of connects rather than two, because it
+	   handles an unknown cert by doing a resume, which consumes two lots of
 	   sessions, and then the third one is the actual session resume */
 	status = connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, FALSE, FALSE, FALSE, FALSE, FALSE );
 	if( status <= 0 )

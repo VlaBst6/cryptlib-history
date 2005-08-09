@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Database Keyset Test Routines					*
-*						Copyright Peter Gutmann 1995-2004					*
+*						Copyright Peter Gutmann 1995-2005					*
 *																			*
 ****************************************************************************/
 
@@ -20,6 +20,35 @@
 #if defined( __ILEC400__ )
   #pragma convert( 0 )
 #endif /* IBM medium iron */
+
+/* Some LDAP keyset names and names of probably-present certs and CRLs.
+   These keysets (and their contents) come and go, so we have a variety of
+   them and try them in turn until something works.  There's a list of more
+   LDAP servers at http://www.dante.net/np/pdi.html, but none of these are
+   known to contain certificates.
+
+   Note that the following strings have to be given on one line in order for
+   the widechar conversion voodoo to work */
+
+static const struct {
+	const C_STR url;			/* LDAP URL for keyset */
+	const char *asciiURL;		/* URL in ASCII */
+	const C_STR certName;		/* DN for cert and CRL */
+	const C_STR crlName;
+	} ldapUrlInfo[] = {
+	{ 0 },
+	{ TEXT( "ldap.diginotar.nl" ), "ldap.diginotar.nl",
+	  TEXT( "cn=Root Certificaat Productie, o=DigiNotar Root,c=NL" ),
+	  TEXT( "CN=CRL Productie,O=DigiNotar CRL,C=NL" ) },
+	{ TEXT( "ds.katalog.posten.se" ), "ds.katalog.posten.se",
+	  TEXT( "cn=Posten CertPolicy_eIDKort_1 CA_nyckel_1, o=Posten_Sverige_AB 556451-4148, c=SE" ),
+	  TEXT( "cn=Posten CertPolicy_eIDKort_1 CA_nyckel_1, o=Posten_Sverige_AB 556451-4148, c=SE" ) },
+	{ TEXT( "ldap2.zebsign.com" ), "ldap2.zebsign.com",
+	  TEXT( "pssUniqueIdentifier=24090, CN=First ZebSign Community ID CA, O=ZebSign - 983163432, C=NO" ) }
+	};
+
+#define LDAP_SERVER_NO		1
+#define LDAP_ALT_SERVER_NO	2	/* Secondary svr.if main server unavailable */
 
 /****************************************************************************
 *																			*
@@ -612,7 +641,7 @@ int testReadCertLDAP( void )
 		"changing the CRYPT_OPTION_KEYS_LDAP_xxx settings to\nmatch those "
 		"used by the server.  Processing will continue without treating\n"
 		"this as a fatal error.\n";
-	C_STR ldapKeysetName = LDAP_KEYSET_NAME1;
+	const C_STR ldapKeysetName = ldapUrlInfo[ LDAP_SERVER_NO ].url;
 	char ldapAttribute1[ CRYPT_MAX_TEXTSIZE + 1 ];
 	char ldapAttribute2[ CRYPT_MAX_TEXTSIZE + 1 ];
 	char certName[ CRYPT_MAX_TEXTSIZE ], caCertName[ CRYPT_MAX_TEXTSIZE ];
@@ -629,16 +658,17 @@ int testReadCertLDAP( void )
 		return( CRYPT_ERROR_NOTAVAIL );
 	if( status == CRYPT_ERROR_OPEN )
 		{
-		puts( LDAP_KEYSET_NAME1_ASCII " not available, trying alternative "
-			  "directory..." );
-		ldapKeysetName = LDAP_KEYSET_NAME2;
+		printf( "%s not available, trying alternative directory...\n",
+				ldapUrlInfo[ LDAP_SERVER_NO ].asciiURL );
+		ldapKeysetName = ldapUrlInfo[ LDAP_ALT_SERVER_NO ].url;
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
 								  CRYPT_KEYSET_LDAP, ldapKeysetName, 
 								  CRYPT_KEYOPT_READONLY );
 		}
 	if( status == CRYPT_ERROR_OPEN )
 		{
-		puts( LDAP_KEYSET_NAME2_ASCII " not available either." );
+		printf( "%s not available either.\n",
+				ldapUrlInfo[ LDAP_ALT_SERVER_NO ].asciiURL );
 		puts( "None of the test LDAP directories are available.  If you need "
 			  "to test the\nLDAP capabilities, you need to set up an LDAP "
 			  "directory that can be used\nfor the certificate store.  You "
@@ -693,11 +723,12 @@ int testReadCertLDAP( void )
 	   code retries failed queries with various options, we still need to
 	   manually override some settings here.  The simplest option is a direct
 	   read with no special-case handling */
-	if( !paramStrcmp( ldapKeysetName, LDAP_KEYSET_NAME1 ) )
+	if( !paramStrcmp( ldapKeysetName, ldapUrlInfo[ LDAP_SERVER_NO ].url ) )
 		{
 		puts( "Testing LDAP certificate read..." );
 		status = testKeysetRead( CRYPT_KEYSET_LDAP, ldapKeysetName,
-								 CRYPT_KEYID_NAME, LDAP_CERT_NAME1, 
+								 CRYPT_KEYID_NAME, 
+								 ldapUrlInfo[ LDAP_SERVER_NO ].certName, 
 								 CRYPT_CERTTYPE_CERTIFICATE, 
 								 READ_OPTION_NORMAL );
 		if( !status )
@@ -714,10 +745,10 @@ int testReadCertLDAP( void )
 		return( TRUE );
 		}
 
-	/* The LDAP directory we're using for these tests doesn't recognise the 
-	   ';binary' modifier which is required by LDAP servers in order to get 
-	   them to work properly, we have to change the attribute name around 
-	   the read calls to the format expected by the server.
+	/* The secondary LDAP directory that we're using for these tests doesn't 
+	   recognise the ';binary' modifier which is required by LDAP servers in 
+	   order to get them to work properly, we have to change the attribute 
+	   name around the read calls to the format expected by the server.
 	   
 	   In addition because the magic formula for fetching a CRL doesn't seem
 	   to work for certificates, the CRL read is done first */
@@ -731,7 +762,8 @@ int testReadCertLDAP( void )
 	cryptSetAttributeString( CRYPT_UNUSED, CRYPT_OPTION_KEYS_LDAP_CRLNAME, 
 							 "certificateRevocationList", 25 );
 	status = testKeysetRead( CRYPT_KEYSET_LDAP, ldapKeysetName,
-							 CRYPT_KEYID_NAME, LDAP_CRL_NAME2, 
+							 CRYPT_KEYID_NAME, 
+							 ldapUrlInfo[ LDAP_ALT_SERVER_NO ].crlName, 
 							 CRYPT_CERTTYPE_CRL, READ_OPTION_NORMAL );
 	cryptSetAttributeString( CRYPT_UNUSED, CRYPT_OPTION_KEYS_LDAP_CRLNAME, 
 							 crlName, strlen( crlName ) );
@@ -761,7 +793,8 @@ int testReadCertLDAP( void )
 	cryptSetAttributeString( CRYPT_UNUSED, CRYPT_OPTION_KEYS_LDAP_CACERTNAME, 
 							 "cACertificate", 13 );
 	status = testKeysetRead( CRYPT_KEYSET_LDAP, ldapKeysetName,
-							 CRYPT_KEYID_NAME, LDAP_CERT_NAME1, 
+							 CRYPT_KEYID_NAME, 
+							 ldapUrlInfo[ LDAP_ALT_SERVER_NO ].certName, 
 							 CRYPT_CERTTYPE_CERTIFICATE, READ_OPTION_NORMAL );
 	cryptSetAttributeString( CRYPT_UNUSED, CRYPT_OPTION_KEYS_LDAP_CERTNAME, 
 							 certName, strlen( certName ) );
@@ -787,16 +820,17 @@ int testWriteCertLDAP( void )
 	int status;
 
 	puts( "Testing LDAP directory write..." );
-	status = testKeysetWrite( CRYPT_KEYSET_LDAP, LDAP_KEYSET_NAME1 );
+	status = testKeysetWrite( CRYPT_KEYSET_LDAP, 
+							  ldapUrlInfo[ LDAP_SERVER_NO ].url );
 	if( status == CRYPT_ERROR_NOTAVAIL )
 		/* LDAP keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
 	if( status == CRYPT_ERROR_FAILED )
 		{
-		puts( "This is probably because you haven't set up an LDAP "
-			  "directory for use as the\nkey store.  For this test to work,"
-			  "you need to set up a directory with the\nname '"
-			  LDAP_KEYSET_NAME1_ASCII "'.\n" );
+		printf( "This is probably because you haven't set up an LDAP "
+				"directory for use as the\nkey store.  For this test to "
+				"work,you need to set up a directory with the\nname "
+				"'%s'.\n\n", ldapUrlInfo[ LDAP_SERVER_NO ].asciiURL );
 		return( FALSE );
 		}
 	if( !status )

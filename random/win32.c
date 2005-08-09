@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Win32 Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2004	*
+*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2005	*
 *																			*
 ****************************************************************************/
 
@@ -378,7 +378,7 @@ static void readPnPData( void )
 void fastPoll( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
-	static BOOLEAN hasAdvFeatures = FALSE, hasHardwareRNG = FALSE;
+	static int sysCaps;
 	FILETIME  creationTime, exitTime, kernelTime, userTime;
 	DWORD minimumWorkingSetSize, maximumWorkingSetSize;
 	LARGE_INTEGER performanceCount;
@@ -465,74 +465,18 @@ void fastPoll( void )
 	if( !addedFixedItems )
 		{
 		STARTUPINFO startupInfo;
-		char vendorID[ 12 ];
-		unsigned long processorID, featureFlags;
 
 		/* Get name of desktop, console window title, new window position and
 		   size, window flags, and handles for stdin, stdout, and stderr */
 		startupInfo.cb = sizeof( STARTUPINFO );
 		GetStartupInfo( &startupInfo );
 		addRandomData( randomState, &startupInfo, sizeof( STARTUPINFO ) );
+
+		/* Remember any hardware-specific special functionality */
+		sysCaps = getSysCaps();
+
+		/* Remember that we've got the fixed info */
 		addedFixedItems = TRUE;
-
-		/* Check whether the CPU supports extended features like CPUID and
-		   RDTSC, and get any info we need related to this.  There is an
-		   IsProcessorFeaturePresent() function, but all that this provides
-		   is an indication of the availability of rdtsc (alongside some
-		   stuff we don't care about, like MMX and 3DNow).  Since we still
-		   need to check for the presence of other features, we do the whole
-		   thing ourselves */
-		_asm {
-			/* Detect the CPU type */
-			pushfd
-			pop eax				/* Get EFLAGS in eax */
-			mov ebx, eax		/* Save a copy for later */
-			xor eax, 0x200000	/* Toggle the CPUID bit */
-			push eax
-			popfd				/* Update EFLAGS */
-			pushfd
-			pop eax				/* Get updated EFLAGS back in eax */
-			push ebx
-			popfd				/* Restore original EFLAGS */
-			xor eax, ebx		/* Check if we could toggle CPUID bit */
-			jz noCPUID			/* Nope, we can't do anything further */
-			mov [hasAdvFeatures], 1	/* Remember that we have CPUID, RDTSC */
-
-			/* We have CPUID, see what we've got */
-			xor ecx, ecx
-			xor edx, edx		/* Tell VC++ that ECX, EDX will be trashed */
-			xor eax, eax		/* CPUID function 0: */
-			cpuid
-			mov dword ptr [vendorID], ebx
-			mov dword ptr [vendorID+4], edx
-			mov dword ptr [vendorID+8], ecx	/* Save vendor ID string */
-			mov eax, 1			/* CPUID function 1:  */
-			cpuid
-			mov [processorID], eax	/* Save processor ID */
-			mov [featureFlags], edx	/* Save processor feature info */
-		noCPUID:
-			}
-
-		/* If there's a vendor ID present, check for vendor-specific
-		   special features */
-		if( hasAdvFeatures && !memcmp( vendorID, "CentaurHauls", 12 ) )
-			{
-		_asm {
-			xor ebx, ebx
-			xor ecx, ecx		/* Tell VC++ that EBX, ECX will be trashed */
-			mov eax, 0xC0000000	/* Centaur extended CPUID info */
-			cpuid
-			cmp eax, 0xC0000001	/* Need at least release 2 ext.feature set */
-			jb noRNG			/* No extended info available */
-			mov eax, 0xC0000001	/* Centaur extended feature flags */
-			cpuid
-			and edx, 01100b
-			cmp edx, 01100b		/* Check for RNG present + enabled flags */
-			jne noRNG			/* No, RNG not present or enabled */
-			mov [hasHardwareRNG], 1	/* Remember that we have a hardware RNG */
-		noRNG:
-			}
-			}
 		}
 
 	/* The performance of QPC varies depending on the architecture it's
@@ -565,7 +509,7 @@ void fastPoll( void )
 	   To make things unambiguous, we detect a CPU new enough to call RDTSC
 	   directly by checking for CPUID capabilities, and fall back to QPC if
 	   this isn't present */
-	if( hasAdvFeatures )
+	if( sysCaps & SYSCAP_FLAG_RDTSC )
 		{
 		unsigned long value;
 
@@ -593,7 +537,7 @@ void fastPoll( void )
 	   that we have to force alignment using a LONGLONG rather than a #pragma
 	   pack, since chars don't need alignment it would have no effect on the
 	   BYTE [] member */
-	if( hasHardwareRNG )
+	if( sysCaps & SYSCAP_FLAG_XSTORE )
 		{
 		struct alignStruct {
 			LONGLONG dummy1;		/* Force alignment of following member */

@@ -345,7 +345,7 @@ typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 #if defined( _MSC_VER )
   #define DATABASE_KEYSET_TYPE	CRYPT_KEYSET_ODBC
   #define CERTSTORE_KEYSET_TYPE	CRYPT_KEYSET_ODBC_STORE
-#elif defined( DBX_MYSQL )
+#elif defined( DBX_DATABASE )
   #define DATABASE_KEYSET_TYPE	CRYPT_KEYSET_DATABASE
   #define CERTSTORE_KEYSET_TYPE	CRYPT_KEYSET_DATABASE_STORE
 #elif defined( DBX_PLUGIN )
@@ -362,28 +362,13 @@ typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 #define DATABASE_PLUGIN_KEYSET_NAME	TEXT( "localhost:6500" )
 #define DATABASE_PLUGIN_KEYSET_NAME_ASCII	"localhost:6500"
 
-/* Some LDAP keyset names and names of probably-present certs and CRLs.
-   These keysets (and their contents) come and go, so we have a variety of
-   them and try them in turn until something works.  There's a list of more
-   LDAP servers at http://www.dante.net/np/pdi.html, but none of these are
-   known to contain certificates.
-
-   Note that the following strings have to be given on one line in order for
-   the widechar conversion voodoo to work */
-
-#define LDAP_KEYSET_NAME1		TEXT( "ldap.diginotar.nl" )
-#define LDAP_KEYSET_NAME1_ASCII	"ldap.diginotar.nl"
-#define LDAP_CERT_NAME1			TEXT( "cn=Root Certificaat Productie, o=DigiNotar Root,c=NL" )
-#define LDAP_CRL_NAME1			TEXT( "CN=CRL Productie,O=DigiNotar CRL,C=NL" )
-#define LDAP_KEYSET_NAME2		TEXT( "ds.katalog.posten.se" )
-#define LDAP_KEYSET_NAME2_ASCII	"ds.katalog.posten.se"
-#define LDAP_CERT_NAME2			TEXT( "cn=Posten CertPolicy_eIDKort_1 CA_nyckel_1, o=Posten_Sverige_AB 556451-4148, c=SE" )
-#define LDAP_CRL_NAME2			TEXT( "cn=Posten CertPolicy_eIDKort_1 CA_nyckel_1, o=Posten_Sverige_AB 556451-4148, c=SE" )
-
 /* The HTTP keyset names (actually URLs for pages containing a cert and
-   CRL) */
+   CRL).  We can't get either Verisign or Thawte root certs because both
+   require you to provide all sorts of personal information and click on a
+   legal agreement before you can download them (!!!), so we use the CAcert
+   root instead */
 
-#define HTTP_KEYSET_CERT_NAME	TEXT( "www.thawte.com/persfree.crt" )
+#define HTTP_KEYSET_CERT_NAME	TEXT( "www.cacert.org/certs/root.der" )
 #define HTTP_KEYSET_CRL_NAME	TEXT( "crl.verisign.com/Class1Individual.crl" )
 #define HTTP_KEYSET_HUGECRL_NAME TEXT( "crl.verisign.com/RSASecureServer.crl" )
 
@@ -727,6 +712,7 @@ int testSessionTLS11Server( void );
   int testSessionCMPClientServer( void );
   int testSessionCMPPKIBootClientServer( void );
   int testSessionPNPPKIClientServer( void );
+  int testSessionPNPPKIDeviceClientServer( void );
   int testSessionPNPPKICAClientServer( void );
   int testSessionPNPPKIIntermedCAClientServer( void );
 #else
@@ -752,6 +738,7 @@ int testSessionTLS11Server( void );
   #define testSessionCMPCAClientServer()			TRUE
   #define testSessionCMPPKIBootClientServer()		TRUE
   #define testSessionPNPPKIClientServer()			TRUE
+  #define testSessionPNPPKIDeviceClientServer()		TRUE
   #define testSessionPNPPKICAClientServer()			TRUE
   #define testSessionPNPPKIIntermedCAClientServer()	TRUE
 #endif /* WINDOWS_THREADS */

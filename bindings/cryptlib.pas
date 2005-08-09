@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Wed Feb 23 23:17:33 2005, filesize = 82355.
+ "cryptlib.h" dated Mon Jul 18 02:47:56 2005, filesize = 82445.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -407,36 +407,33 @@ const
   CRYPT_CERTINFO_FINGERPRINT_MD5 = 2005; { = CRYPT_CERTINFO_FINGERPRINT }  
   CRYPT_CERTINFO_FINGERPRINT_SHA = 2006;  
   CRYPT_CERTINFO_CURRENT_CERTIFICATE = 2007;  { Cursor mgt: Rel.pos in chain/CRL/OCSP }
-  CRYPT_CERTINFO_CURRENT_EXTENSION = 2008;  { Cursor mgt: Rel.pos.or abs.extension }
-  CRYPT_CERTINFO_CURRENT_FIELD = 2009;  { Cursor mgt: Rel.pos.or abs.field in ext }
-  CRYPT_CERTINFO_CURRENT_COMPONENT = 2010;  { Cursor mgt: Rel.pos in multival.field }
-  CRYPT_CERTINFO_TRUSTED_USAGE = 2011;  { Usage that cert is trusted for }
-  CRYPT_CERTINFO_TRUSTED_IMPLICIT = 2012;  { Whether cert is implicitly trusted }
-  CRYPT_CERTINFO_SIGNATURELEVEL = 2013;  { Amount of detail to include in sigs.}
+  CRYPT_CERTINFO_TRUSTED_USAGE = 2008;  { Usage that cert is trusted for }
+  CRYPT_CERTINFO_TRUSTED_IMPLICIT = 2009;  { Whether cert is implicitly trusted }
+  CRYPT_CERTINFO_SIGNATURELEVEL = 2010;  { Amount of detail to include in sigs.}
   
   { General certificate object information }
-  CRYPT_CERTINFO_VERSION = 2014;  { Cert.format version }
-  CRYPT_CERTINFO_SERIALNUMBER = 2015;  { Serial number }
-  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO = 2016;  { Public key }
-  CRYPT_CERTINFO_CERTIFICATE = 2017;  { User certificate }
-  CRYPT_CERTINFO_USERCERTIFICATE = 2017; { = CRYPT_CERTINFO_CERTIFICATE }  
-  CRYPT_CERTINFO_CACERTIFICATE = 2018;  { CA certificate }
-  CRYPT_CERTINFO_ISSUERNAME = 2019;  { Issuer DN }
-  CRYPT_CERTINFO_VALIDFROM = 2020;  { Cert valid-from time }
-  CRYPT_CERTINFO_VALIDTO = 2021;  { Cert valid-to time }
-  CRYPT_CERTINFO_SUBJECTNAME = 2022;  { Subject DN }
-  CRYPT_CERTINFO_ISSUERUNIQUEID = 2023;  { Issuer unique ID }
-  CRYPT_CERTINFO_SUBJECTUNIQUEID = 2024;  { Subject unique ID }
-  CRYPT_CERTINFO_CERTREQUEST = 2025;  { Cert.request (DN + public key) }
-  CRYPT_CERTINFO_THISUPDATE = 2026;  { CRL/OCSP current-update time }
-  CRYPT_CERTINFO_NEXTUPDATE = 2027;  { CRL/OCSP next-update time }
-  CRYPT_CERTINFO_REVOCATIONDATE = 2028;  { CRL/OCSP cert-revocation time }
-  CRYPT_CERTINFO_REVOCATIONSTATUS = 2029;  { OCSP revocation status }
-  CRYPT_CERTINFO_CERTSTATUS = 2030;  { RTCS certificate status }
-  CRYPT_CERTINFO_DN = 2031;  { Currently selected DN in string form }
-  CRYPT_CERTINFO_PKIUSER_ID = 2032;  { PKI user ID }
-  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD = 2033;  { PKI user issue password }
-  CRYPT_CERTINFO_PKIUSER_REVPASSWORD = 2034;  { PKI user revocation password }
+  CRYPT_CERTINFO_VERSION = 2011;  { Cert.format version }
+  CRYPT_CERTINFO_SERIALNUMBER = 2012;  { Serial number }
+  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO = 2013;  { Public key }
+  CRYPT_CERTINFO_CERTIFICATE = 2014;  { User certificate }
+  CRYPT_CERTINFO_USERCERTIFICATE = 2014; { = CRYPT_CERTINFO_CERTIFICATE }  
+  CRYPT_CERTINFO_CACERTIFICATE = 2015;  { CA certificate }
+  CRYPT_CERTINFO_ISSUERNAME = 2016;  { Issuer DN }
+  CRYPT_CERTINFO_VALIDFROM = 2017;  { Cert valid-from time }
+  CRYPT_CERTINFO_VALIDTO = 2018;  { Cert valid-to time }
+  CRYPT_CERTINFO_SUBJECTNAME = 2019;  { Subject DN }
+  CRYPT_CERTINFO_ISSUERUNIQUEID = 2020;  { Issuer unique ID }
+  CRYPT_CERTINFO_SUBJECTUNIQUEID = 2021;  { Subject unique ID }
+  CRYPT_CERTINFO_CERTREQUEST = 2022;  { Cert.request (DN + public key) }
+  CRYPT_CERTINFO_THISUPDATE = 2023;  { CRL/OCSP current-update time }
+  CRYPT_CERTINFO_NEXTUPDATE = 2024;  { CRL/OCSP next-update time }
+  CRYPT_CERTINFO_REVOCATIONDATE = 2025;  { CRL/OCSP cert-revocation time }
+  CRYPT_CERTINFO_REVOCATIONSTATUS = 2026;  { OCSP revocation status }
+  CRYPT_CERTINFO_CERTSTATUS = 2027;  { RTCS certificate status }
+  CRYPT_CERTINFO_DN = 2028;  { Currently selected DN in string form }
+  CRYPT_CERTINFO_PKIUSER_ID = 2029;  { PKI user ID }
+  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD = 2030;  { PKI user issue password }
+  CRYPT_CERTINFO_PKIUSER_REVPASSWORD = 2031;  { PKI user revocation password }
   
   { X.520 Distinguished Name components.  This is a composite field, the
   DN to be manipulated is selected through the addition of a
@@ -1080,8 +1077,8 @@ type
                CRYPT_CONTENT_SIGNEDANDENVELOPEDDATA,
                CRYPT_CONTENT_DIGESTEDDATA, CRYPT_CONTENT_ENCRYPTEDDATA,
                CRYPT_CONTENT_COMPRESSEDDATA, CRYPT_CONTENT_TSTINFO,
-               CRYPT_CONTENT_SPCINDIRECTDATACONTEXT, 
-               CRYPT_CONTENT_RTCSREQUEST, CRYPT_CONTENT_RTCSRESPONSE, 
+               CRYPT_CONTENT_SPCINDIRECTDATACONTEXT,
+               CRYPT_CONTENT_RTCSREQUEST, CRYPT_CONTENT_RTCSRESPONSE,
                CRYPT_CONTENT_RTCSRESPONSE_EXT, CRYPT_CONTENT_LAST
              
   );
@@ -1125,7 +1122,7 @@ const
 
 
 type
-  CRYPT_SIGNATURELEVEL_TYPE = (   
+  CRYPT_SIGNATURELEVEL_TYPE = (  
     CRYPT_SIGNATURELEVEL_NONE,      {  Include only signature  }
     CRYPT_SIGNATURELEVEL_SIGNERCERT,{  Include signer cert  }
     CRYPT_SIGNATURELEVEL_ALL,       {  Include all relevant info  }
@@ -1326,7 +1323,7 @@ type
 
   CRYPT_QUERY_INFO = record  
     { Algorithm information }
-    algoName: array[0 .. CRYPT_MAX_TEXTSIZE-1] of char;{ Algorithm name }
+    algoName: array[0 .. CRYPT_MAX_TEXTSIZE-1] of C_CHR;{ Algorithm name }
     blockSize: Integer;                  { Block size of the algorithm }
     minKeySize: Integer;                 { Minimum key size in bytes }
     keySize: Integer;                    { Recommended key size in bytes }
@@ -1691,7 +1688,7 @@ function cryptCheckSignatureEx( const signature: Pointer;
 function cryptKeysetOpen( var keyset: CRYPT_KEYSET;
   const cryptUser: CRYPT_USER;
   const keysetType: CRYPT_KEYSET_TYPE;
-  const name: PChar;
+  const name: C_STR;
   const options: CRYPT_KEYOPT_TYPE ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
@@ -1704,14 +1701,14 @@ function cryptKeysetClose( const keyset: CRYPT_KEYSET ): Integer;
 function cryptGetPublicKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptGetPrivateKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar;
-  const password: PChar ): Integer;
+  const keyID: C_STR;
+  const password: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
@@ -1723,12 +1720,12 @@ function cryptAddPublicKey( const keyset: CRYPT_KEYSET;
 
 function cryptAddPrivateKey( const keyset: CRYPT_KEYSET;
   const cryptKey: CRYPT_HANDLE;
-  const password: PChar ): Integer;
+  const password: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptDeleteKey( const keyset: CRYPT_KEYSET;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
@@ -1749,7 +1746,7 @@ function cryptDestroyCert( const certificate: CRYPT_CERTIFICATE ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
-{  Get/add/delete certificate extensions.  These are direct data insertion 
+{  Get/add/delete certificate extensions.  These are direct data insertion
    functions whose use is discouraged, so they fix the string at char *
    rather than C_STR  }
 
@@ -1810,13 +1807,13 @@ function cryptCAGetItem( const keyset: CRYPT_KEYSET;
   var certificate: CRYPT_CERTIFICATE;
   const certType: CRYPT_CERTTYPE_TYPE;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptCADeleteItem( const keyset: CRYPT_KEYSET;
   const certType: CRYPT_CERTTYPE_TYPE;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptCACertManagement( var certificate: CRYPT_CERTIFICATE;
@@ -1884,7 +1881,7 @@ function cryptPopData( const envelope: CRYPT_HANDLE;
 function cryptDeviceOpen( var device: CRYPT_DEVICE;
   const cryptUser: CRYPT_USER;
   const deviceType: CRYPT_DEVICE_TYPE;
-  const name: PChar ): Integer;
+  const name: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptDeviceClose( const device: CRYPT_DEVICE ): Integer;
@@ -1916,8 +1913,8 @@ function cryptDeviceCreateContext( const device: CRYPT_DEVICE;
 {  Log on and off (create/destroy a user object)  }
 
 function cryptLogin( var user: CRYPT_USER;
-  const name: PChar;
-  const password: PChar ): Integer;
+  const name: C_STR;
+  const password: C_STR ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptLogout( const user: CRYPT_USER ): Integer;

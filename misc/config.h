@@ -1,27 +1,28 @@
 /****************************************************************************
 *																			*
 *						cryptlib Configuration Settings  					*
-*						Copyright Peter Gutmann 1992-2004					*
+*						Copyright Peter Gutmann 1992-2005					*
 *																			*
 ****************************************************************************/
 
-#ifndef _CRYPTINI_DEFINED
+#ifndef _CONFIG_DEFINED
 
-#define _CRYPTINI_DEFINED
+#define _CONFIG_DEFINED
 
 /* Note that VC 7.1 allows selective inheritance of defines set at the top
    level into source files within projects.  For some bizarre reason this
    defaults to 'none' so that setting USE_xxx values at the project level
-   doesn't filter down to any of the source files */
+   doesn't filter down to any of the source files unless it's manually
+   enabled in the compiler config options */
 
 /* General capabilities that affect further config options */
 
-#if defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __PALMOS__ ) || \
-	defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
+#if defined( __BEOS__ ) || defined( __CHORUS__ ) || defined( __ECOS__ ) || \
+	defined( __PALMOS__ ) || defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
 	defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
 	defined( __UNIX__ ) || defined( __WINDOWS__ )
   #define USE_TCP
-#endif /* Systems with networking built into the base OS */
+#endif /* Systems with TCP/IP networking available */
 
 /* Whether to use the RPC API or not.  This provides total isolation of
    input and output data, at the expense of some additional overhead due
@@ -110,13 +111,7 @@
 	#define USE_LDAP
   #endif /* !NT_DRIVER */
 #endif /* Windows */
-#if ( defined( USE_ODBC ) && ( defined( USE_MYSQL ) || defined( USE_ORACLE ) || defined( USE_POSTGRES ) ) ) || \
-	( defined( USE_MYSQL ) && ( defined( USE_ORACLE ) || defined( USE_POSTGRES ) ) ) || \
-	( defined( USE_ORACLE ) && defined( USE_POSTGRES ) )
-  #error You can only define one of USE_MYSQL, USE_ODBC, USE_ORACLE, or USE_POSTGRES
-#endif /* Conflicting USE_database defines */
-#if defined( USE_TCP ) || defined( USE_ODBC ) || defined( USE_MYSQL ) || \
-	defined( USE_ORACLE ) || defined( USE_POSTGRES )
+#if defined( USE_ODBC ) || defined( USE_DATABASE ) || defined( USE_DATABASE_PLUGIN )
   #define USE_DBMS
 #endif /* RDBMS types */
 #ifdef USE_TCP
@@ -165,9 +160,10 @@
 
 /* System resources.  Threads and widechars */
 
-#if defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __ITRON__ ) || \
-	defined( __OS2__ ) || defined( __PALMOS__ ) || defined( __RTEMS__ ) || \
-	defined( __VXWORKS__ ) || defined( __WIN32__ ) || defined( __WINCE__ )
+#if defined( __BEOS__ ) || defined( __CHORUS__ ) || defined( __ECOS__ ) || \
+	defined( __ITRON__ ) || defined( __OS2__ ) || defined( __PALMOS__ ) || \
+	defined( __RTEMS__ ) || defined( __UCOSII__ ) || defined( __VXWORKS__ ) || \
+	defined( __WIN32__ ) || defined( __WINCE__ )
   #define USE_THREADS
 #endif /* Non-Unix systems with threads */
 #if defined( __UNIX__ ) && \
@@ -188,8 +184,7 @@
 #endif /* Non-Unix systems with widechars */
 #if defined( __UNIX__ ) && \
 	!( ( defined( __APPLE__ ) && OSVERSION < 7 ) || \
-	   defined( __bsdi__ ) || defined( __CYGWIN__ ) || \
-	   defined( __OpenBSD__ ) || \
+	   defined( __bsdi__ ) || defined( __OpenBSD__ ) || \
 	   ( defined( __SCO_VERSION__ ) && OSVERSION < 5 ) || \
 	   ( defined( sun ) && OSVERSION < 5 ) || \
 	   defined( __SYMBIAN32__ ) )
@@ -225,4 +220,4 @@
   #undef USE_TSP
   #undef USE_SESSIONS
 #endif /* 0 */
-#endif /* _CRYPTINI_DEFINED */
+#endif /* _CONFIG_DEFINED */
