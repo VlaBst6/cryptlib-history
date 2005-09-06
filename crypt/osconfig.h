@@ -5,17 +5,20 @@
 
 #define OPENSSL_EXTERN	extern
 #define OPENSSL_GLOBAL
-#if defined( _WINDOWS ) && !defined( WINDOWS )
+#if defined( _WINDOWS ) && !defined( WINDOWS )	/* Windows */
   #define WINDOWS				/* Old format */
   #define OPENSSL_SYS_WINDOWS	/* New fomat */
 #endif /* OpenSSL Windows not defined */
-#if defined( _WIN32 ) && !defined( WIN32 )
+#if defined( _WIN32 ) && !defined( WIN32 )		/* Win32 and WinCE */
   #define WIN32					/* Old format */
   #define OPENSSL_SYS_WIN32		/* New format */
+  #if !defined( _WIN32_WCE )
+	#define USE_ASM				/* Always enabled for x86 Win32 */
+  #endif /* WinCE */
 #endif /* OpenSSL Win32 not defined */
 #include <stdlib.h>			/* For malloc() */
 #include <string.h>			/* For memset() */
-#ifdef USE_ASM
+#ifdef USE_ASM				/* Defined via makefile for Unix systems */
   #define MD5_ASM
   #define RMD160_ASM
   #define SHA1_ASM
@@ -431,7 +434,7 @@
   #define DES_RISC1
   #define DES_UNROLL
   #define RC4_INDEX
-#endif /* gcc native under Cygwin (i.e. not a Cygwin-hosted 
+#endif /* gcc native under Cygwin (i.e. not a Cygwin-hosted
 		  cross-development toolchain */
 
 /* Xilinx XMK */

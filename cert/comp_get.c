@@ -1259,6 +1259,10 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 			return( status );
 			}
 
+		case CRYPT_IATTRIBUTE_CERTHASHALGO:
+			return( copyCertInfoValue( certInfo, 
+									   certInfoPtr->cCertCert->hashAlgo ) );
+
 		case CRYPT_IATTRIBUTE_RESPONDERURL:
 			{
 			const char *responderURL = \

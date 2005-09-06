@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*							cryptlib Misc Routines							*
-*						Copyright Peter Gutmann 1992-2004					*
+*							cryptlib Internal API							*
+*						Copyright Peter Gutmann 1992-2005					*
 *																			*
 ****************************************************************************/
 
@@ -11,8 +11,8 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include "crypt.h"
-#ifdef INC_ALL
+#if defined( INC_ALL )
+  #include "crypt.h"
   #include "md2.h"
   #include "md5.h"
   #include "ripemd.h"
@@ -21,7 +21,18 @@
 	#include "sha2.h"
   #endif /* USE_SHA2 */
   #include "stream.h"
+#elif defined( INC_CHILD )
+  #include "../crypt.h"
+  #include "../crypt/md2.h"
+  #include "../crypt/md5.h"
+  #include "../crypt/ripemd.h"
+  #include "../crypt/sha.h"
+  #ifdef USE_SHA2
+	#include "../crypt/sha2.h"
+  #endif /* USE_SHA2 */
+  #include "../io/stream.h"
 #else
+  #include "crypt.h"
   #include "crypt/md2.h"
   #include "crypt/md5.h"
   #include "crypt/ripemd.h"
@@ -42,8 +53,8 @@
    converting invalid time values to zero, which yield a warning date of
    1/1/1970 rather than an out-of-bounds value or garbage value.  The second
    function implements soft failures, returning an estimate of the
-   approximate current date.  The third function is used for operations such 
-   as signing certs and timestamping and tries to get the time from a 
+   approximate current date.  The third function is used for operations such
+   as signing certs and timestamping and tries to get the time from a
    hardware time source if one is available */
 
 time_t getTime( void )
@@ -68,7 +79,7 @@ time_t getReliableTime( const CRYPT_HANDLE cryptHandle )
 	int status;
 
 	/* Get the dependent device for the object that needs the time */
-	status = krnlSendMessage( cryptHandle, IMESSAGE_GETDEPENDENT, 
+	status = krnlSendMessage( cryptHandle, IMESSAGE_GETDEPENDENT,
 							  &cryptDevice, OBJECT_TYPE_DEVICE );
 	if( cryptStatusError( status ) )
 		cryptDevice = SYSTEM_OBJECT_HANDLE;
@@ -80,20 +91,20 @@ time_t getReliableTime( const CRYPT_HANDLE cryptHandle )
 	if( cryptStatusError( status ) && cryptDevice != SYSTEM_OBJECT_HANDLE )
 		/* We couldn't get the time from a crypto token, fall back to the
 		   system device */
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
-								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_IATTRIBUTE_TIME );
 	if( cryptStatusError( status ) )
 		return( 0 );
 	return( ( theTime < MIN_TIME_VALUE ) ? 0 : theTime );
 	}
 
-/* Calculate a 16-bit Fletcher-like checksum of a block of data.  This isn't 
-   quite a pure Fletcher checksum because we don't bother keeping the 
-   accumulators at 8 bits, and also don't need to set the initial value to 
+/* Calculate a 16-bit Fletcher-like checksum of a block of data.  This isn't
+   quite a pure Fletcher checksum because we don't bother keeping the
+   accumulators at 8 bits, and also don't need to set the initial value to
    nonzero since we'll never see a sequence of zero bytes.  This isn't a big
-   deal since all we need is a consistent result.  In addition we don't 
-   bother with masking to 16 bits during the calculation since it's not 
+   deal since all we need is a consistent result.  In addition we don't
+   bother with masking to 16 bits during the calculation since it's not
    being used as a true checksum */
 
 int checksumData( const void *data, const int dataLength )
@@ -185,10 +196,10 @@ void getHashParameters( const CRYPT_ALGO_TYPE hashAlgorithm,
 	}
 
 /* Perform the FIPS-140 statistical checks that are feasible on a byte
-   string.  The full suite of tests assumes that an infinite source of 
-   values (and time) is available, the following is a scaled-down version 
-   used to sanity-check keys and other short random data blocks.  Note that 
-   this check requires at least 64 bits of data in order to produce useful 
+   string.  The full suite of tests assumes that an infinite source of
+   values (and time) is available, the following is a scaled-down version
+   used to sanity-check keys and other short random data blocks.  Note that
+   this check requires at least 64 bits of data in order to produce useful
    results */
 
 BOOLEAN checkEntropy( const BYTE *data, const int dataLength )
@@ -271,6 +282,56 @@ BOOLEAN algoAvailable( const CRYPT_ALGO_TYPE cryptAlgo )
 									cryptAlgo ) ) ? TRUE : FALSE );
 	}
 
+/* For a given algorithm pair, check whether the first is stronger than the
+   second.  For hashes the order is:
+
+	SHA2 > RIPEMD160 > SHA-1 > all others */
+
+BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1,
+						const CRYPT_ALGO_TYPE algorithm2 )
+	{
+	static const CRYPT_ALGO_TYPE algoPrecedence[] = {
+		CRYPT_ALGO_SHA2, CRYPT_ALGO_RIPEMD160, CRYPT_ALGO_SHA,
+		CRYPT_ALGO_NONE };
+	int algo1index, algo2index;
+
+	/* Find the relative positions on the scale of the two algorithms */
+	for( algo1index = 0; algoPrecedence[ algo1index ] != algorithm1;
+		 algo1index++ )
+		if( algoPrecedence[ algo1index ] == CRYPT_ALGO_NONE )
+			/* We've reached an unrated algorithm, it can't be stronger
+			   than the other one */
+			return( FALSE );
+	for( algo2index = 0; algoPrecedence[ algo2index ] != algorithm2;
+		 algo2index++ )
+		if( algoPrecedence[ algo2index ] == CRYPT_ALGO_NONE )
+			/* We've reached an unrated algorithm, it's weaker than the
+			   other one */
+			return( TRUE );
+
+	/* If the first algorithm has a smaller index than the second, it's a
+	   stronger algorithm */
+	return( ( algo1index < algo2index ) ? TRUE : FALSE );
+	}
+
+/* Sanitise a string before passing it back to the user.  This is used to
+   clear potential problem characters (for example control characters)
+   from strings passed back from untrusted sources */
+
+char *sanitiseString( char *string )
+	{
+	int i;
+
+	assert( isWritePtr( string, strlen( string ) ) );
+
+	/* Remove any potentially unsafe characters from the string */
+	for( i = 0; string[ i ] != '\0'; i++ )
+		if( !isPrint( string[ i ] ) )
+			string[ i ] = '.';
+
+	return( string );
+	}
+
 /****************************************************************************
 *																			*
 *						Dynamic Buffer Management Routines					*
@@ -322,7 +383,7 @@ int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
 		if( ( dataPtr = clDynAlloc( "dynCreate", msgData.length ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
 		msgData.data = dataPtr;
-		status = krnlSendMessage( cryptHandle, message, &msgData, 
+		status = krnlSendMessage( cryptHandle, message, &msgData,
 								  attributeType );
 		if( cryptStatusError( status ) )
 			{
@@ -364,11 +425,11 @@ void dynDestroy( DYNBUF *dynBuf )
 *																			*
 ****************************************************************************/
 
-/* Memory pool management functions.  When allocating many little blocks of 
+/* Memory pool management functions.  When allocating many little blocks of
    memory, especially in resource-constrained systems, it's better if we pre-
-   allocate a small memory pool ourselves and grab chunks of it as required, 
-   falling back to dynamically allocating memory later on if we exhaust the 
-   pool.  The following functions implement the custom memory pool 
+   allocate a small memory pool ourselves and grab chunks of it as required,
+   falling back to dynamically allocating memory later on if we exhaust the
+   pool.  The following functions implement the custom memory pool
    management */
 
 typedef struct {
@@ -397,11 +458,11 @@ void *getMemPool( void *statePtr, const int size )
 	assert( isWritePtr( state, sizeof( MEMPOOL_INFO ) ) );
 	assert( isWritePtr( state->storage, state->storageSize ) );
 
-	/* If we can't satisfy the request from the memory pool, we have to 
+	/* If we can't satisfy the request from the memory pool, we have to
 	   allocate it dynamically */
 	if( state->storagePos + allocSize > state->storageSize )
 		return( clDynAlloc( "getMemPool", size ) );
-	
+
 	/* We can satisfy the request from the pool */
 	allocPtr += state->storagePos;
 	state->storagePos += allocSize;
@@ -433,22 +494,44 @@ void freeMemPool( void *statePtr, void *memblock )
   #include <direct.h>
 #endif /* __WIN32__ */
 
+#ifdef __WINCE__
+
+static void wcPrintf( const char *format, ... )
+	{
+	wchar_t wcBuffer[ 1024 ];
+	char buffer[ 1024 ];
+	va_list argPtr;
+
+	va_start( argPtr, format );
+	vsprintf( buffer, format, argPtr );
+	va_end( argPtr );
+	mbstowcs( wcBuffer, buffer, strlen( buffer ) + 1 );
+	NKDbgPrintfW( wcBuffer );
+	}
+#endif /* __WINCE__ */
+
 static int clAllocIndex = 0;
 
-void *clAllocFn( const char *fileName, const char *fnName, 
+void *clAllocFn( const char *fileName, const char *fnName,
 				 const int lineNo, size_t size )
 	{
 	char buffer[ 512 ];
 	BYTE *memPtr;
+#ifndef __WINCE__
 	int length;
+#endif /* __WINCE__ */
 
-	/* Strip off the leading path components if we can to reduce the amount 
+	/* Strip off the leading path components if we can to reduce the amount
 	   of noise in the output */
 #if defined( __WIN32__ ) || defined( __UNIX__ )
 	if( getcwd( buffer, 512 ) != NULL )
 		fileName += strlen( buffer ) + 1;	/* Skip leading path + '/' */
 #endif /* __WIN32__ || __UNIX__ */
 
+#ifdef __WINCE__
+	wcPrintf( "ALLOC: %s:%s:%d %4d - %d bytes.\n", fileName, fnName, lineNo,
+			  clAllocIndex, size );
+#else
 	length = printf( "ALLOC: %s:%s:%d", fileName, fnName, lineNo );
 	while( length < 46 )
 		{
@@ -456,6 +539,7 @@ void *clAllocFn( const char *fileName, const char *fnName,
 		length++;
 		}
 	printf( " %4d - %d bytes.\n", clAllocIndex, size );
+#endif /* __WINCE__ */
 	if( ( memPtr = malloc( size + 4 ) ) == NULL )
 		return( NULL );
 	mputLong( memPtr, clAllocIndex );	/* Implicit memPtr += 4 */
@@ -463,14 +547,17 @@ void *clAllocFn( const char *fileName, const char *fnName,
 	return( memPtr );
 	}
 
-void clFreeFn( const char *fileName, const char *fnName, 
+void clFreeFn( const char *fileName, const char *fnName,
 			   const int lineNo, void *memblock )
 	{
 	char buffer[ 512 ];
 	BYTE *memPtr = ( BYTE * ) memblock - 4;
-	int length, index;
+	int index;
+#ifndef __WINCE__
+	int length;
+#endif /* __WINCE__ */
 
-	/* Strip off the leading path components if we can to reduce the amount 
+	/* Strip off the leading path components if we can to reduce the amount
 	   of noise in the output */
 #if defined( __WIN32__ ) || defined( __UNIX__ )
 	if( getcwd( buffer, 512 ) != NULL )
@@ -478,6 +565,9 @@ void clFreeFn( const char *fileName, const char *fnName,
 #endif /* __WIN32__ || __UNIX__ */
 
 	index = mgetLong( memPtr );
+#ifdef __WINCE__
+	wcPrintf( "ALLOC: %s:%s:%d %4d.\n", fileName, fnName, lineNo, index );
+#else
 	length = printf( "ALLOC: %s:%s:%d", fileName, fnName, lineNo );
 	while( length < 46 )
 		{
@@ -485,6 +575,7 @@ void clFreeFn( const char *fileName, const char *fnName,
 		length++;
 		}
 	printf( " %4d.\n", index );
+#endif /* __WINCE__ */
 	free( memPtr - 4 );
 	}
 #endif /* CONFIG_DEBUG_MALLOC */
@@ -593,7 +684,7 @@ int importCertFromStream( void *streamPtr,
 		return( CRYPT_ERROR_UNDERFLOW );
 
 	/* Import the cert from the stream */
-	setMessageCreateObjectIndirectInfo( &createInfo, sMemBufPtr( stream ), 
+	setMessageCreateObjectIndirectInfo( &createInfo, sMemBufPtr( stream ),
 										length, certType );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
@@ -615,10 +706,10 @@ int importCertFromStream( void *streamPtr,
 *																			*
 ****************************************************************************/
 
-/* Find the start and end of an attribute group from an attribute within 
+/* Find the start and end of an attribute group from an attribute within
    the group */
 
-void *attributeFindStart( const void *attributePtr, 
+void *attributeFindStart( const void *attributePtr,
 						  GETATTRFUNCTION getAttrFunction )
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID;
@@ -633,10 +724,10 @@ void *attributeFindStart( const void *attributePtr,
 		CRYPT_ATTRIBUTE_TYPE prevGroupID;
 		const void *prevPtr;
 
-		prevPtr = getAttrFunction( attributePtr, &prevGroupID, NULL, NULL, 
+		prevPtr = getAttrFunction( attributePtr, &prevGroupID, NULL, NULL,
 								   ATTR_PREV );
 		if( prevPtr == NULL || prevGroupID != groupID )
-			/* We've reached the start of the list or a different attribute 
+			/* We've reached the start of the list or a different attribute
 			   group, this is the start of the current group */
 			break;
 		attributePtr = prevPtr;
@@ -645,7 +736,7 @@ void *attributeFindStart( const void *attributePtr,
 	return( ( void * ) attributePtr );
 	}
 
-void *attributeFindEnd( const void *attributePtr, 
+void *attributeFindEnd( const void *attributePtr,
 						GETATTRFUNCTION getAttrFunction )
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID;
@@ -653,7 +744,7 @@ void *attributeFindEnd( const void *attributePtr,
 	if( attributePtr == NULL )
 		return( NULL );
 
-	/* Move forwards until we're just before the start of the next 
+	/* Move forwards until we're just before the start of the next
 	   attribute */
 	getAttrFunction( attributePtr, &groupID, NULL, NULL, ATTR_CURRENT );
 	while( TRUE )
@@ -661,10 +752,10 @@ void *attributeFindEnd( const void *attributePtr,
 		CRYPT_ATTRIBUTE_TYPE nextGroupID;
 		const void *nextPtr;
 
-		nextPtr = getAttrFunction( attributePtr, &nextGroupID, NULL, NULL, 
+		nextPtr = getAttrFunction( attributePtr, &nextGroupID, NULL, NULL,
 								   ATTR_NEXT );
 		if( nextPtr == NULL || nextGroupID != groupID )
-			/* We've reached the end of the list or a different attribute 
+			/* We've reached the end of the list or a different attribute
 			   group, this is the end of the current group */
 			break;
 		attributePtr = nextPtr;
@@ -675,7 +766,7 @@ void *attributeFindEnd( const void *attributePtr,
 
 /* Find an attribute in a list of attributes */
 
-void *attributeFind( const void *attributePtr, 
+void *attributeFind( const void *attributePtr,
 					 GETATTRFUNCTION getAttrFunction,
 					 const CRYPT_ATTRIBUTE_TYPE attributeID,
 					 const CRYPT_ATTRIBUTE_TYPE instanceID )
@@ -686,35 +777,35 @@ void *attributeFind( const void *attributePtr,
 		return( NULL );
 
 	/* Find the attribute in the list */
-	getAttrFunction( attributePtr, NULL, &currAttributeID, NULL, 
+	getAttrFunction( attributePtr, NULL, &currAttributeID, NULL,
 					 ATTR_CURRENT );
 	while( attributePtr != NULL && currAttributeID != attributeID )
-		attributePtr = getAttrFunction( attributePtr, NULL, 
-										&currAttributeID, NULL, 
+		attributePtr = getAttrFunction( attributePtr, NULL,
+										&currAttributeID, NULL,
 										ATTR_NEXT );
 	if( instanceID == CRYPT_ATTRIBUTE_NONE )
 		/* We're not looking for a particular instance, we're done */
 		return( ( void * ) attributePtr );
 
 	/* Find the attribute instance */
-	getAttrFunction( attributePtr, NULL, &currAttributeID, &currInstanceID, 
+	getAttrFunction( attributePtr, NULL, &currAttributeID, &currInstanceID,
 					 ATTR_CURRENT );
 	while( attributePtr != NULL && currAttributeID == attributeID )
 		{
 		if( currInstanceID == instanceID )
 			return( ( void * ) attributePtr );
-		attributePtr = getAttrFunction( attributePtr, NULL, 
-										&currAttributeID, &currInstanceID, 
+		attributePtr = getAttrFunction( attributePtr, NULL,
+										&currAttributeID, &currInstanceID,
 										ATTR_NEXT );
 		}
 	return( NULL );
 	}
 
-/* Find the next instance of an attribute in an attribute group.  This is 
+/* Find the next instance of an attribute in an attribute group.  This is
    used to step through multiple instances of an attribute, for example in
    a cert extension containing a SEQUENCE OF <attribute> */
 
-void *attributeFindNextInstance( const void *attributePtr, 
+void *attributeFindNextInstance( const void *attributePtr,
 								 GETATTRFUNCTION getAttrFunction )
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID, attributeID;
@@ -724,10 +815,10 @@ void *attributeFindNextInstance( const void *attributePtr,
 		return( NULL );
 
 	/* Skip the current field */
-	getAttrFunction( attributePtr, &groupID, &attributeID, NULL, 
+	getAttrFunction( attributePtr, &groupID, &attributeID, NULL,
 					 ATTR_CURRENT );
-	attributePtr = getAttrFunction( attributePtr, &currGroupID, 
-									&currAttributeID, NULL, 
+	attributePtr = getAttrFunction( attributePtr, &currGroupID,
+									&currAttributeID, NULL,
 									ATTR_NEXT );
 
 	/* Step through the remaining attributes in the group looking for
@@ -736,8 +827,8 @@ void *attributeFindNextInstance( const void *attributePtr,
 		{
 		if( currAttributeID == attributeID )
 			return( ( void * ) attributePtr );
-		attributePtr = getAttrFunction( attributePtr, &currGroupID, 
-										&currAttributeID, NULL, 
+		attributePtr = getAttrFunction( attributePtr, &currGroupID,
+										&currAttributeID, NULL,
 										ATTR_NEXT );
 		}
 
@@ -749,7 +840,7 @@ void *attributeFindNextInstance( const void *attributePtr,
 
 const void *attributeMoveCursor( const void *currentCursor,
 								 GETATTRFUNCTION getAttrFunction,
-								 const CRYPT_ATTRIBUTE_TYPE attributeMoveType, 
+								 const CRYPT_ATTRIBUTE_TYPE attributeMoveType,
 								 const int cursorMoveType )
 	{
 	const void *newCursor = currentCursor, *lastCursor = NULL;
@@ -768,16 +859,16 @@ const void *attributeMoveCursor( const void *currentCursor,
 	if( currentCursor == NULL )
 		return( NULL );
 
-	/* Set the amount that we want to move by based on the position code.  
-	   This means that we can handle the movement in a simple while loop 
+	/* Set the amount that we want to move by based on the position code.
+	   This means that we can handle the movement in a simple while loop
 	   instead of having to special-case it for moves by one item */
 	count = absMove ? INT_MAX : 1;
 
-	/* Moving by attribute or attribute instance is relatively simple.  For 
-	   attributes we move backwards or forwards until we either run out of 
-	   attributes or the next attribute belongs to a different group.  For 
-	   attribute instances we move similarly, except that we stop when we 
-	   reach an attribute whose group type, attribute type, and instance 
+	/* Moving by attribute or attribute instance is relatively simple.  For
+	   attributes we move backwards or forwards until we either run out of
+	   attributes or the next attribute belongs to a different group.  For
+	   attribute instances we move similarly, except that we stop when we
+	   reach an attribute whose group type, attribute type, and instance
 	   type don't match the current one.  We have to explicitly keep track
 	   of whether the cursor was successfully moved rather than checking
 	   that it's value has changed because some object types maintain an
@@ -788,21 +879,21 @@ const void *attributeMoveCursor( const void *currentCursor,
 		CRYPT_ATTRIBUTE_TYPE groupID;
 		BOOLEAN cursorMoved = FALSE;
 
-		getAttrFunction( currentCursor, &groupID, NULL, NULL, 
+		getAttrFunction( currentCursor, &groupID, NULL, NULL,
 						 ATTR_CURRENT );
 		if( cursorMoveType == CRYPT_CURSOR_FIRST || \
 			cursorMoveType == CRYPT_CURSOR_PREVIOUS )
 			{
 			CRYPT_ATTRIBUTE_TYPE prevGroupID;
 			const void *prevCursor;
-			
-			prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL, 
+
+			prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL,
 										  NULL, ATTR_PREV );
 			while( count-- > 0 && prevCursor != NULL && \
 				   prevGroupID == groupID )
 				{
 				newCursor = prevCursor;
-				prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL, 
+				prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL,
 											  NULL, ATTR_PREV );
 				cursorMoved = TRUE;
 				}
@@ -812,13 +903,13 @@ const void *attributeMoveCursor( const void *currentCursor,
 			CRYPT_ATTRIBUTE_TYPE nextGroupID;
 			const void *nextCursor;
 
-			nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL, 
+			nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL,
 										  NULL, ATTR_NEXT );
 			while( count-- > 0 && nextCursor != NULL && \
 				   nextGroupID == groupID )
 				{
 				newCursor = nextCursor;
-				nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL, 
+				nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL,
 											  NULL, ATTR_NEXT );
 				cursorMoved = TRUE;
 				}
@@ -833,7 +924,7 @@ const void *attributeMoveCursor( const void *currentCursor,
 		CRYPT_ATTRIBUTE_TYPE groupID, attributeID, instanceID;
 		BOOLEAN cursorMoved = FALSE;
 
-		getAttrFunction( currentCursor, &groupID, &attributeID, &instanceID, 
+		getAttrFunction( currentCursor, &groupID, &attributeID, &instanceID,
 						 ATTR_CURRENT );
 		if( cursorMoveType == CRYPT_CURSOR_FIRST || \
 			cursorMoveType == CRYPT_CURSOR_PREVIOUS )
@@ -841,16 +932,16 @@ const void *attributeMoveCursor( const void *currentCursor,
 			CRYPT_ATTRIBUTE_TYPE prevGroupID, prevAttrID, prevInstID;
 			const void *prevCursor;
 
-			prevCursor = getAttrFunction( newCursor, &prevGroupID, 
-										  &prevAttrID, &prevInstID, 
+			prevCursor = getAttrFunction( newCursor, &prevGroupID,
+										  &prevAttrID, &prevInstID,
 										  ATTR_PREV );
 			while( count-- > 0 && prevCursor != NULL && \
 				   prevGroupID == groupID && prevAttrID == attributeID && \
 				   prevInstID == instanceID )
 				{
 				newCursor = prevCursor;
-				prevCursor = getAttrFunction( newCursor, &prevGroupID, 
-											  &prevAttrID, &prevInstID, 
+				prevCursor = getAttrFunction( newCursor, &prevGroupID,
+											  &prevAttrID, &prevInstID,
 											  ATTR_PREV );
 				cursorMoved = TRUE;
 				}
@@ -860,16 +951,16 @@ const void *attributeMoveCursor( const void *currentCursor,
 			CRYPT_ATTRIBUTE_TYPE nextGroupID, nextAttrID, nextInstID;
 			const void *nextCursor;
 
-			nextCursor = getAttrFunction( newCursor, &nextGroupID, 
-										  &nextAttrID, &nextInstID, 
+			nextCursor = getAttrFunction( newCursor, &nextGroupID,
+										  &nextAttrID, &nextInstID,
 										  ATTR_NEXT );
 			while( count-- > 0 && nextCursor != NULL && \
 				   nextGroupID == groupID && nextAttrID == attributeID && \
 				   nextInstID == instanceID )
 				{
 				newCursor = nextCursor;
-				nextCursor = getAttrFunction( newCursor, &nextGroupID, 
-											  &nextAttrID, &nextInstID, 
+				nextCursor = getAttrFunction( newCursor, &nextGroupID,
+											  &nextAttrID, &nextInstID,
 											  ATTR_NEXT );
 				cursorMoved = TRUE;
 				}
@@ -880,11 +971,11 @@ const void *attributeMoveCursor( const void *currentCursor,
 		return( newCursor );
 		}
 
-	/* Moving by attribute group is a bit more complex.  First we find the 
-	   start or end of the current group.  Then we move to the start of the 
-	   previous (via ATTR_PREV and attributeFindStart()), or start of the 
-	   next (via ATTR_NEXT) group beyond that.  This has the effect of 
-	   moving us from anywhere in the current group to the start of the 
+	/* Moving by attribute group is a bit more complex.  First we find the
+	   start or end of the current group.  Then we move to the start of the
+	   previous (via ATTR_PREV and attributeFindStart()), or start of the
+	   next (via ATTR_NEXT) group beyond that.  This has the effect of
+	   moving us from anywhere in the current group to the start of the
 	   preceding or following group.  Finally, we repeat this as required */
 	while( count-- > 0 && newCursor != NULL )
 		{
@@ -895,7 +986,7 @@ const void *attributeMoveCursor( const void *currentCursor,
 			/* Move from the start of the current group to the start of the
 			   preceding group */
 			newCursor = attributeFindStart( newCursor, getAttrFunction );
-			newCursor = getAttrFunction( newCursor, NULL, NULL, NULL, 
+			newCursor = getAttrFunction( newCursor, NULL, NULL, NULL,
 										 ATTR_PREV );
 			if( newCursor != NULL )
 				newCursor = attributeFindStart( newCursor, getAttrFunction );
@@ -905,19 +996,19 @@ const void *attributeMoveCursor( const void *currentCursor,
 			/* Move from the end of the current group to the start of the
 			   next group */
 			newCursor = attributeFindEnd( newCursor, getAttrFunction );
-			newCursor = getAttrFunction( newCursor, NULL, NULL, NULL, 
+			newCursor = getAttrFunction( newCursor, NULL, NULL, NULL,
 										 ATTR_NEXT );
 			}
 		}
 	assert( lastCursor != NULL );	/* We went through loop at least once */
 
-	/* If the new cursor is NULL, we've reached the start or end of the 
+	/* If the new cursor is NULL, we've reached the start or end of the
 	   attribute list */
 	if( newCursor == NULL )
 		/* If it's an absolute move we've reached our destination, otherwise
-		   there's nowhere left to move to.  We move to the start of the 
-		   first or last attribute that we got to before we ran out of 
-		   attributes to make sure that we don't fall off the start/end of 
+		   there's nowhere left to move to.  We move to the start of the
+		   first or last attribute that we got to before we ran out of
+		   attributes to make sure that we don't fall off the start/end of
 		   the list */
 		return( absMove ? \
 				attributeFindStart( lastCursor, getAttrFunction ) : NULL );
@@ -1259,13 +1350,13 @@ int envelopeSigCheck( const void *inData, const int inDataLength,
    we discard it until we find an EOL.  As a secondary concern, we want to
    strip leading, trailing, and repeated whitespace.  We handle the former
    by setting the seen-whitespace flag to true initially, this treats any
-   whitespace at the start of the line as superfluous and strips it.  We 
-   also handle continued lines, denoted by a semicolon or occasionally a 
-   backslash as the last non-whitespace character.  Stripping of repeated 
-   whitespace is also handled by the seenWhitespace flag, stripping of 
-   trailing whitespace is handled by walking back through any final 
-   whitespace once we see the EOL, and continued lines are handled by 
-   setting the seenContinuation flag if we see a semicolon or backslash as 
+   whitespace at the start of the line as superfluous and strips it.  We
+   also handle continued lines, denoted by a semicolon or occasionally a
+   backslash as the last non-whitespace character.  Stripping of repeated
+   whitespace is also handled by the seenWhitespace flag, stripping of
+   trailing whitespace is handled by walking back through any final
+   whitespace once we see the EOL, and continued lines are handled by
+   setting the seenContinuation flag if we see a semicolon or backslash as
    the last non-whitespace character.
 
    Finally, we also need to handle generic DoS attacks.  If we see more than
@@ -1320,7 +1411,7 @@ int addMIMEchar( MIME_STATE *mimeState, char *buffer, int ch )
 		while( state->bufPos > 0 && buffer[ state->bufPos - 1 ] == ' ' )
 			state->bufPos--;
 
-		/* If we've seen a continuation market as the last non-whitespace 
+		/* If we've seen a continuation market as the last non-whitespace
 		   char, the line continues on the next one */
 		if( state->seenContinuation )
 			{

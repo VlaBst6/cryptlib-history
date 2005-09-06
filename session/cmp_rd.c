@@ -726,19 +726,27 @@ static int readResponseBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
+	/* Import the cert as a cryptlib object */
+	setMessageCreateObjectIndirectInfo( &createInfo, bodyInfoPtr, bodyLength, 
+										CRYPT_CERTTYPE_CERTIFICATE );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, &createInfo,
+							  OBJECT_TYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		retExt( sessionInfoPtr, status,
+				"Invalid returned certificate" );
+	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
+
 	/* In order to acknowledge receipt of this message we have to return at a
 	   later point a hash of the cert carried in this message created using
-	   the hash algorithm used in the cert signature, so we have to tunnel
-	   into the cert to extract this information for later use.  This makes
-	   the CMP-level transport layer dependant on the certificate format
-	   it's carrying (so the code will repeatedly break every time a new
-	   cert format is added), but that's what the standard requires */
-	readSequence( stream, NULL );			/* Outer wrapper */
-	readSequence( stream, NULL );			/* Inner wrapper */
-	if( peekTag( stream ) == MAKE_CTAG( 0 ) )
-		readUniversal( stream );			/* Version */
-	readUniversal( stream );				/* Serial number */
-	status = readAlgoIDex( stream, NULL, &protocolInfo->confHashAlgo, NULL );
+	   the hash algorithm used in the cert signature.  This makes the CMP-
+	   level transport layer dependant on the certificate format it's 
+	   carrying (so the code will repeatedly break every time a new cert 
+	   format is added), but that's what the standard requires */
+	status = krnlSendMessage( sessionInfoPtr->iCertResponse, 
+							  IMESSAGE_GETATTRIBUTE, 
+							  &protocolInfo->confHashAlgo, 
+							  CRYPT_IATTRIBUTE_CERTHASHALGO );
 	if( cryptStatusError( status ) )
 		retExt( sessionInfoPtr, status,
 				"Couldn't extract confirmation hash type from certificate" );
@@ -749,17 +757,6 @@ static int readResponseBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 				"Can't confirm certificate issue using algorithm %d",
 				protocolInfo->confHashAlgo );
 
-	/* Import the cert as a cryptlib object */
-	setMessageCreateObjectIndirectInfo( &createInfo, bodyInfoPtr, bodyLength, 
-										CRYPT_CERTTYPE_CERTIFICATE );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, &createInfo,
-							  OBJECT_TYPE_CERTIFICATE );
-	if( cryptStatusOK( status ) )
-		sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
-	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
-				"Invalid returned certificate" );
 	return( CRYPT_OK );
 	}
 

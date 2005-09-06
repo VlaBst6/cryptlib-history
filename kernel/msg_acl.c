@@ -1888,8 +1888,13 @@ int postDispatchChangeStateOpt( const int objectHandle,
 	{
 	const ATTRIBUTE_ACL *attributeACL = ( ATTRIBUTE_ACL * ) auxInfo;
 
-	/* Precondition */
-	PRE( isValidObject( objectHandle ) );
+	/* Precondition.  If we're closing down then a background polling thread
+	   may still be trying to send entropy data to the system object, so we 
+	   don't complain if this is the case */
+	PRE( ( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_THREADS && \
+		   objectHandle == SYSTEM_OBJECT_HANDLE && \
+		   messageValue == CRYPT_IATTRIBUTE_ENTROPY ) || \
+		 isValidObject( objectHandle ) );
 	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
 
 	/* If it's an attribute that triggers a state change, change the state */

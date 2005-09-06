@@ -859,7 +859,9 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
 		return( CRYPT_ARGERROR_STR1 );
 
 	/* Wait for any async device driver binding to complete */
-	krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
+	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		/* The kernel is shutting down, bail out */
+		return( CRYPT_ERROR_PERMISSION );
 
 	/* Pass the call on to the lower-level open function */
 	initStatus = openDevice( &iCryptDevice, createInfo->cryptOwner,
@@ -964,26 +966,28 @@ int deviceManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 		case MANAGEMENT_ACTION_INIT:
 			if( cryptStatusOK( deviceInitFortezza() ) )
 				initFlags |= DEV_FORTEZZA_INITED;
+			if( krnlIsExiting() )
+				/* The kernel is shutting down, exit */
+				return( CRYPT_ERROR_PERMISSION );
 			if( cryptStatusOK( deviceInitPKCS11() ) )
 				initFlags |= DEV_PKCS11_INITED;
+			if( krnlIsExiting() )
+				/* The kernel is shutting down, exit */
+				return( CRYPT_ERROR_PERMISSION );
 			if( cryptStatusOK( deviceInitCryptoAPI() ) )
 				initFlags |= DEV_CRYPTOAPI_INITED;
 			return( CRYPT_OK );
 		
 		case MANAGEMENT_ACTION_PRE_SHUTDOWN:
 			/* In theory we could signal the background entropy poll to 
-			   start wrapping up at this point, however this background 
-			   polling only occurs in two instances, on Unix systems it's 
-			   done by forking off a process with which there's no easy way 
-			   to communicate, so the shutdown function kill()'s it, and on 
-			   Windows systems it's done as a background thread that 
-			   periodically checks a semaphore, however without adding a 
-			   special-case object interface for this there's no direct way 
-			   to access it, and in any case all we're doing is saving half 
-			   a ms or so since the shutdown function sets it anyway.  
-			   Because of this we don't try and do anything here, although 
-			   this call is left in place as a no-op in case it's needed in 
-			   the future */
+			   start wrapping up at this point, however if the background 
+			   polling is being performed in a thread or task the shutdown
+			   is already signalled via the kernel shutdown flag.  If it's
+			   performed by forking off a process, as it is on Unix systems, 
+			   there's no easy way to communicate with this process so the 
+			   shutdown function just kill()s it.  Because of this we don't 
+			   try and do anything here, although this call is left in place 
+			   as a no-op in case it's needed in the future */
 			return( CRYPT_OK );
 		
 		case MANAGEMENT_ACTION_SHUTDOWN:

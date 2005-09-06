@@ -691,6 +691,8 @@ static int certificateMessageFunction( const void *objectInfoPtr,
 				assert( NOTREACHED );
 				return( CRYPT_ERROR_INVALID );
 			}
+		assert( keyUsageValue != CRYPT_UNUSED || \
+				checkKeyFlag != CHECKKEY_FLAG_NONE );
 
 		/* Cert requests are special-case objects in that the key they 
 		   contain is usable only for signature checking of the self-

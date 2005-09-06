@@ -114,7 +114,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	RESOURCE_DATA msgData;
 	STREAM stream;
 	BYTE buffer[ 128 ];
-	char *attrPtr, *valuePtr, valueBuffer[ CRYPT_MAX_TEXTSIZE + 1 ];
+	char *attrPtr, *valuePtr, certIdBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 	char firstChar;
 	int attrLen, valueLen, length, i, status;
 
@@ -154,7 +154,10 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		assert( NOTREACHED );
 		retExt( sessionInfoPtr, status, "Invalid cert store query data" );
 		}
-	strcpy( valueBuffer, valuePtr );
+
+	/* Save a copy of the requested cert ID for later in case we have to
+	   report an error in locating the cert */
+	strcpy( certIdBuffer, valuePtr );
 
 	/* Convert the search attribute type into a cryptlib key ID */
 	firstChar = toLower( *attrPtr );
@@ -170,7 +173,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		{
 		sendErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, 
-				"Invalid cert store query attribute '%s'", attrPtr );
+				"Invalid cert store query attribute '%s'", 
+				sanitiseString( attrPtr ) );
 		}
 
 	/* If the value was base64-encoded in transit, decode it to get the 
@@ -183,7 +187,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 			{
 			sendErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, 
-					"Invalid base64-encoded query value '%s'", valueBuffer );
+					"Invalid base64-encoded query value '%s'", 
+					sanitiseString( certIdBuffer ) );
 			}
 		valuePtr = buffer;
 		valueLen = status;
@@ -201,7 +206,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		   all we do is return a warning to the caller */
 		sendErrorResponse( sessionInfoPtr, status );
 		retExt( sessionInfoPtr, CRYPT_OK, 
-				"Warning: Couldn't find certificate for '%s'", valueBuffer );
+				"Warning: Couldn't find certificate for '%s'", 
+				sanitiseString( certIdBuffer ) );
 		}
 	memset( sessionInfoPtr->receiveBuffer, 0, 2 );	/* Returned status value */
 	setMessageData( &msgData, sessionInfoPtr->receiveBuffer + 2,
@@ -214,7 +220,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		sendErrorResponse( sessionInfoPtr, status );
 		retExt( sessionInfoPtr, status, 
 				"Couldn't export requested certificate for '%s'", 
-				valueBuffer );
+				sanitiseString( certIdBuffer ) );
 		}
 
 	/* Send the result to the client */

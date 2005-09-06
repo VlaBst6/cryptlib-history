@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						STREAM Class Constants and Structures				*
-*						  Copyright Peter Gutmann 1993-2004					*
+*						  Copyright Peter Gutmann 1993-2005					*
 *																			*
 ****************************************************************************/
 
@@ -421,7 +421,8 @@ int sPeek( STREAM *stream );
    form is required to handle the fact that the helper function is a varargs
    function */
 
-int retExtStreamFn( STREAM *stream, const int status, const char *format, ... );
+int retExtStreamFn( STREAM *stream, const int status, 
+					const char *format, ... ) PRINTF_FN;
 #define retExtStream	return retExtStreamFn
 
 /* Stream query functions to determine whether a stream is a null stream or

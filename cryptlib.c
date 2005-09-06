@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Core Routines							*
-*						Copyright Peter Gutmann 1992-2004					*
+*						Copyright Peter Gutmann 1992-2005					*
 *																			*
 ****************************************************************************/
 
@@ -150,11 +150,22 @@ static int dispatchManagementAction( const MANAGEMENT_FUNCTION *mgmtFunctions,
 	{
 	int i, status = CRYPT_OK;
 
+	/* If we're performing a startup and the kernel is shutting down, bail 
+	   out now */
+	if( ( action == MANAGEMENT_ACTION_INIT ) && krnlIsExiting() )
+		return( CRYPT_ERROR_PERMISSION );
+
+	/* Dispatch each management action in turn */
 	for( i = 0; mgmtFunctions[ i ] != NULL; i++ )
 		{
 		const int localStatus = mgmtFunctions[ i ]( action );
 		if( cryptStatusError( localStatus ) && cryptStatusOK( status ) )
 			status = localStatus;
+
+		/* If we're performing a startup and the kernel is shutting down, 
+		   bail out now */
+		if( ( action == MANAGEMENT_ACTION_INIT ) && krnlIsExiting() )
+			return( CRYPT_ERROR_PERMISSION );
 		}
 
 	return( status );

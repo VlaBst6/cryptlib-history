@@ -20,7 +20,7 @@
 
 /* #define STATIC_LIB */
 
-/* os_spec.h performs OS and compiler detection that's used by config.h, so 
+/* os_spec.h performs OS and compiler detection that's used by config.h, so
    this file must be applied before config.h */
 
 #ifdef _CONFIG_DEFINED
@@ -66,7 +66,7 @@
   #define __MSDOS16__
 #endif /* 16-bit DOS */
 
-/* Make the Tandem, Macintosh, AS/400, and PalmOS defines look a bit more 
+/* Make the Tandem, Macintosh, AS/400, and PalmOS defines look a bit more
    like the usual ANSI defines used to identify the other OS types */
 
 #ifdef __TANDEM
@@ -113,11 +113,11 @@
   #pragma warning( disable: 4018 )	/* Comparing signed <-> unsigned value */
   #pragma warning( disable: 4127 )	/* Conditional is constant: while( TRUE ) */
 
-  /* Warning level 4.  The function <-> data pointer cast warnings are 
-	 orthogonal and impossible to disable (they override the universal 
-	 'void *' pointer type), the signed/unsigned and size warnings are 
-	 more compiler peeves as for the level 3 warnings, and the struct 
-	 initialisation warnings are standards extensions that the struct 
+  /* Warning level 4.  The function <-> data pointer cast warnings are
+	 orthogonal and impossible to disable (they override the universal
+	 'void *' pointer type), the signed/unsigned and size warnings are
+	 more compiler peeves as for the level 3 warnings, and the struct
+	 initialisation warnings are standards extensions that the struct
 	 STATIC_INIT macros manage for us */
   #pragma warning( disable: 4054 )	/* Cast from fn.ptr -> generic (data) ptr.*/
   #pragma warning( disable: 4055 )	/* Cast from generic (data) ptr. -> fn.ptr.*/
@@ -337,6 +337,17 @@ typedef unsigned char		BYTE;
   #define CONST_SET_STRUCT_A( init )
 #endif /* Watcom C || SunPro C || SCO C */
 
+/* gcc provides extra parameter checking for printf-like functions, which
+   we enable for the extended-return functions */
+
+#ifdef __GNUC__
+  #define PRINTF_FN		__attribute__ (( format( printf, 3, 4 ) ))
+  #define PRINTF_FN_EX	__attribute__ (( format( printf, 4, 5 ) ))
+#else
+  #define PRINTF_FN
+  #define PRINTF_FN_EX
+#endif /* gcc */
+
 /* The Tandem mktime() is broken and can't convert dates beyond 2023, so we
    replace it with our own version which can */
 
@@ -375,6 +386,12 @@ typedef unsigned char		BYTE;
   #define MD5_ASM
   #define SHA1_ASM
   #define RMD160_ASM
+
+  /* Turn on bignum asm as well.  By default this is done anyway, but the
+     x86 asm code contains some additional routines not present in the
+     asm modules for other CPUs, so we have to define this to disable the
+     equivalent C code, which must be present for non-x86 asm modules */
+  #define USE_ASM
 #endif /* Win32 */
 
 /* Enable use of the AES ASM code where possible */
@@ -384,7 +401,7 @@ typedef unsigned char		BYTE;
 #endif /* Win32 */
 
 /* Enable use of zlib ASM longest-match code where possible.  zlib comes
-   with two asm files, of which match.asm (assemble with "ml /Zp /coff 
+   with two asm files, of which match.asm (assemble with "ml /Zp /coff
    /c match.asm") causes segfaults, so we use gvmat32.asm */
 
 #if defined( __WIN32__ )
@@ -586,9 +603,9 @@ typedef unsigned char		BYTE;
 *																			*
 ****************************************************************************/
 
-/* Widechar handling.  Most systems now support this, the only support that 
+/* Widechar handling.  Most systems now support this, the only support that
    we only require is the wchar_t type define.
-   
+
    Unfortunately in order to check for explicitly enabled widechar support
    via config.h we have to include config.h at this point, because this
    file, containing OS- and compiler-specific settings, both detects the

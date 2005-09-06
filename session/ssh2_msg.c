@@ -94,7 +94,7 @@ static int getAddressAndPort( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		hostInfo[ *hostInfoLen ] = '\0';
 		retExt( sessionInfoPtr, CRYPT_ERROR_DUPLICATE,
 				"Received duplicate request for existing host/port %s", 
-				hostInfo );
+				sanitiseString( hostInfo ) );
 		}
 
 	return( CRYPT_OK );
@@ -492,7 +492,8 @@ int sendChannelOpen( SESSION_INFO *sessionInfoPtr )
 					sessionInfoPtr->errorCode );
 		stringBuffer[ stringLen ] = '\0';
 		retExt( sessionInfoPtr, CRYPT_ERROR_OPEN,
-				"Channel open failed, error message '%s'", stringBuffer );
+				"Channel open failed, error message '%s'", 
+				sanitiseString( stringBuffer ) );
 		}
 	currentChannelNo = readUint32( &stream );
 	if( currentChannelNo != channelNo )

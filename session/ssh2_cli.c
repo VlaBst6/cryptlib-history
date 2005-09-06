@@ -417,7 +417,7 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 				userNameBuffer[ userNamePtr->valueLength ] = '\0';
 				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
 						"Server reported: Invalid user name '%s'", 
-						userNameBuffer );
+						sanitiseString( userNameBuffer ) );
 				}
 
 			/* It's a failure after we've tried to authenticate ourselves,
@@ -478,7 +478,9 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			  strCompare( promptBuffer, "Password", 8 ) ) )
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 					"Server requested unknown PAM authentication type "
-					"'%s'", ( nameLength > 0 ) ? nameBuffer : promptBuffer );
+					"'%s'", ( nameLength > 0 ) ? \
+						sanitiseString( nameBuffer ) : \
+						sanitiseString( promptBuffer ) );
 
 		/* Send back the PAM user-auth response:
 

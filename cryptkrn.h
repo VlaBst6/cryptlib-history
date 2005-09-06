@@ -886,7 +886,7 @@ typedef struct {
 
 /****************************************************************************
 *																			*
-*							Object Management Functions						*
+*								Kernel Functions							*
 *																			*
 ****************************************************************************/
 
@@ -955,8 +955,19 @@ int krnlReleaseObject( const int objectHandle );
    actually a thread ID, but since this isn't visible outside the kernel we
    just us a generic int */
 
-int krnlRelinquishSystemObject( const int /* THREAD_HANDLE */ objectOwnerThread );
+int krnlRelinquishSystemObject( const int /*THREAD_HANDLE*/ objectOwnerThread );
 int krnlReacquireSystemObject( void );
+
+/* When the kernel is closing down, any cryptlib-internal threads should exit
+   as quickly as possible.  For threads coming in from the outside this 
+   happens automatically because any message it tries to send fails, but for
+   internal worker threads (for example the async driver-binding thread or
+   randomness polling threads) that don't perform many kernel calls, the 
+   thread has to periodically check whether the kernel is still active.  The
+   following function is used to indicate whether the kernel is shutting
+   down */
+
+BOOLEAN krnlIsExiting( void );
 
 /* Semaphores and mutexes */
 
@@ -970,7 +981,6 @@ typedef enum {
 	MUTEX_NONE,						/* No mutex */
 	MUTEX_SESSIONCACHE,				/* SSL/TLS session cache */
 	MUTEX_SOCKETPOOL,				/* Network socket pool */
-	MUTEX_RANDOMPOLLING,			/* Randomness polling */
 	MUTEX_LAST						/* Last mutex */
 	} MUTEX_TYPE;
 
@@ -1016,7 +1026,7 @@ int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 
 /* Wait on a semaphore, enter and exit a mutex */
 
-void krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore );
+BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore );
 void krnlEnterMutex( const MUTEX_TYPE mutex );
 void krnlExitMutex( const MUTEX_TYPE mutex );
 

@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,14 +49,13 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
  * [including the GNU Public Licence.]
  */
 
-#include <stdio.h>
 #include <stdio.h>
 #if defined( INC_ALL ) || defined( INC_CHILD )
   #include "bn_lcl.h"
@@ -68,7 +67,7 @@
 int BN_add(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	{
 	const BIGNUM *tmp;
-	int a_neg = a->neg;
+	int a_neg = a->neg, ret;
 
 	bn_check_top(a);
 	bn_check_top(b);
@@ -99,20 +98,17 @@ int BN_add(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 		return(1);
 		}
 
-	if (!BN_uadd(r,a,b)) return(0);
-	if (a_neg) /* both are neg */
-		r->neg=1;
-	else
-		r->neg=0;
-	return(1);
+	ret = BN_uadd(r,a,b);
+	r->neg = a_neg;
+	bn_check_top(r);
+	return ret;
 	}
 
-/* unsigned add of b to a, r must be large enough */
+/* unsigned add of b to a */
 int BN_uadd(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	{
-	register int i;
-	int max,min;
-	BN_ULONG *ap,*bp,*rp,carry,t1;
+	int max,min,dif;
+	BN_ULONG *ap,*bp,*rp,carry,t1,t2;
 	const BIGNUM *tmp;
 
 	bn_check_top(a);
@@ -120,11 +116,12 @@ int BN_uadd(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 
 	if (a->top < b->top)
 		{ tmp=a; a=b; b=tmp; }
-	max=a->top;
-	min=b->top;
+	max = a->top;
+	min = b->top;
+	dif = max - min;
 
 	if (bn_wexpand(r,max+1) == NULL)
-		return(0);
+		return 0;
 
 	r->top=max;
 
@@ -132,46 +129,46 @@ int BN_uadd(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	ap=a->d;
 	bp=b->d;
 	rp=r->d;
-	carry=0;
 
 	carry=bn_add_words(rp,ap,bp,min);
 	rp+=min;
 	ap+=min;
 	bp+=min;
-	i=min;
 
 	if (carry)
 		{
-		while (i < max)
+		while (dif)
 			{
-			i++;
-			t1= *(ap++);
-			if ((*(rp++)=(t1+1)&BN_MASK2) >= t1)
+			dif--;
+			t1 = *(ap++);
+			t2 = (t1+1) & BN_MASK2;
+			*(rp++) = t2;
+			if (t2)
 				{
 				carry=0;
 				break;
 				}
 			}
-		if ((i >= max) && carry)
+		if (carry)
 			{
-			*(rp++)=1;
+			/* carry != 0 => dif == 0 */
+			*rp = 1;
 			r->top++;
 			}
 		}
-	if (rp != ap)
-		{
-		for (; i<max; i++)
-			*(rp++)= *(ap++);
-		}
-	/* memcpy(rp,ap,sizeof(*ap)*(max-i));*/
+	if (dif && rp != ap)
+		while (dif--)
+			/* copy remaining words if ap != rp */
+			*(rp++) = *(ap++);
 	r->neg = 0;
-	return(1);
+	bn_check_top(r);
+	return 1;
 	}
 
 /* unsigned subtraction of b from a, a must be larger than b. */
 int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	{
-	int max,min;
+	int max,min,dif;
 	register BN_ULONG t1,t2,*ap,*bp,*rp;
 	int i,carry;
 #if defined(IRIX_CC_BUG) && !defined(LINT)
@@ -181,14 +178,16 @@ int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	bn_check_top(a);
 	bn_check_top(b);
 
-	if (a->top < b->top) /* hmm... should not be happening */
+	max = a->top;
+	min = b->top;
+	dif = max - min;
+
+	if (dif < 0)	/* hmm... should not be happening */
 		{
 		BNerr(BN_F_BN_USUB,BN_R_ARG2_LT_ARG3);
 		return(0);
 		}
 
-	max=a->top;
-	min=b->top;
 	if (bn_wexpand(r,max) == NULL) return(0);
 
 	ap=a->d;
@@ -197,7 +196,7 @@ int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 
 #if 1
 	carry=0;
-	for (i=0; i<min; i++)
+	for (i = min; i != 0; i--)
 		{
 		t1= *(ap++);
 		t2= *(bp++);
@@ -221,17 +220,20 @@ int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 	ap+=min;
 	bp+=min;
 	rp+=min;
-	i=min;
 #endif
 	if (carry) /* subtracted */
 		{
-		while (i < max)
+		if (!dif)
+			/* error: a < b */
+			return 0;
+		while (dif)
 			{
-			i++;
-			t1= *(ap++);
-			t2=(t1-1)&BN_MASK2;
-			*(rp++)=t2;
-			if (t1 > t2) break;
+			dif--;
+			t1 = *(ap++);
+			t2 = (t1-1)&BN_MASK2;
+			*(rp++) = t2;
+			if (t1)
+				break;
 			}
 		}
 #if 0
@@ -241,13 +243,13 @@ int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 		{
 		for (;;)
 			{
-			if (i++ >= max) break;
+			if (!dif--) break;
 			rp[0]=ap[0];
-			if (i++ >= max) break;
+			if (!dif--) break;
 			rp[1]=ap[1];
-			if (i++ >= max) break;
+			if (!dif--) break;
 			rp[2]=ap[2];
-			if (i++ >= max) break;
+			if (!dif--) break;
 			rp[3]=ap[3];
 			rp+=4;
 			ap+=4;
@@ -257,7 +259,7 @@ int BN_usub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 
 	r->top=max;
 	r->neg=0;
-	bn_fix_top(r);
+	bn_correct_top(r);
 	return(1);
 	}
 
@@ -308,6 +310,7 @@ int BN_sub(BIGNUM *r, const BIGNUM *a, const BIGNUM *b)
 		if (!BN_usub(r,a,b)) return(0);
 		r->neg=0;
 		}
+	bn_check_top(r);
 	return(1);
 	}
 

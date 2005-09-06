@@ -9,9 +9,9 @@
 
 #define _CRYPTLIB_DEFINED
 
-/* The current cryptlib version: 3.2.1.0 */
+/* The current cryptlib version: 3.2.2.0 */
 
-#define CRYPTLIB_VERSION	3210
+#define CRYPTLIB_VERSION	3220
 
 /* Fixup for Windows support.  We need to include windows.h for various types
    and prototypes needed for DLL's.  In addition wincrypt.h defines some
@@ -1113,6 +1113,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_ISSUER,		/* Cert: IssuerName */
 	CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER,	/* Cert: IssuerAndSerial */
 	CRYPT_IATTRIBUTE_SPKI,			/* Cert: Encoded SubjectPublicKeyInfo */
+	CRYPT_IATTRIBUTE_CERTHASHALGO,	/* Cert: Hash algo.used for cert */
 	CRYPT_IATTRIBUTE_CERTCOLLECTION,/* Cert: Certs added to cert chain */
 	CRYPT_IATTRIBUTE_RESPONDERURL,	/* Cert: RTCS/OCSP responder name */
 	CRYPT_IATTRIBUTE_RTCSREQUEST,	/* Cert: RTCS req.info added to RTCS resp.*/

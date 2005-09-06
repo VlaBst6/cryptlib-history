@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								Kernel Initialisation						*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2005					*
 *																			*
 ****************************************************************************/
 
@@ -242,9 +242,12 @@ int krnlBeginInit( void )
 		return( CRYPT_ERROR_FAILED );
 		}
 
-	/* Initialise the kernel data block, excluding the initialisation 
-	   mutex */
-	memset( krnlDataStart, 0, KRNL_DATA_SIZE );
+	/* Initialise the ephemeral portions of the kernel data block.  Since
+	   the shutdown level value is non-ephemeral (it has to persist across
+	   shutdowns to handle threads that may still be active inside cryptlib
+	   when a shutdown occurs), we have to clear this explicitly */
+	CLEAR_KERNEL_DATA();
+	krnlData->shutdownLevel = SHUTDOWN_LEVEL_NONE;
 
 	/* Initialise all of the kernel modules.  Except for the allocation of 
 	   the kernel object table this is all straight static initialistion 
@@ -291,7 +294,18 @@ void krnlCompleteInit( void )
 
 /* Begin and complete the kernel shutdown, leaving the initialisation
    mutex locked between the two calls to allow external shutdown of
-   further, non-kernel-related items */
+   further, non-kernel-related items.  The shutdown proceeds as follows:
+
+	lock initialisation mutex;
+	signal internal worker threads (async.init, randomness poll)
+		to exit (shutdownLevel = SHUTDOWN_LEVEL_THREADS);
+	signal all non-destroy messages to fail 
+		(shutdownLevel = SHUTDOWN_LEVEL_MESSAGES in destroyObjects());
+	destroy objects (via destroyObjects()); 
+	shut down kernel modules;
+	shut down kernel mechanisms (semaphores, messages)
+		(shutdownLevel = SHUTDOWN_LEVEL_MUTEXES);
+	clear kernel data; */
 
 int krnlBeginShutdown( void )
 	{
@@ -306,6 +320,9 @@ int krnlBeginShutdown( void )
 		return( CRYPT_ERROR_NOTINITED );
 		}
 
+	/* Signal all remaining internal threads to exit */
+	krnlData->shutdownLevel = SHUTDOWN_LEVEL_THREADS;
+
 	return( CRYPT_OK );
 	}
 
@@ -315,6 +332,10 @@ int krnlCompleteShutdown( void )
 		   the external shutdown, so we can't currently do it here */
 	destroyObjects();
 #endif /* 0 */
+
+	/* Once the kernel objects have been destroyed, we're in the closing-down
+	   state in which no more messages are processed */
+	assert( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES );
 
 	/* Shut down all of the kernel modules */
 	endAllocation();
@@ -329,8 +350,14 @@ int krnlCompleteShutdown( void )
 	endSemaphores();
 	endSendMessage();
 
-	/* Turn off the lights on the way out */
-	zeroise( krnlDataStart, KRNL_DATA_SIZE );
+	/* At this point all kernel services have been shut down */
+	assert( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES );
+
+	/* Turn off the lights on the way out.  Note that the kernel data-
+	   clearing operation leaves the shutdown level set to handle any 
+	   threads that may still be active */
+	CLEAR_KERNEL_DATA();
+	krnlData->shutdownLevel = SHUTDOWN_LEVEL_ALL;
 	MUTEX_UNLOCK( initialisation );
 
 #ifdef STATIC_INIT
@@ -340,6 +367,18 @@ int krnlCompleteShutdown( void )
 #endif /* STATIC_INIT */
 
 	return( CRYPT_OK );
+	}
+
+/* Indicate to a cryptlib-internal worker thread that the kernel is shutting
+   down and the thread should exit as quickly as possible.  We don't protect
+   this check with a mutex since it can be called after the kernel mutexes 
+   have been destroyed.  This lack of mutex protection for the flag isn't a 
+   serious problem, it's checked at regular intervals by worker threads so 
+   if the thread misses the flag update it'll bve caught at the next check */
+
+BOOLEAN krnlIsExiting( void )
+	{
+	return( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_THREADS );
 	}
 
 /****************************************************************************

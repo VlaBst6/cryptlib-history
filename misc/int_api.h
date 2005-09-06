@@ -66,6 +66,12 @@ int attributeCopy( RESOURCE_DATA *msgData, const void *attribute,
 
 BOOLEAN algoAvailable( const CRYPT_ALGO_TYPE cryptAlgo );
 
+/* For a given algorithm pair, check whether the first is stronger than the
+   second */
+
+BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1, 
+						const CRYPT_ALGO_TYPE algorithm2 );
+
 /* Compare two strings in a case-insensitive manner for those systems that
    don't have this function.  PalmOS has strcasecmp()/strncasecmp(), but
    these aren't i18n-aware, so we have to use a system function instead */
@@ -88,6 +94,12 @@ BOOLEAN algoAvailable( const CRYPT_ALGO_TYPE cryptAlgo );
   int strnicmp( const char *src, const char *dest, const int length );
   int stricmp( const char *src, const char *dest );
 #endif /* OS-specific case-insensitive string compares */
+
+/* Sanitise a string before passing it back to the user.  This is used to
+   clear potential problem characters (for example control characters)
+   from strings passed back from untrusted sources */
+
+char *sanitiseString( char *string );
 
 /* MIME header-line parsing routines.  The caller declares a state variable
    of type MIME_STATE, calls initMIMEstate() to initialise it, calls

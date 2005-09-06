@@ -982,12 +982,19 @@ int checkCert( CERT_INFO *subjectCertInfoPtr,
 			   CRYPT_ERRTYPE_TYPE *errorType );
 int checkCertChain( CERT_INFO *certInfoPtr );
 
-/* Check that a public-key certificate/key is valid for a particular 
-   purpose */
+/* Certificate key check flags.  These are:
+
+	FLAG_NONE: No specific check.
+	FLAG_CA: Certificate must contain a CA key.
+	FLAG_PRIVATEKEY: Check for constraints on the corresponding private 
+			key's usage, not just the public key usage.
+	FLAG_GENCHECK: Perform a general check that the key usage details are
+			in order, without checking for a particular usage */
 
 #define CHECKKEY_FLAG_NONE			0x01	/* No specific checks */
 #define CHECKKEY_FLAG_CA			0x02	/* Must be CA key */
 #define CHECKKEY_FLAG_PRIVATEKEY	0x04	/* Check priv.key constraints */
+#define CHECKKEY_FLAG_GENCHECK		0x08	/* General details check */
 
 int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
 								CRYPT_ATTRIBUTE_TYPE *errorLocus, 

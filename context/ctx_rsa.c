@@ -9,6 +9,7 @@
    putting a trapdoor into the laws of mathematics.
 														-- Lyle Seaman */
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -143,7 +144,7 @@ static int selfTest( void )
 	BN_init( &pkcInfo->tmp1 );
 	BN_init( &pkcInfo->tmp2 );
 	BN_init( &pkcInfo->tmp3 );
-	BN_CTX_init( &pkcInfo->bnCTX );
+	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_n );
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_q );
@@ -208,7 +209,7 @@ static int selfTest( void )
 	BN_clear_free( &pkcInfo->tmp1 );
 	BN_clear_free( &pkcInfo->tmp2 );
 	BN_clear_free( &pkcInfo->tmp3 );
-	BN_CTX_free( &pkcInfo->bnCTX );
+	BN_CTX_free( pkcInfo->bnCTX );
 	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_n );
 	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_p );
 	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_q );
@@ -253,7 +254,7 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   extracted from the bignum */
 	BN_bin2bn( buffer, length, data );
 	zeroise( buffer, length );	/* Clear buffer while data is in bignum */
-	CK( BN_mod_exp_mont( data, data, e, n, &pkcInfo->bnCTX, 
+	CK( BN_mod_exp_mont( data, data, e, n, pkcInfo->bnCTX, 
 						 &pkcInfo->rsaParam_mont_n ) );
 	BN_bn2bin( data, buffer + ( length - BN_num_bytes( data ) ) );
 
@@ -337,19 +338,19 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   data = ( ( rand^e ) * data ) mod n */
 	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
 		CK( BN_mod_mul( data, data, &pkcInfo->rsaParam_blind_k, 
-						&pkcInfo->rsaParam_n, &pkcInfo->bnCTX ) );
+						&pkcInfo->rsaParam_n, pkcInfo->bnCTX ) );
 
 	/* Rather than decrypting by computing a modexp with full mod n 
 	   precision, compute a shorter modexp with mod p and mod q precision:
 		p2 = ( ( C mod p ) ** exponent1 ) mod p
 		q2 = ( ( C mod q ) ** exponent2 ) mod q */
 	CK( BN_mod( p2, data, p,			/* p2 = C mod p  */
-				&pkcInfo->bnCTX ) );
-	CK( BN_mod_exp_mont( p2, p2, e1, p, &pkcInfo->bnCTX, 
+				pkcInfo->bnCTX ) );
+	CK( BN_mod_exp_mont( p2, p2, e1, p, pkcInfo->bnCTX, 
 						 &pkcInfo->rsaParam_mont_p ) );
 	CK( BN_mod( q2, data, q,			/* q2 = C mod q  */
-				&pkcInfo->bnCTX ) );
-	CK( BN_mod_exp_mont( q2, q2, e2, q, &pkcInfo->bnCTX, 
+				pkcInfo->bnCTX ) );
+	CK( BN_mod_exp_mont( q2, q2, e2, q, pkcInfo->bnCTX, 
 						 &pkcInfo->rsaParam_mont_q ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -367,9 +368,9 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* M = ( ( ( p2 * u ) mod p ) * q ) + q2 */
 	CK( BN_mod_mul( data, p2, u, p,		/* data = ( p2 * u ) mod p */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 	CK( BN_mul( p2, data, q,			/* p2 = data * q (bn can't reuse data) */
-				&pkcInfo->bnCTX ) );
+				pkcInfo->bnCTX ) );
 	CK( BN_add( data, p2, q2 ) );		/* data = p2 + q2 */
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -383,7 +384,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		BIGNUM *k = &pkcInfo->rsaParam_blind_k;
 		BIGNUM *kInv = &pkcInfo->rsaParam_blind_kInv;
 
-		CK( BN_mod_mul( data, data, kInv, n, &pkcInfo->bnCTX ) );
+		CK( BN_mod_mul( data, data, kInv, n, pkcInfo->bnCTX ) );
 		
 		/* Update the blinding values in such a way that we get new random
 		   (that is, unpredictable to an outsider) numbers of the correct
@@ -391,8 +392,8 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		   with new random data:
 	
 			k = ( k^2 ) mod n */
-		CK( BN_mod_mul( k, k, k, n, &pkcInfo->bnCTX ) );
-		CK( BN_mod_mul( kInv, kInv, kInv, n, &pkcInfo->bnCTX ) );
+		CK( BN_mod_mul( k, k, k, n, pkcInfo->bnCTX ) );
+		CK( BN_mod_mul( kInv, kInv, kInv, n, pkcInfo->bnCTX ) );
 		if( bnStatusError( bnStatus ) )
 			return( getBnStatus( bnStatus ) );
 		}

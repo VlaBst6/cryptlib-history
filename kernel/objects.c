@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Kernel Object Management						*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2005					*
 *																			*
 ****************************************************************************/
 
@@ -267,14 +267,16 @@ int destroyObjects( void )
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	int depth, objectHandle, status = CRYPT_OK;
 
-	/* Indicate that we're in the middle of a shutdown.  From now on all
-	   messages other than object-destruction ones will be rejected by the
-	   kernel.  This is needed in order to have any remaining active objects
-	   exit quickly, since we don't want them to block the shutdown.  Note
-	   that we do this before we lock the object table to encourage anything
-	   that might have the table locked to exit quickly once we try and lock
-	   the table */
-	krnlData->isClosingDown = TRUE;
+	PRE( krnlData->shutdownLevel == SHUTDOWN_LEVEL_THREADS );
+
+	/* Indicate that we're shutting down the object handling.  From now on 
+	   all messages other than object-destruction ones will be rejected by 
+	   the kernel.  This is needed in order to have any remaining active 
+	   objects exit quickly, since we don't want them to block the shutdown.  
+	   Note that we do this before we lock the object table to encourage 
+	   anything that might have the table locked to exit quickly once we try 
+	   and lock the table */
+	krnlData->shutdownLevel = SHUTDOWN_LEVEL_MESSAGES;
 
 	/* Lock the object table to ensure that other threads don't try to
 	   access it */
@@ -565,7 +567,7 @@ int krnlCreateObject( void **objectDataPtr, const int objectDataSize,
 	if( !isWritePtr( krnlData, sizeof( KERNEL_DATA ) ) || \
 		!krnlData->isInitialised )
 		return( CRYPT_ERROR_NOTINITED );
-	if( krnlData->isClosingDown )
+	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES )
 		{
 		assert( NOTREACHED );
 		return( CRYPT_ERROR_PERMISSION );

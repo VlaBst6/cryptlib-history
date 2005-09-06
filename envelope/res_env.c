@@ -574,7 +574,7 @@ static int addEnvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	ACTION_LIST *actionListPtr, **actionListHeadPtrPtr, *hashActionPtr;
 	ACTION_RESULT actionResult;
 	ACTION_TYPE actionType;
-	int status;
+	int algorithm, status;
 
 	/* If it's meta-information, remember the value */
 	if( envInfo == CRYPT_ENVINFO_DATASIZE )
@@ -969,8 +969,21 @@ static int addEnvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	if( actionType != ACTION_SIGN )
 		return( status );
 
-	/* If there's no subject hash action available, create one so we can 
-	   connect it to the signature action */
+	/* Check whether the hash algorithm used in the cert is stronger than the
+	   one that's set for the envelope as a whole, and if it is, upgrade the
+	   envelope hash algo.  This is based on the fact that anyone who's able
+	   to verify the cert using a stronger hash algorithm must also be able 
+	   to verify the envelope using the stronger algorithm.  This allows a
+	   transparent upgrade to stronger hash algorithms as they become 
+	   available */
+	status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, 
+							  &algorithm, CRYPT_IATTRIBUTE_CERTHASHALGO );
+	if( cryptStatusOK( status ) && \
+		isStrongerHash( algorithm, envelopeInfoPtr->defaultHash ) )
+		envelopeInfoPtr->defaultHash = algorithm;
+
+	/* If there's no subject hash action available, create one so that we 
+	   can connect it to the signature action */
 	if( envelopeInfoPtr->actionList == NULL )
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;

@@ -1219,7 +1219,7 @@ local uInt longest_match_fast(deflate_state *s, IPos cur_match)
 /* ===========================================================================
  * Check that the match at match_start is indeed a match.
  */
-local void check_match(deflate_state *s, IPos start, match, int length)
+local void check_match(deflate_state *s, IPos start, IPos match, int length)
 {
     /* check that the match is indeed a match */
     if (zmemcmp(s->window + match,

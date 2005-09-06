@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -63,7 +63,7 @@
  * are met:
  *
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ *    notice, this list of conditions and the following disclaimer. 
  *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in
@@ -143,6 +143,7 @@ int BN_gcd(BIGNUM *r, const BIGNUM *in_a, const BIGNUM *in_b, BN_CTX *ctx)
 	ret=1;
 err:
 	BN_CTX_end(ctx);
+	bn_check_top(r);
 	return(ret);
 	}
 
@@ -197,6 +198,7 @@ static BIGNUM *euclid(BIGNUM *a, BIGNUM *b)
 		{
 		if (!BN_lshift(a,a,shifts)) goto err;
 		}
+	bn_check_top(a);
 	return(a);
 err:
 	return(NULL);
@@ -254,7 +256,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 		 * is sufficiently small (about 400 .. 500 bits on 32-bit
 		 * sytems, but much more on 64-bit systems) */
 		int shift;
-
+		
 		while (!BN_is_zero(B))
 			{
 			/*
@@ -271,7 +273,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 			while (!BN_is_bit_set(B, shift)) /* note that 0 < B */
 				{
 				shift++;
-
+				
 				if (BN_is_odd(X))
 					{
 					if (!BN_uadd(X, X, n)) goto err;
@@ -290,7 +292,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 			while (!BN_is_bit_set(A, shift)) /* note that 0 < A */
 				{
 				shift++;
-
+				
 				if (BN_is_odd(Y))
 					{
 					if (!BN_uadd(Y, Y, n)) goto err;
@@ -303,7 +305,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 				if (!BN_rshift(A, A, shift)) goto err;
 				}
 
-
+			
 			/* We still have (1) and (2).
 			 * Both  A  and  B  are odd.
 			 * The following computations ensure that
@@ -339,13 +341,13 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 		while (!BN_is_zero(B))
 			{
 			BIGNUM *tmp;
-
+			
 			/*
 			 *      0 < B < A,
 			 * (*) -sign*X*a  ==  B   (mod |n|),
 			 *      sign*Y*a  ==  A   (mod |n|)
 			 */
-
+			
 			/* (D, M) := (A/B, A%B) ... */
 			if (BN_num_bits(A) == BN_num_bits(B))
 				{
@@ -386,20 +388,20 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 				{
 				if (!BN_div(D,M,A,B,ctx)) goto err;
 				}
-
+			
 			/* Now
 			 *      A = D*B + M;
 			 * thus we have
 			 * (**)  sign*Y*a  ==  D*B + M   (mod |n|).
 			 */
-
+			
 			tmp=A; /* keep the BIGNUM object, the value does not matter */
-
+			
 			/* (A, B) := (B, A mod B) ... */
 			A=B;
 			B=M;
 			/* ... so we have  0 <= B < A  again */
-
+			
 			/* Since the former  M  is now  B  and the former  B  is now  A,
 			 * (**) translates into
 			 *       sign*Y*a  ==  D*A + B    (mod |n|),
@@ -418,7 +420,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 			 *       sign*Y*a  ==  A   (mod |n|).
 			 * Note that  X  and  Y  stay non-negative all the time.
 			 */
-
+			
 			/* most of the time D is very small, so we can optimize tmp := D*X+Y */
 			if (BN_is_one(D))
 				{
@@ -445,14 +447,14 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 					}
 				if (!BN_add(tmp,tmp,Y)) goto err;
 				}
-
+			
 			M=Y; /* keep the BIGNUM object, the value does not matter */
 			Y=X;
 			X=tmp;
 			sign = -sign;
 			}
 		}
-
+		
 	/*
 	 * The while loop (Euclid's algorithm) ends when
 	 *      A == gcd(a,n);
@@ -466,7 +468,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 		if (!BN_sub(Y,n,Y)) goto err;
 		}
 	/* Now  Y*a  ==  A  (mod |n|).  */
-
+	
 
 	if (BN_is_one(A))
 		{
@@ -489,5 +491,7 @@ BIGNUM *BN_mod_inverse(BIGNUM *in,
 err:
 	if ((ret == NULL) && (in == NULL)) BN_free(R);
 	BN_CTX_end(ctx);
+	if (ret)
+		bn_check_top(ret);
 	return(ret);
 	}

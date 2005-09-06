@@ -89,28 +89,28 @@
 
    If the thread/task handle can be used as a synchronisation object, these
    additional operations are turned into no-ops.
-   
-   Several of the embedded OSes are extremely difficult to work with because 
-   their kernels perform no memory (or, often, resource) management of their 
+
+   Several of the embedded OSes are extremely difficult to work with because
+   their kernels perform no memory (or, often, resource) management of their
    own, assuming that all memory will be allocated by the caller.  In the
    simplest case this means that the thread stack/workspace has to be user-
-   allocated, in the worst case every object handle variable that's normally 
-   a simple scalar value in other OSes is a composite non-scalar type that 
-   contains all of the object's data, requiring that the caller manually 
-   allocate state data for threads, mutexes, and semaphores rather than 
+   allocated, in the worst case every object handle variable that's normally
+   a simple scalar value in other OSes is a composite non-scalar type that
+   contains all of the object's data, requiring that the caller manually
+   allocate state data for threads, mutexes, and semaphores rather than
    having the OS do it for them.
-   
+
    For things like mutex and semaphore 'handles', which have a fixed number
    or location, this is manageable by statically allocating the storage in
-   advance.  However it significantly complicates things like thread 
-   handling because the thread that dynamically creates a worker thread has 
-   to be around later on to clean up after it when it terminates, and the 
-   state data has to be maintained in external (non-thread) storage.  We 
-   handle this in one of two ways, either by not using cryptlib-internal 
+   advance.  However it significantly complicates things like thread
+   handling because the thread that dynamically creates a worker thread has
+   to be around later on to clean up after it when it terminates, and the
+   state data has to be maintained in external (non-thread) storage.  We
+   handle this in one of two ways, either by not using cryptlib-internal
    threads (they're only used for initialisation and keygen, neither of
    which will benefit much from the ability to run them in the background in
-   an embedded system), or by wrapping the threading functions in our own 
-   ones which allocate memory as required and access the information via a 
+   an embedded system), or by wrapping the threading functions in our own
+   ones which allocate memory as required and access the information via a
    scalar handle.
 
    To enable the use of thread wrappers, see the xxx_THREAD_WRAPPERS define
@@ -335,7 +335,7 @@ int threadPriority( void );
 #define THREAD_HANDLE			KnThreadLid
 #define MUTEX_HANDLE			KnMutex
 
-/* Mutex management functions.  ChorusOS provides no way to destroy a 
+/* Mutex management functions.  ChorusOS provides no way to destroy a
    mutex once it's initialised, presumably it gets cleaned up when the
    owning actor terminates */
 
@@ -372,21 +372,21 @@ int threadPriority( void );
 		else \
 			mutexRel( &krnlData->name##Mutex );
 
-/* Thread management functions.  ChorusOS threads require that the user 
-   allocate the stack space for them, unlike virtually every other embedded 
-   OS, which make this at most a rarely-used option.  To handle this, we use 
-   our own wrappers which hide this mess.  A second problem with ChorusOS 
-   threads is that there's no easy way to pass an argument to a thread, so 
+/* Thread management functions.  ChorusOS threads require that the user
+   allocate the stack space for them, unlike virtually every other embedded
+   OS, which make this at most a rarely-used option.  To handle this, we use
+   our own wrappers which hide this mess.  A second problem with ChorusOS
+   threads is that there's no easy way to pass an argument to a thread, so
    we have to include it as a "software register" value that the thread then
    obtains via threadLoadR().
 
-   The 4096 byte storage area provides enough space for about half a dozen 
-   levels of function nesting (if no large on-stack arrays are used), this 
-   should be enough for background init but probably won't be sufficient for 
-   the infinitely-recursive OpenSSL bignum code, so the value may need to be 
+   The 4096 byte storage area provides enough space for about half a dozen
+   levels of function nesting (if no large on-stack arrays are used), this
+   should be enough for background init but probably won't be sufficient for
+   the infinitely-recursive OpenSSL bignum code, so the value may need to be
    adjusted if background keygen is being used.
-   
-   ChorusOS provides no way to destroy a semaphore once it's initialised, 
+
+   ChorusOS provides no way to destroy a semaphore once it's initialised,
    presumably it gets cleaned up when the owning actor terminates */
 
 #define THREADFUNC_DEFINE( name, arg )	void name( void )
@@ -423,10 +423,10 @@ int threadPriority( void );
 #define THREAD_CLOSE( sync )
 
 /* Because of the problems with resource management of Chorus thread stack
-   space, we no-op out threads unless we're using wrappers by ensuring that 
-   any attempt to spawn a thread inside cryptlib fails, falling back to the 
+   space, we no-op out threads unless we're using wrappers by ensuring that
+   any attempt to spawn a thread inside cryptlib fails, falling back to the
    non-threaded alternative.  Note that cryptlib itself is still thread-
-   safe, it just can't do its init or keygen in an internal background 
+   safe, it just can't do its init or keygen in an internal background
    thread */
 
 #ifndef CHORUS_THREAD_WRAPPERS
@@ -1196,6 +1196,29 @@ rtems_id threadSelf( void );
 #if defined( __osf__ ) || defined( __alpha__ )
   #define __C_ASM_H
 #endif /* Alpha */
+
+/* Linux threads are a particularly peculiar implementation, being based on
+   the Linux clone() system call, which clones an entire process and uses
+   a special "manager thread" to provide the appearance of a multithreaded
+   application.  This threads == processes model produces very strange
+   effects such as the appearance of a mass of (pseudo-)processes, each with
+   their own PID, that appear to consume more memory than is physically
+   present.  Another problem was that signals, which are done on a per-PID
+   basis and should have been consistent across all threads in the process,
+   were instead only delivered to one thread/pseudo-process and never got
+   any further.  The clone()-based hack results in non-conformance with the
+   pthreads spec as well as significant scalability and performance issues.
+
+   The problem was finally (mostly) fixed with Ingo Molnar's native Posix
+   thread library (NPTL) patches to the 2.5 development) kernel, which
+   still retains the strange clone()-based threading mechanism but provides
+   enough kludges to other parts of the kernel that it's not longer so
+   obvious.  For example the clone() call has been optimised to make it
+   more lightweight, Molnar's O(1) scheduler reduces the overhead of the
+   process-per-thread mechanism, fast userspace mutexes eliminate the need
+   for interthread signalling to implement locking, and most importantly the
+   kernel identification of all threads has been collapsed to a single PID,
+   eliminating the confusion caused by the cloned pseudo-processes */
 
 #include <pthread.h>
 #include <sys/time.h>

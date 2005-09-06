@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  Certificate Chain Management Routines					*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2005					*
 *																			*
 ****************************************************************************/
 
@@ -836,8 +836,13 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 
 			/* Skip the contentType OID, read the content encapsulation and 
 			   header if necessary, and burrow down into the PKCS #7 content.  
-			   First we read the wrapper */
-			readUniversal( stream );
+			   First we read the wrapper.  We use readRawObject() rather 
+			   than readUniversal() to make sure that we're at least getting 
+			   an OID at this point */
+			status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
+									BER_OBJECT_IDENTIFIER );
+			if( cryptStatusError( status ) )
+				return( status );
 			readConstructed( stream, NULL, 0 );
 			readSequence( stream, NULL );
 
@@ -854,19 +859,42 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				sSkip( stream, length );
 
 			/* Read the ContentInfo header, contentType OID (ignored) and 
-			   the inner content encapsulation.  Sometimes we may 
-			   (incorrectly) get passed actual signed data (rather than 
-			   degenerate zero-length data signifying a pure cert chain), if 
-			   there's data present we skip it */
+			   the inner content encapsulation.  We use readRawObject()
+			   rather than readUniversal() to make sure that we're at least
+			   getting an OID at this point.
+
+			   Sometimes we may (incorrectly) get passed actual signed data 
+			   (rather than degenerate zero-length data signifying a pure 
+			   cert chain), if there's data present we skip it */
 			readSequenceI( stream, &length );
 			status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
 									BER_OBJECT_IDENTIFIER );
 			if( cryptStatusError( status ) )
 				return( status );
 			if( length == CRYPT_UNUSED )
+				{
 				/* It's an indefinite-length ContentInfo, check for the 
-				   EOC */
+				   EOC.  If there's no EOC present that means there's 
+				   indefinite-length inner data present and we have to dig 
+				   down further */
 				status = checkEOC( stream );
+				if( status == FALSE )
+					{
+					int innerLength;
+
+					/* Try and get the length from the ContentInfo.  We're
+					   really reaching the point of diminishing return here,
+					   if we can't get a length at this point we bail out
+					   since we're not even supposed to be getting down to
+					   this level */
+					status = readConstructedI( stream, &innerLength, 0 );
+					if( cryptStatusError( status ) )
+						return( status );
+					if( innerLength == CRYPT_UNUSED )
+						return( CRYPT_ERROR_BADDATA );
+					status = sSkip( stream, innerLength );
+					}
+				}
 			else
 				/* If we've been fed signed data (i.e. the ContentInfo has 
 				   the content field present), skip the content to get to 

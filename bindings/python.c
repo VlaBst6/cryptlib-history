@@ -267,18 +267,18 @@ static PyObject* processStatusReturnCryptObjectInfo(int status, CRYPT_OBJECT_INF
 static PyObject* python_cryptInit(PyObject* self, PyObject* args)
 {
 	int status = 0;
-
+	
 	status = cryptInit();
-
+	
 	return(processStatus(status));
 }
 
 static PyObject* python_cryptEnd(PyObject* self, PyObject* args)
 {
 	int status = 0;
-
+	
 	status = cryptEnd();
-
+	
 	return(processStatus(status));
 }
 
@@ -287,12 +287,12 @@ static PyObject* python_cryptQueryCapability(PyObject* self, PyObject* args)
 	int status = 0;
 	CRYPT_QUERY_INFO cryptQueryInfo;
 	int cryptAlgo = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptAlgo))
 	    return(NULL);
-
+	
 	status = cryptQueryCapability(cryptAlgo, &cryptQueryInfo);
-
+	
 	return(processStatusReturnCryptQueryInfo(status, cryptQueryInfo));
 }
 
@@ -302,12 +302,12 @@ static PyObject* python_cryptCreateContext(PyObject* self, PyObject* args)
 	int cryptContext = 0;
 	int cryptUser = 0;
 	int cryptAlgo = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptUser, &cryptAlgo))
 	    return(NULL);
-
+	
 	status = cryptCreateContext(&cryptContext, cryptUser, cryptAlgo);
-
+	
 	return(processStatusReturnCryptHandle(status, cryptContext));
 }
 
@@ -315,12 +315,12 @@ static PyObject* python_cryptDestroyContext(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptContext = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptContext))
 	    return(NULL);
-
+	
 	status = cryptDestroyContext(cryptContext);
-
+	
 	return(processStatus(status));
 }
 
@@ -328,12 +328,12 @@ static PyObject* python_cryptDestroyObject(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptObject = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptObject))
 	    return(NULL);
-
+	
 	status = cryptDestroyObject(cryptObject);
-
+	
 	return(processStatus(status));
 }
 
@@ -341,12 +341,12 @@ static PyObject* python_cryptGenerateKey(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptContext = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptContext))
 	    return(NULL);
-
+	
 	status = cryptGenerateKey(cryptContext);
-
+	
 	return(processStatus(status));
 }
 
@@ -354,12 +354,12 @@ static PyObject* python_cryptGenerateKeyAsync(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptContext = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptContext))
 	    return(NULL);
-
+	
 	status = cryptGenerateKeyAsync(cryptContext);
-
+	
 	return(processStatus(status));
 }
 
@@ -367,12 +367,12 @@ static PyObject* python_cryptAsyncQuery(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptObject = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptObject))
 	    return(NULL);
-
+	
 	status = cryptAsyncQuery(cryptObject);
-
+	
 	return(processStatus(status));
 }
 
@@ -380,12 +380,12 @@ static PyObject* python_cryptAsyncCancel(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int cryptObject = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &cryptObject))
 	    return(NULL);
-
+	
 	status = cryptAsyncCancel(cryptObject);
-
+	
 	return(processStatus(status));
 }
 
@@ -396,15 +396,15 @@ static PyObject* python_cryptEncrypt(PyObject* self, PyObject* args)
 	PyObject* buffer = NULL;
 	int length = 0;
 	unsigned char* bufferPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iO", &cryptContext, &buffer))
 	    return(NULL);
-
+	
 	if (!getPointerWrite(buffer, &bufferPtr, &length))
 		goto finish;
-
+	
 	status = cryptEncrypt(cryptContext, bufferPtr, length);
-
+	
 	finish:
 	releasePointer(buffer, bufferPtr);
 	return(processStatus(status));
@@ -417,15 +417,15 @@ static PyObject* python_cryptDecrypt(PyObject* self, PyObject* args)
 	PyObject* buffer = NULL;
 	int length = 0;
 	unsigned char* bufferPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iO", &cryptContext, &buffer))
 	    return(NULL);
-
+	
 	if (!getPointerWrite(buffer, &bufferPtr, &length))
 		goto finish;
-
+	
 	status = cryptDecrypt(cryptContext, bufferPtr, length);
-
+	
 	finish:
 	releasePointer(buffer, bufferPtr);
 	return(processStatus(status));
@@ -437,12 +437,12 @@ static PyObject* python_cryptSetAttribute(PyObject* self, PyObject* args)
 	int cryptHandle = 0;
 	int attributeType = 0;
 	int value = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iii", &cryptHandle, &attributeType, &value))
 	    return(NULL);
-
+	
 	status = cryptSetAttribute(cryptHandle, attributeType, value);
-
+	
 	return(processStatus(status));
 }
 
@@ -454,15 +454,15 @@ static PyObject* python_cryptSetAttributeString(PyObject* self, PyObject* args)
 	PyObject* value = NULL;
 	int valueLength = 0;
 	unsigned char* valuePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &cryptHandle, &attributeType, &value))
 	    return(NULL);
-
+	
 	if (!getPointerRead(value, &valuePtr, &valueLength))
 		goto finish;
-
+	
 	status = cryptSetAttributeString(cryptHandle, attributeType, valuePtr, valueLength);
-
+	
 	finish:
 	releasePointer(value, valuePtr);
 	return(processStatus(status));
@@ -474,12 +474,12 @@ static PyObject* python_cryptGetAttribute(PyObject* self, PyObject* args)
 	int value = 0;
 	int cryptHandle = 0;
 	int attributeType = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptHandle, &attributeType))
 	    return(NULL);
-
+	
 	status = cryptGetAttribute(cryptHandle, attributeType, &value);
-
+	
 	return(processStatusReturnInt(status, value));
 }
 
@@ -491,18 +491,18 @@ static PyObject* python_cryptGetAttributeString(PyObject* self, PyObject* args)
 	int attributeType = 0;
 	PyObject* value = NULL;
 	unsigned char* valuePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &cryptHandle, &attributeType, &value))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptGetAttributeString(cryptHandle, attributeType, NULL, &valueLength)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(value, &valuePtr, &valueLength))
 		goto finish;
-
+	
 	status = cryptGetAttributeString(cryptHandle, attributeType, valuePtr, &valueLength);
-
+	
 	finish:
 	releasePointer(value, valuePtr);
 	return(processStatusReturnInt(status, valueLength));
@@ -513,12 +513,12 @@ static PyObject* python_cryptDeleteAttribute(PyObject* self, PyObject* args)
 	int status = 0;
 	int cryptHandle = 0;
 	int attributeType = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptHandle, &attributeType))
 	    return(NULL);
-
+	
 	status = cryptDeleteAttribute(cryptHandle, attributeType);
-
+	
 	return(processStatus(status));
 }
 
@@ -528,19 +528,19 @@ static PyObject* python_cryptAddRandom(PyObject* self, PyObject* args)
 	PyObject* randomData = NULL;
 	int randomDataLength = 0;
 	unsigned char* randomDataPtr = 0;
-
+	
 	//Special case to handle SLOWPOLL / FASTPOLL values
 	if (PyArg_ParseTuple(args, "i", &randomDataLength))
 	    return processStatus(cryptAddRandom(NULL, randomDataLength));
-
+	
 	if (!PyArg_ParseTuple(args, "O", &randomData))
 	    return(NULL);
-
+	
 	if (!getPointerRead(randomData, &randomDataPtr, &randomDataLength))
 		goto finish;
-
+	
 	status = cryptAddRandom(randomDataPtr, randomDataLength);
-
+	
 	finish:
 	releasePointer(randomData, randomDataPtr);
 	return(processStatus(status));
@@ -553,15 +553,15 @@ static PyObject* python_cryptQueryObject(PyObject* self, PyObject* args)
 	PyObject* objectData = NULL;
 	int objectDataLength = 0;
 	unsigned char* objectDataPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "O", &objectData))
 	    return(NULL);
-
+	
 	if (!getPointerRead(objectData, &objectDataPtr, &objectDataLength))
 		goto finish;
-
+	
 	status = cryptQueryObject(objectDataPtr, objectDataLength, &cryptObjectInfo);
-
+	
 	finish:
 	releasePointer(objectData, objectDataPtr);
 	return(processStatusReturnCryptObjectInfo(status, cryptObjectInfo));
@@ -576,18 +576,18 @@ static PyObject* python_cryptExportKey(PyObject* self, PyObject* args)
 	int exportKey = 0;
 	int sessionKeyContext = 0;
 	unsigned char* encryptedKeyPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oiii", &encryptedKey, &encryptedKeyMaxLength, &exportKey, &sessionKeyContext))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptExportKey(NULL, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(encryptedKey, &encryptedKeyPtr, &encryptedKeyLength))
 		goto finish;
-
+	
 	status = cryptExportKey(encryptedKeyPtr, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointer(encryptedKey, encryptedKeyPtr);
 	return(processStatusReturnInt(status, encryptedKeyLength));
@@ -603,18 +603,18 @@ static PyObject* python_cryptExportKeyEx(PyObject* self, PyObject* args)
 	int exportKey = 0;
 	int sessionKeyContext = 0;
 	unsigned char* encryptedKeyPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oiiii", &encryptedKey, &encryptedKeyMaxLength, &formatType, &exportKey, &sessionKeyContext))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptExportKeyEx(NULL, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(encryptedKey, &encryptedKeyPtr, &encryptedKeyLength))
 		goto finish;
-
+	
 	status = cryptExportKeyEx(encryptedKeyPtr, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointer(encryptedKey, encryptedKeyPtr);
 	return(processStatusReturnInt(status, encryptedKeyLength));
@@ -628,15 +628,15 @@ static PyObject* python_cryptImportKey(PyObject* self, PyObject* args)
 	int importKey = 0;
 	int sessionKeyContext = 0;
 	unsigned char* encryptedKeyPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oii", &encryptedKey, &importKey, &sessionKeyContext))
 	    return(NULL);
-
+	
 	if (!getPointerRead(encryptedKey, &encryptedKeyPtr, &encryptedKeyLength))
 		goto finish;
-
+	
 	status = cryptImportKey(encryptedKeyPtr, encryptedKeyLength, importKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointer(encryptedKey, encryptedKeyPtr);
 	return(processStatus(status));
@@ -651,15 +651,15 @@ static PyObject* python_cryptImportKeyEx(PyObject* self, PyObject* args)
 	int importKey = 0;
 	int sessionKeyContext = 0;
 	unsigned char* encryptedKeyPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oii", &encryptedKey, &importKey, &sessionKeyContext))
 	    return(NULL);
-
+	
 	if (!getPointerRead(encryptedKey, &encryptedKeyPtr, &encryptedKeyLength))
 		goto finish;
-
+	
 	status = cryptImportKeyEx(encryptedKeyPtr, encryptedKeyLength, importKey, sessionKeyContext, &returnedContext);
-
+	
 	finish:
 	releasePointer(encryptedKey, encryptedKeyPtr);
 	return(processStatusReturnCryptHandle(status, returnedContext));
@@ -674,18 +674,18 @@ static PyObject* python_cryptCreateSignature(PyObject* self, PyObject* args)
 	int signContext = 0;
 	int hashContext = 0;
 	unsigned char* signaturePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oiii", &signature, &signatureMaxLength, &signContext, &hashContext))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptCreateSignature(NULL, signatureMaxLength, &signatureLength, signContext, hashContext)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(signature, &signaturePtr, &signatureLength))
 		goto finish;
-
+	
 	status = cryptCreateSignature(signaturePtr, signatureMaxLength, &signatureLength, signContext, hashContext);
-
+	
 	finish:
 	releasePointer(signature, signaturePtr);
 	return(processStatusReturnInt(status, signatureLength));
@@ -702,18 +702,18 @@ static PyObject* python_cryptCreateSignatureEx(PyObject* self, PyObject* args)
 	int hashContext = 0;
 	int extraData = 0;
 	unsigned char* signaturePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oiiiii", &signature, &signatureMaxLength, &formatType, &signContext, &hashContext, &extraData))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptCreateSignatureEx(NULL, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(signature, &signaturePtr, &signatureLength))
 		goto finish;
-
+	
 	status = cryptCreateSignatureEx(signaturePtr, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData);
-
+	
 	finish:
 	releasePointer(signature, signaturePtr);
 	return(processStatusReturnInt(status, signatureLength));
@@ -727,15 +727,15 @@ static PyObject* python_cryptCheckSignature(PyObject* self, PyObject* args)
 	int sigCheckKey = 0;
 	int hashContext = 0;
 	unsigned char* signaturePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oii", &signature, &sigCheckKey, &hashContext))
 	    return(NULL);
-
+	
 	if (!getPointerRead(signature, &signaturePtr, &signatureLength))
 		goto finish;
-
+	
 	status = cryptCheckSignature(signaturePtr, signatureLength, sigCheckKey, hashContext);
-
+	
 	finish:
 	releasePointer(signature, signaturePtr);
 	return(processStatus(status));
@@ -750,15 +750,15 @@ static PyObject* python_cryptCheckSignatureEx(PyObject* self, PyObject* args)
 	int sigCheckKey = 0;
 	int hashContext = 0;
 	unsigned char* signaturePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oii", &signature, &sigCheckKey, &hashContext))
 	    return(NULL);
-
+	
 	if (!getPointerRead(signature, &signaturePtr, &signatureLength))
 		goto finish;
-
+	
 	status = cryptCheckSignatureEx(signaturePtr, signatureLength, sigCheckKey, hashContext, &extraData);
-
+	
 	finish:
 	releasePointer(signature, signaturePtr);
 	return(processStatusReturnCryptHandle(status, extraData));
@@ -773,15 +773,15 @@ static PyObject* python_cryptKeysetOpen(PyObject* self, PyObject* args)
 	PyObject* name = NULL;
 	int options = 0;
 	unsigned char* namePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiOi", &cryptUser, &keysetType, &name, &options))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(name, &namePtr))
 		goto finish;
-
+	
 	status = cryptKeysetOpen(&keyset, cryptUser, keysetType, namePtr, options);
-
+	
 	finish:
 	releasePointerString(name, namePtr);
 	return(processStatusReturnCryptHandle(status, keyset));
@@ -791,12 +791,12 @@ static PyObject* python_cryptKeysetClose(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int keyset = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &keyset))
 	    return(NULL);
-
+	
 	status = cryptKeysetClose(keyset);
-
+	
 	return(processStatus(status));
 }
 
@@ -808,15 +808,15 @@ static PyObject* python_cryptGetPublicKey(PyObject* self, PyObject* args)
 	int keyIDtype = 0;
 	PyObject* keyID = NULL;
 	unsigned char* keyIDPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &keyset, &keyIDtype, &keyID))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptGetPublicKey(keyset, &cryptContext, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(keyID, keyIDPtr);
 	return(processStatusReturnCryptHandle(status, cryptContext));
@@ -832,17 +832,17 @@ static PyObject* python_cryptGetPrivateKey(PyObject* self, PyObject* args)
 	PyObject* password = NULL;
 	unsigned char* keyIDPtr = 0;
 	unsigned char* passwordPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiOO", &keyset, &keyIDtype, &keyID, &password))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(keyID, &keyIDPtr))
 		goto finish;
 	if (!getPointerReadString(password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptGetPrivateKey(keyset, &cryptContext, keyIDtype, keyIDPtr, passwordPtr);
-
+	
 	finish:
 	releasePointerString(keyID, keyIDPtr);
 	releasePointerString(password, passwordPtr);
@@ -854,12 +854,12 @@ static PyObject* python_cryptAddPublicKey(PyObject* self, PyObject* args)
 	int status = 0;
 	int keyset = 0;
 	int certificate = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &keyset, &certificate))
 	    return(NULL);
-
+	
 	status = cryptAddPublicKey(keyset, certificate);
-
+	
 	return(processStatus(status));
 }
 
@@ -870,15 +870,15 @@ static PyObject* python_cryptAddPrivateKey(PyObject* self, PyObject* args)
 	int cryptKey = 0;
 	PyObject* password = NULL;
 	unsigned char* passwordPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &keyset, &cryptKey, &password))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptAddPrivateKey(keyset, cryptKey, passwordPtr);
-
+	
 	finish:
 	releasePointerString(password, passwordPtr);
 	return(processStatus(status));
@@ -891,15 +891,15 @@ static PyObject* python_cryptDeleteKey(PyObject* self, PyObject* args)
 	int keyIDtype = 0;
 	PyObject* keyID = NULL;
 	unsigned char* keyIDPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &keyset, &keyIDtype, &keyID))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptDeleteKey(keyset, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(keyID, keyIDPtr);
 	return(processStatus(status));
@@ -911,12 +911,12 @@ static PyObject* python_cryptCreateCert(PyObject* self, PyObject* args)
 	int certificate = 0;
 	int cryptUser = 0;
 	int certType = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptUser, &certType))
 	    return(NULL);
-
+	
 	status = cryptCreateCert(&certificate, cryptUser, certType);
-
+	
 	return(processStatusReturnCryptHandle(status, certificate));
 }
 
@@ -924,12 +924,12 @@ static PyObject* python_cryptDestroyCert(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int certificate = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &certificate))
 	    return(NULL);
-
+	
 	status = cryptDestroyCert(certificate);
-
+	
 	return(processStatus(status));
 }
 
@@ -944,21 +944,21 @@ static PyObject* python_cryptGetCertExtension(PyObject* self, PyObject* args)
 	int extensionMaxLength = 0;
 	unsigned char* oidPtr = 0;
 	unsigned char* extensionPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iOOi", &certificate, &oid, &extension, &extensionMaxLength))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(oid, &oidPtr))
 		goto finish;
-
+	
 	if (!processStatusBool(cryptGetCertExtension(certificate, oidPtr, &criticalFlag, NULL, extensionMaxLength, &extensionLength)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(extension, &extensionPtr, &extensionLength))
 		goto finish;
-
+	
 	status = cryptGetCertExtension(certificate, oidPtr, &criticalFlag, extensionPtr, extensionMaxLength, &extensionLength);
-
+	
 	finish:
 	releasePointer(extension, extensionPtr);
 	releasePointerString(oid, oidPtr);
@@ -975,18 +975,18 @@ static PyObject* python_cryptAddCertExtension(PyObject* self, PyObject* args)
 	int extensionLength = 0;
 	unsigned char* oidPtr = 0;
 	unsigned char* extensionPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iOiO", &certificate, &oid, &criticalFlag, &extension))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(oid, &oidPtr))
 		goto finish;
-
+	
 	if (!getPointerRead(extension, &extensionPtr, &extensionLength))
 		goto finish;
-
+	
 	status = cryptAddCertExtension(certificate, oidPtr, criticalFlag, extensionPtr, extensionLength);
-
+	
 	finish:
 	releasePointer(extension, extensionPtr);
 	releasePointerString(oid, oidPtr);
@@ -999,15 +999,15 @@ static PyObject* python_cryptDeleteCertExtension(PyObject* self, PyObject* args)
 	int certificate = 0;
 	PyObject* oid = NULL;
 	unsigned char* oidPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iO", &certificate, &oid))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(oid, &oidPtr))
 		goto finish;
-
+	
 	status = cryptDeleteCertExtension(certificate, oidPtr);
-
+	
 	finish:
 	releasePointerString(oid, oidPtr);
 	return(processStatus(status));
@@ -1018,12 +1018,12 @@ static PyObject* python_cryptSignCert(PyObject* self, PyObject* args)
 	int status = 0;
 	int certificate = 0;
 	int signContext = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &certificate, &signContext))
 	    return(NULL);
-
+	
 	status = cryptSignCert(certificate, signContext);
-
+	
 	return(processStatus(status));
 }
 
@@ -1032,12 +1032,12 @@ static PyObject* python_cryptCheckCert(PyObject* self, PyObject* args)
 	int status = 0;
 	int certificate = 0;
 	int sigCheckKey = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &certificate, &sigCheckKey))
 	    return(NULL);
-
+	
 	status = cryptCheckCert(certificate, sigCheckKey);
-
+	
 	return(processStatus(status));
 }
 
@@ -1049,15 +1049,15 @@ static PyObject* python_cryptImportCert(PyObject* self, PyObject* args)
 	int certObjectLength = 0;
 	int cryptUser = 0;
 	unsigned char* certObjectPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oi", &certObject, &cryptUser))
 	    return(NULL);
-
+	
 	if (!getPointerRead(certObject, &certObjectPtr, &certObjectLength))
 		goto finish;
-
+	
 	status = cryptImportCert(certObjectPtr, certObjectLength, cryptUser, &certificate);
-
+	
 	finish:
 	releasePointer(certObject, certObjectPtr);
 	return(processStatusReturnCryptHandle(status, certificate));
@@ -1072,18 +1072,18 @@ static PyObject* python_cryptExportCert(PyObject* self, PyObject* args)
 	int certFormatType = 0;
 	int certificate = 0;
 	unsigned char* certObjectPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "Oiii", &certObject, &certObjectMaxLength, &certFormatType, &certificate))
 	    return(NULL);
-
+	
 	if (!processStatusBool(cryptExportCert(NULL, certObjectMaxLength, &certObjectLength, certFormatType, certificate)))
 		goto finish;
-
+	
 	if (!getPointerWriteCheckIndices(certObject, &certObjectPtr, &certObjectLength))
 		goto finish;
-
+	
 	status = cryptExportCert(certObjectPtr, certObjectMaxLength, &certObjectLength, certFormatType, certificate);
-
+	
 	finish:
 	releasePointer(certObject, certObjectPtr);
 	return(processStatusReturnInt(status, certObjectLength));
@@ -1094,12 +1094,12 @@ static PyObject* python_cryptCAAddItem(PyObject* self, PyObject* args)
 	int status = 0;
 	int keyset = 0;
 	int certificate = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &keyset, &certificate))
 	    return(NULL);
-
+	
 	status = cryptCAAddItem(keyset, certificate);
-
+	
 	return(processStatus(status));
 }
 
@@ -1112,15 +1112,15 @@ static PyObject* python_cryptCAGetItem(PyObject* self, PyObject* args)
 	int keyIDtype = 0;
 	PyObject* keyID = NULL;
 	unsigned char* keyIDPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiiO", &keyset, &certType, &keyIDtype, &keyID))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptCAGetItem(keyset, &certificate, certType, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(keyID, keyIDPtr);
 	return(processStatusReturnCryptHandle(status, certificate));
@@ -1134,15 +1134,15 @@ static PyObject* python_cryptCADeleteItem(PyObject* self, PyObject* args)
 	int keyIDtype = 0;
 	PyObject* keyID = NULL;
 	unsigned char* keyIDPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiiO", &keyset, &certType, &keyIDtype, &keyID))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptCADeleteItem(keyset, certType, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(keyID, keyIDPtr);
 	return(processStatus(status));
@@ -1156,12 +1156,12 @@ static PyObject* python_cryptCACertManagement(PyObject* self, PyObject* args)
 	int keyset = 0;
 	int caKey = 0;
 	int certRequest = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiii", &action, &keyset, &caKey, &certRequest))
 	    return(NULL);
-
+	
 	status = cryptCACertManagement(&certificate, action, keyset, caKey, certRequest);
-
+	
 	return(processStatusReturnCryptHandle(status, certificate));
 }
 
@@ -1171,12 +1171,12 @@ static PyObject* python_cryptCreateEnvelope(PyObject* self, PyObject* args)
 	int envelope = 0;
 	int cryptUser = 0;
 	int formatType = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptUser, &formatType))
 	    return(NULL);
-
+	
 	status = cryptCreateEnvelope(&envelope, cryptUser, formatType);
-
+	
 	return(processStatusReturnCryptHandle(status, envelope));
 }
 
@@ -1184,12 +1184,12 @@ static PyObject* python_cryptDestroyEnvelope(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int envelope = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &envelope))
 	    return(NULL);
-
+	
 	status = cryptDestroyEnvelope(envelope);
-
+	
 	return(processStatus(status));
 }
 
@@ -1199,12 +1199,12 @@ static PyObject* python_cryptCreateSession(PyObject* self, PyObject* args)
 	int session = 0;
 	int cryptUser = 0;
 	int formatType = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &cryptUser, &formatType))
 	    return(NULL);
-
+	
 	status = cryptCreateSession(&session, cryptUser, formatType);
-
+	
 	return(processStatusReturnCryptHandle(status, session));
 }
 
@@ -1212,12 +1212,12 @@ static PyObject* python_cryptDestroySession(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int session = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &session))
 	    return(NULL);
-
+	
 	status = cryptDestroySession(session);
-
+	
 	return(processStatus(status));
 }
 
@@ -1229,15 +1229,15 @@ static PyObject* python_cryptPushData(PyObject* self, PyObject* args)
 	PyObject* buffer = NULL;
 	int length = 0;
 	unsigned char* bufferPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iO", &envelope, &buffer))
 	    return(NULL);
-
+	
 	if (!getPointerRead(buffer, &bufferPtr, &length))
 		goto finish;
-
+	
 	status = cryptPushData(envelope, bufferPtr, length, &bytesCopied);
-
+	
 	finish:
 	releasePointer(buffer, bufferPtr);
 	return(processStatusReturnInt(status, bytesCopied));
@@ -1247,12 +1247,12 @@ static PyObject* python_cryptFlushData(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int envelope = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &envelope))
 	    return(NULL);
-
+	
 	status = cryptFlushData(envelope);
-
+	
 	return(processStatus(status));
 }
 
@@ -1264,17 +1264,17 @@ static PyObject* python_cryptPopData(PyObject* self, PyObject* args)
 	PyObject* buffer = NULL;
 	int length = 0;
 	unsigned char* bufferPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iOi", &envelope, &buffer, &length))
 	    return(NULL);
-
+	
 	//CryptPopData is a special case that doesn't have the length querying call
-
+	
 	if (!getPointerWrite(buffer, &bufferPtr, &bytesCopied))
 		goto finish;
-
+	
 	status = cryptPopData(envelope, bufferPtr, length, &bytesCopied);
-
+	
 	finish:
 	releasePointer(buffer, bufferPtr);
 	return(processStatusReturnInt(status, bytesCopied));
@@ -1288,15 +1288,15 @@ static PyObject* python_cryptDeviceOpen(PyObject* self, PyObject* args)
 	int deviceType = 0;
 	PyObject* name = NULL;
 	unsigned char* namePtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "iiO", &cryptUser, &deviceType, &name))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(name, &namePtr))
 		goto finish;
-
+	
 	status = cryptDeviceOpen(&device, cryptUser, deviceType, namePtr);
-
+	
 	finish:
 	releasePointerString(name, namePtr);
 	return(processStatusReturnCryptHandle(status, device));
@@ -1306,12 +1306,12 @@ static PyObject* python_cryptDeviceClose(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int device = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &device))
 	    return(NULL);
-
+	
 	status = cryptDeviceClose(device);
-
+	
 	return(processStatus(status));
 }
 
@@ -1321,12 +1321,12 @@ static PyObject* python_cryptDeviceQueryCapability(PyObject* self, PyObject* arg
 	CRYPT_QUERY_INFO cryptQueryInfo;
 	int device = 0;
 	int cryptAlgo = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &device, &cryptAlgo))
 	    return(NULL);
-
+	
 	status = cryptDeviceQueryCapability(device, cryptAlgo, &cryptQueryInfo);
-
+	
 	return(processStatusReturnCryptQueryInfo(status, cryptQueryInfo));
 }
 
@@ -1336,12 +1336,12 @@ static PyObject* python_cryptDeviceCreateContext(PyObject* self, PyObject* args)
 	int cryptContext = 0;
 	int device = 0;
 	int cryptAlgo = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "ii", &device, &cryptAlgo))
 	    return(NULL);
-
+	
 	status = cryptDeviceCreateContext(device, &cryptContext, cryptAlgo);
-
+	
 	return(processStatusReturnCryptHandle(status, cryptContext));
 }
 
@@ -1353,17 +1353,17 @@ static PyObject* python_cryptLogin(PyObject* self, PyObject* args)
 	PyObject* password = NULL;
 	unsigned char* namePtr = 0;
 	unsigned char* passwordPtr = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "OO", &name, &password))
 	    return(NULL);
-
+	
 	if (!getPointerReadString(name, &namePtr))
 		goto finish;
 	if (!getPointerReadString(password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptLogin(&user, namePtr, passwordPtr);
-
+	
 	finish:
 	releasePointerString(name, namePtr);
 	releasePointerString(password, passwordPtr);
@@ -1374,12 +1374,12 @@ static PyObject* python_cryptLogout(PyObject* self, PyObject* args)
 {
 	int status = 0;
 	int user = 0;
-
+	
 	if (!PyArg_ParseTuple(args, "i", &user))
 	    return(NULL);
-
+	
 	status = cryptLogout(user);
-
+	
 	return(processStatus(status));
 }
 
@@ -1387,66 +1387,66 @@ static PyObject* python_cryptLogout(PyObject* self, PyObject* args)
 
 static PyMethodDef module_functions[] =
 {
-	{ "cryptInit", python_cryptInit, METH_VARARGS },
-	{ "cryptEnd", python_cryptEnd, METH_VARARGS },
-	{ "cryptQueryCapability", python_cryptQueryCapability, METH_VARARGS },
-	{ "cryptCreateContext", python_cryptCreateContext, METH_VARARGS },
-	{ "cryptDestroyContext", python_cryptDestroyContext, METH_VARARGS },
-	{ "cryptDestroyObject", python_cryptDestroyObject, METH_VARARGS },
-	{ "cryptGenerateKey", python_cryptGenerateKey, METH_VARARGS },
-	{ "cryptGenerateKeyAsync", python_cryptGenerateKeyAsync, METH_VARARGS },
-	{ "cryptAsyncQuery", python_cryptAsyncQuery, METH_VARARGS },
-	{ "cryptAsyncCancel", python_cryptAsyncCancel, METH_VARARGS },
-	{ "cryptEncrypt", python_cryptEncrypt, METH_VARARGS },
-	{ "cryptDecrypt", python_cryptDecrypt, METH_VARARGS },
-	{ "cryptSetAttribute", python_cryptSetAttribute, METH_VARARGS },
-	{ "cryptSetAttributeString", python_cryptSetAttributeString, METH_VARARGS },
-	{ "cryptGetAttribute", python_cryptGetAttribute, METH_VARARGS },
-	{ "cryptGetAttributeString", python_cryptGetAttributeString, METH_VARARGS },
-	{ "cryptDeleteAttribute", python_cryptDeleteAttribute, METH_VARARGS },
-	{ "cryptAddRandom", python_cryptAddRandom, METH_VARARGS },
-	{ "cryptQueryObject", python_cryptQueryObject, METH_VARARGS },
-	{ "cryptExportKey", python_cryptExportKey, METH_VARARGS },
-	{ "cryptExportKeyEx", python_cryptExportKeyEx, METH_VARARGS },
-	{ "cryptImportKey", python_cryptImportKey, METH_VARARGS },
-	{ "cryptImportKeyEx", python_cryptImportKeyEx, METH_VARARGS },
-	{ "cryptCreateSignature", python_cryptCreateSignature, METH_VARARGS },
-	{ "cryptCreateSignatureEx", python_cryptCreateSignatureEx, METH_VARARGS },
-	{ "cryptCheckSignature", python_cryptCheckSignature, METH_VARARGS },
-	{ "cryptCheckSignatureEx", python_cryptCheckSignatureEx, METH_VARARGS },
-	{ "cryptKeysetOpen", python_cryptKeysetOpen, METH_VARARGS },
-	{ "cryptKeysetClose", python_cryptKeysetClose, METH_VARARGS },
-	{ "cryptGetPublicKey", python_cryptGetPublicKey, METH_VARARGS },
-	{ "cryptGetPrivateKey", python_cryptGetPrivateKey, METH_VARARGS },
-	{ "cryptAddPublicKey", python_cryptAddPublicKey, METH_VARARGS },
-	{ "cryptAddPrivateKey", python_cryptAddPrivateKey, METH_VARARGS },
-	{ "cryptDeleteKey", python_cryptDeleteKey, METH_VARARGS },
-	{ "cryptCreateCert", python_cryptCreateCert, METH_VARARGS },
-	{ "cryptDestroyCert", python_cryptDestroyCert, METH_VARARGS },
-	{ "cryptGetCertExtension", python_cryptGetCertExtension, METH_VARARGS },
-	{ "cryptAddCertExtension", python_cryptAddCertExtension, METH_VARARGS },
-	{ "cryptDeleteCertExtension", python_cryptDeleteCertExtension, METH_VARARGS },
-	{ "cryptSignCert", python_cryptSignCert, METH_VARARGS },
-	{ "cryptCheckCert", python_cryptCheckCert, METH_VARARGS },
-	{ "cryptImportCert", python_cryptImportCert, METH_VARARGS },
-	{ "cryptExportCert", python_cryptExportCert, METH_VARARGS },
-	{ "cryptCAAddItem", python_cryptCAAddItem, METH_VARARGS },
-	{ "cryptCAGetItem", python_cryptCAGetItem, METH_VARARGS },
-	{ "cryptCADeleteItem", python_cryptCADeleteItem, METH_VARARGS },
-	{ "cryptCACertManagement", python_cryptCACertManagement, METH_VARARGS },
-	{ "cryptCreateEnvelope", python_cryptCreateEnvelope, METH_VARARGS },
-	{ "cryptDestroyEnvelope", python_cryptDestroyEnvelope, METH_VARARGS },
-	{ "cryptCreateSession", python_cryptCreateSession, METH_VARARGS },
-	{ "cryptDestroySession", python_cryptDestroySession, METH_VARARGS },
-	{ "cryptPushData", python_cryptPushData, METH_VARARGS },
-	{ "cryptFlushData", python_cryptFlushData, METH_VARARGS },
-	{ "cryptPopData", python_cryptPopData, METH_VARARGS },
-	{ "cryptDeviceOpen", python_cryptDeviceOpen, METH_VARARGS },
-	{ "cryptDeviceClose", python_cryptDeviceClose, METH_VARARGS },
-	{ "cryptDeviceQueryCapability", python_cryptDeviceQueryCapability, METH_VARARGS },
-	{ "cryptDeviceCreateContext", python_cryptDeviceCreateContext, METH_VARARGS },
-	{ "cryptLogin", python_cryptLogin, METH_VARARGS },
-	{ "cryptLogout", python_cryptLogout, METH_VARARGS },
+	{ "cryptInit", python_cryptInit, METH_VARARGS }, 
+	{ "cryptEnd", python_cryptEnd, METH_VARARGS }, 
+	{ "cryptQueryCapability", python_cryptQueryCapability, METH_VARARGS }, 
+	{ "cryptCreateContext", python_cryptCreateContext, METH_VARARGS }, 
+	{ "cryptDestroyContext", python_cryptDestroyContext, METH_VARARGS }, 
+	{ "cryptDestroyObject", python_cryptDestroyObject, METH_VARARGS }, 
+	{ "cryptGenerateKey", python_cryptGenerateKey, METH_VARARGS }, 
+	{ "cryptGenerateKeyAsync", python_cryptGenerateKeyAsync, METH_VARARGS }, 
+	{ "cryptAsyncQuery", python_cryptAsyncQuery, METH_VARARGS }, 
+	{ "cryptAsyncCancel", python_cryptAsyncCancel, METH_VARARGS }, 
+	{ "cryptEncrypt", python_cryptEncrypt, METH_VARARGS }, 
+	{ "cryptDecrypt", python_cryptDecrypt, METH_VARARGS }, 
+	{ "cryptSetAttribute", python_cryptSetAttribute, METH_VARARGS }, 
+	{ "cryptSetAttributeString", python_cryptSetAttributeString, METH_VARARGS }, 
+	{ "cryptGetAttribute", python_cryptGetAttribute, METH_VARARGS }, 
+	{ "cryptGetAttributeString", python_cryptGetAttributeString, METH_VARARGS }, 
+	{ "cryptDeleteAttribute", python_cryptDeleteAttribute, METH_VARARGS }, 
+	{ "cryptAddRandom", python_cryptAddRandom, METH_VARARGS }, 
+	{ "cryptQueryObject", python_cryptQueryObject, METH_VARARGS }, 
+	{ "cryptExportKey", python_cryptExportKey, METH_VARARGS }, 
+	{ "cryptExportKeyEx", python_cryptExportKeyEx, METH_VARARGS }, 
+	{ "cryptImportKey", python_cryptImportKey, METH_VARARGS }, 
+	{ "cryptImportKeyEx", python_cryptImportKeyEx, METH_VARARGS }, 
+	{ "cryptCreateSignature", python_cryptCreateSignature, METH_VARARGS }, 
+	{ "cryptCreateSignatureEx", python_cryptCreateSignatureEx, METH_VARARGS }, 
+	{ "cryptCheckSignature", python_cryptCheckSignature, METH_VARARGS }, 
+	{ "cryptCheckSignatureEx", python_cryptCheckSignatureEx, METH_VARARGS }, 
+	{ "cryptKeysetOpen", python_cryptKeysetOpen, METH_VARARGS }, 
+	{ "cryptKeysetClose", python_cryptKeysetClose, METH_VARARGS }, 
+	{ "cryptGetPublicKey", python_cryptGetPublicKey, METH_VARARGS }, 
+	{ "cryptGetPrivateKey", python_cryptGetPrivateKey, METH_VARARGS }, 
+	{ "cryptAddPublicKey", python_cryptAddPublicKey, METH_VARARGS }, 
+	{ "cryptAddPrivateKey", python_cryptAddPrivateKey, METH_VARARGS }, 
+	{ "cryptDeleteKey", python_cryptDeleteKey, METH_VARARGS }, 
+	{ "cryptCreateCert", python_cryptCreateCert, METH_VARARGS }, 
+	{ "cryptDestroyCert", python_cryptDestroyCert, METH_VARARGS }, 
+	{ "cryptGetCertExtension", python_cryptGetCertExtension, METH_VARARGS }, 
+	{ "cryptAddCertExtension", python_cryptAddCertExtension, METH_VARARGS }, 
+	{ "cryptDeleteCertExtension", python_cryptDeleteCertExtension, METH_VARARGS }, 
+	{ "cryptSignCert", python_cryptSignCert, METH_VARARGS }, 
+	{ "cryptCheckCert", python_cryptCheckCert, METH_VARARGS }, 
+	{ "cryptImportCert", python_cryptImportCert, METH_VARARGS }, 
+	{ "cryptExportCert", python_cryptExportCert, METH_VARARGS }, 
+	{ "cryptCAAddItem", python_cryptCAAddItem, METH_VARARGS }, 
+	{ "cryptCAGetItem", python_cryptCAGetItem, METH_VARARGS }, 
+	{ "cryptCADeleteItem", python_cryptCADeleteItem, METH_VARARGS }, 
+	{ "cryptCACertManagement", python_cryptCACertManagement, METH_VARARGS }, 
+	{ "cryptCreateEnvelope", python_cryptCreateEnvelope, METH_VARARGS }, 
+	{ "cryptDestroyEnvelope", python_cryptDestroyEnvelope, METH_VARARGS }, 
+	{ "cryptCreateSession", python_cryptCreateSession, METH_VARARGS }, 
+	{ "cryptDestroySession", python_cryptDestroySession, METH_VARARGS }, 
+	{ "cryptPushData", python_cryptPushData, METH_VARARGS }, 
+	{ "cryptFlushData", python_cryptFlushData, METH_VARARGS }, 
+	{ "cryptPopData", python_cryptPopData, METH_VARARGS }, 
+	{ "cryptDeviceOpen", python_cryptDeviceOpen, METH_VARARGS }, 
+	{ "cryptDeviceClose", python_cryptDeviceClose, METH_VARARGS }, 
+	{ "cryptDeviceQueryCapability", python_cryptDeviceQueryCapability, METH_VARARGS }, 
+	{ "cryptDeviceCreateContext", python_cryptDeviceCreateContext, METH_VARARGS }, 
+	{ "cryptLogin", python_cryptLogin, METH_VARARGS }, 
+	{ "cryptLogout", python_cryptLogout, METH_VARARGS }, 
     {0, 0}
 };
 
@@ -1615,7 +1615,7 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 205);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA2", v);
-    Py_DECREF(v); /* SHA-2 */
+    Py_DECREF(v); /* SHA2 (SHA-256/384/512) */
 
     v = Py_BuildValue("i", 300);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_MD5", v);
@@ -2302,114 +2302,102 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Cursor mgt: Rel.pos in chain/CRL/OCSP */
 
     v = Py_BuildValue("i", 2008);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_EXTENSION", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos.or abs.extension */
-
-    v = Py_BuildValue("i", 2009);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_FIELD", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos.or abs.field in ext */
-
-    v = Py_BuildValue("i", 2010);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_COMPONENT", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos in multival.field */
-
-    v = Py_BuildValue("i", 2011);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_USAGE", v);
     Py_DECREF(v); /* Usage that cert is trusted for */
 
-    v = Py_BuildValue("i", 2012);
+    v = Py_BuildValue("i", 2009);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_IMPLICIT", v);
     Py_DECREF(v); /* Whether cert is implicitly trusted */
 
-    v = Py_BuildValue("i", 2013);
+    v = Py_BuildValue("i", 2010);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGNATURELEVEL", v);
     Py_DECREF(v); /* Amount of detail to include in sigs. */
 
-    v = Py_BuildValue("i", 2014);
+    v = Py_BuildValue("i", 2011);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VERSION", v);
     Py_DECREF(v); /* Cert.format version */
 
-    v = Py_BuildValue("i", 2015);
+    v = Py_BuildValue("i", 2012);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SERIALNUMBER", v);
     Py_DECREF(v); /* Serial number */
 
-    v = Py_BuildValue("i", 2016);
+    v = Py_BuildValue("i", 2013);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO", v);
     Py_DECREF(v); /* Public key */
 
-    v = Py_BuildValue("i", 2017);
+    v = Py_BuildValue("i", 2014);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTIFICATE", v);
     Py_DECREF(v); /* User certificate */
 
-    v = Py_BuildValue("i", 2017);
+    v = Py_BuildValue("i", 2014);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_USERCERTIFICATE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2018);
+    v = Py_BuildValue("i", 2015);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CACERTIFICATE", v);
     Py_DECREF(v); /* CA certificate */
 
-    v = Py_BuildValue("i", 2019);
+    v = Py_BuildValue("i", 2016);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERNAME", v);
     Py_DECREF(v); /* Issuer DN */
 
-    v = Py_BuildValue("i", 2020);
+    v = Py_BuildValue("i", 2017);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDFROM", v);
     Py_DECREF(v); /* Cert valid-from time */
 
-    v = Py_BuildValue("i", 2021);
+    v = Py_BuildValue("i", 2018);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDTO", v);
     Py_DECREF(v); /* Cert valid-to time */
 
-    v = Py_BuildValue("i", 2022);
+    v = Py_BuildValue("i", 2019);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTNAME", v);
     Py_DECREF(v); /* Subject DN */
 
-    v = Py_BuildValue("i", 2023);
+    v = Py_BuildValue("i", 2020);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERUNIQUEID", v);
     Py_DECREF(v); /* Issuer unique ID */
 
-    v = Py_BuildValue("i", 2024);
+    v = Py_BuildValue("i", 2021);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTUNIQUEID", v);
     Py_DECREF(v); /* Subject unique ID */
 
-    v = Py_BuildValue("i", 2025);
+    v = Py_BuildValue("i", 2022);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTREQUEST", v);
     Py_DECREF(v); /* Cert.request (DN + public key) */
 
-    v = Py_BuildValue("i", 2026);
+    v = Py_BuildValue("i", 2023);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_THISUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP current-update time */
 
-    v = Py_BuildValue("i", 2027);
+    v = Py_BuildValue("i", 2024);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NEXTUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP next-update time */
 
-    v = Py_BuildValue("i", 2028);
+    v = Py_BuildValue("i", 2025);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONDATE", v);
     Py_DECREF(v); /* CRL/OCSP cert-revocation time */
 
-    v = Py_BuildValue("i", 2029);
+    v = Py_BuildValue("i", 2026);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONSTATUS", v);
     Py_DECREF(v); /* OCSP revocation status */
 
-    v = Py_BuildValue("i", 2030);
+    v = Py_BuildValue("i", 2027);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTSTATUS", v);
     Py_DECREF(v); /* RTCS certificate status */
 
-    v = Py_BuildValue("i", 2031);
+    v = Py_BuildValue("i", 2028);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DN", v);
     Py_DECREF(v); /* Currently selected DN in string form */
 
-    v = Py_BuildValue("i", 2032);
+    v = Py_BuildValue("i", 2029);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ID", v);
     Py_DECREF(v); /* PKI user ID */
 
-    v = Py_BuildValue("i", 2033);
+    v = Py_BuildValue("i", 2030);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD", v);
     Py_DECREF(v); /* PKI user issue password */
 
-    v = Py_BuildValue("i", 2034);
+    v = Py_BuildValue("i", 2031);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_REVPASSWORD", v);
     Py_DECREF(v); /* PKI user revocation password */
 
@@ -3070,270 +3058,274 @@ class CryptHandle:\n\
     Py_DECREF(v); /* counterSignature */
 
     v = Py_BuildValue("i", 2504);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGDESCRIPTION", v);
+    Py_DECREF(v); /* 1 2 840 113549 1 9 15 sMIMECapabilities */
+
+    v = Py_BuildValue("i", 2505);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAPABILITIES", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2505);
+    v = Py_BuildValue("i", 2506);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_3DES", v);
     Py_DECREF(v); /* 3DES encryption */
 
-    v = Py_BuildValue("i", 2506);
+    v = Py_BuildValue("i", 2507);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_AES", v);
     Py_DECREF(v); /* AES encryption */
 
-    v = Py_BuildValue("i", 2507);
+    v = Py_BuildValue("i", 2508);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_CAST128", v);
     Py_DECREF(v); /* CAST-128 encryption */
 
-    v = Py_BuildValue("i", 2508);
+    v = Py_BuildValue("i", 2509);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_IDEA", v);
     Py_DECREF(v); /* IDEA encryption */
 
-    v = Py_BuildValue("i", 2509);
+    v = Py_BuildValue("i", 2510);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_RC2", v);
     Py_DECREF(v); /* RC2 encryption (w.128 key) */
 
-    v = Py_BuildValue("i", 2510);
+    v = Py_BuildValue("i", 2511);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_RC5", v);
     Py_DECREF(v); /* RC5 encryption (w.128 key) */
 
-    v = Py_BuildValue("i", 2511);
+    v = Py_BuildValue("i", 2512);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_SKIPJACK", v);
     Py_DECREF(v); /* Skipjack encryption */
 
-    v = Py_BuildValue("i", 2512);
+    v = Py_BuildValue("i", 2513);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_DES", v);
     Py_DECREF(v); /* DES encryption */
 
-    v = Py_BuildValue("i", 2513);
+    v = Py_BuildValue("i", 2514);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_PREFERSIGNEDDATA", v);
     Py_DECREF(v); /* preferSignedData */
 
-    v = Py_BuildValue("i", 2514);
+    v = Py_BuildValue("i", 2515);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_CANNOTDECRYPTANY", v);
     Py_DECREF(v); /* canNotDecryptAny */
 
-    v = Py_BuildValue("i", 2515);
+    v = Py_BuildValue("i", 2516);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPTREQUEST", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2516);
+    v = Py_BuildValue("i", 2517);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_CONTENTIDENTIFIER", v);
     Py_DECREF(v); /* contentIdentifier */
 
-    v = Py_BuildValue("i", 2517);
+    v = Py_BuildValue("i", 2518);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_FROM", v);
     Py_DECREF(v); /* receiptsFrom */
 
-    v = Py_BuildValue("i", 2518);
+    v = Py_BuildValue("i", 2519);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_TO", v);
     Py_DECREF(v); /* receiptsTo */
 
-    v = Py_BuildValue("i", 2519);
+    v = Py_BuildValue("i", 2520);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECURITYLABEL", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2520);
+    v = Py_BuildValue("i", 2521);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION", v);
     Py_DECREF(v); /* securityClassification */
 
-    v = Py_BuildValue("i", 2521);
+    v = Py_BuildValue("i", 2522);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_POLICY", v);
     Py_DECREF(v); /* securityPolicyIdentifier */
 
-    v = Py_BuildValue("i", 2522);
+    v = Py_BuildValue("i", 2523);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_PRIVACYMARK", v);
     Py_DECREF(v); /* privacyMark */
 
-    v = Py_BuildValue("i", 2523);
+    v = Py_BuildValue("i", 2524);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CATTYPE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.type */
 
-    v = Py_BuildValue("i", 2524);
+    v = Py_BuildValue("i", 2525);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CATVALUE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.value */
 
-    v = Py_BuildValue("i", 2525);
+    v = Py_BuildValue("i", 2526);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXPANSIONHISTORY", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2526);
+    v = Py_BuildValue("i", 2527);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_ENTITYIDENTIFIER", v);
     Py_DECREF(v); /* mlData.mailListIdentifier.issuerAndSerialNumber */
 
-    v = Py_BuildValue("i", 2527);
+    v = Py_BuildValue("i", 2528);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_TIME", v);
     Py_DECREF(v); /* mlData.expansionTime */
 
-    v = Py_BuildValue("i", 2528);
+    v = Py_BuildValue("i", 2529);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_NONE", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.none */
 
-    v = Py_BuildValue("i", 2529);
+    v = Py_BuildValue("i", 2530);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_INSTEADOF", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.insteadOf.generalNames.generalName */
 
-    v = Py_BuildValue("i", 2530);
+    v = Py_BuildValue("i", 2531);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_INADDITIONTO", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.inAdditionTo.generalNames.generalName */
 
-    v = Py_BuildValue("i", 2531);
+    v = Py_BuildValue("i", 2532);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINTS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2532);
+    v = Py_BuildValue("i", 2533);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINT_DESCRIPTION", v);
     Py_DECREF(v); /* contentDescription */
 
-    v = Py_BuildValue("i", 2533);
+    v = Py_BuildValue("i", 2534);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINT_TYPE", v);
     Py_DECREF(v); /* contentType */
 
-    v = Py_BuildValue("i", 2534);
+    v = Py_BuildValue("i", 2535);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQUIVALENTLABEL", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2535);
+    v = Py_BuildValue("i", 2536);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_POLICY", v);
     Py_DECREF(v); /* securityPolicyIdentifier */
 
-    v = Py_BuildValue("i", 2536);
+    v = Py_BuildValue("i", 2537);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CLASSIFICATION", v);
     Py_DECREF(v); /* securityClassification */
 
-    v = Py_BuildValue("i", 2537);
+    v = Py_BuildValue("i", 2538);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_PRIVACYMARK", v);
     Py_DECREF(v); /* privacyMark */
 
-    v = Py_BuildValue("i", 2538);
+    v = Py_BuildValue("i", 2539);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CATTYPE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.type */
 
-    v = Py_BuildValue("i", 2539);
+    v = Py_BuildValue("i", 2540);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CATVALUE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.value */
 
-    v = Py_BuildValue("i", 2540);
+    v = Py_BuildValue("i", 2541);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERTIFICATE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2541);
+    v = Py_BuildValue("i", 2542);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERT_ESSCERTID", v);
     Py_DECREF(v); /* certs.essCertID */
 
-    v = Py_BuildValue("i", 2542);
+    v = Py_BuildValue("i", 2543);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERT_POLICIES", v);
     Py_DECREF(v); /* policies.policyInformation.policyIdentifier */
 
-    v = Py_BuildValue("i", 2543);
+    v = Py_BuildValue("i", 2544);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNATUREPOLICYID", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2544);
+    v = Py_BuildValue("i", 2545);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICYID", v);
     Py_DECREF(v); /* sigPolicyID */
 
-    v = Py_BuildValue("i", 2545);
+    v = Py_BuildValue("i", 2546);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICYHASH", v);
     Py_DECREF(v); /* sigPolicyHash */
 
-    v = Py_BuildValue("i", 2546);
+    v = Py_BuildValue("i", 2547);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_CPSURI", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.cPSuri */
 
-    v = Py_BuildValue("i", 2547);
+    v = Py_BuildValue("i", 2548);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_ORGANIZATION", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.noticeRef.organization */
 
-    v = Py_BuildValue("i", 2548);
+    v = Py_BuildValue("i", 2549);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_NOTICENUMBERS", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.noticeRef.noticeNumbers */
 
-    v = Py_BuildValue("i", 2549);
+    v = Py_BuildValue("i", 2550);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_EXPLICITTEXT", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.explicitText */
 
-    v = Py_BuildValue("i", 2550);
+    v = Py_BuildValue("i", 2551);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEIDENTIFIER", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2551);
+    v = Py_BuildValue("i", 2552);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_ORIGINATORSIG", v);
     Py_DECREF(v); /* originatorSig */
 
-    v = Py_BuildValue("i", 2552);
+    v = Py_BuildValue("i", 2553);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_DOMAINSIG", v);
     Py_DECREF(v); /* domainSig */
 
-    v = Py_BuildValue("i", 2553);
+    v = Py_BuildValue("i", 2554);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_ADDITIONALATTRIBUTES", v);
     Py_DECREF(v); /* additionalAttributesSig */
 
-    v = Py_BuildValue("i", 2554);
+    v = Py_BuildValue("i", 2555);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_REVIEWSIG", v);
     Py_DECREF(v); /* reviewSig */
 
-    v = Py_BuildValue("i", 2555);
+    v = Py_BuildValue("i", 2556);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_NONCE", v);
     Py_DECREF(v); /* randomNonce */
 
-    v = Py_BuildValue("i", 2556);
+    v = Py_BuildValue("i", 2557);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_MESSAGETYPE", v);
     Py_DECREF(v); /* messageType */
 
-    v = Py_BuildValue("i", 2557);
+    v = Py_BuildValue("i", 2558);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_PKISTATUS", v);
     Py_DECREF(v); /* pkiStatus */
 
-    v = Py_BuildValue("i", 2558);
+    v = Py_BuildValue("i", 2559);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_FAILINFO", v);
     Py_DECREF(v); /* failInfo */
 
-    v = Py_BuildValue("i", 2559);
+    v = Py_BuildValue("i", 2560);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_SENDERNONCE", v);
     Py_DECREF(v); /* senderNonce */
 
-    v = Py_BuildValue("i", 2560);
+    v = Py_BuildValue("i", 2561);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_RECIPIENTNONCE", v);
     Py_DECREF(v); /* recipientNonce */
 
-    v = Py_BuildValue("i", 2561);
+    v = Py_BuildValue("i", 2562);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_TRANSACTIONID", v);
     Py_DECREF(v); /* transID */
 
-    v = Py_BuildValue("i", 2562);
+    v = Py_BuildValue("i", 2563);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCAGENCYINFO", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2563);
+    v = Py_BuildValue("i", 2564);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCAGENCYURL", v);
     Py_DECREF(v); /* spcAgencyInfo.url */
 
-    v = Py_BuildValue("i", 2564);
+    v = Py_BuildValue("i", 2565);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTATEMENTTYPE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2565);
+    v = Py_BuildValue("i", 2566);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTMT_INDIVIDUALCODESIGNING", v);
     Py_DECREF(v); /* individualCodeSigning */
 
-    v = Py_BuildValue("i", 2566);
+    v = Py_BuildValue("i", 2567);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTMT_COMMERCIALCODESIGNING", v);
     Py_DECREF(v); /* commercialCodeSigning */
 
-    v = Py_BuildValue("i", 2567);
+    v = Py_BuildValue("i", 2568);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2568);
+    v = Py_BuildValue("i", 2569);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO_NAME", v);
     Py_DECREF(v); /* spcOpusInfo.name */
 
-    v = Py_BuildValue("i", 2569);
+    v = Py_BuildValue("i", 2570);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO_URL", v);
     Py_DECREF(v); /* spcOpusInfo.url */
 
-    v = Py_BuildValue("i", 2570);
+    v = Py_BuildValue("i", 2571);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_LAST", v);
     Py_DECREF(v);
 

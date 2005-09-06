@@ -57,27 +57,6 @@
 
 #define RANDOM_BUFSIZE	4096
 
-/* When we're running a background poll, the main thread can ask it to
-   terminate if cryptlib is shutting down.  The following macro checks
-   whether the background thread should exit prematurely */
-
-#define checkPollExit()	\
-		{ \
-		BOOLEAN exitFlag; \
-		\
-		krnlEnterMutex( MUTEX_RANDOMPOLLING ); \
-		exitFlag = exitNow; \
-		krnlExitMutex( MUTEX_RANDOMPOLLING ); \
-		if( exitFlag ) \
-			return; \
-		}
-
-/* A flag telling the randomness polling thread to exit.  This is set on
-   shutdown to indicate that it should bail out as quickly as possible so as
-   not to hold up the shutdown */
-
-static BOOLEAN exitNow;
-
 /* Handles to various randomness objects */
 
 static HANDLE hAdvAPI32;	/* Handle to misc.library */
@@ -388,7 +367,8 @@ void fastPoll( void )
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE ];
 
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -418,7 +398,8 @@ void fastPoll( void )
 	addRandomValue( randomState, GetProcessHeap() );
 	addRandomValue( randomState, GetProcessWindowStation() );
 	addRandomValue( randomState, GetTickCount() );
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Calling the following function can cause problems in some cases in
 	   that a calling application eventually stops getting events from its
@@ -679,7 +660,8 @@ static void slowPollWin95( void )
 			return;
 			}
 		}
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	initRandomData( randomState, buffer, BIG_RANDOM_BUFSIZE );
 
@@ -723,7 +705,11 @@ static void slowPollWin95( void )
 
 			/* First add the information from the basic Heaplist32
 			   structure */
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &hl32, sizeof( HEAPLIST32 ) );
 
 			/* Now walk through the heap blocks getting information
@@ -732,7 +718,11 @@ static void slowPollWin95( void )
 			if( pHeap32First( &he32, hl32.th32ProcessID, hl32.th32HeapID ) )
 				do
 					{
-					checkPollExit();
+					if( krnlIsExiting() )
+						{
+						CloseHandle( hSnapshot );
+						return;
+						}
 					addRandomData( randomState, &he32,
 								   sizeof( HEAPENTRY32 ) );
 					}
@@ -745,7 +735,11 @@ static void slowPollWin95( void )
 	if( pProcess32First( hSnapshot, &pe32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &pe32, sizeof( PROCESSENTRY32 ) );
 			}
 		while( pProcess32Next( hSnapshot, &pe32 ) );
@@ -755,7 +749,11 @@ static void slowPollWin95( void )
 	if( pThread32First( hSnapshot, &te32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
 	while( pThread32Next( hSnapshot, &te32 ) );
@@ -765,14 +763,19 @@ static void slowPollWin95( void )
 	if( pModule32First( hSnapshot, &me32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
 	while( pModule32Next( hSnapshot, &me32 ) );
 
 	/* Clean up the snapshot */
 	CloseHandle( hSnapshot );
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Flush any remaining data through */
 	endRandomData( randomState, 100 );
@@ -900,7 +903,8 @@ static void slowPollWinNT( void )
 		if( pNtQuerySystemInfo == NULL )
 			hNTAPI = NULL;
 		}
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Get network statistics.  Note: Both NT Workstation and NT Server by
 	   default will be running both the workstation and server services.  The
@@ -950,14 +954,19 @@ static void slowPollWinNT( void )
 							 &diskPerformance, sizeof( diskPerformance ),
 							 &dwSize, NULL ) )
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hDevice );
+				return;
+				}
 			setMessageData( &msgData, &diskPerformance, dwSize );
 			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
 							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
 			}
 		CloseHandle( hDevice );
 		}
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* In theory we should be using the Win32 performance query API to obtain
 	   unpredictable data from the system, however this is so unreliable (see
@@ -996,7 +1005,11 @@ static void slowPollWinNT( void )
 											 32768, ( DWORD ) &dwSize );
 				if( status == ERROR_SUCCESS && dwSize > 0 )
 					{
-					checkPollExit();
+					if( krnlIsExiting() )
+						{
+						clFree( "slowPollWinNT", buffer );
+						return;
+						}
 					setMessageData( &msgData, buffer, dwSize );
 					status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 										IMESSAGE_SETATTRIBUTE_S, &msgData,
@@ -1013,7 +1026,8 @@ static void slowPollWinNT( void )
 				{
 				static const int quality = 100;
 
-				checkPollExit();
+				if( krnlIsExiting() )
+					return;
 				krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
 								 ( void * ) &quality,
 								 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
@@ -1021,7 +1035,8 @@ static void slowPollWinNT( void )
 				}
 			}
 		}
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Wait for any async keyset driver binding to complete.  You may be
 	   wondering what this call is doing here... the reason it's necessary is
@@ -1041,8 +1056,9 @@ static void slowPollWinNT( void )
 	   the statistics, which include the reference counts.  Because of this,
 	   we have to wait until any async driver bind has completed before we can
 	   call RegQueryValueEx() */
-	krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
-	checkPollExit();
+	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		/* The kernel is shutting down, bail out */
+		return;
 
 	/* Get information from the system performance counters.  This can take a
 	   few seconds to do.  In some environments the call to RegQueryValueEx()
@@ -1210,7 +1226,8 @@ unsigned __stdcall threadSafeSlowPollWinNT( void *dummy )
 
 void slowPoll( void )
 	{
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Read data from the various hardware sources */
 	readPIIIRng();
@@ -1265,10 +1282,6 @@ void waitforRandomCompletion( const BOOLEAN force )
 	/* If this is a forced shutdown, tell the polling thread to exit */
 	if( force )
 		{
-		krnlEnterMutex( MUTEX_RANDOMPOLLING );
-		exitNow = TRUE;
-		krnlExitMutex( MUTEX_RANDOMPOLLING );
-
 		/* Wait for the polling thread to terminate.  Since this is a forced
 		   shutdown, we only wait a fixed amount of time (2s) before we bail
 		   out */
@@ -1299,7 +1312,6 @@ void initRandomPolling( void )
 	/* Reset the various module and object handles and status info and
 	   initialise the PIII/P4 hardware RNG interface if it's present */
 	hAdvAPI32 = hNetAPI32 = hThread = NULL;
-	exitNow = FALSE;
 	initPIIIRng();
 	}
 

@@ -266,17 +266,19 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	else
 		certInfoPtr->version = 1;
 
-	/* Read the serial number */
+	/* Read the serial number and signature algorithm information.  The
+	   algorithm information was included to avert a somewhat obscure attack 
+	   that isn't possible anyway because of the way the signature data is 
+	   encoded in PKCS #1 sigs (although it's still possible for some of the 
+	   ISO sig.types) so there's no need to record it, however we record it
+	   because some higher-level protocols use the hash algorithm in the cert
+	   as an implicit indicator of the hash algorithm they'll use */
 	status = readSerialNumber( stream, certInfoPtr, DEFAULT_TAG );
+	if( cryptStatusOK( status ) )
+		status = readAlgoIDex( stream, NULL, 
+							   &certInfoPtr->cCertCert->hashAlgo, NULL );
 	if( cryptStatusError( status ) )
 		return( status );
-
-	/* Skip the signature algorithm information.  This was included to avert
-	   a somewhat obscure attack that isn't possible anyway because of the
-	   way the signature data is encoded in PKCS #1 sigs (although it's still
-	   possible for some of the ISO sig.types) so there's no need to record
-	   it */
-	readUniversal( stream );
 
 	/* Read the issuer name, validity information, and subject name */
 	status = readIssuerDN( stream, certInfoPtr );
@@ -318,15 +320,16 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	   have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_CERTIFICATE, endPos - stell( stream ),
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
-
-	return( status );
+	return( fixAttributes( certInfoPtr ) );
 	}
 
 /* Read the information in an attribute certificate */
@@ -491,15 +494,16 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	   have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_CRL, endPos - stell( stream ),
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
-
-	return( status );
+	return( fixAttributes( certInfoPtr ) );
 	}
 
 /* Read CMS attributes */
@@ -543,11 +547,12 @@ static int readCertRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 			status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_CERTREQUEST, length, 
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
+	status = fixAttributes( certInfoPtr );
 
 	/* Certification requests are always self-signed */
 	certInfoPtr->flags |= CERT_FLAG_SELFSIGNED;
@@ -618,11 +623,14 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 			status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_REQUEST_CERT, length, 
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
+	status = fixAttributes( certInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* CRMF requests are usually self-signed, however if they've been 
 	   generated with an encryption-only key then the place of the signature
@@ -696,12 +704,11 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		else
 			status = readUniversal( stream );
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
-
-	return( status );
+	return( fixAttributes( certInfoPtr ) );
 	}
 
 /* Read an RTCS request/response */
@@ -736,15 +743,16 @@ static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	   will have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_RTCS_REQUEST, endPos - stell( stream ),
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
-
-	return( status );
+	return( fixAttributes( certInfoPtr ) );
 	}
 
 static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
@@ -828,15 +836,16 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	   will have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+		{
 		status = readAttributes( stream, &certInfoPtr->attributes,
 						CRYPT_CERTTYPE_OCSP_REQUEST, endPos - stell( stream ),
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Fix up any problems in attributes */
-	if( cryptStatusOK( status ) )
-		status = fixAttributes( certInfoPtr );
-
-	return( status );
+	return( fixAttributes( certInfoPtr ) );
 	}
 
 static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )

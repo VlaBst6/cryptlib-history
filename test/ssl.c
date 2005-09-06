@@ -144,7 +144,10 @@ static const struct {
 
 	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message 
 			  as a discrete packet, providing a nice test of cryptlib's on-
-			  demand buffer refill */
+			  demand buffer refill.
+	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL 
+			   connect, sends a CA cert which is also used for encryption,
+			   but with no keyUsage flags set */
 
 #define STARTTLS_SERVER_NO	2
 
@@ -153,20 +156,21 @@ typedef enum { PROTOCOL_NONE, PROTOCOL_SMTP, PROTOCOL_POP,
 			 } PROTOCOL_TYPE;
 
 static const struct {
-	const char *name;
+	const C_STR name;
 	const int port;
 	PROTOCOL_TYPE protocol;
 	} starttlsInfo[] = {
 	{ NULL, 0 },
-	/* 1 */	{ "132.239.1.57", 25, PROTOCOL_SMTP },
-	/* 2 */	{ "144.92.240.11", 1110, PROTOCOL_POP },
-	/* 3 */	{ "144.92.12.93", 25, PROTOCOL_SMTP },
-	/* 4 */	{ "128.59.59.23", 25, PROTOCOL_SMTP },
-	/* 5 */	{ "192.108.102.201", 110, PROTOCOL_POP },
-	/* 6 */	{ "194.25.134.46", 995, PROTOCOL_POP_DIRECT },
-	/* 7 */	{ "68.38.166.195", 21, PROTOCOL_FTP },
-	/* 8 */	{ "141.30.198.37", 110, PROTOCOL_POP },
-	/* 9 */ { "134.76.10.26", 25, PROTOCOL_SMTP },
+	/*  1 */ { TEXT( "132.239.1.57" ), 25, PROTOCOL_SMTP },
+	/*  2 */ { TEXT( "144.92.240.11" ), 1110, PROTOCOL_POP },
+	/*  3 */ { TEXT( "144.92.12.93" ), 25, PROTOCOL_SMTP },
+	/*  4 */ { TEXT( "128.59.59.23" ), 25, PROTOCOL_SMTP },
+	/*  5 */ { TEXT( "192.108.102.201" ), 110, PROTOCOL_POP },
+	/*  6 */ { TEXT( "194.25.134.46" ), 995, PROTOCOL_POP_DIRECT },
+	/*  7 */ { TEXT( "68.38.166.195" ), 21, PROTOCOL_FTP },
+	/*  8 */ { TEXT( "141.30.198.37" ), 110, PROTOCOL_POP },
+	/*  9 */ { TEXT( "134.76.10.26" ), 25, PROTOCOL_SMTP },
+	/* 10 */ { TEXT( "209.151.91.6" ), 995, PROTOCOL_POP_DIRECT },
 	{ NULL, 0 }
 	};
 

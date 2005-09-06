@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -161,7 +162,7 @@ static int selfTest( void )
 	BN_init( &pkcInfo->tmp3 );
 	BN_init( &pkcInfo->dlpTmp1 );
 	BN_init( &pkcInfo->dlpTmp2 );
-	BN_CTX_init( &pkcInfo->bnCTX );
+	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
 	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
@@ -201,7 +202,7 @@ static int selfTest( void )
 	BN_clear_free( &pkcInfo->tmp3 );
 	BN_clear_free( &pkcInfo->dlpTmp1 );
 	BN_clear_free( &pkcInfo->dlpTmp2 );
-	BN_CTX_free( &pkcInfo->bnCTX );
+	BN_CTX_free( pkcInfo->bnCTX );
 	BN_MONT_CTX_free( &pkcInfo->dlpParam_mont_p );
 	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
 	zeroise( &contextInfoPtr, sizeof( CONTEXT_INFO ) );
@@ -287,31 +288,31 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BN_copy( phi_p, p );
 	BN_sub_word( phi_p, 1 );			/* phi( p ) = p - 1 */
 	BN_mod( k, k, phi_p,				/* Reduce k to the correct range */
-			&pkcInfo->bnCTX );
-	BN_gcd( r, k, phi_p, &pkcInfo->bnCTX );
+			pkcInfo->bnCTX );
+	BN_gcd( r, k, phi_p, pkcInfo->bnCTX );
 	while( !BN_is_one( r ) )
 		{
 		BN_sub_word( k, 1 );
-		BN_gcd( r, k, phi_p, &pkcInfo->bnCTX );
+		BN_gcd( r, k, phi_p, pkcInfo->bnCTX );
 		}
 
 	/* Move the data from the buffer into a bignum */
 	BN_bin2bn( bufPtr, ELGAMAL_SIGPART_SIZE, s );
 
 	/* r = g^k mod p */
-	BN_mod_exp_mont( r, g, k, p, &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
+	BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
 										/* r = g^k mod p */
 
 	/* s = ( k^-1 * ( hash - x * r ) ) mod phi( p ) */
 	kInv = BN_mod_inverse( k, phi_p,	/* k = ( k^-1 ) mod phi( p ) */
-						   &pkcInfo->bnCTX );
+						   pkcInfo->bnCTX );
 	BN_mod_mul( tmp, x, r, phi_p,		/* tmp = ( x * r ) mod phi( p ) */
-				&pkcInfo->bnCTX );
+				pkcInfo->bnCTX );
 	if( BN_cmp( s, tmp ) < 0 )			/* if hash < x * r */
 		BN_add( s, s, phi_p );			/*   hash = hash + phi( p ) (fast mod) */
 	BN_sub( s, s, tmp );				/* s = hash - x * r */
 	BN_mod_mul( s, s, kInv, phi_p,		/* s = ( s * k^-1 ) mod phi( p ) */ 
-				&pkcInfo->bnCTX );
+				pkcInfo->bnCTX );
 
 	/* Encode the result as a DL data block */
 	length = encodeDLValues( buffer, r, s );
@@ -351,14 +352,14 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 		/* u1 = ( y^r * r^s ) mod p */
 		BN_mod_exp_mont( u1, y, r, p,		/* y' = ( y^r ) mod p */
-						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
+						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
 		BN_mod_exp_mont( r, r, s, p, 		/* r' = ( r^s ) mod p */
-						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
+						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
 		BN_mod_mul_mont( u1, u1, r, p,		/* u1 = ( y' * r' ) mod p */
-						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
+						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p );	
 
 		/* u2 = g^hash mod p */
-		BN_mod_exp_mont( u2, g, hash, p, &pkcInfo->bnCTX,
+		BN_mod_exp_mont( u2, g, hash, p, pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p );
 
 		/* if u1 == u2, signature is good */
@@ -444,12 +445,12 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	CKPTR( BN_copy( phi_p, p ) );
 	CK( BN_sub_word( phi_p, 1 ) );		/* phi( p ) = p - 1 */
 	CK( BN_mod( k, k, phi_p,			/* Reduce k to the correct range */
-				&pkcInfo->bnCTX ) );
-	CK( BN_gcd( s, k, phi_p, &pkcInfo->bnCTX ) );
+				pkcInfo->bnCTX ) );
+	CK( BN_gcd( s, k, phi_p, pkcInfo->bnCTX ) );
 	while( bnStatusOK( bnStatus ) && !BN_is_one( s ) )
 		{
 		CK( BN_sub_word( k, 1 ) );
-		CK( BN_gcd( s, k, phi_p, &pkcInfo->bnCTX ) );
+		CK( BN_gcd( s, k, phi_p, pkcInfo->bnCTX ) );
 		}
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -459,12 +460,12 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* s = ( y^k * M ) mod p */
 	CK( BN_mod_exp_mont( r, y, k, p,	/* y' = y^k mod p */
-						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	CK( BN_mod_mul( s, r, tmp, p,		/* s = y'M mod p */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 
 	/* r = g^k mod p */
-	CK( BN_mod_exp_mont( r, g, k, p, &pkcInfo->bnCTX,
+	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -508,11 +509,11 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* M = ( s / ( r^x ) ) mod p */
 	CK( BN_mod_exp_mont( r, r, x, p,		/* r' = r^x */
-						 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	CKPTR( BN_mod_inverse( tmp, r, p,		/* r'' = r'^-1 */
-						   &pkcInfo->bnCTX ) );
+						   pkcInfo->bnCTX ) );
 	CK( BN_mod_mul( s, s, tmp, p,			/* s = s * r'^-1 mod p */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 

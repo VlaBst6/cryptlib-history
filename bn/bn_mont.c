@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -93,6 +93,7 @@ int BN_mod_mul_montgomery(BIGNUM *r, const BIGNUM *a, const BIGNUM *b,
 		}
 	/* reduce from aRR to aR */
 	if (!BN_from_montgomery(r,tmp,mont,ctx)) goto err;
+	bn_check_top(r);
 	ret=1;
 err:
 	BN_CTX_end(ctx);
@@ -119,7 +120,7 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 	/* mont->ri is the size of mont->N in bits (rounded up
 	   to the word size) */
 	al=ri=mont->ri/BN_BITS2;
-
+	
 	nl=n->top;
 	if ((al == 0) || (nl == 0)) { r->top=0; return(1); }
 
@@ -137,7 +138,7 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 	for (i=r->top; i<max; i++) /* memset? XXX */
 		r->d[i]=0;
 #else
-	memset(&(r->d[r->top]),0,(max-r->top)*sizeof(BN_ULONG));
+	memset(&(r->d[r->top]),0,(max-r->top)*sizeof(BN_ULONG)); 
 #endif
 
 	r->top=max;
@@ -175,8 +176,8 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 			for (x=2; (((++nrp[x])&BN_MASK2) == 0); x++) ;
 			}
 		}
-	bn_fix_top(r);
-
+	bn_correct_top(r);
+	
 	/* mont->ri will be a multiple of the word size */
 #if 0
 	BN_rshift(ret,r,mont->ri);
@@ -194,7 +195,7 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 	for (i=0; i<al; i+=4)
 		{
 		BN_ULONG t1,t2,t3,t4;
-
+		
 		t1=ap[i+0];
 		t2=ap[i+1];
 		t3=ap[i+2];
@@ -208,14 +209,14 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 	for (; i<al; i++)
 		rp[i]=ap[i];
 #endif
-#else /* !MONT_WORD */
+#else /* !MONT_WORD */ 
 	BIGNUM *t1,*t2;
 
 	BN_CTX_start(ctx);
 	t1 = BN_CTX_get(ctx);
 	t2 = BN_CTX_get(ctx);
 	if (t1 == NULL || t2 == NULL) goto err;
-
+	
 	if (!BN_copy(t1,a)) goto err;
 	BN_mask_bits(t1,mont->ri);
 
@@ -232,6 +233,7 @@ int BN_from_montgomery(BIGNUM *ret, const BIGNUM *a, BN_MONT_CTX *mont,
 		if (!BN_usub(ret,ret,&(mont->N))) goto err;
 		}
 	retn=1;
+	bn_check_top(ret);
  err:
 	BN_CTX_end(ctx);
 	return(retn);
@@ -272,11 +274,13 @@ void BN_MONT_CTX_free(BN_MONT_CTX *mont)
 
 int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod, BN_CTX *ctx)
 	{
-	BIGNUM Ri,*R;
+	int ret = 0;
+	BIGNUM *Ri,*R;
 
-	BN_init(&Ri);
+	BN_CTX_start(ctx);
+	if((Ri = BN_CTX_get(ctx)) == NULL) goto err;
 	R= &(mont->RR);					/* grab RR as a temp */
-	BN_copy(&(mont->N),mod);			/* Set N */
+	if (!BN_copy(&(mont->N),mod)) goto err;		/* Set N */
 	mont->N.neg = 0;
 
 #ifdef MONT_WORD
@@ -285,7 +289,7 @@ int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod, BN_CTX *ctx)
 		BN_ULONG buf[2];
 
 		mont->ri=(BN_num_bits(mod)+(BN_BITS2-1))/BN_BITS2*BN_BITS2;
-		if (!(BN_zero(R))) goto err;
+		BN_zero(R);
 		if (!(BN_set_bit(R,BN_BITS2))) goto err;	/* R */
 
 		buf[0]=mod->d[0]; /* tmod = N mod word size */
@@ -295,47 +299,46 @@ int BN_MONT_CTX_set(BN_MONT_CTX *mont, const BIGNUM *mod, BN_CTX *ctx)
 		tmod.dmax=2;
 		tmod.neg=0;
 							/* Ri = R^-1 mod N*/
-		if ((BN_mod_inverse(&Ri,R,&tmod,ctx)) == NULL)
+		if ((BN_mod_inverse(Ri,R,&tmod,ctx)) == NULL)
 			goto err;
-		if (!BN_lshift(&Ri,&Ri,BN_BITS2)) goto err; /* R*Ri */
-		if (!BN_is_zero(&Ri))
+		if (!BN_lshift(Ri,Ri,BN_BITS2)) goto err; /* R*Ri */
+		if (!BN_is_zero(Ri))
 			{
-			if (!BN_sub_word(&Ri,1)) goto err;
+			if (!BN_sub_word(Ri,1)) goto err;
 			}
 		else /* if N mod word size == 1 */
 			{
-			if (!BN_set_word(&Ri,BN_MASK2)) goto err;  /* Ri-- (mod word size) */
+			if (!BN_set_word(Ri,BN_MASK2)) goto err;  /* Ri-- (mod word size) */
 			}
-		if (!BN_div(&Ri,NULL,&Ri,&tmod,ctx)) goto err;
+		if (!BN_div(Ri,NULL,Ri,&tmod,ctx)) goto err;
 		/* Ni = (R*Ri-1)/N,
 		 * keep only least significant word: */
-		mont->n0 = (Ri.top > 0) ? Ri.d[0] : 0;
-		BN_free(&Ri);
+		mont->n0 = (Ri->top > 0) ? Ri->d[0] : 0;
 		}
 #else /* !MONT_WORD */
 		{ /* bignum version */
 		mont->ri=BN_num_bits(&mont->N);
-		if (!BN_zero(R)) goto err;
+		BN_zero(R);
 		if (!BN_set_bit(R,mont->ri)) goto err;  /* R = 2^ri */
 		                                        /* Ri = R^-1 mod N*/
-		if ((BN_mod_inverse(&Ri,R,&mont->N,ctx)) == NULL)
+		if ((BN_mod_inverse(Ri,R,&mont->N,ctx)) == NULL)
 			goto err;
-		if (!BN_lshift(&Ri,&Ri,mont->ri)) goto err; /* R*Ri */
-		if (!BN_sub_word(&Ri,1)) goto err;
+		if (!BN_lshift(Ri,Ri,mont->ri)) goto err; /* R*Ri */
+		if (!BN_sub_word(Ri,1)) goto err;
 							/* Ni = (R*Ri-1) / N */
-		if (!BN_div(&(mont->Ni),NULL,&Ri,&mont->N,ctx)) goto err;
-		BN_free(&Ri);
+		if (!BN_div(&(mont->Ni),NULL,Ri,&mont->N,ctx)) goto err;
 		}
 #endif
 
 	/* setup RR for conversions */
-	if (!BN_zero(&(mont->RR))) goto err;
+	BN_zero(&(mont->RR));
 	if (!BN_set_bit(&(mont->RR),mont->ri*2)) goto err;
 	if (!BN_mod(&(mont->RR),&(mont->RR),&(mont->N),ctx)) goto err;
 
-	return(1);
+	ret = 1;
 err:
-	return(0);
+	BN_CTX_end(ctx);
+	return ret;
 	}
 
 BN_MONT_CTX *BN_MONT_CTX_copy(BN_MONT_CTX *to, BN_MONT_CTX *from)
@@ -350,3 +353,21 @@ BN_MONT_CTX *BN_MONT_CTX_copy(BN_MONT_CTX *to, BN_MONT_CTX *from)
 	return(to);
 	}
 
+BN_MONT_CTX *BN_MONT_CTX_set_locked(BN_MONT_CTX **pmont, int lock,
+					const BIGNUM *mod, BN_CTX *ctx)
+	{
+	if (*pmont)
+		return *pmont;
+/*	CRYPTO_w_lock(lock);	- pcg */
+	if (!*pmont)
+		{
+		*pmont = BN_MONT_CTX_new();
+		if (*pmont && !BN_MONT_CTX_set(*pmont, mod, ctx))
+			{
+			BN_MONT_CTX_free(*pmont);
+			*pmont = NULL;
+			}
+		}
+/*	CRYPTO_w_unlock(lock);	- pcg */
+	return *pmont;
+	}

@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -65,7 +66,7 @@ static int fixCRTvalues( PKC_INFO *pkcInfo, const BOOLEAN fixPKCSvalues )
 		return( CRYPT_OK );
 	BN_swap( &pkcInfo->rsaParam_exponent1, &pkcInfo->rsaParam_exponent2 );
 	return( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p,
-							&pkcInfo->bnCTX ) != NULL ? \
+							pkcInfo->bnCTX ) != NULL ? \
 			CRYPT_OK : CRYPT_ERROR_FAILED );
 	}
 
@@ -75,16 +76,16 @@ static int getRSAMontgomery( PKC_INFO *pkcInfo, const BOOLEAN isPublicKey )
 	{
 	/* Evaluate the public value */
 	if( !BN_MONT_CTX_set( &pkcInfo->rsaParam_mont_n, &pkcInfo->rsaParam_n,
-						  &pkcInfo->bnCTX ) )
+						  pkcInfo->bnCTX ) )
 		return( CRYPT_ERROR_FAILED );
 	if( isPublicKey )
 		return( CRYPT_OK );
 
 	/* Evaluate the private values */
 	return( BN_MONT_CTX_set( &pkcInfo->rsaParam_mont_p, &pkcInfo->rsaParam_p,
-							 &pkcInfo->bnCTX ) && \
+							 pkcInfo->bnCTX ) && \
 			BN_MONT_CTX_set( &pkcInfo->rsaParam_mont_q, &pkcInfo->rsaParam_q,
-							 &pkcInfo->bnCTX ) ? \
+							 pkcInfo->bnCTX ) ? \
 			CRYPT_OK : CRYPT_ERROR_FAILED );
 	}
 
@@ -120,19 +121,19 @@ int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 	   e2 = d mod (q - 1) */
 	CK( BN_sub_word( p, 1 ) );
 	CK( BN_sub_word( q, 1 ) );
-	CK( BN_mul( tmp, p, q, &pkcInfo->bnCTX ) );
-	CKPTR( BN_mod_inverse( d, &pkcInfo->rsaParam_e, tmp, &pkcInfo->bnCTX ) );
+	CK( BN_mul( tmp, p, q, pkcInfo->bnCTX ) );
+	CKPTR( BN_mod_inverse( d, &pkcInfo->rsaParam_e, tmp, pkcInfo->bnCTX ) );
 	CK( BN_mod( &pkcInfo->rsaParam_exponent1, d,
-				p, &pkcInfo->bnCTX ) );
-	CK( BN_mod( &pkcInfo->rsaParam_exponent2, d, q, &pkcInfo->bnCTX ) );
+				p, pkcInfo->bnCTX ) );
+	CK( BN_mod( &pkcInfo->rsaParam_exponent2, d, q, pkcInfo->bnCTX ) );
 	CK( BN_add_word( p, 1 ) );
 	CK( BN_add_word( q, 1 ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
 	/* Compute n = pq, and u = qInv mod p */
-	CK( BN_mul( &pkcInfo->rsaParam_n, p, q, &pkcInfo->bnCTX ) );
-	CKPTR( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p, &pkcInfo->bnCTX ) );
+	CK( BN_mul( &pkcInfo->rsaParam_n, p, q, pkcInfo->bnCTX ) );
+	CKPTR( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
@@ -168,7 +169,7 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 		return( FALSE );
 
 	/* Verify that n = p * q */
-	CK( BN_mul( tmp, p, q, &pkcInfo->bnCTX ) );
+	CK( BN_mul( tmp, p, q, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || BN_cmp( n, tmp ) != 0 )
 		return( FALSE );
 
@@ -177,16 +178,16 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 	   shortcut is used, so we can only perform this check if d is present */
 	if( !BN_is_zero( d ) )
 		{
-		CK( BN_mod_mul( tmp, d, e, p1, &pkcInfo->bnCTX ) );
+		CK( BN_mod_mul( tmp, d, e, p1, pkcInfo->bnCTX ) );
 		if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 			return( FALSE );
-		CK( BN_mod_mul( tmp, d, e, q1, &pkcInfo->bnCTX ) );
+		CK( BN_mod_mul( tmp, d, e, q1, pkcInfo->bnCTX ) );
 		if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 			return( FALSE );
 		}
 
 	/* Verify that ( q * u ) mod p == 1 */
-	CK( BN_mod_mul( tmp, q, &pkcInfo->rsaParam_u, p, &pkcInfo->bnCTX ) );
+	CK( BN_mod_mul( tmp, q, &pkcInfo->rsaParam_u, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 		return( FALSE );
 
@@ -196,10 +197,10 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 	   component, so we have to use the full BN_mod() form of the checks
 	   that are carried out further on */
 #ifdef SIXTEEN_BIT
-	CK( BN_mod( tmp, p1, e, &pkcInfo->bnCTX ) );
+	CK( BN_mod( tmp, p1, e, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || BN_is_zero( tmp ) )
 		return( FALSE );
-	CK( BN_mod( tmp, q1, e, &pkcInfo->bnCTX ) );
+	CK( BN_mod( tmp, q1, e, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || BN_is_zero( tmp ) )
 		return( FALSE );
 	return( TRUE );
@@ -332,17 +333,17 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 
 			CKPTR( BN_copy( exponent1, p ) );/* exponent1 = d mod ( p - 1 ) ) */
 			CK( BN_sub_word( exponent1, 1 ) );
-			CK( BN_mod( exponent1, d, exponent1, &pkcInfo->bnCTX ) );
+			CK( BN_mod( exponent1, d, exponent1, pkcInfo->bnCTX ) );
 			CKPTR( BN_copy( exponent2, q ) );/* exponent2 = d mod ( q - 1 ) ) */
 			CK( BN_sub_word( exponent2, 1 ) );
-			CK( BN_mod( exponent2, d, exponent2, &pkcInfo->bnCTX ) );
+			CK( BN_mod( exponent2, d, exponent2, pkcInfo->bnCTX ) );
 			if( bnStatusError( bnStatus ) )
 				return( getBnStatus( bnStatus ) );
 			}
 		if( BN_is_zero( &pkcInfo->rsaParam_u ) )
 			{
 			CKPTR( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p,
-								   &pkcInfo->bnCTX ) );
+								   pkcInfo->bnCTX ) );
 			if( bnStatusError( bnStatus ) )
 				return( getBnStatus( bnStatus ) );
 			}
@@ -396,10 +397,10 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 			return( status );
 
 		/* Set up the blinding and unblinding values */
-		CK( BN_mod( k, k, n, &pkcInfo->bnCTX ) );	/* k = rand() mod n */
-		CKPTR( BN_mod_inverse( kInv, k, n, &pkcInfo->bnCTX ) );
+		CK( BN_mod( k, k, n, pkcInfo->bnCTX ) );	/* k = rand() mod n */
+		CKPTR( BN_mod_inverse( kInv, k, n, pkcInfo->bnCTX ) );
 													/* kInv = k^-1 mod n */
-		CK( BN_mod_exp_mont( k, k, e, n, &pkcInfo->bnCTX,
+		CK( BN_mod_exp_mont( k, k, e, n, pkcInfo->bnCTX,
 							 &pkcInfo->rsaParam_mont_n ) );
 													/* k = k^e mod n */
 		if( bnStatusError( bnStatus ) )

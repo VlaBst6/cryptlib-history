@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -131,7 +132,7 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
 	BN_init( &pkcInfo->tmp1 );
 	BN_init( &pkcInfo->tmp2 );
 	BN_init( &pkcInfo->tmp3 );
-	BN_CTX_init( &pkcInfo->bnCTX );
+	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	checkContextInfoPtr.capabilityInfo = capabilityInfoPtr;
 	initKeyWrite( &checkContextInfoPtr );	/* For calcKeyID() */
@@ -193,7 +194,7 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
 	BN_clear_free( &pkcInfo->tmp1 );
 	BN_clear_free( &pkcInfo->tmp2 );
 	BN_clear_free( &pkcInfo->tmp3 );
-	BN_CTX_free( &pkcInfo->bnCTX );
+	BN_CTX_free( pkcInfo->bnCTX );
 	BN_MONT_CTX_free( &pkcInfo->dlpParam_mont_p );
 	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
 	zeroise( &checkContextInfoPtr, sizeof( CONTEXT_INFO ) );
@@ -221,7 +222,7 @@ static int selfTest( void )
 	BN_init( &pkcInfo->tmp1 );
 	BN_init( &pkcInfo->tmp2 );
 	BN_init( &pkcInfo->tmp3 );
-	BN_CTX_init( &pkcInfo->bnCTX );
+	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
 	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
@@ -247,7 +248,7 @@ static int selfTest( void )
 	BN_clear_free( &pkcInfo->tmp1 );
 	BN_clear_free( &pkcInfo->tmp2 );
 	BN_clear_free( &pkcInfo->tmp3 );
-	BN_CTX_free( &pkcInfo->bnCTX );
+	BN_CTX_free( pkcInfo->bnCTX );
 	BN_MONT_CTX_free( &pkcInfo->dlpParam_mont_p );
 	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
 	zeroise( &contextInfoPtr, sizeof( CONTEXT_INFO ) );
@@ -334,7 +335,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   the bignum code can't handle modexp with the first two parameters the
 	   same */
 	CK( BN_mod_exp_mont( z, &pkcInfo->dhParam_yPrime, &pkcInfo->dlpParam_x, 
-						 &pkcInfo->dlpParam_p, &pkcInfo->bnCTX, 
+						 &pkcInfo->dlpParam_p, pkcInfo->bnCTX, 
 						 &pkcInfo->dlpParam_mont_p ) );
 	keyAgreeParams->wrappedKeyLen = BN_bn2bin( z, keyAgreeParams->wrappedKey );
 

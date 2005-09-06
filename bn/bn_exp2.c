@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -63,7 +63,7 @@
  * are met:
  *
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ *    notice, this list of conditions and the following disclaimer. 
  *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in
@@ -123,10 +123,11 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 	BN_CTX *ctx, BN_MONT_CTX *in_mont)
 	{
 	int i,j,bits,b,bits1,bits2,ret=0,wpos1,wpos2,window1,window2,wvalue1,wvalue2;
-	int r_is_one=1,ts1=0,ts2=0;
+	int r_is_one=1;
 	BIGNUM *d,*r;
 	const BIGNUM *a_mod_m;
-	BIGNUM val1[TABLE_SIZE], val2[TABLE_SIZE];
+	/* Tables of variables obtained from 'ctx' */
+	BIGNUM *val1[TABLE_SIZE], *val2[TABLE_SIZE];
 	BN_MONT_CTX *mont=NULL;
 
 	bn_check_top(a1);
@@ -147,13 +148,15 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 		ret = BN_one(rr);
 		return ret;
 		}
-
+	
 	bits=(bits1 > bits2)?bits1:bits2;
 
 	BN_CTX_start(ctx);
 	d = BN_CTX_get(ctx);
 	r = BN_CTX_get(ctx);
-	if (d == NULL || r == NULL) goto err;
+	val1[0] = BN_CTX_get(ctx);
+	val2[0] = BN_CTX_get(ctx);
+	if(!d || !r || !val1[0] || !val2[0]) goto err;
 
 	if (in_mont != NULL)
 		mont=in_mont;
@@ -169,69 +172,67 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 	/*
 	 * Build table for a1:   val1[i] := a1^(2*i + 1) mod m  for i = 0 .. 2^(window1-1)
 	 */
-	BN_init(&val1[0]);
-	ts1=1;
 	if (a1->neg || BN_ucmp(a1,m) >= 0)
 		{
-		if (!BN_mod(&(val1[0]),a1,m,ctx))
+		if (!BN_mod(val1[0],a1,m,ctx))
 			goto err;
-		a_mod_m = &(val1[0]);
+		a_mod_m = val1[0];
 		}
 	else
 		a_mod_m = a1;
 	if (BN_is_zero(a_mod_m))
 		{
-		ret = BN_zero(rr);
+		BN_zero(rr);
+		ret = 1;
 		goto err;
 		}
 
-	if (!BN_to_montgomery(&(val1[0]),a_mod_m,mont,ctx)) goto err;
+	if (!BN_to_montgomery(val1[0],a_mod_m,mont,ctx)) goto err;
 	if (window1 > 1)
 		{
-		if (!BN_mod_mul_montgomery(d,&(val1[0]),&(val1[0]),mont,ctx)) goto err;
+		if (!BN_mod_mul_montgomery(d,val1[0],val1[0],mont,ctx)) goto err;
 
 		j=1<<(window1-1);
 		for (i=1; i<j; i++)
 			{
-			BN_init(&(val1[i]));
-			if (!BN_mod_mul_montgomery(&(val1[i]),&(val1[i-1]),d,mont,ctx))
+			if(((val1[i] = BN_CTX_get(ctx)) == NULL) ||
+					!BN_mod_mul_montgomery(val1[i],val1[i-1],
+						d,mont,ctx))
 				goto err;
 			}
-		ts1=i;
 		}
 
 
 	/*
 	 * Build table for a2:   val2[i] := a2^(2*i + 1) mod m  for i = 0 .. 2^(window2-1)
 	 */
-	BN_init(&val2[0]);
-	ts2=1;
 	if (a2->neg || BN_ucmp(a2,m) >= 0)
 		{
-		if (!BN_mod(&(val2[0]),a2,m,ctx))
+		if (!BN_mod(val2[0],a2,m,ctx))
 			goto err;
-		a_mod_m = &(val2[0]);
+		a_mod_m = val2[0];
 		}
 	else
 		a_mod_m = a2;
 	if (BN_is_zero(a_mod_m))
 		{
-		ret = BN_zero(rr);
+		BN_zero(rr);
+		ret = 1;
 		goto err;
 		}
-	if (!BN_to_montgomery(&(val2[0]),a_mod_m,mont,ctx)) goto err;
+	if (!BN_to_montgomery(val2[0],a_mod_m,mont,ctx)) goto err;
 	if (window2 > 1)
 		{
-		if (!BN_mod_mul_montgomery(d,&(val2[0]),&(val2[0]),mont,ctx)) goto err;
+		if (!BN_mod_mul_montgomery(d,val2[0],val2[0],mont,ctx)) goto err;
 
 		j=1<<(window2-1);
 		for (i=1; i<j; i++)
 			{
-			BN_init(&(val2[i]));
-			if (!BN_mod_mul_montgomery(&(val2[i]),&(val2[i-1]),d,mont,ctx))
+			if(((val2[i] = BN_CTX_get(ctx)) == NULL) ||
+					!BN_mod_mul_montgomery(val2[i],val2[i-1],
+						d,mont,ctx))
 				goto err;
 			}
-		ts2=i;
 		}
 
 
@@ -250,7 +251,7 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 			if (!BN_mod_mul_montgomery(r,r,r,mont,ctx))
 				goto err;
 			}
-
+		
 		if (!wvalue1)
 			if (BN_is_bit_set(p1, b))
 				{
@@ -267,7 +268,7 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 						wvalue1++;
 					}
 				}
-
+		
 		if (!wvalue2)
 			if (BN_is_bit_set(p2, b))
 				{
@@ -288,16 +289,16 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 		if (wvalue1 && b == wpos1)
 			{
 			/* wvalue1 is odd and < 2^window1 */
-			if (!BN_mod_mul_montgomery(r,r,&(val1[wvalue1>>1]),mont,ctx))
+			if (!BN_mod_mul_montgomery(r,r,val1[wvalue1>>1],mont,ctx))
 				goto err;
 			wvalue1 = 0;
 			r_is_one = 0;
 			}
-
+		
 		if (wvalue2 && b == wpos2)
 			{
 			/* wvalue2 is odd and < 2^window2 */
-			if (!BN_mod_mul_montgomery(r,r,&(val2[wvalue2>>1]),mont,ctx))
+			if (!BN_mod_mul_montgomery(r,r,val2[wvalue2>>1],mont,ctx))
 				goto err;
 			wvalue2 = 0;
 			r_is_one = 0;
@@ -308,9 +309,6 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 err:
 	if ((in_mont == NULL) && (mont != NULL)) BN_MONT_CTX_free(mont);
 	BN_CTX_end(ctx);
-	for (i=0; i<ts1; i++)
-		BN_clear_free(&(val1[i]));
-	for (i=0; i<ts2; i++)
-		BN_clear_free(&(val2[i]));
+	bn_check_top(rr);
 	return(ret);
 	}

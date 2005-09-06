@@ -804,6 +804,10 @@ SOURCE=.\crypt32.rc
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\int_api.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\bindings\java_jni.c
 # End Source File
 # Begin Source File
@@ -1002,10 +1006,6 @@ SOURCE=.\cryptkey.c
 # Begin Source File
 
 SOURCE=.\cryptlib.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\cryptmis.c
 # End Source File
 # Begin Source File
 

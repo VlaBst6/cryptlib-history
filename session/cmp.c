@@ -364,7 +364,7 @@ int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr,
 		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
 		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
 				  "Couldn't find PKI user information for %s",
-				  userID );
+				  sanitiseString( userID ) );
 		}
 	cmpInfo->userInfo = getkeyInfo.cryptHandle;
 	protocolInfo->userIDchanged = FALSE;

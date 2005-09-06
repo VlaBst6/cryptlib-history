@@ -1393,11 +1393,10 @@ static int completeConnect( STREAM *stream,
 		status = CRYPT_OK;	/* Reset status from above checks */
 		}
 
-	/* Wait for any async network driver binding to complete */
-	krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
-
-	/* Make sure that the network interface has been initialised */
-	if( !stream->transportOKFunction() )
+	/* Wait for any async network driver binding to complete and make sure 
+	   that the network interface has been initialised */
+	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) || \
+		!stream->transportOKFunction() )
 		{
 		/* Provide more information on the nature of the problem */
 		strcpy( errorMessage, "Networking subsystem not available" );

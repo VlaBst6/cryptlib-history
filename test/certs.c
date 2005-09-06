@@ -2760,7 +2760,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 24; i++ )
+	for( i = 1; i <= 25; i++ )
 		if( !certImport( i, FALSE ) )
 			return( FALSE );
 	return( TRUE );

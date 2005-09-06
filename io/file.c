@@ -1889,20 +1889,21 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 		  close it again (for example to abort the access if there's a lock
 		  on it) all locks are released.
 
-	   The downside of flock()-locking is that it doesn't usually work with
-	   NFS unless special hacks have been applied.  fcntl() passes lock
-	   requests to rpc.lockd to handle, but this is its own type of mess
-	   since it's often unreliable, so it's really not much worse than
-	   flock().  In addition locking support under filesystems like AFS is
-	   often nonexistant, with the lock apparently succeeding but no lock
-	   actually being applied.  Finally, locking is almost always advisory
-	   only, but even mandatory locking can be bypassed by tricks such as
-	   copying the original, unlinking it, and renaming the copy back to the
-	   original (the unlinked - and still locked - original goes away once
-	   the handle is closed) - this mechanism is standard practice for many
-	   Unix utilities like text editors.  In addition mandatory locking is
-	   wierd in that an open for write (or read, on a write-locked file) will
-	   succeed, it's only a later attempt to read/write that will fail.
+	   flock() sticks with the much more sensible 4.2BSD-based last-close
+	   semantics, however it doesn't usually work with NFS unless special
+	   hacks have been applied.  fcntl() passes lock requests to rpc.lockd
+	   to handle, but this is its own type of mess since it's often
+	   unreliable, so it's really not much worse than flock().  In addition
+	   locking support under filesystems like AFS is often nonexistant, with
+	   the lock apparently succeeding but no lock actually being applied.
+	   Finally, locking is almost always advisory only, but even mandatory
+	   locking can be bypassed by tricks such as copying the original,
+	   unlinking it, and renaming the copy back to the original (the
+	   unlinked - and still locked - original goes away once the handle is
+	   closed) - this mechanism is standard practice for many Unix utilities
+	   like text editors.  In addition mandatory locking is wierd in that an
+	   open for write (or read, on a write-locked file) will succeed, it's
+	   only a later attempt to read/write that will fail.
 
 	   This mess is why dotfile-locking is still so popular, but that's
 	   probably going a bit far for simple keyset accesses */
@@ -2074,7 +2075,9 @@ void fileErase( const char *fileName )
 	{
 	STREAM stream;
 	struct stat fstatInfo;
-#ifndef __APPLE__
+#if defined( __FreeBSD__ )
+	struct timeval timeVals[ 2 ];
+#elif  !defined( __APPLE__ )
 	struct utimbuf timeStamp;
 #endif /* OS-specific variable declarations */
 #ifdef EBCDIC_CHARS
@@ -2102,10 +2105,19 @@ void fileErase( const char *fileName )
 	if( fstat( stream.fd, &fstatInfo ) == 0 )
 		eraseFile( &stream, 0, fstatInfo.st_size );
 
-	/* Reset the time stamps and delete the file */
+	/* Reset the time stamps and delete the file.  On BSD filesystems that
+	   support creation times (e.g. UFS2), the handling of creation times
+	   has been kludged into utimes() by having it called twice.  The first
+	   call sets the creation time provided it's older than the current
+	   creation time (which it always is, since we set it to the epoch).
+	   The second call then works as utimes() normally would */
 	sFileClose( &stream );
-#ifdef __APPLE__
+#if defined( __APPLE__ )
 	utimes( fileName, NULL );
+#elif defined( __FreeBSD__ )
+	memset( timeVals, 0, sizeof( struct timeval ) * 2 );
+	utimes( fileName, timeVals );
+	utimes( fileName, timeVals );
 #else
 	memset( &timeStamp, 0, sizeof( struct utimbuf ) );
 	utime( fileName, &timeStamp );
@@ -2538,7 +2550,13 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 #endif /* Win32 vs.WinCE */
 
 /* Older versions of the Windows SDK don't include the defines for system
-   directories so we define them ourselves if necesary */
+   directories so we define them ourselves if necesary.  Note that we use
+   CSIDL_APPDATA, which expands to 'Application Data', rather than
+   CSIDL_LOCAL_APPDATA, which expands to 'Local Settings/Application Data',
+   because although the latter is technically safer (it's not part of the
+   roaming profile, so it'll never leave the local machine), it's
+   technically intended for less-important/discardable data and temporary
+   files */
 
 #ifndef CSIDL_PERSONAL
   #define CSIDL_PERSONAL		0x05	/* 'My Documents' */
@@ -2552,6 +2570,14 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 #ifndef SHGFP_TYPE_CURRENT
   #define SHGFP_TYPE_CURRENT	0
 #endif /* !SHGFP_TYPE_CURRENT */
+
+/* Older versions of the Windows SDK don't include the defines for services
+   added in Windows XP so we define them ourselves if necessary */
+
+#ifndef SECURITY_LOCAL_SERVICE_RID
+  #define SECURITY_LOCAL_SERVICE_RID	19
+  #define SECURITY_NETWORK_SERVICE_RID	20
+#endif /* !SECURITY_LOCAL_SERVICE_RID */
 
 /* Windows CE doesn't have security mechanisms, so we make it look like Win95
    for ACL handling purposes */
@@ -2567,8 +2593,74 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 #ifndef __WINCE__
 
 #define TOKEN_BUFFER_SIZE	256
+#define SID_BUFFER_SIZE		256
 #define UNI_BUFFER_SIZE		( 256 + _MAX_PATH )
 #define PATH_BUFFER_SIZE	( _MAX_PATH + 16 )
+
+static BOOLEAN isSpecialSID( SID *pUserSid )
+	{
+	BYTE sidBuffer[ SID_BUFFER_SIZE ];
+	SID *pSid = ( PSID ) sidBuffer;
+	SID_IDENTIFIER_AUTHORITY identifierAuthority = SECURITY_NT_AUTHORITY;
+
+	/* Create a SID for each special-case account and check whether it
+	   matches the current user's SID.  It would be easier to use 
+	   IsWellKnownSid() for this check, but this only appeared in Windows 
+	   XP */
+	InitializeSid( pSid, &identifierAuthority, 1 );
+	*( GetSidSubAuthority( pSid, 0 ) ) = SECURITY_LOCAL_SYSTEM_RID;
+	if( EqualSid( pSid, pUserSid ) )
+		return( TRUE );
+	*( GetSidSubAuthority( pSid, 0 ) ) = SECURITY_LOCAL_SERVICE_RID;
+	if( EqualSid( pSid, pUserSid ) )
+		return( TRUE );
+	*( GetSidSubAuthority( pSid, 0 ) ) = SECURITY_NETWORK_SERVICE_RID;
+	if( EqualSid( pSid, pUserSid ) )
+		return( TRUE );
+
+	return( FALSE );
+	}
+
+static BOOLEAN getUncName( UNIVERSAL_NAME_INFO *nameInfo, 
+						   const char **fileName )
+	{
+	typedef DWORD ( WINAPI *WNETGETUNIVERSALNAMEA )( LPCSTR lpLocalPath,
+										DWORD dwInfoLevel, LPVOID lpBuffer,
+										LPDWORD lpBufferSize );
+	WNETGETUNIVERSALNAMEA pWNetGetUniversalNameA;
+	HINSTANCE hMPR;
+	DWORD uniBufSize = UNI_BUFFER_SIZE;
+	BOOLEAN gotUNC = FALSE;
+
+	/* Load the MPR library.  We can't (safely) use an opportunistic 
+	   GetModuleHandle() before the LoadLibrary() for this because the code 
+	   that originally loaded the DLL might do a FreeLibrary in another 
+	   thread, causing the library to be removed from under us.  In any case 
+	   LoadLibrary does this for us, merely incrementing the reference count 
+	   if the DLL is already loaded */
+	hMPR = LoadLibrary( "Mpr.dll" );
+	if( hMPR == NULL )
+		/* Should never happen, we can't have a mapped network drive if no 
+		   network is available */
+		return( FALSE );
+
+	/* Get the translated UNC name.  The UNIVERSAL_NAME_INFO struct is one 
+	   of those variable-length ones where the lpUniversalName member points 
+	   to extra data stored off the end of the struct, so we overlay it onto 
+	   a much larger buffer */
+	pWNetGetUniversalNameA = ( WNETGETUNIVERSALNAMEA ) \
+							 GetProcAddress( hMPR, "WNetGetUniversalNameA" );
+	if( pWNetGetUniversalNameA != NULL && \
+		pWNetGetUniversalNameA( *fileName, UNIVERSAL_NAME_INFO_LEVEL,
+								nameInfo, &uniBufSize ) == NO_ERROR )
+		{
+		*fileName = nameInfo->lpUniversalName;
+		gotUNC = TRUE;
+		}
+	FreeLibrary( hMPR );
+
+	return( gotUNC );
+	}
 
 static BOOLEAN checkUserKnown( const char *fileName )
 	{
@@ -2576,12 +2668,12 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	BYTE uniBuffer[ UNI_BUFFER_SIZE ], tokenBuffer[ TOKEN_BUFFER_SIZE ];
 	char pathBuffer[ PATH_BUFFER_SIZE ], nameBuffer[ PATH_BUFFER_SIZE ];
 	char domainBuffer[ PATH_BUFFER_SIZE ], *fileNamePtr;
-    UNIVERSAL_NAME_INFO *nameInfo = ( UNIVERSAL_NAME_INFO * ) uniBuffer;
+	UNIVERSAL_NAME_INFO *nameInfo = ( UNIVERSAL_NAME_INFO * ) uniBuffer;
 	TOKEN_USER *pTokenUser = ( TOKEN_USER * ) tokenBuffer;
 	SID_NAME_USE eUse;
-	BOOLEAN isMappedDrive = FALSE, tokenOK = FALSE, retVal;
-	int uniBufSize = UNI_BUFFER_SIZE, nameBufSize = PATH_BUFFER_SIZE;
-	int domainBufSize = PATH_BUFFER_SIZE, serverNameLength;
+	DWORD nameBufSize = PATH_BUFFER_SIZE, domainBufSize = PATH_BUFFER_SIZE;
+	BOOLEAN isMappedDrive = FALSE, tokenOK = FALSE;
+	int serverNameLength;
 
 	assert( sizeof( UNIVERSAL_NAME_INFO ) + _MAX_PATH <= UNI_BUFFER_SIZE );
 
@@ -2629,44 +2721,9 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	   usual reason for this will be that there's a problem with the network
 	   and the share is a cached remnant of a persistent connection), all we
 	   can do is fail safe and hope that the user is known */
-	if( isMappedDrive )
-		{
-		typedef DWORD ( WINAPI *WNETGETUNIVERSALNAMEA )( LPCSTR lpLocalPath,
-										DWORD dwInfoLevel, LPVOID lpBuffer,
-										LPDWORD lpBufferSize );
-		WNETGETUNIVERSALNAMEA pWNetGetUniversalNameA;
-		HINSTANCE hMPR;
-		BOOLEAN gotUNC = FALSE;
+	if( isMappedDrive && !getUncName( nameInfo, &fileName ) )
+		return( TRUE );
 
-		/* Load the MPR library.  We can't (safely) use an opportunistic
-		   GetModuleHandle() before the LoadLibrary() for this because the
-		   code that originally loaded the DLL might do a FreeLibrary in
-		   another thread, causing the library to be removed from under us.
-		   In any case LoadLibrary does this for us, merely incrementing the
-		   reference count if the DLL is already loaded */
-	 	hMPR = LoadLibrary( "Mpr.dll" );
-		if( hMPR == NULL )
-			/* Should never happen, we can't have a mapped network drive if
-			   no network is available */
-			return( TRUE );		/* Default fail-safe */
-
-		/* Get the translated UNC name.  The UNIVERSAL_NAME_INFO struct is
-		   one of those variable-length ones where the lpUniversalName
-		   member points to extra data stored off the end of the struct, so
-		   we overlay it onto a much larger buffer */
-		pWNetGetUniversalNameA = ( WNETGETUNIVERSALNAMEA ) \
-								 GetProcAddress( hMPR, "WNetGetUniversalNameA" );
-		if( pWNetGetUniversalNameA != NULL && \
-			pWNetGetUniversalNameA( fileName, UNIVERSAL_NAME_INFO_LEVEL,
-									nameInfo, &uniBufSize ) == NO_ERROR )
-			{
-			fileName = nameInfo->lpUniversalName;
-			gotUNC = TRUE;
-			}
-		FreeLibrary( hMPR );
-		if( !gotUNC )
-			return( TRUE );		/* Default fail-safe */
-		}
 	assert( !memcmp( fileName, "\\\\", 2 ) );
 
 	/* We've got the network share in UNC form, extract the server name.  If
@@ -2678,7 +2735,7 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	memmove( pathBuffer, fileName, serverNameLength );
 	memcpy( pathBuffer + serverNameLength, "\\", 2 );
 
-	/* Check whether the current user's SID is known to the server */
+	/* Get the current user's SID */
 	if( OpenThreadToken( GetCurrentThread(), TOKEN_QUERY, FALSE, &hToken ) || \
 		OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &hToken ) )
 		{
@@ -2690,17 +2747,31 @@ static BOOLEAN checkUserKnown( const char *fileName )
 		}
 	if( !tokenOK )
 		return( TRUE );			/* Default fail-safe */
-	retVal = LookupAccountSid( pathBuffer, pTokenUser->User.Sid,
-							   nameBuffer, &nameBufSize,
-							   domainBuffer, &domainBufSize, &eUse );
-	if( !retVal && GetLastError() == ERROR_NONE_MAPPED )
+
+	/* Check whether this is a special-case account that can't be mapped to
+	   an account on the server */
+	if( isSpecialSID( pTokenUser->User.Sid ) )
+		/* The user with this SID may be known to the server, but it 
+		   represents a different entity on the server than it does on the
+		   local system */
+		return( FALSE );
+
+	/* Check whether the user with this SID is known to the server.  We
+	   get some additional info in the form of the eUse value, which
+	   indicates the general class of the SID (e.g. SidTypeUser, 
+	   SidTypeGroup, SidTypeDomain, SidTypeAlias, etc, but these aren't of
+	   much use to us */
+	if( !LookupAccountSid( pathBuffer, pTokenUser->User.Sid,
+						   nameBuffer, &nameBufSize,
+						   domainBuffer, &domainBufSize, &eUse ) && \
+		GetLastError() == ERROR_NONE_MAPPED )
 		/* The user with this SID isn't known to the server */
 		return( FALSE );
 
 	/* Either the user is known to the server or it's a fail-safe */
 	return( TRUE );
 	}
-#endif /* __WINCE__ */
+#endif /* !__WINCE__ */
 
 /* Open/close a file stream */
 
@@ -2768,7 +2839,14 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   result, they can't read the file that they've just created.  To get
 	   around this, we need to perform an incredibly convoluted check (via
 	   checkUserKnown()) to see whether the path is a network path and if
-	   so, if the user is known to the server providing the network share */
+	   so, if the user is known to the server providing the network share.
+	   
+	   An extension of this problem occurs where the user *is* known on the
+	   local and server system, but the two are logically different.  This 
+	   occurs for the System/LocalSystem service account and,for Windows XP 
+	   and newer, LocalService and NetworkService.  To handle this,
+	   checkUserKnown() also checks whether the user is running under one of
+	   these accounts */
 	if( !isWin95 && ( mode & FILE_WRITE ) && ( mode & FILE_PRIVATE ) && \
 		checkUserKnown( fileNamePtr ) && \
 		( aclInfo = initACLInfo( FILE_GENERIC_READ | \
@@ -2849,6 +2927,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 			   the check */
 			CloseHandle( hFile );
 			freeACLInfo( aclInfo );
+			SetErrorMode( uErrorMode );
 			return( CRYPT_ERROR_OPEN );
 			}
 #endif /* __WINCE__ */
@@ -3159,7 +3238,7 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 			{
 			/* Under WinNT and Win2K the LocalSystem account doesn't have
 			   its own profile, so SHGetFolderPath() will report success but
-			   return a zero-length path if we're running as a service.  In
+			   returns a zero-length path if we're running as a service.  In
 			   this case we use the nearest equivalent that LocalSystem has
 			   to its own directories, which is the Windows directory.  This
 			   is safe because LocalSystem always has permission to write

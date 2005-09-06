@@ -2880,6 +2880,14 @@ static const FAR_BSS ATTRIBUTE_ACL internalACL[] = {
 		CRYPT_IATTRIBUTE_SPKI,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN | ST_CERT_CERTREQ | ST_CERT_REQ_CERT, ST_NONE, ACCESS_INT_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, CRYPT_MAX_PKCSIZE * 3 ) ),
+	MKACL_N(	/* Cert: Hash algo.used for cert */
+		/* Although this attribute is technically valid for most cert types,
+		   it's only used with standard certificates, where it's used as
+		   an implicit indicator of the preferred hash algorithm to use when
+		   signing data */
+		CRYPT_IATTRIBUTE_CERTHASHALGO,	
+		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
+		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( CRYPT_ALGO_FIRST_HASH, CRYPT_ALGO_LAST_HASH ) ),
 	MKACL_O_EX(	/* Cert: Certs added to cert chain */
 		/* This attribute is marked as a trigger attribute since the cert
 		   chain object it affects doesn't contain a true chain of certs but

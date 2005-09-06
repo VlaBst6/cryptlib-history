@@ -105,7 +105,7 @@
 	  !( defined( __MVS__ ) || defined( __TANDEM_NSK__ ) || \
 		 defined( __TANDEM_OSS__ ) )
   void initRandomPolling( void );
-  #define endRandomPolling()
+  void endRandomPolling( void );
   void waitforRandomCompletion( const BOOLEAN force );
 #else
   #define initRandomPolling()

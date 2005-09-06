@@ -645,7 +645,8 @@ static int checkCRL( const CERT_INFO *crlInfoPtr,
 
 	/* Make sure that the issuer can sign CRLs and the issuer cert in
 	   general is in order */
-	return( checkKeyUsage( issuerCertInfoPtr, CHECKKEY_FLAG_CA, 
+	return( checkKeyUsage( issuerCertInfoPtr, 
+						   CHECKKEY_FLAG_CA | CHECKKEY_FLAG_GENCHECK, 
 						   CRYPT_KEYUSAGE_CRLSIGN, complianceLevel, 
 						   errorLocus, errorType ) );
 	}
@@ -863,7 +864,7 @@ int checkCert( CERT_INFO *subjectCertInfoPtr,
 	if( subjectCertInfoPtr->cCertCert->maxCheckLevel < CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL && \
 		subjectCertInfoPtr->type != CRYPT_CERTTYPE_ATTRIBUTE_CERT )
 		{
-		status = checkKeyUsage( subjectCertInfoPtr, CHECKKEY_FLAG_NONE, 
+		status = checkKeyUsage( subjectCertInfoPtr, CHECKKEY_FLAG_GENCHECK, 
 								CRYPT_UNUSED, complianceLevel, 
 								errorLocus, errorType );
 		if( cryptStatusError( status ) )

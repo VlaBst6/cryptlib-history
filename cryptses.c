@@ -1782,6 +1782,9 @@ int sessionManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			if( cryptStatusOK( status ) )
 				{
 				initLevel++;
+				if( krnlIsExiting() )
+					/* The kernel is shutting down, exit */
+					return( CRYPT_ERROR_PERMISSION );
 				status = initSessionCache();
 				}
 			if( cryptStatusOK( status ) )

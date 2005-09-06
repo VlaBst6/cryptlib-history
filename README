@@ -1,3 +1,9 @@
+Changes in 3.2.2 release
+========================
+
+The bignum code has been updated to the latest version, which is no less
+ghastly than before but somewhat faster, particularly on x86 systems.
+
 Changes in 3.2.1 release
 ========================
 
@@ -13,9 +19,9 @@ decompression.  Another potential problem with 1.1.4 is that there may be as
 yet undiscovered problems in it that no-one's found yet because they're
 concentrating on the newer 1.2.x instead.
 
-Because 1.2.x includes a significant rewrite of a fair portion of the code,
-it's not possible to simply switch from one version of zlib to the other at
-the flip of a compiler switch.  Based on user feedback, the preferred
+Because zlib 1.2.x includes a significant rewrite of a fair portion of the
+code, it's not possible to simply switch from one version of zlib to the other
+at the flip of a compiler switch.  Based on user feedback, the preferred
 behaviour is to have cryptlib move from the old 1.1.x to the current 1.2.x
 code base, so cryptlib 3.2.1 uses zlib 1.2.3 (those values are pure
 coincidence).  Users concerned about security issues should disable the

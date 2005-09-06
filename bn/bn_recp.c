@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -97,7 +97,7 @@ void BN_RECP_CTX_free(BN_RECP_CTX *recp)
 int BN_RECP_CTX_set(BN_RECP_CTX *recp, const BIGNUM *d, BN_CTX *ctx)
 	{
 	if (!BN_copy(&(recp->N),d)) return 0;
-	if (!BN_zero(&(recp->Nr))) return 0;
+	BN_zero(&(recp->Nr));
 	recp->num_bits=BN_num_bits(d);
 	recp->shift=0;
 	return(1);
@@ -126,6 +126,7 @@ int BN_mod_mul_reciprocal(BIGNUM *r, const BIGNUM *x, const BIGNUM *y,
 	ret = BN_div_recp(NULL,r,ca,recp,ctx);
 err:
 	BN_CTX_end(ctx);
+	bn_check_top(r);
 	return(ret);
 	}
 
@@ -150,7 +151,7 @@ int BN_div_recp(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m,
 
 	if (BN_ucmp(m,&(recp->N)) < 0)
 		{
-		if (!BN_zero(d)) return 0;
+		BN_zero(d);
 		if (!BN_copy(r,m)) return 0;
 		BN_CTX_end(ctx);
 		return(1);
@@ -193,7 +194,7 @@ int BN_div_recp(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m,
 		{
 		if (j++ > 2)
 			{
-			BNerr(BN_F_BN_MOD_MUL_RECIPROCAL,BN_R_BAD_RECIPROCAL);
+			BNerr(BN_F_BN_DIV_RECP,BN_R_BAD_RECIPROCAL);
 			goto err;
 			}
 		if (!BN_usub(r,r,&(recp->N))) goto err;
@@ -206,8 +207,10 @@ int BN_div_recp(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m,
 	ret=1;
 err:
 	BN_CTX_end(ctx);
+	if(dv) bn_check_top(dv);
+	if(rem) bn_check_top(rem);
 	return(ret);
-	}
+	} 
 
 /* len is the expected size of the result
  * We actually calculate with an extra word of precision, so
@@ -217,17 +220,18 @@ err:
 int BN_reciprocal(BIGNUM *r, const BIGNUM *m, int len, BN_CTX *ctx)
 	{
 	int ret= -1;
-	BIGNUM t;
+	BIGNUM *t;
 
-	BN_init(&t);
+	BN_CTX_start(ctx);
+	if((t = BN_CTX_get(ctx)) == NULL) goto err;
 
-	if (!BN_zero(&t)) goto err;
-	if (!BN_set_bit(&t,len)) goto err;
+	if (!BN_set_bit(t,len)) goto err;
 
-	if (!BN_div(r,NULL,&t,m,ctx)) goto err;
+	if (!BN_div(r,NULL,t,m,ctx)) goto err;
 
 	ret=len;
 err:
-	BN_free(&t);
+	bn_check_top(r);
+	BN_CTX_end(ctx);
 	return(ret);
 	}

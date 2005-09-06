@@ -433,7 +433,7 @@ typedef struct KI {
    function */
 
 int retExtFnKeyset( KEYSET_INFO *keysetInfoPtr, const int status, 
-					const char *format, ... );
+					const char *format, ... ) PRINTF_FN;
 #define retExt	return retExtFnKeyset
 
 /* Prototypes for keyset mapping functions */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						WinCE Randomness-Gathering Code						*
-*						Copyright Peter Gutmann 1996-2003					*
+*						Copyright Peter Gutmann 1996-2005					*
 *																			*
 ****************************************************************************/
 
@@ -26,27 +26,6 @@
 /* The size of the intermediate buffer used to accumulate polled data */
 
 #define RANDOM_BUFSIZE	4096
-
-/* When we're running a background poll, the main thread can ask it to
-   terminate if cryptlib is shutting down.  The following macro checks
-   whether the background thread should exit prematurely */
-
-#define checkPollExit()	\
-		{ \
-		BOOLEAN exitFlag; \
-		\
-		krnlEnterMutex( MUTEX_RANDOMPOLLING ); \
-		exitFlag = exitNow; \
-		krnlExitMutex( MUTEX_RANDOMPOLLING ); \
-		if( exitFlag ) \
-			return; \
-		}
-
-/* A flag telling the randomness polling thread to exit.  This is set on
-   shutdown to indicate that it should bail out as quickly as possible so as
-   not to hold up the shutdown */
-
-static BOOLEAN exitNow;
 
 /* Handles to various randomness objects */
 
@@ -84,7 +63,8 @@ void fastPoll( void )
 	BYTE buffer[ RANDOM_BUFSIZE ];
 	int bufIndex = 0, length;
 
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Initialize the native function pointers if necessary.  CeGetRandom()
 	   is only available in relatively new versions of WinCE, so we have to
@@ -134,7 +114,8 @@ void fastPoll( void )
 	addRandomValue( randomState, GetProcessHeap() );
 	addRandomValue( randomState, GetQueueStatus( QS_ALLINPUT ) );
 	addRandomValue( randomState, GetTickCount() );
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Get multiword system information: Current caret position, current
 	   mouse cursor position */
@@ -300,7 +281,8 @@ static void slowPollWinCE( void )
 			return;
 			}
 		}
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	initRandomData( randomState, buffer, BIG_RANDOM_BUFSIZE );
 
@@ -341,7 +323,11 @@ static void slowPollWinCE( void )
 
 			/* First add the information from the basic Heaplist32
 			   structure */
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				pCloseToolhelp32Snapshot( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &hl32, sizeof( HEAPLIST32 ) );
 
 			/* Now walk through the heap blocks getting information
@@ -350,7 +336,11 @@ static void slowPollWinCE( void )
 			if( pHeap32First( hSnapshot, &he32, hl32.th32ProcessID, hl32.th32HeapID ) )
 				do
 					{
-					checkPollExit();
+					if( krnlIsExiting() )
+						{
+						pCloseToolhelp32Snapshot( hSnapshot );
+						return;
+						}
 					addRandomData( randomState, &he32,
 								   sizeof( HEAPENTRY32 ) );
 					}
@@ -363,7 +353,11 @@ static void slowPollWinCE( void )
 	if( pProcess32First( hSnapshot, &pe32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				pCloseToolhelp32Snapshot( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &pe32, sizeof( PROCESSENTRY32 ) );
 			}
 		while( pProcess32Next( hSnapshot, &pe32 ) );
@@ -373,7 +367,11 @@ static void slowPollWinCE( void )
 	if( pThread32First( hSnapshot, &te32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				pCloseToolhelp32Snapshot( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
 	while( pThread32Next( hSnapshot, &te32 ) );
@@ -383,14 +381,19 @@ static void slowPollWinCE( void )
 	if( pModule32First( hSnapshot, &me32 ) )
 		do
 			{
-			checkPollExit();
+			if( krnlIsExiting() )
+				{
+				pCloseToolhelp32Snapshot( hSnapshot );
+				return;
+				}
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
 	while( pModule32Next( hSnapshot, &me32 ) );
 
 	/* Clean up the snapshot */
 	pCloseToolhelp32Snapshot( hSnapshot );
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Flush any remaining data through */
 	endRandomData( randomState, 100 );
@@ -412,7 +415,8 @@ DWORD WINAPI threadSafeSlowPoll( void *dummy )
 
 void slowPoll( void )
 	{
-	checkPollExit();
+	if( krnlIsExiting() )
+		return;
 
 	/* Start a threaded slow poll.  If a slow poll is already running, we
 	   just return since there isn't much point in running two of them at the
@@ -437,10 +441,6 @@ void waitforRandomCompletion( const BOOLEAN force )
 	/* If this is a forced shutdown, tell the polling thread to exit */
 	if( force )
 		{
-		krnlEnterMutex( MUTEX_RANDOMPOLLING );
-		exitNow = TRUE;
-		krnlExitMutex( MUTEX_RANDOMPOLLING );
-
 		/* Wait for the polling thread to terminate.  Since this is a forced
 		   shutdown, we only wait a fixed amount of time (2s) before we bail
 		   out */
@@ -470,7 +470,6 @@ void initRandomPolling( void )
 	{
 	/* Reset the various object handles and status info */
 	hToolHelp32 = hThread = NULL;
-	exitNow = FALSE;
 	}
 
 void endRandomPolling( void )

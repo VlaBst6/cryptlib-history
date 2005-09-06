@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -164,7 +165,7 @@ static int selfTest( void )
 	BN_init( &pkcInfo->tmp3 );
 	BN_init( &pkcInfo->dlpTmp1 );
 	BN_init( &pkcInfo->dlpTmp2 );
-	BN_CTX_init( &pkcInfo->bnCTX );
+	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
 	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
@@ -191,7 +192,7 @@ static int selfTest( void )
 	BN_clear_free( &pkcInfo->tmp3 );
 	BN_clear_free( &pkcInfo->dlpTmp1 );
 	BN_clear_free( &pkcInfo->dlpTmp2 );
-	BN_CTX_free( &pkcInfo->bnCTX );
+	BN_CTX_free( pkcInfo->bnCTX );
 	BN_MONT_CTX_free( &pkcInfo->dlpParam_mont_p );
 	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
 	zeroise( &contextInfoPtr, sizeof( CONTEXT_INFO ) );
@@ -273,7 +274,7 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 			return( status );
 		}
 	CK( BN_mod( k, k, q, 				/* Reduce k to the correct range */
-				&pkcInfo->bnCTX ) );
+				pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
@@ -281,21 +282,21 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BN_bin2bn( ( BYTE * ) dlpParams->inParam1, DSA_SIGPART_SIZE, hash );
 
 	/* r = ( g ^ k mod p ) mod q */
-	CK( BN_mod_exp_mont( r, g, k, p, &pkcInfo->bnCTX, 
+	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX, 
 						 &pkcInfo->dlpParam_mont_p ) );
-	CK( BN_mod( r, r, q, &pkcInfo->bnCTX ) );
+	CK( BN_mod( r, r, q, pkcInfo->bnCTX ) );
 
 	/* s = k^-1 * ( hash + x * r ) mod q */
 	CKPTR( BN_mod_inverse( kInv, k, q,	/* temp = k^-1 mod q */
-						   &pkcInfo->bnCTX ) );
+						   pkcInfo->bnCTX ) );
 /*	BN_mul( s, x, r );					// s = x * r */
 	CK( BN_mod_mul( s, x, r, q,			/* s = ( x * r ) mod q */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 	CK( BN_add( s, s, hash ) );			/* s = s + hash */
 	if( BN_cmp( s, q ) > 0 )			/* if s > q */
 		CK( BN_sub( s, s, q ) );		/*   s = s - q (fast mod) */
 	CK( BN_mod_mul( s, s, kInv, q,		/* s = k^-1 * ( hash + x * r ) mod q */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
@@ -346,20 +347,20 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* w = s^-1 mod q */
 	CKPTR( BN_mod_inverse( u2, s, q,	/* w = s^-1 mod q */
-						   &pkcInfo->bnCTX ) );
+						   pkcInfo->bnCTX ) );
 
 	/* u1 = ( hash * w ) mod q */
 	CK( BN_mod_mul( u1, u1, u2, q,		/* u1 = ( hash * w ) mod q */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 
 	/* u2 = ( r * w ) mod q */
 	CK( BN_mod_mul( u2, r, u2, q,		/* u2 = ( r * w ) mod q */
-					&pkcInfo->bnCTX ) );
+					pkcInfo->bnCTX ) );
 
 	/* v = ( ( ( g^u1 ) * ( y^u2 ) ) mod p ) mod q */
-	CK( BN_mod_exp2_mont( u2, g, u1, y, u2, p, &pkcInfo->bnCTX,
+	CK( BN_mod_exp2_mont( u2, g, u1, y, u2, p, pkcInfo->bnCTX,
 						  &pkcInfo->dlpParam_mont_p ) );
-	CK( BN_mod( s, u2, q, &pkcInfo->bnCTX ) );
+	CK( BN_mod( s, u2, q, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 

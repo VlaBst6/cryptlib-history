@@ -214,7 +214,7 @@ int readPacketHeaderSSH2( SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->flags |= SESSION_SENDCLOSED;
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 				"Remote SSH software has crashed, diagnostic was '%s'",
-				bufPtr  );
+				sanitiseString( bufPtr ) );
 		}
 
 	/* Decrypt the header if necessary */

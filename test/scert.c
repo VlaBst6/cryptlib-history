@@ -515,7 +515,7 @@ int testSessionSCEP( void )
 		{
 		puts( "CA certificate store doesn't contain the PKI user "
 			  "information needed to\nauthenticate certificate issue "
-			  "operations, can't perform SCEP test." );
+			  "operations, can't perform SCEP test.\n" );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 
@@ -1556,7 +1556,7 @@ static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
 			  "information needed to\nauthenticate certificate issue "
 			  "operations.  This is probably because the\nserver loopback "
 			  "test (which initialises the cert store) hasn't been run "
-			  "yet.\nSkipping CMP test." );
+			  "yet.\nSkipping CMP test.\n" );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 #endif /* SERVER_IS_CRYPTLIB */
@@ -1814,7 +1814,8 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 	if( useDevice )
 		{
 		status = cryptDeviceOpen( &cryptKeyset, CRYPT_UNUSED, 
-								  CRYPT_DEVICE_PKCS11, "[Autodetect]" );
+								  CRYPT_DEVICE_PKCS11, 
+								  TEXT( "[Autodetect]" ) );
 		if( cryptStatusError( status ) )
 			{
 			printf( "Crypto device open failed with error code %d, "
@@ -1831,11 +1832,11 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 			return( FALSE );
 			}
 		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
-							"Signature key" ) == CRYPT_OK )
+							TEXT( "Signature key" ) ) == CRYPT_OK )
 			puts( "(Deleted a signature key object, presumably a leftover "
 				  "from a previous run)." );
 		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
-							"Encryption key" ) == CRYPT_OK )
+							TEXT( "Encryption key" ) ) == CRYPT_OK )
 			puts( "(Deleted an encryption key object, presumably a leftover "
 				  "from a previous run)." );
 		}
@@ -1954,6 +1955,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 										 TEST_PRIVKEY_PASSWORD );
 			cryptKeysetClose( cryptKeyset );
 			}
+		cryptDestroyContext( cryptKey );
 		if( cryptStatusError( status ) )
 			{
 			printf( "Certified private-key password change failed with error "

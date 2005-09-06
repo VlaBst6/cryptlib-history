@@ -494,12 +494,12 @@ typedef struct SI {
    extended error information */
 
 int retExtFnSession( SESSION_INFO *sessionInfoPtr, const int status, 
-					 const char *format, ... );
+					 const char *format, ... ) PRINTF_FN;
 #define retExt	return retExtFnSession
 
 int retExtExFnSession( SESSION_INFO *sessionInfoPtr, 
 					   const int status, const CRYPT_HANDLE extErrorObject, 
-					   const char *format, ... );
+					   const char *format, ... ) PRINTF_FN_EX;
 #define retExtEx	return retExtExFnSession
 
 /* Session attribute management functions */

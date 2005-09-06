@@ -375,13 +375,6 @@ static void updateConfigCert( void )
 
 void testKludge( void )
 	{
-#if 0
-	int value, status;
-
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, CRYPT_ALGO_AES );
-	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, &value );
-#endif
-
 	/* Create test key databases */
 #if 0
 	checkCreateDatabaseKeysets();

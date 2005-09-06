@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #include "crypt.h"
 #ifdef INC_ALL
   #include "context.h"
@@ -115,7 +116,7 @@ void clearTempBignums( PKC_INFO *pkcInfo )
 	BN_clear( &pkcInfo->tmp1 );
 	BN_clear( &pkcInfo->tmp2 );
 	BN_clear( &pkcInfo->tmp3 );
-	BN_CTX_clear( &pkcInfo->bnCTX );
+	BN_CTX_clear( pkcInfo->bnCTX );
 	}
 
 /****************************************************************************
@@ -1392,7 +1393,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 			BN_MONT_CTX_free( &pkcInfo->montCTX1 );
 			BN_MONT_CTX_free( &pkcInfo->montCTX2 );
 			BN_MONT_CTX_free( &pkcInfo->montCTX3 );
-			BN_CTX_free( &pkcInfo->bnCTX );
+			BN_CTX_free( pkcInfo->bnCTX );
 			if( pkcInfo->publicKeyInfo != NULL )
 				clFree( "contextMessageFunction", pkcInfo->publicKeyInfo );
 			}
@@ -1865,7 +1866,7 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 		BN_init( &pkcInfo->tmp1 );
 		BN_init( &pkcInfo->tmp2 );
 		BN_init( &pkcInfo->tmp3 );
-		BN_CTX_init( &pkcInfo->bnCTX );
+		pkcInfo->bnCTX = BN_CTX_new();
 		BN_MONT_CTX_init( &pkcInfo->montCTX1 );
 		BN_MONT_CTX_init( &pkcInfo->montCTX2 );
 		BN_MONT_CTX_init( &pkcInfo->montCTX3 );

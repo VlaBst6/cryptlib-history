@@ -6,6 +6,7 @@
 ****************************************************************************/
 
 #include <stdlib.h>
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -173,7 +174,7 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 
 	/* j = (p - 1) / q */
 	CK( BN_sub_word( p, 1 ) );
-	CK( BN_div( j, NULL, p, q, &pkcInfo->bnCTX ) );
+	CK( BN_div( j, NULL, p, q, pkcInfo->bnCTX ) );
 	CK( BN_add_word( p, 1 ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -187,7 +188,7 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 	do
 		{
 		CK( BN_add_word( gCounter, 1 ) );
-		CK( BN_mod_exp( g, gCounter, j, p, &pkcInfo->bnCTX ) );
+		CK( BN_mod_exp( g, gCounter, j, p, pkcInfo->bnCTX ) );
 		}
 	while( bnStatusOK( bnStatus ) && BN_is_one( g ) );
 
@@ -264,7 +265,7 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 		for( i = nFactors - 2; i >= 0; i-- )
 			indices[ i ] = indices[ i + 1 ] - 1;
 		BN_mul( &llProducts[ nFactors - 1 ], q, &llPrimes[ nPrimes - 1 ], 
-				&pkcInfo->bnCTX );
+				pkcInfo->bnCTX );
 		indexMoved = nFactors - 2;
 
 		/* Test all possible new prime permutations until a prime is found or 
@@ -275,7 +276,7 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 			   currently indexed random primes */
 			for( i = indexMoved; i >= 0; i-- )
 				CK( BN_mul( &llProducts[ i ], &llProducts[ i + 1 ],
-							&llPrimes[ indices[ i ] ], &pkcInfo->bnCTX ) );
+							&llPrimes[ indices[ i ] ], pkcInfo->bnCTX ) );
 			CKPTR( BN_copy( p, &llProducts[ 0 ] ) );
 			CK( BN_add_word( p, 1 ) );
 			if( bnStatusError( bnStatus ) )
@@ -387,7 +388,7 @@ static int generateDLPrivateValue( PKC_INFO *pkcInfo )
 		{
 		/* Trim x down to size.  Actually we get the upper bound as q-3,
 		   but over a 160-bit (minimum) number range this doesn't matter */
-		CK( BN_mod( x, x, q, &pkcInfo->bnCTX ) );
+		CK( BN_mod( x, x, q, pkcInfo->bnCTX ) );
 
 		/* If the value we ended up with is too small, just generate a new
 		   value one bit shorter, which guarantees that it'll fit the 
@@ -428,11 +429,11 @@ int generateDLPkey( CONTEXT_INFO *contextInfoPtr, const int keyBits,
 	/* Evaluate the Montgomery forms and calculate y */
 	BN_MONT_CTX_init( &pkcInfo->dlpParam_mont_p );
 	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, &pkcInfo->dlpParam_p, 
-						 &pkcInfo->bnCTX ) );
+						 pkcInfo->bnCTX ) );
 	if( bnStatusOK( bnStatus ) )
 		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, &pkcInfo->dlpParam_g,
 							 &pkcInfo->dlpParam_x, &pkcInfo->dlpParam_p, 
-							 &pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+							 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	return( getBnStatus( bnStatus ) );
 	}
 
@@ -475,7 +476,7 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 		return( CRYPT_ARGERROR_STR1 );
 	if( !isPKCS3 )
 		{
-		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_q, p, &pkcInfo->bnCTX,
+		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_q, p, pkcInfo->bnCTX,
 							 &pkcInfo->dlpParam_mont_p ) );
 		if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 			return( CRYPT_ARGERROR_STR1 );
@@ -484,7 +485,7 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	/* Make sure that the private key value is valid */
 	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
 		{
-		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_x, p, &pkcInfo->bnCTX,
+		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_x, p, pkcInfo->bnCTX,
 							 &pkcInfo->dlpParam_mont_p ) );
 		if( bnStatusError( bnStatus ) || BN_cmp( tmp, &pkcInfo->dlpParam_y ) )
 			return( CRYPT_ARGERROR_STR1 );
@@ -529,9 +530,9 @@ int initDLPkey( CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
 
 	/* Evaluate the Montgomery form and calculate y if necessary */
 	BN_MONT_CTX_init( &pkcInfo->dlpParam_mont_p );
-	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, p, &pkcInfo->bnCTX ) );
+	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, p, pkcInfo->bnCTX ) );
 	if( bnStatusOK( bnStatus ) && BN_is_zero( &pkcInfo->dlpParam_y ) )
-		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, g, x, p, &pkcInfo->bnCTX, 
+		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, g, x, p, pkcInfo->bnCTX, 
 							 &pkcInfo->dlpParam_mont_p ) );
 
 	pkcInfo->keySizeBits = BN_num_bits( p );

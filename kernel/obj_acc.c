@@ -442,6 +442,7 @@ int krnlReacquireSystemObject( void )
 	importPrivateKey: Read private key data from a stream after decryption
 					  with a KEK */
 
+#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "context.h"
 #elif defined( INC_CHILD )

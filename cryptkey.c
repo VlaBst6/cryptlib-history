@@ -1112,7 +1112,9 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 	   late as possible to prevent file keyset reads that occur on startup 
 	   (for example to get config options) from stalling the startup 
 	   process */
-	krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
+	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		/* The kernel is shutting down, bail out */
+		return( CRYPT_ERROR_PERMISSION );
 
 	/* It's a specific type of keyset, set up the access information for it
 	   and connect to it */
@@ -1228,6 +1230,9 @@ int keysetManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			if( cryptStatusOK( status ) )
 				{
 				initLevel++;
+				if( krnlIsExiting() )
+					/* The kernel is shutting down, exit */
+					return( CRYPT_ERROR_PERMISSION );
 				status = dbxInitLDAP();
 				}
 			if( cryptStatusOK( status ) )

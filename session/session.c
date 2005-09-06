@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Session Support Routines					*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2005					*
 *																			*
 ****************************************************************************/
 
@@ -245,7 +245,9 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 	/* Wait for any async driver binding to complete.  We can delay this
 	   until this very late stage because no networking functionality is
 	   used until this point */
-	krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
+	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		/* The kernel is shutting down, bail out */
+		return( CRYPT_ERROR_PERMISSION );
 
 	/* If this is the first time we've got here, activate the session */
 	if( !( sessionInfoPtr->flags & SESSION_PARTIALOPEN ) )
@@ -254,6 +256,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	assert( !sIsNullStream( &sessionInfoPtr->stream ) );
 
 	/* If it's a secure data transport session, complete the session state
 	   setup.  Note that some sessions dynamically change the protocol info

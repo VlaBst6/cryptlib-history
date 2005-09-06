@@ -259,7 +259,7 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 		algoString[ stringLen ] = '\0';
 		retExt( errorInfo, CRYPT_ERROR_NOTAVAIL,
 				"No algorithm compatible with the remote system's selection "
-				"was found : %s", algoString );
+				"was found : %s", sanitiseString( algoString ) );
 		}
 
 	/* We found a more-preferred algorithm than the default, go with that */

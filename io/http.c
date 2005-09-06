@@ -740,7 +740,8 @@ static int readHeaderLines( STREAM *stream, char *lineBuffer,
 					lineBuffer[ CRYPT_MAX_TEXTSIZE ] = '\0';
 					retExtStream( stream, CRYPT_ERROR_BADDATA,
 								  "Invalid HTTP transfer encoding method "
-								  "'%s', expected 'Chunked'", lineBuffer );
+								  "'%s', expected 'Chunked'", 
+								  sanitiseString( lineBuffer ) );
 					}
 
 				/* If it's a chunked encoding, the length is part of the 
@@ -762,7 +763,7 @@ static int readHeaderLines( STREAM *stream, char *lineBuffer,
 					retExtStream( stream, CRYPT_ERROR_BADDATA,
 								  "Invalid HTTP content encoding method "
 								  "'%s', expected 'Identity'",
-								  lineBuffer );
+								  sanitiseString( lineBuffer ) );
 					}
 				break;
 
@@ -780,7 +781,7 @@ static int readHeaderLines( STREAM *stream, char *lineBuffer,
 					retExtStream( stream, CRYPT_ERROR_BADDATA,
 								  "Invalid HTTP content transfer encoding "
 								  "method '%s', expected 'Identity' or "
-								  "'Binary'", lineBuffer );
+								  "'Binary'", sanitiseString( lineBuffer ) );
 					}
 				break;
 
@@ -1353,7 +1354,8 @@ static int readFunction( STREAM *stream, void *buffer, int length )
 			{
 			byteBufPtr[ min( readLength, MAX_ERRMSG_SIZE - 32 ) ] = '\0';
 			retExtStream( stream, CRYPT_ERROR_READ,
-						  "HTTP server reported: '%s'", buffer );
+						  "HTTP server reported: '%s'", 
+						  sanitiseString( buffer ) );
 			}
 		}
 

@@ -318,7 +318,8 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		stringBuffer[ stringLength ] = '\0';
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-				"Unknown user auth method name '%s'", stringBuffer );
+				"Unknown user auth method name '%s'", 
+				sanitiseString( stringBuffer ) );
 		}
 	sgetc( &stream );	/* Skip boolean flag */
 

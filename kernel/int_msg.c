@@ -212,6 +212,12 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 		actionFlags |= \
 			MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_NONE_EXTERNAL );
 
+	/* Inner precondition: The usage shouldn't be all-zero.  Technically it 
+	   can be since there are bound to be certs out there broken enough to do
+	   this, and certainly under the stricter compliance levels this *will* 
+	   happen, so we make it a warning that's only produced in debug mode */
+	PRE( actionFlags != 0 );
+
 	/* We're done querying the dependent object, re-lock the object table and
 	   make sure that the original object hasn't been touched */
 	MUTEX_LOCK( objectTable );

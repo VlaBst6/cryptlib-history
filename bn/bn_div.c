@@ -5,21 +5,21 @@
  * This package is an SSL implementation written
  * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
- *
+ * 
  * This library is free for commercial and non-commercial use as long as
  * the following conditions are aheared to.  The following conditions
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
  * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
+ * 
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
  * If this package is used in a product, Eric Young should be given attribution
  * as the author of the parts of the library used.
  * This can be in the form of a textual message at program startup or
  * in documentation (online or textual) provided with the package.
- *
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -34,10 +34,10 @@
  *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
+ * 4. If you include any Windows specific code (or a derivative thereof) from 
  *    the apps directory (application code) you must include an acknowledgement:
  *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
+ * 
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -49,7 +49,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
+ * 
  * The licence and distribution terms for any publically available version or
  * derivative of this code cannot be changed.  i.e. this code cannot simply be
  * copied and put under another distribution licence
@@ -180,12 +180,16 @@ int BN_div(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m, const BIGNUM *d,
 int BN_div(BIGNUM *dv, BIGNUM *rm, const BIGNUM *num, const BIGNUM *divisor,
 	   BN_CTX *ctx)
 	{
-	int norm_shift,i,j,loop;
+	int norm_shift,i,loop;
 	BIGNUM *tmp,wnum,*snum,*sdiv,*res;
 	BN_ULONG *resp,*wnump;
 	BN_ULONG d0,d1;
 	int num_n,div_n;
 
+	if (dv)
+		bn_check_top(dv);
+	if (rm)
+		bn_check_top(rm);
 	bn_check_top(num);
 	bn_check_top(divisor);
 
@@ -211,7 +215,6 @@ int BN_div(BIGNUM *dv, BIGNUM *rm, const BIGNUM *num, const BIGNUM *divisor,
 		res=BN_CTX_get(ctx);
 	else	res=dv;
 	if (sdiv == NULL || res == NULL) goto err;
-	tmp->neg=0;
 
 	/* First we normalise the numbers */
 	norm_shift=BN_BITS2-((BN_num_bits(divisor))%BN_BITS2);
@@ -223,17 +226,17 @@ int BN_div(BIGNUM *dv, BIGNUM *rm, const BIGNUM *num, const BIGNUM *divisor,
 	div_n=sdiv->top;
 	num_n=snum->top;
 	loop=num_n-div_n;
-
 	/* Lets setup a 'window' into snum
 	 * This is the part that corresponds to the current
 	 * 'area' being divided */
-	BN_init(&wnum);
-	wnum.d=	 &(snum->d[loop]);
-	wnum.top= div_n;
-	wnum.dmax= snum->dmax+1; /* a bit of a lie */
+	wnum.neg   = 0;
+	wnum.d     = &(snum->d[loop]);
+	wnum.top   = div_n;
+	/* only needed when BN_ucmp messes up the values between top and max */
+	wnum.dmax  = snum->dmax - loop; /* so we don't step out of bounds */
 
 	/* Get the top 2 words of sdiv */
-	/* i=sdiv->top; */
+	/* div_n=sdiv->top; */
 	d0=sdiv->d[div_n-1];
 	d1=(div_n == 1)?0:sdiv->d[div_n-2];
 
@@ -251,19 +254,28 @@ int BN_div(BIGNUM *dv, BIGNUM *rm, const BIGNUM *num, const BIGNUM *divisor,
 
 	if (BN_ucmp(&wnum,sdiv) >= 0)
 		{
-		if (!BN_usub(&wnum,&wnum,sdiv)) goto err;
+		/* If BN_DEBUG_RAND is defined BN_ucmp changes (via
+		 * bn_pollute) the const bignum arguments =>
+		 * clean the values between top and max again */
+		bn_clear_top2max(&wnum);
+		bn_sub_words(wnum.d, wnum.d, sdiv->d, div_n);
 		*resp=1;
-		res->d[res->top-1]=1;
 		}
 	else
 		res->top--;
+	/* if res->top == 0 then clear the neg value otherwise decrease
+	 * the resp pointer */
 	if (res->top == 0)
 		res->neg = 0;
-	resp--;
+	else
+		resp--;
 
-	for (i=0; i<loop-1; i++)
+	for (i=0; i<loop-1; i++, wnump--, resp--)
 		{
 		BN_ULONG q,l0;
+		/* the first part of the loop uses the top two words of
+		 * snum and sdiv to calculate a BN_ULONG q such that
+		 * | wnum - sdiv * q | < sdiv */
 #if defined(BN_DIV3W) && !defined(OPENSSL_NO_ASM)
 		BN_ULONG bn_div_3_words(BN_ULONG*,BN_ULONG,BN_ULONG);
 		q=bn_div_3_words(wnump,d1,d0);
@@ -347,27 +359,28 @@ X) -> 0x%08X\n",
 #endif /* !BN_DIV3W */
 
 		l0=bn_mul_words(tmp->d,sdiv->d,div_n,q);
-		wnum.d--; wnum.top++;
 		tmp->d[div_n]=l0;
-		for (j=div_n+1; j>0; j--)
-			if (tmp->d[j-1]) break;
-		tmp->top=j;
-
-		j=wnum.top;
-		if (!BN_sub(&wnum,&wnum,tmp)) goto err;
-
-		snum->top=snum->top+wnum.top-j;
-
-		if (wnum.neg)
+		wnum.d--;
+		/* ingore top values of the bignums just sub the two 
+		 * BN_ULONG arrays with bn_sub_words */
+		if (bn_sub_words(wnum.d, wnum.d, tmp->d, div_n+1))
 			{
+			/* Note: As we have considered only the leading
+			 * two BN_ULONGs in the calculation of q, sdiv * q
+			 * might be greater than wnum (but then (q-1) * sdiv
+			 * is less or equal than wnum)
+			 */
 			q--;
-			j=wnum.top;
-			if (!BN_add(&wnum,&wnum,sdiv)) goto err;
-			snum->top+=wnum.top-j;
+			if (bn_add_words(wnum.d, wnum.d, sdiv->d, div_n))
+				/* we can't have an overflow here (assuming
+				 * that q != 0, but if q == 0 then tmp is
+				 * zero anyway) */
+				(*wnump)++;
 			}
-		*(resp--)=q;
-		wnump--;
+		/* store part of the result */
+		*resp = q;
 		}
+	bn_correct_top(snum);
 	if (rm != NULL)
 		{
 		/* Keep a copy of the neg flag in num because if rm==num
@@ -377,10 +390,13 @@ X) -> 0x%08X\n",
 		BN_rshift(rm,snum,norm_shift);
 		if (!BN_is_zero(rm))
 			rm->neg = neg;
+		bn_check_top(rm);
 		}
 	BN_CTX_end(ctx);
 	return(1);
 err:
+	if (rm)
+		bn_check_top(rm);
 	BN_CTX_end(ctx);
 	return(0);
 	}

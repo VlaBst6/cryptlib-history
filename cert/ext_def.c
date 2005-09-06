@@ -2335,19 +2335,18 @@ typedef enum {
 static int checkURLString( const char *url, const int urlLength, 
 						   const URL_CHECK_TYPE urlType )
 	{
-	const char *schemaPtr;
+	const char *schemaPtr = NULL;
 	int length = urlLength, i;
 
 	/* Check for a schema separator */
-	schemaPtr = strstr( url, "://" );
-	if( schemaPtr != NULL )
-		{
-		const char *urlStart = url;
-
-		url = schemaPtr + 3;	/* Skip "://" */
-		schemaPtr = urlStart;
-		length = schemaPtr - urlStart;
-		}
+	for( i = 0; i < urlLength - 2; i++ )
+		if( url[ i ] == ':' && !memcmp( url + i, "://", 3 ) )
+			{
+			schemaPtr = url;
+			url += i + 3;	/* Skip schema + "://" */
+			length = urlLength - ( url - schemaPtr );
+			break;
+			}
 
 	/* Make sure that the start of the URL looks valid */
 	switch( urlType )

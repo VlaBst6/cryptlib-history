@@ -159,7 +159,7 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	   difficult to manage portably across different platforms */
 	while( objectTable[ objectHandle ].uniqueID == uniqueID && \
 		   isInUse( objectHandle ) && waitCount < MAX_WAITCOUNT && \
-		   !krnlData->isClosingDown )
+		   krnlData->shutdownLevel < SHUTDOWN_LEVEL_MESSAGES )
 		{
 		MUTEX_UNLOCK( objectTable );
 		waitCount++;
@@ -176,7 +176,7 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 #endif /* NDEBUG */
 
 	/* If cryptlib is shutting down, exit */
-	if( krnlData->isClosingDown )
+	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES )
 		return( CRYPT_ERROR_PERMISSION );
 
 	/* If we timed out waiting for the object, return a timeout error */
@@ -1173,8 +1173,11 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	   shutdown code needs to determine whether they're currently busy).
 	   The check outside the object-table lock is done in order to have any
 	   remaining active objects exit quickly without tying up the object
-	   table, since we don't want them to block the shutdown */
-	if( krnlData->isClosingDown && \
+	   table, since we don't want them to block the shutdown.  In addition
+	   if the thread is a leftover/long-running thread that's still active
+	   after the shutdown has occurred, we can't access the object table
+	   lock since it'll have been deleted */
+	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES && \
 		!( localMessage == MESSAGE_DESTROY || \
 		   localMessage == MESSAGE_DECREFCOUNT || \
 		   ( localMessage == MESSAGE_GETATTRIBUTE && \
@@ -1380,7 +1383,7 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		   processing, exit now before we try and do anything with the
 		   object.  It's safe to perform the check at this point since no
 		   message sent during shutdown will get here */
-		if( krnlData->isClosingDown )
+		if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES )
 			{
 			MUTEX_UNLOCK( objectTable );
 			return( CRYPT_ERROR_PERMISSION );

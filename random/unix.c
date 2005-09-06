@@ -55,6 +55,9 @@
 #if defined( __VXWORKS__ )
   #error For the VxWorks build you need to edit $MISCOBJS in the makefile to use 'vxworks' and not 'unix'
 #endif /* VxWorks has its own randomness-gathering file */
+#if defined( __XMK__ )
+  #error For the Xilinx XMK build you need to edit $MISCOBJS in the makefile to use 'xmk' and not 'unix'
+#endif /* XMK has its own randomness-gathering file */
 
 /* OS-specific includes */
 
@@ -131,6 +134,22 @@
   struct rlimit { int dummy1, dummy2; };
   struct rusage { int dummy; };
 #endif /* Systems without rlimit/rusage */
+
+/* If we're using threads, we have to protect the entropy gatherer with
+   a mutex to prevent multiple threads from trying to initate polls at the
+   same time.  Unlike the kernel mutexes, we don't have to worry about
+   being called recursively, so there's no need for special-case handling
+   for Posix' nasty non-reentrant mutexes */
+
+#ifdef USE_THREADS
+  #include <pthread.h>
+
+  #define lockPollingMutex()	pthread_mutex_lock( &gathererMutex )
+  #define unlockPollingMutex()	pthread_mutex_unlock( &gathererMutex )
+#else
+  #define lockPollingMutex()
+  #define unlockPollingMutex()
+#endif /* USE_THREADS */
 
 /* The size of the intermediate buffer used to accumulate polled data */
 
@@ -356,6 +375,9 @@ static BYTE *gathererBuffer;	/* Shared buffer for gathering random noise */
 static int gathererMemID;		/* ID for shared memory */
 static int gathererBufSize;		/* Size of the shared memory buffer */
 static struct sigaction gathererOldHandler;	/* Previous signal handler */
+#ifdef USE_THREADS
+  static pthread_mutex_t gathererMutex;	/* Mutex to protect the polling */
+#endif /* USE_THREADS */
 
 /* The struct at the start of the shared memory buffer used to communicate
    information from the child to the parent */
@@ -364,6 +386,7 @@ typedef struct {
 	int usefulness;				/* Usefulness of data in buffer */
 	int noBytes;				/* No.of bytes in buffer */
 	} GATHERER_INFO;
+
 
 /****************************************************************************
 *																			*
@@ -1133,10 +1156,10 @@ void slowPoll( void )
 	int fd, bufPos, i, value;
 
 	/* Make sure we don't start more than one slow poll at a time */
-	krnlEnterMutex( MUTEX_RANDOMPOLLING );
+	lockPollingMutex();
 	if( gathererProcess	)
 		{
-		krnlExitMutex( MUTEX_RANDOMPOLLING );
+		unlockPollingMutex();
 		return;
 		}
 
@@ -1168,7 +1191,7 @@ void slowPoll( void )
 		{
 		/* We got enough entropy from the additional sources, we don't
 		   have to go through with the full (heavyweight) poll */
-		krnlExitMutex( MUTEX_RANDOMPOLLING );
+		unlockPollingMutex();
 		return;
 		}
 
@@ -1234,7 +1257,7 @@ void slowPoll( void )
 			shmctl( gathererMemID, IPC_RMID, NULL );
 		if( gathererOldHandler.sa_handler != SIG_DFL )
 			sigaction( SIGCHLD, &gathererOldHandler, NULL );
-		krnlExitMutex( MUTEX_RANDOMPOLLING );
+		unlockPollingMutex();
 		return; /* Something broke */
 		}
 
@@ -1244,7 +1267,7 @@ void slowPoll( void )
 	   to a nonzero value (which marks it as busy) and exit the mutex, then
 	   overwrite it with the real PID (also nonzero) from the fork */
 	gathererProcess = -1;
-	krnlExitMutex( MUTEX_RANDOMPOLLING );
+	unlockPollingMutex();
 
 	/* Fork off the gatherer, the parent process returns to the caller */
 	if( ( gathererProcess = fork() ) != 0 )
@@ -1257,11 +1280,11 @@ void slowPoll( void )
 			fprintf( stderr, "cryptlib: fork() failed, errno = %d, "
 					 "file = %s, line = %d.\n", errno, __FILE__, __LINE__ );
 #endif /* DEBUG_CONFLICTS */
-			krnlEnterMutex( MUTEX_RANDOMPOLLING );
+			lockPollingMutex();
 			shmctl( gathererMemID, IPC_RMID, NULL );
 			sigaction( SIGCHLD, &gathererOldHandler, NULL );
 			gathererProcess = 0;
-			krnlExitMutex( MUTEX_RANDOMPOLLING );
+			unlockPollingMutex();
 			}
 		return;	/* Error/parent process returns */
 		}
@@ -1447,7 +1470,7 @@ void slowPoll( void )
 
 void waitforRandomCompletion( const BOOLEAN force )
 	{
-	krnlEnterMutex( MUTEX_RANDOMPOLLING );
+	lockPollingMutex();
 	if( gathererProcess	)
 		{
 		RESOURCE_DATA msgData;
@@ -1542,7 +1565,7 @@ void waitforRandomCompletion( const BOOLEAN force )
 #endif /* !QNX 4.x */
 		gathererProcess = 0;
 		}
-	krnlExitMutex( MUTEX_RANDOMPOLLING );
+	unlockPollingMutex();
 	}
 
 /* Check whether we've forked and we're the child.  The mechanism used varies
@@ -1577,10 +1600,10 @@ BOOLEAN checkForked( void )
 	BOOLEAN hasForked;
 
 	/* Read the forked-t flag in a thread-safe manner */
-	krnlEnterMutex( MUTEX_RANDOMPOLLING );
+	lockPollingMutex();
 	hasForked = forked;
 	forked = FALSE;
-	krnlExitMutex( MUTEX_RANDOMPOLLING );
+	unlockPollingMutex();
 
 	return( hasForked );
 	}
@@ -1588,9 +1611,9 @@ BOOLEAN checkForked( void )
 void setForked( void )
 	{
 	/* Set the forked-t flag in a thread-safe manner */
-	krnlEnterMutex( MUTEX_RANDOMPOLLING );
+	lockPollingMutex();
 	forked = TRUE;
-	krnlExitMutex( MUTEX_RANDOMPOLLING );
+	unlockPollingMutex();
 	}
 
 #else
@@ -1626,5 +1649,14 @@ void initRandomPolling( void )
 	   sides remix the pool thoroughly */
 #ifdef USE_THREADS
 	pthread_atfork( NULL, setForked, setForked );
+
+	pthread_mutex_init( &gathererMutex, NULL );
+#endif /* USE_THREADS */
+	}
+
+void endRandomPolling( void )
+	{
+#ifdef USE_THREADS
+	pthread_mutex_destroy( &gathererMutex );
 #endif /* USE_THREADS */
 	}

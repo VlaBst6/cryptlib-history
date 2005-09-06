@@ -32,7 +32,7 @@
 
 MAJ		= 3
 MIN		= 2
-PLV		= 1
+PLV		= 2
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
@@ -239,17 +239,17 @@ KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
 
 LIBOBJS		= $(OBJPATH)cryptapi.o $(OBJPATH)cryptcfg.o $(OBJPATH)cryptcrt.o \
 			  $(OBJPATH)cryptctx.o $(OBJPATH)cryptdev.o $(OBJPATH)cryptenv.o \
-			  $(OBJPATH)cryptkey.o $(OBJPATH)cryptlib.o $(OBJPATH)cryptmis.o \
-			  $(OBJPATH)cryptses.o $(OBJPATH)cryptusr.o
+			  $(OBJPATH)cryptkey.o $(OBJPATH)cryptlib.o $(OBJPATH)cryptses.o \
+			  $(OBJPATH)cryptusr.o
 
 MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_rw.o $(OBJPATH)mech_drv.o \
 			  $(OBJPATH)mech_enc.o $(OBJPATH)mech_sig.o $(OBJPATH)mech_wrp.o \
 			  $(OBJPATH)obj_qry.o $(OBJPATH)sign.o $(OBJPATH)sign_rw.o
 
 MISCOBJS	= $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o $(OBJPATH)asn1_wr.o \
-			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)java_jni.o \
-			  $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o $(OBJPATH)random.o \
-			  $(OBJPATH)unix.o
+			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)int_api.o \
+			  $(OBJPATH)java_jni.o $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o \
+			  $(OBJPATH)random.o $(OBJPATH)unix.o
 
 SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_rd.o \
 			  $(OBJPATH)cmp_wr.o $(OBJPATH)ocsp.o $(OBJPATH)pnppki.o \
@@ -480,9 +480,6 @@ $(OBJPATH)cryptkey.o:	$(CRYPT_DEP) keyset/keyset.h cryptkey.c
 
 $(OBJPATH)cryptlib.o:	$(CRYPT_DEP) cryptlib.c
 						$(CC) $(CFLAGS) cryptlib.c -o $(OBJPATH)cryptlib.o
-
-$(OBJPATH)cryptmis.o:	$(CRYPT_DEP) cryptmis.c
-						$(CC) $(CFLAGS) cryptmis.c -o $(OBJPATH)cryptmis.o
 
 $(OBJPATH)cryptses.o:	$(CRYPT_DEP) cryptses.c
 						$(CC) $(CFLAGS) cryptses.c -o $(OBJPATH)cryptses.o
@@ -1013,6 +1010,9 @@ $(OBJPATH)asn1_wr.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_wr.c
 
 $(OBJPATH)base64.o:		$(CRYPT_DEP) misc/base64.c
 						$(CC) $(CFLAGS) misc/base64.c -o $(OBJPATH)base64.o
+
+$(OBJPATH)int_api.o:	$(CRYPT_DEP) misc/int_api.c
+						$(CC) $(CFLAGS) misc/int_api.c -o $(OBJPATH)int_api.o
 
 $(OBJPATH)misc_rw.o:	$(CRYPT_DEP) $(IO_DEP) misc/misc_rw.c
 						$(CC) $(CFLAGS) misc/misc_rw.c -o $(OBJPATH)misc_rw.o
@@ -2455,6 +2455,17 @@ target-amx:
 	fi
 	make $(XDEFINES) OSNAME=AMX CC=armcc CFLAGS="$(XCFLAGS) \
 		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__AMX__ -O2"
+
+# eCOS: Gnu toolchain under Unix.  The entry below is for the ARM toolchain.
+
+target-ecos:
+	@make directories
+	@if grep "unix\.o" makefile > /dev/null ; then \
+		sed s/unix\.o/ecos\.o/g makefile | sed s/unix\.c/ecos\.c/g > makefile.tmp || exit 1 ; \
+		mv -f makefile.tmp makefile || exit 1 ; \
+	fi
+	make $(XDEFINES) OSNAME=eCOS CC=armcc CFLAGS="$(XCFLAGS) \
+		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__ECOS__ -O2"
 
 # uC/OS-II: Generic toolchain for various architectures, the entry below is
 #			for x86..
