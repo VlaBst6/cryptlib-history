@@ -1,24 +1,16 @@
 /****************************************************************************
 *																			*
 *							cryptlib CryptoAPI Routines						*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "device.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../context/context.h"
-  #include "device.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -545,7 +537,7 @@ static int createExportKey( const HCRYPTPROV hProv, HCRYPTKEY *hPrivateKey,
 	{
 	BLOBHEADER *blobHeaderPtr;
 	RSAPUBKEY *pubKeyPtr;
-	BYTE keyBlob[ 1024 ], *keyBlobPtr;
+	BYTE keyBlob[ 1024 + 8 ], *keyBlobPtr;
 	BOOL result;
 	int bitLen16, keyBlobLen = 1024;
 
@@ -620,12 +612,12 @@ static int createExportKey( const HCRYPTPROV hProv, HCRYPTKEY *hPrivateKey,
 
 static int importPlainKey( const HCRYPTPROV hProv, 
 						   const HCRYPTKEY hPrivateKey, 
-						   const privateKeySize, HCRYPTKEY *hSessionKey, 
+						   const int privateKeySize, HCRYPTKEY *hSessionKey, 
 						   const CRYPT_ALGO_TYPE cryptAlgo, const BYTE *keyData, 
 						   const int keyDataSize, void *errorInfoPtr )
 	{
 	BLOBHEADER *blobHeaderPtr;
-	BYTE keyBlob[ 1024 ], *keyBlobPtr;
+	BYTE keyBlob[ 1024 + 8 ], *keyBlobPtr;
 	ALG_ID algID;
 	DWORD *dwPtr;
 	BOOL result;
@@ -682,8 +674,8 @@ static int getPubkeyComponents( CRYPTOAPI_INFO *cryptoapiInfo,
 	{
 	BLOBHEADER *blobHeaderPtr;
 	RSAPUBKEY *pubKeyPtr;
-	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE ], *nPtr;
-	BYTE buffer[ 16 ], *bufPtr = buffer;
+	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE + 8 ], *nPtr;
+	BYTE buffer[ 16 + 8 ], *bufPtr = buffer;
 	int keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE, exponent, length;
 
 	/* Clear return values */
@@ -727,7 +719,7 @@ static int capiToCryptlibContext( CRYPTOAPI_INFO *cryptoapiInfo,
 	CRYPT_PKCINFO_RSA rsaKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	RESOURCE_DATA msgData;
-	BYTE n[ CRYPT_MAX_PKCSIZE ], e[ CRYPT_MAX_PKCSIZE ];
+	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
 	int nLen, eLen, status;
 
 	/* Clear return value */
@@ -896,7 +888,7 @@ static int getCertificate( const CRYPTOAPI_INFO *cryptoapiInfo,
 			certInfo.Issuer.cbData = ( int ) sizeofObject( length );
 			sSkip( &stream, length );
 			certInfo.SerialNumber.pbData = sMemBufPtr( &stream );
-			readGenericHole( &stream, &length, BER_INTEGER );/* Serial number */
+			readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
 			certInfo.SerialNumber.cbData = ( int ) sizeofObject( length );
 			assert( sStatusOK( &stream ) );
 			sMemDisconnect( &stream );
@@ -957,7 +949,7 @@ static int getCertificateFromKey( CRYPTOAPI_INFO *cryptoapiInfo,
 	{
 	PCCERT_CONTEXT pCertContext;
 	CERT_PUBLIC_KEY_INFO pubKeyInfo;
-	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE ];
+	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE + 8 ];
 	int keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE;
 
 	/* Clear return value */
@@ -1055,7 +1047,8 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 					 &deviceInfo->objectHandle, SETDEP_OPTION_INCREF );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
 					 ( void * ) &hKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
-	setMessageData( &msgData, ( void * ) label, strlen( label ) );
+	setMessageData( &msgData, ( void * ) label, 
+					min( strlen( label ), CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
 #if 0
@@ -1138,8 +1131,8 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	CRYPTOAPI_INFO *cryptoapiInfo = deviceInfo->deviceCryptoAPI;
 	HCRYPTPROV hProv;
 	HCERTSTORE hCertStore;
-	char providerNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 ];
-	char keysetNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 ];
+	char providerNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
+	char keysetNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 	const char *keysetName = NULL;
 	DWORD value;
 	int i, driverNameLength = nameLength, status;
@@ -2070,7 +2063,7 @@ static int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 static int rsaSetKeyInfo( CRYPTOAPI_INFO *cryptoapiInfo,
 						  CONTEXT_INFO *contextInfoPtr )
 	{
-	BYTE n[ CRYPT_MAX_PKCSIZE ], e[ CRYPT_MAX_PKCSIZE ];
+	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 	RESOURCE_DATA msgData;
 	int nLen, eLen, keyDataSize, status;
@@ -2120,7 +2113,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	HCRYPTKEY hKey;
 	BLOBHEADER *blobHeaderPtr;
 	RSAPUBKEY *pubKeyPtr;
-	BYTE keyBlob[ CRYPT_MAX_PKCSIZE * 8 ], *keyBlobPtr;
+	BYTE keyBlob[ ( CRYPT_MAX_PKCSIZE * 8 ) + 8 ], *keyBlobPtr;
 	DWORD exponent = 0L;
 	BOOL result;
 	const int nLen = bitsToBytes( rsaKey->nLen );
@@ -2278,7 +2271,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	STREAM stream;
 	HCRYPTHASH hHash;
 	BYTE tempBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
-	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE ], *bufPtr = buffer;
+	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE + 8 ], *bufPtr = buffer;
 	ALG_ID algID;
 	BOOL result;
 	int resultLength = length, i, status;
@@ -2291,7 +2284,8 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 			break;
 	i++;	/* Skip final 0 byte */
 	sMemConnect( &stream, bufPtr + i, length - i );
-	status = readMessageDigest( &stream, &cryptAlgo, hashBuffer, &i );
+	status = readMessageDigest( &stream, &cryptAlgo, hashBuffer, 
+								CRYPT_MAX_HASHSIZE, &i );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -2446,7 +2440,8 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 						  const void *y, const int yLen )
 	{
 	RESOURCE_DATA msgData;
-	BYTE keyDataBuffer[ CRYPT_MAX_PKCSIZE * 2 ], idBuffer[ KEYID_SIZE ];
+	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
+	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int keyDataSize, cryptStatus;
 
 	/* Send the public key data to the context.  We send the keying info as
@@ -2514,7 +2509,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	HCRYPTKEY hKey;
 	BLOBHEADER *blobHeaderPtr;
 	DSSPUBKEY *pubKeyPtr;
-	BYTE keyBlob[ CRYPT_MAX_PKCSIZE * 4 ], *keyBlobPtr;
+	BYTE keyBlob[ ( CRYPT_MAX_PKCSIZE * 4 ) + 8 ], *keyBlobPtr;
 	BOOL result;
 	const int pLen = bitsToBytes( dlpKey->pLen );
 	int status;
@@ -2619,7 +2614,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	RESOURCE_DATA msgData;
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
-	BYTE pubkeyBuffer[ CRYPT_MAX_PKCSIZE * 2 ], label[ 8 ];
+	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ], label[ 8 + 8 ];
 	CK_RV status;
 	STREAM stream;
 	long length;
@@ -2753,7 +2748,7 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
 	DEVICE_INFO *deviceInfo;
 	BIGNUM *r, *s;
-	BYTE signature[ 40 ];
+	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
 
 	assert( length == sizeof( DLP_PARAMS ) );
@@ -2812,7 +2807,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
 	DEVICE_INFO *deviceInfo;
 	BIGNUM *r, *s;
-	BYTE signature[ 40 ];
+	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
 
 	/* This function is present but isn't used as part of any normal 

@@ -5,18 +5,11 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "certattr.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
@@ -49,7 +42,8 @@ static ATTRIBUTE_LIST *getNextEncodedAttribute( ATTRIBUTE_LIST *attributeListPtr
 	{
 	ATTRIBUTE_LIST *currentAttributeListPtr = NULL;
 	STREAM stream;
-	BYTE currentEncodedForm[ ATTR_ENCODED_SIZE ], buffer[ ATTR_ENCODED_SIZE ];
+	BYTE currentEncodedForm[ ATTR_ENCODED_SIZE + 8 ];
+	BYTE buffer[ ATTR_ENCODED_SIZE + 8 ];
 
 	/* Connect the output stream and give the current encoded form the
 	   maximum possible value */
@@ -379,12 +373,22 @@ int writeAttributeField( STREAM *stream, ATTRIBUTE_LIST *attributeListPtr,
 	switch( fieldType )
 		{
 		case FIELDTYPE_BLOB:
+			if( tag != DEFAULT_TAG )
+				{
+				/* This gets a bit messy because the blob is stored in 
+				   encoded form in the attribute, to write it as a tagged 
+				   value we have to write a different first byte */
+				sputc( stream, tag );
+				return( swrite( stream, ( ( BYTE * ) dataPtr ) + 1,
+								attributeListPtr->valueLength - 1 ) );
+				}
 			return( swrite( stream, dataPtr, attributeListPtr->valueLength ) );
 
 		case FIELDTYPE_DN:
 			return( writeDN( stream, attributeListPtr->value, tag ) );
 
 		case FIELDTYPE_IDENTIFIER:
+			assert( tag == DEFAULT_TAG );
 			return( swrite( stream, attributeInfoPtr->oid, size ) );
 
 		case FIELDTYPE_DISPLAYSTRING:
@@ -591,7 +595,7 @@ int writeAttributes( STREAM *stream, ATTRIBUTE_LIST *attributeListPtr,
 		type == CRYPT_CERTTYPE_RTCS_RESPONSE )
 		{
 		ATTRIBUTE_LIST *currentAttributePtr;
-		BYTE currentEncodedForm[ ATTR_ENCODED_SIZE ];
+		BYTE currentEncodedForm[ ATTR_ENCODED_SIZE + 8 ];
 
 		/* Write the wrapper, depending on the object type */
 		if( type == CRYPT_CERTTYPE_RTCS_REQUEST )

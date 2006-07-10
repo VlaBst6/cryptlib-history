@@ -5,17 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "certattr.h"
-  #include "../misc/asn1.h"
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
@@ -368,9 +361,9 @@ BOOLEAN checkAttributePresent( const ATTRIBUTE_LIST *attributeListPtr,
 
 /* Move the attribute cursor relative to the current cursor position */
 
-ATTRIBUTE_LIST *moveAttributeCursor( const ATTRIBUTE_LIST *currentCursor,
-									 const CRYPT_ATTRIBUTE_TYPE certInfoType, 
-									 const int position )
+ATTRIBUTE_LIST *certMoveAttributeCursor( const ATTRIBUTE_LIST *currentCursor,
+										 const CRYPT_ATTRIBUTE_TYPE certInfoType, 
+										 const int position )
 	{
 	assert( currentCursor == NULL || \
 			isReadPtr( currentCursor, sizeof( ATTRIBUTE_LIST ) ) );

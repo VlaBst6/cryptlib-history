@@ -1,20 +1,13 @@
 /****************************************************************************
 *																			*
 *				cryptlib SSL v3/TLS Session Read/Write Routines				*
-*					   Copyright Peter Gutmann 1998-2004					*
+*					   Copyright Peter Gutmann 1998-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "misc_rw.h"
-  #include "session.h"
-  #include "ssl.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/misc_rw.h"
   #include "session.h"
   #include "ssl.h"
 #else
@@ -171,8 +164,7 @@ int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 			/* If we're the server and the client has offered a vaguely 
 			   sensible version, fall back to the highest version that we
 			   support */
-			if( ( sessionInfoPtr->flags && SESSION_ISSERVER ) && \
-				version <= 5 )
+			if( isServer( sessionInfoPtr ) && version <= 5 )
 				{
 				sessionInfoPtr->version = SSL_MINOR_VERSION_TLS11;
 				break;
@@ -246,6 +238,9 @@ static int checkPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		const int offset = stell( stream );
 
 		status = loadExplicitIV( sessionInfoPtr, stream );
+		if( cryptStatusError( status ) )
+			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					"Error loading TLS explicit IV" );
 		value -= stell( stream ) - offset;
 		}
 
@@ -510,7 +505,7 @@ static void openPacketStream( STREAM *stream, const SESSION_INFO *sessionInfoPtr
 		sslInfo->ivSize > 0 )
 		{
 		RESOURCE_DATA msgData;
-		BYTE iv[ CRYPT_MAX_IVSIZE ];
+		BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
 
 		setMessageData( &msgData, iv, sslInfo->ivSize );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
@@ -568,7 +563,7 @@ int continueHSPacketStream( STREAM *stream, const int packetType )
 		byte		ID = packetType
 		uint24		len = 0 (placeholder) */
 	sputc( stream, packetType );
-	writeUint24( stream, 0 );
+	writeUint24( stream, 0 );	/* Placeholder */
 	return( offset );
 	}
 
@@ -790,7 +785,7 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-				"Invalid alert message" );
+				"Invalid alert message length %d", length );
 
 	/* Read and process the alert packet */
 	status = sread( &sessionInfoPtr->stream, buffer, length );

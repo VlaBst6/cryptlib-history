@@ -5,15 +5,9 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "../misc/asn1.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
@@ -97,7 +91,7 @@ typedef struct {
 	const BOOLEAN wcsOK;			/* Whether widechar is allowed for comp.*/
 	} DN_COMPONENT_INFO;
 
-static const FAR_BSS DN_COMPONENT_INFO certInfoOIDs[] = {
+static const DN_COMPONENT_INFO FAR_BSS certInfoOIDs[] = {
 	/* Useful components */
 	{ CRYPT_CERTINFO_COMMONNAME, MKDNOID( "\x55\x04\x03" ), "cn", "oid.2.5.4.3", CRYPT_MAX_TEXTSIZE, FALSE, TRUE },
 	{ CRYPT_CERTINFO_COUNTRYNAME, MKDNOID( "\x55\x04\x06" ), "c", "oid.2.5.4.6", 2, FALSE, FALSE },
@@ -394,7 +388,7 @@ static int insertDNstring( void **dnListHead, const CRYPT_ATTRIBUTE_TYPE type,
 		   code way).  To work around this we insert a dummy expression to
 		   keep the value live */
 		{
-#if defined( __GNUC__ ) && ( __GNUC__ == 2 )
+#if defined( __GNUC__ ) && ( __GNUC__ == 2 ) && ( __GNUC_MINOR__ == 7 )
 		int i = type - DN_OID_OFFSET;
 		dnComponentInfo = &certInfoOIDs[ i ];
 		if( dnComponentInfo < 0 )	/* Dummy code to keep i live */
@@ -487,18 +481,17 @@ static int insertDNstring( void **dnListHead, const CRYPT_ATTRIBUTE_TYPE type,
 
 		dnStrPtr[ 0 ] = toUpper( dnStrPtr[ 0 ] );
 		dnStrPtr[ 1 ] = toUpper( dnStrPtr[ 1 ] );
-
 		if( flags & DN_FLAG_NOCHECK )
 			{
 			/* 'UK' isn't an ISO 3166 country code but may be found in some
 			   certificates.  If we find this, we quietly convert it to the
 			   correct value */
-			if( !memcmp( newElement->value, "UK", 2 ) )
-				memcpy( newElement->value, "GB", 2 );
+			if( !memcmp( dnStrPtr, "UK", 2 ) )
+				memcpy( dnStrPtr, "GB", 2 );
 			}
 		else
 			/* Make sure the country code is valid */
-			if( !checkCountryCode( ( char * ) newElement->value ) )
+			if( !checkCountryCode( dnStrPtr ) )
 				{
 				endVarStruct( newElement, DN_COMPONENT );
 				clFree( "insertDNstring", newElement );
@@ -819,7 +812,7 @@ int convertEmail( CERT_INFO *certInfoPtr, void **dnListHead,
 static int readAVA( STREAM *stream, CRYPT_ATTRIBUTE_TYPE *type, int *length,
 					int *stringTag )
 	{
-	BYTE oid[ MAX_OID_SIZE ];
+	BYTE oid[ MAX_OID_SIZE + 8 ];
 	int oidLength, tag, i, status;
 
 	/* Clear return values */
@@ -833,8 +826,8 @@ static int readAVA( STREAM *stream, CRYPT_ATTRIBUTE_TYPE *type, int *length,
 	   accessed by the user (although it can still be accessed using the
 	   cursor functions) */
 	readSequence( stream, NULL );
-	status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE,
-							BER_OBJECT_IDENTIFIER );
+	status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE,
+							 BER_OBJECT_IDENTIFIER );
 	if( cryptStatusError( status ) )
 		return( status );
 	for( i = 0; certInfoOIDs[ i ].oid != NULL; i++ )
@@ -851,18 +844,18 @@ static int readAVA( STREAM *stream, CRYPT_ATTRIBUTE_TYPE *type, int *length,
 		return( OK_SPECIAL );
 		}
 
-	/* We've reached the data value, make sure it's in order */
+	/* We've reached the data value, make sure that it's in order */
 	tag = peekTag( stream );
 	if( tag == BER_BITSTRING )
 		{
 		/* Bitstrings are used for uniqueIdentifiers, however these usually
 		   encapsulate something else so we dig one level deeper to find the
 		   encapsulated string */
-		readBitStringHole( stream, NULL, DEFAULT_TAG );
+		readBitStringHole( stream, NULL, 2, DEFAULT_TAG );
 		tag = peekTag( stream );
 		}
 	*stringTag = tag;
-	return( readGenericHole( stream, length, tag ) );
+	return( readGenericHole( stream, length, 1, tag ) );
 	}
 
 /* Read an RDN component */
@@ -871,7 +864,7 @@ static int readRDNcomponent( STREAM *stream, void **dnComponentListHead,
 							 const int rdnDataLeft )
 	{
 	CRYPT_ATTRIBUTE_TYPE type;
-	BYTE stringBuffer[ MAX_ATTRIBUTE_SIZE ], *value;
+	BYTE stringBuffer[ MAX_ATTRIBUTE_SIZE + 8 ], *value;
 	const int rdnStart = stell( stream );
 	int valueLength, stringTag;
 	int flags = DN_FLAG_NOCHECK, status;
@@ -1047,7 +1040,7 @@ int writeDN( STREAM *stream, const void *dnComponentListHead, const int tag )
 		 dnComponentPtr = dnComponentPtr->next )
 		{
 		const DN_COMPONENT_INFO *dnComponentInfo = dnComponentPtr->typeInfo;
-		BYTE dnString[ MAX_ATTRIBUTE_SIZE ];
+		BYTE dnString[ MAX_ATTRIBUTE_SIZE + 8 ];
 		int dnStringLength;
 
 		/* Write the RDN wrapper */
@@ -1179,7 +1172,7 @@ static BOOLEAN parseDNString( DN_STRING_INFO *dnStringInfo,
 int readDNstring( const char *string, const int stringLength,
 				  void **dnComponentListHead )
 	{
-	DN_STRING_INFO dnStringInfo[ MAX_DNSTRING_COMPONENTS + 1 ];
+	DN_STRING_INFO dnStringInfo[ MAX_DNSTRING_COMPONENTS + 1 + 8 ];
 	DN_COMPONENT *dnComponentPtr;
 	int stringInfoIndex;
 
@@ -1213,7 +1206,7 @@ int readDNstring( const char *string, const int stringLength,
 		do
 			{
 			const DN_COMPONENT_INFO *dnComponentInfo = NULL;
-			BYTE textBuffer[ MAX_ATTRIBUTE_SIZE + 1 ];
+			BYTE textBuffer[ MAX_ATTRIBUTE_SIZE + 1 + 8 ];
 			CRYPT_ATTRIBUTE_TYPE type;
 			int i, textIndex = 0, status;
 

@@ -27,7 +27,8 @@
 		blocks and make sure the results match.
 	Kernel check test: Run through every possible object type and attribute
 		making sure we don't trigger any assertions.
-	Threading stress test: DES-encrypt 100 data blocks in threads.
+	Simple threading stress test: DES-encrypt 100 data blocks in threads.
+	Complex threading stress test: Encrypted and signed enveloping.
 	Threading continuous test: Envelope data in threads until interrupted.
 
    Note that these are exhaustive tests that check large numbers of objects
@@ -413,7 +414,7 @@ static void testKernelChecks( void )
 
 /****************************************************************************
 *																			*
-*							Threading Stress Test							*
+*							Simple Threading Stress Test					*
 *																			*
 ****************************************************************************/
 
@@ -426,7 +427,7 @@ static void testKernelChecks( void )
 
 #ifdef WINDOWS_THREADS
 
-#define NO_THREADS	45
+#define NO_SIMPLE_THREADS	45
 
 static void randSleep( void )
 	{
@@ -476,11 +477,11 @@ unsigned __stdcall processDataThread( void *arg )
 
 static void testStressThreads( void )
 	{
-	HANDLE hThreadArray[ NO_THREADS ];
+	HANDLE hThreadArray[ NO_SIMPLE_THREADS ];
 	int i;
 
 	/* Start the threads */
-	for( i = 0; i < NO_THREADS; i++ )
+	for( i = 0; i < NO_SIMPLE_THREADS; i++ )
 		{
 		unsigned threadID;
 
@@ -493,12 +494,12 @@ static void testStressThreads( void )
 	printf( "Threads completed: " );
 
 	/* Wait for all the threads to complete */
-	if( WaitForMultipleObjects( NO_THREADS, hThreadArray, TRUE,
+	if( WaitForMultipleObjects( NO_SIMPLE_THREADS, hThreadArray, TRUE,
 								15000 ) == WAIT_TIMEOUT )
 		puts( "\nNot all threads completed in 15s." );
 	else
 		puts( "." );
-	for( i = 0; i < NO_THREADS; i++ )
+	for( i = 0; i < NO_SIMPLE_THREADS; i++ )
 		CloseHandle( hThreadArray[ i ] );
 	}
 #endif /* WINDOWS_THREADS */
@@ -596,6 +597,155 @@ static void testContinuousThreads( void )
 
 /****************************************************************************
 *																			*
+*							Complex Threading Stress Test					*
+*																			*
+****************************************************************************/
+
+/* Unlike the previous test, there's enough nondeterminism added in this one
+   that things go out of sync all by themselves */
+
+#ifdef WINDOWS_THREADS
+
+#define NO_COMPLEX_THREADS	4
+
+unsigned __stdcall signTest( void *arg ) 
+	{
+	CRYPT_KEYSET cryptKeyset;
+	CRYPT_CONTEXT privateKeyContext;
+	CRYPT_ENVELOPE cryptEnvelope;
+	BYTE buffer[ 1024 ];
+	const int count = *( ( int * ) arg );
+	int bytesCopied, i, status;
+
+	printf( "SignTest %d.\n", count );
+
+	for( i = 0; i < count; i++ ) 
+		{
+		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, 
+								  CRYPT_KEYSET_FILE, TEST_PRIVKEY_FILE, 
+								  CRYPT_KEYOPT_READONLY);
+		if( cryptStatusOK( status ) )
+			status = cryptGetPrivateKey( cryptKeyset, &privateKeyContext, 
+										 CRYPT_KEYID_NAME, RSA_PRIVKEY_LABEL, 
+										 TEST_PRIVKEY_PASSWORD );
+		if( cryptStatusOK( status ) )
+			status = cryptCreateEnvelope( &cryptEnvelope, CRYPT_UNUSED, 
+										  CRYPT_FORMAT_CMS );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttribute( cryptEnvelope, 
+										CRYPT_ENVINFO_SIGNATURE, 
+										privateKeyContext );
+		if( cryptStatusOK( status ) )
+			status = cryptPushData( cryptEnvelope, "message", 7, 
+									&bytesCopied );
+		if( cryptStatusOK( status ) )
+			status = cryptFlushData( cryptEnvelope );
+		if( cryptStatusOK( status ) )
+			status = cryptPopData( cryptEnvelope, buffer, 1024, 
+									&bytesCopied );
+		if( cryptStatusOK( status ) )
+			status = cryptDestroyContext( privateKeyContext );
+		if( cryptStatusOK( status ) )
+			status = cryptKeysetClose( cryptKeyset );
+		if( cryptStatusOK( status ) )
+			status = cryptDestroyEnvelope( cryptEnvelope );
+		if( cryptStatusError( status ) )
+			{
+			_endthreadex( status );
+			return( 0 );
+			}
+		}
+
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
+unsigned __stdcall encTest( void *arg ) 
+	{
+	CRYPT_ENVELOPE cryptEnvelope;
+	CRYPT_CERTIFICATE cryptCert;
+	BYTE buffer[ 1024 ];
+	const int count = *( ( int * ) arg );
+	int bytesCopied, i, status;
+
+	printf( "EncTest %d.\n", count );
+
+	for( i = 0; i < count; i++ ) 
+		{
+		FILE *filePtr;
+		int certSize;
+
+		if( ( filePtr = fopen( "testdata/cert5.der", "rb" ) ) != NULL ) 
+			{
+			certSize = fread( buffer, 1, 1024, filePtr );
+			fclose( filePtr );
+			}
+
+		status = cryptImportCert( buffer, certSize, CRYPT_UNUSED, 
+								  &certificate );
+		if( cryptStatusOK( status ) )
+			status = cryptCreateEnvelope( &cryptEnvelope, CRYPT_UNUSED, 
+										  CRYPT_FORMAT_CMS );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttribute( cryptEnvelope, 
+										CRYPT_ENVINFO_PUBLICKEY, cryptCert );
+		if( cryptStatusOK( status ) )
+			status = cryptPushData( cryptEnvelope, buffer, 200, 
+									&bytesCopied );
+		if( cryptStatusOK( status ) )
+			status = cryptFlushData( cryptEnvelope );
+		if( cryptStatusOK( status ) )
+			status = cryptPopData( cryptEnvelope, buffer, 1024, 
+								   &bytesCopied );
+		if( cryptStatusOK( status ) )
+			status = cryptDestroyCert( cryptCert );
+		if( cryptStatusOK( status ) )
+			status = cryptDestroyEnvelope( cryptEnvelope );
+		if( cryptStatusError( status ) )
+			{
+			_endthreadex( status );
+			return( 0 );
+			}
+		}
+
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
+int testStressThreadsComplex( void ) 
+	{
+	HANDLE hThreads[ NO_COMPLEX_THREADS ];
+	int i;
+
+	cryptAddRandom( NULL, CRYPT_RANDOM_SLOWPOLL );
+
+	for( i = 0; i < 1000; i++ )
+		{
+		unsigned dwThreadId;
+		int j;
+
+		hThreads[ 0 ] = ( HANDLE ) \
+			_beginthreadex( NULL, 0, encTest, &i, 0, &dwThreadId );
+		hThreads[ 1 ] = ( HANDLE ) \
+			_beginthreadex( NULL, 0, signTest, &i, 0, &dwThreadId );
+		hThreads[ 2 ] = ( HANDLE ) \
+			_beginthreadex( NULL, 0, encTest, &i, 0, &dwThreadId );
+		hThreads[ 3 ] = ( HANDLE ) \
+			_beginthreadex( NULL, 0, signTest, &i, 0, &dwThreadId );
+
+		WaitForMultipleObjects( NO_COMPLEX_THREADS, hThreads, TRUE, 
+								INFINITE );
+	
+		for( j = 0; j < NO_COMPLEX_THREADS; j++ ) 
+			CloseHandle( hThreads[ j ] );
+		}
+
+	return 0;
+	}
+#endif /* WINDOWS_THREADS */
+
+/****************************************************************************
+*																			*
 *									Test Interface							*
 *																			*
 ****************************************************************************/
@@ -606,7 +756,8 @@ void smokeTest( void )
 	testKernelChecks();
 	testStressObjects();
 #if defined( UNIX_THREADS ) || defined( WINDOWS_THREADS )
-	testStressThreads();
+	testStressThreadsSimple();
+	testStressThreadsComplex();
 #endif /* UNIX_THREADS || WINDOWS_THREADS */
 	}
 #endif /* SMOKE_TEST */

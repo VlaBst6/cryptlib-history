@@ -6,14 +6,9 @@
 ****************************************************************************/
 
 #include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "../misc/asn1.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
@@ -85,7 +80,7 @@ typedef unsigned short int bmpchar_t;	/* Unicode data type */
 #define I	2						/* IA5String/VisibleString/ISO646String */
 #define PI	( P | I )				/* PrintableString and IA5String */
 
-static const FAR_BSS int asn1CharFlags[] = {
+static const int FAR_BSS asn1CharFlags[] = {
 	/* 00  01  02  03  04  05  06  07  08  09  0A  0B  0C  0D  0E  0F */
 		0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,	0,
 	/* 10  11  12  13  14  15  16  17  18  19  1A  1B  1C  1D  1E  1F */
@@ -142,11 +137,10 @@ static wchar_t getBmpchar( const BYTE *string )
 
 static BOOLEAN isNativeWidecharString( const BYTE *string, const int length )
 	{
-	const wchar_t wCh = getWidechar( string );
+	wchar_t wCh = getWidechar( string );
 	int hiByte = 0, i;
 
 	assert( !( length % WCSIZE ) );
-	assert( !( ( int ) string & 1 ) );
 
 	/* If it's too short to be a widechar string, it's definitely not 
 	   Unicode */
@@ -156,7 +150,10 @@ static BOOLEAN isNativeWidecharString( const BYTE *string, const int length )
 		return( FALSE );
 
 	/* If wchar_t is > 16 bits and the bits above 16 are set or all zero,
-	   it's either definitely not Unicode or Unicode */
+	   it's either definitely not Unicode or Unicode.  Note that some
+	   compilers will complain of unreachable code here, unfortunately we
+	   can't easily fix this since WCSIZE is usually an expression involving
+	   sizeof(), which we can't handle via the preprocessor */
 #if INT_MAX > 0xFFFFL
 	if( WCSIZE > 2 )
 		return( ( wCh > 0xFFFF ) ? FALSE : TRUE );
@@ -209,8 +206,7 @@ static BOOLEAN isNativeWidecharString( const BYTE *string, const int length )
 	   matter since it'll get "converted" into a non-widechar string later */
 	for( i = 0; i < length; i += WCSIZE )
 		{
-		const wchar_t wCh = getWidechar( string );
-
+		wCh = getWidechar( string );
 		string += WCSIZE;
 		if( wCh > 0xFF )
 			{
@@ -353,7 +349,7 @@ static ASN1_STRINGTYPE getNativeStringType( const BYTE *string,
 			string += WCSIZE;
 
 			/* Safety check */
-			if( ch < 0 )
+			if( ch & 0xFFFF0000L )
 				return( STRINGTYPE_NONE );
 
 			/* If the high bit is set, it's not an ASCII subset */
@@ -631,8 +627,6 @@ int copyFromAsn1String( void *dest, int *destLen, const int maxLen,
 		wchar_t *wcDestPtr = ( wchar_t * ) dest;
 		const int newLen = ( sourceLen / UCSIZE ) * WCSIZE;
 		int i;
-
-		assert( !( ( int ) dest & 1 ) );
 
 		if( newLen > maxLen )
 			return( CRYPT_ERROR_OVERFLOW );

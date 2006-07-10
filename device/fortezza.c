@@ -11,8 +11,6 @@
    from the (exportable) printed manuals rather than through access to any
    original code */
 
-#include <stdlib.h>
-#include <string.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
@@ -20,12 +18,6 @@
   #include "device.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../context/context.h"
-  #include "device.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -479,7 +471,8 @@ static int findFreeCertificate( const FORTEZZA_INFO *fortezzaInfo )
 
 static void getCertificateLabel( const int certIndex, const int parentIndex,
 								 const CRYPT_CERTIFICATE iCryptCert, 
-								 const BOOLEAN newEntry, char *label )
+								 const BOOLEAN newEntry, char *label,
+								 const int labelMaxLen )
 	{
 	RESOURCE_DATA msgData;
 	int value, status;
@@ -501,8 +494,8 @@ static void getCertificateLabel( const int certIndex, const int parentIndex,
 							  &value, CRYPT_CERTINFO_CA );
 	if( cryptStatusOK( status ) && value )
 		{
-		sprintf( label, "CAX1FF%02X", 
-				 ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
+		sPrintf_s( label, labelMaxLen, "CAX1FF%02X", 
+				   ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
 		
 		return;
 		}
@@ -515,8 +508,8 @@ static void getCertificateLabel( const int certIndex, const int parentIndex,
 					CRYPT_KEYUSAGE_ENCIPHERONLY | \
 					CRYPT_KEYUSAGE_DECIPHERONLY ) ) )
 		{
-		sprintf( label, "KEAKFF%02X", 
-				 ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
+		sPrintf_s( label, labelMaxLen, "KEAKFF%02X", 
+				   ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
 
 		return;
 		}
@@ -541,11 +534,11 @@ static void getCertificateLabel( const int certIndex, const int parentIndex,
 								  CRYPT_CERTINFO_ORGANIZATIONALUNITNAME );
 		}
 	if( cryptStatusError( status ) )
-		sprintf( label, "DSAIFF%02X", 
-				 ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
+		sPrintf_s( label, labelMaxLen, "DSAIFF%02X", 
+				   ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
 	else
-		sprintf( label, "DSAOFF%02X", 
-				 ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
+		sPrintf_s( label, labelMaxLen, "DSAOFF%02X", 
+				   ( parentIndex != CRYPT_UNUSED ) ? parentIndex : 0xFF );
 
 	/* If it's a completely new entry (i.e. one that doesn't correspond to a 
 	   private key), mark it as a cert-only key */
@@ -627,8 +620,9 @@ static void getCertificateInfo( FORTEZZA_INFO *fortezzaInfo )
 		if( cryptStatusError( status ) || \
 			certSize < 256 || certSize > CI_CERT_SIZE - 4 )
 			continue;
-		hashFunction( NULL, hashList[ certIndex ], certificate, 
-					  ( int ) sizeofObject( certSize ), HASH_ALL );
+		hashFunction( NULL, hashList[ certIndex ], sizeof( CI_HASHVALUE ),
+					  certificate, ( int ) sizeofObject( certSize ), 
+					  HASH_ALL );
 		}
 	fortezzaInfo->certHashesInitialised = TRUE;
 	}
@@ -667,8 +661,8 @@ static void updateCertificateInfo( FORTEZZA_INFO *fortezzaInfo,
 		HASHFUNCTION hashFunction;
 
 		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, NULL );
-		hashFunction( NULL, hashList[ certIndex ], ( void * ) certificate, 
-					  certSize, HASH_ALL );
+		hashFunction( NULL, hashList[ certIndex ], sizeof( CI_HASHVALUE ),
+					  ( void * ) certificate, certSize, HASH_ALL );
 		}
 	else
 		/* There's no cert present at this location (for example because 
@@ -705,7 +699,8 @@ static int updateCertificate( FORTEZZA_INFO *fortezzaInfo, const int certIndex,
 
 	/* Get the SDN.605 label for the cert */
 	getCertificateLabel( certIndex, parentIndex, iCryptCert, 
-						 personality->CertLabel[ 0 ] ? FALSE : TRUE, label );
+						 personality->CertLabel[ 0 ] ? FALSE : TRUE, 
+						 label, sizeof( CI_CERT_STR ) );
 
 	/* If there's label data supplied (which happens for data-only certs 
 	   with no associated personality), use that */
@@ -886,7 +881,7 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 		{
 		HASHFUNCTION hashFunction;
 		RESOURCE_DATA msgData;
-		BYTE hash[ CRYPT_MAX_HASHSIZE ], keyDataBuffer[ 1024 ];
+		BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], keyDataBuffer[ 1024 + 8 ];
 		int certIndex;
 
 		/* Get the keyID for the leaf certificate */
@@ -896,7 +891,8 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 			krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
 							 &msgData, CRYPT_IATTRIBUTE_SPKI ) ) )
 			return( CRYPT_ARGERROR_NUM1 );
-		hashFunction( NULL, hash, keyDataBuffer, msgData.length, HASH_ALL );
+		hashFunction( NULL, hash, CRYPT_MAX_HASHSIZE, keyDataBuffer, 
+					  msgData.length, HASH_ALL );
 
 		/* If we're not adding the cert as a data-only PAA cert in the 0-th
 		   slot (which is a special case with no corresponding personality 
@@ -932,7 +928,7 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 			{
 			CI_CERTIFICATE certificate;
 			const int certIndex = currentCertInfo->index;
-			char buffer[ 8 ];
+			char buffer[ 16 ];
 			int index;
 
 			/* If the cert is present and the parent cert index is correct,
@@ -945,7 +941,7 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 
 			/* Update the parent cert index in the label, read the cert, and 
 			   write it back out with the new label */
-			sprintf( buffer, "%02X", currentCertInfo->parentIndex );
+			sPrintf_s( buffer, 8, "%02X", currentCertInfo->parentIndex );
 			memcpy( personalityList[ certIndex ].CertLabel + 6, buffer, 2 );
 			status = pCI_GetCertificate( certIndex, certificate );
 #ifndef NO_UPDATE
@@ -1670,7 +1666,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, &certIndex, 
 					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	setMessageData( &msgData, personality->CertLabel + 8,
-					 strlen( personality->CertLabel + 8 ) );
+					 min( strlen( personality->CertLabel + 8 ),
+						  CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
 					 CRYPT_CTXINFO_LABEL );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE,

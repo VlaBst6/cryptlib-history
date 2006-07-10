@@ -39,14 +39,14 @@ RSC=rc.exe
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 0
 # PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\release"
+# PROP Intermediate_Dir ".\release_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
 # ADD BASE F90 /I "Release/"
 # ADD F90 /I "Release/"
 # ADD BASE CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /YX /c
-# ADD CPP /nologo /MD /W3 /O2 /D "NDEBUG" /D "INC_CHILD" /FD /c
+# ADD CPP /nologo /MD /W3 /O2 /I ".\\" /D "NDEBUG" /FD /c
 # SUBTRACT CPP /YX
 # ADD BASE MTL /nologo /D "NDEBUG" /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
@@ -69,14 +69,14 @@ LINK32=link.exe
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
 # PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\debug"
+# PROP Intermediate_Dir ".\debug_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
 # ADD BASE F90 /I "Debug/"
 # ADD F90 /I "Debug/"
 # ADD BASE CPP /nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /YX /c
-# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /D "INC_CHILD" /FD /c
+# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /FD /c
 # SUBTRACT CPP /Fr /YX
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
 # ADD MTL /nologo /D "_DEBUG" /win32
@@ -169,6 +169,10 @@ SOURCE=".\bn\bn-win32.obj"
 # Begin Source File
 
 SOURCE=.\cert\certrev.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\certschk.c
 # End Source File
 # Begin Source File
 
@@ -384,6 +388,10 @@ SOURCE=.\context\kg_rsa.c
 # PROP Default_Filter ""
 # Begin Source File
 
+SOURCE=.\crypt\aes_modes.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\crypt\aeskey.c
 # End Source File
 # Begin Source File
@@ -484,10 +492,6 @@ SOURCE=.\crypt\skipjack.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\crypt\aescrypt.obj
-# End Source File
-# Begin Source File
-
 SOURCE=".\crypt\s1-win32.obj"
 # End Source File
 # Begin Source File
@@ -517,6 +521,10 @@ SOURCE=".\crypt\rm-win32.obj"
 # Begin Source File
 
 SOURCE=".\crypt\b-win32.obj"
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\aescrypt2.obj
 # End Source File
 # End Group
 # Begin Group "Devices"
@@ -568,6 +576,10 @@ SOURCE=.\envelope\pgp_env.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\envelope\res_actn.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\envelope\res_denv.c
 # End Source File
 # Begin Source File
@@ -592,7 +604,11 @@ SOURCE=.\io\file.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\io\http.c
+SOURCE=.\io\http_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\http_wr.c
 # End Source File
 # Begin Source File
 
@@ -700,7 +716,7 @@ SOURCE=.\keyset\dbx_wr.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\keyset\http_crt.c
+SOURCE=.\keyset\http.c
 # End Source File
 # Begin Source File
 
@@ -724,6 +740,14 @@ SOURCE=.\keyset\pkcs15.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\keyset\pkcs15_add.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_att.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\keyset\pkcs15_rd.c
 # End Source File
 # Begin Source File
@@ -737,6 +761,10 @@ SOURCE=.\keyset\pkcs15_wr.c
 # Begin Source File
 
 SOURCE=.\mechs\keyex.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\keyex_int.c
 # End Source File
 # Begin Source File
 
@@ -768,7 +796,23 @@ SOURCE=.\mechs\sign.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\mechs\sign_cms.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\sign_int.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\sign_pgp.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\mechs\sign_rw.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\sign_x509.c
 # End Source File
 # End Group
 # Begin Group "Misc"
@@ -808,6 +852,14 @@ SOURCE=.\misc\int_api.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\int_attr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\int_env.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\bindings\java_jni.c
 # End Source File
 # Begin Source File
@@ -820,7 +872,7 @@ SOURCE=.\misc\os_spec.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\envelope\pgp_misc.c
+SOURCE=.\misc\pgp_misc.c
 # End Source File
 # Begin Source File
 
@@ -865,6 +917,14 @@ SOURCE=.\session\rtcs.c
 # Begin Source File
 
 SOURCE=.\session\scep.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\scorebrd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\sess_attr.c
 # End Source File
 # Begin Source File
 
@@ -1033,6 +1093,10 @@ SOURCE=.\cert\cert.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\config.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\misc\consts.h
 # End Source File
 # Begin Source File
@@ -1074,6 +1138,10 @@ SOURCE=.\kernel\kernel.h
 # Begin Source File
 
 SOURCE=.\keyset\keyset.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\mech.h
 # End Source File
 # Begin Source File
 

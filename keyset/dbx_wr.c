@@ -5,20 +5,12 @@
 *																			*
 ****************************************************************************/
 
-#include <stdarg.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "keyset.h"
   #include "dbms.h"
   #include "asn1.h"
   #include "rpc.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../keyset/keyset.h"
-  #include "../keyset/dbms.h"
-  #include "../misc/asn1.h"
-  #include "../misc/rpc.h"
 #else
   #include "crypt.h"
   #include "keyset/keyset.h"
@@ -272,7 +264,7 @@ int addCert( DBMS_INFO *dbmsInfo, const CRYPT_HANDLE iCryptHandle,
 		}
 	if( certType == CRYPT_CERTTYPE_PKIUSER )
 		{
-		char encKeyID[ 128 ];
+		char encKeyID[ CRYPT_MAX_TEXTSIZE + 8 ];
 
 		/* Get the PKI user ID.  We can't read this directly since it's
 		   returned in text form for use by end users so we have to read the
@@ -281,15 +273,15 @@ int addCert( DBMS_INFO *dbmsInfo, const CRYPT_HANDLE iCryptHandle,
 		   (== subjectKeyIdentifier, which it isn't really) but we need to
 		   use this to ensure that it's hashed/expanded out to the correct
 		   size */
-		setMessageData( &msgData, encKeyID, 128 );
+		setMessageData( &msgData, encKeyID, CRYPT_MAX_TEXTSIZE );
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_CERTINFO_PKIUSER_ID );
 		if( cryptStatusOK( status ) )
 			{
-			BYTE binaryKeyID[ 128 ];
+			BYTE binaryKeyID[ 64 + 8 ];
 			int length;
 
-			status = length = decodePKIUserValue( binaryKeyID, encKeyID, 
+			status = length = decodePKIUserValue( binaryKeyID, 64, encKeyID, 
 												  msgData.length );
 			if( !cryptStatusError( status ) )
 				{

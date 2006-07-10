@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2005                   *
+'*                       Copyright Peter Gutmann 1997-2006                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Mon Jul 18 02:47:56 2005, filesize = 82445.
+'"cryptlib.h" dated Wed Aug 30 01:34:02 2006, filesize = 82663.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,6 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
+  Public Const CRYPTLIB_VERSION As Long = 3230
 
 
 '****************************************************************************
@@ -73,7 +74,8 @@ Public Enum CRYPT_ALGO_TYPE
 
     ' MAC's 
     CRYPT_ALGO_HMAC_MD5 = 300       ' HMAC-MD5 
-    CRYPT_ALGO_HMAC_SHA             ' HMAC-SHA 
+    CRYPT_ALGO_HMAC_SHA1            ' HMAC-SHA 
+        CRYPT_ALGO_HMAC_SHA = CRYPT_ALGO_HMAC_SHA1  ' Older form 
     CRYPT_ALGO_HMAC_RIPEMD160       ' HMAC-RIPEMD-160 
 
 '      Vendors may want to use their own algorithms that aren't part of the
@@ -750,8 +752,8 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
 
     ' 1 2 840 113549 1 9 16 2 2 essSecurityLabel 
     CRYPT_CERTINFO_CMS_SECURITYLABEL
-    CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION  ' securityClassification 
     CRYPT_CERTINFO_CMS_SECLABEL_POLICY      ' securityPolicyIdentifier 
+    CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION  ' securityClassification 
     CRYPT_CERTINFO_CMS_SECLABEL_PRIVACYMARK ' privacyMark 
     CRYPT_CERTINFO_CMS_SECLABEL_CATTYPE     ' securityCategories.securityCategory.type 
     CRYPT_CERTINFO_CMS_SECLABEL_CATVALUE    ' securityCategories.securityCategory.value 
@@ -905,9 +907,6 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     '********************
     ' Session attributes 
     '********************
-
-'      Pseudo-information on a session or meta-information which is used to
-'      control the way that a session is managed 
 
     ' Pseudo-information about the session 
     CRYPT_SESSINFO_ACTIVE           ' Whether session is active 
@@ -1455,6 +1454,7 @@ End Type
   Public Const CRYPT_ERROR_NOSECURE As Long = -13 ' Opn.not avail.at requested sec.level 
   Public Const CRYPT_ERROR_RANDOM As Long = -14 ' No reliable random data available 
   Public Const CRYPT_ERROR_FAILED As Long = -15 ' Operation failed 
+  Public Const CRYPT_ERROR_INTERNAL As Long = -16 ' Internal consistency check failed 
 
 ' Security violations 
 

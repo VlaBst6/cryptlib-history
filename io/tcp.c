@@ -6,14 +6,8 @@
 ****************************************************************************/
 
 #include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "stream.h"
-  #include "tcp.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "stream.h"
   #include "tcp.h"
 #else
@@ -36,6 +30,10 @@ static int initSocketPool( void );
 static void endSocketPool( void );
 
 #ifdef __WINDOWS__
+
+#ifndef TEXT
+  #define TEXT		/* Win32 windows.h defines this, but not the Win16 one */
+#endif /* TEXT */
 
 /* Global function pointers.  These are necessary because the functions need
    to be dynamically linked since not all systems contain the necessary
@@ -373,7 +371,8 @@ static BOOLEAN transportOKFunction( void )
 		   a test socket here to make sure that everything is OK.  If the
 		   network transport is unavailable, we re-try each time we're
 		   called in case it's been enabled in the meantime */
-		if( !isBadSocket( netSocket = socket( PF_INET, SOCK_STREAM, 0 ) ) )
+		netSocket = socket( PF_INET, SOCK_STREAM, 0 );
+		if( !isBadSocket( netSocket ) )
 			{
 			closesocket( netSocket );
 			transportOK = TRUE;
@@ -401,12 +400,12 @@ typedef struct {
 	const int errorCode;		/* Native error code */
 	const int cryptSpecificCode;/* Specific cryptlib error code */
 	const BOOLEAN isFatal;		/* Seriousness level */
-	const char *errorString;	/* Error message */
+	const char FAR_BSS *errorString;/* Error message */
 	} SOCKETERROR_INFO;
 
 #ifdef __WINDOWS__
 
-static const FAR_BSS SOCKETERROR_INFO socketErrorInfo[] = {
+static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 	{ WSAECONNREFUSED, CRYPT_ERROR_PERMISSION, TRUE,
 		"WSAECONNREFUSED: The attempt to connect was rejected" },
 	{ WSAEADDRNOTAVAIL, CRYPT_ERROR_NOTFOUND, TRUE,
@@ -453,7 +452,7 @@ static const FAR_BSS SOCKETERROR_INFO socketErrorInfo[] = {
 
 #else
 
-static const FAR_BSS SOCKETERROR_INFO socketErrorInfo[] = {
+static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 	{ EADDRNOTAVAIL, CRYPT_ERROR_NOTFOUND, TRUE,
 		"EADDRNOTAVAIL: Specified address is not available from the local "
 		"machine" },
@@ -495,7 +494,7 @@ static const FAR_BSS SOCKETERROR_INFO socketErrorInfo[] = {
 
 #define TIMEOUT_ERROR	ETIMEDOUT			/* Code for timeout error */
 
-static const FAR_BSS SOCKETERROR_INFO hostErrorInfo[] = {
+static const SOCKETERROR_INFO FAR_BSS hostErrorInfo[] = {
 	{ HOST_NOT_FOUND, CRYPT_ERROR_NOTFOUND, TRUE,
 		"HOST_NOT_FOUND: Host not found" },
 	{ NO_ADDRESS, CRYPT_ERROR_NOTFOUND, TRUE,
@@ -670,7 +669,17 @@ static int my_getsockopt( int socket, int level, int option,
    against runaway apps and because cryptlib was never designed to function
    as a high-volume server application.  If necessary this can be changed to
    dynamically expand the socket pool in the same way that the kernel
-   dynamically expands its object table */
+   dynamically expands its object table.  However it's not a good idea to
+   simply remove the restriction entirely (or set it to too high a value)
+   because this can cause problems with excess consumption of kernel
+   resources.  For example under Windows opening several tens of thousands
+   of connections will eventually return WSAENOBUFS when the nonpaged pool
+   is exhausted.  At this point things start to get problematic because
+   many drivers don't handle the inability to allocate memory very well, and
+   can start to fail and render the whole system unstable.  This is a
+   general resource-consumption problem that affects all users of the shared
+   nonpaged pool, but we can at least make sure that we're not the cause of
+   any crashes by limiting our own consumption */
 
 #ifdef CONFIG_CONSERVE_MEMORY
   #define SOCKETPOOL_SIZE		16
@@ -721,12 +730,14 @@ static int newSocket( SOCKET *newSocketPtr, struct addrinfo *addrInfoPtr,
 					  const BOOLEAN isServer )
 	{
 	SOCKET netSocket;
-	int i;
+	int i, status;
 
 	/* Clear return value */
 	*newSocketPtr = INVALID_SOCKET;
 
-	krnlEnterMutex( MUTEX_SOCKETPOOL );
+	status = krnlEnterMutex( MUTEX_SOCKETPOOL );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* If this is a server socket (i.e. one bound to a specific interface and
 	   port), check to see whether there's already a socket bound here and if
@@ -771,8 +782,6 @@ static int newSocket( SOCKET *newSocketPtr, struct addrinfo *addrInfoPtr,
 		if( socketInfo[ i ].refCount <= 0 && \
 			socketInfo[ i ].netSocket != INVALID_SOCKET )
 			{
-			int status;
-
 			status = closesocket( socketInfo[ i ].netSocket );
 			if( !isSocketError( status ) )
 				socketInfo[ i ] = SOCKET_INFO_TEMPLATE;
@@ -787,8 +796,9 @@ static int newSocket( SOCKET *newSocketPtr, struct addrinfo *addrInfoPtr,
 		assert( NOTREACHED );
 		return( CRYPT_ERROR_OVERFLOW );	/* Should never happen */
 		}
-	if( isBadSocket( netSocket = socket( addrInfoPtr->ai_family,
-										 addrInfoPtr->ai_socktype, 0 ) ) )
+	netSocket = socket( addrInfoPtr->ai_family,
+						addrInfoPtr->ai_socktype, 0 );
+	if( isBadSocket( netSocket ) )
 		{
 		krnlExitMutex( MUTEX_SOCKETPOOL );
 		return( CRYPT_ERROR_OPEN );
@@ -834,9 +844,11 @@ static void newSocketDone( void )
 
 static int addSocket( const SOCKET netSocket )
 	{
-	int i;
+	int i, status;
 
-	krnlEnterMutex( MUTEX_SOCKETPOOL );
+	status = krnlEnterMutex( MUTEX_SOCKETPOOL );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Add an existing socket entry */
 	for( i = 0; i < SOCKETPOOL_SIZE; i++ )
@@ -859,9 +871,11 @@ static int addSocket( const SOCKET netSocket )
 
 static void deleteSocket( const SOCKET netSocket )
 	{
-	int i;
+	int i, status;
 
-	krnlEnterMutex( MUTEX_SOCKETPOOL );
+	status = krnlEnterMutex( MUTEX_SOCKETPOOL );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Find the entry for this socket in the pool.  There may not be one
 	   present if the pool has received a shutdown signal and closed all
@@ -880,8 +894,6 @@ static void deleteSocket( const SOCKET netSocket )
 	socketInfo[ i ].refCount--;
 	if( socketInfo[ i ].refCount <= 0 )
 		{
-		int status;
-
 		/* If the reference count has reached zero, close the socket
 		   and delete the pool entry */
 		status = closesocket( socketInfo[ i ].netSocket );
@@ -1034,7 +1046,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 	   select() timeout error */
 	if( status == 0 || isSocketError( status ) )
 		{
-		char errorMessage[ 128 ];
+		char errorMessage[ 128 + 8 ];
 
 		/* If we've already received data from a previous I/O, it counts as
 		   the transferred byte count even though we timed out this time
@@ -1048,8 +1060,9 @@ static int ioWait( STREAM *stream, const time_t timeout,
 			return( OK_SPECIAL );
 
 		/* The select() timed out, exit */
-		sPrintf( errorMessage, "Timeout on %s (select()) after %d seconds",
-				 errorInfo[ type ].errorString, timeout );
+		sPrintf_s( errorMessage, 128,
+				   "Timeout on %s (select()) after %ld seconds",
+				   errorInfo[ type ].errorString, timeout );
 		return( setSocketError( stream, errorMessage, CRYPT_ERROR_TIMEOUT,
 								FALSE ) );
 		}
@@ -1180,13 +1193,9 @@ static int preOpenSocket( STREAM *stream, const char *server,
 		}
 	freeAddressInfo( addrInfoPtr );
 	if( status < 0 && !nonBlockWarning )
-		{
 		/* There was an error condition other than a notification that the
 		   operation hasn't completed yet */
-		status = mapError( stream, socketErrorInfo, CRYPT_ERROR_OPEN );
-		deleteSocket( netSocket );
-		return( status );
-		}
+		return( mapError( stream, socketErrorInfo, CRYPT_ERROR_OPEN ) );
 	if( status == 0 )
 		{
 		/* If we're connecting to a local host, the connect can complete

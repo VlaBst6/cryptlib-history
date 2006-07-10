@@ -1,16 +1,12 @@
 /****************************************************************************
 *																			*
 *							Kernel Message Dispatcher						*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2006					*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "acl.h"
-  #include "kernel.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "acl.h"
   #include "kernel.h"
 #else
@@ -26,7 +22,7 @@ static KERNEL_DATA *krnlData = NULL;
 /* The ACL used to check objects passed as message parameters, in this case
    for cert sign/sig-check messages */
 
-static const FAR_BSS MESSAGE_ACL messageParamACLTbl[] = {
+static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
 	/* Certs can only be signed by (private-key) PKC contexts */
 	{ MESSAGE_CRT_SIGN,
 	  { ST_CTX_PKC,
@@ -41,7 +37,7 @@ static const FAR_BSS MESSAGE_ACL messageParamACLTbl[] = {
 					 ST_KEYSET_DBMS,
 		ST_SESS_RTCS | ST_SESS_OCSP } },
 
-	{ MESSAGE_NONE, ST_NONE, ST_NONE }
+	{ MESSAGE_NONE, { ST_NONE, ST_NONE } }
 	};
 
 /****************************************************************************
@@ -54,7 +50,7 @@ static const FAR_BSS MESSAGE_ACL messageParamACLTbl[] = {
    directly to the appropriate target object).  The following function checks
    that the target object is one of the required types */
 
-int checkTargetType( const int objectHandle, const int targets )
+int checkTargetType( const int objectHandle, const long targets )
 	{
 	const OBJECT_TYPE target = targets & 0xFF;
 	const OBJECT_TYPE altTarget = targets >> 8;
@@ -114,7 +110,7 @@ static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
 #define MAX_WAITCOUNT				10000
 #define WAITCOUNT_WARN_THRESHOLD	100
 
-#ifndef NDEBUG
+#if !defined( NDEBUG ) && !defined( __WIN16__ )
 
 #include <stdio.h>
 
@@ -125,7 +121,7 @@ static void waitWarn( const int objectHandle, const int waitCount )
 		"Session", "User", "None", "None"
 		};
 	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
-	char buffer[ 128 ];
+	char buffer[ 128 + 8 ];
 
 	if( objectHandle == SYSTEM_OBJECT_HANDLE )
 		strcpy( buffer, "system object" );
@@ -133,9 +129,9 @@ static void waitWarn( const int objectHandle, const int waitCount )
 		if( objectHandle == DEFAULTUSER_OBJECT_HANDLE )
 			strcpy( buffer, "default user object" );
 		else
-			sPrintf( buffer, "object %d (%s, subtype %lX)",
-					 objectHandle, objectTypeNames[ objectInfoPtr->type ],
-					 objectInfoPtr->subType );
+			sPrintf_s( buffer, 128, "object %d (%s, subtype %lX)",
+					   objectHandle, objectTypeNames[ objectInfoPtr->type ],
+					   objectInfoPtr->subType );
 	fprintf( stderr, "\nWarning: Thread %X waited %d iteration%s for %s.\n",
 			 THREAD_SELF(), waitCount, ( waitCount == 1 ) ? "" : "s",
 			 buffer );
@@ -145,17 +141,18 @@ static void waitWarn( const int objectHandle, const int waitCount )
 int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
-	const unsigned int uniqueID = objectTable[ objectHandle ].uniqueID;
+	const int uniqueID = objectTable[ objectHandle ].uniqueID;
 	int waitCount = 0;
 
 	/* Preconditions: The object is in use by another thread */
 	PRE( isValidObject( objectHandle ) );
 	PRE( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) );
 
-	/* While the object is busy, put the thread to sleep.  This is the
-	   optimal portable way to wait on the resource, since it gives up this
-	   thread's timeslice to allow other threads (including the one using
-	   the object) to run.  Other methods such as mutexes with timers are
+	/* While the object is busy, put the thread to sleep ("Pauzele lungi si
+	   dese;  Cheia marilor succese").  This is the only really portable way
+	   to wait on the resource, which gives up this thread's timeslice to
+	   allow other threads (including the one using the object) to run.
+	   Somewhat better methods methods such as mutexes with timers are
 	   difficult to manage portably across different platforms */
 	while( objectTable[ objectHandle ].uniqueID == uniqueID && \
 		   isInUse( objectHandle ) && waitCount < MAX_WAITCOUNT && \
@@ -166,14 +163,14 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 		THREAD_YIELD();
 		MUTEX_LOCK( objectTable );
 		}
-#ifndef NDEBUG
+#if !defined( NDEBUG ) && !defined( __WIN16__ )
 	if( waitCount > WAITCOUNT_WARN_THRESHOLD )
 		/* If we waited more than WAITCOUNT_WARN_THRESHOLD iterations for
 		   something this could be a sign of a resource usage bottleneck
 		   (typically caused by users who don't understand threading), warn
 		   the user that there's a potential problem */
 		waitWarn( objectHandle, waitCount );
-#endif /* NDEBUG */
+#endif /* NDEBUG on systems with stdio */
 
 	/* If cryptlib is shutting down, exit */
 	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES )
@@ -332,7 +329,7 @@ static int handleAliasedObject( const int objectHandle,
    The device message targeted at the context would in turn be routed to the
    context's dependent device, which is its final destination */
 
-int findTargetType( const int originalObjectHandle, const int targets )
+int findTargetType( const int originalObjectHandle, const long targets )
 	{
 	const OBJECT_TYPE target = targets & 0xFF;
 	const OBJECT_TYPE altTarget1 = ( targets >> 8 ) & 0xFF;
@@ -414,7 +411,7 @@ int findTargetType( const int originalObjectHandle, const int targets )
    is its final destination */
 
 static int routeCompareMessageTarget( const int originalObjectHandle,
-									  const int messageValue )
+									  const long messageValue )
 	{
 	OBJECT_TYPE targetType = OBJECT_TYPE_NONE;
 	int objectHandle = originalObjectHandle;
@@ -488,13 +485,13 @@ typedef enum {
 	PARAMTYPE_NONE_CHECKTYPE,/* Data = 0, value = check type */
 	PARAMTYPE_DATA_NONE,	/* Data, value = 0 */
 	PARAMTYPE_DATA_ANY,		/* Data, value = any */
-	PARAMTYPE_DATA_BOOLEAN,	/* Data, value = boolean */
 	PARAMTYPE_DATA_LENGTH,	/* Data, value >= 0 */
 	PARAMTYPE_DATA_OBJTYPE,	/* Data, value = object type */
 	PARAMTYPE_DATA_MECHTYPE,/* Data, value = mechanism type */
 	PARAMTYPE_DATA_ITEMTYPE,/* Data, value = keymgmt.item type */
 	PARAMTYPE_DATA_FORMATTYPE,/* Data, value = cert format type */
 	PARAMTYPE_DATA_COMPARETYPE,/* Data, value = compare type */
+	PARAMTYPE_DATA_SETDEPTYPE,/* Data, value = setdep.option type */
 	PARAMTYPE_LAST			/* Last possible parameter check type */
 	} PARAMCHECK_TYPE;
 
@@ -522,12 +519,12 @@ typedef struct {
 	   OBJECT_TYPE_NONE; if the target is explicitly determined, the routing
 	   target is identified in the target.  If the routing function is null,
 	   the message isn't routed */
-	const OBJECT_TYPE routingTarget;	/* Target type if routable */
-	int ( *routingFunction )( const int objectHandle, const int arg );
+	const long routingTarget;			/* Target type if routable */
+	int ( *routingFunction )( const int objectHandle, const long arg );
 
 	/* Object type checking information: Object subtypes for which this
 	   message is valid (for object-type-specific message) */
-	const int subTypeA, subTypeB;		/* Object subtype for which msg.valid */
+	const OBJECT_SUBTYPE subTypeA, subTypeB;/* Object subtype for which msg.valid */
 
 	/* Message type checking information used to assertion-check the function
 	   preconditions */
@@ -552,7 +549,7 @@ typedef struct {
 									  const BOOLEAN isInternal );
 	} MESSAGE_HANDLING_INFO;
 
-static const FAR_BSS MESSAGE_HANDLING_INFO messageHandlingInfo[] = {
+static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_NONE, ROUTE_NONE, 0, PARAMTYPE_NONE_NONE },
 
 	/* Control messages.  These messages aren't routed, are valid for all
@@ -576,7 +573,7 @@ static const FAR_BSS MESSAGE_HANDLING_INFO messageHandlingInfo[] = {
 	  HANDLE_INTERNAL( getDependentObject ) },
 	{ MESSAGE_SETDEPENDENT,			/* Set dependent object (e.g. ctx->dev) */
 	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
-	  PARAMTYPE_DATA_BOOLEAN,
+	  PARAMTYPE_DATA_SETDEPTYPE,
 	  HANDLE_INTERNAL( setDependentObject ) },
 	{ MESSAGE_CLONE,				/* Clone the object (only valid for ctxs) */
 	  ROUTE_FIXED( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_HASH, ST_NONE,
@@ -973,6 +970,8 @@ static int dispatchMessage( const int localObjectHandle,
 	int status;
 
 	PRE( isValidHandle( localObjectHandle ) );
+	PRE( !isInUse( localObjectHandle ) || \
+		 isObjectOwner( localObjectHandle ) );
 	PRE( isReadPtr( messageQueueData, sizeof( MESSAGE_QUEUE_DATA ) ) );
 	PRE( isWritePtr( objectInfoPtr, sizeof( OBJECT_INFO ) ) );
 
@@ -1002,33 +1001,25 @@ static int dispatchMessage( const int localObjectHandle,
 							  messageQueueData->messageValue );
 	MUTEX_LOCK( objectTable );
 	objectInfoPtr = &krnlData->objectTable[ localObjectHandle ];
+
 	assert( localObjectHandle == SYSTEM_OBJECT_HANDLE || \
-			( objectInfoPtr->type == OBJECT_TYPE_USER && \
-			  localMessage == MESSAGE_SETATTRIBUTE && \
-			    messageQueueData->messageValue == \
-					localObjectHandle == SYSTEM_OBJECT_HANDLE ) || \
 			objectInfoPtr->lockCount == lockCount );
 
-	/* The system object and to a lesser extent the user object may unlock
-	   themselves while processing a message when they forward the message
-	   elsewhere or perform non-object-specific processing, so we only
-	   decrement the lock count if it's unchanged and we still own the
-	   object.  We have to perform the ownership check to avoid the
-	   situation where we unlock the object and another thread locks it,
-	   leading to an (apparently) unchanged lock count */
+	/* The system object may unlock itself while processing a message
+	   when it forwards the message elsewhere or performs non-object-
+	   specific processing, so we only decrement the lock count if it's
+	   unchanged and we still own the object.  We have to perform the
+	   ownership check to avoid the situation where we unlock the object
+	   and another thread locks it, leading to an (apparently) unchanged
+	   lock count */
 	if( objectInfoPtr->lockCount == lockCount && \
 		isObjectOwner( localObjectHandle ) )
 		objectInfoPtr->lockCount--;
 
 	/* Postcondition: The lock count is non-negative and, if it's not the
-	   system object or a user object, has been reset to its previous
-	   value */
+	   system object, has been reset to its previous value */
 	POST( objectInfoPtr->lockCount >= 0 && \
 		  ( localObjectHandle == SYSTEM_OBJECT_HANDLE ||
-		    ( objectInfoPtr->type == OBJECT_TYPE_USER && \
-			  localMessage == MESSAGE_SETATTRIBUTE && \
-			  messageQueueData->messageValue == \
-				localObjectHandle == SYSTEM_OBJECT_HANDLE ) || \
 			objectInfoPtr->lockCount == lockCount - 1 ) );
 
 	/* If there's a post-dispatch handler present, apply it.  Since a
@@ -1092,13 +1083,13 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		 handlingInfoPtr->paramCheck == PARAMTYPE_NONE_CHECKTYPE || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_NONE || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_ANY || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_BOOLEAN || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_LENGTH || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_OBJTYPE || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_MECHTYPE || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_ITEMTYPE || \
 		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_FORMATTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_COMPARETYPE );
+		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_COMPARETYPE || \
+		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_SETDEPTYPE );
 	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_NONE_NONE || \
 		 ( handlingInfoPtr->paramCheck == PARAMTYPE_NONE_NONE && \
 		   messageDataPtr == NULL && messageValue == 0 ) );
@@ -1120,10 +1111,6 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_DATA_ANY || \
 		 ( handlingInfoPtr->paramCheck == PARAMTYPE_DATA_ANY && \
 		   messageDataPtr != NULL ) );
-	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_DATA_BOOLEAN || \
-		 ( handlingInfoPtr->paramCheck == PARAMTYPE_DATA_BOOLEAN && \
-		   messageDataPtr != NULL && \
-		   ( messageValue == FALSE || messageValue == TRUE ) ) );
 	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_DATA_LENGTH || \
 		 ( handlingInfoPtr->paramCheck == PARAMTYPE_DATA_LENGTH && \
 		   messageDataPtr != NULL && messageValue >= 0 ) );
@@ -1148,6 +1135,11 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		   messageDataPtr != NULL && \
 		   ( messageValue > MESSAGE_COMPARE_NONE && \
 			 messageValue < MESSAGE_COMPARE_LAST ) ) );
+	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_DATA_SETDEPTYPE || \
+		 ( handlingInfoPtr->paramCheck == PARAMTYPE_DATA_SETDEPTYPE && \
+		   messageDataPtr != NULL && \
+		   messageValue > SETDEP_OPTION_NONE && \
+		   messageValue < SETDEP_OPTION_LAST ) );
 
 	/* If it's an object-manipulation message get the attribute's mandatory
 	   ACL; if it's an object-parameter message get the parameter's mandatory
@@ -1421,13 +1413,24 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 
 	/* If the object is in use by another thread, wait for it to become
 	   available */
-	if( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) )
-		status = waitForObject( objectHandle, &objectInfoPtr );
+	if( isInUse( localObjectHandle ) && !isObjectOwner( localObjectHandle ) )
+		{
+		status = waitForObject( localObjectHandle, &objectInfoPtr );
+#if !defined( NDEBUG ) && defined( USE_THREADS )
+		if( cryptStatusOK( status ) && isInUse( localObjectHandle ) )
+			/* dispatchMessage() expects us to be the lock owner if the
+			   object is in use, however if the object has been */
+			objectInfoPtr->lockOwner = THREAD_SELF();
+#endif /* !NDEBUG && USE_THREADS */
+		}
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( objectTable );
 		return( status );
 		}
+/******/
+assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
+/******/
 
 	/* Enqueue the message */
 	if( ( message & MESSAGE_MASK ) != localMessage )
@@ -1453,6 +1456,9 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		MUTEX_UNLOCK( objectTable );
 		return( ( status == OK_SPECIAL ) ? CRYPT_OK : status );
 		}
+/******/
+assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
+/******/
 
 	/* While there are more messages for this object present, dequeue them
 	   and dispatch them.  Since messages will only be enqueued if
@@ -1495,6 +1501,9 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 				}
 			continue;
 			}
+/******/
+assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
+/******/
 
 		/* Inner precondition: The object is in a valid state or it's a
 		   destroy message to a busy object or a destroy message that was

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Unix Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2005		*
+*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2006		*
 *																			*
 ****************************************************************************/
 
@@ -20,9 +20,7 @@
 
 /* General includes */
 
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 #include <time.h>
 #include "crypt.h"
 
@@ -104,6 +102,9 @@
 #if !( defined( __QNX__ ) || defined( __CYGWIN__ ) )
   #include <sys/shm.h>
 #endif /* QNX || Cygwin */
+#if defined( __linux__ ) && ( defined(__i386__) || defined(__x86_64__) )
+  #include <asm/msr.h>
+#endif /* Linux on x86 */
 #ifndef __MVS__
   #if 0		/* Deprecated - 6/4/03 */
 	#include <sys/signal.h>
@@ -155,12 +156,12 @@
 
 #define RANDOM_BUFSIZE	4096
 
-/* The structure containing information on random-data sources.  Each record
-   contains the source and a relative estimate of its usefulness (weighting)
-   which is used to scale the number of kB of output from the source (total =
-   data_bytes / usefulness).  Usually the weighting is in the range 1-3 (or 0
-   for especially useless sources), resulting in a usefulness rating of 1...3
-   for each kB of source output (or 0 for the useless sources).
+/* The structure containing information on random-data sources.  Each record 
+   contains the source and a relative estimate of its usefulness (weighting) 
+   which is used to scale the number of kB of output from the source (total 
+   = data_bytes / usefulness).  Usually the weighting is in the range 1-3 
+   (or 0 for especially useless sources), resulting in a usefulness rating 
+   of 1...3 for each kB of source output (or 0 for the useless sources).
 
    If the source is constantly changing (certain types of network statistics
    have this characteristic) but the amount of output is small, the weighting
@@ -171,7 +172,11 @@
 
    In order to provide enough randomness to satisfy the requirements for a
    slow poll, we need to accumulate at least 20 points of usefulness (a
-   typical system should get about 30 points).
+   typical system should get about 30 points).  This is useful not only for 
+   use on source-starved systems but also in special circumstances like 
+   running in a *BSD jail, in which only other processes running in the jail
+   are visible, severely restricting the amount of entropy that can be 
+   collected.
 
    Some potential options are missed out because of special considerations.
    pstat -i and pstat -f can produce amazing amounts of output (the record is
@@ -209,8 +214,8 @@
    In order to maximise use of the buffer, the code performs a form of run-
    length compression on its input where a repeated sequence of bytes is
    replaced by the occurrence count mod 256.  Some commands output an awful
-   lot of whitespace, this measure greatly increases the amount of data we
-   can fit in the buffer.
+   lot of whitespace, this measure greatly increases the amount of data that 
+   we can fit in the buffer.
 
    When we scale the weighting using the SC() macro, some preprocessors may
    give a division by zero warning for the most obvious expression 'weight ?
@@ -257,7 +262,6 @@ static struct RI {
 	{ "/usr/sbin/netstat", "-in", SC( -1 ), NULL, 0, 0, 0, TRUE },
 	{ "/bin/netstat", "-in", SC( -1 ), NULL, 0, 0, 0, TRUE },
 	{ "/usr/etc/netstat", "-in", SC( -1 ), NULL, 0, 0, 0, FALSE },
-	{ "/usr/sbin/ntptrace", "-r2 -t1 -nv", SC( -1 ), NULL, 0, 0, 0, FALSE },
 #ifndef __SCO_VERSION__
 	{ "/usr/sbin/snmp_request", "localhost public get 1.3.6.1.2.1.7.1.0", SC( -1 ), NULL, 0, 0, 0, FALSE }, /* UDP in */
 	{ "/usr/sbin/snmp_request", "localhost public get 1.3.6.1.2.1.7.4.0", SC( -1 ), NULL, 0, 0, 0, FALSE }, /* UDP out */
@@ -291,7 +295,14 @@ static struct RI {
 	{ "", NULL, SC( SC_0 ), NULL, 0, 0, 0, FALSE },
 
 	/* Potentially heavyweight or low-value sources that are only polled if
-	   alternative sources aren't available */
+	   alternative sources aren't available.  ntptrace is somewhat
+	   problematic in that some versions don't support -r and -t, made worse
+	   by the fact that various servers in the commonly-used pool.ntp.org
+	   cluster refuse to answer ntptrace.  As a result, using this can hang
+	   for quite awhile before it times out, so we treat it as a heavyweight
+	   source even though in theory it's a nice high-entropy lightweight
+	   one */
+	{ "/usr/sbin/ntptrace", "-r2 -t1 -nv", SC( -1 ), NULL, 0, 0, 0, FALSE },
 #if defined( __sgi ) || defined( __hpux )
 	{ "/bin/ps", "-el", SC( 0.3 ), NULL, 0, 0, 0, TRUE },
 #endif /* SGI || PHUX */
@@ -386,7 +397,6 @@ typedef struct {
 	int usefulness;				/* Usefulness of data in buffer */
 	int noBytes;				/* No.of bytes in buffer */
 	} GATHERER_INFO;
-
 
 /****************************************************************************
 *																			*
@@ -507,12 +517,20 @@ static FILE *my_popen( struct RI *entry )
 	if( entry->pid == ( pid_t ) 0 )
 		{
 		struct passwd *passwd;
+		int fd;
 
-		/* We are the child.  Make the read side of the pipe be stdout */
+		/* We are the child, connect the read side of the pipe to stdout and
+		   unplug stdin and stderr */
 		if( dup2( pipedes[ STDOUT_FILENO ], STDOUT_FILENO ) < 0 )
 			exit( 127 );
+		if( ( fd = open ( "/dev/null", O_RDWR ) ) > 0 )
+			{
+			dup2( fd, STDIN_FILENO );
+			dup2( fd, STDERR_FILENO );
+			close( fd );
+			}
 
-		/* If we're root, give up our permissions to make sure we don't
+		/* If we're root, give up our permissions to make sure that we don't
 		   inadvertently read anything sensitive.  If the getpwnam() fails
 		   (this can happen if we're chrooted with no "nobody" entry in the
 		   local passwd file) we default to -1, which is usually nobody.  We
@@ -681,6 +699,15 @@ void fastPoll( void )
 	hrTime = gethrtime();
 	addRandomData( randomState, &hrTime, sizeof( hrtime_t ) );
 #endif /* Slowaris */
+#ifdef rdtscl
+	if( getSysCaps() & SYSCAP_FLAG_RDTSC )
+		{
+		unsigned long tscValue;
+
+		rdtscl( tscValue );
+		addRandomValue( randomState, tscValue );
+		}
+#endif /* rdtsc available */
 #if ( defined( __QNX__ ) && OSVERSION >= 5 )
 	/* Return the output of RDTSC or its equivalent on other systems.  We
 	   don't worry about locking the thread to a CPU since we're not using
@@ -780,13 +807,13 @@ static int getProcData( void )
 #endif /* PIOCUSAGE */
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE ];
-	char fileName[ 128 ];
+	char fileName[ 128 + 8 ];
 	int fd, noEntries = 0, quality;
 
 	/* Try and open the process info for this process */
-	sPrintf( fileName, "/proc/%d", getpid() );
+	sPrintf_s( fileName, 128, "/proc/%d", getpid() );
 	if( ( fd = open( fileName, O_RDONLY ) ) == -1 )
-		return;
+		return( 0 );
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -1153,7 +1180,7 @@ void slowPoll( void )
 	int maxFD = 0;
 #endif /* OS-specific brokenness */
 	int extraEntropy = 0, usefulness = 0;
-	int fd, bufPos, i, value;
+	int fd, bufPos, i;
 
 	/* Make sure we don't start more than one slow poll at a time */
 	lockPollingMutex();
@@ -1359,25 +1386,36 @@ void slowPoll( void )
 			}
 		else
 			dataSources[ i ].pipe = my_popen( &dataSources[ i ] );
-		if( dataSources[ i ].pipe != NULL )
+		if( dataSources[ i ].pipe == NULL )
+			continue;
+		if( fileno( dataSources[ i ].pipe ) >= FD_SETSIZE )
 			{
-			dataSources[ i ].pipeFD = fileno( dataSources[ i ].pipe );
-			if( dataSources[ i ].pipeFD > maxFD )
-				maxFD = dataSources[ i ].pipeFD;
-			fcntl( dataSources[ i ].pipeFD, F_SETFL, O_NONBLOCK );
-			FD_SET( dataSources[ i ].pipeFD, &fds );
-			dataSources[ i ].length = 0;
+			/* The fd is larger than what can be fitted into an fd_set, don't
+			   try and use it.  This can happen if the calling app opens a
+			   large number of files, since most FD_SET() macros don't
+			   perform any safety checks this can cause segfaults and other
+			   problems if we don't perform the check ourselves */
+			fclose( dataSources[ i ].pipe );
+			dataSources[ i ].pipe = NULL;
+			continue;
+			}
 
-			/* If there are alternatives for this command, don't try and
-			   execute them */
-			while( dataSources[ i ].hasAlternative )
-				{
+		/* Set up the data source information */
+		dataSources[ i ].pipeFD = fileno( dataSources[ i ].pipe );
+		if( dataSources[ i ].pipeFD > maxFD )
+			maxFD = dataSources[ i ].pipeFD;
+		fcntl( dataSources[ i ].pipeFD, F_SETFL, O_NONBLOCK );
+		FD_SET( dataSources[ i ].pipeFD, &fds );
+		dataSources[ i ].length = 0;
+
+		/* If there are alternatives for this command, don't try and execute
+		   them */
+		while( dataSources[ i ].hasAlternative )
+			{
 #ifdef DEBUG_RANDOM
-				printf( "rndunix: Skipping %s.\n",
-						dataSources[ i + 1 ].path );
+			printf( "rndunix: Skipping %s.\n", dataSources[ i + 1 ].path );
 #endif /* DEBUG_RANDOM */
-				i++;
-				}
+			i++;
 			}
 		}
 	gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
@@ -1458,14 +1496,21 @@ void slowPoll( void )
 #endif /* !QNX 4.x */
 	}
 
-/* Wait for the randomness gathering to finish.  Cray Unicos doesn't have
-   sched_yield() and OpenBSD has its sched_yield() in libpthread so it
-   doesn't exist if we're not building with USE_THREADS, in which case we
-   have to no-op it out */
+/* Wait for the randomness gathering to finish */
 
-#if defined( _CRAY ) || \
-	( defined( __OpenBSD__ ) && !defined( USE_THREADS ) )
+#if !defined( _POSIX_PRIORITY_SCHEDULING ) || ( _POSIX_PRIORITY_SCHEDULING < 0 )
+  /* No sched_yield() or sched_yield() not supported */
   #define sched_yield()
+#elif ( _POSIX_PRIORITY_SCHEDULING == 0 )
+
+static void my_sched_yield( void )
+	{
+	/* sched_yield() is only supported if sysconf() tells us it is */
+	if( sysconf( _SC_PRIORITY_SCHEDULING ) > 0 )
+		sched_yield();
+	}
+#define sched_yield		my_sched_yield
+
 #endif /* Systems without sched_yield() */
 
 void waitforRandomCompletion( const BOOLEAN force )
@@ -1485,8 +1530,9 @@ void waitforRandomCompletion( const BOOLEAN force )
 			   yield our timeslice a few times so that the shutdown can
 			   take effect. This is unfortunately somewhat implementation-
 			   dependant in that in some cases it'll only yield the current
-			   thread's timeslice, or if it's a high-priority thread it'll
-			   be scheduled again before any lower-priority threads get to
+			   thread's timeslice rather than the overall process'
+			   timeslice, or if it's a high-priority thread it'll be
+			   scheduled again before any lower-priority threads get to
 			   run */
 			kill( gathererProcess, SIGTERM );
 			sched_yield();
@@ -1594,16 +1640,17 @@ void waitforRandomCompletion( const BOOLEAN force )
 #ifdef USE_THREADS
 
 static BOOLEAN forked = FALSE;
+static pthread_mutex_t forkedMutex;
 
 BOOLEAN checkForked( void )
 	{
 	BOOLEAN hasForked;
 
 	/* Read the forked-t flag in a thread-safe manner */
-	lockPollingMutex();
+	pthread_mutex_lock( &forkedMutex );
 	hasForked = forked;
 	forked = FALSE;
-	unlockPollingMutex();
+	pthread_mutex_unlock( &forkedMutex );
 
 	return( hasForked );
 	}
@@ -1611,9 +1658,9 @@ BOOLEAN checkForked( void )
 void setForked( void )
 	{
 	/* Set the forked-t flag in a thread-safe manner */
-	lockPollingMutex();
+	pthread_mutex_lock( &forkedMutex );
 	forked = TRUE;
-	unlockPollingMutex();
+	pthread_mutex_unlock( &forkedMutex );
 	}
 
 #else
@@ -1651,12 +1698,14 @@ void initRandomPolling( void )
 	pthread_atfork( NULL, setForked, setForked );
 
 	pthread_mutex_init( &gathererMutex, NULL );
+	pthread_mutex_init( &forkedMutex, NULL );
 #endif /* USE_THREADS */
 	}
 
 void endRandomPolling( void )
 	{
 #ifdef USE_THREADS
+	pthread_mutex_destroy( &forkedMutex );
 	pthread_mutex_destroy( &gathererMutex );
 #endif /* USE_THREADS */
 	}

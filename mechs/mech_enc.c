@@ -5,21 +5,14 @@
 *																			*
 ****************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #ifdef INC_ALL
   #include "crypt.h"
-  #include "pgp.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../envelope/pgp.h"
-  #include "../misc/asn1.h"
+  #include "pgp.h"
 #else
   #include "crypt.h"
-  #include "envelope/pgp.h"
   #include "misc/asn1.h"
+  #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
 /* Prototypes for kernel-internal access functions */
@@ -646,7 +639,8 @@ int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 int importCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 	{
 	RESOURCE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_KEYSIZE + 16 ], ivBuffer[ CRYPT_MAX_IVSIZE ];
+	BYTE buffer[ CRYPT_MAX_KEYSIZE + 16 + 8 ];
+	BYTE ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
 	BYTE *dataEndPtr = buffer + mechanismInfo->wrappedDataLength;
 	int blockSize, status;
 

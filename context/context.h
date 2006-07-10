@@ -17,8 +17,6 @@
   #ifndef _STREAM_DEFINED
 	#if defined( INC_ALL )
 	  #include "stream.h"
-	#elif defined( INC_CHILD )
-	  #include "../io/stream.h"
 	#else
 	  #include "io/stream.h"
 	#endif /* Compiler-specific includes */
@@ -26,8 +24,6 @@
   #ifndef BN_H
 	#if defined( INC_ALL )
 	  #include "bn.h"
-	#elif defined( INC_CHILD )
-	  #include "../bn/bn.h"
 	#else
 	  #include "bn/bn.h"
 	#endif /* Compiler-specific includes */
@@ -36,8 +32,6 @@
 #ifndef _CRYPTCAP_DEFINED
   #if defined( INC_ALL )
 	#include "capabil.h"
-  #elif defined( INC_CHILD )
-	#include "../device/capabil.h"
   #else
 	#include "device/capabil.h"
   #endif /* Compiler-specific includes */
@@ -215,6 +209,7 @@ typedef struct {
 	/* Pointers to functions to public-key context access methods.  The
 	   functions to read and write public and private keys are kept distinct
 	   to enforce red/black separation */
+	int ( *calculateKeyIDFunction )( struct CI *contextInfoPtr );
 	int ( *readPublicKeyFunction )( STREAM *stream, struct CI *contextInfoPtr,
 									const KEYFORMAT_TYPE formatType );
 	int ( *readPrivateKeyFunction )( STREAM *stream, struct CI *contextInfoPtr,
@@ -227,10 +222,17 @@ typedef struct {
 									  const struct CI *contextInfoPtr,
 									  const KEYFORMAT_TYPE formatType,
 									  const char *accessKey );
+	int ( *encodeDLValuesFunction )( BYTE *buffer, const int bufSize, 
+									 const BIGNUM *value1, 
+									 const BIGNUM *value2, 
+									 const CRYPT_FORMAT_TYPE formatType );
+	int ( *decodeDLValuesFunction )( const BYTE *buffer, const int bufSize, 
+									 BIGNUM **value1, BIGNUM **value2, 
+									 const CRYPT_FORMAT_TYPE formatType );
 
 	/* State information needed to allow background key generation */
 #ifdef USE_THREADS
-	THREAD_FUNCTION_PARAMS threadParams;
+	THREAD_STATE threadState;
 #endif /* OS's with threads */
 	} PKC_INFO;
 #endif /* PKC_CONTEXT */
@@ -299,7 +301,7 @@ typedef struct CI {
 #endif /* USE_DEVICES */
 
 	/* The label for this object, typically used to identify stored keys */
-	char label[ CRYPT_MAX_TEXTSIZE ];/* Text string identifying key */
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];/* Text string identifying key */
 	int labelSize;
 
 #ifdef USE_THREADS
@@ -437,11 +439,6 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr );
 int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits );
 int generateBignum( BIGNUM *bn, const int noBits, const BYTE high,
 					const BYTE low );
-int calculateKeyID( CONTEXT_INFO *contextInfoPtr );
-int encodeDLValues( BYTE *buffer, const int bufSize, BIGNUM *value1,
-					BIGNUM *value2, const CRYPT_FORMAT_TYPE formatType );
-int decodeDLValues( const BYTE *buffer, const int bufSize, BIGNUM **value1,
-					BIGNUM **value2, const CRYPT_FORMAT_TYPE formatType );
 int keygenCallback( void *callbackArg );
 
 #endif /* PKC_CONTEXT */

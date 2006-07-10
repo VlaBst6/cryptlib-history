@@ -74,8 +74,6 @@
 
 #if defined( INC_ALL )
   #include "osconfig.h"
-#elif defined( INC_CHILD )
-  #include "../crypt/osconfig.h"
 #else
   #include "crypt/osconfig.h"
 #endif /* Compiler-specific includes */
@@ -89,7 +87,11 @@
 	- Add BN_high_bit() to the end of bn_lib.c.
 	- Add BN_CTX_clear() to bn_ctx.c.
 	- Add BN_xyz typedefs, which are normally defined in ossl_typ.h.
-	- Add memory-allocation/free/zeroise macros */
+	- Add memory-allocation/free/zeroise macros.
+	- Add ASM_EXPORT to asm functions bn_mul_add_words(), bn_mul_words(),
+		bn_sqr_words(), bn_div_words(), bn_add_words(), and bn_sub_words()
+		below, also to bn_mul_comba4(), bn_mul_comba8(), bn_sqr_comba4(),
+		and bn_sqr_comba8() in bn_lcl.h */
 
 typedef struct bignum_st BIGNUM;
 typedef struct bignum_ctx BN_CTX;
@@ -768,12 +770,12 @@ int RAND_pseudo_bytes(unsigned char *buf,int num);
 	bn_pollute(a); \
 	}
 
-BN_ULONG bn_mul_add_words(BN_ULONG *rp, const BN_ULONG *ap, int num, BN_ULONG w);
-BN_ULONG bn_mul_words(BN_ULONG *rp, const BN_ULONG *ap, int num, BN_ULONG w);
-void     bn_sqr_words(BN_ULONG *rp, const BN_ULONG *ap, int num);
-BN_ULONG bn_div_words(BN_ULONG h, BN_ULONG l, BN_ULONG d);
-BN_ULONG bn_add_words(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp,int num);
-BN_ULONG bn_sub_words(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp,int num);
+BN_ULONG ASM_EXPORT bn_mul_add_words(BN_ULONG *rp, const BN_ULONG *ap, int num, BN_ULONG w);
+BN_ULONG ASM_EXPORT bn_mul_words(BN_ULONG *rp, const BN_ULONG *ap, int num, BN_ULONG w);
+void     ASM_EXPORT bn_sqr_words(BN_ULONG *rp, const BN_ULONG *ap, int num);
+BN_ULONG ASM_EXPORT bn_div_words(BN_ULONG h, BN_ULONG l, BN_ULONG d);
+BN_ULONG ASM_EXPORT bn_add_words(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp,int num);
+BN_ULONG ASM_EXPORT bn_sub_words(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp,int num);
 
 int BN_bntest_rand(BIGNUM *rnd, int bits, int top,int bottom);
 

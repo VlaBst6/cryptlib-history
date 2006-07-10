@@ -1,20 +1,13 @@
 /****************************************************************************
 *																			*
 *						cryptlib SSH Session Management						*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "misc_rw.h"
-  #include "session.h"
-  #include "ssh.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/misc_rw.h"
   #include "session.h"
   #include "ssh.h"
 #else
@@ -24,7 +17,7 @@
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
 
-#if defined( USE_SSH1 ) || defined( USE_SSH2 )
+#if defined( USE_SSH ) || defined( USE_SSH1 )
 
 /****************************************************************************
 *																			*
@@ -177,12 +170,12 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	/* Determine which version we're talking to */
 	if( *versionStringPtr == '1' )
 		{
-#ifdef USE_SSH2
+#ifdef USE_SSH
 		if( !memcmp( versionStringPtr, "1.99", 4 ) )
 			/* SSHv2 server in backwards-compatibility mode */
 			sessionInfoPtr->version = 2;
 		else
-#endif /* USE_SSH2 */
+#endif /* USE_SSH */
 			{
 #ifdef USE_SSH1
 			/* If the caller has specifically asked for SSHv2 but all that
@@ -198,11 +191,11 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			}
 		}
 	else
-#ifdef USE_SSH2
+#ifdef USE_SSH
 		if( *versionStringPtr == '2' )
 			sessionInfoPtr->version = 2;
 		else
-#endif /* USE_SSH2 */
+#endif /* USE_SSH */
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 					"Invalid SSH version %c",
 					sessionInfoPtr->receiveBuffer[ 0 ] );
@@ -297,37 +290,67 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			!memcmp( subVersionStringPtr, "3.10", 4 ) )
 			sessionInfoPtr->protocolFlags |= SSH_PFLAG_PAMPW;
 		}
-	if( *versionStringPtr == '2' && \
-		strstr( versionStringPtr, "VShell" ) == NULL )
+	if( isDigit( *versionStringPtr ) )
 		{
-		/* ssh.com 2.x versions have quite a number of bugs so we check for
-		   them as a group */
-		if( !memcmp( versionStringPtr, "2.0.0", 5 ) || \
-			!memcmp( versionStringPtr, "2.0.10", 6 ) )
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHSECRET;
-		if( !memcmp( versionStringPtr, "2.0", 3 ) || \
-			!memcmp( versionStringPtr, "2.1", 3 ) )
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_SIGFORMAT;
-		if( !memcmp( versionStringPtr, "2.0", 3 ) || \
-			!memcmp( versionStringPtr, "2.1", 3 ) )
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_WINDOWBUG;
-		if( !memcmp( versionStringPtr, "2.1", 3 ) || \
-			!memcmp( versionStringPtr, "2.2", 3 ) )
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
-		if( !memcmp( versionStringPtr, "2.0", 3 ) || \
-			!memcmp( versionStringPtr, "2.1", 3 ) || \
-			!memcmp( versionStringPtr, "2.2", 3 ) || \
-			!memcmp( versionStringPtr, "2.3.0", 5 ) )
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_HMACKEYSIZE;
-		if( !memcmp( versionStringPtr, "2.", 2 ) )
-			/* Not sure of the exact versions where this occurs */
-			sessionInfoPtr->protocolFlags |= SSH_PFLAG_TEXTDIAGS;
+		const char *vendorIDString;
+		const char versionDigit = *versionStringPtr;
+
+		/* Find the vendor ID after the version info */
+		for( vendorIDString = versionStringPtr;
+			 *vendorIDString != '\0' && *vendorIDString != ' ';
+			 vendorIDString++ );
+		if( *vendorIDString == ' ' )
+			vendorIDString++;
+		if( *vendorIDString == '\0' )
+			vendorIDString = "[None]";	/* Should never happen */
+
+		switch( versionDigit )
+			{
+			case '1':
+				if( !memcmp( versionStringPtr, "1.7 SecureFX", 12 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
+				if( !memcmp( versionStringPtr, "1.0", 3 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_CUTEFTP;
+				break;
+
+			case '2':
+				if( !memcmp( vendorIDString, "VShell", 6 ) )
+					break;	/* Make sure that it isn't VShell */
+
+				/* ssh.com 2.x versions have quite a number of bugs so we
+				   check for them as a group */
+				if( !memcmp( versionStringPtr, "2.0.0", 5 ) || \
+					!memcmp( versionStringPtr, "2.0.10", 6 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHSECRET;
+				if( !memcmp( versionStringPtr, "2.0", 3 ) || \
+					!memcmp( versionStringPtr, "2.1", 3 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_SIGFORMAT;
+				if( !memcmp( versionStringPtr, "2.0", 3 ) || \
+					!memcmp( versionStringPtr, "2.1", 3 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_WINDOWBUG;
+				if( !memcmp( versionStringPtr, "2.1", 3 ) || \
+					!memcmp( versionStringPtr, "2.2", 3 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
+				if( !memcmp( versionStringPtr, "2.0", 3 ) || \
+					!memcmp( versionStringPtr, "2.1", 3 ) || \
+					!memcmp( versionStringPtr, "2.2", 3 ) || \
+					!memcmp( versionStringPtr, "2.3.0", 5 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_HMACKEYSIZE;
+				if( !memcmp( versionStringPtr, "2.", 2 ) )
+					/* Not sure of the exact versions where this occurs */
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_TEXTDIAGS;
+				break;
+
+			case '3':
+				if( !memcmp( versionStringPtr, "3.0 SecureCRT", 13 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
+				break;
+
+			case '5':
+				if( !memcmp( vendorIDString, "SSH Tectia", 10 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_TECTIA;
+			}
 		}
-	if( !memcmp( versionStringPtr, "3.0 SecureCRT", 13 ) || \
-		!memcmp( versionStringPtr, "1.7 SecureFX", 12 ) )
-		sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
-	if( !memcmp( versionStringPtr, "1.0", 3 ) )
-		sessionInfoPtr->protocolFlags |= SSH_PFLAG_CUTEFTP;
 
 	return( CRYPT_OK );
 	}
@@ -354,8 +377,7 @@ static int initVersion( SESSION_INFO *sessionInfoPtr,
 	if( sessionInfoPtr->version == 1 )
 		{
 		initSSH1processing( sessionInfoPtr, handshakeInfo,
-							( sessionInfoPtr->flags & SESSION_ISSERVER) ? \
-								TRUE : FALSE );
+							isServer( sessionInfoPtr ) ? TRUE : FALSE );
 		sessionInfoPtr->sendBufStartOfs = \
 			sessionInfoPtr->receiveBufStartOfs = \
 				sessionInfoPtr->protocolInfo->sendBufStartOfs;
@@ -363,8 +385,7 @@ static int initVersion( SESSION_INFO *sessionInfoPtr,
 		}
 #endif /* USE_SSH1 */
 	initSSH2processing( sessionInfoPtr, handshakeInfo,
-						( sessionInfoPtr->flags & SESSION_ISSERVER) ? \
-							TRUE : FALSE );
+						isServer( sessionInfoPtr ) ? TRUE : FALSE );
 
 	/* SSHv2 hashes parts of the handshake messages for integrity-protection
 	   purposes, so if we're talking to an SSHv2 peer we create a context
@@ -398,7 +419,7 @@ static int completeStartup( SESSION_INFO *sessionInfoPtr )
 		   reporting during the shutdown phase since we've already got
 		   error information present from the already-encountered error */
 		destroyHandshakeInfo( &handshakeInfo );
-		sessionInfoPtr->flags |= SESSION_NOREPORTERROR;
+		disableErrorReporting( sessionInfoPtr );
 		sessionInfoPtr->shutdownFunction( sessionInfoPtr );
 		return( status );
 		}
@@ -409,7 +430,7 @@ static int completeStartup( SESSION_INFO *sessionInfoPtr )
 		{
 		destroySecurityContextsSSH( sessionInfoPtr );
 		destroyHandshakeInfo( &handshakeInfo );
-		sessionInfoPtr->flags |= SESSION_NOREPORTERROR;
+		disableErrorReporting( sessionInfoPtr );
 		sessionInfoPtr->shutdownFunction( sessionInfoPtr );
 		return( status );
 		}
@@ -428,7 +449,7 @@ static int completeStartup( SESSION_INFO *sessionInfoPtr )
 		/* At this point we could be in the secure state, so we have to
 		   keep the security info around until after we've called the
 		   shutdown function, which could require sending secured data */
-		sessionInfoPtr->flags |= SESSION_NOREPORTERROR;
+		disableErrorReporting( sessionInfoPtr );
 		sessionInfoPtr->shutdownFunction( sessionInfoPtr );
 		destroySecurityContextsSSH( sessionInfoPtr );
 		return( status );
@@ -543,7 +564,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* If we 're setting the channel-active attribute, this implicitly
-	   activates or deactivates the channel rather than setting any 
+	   activates or deactivates the channel rather than setting any
 	   attribute value */
 	if( type == CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE )
 		{
@@ -571,15 +592,15 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	{
 	HASHFUNCTION hashFunction;
 	STREAM stream;
-	BYTE buffer[ 128 + ( CRYPT_MAX_PKCSIZE * 4 ) ];
-	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE ];
+	BYTE buffer[ 128 + ( CRYPT_MAX_PKCSIZE * 4 ) + 8 ];
+	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, hashSize, status;
 
 	if( type != CRYPT_SESSINFO_PRIVATEKEY )
 		return( CRYPT_OK );
 
 	/* Only the server key has a fingerprint */
-	if( !( sessionInfoPtr->flags & SESSION_ISSERVER ) )
+	if( !isServer( sessionInfoPtr ) )
 		return( CRYPT_OK );
 
 	getHashParameters( CRYPT_ALGO_MD5, &hashFunction, &hashSize );
@@ -594,8 +615,7 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	   type or format */
 	sMemOpen( &stream, buffer, 128 + ( CRYPT_MAX_PKCSIZE * 4 ) );
 	status = exportAttributeToStream( &stream, cryptHandle,
-									  CRYPT_IATTRIBUTE_KEY_SSH2,
-									  CRYPT_USE_DEFAULT );
+									  CRYPT_IATTRIBUTE_KEY_SSH );
 	if( cryptStatusError( status ) )
 		return( status );
 	length = stell( &stream );
@@ -603,8 +623,9 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	readUint32( &stream );					/* Length */
 	status = readUniversal32( &stream );	/* Algorithm ID */
 	if( cryptStatusOK( status ) )
-		hashFunction( NULL, fingerPrint, sMemBufPtr( &stream ),
-					  length - stell( &stream ), HASH_ALL );
+		hashFunction( NULL, fingerPrint, CRYPT_MAX_HASHSIZE, 
+					  sMemBufPtr( &stream ), length - stell( &stream ), 
+					  HASH_ALL );
 	sMemClose( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -629,7 +650,7 @@ int setAccessMethodSSH( SESSION_INFO *sessionInfoPtr )
 	sessionInfoPtr->getAttributeFunction = getAttributeFunction;
 	sessionInfoPtr->setAttributeFunction = setAttributeFunction;
 	sessionInfoPtr->checkAttributeFunction = checkAttributeFunction;
-	if( sessionInfoPtr->flags & SESSION_ISSERVER )
+	if( isServer( sessionInfoPtr ) )
 		{
 		sessionInfoPtr->transactFunction = serverStartup;
 		initSSH2processing( sessionInfoPtr, NULL, TRUE );
@@ -642,4 +663,4 @@ int setAccessMethodSSH( SESSION_INFO *sessionInfoPtr )
 
 	return( CRYPT_OK );
 	}
-#endif /* USE_SSH1 || USE_SSH2 */
+#endif /* USE_SSH || USE_SSH1 */

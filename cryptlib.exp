@@ -49,6 +49,8 @@ cryptImportKeyEx
 cryptInit
 cryptKeysetClose
 cryptKeysetOpen
+cryptLogin
+cryptLogout
 cryptPopData
 cryptPushData
 cryptQueryCapability

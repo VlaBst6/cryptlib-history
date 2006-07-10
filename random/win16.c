@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*							Win16 Randomness-Gathering Code					*
-*						   Copyright Peter Gutmann 1996-2002				*
+*						Win16 Randomness-Gathering Code						*
+*						Copyright Peter Gutmann 1996-2006					*
 *																			*
 ****************************************************************************/
 
@@ -10,9 +10,7 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
-#include "../crypt.h"
+#include "crypt.h"
 
 /* OS-specific includes */
 

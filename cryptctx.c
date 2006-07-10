@@ -1,16 +1,14 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Encryption Context Routines					*
-*						Copyright Peter Gutmann 1992-2005					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
 /* "Modern cryptography is nothing more than a mathematical framework for
 	debating the implications of various paranoid delusions"
 												- Don Alvarez */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #include "crypt.h"
 #ifdef INC_ALL
@@ -37,12 +35,14 @@
 const CAPABILITY_INFO FAR_BSS *findCapabilityInfo(
 					const CAPABILITY_INFO_LIST *capabilityInfoList,
 					const CRYPT_ALGO_TYPE cryptAlgo );
+void clearTempBignums( PKC_INFO *pkcInfo );
+void initContextBignums( PKC_INFO *pkcInfo, 
+						 const BOOLEAN useSideChannelProtection );
+void freeContextBignums( PKC_INFO *pkcInfo, int contextFlags );
 
 /* Prototypes for functions in keyload.c */
 
 void initKeyHandling( CONTEXT_INFO *contextInfoPtr );
-int initKeyParams( CONTEXT_INFO *contextInfoPtr, const void *iv,
-				   const int ivLength, const CRYPT_MODE_TYPE mode );
 
 /****************************************************************************
 *																			*
@@ -87,11 +87,11 @@ static int attributeToFormatType( const CRYPT_ATTRIBUTE_TYPE attribute )
 	{
 	switch( attribute )
 		{
+		case CRYPT_IATTRIBUTE_KEY_SSH:
+			return( KEYFORMAT_SSH );
+
 		case CRYPT_IATTRIBUTE_KEY_SSH1:
 			return( KEYFORMAT_SSH1 );
-
-		case CRYPT_IATTRIBUTE_KEY_SSH2:
-			return( KEYFORMAT_SSH2 );
 
 		case CRYPT_IATTRIBUTE_KEY_SSL:
 			return( KEYFORMAT_SSL );
@@ -107,16 +107,6 @@ static int attributeToFormatType( const CRYPT_ATTRIBUTE_TYPE attribute )
 
 	assert( NOTREACHED );
 	return( CRYPT_ERROR );	/* Get rid of compiler warning */
-	}
-
-/* Clear temporary bignum values used during PKC operations */
-
-void clearTempBignums( PKC_INFO *pkcInfo )
-	{
-	BN_clear( &pkcInfo->tmp1 );
-	BN_clear( &pkcInfo->tmp2 );
-	BN_clear( &pkcInfo->tmp3 );
-	BN_CTX_clear( pkcInfo->bnCTX );
 	}
 
 /****************************************************************************
@@ -371,8 +361,8 @@ static int setKey( CONTEXT_INFO *contextInfoPtr,
 			( contextInfoPtr->flags & CONTEXT_DUMMY ) );
 	assert( keyType == CRYPT_IATTRIBUTE_KEY_SPKI || \
 			keyType == CRYPT_IATTRIBUTE_KEY_PGP || \
+			keyType == CRYPT_IATTRIBUTE_KEY_SSH || \
 			keyType == CRYPT_IATTRIBUTE_KEY_SSH1 || \
-			keyType == CRYPT_IATTRIBUTE_KEY_SSH2 || \
 			keyType == CRYPT_IATTRIBUTE_KEY_SSL || \
 			keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
 			keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL );
@@ -394,7 +384,7 @@ static int setKey( CONTEXT_INFO *contextInfoPtr,
 			return( CRYPT_ERROR_MEMORY );
 		memcpy( contextInfoPtr->ctxPKC->publicKeyInfo, keyData, keyDataLen );
 		contextInfoPtr->ctxPKC->publicKeyInfoSize = keyDataLen;
-		return( calculateKeyID( contextInfoPtr ) );
+		return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
 		}
 
 	/* Read the appropriately-formatted key data into the context, applying 
@@ -413,7 +403,7 @@ static int setKey( CONTEXT_INFO *contextInfoPtr,
 	   more to do at this point and we're done */
 	if( keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
 		keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL )
-		return( calculateKeyID( contextInfoPtr ) );
+		return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
 
 	/* Perform an internal load that uses the key component values that 
 	   we've just read into the context */
@@ -442,7 +432,7 @@ static int setKey( CONTEXT_INFO *contextInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	contextInfoPtr->flags |= CONTEXT_KEY_SET;
-	return( calculateKeyID( contextInfoPtr ) );
+	return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
 	}
 
 /* Load a composite key into a context */
@@ -491,7 +481,7 @@ static int setKeyComponents( CONTEXT_INFO *contextInfoPtr,
 static int encryptData( CONTEXT_INFO *contextInfoPtr, void *data, 
 						const int dataLength )
 	{
-	BYTE savedData[ ENCRYPT_CHECKSIZE ];
+	BYTE savedData[ ENCRYPT_CHECKSIZE + 8 ];
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	const int savedDataLength = min( dataLength, ENCRYPT_CHECKSIZE );
 	int status;
@@ -514,7 +504,8 @@ static int encryptData( CONTEXT_INFO *contextInfoPtr, void *data,
 
 			status = contextInfoPtr->encryptFunction( contextInfoPtr, data, 
 													  dataLength );
-			clearTempBignums( contextInfoPtr->ctxPKC );
+			if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+				clearTempBignums( contextInfoPtr->ctxPKC );
 			return( status );
 			}
 
@@ -524,10 +515,11 @@ static int encryptData( CONTEXT_INFO *contextInfoPtr, void *data,
 								   data, ENCRYPT_CHECKSIZE );
 		status = contextInfoPtr->encryptFunction( contextInfoPtr, data, 
 												  dataLength );
+		if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+			clearTempBignums( contextInfoPtr->ctxPKC );
 		if( cryptStatusError( status ) )
 			{
 			zeroise( savedData, ENCRYPT_CHECKSIZE );
-			clearTempBignums( contextInfoPtr->ctxPKC );
 			return( status );
 			}
 
@@ -863,8 +855,8 @@ static int processGetAttributeS( CONTEXT_INFO *contextInfoPtr,
 									   contextInfoPtr->ctxPKC->publicKeyInfoSize ) );
 			/* Drop through */
 
+		case CRYPT_IATTRIBUTE_KEY_SSH:
 		case CRYPT_IATTRIBUTE_KEY_SSH1:
-		case CRYPT_IATTRIBUTE_KEY_SSH2:
 		case CRYPT_IATTRIBUTE_KEY_SSL:
 			{
 			STREAM stream;
@@ -1192,8 +1184,8 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
 		case CRYPT_IATTRIBUTE_KEY_PGP:
+		case CRYPT_IATTRIBUTE_KEY_SSH:
 		case CRYPT_IATTRIBUTE_KEY_SSH1:
-		case CRYPT_IATTRIBUTE_KEY_SSH2:
 		case CRYPT_IATTRIBUTE_KEY_SSL:
 		case CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL:
 		case CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL:
@@ -1283,7 +1275,7 @@ static int processDeleteAttribute( CONTEXT_INFO *contextInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_CTXINFO_LABEL:
-			if( contextInfoPtr->labelSize == 0 )
+			if( contextInfoPtr->labelSize <= 0 )
 				return( exitErrorNotFound( contextInfoPtr,
 										   CRYPT_CTXINFO_LABEL ) );
 			zeroise( contextInfoPtr->label, contextInfoPtr->labelSize );
@@ -1371,32 +1363,8 @@ static int contextMessageFunction( const void *objectInfoPtr,
 
 		/* Perform context-type-specific cleanup */
 		if( contextType == CONTEXT_PKC )
-			{
-			PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-
-			BN_clear_free( &pkcInfo->param1 );
-			BN_clear_free( &pkcInfo->param2 );
-			BN_clear_free( &pkcInfo->param3 );
-			BN_clear_free( &pkcInfo->param4 );
-			BN_clear_free( &pkcInfo->param5 );
-			BN_clear_free( &pkcInfo->param6 );
-			BN_clear_free( &pkcInfo->param7 );
-			BN_clear_free( &pkcInfo->param8 );
-			if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
-				{
-				BN_clear_free( &pkcInfo->blind1 );
-				BN_clear_free( &pkcInfo->blind2 );
-				}
-			BN_clear_free( &pkcInfo->tmp1 );
-			BN_clear_free( &pkcInfo->tmp2 );
-			BN_clear_free( &pkcInfo->tmp3 );
-			BN_MONT_CTX_free( &pkcInfo->montCTX1 );
-			BN_MONT_CTX_free( &pkcInfo->montCTX2 );
-			BN_MONT_CTX_free( &pkcInfo->montCTX3 );
-			BN_CTX_free( pkcInfo->bnCTX );
-			if( pkcInfo->publicKeyInfo != NULL )
-				clFree( "contextMessageFunction", pkcInfo->publicKeyInfo );
-			}
+			freeContextBignums( contextInfoPtr->ctxPKC,
+								contextInfoPtr->flags );
 
 		return( CRYPT_OK );
 		}
@@ -1446,7 +1414,8 @@ static int contextMessageFunction( const void *objectInfoPtr,
 						  ( contextInfoPtr->flags & CONTEXT_IV_SET ) ) );
 				status = contextInfoPtr->decryptFunction( contextInfoPtr,
 											messageDataPtr, messageValue );
-				if( contextInfoPtr->type == CONTEXT_PKC )
+				if( contextInfoPtr->type == CONTEXT_PKC && \
+					!( contextInfoPtr->flags & CONTEXT_DUMMY ) )
 					clearTempBignums( contextInfoPtr->ctxPKC );
 				assert( cryptStatusOK( status ) );
 				break;
@@ -1456,7 +1425,8 @@ static int contextMessageFunction( const void *objectInfoPtr,
 
 				status = capabilityInfo->signFunction( contextInfoPtr,
 											messageDataPtr, messageValue );
-				clearTempBignums( contextInfoPtr->ctxPKC );
+				if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+					clearTempBignums( contextInfoPtr->ctxPKC );
 				assert( cryptStatusOK( status ) );
 				break;
 
@@ -1464,7 +1434,8 @@ static int contextMessageFunction( const void *objectInfoPtr,
 				assert( capabilityInfo->sigCheckFunction != NULL );
 				status = capabilityInfo->sigCheckFunction( contextInfoPtr,
 											messageDataPtr, messageValue );
-				clearTempBignums( contextInfoPtr->ctxPKC );
+				if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+					clearTempBignums( contextInfoPtr->ctxPKC );
 				break;
 
 			case MESSAGE_CTX_HASH:
@@ -1502,6 +1473,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 
 			default:
 				assert( NOTREACHED );
+				return( CRYPT_ERROR_FAILED );
 			}
 		return( status );
 		}
@@ -1564,6 +1536,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 
 			default:
 				assert( NOTREACHED );
+				/* Fall through to failure return */
 			}
 
 		/* The comparison failed */
@@ -1627,7 +1600,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 
 			default:
 				assert( NOTREACHED );
-				return( CRYPT_ERROR );	/* Get rid of compiler warning */
+				return( CRYPT_ERROR_FAILED );
 			}
 
 		return( CRYPT_OK );
@@ -1685,7 +1658,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 	if( message == MESSAGE_CTX_GENIV )
 		{
 		RESOURCE_DATA msgData;
-		BYTE buffer[ CRYPT_MAX_IVSIZE ];
+		BYTE buffer[ CRYPT_MAX_IVSIZE + 8 ];
 
 		assert( contextInfoPtr->type == CONTEXT_CONV );
 
@@ -1728,11 +1701,12 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 		  ( cryptAlgo <= CRYPT_ALGO_LAST_HASH ) ) ? CONTEXT_HASH : CONTEXT_MAC;
 	CONTEXT_INFO *contextInfoPtr;
 	BOOLEAN useSideChannelProtection;
+	OBJECT_SUBTYPE subType;
 	const int createFlags = objectFlags | \
 							( needsSecureMemory( contextType ) ? \
 							CREATEOBJECT_FLAG_SECUREMALLOC : 0 );
 	int actionFlags = 0, actionPerms = ACTION_PERM_ALL;
-	int storageSize, stateStorageSize = 0, subType;
+	int storageSize, stateStorageSize = 0;
 	int initStatus = CRYPT_OK, status;
 
 	assert( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST_MAC );
@@ -1814,7 +1788,7 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 
 		default:
 			assert( NOTREACHED );
-			return( CRYPT_ERROR );
+			return( CRYPT_ARGERROR_NUM1 );
 		}
 	if( actionFlags == 0 )
 		{
@@ -1846,31 +1820,8 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 		contextInfoPtr->flags |= CONTEXT_SIDECHANNELPROTECTION;
 	if( contextInfoPtr->type == CONTEXT_PKC && \
 		!( objectFlags & CREATEOBJECT_FLAG_DUMMY ) )
-		{
-		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-
-		/* Initialise the bignum information */
-		BN_init( &pkcInfo->param1 );
-		BN_init( &pkcInfo->param2 );
-		BN_init( &pkcInfo->param3 );
-		BN_init( &pkcInfo->param4 );
-		BN_init( &pkcInfo->param5 );
-		BN_init( &pkcInfo->param6 );
-		BN_init( &pkcInfo->param7 );
-		BN_init( &pkcInfo->param8 );
-		if( useSideChannelProtection )
-			{
-			BN_init( &pkcInfo->blind1 );
-			BN_init( &pkcInfo->blind2 );
-			}
-		BN_init( &pkcInfo->tmp1 );
-		BN_init( &pkcInfo->tmp2 );
-		BN_init( &pkcInfo->tmp3 );
-		pkcInfo->bnCTX = BN_CTX_new();
-		BN_MONT_CTX_init( &pkcInfo->montCTX1 );
-		BN_MONT_CTX_init( &pkcInfo->montCTX2 );
-		BN_MONT_CTX_init( &pkcInfo->montCTX3 );
-		}
+		initContextBignums( contextInfoPtr->ctxPKC, 
+							useSideChannelProtection );
 	if( contextInfoPtr->type == CONTEXT_CONV )
 		{
 		/* Set the default encryption mode, which is always CBC if possible,

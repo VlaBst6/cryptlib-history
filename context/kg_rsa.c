@@ -5,14 +5,9 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "context.h"
-  #include "keygen.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "context.h"
   #include "keygen.h"
 #else
@@ -28,13 +23,19 @@
 ****************************************************************************/
 
 /* We use F4 as the default public exponent e unless the user chooses to
-   override this with some other value.  The older (X.509v1) recommended
-   value of 3 is insecure for general use and more recent work indicates that
-   values like 17 (used by PGP) are also insecure against the Hastad attack.
-   We could work around this by using 41 or 257 as the exponent, however
-   current best practice favours F4 unless you're doing banking standards, in
-   which case you set e=2 (EMV) and use raw, unpadded RSA (HBCI) to make it
-   easier for students to break your banking security as a homework exercise.
+   override this with some other value:
+
+	Fn = 2^(2^n) + 1, n = 0...4.
+
+	F0 = 3, F1 = 5, F2 = 17, F3 = 257, F4 = 65537.
+   
+   The older (X.509v1) recommended value of 3 is insecure for general use 
+   and more recent work indicates that values like 17 (used by PGP) are also 
+   insecure against the Hastad attack.  We could work around this by using 
+   41 or 257 as the exponent, however current best practice favours F4 
+   unless you're doing banking standards, in which case you set e=2 (EMV) 
+   and use raw, unpadded RSA (HBCI) to make it easier for students to break 
+   your banking security as a homework exercise.
 
    Since some systems may be using 16-bit bignum component values, we use an
    exponent of 257 for these cases to ensure that it fits in a single
@@ -117,8 +118,11 @@ int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Compute d = eInv mod (p - 1)(q - 1), e1 = d mod (p - 1), and
-	   e2 = d mod (q - 1) */
+	/* Compute:
+
+		d = eInv mod (p - 1)(q - 1)
+		e1 = d mod (p - 1)
+		e2 = d mod (q - 1) */
 	CK( BN_sub_word( p, 1 ) );
 	CK( BN_sub_word( q, 1 ) );
 	CK( BN_mul( tmp, p, q, pkcInfo->bnCTX ) );
@@ -131,7 +135,10 @@ int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
-	/* Compute n = pq, and u = qInv mod p */
+	/* Compute:
+
+		n = pq
+		u = qInv mod p */
 	CK( BN_mul( &pkcInfo->rsaParam_n, p, q, pkcInfo->bnCTX ) );
 	CKPTR( BN_mod_inverse( &pkcInfo->rsaParam_u, q, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) )
@@ -168,16 +175,27 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 	if( bnStatusError( bnStatus ) )
 		return( FALSE );
 
-	/* Verify that n = p * q */
+	/* Verify that:
+	
+		n = p * q */
 	CK( BN_mul( tmp, p, q, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || BN_cmp( n, tmp ) != 0 )
 		return( FALSE );
 
-	/* Verify that ( d * e ) mod p-1 == 1 and ( d * e ) mod q-1 == 1.  Some
-	   implementations don't store d since it's not needed when the CRT
+	/* Verify that:
+
+		p, q < d
+		( d * e ) mod p-1 == 1 
+		( d * e ) mod q-1 == 1
+	
+	   Some implementations don't store d since it's not needed when the CRT
 	   shortcut is used, so we can only perform this check if d is present */
 	if( !BN_is_zero( d ) )
 		{
+		if( BN_cmp( p, d ) >= 0 )
+			return( FALSE );
+		if( BN_cmp( q, d ) >= 0 )
+			return( FALSE );
 		CK( BN_mod_mul( tmp, d, e, p1, pkcInfo->bnCTX ) );
 		if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 			return( FALSE );
@@ -186,7 +204,9 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 			return( FALSE );
 		}
 
-	/* Verify that ( q * u ) mod p == 1 */
+	/* Verify that:
+
+		( q * u ) mod p == 1 */
 	CK( BN_mod_mul( tmp, q, &pkcInfo->rsaParam_u, p, pkcInfo->bnCTX ) );
 	if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 		return( FALSE );
@@ -231,7 +251,7 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 	   one */
 	if( eWord != 3 && eWord != 17 && eWord != 257 && eWord != 65537L )
 		{
-		static const FAR_BSS unsigned int smallPrimes[] = {
+		static const unsigned int FAR_BSS smallPrimes[] = {
 			   2,   3,   5,   7,  11,  13,  17,  19,
 			  23,  29,  31,  37,  41,  43,  47,  53,
 			  59,  61,  67,  71,  73,  79,  83,  89,
@@ -257,15 +277,31 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 			 };
 		int i;
 
-		for( i = 0; smallPrimes[ i ] != 0; i++ )
+		for( i = 0; eWord > smallPrimes[ i ] && \
+					smallPrimes[ i ] != 0; i++ )
 			if( eWord % smallPrimes[ i ] == 0 )
 				return( FALSE );
 		}
 
-	/* Verify that gcd( ( p - 1 )( q - 1), e ) == 1.  Since e is a small
-	   prime, we can do this much more efficiently by checking that
-	   ( p - 1 ) mod e != 0 and ( q - 1 ) mod e != 0 */
+	/* Verify that:
+
+		gcd( ( p - 1 )( q - 1), e ) == 1
+	
+	   Since e is a small prime, we can do this much more efficiently by 
+	   checking that:
+
+		( p - 1 ) mod e != 0
+		( q - 1 ) mod e != 0 */
 	if( BN_mod_word( p1, eWord ) == 0 || BN_mod_word( q1, eWord ) == 0 )
+		return( FALSE );
+
+	/* Verify that:
+
+		e1 < p
+		e2 < q */
+	if( BN_cmp( &pkcInfo->rsaParam_exponent1, p ) >= 0 )
+		return( FALSE );
+	if( BN_cmp( &pkcInfo->rsaParam_exponent2, q ) >= 0 )
 		return( FALSE );
 
 	return( TRUE );
@@ -281,7 +317,7 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 	BIGNUM *n = &pkcInfo->rsaParam_n, *e = &pkcInfo->rsaParam_e;
 	BIGNUM *d = &pkcInfo->rsaParam_d, *p = &pkcInfo->rsaParam_p;
 	BIGNUM *q = &pkcInfo->rsaParam_q;
-	int bnStatus = BN_STATUS, status = CRYPT_OK;
+	int length, bnStatus = BN_STATUS, status = CRYPT_OK;
 
 	/* Make sure that the necessary key parameters have been initialised */
 	if( BN_is_zero( n ) || BN_is_zero( e ) )
@@ -298,11 +334,18 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 			return( CRYPT_ARGERROR_STR1 );
 		}
 
-	/* Make sure that the key paramters are valid: n > MIN_PKCSIZE_BITS,
-	   e >= 3, |p-q| > 128 bits.  Since e is commonly set to F4, we have
-	   to special-case the check for systems where the bignum components
-	   are 16-bit values */
-	if( BN_num_bits( n ) <= MIN_PKCSIZE_BITS )
+	/* Make sure that the key paramters are valid:
+
+		nLen >= MIN_PKCSIZE_BITS, nLen <= MAX_PKCSIZE_BITS
+
+		e >= 3, e < n
+		
+		|p-q| > 128 bits
+		
+	   Since e is commonly set to F4, we have to special-case the check for 
+	   systems where the bignum components are 16-bit values */
+	length = BN_num_bits( n );
+	if( length < MIN_PKCSIZE_BITS || length > MAX_PKCSIZE_BITS )
 		return( CRYPT_ARGERROR_STR1 );
 #ifdef SIXTEEN_BIT
 	BN_set_word( &pkcInfo->tmp1, 3 );
@@ -312,6 +355,8 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 	if( BN_get_word( e ) < 3 )
 		return( CRYPT_ARGERROR_STR1 );
 #endif /* Systems without 32 * 32 -> 64 ops */
+	if( BN_cmp( e, n ) >= 0 )
+		return( CRYPT_ARGERROR_STR1 );
 	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
 		{
 		/* Make sure that p and q differ by at least 128 bits */

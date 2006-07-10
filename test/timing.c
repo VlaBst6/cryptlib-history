@@ -622,12 +622,7 @@ static void performanceTests( const CRYPT_DEVICE cryptDevice )
 #undef __WIN32__
 #undef BYTE
 #undef BOOLEAN
-#ifdef _MSC_VER
-  #define INC_CHILD
-  #include "../crypt.h"
-#else
-  #include "crypt.h"
-#endif /* Braindamaged MSC include handling */
+#include "crypt.h"
 
 #define CRYPT_IATTRIBUTE_KEY_SPKI	8015
 

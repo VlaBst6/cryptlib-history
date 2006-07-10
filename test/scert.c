@@ -26,52 +26,13 @@
 
 #define NET_TIMEOUT		180
 
+#ifdef TEST_SESSION
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
-
-#ifdef WINDOWS_THREADS
-
-static HANDLE hMutex;
-
-void createMutex( void )
-	{
-	hMutex = CreateMutex( NULL, FALSE, NULL );
-	}
-void releaseMutex( void )
-	{
-	ReleaseMutex( hMutex );
-	}
-int waitMutex( void )
-	{
-	if( WaitForSingleObject( hMutex, 30000 ) == WAIT_TIMEOUT )
-		return( CRYPT_ERROR_TIMEOUT );
-
-	return( CRYPT_OK );
-	}
-void destroyMutex( void )
-	{
-	CloseHandle( hMutex );
-	}
-
-void waitForThread( const HANDLE hThread )
-	{
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-	}
-#else
-  #define waitMutex()		CRYPT_OK
-  #define releaseMutex()
-#endif /* WINDOWS_THREADS */
 
 /* Run a persistent server session, recycling the connection if the client
    kept the link open */
@@ -287,7 +248,7 @@ static int getPkiUserInfo( C_STR userID, C_STR issuePW, C_STR revPW,
 		{
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
-		return( status );
+		return( FALSE );
 		}
 	status = cryptCAGetItem( cryptCertStore, &cryptPKIUser,
 							 CRYPT_CERTTYPE_PKIUSER, CRYPT_KEYID_NAME,
@@ -298,14 +259,14 @@ static int getPkiUserInfo( C_STR userID, C_STR issuePW, C_STR revPW,
 		/* Only report error info if it's not a basic presence check */
 		if( userID != NULL )
 			extErrorExit( cryptCertStore, "cryptCAGetItem()", status, __LINE__ );
-		return( status );
+		return( FALSE );
 		}
 
 	/* If it's a presence check only, we're done */
 	if( userID == NULL )
 		{
 		cryptDestroyCert( cryptPKIUser );
-		return( CRYPT_OK );
+		return( TRUE );
 		}
 
 	/* Then we extract the information from the PkiUser object */
@@ -334,12 +295,12 @@ static int getPkiUserInfo( C_STR userID, C_STR issuePW, C_STR revPW,
 		{
 		attrErrorExit( cryptPKIUser, "cryptGetAttribute()", status,
 					   __LINE__ );
-		return( status );
+		return( FALSE );
 		}
 
 	/* We've got what we need, tell the user what we're doing */
 	printf( "Using user name %s, password %s.\n", userID, issuePW );
-	return( CRYPT_OK );
+	return( TRUE );
 	}
 
 /* Set up objects and information needed by a server-side PKI session */
@@ -419,22 +380,27 @@ static int serverInit( CRYPT_CONTEXT *cryptPrivateKey,
 	#3 - OpenSCEP (openscep.othello.ch): Seems to be permanently unavailable.
 
 	#4 - Entrust (freecerts.entrust.com/vpncerts/cep.htm): Only seems to be
-			set up to handle Cisco gear */
+			set up to handle Cisco gear.
+
+	#5 - EJBCA: */
 
 #define SCEP_NO		1
 
 typedef struct {
-	const char *name;
-	const C_CHR *url, *user, *password, *caCertUrl;
+	const char FAR_BSS *name;
+	const C_CHR FAR_BSS *url, FAR_BSS *user, FAR_BSS *password, FAR_BSS *caCertUrl;
 	} SCEP_INFO;
 
-static const SCEP_INFO scepInfo[] = {
+static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ NULL },	/* Dummy so index == SCEP_NO */
 	{ /*1*/ "cryptlib", TEXT( "http://localhost/pkiclient.exe" ), NULL, NULL, NULL },
 	{ /*2*/ "SSH", TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe" ), TEXT( "ssh" ), TEXT( "ssh" ),
 			TEXT( "http://pki.ssh.com:8080/scep/pkiclient.exe?operation=GetCACert&message=test-ca1.ssh.com" ) },
 	{ /*3*/ "OpenSCEP", TEXT( "http://openscep.othello.ch/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
 	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
+	{ /*5*/ "EJBCA", TEXT( "http://q-rl-xp:8080/ejbca/publicweb/apply/scep/pkiclient.exe" ),
+			TEXT("test2"), TEXT("test2"),
+			"http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" },
 	};
 
 /* Cert request data for the cert from the SCEP server.  Note that we have
@@ -443,7 +409,7 @@ static const SCEP_INFO scepInfo[] = {
    #10 requests we need to provide a DN, and since we provide it it has to
    match the PKI user DN */
 
-static const CERT_DATA scepRequestData[] = {
+static const CERT_DATA FAR_BSS scepRequestData[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
@@ -459,7 +425,7 @@ static const CERT_DATA scepRequestData[] = {
 
 /* PKI user data to authorise the issuing of the various certs */
 
-static const CERT_DATA scepPkiUserData[] = {
+static const CERT_DATA FAR_BSS scepPkiUserData[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
@@ -489,48 +455,54 @@ static int getScepCACert( const C_STR caCertUrl,
 		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()",
 							  status, __LINE__ ) );
 
-	return( CRYPT_OK );
+	return( TRUE );
 	}
 
 /* Perform an SCEP test */
 
-int testSessionSCEP( void )
+static int connectSCEP( void )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CERTIFICATE cryptRequest, cryptResponse, cryptCACert;
 	CRYPT_CONTEXT cryptContext;
+#if ( SCEP_NO == 1 )
 	C_CHR userID[ 64 ], password[ 64 ];
+#endif /* cryptlib SCEP_NO == 1 */
 	const C_STR userPtr = scepInfo[ SCEP_NO ].user;
 	const C_STR passwordPtr = scepInfo[ SCEP_NO ].password;
 	int status;
 
-	puts( "Testing SCEP session..." );
+	printf( "Testing %s SCEP session...\n", scepInfo[ SCEP_NO ].name );
 
-	/* Make sure that the required user info is present.  If it isn't, the
-	   CA auditing will detect a request from a nonexistant user and refuse
-	   to issue a certificate */
-	status = getPkiUserInfo( NULL, NULL, NULL,
-							 TEXT( "Test SCEP PKI user" ) );
-	if( cryptStatusError( status ) )
+#if ( SCEP_NO == 1 )
+	/* If we're doing a loopback test, make sure that the required user info
+	   is present.  If it isn't, the CA auditing will detect a request from
+	   a nonexistant user and refuse to issue a certificate */
+	if( !getPkiUserInfo( NULL, NULL, NULL, TEXT( "Test SCEP PKI user" ) ) )
 		{
 		puts( "CA certificate store doesn't contain the PKI user "
 			  "information needed to\nauthenticate certificate issue "
 			  "operations, can't perform SCEP test.\n" );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
+#endif /* cryptlib SCEP_NO == 1 */
 
 	/* Get the issuing CA's cert */
 	if( scepInfo[ SCEP_NO ].caCertUrl != NULL )
-		status = getScepCACert( scepInfo[ SCEP_NO ].caCertUrl,
-								&cryptCACert );
+		{
+		if( !getScepCACert( scepInfo[ SCEP_NO ].caCertUrl, &cryptCACert ) )
+			return( FALSE );
+		}
 	else
+		{
 		status = importCertFromTemplate( &cryptCACert, SCEP_CA_FILE_TEMPLATE,
 										 SCEP_NO );
-	if( cryptStatusError( status ) )
-		{
-		printf( "Couldn't get SCEP CA certificate, status = %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't get SCEP CA certificate, status = %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
 		}
 
 	/* cryptlib implements per-user (rather than shared interop) IDs and
@@ -539,11 +511,19 @@ int testSessionSCEP( void )
 #if ( SCEP_NO == 1 )
 	status = getPkiUserInfo( userID, password, NULL,
 							 TEXT( "Test SCEP PKI user" ) );
-	if( cryptStatusError( status ) )
+	if( status == CRYPT_ERROR_NOTAVAIL )
 		{
+		/* Cert store operations aren't available, exit but continue with
+		   other tests */
 		cryptDestroyCert( cryptCACert );
-		return( ( status == CRYPT_ERROR_NOTAVAIL ) ? TRUE : FALSE );
+		return( TRUE );
 		}
+	else
+		if( !status )
+			{
+			cryptDestroyCert( cryptCACert );
+			return( FALSE );
+			}
 	userPtr = userID;
 	passwordPtr = password;
 #endif /* cryptlib SCEP_NO == 1 */
@@ -593,6 +573,7 @@ int testSessionSCEP( void )
 							 paramStrlen( USER_PRIVKEY_LABEL ) );
 	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
+	if( cryptStatusOK( status ) )
 #else
 	loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
 					   USER_PRIVKEY_LABEL );
@@ -666,6 +647,11 @@ int testSessionSCEP( void )
 	cryptDestroyCert( cryptResponse );
 	puts( "SCEP client session succeeded.\n" );
 	return( TRUE );
+	}
+
+int testSessionSCEP( void )
+	{
+	return( connectSCEP() );
 	}
 
 int testSessionSCEPServer( void )
@@ -761,12 +747,12 @@ int testSessionSCEPClientServer( void )
 	/* Start the server and wait for it to initialise (this takes a bit
 	   longer than the other servers because we have to work with a cert
 	   store so we wait a bit longer than usual) */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &scepServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, scepServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 3000 );
 
 	/* Connect to the local server */
-	status = testSessionSCEP();
+	status = connectSCEP();
 	waitForThread( hThread );
 	return( status );
 	}
@@ -819,11 +805,11 @@ int testSessionSCEPClientServer( void )
 #define CA_NO					CA_CRYPTLIB
 
 typedef struct {
-	const char *name;
-	const C_CHR *url, *user, *password;
+	const char FAR_BSS *name;
+	const C_CHR FAR_BSS *url, FAR_BSS *user, FAR_BSS *password;
 	} CA_INFO;
 
-static const CA_INFO caInfo[] = {
+static const CA_INFO FAR_BSS caInfo[] = {
 	{ NULL },	/* Dummy so index == CA_NO */
 	{ /*1*/ "cryptlib", TEXT( "http://localhost" ), TEXT( "interop" ), TEXT( "interop" ) },
 	{ /*2*/	"cryptlib/PKIBoot", /*"_pkiboot._tcp.cryptoapps.com"*/TEXT( "http://localhost" ), TEXT( "interop" ), TEXT( "interop" ) },
@@ -888,8 +874,9 @@ static const CA_INFO caInfo[] = {
   #define NO_CA_REQUESTS	0
 #endif /* SERVER_IS_CRYPTLIB */
 
-/* Define the following to enable testing of servers where the initial DN is
-   supplied by the server (i.e. the user supplies a null DN) */
+/* Define the following to enable testing of servers where the initial DN 
+   (and optional additional information like the altName) is supplied by the 
+   server (i.e. the user supplies a null DN) */
 
 #ifdef SERVER_IS_CRYPTLIB
   #define SERVER_PROVIDES_DN
@@ -897,7 +884,7 @@ static const CA_INFO caInfo[] = {
 
 /* Cert request data for the various types of certs that a CMP CA can return */
 
-static const CERT_DATA cmpRsaSignRequestData[] = {
+static const CERT_DATA FAR_BSS cmpRsaSignRequestData[] = {
 	/* Identification information */
   #ifdef SERVER_FIXED_DN
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "KR" ) },
@@ -921,19 +908,17 @@ static const CERT_DATA cmpRsaSignRequestData[] = {
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA cmpRsaSignRequestNoDNData[] = {
+static const CERT_DATA FAR_BSS cmpRsaSignRequestNoDNData[] = {
 	/* Identification information - none, it's provided by the server */
 
-	/* Subject altName */
-	{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
-	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
+	/* Subject altName - none, it's provided by the server */
 
 	/* Signature-only key */
 	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_DIGITALSIGNATURE },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA cmpRsaEncryptRequestData[] = {
+static const CERT_DATA FAR_BSS cmpRsaEncryptRequestData[] = {
 	/* Identification information */
 #ifdef SERVER_FIXED_DN
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "KR" ) },
@@ -957,7 +942,7 @@ static const CERT_DATA cmpRsaEncryptRequestData[] = {
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA cmpRsaCaRequestData[] = {
+static const CERT_DATA FAR_BSS cmpRsaCaRequestData[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
@@ -973,7 +958,7 @@ static const CERT_DATA cmpRsaCaRequestData[] = {
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA cmpDsaRequestData[] = {
+static const CERT_DATA FAR_BSS cmpDsaRequestData[] = {
 	/* Identification information */
 #ifdef SERVER_FIXED_DN
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "KR" ) },
@@ -1001,21 +986,27 @@ static const CERT_DATA cmpDsaRequestData[] = {
 
 /* PKI user data to authorise the issuing of the various certs */
 
-static const CERT_DATA cmpPkiUserData[] = {
+static const CERT_DATA FAR_BSS cmpPkiUserData[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
 	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Test PKI user" ) },
 
+	/* Subject altName */
+	{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
+
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA cmpPkiUserCaData[] = {
+static const CERT_DATA FAR_BSS cmpPkiUserCaData[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
 	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Test CA PKI user" ) },
+
+	/* Subject altName */
+	{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@ca.wetas-r-us.com" ) },
 
 	/* CA extensions */
 	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC,
@@ -1082,7 +1073,7 @@ static int createCmpRequest( const CERT_DATA *requestData,
 			/* Use a fixed private key, for testing purposes */
 			if( cryptAlgo == CRYPT_ALGO_RSA )
 				loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
-								   USER_PRIVKEY_LABEL );
+								   USER_PRIVKEY_LABEL, FALSE );
 			else
 				loadDSAContextsEx( CRYPT_UNUSED, &cryptContext, NULL,
 								   USER_PRIVKEY_LABEL, NULL );
@@ -1518,7 +1509,7 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 		cr + cp + certconf + pkiconf (success implies that ir/kur/rr
 						works since they've already been tested for RSA) */
 
-static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
+static int connectCMP( const BOOLEAN usePKIBoot )
 	{
 	CRYPT_CERTIFICATE cryptCACert = CRYPT_UNUSED, cryptCert;
 	C_CHR readFileName[ FILENAME_BUFFER_SIZE ];
@@ -1549,8 +1540,7 @@ static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
 	/* Make sure that the required user info is present.  If it isn't, the
 	   CA auditing will detect a request from a nonexistant user and refuse
 	   to issue a certificate */
-	status = getPkiUserInfo( NULL, NULL, NULL, TEXT( "Test PKI user" ) );
-	if( cryptStatusError( status ) )
+	if( !getPkiUserInfo( NULL, NULL, NULL, TEXT( "Test PKI user" ) ) )
 		{
 		puts( "CA certificate store doesn't contain the PKI user "
 			  "information needed to\nauthenticate certificate issue "
@@ -1591,13 +1581,23 @@ static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
 	   before we can perform any operations */
 	status = getPkiUserInfo( userID, issuePW, NULL,
 							 TEXT( "Test PKI user" ) );
-	if( cryptStatusError( status ) )
+	if( status == CRYPT_ERROR_NOTAVAIL )
 		{
+		/* Cert store operations aren't available, exit but continue with
+		   other tests */
 	#ifndef SERVER_PKIBOOT
 		cryptDestroyCert( cryptCACert );
 	#endif /* !SERVER_PKIBOOT */
-		return( ( status == CRYPT_ERROR_NOTAVAIL ) ? TRUE : FALSE );
+		return( TRUE );
 		}
+	else
+		if( !status )
+			{
+	#ifndef SERVER_PKIBOOT
+			cryptDestroyCert( cryptCACert );
+	#endif /* !SERVER_PKIBOOT */
+			return( FALSE );
+			}
 
 	/* Set up the variable info in the CA info record */
 	cryptlibCAInfo.user = userID;
@@ -1609,7 +1609,7 @@ static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
 	filenameParamFromTemplate( writeFileName, CMP_PRIVKEY_FILE_TEMPLATE, 1 );
 	status = requestCert( "RSA signing cert.init.request", caInfoPtr, NULL,
 						  usePKIBoot ? NULL : writeFileName,
-#ifdef SERVER_PROVIDES_DN
+#if defined( SERVER_PROVIDES_DN )
 						  cmpRsaSignRequestNoDNData,
 #else
 						  cmpRsaSignRequestData,
@@ -1783,7 +1783,7 @@ static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN requestCACert )
 
 int testSessionCMP( void )
 	{
-	return( connectCMP( FALSE, FALSE ) );
+	return( connectCMP( FALSE ) );
 	}
 
 /* Test the plug-and-play PKI functionality */
@@ -1807,14 +1807,14 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 		return( FALSE );
 		}
 
-	/* Open the device/create the keyset to contain the keys.  This doesn't 
+	/* Open the device/create the keyset to contain the keys.  This doesn't
 	   perform a full device.c-style auto-configure but assumes that it's
 	   talking to a device that's already been initialised and is ready to
 	   go */
 	if( useDevice )
 		{
-		status = cryptDeviceOpen( &cryptKeyset, CRYPT_UNUSED, 
-								  CRYPT_DEVICE_PKCS11, 
+		status = cryptDeviceOpen( &cryptKeyset, CRYPT_UNUSED,
+								  CRYPT_DEVICE_PKCS11,
 								  TEXT( "[Autodetect]" ) );
 		if( cryptStatusError( status ) )
 			{
@@ -1822,8 +1822,8 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 					"line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
-		status = cryptSetAttributeString( cryptKeyset, 
-										  CRYPT_DEVINFO_AUTHENT_USER, 
+		status = cryptSetAttributeString( cryptKeyset,
+										  CRYPT_DEVINFO_AUTHENT_USER,
 										  "test", 4 );
 		if( cryptStatusError( status ) )
 			{
@@ -1831,11 +1831,11 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 					status, __LINE__ );
 			return( FALSE );
 			}
-		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
+		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME,
 							TEXT( "Signature key" ) ) == CRYPT_OK )
 			puts( "(Deleted a signature key object, presumably a leftover "
 				  "from a previous run)." );
-		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, 
+		if( cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME,
 							TEXT( "Encryption key" ) ) == CRYPT_OK )
 			puts( "(Deleted an encryption key object, presumably a leftover "
 				  "from a previous run)." );
@@ -1866,8 +1866,13 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 	status = getPkiUserInfo( userID, issuePW, NULL, isCaUser ? \
 								TEXT( "Test CA PKI user" ) : \
 								TEXT( "Test PKI user" ) );
-	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ERROR_NOTAVAIL ) ? TRUE : FALSE );
+	if( status == CRYPT_ERROR_NOTAVAIL )
+		/* Cert store operations aren't available, exit but continue with
+		   other tests */
+		return( TRUE );
+	else
+		if( !status )
+			return( FALSE );
 
 	/* Set up the information we need for the plug-and-play PKI process */
 	status = cryptSetAttributeString( cryptSession,
@@ -1890,10 +1895,10 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 		{
 		/* Keygen on a device can take an awfully long time for some devices,
 		   so we set an extended timeout to allow for this */
-		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 						   NET_TIMEOUT );
-		status = cryptSetAttribute( cryptSession, 
-									CRYPT_OPTION_NET_WRITETIMEOUT, 
+		status = cryptSetAttribute( cryptSession,
+									CRYPT_OPTION_NET_WRITETIMEOUT,
 									NET_TIMEOUT );
 		}
 	if( useDevice )
@@ -1999,10 +2004,10 @@ static int cmpServerSingleIteration( const CRYPT_CONTEXT cryptPrivateKey,
 		{
 		/* Keygen on a device can take an awfully long time for some devices,
 		   so we set an extended timeout to allow for this */
-		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
 						   NET_TIMEOUT );
-		status = cryptSetAttribute( cryptSession, 
-									CRYPT_OPTION_NET_WRITETIMEOUT, 
+		status = cryptSetAttribute( cryptSession,
+									CRYPT_OPTION_NET_WRITETIMEOUT,
 									NET_TIMEOUT );
 		}
 	if( cryptStatusError( status ) )
@@ -2033,7 +2038,7 @@ int testSessionCMPServer( void )
 	CRYPT_KEYSET cryptCertStore;
 	int caCertTrusted, i, status;
 
-	/* Acquire the PNP PKI init mutex */
+	/* Acquire the init mutex */
 	waitMutex();
 
 	puts( "SVR: Testing CMP server session..." );
@@ -2144,7 +2149,7 @@ int testSessionCMPServer( void )
 #ifdef WINDOWS_THREADS
 
 static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
-						 const BOOLEAN isIntermediateCA, 
+						 const BOOLEAN isIntermediateCA,
 						 const BOOLEAN useDevice )
 	{
 	CRYPT_CONTEXT cryptCAKey;
@@ -2224,12 +2229,12 @@ int testSessionCMPClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectCMP( FALSE, FALSE );
+	status = connectCMP( FALSE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2259,12 +2264,12 @@ int testSessionCMPPKIBootClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPKIBootServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpPKIBootServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectCMP( TRUE, FALSE );
+	status = connectCMP( TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2288,7 +2293,7 @@ int testSessionPNPPKIClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPnPPKIServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpPnPPKIServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
@@ -2317,7 +2322,7 @@ int testSessionPNPPKIDeviceClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPnPPKIDeviceServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpPnPPKIDeviceServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
@@ -2343,7 +2348,7 @@ int testSessionPNPPKICAClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPnPPKICaServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpPnPPKICaServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
@@ -2369,7 +2374,7 @@ int testSessionPNPPKIIntermedCAClientServer( void )
 
 	/* Start the server */
 	createMutex();
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &cmpPnPPKIIntermedCaServerThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, cmpPnPPKIIntermedCaServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
@@ -2380,3 +2385,5 @@ int testSessionPNPPKIIntermedCAClientServer( void )
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
+
+#endif /* TEST_SESSION */

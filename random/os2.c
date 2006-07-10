@@ -11,8 +11,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include "crypt.h"
 
 #define INCL_DOSMISC

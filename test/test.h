@@ -1,11 +1,14 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2005					*
+*						Copyright Peter Gutmann 1995-2006					*
 *																			*
 ****************************************************************************/
 
-/* Define the following to enable/disable various blocks of tests */
+/* Define the following to enable/disable various blocks of tests.  Note
+   that the self-test uses a sizeable amount of automatic data, on 16-bit
+   systems it'll probably be necessary to run each test individually rather
+   than in groups as arranged below */
 
 #if 1
 #define TEST_SELFTEST		/* Perform internal self-test */
@@ -20,7 +23,7 @@
 #define TEST_CERTPROCESS	/* Test certificate handling/CA management */
 #endif /* 0 */
 #if 1
-#define TEST_HIGHEVEL		/* Test high-level encr/sig.functions */
+#define TEST_HIGHLEVEL		/* Test high-level encr/sig.functions */
 #define TEST_ENVELOPE		/* Test enveloping functions */
 #endif /* 0 */
 #if 1
@@ -33,6 +36,10 @@
    just produce a cascade of device-not-present warnings */
 
 /* #define TEST_DEVICE */
+#if defined( TEST_DEVICE ) && !defined( TEST_LOWLEVEL )
+  #define TEST_LOWLEVEL
+  #define TEST_ENVELOPE
+#endif /* Low-level and envelope tests are called by the device tests */
 
 /* Some of the device tests can be rather slow, the following defines disable
    these tests for speed reasons.  Note that the Fortezza test can be further
@@ -118,11 +125,14 @@
   #define EXIT_FAILURE	!EXIT_SUCCESS
 #endif /* EXIT_SUCCESS */
 
-/* If we're using a DOS compiler but not a 32-bit one, record this */
+/* If we're using a 16-bit compiler, record this */
 
 #if defined( __MSDOS__ ) && !defined( __MSDOS32__ )
   #define __MSDOS16__
-#endif /* __MSDOS__ && !__MSDOS32__ */
+#endif /* 16-bit DOS */
+#if defined( _MSC_VER ) && ( _MSC_VER <= 800 )
+  #define __WIN16__
+#endif /* 16-bit Windows */
 
 /* It's useful to know if we're running under Windows to enable Windows-
    specific processing */
@@ -176,7 +186,7 @@
    signature chains, the file buffer should be less than the 16-bit INT_MAX
    for testing on 16-bit machines */
 
-#if defined( __MSDOS__ ) && defined( __TURBOC__ )
+#if defined( __MSDOS16__ ) || defined( __WIN16__ )
   #define BUFFER_SIZE			4096
   #define FILEBUFFER_SIZE		20000
 #else
@@ -192,6 +202,14 @@
   #include <ctype.h>
   #include <string.h>
 #endif /* __PALMSOURCE__ */
+
+/* The ability to get rid of annoying warnings via the project file in BC++
+   5.0x is completely broken, the only way to do this is via pragmas in the
+   source code */
+
+#if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
+  #pragma warn -ucp						/* Signed/unsigned char assignment */
+#endif /* Broken BC++ 5.0x warning handling */
 
 /* Helper function to make tracking down errors on systems with no console a
    bit less painful */
@@ -218,9 +236,9 @@
    which should result in a more useful warning if for some reason inline
    threading functions with asm are enabled */
 
-#if( ( defined( sun ) && ( OSVERSION > 4 ) ) || defined( __osf__ ) || \
-	 defined( __alpha__ ) || defined( __Mach__ ) || defined( _AIX ) || \
-	 defined( __linux__ ) )
+#if( defined( _AIX ) || defined( __alpha__ ) || defined( __APPLE__ ) || \
+	 defined( __linux__ ) || defined( __osf__ ) || \
+	 ( defined( sun ) && ( OSVERSION > 4 ) ) )
   #define UNIX_THREADS
 
   /* We need to include pthread.h at this point because any number of other
@@ -233,7 +251,7 @@
 	#define __C_ASM_H		/* See comment in cryptos.h */
   #endif /* Alpha */
   #include <pthread.h>
-#endif /* Slowaris || OSF1/DEC Unix || Mach || AIX || Linux */
+#endif /* AIX || OSF1/DEC Unix || OS/X || Linux || Slowaris */
 #if ( defined( WIN32 ) || defined( _WIN32 ) ) && !defined( _WIN32_WCE )
   /* We don't test the loopback functionality under WinCE because the
 	 _beginthreadx() vs. CreateThread() issue (normally hidden in
@@ -247,7 +265,9 @@
 
 /* Try and detect OSes that have widechar support */
 
-#if defined( __WINDOWS__ ) || defined( __linux__ ) || \
+#if ( defined( __WINDOWS__ ) && \
+	  !( defined( __WIN16__ ) || defined( __BORLANDC__ ) ) ) || \
+	defined( __linux__ ) || \
 	( defined( sun ) && ( OSVERSION > 4 ) ) || defined( __osf__ )
   #define HAS_WIDECHAR
 #endif /* OSes with widechar support */
@@ -331,7 +351,8 @@ typedef struct {
 
 typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES,
-			   KEYFILE_NAIPGP } KEYFILE_TYPE;
+			   KEYFILE_OPENPGP_RSA, KEYFILE_NAIPGP,
+			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
 
 /* The generic password for private keys */
 
@@ -413,6 +434,11 @@ typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 
 /* Prototypes for functions in utils.c */
 
+const C_STR getKeyfileName( const KEYFILE_TYPE type,
+							const BOOLEAN isPrivKey );
+const C_STR getKeyfilePassword( const KEYFILE_TYPE type );
+const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
+							  const BOOLEAN isPrivKey );
 void printErrorAttributeInfo( const CRYPT_CERTIFICATE certificate );
 int displayAttributes( const CRYPT_HANDLE cryptHandle );
 int printCertInfo( const CRYPT_CERTIFICATE certificate );
@@ -437,6 +463,20 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 					   const BOOLEAN isServer,
 					   const BOOLEAN showFingerprint );
 BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port );
+
+/* Threading support functions, in utils.c */
+
+void createMutex( void );
+void releaseMutex( void );
+int waitMutex( void );
+void destroyMutex( void );
+#if defined( WINDOWS_THREADS )
+  void waitForThread( const HANDLE hThread );
+#elif defined( UNIX_THREADS )
+  void waitForThread( const pthread_t hThread );
+#else
+  void waitForThread( const int hThread );
+#endif /* Systems with threading support */
 
 /* Exit with an error message, in utils.c.  attrErrorExit() prints the
    locus and type, extErrorExit() prints the extended error code and
@@ -472,7 +512,8 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 						   CRYPT_CONTEXT *cryptContext,
 						   CRYPT_CONTEXT *decryptContext,
 						   const C_STR cryptContextLabel,
-						   const C_STR decryptContextLabel );
+						   const C_STR decryptContextLabel,
+						   const BOOLEAN useMinimalKey );
 BOOLEAN loadRSAContexts( const CRYPT_DEVICE cryptDevice,
 						 CRYPT_CONTEXT *cryptContext,
 						 CRYPT_CONTEXT *decryptContext );
@@ -487,7 +528,7 @@ BOOLEAN loadDSAContexts( const CRYPT_DEVICE cryptDevice,
 BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 							 CRYPT_CONTEXT *decryptContext );
 BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
-						CRYPT_CONTEXT *cryptContext2, int keySize );
+						CRYPT_CONTEXT *cryptContext2 );
 void destroyContexts( const CRYPT_DEVICE cryptDevice,
 					  CRYPT_CONTEXT cryptContext,
 					  CRYPT_CONTEXT decryptContext );
@@ -497,14 +538,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			   BYTE *buffer, const BOOLEAN isDevice,
 			   const BOOLEAN noWarnFail );
-
-/* Prototypes for functions in keyfile.c */
-
-const C_STR getKeyfileName( const KEYFILE_TYPE type,
-							const BOOLEAN isPrivKey );
-const C_STR getKeyfilePassword( const KEYFILE_TYPE type );
-const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
-							  const BOOLEAN isPrivKey );
+int testRSAMinimalKey( void );
 
 /* Prototypes for functions in envelope.c */
 
@@ -583,20 +617,21 @@ int testReadCertHTTP( void );
 int testEnvelopeData( void );
 int testEnvelopeDataLargeBuffer( void );
 int testEnvelopeCompress( void );
-int testEnvelopeCompressedDataImport( void );
+int testPGPEnvelopeCompressedDataImport( void );
 int testEnvelopeSessionCrypt( void );
 int testEnvelopeSessionCryptLargeBuffer( void );
 int testEnvelopeCrypt( void );
 int testEnvelopePasswordCrypt( void );
-int testEnvelopePasswordCryptImport( void );
+int testPGPEnvelopePasswordCryptImport( void );
 int testEnvelopePKCCrypt( void );
-int testEnvelopePKCCryptImport( void );
+int testPGPEnvelopePKCCryptImport( void );
 int testEnvelopeSign( void );
 int testEnvelopeSignOverflow( void );
-int testEnvelopeSignedDataImport( void );
+int testPGPEnvelopeSignedDataImport( void );
 int testEnvelopeAuthenticate( void );
 int testCMSEnvelopePKCCrypt( void );
 int testCMSEnvelopePKCCryptDoubleCert( void );
+int testCMSEnvelopePKCCryptImport( void );
 int testCMSEnvelopeSign( void );
 int testCMSEnvelopeDualSign( void );
 int testCMSEnvelopeDetachedSig( void );
@@ -633,6 +668,7 @@ int testOCSPImport( void );
 int testBase64CertImport( void );
 int testBase64CertChainImport( void );
 int testMiscImport( void );
+int testNonchainCert( void );
 int testCertComplianceLevel( void );
 int testPathProcessing( void );
 int testCertProcess( void );
@@ -662,11 +698,13 @@ int testSessionTSPServer( void );
 /* Prototypes for functions in ssh.c */
 
 int testSessionUrlParse( void );
+int testSessionAttributes( void );
 int testSessionSSHMultiServer( void );
 int testSessionSSHv1( void );
 int testSessionSSH( void );
 int testSessionSSHClientCert( void );
 int testSessionSSHPortforward( void );
+int testSessionSSHExec( void );
 int testSessionSSH_SFTP( void );
 int testSessionSSHv1Server( void );
 int testSessionSSHServer( void );
@@ -696,11 +734,13 @@ int testSessionTLS11Server( void );
   int testSessionSSHClientServerFingerprint( void );
   int testSessionSSHClientServerSFTP( void );
   int testSessionSSHClientServerPortForward( void );
+  int testSessionSSHClientServerExec( void );
   int testSessionSSHClientServerMultichannel( void );
   int testSessionSSLClientServer( void );
   int testSessionSSLClientCertClientServer( void );
   int testSessionTLSClientServer( void );
   int testSessionTLSSharedKeyClientServer( void );
+  int testSessionTLSNoSharedKeyClientServer( void );
   int testSessionTLSBulkTransferClientServer( void );
   int testSessionTLS11ClientServer( void );
   int testSessionHTTPCertstoreClientServer( void );
@@ -721,11 +761,13 @@ int testSessionTLS11Server( void );
   #define testSessionSSHClientServerFingerprint()	TRUE
   #define testSessionSSHClientServerSFTP()			TRUE
   #define testSessionSSHClientServerPortForward()	TRUE
+  #define testSessionSSHClientServerExec()			TRUE
   #define testSessionSSHClientServerMultichannel()	TRUE
   #define testSessionSSLClientServer()				TRUE
   #define testSessionSSLClientCertClientServer()	TRUE
   #define testSessionTLSClientServer()				TRUE
   #define testSessionTLSSharedKeyClientServer()		TRUE
+  #define testSessionTLSNoSharedKeyClientServer()	TRUE
   #define testSessionTLSBulkTransferClientServer()	TRUE
   #define testSessionTLS11ClientServer()			TRUE
   #define testSessionHTTPCertstoreClientServer()	TRUE

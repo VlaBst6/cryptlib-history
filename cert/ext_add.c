@@ -5,17 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "certattr.h"
-  #include "../misc/asn1.h"
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
@@ -102,7 +95,7 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 		case BER_OBJECT_IDENTIFIER:
 			{
 			const BYTE *oidPtr = data;
-			BYTE binaryOID[ MAX_OID_SIZE ];
+			BYTE binaryOID[ MAX_OID_SIZE + 8 ];
 
 			/* If it's a BER/DER-encoded OID, make sure that it's valid 
 			   ASN.1 */
@@ -114,7 +107,8 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 			else
 				/* It's a text OID, check the syntax and make sure that the 
 				   length is valid */
-				if( textToOID( data, dataLength, binaryOID ) )
+				if( !cryptStatusError( textToOID( data, dataLength, 
+												  binaryOID ) ) )
 					return( CRYPT_OK );
 
 			if( errorType != NULL )

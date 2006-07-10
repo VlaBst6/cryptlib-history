@@ -5,15 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "md5.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "context.h"
-  #include "../crypt/md5.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -39,13 +34,13 @@ typedef struct {
 /* Test the HMAC-MD5 output against the test vectors given in RFC 2104 and
    RFC ???? */
 
-static const FAR_BSS struct {
-	const char *key;						/* HMAC key */
+static const struct {
+	const char FAR_BSS *key;				/* HMAC key */
 	const int keyLength;					/* Length of key */
-	const char *data;						/* Data to hash */
+	const char FAR_BSS *data;				/* Data to hash */
 	const int length;						/* Length of data */
 	const BYTE digest[ MD5_DIGEST_LENGTH ];	/* Digest of data */
-	} hmacValues[] = {
+	} FAR_BSS hmacValues[] = {
 	{ "\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B\x0B", 16,
 	  "Hi There", 8,
 	  { 0x92, 0x94, 0x72, 0x7A, 0x36, 0x38, 0xBB, 0x1C,

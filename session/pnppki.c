@@ -5,14 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "session.h"
-  #include "cmp.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "session.h"
   #include "cmp.h"
 #else
@@ -297,7 +291,8 @@ static int generateKey( CRYPT_CONTEXT *iPrivateKey,
 	if( cryptStatusOK( status ) )
 		{
 		setMessageData( &msgData, ( void * ) keyInfo[ keyType ].label, 
-						strlen( keyInfo[ keyType ].label ) );
+						min( strlen( keyInfo[ keyType ].label ),
+							 CRYPT_MAX_TEXTSIZE ) );
 		status = krnlSendMessage( createInfo.cryptHandle, 
 								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
 								  CRYPT_CTXINFO_LABEL );

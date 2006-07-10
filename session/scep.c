@@ -5,17 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-  #include "session.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
   #include "session.h"
 #else
   #include "crypt.h"
@@ -110,9 +103,9 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 									  CRYPT_SESSINFO_USERNAME );
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
 	RESOURCE_DATA msgData;
-	BYTE keyIDbuffer[ CRYPT_MAX_TEXTSIZE ], *keyIDptr = userNamePtr->value;
-	BYTE requestPassword[ CRYPT_MAX_TEXTSIZE ];
-	BYTE userPassword[ CRYPT_MAX_TEXTSIZE ];
+	BYTE keyIDbuffer[ 64 + 8 ], *keyIDptr = userNamePtr->value;
+	BYTE requestPassword[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BYTE userPassword[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int requestPasswordSize, userPasswordSize;
 	int keyIDsize = userNamePtr->valueLength, status;
 
@@ -130,7 +123,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 	   look up a PKI user with it */
 	if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE )
 		{
-		keyIDsize = decodePKIUserValue( keyIDbuffer, userNamePtr->value, 
+		keyIDsize = decodePKIUserValue( keyIDbuffer, 64, userNamePtr->value, 
 										userNamePtr->valueLength );
 		keyIDptr = keyIDbuffer;
 		}
@@ -1054,7 +1047,7 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		return( CRYPT_OK );
 
 	/* If it's a client key, make sure that there's no cert attached */
-	if( !( sessionInfoPtr->flags & SESSION_ISSERVER ) )
+	if( !isServer( sessionInfoPtr ) )
 		{
 		int value;
 
@@ -1099,7 +1092,7 @@ int setAccessMethodSCEP( SESSION_INFO *sessionInfoPtr )
 
 	/* Set the access method pointers */
 	sessionInfoPtr->protocolInfo = &protocolInfo;
-	if( sessionInfoPtr->flags & SESSION_ISSERVER )
+	if( isServer( sessionInfoPtr ) )
 		sessionInfoPtr->transactFunction = serverTransact;
 	else
 		sessionInfoPtr->transactFunction = clientTransact;

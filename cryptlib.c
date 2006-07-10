@@ -5,9 +5,6 @@
 *																			*
 ****************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include "crypt.h"
 
 /* Prototypes for functions in init.c */
@@ -182,7 +179,7 @@ static int dispatchManagementAction( const MANAGEMENT_FUNCTION *mgmtFunctions,
 
 #ifdef USE_THREADS
 
-void threadedBind( const THREAD_FUNCTION_PARAMS *threadParams )
+void threadedBind( const THREAD_PARAMS *threadParams )
 	{
 	dispatchManagementAction( threadParams->ptrParam, 
 							  threadParams->intParam );
@@ -201,7 +198,7 @@ int initCryptlib( void )
 
 	if( dwPlatform == CRYPT_ERROR )
 		{
-		OSVERSIONINFO osvi = { sizeof( osvi ) };
+		OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
 
 		/* Figure out which version of Windows we're running under */
 		GetVersionEx( &osvi );
@@ -276,11 +273,11 @@ int initCryptlib( void )
 								  CRYPT_OPTION_MISC_ASYNCINIT );
 		if( cryptStatusOK( status ) && asyncInit )
 			{
-			STATIC_THREADPARAM_STORAGE THREAD_FUNCTION_PARAMS threadParams;
-
-			initThreadParams( &threadParams, ( void * ) asyncInitFunctions, \
-							  MANAGEMENT_ACTION_INIT );
-			status = krnlDispatchThread( threadedBind, &threadParams, 
+			/* We use the kernel's thread storage for this thread, so we 
+			   specify the thread data storage as NULL */
+			status = krnlDispatchThread( threadedBind, NULL, 
+										 asyncInitFunctions, 
+										 MANAGEMENT_ACTION_INIT,
 										 SEMAPHORE_DRIVERBIND );
 			if( cryptStatusError( status ) )
 				/* The thread couldn't be started, try again with a 

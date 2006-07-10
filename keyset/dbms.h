@@ -6,15 +6,10 @@
 ****************************************************************************/
 
 #include <stdarg.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "keyset.h"
   #include "rpc.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../keyset/keyset.h"
-  #include "../misc/rpc.h"
 #else
   #include "crypt.h"
   #include "keyset/keyset.h"
@@ -162,10 +157,10 @@ typedef enum {
    be used by backend-specific connect functions */
 
 typedef struct {
-	char userBuffer[ CRYPT_MAX_TEXTSIZE + 1 ], *user;
-	char passwordBuffer[ CRYPT_MAX_TEXTSIZE + 1 ], *password;
-	char serverBuffer[ CRYPT_MAX_TEXTSIZE + 1 ], *server;
-	char nameBuffer[ CRYPT_MAX_TEXTSIZE + 1 ], *name;
+	char userBuffer[ CRYPT_MAX_TEXTSIZE + 8 ], *user;
+	char passwordBuffer[ CRYPT_MAX_TEXTSIZE + 8 ], *password;
+	char serverBuffer[ CRYPT_MAX_TEXTSIZE + 8 ], *server;
+	char nameBuffer[ CRYPT_MAX_TEXTSIZE + 8 ], *name;
 	int userLen, passwordLen, serverLen, nameLen;
 	} DBMS_NAME_INFO;
 

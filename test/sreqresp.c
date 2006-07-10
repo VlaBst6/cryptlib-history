@@ -27,9 +27,11 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, const int number,
 			  const BOOLEAN multipleCerts );
 int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 			  const BOOLEAN ocspv2, const BOOLEAN revokedCert,
-			  const BOOLEAN multipleCerts, 
+			  const BOOLEAN multipleCerts,
 			  const CRYPT_SIGNATURELEVEL_TYPE sigLevel,
 			  const CRYPT_CONTEXT privKeyContext );
+
+#ifdef TEST_SESSION
 
 /****************************************************************************
 *																			*
@@ -38,7 +40,7 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 ****************************************************************************/
 
 /* This isn't really a proper session but just an HTTP cert store interface,
-   but the semantics for the server side fit the session interface better 
+   but the semantics for the server side fit the session interface better
    than the keyset interface */
 
 static int connectCertstoreServer( void )
@@ -50,7 +52,7 @@ static int connectCertstoreServer( void )
 	puts( "Testing HTTP certstore server session..." );
 
 	/* Create the HTTP certstore session */
-	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, 
+	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
 								 CRYPT_SESSION_CERTSTORE_SERVER );
 	if( status == CRYPT_ERROR_PARAM3 )	/* Certstore session access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
@@ -63,7 +65,7 @@ static int connectCertstoreServer( void )
 	if( !setLocalConnect( cryptSession, 80 ) )
 		return( FALSE );
 
-	/* Add the cert store that we'll be using to provide certs (it's 
+	/* Add the cert store that we'll be using to provide certs (it's
 	   actually just the generic database keyset and not the full cert
 	   store, because this contains more test certs) */
 	status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
@@ -86,7 +88,7 @@ static int connectCertstoreServer( void )
 		cryptKeysetClose( cryptCertStore );
 		}
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptSession, "cryptSetAttribute()",
+		return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 							   status, __LINE__ ) );
 
 	/* Activate the server */
@@ -101,7 +103,7 @@ static int connectCertstoreServer( void )
 		}
 
 	/* Check whether the session connection is still open */
-	status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE, 
+	status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
 								&connectionActive );
 	if( cryptStatusError( status ) || !connectionActive )
 		{
@@ -149,9 +151,9 @@ static int connectCertstoreClient( void )
 	const C_STR cert2ID = TEXT( "notpresent@absent.com" );
 	int status;
 
-	/* Open the keyset with a check to make sure this access method exists 
+	/* Open the keyset with a check to make sure this access method exists
 	   so we can return an appropriate error message */
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_HTTP, 
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_HTTP,
 							  TEXT( "localhost" ), CRYPT_KEYOPT_READONLY );
 	if( status == CRYPT_ERROR_PARAM3 )
 		/* This type of keyset access not available */
@@ -163,12 +165,12 @@ static int connectCertstoreClient( void )
 		return( CRYPT_ERROR_FAILED );
 		}
 
-	/* Read a present certificate from the keyset using the ASCII email 
+	/* Read a present certificate from the keyset using the ASCII email
 	   address */
 	status = cryptGetPublicKey( cryptKeyset, &cryptCert, CRYPT_KEYID_EMAIL,
 								cert1ID );
 	if( cryptStatusError( status ) )
-		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status, 
+		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status,
 							  __LINE__ ) );
 	printf( "Successfully read cert for '%s'.\n", cert1ID );
 	cryptDestroyCert( cryptCert );
@@ -177,10 +179,10 @@ static int connectCertstoreClient( void )
 	status = cryptGetPublicKey( cryptKeyset, &cryptCert, CRYPT_KEYID_EMAIL,
 								cert2ID );
 	if( status == CRYPT_ERROR_NOTFOUND )
-		printf( "Successfully processed not-present code for '%s'.\n", 
+		printf( "Successfully processed not-present code for '%s'.\n",
 				cert2ID );
 	else
-		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status, 
+		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status,
 							  __LINE__ ) );
 
 	/* Read the certificate from the keyset using the base64-encoded certID.
@@ -190,7 +192,7 @@ static int connectCertstoreClient( void )
 	status = cryptGetPublicKey( cryptKeyset, &cryptCert, CRYPT_KEYID_EMAIL,
 								cert1ID );
 	if( cryptStatusError( status ) )
-		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status, 
+		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status,
 							  __LINE__ ) );
 	printf( "Successfully read cert for '%s'.\n", cert1ID );
 	cryptDestroyCert( cryptCert );
@@ -223,22 +225,15 @@ int testSessionHTTPCertstoreClientServer( void )
 	int status;
 
 	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &certstoreServerThread,
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, certstoreServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
 	status = connectCertstoreClient();
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
@@ -275,6 +270,10 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 	printf( "%sTesting %sRTCS session...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "" );
 
+	/* Acquire the init mutex if we're the server */
+	if( isServer )
+		waitMutex();
+
 	/* Create the RTCS session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
 	if( status == CRYPT_ERROR_PARAM3 )	/* RTCS session access not available */
@@ -303,7 +302,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			cryptDestroyContext( cryptPrivateKey );
 			}
 		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptSession, "cryptSetAttribute()",
+			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
 
 		/* Add the cert store that we'll be using to provide revocation
@@ -321,6 +320,15 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			cryptDestroySession( cryptSession );
 			return( CRYPT_ERROR_NOTAVAIL );
 			}
+		if( status == CRYPT_ERROR_OPEN )
+			{
+			/* The keyset is available, but it hasn't been created yet by an
+			   earlier self-test, this isn't a reason to abort processing */
+			puts( "SVR: Certificate store hasn't been created yet by "
+				  "earlier tests, aborting\n     RTCS responder test.\n" );
+			cryptDestroySession( cryptSession );
+			return( CRYPT_ERROR_NOTAVAIL );
+			}
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( cryptSession,
@@ -328,8 +336,11 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			cryptKeysetClose( cryptCertStore );
 			}
 		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptSession, "cryptSetAttribute()",
+			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
+
+		/* Tell the client that we're ready to go */
+		releaseMutex();
 		}
 	else
 		{
@@ -366,6 +377,14 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 									   __LINE__ ) );
 			}
 #endif /* Kludges for incorrect/missing authorityInfoAccess values */
+
+		/* Wait for the server to finish initialising */
+		if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+			{
+			printf( "Timed out waiting for server to initialise, line %d.\n",
+					__LINE__ );
+			return( FALSE );
+			}		
 		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 	if( isServer )
@@ -478,7 +497,13 @@ int testSessionRTCS( void )
 	}
 int testSessionRTCSServer( void )
 	{
-	return( connectRTCS( CRYPT_SESSION_RTCS_SERVER, FALSE, FALSE ) );
+	int status;
+
+	createMutex();
+	status = connectRTCS( CRYPT_SESSION_RTCS_SERVER, FALSE, FALSE );
+	destroyMutex();
+
+	return( status );
 	}
 
 /* Perform a client/server loopback test */
@@ -499,22 +524,15 @@ int testSessionRTCSClientServer( void )
 	int status;
 
 	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &rtcsServerThread,
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, rtcsServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 2000 );
 
 	/* Connect to the local server */
 	status = connectRTCS( CRYPT_SESSION_RTCS, FALSE, TRUE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
@@ -578,6 +596,10 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 	printf( "%sTesting %sOCSP session...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "" );
 
+	/* Acquire the init mutex if we're the server */
+	if( isServer )
+		waitMutex();
+
 	/* Create the OCSP session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
 	if( status == CRYPT_ERROR_PARAM3 )	/* OCSP session access not available */
@@ -606,7 +628,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			cryptDestroyContext( cryptPrivateKey );
 			}
 		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptSession, "cryptSetAttribute()",
+			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
 
 		/* Add the cert store that we'll be using to provide revocation
@@ -631,14 +653,17 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			cryptKeysetClose( cryptCertStore );
 			}
 		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptSession, "cryptSetAttribute()",
+			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
+
+		/* Tell the client that we're ready to go */
+		releaseMutex();
 		}
 	else
 		{
 		/* Create the OCSP request */
 		if( !initOCSP( &cryptOCSPRequest, localSession ? 1 : OCSP_SERVER_NO,
-					   FALSE, revokedCert, multipleCerts, 
+					   FALSE, revokedCert, multipleCerts,
 					   CRYPT_SIGNATURELEVEL_NONE, CRYPT_UNUSED ) )
 			return( FALSE );
 
@@ -679,6 +704,14 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 				return( attrErrorExit( cryptSession, "cryptSetAttribute()",
 									   status, __LINE__ ) );
 			}
+
+		/* Wait for the server to finish initialising */
+		if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+			{
+			printf( "Timed out waiting for server to initialise, line %d.\n",
+					__LINE__ );
+			return( FALSE );
+			}		
 		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 	if( isServer )
@@ -779,8 +812,8 @@ static int connectOCSPDirect( void )
 #endif /* Kludges for incorrect/missing authorityInfoAccess values */
 
 	/* Check the cert directly against the server.  This check quantises the
-	   result into a basic pass/fail that doesn't provide as much detail as 
-	   the low-level OCSP check, so it's not unusual to get 
+	   result into a basic pass/fail that doesn't provide as much detail as
+	   the low-level OCSP check, so it's not unusual to get
 	   CRYPT_ERROR_INVALID whent he low-level check returns
 	   CRYPT_OCSPSTATUS_UNKNOWN */
 	status = cryptCheckCert( cryptCert, cryptSession );
@@ -831,22 +864,15 @@ int testSessionOCSPClientServer( void )
 	int status;
 
 	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &ocspServerThread,
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, ocspServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
 	status = connectOCSP( CRYPT_SESSION_OCSP, FALSE, FALSE, TRUE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
@@ -880,7 +906,7 @@ int testSessionOCSPClientServer( void )
 	#9 - SeMarket
 			None
 	#10 - Entrust
-			None 
+			None
 	#11 - nCipher
 			Very slow TSP, requires extended read timeout to get response */
 
@@ -901,9 +927,10 @@ int testSessionOCSPClientServer( void )
 
 /* Perform a timestamping test */
 
-static int testTSP( const CRYPT_SESSION cryptSession, 
-					const BOOLEAN isServer, 
-					const BOOLEAN isRecycledConnection )
+static int testTSP( const CRYPT_SESSION cryptSession,
+					const BOOLEAN isServer,
+					const BOOLEAN isRecycledConnection,
+					const BOOLEAN localSession )
 	{
 	int status;
 
@@ -920,7 +947,7 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 			{
 			/* If we're moving further data over an existing connection,
 			   delete the message imprint from the previous run */
-			status = cryptDeleteAttribute( cryptSession, 
+			status = cryptDeleteAttribute( cryptSession,
 										   CRYPT_SESSINFO_TSP_MSGIMPRINT );
 			if( cryptStatusError( status ) )
 				{
@@ -930,7 +957,7 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 				}
 			}
 		status = cryptSetAttribute( cryptSession,
-									CRYPT_SESSINFO_TSP_MSGIMPRINT, 
+									CRYPT_SESSINFO_TSP_MSGIMPRINT,
 									hashContext );
 		if( cryptStatusError( status ) )
 			{
@@ -939,9 +966,23 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 			return( FALSE );
 			}
 		cryptDestroyContext( hashContext );
-		}
 
-	/* Active the session and timestamp the message */
+		/* If it's a local session, wait for the server to finish 
+		   initialising */
+		if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
+			{
+			printf( "Timed out waiting for server to initialise, line %d.\n",
+					__LINE__ );
+			return( FALSE );
+			}		
+		}
+	else
+		/* We're the server, if this is the first connect tell the client 
+		   that we're ready to go */
+		if( !isRecycledConnection )
+			releaseMutex();
+
+	/* Activate the session and timestamp the message */
 #if TSP_SERVER_NO == 11
 	cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 30 );
 #endif /* Very slow TSP */
@@ -977,7 +1018,7 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 		BYTE buffer[ BUFFER_SIZE ];
 		int bytesCopied;
 
-		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE, 
+		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE,
 									&cryptEnvelope );
 		if( cryptStatusError( status ) )
 			{
@@ -985,7 +1026,7 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 						   "timestamp", status, __LINE__ );
 			return( FALSE );
 			}
-		status = cryptPopData( cryptEnvelope, buffer, BUFFER_SIZE, 
+		status = cryptPopData( cryptEnvelope, buffer, BUFFER_SIZE,
 							   &bytesCopied );
 		if( cryptStatusError( status ) )
 			{
@@ -1014,6 +1055,10 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 	printf( "%sTesting %sTSP session...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "" );
 
+	/* Acquire the init mutex if we're the server */
+	if( isServer )
+		waitMutex();
+
 	/* Create the TSP session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
 	if( status == CRYPT_ERROR_PARAM3 )	/* TSP session access not available */
@@ -1025,7 +1070,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 		return( FALSE );
 		}
 
-	/* Set up the server information and activate the session.  Since this 
+	/* Set up the server information and activate the session.  Since this
 	   test explicitly tests the ability to handle persistent connections,
 	   we don't use the general-purpose request/response server wrapper,
 	   which only uses persistent connections opportunistically */
@@ -1065,7 +1110,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 				"error code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	status = testTSP( cryptSession, isServer, FALSE );
+	status = testTSP( cryptSession, isServer, FALSE, localSession );
 	if( status <= 0 )
 		return( status );
 
@@ -1074,23 +1119,23 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 		{
 		int connectionActive;
 
-		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE, 
+		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
 									&connectionActive );
 		if( cryptStatusError( status ) || !connectionActive )
 			{
 			printExtError( cryptSession, isServer ? \
 						   "SVR: Persistent connection has been closed, "
 							"operation" : \
-						   "Persistent connection has been closed, operation", 
+						   "Persistent connection has been closed, operation",
 						   status, __LINE__ );
 			return( FALSE );
 			}
 
 		/* Activate the connection to handle two more requests */
-		status = testTSP( cryptSession, isServer, TRUE );
+		status = testTSP( cryptSession, isServer, TRUE, FALSE );
 		if( status <= 0 )
 			return( status );
-		status = testTSP( cryptSession, isServer, TRUE );
+		status = testTSP( cryptSession, isServer, TRUE, FALSE );
 		if( status <= 0 )
 			return( status );
 		}
@@ -1105,7 +1150,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 		}
 
 	printf( isServer ? "SVR: %sTSP server session succeeded.\n\n" : \
-					   "%sTSP client session succeeded.\n\n", 
+					   "%sTSP client session succeeded.\n\n",
 			persistentConnection ? "Persistent " : "" );
 	return( TRUE );
 	}
@@ -1141,22 +1186,15 @@ int testSessionTSPClientServer( void )
 	int status;
 
 	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tspServerThread,
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tspServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
 	status = connectTSP( CRYPT_SESSION_TSP, CRYPT_UNUSED, FALSE, TRUE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
@@ -1174,22 +1212,17 @@ int testSessionTSPClientServerPersistent( void )
 	int status;
 
 	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tspServerPersistentThread,
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tspServerPersistentThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
 	status = connectTSP( CRYPT_SESSION_TSP, CRYPT_UNUSED, TRUE, TRUE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
+
+#endif /* TEST_SESSION */

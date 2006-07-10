@@ -22,7 +22,7 @@
   #pragma convert( 0 )
 #endif /* IBM medium iron */
 
-/* Test data to use for the self-test.  The PGP test data is slightly 
+/* Test data to use for the self-test.  The PGP test data is slightly
    different since it's not possible to include a null character in data
    generated via the command-line versions of PGP.  On EBCDIC systems we
    have to hardcode in the character codes since the pre-generated data
@@ -40,7 +40,7 @@
 #define ENVELOPE_TESTDATA_SIZE			15
 #define ENVELOPE_COMPRESSEDDATA_SIZE	20
 
-/* To convert a CMS blob into an S/MIME message, base64 encode it and add 
+/* To convert a CMS blob into an S/MIME message, base64 encode it and add
    the following header:
 
 	To: <address>
@@ -53,8 +53,8 @@
 
 	<base64-encoded data>
 
-   To allow the inner message to be processed by a mailer, the contents will 
-   themselves have to be MIME-formatted: 
+   To allow the inner message to be processed by a mailer, the contents will
+   themselves have to be MIME-formatted:
 
 	MIME-Version: 1.0
 	Content-Type: text/plain;charset="us-ascii"
@@ -67,6 +67,8 @@
    are disabled */
 
 extern int keyReadOK, doubleCertOK;
+
+#if defined( TEST_ENVELOPE ) || defined( TEST_SESSION )	/* For TSP enveloping */
 
 /****************************************************************************
 *																			*
@@ -231,7 +233,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 			C_CHR label[ CRYPT_MAX_TEXTSIZE + 1 ];
 			int labelLength;
 
-			status = cryptGetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT, 
+			status = cryptGetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT,
 										&cryptEnvInfo );
 			if( cryptStatusError( status ) )
 				{
@@ -252,17 +254,17 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 					break;
 
 				case CRYPT_ENVINFO_PRIVATEKEY:
-					/* If there's no decryptoin password present, the 
+					/* If there's no decryptoin password present, the
 					   private key must be passed in directly */
 					if( stringEnvInfo == NULL )
 						{
-						status = cryptSetAttribute( envelope, 
-													CRYPT_ENVINFO_PRIVATEKEY, 
+						status = cryptSetAttribute( envelope,
+													CRYPT_ENVINFO_PRIVATEKEY,
 													numericEnvInfo );
 						if( cryptStatusError( status ) )
 							{
 							printf( "Attempt to add private key failed with "
-									"error code %d, line %d.\n", status, 
+									"error code %d, line %d.\n", status,
 									__LINE__ );
 							return( status );
 							}
@@ -270,7 +272,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 						break;
 						}
 
-					/* A private-key keyset is present in the envelope, we 
+					/* A private-key keyset is present in the envelope, we
 					   need a password to decrypt the key */
 					status = cryptGetAttributeString( envelope,
 									CRYPT_ENVINFO_PRIVATEKEY_LABEL,
@@ -333,7 +335,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 					return( SENTINEL );
 				}
 			}
-		while( cryptSetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT_GROUP, 
+		while( cryptSetAttribute( envelope, CRYPT_ATTRIBUTE_CURRENT_GROUP,
 								  CRYPT_CURSOR_NEXT ) == CRYPT_OK );
 
 		/* If we're using some form of encrypted enveloping, report the
@@ -366,7 +368,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 			{
 			const int initialBytesIn = bytesIn;
 
-			status = cryptPushData( envelope, buffer + initialBytesIn, 
+			status = cryptPushData( envelope, buffer + initialBytesIn,
 									length - initialBytesIn, &bytesIn );
 			if( cryptStatusError( status ) )
 				{
@@ -391,7 +393,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 				bytesIn, length, __LINE__ );
 		return( SENTINEL );
 		}
-	status = cryptGetAttribute( envelope, CRYPT_ENVINFO_CONTENTTYPE, 
+	status = cryptGetAttribute( envelope, CRYPT_ENVINFO_CONTENTTYPE,
 								&contentType );
 	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_DATA )
 		printf( "Nested content type = %d.\n", contentType );
@@ -400,7 +402,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 	status = cryptFlushData( envelope );
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_COMPLETE )
 		{
-		printf( "cryptFlushData() failed with error code %d, line %d.\n", 
+		printf( "cryptFlushData() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		printErrorAttributeInfo( envelope );
 		return( status );
@@ -449,7 +451,7 @@ static int destroyEnvelope( CRYPT_ENVELOPE envelope )
 
 /* Test raw data enveloping */
 
-static int envelopeData( const char *dumpFileName, 
+static int envelopeData( const char *dumpFileName,
 						 const BOOLEAN useDatasize,
 						 const int bufferSize,
 						 const CRYPT_FORMAT_TYPE formatType )
@@ -521,7 +523,7 @@ static int envelopeData( const char *dumpFileName,
 		count != length + ( ( formatType == CRYPT_FORMAT_PGP ) ? 8 : \
 							useDatasize ? 17 : 25 ) )
 		{
-		printf( "Enveloped data length %d, should be %d.\n", 
+		printf( "Enveloped data length %d, should be %d.\n",
 				count, length + 25 );
 		return( FALSE );
 		}
@@ -598,20 +600,21 @@ int testEnvelopeDataLargeBuffer( void )
 
 /* Test compressed enveloping */
 
-static int envelopeDecompress( BYTE *buffer, const int length )
+static int envelopeDecompress( BYTE *buffer, const int bufSize,
+							   const int length )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	BYTE smallBuffer[ 128 ];
 	int count, zeroCount;
 
-	/* Create the envelope, push in the data, and pop the de-enveloped 
+	/* Create the envelope, push in the data, and pop the de-enveloped
 	   result */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
 	count = pushData( cryptEnvelope, buffer, length, NULL, 0 );
 	if( cryptStatusError( count ) )
 		return( FALSE );
-	count = popData( cryptEnvelope, buffer, FILEBUFFER_SIZE );
+	count = popData( cryptEnvelope, buffer, bufSize );
 	if( cryptStatusError( count ) )
 		{
 #ifdef __hpux
@@ -625,9 +628,9 @@ static int envelopeDecompress( BYTE *buffer, const int length )
 		return( FALSE );
 		}
 
-	/* See what happens when we try and pop out more data.  This test is done 
+	/* See what happens when we try and pop out more data.  This test is done
 	   because some compressed-data formats don't indicate the end of the
-	   data properly, and we need to make sure that the de-enveloping code 
+	   data properly, and we need to make sure that the de-enveloping code
 	   handles this correctly */
 	zeroCount = popData( cryptEnvelope, smallBuffer, 128 );
 	if( zeroCount != 0 )
@@ -644,7 +647,7 @@ static int envelopeDecompress( BYTE *buffer, const int length )
 	return( count );
 	}
 
-static int envelopeCompress( const char *dumpFileName, 
+static int envelopeCompress( const char *dumpFileName,
 							 const BOOLEAN useDatasize,
 							 const CRYPT_FORMAT_TYPE formatType )
 	{
@@ -717,8 +720,8 @@ static int envelopeCompress( const char *dumpFileName,
 
 	/* De-envelope the data and make sure that the result matches what we
 	   pushed */
-	count = envelopeDecompress( envelopedBuffer, count );
-	if( !count )
+	count = envelopeDecompress( envelopedBuffer, FILEBUFFER_SIZE, count );
+	if( count <= 0 )
 		return( FALSE );
 	if( count != dataCount || memcmp( buffer, envelopedBuffer, dataCount ) )
 		{
@@ -747,7 +750,7 @@ int testEnvelopeCompress( void )
 
 /* Test encrypted enveloping with a raw session key */
 
-static int envelopeSessionCrypt( const char *dumpFileName, 
+static int envelopeSessionCrypt( const char *dumpFileName,
 								 const BOOLEAN useDatasize,
 								 const BOOLEAN useLargeBuffer,
 								 const CRYPT_FORMAT_TYPE formatType )
@@ -758,9 +761,11 @@ static int envelopeSessionCrypt( const char *dumpFileName,
 								selectCipher( CRYPT_ALGO_IDEA ) : \
 								selectCipher( CRYPT_ALGO_CAST );
 	BYTE *inBufPtr = ENVELOPE_TESTDATA, *outBufPtr = globalBuffer;
-	const int length = useLargeBuffer ? \
-							( ( INT_MAX <= 32768L ) ? 16384 : 1048576 ) : \
-							ENVELOPE_TESTDATA_SIZE;
+#if defined( __MSDOS16__ ) || defined( __WIN16__ )
+	const int length = useLargeBuffer ? 16384 : ENVELOPE_TESTDATA_SIZE;
+#else
+	const int length = useLargeBuffer ? 1048576L : ENVELOPE_TESTDATA_SIZE;
+#endif /* 16- vs.32-bit systems */
 	const int bufSize = length + 128;
 	int count;
 
@@ -769,7 +774,7 @@ static int envelopeSessionCrypt( const char *dumpFileName,
 		int i;
 
 		printf( "Testing %sraw-session-key encrypted enveloping of large "
-				"data quantity...\n", 
+				"data quantity...\n",
 				( formatType == CRYPT_FORMAT_PGP ) ? "PGP " : "" );
 
 		/* Allocate a large buffer and fill it with a known value */
@@ -797,8 +802,8 @@ static int envelopeSessionCrypt( const char *dumpFileName,
 		}
 	else
 		{
-		/* PGP only allows a limited subset of algorithms and modes, in 
-		   addition we have to specifically check that IDEA is available 
+		/* PGP only allows a limited subset of algorithms and modes, in
+		   addition we have to specifically check that IDEA is available
 		   since it's possible to build cryptlib without IDEA support */
 		if( cryptAlgo != CRYPT_ALGO_IDEA )
 			{
@@ -820,12 +825,12 @@ static int envelopeSessionCrypt( const char *dumpFileName,
 		return( FALSE );
 	if( useDatasize && !useLargeBuffer )
 		{
-		/* Test the ability to destroy the context after it's been added 
-		   (we replace it with a different context that's used later for 
+		/* Test the ability to destroy the context after it's been added
+		   (we replace it with a different context that's used later for
 		   de-enveloping) */
 		cryptDestroyContext( cryptContext );
 		cryptCreateContext( &cryptContext, CRYPT_UNUSED, cryptAlgo );
-		cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEY, 
+		cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEY,
 								 "0123456789ABCDEF", 16 );
 		}
 	if( useDatasize )
@@ -917,7 +922,7 @@ int testEnvelopeSessionCryptLargeBuffer( void )
 
 /* Test encrypted enveloping */
 
-static int envelopeDecrypt( BYTE *buffer, const int length, 
+static int envelopeDecrypt( BYTE *buffer, const int length,
 							const CRYPT_CONTEXT cryptContext )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
@@ -937,7 +942,7 @@ static int envelopeDecrypt( BYTE *buffer, const int length,
 	return( count );
 	}
 
-static int envelopeCrypt( const char *dumpFileName, 
+static int envelopeCrypt( const char *dumpFileName,
 						  const BOOLEAN useDatasize,
 						  const CRYPT_FORMAT_TYPE formatType )
 	{
@@ -945,7 +950,7 @@ static int envelopeCrypt( const char *dumpFileName,
 	CRYPT_ENVELOPE cryptEnvelope;
 	int count;
 
-	printf( "Testing encrypted enveloping%s...\n", 
+	printf( "Testing encrypted enveloping%s...\n",
 			useDatasize ? " with datasize hint" : "" );
 
 	/* Create the session key context.  We don't check for errors here
@@ -954,7 +959,7 @@ static int envelopeCrypt( const char *dumpFileName,
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEY,
 							 "0123456789ABCDEF", 16 );
 
-	/* Create the envelope, push in a KEK and the data, pop the enveloped 
+	/* Create the envelope, push in a KEK and the data, pop the enveloped
 	   result, and destroy the envelope */
 	if( !createEnvelope( &cryptEnvelope, formatType ) || \
 		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_KEY, cryptContext ) )
@@ -979,7 +984,7 @@ static int envelopeCrypt( const char *dumpFileName,
 	/* De-envelope the data and make sure that the result matches what we
 	   pushed */
 	count = envelopeDecrypt( globalBuffer, count, cryptContext );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
 		memcmp( globalBuffer, ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE ) )
@@ -1013,7 +1018,7 @@ static int envelopePasswordDecrypt( BYTE *buffer, const int length )
 	   and destroy the envelope */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
-	count = pushData( cryptEnvelope, buffer, length, TEXT( "Password" ), 
+	count = pushData( cryptEnvelope, buffer, length, TEXT( "Password" ),
 					  paramStrlen( TEXT( "Password" ) ) );
 	if( cryptStatusError( count ) )
 		return( FALSE );
@@ -1024,9 +1029,9 @@ static int envelopePasswordDecrypt( BYTE *buffer, const int length )
 	return( count );
 	}
 
-static int envelopePasswordCrypt( const char *dumpFileName, 
-								  const BOOLEAN useDatasize, 
-								  const BOOLEAN useAltCipher, 
+static int envelopePasswordCrypt( const char *dumpFileName,
+								  const BOOLEAN useDatasize,
+								  const BOOLEAN useAltCipher,
 								  const BOOLEAN multiKeys,
 								  const CRYPT_FORMAT_TYPE formatType )
 	{
@@ -1046,8 +1051,8 @@ static int envelopePasswordCrypt( const char *dumpFileName,
 	/* Create the envelope, push in a password and the data, pop the
 	   enveloped result, and destroy the envelope */
 	if( !createEnvelope( &cryptEnvelope, formatType ) || \
-		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
-						   TEXT( "Password" ), 
+		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+						   TEXT( "Password" ),
 						   paramStrlen( TEXT( "Password" ) ) ) )
 		return( FALSE );
 	if( useAltCipher )
@@ -1056,15 +1061,23 @@ static int envelopePasswordCrypt( const char *dumpFileName,
 		int status;
 
 		/* Test enveloping with an IV-less stream cipher, which tests the
-		   handling of algorithms that can't be used to wrap themselves in 
+		   handling of algorithms that can't be used to wrap themselves in
 		   the RecipientInfo */
-		status = cryptCreateContext( &sessionKeyContext, CRYPT_UNUSED, 
+		status = cryptCreateContext( &sessionKeyContext, CRYPT_UNUSED,
 									 CRYPT_ALGO_RC4 );
+		if( status == CRYPT_ERROR_NOTAVAIL )
+			{
+			puts( "Warning: Couldn't set non-default envelope cipher "
+					"RC4, this may be disabled\n         in this build of "
+					"cryptlib.\n" );
+			destroyEnvelope( cryptEnvelope );
+			return( TRUE );
+			}
 		if( cryptStatusOK( status ) )
 			{
 			cryptGenerateKey( sessionKeyContext );
-			status = cryptSetAttribute( cryptEnvelope, 
-										CRYPT_ENVINFO_SESSIONKEY, 
+			status = cryptSetAttribute( cryptEnvelope,
+										CRYPT_ENVINFO_SESSIONKEY,
 										sessionKeyContext );
 			cryptDestroyContext( sessionKeyContext );
 			}
@@ -1076,14 +1089,14 @@ static int envelopePasswordCrypt( const char *dumpFileName,
 			}
 		}
 	if( multiKeys && \
-		( !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
-							 TEXT( "Password1" ), 
+		( !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+							 TEXT( "Password1" ),
 							 paramStrlen( TEXT( "Password1" ) ) ) || \
-		  !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
-							 TEXT( "Password2" ), 
+		  !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+							 TEXT( "Password2" ),
 							 paramStrlen( TEXT( "Password2" ) ) ) || \
-		  !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
-							 TEXT( "Password3" ), 
+		  !addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+							 TEXT( "Password3" ),
 							 paramStrlen( TEXT( "Password3" ) ) ) ) )
 		return( FALSE );
 	if( useDatasize )
@@ -1106,7 +1119,7 @@ static int envelopePasswordCrypt( const char *dumpFileName,
 	/* De-envelope the data and make sure that the result matches what we
 	   pushed */
 	count = envelopePasswordDecrypt( globalBuffer, count );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
 		memcmp( globalBuffer, ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE ) )
@@ -1135,7 +1148,7 @@ int testEnvelopePasswordCrypt( void )
 
 /* Test PKC-encrypted enveloping */
 
-static int envelopePKCDecrypt( BYTE *buffer, const int length, 
+static int envelopePKCDecrypt( BYTE *buffer, const int length,
 							   const KEYFILE_TYPE keyFileType )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
@@ -1147,13 +1160,13 @@ static int envelopePKCDecrypt( BYTE *buffer, const int length,
 	/* Create the envelope and push in the decryption keyset */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE, 
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  keysetName, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusOK( status ) )
 		status = addEnvInfoNumeric( cryptEnvelope,
 								CRYPT_ENVINFO_KEYSET_DECRYPT, cryptKeyset );
 	cryptKeysetClose( cryptKeyset );
-	if( !status )
+	if( status <= 0 )
 		return( FALSE );
 
 	/* Push in the data */
@@ -1167,21 +1180,19 @@ static int envelopePKCDecrypt( BYTE *buffer, const int length,
 	return( count );
 	}
 
-static int envelopePKCDecryptDirect( BYTE *buffer, const int length, 
+static int envelopePKCDecryptDirect( BYTE *buffer, const int length,
 									 const KEYFILE_TYPE keyFileType )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	CRYPT_CONTEXT cryptContext;
-	const C_STR keysetName = getKeyfileName( keyFileType, TRUE );
-	const C_STR password = getKeyfilePassword( keyFileType );
 	int count, status;
 
 	/* Create the envelope and get the decryption key */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
-	status = getPrivateKey( &cryptContext, 
-							getKeyfileName( keyFileType, TRUE ), 
-							getKeyfileUserID( keyFileType, TRUE ), 
+	status = getPrivateKey( &cryptContext,
+							getKeyfileName( keyFileType, TRUE ),
+							getKeyfileUserID( keyFileType, TRUE ),
 							getKeyfilePassword( keyFileType ) );
 	if( cryptStatusError( status ) )
 		return( FALSE );
@@ -1198,7 +1209,7 @@ static int envelopePKCDecryptDirect( BYTE *buffer, const int length,
 	return( count );
 	}
 
-static int envelopePKCCrypt( const char *dumpFileName, 
+static int envelopePKCCrypt( const char *dumpFileName,
 							 const BOOLEAN useDatasize,
 							 const KEYFILE_TYPE keyFileType,
 							 const BOOLEAN useRecipient,
@@ -1211,9 +1222,9 @@ static int envelopePKCCrypt( const char *dumpFileName,
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_HANDLE cryptKey;
 	const C_STR keysetName = getKeyfileName( keyFileType, FALSE );
-		/* When reading keys we have to explicitly use the first matching 
-		   key in the PGP 2.x keyring since the remaining keys are (for some 
-		   reason) stored unencrypted, and the keyring read code will 
+		/* When reading keys we have to explicitly use the first matching
+		   key in the PGP 2.x keyring since the remaining keys are (for some
+		   reason) stored unencrypted, and the keyring read code will
 		   disallow the use of the key if it's stored in this manner */
 	const C_STR keyID = ( keyFileType == KEYFILE_PGP ) ? \
 				TEXT( "test" ) : getKeyfileUserID( keyFileType, FALSE );
@@ -1247,11 +1258,11 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		printf( " and direct key add" );
 	puts( "..." );
 
-	/* If we're using OpenPGP keys we have to use a recipient rather than 
-	   adding the key directly because there's no way to tell in advance, when 
+	/* If we're using OpenPGP keys we have to use a recipient rather than
+	   adding the key directly because there's no way to tell in advance, when
 	   reading a dual DSA/Elgamal key, which one is actually needed.  Since
-	   the signing private key is the one which is usually needed in 
-	   standalone reads, a straight read will return the DSA rather than 
+	   the signing private key is the one which is usually needed in
+	   standalone reads, a straight read will return the DSA rather than
 	   Elgamal key.  It's only through the use of recipient info that the
 	   (cryptlib-internal) code can specify a preference for an encryption
 	   key */
@@ -1259,9 +1270,9 @@ static int envelopePKCCrypt( const char *dumpFileName,
 			!( keyFileType == KEYFILE_OPENPGP ) );
 
 	/* Open the keyset and either get the public key the hard (to make sure
-	   that this version works) or leave the keyset open to allow it to be 
+	   that this version works) or leave the keyset open to allow it to be
 	   added to the envelope */
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE, 
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  keysetName, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusError( status ) )
 		{
@@ -1295,21 +1306,21 @@ static int envelopePKCCrypt( const char *dumpFileName,
 	if( useRecipient )
 		{
 		/* Add recipient information to the envelope.  Since we can't
-		   guarantee for enveloping with cryptlib native key types that we 
-		   have a real public-key keyset available at this time (it's created 
-		   by a different part of the self-test code that may not have run 
-		   yet) we're actually reading the public key from the private-key 
-		   keyset.  Normally we couldn't do this, however since PKCS #15 
-		   doesn't store email addresses as key ID's (there's no need to), 
-		   the code will drop back to trying for a match on the key label.  
-		   Because of this we specify the private key label instead of a real 
-		   recipient email address.  Note that this trick only works because 
-		   of a coincidence of two or three factors and wouldn't normally be 
-		   used, it's only used here because we can't assume that a real 
+		   guarantee for enveloping with cryptlib native key types that we
+		   have a real public-key keyset available at this time (it's created
+		   by a different part of the self-test code that may not have run
+		   yet) we're actually reading the public key from the private-key
+		   keyset.  Normally we couldn't do this, however since PKCS #15
+		   doesn't store email addresses as key ID's (there's no need to),
+		   the code will drop back to trying for a match on the key label.
+		   Because of this we specify the private key label instead of a real
+		   recipient email address.  Note that this trick only works because
+		   of a coincidence of two or three factors and wouldn't normally be
+		   used, it's only used here because we can't assume that a real
 		   public-key keyset is available for use.
-		   
+
 		   An additional test that would be useful is the ability to handle
-		   multiple key exchange records, however the keyset kludge makes 
+		   multiple key exchange records, however the keyset kludge makes
 		   this rather difficult.  Since the functionality is tested by the
 		   use of multiple passwords in the conventional-encryption test
 		   earlier on this isn't a major issue */
@@ -1328,7 +1339,7 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		cryptDestroyObject( cryptKey );
 		}
 	if( useMultipleKeyex && \
-		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
+		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
 						   TEXT( "test" ), paramStrlen( TEXT( "test" ) ) ) )
 		return( FALSE );
 	if( useDatasize )
@@ -1354,7 +1365,7 @@ static int envelopePKCCrypt( const char *dumpFileName,
 		count = envelopePKCDecryptDirect( globalBuffer, count, keyFileType );
 	else
 		count = envelopePKCDecrypt( globalBuffer, count, keyFileType );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
 		memcmp( globalBuffer, ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE ) )
@@ -1416,7 +1427,7 @@ static int getSigCheckResult( const CRYPT_ENVELOPE cryptEnvelope,
 		return( FALSE );
 
 	/* Determine the result of the signature check */
-	status = cryptGetAttribute( cryptEnvelope, CRYPT_ATTRIBUTE_CURRENT, 
+	status = cryptGetAttribute( cryptEnvelope, CRYPT_ATTRIBUTE_CURRENT,
 								&value );
 	if( cryptStatusError( status ) )
 		{
@@ -1462,6 +1473,11 @@ static int getSigCheckResult( const CRYPT_ENVELOPE cryptEnvelope,
 			puts( "Signature is invalid." );
 			break;
 
+		case CRYPT_ERROR_NOTAVAIL:
+			puts( "Warning: Couldn't verify signature due to use of a "
+				  "deprecated/insecure\n         signature algorithm.\n" );
+			return( TRUE );
+
 		default:
 			printf( "Signature check failed, result = %d.\n", value );
 		}
@@ -1469,10 +1485,10 @@ static int getSigCheckResult( const CRYPT_ENVELOPE cryptEnvelope,
 	return( FALSE );
 	}
 
-static int envelopeSigCheck( BYTE *buffer, const int length, 
+static int envelopeSigCheck( BYTE *buffer, const int length,
 							 const CRYPT_CONTEXT hashContext,
 							 const CRYPT_CONTEXT sigContext,
-							 const BOOLEAN useRawKey, 
+							 const BOOLEAN useRawKey,
 							 const BOOLEAN useAltRawKey,
 							 const BOOLEAN detachedSig,
 							 const CRYPT_FORMAT_TYPE formatType )
@@ -1480,7 +1496,7 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 	CRYPT_ENVELOPE cryptEnvelope;
 	int count, status;
 
-	/* Create the envelope and push in the sig.check keyset if we're not 
+	/* Create the envelope and push in the sig.check keyset if we're not
 	   using a supplied context for the sig.check */
 	if( !createDeenvelope( &cryptEnvelope ) )
 		return( FALSE );
@@ -1490,7 +1506,7 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 
 		if( useRawKey )
 			status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
-									  CRYPT_KEYSET_FILE, 
+									  CRYPT_KEYSET_FILE,
 									  useAltRawKey ? \
 										OPENPGP_PUBKEY_FILE : PGP_PUBKEY_FILE,
 									  CRYPT_KEYOPT_READONLY );
@@ -1502,11 +1518,11 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 			status = addEnvInfoNumeric( cryptEnvelope,
 								CRYPT_ENVINFO_KEYSET_SIGCHECK, cryptKeyset );
 		cryptKeysetClose( cryptKeyset );
-		if( !status )
+		if( status <= 0 )
 			return( FALSE );
 		}
 
-	/* If the hash value is being supplied externally, add it to the envelope 
+	/* If the hash value is being supplied externally, add it to the envelope
 	   before we add the signature data */
 	if( detachedSig && hashContext != CRYPT_UNUSED )
 		{
@@ -1540,9 +1556,9 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 	if( !getSigCheckResult( cryptEnvelope, sigContext, TRUE ) )
 		return( FALSE );
 
-	/* If we supplied the sig-checking key, make sure that it's handled 
-	   correctly by the envelope.  We shouldn't be able to read it back from 
-	   a PGP envelope, and from a cryptlib/CMS/SMIME envelope we should get 
+	/* If we supplied the sig-checking key, make sure that it's handled
+	   correctly by the envelope.  We shouldn't be able to read it back from
+	   a PGP envelope, and from a cryptlib/CMS/SMIME envelope we should get
 	   back only a cert, not the full private key that we added */
 	if( sigContext != CRYPT_UNUSED )
 		{
@@ -1571,14 +1587,14 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 			if( cryptStatusError( status ) )
 				{
 				printf( "Couldn't retrieve signature check key from "
-						"envelope, status %d, line %d.\n", status, 
+						"envelope, status %d, line %d.\n", status,
 						__LINE__ );
 				return( FALSE );
 				}
-			
+
 			/* The signing key should be a pure cert, not the private key+
-			   cert combination that we pushed in.  Note that the following 
-			   will result in an error message being printed in 
+			   cert combination that we pushed in.  Note that the following
+			   will result in an error message being printed in
 			   addEnvInfoNumeric() */
 			createEnvelope( &testEnvelope, CRYPT_FORMAT_CRYPTLIB );
 			if( addEnvInfoNumeric( testEnvelope, CRYPT_ENVINFO_SIGNATURE,
@@ -1603,10 +1619,10 @@ static int envelopeSigCheck( BYTE *buffer, const int length,
 	}
 
 static int envelopeSign( const void *data, const int dataLength,
-						 const char *dumpFileName, const BOOLEAN useDatasize, 
-						 const BOOLEAN useRawKey, const BOOLEAN useAltRawKey, 
-						 const BOOLEAN useCustomHash, 
-						 const BOOLEAN useSuppliedKey, 
+						 const char *dumpFileName, const BOOLEAN useDatasize,
+						 const BOOLEAN useRawKey, const BOOLEAN useAltRawKey,
+						 const BOOLEAN useCustomHash,
+						 const BOOLEAN useSuppliedKey,
 						 const CRYPT_FORMAT_TYPE formatType )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
@@ -1626,7 +1642,7 @@ static int envelopeSign( const void *data, const int dataLength,
 			( useDatasize && ( formatType != CRYPT_FORMAT_PGP ) ) ? \
 			" with datasize hint" : "" );
 	if( useCustomHash )
-		printf( " %s custom hash", 
+		printf( " %s custom hash",
 				( formatType == CRYPT_FORMAT_PGP ) ? "with" :"and" );
 	printf( " using %s", useAltRawKey ? "raw DSA key" : \
 			useRawKey ? "raw public key" : useSuppliedKey ? \
@@ -1643,7 +1659,7 @@ static int envelopeSign( const void *data, const int dataLength,
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptGetPrivateKey( cryptKeyset, &cryptContext,
-										 CRYPT_KEYID_NAME, TEXT( "test" ), 
+										 CRYPT_KEYID_NAME, TEXT( "test" ),
 										 useAltRawKey ? TEXT( "test1" ) : \
 														TEXT( "test10" ) );
 			cryptKeysetClose( cryptKeyset );
@@ -1671,11 +1687,12 @@ static int envelopeSign( const void *data, const int dataLength,
 		/* Add the (nonstandard) hash algorithm information.  We need to do
 		   this before we add the signing key since it's automatically
 		   associated with the last hash algorithm added */
-		cryptCreateContext( &hashContext, CRYPT_UNUSED, CRYPT_ALGO_MD5 );
+		cryptCreateContext( &hashContext, CRYPT_UNUSED,
+							CRYPT_ALGO_RIPEMD160 );
 		status = addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_HASH,
 									hashContext );
 		cryptDestroyContext( hashContext );
-		if( !status )
+		if( status <= 0 )
 			return( FALSE );
 		}
 	if( !addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
@@ -1694,7 +1711,7 @@ static int envelopeSign( const void *data, const int dataLength,
 		status = addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_HASH,
 									hashContext );
 		cryptDestroyContext( hashContext );
-		if( !status )
+		if( status <= 0 )
 			return( FALSE );
 		}
 	if( cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
@@ -1723,10 +1740,10 @@ static int envelopeSign( const void *data, const int dataLength,
 
 	/* De-envelope the data and make sure that the result matches what we
 	   pushed */
-	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
+	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
 							  ( useSuppliedKey ) ? cryptContext : CRYPT_UNUSED,
 							  useRawKey, useAltRawKey, FALSE, formatType );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != dataLength || memcmp( globalBuffer, data, dataLength ) )
 		{
@@ -1786,7 +1803,8 @@ int testEnvelopeSign( void )
 
 static int envelopeSignOverflow( const void *data, const int dataLength,
 								 const char *dumpFileName,
-								 const CRYPT_FORMAT_TYPE formatType )
+								 const CRYPT_FORMAT_TYPE formatType,
+								 const char *description )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	CRYPT_CONTEXT cryptContext;
@@ -1800,9 +1818,10 @@ static int envelopeSignOverflow( const void *data, const int dataLength,
 			  "enveloping..." );
 		return( TRUE );
 		}
-	printf( "Testing %ssigned enveloping with forced overflow...\n",
+	printf( "Testing %ssigned enveloping with forced overflow in %s...\n",
 			( formatType == CRYPT_FORMAT_PGP ) ? "PGP " : \
-			( formatType == CRYPT_FORMAT_SMIME ) ? "S/MIME " : "" );
+			( formatType == CRYPT_FORMAT_SMIME ) ? "S/MIME " : "",
+			description );
 
 	/* Get the private key */
 	status = getPrivateKey( &cryptContext, USER_PRIVKEY_FILE,
@@ -1814,7 +1833,7 @@ static int envelopeSignOverflow( const void *data, const int dataLength,
 		return( FALSE );
 		}
 
-	/* Create the envelope and push in the signing key and any extra 
+	/* Create the envelope and push in the signing key and any extra
 	   information */
 	if( !createEnvelope( &cryptEnvelope, formatType ) )
 		return( FALSE );
@@ -1831,7 +1850,7 @@ static int envelopeSignOverflow( const void *data, const int dataLength,
 	if( cryptStatusError( status ) )
 		{
 		printf( "Couldn't set envelope parameters to force overflow, line "
-				"%d.\n", status, __LINE__ );
+				"%d.\n", __LINE__ );
 		return( FALSE );
 		}
 
@@ -1852,29 +1871,29 @@ static int envelopeSignOverflow( const void *data, const int dataLength,
 				"CRYPT_ERROR_OVERFLOW,\n  line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	status = cryptPopData( cryptEnvelope, localBuffer, 8192 + 4096, 
+	status = cryptPopData( cryptEnvelope, localBuffer, 8192 + 4096,
 						   &bytesOut );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptPopData() #1 failed with status %d, line %d.\n", 
-				status, bytesOut, dataLength, __LINE__ );
+		printf( "cryptPopData() #1 failed with status %d, line %d.\n",
+				status, __LINE__ );
 		return( FALSE );
 		}
 	localBufPos = bytesOut;
 	status = cryptFlushData( cryptEnvelope );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptFlushData() failed with error code %d, line %d.\n", 
+		printf( "cryptFlushData() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		printErrorAttributeInfo( cryptEnvelope );
 		return( FALSE );
 		}
-	status = cryptPopData( cryptEnvelope, localBuffer + localBufPos, 
+	status = cryptPopData( cryptEnvelope, localBuffer + localBufPos,
 						   8192 + 4096 - localBufPos, &bytesOut );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptPopData() #2 failed with status %d, line %d.\n", 
-				status, bytesOut, dataLength, __LINE__ );
+		printf( "cryptPopData() #2 failed with status %d, line %d.\n",
+				status, __LINE__ );
 		return( FALSE );
 		}
 	localBufPos += bytesOut;
@@ -1887,10 +1906,10 @@ static int envelopeSignOverflow( const void *data, const int dataLength,
 
 	/* De-envelope the data and make sure that the result matches what we
 	   pushed */
-	bytesOut = envelopeSigCheck( localBuffer, localBufPos, CRYPT_UNUSED, 
-								 CRYPT_UNUSED, FALSE, FALSE, FALSE, 
+	bytesOut = envelopeSigCheck( localBuffer, localBufPos, CRYPT_UNUSED,
+								 CRYPT_UNUSED, FALSE, FALSE, FALSE,
 								 formatType );
-	if( !bytesOut )
+	if( bytesOut <= 0 )
 		return( FALSE );
 	if( bytesOut != dataLength || memcmp( localBuffer, data, dataLength ) )
 		{
@@ -1907,17 +1926,17 @@ int testEnvelopeSignOverflow( void )
 	{
 	BYTE buffer[ 8192 + 1024 ];
 
-	/* Push in just the right amount of data to force an overflow when we 
+	/* Push in just the right amount of data to force an overflow when we
 	   generate the signature, to check overflow handling in the enveloping
 	   code.
-	   
-	   For PGP it's almost impossible to invoke overflow handling since the 
-	   enveloping code is set up to either emit the signature directly into 
-	   the buffer or, via an over-conservative estimation of buffer space, 
-	   ensure that the user leaves enough space in the buffer for the entire 
-	   sig.  For an estimated space requirement of 256 bytes, 8192 - 280 
+
+	   For PGP it's almost impossible to invoke overflow handling since the
+	   enveloping code is set up to either emit the signature directly into
+	   the buffer or, via an over-conservative estimation of buffer space,
+	   ensure that the user leaves enough space in the buffer for the entire
+	   sig.  For an estimated space requirement of 256 bytes, 8192 - 280
 	   will force the sig into the auxBuffer, but since this is an over-
-	   conservative estimate it'll then be flushed straight into the 
+	   conservative estimate it'll then be flushed straight into the
 	   envelope buffer.  The only way to actually force overflow handling
 	   would be to use the longest possible key size and a cert with a large
 	   issuerAndSerialNumber.
@@ -1936,13 +1955,13 @@ int testEnvelopeSignOverflow( void )
 	   overflow on signing.
 	   */
 	memset( buffer, '*', 8192 + 1024 );
-	if( !envelopeSignOverflow( buffer, 8192 - 280, "env_sigo.pgp", CRYPT_FORMAT_PGP ) )
+	if( !envelopeSignOverflow( buffer, 8192 - 280, "env_sigo.pgp", CRYPT_FORMAT_PGP, "signature" ) )
 		return( FALSE );	/* PGP format, raw key */
-	if( !envelopeSignOverflow( buffer, 8384 - 6, "env_sigo2.pgp", CRYPT_FORMAT_PGP ) )
+	if( !envelopeSignOverflow( buffer, 8384 - 6, "env_sigo2.pgp", CRYPT_FORMAT_PGP, "seg.boundary" ) )
 		return( FALSE );	/* PGP format, raw key */
-	if( !envelopeSignOverflow( buffer, 8192 - 1152, "env_csgo1", CRYPT_FORMAT_SMIME ) )
+	if( !envelopeSignOverflow( buffer, 8192 - 1152, "env_csgo1", CRYPT_FORMAT_SMIME, "signing certs" ) )
 		return( FALSE );	/* Datasize, certificate, S/MIME semantics */
-	return( envelopeSignOverflow( buffer, 8192 - 1280, "env_csgo2", CRYPT_FORMAT_SMIME ) );
+	return( envelopeSignOverflow( buffer, 8192 - 1280, "env_csgo2", CRYPT_FORMAT_SMIME, "signature" ) );
 	}						/* Datasize, certificate, S/MIME semantics */
 
 /* Test authenticated (MACd) enveloping */
@@ -1963,8 +1982,8 @@ static int envelopeAuthent( const void *data, const int dataLength,
 	if( !createEnvelope( &cryptEnvelope, CRYPT_FORMAT_CRYPTLIB ) || \
 		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_MAC,
 							TRUE ) || \
-		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD, 
-						   TEXT( "Password" ), 
+		!addEnvInfoString( cryptEnvelope, CRYPT_ENVINFO_PASSWORD,
+						   TEXT( "Password" ),
 						   paramStrlen( TEXT( "Password" ) ) ) )
 		return( FALSE );
 
@@ -2019,8 +2038,8 @@ int testEnvelopeAuthenticate( void )
 	{
 	/* As of mid 2003 there are no known implementations of this CMS
 	   mechanism, any attempt to use it will trigger an assertion in the
-	   enveloping code intended to catch things like this so we don't try
-	   and exercise it */
+	   enveloping code intended to catch things like this so that we don't
+	   try and exercise it */
 	return( TRUE );
 
 	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE,
@@ -2043,22 +2062,22 @@ static int displaySigResult( const CRYPT_ENVELOPE cryptEnvelope,
 							 const BOOLEAN firstSig )
 	{
 	CRYPT_CERTIFICATE signerInfo;
-	BOOLEAN sigStatus = FALSE;
+	BOOLEAN sigStatus;
 	int status;
 
 	/* Determine the result of the signature check.  We only display the
-	   attributes for the first sig since this operation walks the attribute 
+	   attributes for the first sig since this operation walks the attribute
 	   list,which moves the attribute cursor */
-	sigStatus = getSigCheckResult( cryptEnvelope, sigCheckContext, 
+	sigStatus = getSigCheckResult( cryptEnvelope, sigCheckContext,
 								   firstSig );
 	if( sigCheckContext != CRYPT_UNUSED )
-		/* If the sig.check key is provided externally (which in practice we 
-		   only do for PGP sigs), there's no signer info or extra data 
+		/* If the sig.check key is provided externally (which in practice we
+		   only do for PGP sigs), there's no signer info or extra data
 		   present */
 		return( sigStatus );
 
 	/* Report on the signer and signature info.  We continue even if the sig.
-	   status is bad since we can still try and display signing info even if 
+	   status is bad since we can still try and display signing info even if
 	   the check fails */
 	status = cryptGetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
 								&signerInfo );
@@ -2129,6 +2148,18 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 			}
 		}
 	count = pushData( cryptEnvelope, signedData, signedDataLength, NULL, 0 );
+	if( count == CRYPT_ERROR_NOTAVAIL && \
+		!( detachedSig || hasTimestamp || checkData ) )
+		{
+		/* Some old signed data uses deprecated or now-broken algorithms
+		   which will produce a CRYPT_ERROR_NOTAVAIL if we try and verify
+		   the signature, treat this as a special case */
+		puts( "Warning: The hash/signature algorithm required to verify "
+			  "the signed data\n         isn't enabled in this build of "
+			  "cryptlib, can't verify the\n         signature." );
+		destroyEnvelope( cryptEnvelope );
+		return( TRUE );
+		}
 	if( !cryptStatusError( count ) )
 		{
 		if( detachedSig )
@@ -2143,8 +2174,8 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 	if( cryptStatusError( count ) )
 		return( FALSE );
 
-	/* Display the details of the envelope signature and check whether 
-	   there's more information such as a timestamp or a second signature 
+	/* Display the details of the envelope signature and check whether
+	   there's more information such as a timestamp or a second signature
 	   present */
 	status = displaySigResult( cryptEnvelope, sigCheckContext, TRUE );
 	if( status == TRUE && hasTimestamp )
@@ -2152,7 +2183,7 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 		CRYPT_ENVELOPE cryptTimestamp;
 		int contentType;
 
-		/* Try and get the timestamp info.  We can't safely use 
+		/* Try and get the timestamp info.  We can't safely use
 		   displaySigResult() on this because many timestamps are stripped-
 		   down minimal-size CMS messages with no additional sig-checking
 		   info present, so we just read the CMS content-type to make sure
@@ -2227,7 +2258,7 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 			  "enveloping..." );
 		return( TRUE );
 		}
-	printf( "Testing %s %s%s", isPGP ? "PGP" : "CMS", 
+	printf( "Testing %s %s%s", isPGP ? "PGP" : "CMS",
 			useExtAttributes ? "extended " : "",
 			detachedSig ? "detached signature" : \
 				dualSig ? "dual signature" : "signed enveloping" );
@@ -2246,8 +2277,8 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 		printf( " and timestamp" );
 	puts( "..." );
 
-	/* Get the private key.  If we're applying two signatures, we also get 
-	   a second signing key.  Since the dual-key file test has created a 
+	/* Get the private key.  If we're applying two signatures, we also get
+	   a second signing key.  Since the dual-key file test has created a
 	   second signing key, we use that as the most convenient one */
 	if( externalSignContext != CRYPT_UNUSED )
 		cryptContext = externalSignContext;
@@ -2280,7 +2311,7 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
 							cryptContext ) )
 		return( FALSE );
-	if( dualSig && 
+	if( dualSig &&
 		!addEnvInfoNumeric( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
 							cryptContext2 ) )
 		return( FALSE );
@@ -2299,18 +2330,27 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 		{
 		CRYPT_CERTIFICATE cmsAttributes;
 
-		/* Add an ESS security label and signing description as signing 
+		/* Add an ESS security label and signing description as signing
 		   attributes */
 		cryptCreateCert( &cmsAttributes, CRYPT_UNUSED,
 						 CRYPT_CERTTYPE_CMS_ATTRIBUTES );
 		status = cryptSetAttributeString( cmsAttributes,
 							CRYPT_CERTINFO_CMS_SECLABEL_POLICY,
-							TEXT( "1 3 6 1 4 1 9999 1" ), 
+							TEXT( "1 3 6 1 4 1 9999 1" ),
 							paramStrlen( TEXT( "1 3 6 1 4 1 9999 1" ) ) );
 		if( cryptStatusOK( status ) )
 			status = cryptSetAttribute( cmsAttributes,
 							CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION,
 							CRYPT_CLASSIFICATION_SECRET );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttributeString( cmsAttributes,
+							CRYPT_CERTINFO_CMS_SECLABEL_CATTYPE,
+							TEXT( "1 3 6 1 4 1 9999 2" ),
+							paramStrlen( TEXT( "1 3 6 1 4 1 9999 2" ) ) );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttributeString( cmsAttributes,
+							CRYPT_CERTINFO_CMS_SECLABEL_CATVALUE,
+							"\x04\x04\x01\x02\x03\x04", 6 );
 		if( cryptStatusOK( status ) )
 			status = cryptSetAttributeString( cmsAttributes,
 							CRYPT_CERTINFO_CMS_SIGNINGDESCRIPTION,
@@ -2333,16 +2373,16 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 
 		/* Create the TSP session, add the TSA URL, and add it to the
 		   envelope */
-		status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, 
+		status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
 									 CRYPT_SESSION_TSP );
 		if( status == CRYPT_ERROR_PARAM3 )	/* TSP session access not available */
 			return( CRYPT_ERROR_NOTAVAIL );
-		status = cryptSetAttributeString( cryptSession, 
-										  CRYPT_SESSINFO_SERVER_NAME, 
-										  TSP_DEFAULTSERVER_NAME, 
+		status = cryptSetAttributeString( cryptSession,
+										  CRYPT_SESSINFO_SERVER_NAME,
+										  TSP_DEFAULTSERVER_NAME,
 										  paramStrlen( TSP_DEFAULTSERVER_NAME ) );
 		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptSession, "cryptSetAttributeString()", 
+			return( attrErrorExit( cryptSession, "cryptSetAttributeString()",
 								   status, __LINE__ ) );
 		status = cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_TIMESTAMP,
 									cryptSession );
@@ -2383,7 +2423,7 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 
 	/* Tell them what happened */
 	printf( "%s %s has size %d bytes.\n", isPGP ? "PGP" : "CMS",
-			( detachedSig ) ? "detached signature" : "signed data", 
+			( detachedSig ) ? "detached signature" : "signed data",
 			count );
 	debugDump( detachedSig ?
 				 ( !isPGP ? \
@@ -2417,14 +2457,14 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 		}
 
 	/* Make sure that the signature is valid */
-	status = cmsEnvelopeSigCheck( globalBuffer, count, 
-								  isPGP ? cryptContext : CRYPT_UNUSED, 
+	status = cmsEnvelopeSigCheck( globalBuffer, count,
+								  isPGP ? cryptContext : CRYPT_UNUSED,
 								  hashContext, detachedSig, FALSE, TRUE );
 	if( hashContext != CRYPT_UNUSED )
 		cryptDestroyContext( hashContext );
 	if( isPGP )
 		cryptDestroyContext( cryptContext );
-	if( !status )
+	if( status <= 0 )
 		return( FALSE );
 
 	if( detachedSig )
@@ -2483,8 +2523,7 @@ int testSessionEnvTSP( void )
 	return( cmsEnvelopeSign( TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, FALSE, CRYPT_UNUSED, CRYPT_FORMAT_CMS ) );
 	}						/* Datasize, attributes, timestamp */
 
-static int cmsImportSignedData( const char *fileName, const int fileNo,
-								const BOOLEAN isDetachedSig )
+static int cmsImportSignedData( const char *fileName, const int fileNo )
 	{
 	BYTE *bufPtr = globalBuffer;
 	char msgBuffer[ 128 ];
@@ -2502,7 +2541,7 @@ static int cmsImportSignedData( const char *fileName, const int fileNo,
 		}
 	sprintf( msgBuffer, "S/MIME SignedData #%d", fileNo );
 	count = readFileData( fileName, msgBuffer, bufPtr, count );
-	if( !count )
+	if( count <= 0 )
 		{
 		if( bufPtr != globalBuffer )
 			free( bufPtr );
@@ -2510,46 +2549,14 @@ static int cmsImportSignedData( const char *fileName, const int fileNo,
 		}
 
 	/* Check the signature on the data */
-	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED, 
-								  FALSE, ( fileNo == 6 ) ? TRUE : FALSE, 
+	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED,
+								  FALSE, ( fileNo == 6 ) ? TRUE : FALSE,
 								  FALSE );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );
 	if( status )
 		puts( "S/MIME SignedData import succeeded.\n" );
 	return( status );
-	}
-
-int testCMSEnvelopeSignedDataImport( void )
-	{
-	FILE *filePtr;
-	BYTE fileName[ BUFFER_SIZE ];
-	int i;
-
-	/* Make sure that the test data is present so we can return a useful 
-	   error message */
-	filenameFromTemplate( fileName, SMIME_SIG_FILE_TEMPLATE, 1 );
-	if( ( filePtr = fopen( fileName, "rb" ) ) == NULL )
-		{
-		puts( "Couldn't find S/MIME SignedData file, skipping test of "
-			  "SignedData import..." );
-		return( TRUE );
-		}
-	fclose( filePtr );
-
-	/* There are many encoding variations possible for signed data so we try
-	   a representative sample to make sure that the code works in all 
-	   cases */
-	for( i = 1; i <= 6; i++ )
-		{
-		filenameFromTemplate( fileName, SMIME_SIG_FILE_TEMPLATE, i );
-		if( !cmsImportSignedData( fileName, i, ( i == 5 ) ? TRUE : FALSE ) && \
-			i != 5 )	/* AuthentiCode sig check fails for some reason */
-			return( FALSE );
-		}
-
-	puts( "Import of S/MIME SignedData succeeded.\n" );
-	return( TRUE );
 	}
 
 /* Test CMS enveloping/de-enveloping */
@@ -2580,7 +2587,7 @@ static int cmsEnvelopeDecrypt( const void *envelopedData,
 								CRYPT_ENVINFO_KEYSET_DECRYPT, cryptKeyset );
 		cryptKeysetClose( cryptKeyset );
 		}
-	if( !status )
+	if( status <= 0 )
 		return( FALSE );
 
 	/* Push in the data */
@@ -2640,7 +2647,7 @@ static int cmsEnvelopeCrypt( const char *dumpFileName,
 					printf( " with datasize hint" );
 	puts( "..." );
 
-	/* Get the public key.  We use assorted variants to make sure that they 
+	/* Get the public key.  We use assorted variants to make sure that they
 	   all work */
 	if( externalCryptContext != CRYPT_UNUSED )
 		{
@@ -2746,6 +2753,64 @@ static int cmsEnvelopeCrypt( const char *dumpFileName,
 	/* Clean up */
 	puts( "Enveloping of CMS public-key encrypted data succeeded.\n" );
 	return( TRUE );
+	}
+
+static int cmsImportEnvelopedData( const char *fileName, const int fileNo )
+	{
+	CRYPT_ENVELOPE cryptEnvelope;
+	BYTE *bufPtr = globalBuffer;
+	char msgBuffer[ 128 ];
+	int count, bytesIn, byteCount = 0, status;
+
+	/* Read the test data */
+	count = getFileSize( fileName ) + 10;
+	if( count >= BUFFER_SIZE )
+		{
+		if( ( bufPtr = malloc( count ) ) == NULL )
+			{
+			printf( "Couldn't allocate test buffer of %d bytes.\n", count );
+			return( FALSE );
+			}
+		}
+	sprintf( msgBuffer, "S/MIME EnvelopedData #%d", fileNo );
+	count = readFileData( fileName, msgBuffer, bufPtr, count );
+	if( count <= 0 )
+		{
+		if( bufPtr != globalBuffer )
+			free( bufPtr );
+		return( count );
+		}
+
+	/* Make sure that we can parse the data */
+	if( !createDeenvelope( &cryptEnvelope ) )
+		{
+		if( bufPtr != globalBuffer )
+			free( bufPtr );
+		return( FALSE );
+		}
+	status = cryptPushData( cryptEnvelope, bufPtr, count, &bytesIn );
+	while( status == CRYPT_ERROR_UNDERFLOW )
+		{
+		byteCount += bytesIn;
+		status = cryptPushData( cryptEnvelope, bufPtr + byteCount,
+								count - byteCount, &bytesIn );
+		}
+	destroyEnvelope( cryptEnvelope );
+	if( bufPtr != globalBuffer )
+		free( bufPtr );
+	if( status == CRYPT_ENVELOPE_RESOURCE )
+		/* When we get to the CRYPT_ENVELOPE_RESOURCE stage we know that 
+		   we've successfully processed all of the recipients, because
+		   cryptlib is asking us for a key to continue */
+		status = CRYPT_OK;
+	if( cryptStatusOK( status ) )
+		{
+		puts( "S/MIME EnvelopedData import succeeded.\n" );
+		return( TRUE );
+		}
+	else
+		printf( "Couldn't de-envelope data, status = %d.\n", status );
+	return( FALSE );
 	}
 
 int testCMSEnvelopePKCCrypt( void )
@@ -2856,24 +2921,91 @@ int testCMSEnvelopePKCCryptDoubleCert( void )
 *																			*
 ****************************************************************************/
 
+/* Import S/MIME signed data */
+
+int testCMSEnvelopeSignedDataImport( void )
+	{
+	FILE *filePtr;
+	BYTE fileName[ BUFFER_SIZE ];
+	int i;
+
+	/* Make sure that the test data is present so that we can return a
+	   useful error message */
+	filenameFromTemplate( fileName, SMIME_SIG_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( fileName, "rb" ) ) == NULL )
+		{
+		puts( "Couldn't find S/MIME SignedData file, skipping test of "
+			  "SignedData import..." );
+		return( TRUE );
+		}
+	fclose( filePtr );
+
+	/* There are many encoding variations possible for signed data so we try
+	   a representative sample to make sure that the code works in all
+	   cases */
+	for( i = 1; i <= 7; i++ )
+		{
+		filenameFromTemplate( fileName, SMIME_SIG_FILE_TEMPLATE, i );
+		if( !cmsImportSignedData( fileName, i ) && i != 5 )
+			/* AuthentiCode sig check fails for some reason */
+			return( FALSE );
+		}
+
+	puts( "Import of S/MIME SignedData succeeded.\n" );
+	return( TRUE );
+	}
+
+/* Import S/MIME encrypted data */
+
+int testCMSEnvelopePKCCryptImport( void )
+	{
+	FILE *filePtr;
+	BYTE fileName[ BUFFER_SIZE ];
+	int i;
+
+	/* Make sure that the test data is present so that we can return a
+	   useful error message */
+	filenameFromTemplate( fileName, SMIME_ENV_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( fileName, "rb" ) ) == NULL )
+		{
+		puts( "Couldn't find S/MIME EnvelopedData file, skipping test of "
+			  "EnvelopedData import..." );
+		return( TRUE );
+		}
+	fclose( filePtr );
+
+	/* Enveloped data requires decryption keys that aren't generally
+	   available, so all that we do in this case is make sure that we can
+	   parse the data */
+	for( i = 1; i <= 1; i++ )
+		{
+		filenameFromTemplate( fileName, SMIME_ENV_FILE_TEMPLATE, i );
+		if( !cmsImportEnvelopedData( fileName, i ) )
+			return( FALSE );
+		}
+
+	puts( "Import of S/MIME EnvelopedData succeeded.\n" );
+	return( TRUE );
+	}
+
 /* Import PGP 2.x and OpenPGP-generated password-encrypted data */
 
-int testEnvelopePasswordCryptImport( void )
+int testPGPEnvelopePasswordCryptImport( void )
 	{
 	BYTE fileName[ BUFFER_SIZE ];
 	int count;
 
 	/* Process the PGP 2.x data */
 	filenameFromTemplate( fileName, PGP_ENC_FILE_TEMPLATE, 1 );
-	count = readFileData( fileName, "PGP password-encrypted data", 
+	count = readFileData( fileName, "PGP password-encrypted data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePasswordDecrypt( globalBuffer, count );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -2883,26 +3015,26 @@ int testEnvelopePasswordCryptImport( void )
 
 	/* Process the OpenPGP data */
 	filenameFromTemplate( fileName, PGP_ENC_FILE_TEMPLATE, 2 );
-	count = readFileData( fileName, "OpenPGP password-encrypted data", 
+	count = readFileData( fileName, "OpenPGP password-encrypted data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( !envelopePasswordDecrypt( globalBuffer, count ) )
 		return( FALSE );
-	if( memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+	if( memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
 		return( FALSE );
 		}
 	filenameFromTemplate( fileName, PGP_ENC_FILE_TEMPLATE, 3 );
-	count = readFileData( fileName, "OpenPGP password-encrypted data", 
+	count = readFileData( fileName, "OpenPGP password-encrypted data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( !envelopePasswordDecrypt( globalBuffer, count ) )
 		return( FALSE );
-	if( memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+	if( memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -2914,34 +3046,34 @@ int testEnvelopePasswordCryptImport( void )
 
 /* Import PGP 2.x and OpenPGP-generated PKC-encrypted data */
 
-int testEnvelopePKCCryptImport( void )
+int testPGPEnvelopePKCCryptImport( void )
 	{
 	BYTE fileName[ BUFFER_SIZE ];
 	int count;
 
 	/* Process the PGP 2.x data */
 	filenameFromTemplate( fileName, PGP_PKE_FILE_TEMPLATE, 1 );
-	count = readFileData( fileName, "PGP-encrypted data", globalBuffer, 
+	count = readFileData( fileName, "PGP-encrypted data", globalBuffer,
 						  BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
 		return( FALSE );
 		}
 	filenameFromTemplate( fileName, PGP_PKE_FILE_TEMPLATE, 2 );
-	count = readFileData( fileName, "PGP (NAI)-encrypted data", globalBuffer, 
+	count = readFileData( fileName, "PGP (NAI)-encrypted data", globalBuffer,
 						  BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_NAIPGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( globalBuffer[ 0 ] != 0xA3 || globalBuffer[ 1 ] != 0x01 || \
 		globalBuffer[ 2 ] != 0x5B || globalBuffer[ 3 ] != 0x53 )
@@ -2951,19 +3083,20 @@ int testEnvelopePKCCryptImport( void )
 		}
 	puts( "Import of PGP-encrypted data succeeded." );
 
-	/* Process the OpenPGP data.  The first file uses RSA and 3DES, the 
-	   second uses Elgamal and AES with MDC, the third Elgamal and Blowfish 
-	   with MDC */
+	/* Process the OpenPGP data.  The first file uses RSA and 3DES, the
+	   second uses Elgamal and AES with MDC, the third Elgamal and Blowfish
+	   with MDC, and the fourth Elgamal and AES with MDC and partial
+	   lengths */
 	filenameFromTemplate( fileName, OPENPGP_PKE_FILE_TEMPLATE, 1 );
-	count = readFileData( fileName, "OpenPGP (GPG)-encrypted data", 
+	count = readFileData( fileName, "OpenPGP (GPG)-encrypted data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -2972,13 +3105,13 @@ int testEnvelopePKCCryptImport( void )
 	filenameFromTemplate( fileName, OPENPGP_PKE_FILE_TEMPLATE, 2 );
 	count = readFileData( fileName, "OpenPGP (GPG)-encrypted data with "
 						  "AES + MDC", globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_OPENPGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -2987,25 +3120,43 @@ int testEnvelopePKCCryptImport( void )
 	filenameFromTemplate( fileName, OPENPGP_PKE_FILE_TEMPLATE, 3 );
 	count = readFileData( fileName, "OpenPGP (GPG)-encrypted data with "
 						  "Blowfish + MDC", globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_OPENPGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
 		return( FALSE );
 		}
+#if 0
+	filenameFromTemplate( fileName, OPENPGP_PKE_FILE_TEMPLATE, 4 );
+	count = readFileData( fileName, "OpenPGP (GPG)-encrypted data with "
+						  "partial lengths", globalBuffer, BUFFER_SIZE );
+	if( count <= 0 )
+		return( FALSE );
+	count = envelopePKCDecrypt( globalBuffer, count, KEYFILE_OPENPGP_PARTIAL );
+	if( count <= 0 )
+		return( FALSE );
+	count = envelopeDecompress( globalBuffer, BUFFER_SIZE, count );
+	if( count <= 0 )
+		return( FALSE );
+	if( count < 600 || memcmp( globalBuffer, "\n\n<sect>Vorwort\n", 16 ) )
+		{
+		puts( "De-enveloped data != original data." );
+		return( FALSE );
+		}
+#endif
 	puts( "Import of OpenPGP-encrypted data succeeded.\n" );
 	return( TRUE );
 	}
 
 /* Import PGP 2.x and OpenPGP-generated signed data */
 
-int testEnvelopeSignedDataImport( void )
+int testPGPEnvelopeSignedDataImport( void )
 	{
 	CRYPT_CONTEXT hashContext;
 	BYTE fileName[ BUFFER_SIZE ];
@@ -3013,17 +3164,17 @@ int testEnvelopeSignedDataImport( void )
 
 	/* Process the PGP 2.x data */
 	filenameFromTemplate( fileName, PGP_SIG_FILE_TEMPLATE, 1 );
-	count = readFileData( fileName, "PGP-signed data", globalBuffer, 
+	count = readFileData( fileName, "PGP-signed data", globalBuffer,
 						  BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
-							  CRYPT_UNUSED, TRUE, FALSE, FALSE, 
+	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
+							  CRYPT_UNUSED, TRUE, FALSE, FALSE,
 							  CRYPT_FORMAT_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -3034,17 +3185,17 @@ int testEnvelopeSignedDataImport( void )
 	/* Process the OpenPGP (actually a weird 2.x/OpenPGP hybrid produced by
 	   PGP 5.0) data */
 	filenameFromTemplate( fileName, PGP_SIG_FILE_TEMPLATE, 2 );
-	count = readFileData( fileName, "PGP 2.x/OpenPGP-hybrid-signed data", 
+	count = readFileData( fileName, "PGP 2.x/OpenPGP-hybrid-signed data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
-							  CRYPT_UNUSED, TRUE, FALSE, FALSE, 
+	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
+							  CRYPT_UNUSED, TRUE, FALSE, FALSE,
 							  CRYPT_FORMAT_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -3054,17 +3205,17 @@ int testEnvelopeSignedDataImport( void )
 
 	/* Process the OpenPGP data */
 	filenameFromTemplate( fileName, PGP_SIG_FILE_TEMPLATE, 3 );
-	count = readFileData( fileName, "OpenPGP-signed data", 
+	count = readFileData( fileName, "OpenPGP-signed data",
 						  globalBuffer, BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
-							  CRYPT_UNUSED, TRUE, TRUE, FALSE, 
+	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
+							  CRYPT_UNUSED, TRUE, TRUE, FALSE,
 							  CRYPT_FORMAT_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	if( count != ENVELOPE_TESTDATA_SIZE || \
-		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA, 
+		memcmp( globalBuffer, ENVELOPE_PGP_TESTDATA,
 				ENVELOPE_TESTDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -3072,7 +3223,7 @@ int testEnvelopeSignedDataImport( void )
 		}
 	puts( "Import of OpenPGP-signed data succeeded." );
 
-	/* Process the OpenPGP detached signature data.  The data is provided 
+	/* Process the OpenPGP detached signature data.  The data is provided
 	   externally so we have to hash it ourselves.  Since PGP hashes further
 	   data after hashing the content, we can't complete the hashing but have
 	   to use the partially-completed hash */
@@ -3087,15 +3238,15 @@ int testEnvelopeSignedDataImport( void )
 		}
 	filenameFromTemplate( fileName, PGP_SIG_FILE_TEMPLATE, 4 );
 	count = readFileData( fileName, "OpenPGP-signed data with "
-						  "externally-supplied hash", globalBuffer, 
+						  "externally-supplied hash", globalBuffer,
 						  BUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeSigCheck( globalBuffer, count, hashContext, 
-							  CRYPT_UNUSED, TRUE, TRUE, TRUE, 
+	count = envelopeSigCheck( globalBuffer, count, hashContext,
+							  CRYPT_UNUSED, TRUE, TRUE, TRUE,
 							  CRYPT_FORMAT_PGP );
 	cryptDestroyContext( hashContext );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	puts( "Import of OpenPGP-signed data with externally-supplied hash "
 		  "succeeded.\n" );
@@ -3104,7 +3255,7 @@ int testEnvelopeSignedDataImport( void )
 
 /* Import PGP 2.x and OpenPGP-generated compressed data */
 
-int testEnvelopeCompressedDataImport( void )
+int testPGPEnvelopeCompressedDataImport( void )
 	{
 	BYTE fileName[ BUFFER_SIZE ], *bufPtr;
 	int count;
@@ -3119,28 +3270,28 @@ int testEnvelopeCompressedDataImport( void )
 
 	/* Process the PGP 2.x data */
 	filenameFromTemplate( fileName, PGP_COPR_FILE_TEMPLATE, 1 );
-	count = readFileData( fileName, "PGP 2.x compressed data", 
+	count = readFileData( fileName, "PGP 2.x compressed data",
 						  bufPtr, FILEBUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeDecompress( bufPtr, count );
-	if( count && memcmp( bufPtr, ENVELOPE_COMPRESSEDDATA, 
+	count = envelopeDecompress( bufPtr, FILEBUFFER_SIZE, count );
+	if( count && memcmp( bufPtr, ENVELOPE_COMPRESSEDDATA,
 						 ENVELOPE_COMPRESSEDDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
 		return( FALSE );
 		}
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	puts( "Import of PGP 2.x compressed data succeeded.\n" );
 
 	/* Process the OpenPGP nested data */
 	filenameFromTemplate( fileName, PGP_COPR_FILE_TEMPLATE, 2 );
-	count = readFileData( fileName, "OpenPGP compressed signed data", 
+	count = readFileData( fileName, "OpenPGP compressed signed data",
 						  bufPtr, FILEBUFFER_SIZE );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	count = envelopeDecompress( bufPtr, count );
+	count = envelopeDecompress( bufPtr, FILEBUFFER_SIZE, count );
 	if( count && \
 		( bufPtr[ 0 ] != 0x90 || bufPtr[ 1 ] != 0x0D || \
 		  bufPtr[ 2 ] != 0x03 || bufPtr[ 3 ] != 0x00 ) )
@@ -3148,16 +3299,16 @@ int testEnvelopeCompressedDataImport( void )
 		puts( "De-enveloped data != original data." );
 		return( FALSE );
 		}
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
 	memcpy( globalBuffer, bufPtr, count );
 	free( bufPtr );
-	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
-							  CRYPT_UNUSED, TRUE, TRUE, FALSE, 
+	count = envelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
+							  CRYPT_UNUSED, TRUE, TRUE, FALSE,
 							  CRYPT_FORMAT_PGP );
-	if( !count )
+	if( count <= 0 )
 		return( FALSE );
-	if( count && memcmp( globalBuffer, ENVELOPE_COMPRESSEDDATA, 
+	if( count && memcmp( globalBuffer, ENVELOPE_COMPRESSEDDATA,
 						 ENVELOPE_COMPRESSEDDATA_SIZE ) )
 		{
 		puts( "De-enveloped data != original data." );
@@ -3167,8 +3318,8 @@ int testEnvelopeCompressedDataImport( void )
 	return( TRUE );
 	}
 
-/* Generic test routines used for debugging.  These are only meant to be 
-   used interactively, and throw exceptions rather than returning status 
+/* Generic test routines used for debugging.  These are only meant to be
+   used interactively, and throw exceptions rather than returning status
    values */
 
 static void dataImport( int count, const BOOLEAN resultBad )
@@ -3236,7 +3387,7 @@ void xxxSignedDataImport( const char *fileName )
 		assert( 0 );
 	count = readFileData( fileName, "S/MIME test data", globalBuffer, count );
 	assert( count );
-	status = cmsEnvelopeSigCheck( globalBuffer, count, CRYPT_UNUSED, 
+	status = cmsEnvelopeSigCheck( globalBuffer, count, CRYPT_UNUSED,
 								  CRYPT_UNUSED, FALSE, FALSE, FALSE );
 	assert( status );
 	}
@@ -3253,3 +3404,5 @@ void xxxEncryptedDataImport( const char *fileName )
 	status = cmsEnvelopeDecrypt( globalBuffer, count, CRYPT_UNUSED, NULL );
 	assert( status );
 	}
+
+#endif /* TEST_ENVELOPE || TEST_SESSION */

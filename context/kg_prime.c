@@ -31,14 +31,10 @@
    } From this demonstration you can see that there is only one prime, and
    } it is ten. Therefore, the largest prime is ten.
 													-- The Usenet Oracle */
-#include <stdlib.h>
+
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "context.h"
-  #include "keygen.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "context.h"
   #include "keygen.h"
 #else
@@ -48,8 +44,6 @@
 #endif /* Compiler-specific includes */
 #if defined( INC_ALL )
   #include "bn_prime.h"
-#elif defined( INC_CHILD )
-  #include "../bn/bn_prime.h"
 #else
   #include "bn/bn_prime.h"
 #endif /* Compiler-specific includes */

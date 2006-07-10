@@ -40,6 +40,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"testlib/zsecrinhg"
 #define OPENPGP_PUBKEY_AES_FILE		"testlib/zpubrinap"
 #define OPENPGP_PRIVKEY_AES_FILE	"testlib/zsecrinas"
+#define OPENPGP_PUBKEY_RSA_FILE		"testlib/zpubrinrg"
+#define OPENPGP_PRIVKEY_RSA_FILE	"testlib/zsecrinrg"
+#define OPENPGP_PRIVKEY_PART_FILE	"testlib/zsecrinpp"
 #define NAIPGP_PUBKEY_FILE			"testlib/zpubringp"
 #define NAIPGP_PRIVKEY_FILE			"testlib/zsecrings"
 #define PKCS12_FILE					"testlib/zkey"
@@ -56,6 +59,8 @@
 #define PATHTEST_FILE_TEMPLATE		"testlib/zntest%d"
 #define SSHKEY_FILE_TEMPLATE		"testlib/zsshkey%d"
 #define PGPKEY_FILE_TEMPLATE		"testlib/zpgpkey%d"
+#define NOCHAIN_EE_FILE				"testlib/znochn_ee"
+#define NOCHAIN_CA_FILE				"testlib/znochn_ca"
 #define RTCS_OK_FILE				"testlib/zrtcsrok"
 #define OCSP_OK_FILE				"testlib/zocsprok"
 #define OCSP_REV_FILE				"testlib/zocsprrev"
@@ -70,7 +75,7 @@
 #define SCEP_CA_FILE_TEMPLATE		"testlib/zscepca%d"
 
 #define SMIME_SIG_FILE_TEMPLATE		"testlib/zsmime%d"
-#define SMIME_ENVELOPED_FILE		"testlib/zsmimem"
+#define SMIME_ENV_FILE_TEMPLATE		"testlib/zsmimem%d"
 #define PGP_ENC_FILE_TEMPLATE		"testlib/zenc%d"
 #define PGP_PKE_FILE_TEMPLATE		"testlib/zenc_pkp%d"
 #define OPENPGP_PKE_FILE_TEMPLATE	"testlib/enc_pkg%d"
@@ -111,6 +116,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	":testdata:secrinh.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		":testdata:pubrina.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	":testdata:secrina.skr"
+#define OPENPGP_PUBKEY_RSA_FILE		":testdata:pubrinr.gpg"
+#define OPENPGP_PRIVKEY_RSA_FILE	":testdata:secrinr.gpg"
+#define OPENPGP_PRIVKEY_PART_FILE	":testdata:secrinp.gpg"
 #define NAIPGP_PUBKEY_FILE			":testdata:pubring.pkr"
 #define NAIPGP_PRIVKEY_FILE			":testdata:secring.skr"
 #define PKCS12_FILE					":testdata:key.p12"
@@ -127,6 +135,8 @@
 #define PATHTEST_FILE_TEMPLATE		":testdata:ntest%d.p7s"
 #define SSHKEY_FILE_TEMPLATE		":testdata:sshkey%d.asc"
 #define PGPKEY_FILE_TEMPLATE		":testdata:pgpkey%d.asc"
+#define NOCHAIN_EE_FILE				":testdata:nochn_ee.der"
+#define NOCHAIN_CA_FILE				":testdata:nochn_ca.der"
 #define RTCS_OK_FILE				":testdata:rtcsrok.der"
 #define OCSP_OK_FILE				":testdata:ocsprok.der"
 #define OCSP_REV_FILE				":testdata:ocsprrev.der"
@@ -141,7 +151,7 @@
 #define SCEP_CA_FILE_TEMPLATE		":testdata:scep_ca%d.der"
 
 #define SMIME_SIG_FILE_TEMPLATE		":testdata:smime%d.p7s"
-#define SMIME_ENVELOPED_FILE		":testdata:smime.p7m"
+#define SMIME_ENV_FILE_TEMPLATE		":testdata:smime%d.p7m"
 #define PGP_ENC_FILE_TEMPLATE		":testdata:enc%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		":testdata:enc_pk%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	":testdata:enc_pk%d.gpg"
@@ -182,6 +192,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"DD:CLBGPG(SECRINH)"
 #define OPENPGP_PUBKEY_AES_FILE		"DD:CLBPKR(PUBRINA)"
 #define OPENPGP_PRIVKEY_AES_FILE	"DD:CLBSKR(SECRINA)"
+#define OPENPGP_PUBKEY_RSA_FILE		"DD:CLBGPG(PUBRINR)"
+#define OPENPGP_PRIVKEY_RSA_FILE	"DD:CLBGPG(SECRINR)"
+#define OPENPGP_PRIVKEY_PART_FILE	"DD:CLBGPG(SECRINP)"
 #define NAIPGP_PUBKEY_FILE			"DD:CLBPKR(PUBRING)"
 #define NAIPGP_PRIVKEY_FILE			"DD:CLBSKR(SECRING)"
 #define PKCS12_FILE					"DD:CLBP12(KEY)"
@@ -198,6 +211,8 @@
 #define PATHTEST_FILE_TEMPLATE		"DD:CLBDER(NTEST%d)"
 #define SSHKEY_FILE_TEMPLATE		"DD:CLBDER(SSHKEY%d)"
 #define PGPKEY_FILE_TEMPLATE		"DD:CLBDER(PGPKEY%d)"
+#define NOCHAIN_EE_FILE				"DD:CLBDER(NOCHNEE)"
+#define NOCHAIN_CA_FILE				"DD:CLBDER(NOCHNCA)"
 #define RTCS_OK_FILE				"DD:CLBDER(RTCSROK)"
 #define OCSP_OK_FILE				"DD:CLBDER(OCSPROK)"
 #define OCSP_REV_FILE				"DD:CLBDER(OCSPRREV)"
@@ -212,7 +227,7 @@
 #define SCEP_CA_FILE_TEMPLATE		"DD:CLBDER(SCEPCA%d)"
 
 #define SMIME_SIG_FILE_TEMPLATE		"DD:CLBP7S(SMIME%d)"
-#define SMIME_ENVELOPED_FILE		"DD:CLBP7M(SMIME)"
+#define SMIME_ENV_FILE_TEMPLATE		"DD:CLBP7M(SMIME%d)"
 #define PGP_ENC_FILE_TEMPLATE		"DD:CLBPGP(ENC%d)"
 #define PGP_PKE_FILE_TEMPLATE		"DD:CLBPGP(ENCPK%d)"
 #define OPENPGP_PKE_FILE_TEMPLATE	"DD:CLBGPG(ENCPK%d)"
@@ -253,6 +268,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	"zsecrinh.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		"zpubrina.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	"zsecrina.skr"
+#define OPENPGP_PUBKEY_RSA_FILE		"zpubrinr.gpg"
+#define OPENPGP_PRIVKEY_RSA_FILE	"zsecrinr.gpg"
+#define OPENPGP_PRIVKEY_PART_FILE	"zsecrinp.gpg"
 #define NAIPGP_PUBKEY_FILE			"zpubring.pkr"
 #define NAIPGP_PRIVKEY_FILE			"zsecring.skr"
 #define PKCS12_FILE					"zkey.p12"
@@ -269,6 +287,8 @@
 #define PATHTEST_FILE_TEMPLATE		"zntest%d.p7s"
 #define SSHKEY_FILE_TEMPLATE		"zsshkey%d.asc"
 #define PGPKEY_FILE_TEMPLATE		"zpgpkey%d.asc"
+#define NOCHAIN_EE_FILE				"znochn_ee.der"
+#define NOCHAIN_CA_FILE				"znochn_ca.der"
 #define RTCS_OK_FILE				"zrtcsrok.der"
 #define OCSP_OK_FILE				"zocsprok.der"
 #define OCSP_REV_FILE				"zocsprrev.der"
@@ -283,7 +303,7 @@
 #define SCEP_CA_FILE_TEMPLATE		"zscepca%d.der"
 
 #define SMIME_SIG_FILE_TEMPLATE		"zsmime%d.p7s"
-#define SMIME_ENVELOPED_FILE		"zsmime.p7m"
+#define SMIME_ENV_FILE_TEMPLATE		"zsmime%d.p7m"
 #define PGP_ENC_FILE_TEMPLATE		"zenc%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		"zenc_pk%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	"zenc_pk%d.gpg"
@@ -324,6 +344,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	L"\\Storage Card\\secrinh.gpg"
 #define OPENPGP_PUBKEY_AES_FILE		L"\\Storage Card\\pubrina.pkr"
 #define OPENPGP_PRIVKEY_AES_FILE	L"\\Storage Card\\secrina.skr"
+#define OPENPGP_PUBKEY_RSA_FILE		L"\\Storage Card\\pubrinr.gpg"
+#define OPENPGP_PRIVKEY_RSA_FILE	L"\\Storage Card\\secrinr.gpg"
+#define OPENPGP_PRIVKEY_PART_FILE	L"\\Storage Card\\secrinp.gpg"
 #define NAIPGP_PUBKEY_FILE			L"\\Storage Card\\pubring.pkr"
 #define NAIPGP_PRIVKEY_FILE			L"\\Storage Card\\secring.skr"
 #define PKCS12_FILE					L"\\Storage Card\\key.p12"
@@ -340,6 +363,8 @@
 #define PATHTEST_FILE_TEMPLATE		L"\\Storage Card\\ntest%d.p7s"
 #define SSHKEY_FILE_TEMPLATE		L"\\Storage Card\\sshkey%d.asc"
 #define PGPKEY_FILE_TEMPLATE		L"\\Storage Card\\pgpkey%d.asc"
+#define NOCHAIN_EE_FILE				L"\\Storage Card\\nochn_ee.der"
+#define NOCHAIN_CA_FILE				L"\\Storage Card\\nochn_ca.der"
 #define RTCS_OK_FILE				L"\\Storage Card\\rtcsrok.der"
 #define OCSP_OK_FILE				L"\\Storage Card\\ocsprok.der"
 #define OCSP_REV_FILE				L"\\Storage Card\\ocsprrev.der"
@@ -354,7 +379,7 @@
 #define SCEP_CA_FILE_TEMPLATE		L"\\Storage Card\\scep_ca%d.der"
 
 #define SMIME_SIG_FILE_TEMPLATE		L"\\Storage Card\\smime%d.p7s"
-#define SMIME_ENVELOPED_FILE		L"\\Storage Card\\smime.p7m"
+#define SMIME_ENV_FILE_TEMPLATE		L"\\Storage Card\\smime%d.p7m"
 #define PGP_ENC_FILE_TEMPLATE		L"\\Storage Card\\enc%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		L"\\Storage Card\\enc_pk%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	L"\\Storage Card\\enc_pk%d.gpg"
@@ -395,6 +420,9 @@
 #define OPENPGP_PRIVKEY_HASH_FILE	TEXT( "testdata/secrinh.gpg" )
 #define OPENPGP_PUBKEY_AES_FILE		TEXT( "testdata/pubrina.pkr" )
 #define OPENPGP_PRIVKEY_AES_FILE	TEXT( "testdata/secrina.skr" )
+#define OPENPGP_PUBKEY_RSA_FILE		TEXT( "testdata/pubrinr.gpg" )
+#define OPENPGP_PRIVKEY_RSA_FILE	TEXT( "testdata/secrinr.gpg" )
+#define OPENPGP_PRIVKEY_PART_FILE	TEXT( "testdata/secrinp.gpg" )
 #define NAIPGP_PUBKEY_FILE			TEXT( "testdata/pubring.pkr" )
 #define NAIPGP_PRIVKEY_FILE			TEXT( "testdata/secring.skr" )
 #define PKCS12_FILE					TEXT( "testdata/key.p12" )
@@ -411,6 +439,8 @@
 #define PATHTEST_FILE_TEMPLATE		TEXT( "testdata/ntest%d.p7s" )
 #define SSHKEY_FILE_TEMPLATE		TEXT( "testdata/sshkey%d.asc" )
 #define PGPKEY_FILE_TEMPLATE		TEXT( "testdata/pgpkey%d.asc" )
+#define NOCHAIN_EE_FILE				TEXT( "testdata/nochn_ee.der" )
+#define NOCHAIN_CA_FILE				TEXT( "testdata/nochn_ca.der" )
 #define RTCS_OK_FILE				TEXT( "testdata/rtcsrok.der" )
 #define OCSP_OK_FILE				TEXT( "testdata/ocsprok.der" )
 #define OCSP_REV_FILE				TEXT( "testdata/ocsprrev.der" )
@@ -425,7 +455,7 @@
 #define SCEP_CA_FILE_TEMPLATE		TEXT( "testdata/scep_ca%d.der" )
 
 #define SMIME_SIG_FILE_TEMPLATE		TEXT( "testdata/smime%d.p7s" )
-#define SMIME_ENVELOPED_FILE		TEXT( "testdata/smime.p7m" )
+#define SMIME_ENV_FILE_TEMPLATE		TEXT( "testdata/smime%d.p7m" )
 #define PGP_ENC_FILE_TEMPLATE		TEXT( "testdata/enc%d.pgp" )
 #define PGP_PKE_FILE_TEMPLATE		TEXT( "testdata/enc_pk%d.pgp" )
 #define OPENPGP_PKE_FILE_TEMPLATE	TEXT( "testdata/enc_pk%d.gpg" )

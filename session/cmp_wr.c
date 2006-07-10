@@ -5,18 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-  #include "session.h"
-  #include "cmp.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
   #include "session.h"
   #include "cmp.h"
 #else
@@ -543,14 +535,12 @@ static int writeErrorBody( STREAM *stream,
 static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 						   CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	CRYPT_HANDLE senderNameObject = \
-			( sessionInfoPtr->flags & SESSION_ISSERVER ) ? \
+	CRYPT_HANDLE senderNameObject = isServer( sessionInfoPtr ) ? \
 				sessionInfoPtr->privateKey : \
-			protocolInfo->cryptOnlyKey ? \
+									protocolInfo->cryptOnlyKey ? \
 				sessionInfoPtr->iAuthOutContext : \
 				sessionInfoPtr->iCertRequest;
-	const CRYPT_HANDLE recipNameObject = \
-			( sessionInfoPtr->flags & SESSION_ISSERVER ) ? \
+	const CRYPT_HANDLE recipNameObject = isServer( sessionInfoPtr ) ? \
 			sessionInfoPtr->iCertResponse : sessionInfoPtr->iAuthInContext;
 	STREAM nullStream;
 	RESOURCE_DATA msgData;
@@ -583,8 +573,7 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 		setMessageData( &msgData, NULL, 0 );
 		status = krnlSendMessage( senderNameObject, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_SUBJECT );
-		if( status == CRYPT_ERROR_NOTFOUND && \
-			!( sessionInfoPtr->flags & SESSION_ISSERVER ) && \
+		if( status == CRYPT_ERROR_NOTFOUND && !isServer( sessionInfoPtr ) && \
 			protocolInfo->operation == CTAG_PB_IR )
 			{
 			/* If there's no subject DN present and it's the first message 
@@ -653,7 +642,7 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 		sendClibID = TRUE;
 		}
 	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_CERTIDSENT ) && \
-		( ( ( sessionInfoPtr->flags & SESSION_ISSERVER ) && \
+		( ( isServer( sessionInfoPtr ) && \
 			protocolInfo->operation == CTAG_PB_GENM ) || \
 		  !protocolInfo->useMACsend ) )
 		{
@@ -688,8 +677,7 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 		if( senderNameObject != CRYPT_ERROR )
 			{
 			status = exportAttributeToStream( stream, senderNameObject, 
-											  CRYPT_IATTRIBUTE_SUBJECT,
-											  CRYPT_USE_DEFAULT );
+											  CRYPT_IATTRIBUTE_SUBJECT );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -699,8 +687,7 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 		if( recipNameObject != CRYPT_ERROR )
 			{
 			status = exportAttributeToStream( stream, recipNameObject, 
-											  CRYPT_IATTRIBUTE_SUBJECT,
-											  CRYPT_USE_DEFAULT );
+											  CRYPT_IATTRIBUTE_SUBJECT );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -829,7 +816,7 @@ int writePkiMessage( SESSION_INFO *sessionInfoPtr,
 		switch( bodyType )
 			{
 			case CMPBODY_NORMAL:
-				if( sessionInfoPtr->flags & SESSION_ISSERVER )
+				if( isServer( sessionInfoPtr ) )
 					status = writeResponseBody( &stream, sessionInfoPtr,
 												protocolInfo );
 				else
@@ -850,7 +837,7 @@ int writePkiMessage( SESSION_INFO *sessionInfoPtr,
 				break;
 
 			case CMPBODY_GENMSG:
-				if( sessionInfoPtr->flags & SESSION_ISSERVER )
+				if( isServer( sessionInfoPtr ) )
 					status = writeGenMsgBody( &stream, sessionInfoPtr,
 											  protocolInfo );
 				else

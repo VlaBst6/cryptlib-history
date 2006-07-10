@@ -9,7 +9,7 @@
 
 #define _KERNEL_DEFINED
 
-#if defined( INC_ALL ) || defined( INC_CHILD )
+#if defined( INC_ALL )
   #include "thread.h"
 #else
   #include "kernel/thread.h"
@@ -28,9 +28,9 @@
    RAY: No!  Nobody ever made them like this!  The architect was either a
         certified genius or an authentic wacko! */
 
-/* "There is a fine line between genius and insanity.  
-    I have erased this line" - Oscar Levant 
-	(or "Nullum magnum ingenium sine mixtura dementiae" if you want it in 
+/* "There is a fine line between genius and insanity.
+    I have erased this line" - Oscar Levant
+	(or "Nullum magnum ingenium sine mixtura dementiae" if you want it in
 	the usual style) */
 
 /****************************************************************************
@@ -145,7 +145,7 @@
 typedef struct {
 	/* Object type and value */
 	OBJECT_TYPE type;			/* Object type */
-	int subType;				/* Object subtype */
+	OBJECT_SUBTYPE subType;		/* Object subtype */
 	void *objectPtr;			/* Object data */
 	int objectSize;				/* Object data size */
 
@@ -210,7 +210,7 @@ typedef struct {
    allocated pseudorandomly under the control of an LFSR */
 
 typedef struct {
-	int lfsrMask, lfsrPoly;		/* LFSR state values */
+	long lfsrMask, lfsrPoly;	/* LFSR state values */
 	int objectHandle;			/* Current object handle */
 	} OBJECT_STATE_INFO;
 
@@ -260,13 +260,22 @@ typedef struct {
 	int refCount;				/* Reference count for handle */
 	} SEMAPHORE_INFO;
 
+/* A structure to store the details of a thread */
+
+typedef struct {
+	THREAD_FUNCTION threadFunction;	/* Function to call from thread */
+	THREAD_PARAMS threadParams;		/* Thread function parameters */
+	SEMAPHORE_TYPE semaphore;		/* Optional semaphore to set */
+	MUTEX_HANDLE syncHandle;		/* Handle to use for thread sync */
+	} THREAD_INFO;
+
 /* When the kernel closes down, it does so in a multi-stage process that's
    equivalent to Unix runlevels.  At the first level, all internal worker
    threads/tasks must exist.  At the next level, all messages to objects
    except destroy messages fail.  At the final level, all kernel-managed
    primitives such as mutexes and semaphores are no longer available */
 
-typedef enum { 
+typedef enum {
 	SHUTDOWN_LEVEL_NONE,		/* Normal operation */
 	SHUTDOWN_LEVEL_THREADS,		/* Internal threads must exit */
 	SHUTDOWN_LEVEL_MESSAGES,	/* Only destroy messages are valid */
@@ -318,11 +327,11 @@ typedef struct {
 #endif /* USE_THREADS */
 
 	/* The kernel message dispatcher queue */
-	MESSAGE_QUEUE_DATA messageQueue[ MESSAGE_QUEUE_SIZE ];
+	MESSAGE_QUEUE_DATA messageQueue[ MESSAGE_QUEUE_SIZE + 8 ];
 	int queueEnd;						/* Points past last queue element */
 
 	/* The kernel semaphores */
-	SEMAPHORE_INFO semaphoreInfo[ SEMAPHORE_LAST ];
+	SEMAPHORE_INFO semaphoreInfo[ SEMAPHORE_LAST + 8 ];
 #ifdef USE_THREADS
 	MUTEX_DECLARE_STORAGE( semaphore );
 #endif /* USE_THREADS */
@@ -334,6 +343,12 @@ typedef struct {
 #ifdef USE_THREADS
 	MUTEX_DECLARE_STORAGE( mutex1 );
 	MUTEX_DECLARE_STORAGE( mutex2 );
+	MUTEX_DECLARE_STORAGE( mutex3);
+#endif /* USE_THREADS */
+
+	/* The kernel thread data */
+#ifdef USE_THREADS
+	THREAD_INFO threadInfo;
 #endif /* USE_THREADS */
 
 	/* The kernel secure memory list and a lock to protect it */
@@ -514,8 +529,8 @@ int cloneObject( const int objectHandle, const int clonedObject,
 
 /* Prototypes for functions in sendmsg.c */
 
-int findTargetType( const int originalObjectHandle, const int targets );
-int checkTargetType( const int objectHandle, const int targets );
+int checkTargetType( const int objectHandle, const long targets );
+int findTargetType( const int originalObjectHandle, const long targets );
 int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr );
 
 /* Prototypes for functions in objects.c */

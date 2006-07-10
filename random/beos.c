@@ -10,8 +10,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include "crypt.h"
 
 /* These get defined by the Be headers */

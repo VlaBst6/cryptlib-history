@@ -1,22 +1,15 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Read Routines					*
-*						 Copyright Peter Gutmann 1996-2005					*
+*						 Copyright Peter Gutmann 1996-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "certattr.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
@@ -41,10 +34,6 @@
 #else
   #define TRACE_FIELDTYPE( attributeInfoPtr, stackPos )
 #endif /* NDEBUG */
-
-/* Prototypes for functions in certcomp.c */
-
-int oidToText( const BYTE *binaryOID, char *oid );
 
 /****************************************************************************
 *																			*
@@ -93,7 +82,9 @@ static int getFieldTag( STREAM *stream,
 			tag++;	/* Make sure that it doesn't match */
 		}
 
-	assert( tag > 0 && tag < 0xF0 );
+	assert( ( ( tag == FIELDTYPE_BLOB || tag == FIELDTYPE_DN ) && \
+			  !( attributeInfoPtr->flags & FL_OPTIONAL ) ) || \
+			( tag > 0 && tag < 0xF0 ) );
 	return( tag );
 	}
 
@@ -174,7 +165,7 @@ typedef struct {
 	} SETOF_STATE_INFO;
 
 typedef struct {
-	SETOF_STATE_INFO stateInfo[ SETOF_STATE_STACKSIZE ];
+	SETOF_STATE_INFO stateInfo[ SETOF_STATE_STACKSIZE + 8 ];
 	int stackPos;			/* Current position in stack */
 	} SETOF_STACK;
 
@@ -366,7 +357,7 @@ static int checkSetofEnd( STREAM *stream, SETOF_STACK *setofStack,
 static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 									const ATTRIBUTE_INFO *attributeInfoPtr )
 	{
-	BYTE oid[ MAX_OID_SIZE ];
+	BYTE oid[ MAX_OID_SIZE + 8 ];
 	int oidLength, sequenceLength, status;
 
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
@@ -375,8 +366,8 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 	/* Skip the header and read the OID.  We only check for a sane total
 	   length in the debug version since this isn't a fatal error */
 	readSequence( stream, &sequenceLength );
-	status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE,
-							BER_OBJECT_IDENTIFIER );
+	status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE,
+							 BER_OBJECT_IDENTIFIER );
 	if( cryptStatusError( status ) )
 		return( NULL );
 	sequenceLength -= oidLength;
@@ -532,7 +523,7 @@ static int readIdentifierFields( STREAM *stream,
 	while( peekTag( stream ) == BER_OBJECT_IDENTIFIER )
 		{
 		const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
-		BYTE oid[ MAX_OID_SIZE ];
+		BYTE oid[ MAX_OID_SIZE + 8 ];
 		BOOLEAN addField = TRUE;
 		static const int dummy = CRYPT_UNUSED;
 		int oidLength, status;
@@ -548,8 +539,8 @@ static int readIdentifierFields( STREAM *stream,
 		/* Read the OID and walk down the list of possible OIDs up to the end
 		   of the group of alternatives trying to match it to an allowed
 		   value */
-		status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE,
-								BER_OBJECT_IDENTIFIER );
+		status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE,
+								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
 			return( status );
 		while( oidLength != sizeofOID( attributeInfoPtr->oid ) || \
@@ -796,14 +787,31 @@ static int readAttributeField( STREAM *stream,
 			/* If it's a string type or a blob, read it in as a blob (the 
 			   only difference being that for a true blob we read the tag + 
 			   length as well) */
-			BYTE buffer[ 256 ];
+			BYTE buffer[ 256 + 8 ];
 
 			/* Read in the string to a maximum length of 256 bytes */
 			if( fieldType == FIELDTYPE_BLOB )
-				status = readRawObjectTag( stream, buffer, &length, 256, 
-										   CRYPT_UNUSED );
+				{
+				const int tag = peekTag( stream );
+
+				/* Reading in blob fields is somewhat difficult since these
+				   are typically used to read SET/SEQUENCE OF kitchensink
+				   values and so won't have a consistent tag that we can pass
+				   to readRawObject().  To get around this we peek ahead into
+				   the stream to get the tag and then pass that down to 
+				   readRawObject().  Note that this requires that the blob 
+				   have an internal structure (with its own { tag, length }
+				   data), since the caller has already stripped off the tag
+				   and length */
+				if( !cryptStatusError( tag ) )
+					status = readRawObject( stream, buffer, &length, 256, 
+											tag );
+				else
+					status = tag;
+				}
 			else
-				status = readOctetStringData( stream, buffer, &length, 256 );
+				status = readOctetStringData( stream, buffer, &length, \
+											  1, 256 );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
@@ -828,13 +836,13 @@ static int readAttributeField( STREAM *stream,
 
 		case BER_OBJECT_IDENTIFIER:
 			{
-			BYTE oid[ MAX_OID_SIZE ];
+			BYTE oid[ MAX_OID_SIZE + 8 ];
 
 			/* If it's an OID, we need to reassemble the entire OID since 
 			   this is the form expected by addAttributeField() */
 			oid[ 0 ] = BER_OBJECT_IDENTIFIER;	/* Add skipped tag */
-			status = readRawObjectData( stream, oid + 1, &length,
-										MAX_OID_SIZE - 1 );
+			status = readEncodedOID( stream, oid  + 1, &length, 
+									 MAX_OID_SIZE - 1, NO_TAG );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
@@ -866,10 +874,6 @@ static int readAttributeField( STREAM *stream,
 				deleteDN( &dnPtr );
 			return( status );
 			}
-		
-		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR );
 		}
 
 	assert( NOTREACHED );
@@ -989,19 +993,15 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			goto continueDecoding;
 			}
 
-		/* Non-encoding field: Check that it matches the required value and
-		   continue */
+		/* Non-encoding field: Skip it and continue */
 		if( attributeInfoPtr->flags & FL_NONENCODING )
 			{
-			BYTE data[ 64 ];
-			int dataLength;
-
 			/* Read the data and continue.  We don't check its value or set
 			   specific error information for reasons given under the SET-OF
 			   handling code above (value check) and optional field code below
 			   (error locus set) */
 			TRACE_FIELDTYPE( attributeInfoPtr, setofStack.stackPos );
-			status = readRawObject( stream, data, &dataLength, 64, CRYPT_UNUSED );
+			status = readUniversal( stream );
 			if( cryptStatusError( status ) )
 				return( status );
 			if( setofInfoPtr->endPos > 0 )
@@ -1311,7 +1311,7 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			do
 				{
 				const ATTRIBUTE_INFO *attributeInfoPtr;
-				BYTE oid[ MAX_OID_SIZE ];
+				BYTE oid[ MAX_OID_SIZE + 8 ];
 				int oidLength;
 
 				/* If we've run out of attributes without finding anything
@@ -1321,8 +1321,9 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 
 				/* Read the wrapper SEQUENCE and OID */
 				readSequence( stream, NULL );
-				status = readRawObject( stream, oid, &oidLength,
-										MAX_OID_SIZE, BER_OBJECT_IDENTIFIER );
+				status = readEncodedOID( stream, oid, &oidLength,
+										 MAX_OID_SIZE, 
+										 BER_OBJECT_IDENTIFIER );
 				if( cryptStatusError( status ) )
 					return( status );
 
@@ -1399,15 +1400,15 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 	while( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
 		{
 		const ATTRIBUTE_INFO *attributeInfoPtr;
-		BYTE oid[ MAX_OID_SIZE ];
+		BYTE oid[ MAX_OID_SIZE + 8 ];
 		BOOLEAN criticalFlag = FALSE, ignoreAttribute = FALSE;
 		int attributeLength;
 
 		/* Read the outer wrapper and determine the attribute type based on
 		   the OID */
 		readSequence( stream, NULL );
-		status = readRawObject( stream, oid, &length, MAX_OID_SIZE,
-								BER_OBJECT_IDENTIFIER );
+		status = readEncodedOID( stream, oid, &length, MAX_OID_SIZE,
+								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
 			return( status );
 		attributeInfoPtr = oidToAttribute( attributeType, oid );
@@ -1443,7 +1444,7 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 		if( wrapperTagSet )
 			status = readSet( stream, &attributeLength );
 		else
-			status = readOctetStringHole( stream, &attributeLength,
+			status = readOctetStringHole( stream, &attributeLength, 2,
 										  DEFAULT_TAG );
 		if( cryptStatusError( status ) )
 			{
@@ -1462,7 +1463,7 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			attributeInfoPtr->fieldID == CRYPT_CERTINFO_AUTHORITYKEYIDENTIFIER && \
 			attributeLength == 26 )
 			{
-			BYTE buffer[ 32 ];
+			BYTE buffer[ 32 + 8 ];
 			long offset = stell( stream );
 			int length2, length3;
 
@@ -1473,7 +1474,7 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			   isn't checked for here */
 			readSequence( stream, &length );
 			readConstructed( stream, &length2, 0 );
-			status = readOctetString( stream, buffer, &length3, 32 );
+			status = readOctetString( stream, buffer, &length3, 1, 32 );
 			if( cryptStatusOK( status ) && \
 				length == 24 && length2 == 22 && length3 == 20 )
 				{

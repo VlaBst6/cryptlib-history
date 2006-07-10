@@ -5,13 +5,9 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "context.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "context.h"
 #else
   #include "crypt.h"
@@ -61,7 +57,7 @@ typedef struct {
 	const int yLen; const BYTE y[ 64 ];
 	} DLP_PRIVKEY;
 
-static const FAR_BSS DLP_PRIVKEY dlpTestKey = {
+static const DLP_PRIVKEY FAR_BSS dlpTestKey = {
 	/* p */
 	64,
 	{ 0x8D, 0xF2, 0xA4, 0x94, 0x49, 0x22, 0x76, 0xAA,
@@ -104,7 +100,7 @@ static const FAR_BSS DLP_PRIVKEY dlpTestKey = {
 	  0x96, 0x30, 0xA7, 0x6B, 0x03, 0x0E, 0xE3, 0x33 }
 	};
 
-static const FAR_BSS BYTE shaM[] = {
+static const BYTE FAR_BSS shaM[] = {
 	0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
 	0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
 	0x9C, 0xD0, 0xD8, 0x9D
@@ -113,7 +109,7 @@ static const FAR_BSS BYTE shaM[] = {
 /* If we're doing a self-test using the FIPS 186 values we use the following
    fixed k data rather than a randomly-generated value */
 
-static const FAR_BSS BYTE kVal[] = {
+static const BYTE FAR_BSS kVal[] = {
 	0x35, 0x8D, 0xAD, 0x57, 0x14, 0x62, 0x71, 0x0F,
 	0x50, 0xE2, 0x54, 0xCF, 0x1A, 0x37, 0x6B, 0x2B,
 	0xDE, 0xAA, 0xDF, 0xBF
@@ -129,7 +125,7 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	/* Generate a signature with the private key */
 	setDLPParams( &dlpParams, shaM, 20, buffer, 128 );
 	dlpParams.inLen2 = -999;
-	status = capabilityInfoPtr->signFunction( contextInfoPtr, 
+	status = capabilityInfoPtr->signFunction( contextInfoPtr,
 						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
 	if( cryptStatusError( status ) )
 		return( FALSE );
@@ -139,7 +135,7 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	setDLPParams( &dlpParams, shaM, 20, NULL, 0 );
 	dlpParams.inParam2 = buffer;
 	dlpParams.inLen2 = sigSize;
-	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr, 
+	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr,
 						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
 	return( cryptStatusOK( status ) ? TRUE : FALSE );
 	}
@@ -168,6 +164,8 @@ static int selfTest( void )
 	pkcInfo->bnCTX = BN_CTX_new();
 	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
 	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
+	contextInfoPtr.type = CONTEXT_PKC;
+	initKeyRead( &contextInfoPtr );
 	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
 	BN_bin2bn( dlpTestKey.p, dlpTestKey.pLen, &pkcInfo->dlpParam_p );
 	BN_bin2bn( dlpTestKey.q, dlpTestKey.qLen, &pkcInfo->dlpParam_q );
@@ -247,12 +245,12 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   the random data pool may not exist yet, and may in fact never exist in
 	   a satisfactory condition if there isn't enough randomness present in
 	   the system to generate cryptographically strong random numbers.  To
-	   bypass this problem, if the caller passes in a second length parameter 
-	   of -999, we know that it's an internal self-test call and use a fixed 
-	   bit pattern for k that avoids having to call generateBignum() (this 
-	   also means we can use the FIPS 186 self-test value for k).  This is a 
-	   somewhat ugly use of 'magic numbers', but it's safe because this 
-	   function can only be called internally, so all we need to trap is 
+	   bypass this problem, if the caller passes in a second length parameter
+	   of -999, we know that it's an internal self-test call and use a fixed
+	   bit pattern for k that avoids having to call generateBignum() (this
+	   also means we can use the FIPS 186 self-test value for k).  This is a
+	   somewhat ugly use of 'magic numbers', but it's safe because this
+	   function can only be called internally, so all we need to trap is
 	   accidental use of the parameter which is normally unused */
 	if( dlpParams->inLen2 == -999 )
 		BN_bin2bn( ( BYTE * ) kVal, DSA_SIGPART_SIZE, k );
@@ -282,7 +280,7 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BN_bin2bn( ( BYTE * ) dlpParams->inParam1, DSA_SIGPART_SIZE, hash );
 
 	/* r = ( g ^ k mod p ) mod q */
-	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX, 
+	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p ) );
 	CK( BN_mod( r, r, q, pkcInfo->bnCTX ) );
 
@@ -301,8 +299,9 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		return( getBnStatus( bnStatus ) );
 
 	/* Encode the result as a DL data block */
-	status = encodeDLValues( dlpParams->outParam, dlpParams->outLen, r, s,
-							 dlpParams->formatType );
+	status = pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
+											  dlpParams->outLen, r, s,
+											  dlpParams->formatType );
 	if( !cryptStatusError( status ) )
 		{
 		dlpParams->outLen = status;
@@ -336,8 +335,9 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* Decode the values from a DL data block and make sure that r and s are
 	   valid */
-	status = decodeDLValues( dlpParams->inParam2, dlpParams->inLen2, &r, &s,
-							 dlpParams->formatType );
+	status = pkcInfo->decodeDLValuesFunction( dlpParams->inParam2, 
+											  dlpParams->inLen2, &r, &s,
+											  dlpParams->formatType );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( BN_cmp( r, q ) >= 0 || BN_cmp( s, q ) >= 0 )
@@ -376,7 +376,7 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /* Load key components into an encryption context */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key, 
+static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 					const int keyLength )
 	{
 	int status;
@@ -411,7 +411,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( cryptStatusOK( status ) )
 		status = checkDLPkey( contextInfoPtr, FALSE );
 	if( cryptStatusOK( status ) )
-		status = calculateKeyID( contextInfoPtr );
+		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
 	return( status );
 	}
 
@@ -423,7 +423,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 
 	status = generateDLPkey( contextInfoPtr, ( keySizeBits / 64 ) * 64, 160,
 							 TRUE );
-	if( cryptStatusOK( status ) && 
+	if( cryptStatusOK( status ) &&
 #ifndef USE_FIPS140
 		( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) &&
 #endif /* USE_FIPS140 */
@@ -433,7 +433,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 		status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
-		status = calculateKeyID( contextInfoPtr );
+		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
 	return( status );
 	}
 

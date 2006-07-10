@@ -10,14 +10,7 @@
 
 /* General includes */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#ifdef INC_CHILD
-  #include "../crypt.h"
-#else
-  #include "crypt.h"
-#endif /* Compiler-specific includes */
+#include "crypt.h"
 
 /* OS-specific includes */
 
@@ -286,14 +279,13 @@ static void slowPollWinCE( void )
 
 	initRandomData( randomState, buffer, BIG_RANDOM_BUFSIZE );
 
-	/* Take a snapshot of everything we can get to that's currently in the
-	   system */
-	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPALL, 0 );
-	if( !hSnapshot )
-		return;
+	/* Take snapshots what's currently in the system.  In theory we could
+	   do a TH32CS_SNAPALL to get everything at once, but this can lead
+	   to out-of-memory errors on some memory-limited systems, so we only
+	   snapshot the individual resource that we're interested in.
 
-	/* Walk through the local heap.  We have to be careful to not spend
-	   excessive amounts of time on this if we're linked into a large
+	   First we walk through the local heap.  We have to be careful to not
+	   spend excessive amounts of time on this if we're linked into a large
 	   application with a great many heaps and/or heap blocks, since the
 	   heap-traversal functions are rather slow.  Fortunately this is
 	   quite rare under WinCE since it implies a large/long-running server
@@ -314,6 +306,12 @@ static void slowPollWinCE( void )
 	   of heavy allocation/deallocation this can cause problems when calling
 	   HeapNext().  By limiting the amount of time that we spend in each
 	   heap, we can reduce our exposure somewhat */
+	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPHEAPLIST, 0 );
+	if( hSnapshot == INVALID_HANDLE_VALUE )
+		{
+		assert( NOTREACHED );	/* Make sure that we get some feedback */
+		return;
+		}
 	hl32.dwSize = sizeof( HEAPLIST32 );
 	if( pHeap32ListFirst( hSnapshot, &hl32 ) )
 		do
@@ -347,8 +345,17 @@ static void slowPollWinCE( void )
 				while( entryCount++ < 20 && pHeap32Next( hSnapshot, &he32 ) );
 			}
 		while( listCount++ < 20 && pHeap32ListNext( hSnapshot, &hl32 ) );
+	pCloseToolhelp32Snapshot( hSnapshot );
+	if( krnlIsExiting() )
+		return;
 
-	/* Walk through all processes */
+	/* Now walk through all processes */
+	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 );
+	if( hSnapshot == INVALID_HANDLE_VALUE )
+		{
+		endRandomData( randomState, 40 );
+		return;
+		}
 	pe32.dwSize = sizeof( PROCESSENTRY32 );
 	if( pProcess32First( hSnapshot, &pe32 ) )
 		do
@@ -361,8 +368,17 @@ static void slowPollWinCE( void )
 			addRandomData( randomState, &pe32, sizeof( PROCESSENTRY32 ) );
 			}
 		while( pProcess32Next( hSnapshot, &pe32 ) );
+	pCloseToolhelp32Snapshot( hSnapshot );
+	if( krnlIsExiting() )
+		return;
 
-	/* Walk through all threads */
+	/* Then walk through all threads */
+	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
+	if( hSnapshot == INVALID_HANDLE_VALUE )
+		{
+		endRandomData( randomState, 60 );
+		return;
+		}
 	te32.dwSize = sizeof( THREADENTRY32 );
 	if( pThread32First( hSnapshot, &te32 ) )
 		do
@@ -375,8 +391,17 @@ static void slowPollWinCE( void )
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
 	while( pThread32Next( hSnapshot, &te32 ) );
+	pCloseToolhelp32Snapshot( hSnapshot );
+	if( krnlIsExiting() )
+		return;
 
-	/* Walk through all modules associated with the process */
+	/* Finally, walk through all modules associated with the process */
+	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPMODULE, 0 );
+	if( hSnapshot == INVALID_HANDLE_VALUE )
+		{
+		endRandomData( randomState, 80 );
+		return;
+		}
 	me32.dwSize = sizeof( MODULEENTRY32 );
 	if( pModule32First( hSnapshot, &me32 ) )
 		do
@@ -389,8 +414,6 @@ static void slowPollWinCE( void )
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
 	while( pModule32Next( hSnapshot, &me32 ) );
-
-	/* Clean up the snapshot */
 	pCloseToolhelp32Snapshot( hSnapshot );
 	if( krnlIsExiting() )
 		return;
@@ -434,34 +457,33 @@ void slowPoll( void )
 
 void waitforRandomCompletion( const BOOLEAN force )
 	{
-	/* If there's not polling thread running, there's nothing to do */
-	if( !hThread )
+	const int timeout = force ? 2000 : INFINITE;
+
+	/* If there's no polling thread running, there's nothing to do.  Note
+	   that this isn't entirely thread-safe because someone may start
+	   another poll after we perform this check, but there's no way to
+	   handle this without some form of interlock mechanism with the
+	   randomness mutex and the WaitForSingleObject().  In any case all
+	   that'll happen is that the caller won't get all of the currently-
+	   polling entropy */
+	if( hThread == NULL )
 		return;
 
-	/* If this is a forced shutdown, tell the polling thread to exit */
-	if( force )
+	/* Wait for the polling thread to terminate.  If it's a forced shutdown,
+	   we only wait a fixed amount of time (2s) before we bail out.  In
+	   addition we don't check for an error return (WAIT_ABANDONED) because
+	   this just means that the thread has exited as well */
+	WaitForSingleObject( hThread, timeout );
+
+	/* Clean up */
+	if( cryptStatusError( krnlEnterMutex( MUTEX_RANDOM ) ) )
+		return;
+	if( hThread != NULL )
 		{
-		/* Wait for the polling thread to terminate.  Since this is a forced
-		   shutdown, we only wait a fixed amount of time (2s) before we bail
-		   out */
-		WaitForSingleObject( hThread, 2000 );
 		CloseHandle( hThread );
 		hThread = NULL;
-
-		return;
 		}
-
-	/* Sign the system object over to the polling thread to allow it to
-	   update the entropy data */
-	krnlRelinquishSystemObject( threadID );
-
-	/* Wait for the polling thread to terminate */
-	WaitForSingleObject( hThread, INFINITE );
-	CloseHandle( hThread );
-	hThread = NULL;
-
-	/* Return the system object to the calling thread */
-	krnlReacquireSystemObject();
+	krnlExitMutex( MUTEX_RANDOM );
 	}
 
 /* Initialise and clean up any auxiliary randomness-related objects */

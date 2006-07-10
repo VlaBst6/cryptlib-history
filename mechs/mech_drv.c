@@ -5,21 +5,14 @@
 *																			*
 ****************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #ifdef INC_ALL
   #include "crypt.h"
-  #include "pgp.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../envelope/pgp.h"
-  #include "../misc/asn1.h"
+  #include "pgp.h"
 #else
   #include "crypt.h"
-  #include "envelope/pgp.h"
   #include "misc/asn1.h"
+  #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -61,10 +54,11 @@ static void expandData( BYTE *outPtr, const int outLen, const BYTE *inPtr,
 
 static void prfInit( HASHFUNCTION hashFunction, void *hashState,
 					 const int hashSize, void *processedKey,
+					 const int processedKeyMaxLength,
 					 int *processedKeyLength, const void *key,
 					 const int keyLength )
 	{
-	BYTE hashBuffer[ HMAC_DATASIZE ], *keyPtr = processedKey;
+	BYTE hashBuffer[ HMAC_DATASIZE + 8 ], *keyPtr = processedKey;
 	int i;
 
 	/* If the key size is larger than tha SHA data size, reduce it to the
@@ -74,7 +68,8 @@ static void prfInit( HASHFUNCTION hashFunction, void *hashState,
 		{
 		/* Hash the user key down to the hash size and use the hashed form of
 		   the key */
-		hashFunction( NULL, processedKey, ( void * ) key, keyLength, HASH_ALL );
+		hashFunction( NULL, processedKey, processedKeyMaxLength,
+					  ( void * ) key, keyLength, HASH_ALL );
 		*processedKeyLength = hashSize;
 		}
 	else
@@ -89,19 +84,22 @@ static void prfInit( HASHFUNCTION hashFunction, void *hashState,
 	memset( hashBuffer, HMAC_IPAD, HMAC_DATASIZE );
 	for( i = 0; i < *processedKeyLength; i++ )
 		hashBuffer[ i ] ^= *keyPtr++;
-	hashFunction( hashState, NULL, hashBuffer, HMAC_DATASIZE, HASH_START );
+	hashFunction( hashState, NULL, 0, hashBuffer, HMAC_DATASIZE, HASH_START );
 	zeroise( hashBuffer, HMAC_DATASIZE );
 	}
 
 static void prfEnd( HASHFUNCTION hashFunction, void *hashState,
 					const int hashSize, void *hash,
-					const void *processedKey, const int processedKeyLength )
+					const int hashMaxSize, const void *processedKey, 
+					const int processedKeyLength )
 	{
-	BYTE hashBuffer[ HMAC_DATASIZE ], digestBuffer[ CRYPT_MAX_HASHSIZE ];
+	BYTE hashBuffer[ HMAC_DATASIZE + 8 ];
+	BYTE digestBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int i;
 
 	/* Complete the inner hash and extract the digest */
-	hashFunction( hashState, digestBuffer, NULL, 0, HASH_END );
+	hashFunction( hashState, digestBuffer, CRYPT_MAX_HASHSIZE, NULL, 0, 
+				  HASH_END );
 
 	/* Perform the outer hash using the zero-padded key XORed with the opad
 	   value followed by the digest from the inner hash */
@@ -109,9 +107,11 @@ static void prfEnd( HASHFUNCTION hashFunction, void *hashState,
 	memcpy( hashBuffer, processedKey, processedKeyLength );
 	for( i = 0; i < processedKeyLength; i++ )
 		hashBuffer[ i ] ^= HMAC_OPAD;
-	hashFunction( hashState, NULL, hashBuffer, HMAC_DATASIZE, HASH_START );
+	hashFunction( hashState, NULL, 0, hashBuffer, HMAC_DATASIZE, 
+				  HASH_START );
 	zeroise( hashBuffer, HMAC_DATASIZE );
-	hashFunction( hashState, hash, digestBuffer, hashSize, HASH_END );
+	hashFunction( hashState, hash, hashMaxSize, digestBuffer, hashSize, 
+				  HASH_END );
 	zeroise( digestBuffer, CRYPT_MAX_HASHSIZE );
 	}
 
@@ -126,8 +126,8 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 					CRYPT_ALGO_RIPEMD160 : CRYPT_ALGO_SHA;
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo, initialHashInfo;
-	BYTE processedKey[ HMAC_DATASIZE ], block[ CRYPT_MAX_HASHSIZE ];
-	BYTE countBuffer[ 4 ];
+	BYTE processedKey[ HMAC_DATASIZE + 8 ], block[ CRYPT_MAX_HASHSIZE + 8 ];
+	BYTE countBuffer[ 4 + 8 ];
 	BYTE *dataOutPtr = mechanismInfo->dataOut;
 	int hashSize, keyIndex, processedKeyLength, blockCount = 1;
 
@@ -145,7 +145,7 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	   constant */
 	getHashParameters( hmacAlgo, &hashFunction, &hashSize );
 	prfInit( hashFunction, initialHashInfo, hashSize,
-			 processedKey, &processedKeyLength,
+			 processedKey, HMAC_DATASIZE, &processedKeyLength,
 			 mechanismInfo->dataIn, mechanismInfo->dataInLength );
 
 	/* Produce enough blocks of output to fill the key */
@@ -160,11 +160,11 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		/* Calculate HMAC( salt || counter ) */
 		countBuffer[ 3 ] = ( BYTE ) blockCount++;
 		memcpy( hashInfo, initialHashInfo, sizeof( HASHINFO ) );
-		hashFunction( hashInfo, NULL, mechanismInfo->salt,
+		hashFunction( hashInfo, NULL, 0, mechanismInfo->salt,
 					  mechanismInfo->saltLength, HASH_CONTINUE );
-		hashFunction( hashInfo, NULL, countBuffer, 4, HASH_CONTINUE );
-		prfEnd( hashFunction, hashInfo, hashSize, block, processedKey,
-				processedKeyLength );
+		hashFunction( hashInfo, NULL, 0, countBuffer, 4, HASH_CONTINUE );
+		prfEnd( hashFunction, hashInfo, hashSize, block, CRYPT_MAX_HASHSIZE, 
+				processedKey, processedKeyLength );
 		memcpy( dataOutPtr, block, noKeyBytes );
 
 		/* Calculate HMAC( T1 ) ^ HMAC( T1 ) ^ ... HMAC( Tc ) */
@@ -174,9 +174,9 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 
 			/* Generate the PRF output for the current iteration */
 			memcpy( hashInfo, initialHashInfo, sizeof( HASHINFO ) );
-			hashFunction( hashInfo, NULL, block, hashSize, HASH_CONTINUE );
-			prfEnd( hashFunction, hashInfo, hashSize, block, processedKey,
-					processedKeyLength );
+			hashFunction( hashInfo, NULL, 0, block, hashSize, HASH_CONTINUE );
+			prfEnd( hashFunction, hashInfo, hashSize, block, 
+					CRYPT_MAX_HASHSIZE, processedKey, processedKeyLength );
 
 			/* Xor the new PRF output into the existing PRF output */
 			for( j = 0; j < noKeyBytes; j++ )
@@ -200,8 +200,8 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION hashFunction;
-	BYTE p12_DSP[ P12_BLOCKSIZE + P12_BLOCKSIZE + ( P12_BLOCKSIZE * 3 ) ];
-	BYTE p12_Ai[ P12_BLOCKSIZE ], p12_B[ P12_BLOCKSIZE ];
+	BYTE p12_DSP[ P12_BLOCKSIZE + P12_BLOCKSIZE + ( P12_BLOCKSIZE * 3 ) + 8 ];
+	BYTE p12_Ai[ P12_BLOCKSIZE + 8 ], p12_B[ P12_BLOCKSIZE + 8 ];
 	BYTE *bmpPtr = p12_DSP + P12_BLOCKSIZE + P12_BLOCKSIZE;
 	BYTE *dataOutPtr = mechanismInfo->dataOut;
 	const BYTE *dataInPtr = mechanismInfo->dataIn;
@@ -288,7 +288,7 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION md5HashFunction, shaHashFunction;
 	HASHINFO hashInfo;
-	BYTE hash[ CRYPT_MAX_HASHSIZE ], counterData[ 16 ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], counterData[ 16 + 8 ];
 	int md5HashSize, shaHashSize, counter = 0, keyIndex;
 
 	UNUSED( dummy );
@@ -311,16 +311,19 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		counter++;
 
 		/* Calculate SHA1( 'A'/'BB'/'CCC'/... || keyData || salt ) */
-		shaHashFunction( hashInfo, NULL, counterData, counter, HASH_START );
-		shaHashFunction( hashInfo, NULL, mechanismInfo->dataIn,
+		shaHashFunction( hashInfo, NULL, 0, counterData, counter, 
+						 HASH_START );
+		shaHashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 						 mechanismInfo->dataInLength, HASH_CONTINUE );
-		shaHashFunction( hashInfo, hash, mechanismInfo->salt,
-						 mechanismInfo->saltLength, HASH_END );
+		shaHashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE, 
+						 mechanismInfo->salt, mechanismInfo->saltLength, 
+						 HASH_END );
 
 		/* Calculate MD5( keyData || SHA1-hash ) */
-		md5HashFunction( hashInfo, NULL, mechanismInfo->dataIn,
+		md5HashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 						 mechanismInfo->dataInLength, HASH_START );
-		md5HashFunction( hashInfo, hash, hash, shaHashSize, HASH_END );
+		md5HashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE,
+						 hash, shaHashSize, HASH_END );
 
 		/* Copy the result to the output */
 		memcpy( ( BYTE * )( mechanismInfo->dataOut ) + keyIndex, hash, noKeyBytes );
@@ -339,9 +342,10 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	HASHFUNCTION md5HashFunction, shaHashFunction;
 	HASHINFO md5HashInfo, md5InitialHashInfo, md5AnHashInfo;
 	HASHINFO shaHashInfo, shaInitialHashInfo, shaAnHashInfo;
-	BYTE md5ProcessedKey[ HMAC_DATASIZE ], shaProcessedKey[ HMAC_DATASIZE ];
-	BYTE md5A[ CRYPT_MAX_HASHSIZE ], shaA[ CRYPT_MAX_HASHSIZE ];
-	BYTE md5Hash[ CRYPT_MAX_HASHSIZE ], shaHash[ CRYPT_MAX_HASHSIZE ];
+	BYTE md5ProcessedKey[ HMAC_DATASIZE + 8 ];
+	BYTE shaProcessedKey[ HMAC_DATASIZE + 8 ];
+	BYTE md5A[ CRYPT_MAX_HASHSIZE + 8 ], shaA[ CRYPT_MAX_HASHSIZE + 8 ];
+	BYTE md5Hash[ CRYPT_MAX_HASHSIZE + 8 ], shaHash[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE *md5DataOutPtr = mechanismInfo->dataOut;
 	BYTE *shaDataOutPtr = mechanismInfo->dataOut;
 	const BYTE *dataEndPtr = ( BYTE * ) mechanismInfo->dataOut + \
@@ -373,21 +377,23 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	/* Initialise the MD5 and SHA-1 information with the keying info.  These
 	   are reused for any future hashing since they're constant */
 	prfInit( md5HashFunction, md5InitialHashInfo, md5HashSize,
-			 md5ProcessedKey, &md5ProcessedKeyLength, s1, sLen );
+			 md5ProcessedKey, HMAC_DATASIZE, &md5ProcessedKeyLength, 
+			 s1, sLen );
 	prfInit( shaHashFunction, shaInitialHashInfo, shaHashSize,
-			 shaProcessedKey, &shaProcessedKeyLength, s2, sLen );
+			 shaProcessedKey, HMAC_DATASIZE, &shaProcessedKeyLength, 
+			 s2, sLen );
 
 	/* Calculate A1 = HMAC( salt ) */
 	memcpy( md5HashInfo, md5InitialHashInfo, sizeof( HASHINFO ) );
-	md5HashFunction( md5HashInfo, NULL, mechanismInfo->salt,
+	md5HashFunction( md5HashInfo, NULL, 0, mechanismInfo->salt,
 					 mechanismInfo->saltLength, HASH_CONTINUE );
 	prfEnd( md5HashFunction, md5HashInfo, md5HashSize, md5A,
-			md5ProcessedKey, md5ProcessedKeyLength );
+			CRYPT_MAX_HASHSIZE, md5ProcessedKey, md5ProcessedKeyLength );
 	memcpy( shaHashInfo, shaInitialHashInfo, sizeof( HASHINFO ) );
-	shaHashFunction( shaHashInfo, NULL, mechanismInfo->salt,
+	shaHashFunction( shaHashInfo, NULL, 0, mechanismInfo->salt,
 					 mechanismInfo->saltLength, HASH_CONTINUE );
 	prfEnd( shaHashFunction, shaHashInfo, shaHashSize, shaA,
-			shaProcessedKey, shaProcessedKeyLength );
+			CRYPT_MAX_HASHSIZE, shaProcessedKey, shaProcessedKeyLength );
 
 	/* Produce enough blocks of output to fill the key.  We use the MD5 hash
 	   size as the loop increment since this produces the smaller output
@@ -403,27 +409,29 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 
 		/* Calculate HMAC( An || salt ) */
 		memcpy( md5HashInfo, md5InitialHashInfo, sizeof( HASHINFO ) );
-		md5HashFunction( md5HashInfo, NULL, md5A, md5HashSize, HASH_CONTINUE );
+		md5HashFunction( md5HashInfo, NULL, 0, md5A, md5HashSize, 
+						 HASH_CONTINUE );
 		memcpy( md5AnHashInfo, md5HashInfo, sizeof( HASHINFO ) );
-		md5HashFunction( md5HashInfo, NULL, mechanismInfo->salt,
+		md5HashFunction( md5HashInfo, NULL, 0, mechanismInfo->salt,
 						 mechanismInfo->saltLength, HASH_CONTINUE );
 		prfEnd( md5HashFunction, md5HashInfo, md5HashSize, md5Hash,
-				md5ProcessedKey, md5ProcessedKeyLength );
+				CRYPT_MAX_HASHSIZE, md5ProcessedKey, md5ProcessedKeyLength );
 		memcpy( shaHashInfo, shaInitialHashInfo, sizeof( HASHINFO ) );
-		shaHashFunction( shaHashInfo, NULL, shaA, shaHashSize, HASH_CONTINUE );
+		shaHashFunction( shaHashInfo, NULL, 0, shaA, shaHashSize, 
+						 HASH_CONTINUE );
 		memcpy( shaAnHashInfo, shaHashInfo, sizeof( HASHINFO ) );
-		shaHashFunction( shaHashInfo, NULL, mechanismInfo->salt,
+		shaHashFunction( shaHashInfo, NULL, 0, mechanismInfo->salt,
 						 mechanismInfo->saltLength, HASH_CONTINUE );
 		prfEnd( shaHashFunction, shaHashInfo, shaHashSize, shaHash,
-				shaProcessedKey, shaProcessedKeyLength );
+				CRYPT_MAX_HASHSIZE, shaProcessedKey, shaProcessedKeyLength );
 
 		/* Calculate An+1 = HMAC( An ) */
 		memcpy( md5HashInfo, md5AnHashInfo, sizeof( HASHINFO ) );
 		prfEnd( md5HashFunction, md5HashInfo, md5HashSize, md5A,
-				md5ProcessedKey, md5ProcessedKeyLength );
+				CRYPT_MAX_HASHSIZE, md5ProcessedKey, md5ProcessedKeyLength );
 		memcpy( shaHashInfo, shaAnHashInfo, sizeof( HASHINFO ) );
 		prfEnd( shaHashFunction, shaHashInfo, shaHashSize, shaA,
-				shaProcessedKey, shaProcessedKeyLength );
+				CRYPT_MAX_HASHSIZE, shaProcessedKey, shaProcessedKeyLength );
 
 		/* Copy the result to the output */
 		for( i = 0; i < md5NoKeyBytes; i++ )
@@ -464,14 +472,16 @@ int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 
 	/* Calculate SHA1( password || salt ) */
 	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, &hashSize );
-	hashFunction( hashInfo, NULL, mechanismInfo->dataIn,
+	hashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 				  mechanismInfo->dataInLength, HASH_START );
-	hashFunction( hashInfo, mechanismInfo->dataOut, mechanismInfo->salt,
+	hashFunction( hashInfo, mechanismInfo->dataOut, 
+				  mechanismInfo->dataOutLength, mechanismInfo->salt,
 				  mechanismInfo->saltLength, HASH_END );
 
 	/* Iterate the hashing the remaining number of times */
 	while( iterations-- > 0 )
-		hashFunction( NULL, mechanismInfo->dataOut, mechanismInfo->dataOut,
+		hashFunction( NULL, mechanismInfo->dataOut, 
+					  mechanismInfo->dataOutLength, mechanismInfo->dataOut,
 					  hashSize, HASH_ALL );
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 
@@ -487,7 +497,7 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
-	BYTE hashedKey[ CRYPT_MAX_KEYSIZE ];
+	BYTE hashedKey[ CRYPT_MAX_KEYSIZE + 8 ];
 	long byteCount = ( long ) mechanismInfo->iterations << 6;
 	long secondByteCount = 0;
 	int hashSize;
@@ -507,25 +517,25 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		secondByteCount = byteCount;
 
 	/* Repeatedly hash the salt and password until we've met the byte count */
-	hashFunction( hashInfo, NULL, mechanismInfo->salt,
+	hashFunction( hashInfo, NULL, 0, mechanismInfo->salt,
 				  mechanismInfo->saltLength, HASH_START );
 	byteCount -= mechanismInfo->saltLength;
 	do
 		{
 		if( byteCount <= mechanismInfo->dataInLength )
-			hashFunction( hashInfo, hashedKey, mechanismInfo->dataIn,
-						  byteCount, HASH_END );
+			hashFunction( hashInfo, hashedKey, CRYPT_MAX_KEYSIZE,
+						  mechanismInfo->dataIn, byteCount, HASH_END );
 		else
-			hashFunction( hashInfo, NULL, mechanismInfo->dataIn,
+			hashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 						  mechanismInfo->dataInLength, HASH_CONTINUE );
 		byteCount -= mechanismInfo->dataInLength;
 		if( byteCount <= 0 )
 			continue;
 		if( byteCount <= mechanismInfo->saltLength )
-			hashFunction( hashInfo, hashedKey, mechanismInfo->salt,
-						  byteCount, HASH_END );
+			hashFunction( hashInfo, hashedKey, CRYPT_MAX_KEYSIZE,
+						  mechanismInfo->salt, byteCount, HASH_END );
 		else
-			hashFunction( hashInfo, NULL, mechanismInfo->salt,
+			hashFunction( hashInfo, NULL, 0, mechanismInfo->salt,
 						  mechanismInfo->saltLength, HASH_CONTINUE );
 		byteCount -= mechanismInfo->saltLength;
 		}
@@ -534,26 +544,28 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		{
 		/* Perform a second round of hashing, preloading the hash with a
 		   single zero byte */
-		hashFunction( hashInfo, NULL, ( const BYTE * ) "\x00", 1,
+		hashFunction( hashInfo, NULL, 0, ( const BYTE * ) "\x00", 1,
 					  HASH_START );
 		do
 			{
 			if( secondByteCount <= mechanismInfo->saltLength )
 				hashFunction( hashInfo, hashedKey + hashSize,
+							  CRYPT_MAX_KEYSIZE - hashSize,
 							  mechanismInfo->salt, secondByteCount,
 							  HASH_END );
 			else
-				hashFunction( hashInfo, NULL, mechanismInfo->salt,
+				hashFunction( hashInfo, NULL, 0, mechanismInfo->salt,
 							  mechanismInfo->saltLength, HASH_CONTINUE );
 			secondByteCount -= mechanismInfo->saltLength;
 			if( secondByteCount <= 0 )
 				continue;
 			if( secondByteCount <= mechanismInfo->dataInLength )
 				hashFunction( hashInfo, hashedKey + hashSize,
+							  CRYPT_MAX_KEYSIZE - hashSize,
 							  mechanismInfo->dataIn, secondByteCount,
 							  HASH_END );
 			else
-				hashFunction( hashInfo, NULL, mechanismInfo->dataIn,
+				hashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 							  mechanismInfo->dataInLength, HASH_CONTINUE );
 			secondByteCount -= mechanismInfo->dataInLength;
 			}

@@ -5,15 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "des.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "context.h"
-  #include "../crypt/des.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -26,8 +21,6 @@
 
 #if defined( INC_ALL )
   #include "testdes.h"
-#elif defined( INC_CHILD )
-  #include "../crypt/testdes.h"
 #else
   #include "crypt/testdes.h"
 #endif /* Compiler-specific includes */
@@ -476,7 +469,11 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	/* Call the libdes key schedule code.  Returns with -1 if the key parity
 	   is wrong (which never occurs since we force the correct parity) or -2
-	   if a weak key is used */
+	   if a weak key is used.  In theory this could leave us open to timing
+	   attacks (a memcmp() implemented as a bytewise operation will exit on 
+	   the first mis-matching byte), but in practice the trip through the
+	   kernel adds enough skew to make the one or two clock cycle difference
+	   undetectable */
 	des_set_odd_parity( ( C_Block * ) convInfo->userKey );
 	if( des_key_sched( ( des_cblock * ) convInfo->userKey, des3Key->desKey1 ) )
 		return( CRYPT_ARGERROR_STR1 );

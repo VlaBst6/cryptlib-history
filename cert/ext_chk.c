@@ -5,19 +5,11 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "certattr.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
@@ -319,7 +311,7 @@ typedef struct {
 	   items from both the subfield and the encapsulating field, so we also
 	   record the current stack top to make sure that we don't go past this 
 	   level when popping items after we've finished encoding a subfield */
-	ATTRIBUTE_STACK stack[ ATTRIBUTE_STACKSIZE ];
+	ATTRIBUTE_STACK stack[ ATTRIBUTE_STACKSIZE + 8 ];
 	int stackPos;					/* Encoding stack position */
 	int stackTop;
 

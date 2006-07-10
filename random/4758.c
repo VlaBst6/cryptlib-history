@@ -10,8 +10,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include <time.h>
 #include "../crypt.h"
 

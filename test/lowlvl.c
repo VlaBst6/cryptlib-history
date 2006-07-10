@@ -25,11 +25,11 @@
 
 #define TESTBUFFER_SIZE		256
 
-/* Since the DH operations aren't visible externally, we have to use the 
-   kernel API to perform the test.  To get the necessary definitions and 
-   prototypes, we have to use crypt.h, however since we've already included 
-   cryptlib.h the built-in guards preclude us from pulling it in again with 
-   the internal-only values defined, so we have to explicitly define things 
+/* Since the DH operations aren't visible externally, we have to use the
+   kernel API to perform the test.  To get the necessary definitions and
+   prototypes, we have to use crypt.h, however since we've already included
+   cryptlib.h the built-in guards preclude us from pulling it in again with
+   the internal-only values defined, so we have to explicitly define things
    like attribute values that normally aren't visible externally */
 
 #ifdef TEST_DH
@@ -37,13 +37,10 @@
   #undef __WIN16__
   #undef __WIN32__
   #undef BYTE
-  #ifdef _MSC_VER
-	#define INC_CHILD
-	#include "../crypt.h"
-  #else
-	#include "crypt.h"
-  #endif /* Braindamaged MSC include handling */
+  #include "crypt.h"
 #endif /* TEST_DH */
+
+#if defined( TEST_LOWLEVEL ) || defined( TEST_KEYSET )	/* Needed for PGP keysets */
 
 /****************************************************************************
 *																			*
@@ -84,7 +81,7 @@ static BOOLEAN checkLowlevelInfo( const CRYPT_DEVICE cryptDevice,
 	if( cryptAlgo < CRYPT_ALGO_FIRST_HASH || cryptAlgo > CRYPT_ALGO_LAST_HASH )
 		{
 		printf( ", keysize %d-%d bits (recommended = %d bits)",
-				cryptQueryInfo.minKeySize << 3, 
+				cryptQueryInfo.minKeySize << 3,
 				cryptQueryInfo.maxKeySize << 3, cryptQueryInfo.keySize << 3 );
 		}
 	puts( "." );
@@ -92,7 +89,7 @@ static BOOLEAN checkLowlevelInfo( const CRYPT_DEVICE cryptDevice,
 	return( TRUE );
 	}
 
-/* Set a pair of encrypt/decrypt buffers to a known state, and make sure 
+/* Set a pair of encrypt/decrypt buffers to a known state, and make sure
    that they're still in that known state */
 
 static void initTestBuffers( BYTE *buffer1, BYTE *buffer2, const int length )
@@ -398,7 +395,7 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			{
 			printf( "Couldn't perform DH key agreement, status = %d.\n",
 					status );
-			return( FALSE );
+			return( status );
 			}
 
 		return( CRYPT_OK );
@@ -406,12 +403,12 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 #endif /* TEST_DH */
 	if( cryptAlgo == CRYPT_ALGO_RSA )
 		{
-		static const BYTE rsa512Value[] = \
+		static const BYTE FAR_BSS rsa512Value[] = \
 			"\x4E\x1F\x2F\x10\xA9\xFB\x4F\xD9\xC1\x25\x79\x7A\x36\x00\x58\xD0"
 			"\x9E\x8B\x9F\xBA\xC7\x04\x10\x77\xDB\xBC\xC9\xD1\x70\xCD\xF6\x86"
 			"\xA4\xDC\x39\xA9\x57\xD7\xC7\xE0\x87\xF2\x31\xDF\x83\x7d\x27\x0E"
 			"\xB4\xA6\x93\x3D\x11\xEB\xA5\x0E\x42\x66\x7B\x30\x50\x84\xC1\x81";
-		static const BYTE rsa1024Value[] = \
+		static const BYTE FAR_BSS rsa1024Value[] = \
 			"\x84\x8E\x00\x3E\x49\x11\x0D\x42\x4C\x71\x6B\xB4\xCF\x13\xDD\xCD"
 			"\x12\x30\x56\xC2\x4A\x55\x3B\xD8\x30\xA2\xB8\x73\xA7\xAB\xF0\x7A"
 			"\x2E\x07\x20\xCC\xBE\xEA\x58\x03\x56\xF6\x18\x27\x28\x4F\xE1\x02"
@@ -460,8 +457,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 					length ) )
 			{
 			/* For a non-randomized PKC the encryption of the fixed value
-			   produces known output, we make sure that this matches the 
-			   expected value.  This makes diagnosing problems with crypto 
+			   produces known output, we make sure that this matches the
+			   expected value.  This makes diagnosing problems with crypto
 			   devices rather easier */
 			puts( "The actual encrypted value doesn't match the expected value." );
 			encryptOK = FALSE;
@@ -492,7 +489,7 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			{
 			if( encryptOK )
 				/* This could happen with simple-minded CRT implementations
-				   that only work when p > q (the test key has p < q in 
+				   that only work when p > q (the test key has p < q in
 				   order to find this problem) */
 				puts( "Decryption failed even though encryption produced "
 					  "valid data.  The RSA\ndecryption step is broken." );
@@ -500,14 +497,14 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 				puts( "Decryption failed because the encryption step "
 					  "produced invalid data. The RSA\nencryption step is "
 					  "broken." );
-			return( status );
+			return( CRYPT_ERROR_FAILED );
 			}
 		else
 			if( !encryptOK )
 				{
 				puts( "Decryption succeeded even though encryption produced "
 					  "invalid data.  The RSA\nimplementation is broken." );
-				return( status );
+				return( CRYPT_ERROR_FAILED );
 				}
 
 		return( CRYPT_OK );
@@ -516,7 +513,7 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		cryptAlgo <= CRYPT_ALGO_LAST_MAC )
 		{
 		/* Hash the buffer in two odd-sized chunks.  Note the use of the hash
-		   wrap-up call, this is the only time when we can call 
+		   wrap-up call, this is the only time when we can call
 		   cryptEncrypt() with a zero length */
 		status = cryptEncrypt( cryptContext, buffer, 80 );
 		if( cryptStatusOK( status ) )
@@ -580,7 +577,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 		return( TRUE );
 
 	/* Since DH and KEA only perform key agreement rather than a true key
-	   exchange, we can't test their encryption capabilities unless we're 
+	   exchange, we can't test their encryption capabilities unless we're
 	   using a custom-modified version of cryptlib */
 #ifndef TEST_DH
 	if( cryptAlgo == CRYPT_ALGO_DH )
@@ -591,7 +588,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 
 	/* Test each mode of an algorithm.  We have to be very careful about
 	   destroying any objects we create before we exit, because objects left
-	   active in a device will prevent it from being shut down once the 
+	   active in a device will prevent it from being shut down once the
 	   tests have completed */
 	do
 		{
@@ -630,7 +627,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			case CRYPT_ALGO_RC5:
 			case CRYPT_ALGO_BLOWFISH:
 			case CRYPT_ALGO_HMAC_MD5:
-			case CRYPT_ALGO_HMAC_SHA:
+			case CRYPT_ALGO_HMAC_SHA1:
 			case CRYPT_ALGO_HMAC_RIPEMD160:
 				status = loadContexts( &cryptContext, &decryptContext,
 									   cryptDevice, cryptAlgo, cryptMode,
@@ -692,7 +689,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			}
 
 		/* Perform a test en/decryption */
-		status = testCrypt( cryptContext, decryptContext, buffer, isDevice, 
+		status = testCrypt( cryptContext, decryptContext, buffer, isDevice,
 							FALSE );
 		if( cryptStatusError( status ) )
 			{
@@ -751,7 +748,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				return( FALSE );
 				}
 
-			/* Make sure that we can get repeatable results after deleting 
+			/* Make sure that we can get repeatable results after deleting
 			   the hash/MAC and rehashing the data */
 			status = cryptDeleteAttribute( cryptContext,
 										   CRYPT_CTXINFO_HASHVALUE );
@@ -834,6 +831,39 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 	return( TRUE );
 	}
 
+/* Test the ability of the RSA key-load code to reconstruct a full RSA key
+   from only the minimal non-CRT components */
+
+int testRSAMinimalKey( void )
+	{
+	CRYPT_CONTEXT cryptContext, decryptContext;
+	BYTE buffer[ TESTBUFFER_SIZE ], testBuffer[ TESTBUFFER_SIZE ];
+	int status;
+
+	puts( "Testing ability to recover CRT components for RSA private key..." );
+
+	/* Load the RSA contexts from the minimal (non-CRT) RSA key */
+	status = loadRSAContextsEx( CRYPT_UNUSED, &cryptContext, &decryptContext,
+								RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, TRUE );
+	if( !status )
+		return( FALSE );
+
+	/* Initialise the test buffers */
+	initTestBuffers( buffer, testBuffer, TESTBUFFER_SIZE );
+
+	/* Make sure that we can encrypt and decrypt with the reconstituted CRT
+	   private key */
+	status = testCrypt( cryptContext, decryptContext, buffer, FALSE, FALSE );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Clean up */
+	destroyContexts( CRYPT_UNUSED, cryptContext, decryptContext );
+
+	puts( "RSA CRT component recovery test succeeded." );
+	return( TRUE );
+	}
+
 /****************************************************************************
 *																			*
 *								Performance Tests							*
@@ -844,7 +874,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
    rather OS-dependent, we only enable this under Windows where we've got
    guaranteed high-res timer access */
 
-#ifdef __WINDOWS__
+#if defined( __WINDOWS__ ) && !defined( __WIN16__ )
 
 #include <math.h>	/* For sqrt() for standard deviation */
 
@@ -865,7 +895,7 @@ static unsigned long timeDiff( unsigned long startTime )
 	int status;
 
 	/* Only accurate to 10ms, returns constant values in VC++ debugger */
-	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime, 
+	GetThreadTimes( GetCurrentThread(), &dummyTime, &dummyTime,
 					&kernelTime, &userTime );
 	timeLSB = userTime.dwLowDateTime;
 #endif /* 0 */
@@ -877,21 +907,21 @@ static unsigned long timeDiff( unsigned long startTime )
 	return( ( 0xFFFFFFFF - startTime ) + 1 + timeLSB );
 	}
 
-/* Print timing info.  This gets a bit hairy because we're actually counting 
-   timer ticks rather than thread times, which means we'll be affected by 
+/* Print timing info.  This gets a bit hairy because we're actually counting
+   timer ticks rather than thread times, which means we'll be affected by
    things like context switches.  There are two approaches to this:
 
 	1. Take the fastest time, which will be the time least affected by system
-	   overhead. 
+	   overhead.
 
-	2. Apply standard statistical techniques to weed out anomalies.  Since 
-	   this is just for testing purposes all we do is discard any results 
+	2. Apply standard statistical techniques to weed out anomalies.  Since
+	   this is just for testing purposes all we do is discard any results
 	   out by more than 10%, which is crude but reasonably effective.  A
 	   more rigorous approach is to discards results more than n standard
 	   deviations out, but this gets screwed up by the fact that a single
-	   context switch of 20K ticks can throw out results from an execution 
-	   time of only 50 ticks.  In any case (modulo context switches) the 
-	   fastest, 10%-out, and 2 SD out times are all within about 1% of each 
+	   context switch of 20K ticks can throw out results from an execution
+	   time of only 50 ticks.  In any case (modulo context switches) the
+	   fastest, 10%-out, and 2 SD out times are all within about 1% of each
 	   other, so all methods are roughly equally accurate */
 
 static void printTimes( long times[ NO_TESTS + 1 ][ 8 ] )
@@ -925,7 +955,7 @@ static void printTimes( long times[ NO_TESTS + 1 ][ 8 ] )
 			if( times[ j ][ i ] < timeMin )
 				timeMin = times[ j ][ i ];
 
-		/* Find the mean time, discarding anomalous results more than 10% 
+		/* Find the mean time, discarding anomalous results more than 10%
 		   out */
 		for( j = 1; j < NO_TESTS + 1; j++ )
 			if( times[ j ][ i ] > timeAvg - timeDelta && \
@@ -965,9 +995,9 @@ static void printTimes( long times[ NO_TESTS + 1 ][ 8 ] )
 			timesCountSD++;	/* Context switch, fudge it */
 		printf( "%6d", timeCorrSumSD / timesCountSD );
 
-#if 1	/* Print difference to fastest and mean times, usually only around 
+#if 1	/* Print difference to fastest and mean times, usually only around
 		   1% */
-		printf( " (dF = %4d, dM = %4d)\n", 
+		printf( " (dF = %4d, dM = %4d)\n",
 				( timeCorrSumSD / timesCountSD ) - timeMin,
 				abs( ( timeCorrSumSD / timesCountSD ) - \
 					 ( timeCorrSum10 / timesCount10 ) ) );
@@ -977,7 +1007,7 @@ static void printTimes( long times[ NO_TESTS + 1 ][ 8 ] )
 	printf( "\n" );
 	}
 
-static long encOne( const CRYPT_CONTEXT cryptContext, BYTE *buffer, 
+static long encOne( const CRYPT_CONTEXT cryptContext, BYTE *buffer,
 					const int length )
 	{
 	unsigned long timeVal;
@@ -1006,7 +1036,7 @@ static int encTest( const CRYPT_CONTEXT cryptContext,
 	return( TRUE );
 	}
 
-static int encTests( const CRYPT_DEVICE cryptDevice, 
+static int encTests( const CRYPT_DEVICE cryptDevice,
 					 const CRYPT_ALGO_TYPE cryptAlgo,
 					 const CRYPT_ALGO_TYPE cryptMode,
 					 BYTE *buffer )
@@ -1023,9 +1053,9 @@ static int encTests( const CRYPT_DEVICE cryptDevice,
 	for( i = 0; i < 10; i++ )
 		{
 		timeVal = timeDiff( 0 );
-		status = loadContexts( &cryptContext, NULL, cryptDevice, 
+		status = loadContexts( &cryptContext, NULL, cryptDevice,
 							   cryptAlgo, cryptMode,
-							   ( BYTE * ) "12345678901234567890", 
+							   ( BYTE * ) "12345678901234567890",
 							   ( cryptAlgo == CRYPT_ALGO_DES ) ? 8 : \
 							   ( cryptAlgo == CRYPT_ALGO_3DES || \
 							     cryptAlgo == CRYPT_ALGO_RC4 || \
@@ -1041,7 +1071,7 @@ static int encTests( const CRYPT_DEVICE cryptDevice,
 	puts( "     8    16    64    1K    4K    8K   64K" );
 	puts( "  ----  ----  ----  ----  ----  ----  ----" );
 
-	/* Run the encryption tests NO_TESTS times, discard the first set of 
+	/* Run the encryption tests NO_TESTS times, discard the first set of
 	   results since the cache will be empty at that point */
 	for( i = 0; i < NO_TESTS + 1; i++ )
 		encTest( cryptContext, cryptAlgo, buffer, times[ i ] );
@@ -1096,4 +1126,6 @@ void performanceTests( const CRYPT_DEVICE cryptDevice )
 	encTests( CRYPT_UNUSED, CRYPT_ALGO_SHA, CRYPT_MODE_NONE, buffer );
 	free( buffer );
 	}
-#endif /* __WINDOWS__ */
+#endif /* __WINDOWS__ && _MSC_VER */
+
+#endif /* TEST_LOWLEVEL || TEST_KEYSET */

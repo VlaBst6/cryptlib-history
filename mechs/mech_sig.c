@@ -1,21 +1,14 @@
 /****************************************************************************
 *																			*
 *					cryptlib Signature Mechanism Routines					*
-*					  Copyright Peter Gutmann 1992-2004						*
+*					  Copyright Peter Gutmann 1992-2006						*
 *																			*
 ****************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #ifdef INC_ALL
   #include "crypt.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "crypt.h"
   #include "misc/asn1.h"
@@ -49,7 +42,7 @@ static int sign( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 	CRYPT_ALGO_TYPE hashAlgo;
 	RESOURCE_DATA msgData;
 	STREAM stream;
-	BYTE hash[ CRYPT_MAX_HASHSIZE ], hash2[ CRYPT_MAX_HASHSIZE ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], hash2[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE preSigData[ CRYPT_MAX_PKCSIZE + 8 ];
 	BOOLEAN useSideChannelProtection;
 	int hashSize, hashSize2, length, i, status;
@@ -205,7 +198,7 @@ int sigcheck( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 	RESOURCE_DATA msgData;
 	STREAM stream;
 	BYTE decryptedSignature[ CRYPT_MAX_PKCSIZE + 8 ];
-	BYTE hash[ CRYPT_MAX_HASHSIZE ], hash2[ CRYPT_MAX_HASHSIZE ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], hash2[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, hashSize, hashSize2 = 0, ch, i, status;
 
 	/* Sanity check the input data */
@@ -263,7 +256,8 @@ int sigcheck( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 				status = CRYPT_ERROR_BADDATA;
 				break;
 				}
-			status = readMessageDigest( &stream, &hashAlgo, hash, &hashSize );
+			status = readMessageDigest( &stream, &hashAlgo, hash, 
+										CRYPT_MAX_HASHSIZE, &hashSize );
 			if( cryptStatusOK( status ) && contextHashAlgo != hashAlgo )
 				status = CRYPT_ERROR_SIGNATURE;
 			break;
@@ -297,6 +291,11 @@ int sigcheck( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 			assert( NOTREACHED );
 			return( CRYPT_ERROR_NOTAVAIL );
 		}
+	if( cryptStatusOK( status ) && sMemDataLeft( &stream ) != 0 )
+		/* Make sure that that's all that there is.  This is already 
+		   checked implicitly anderswhere, but we make the check explicit 
+		   here */
+		status = CRYPT_ERROR_BADDATA;
 	sMemDisconnect( &stream );
 	zeroise( decryptedSignature, CRYPT_MAX_PKCSIZE );
 	if( cryptStatusError( status ) )

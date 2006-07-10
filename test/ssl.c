@@ -21,6 +21,23 @@
   #pragma convert( 0 )
 #endif /* IBM medium iron */
 
+/* We can run the SSL/TLS self-test with a large variety of options, rather
+   than using dozens of boolean option flags to control them all we define
+   various test classes that exercise each option type */
+
+typedef enum {
+	SSL_TEST_NORMAL,			/* Standard SSL/TLS test */
+	SSL_TEST_BULKTRANSER,		/* Bulk data transfer */
+	SSL_TEST_CLIENTCERT,		/* User auth.with client cert */
+	SSL_TEST_PSK,				/* User auth.with shared key */
+	SSL_TEST_PSK_SVRONLY,		/* Client = no PSK, server = TLS-PSK */
+	SSL_TEST_PSK_CLIONLY,		/* Client = TLS-PSK, server = no PSK */
+	SSL_TEST_PSK_WRONGKEY,		/* User auth.with incorrect shared key */
+	SSL_TEST_STARTTLS			/* STARTTLS/STLS/AUTH TLS */
+	} SSL_TEST_TYPE;
+
+#ifdef TEST_SESSION
+
 /****************************************************************************
 *																			*
 *								SSL/TLS Routines Test						*
@@ -73,8 +90,8 @@
 			   server 7), which could be the cause of the problem.
 	Server 18: Generic OpenSSL server.
 	Server 19: Crippled crypto using NS Server 3.6.
-	Server 20: Apache with Thawte certs, requires 
-			   CRYPT_OPTION_CERT_COMPLIANCELEVEL = 
+	Server 20: Apache with Thawte certs, requires
+			   CRYPT_OPTION_CERT_COMPLIANCELEVEL =
 			   CRYPT_COMPLIANCELEVEL_REDUCED due to b0rken certs */
 
 #define SSL_SERVER_NO	2
@@ -83,8 +100,8 @@
 
 static const struct {
 	const C_STR name;
-	const char *path;
-	} sslInfo[] = {
+	const char FAR_BSS *path;
+	} FAR_BSS sslInfo[] = {
 	{ NULL, NULL },
 	/*  1 */ { TEXT( "localhost" ), "/" },
 	/*  2 */ { TEXT( "https://www.amazon.com" ), "/" },
@@ -142,12 +159,14 @@ static const struct {
 				telnet ftp.windsorchapel.net 21
 				auth ssl
 
-	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message 
+	Server 9: SMTP: mailer.gwdg.de:25 (134.76.10.26), sends each SSL message
 			  as a discrete packet, providing a nice test of cryptlib's on-
 			  demand buffer refill.
-	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL 
+	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL
 			   connect, sends a CA cert which is also used for encryption,
-			   but with no keyUsage flags set */
+			   but with no keyUsage flags set.
+	Server 11: POP: pop.gmail.com:110 (64.233.167.111), convenient always-
+			   available server */
 
 #define STARTTLS_SERVER_NO	2
 
@@ -159,7 +178,7 @@ static const struct {
 	const C_STR name;
 	const int port;
 	PROTOCOL_TYPE protocol;
-	} starttlsInfo[] = {
+	} FAR_BSS starttlsInfo[] = {
 	{ NULL, 0 },
 	/*  1 */ { TEXT( "132.239.1.57" ), 25, PROTOCOL_SMTP },
 	/*  2 */ { TEXT( "144.92.240.11" ), 1110, PROTOCOL_POP },
@@ -171,13 +190,18 @@ static const struct {
 	/*  8 */ { TEXT( "141.30.198.37" ), 110, PROTOCOL_POP },
 	/*  9 */ { TEXT( "134.76.10.26" ), 25, PROTOCOL_SMTP },
 	/* 10 */ { TEXT( "209.151.91.6" ), 995, PROTOCOL_POP_DIRECT },
+	/* 11 */ { TEXT( "64.233.167.111" ), 110, PROTOCOL_POP },
 	{ NULL, 0 }
 	};
 
 /* Large buffer size to test bulk data transfer capability for secure
    sessions */
 
-#define BULKDATA_BUFFER_SIZE	300000L
+#if defined( __MSDOS16__ ) || defined( __WIN16__ )
+  #define BULKDATA_BUFFER_SIZE	20000
+#else
+  #define BULKDATA_BUFFER_SIZE	300000L
+#endif /* 16-bit VC++ */
 
 static int checksumData( const void *data, const int dataLength )
 	{
@@ -227,11 +251,12 @@ static BOOLEAN handleBulkBuffer( BYTE *buffer, const BOOLEAN isInit )
 
 /* Negotiate through a STARTTLS */
 
-#if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
+#if defined( __WINDOWS__ ) && \
+	!( defined( __WIN16__ ) || defined( _WIN32_WCE ) )
 
 static int readLine( SOCKET netSocket, char *buffer )
 	{
-	int bufPos = 0, status = CRYPT_OK;
+	int bufPos, status = CRYPT_OK;
 
 	for( bufPos = 0; \
 		 status >= 0 && bufPos < 1024 && \
@@ -364,17 +389,14 @@ static int negotiateSTARTTLS( int *protocol )
 /* Establish an SSL/TLS session */
 
 static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
-						  const int version, const BOOLEAN useClientCert,
-						  const BOOLEAN localSession,
-						  const BOOLEAN bulkTransfer,
-						  const BOOLEAN localSocket,
-						  const BOOLEAN sharedKey )
+						  const SSL_TEST_TYPE testType, const int version,
+						  const BOOLEAN localSession )
 	{
 	CRYPT_SESSION cryptSession;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_SSL_SERVER ) ? \
 							   TRUE : FALSE;
 	const char *versionStr[] = { "SSL", "TLS", "TLS 1.1" };
-	const C_STR serverName = ( localSocket ) ? \
+	const C_STR serverName = ( testType == SSL_TEST_STARTTLS ) ? \
 								starttlsInfo[ STARTTLS_SERVER_NO ].name : \
 							 ( version == 0 ) ? \
 								sslInfo[ SSL_SERVER_NO ].name : \
@@ -388,12 +410,32 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* __WINDOWS__ && !_WIN32_WCE */
 	int bytesCopied, protocol = PROTOCOL_SMTP, status;
 
+	/* If this is a local session, synchronise the client and server */
+	if( localSession )
+		{
+		if( isServer )
+			{
+			/* Acquire the init mutex */
+			waitMutex();
+			}
+		else
+			/* We're the client Wait for the server to finish initialising */
+			if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+				{
+				printf( "Timed out waiting for server to initialise, "
+						"line %d.\n", __LINE__ );
+				return( FALSE );
+				}
+		}
+
 	printf( "%sTesting %s%s session%s...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "", versionStr[ version ],
-			useClientCert ? " with client certs" : \
-			localSocket ? " with local socket" : \
-			bulkTransfer ? " for bulk data transfer" : \
-			sharedKey ? " with shared key" : "" );
+			( testType == SSL_TEST_CLIENTCERT ) ? " with client certs" : \
+			( testType == SSL_TEST_STARTTLS ) ? " with local socket" : \
+			( testType == SSL_TEST_BULKTRANSER ) ? " for bulk data transfer" : \
+			( testType == SSL_TEST_PSK || \
+			  testType == SSL_TEST_PSK_CLIONLY || \
+			  testType == SSL_TEST_PSK_SVRONLY ) ? " with shared key" : "" );
 	if( !isServer && !localSession )
 		printf( "  Remote host: %s.\n", serverName );
 
@@ -416,7 +458,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		}
 
 	/* If we're doing a bulk data transfer, set up the necessary buffer */
-	if( bulkTransfer )
+	if( testType == SSL_TEST_BULKTRANSER )
 		{
 		if( ( bulkBuffer = malloc( BULKDATA_BUFFER_SIZE ) ) == NULL )
 			{
@@ -435,17 +477,23 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 
 		if( !setLocalConnect( cryptSession, 443 ) )
 			return( FALSE );
-		status = getPrivateKey( &privateKey, SERVER_PRIVKEY_FILE,
-								USER_PRIVKEY_LABEL,
-								TEST_PRIVKEY_PASSWORD );
-		if( cryptStatusOK( status ) )
+		if( ( testType != SSL_TEST_PSK ) && \
+			( testType != SSL_TEST_PSK_SVRONLY ) )
 			{
-			status = cryptSetAttribute( cryptSession,
-										CRYPT_SESSINFO_PRIVATEKEY,
-										privateKey );
-			cryptDestroyContext( privateKey );
+			/* We don't add a private key if we're doing TLS-PSK, to test
+			   TLS-PSK's abiltiy to work without a PKC */
+			status = getPrivateKey( &privateKey, SERVER_PRIVKEY_FILE,
+									USER_PRIVKEY_LABEL,
+									TEST_PRIVKEY_PASSWORD );
+			if( cryptStatusOK( status ) )
+				{
+				status = cryptSetAttribute( cryptSession,
+											CRYPT_SESSINFO_PRIVATEKEY,
+											privateKey );
+				cryptDestroyContext( privateKey );
+				}
 			}
-		if( cryptStatusOK( status ) && useClientCert )
+		if( cryptStatusOK( status ) && testType == SSL_TEST_CLIENTCERT )
 			{
 			CRYPT_KEYSET cryptKeyset;
 
@@ -465,7 +513,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		}
 	else
 		{
-		if( localSocket )
+		if( testType == SSL_TEST_STARTTLS )
 			{
 			/* Testing this fully requires a lot of OS-specific juggling so
 			   unless we're running under Windows we just supply the handle
@@ -476,7 +524,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			   of socket calls to set up a minimal socket.  Since there's
 			   very little error-checking done, we don't treat a failure
 			   as fatal */
-#if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
+#if defined( __WINDOWS__ ) && \
+	!( defined( __WIN16__ ) || defined( _WIN32_WCE ) )
 			WSADATA wsaData;
 
 			if( WSAStartup( 2, &wsaData ) )
@@ -512,7 +561,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			/* The fileno() function doesn't work for DDNAMEs */
 			status = cryptSetAttribute( cryptSession,
 							CRYPT_SESSINFO_NETWORKSOCKET, 0 );
-#elif defined( _WIN32_WCE )
+#elif defined( __WIN16__ ) || defined( _WIN32_WCE )
 			status = cryptSetAttribute( cryptSession,
 							CRYPT_SESSINFO_NETWORKSOCKET, 1 );
 #else
@@ -532,7 +581,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 								CRYPT_SESSINFO_SERVER_NAME, serverName,
 								paramStrlen( serverName ) );
 			}
-		if( cryptStatusOK( status ) && useClientCert )
+		if( cryptStatusOK( status ) && testType == SSL_TEST_CLIENTCERT )
 			{
 			CRYPT_CONTEXT privateKey;
 
@@ -551,70 +600,59 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 								12 );
 #endif /* 0 */
 		}
-	if( cryptStatusOK( status ) && sharedKey )
+	if( cryptStatusOK( status ) && \
+		( testType == SSL_TEST_PSK || \
+		  ( isServer && testType == SSL_TEST_PSK_SVRONLY ) || \
+		  ( !isServer && testType == SSL_TEST_PSK_CLIONLY ) ) )
 		{
+		/* If we're testing the no-PSK handling, only the server is
+		   expecting TLS-PSK, so the client isn't supplied with a
+		   password */
+		if( cryptStatusOK( status ) && isServer && testType == SSL_TEST_PSK )
+			{
+			/* If we're testing PSK, add several preceding usernames and
+			   passwords */
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "before1" ),
+								paramStrlen( TEXT( "before1" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "before1" ),
+								paramStrlen( TEXT( "before1" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "before2" ),
+								paramStrlen( TEXT( "before2" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "before2" ),
+								paramStrlen( TEXT( "before2" ) ) );
+			}
 		status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_USERNAME, SSL_USER_NAME,
-									paramStrlen( SSL_USER_NAME ) );
+								CRYPT_SESSINFO_USERNAME, SSL_USER_NAME,
+								paramStrlen( SSL_USER_NAME ) );
 		if( cryptStatusOK( status ) )
 			status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_PASSWORD, SSL_PASSWORD,
-									paramStrlen( SSL_PASSWORD ) );
-		if( isServer )
+								CRYPT_SESSINFO_PASSWORD, SSL_PASSWORD,
+								paramStrlen( SSL_PASSWORD ) );
+		if( cryptStatusOK( status ) && isServer && testType == SSL_TEST_PSK )
 			{
-#if 0	/* Old PSK mechanism */
-			/* If it's a server session, set an additional username/password
-			   to test the ability of the session cache to store multiple
-			   shared secrets */
-			status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ),
-									paramStrlen( TEXT( "0000" ) ) );
-			if( cryptStatusOK( status ) )
-				status = cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_PASSWORD, TEXT( "0000" ),
-									paramStrlen( TEXT( "0000" ) ) );
-			if( cryptStatusOK( status ) && \
-				cryptStatusOK( \
-					cryptSetAttributeString( cryptSession,
-									CRYPT_SESSINFO_USERNAME, TEXT( "0000" ),
-									paramStrlen( TEXT( "0000" ) ) ) ) )
-				{
-				printf( "SVR: Addition of duplicate entry to SSL session "
-						"cache wasn't detected, line %d.\n", __LINE__ );
-				return( FALSE );
-				}
-#endif /* 0 */
-
-#if 0		/* Check the functioning of the session cache's LRU mechanism */
-			{
-			int i;
-
-			for( i = 0; i < 1024 + 2000; i++ )
-				{
-				char userName[ 64 ];
-
-				sprintf( userName, "user%04d", i );
-				status = cryptSetAttributeString( cryptSession,
-										CRYPT_SESSINFO_USERNAME, userName,
-										paramStrlen( userName ) );
-				if( cryptStatusOK( status ) )
-					status = cryptSetAttributeString( cryptSession,
-										CRYPT_SESSINFO_PASSWORD, userName,
-										paramStrlen( userName ) );
-				if( cryptStatusError( status ) )
-					{
-					printf( "SVR: Error %d during SSL server cache LRU "
-							"test, line %d.\n", status, __LINE__ );
-					return( FALSE );
-					}
-				}
-			}
-#endif /* 0 */
+			/* If we're testing PSK, add several succeeding usernames and
+			   passwords */
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "after1" ),
+								paramStrlen( TEXT( "after1" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "after1" ),
+								paramStrlen( TEXT( "after1" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "after2" ),
+								paramStrlen( TEXT( "after2" ) ) );
+			cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "after2" ),
+								paramStrlen( TEXT( "after2" ) ) );
 			}
 		}
 	if( cryptStatusError( status ) )
 		{
-		if( localSocket )
+		if( testType == SSL_TEST_STARTTLS )
 			{
 #if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
 			closesocket( netSocket );
@@ -630,6 +668,9 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
+	if( isServer && localSession )
+		/* Tell the client that we're ready to go */
+		releaseMutex();
 #if ( SSL_SERVER_NO == 5 ) || ( STARTTLS_SERVER_NO == 8 )
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &version );
@@ -641,7 +682,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   version );
 #endif /* SSL server with b0rken certs */
-	if( isServer )
+	if( isServer && testType != SSL_TEST_PSK_CLIONLY && \
+					testType != SSL_TEST_PSK_SVRONLY )
 		{
 		if( !printConnectInfo( cryptSession ) )
 			return( FALSE );
@@ -650,7 +692,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		{
 		char strBuffer[ 128 ];
 
-		if( localSocket )
+		if( testType == SSL_TEST_STARTTLS )
 			{
 #if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
 			closesocket( netSocket );
@@ -671,7 +713,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				 versionStr[ version ] );
 		printExtError( cryptSession, strBuffer, status, __LINE__ );
 		cryptDestroySession( cryptSession );
-		if( bulkTransfer )
+		if( testType == SSL_TEST_BULKTRANSER )
 			free( bulkBuffer );
 		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND )
 			{
@@ -681,14 +723,35 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			puts( "  (Server could be down, faking it and continuing...)\n" );
 			return( CRYPT_ERROR_FAILED );
 			}
+		if( testType == SSL_TEST_PSK_CLIONLY || \
+			testType == SSL_TEST_PSK_SVRONLY )
+			{
+			/* The CLIONLY/SVRONLY test is supposed to fail, so if this
+			   happens then the overall test has succeeded */
+			puts( "  (This test checks error handling, so the failure "
+				  "response is correct).\n" );
+			return( TRUE );
+			}
 		return( FALSE );
 		}
+	else
+		/* The CLIONLY/SVRONLY test is supposed to fail, if this doesn't
+		   happen then there's a problem */
+		if( testType == SSL_TEST_PSK_CLIONLY || \
+			testType == SSL_TEST_PSK_SVRONLY )
+			{
+			printf( "%sTLS-PSK handshake without password should have "
+					"failed but succeeded,\nline %d.\n",
+					isServer ? "SVR: " : "", __LINE__  );
+			return( FALSE );
+			}
 
 	/* Report the session security info */
-	if( !printSecurityInfo( cryptSession, isServer, !sharedKey ) )
+	if( !printSecurityInfo( cryptSession, isServer,
+							( testType != SSL_TEST_PSK ) ) )
 		return( FALSE );
 	if( ( !localSession && !isServer ) ||
-		( localSession && isServer && useClientCert ) )
+		( localSession && isServer && testType == SSL_TEST_CLIENTCERT ) )
 		{
 		CRYPT_CERTIFICATE cryptCertificate;
 
@@ -706,7 +769,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		printCertChainInfo( cryptCertificate );
 		cryptDestroyCert( cryptCertificate );
 		}
-	if( isServer && sharedKey )
+	if( isServer && testType == SSL_TEST_PSK )
 		{
 		C_CHR userNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 ];
 		int length;
@@ -739,9 +802,9 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 								15 );
 #else
 	status = cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT,
-								bulkTransfer ? 0 : 5 );
+								( testType == SSL_TEST_BULKTRANSER ) ? 0 : 5 );
 #endif /* SSL_SERVER_NO == 3 */
-	if( bulkTransfer )
+	if( testType == SSL_TEST_BULKTRANSER )
 		{
 		if( isServer )
 			{
@@ -798,7 +861,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				char strBuffer[ 256 ];
 
 				sprintf( strBuffer, "Read of bulk data from server aborted "
-									"after %d of %d bytes were read\n(last "
+									"after %ld of %ld bytes were read\n(last "
 									"read = %d bytes), transfer",
 									byteCount, BULKDATA_BUFFER_SIZE,
 									bytesCopied );
@@ -899,7 +962,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			int fetchStringLen;
 
 			/* Send a fetch request to the server */
-			if( localSocket )
+			if( testType == SSL_TEST_STARTTLS )
 				{
 				if( protocol == PROTOCOL_SMTP )
 					strcpy( fetchString, "EHLO foo.bar.com\r\n" );
@@ -995,7 +1058,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* SSL_SERVER_NO == 3 */
 
 			/* If it's a chatty protocol, exchange some more pleasantries */
-			if( localSocket )
+			if( testType == SSL_TEST_STARTTLS )
 				{
 				if( protocol == PROTOCOL_SMTP )
 					strcpy( fetchString, "QUIT\r\n" );
@@ -1048,7 +1111,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 		return( FALSE );
 		}
 #if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
-	if( localSocket )
+	if( testType == SSL_TEST_STARTTLS )
 		{
 		closesocket( netSocket );
 		WSACleanup();
@@ -1062,24 +1125,24 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 
 int testSessionSSL( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 0, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 0, FALSE ) );
 	}
 int testSessionSSLLocalSocket( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 0, FALSE, FALSE, FALSE, TRUE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_STARTTLS, 0, FALSE ) );
 	}
 int testSessionSSLClientCert( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 0, TRUE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_CLIENTCERT, 0, FALSE ) );
 	}
 int testSessionSSLSharedKey( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 0, TRUE, FALSE, FALSE, FALSE, TRUE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_PSK, 0, FALSE ) );
 	}
 
 int testSessionSSLServer( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 0, FALSE ) );
 	}
 int testSessionSSLServerCached( void )
 	{
@@ -1091,33 +1154,33 @@ int testSessionSSLServerCached( void )
 	   this will require three lots of connects rather than two, because it
 	   handles an unknown cert by doing a resume, which consumes two lots of
 	   sessions, and then the third one is the actual session resume */
-	status = connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, FALSE, FALSE, FALSE, FALSE, FALSE );
+	status = connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 0, FALSE );
 	if( status <= 0 )
 		return( status );
-	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 0, FALSE ) );
 	}
 int testSessionSSLServerClientCert( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, TRUE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_CLIENTCERT, 0, FALSE ) );
 	}
 
 int testSessionTLS( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 1, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 1, FALSE ) );
 	}
 
 int testSessionTLSServer( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 1, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 1, FALSE ) );
 	}
 int testSessionTLSServerSharedKey( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 1, FALSE, FALSE, FALSE, FALSE, TRUE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_PSK, 1, FALSE ) );
 	}
 
 int testSessionTLS11( void )
 	{
-	return( connectSSLTLS( CRYPT_SESSION_SSL, 2, FALSE, FALSE, FALSE, FALSE, FALSE ) );
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 2, FALSE ) );
 	}
 
 /* Perform a client/server loopback test */
@@ -1126,7 +1189,7 @@ int testSessionTLS11( void )
 
 unsigned __stdcall sslServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, FALSE, TRUE, FALSE, FALSE, FALSE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 0, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1137,29 +1200,22 @@ int testSessionSSLClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &sslServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, sslServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 0, FALSE, TRUE, FALSE, FALSE, FALSE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 0, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
 unsigned __stdcall sslClientCertServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 0, TRUE, TRUE, FALSE, FALSE, FALSE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_CLIENTCERT, 0, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1170,29 +1226,22 @@ int testSessionSSLClientCertClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &sslClientCertServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, sslClientCertServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 0, TRUE, TRUE, FALSE, FALSE, FALSE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_CLIENTCERT, 0, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
 unsigned __stdcall tlsServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 1, FALSE, TRUE, FALSE, FALSE, FALSE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 1, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1203,29 +1252,22 @@ int testSessionTLSClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tlsServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 1, FALSE, TRUE, FALSE, FALSE, FALSE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 1, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
 unsigned __stdcall tlsSharedKeyServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 1, FALSE, TRUE, FALSE, FALSE, TRUE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_PSK, 1, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1236,29 +1278,65 @@ int testSessionTLSSharedKeyClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tlsSharedKeyServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsSharedKeyServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 1, FALSE, TRUE, FALSE, FALSE, TRUE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_PSK, 1, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
+	return( status );
+	}
 
+unsigned __stdcall tlsNoSharedKeyServerThread( void *arg )
+	{
+	int testType = *( ( int * ) arg );
+
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, testType, 1, TRUE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+
+int testSessionTLSNoSharedKeyClientServer( void )
+	{
+	HANDLE hThread;
+	unsigned threadID;
+	int arg, status;
+
+	/* Start the server */
+	createMutex();
+	arg = SSL_TEST_PSK_CLIONLY;
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsNoSharedKeyServerThread,
+										 &arg, 0, &threadID );
+	Sleep( 1000 );
+
+	/* Connect to the local server */
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_PSK_CLIONLY, 1, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
+	if( status != TRUE )
+		return( status );
+
+	/* Restart the server */
+	createMutex();
+	arg = SSL_TEST_PSK_SVRONLY;
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsNoSharedKeyServerThread,
+										 &arg, 0, &threadID );
+	Sleep( 1000 );
+
+	/* Connect to the local server */
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_PSK_SVRONLY, 1, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
 unsigned __stdcall tlsBulkTransferServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 1, FALSE, TRUE, TRUE, FALSE, FALSE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_BULKTRANSER, 1, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1269,29 +1347,22 @@ int testSessionTLSBulkTransferClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tlsBulkTransferServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tlsBulkTransferServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 1, FALSE, TRUE, TRUE, FALSE, FALSE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_BULKTRANSER, 1, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 
 unsigned __stdcall tls11ServerThread( void *dummy )
 	{
-	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, 2, FALSE, TRUE, FALSE, FALSE, FALSE );
+	connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 2, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1302,23 +1373,18 @@ int testSessionTLS11ClientServer( void )
 	unsigned threadID;
 	int status;
 
-	/* Start the server and wait for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &tls11ServerThread,
+	/* Start the server */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, tls11ServerThread,
 										 NULL, 0, &threadID );
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectSSLTLS( CRYPT_SESSION_SSL, 2, FALSE, TRUE, FALSE, FALSE, FALSE );
-	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
-		{
-		puts( "Warning: Server thread is still active due to session "
-			  "negotiation failure,\n         this will cause an error "
-			  "condition when cryptEnd() is called due\n         to "
-			  "resources remaining allocated.  Press a key to continue." );
-		getchar();
-		}
-	CloseHandle( hThread );
-
+	status = connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 2, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
 	return( status );
 	}
 #endif /* WINDOWS_THREADS */
+
+#endif /* TEST_SESSION */

@@ -5,15 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "cast.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "context.h"
-  #include "../crypt/cast.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -38,11 +33,11 @@
 
 /* CAST test vectors from CAST specification */
 
-static const FAR_BSS struct CAST_TEST {
+static const struct CAST_TEST {
 	BYTE key[ CAST_KEY_LENGTH ];
 	BYTE plainText[ CAST_BLOCKSIZE ];
 	BYTE cipherText[ CAST_BLOCKSIZE ];
-	} testCAST[] = {
+	} FAR_BSS testCAST[] = {
 	{ { 0x01, 0x23, 0x45, 0x67, 0x12, 0x34, 0x56, 0x78,
 		0x23, 0x45, 0x67, 0x89, 0x34, 0x56, 0x78, 0x9A },
 	  { 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF },

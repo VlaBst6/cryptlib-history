@@ -5,16 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
@@ -31,10 +25,10 @@ int fixAttributes( CERT_INFO *certInfoPtr );
 *																			*
 ****************************************************************************/
 
-/* Return from a cert info read after encountering an error, setting the 
-   extended error information if the error was caused by invalid data.  
+/* Return from a cert info read after encountering an error, setting the
+   extended error information if the error was caused by invalid data.
    Although this isn't actually returned to the caller because the cert
-   object isn't created, it allows more precise error diagnosis for other 
+   object isn't created, it allows more precise error diagnosis for other
    routines */
 
 static int certErrorReturn( CERT_INFO *certInfoPtr,
@@ -48,14 +42,14 @@ static int certErrorReturn( CERT_INFO *certInfoPtr,
 
 /* Read a certificate serial number */
 
-static int readSerialNumber( STREAM *stream, CERT_INFO *certInfoPtr, 
+static int readSerialNumber( STREAM *stream, CERT_INFO *certInfoPtr,
 							 const int tag )
 	{
-	BYTE integer[ MAX_SERIALNO_SIZE ];
+	BYTE integer[ MAX_SERIALNO_SIZE + 8 ];
 	int integerLength, status;
 
 	/* Read the integer component of the serial number */
-	status = readIntegerTag( stream, integer, &integerLength, 
+	status = readIntegerTag( stream, integer, &integerLength,
 							 MAX_SERIALNO_SIZE, tag );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_SERIALNUMBER,
@@ -63,7 +57,7 @@ static int readSerialNumber( STREAM *stream, CERT_INFO *certInfoPtr,
 
 	/* Some certs may have a serial number of zero, which is turned into a
 	   zero-length integer by the ASN.1 read code which truncates leading
-	   zeroes that are added due to ASN.1 encoding requirements.  If we get 
+	   zeroes that are added due to ASN.1 encoding requirements.  If we get
 	   a zero-length integer, we turn it into a single zero byte */
 	if( !integerLength )
 		{
@@ -142,7 +136,10 @@ static int readUniqueID( STREAM *stream, CERT_INFO *certInfoPtr,
 	/* Read the length of the unique ID, allocate room for it, and read it
 	   into the cert.  We ignore the tag since we've already checked it via
 	   peekTag() before we got here */
-	status = readBitStringHole( stream, &length, ANY_TAG );
+	status = readBitStringHole( stream, &length, 1, 
+								( type == CRYPT_CERTINFO_ISSUERUNIQUEID ) ? \
+									CTAG_CE_ISSUERUNIQUEID : \
+									CTAG_CE_SUBJECTUNIQUEID );
 	if( cryptStatusOK( status ) && ( length < 1 || length > 1024 ) )
 		status = CRYPT_ERROR_BADDATA;
 	if( cryptStatusOK( status ) )
@@ -168,7 +165,7 @@ static int readUniqueID( STREAM *stream, CERT_INFO *certInfoPtr,
 	return( CRYPT_OK );
 	}
 
-/* Read DN information and remember the encoded DN data so we can copy it 
+/* Read DN information and remember the encoded DN data so we can copy it
    (complete with any encoding errors) to the issuer DN field of anything
    we sign */
 
@@ -215,26 +212,26 @@ static int readPublicKeyInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		   read the information as a generic hole rather than a normal
 		   SEQUENCE.  In addition because readAlgoID() can return non-stream
 		   errors (for example an algorithm not-available status) we have to
-		   explicitly check the return status rather than relying on it to 
+		   explicitly check the return status rather than relying on it to
 		   be carried along in the stream state */
-		readGenericHole( stream, NULL, DEFAULT_TAG );
+		readGenericHole( stream, NULL, 4, DEFAULT_TAG );
 		status = readAlgoID( stream, &certInfoPtr->publicKeyAlgo );
 		if( cryptStatusOK( status ) )
 			status = readUniversal( stream );
 		}
 	else
 		{
-		status = iCryptReadSubjectPublicKey( stream, 
+		status = iCryptReadSubjectPublicKey( stream,
 									&certInfoPtr->iPubkeyContext, FALSE );
 		if( cryptStatusOK( status ) )
-			status = krnlSendMessage( certInfoPtr->iPubkeyContext, 
-									  IMESSAGE_GETATTRIBUTE, 
-									  &certInfoPtr->publicKeyAlgo, 
+			status = krnlSendMessage( certInfoPtr->iPubkeyContext,
+									  IMESSAGE_GETATTRIBUTE,
+									  &certInfoPtr->publicKeyAlgo,
 									  CRYPT_CTXINFO_ALGO );
 		}
 	if( cryptStatusError( status ) )
-		return( certErrorReturn( certInfoPtr, 
-								 CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, 
+		return( certErrorReturn( certInfoPtr,
+								 CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO,
 								 status ) );
 
 	return( CRYPT_OK );
@@ -267,15 +264,15 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		certInfoPtr->version = 1;
 
 	/* Read the serial number and signature algorithm information.  The
-	   algorithm information was included to avert a somewhat obscure attack 
-	   that isn't possible anyway because of the way the signature data is 
-	   encoded in PKCS #1 sigs (although it's still possible for some of the 
+	   algorithm information was included to avert a somewhat obscure attack
+	   that isn't possible anyway because of the way the signature data is
+	   encoded in PKCS #1 sigs (although it's still possible for some of the
 	   ISO sig.types) so there's no need to record it, however we record it
 	   because some higher-level protocols use the hash algorithm in the cert
 	   as an implicit indicator of the hash algorithm they'll use */
 	status = readSerialNumber( stream, certInfoPtr, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
-		status = readAlgoIDex( stream, NULL, 
+		status = readAlgoIDex( stream, NULL, \
 							   &certInfoPtr->cCertCert->hashAlgo, NULL );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -303,14 +300,14 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	/* Read the issuer and subject unique ID's if there are any present */
 	if( peekTag( stream ) == MAKE_CTAG_PRIMITIVE( CTAG_CE_ISSUERUNIQUEID ) )
 		{
-		status = readUniqueID( stream, certInfoPtr, 
+		status = readUniqueID( stream, certInfoPtr,
 							   CRYPT_CERTINFO_ISSUERUNIQUEID );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 	if( peekTag( stream ) == MAKE_CTAG_PRIMITIVE( CTAG_CE_SUBJECTUNIQUEID ) )
 		{
-		status = readUniqueID( stream, certInfoPtr, 
+		status = readUniqueID( stream, certInfoPtr,
 							   CRYPT_CERTINFO_SUBJECTUNIQUEID );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -388,7 +385,7 @@ static int readAttributeCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	/* Read the issuer unique ID if there's one present */
 	if( peekTag( stream ) == BER_BITSTRING )
 		{
-		status = readUniqueID( stream, certInfoPtr, 
+		status = readUniqueID( stream, certInfoPtr,
 							   CRYPT_CERTINFO_ISSUERUNIQUEID );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -405,7 +402,7 @@ static int readAttributeCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	return( status );
 	}
 
-/* Read the information in a CRL.  We read various lengths as long values 
+/* Read the information in a CRL.  We read various lengths as long values
    since CRLs can get quite large */
 
 static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
@@ -416,14 +413,14 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 	/* If it's a standalone CRL entry, read the single entry and return */
 	if( certInfoPtr->flags & CERT_FLAG_CRLENTRY )
-		return( readCRLentry( stream, &certRevInfo->revocations, 
-							  &certInfoPtr->errorLocus, 
+		return( readCRLentry( stream, &certRevInfo->revocations,
+							  &certInfoPtr->errorLocus,
 							  &certInfoPtr->errorType ) );
 
 	/* Read the outer SEQUENCE and version number if it's present */
 	status = readLongSequence( stream, &length );
 	if( cryptStatusOK( status ) && length == CRYPT_UNUSED )
-		/* If it's an (invalid) indefinite-length encoding we can't do 
+		/* If it's an (invalid) indefinite-length encoding we can't do
 		   anything with it */
 		status = CRYPT_ERROR_BADDATA;
 	if( cryptStatusError( status ) )
@@ -436,7 +433,7 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		readShortInteger( stream, &version );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
-	else	
+	else
 		certInfoPtr->version = 1;
 
 	/* Skip the signature algorithm information.  This was included to avert
@@ -469,23 +466,23 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		{
 		status = readLongSequence( stream, &length );
 		if( cryptStatusOK( status ) && length == CRYPT_UNUSED )
-			/* If it's an (invalid) indefinite-length encoding we can't do 
+			/* If it's an (invalid) indefinite-length encoding we can't do
 			   anything with it */
 			status = CRYPT_ERROR_BADDATA;
 		while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
 			{
 			const long innerStartPos = stell( stream );
 
-			status = readCRLentry( stream, &certRevInfo->revocations, 
-								   &certInfoPtr->errorLocus, 
+			status = readCRLentry( stream, &certRevInfo->revocations,
+								   &certInfoPtr->errorLocus,
 								   &certInfoPtr->errorType );
 			length -= stell( stream ) - innerStartPos;
 			}
 		if( cryptStatusError( status ) )
-			/* The invalid attribute isn't quite a user certificate, but 
-			   it's the data that arose from a user certificate so it's the 
+			/* The invalid attribute isn't quite a user certificate, but
+			   it's the data that arose from a user certificate so it's the
 			   most appropriate locus for the error */
-			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE, 
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 									 status ) );
 		certRevInfo->currentRevocation = certRevInfo->revocations;
 		}
@@ -541,11 +538,11 @@ static int readCertRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_CR_ATTRIBUTES ) )
 		{
 		int length;
-		
+
 		status = readConstructed( stream, &length, CTAG_CR_ATTRIBUTES );
 		if( cryptStatusOK( status ) && length >= MIN_ATTRIBUTE_SIZE )
 			status = readAttributes( stream, &certInfoPtr->attributes,
-						CRYPT_CERTTYPE_CERTREQUEST, length, 
+						CRYPT_CERTTYPE_CERTREQUEST, length,
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -572,8 +569,8 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	readUniversal( stream );
 	status = readSequence( stream, NULL );
 
-	/* Skip any junk before the Validity, SubjectName, or 
-	   SubjectPublicKeyInfo (the semantics of what we're stripping are at 
+	/* Skip any junk before the Validity, SubjectName, or
+	   SubjectPublicKeyInfo (the semantics of what we're stripping are at
 	   best undefined (version), at worst dangerous (serialNumber) */
 	while( cryptStatusOK( status ) && \
 		   ( peekTag( stream ) != MAKE_CTAG( CTAG_CF_VALIDITY ) && \
@@ -602,15 +599,15 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( peekTag( stream ) != MAKE_CTAG( CTAG_CF_PUBLICKEY ) )
 		status = CRYPT_ERROR_BADDATA;
 	else
-		/* Read the public key information.  CRMF uses yet more nonstandard 
-		   tagging for the public key, in theory we'd have to read it with 
-		   the CTAG_CF_PUBLICKEY tag instead of the default SEQUENCE, 
-		   however the public-key-read code reads the SPKI encapsulation as 
-		   a generic hole to handle this so there's no need for any special 
+		/* Read the public key information.  CRMF uses yet more nonstandard
+		   tagging for the public key, in theory we'd have to read it with
+		   the CTAG_CF_PUBLICKEY tag instead of the default SEQUENCE,
+		   however the public-key-read code reads the SPKI encapsulation as
+		   a generic hole to handle this so there's no need for any special
 		   handling */
 		status = readPublicKeyInfo( stream, certInfoPtr );
 	if( cryptStatusError( status ) )
-		return( certErrorReturn( certInfoPtr, 
+		return( certErrorReturn( certInfoPtr,
 							CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, status ) );
 
 	/* Read the attributes */
@@ -621,7 +618,7 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		status = readConstructed( stream, &length, CTAG_CF_EXTENSIONS );
 		if( cryptStatusOK( status ) && length >= MIN_ATTRIBUTE_SIZE )
 			status = readAttributes( stream, &certInfoPtr->attributes,
-						CRYPT_CERTTYPE_REQUEST_CERT, length, 
+						CRYPT_CERTTYPE_REQUEST_CERT, length,
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -632,10 +629,10 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* CRMF requests are usually self-signed, however if they've been 
+	/* CRMF requests are usually self-signed, however if they've been
 	   generated with an encryption-only key then the place of the signature
-	   is taken by one of a number of magic values which indicate that no 
-	   signature is present and that something else needs to be done to 
+	   is taken by one of a number of magic values which indicate that no
+	   signature is present and that something else needs to be done to
 	   verify that the sender has the private key */
 	tag = peekTag( stream );
 	status = readConstructed( stream, NULL, tag );
@@ -643,7 +640,7 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		/* It's a signature, the request is self-signed */
 		certInfoPtr->flags |= CERT_FLAG_SELFSIGNED;
 	else
-		/* If it's not an indication that private-key POP will be performed 
+		/* If it's not an indication that private-key POP will be performed
 		   by returning the cert in encrypted form, we can't handle it */
 		if( tag != MAKE_CTAG( 2 ) )
 			return( CRYPT_ERROR_BADDATA );
@@ -667,13 +664,13 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		   peekTag( stream ) != MAKE_CTAG_PRIMITIVE( CTAG_CF_SERIALNUMBER ) )
 		status = readUniversal( stream );
 	if( cryptStatusOK( status ) )
-		status = readSerialNumber( stream, certInfoPtr, 
+		status = readSerialNumber( stream, certInfoPtr,
 								   CTAG_CF_SERIALNUMBER );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Skip any junk before the issuer name and read the issuer name.  We 
-	   don't actually care about the contents but we have to decode them 
+	/* Skip any junk before the issuer name and read the issuer name.  We
+	   don't actually care about the contents but we have to decode them
 	   anyway in case the caller wants to view them */
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_CF_SIGNINGALG ) )
 		status = readUniversal( stream );
@@ -685,20 +682,20 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Skip any further junk that may be present in the template and read 
+	/* Skip any further junk that may be present in the template and read
 	   the attributes */
 	while( cryptStatusOK( status ) && \
 		   stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
 		{
 		const int tag = peekTag( stream );
-		
+
 		if( tag == MAKE_CTAG( CTAG_CF_EXTENSIONS ) )
 			{
 			status = readConstructed( stream, &length, CTAG_CF_EXTENSIONS );
 			if( cryptStatusOK( status ) && length >= MIN_ATTRIBUTE_SIZE )
 				status = readAttributes( stream, &certInfoPtr->attributes,
-										 CRYPT_CERTTYPE_REQUEST_REVOCATION, 
-										 length, &certInfoPtr->errorLocus, 
+										 CRYPT_CERTTYPE_REQUEST_REVOCATION,
+										 length, &certInfoPtr->errorLocus,
 										 &certInfoPtr->errorType );
 			}
 		else
@@ -718,7 +715,7 @@ static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	CERT_VAL_INFO *certValInfo = certInfoPtr->cCertVal;
 	int length, endPos, status;
 
-	/* Read the outer wrapper and SEQUENCE OF request info and make the 
+	/* Read the outer wrapper and SEQUENCE OF request info and make the
 	   currently selected one the start of the list */
 	readSequence( stream, &length );
 	endPos = stell( stream ) + length;
@@ -727,19 +724,19 @@ static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		{
 		const int innerStartPos = stell( stream );
 
-		status = readRtcsRequestEntry( stream, &certValInfo->validityInfo, 
+		status = readRtcsRequestEntry( stream, &certValInfo->validityInfo,
 									   certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
-		   data that arose from a user certificate so it's the most 
+		   data that arose from a user certificate so it's the most
 		   appropriate locus for the error */
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 								 status ) );
 	certValInfo->currentValidity = certValInfo->validityInfo;
 
-	/* Read the extensions if there are any present.  Because some requests 
+	/* Read the extensions if there are any present.  Because some requests
 	   will have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
@@ -760,7 +757,7 @@ static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	CERT_VAL_INFO *certValInfo = certInfoPtr->cCertVal;
 	int length, endPos, status;
 
-	/* Read the SEQUENCE OF validity info and make the currently selected 
+	/* Read the SEQUENCE OF validity info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
 	endPos = stell( stream ) + length;
@@ -768,13 +765,13 @@ static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		{
 		const int innerStartPos = stell( stream );
 
-		status = readRtcsResponseEntry( stream, &certValInfo->validityInfo, 
+		status = readRtcsResponseEntry( stream, &certValInfo->validityInfo,
 										certInfoPtr, FALSE );
 		length -= stell( stream ) - innerStartPos;
 		}
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
-		   data that arose from a user certificate so it's the most 
+		   data that arose from a user certificate so it's the most
 		   appropriate locus for the error */
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 								 status ) );
@@ -813,26 +810,26 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_OR_DUMMY ) )
 		readUniversal( stream );
 
-	/* Read the SEQUENCE OF revocation info and make the currently selected 
+	/* Read the SEQUENCE OF revocation info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
 	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
 		{
 		const int innerStartPos = stell( stream );
 
-		status = readOcspRequestEntry( stream, &certRevInfo->revocations, 
+		status = readOcspRequestEntry( stream, &certRevInfo->revocations,
 									   certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
-		   data that arose from a user certificate so it's the most 
+		   data that arose from a user certificate so it's the most
 		   appropriate locus for the error */
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 								 status ) );
 	certRevInfo->currentRevocation = certRevInfo->revocations;
 
-	/* Read the extensions if there are any present.  Because some requests 
+	/* Read the extensions if there are any present.  Because some requests
 	   will have broken encoding of lengths, we allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
 	if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
@@ -869,7 +866,7 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		}
 	if( peekTag( stream ) == MAKE_CTAG( 1 ) )
 		{
-		/* It's a DN, read it as the issuer name in case the caller is 
+		/* It's a DN, read it as the issuer name in case the caller is
 		   interested in it */
 		readConstructed( stream, NULL, 1 );
 		status = readIssuerDN( stream, certInfoPtr );
@@ -877,26 +874,26 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 			return( status );
 		}
 	else
-		/* We can't do much with a key hash, in any case all current 
+		/* We can't do much with a key hash, in any case all current
 		   responders use the issuer DN to identify the responder so
 		   this shouldn't be much of a problem */
 		readUniversal( stream );
 	readGeneralizedTime( stream, NULL );		/* producedAt */
 
-	/* Read the SEQUENCE OF revocation info and make the currently selected 
+	/* Read the SEQUENCE OF revocation info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
 	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
 		{
 		const int innerStartPos = stell( stream );
 
-		status = readOcspResponseEntry( stream, &certRevInfo->revocations, 
+		status = readOcspResponseEntry( stream, &certRevInfo->revocations,
 										certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
-		   data that arose from a user certificate so it's the most 
+		   data that arose from a user certificate so it's the most
 		   appropriate locus for the error */
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 								 status ) );
@@ -909,10 +906,10 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 						&certInfoPtr->errorLocus, &certInfoPtr->errorType );
 
 	/* In theory some OCSP responses can be sort of self-signed via attached
-	   certs, but there are so many incompatible ways to delegate trust and 
-	   signing authority mentioned in the RFC without any indication of 
-	   which one implementors will follow that we require the user to supply 
-	   the sig check certificate rather than assuming that some particular 
+	   certs, but there are so many incompatible ways to delegate trust and
+	   signing authority mentioned in the RFC without any indication of
+	   which one implementors will follow that we require the user to supply
+	   the sig check certificate rather than assuming that some particular
 	   trust delegation mechanism will happen to be in place */
 /*	certInfoPtr->flags |= CERT_FLAG_SELFSIGNED; */
 	return( status );
@@ -928,10 +925,10 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	ATTRIBUTE_LIST *attributeListCursor;
 	QUERY_INFO queryInfo;
 	STREAM userInfoStream;
-	BYTE userInfo[ 128 ];
+	BYTE userInfo[ 128 + 8 ];
 	int userInfoSize, length, status;
 
-	/* Read the user name and encryption algorithm info and the start of the 
+	/* Read the user name and encryption algorithm info and the start of the
 	   encrypted data */
 	userInfoPtr->subjectDNptr = sMemBufPtr( stream );
 	userInfoPtr->subjectDNsize = stell( stream );
@@ -940,7 +937,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	if( cryptStatusOK( status ) )
 		{
 		readContextAlgoID( stream, NULL, &queryInfo, DEFAULT_TAG );
-		status = readOctetString( stream, userInfo, &userInfoSize, 128 );
+		status = readOctetString( stream, userInfo, &userInfoSize, 8, 128 );
 		if( cryptStatusOK( status ) && \
 			userInfoSize != PKIUSER_ENCR_AUTHENTICATOR_SIZE )
 			status = CRYPT_ERROR_BADDATA;
@@ -948,18 +945,18 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Clone the CA key for our own use, load the IV from the encryption 
-	   info, and use the cloned context to decrypt the user info.  We need to 
-	   do this to prevent problems if multiple threads try to simultaneously 
-	   decrypt with the CA key.  Since user objects aren't fully implemented 
+	/* Clone the CA key for our own use, load the IV from the encryption
+	   info, and use the cloned context to decrypt the user info.  We need to
+	   do this to prevent problems if multiple threads try to simultaneously
+	   decrypt with the CA key.  Since user objects aren't fully implemented
 	   yet, we use a fixed key as the CA key for now (most CA guidelines
 	   merely require that the CA protect its user database via standard
 	   (physical/ACL) security measures, so this is no less secure than what's
 	   required by various CA guidelines).
 
-	   When we do this for real we probably need an extra level of 
-	   indirection to go from the CA secret to the database decryption key 
-	   so that we can change the encryption algorithm and so that we don't 
+	   When we do this for real we probably need an extra level of
+	   indirection to go from the CA secret to the database decryption key
+	   so that we can change the encryption algorithm and so that we don't
 	   have to directly apply the CA secret key to the user database */
 	setMessageCreateObjectInfo( &createInfo, queryInfo.cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
@@ -970,7 +967,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 
 		setMessageData( &msgData, "interop interop interop ", 24 );
 		status = krnlSendMessage( createInfo.cryptHandle,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
+								  IMESSAGE_SETATTRIBUTE_S, &msgData,
 								  CRYPT_CTXINFO_KEY );
 		iCryptContext = createInfo.cryptHandle;
 		}
@@ -979,40 +976,41 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 		RESOURCE_DATA msgData;
 
 		setMessageData( &msgData, queryInfo.iv, queryInfo.ivLength );
-		krnlSendMessage( iCryptContext,IMESSAGE_SETATTRIBUTE_S, &msgData, 
+		krnlSendMessage( iCryptContext,IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_IV );
-		status = krnlSendMessage( iCryptContext, IMESSAGE_CTX_DECRYPT, 
+		status = krnlSendMessage( iCryptContext, IMESSAGE_CTX_DECRYPT,
 								  userInfo, userInfoSize );
 		krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Read the user info.  If we get a bad data error at this point we 
-	   report it as a wrong decryption key rather than bad data since it's 
+	/* Read the user info.  If we get a bad data error at this point we
+	   report it as a wrong decryption key rather than bad data since it's
 	   more likely to be the former */
 	sMemConnect( &userInfoStream, userInfo, userInfoSize );
 	readSequence( &userInfoStream, NULL );
 	readOctetString( &userInfoStream, certUserInfo->pkiIssuePW, &length,
-					 PKIUSER_AUTHENTICATOR_SIZE );
-	status = readOctetString( &userInfoStream, certUserInfo->pkiRevPW, 
-							  &length, PKIUSER_AUTHENTICATOR_SIZE );
+					 PKIUSER_AUTHENTICATOR_SIZE, PKIUSER_AUTHENTICATOR_SIZE );
+	status = readOctetString( &userInfoStream, certUserInfo->pkiRevPW,
+							  &length, PKIUSER_AUTHENTICATOR_SIZE, 
+							  PKIUSER_AUTHENTICATOR_SIZE );
 	sMemDisconnect( &userInfoStream );
 	zeroise( userInfo, userInfoSize );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_WRONGKEY );
 
 	/* Read the user ID and any other attributes */
-	status = readAttributes( stream, &userInfoPtr->attributes, 
+	status = readAttributes( stream, &userInfoPtr->attributes,
 							 CRYPT_CERTTYPE_PKIUSER, sMemDataLeft( stream ),
-							 &userInfoPtr->errorLocus, 
+							 &userInfoPtr->errorLocus,
 							 &userInfoPtr->errorType );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* In use the PKI user info is applied as a template to certificates to 
+	/* In use the PKI user info is applied as a template to certificates to
 	   modify their contents before issue.  This is done by merging the
-	   user info with the cert before it's issued.  Since there can be 
+	   user info with the cert before it's issued.  Since there can be
 	   overlapping or conflicting attributes in the two objects, the ones in
 	   the PKI user info are marked as locked to ensure that they override
 	   any conflicting attributes that may be present in the cert */
@@ -1021,7 +1019,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 			!isBlobAttribute( attributeListCursor );
 		 attributeListCursor = attributeListCursor->next )
 		attributeListCursor->flags |= ATTR_FLAG_LOCKED;
-	
+
 	return( CRYPT_OK );
 	}
 
@@ -1031,7 +1029,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 *																			*
 ****************************************************************************/
 
-const CERTREAD_INFO certReadTable[] = {
+const CERTREAD_INFO FAR_BSS certReadTable[] = {
 	{ CRYPT_CERTTYPE_CERTIFICATE, readCertInfo },
 	{ CRYPT_CERTTYPE_ATTRIBUTE_CERT, readAttributeCertInfo },
 	{ CRYPT_CERTTYPE_CERTREQUEST, readCertRequestInfo },

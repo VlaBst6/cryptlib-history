@@ -44,6 +44,8 @@
 
 #define TEST_ALGORITHMS			1
 
+#ifdef TEST_DEVICE
+
 /* The device code will produce a large number of warnings because of ASCII
    <-> Unicode issues, since there aren't any PKCS #11 drivers for WinCE
    it's not worth adding a mountain of special-case code to handle this so
@@ -383,7 +385,6 @@ static BOOLEAN createKey( const CRYPT_DEVICE cryptDevice,
 /* Print information about a device and log in if necessary */
 
 static const DEVICE_CONFIG_INFO *checkLogonDevice( const CRYPT_DEVICE cryptDevice,
-												   const CRYPT_DEVICE_TYPE deviceType,
 												   const DEVICE_CONFIG_INFO *deviceInfo,
 												   const BOOLEAN isAutoDetect,
 												   const BOOLEAN willInitialise )
@@ -858,7 +859,7 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 	{
 	CRYPT_DEVICE cryptDevice;
 	BOOLEAN isWriteProtected = FALSE, isAutoDetect = FALSE;
-	BOOLEAN initDevice = FALSE, testResult = FALSE, partialSuccess = FALSE;
+	BOOLEAN testResult = FALSE, partialSuccess = FALSE;
 	int status;
 
 	/* Open a connection to the device */
@@ -902,8 +903,8 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 	   fully */
 	if( deviceType == CRYPT_DEVICE_PKCS11 || deviceType == CRYPT_DEVICE_FORTEZZA )
 		{
-		deviceInfo = checkLogonDevice( cryptDevice, deviceType, deviceInfo,
-									   isAutoDetect, TEST_INITIALISE_CARD );
+		deviceInfo = checkLogonDevice( cryptDevice, deviceInfo, isAutoDetect, 
+									   TEST_INITIALISE_CARD );
 		if( deviceInfo == NULL )
 			{
 			cryptDeviceClose( cryptDevice );
@@ -1593,10 +1594,9 @@ static int initUserInfo( const CRYPT_KEYSET cryptCertStore,
 								 CRYPT_CERTTYPE_PKIUSER, CRYPT_KEYID_NAME,
 								 userCN );
 		}
-	else
-		if( cryptStatusError( status ) )
-			return( extErrorExit( cryptCertStore, "cryptCAAddItem()", status,
-								  __LINE__ ) );
+	if( cryptStatusError( status ) )
+		return( extErrorExit( cryptCertStore, "cryptCAAddItem()", status,
+							  __LINE__ ) );
 	puts( " done." );
 
 	/* Display the information for the user */
@@ -1914,7 +1914,7 @@ int testDeviceLifeCycle( void )
 	int status;
 
 	/* Start the server and wait 15s for it to initialise */
-	hThread = ( HANDLE ) _beginthreadex( NULL, 0, &serverThread,
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, serverThread,
 										 NULL, 0, &threadID );
 	Sleep( 15000 );
 
@@ -1936,11 +1936,15 @@ int testDeviceLifeCycle( void )
 #endif /* WINDOWS_THREADS */
 #endif /* WinCE */
 
+#endif /* TEST_DEVICE */
+
 /****************************************************************************
 *																			*
 *							User Management Routines Test					*
 *																			*
 ****************************************************************************/
+
+#ifdef TEST_USER
 
 int testUser( void )
 	{
@@ -2000,3 +2004,5 @@ int testUser( void )
 	puts( "User management tests succeeded.\n" );
 	return( TRUE );
 	}
+
+#endif /* TEST_USER */

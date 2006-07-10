@@ -33,8 +33,8 @@
 #endif /* USER_SUPPLIED_PASSWORD */
 
 /* We can run the SSH self-test with a large variety of options, rather than
-   use dozens of boolean option flags to control them all we define various
-   test classes that exercise each option type */
+   using dozens of boolean option flags to control them all we define
+   various test classes that exercise each option type */
 
 typedef enum {
 	SSH_TEST_NORMAL,			/* Standard SSHv2 test */
@@ -42,10 +42,13 @@ typedef enum {
 	SSH_TEST_CLIENTCERT,		/* Use client public-key for auth */
 	SSH_TEST_SUBSYSTEM,			/* Test SFTP subsystem */
 	SSH_TEST_PORTFORWARDING,	/* Test port forwarding */
+	SSH_TEST_EXEC,				/* Test rexec rather than rsh functionality */
 	SSH_TEST_MULTICHANNEL,		/* Test multi-channel handling */
 	SSH_TEST_FINGERPRINT,		/* Test (invalid) key fingerprint */
 	SSH_TEST_CONFIRMAUTH		/* Test manual server confirmation of auth.*/
 	} SSH_TEST_TYPE;
+
+#ifdef TEST_SESSION
 
 /****************************************************************************
 *																			*
@@ -60,7 +63,7 @@ static const struct {
 	const C_STR name;			/* Parsed server name */
 	const int port;				/* Parsed server port */
 	const C_STR userInfo;		/* Parsed user info */
-	} urlParseInfo[] = {
+	} FAR_BSS urlParseInfo[] = {
 	/* IP address forms */
 	{ TEXT( "1.2.3.4" ), TEXT( "1.2.3.4" ), 0, NULL },
 	{ TEXT( "1.2.3.4:80" ), TEXT( "1.2.3.4" ), 80, NULL },
@@ -164,11 +167,124 @@ int testSessionUrlParse( void )
 	return( TRUE );
 	}
 
+/* Test session attribute handling */
+
+int testSessionAttributes( void )
+	{
+	CRYPT_SESSION cryptSession;
+	int status;
+
+	puts( "Testing session attribute handling..." );
+
+	/* Create a server session of the most generic type */
+	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
+								 CRYPT_SESSION_SSL_SERVER );
+	if( status == CRYPT_ERROR_PARAM3 )	/* SSL server session access not avail.*/
+		return( CRYPT_ERROR_NOTAVAIL );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptCreateSession() failed with error code %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Add an initial attribute */
+	status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_SERVER_NAME, TEXT( "servername" ),
+								paramStrlen( TEXT( "servername" ) ) );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptSetAttributeString() failed with error code %d, "
+				"line %d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Add several username/password pairs */
+	status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "test1" ),
+								paramStrlen( TEXT( "test1" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "test1" ),
+								paramStrlen( TEXT( "test1" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "test2" ),
+								paramStrlen( TEXT( "test2" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "test2" ),
+								paramStrlen( TEXT( "test2" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "test3" ),
+								paramStrlen( TEXT( "test3" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "test3" ),
+								paramStrlen( TEXT( "test3" ) ) );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptSetAttributeString() for username/password pairs "
+				"failed with error code %d, line %d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Add a duplicate entry and make sure that it's detected */
+	status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "test2" ),
+								paramStrlen( TEXT( "test2" ) ) );
+	if( status != CRYPT_ERROR_DUPLICATE )
+		{
+		printf( "Addition of duplicate user/password entry wasn't detected, "
+				"line %d.\n", __LINE__ );
+		return( FALSE );
+		}
+
+	/* Add a password without a preceding username and make sure that it's
+	   detected */
+	status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_PASSWORD, TEXT( "invalid_pw" ),
+								paramStrlen( TEXT( "invalid_pw" ) ) );
+	if( status != CRYPT_ERROR_NOTINITED )
+		{
+		printf( "Addition of password without username wasn't detected, "
+				"line %d.\n", __LINE__ );
+		return( FALSE );
+		}
+
+	/* Add a username without a password and make sure that it's detected */
+	status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "valid_name" ),
+								paramStrlen( TEXT( "valid_name" ) ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptSession,
+								CRYPT_SESSINFO_USERNAME, TEXT( "invalid_name" ),
+								paramStrlen( TEXT( "invalid_name" ) ) );
+	if( status != CRYPT_ERROR_PARAM2 )
+		{
+		printf( "Addition of username without password wasn't detected, "
+				"line %d.\n", __LINE__ );
+		return( FALSE );
+		}
+
+	/* Clean up */
+	status = cryptDestroySession( cryptSession );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptDestroySession() failed with error code %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
+		}
+	puts( "Session attribute handling succeeded.\n" );
+	return( TRUE );
+	}
+
 /* Test the ability to have multiple server threads waiting on a session.
    Since this requries (OS-specific) threading, we just use two sample
    systems, Win32 (Windows threads) and Linux (pthreads).  Since Linux's
-   somewhat strange not-quite-a-thread/not-quite-a-process implementation 
-   can be a bit buggy, we also use another sample pthreads implementation 
+   somewhat strange not-quite-a-thread/not-quite-a-process implementation
+   can be a bit buggy, we also use another sample pthreads implementation
    (FreeBSD/NetBSD) as a sanity check */
 
 #define NO_SERVER_THREADS	4
@@ -186,7 +302,7 @@ int testSessionUrlParse( void )
   #define THREAD_SELF()		GetCurrentThreadId()
 #else
   #define THREAD_HANDLE		pthread_t
-  #define THREAD_EXIT()		pthread_exit( ( void * ) 0 ); return
+  #define THREAD_EXIT()		pthread_exit( ( void * ) 0 ); return( 0 )
   #define THREAD_SELF()		pthread_self()
 #endif /* Windows vs. pthreads */
 
@@ -526,12 +642,12 @@ static int printDataInfo( CRYPT_SESSION cryptSession,
   try a local connect, which either times out or goes through an SSHv2
   handshake if there's a server there */
 
-static const C_STR ssh1Info[] = {
+static const C_STR FAR_BSS ssh1Info[] = {
 	NULL,
 	TEXT( "localhost" ),
 	NULL
 	};
-static const C_STR ssh2Info[] = {
+static const C_STR FAR_BSS ssh2Info[] = {
 	NULL,
 	TEXT( "localhost" ),
 	TEXT( "sorrel.humboldt.edu:222" ),
@@ -574,7 +690,9 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			( testType == SSH_TEST_SSH1 ) ? "v1" : "v2",
 			( testType == SSH_TEST_SUBSYSTEM ) ? " SFTP" : \
 				( testType == SSH_TEST_PORTFORWARDING ) ? " port-forwarding" : \
-				( testType == SSH_TEST_MULTICHANNEL ) ? " multi-channel" : "" );
+				( testType == SSH_TEST_EXEC ) ? " remote exec" : \
+				( testType == SSH_TEST_MULTICHANNEL ) ? " multi-channel" : \
+				( testType == SSH_TEST_CLIENTCERT ) ? " pubkey-auth" : "" );
 	if( !isServer && !localSession )
 #ifdef UNICODE_STRINGS
 		printf( "  Remote host: %S.\n", serverName );
@@ -682,6 +800,10 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 											  CRYPT_SESSINFO_SERVER_FINGERPRINT,
 											  fingerPrint, 16 );
 			}
+		if( cryptStatusOK( status ) && \
+			( testType == SSH_TEST_EXEC ) )
+			status = createChannel( cryptSession, TEXT( "exec" ),
+									TEXT( "/bin/netstat" ) );
 		}
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_VERSION,
@@ -705,8 +827,9 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			return( CRYPT_ERROR_NOTAVAIL );
 			}
 
-		printf( "cryptSetAttribute/AttributeString() failed with error code "
-				"%d, line %d.\n", status, __LINE__ );
+		printf( "%scryptSetAttribute/AttributeString() failed with error "
+				"code %d, line %d.\n", isServer ? "SVR: " : "", status, 
+				__LINE__ );
 		return( FALSE );
 		}
 
@@ -765,7 +888,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			}
 
 		/* Now that the handshake is complete, display the connection info */
-		if( !printConnectInfo( cryptSession ) )
+		if( cryptStatusOK( status ) && !printConnectInfo( cryptSession ) )
 			return( FALSE );
 		}
 	if( cryptStatusError( status ) )
@@ -832,7 +955,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	printf( "%sCurrent channel is #%d.\n", isServer ? "SVR: " : "", 
+	printf( "%sCurrent channel is #%d.\n", isServer ? "SVR: " : "",
 			channel );
 
 	/* Report additional channel-specific information */
@@ -1049,7 +1172,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			{
 			/* Close the current channel */
 			status = cryptSetAttribute( cryptSession,
-										CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE, 
+										CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE,
 										FALSE );
 			if( cryptStatusError( status ) )
 				{
@@ -1090,6 +1213,10 @@ int testSessionSSHClientCert( void )
 int testSessionSSHPortforward( void )
 	{
 	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_PORTFORWARDING, FALSE ) );
+	}
+int testSessionSSHExec( void )
+	{
+	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_EXEC, FALSE ) );
 	}
 int testSessionSSH_SFTP( void )
 	{
@@ -1201,6 +1328,10 @@ int testSessionSSHClientServerPortForward( void )
 	{
 	return( sshClientServer( SSH_TEST_PORTFORWARDING ) );
 	}
+int testSessionSSHClientServerExec( void )
+	{
+	return( sshClientServer( SSH_TEST_EXEC ) );
+	}
 int testSessionSSHClientServerMultichannel( void )
 	{
 	return( sshClientServer( SSH_TEST_MULTICHANNEL ) );
@@ -1227,7 +1358,7 @@ int testSessionSSHClientServerMultichannel( void )
 
    Rather than creating our own versions of code already present in cryptlib,
    we pull in the cryptlib code wholesale here unless we've built cryptlib as
-   a static lib, in which case it'll already be present.  This is a pretty 
+   a static lib, in which case it'll already be present.  This is a pretty
    ugly hack, but saves having to copy over a pile of cryptlib code.
 
    Because cryptlib has an internal BYTE type, we need to no-op it out before
@@ -1242,9 +1373,6 @@ int testSessionSSHClientServerMultichannel( void )
   #if defined( SYMANTEC_C ) || defined( __BEOS__ )
 	#define INC_ALL
 	#include "misc_rw.c"
-  #elif defined( _MSC_VER )
-	#define INC_CHILD
-	#include "../misc/misc_rw.c"
   #else
 	#include "misc/misc_rw.c"
   #endif /* Compiler-specific includes */
@@ -2076,3 +2204,5 @@ int sftpClient( const CRYPT_SESSION cryptSession )
 	return( CRYPT_OK );
 	}
 #endif /* WINDOWS_THREADS */
+
+#endif /* TEST_SESSION */

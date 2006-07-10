@@ -1,14 +1,11 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Copy Routines					*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2006					*
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
-#if defined( INC_ALL ) ||  defined( INC_CHILD )
+#if defined( INC_ALL )
   #include "cert.h"
   #include "certattr.h"
 #else
@@ -244,11 +241,17 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 	   the list checking that the attribute to copy isn't already in the
 	   destination attributes, first for recognised attributes and then for
 	   unrecognised ones.  We have to do this separately since once we begin
-	   the copy process it's rather hard to undo it.  Note that in theory 
-	   there are some attributes that can have multiple instances of a field
-	   present, which means that we could allow them to appear in both the 
-	   source and destination lists, however if this occurs it's more likely 
-	   to be an error than a desire to merge two disparate collections of 
+	   the copy process it's rather hard to undo it.  There are two special 
+	   cases that we could in theory allow:
+
+		1. Some composite attributes could have non-overlapping fields in 
+		   the source and destination.
+
+		2. Some attributes can have multiple instances of a field present.
+
+	   This means that we could allow them to appear in both the source and 
+	   destination lists, however if this occurs it's more likely to be an 
+	   error than a desire to merge two disparate collections of fields or
 	   attributes */
 	if( *destListHeadPtr != NULL )
 		{
@@ -263,7 +266,8 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 					attributeListCursor->attributeID <= \
 							attributeListCursor->next->attributeID );
 			if( findAttributeField( *destListHeadPtr,
-					attributeListCursor->fieldID, CRYPT_ATTRIBUTE_NONE ) != NULL )
+									attributeListCursor->fieldID, 
+									CRYPT_ATTRIBUTE_NONE ) != NULL )
 				{
 				*errorLocus = attributeListCursor->fieldID;
 				*errorType = CRYPT_ERRTYPE_ATTR_PRESENT;
@@ -449,19 +453,21 @@ int copyIssuerAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 	   read-only fields and can't be added by the user */
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_SUBJECTALTNAME, 
-									  COPY_SUBJECT_TO_ISSUER );
+									  TRUE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, TRUE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_SUBJECT_TO_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER, 
-									  COPY_SUBJECT_TO_ISSUER );
+									  TRUE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, TRUE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_SUBJECT_TO_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -483,7 +489,38 @@ int copyIssuerAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 		findAttribute( *destListHeadPtr, 
 					   CRYPT_CERTINFO_AUTHORITYINFOACCESS, FALSE ) == NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, TRUE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_SUBJECT_TO_ISSUER );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	return( CRYPT_OK );
+	}
+
+/* Copy attributes that are propagated from a CRMF cert request template to 
+   the issued certificate */
+
+int copyCRMFRequestAttributes( ATTRIBUTE_LIST **destListHeadPtr,
+							   const ATTRIBUTE_LIST *srcListPtr )
+	{
+	ATTRIBUTE_LIST *attributeListPtr;
+	int status;
+
+	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	/* Copy the altName across.  This is needed because it contains 
+	   additional identification information (in fact probably the only
+	   identification information of any value) like the email address and
+	   server URL */
+	attributeListPtr = findAttribute( srcListPtr,
+									  CRYPT_CERTINFO_SUBJECTALTNAME, 
+									  TRUE );
+	if( attributeListPtr != NULL )
+		{
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -516,7 +553,8 @@ int copyOCSPRequestAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 	attributeListPtr = findAttributeField( srcListPtr,
 							CRYPT_CERTINFO_OCSP_NONCE, CRYPT_ATTRIBUTE_NONE );
 	if( attributeListPtr != NULL )
-		status = copyAttribute( destListHeadPtr, attributeListPtr, FALSE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_DIRECT );
 
 	return( status );
 	}
@@ -540,14 +578,16 @@ int copyRevocationAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 									  CRYPT_CERTINFO_CRLREASON, FALSE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, FALSE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_INVALIDITYDATE, FALSE );
 	if( attributeListPtr != NULL )
-		status = copyAttribute( destListHeadPtr, attributeListPtr, FALSE );
+		status = copyAttribute( destListHeadPtr, attributeListPtr, 
+								COPY_DIRECT );
 
 	return( status );
 	}

@@ -1,7 +1,7 @@
 #****************************************************************************
 #*																			*
-#*							Makefile for cryptlib 3.2.1						*
-#*						Copyright Peter Gutmann 1995-2005					*
+#*							Makefile for cryptlib 3.2						*
+#*						Copyright Peter Gutmann 1995-2006					*
 #*																			*
 #****************************************************************************
 
@@ -32,73 +32,17 @@
 
 MAJ		= 3
 MIN		= 2
-PLV		= 2
+PLV		= 3
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
 DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 
-# Extra compiler options for debugging.  Add this to the CFLAGS to provide an
-# extra level of warnings about potential problems when using gcc.  The
-# -Wno-switch is necessary because all cryptlib attributes are declared from
-# a single pool of enums, but only the values for a particular object class
-# are used in the object-specific code, leading to huge numbers of warnings
-# about unhandled enum values in case statements.  The additional warning
-# types are:
-#
-# -Wshadow: Warn whenever a local variable shadows another local variable,
-#		parameter or global variable (that is, a local of the same name as
-#		an existing variable is declared in a nested scope).  Note that this
-#		leads to some false positives as gcc treats forward declarations of
-#		functions within earlier functions that have the same parameters as
-#		the function they're declared within as shadowing.  This can be
-#		usually detected in the output by noting that a pile of supposedly
-#		shadow declarations occur within a few lines of one another.
-#
-# -Wpointer-arith: Warn about anything that depends on the sizeof a
-#		function type or of void.
-#
-# -Wcast-align: Warn whenever a pointer is cast such that the required
-#		alignment of the target is increased, for example if a "char *" is
-#		cast to an "int *".
-#
-# -Wstrict-prototypes: Warn if a function is declared or defined K&R-style.
-#
-# -Wredundant-decls: Warn if anything is declared more than once in the same
-#		scope.
-#
-# -Wformat: Check calls to "printf" etc to make sure that the args supplied
-#		have types appropriate to the format string.
-#
-# Note that some of these require the use of at least -O2 in order to be
-# detected because they require the use of various levels of data flow
-# analysis by the compiler.  However, when this is used the optimiser
-# interacts badly with -Wunreachable-code due to statements rearranged by
-# the optimiser being declared unreachable, so we don't enable this warning.
-
-DEBUG_FLAGS	= -Wall -Wno-switch -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wredundant-decls -Wformat
-
-# Compiler options.  The IRIX cc doesn't recognise -fPIC, but generates PIC
-# by default anyway, so to make this work under IRIX just remove the -fPIC.
-# The PHUX compiler requires +z for PIC.  OS X generates PIC by default, but
-# doesn't mind having -fPIC specified anyway.  gcc under Cygwin (and
-# specifically Cygwin-native, not a cross-development toolchain hosted under
-# Cygwin) generates PIC by default but also doesn't allow -fPIC to be
-# explicitly specified, so you need to remove the -fPIC to compile under
-# Cygwin native.
-#
-# For the PIC options, the only difference between -fpic and -fPIC is that
-# the latter generates large-displacement jumps while the former doesn't,
-# bailing out with an error if a large-displacement jump would be required.
-# As a side-effect, -fPIC code is slightly less efficient because of the use
-# of large-displacement jumps, so if you're tuning the code for size/speed
-# you can try -fpic to see if you get any improvement.
-#
-# By default this builds the release version of the code, to build the debug
-# version (which is useful for finding compiler bugs and system-specific
-# peculiarities) remove the NDEBUG define.  Many problems will now trigger an
-# assertion at the point of failure rather than returning an error status
-# from 100 levels down in the code.
+# Compiler options.  By default this builds the release version of the code,
+# to build the debug version (which is useful for finding compiler bugs and
+# system-specific peculiarities) remove the NDEBUG define.  Many problems
+# will now trigger an assertion at the point of failure rather than returning
+# an error status from 100 levels down in the code.
 #
 # Note that the gcc build uses -fomit-frame-pointer to free up an extra
 # register on x86 (which desperately needs it), this will screw up gdb if
@@ -106,9 +50,11 @@ DEBUG_FLAGS	= -Wall -Wno-switch -Wshadow -Wpointer-arith -Wcast-align -Wstrict-p
 #
 # If the OS supports it, the multithreaded version of cryptlib will be built.
 # To specifically disable this, add -DNO_THREADS.
+#
+# Further cc flags are gathered dynamically at runtime via the ccopts.sh
+# script.
 
 CFLAGS		= -c -D__UNIX__ -DNDEBUG -I.
-SCFLAGS 	= -fPIC -c -D__UNIX__ -DNDEBUG -I.
 
 # To link the self-test code with a key database, uncomment the following
 # and substitute the name or names of the database libraries you'll be using.
@@ -129,12 +75,12 @@ STATIC_OBJ_PATH = ./static-obj/
 STATIC_OBJ_DIR = ./static-obj
 SHARED_OBJ_PATH = ./shared-obj/
 SHARED_OBJ_DIR = ./shared-obj
-LINKFILE	= link.tmp
 CPP			= $(CC) -E
 LD			= $(CC)
 AR			= ar
 SHELL		= /bin/sh
 OSNAME		= `uname`
+LINKFILE	= link.tmp
 
 # Default target and obj file path.  This is changed depending on whether
 # we're building the static or shared library, the default is to build the
@@ -155,14 +101,16 @@ DEFINES		= $(TARGET) OBJPATH=$(OBJPATH) OSNAME=$(OSNAME)
 # Unix target.
 
 XCFLAGS		= -c -DNDEBUG -I.
-XDEFINES	= $(TARGET) OBJPATH=$(OBJPATH)
+XDEFINES	= $(TARGET) OBJPATH=$(OBJPATH) CROSSCOMPILE=1
 
 # Cross-compilation paths.  The Palm SDK under Cygwin only understands
 # heavily-escaped absolute MSDOS pathnames, so it's necessary to specify
 # (for example)
 # -I"c:/Program\\\ Files/PalmSource/Palm\\\ OS\\\ Developer\\\ Suite/sdk-6/"
 # as the SDK path.  In practice it's easier to dump all the files in their
-# own partition, which is what the Palm SDK target below assumes.
+# own partition, which is what the Palm SDK target below assumes.  Note that
+# if you change this you'll also have to change the path value in
+# tools/buildlib.sh.
 
 PALMSDK_PATH	= "d:/Palm\\\ SDK/sdk-6"
 
@@ -182,24 +130,24 @@ BNOBJS		= $(OBJPATH)bn_add.o $(OBJPATH)bn_asm.o $(OBJPATH)bn_ctx.o \
 			  $(OBJPATH)bn_mont.o $(OBJPATH)bn_mul.o $(OBJPATH)bn_recp.o \
 			  $(OBJPATH)bn_shift.o $(OBJPATH)bn_sqr.o $(OBJPATH)bn_word.o
 
-CERTOBJS	= $(OBJPATH)certrev.o $(OBJPATH)certsign.o $(OBJPATH)certval.o \
-			  $(OBJPATH)chain.o $(OBJPATH)chk_cert.o $(OBJPATH)chk_chn.o \
-			  $(OBJPATH)chk_use.o $(OBJPATH)comp_get.o $(OBJPATH)comp_set.o \
-			  $(OBJPATH)dn.o $(OBJPATH)dnstring.o $(OBJPATH)ext.o \
-			  $(OBJPATH)ext_add.o $(OBJPATH)ext_chk.o $(OBJPATH)ext_copy.o \
-			  $(OBJPATH)ext_def.o $(OBJPATH)ext_rd.o $(OBJPATH)ext_wr.o \
-			  $(OBJPATH)imp_exp.o $(OBJPATH)read.o $(OBJPATH)trustmgr.o \
-			  $(OBJPATH)write.o
+CERTOBJS	= $(OBJPATH)certrev.o $(OBJPATH)certschk.o $(OBJPATH)certsign.o \
+			  $(OBJPATH)certval.o $(OBJPATH)chain.o $(OBJPATH)chk_cert.o \
+			  $(OBJPATH)chk_chn.o $(OBJPATH)chk_use.o $(OBJPATH)comp_get.o \
+			  $(OBJPATH)comp_set.o $(OBJPATH)dn.o $(OBJPATH)dnstring.o \
+			  $(OBJPATH)ext.o $(OBJPATH)ext_add.o $(OBJPATH)ext_chk.o \
+			  $(OBJPATH)ext_copy.o $(OBJPATH)ext_def.o $(OBJPATH)ext_rd.o \
+			  $(OBJPATH)ext_wr.o $(OBJPATH)imp_exp.o $(OBJPATH)read.o \
+			  $(OBJPATH)trustmgr.o $(OBJPATH)write.o
 
-CRYPTOBJS	= $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o $(OBJPATH)aestab.o \
-			  $(OBJPATH)bfecb.o $(OBJPATH)bfenc.o $(OBJPATH)bfskey.o \
-			  $(OBJPATH)castecb.o $(OBJPATH)castenc.o $(OBJPATH)castskey.o \
-			  $(OBJPATH)descbc.o $(OBJPATH)desecb.o $(OBJPATH)desecb3.o \
-			  $(OBJPATH)desenc.o $(OBJPATH)desskey.o $(OBJPATH)icbc.o \
-			  $(OBJPATH)iecb.o $(OBJPATH)iskey.o $(OBJPATH)rc2cbc.o \
-			  $(OBJPATH)rc2ecb.o $(OBJPATH)rc2skey.o $(OBJPATH)rc4enc.o \
-			  $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o $(OBJPATH)rc5enc.o \
-			  $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
+CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
+			  $(OBJPATH)aestab.o $(OBJPATH)bfecb.o $(OBJPATH)bfenc.o \
+			  $(OBJPATH)bfskey.o $(OBJPATH)castecb.o $(OBJPATH)castenc.o \
+			  $(OBJPATH)castskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
+			  $(OBJPATH)desecb3.o $(OBJPATH)desenc.o $(OBJPATH)desskey.o \
+			  $(OBJPATH)icbc.o $(OBJPATH)iecb.o $(OBJPATH)iskey.o \
+			  $(OBJPATH)rc2cbc.o $(OBJPATH)rc2ecb.o $(OBJPATH)rc2skey.o \
+			  $(OBJPATH)rc4enc.o $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o \
+			  $(OBJPATH)rc5enc.o $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
 
 CTXOBJS		= $(OBJPATH)kg_dlp.o $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o \
 			  $(OBJPATH)keyload.o $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o \
@@ -216,20 +164,21 @@ DEVOBJS		= $(OBJPATH)fortezza.o $(OBJPATH)pkcs11.o $(OBJPATH)system.o
 
 ENVOBJS		= $(OBJPATH)cms_denv.o $(OBJPATH)cms_env.o $(OBJPATH)decode.o \
 			  $(OBJPATH)encode.o $(OBJPATH)pgp_denv.o $(OBJPATH)pgp_env.o \
-			  $(OBJPATH)pgp_misc.o $(OBJPATH)res_denv.o $(OBJPATH)res_env.o
+			  $(OBJPATH)res_actn.o $(OBJPATH)res_denv.o $(OBJPATH)res_env.o
 
 HASHOBJS	= $(OBJPATH)md2dgst.o $(OBJPATH)md4dgst.o $(OBJPATH)md5dgst.o \
 			  $(OBJPATH)rmddgst.o $(OBJPATH)sha1dgst.o $(OBJPATH)sha2.o
 
 IOOBJS		= $(OBJPATH)cmp_tcp.o $(OBJPATH)dns.o $(OBJPATH)file.o \
-			  $(OBJPATH)http.o $(OBJPATH)memory.o $(OBJPATH)net.o \
-			  $(OBJPATH)stream.o $(OBJPATH)tcp.o
+			  $(OBJPATH)http_rd.o $(OBJPATH)http_wr.o $(OBJPATH)memory.o \
+			  $(OBJPATH)net.o $(OBJPATH)stream.o $(OBJPATH)tcp.o
 
 KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_issue.o \
 			  $(OBJPATH)ca_misc.o $(OBJPATH)ca_rev.o $(OBJPATH)dbx_misc.o \
-			  $(OBJPATH)dbx_rd.o $(OBJPATH)dbx_wr.o $(OBJPATH)http_crt.o \
+			  $(OBJPATH)dbx_rd.o $(OBJPATH)dbx_wr.o $(OBJPATH)http.o \
 			  $(OBJPATH)ldap.o $(OBJPATH)odbc.o $(OBJPATH)pgp.o \
-			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_rd.o \
+			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_add.o \
+			  $(OBJPATH)pkcs15_att.o $(OBJPATH)pkcs15_rd.o \
 			  $(OBJPATH)pkcs15_wr.o
 
 KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
@@ -242,18 +191,22 @@ LIBOBJS		= $(OBJPATH)cryptapi.o $(OBJPATH)cryptcfg.o $(OBJPATH)cryptcrt.o \
 			  $(OBJPATH)cryptkey.o $(OBJPATH)cryptlib.o $(OBJPATH)cryptses.o \
 			  $(OBJPATH)cryptusr.o
 
-MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_rw.o $(OBJPATH)mech_drv.o \
-			  $(OBJPATH)mech_enc.o $(OBJPATH)mech_sig.o $(OBJPATH)mech_wrp.o \
-			  $(OBJPATH)obj_qry.o $(OBJPATH)sign.o $(OBJPATH)sign_rw.o
+MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_int.o $(OBJPATH)keyex_rw.o \
+			  $(OBJPATH)mech_drv.o $(OBJPATH)mech_enc.o $(OBJPATH)mech_sig.o \
+			  $(OBJPATH)mech_wrp.o $(OBJPATH)obj_qry.o $(OBJPATH)sign.o \
+			  $(OBJPATH)sign_cms.o $(OBJPATH)sign_int.o $(OBJPATH)sign_pgp.o \
+			  $(OBJPATH)sign_rw.o $(OBJPATH)sign_x509.o
 
 MISCOBJS	= $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o $(OBJPATH)asn1_wr.o \
 			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)int_api.o \
-			  $(OBJPATH)java_jni.o $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o \
+			  $(OBJPATH)int_attr.o $(OBJPATH)int_env.o $(OBJPATH)java_jni.o \
+			  $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o $(OBJPATH)pgp_misc.o \
 			  $(OBJPATH)random.o $(OBJPATH)unix.o
 
 SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_rd.o \
 			  $(OBJPATH)cmp_wr.o $(OBJPATH)ocsp.o $(OBJPATH)pnppki.o \
-			  $(OBJPATH)rtcs.o $(OBJPATH)scep.o $(OBJPATH)sess_rw.o \
+			  $(OBJPATH)rtcs.o $(OBJPATH)scep.o $(OBJPATH)scorebrd.o \
+			  $(OBJPATH)sess_attr.o $(OBJPATH)sess_rw.o \
 			  $(OBJPATH)session.o $(OBJPATH)ssh.o $(OBJPATH)ssh1.o \
 			  $(OBJPATH)ssh2.o $(OBJPATH)ssh2_chn.o $(OBJPATH)ssh2_cli.o \
 			  $(OBJPATH)ssh2_cry.o $(OBJPATH)ssh2_msg.o $(OBJPATH)ssh2_rw.o \
@@ -273,7 +226,7 @@ OBJS		= $(BNOBJS) $(CERTOBJS) $(CRYPTOBJS) $(CTXOBJS) $(DEVOBJS) \
 # Object files for the self-test code
 
 TESTOBJS	= certs.o devices.o envelope.o highlvl.o keydbx.o keyfile.o \
-			  keyload.o lowlvl.o scert.o sreqresp.o ssh.o ssl.o stress.o \
+			  loadkey.o lowlvl.o scert.o sreqresp.o ssh.o ssl.o stress.o \
 			  testlib.o utils.o
 
 # Various functions all make use of certain headers so we define the
@@ -281,7 +234,7 @@ TESTOBJS	= certs.o devices.o envelope.o highlvl.o keydbx.o keyfile.o \
 
 IO_DEP = io/stream.h misc/misc_rw.h
 
-ASN1_DEP = $(IO_DEP) misc/asn1.h misc/asn1_ext.h misc/ber.h
+ASN1_DEP = $(IO_DEP) misc/asn1.h misc/asn1_ext.h
 
 CRYPT_DEP	= cryptlib.h crypt.h cryptkrn.h misc/config.h misc/consts.h \
 			  misc/int_api.h misc/os_spec.h
@@ -296,9 +249,7 @@ ZLIB_DEP = zlib/zconf.h zlib/zlib.h zlib/zutil.h
 #*																			*
 #****************************************************************************
 
-# Find the system type and use a conditional make depending on that and the
-# endianness, which is piped in from the endianness-detection program (who
-# needs autoconf in order to be ugly?).
+# Find the system type and use a conditional make depending on that.
 #
 # Slowaris doesn't ship with a compiler by default, so Sun had to provide
 # something that pretends to be one for things that look for a cc.  This
@@ -309,14 +260,6 @@ ZLIB_DEP = zlib/zconf.h zlib/zlib.h zlib/zutil.h
 # incorrectly, it will bail out with a "package not installed" error.  We
 # check for this bogus compiler and if we get the error message fall back to
 # gcc, which is how most people just fix this mess.
-#
-# Aches has a broken uname, which reports the OS minor version with uname -r
-# instead of the major version.  The alternative command oslevel reports the
-# full version number, which we can extract in the standard manner.
-# Similarly, QNX uses -v instead of -r for the version, and also has a broken
-# 'cut'.  PHUX returns the version as something like 'B.11.11', so we have
-# to carefully extract the thing that looks most like a version number from
-# this.
 #
 # The MVS USS c89 compiler has a strict ordering of options.  That ordering
 # can be relaxed with the _C89_CCMODE environment variable to accept options
@@ -329,109 +272,112 @@ ZLIB_DEP = zlib/zconf.h zlib/zlib.h zlib/zutil.h
 # The '-' to disable error-checking in several cases below is necessary for
 # the braindamaged QNX make, which bails out as soon as one of the tests
 # fails, whether this would affect the make or not.
+#
+# We have to special-case the situation where the OS name is an alias for
+# uname rather than being predefined (this occurs when cross-compiling),
+# because the resulting expansion would contain two levels of `` escapes.  To
+# handle this, we leave a predefined OS name in place, but replace a call to
+# uname with instructions to the osversion.sh script to figure it out for
+# itself.  In addition since $(CROSSCOMPILE) is usually a null value, we add
+# an extra character to the comparison string to avoid syntax errors.
 
 default:
 	@make directories
-	@make endian_test
+	@make toolscripts
 	@- if [ $(OSNAME) = 'OS/390' -a "$(_C89_CCMODE)" != "1" ] ; then \
 		echo "The c89 environment variable _C89_CCMODE must be set to 1." >&2 ; \
 		exit 1 ; \
 	fi
 	@case $(OSNAME) in \
-		'AIX') \
-			make CFLAGS="$(CFLAGS) `./endian` \
-				-DOSVERSION=`oslevel | cut -d'.' -f1`" $(OSNAME) ;; \
 		'BeOS') \
-			make CFLAGS="$(CFLAGS) `./endian` \
-				-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1` \
-				-D_STATIC_LINKING" $(OSNAME) ;; \
+			make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+				-DOSVERSION=`./tools/osversion.sh BeOS` \
+				-D_STATIC_LINKING" BeOS ;; \
 		'HP-UX') \
 			if gcc -v > /dev/null 2>&1 ; then \
-				make CC=gcc CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]\.//' | cut -d'.' -f1`" \
-					$(OSNAME) ; \
+				make CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc` \
+					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
 			else \
-				make CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]\.//' | cut -d'.' -f1`" \
-					$(OSNAME) ; \
+				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
 			fi ;; \
-		'QNX')\
-			make CFLAGS="$(CFLAGS) `./endian` \
-				-DOSVERSION=`uname -v | sed 's/^[A-Z]//' | cut -c 1`" \
-				$(OSNAME) ;; \
 		'SunOS') \
 			if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
-				make CC=gcc CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-					$(OSNAME) ; \
+				make CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc` \
+					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
 			else \
-				make CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-					$(OSNAME) ; \
+				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
 			fi ;; \
 		*) \
 			if [ `uname -m | cut -c 1-4` = 'CRAY' ] ; then \
-				make CFLAGS="$(CFLAGS) `./endian` -DOSVERSION=`uname -r | cut -c 1`" \
-				OSNAME=`uname -m | cut -c 1-4` CRAY ; \
+				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+					-DOSVERSION=`./tools/osversion.sh CRAY`" OSNAME="CRAY" CRAY ; \
+			elif [ '$(CROSSCOMPILE)x' = '1x' ] ; then \
+				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+					-DOSVERSION=`./tools/osversion.sh $(OSNAME)`" $(OSNAME) ; \
 			else \
-				make CFLAGS="$(CFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-					$(OSNAME) ; \
+				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
+					-DOSVERSION=`./tools/osversion.sh autodetect`" $(OSNAME) ; \
 			fi ;; \
 	esac
 
 shared:
 	@make directories
-	@make endian_test
+	@make toolscripts
 	@- if [ $(OSNAME) = 'OS/390' -a "$(_C89_CCMODE)" != "1" ] ; then \
 		echo "The c89 environment variable _C89_CCMODE must be set to 1." >&2 ; \
 		exit 1; \
 	fi
 	@case $(OSNAME) in \
-		'AIX') \
-			make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-				CFLAGS="$(SCFLAGS) `./endian` \
-				-DOSVERSION=`oslevel | cut -d'.' -f1`" $(OSNAME) ;; \
 		'Darwin') \
 			make TARGET=$(DYLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-				CFLAGS="$(SCFLAGS) -fno-common `./endian` \
-				-DOSVERSION=`uname -r | cut -b 1`" $(OSNAME) ;; \
-		'QNX') \
-			make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-				CFLAGS="$(SCFLAGS) `./endian` \
-				-DOSVERSION=`uname -v | sed 's/^[A-Z]//' | cut -c 1`" \
-				$(OSNAME) ;; \
+				CFLAGS="$(CFLAGS) -fno-common `./tools/ccopts.sh $(CC) Darwin` \
+				-DOSVERSION=`./tools/osversion.sh Darwin`" Darwin ;; \
+		'HP-UX') \
+			if gcc -v > /dev/null 2>&1 ; then \
+				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
+					CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc HP-UX` \
+					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
+			else \
+				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
+					CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC) HP-UX` \
+					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
+			fi ;; \
 		'SunOS') \
 			if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
 				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-					CC=gcc CFLAGS="$(SCFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-					$(OSNAME) ; \
+					CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc SunOS` \
+					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
 			else \
 				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-					CFLAGS="$(SCFLAGS) `./endian` \
-					-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-					$(OSNAME) ; \
+					CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC) SunOS` \
+					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
 			fi ;; \
 		*) \
-			make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
-				CFLAGS="$(SCFLAGS) `./endian` \
-				-DOSVERSION=`uname -r | sed 's/^[A-Z]//' | cut -b 1`" \
-				$(OSNAME) ;; \
+			if [ '$(CROSSCOMPILE)x' = '1x' ] ; then \
+				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
+					CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC) $(OSNAME)` \
+					-DOSVERSION=`./tools/osversion.sh $(OSNAME)`" $(OSNAME) ; \
+			else \
+				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
+					CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC) autodetect` \
+					-DOSVERSION=`./tools/osversion.sh autodetect`" $(OSNAME) ; \
+			fi ;; \
 	esac
 
 directories:
 	@- if [ ! -d $(STATIC_OBJ_PATH) ] ; then mkdir $(STATIC_OBJ_DIR) ; fi
 	@- if [ ! -d $(SHARED_OBJ_PATH) ] ; then mkdir $(SHARED_OBJ_DIR) ; fi
 
-endian_test:	endian
-	@if gcc -v > /dev/null 2>&1 ; then \
-		gcc endian.c -o endian > /dev/null ; \
-	elif [ $(OSNAME) = 'NONSTOP_KERNEL' ] ; then \
-		c89 endian.c -o endian > /dev/null ; \
-	else \
-		$(CC) endian.c -o endian > /dev/null ; \
-	fi
+toolscripts:
+	@- if [ ! -x ./tools/buildasm.sh ] ; then chmod +x ./tools/buildasm.sh ; fi
+	@- if [ ! -x ./tools/buildlib.sh ] ; then chmod +x ./tools/buildlib.sh ; fi
+	@- if [ ! -x ./tools/buildsharedlib.sh ] ; then chmod +x ./tools/buildsharedlib.sh ; fi
+	@- if [ ! -x ./tools/ccopts.sh ] ; then chmod +x ./tools/ccopts.sh ; fi
+	@- if [ ! -x ./tools/getlibs.sh ] ; then chmod +x ./tools/getlibs.sh ; fi
+	@- if [ ! -x ./tools/mkhdr.sh ] ; then chmod +x ./tools/mkhdr.sh ; fi
+	@- if [ ! -x ./tools/osversion.sh ] ; then chmod +x ./tools/osversion.sh ; fi
 
 # Frohe Ostern.
 
@@ -543,6 +489,9 @@ $(OBJPATH)bn_word.o:	crypt/osconfig.h bn/bn.h bn/bn_lcl.h bn/bn_word.c
 
 $(OBJPATH)certrev.o:	$(CRYPT_DEP) $(ASN1_DEP) cert/cert.h cert/certrev.c
 						$(CC) $(CFLAGS) cert/certrev.c -o $(OBJPATH)certrev.o
+
+$(OBJPATH)certschk.o:	$(CRYPT_DEP) $(ASN1_DEP) cert/cert.h cert/certschk.c
+						$(CC) $(CFLAGS) cert/certschk.c -o $(OBJPATH)certschk.o
 
 $(OBJPATH)certsign.o:	$(CRYPT_DEP) $(ASN1_DEP) cert/cert.h cert/certsign.c
 						$(CC) $(CFLAGS) cert/certsign.c -o $(OBJPATH)certsign.o
@@ -703,6 +652,9 @@ $(OBJPATH)ctx_skip.o:	$(CRYPT_DEP) context/context.h context/ctx_skip.c
 
 # crypt subdirectory - crypt algos
 
+$(OBJPATH)aes_modes.o:	$(CRYPT_DEP) crypt/aes.h crypt/aesopt.h crypt/aes_modes.c
+						$(CC) $(CFLAGS) crypt/aes_modes.c -o $(OBJPATH)aes_modes.o
+
 $(OBJPATH)aescrypt.o:	$(CRYPT_DEP) crypt/aes.h crypt/aesopt.h crypt/aescrypt.c
 						$(CC) $(CFLAGS) crypt/aescrypt.c -o $(OBJPATH)aescrypt.o
 
@@ -836,14 +788,14 @@ $(OBJPATH)encode.o:		$(CRYPT_DEP) envelope/envelope.h $(ASN1_DEP) \
 						envelope/encode.c
 						$(CC) $(CFLAGS) envelope/encode.c -o $(OBJPATH)encode.o
 
-$(OBJPATH)pgp_denv.o:	$(CRYPT_DEP) $(IO_DEP) envelope/pgp.h envelope/pgp_denv.c
+$(OBJPATH)pgp_denv.o:	$(CRYPT_DEP) $(IO_DEP) misc/pgp.h envelope/pgp_denv.c
 						$(CC) $(CFLAGS) envelope/pgp_denv.c -o $(OBJPATH)pgp_denv.o
 
-$(OBJPATH)pgp_env.o:	$(CRYPT_DEP) $(IO_DEP) envelope/pgp.h envelope/pgp_env.c
+$(OBJPATH)pgp_env.o:	$(CRYPT_DEP) $(IO_DEP) misc/pgp.h envelope/pgp_env.c
 						$(CC) $(CFLAGS) envelope/pgp_env.c -o $(OBJPATH)pgp_env.o
 
-$(OBJPATH)pgp_misc.o:	$(CRYPT_DEP) $(IO_DEP) envelope/pgp.h envelope/pgp_misc.c
-						$(CC) $(CFLAGS) envelope/pgp_misc.c -o $(OBJPATH)pgp_misc.o
+$(OBJPATH)res_actn.o:	$(CRYPT_DEP) envelope/envelope.h envelope/res_actn.c
+						$(CC) $(CFLAGS) envelope/res_actn.c -o $(OBJPATH)res_actn.o
 
 $(OBJPATH)res_denv.o:	$(CRYPT_DEP) envelope/envelope.h envelope/res_denv.c
 						$(CC) $(CFLAGS) envelope/res_denv.c -o $(OBJPATH)res_denv.o
@@ -862,8 +814,11 @@ $(OBJPATH)dns.o:		$(CRYPT_DEP) io/tcp.h io/dns.c
 $(OBJPATH)file.o:		$(CRYPT_DEP) $(ASN1_DEP) io/file.h io/file.c
 						$(CC) $(CFLAGS) io/file.c -o $(OBJPATH)file.o
 
-$(OBJPATH)http.o:		$(CRYPT_DEP) io/http.c
-						$(CC) $(CFLAGS) io/http.c -o $(OBJPATH)http.o
+$(OBJPATH)http_rd.o:	$(CRYPT_DEP) io/http_rd.c
+						$(CC) $(CFLAGS) io/http_rd.c -o $(OBJPATH)http_rd.o
+
+$(OBJPATH)http_wr.o:	$(CRYPT_DEP) io/http_wr.c
+						$(CC) $(CFLAGS) io/http_wr.c -o $(OBJPATH)http_wr.o
 
 $(OBJPATH)memory.o:		$(CRYPT_DEP) $(ASN1_DEP) io/memory.c
 						$(CC) $(CFLAGS) io/memory.c -o $(OBJPATH)memory.o
@@ -941,8 +896,8 @@ $(OBJPATH)dbx_rd.o:		$(CRYPT_DEP) keyset/keyset.h keyset/dbx_rd.c
 $(OBJPATH)dbx_wr.o:		$(CRYPT_DEP) keyset/keyset.h keyset/dbx_wr.c
 						$(CC) $(CFLAGS) keyset/dbx_wr.c -o $(OBJPATH)dbx_wr.o
 
-$(OBJPATH)http_crt.o:	$(CRYPT_DEP) keyset/keyset.h keyset/http_crt.c
-						$(CC) $(CFLAGS) keyset/http_crt.c -o $(OBJPATH)http_crt.o
+$(OBJPATH)http.o:		$(CRYPT_DEP) keyset/keyset.h keyset/http.c
+						$(CC) $(CFLAGS) keyset/http.c -o $(OBJPATH)http.o
 
 $(OBJPATH)ldap.o:		$(CRYPT_DEP) keyset/keyset.h keyset/ldap.c
 						$(CC) $(CFLAGS) keyset/ldap.c -o $(OBJPATH)ldap.o
@@ -950,7 +905,7 @@ $(OBJPATH)ldap.o:		$(CRYPT_DEP) keyset/keyset.h keyset/ldap.c
 $(OBJPATH)odbc.o:		$(CRYPT_DEP) keyset/keyset.h keyset/odbc.c
 						$(CC) $(CFLAGS) keyset/odbc.c -o $(OBJPATH)odbc.o
 
-$(OBJPATH)pgp.o:		$(CRYPT_DEP) envelope/pgp.h keyset/pgp.c
+$(OBJPATH)pgp.o:		$(CRYPT_DEP) misc/pgp.h keyset/pgp.c
 						$(CC) $(CFLAGS) keyset/pgp.c -o $(OBJPATH)pgp.o
 
 $(OBJPATH)pkcs12.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.c
@@ -958,6 +913,12 @@ $(OBJPATH)pkcs12.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.c
 
 $(OBJPATH)pkcs15.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15.c
 						$(CC) $(CFLAGS) keyset/pkcs15.c -o $(OBJPATH)pkcs15.o
+
+$(OBJPATH)pkcs15_add.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_add.c
+						$(CC) $(CFLAGS) keyset/pkcs15_add.c -o $(OBJPATH)pkcs15_add.o
+
+$(OBJPATH)pkcs15_att.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_att.c
+						$(CC) $(CFLAGS) keyset/pkcs15_att.c -o $(OBJPATH)pkcs15_att.o
 
 $(OBJPATH)pkcs15_rd.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_rd.c
 						$(CC) $(CFLAGS) keyset/pkcs15_rd.c -o $(OBJPATH)pkcs15_rd.o
@@ -967,32 +928,47 @@ $(OBJPATH)pkcs15_wr.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs1
 
 # mechanism subdirectory
 
-$(OBJPATH)keyex.o:		$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/keyex.c
+$(OBJPATH)keyex.o:		$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/keyex.c
 						$(CC) $(CFLAGS) mechs/keyex.c -o $(OBJPATH)keyex.o
 
-$(OBJPATH)keyex_rw.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/keyex_rw.c
+$(OBJPATH)keyex_int.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/keyex_int.c
+						$(CC) $(CFLAGS) mechs/keyex_int.c -o $(OBJPATH)keyex_int.o
+
+$(OBJPATH)keyex_rw.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/keyex_rw.c
 						$(CC) $(CFLAGS) mechs/keyex_rw.c -o $(OBJPATH)keyex_rw.o
 
-$(OBJPATH)mech_drv.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/mech_drv.c
+$(OBJPATH)mech_drv.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_drv.c
 						$(CC) $(CFLAGS) mechs/mech_drv.c -o $(OBJPATH)mech_drv.o
 
-$(OBJPATH)mech_enc.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/mech_enc.c
+$(OBJPATH)mech_enc.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_enc.c
 						$(CC) $(CFLAGS) mechs/mech_enc.c -o $(OBJPATH)mech_enc.o
 
-$(OBJPATH)mech_sig.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/mech_sig.c
+$(OBJPATH)mech_sig.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_sig.c
 						$(CC) $(CFLAGS) mechs/mech_sig.c -o $(OBJPATH)mech_sig.o
 
-$(OBJPATH)mech_wrp.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/mech_wrp.c
+$(OBJPATH)mech_wrp.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_wrp.c
 						$(CC) $(CFLAGS) mechs/mech_wrp.c -o $(OBJPATH)mech_wrp.o
 
-$(OBJPATH)obj_qry.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/obj_qry.c
+$(OBJPATH)obj_qry.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/obj_qry.c
 						$(CC) $(CFLAGS) mechs/obj_qry.c -o $(OBJPATH)obj_qry.o
 
-$(OBJPATH)sign.o:		$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/sign.c
+$(OBJPATH)sign.o:		$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign.c
 						$(CC) $(CFLAGS) mechs/sign.c -o $(OBJPATH)sign.o
 
-$(OBJPATH)sign_rw.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mechanism.h mechs/sign_rw.c
+$(OBJPATH)sign_cms.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_cms.c
+						$(CC) $(CFLAGS) mechs/sign_cms.c -o $(OBJPATH)sign_cms.o
+
+$(OBJPATH)sign_int.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_int.c
+						$(CC) $(CFLAGS) mechs/sign_int.c -o $(OBJPATH)sign_int.o
+
+$(OBJPATH)sign_pgp.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_pgp.c
+						$(CC) $(CFLAGS) mechs/sign_pgp.c -o $(OBJPATH)sign_pgp.o
+
+$(OBJPATH)sign_rw.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_rw.c
 						$(CC) $(CFLAGS) mechs/sign_rw.c -o $(OBJPATH)sign_rw.o
+
+$(OBJPATH)sign_x509.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_x509.c
+						$(CC) $(CFLAGS) mechs/sign_x509.c -o $(OBJPATH)sign_x509.o
 
 # misc subdirectory
 
@@ -1014,11 +990,20 @@ $(OBJPATH)base64.o:		$(CRYPT_DEP) misc/base64.c
 $(OBJPATH)int_api.o:	$(CRYPT_DEP) misc/int_api.c
 						$(CC) $(CFLAGS) misc/int_api.c -o $(OBJPATH)int_api.o
 
+$(OBJPATH)int_attr.o:	$(CRYPT_DEP) misc/int_attr.c
+						$(CC) $(CFLAGS) misc/int_attr.c -o $(OBJPATH)int_attr.o
+
+$(OBJPATH)int_env.o:	$(CRYPT_DEP) misc/int_env.c
+						$(CC) $(CFLAGS) misc/int_env.c -o $(OBJPATH)int_env.o
+
 $(OBJPATH)misc_rw.o:	$(CRYPT_DEP) $(IO_DEP) misc/misc_rw.c
 						$(CC) $(CFLAGS) misc/misc_rw.c -o $(OBJPATH)misc_rw.o
 
 $(OBJPATH)os_spec.o: 	$(CRYPT_DEP) misc/os_spec.c
 						$(CC) $(CFLAGS) misc/os_spec.c -o $(OBJPATH)os_spec.o
+
+$(OBJPATH)pgp_misc.o:	$(CRYPT_DEP) $(IO_DEP) misc/pgp.h misc/pgp_misc.c
+						$(CC) $(CFLAGS) misc/pgp_misc.c -o $(OBJPATH)pgp_misc.o
 
 $(OBJPATH)random.o:		$(CRYPT_DEP) random/random.c
 						$(CC) $(CFLAGS) random/random.c -o $(OBJPATH)random.o
@@ -1055,6 +1040,12 @@ $(OBJPATH)rtcs.o:		$(CRYPT_DEP) $(ASN1_DEP) session/session.h session/rtcs.c
 
 $(OBJPATH)scep.o:		$(CRYPT_DEP) $(ASN1_DEP) session/session.h session/scep.c
 						$(CC) $(CFLAGS) session/scep.c -o $(OBJPATH)scep.o
+
+$(OBJPATH)scorebrd.o:	$(CRYPT_DEP) $(ASN1_DEP) session/session.h session/scorebrd.c
+						$(CC) $(CFLAGS) session/scorebrd.c -o $(OBJPATH)scorebrd.o
+
+$(OBJPATH)sess_attr.o:	$(CRYPT_DEP) session/session.h session/sess_attr.c
+						$(CC) $(CFLAGS) session/sess_attr.c -o $(OBJPATH)sess_attr.o
 
 $(OBJPATH)sess_rw.o:	$(CRYPT_DEP) $(ASN1_DEP) session/session.h session/sess_rw.c
 						$(CC) $(CFLAGS) session/sess_rw.c -o $(OBJPATH)sess_rw.o
@@ -1147,128 +1138,6 @@ $(OBJPATH)zutil.o:		$(ZLIB_DEP) zlib/zutil.c
 
 #****************************************************************************
 #*																			*
-#*								ASM Module Targets							*
-#*																			*
-#****************************************************************************
-
-# Build the asm equivalents of various C modules.  These are built before any
-# other files and override the .o's that are produced by compiling the C
-# equivalents of the asm files, so that (provided the build succeeds) the .o
-# files that would be created from the C code will never be created because
-# the asm-derived .o's already exist.
-#
-# Since these targets aren't files, we can't use make to build them as
-# required (actually some makes will allow two sets of dependencies for a
-# target, but this doesn't give us any control over whether we want the .o
-# built from the .s or the .c).  A workaround for this is to use a quick
-# shell hack to only build the files if they don't already exist - this is
-# OK since they'll only be built once.
-#
-# The exception to this is the hash asm files, which use an incredible amount
-# of preprocessor kludging that requires that both the .c and .s files are
-# built.  To handle this we use EXTRAOBJS to include the extra asm-derived
-# objs into the build.
-
-asm_bn:					bn/bn-$(INFILE).s
-						@if [ ! -f $(OBJPATH)bn_asm.o ] ; then \
-							$(AS) bn/bn-$(INFILE).s -o $(OBJPATH)bn_asm.o; \
-						fi
-
-asm_bf:					crypt/b-$(INFILE).s
-						@if [ ! -f $(OBJPATH)bfenc.o ] ; then \
-							$(AS) crypt/b-$(INFILE).s -o $(OBJPATH)bfenc.o; \
-						fi
-
-asm_cast:				crypt/c-$(INFILE).s
-						@if [ ! -f $(OBJPATH)castenc.o ] ; then \
-							$(AS) crypt/c-$(INFILE).s -o $(OBJPATH)castenc.o; \
-						fi
-
-asm_des:				crypt/d-$(INFILE).s
-						@if [ ! -f $(OBJPATH)desenc.o ] ; then \
-							$(AS) crypt/d-$(INFILE).s -o $(OBJPATH)desenc.o; \
-						fi
-
-asm_rc4:				crypt/r4-$(INFILE).s
-						@if [ ! -f $(OBJPATH)rc4enc.o ] ; then \
-							$(AS) crypt/r4-$(INFILE).s -o $(OBJPATH)rc4enc.o;\
-						fi
-
-asm_rc5:				crypt/r5-$(INFILE).s
-						@if [ ! -f $(OBJPATH)rc5enc.o ] ; then \
-							$(AS) crypt/r5-$(INFILE).s -o $(OBJPATH)rc5enc.o; \
-						fi
-
-asm_md5:				crypt/m5-$(INFILE).s
-						@if [ ! -f $(OBJPATH)md5asm.o ] ; then \
-							$(AS) crypt/m5-$(INFILE).s -o $(OBJPATH)md5asm.o; \
-						fi
-
-asm_ripemd:				crypt/rm-$(INFILE).s
-						@if [ ! -f $(OBJPATH)rmdasm.o ] ; then \
-							$(AS) crypt/rm-$(INFILE).s -o $(OBJPATH)rmdasm.o; \
-						fi
-
-asm_sha1:				crypt/s1-$(INFILE).s
-						@if [ ! -f $(OBJPATH)sha1asm.o ] ; then \
-							$(AS) crypt/s1-$(INFILE).s -o $(OBJPATH)sha1asm.o; \
-						fi
-
-asm_targets:
-		@make asm_bn INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_bf INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_cast INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_des INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_rc4 INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_rc5 INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_md5 INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_ripemd INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-		@make asm_sha1 INFILE=$(INFILE) OBJPATH=$(OBJPATH)
-
-asm_elf:
-		@make asm_targets INFILE=elf OBJPATH=$(OBJPATH)
-
-asm_out:
-		@make asm_targets INFILE=out OBJPATH=$(OBJPATH)
-
-asm_sol:
-		@make asm_targets INFILE=sol OBJPATH=$(OBJPATH)
-
-# The pseudo-dependencies to build the asm modules for other processors.
-# Only the bignum code is done in asm for these.  See the SunOS dependency
-# for the explanation of the leading '-' in the asm_sparc rule.  For gas on
-# OSF/1, it may be necessary to use -m<cpu_type> (where <cpu_type> is
-# anything, e.g.21064, 21164, etc) if gas dies with an illegal operand error
-# (this is a bug in some versions of gas).  For Sparc there are two lots of
-# asm code, sparcv8 for SuperSparc (Sparc v8) and sparcv8plus for UltraSparc
-# (Sparc v9 with hacks for when the kernel doesn't preserve the upper 32
-# bits of some 64-bit registers).
-
-asm_alpha:				bn/alpha.s
-						$(AS) bn/alpha.s -o $(OBJPATH)bn_asm.o
-
-asm_mips:				bn/mips3.s
-						$(AS) bn/mips3.s -o $(OBJPATH)bn_asm.o
-
-asm_mvs:				misc/mvsent.s
-						$(CC) -c misc/mvsent.s -o $(OBJPATH)mvsent.o
-
-asm_phux:				bn/pa-risc2.s
-						$(CC) bn/pa-risc2.s -o $(OBJPATH)bn_asm.o
-
-asm_sparc:				bn/sparcv8plus.S
-						@- if [ `which $(CC) | grep -c "no gcc"` = '1' ] ; then \
-							$(AS) -V -Qy -s -xarch=v8plusa bn/sparcv8plus.S -o $(OBJPATH)bn_asm.o ; \
-						else \
-							if [ `uname -a | grep -c sun4m` = '1' ] ; then \
-								gcc -mcpu=supersparc -c bn/sparcv8.S -o $(OBJPATH)bn_asm.o ; \
-							else \
-								gcc -mcpu=ultrasparc -c bn/sparcv8plus.S -o $(OBJPATH)bn_asm.o ; \
-							fi ; \
-						fi
-
-#****************************************************************************
-#*																			*
 #*								Test Code Targets							*
 #*																			*
 #****************************************************************************
@@ -1296,8 +1165,8 @@ keydbx.o:				cryptlib.h crypt.h test/test.h test/keydbx.c
 keyfile.o:				cryptlib.h crypt.h test/test.h test/keyfile.c
 						$(CC) $(CFLAGS) test/keyfile.c
 
-keyload.o:				cryptlib.h crypt.h test/test.h test/keyload.c
-						$(CC) $(CFLAGS) test/keyload.c
+loadkey.o:				cryptlib.h crypt.h test/test.h test/loadkey.c
+						$(CC) $(CFLAGS) test/loadkey.c
 
 lowlvl.o:				cryptlib.h crypt.h test/test.h test/lowlvl.c
 						$(CC) $(CFLAGS) test/lowlvl.c
@@ -1326,304 +1195,24 @@ testlib.o:				cryptlib.h crypt.h test/test.h test/testlib.c
 #*																			*
 #****************************************************************************
 
-# Some OS's require the linking of additional special libraries, either
-# into the executable for the static-lib version or into the library itself
-# for the shared-lib version.  The OS's and their libraries are:
-#
-#	AIX:						-lc_r -lpthreads
-#	BeOS:						None
-#	BeOS with BONE:				-lbind -lsocket
-#	BSDI:						-lgcc
-#	Cray Unicos:				-lpthread
-#	Cygwin:						None
-#	FreeBSD 4.x:				-lc_r + -pthread passed to gcc
-#	FreeBSD 5.x:				-lc_r
-#	Irix:						-lw
-#	Linux/OSF1/DEC Unix:		-lpthread -lresolv
-#	NetBSD:						-lpthread
-#	MVS:						None
-#	NCR MP-RAS (threads):		-Xdce -lnsl -lsocket -lc89 -lpthread -lresolv
-#	NCR MP-RAS (no.threads):	-lnsl -lsocket -lc89
-#	PHUX 9.x, 10.x:				None
-#	PHUX 11.x:					-lpthread
-#	SunOS 4.x:					-ldl -lnsl -lposix4
-#	SunOS 5.5 and 5.6:			-lw -lsocket -lkstat -lnsl -lposix4 -lthread
-#	Solaris 7+ (SunOS 5.7+):	-lw -lresolv -lsocket -lkstat -lrt -lnsl -lthread
-#	Tandem OSS/NSK:				None
-#	UnixWare (SCO):				-lsocket
-#
-# Comments:
-#
-#	-lc_r = libc extended with re-entrant functions needed for threading.
-#			This is required by FreeBSD 5.1-RELEASE but not FreeBSD 5.1-
-#			CURRENT, which has the standard libc re-entrant.  Because there's
-#			no easy way to tell what we're running under (they both have the
-#			same version numbers) we use it for both.
-#	-ldl = dload support for dynamically loaded PKCS #11 drivers.
-#	-lgcc = Extra gcc support lib needed for BSDI, which ships with gcc but
-#			not the proper libs for it.
-#	-lkstat = kstat functions for Solaris randomness gathering.
-#	-lsocket = Resolver functions.
-#	-lnsl = Socket support for Slowaris, which doesn't have it in libc.
-#   -lposix4 = Solaris 2.5 and 2.6 library for sched_yield.
-#	-lresolv = Resolver functions.
-# 	-lrt = Solaris 2.7 and above realtime library for sched_yield().
-#	-lthread/lpthread/lpthreads = pthreads support.  Note that this generally
-#			has to be linked as late as possible (and in particular after the
-#			implied -lc) because libpthread overrides non-thread-safe and stub
-#			functions in libraries linked earlier on with thread-safe
-#			alternatives.
-#	-lw = Widechar support.
-
-OSLIBS_AIX		= -lc_r -lpthreads
-OSLIBS_BEOS		=
-OSLIBS_BEOS_BONE = -lbind -lsocket
-OSLIBS_BSDI		= -lgcc
-OSLIBS_CRAY		= -lpthread
-OSLIBS_CYGWIN	=
-OSLIBS_FREEBSD	= -lc_r
-OSLIBS_HPUX10	=
-OSLIBS_HPUX11	= -lpthread
-OSLIBS_IRIX		= -lw
-OSLIBS_LINUX	= -lresolv -lpthread
-OSLIBS_MPRAS	= -K xpg42 -lnsl -lsocket -lc89
-OSLIBS_NETBSD	= -lpthread
-OSLIBS_SCO		= -lsocket
-OSLIBS_SUNOS	= -ldl -lnsl -lposix4
-OSLIBS_SOLARIS5	= -lw -lsocket -lkstat -lnsl -lposix4 -lthread
-OSLIBS_SOLARIS7	= -lw -lresolv -lsocket -lkstat -lrt -lnsl -lthread
-
-get_libs:
-			@case $(OSNAME) in \
-				'AIX') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_AIX)" ;; \
-				'BeOS') \
-					if [ -f /system/lib/libbind.so ] ; then \
-						make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-							OS_LIBS="$(OSLIBS_BEOS_BONE)" ; \
-					else \
-						make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-							OS_LIBS="$(OSLIBS_BEOS)" ; \
-					fi ;; \
-				'BSD/OS') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_BSDI)" ;; \
-				'CYGWIN_NT-5.0'|'CYGWIN_NT-5.1') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_CYGWIN)" ;; \
-				'FreeBSD') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_FREEBSD)" ;; \
-				'HP-UX') \
-					case `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` in \
-						9|10) \
-							if gcc -v > /dev/null 2>&1; then \
-								make $(LINK_TARGET) LD=gcc \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_HPUX10)" ; \
-							else \
-								make $(LINK_TARGET) \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_HPUX10)" ; \
-							fi ;; \
-						11) \
-							if gcc -v > /dev/null 2>&1; then \
-								make $(LINK_TARGET) LD=gcc \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_HPUX11)" ; \
-							else \
-								make $(LINK_TARGET) \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_HPUX11)" ; \
-							fi ;; \
-					esac ;; \
-				'IRIX'|'IRIX64') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_IRIX)" ;; \
-				'Linux'|'OSF1') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_LINUX)" ;; \
-				'NetBSD') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_NETBSD)" ;; \
-				'SunOS') \
-					case `uname -r | cut -f 1 -d '.'` in \
-						4) \
-							make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-								OS_LIBS="$(OSLIBS_SUNOS)" ;; \
-						5|6) \
-							if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
-								make $(LINK_TARGET) LD=gcc \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_SOLARIS5)" ; \
-							else \
-								make $(LINK_TARGET) \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_SOLARIS5)" ; \
-							fi ;; \
-						7|8|9) \
-							if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
-								make $(LINK_TARGET) LD=gcc \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_SOLARIS7)" ; \
-							else \
-								make $(LINK_TARGET) \
-									LIB=$(LIB) OUT=$(OUT) \
-									OS_LIBS="$(OSLIBS_SOLARIS7)" ; \
-							fi ;; \
-					esac ;; \
-				'UNIX_SV') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_MPRAS)" ;; \
-				'UnixWare') \
-					make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-						OS_LIBS="$(OSLIBS_SCO)" ;; \
-				*) \
-					if [ `uname -m | cut -c 1-4` = 'CRAY' ] ; then \
-						make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) \
-							OS_LIBS="$(OSLIBS_CRAY)" ; \
-					else \
-						make $(LINK_TARGET) LIB=$(LIB) OUT=$(OUT) ; \
-					fi ;; \
-			esac
-
-# Create the static library.  The main test program is also listed as a
-# dependency since we need to use OS-specific compiler options for it that a
-# simple 'make testlib' won't give us (the test program checks whether the
-# compiler options were set correctly when building the library, so it needs
-# to include a few library-specific files that wouldn't be used in a normal
-# program).
-#
-# The use of ar and ranlib is rather system-dependant.  Some ar's (e.g.OSF1)
-# create the .SYMDEF file by default, some require the 's' option, and some
-# require the use of ranlib altogether because ar doesn't recognise the 's'
-# option.  If we know what's required we use the appropriate form, otherwise
-# we first try 'ar rcs' (which works on most systems) and if that fails fall
-# back to 'ar rc' followed by ranlib.  QNX doesn't have either ranlib or the
-# 's' option to ar, so the best we can do is use 'ar rc'.  Finally, Unicos
-# has a weird ar that takes args in a nonstandard form.
-#
-# The OS-specific linking is handled through multiple levels of indirection.
-# At the top level we specify the target and library to link with (static or
-# shared).  We pass this down to get_libs, which sorts out the OS-specific
-# library options, and then finally passes the whole lot down to link, which
-# performs the actual link.
+# Create the static and shared libraries.  The main test program is also
+# listed as a dependency since we need to use OS-specific compiler options
+# for it that a simple 'make testlib' won't give us (the test program checks
+# whether the compiler options were set correctly when building the library,
+# so it needs to include a few library-specific files that wouldn't be used
+# in a normal program).
 #
 # When cross-compiling, we have to use the hosted tools and libraries rather
 # than the system tools and libraries for the build, so we special-case this
-# step based on the $(OSNAME) setting.
-#
-# Because the macros expand to rather large lists of files, we use an extra
-# level of indirection for the ar commands (at least one system, MP-RAS, will
-# dump core trying to process the command if it's expanded inline).
-
-ar_rc:
-				@$(AR) rc $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-
-ar_rcs:
-				@$(AR) rcs $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-
-ar_cray:
-				@$(AR) -rc $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-
-ar_guess:
-				@ar rcs $(LIBNAME) $(OBJS) $(EXTRAOBJS) || \
-				( ar rc $(LIBNAME) $(OBJS) $(EXTRAOBJS) && \
-				  ranlib $(LIBNAME) )
-
-ranlib:
-				@$(AR) rc $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-				@ranlib $(LIBNAME)
-
-palmlib:
-				@palib -add $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-				palink -nodebug -o palmcl.dll $(LIBNAME) $(OBJPATH)cryptsld.o \
-					-libpath $(PALMSDK_PATH)/libraries/ARM_4T/Release/Default
-
-palmlib-prc:
-				@arm-palmos-ar rc $(LIBNAME) $(OBJS) $(EXTRAOBJS)
-				@arm-palmos-ranlib $(LIBNAME)
+# step based on the $(OSNAME) setting supplied to the build script.
 
 $(LIBNAME):		$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
-				@case $(OSNAME) in \
-					'AIX'|'HP-UX'|'Linux'|'OSF1'|'UNIX_SV') \
-						make ar_rcs ;; \
-					'Atmel') \
-						echo "Need to set up Atmel link command" ;; \
-					'BSD/OS'|'FreeBSD'|'iBSD'|'NetBSD'|'OpenBSD') \
-						make ranlib ;; \
-					'CRAY') \
-						make ar_cray ;; \
-					'PalmOS') \
-						make palmlib ;; \
-					'PalmOS-PRC') \
-						make palmlib-prc ;; \
-					'QNX') \
-						make ar_rc ;; \
-					'SunOS') \
-						if [ `which ar | grep -c "no ar"` = '1' ] ; then \
-							make AR=/usr/ccs/bin/ar ar_rcs ; \
-						else \
-							make ar_rcs ; \
-						fi ;; \
-					'ucLinux') \
-						echo "Need to set up ucLinux link command" ;; \
-					*) \
-						make ar_guess ;; \
-				esac
+				@./tools/buildlib.sh $(OSNAME) $(LIBNAME) $(OBJS) $(EXTRAOBJS)
 
-# Create the shared library.  The options need to be tuned for some systems
-# since there's no standard for shared libraries, and different versions of
-# gcc also changed the way this was handled.  If the current line doesn't
-# work, try one of the following ones:
-#
-# AIX:			AIX requires some weird voodoo which is unlike any other
-#				system's way of doing it (probably done by the MVS team,
-#				see "AIX Linking and Loading Mechanisms" for a starter).
-#				In addition to this, the shared lib (during development)
-#				must be given permissions 750 to avoid loading it
-#				permanently into the shared memory segment (only root can
-#				remove it).  The production shared library must have a
-#				555 (or whatever) permission.  The various options are:
-#				-bnoentry = don't look for a main(), -bE = export the symbols
-#				in cryptlib.exp, -bM:SRE = make it a shared library.
-#				$(LD) -ldl -bE:cryptlib.exp -bM:SRE -bnoentry
-# BeOS:			$(LD) -nostart
-# *BSD's:		$(LD) -Bshareable -o lib$(PROJ).so.$(MAJ)
-# Cygwin:		$(LD) -L/usr/local/lib -lcygipc
-# HPUX:			$(LD) -shared -Wl,-soname,lib$(PROJ).so.$(MAJ)
-# IRIX, OSF/1:	$(LD) -shared -o lib$(PROJ).so.$(MAJ)
-# Linux:		$(LD) -Bshareable -ldl -o lib$(PROJ).so.$(MAJ)
-# Solaris:		$(LD) -G -ldl -o lib$(PROJ).so.$(MAJ)
 
 $(SLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
-				@make linkfile
-				@make get_libs LINK_TARGET=shared_lib
-				@rm -f $(LINKFILE)
-
-shared_lib:
-				@case $(OSNAME) in \
-					'AIX') \
-						cc -o shrlibcl.o -bE:cryptlib.exp \
-							-bM:SRE -bnoentry -lpthread $(OS_LIBS) \
-							$(EXTRAOBJS) `cat $(LINKFILE)` ; \
-						ar -q $(SLIBNAME).a shrlibcl.o; \
-						rm -f shrlibcl.o; \
-						chmod 750 $(SLIBNAME).a ;; \
-					'BeOS' ) \
-						$(LD) -nostart -o $(SLIBNAME) $(OS_LIBS) \
-							$(EXTRAOBJS) `cat $(LINKFILE)` ; \
-						strip $(SLIBNAME) ;; \
-					'HP-UX') \
-						ld -b -o lib$(PROJ).sl $(OS_LIBS) \
-							$(EXTRAOBJS) `cat $(LINKFILE)` ; \
-						strip lib$(PROJ).sl ;; \
-					*) \
-						$(LD) -shared -o $(SLIBNAME) $(OS_LIBS) \
-							$(EXTRAOBJS) `cat $(LINKFILE)` ; \
-						strip $(SLIBNAME) ;; \
-				esac
+				@./tools/buildsharedlib.sh $(OSNAME) $(SLIBNAME) $(LD) $(OBJS) \
+					$(EXTRAOBJS)
 
 $(DYLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
 				@$(LD) -dynamiclib -compatibility_version $(MAJ).$(MIN) \
@@ -1642,22 +1231,24 @@ $(DYLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
 # A temporary workaround for testing is to set LD_LIBRARY_PATH to the
 # directory containing the cryptlib shared lib.  This (colon-separated) list
 # of directories is searched before the standard library directories.  This
-# may have systems-specific variations, e.g. under PHUX it's called
+# may have system-specific variations, e.g. under PHUX it's called
 # SHLIB_PATH and under Aches it's LIBPATH.  BeOS uses LIBRARY_PATH, and
 # needs to have it pointed to . to find the shared lib, otherwise it fails
 # with a "Missing library" error without indicating which library is missing.
 #
-# To run stestlib with a one-off lib path change, use:
+# To run stestlib with a one-off lib path change, use either the universal:
+#
+#	env LD_LIBRARY_PATH=. ./testlib
+#
+# or the shell-specific (cdh):
 #
 #	setenv LD_LIBRARY_PATH .:$LD_LIBRARY_PATH
-#	./stestlib
+#	./testlib
 #
-# or:
+# or (sh):
 #
 #	LD_LIBRARY_PATH=. ; export LD_LIBRARY_PATH
-#	./stestlib
-#
-# depending on your shell.
+#	./testlib
 #
 # Finally, ldd <filename> will print out shared lib dependencies.
 #
@@ -1665,26 +1256,34 @@ $(DYLIBNAME):	$(OBJS) $(EXTRAOBJS) $(TESTOBJS)
 # explicitly rather than implicitly via testlib in order to go via the
 # auto-config mechanism.  Since OS X uses special dylibs instead of normal
 # shared libs, we detect this and build the appropriate lib type.
-
-linkfile:
-				@rm -f $(LINKFILE)
-				@echo $(OBJS) > $(LINKFILE)
-
-link:
-				@$(LD) -o $(OUT) $(LDFLAGS) `cat $(LINKFILE)` -L. $(LIB) \
-					$(OS_LIBS)
+#
+# To test the code with extended malloc diagnostics on systems with
+# phkmalloc, use:
+#
+#	env MALLOC_OPTIONS="AJVX" ./testlib
 
 testlib:		$(TESTOBJS)
-				@make linkfile OBJS="$(TESTOBJS)"
-				@make get_libs LINK_TARGET=link OUT=testlib LIB=-l$(PROJ)
+				@rm -f $(LINKFILE)
+				@echo $(TESTOBJS) > $(LINKFILE)
+				@$(LD) -o testlib $(LDFLAGS) `cat $(LINKFILE)` -L. -l$(PROJ) \
+					`./tools/getlibs.sh autodetect`
 				@rm -f $(LINKFILE)
 
 stestlib:		$(TESTOBJS)
-				@make linkfile OBJS="$(TESTOBJS)"
-				@if [ $(OSNAME) = 'Darwin' ] ; then \
-					make get_libs LINK_TARGET=link OUT=stestlib LIB=$(DYLIBNAME) ; \
+				@rm -f $(LINKFILE)
+				@echo $(TESTOBJS) > $(LINKFILE)
+				@if [ $(OSNAME) = 'AIX' ] ; then \
+					$(LD) -o testlib $(LDFLAGS) `cat $(LINKFILE)` -L. $(SLIBNAME).a \
+						`./tools/getlibs.sh AIX` ; \
+				elif [ $(OSNAME) = 'Darwin' ] ; then \
+					$(LD) -o testlib $(LDFLAGS) `cat $(LINKFILE)` -L. $(DYLIBNAME) \
+						`./tools/getlibs.sh Darwin` ; \
+				elif [ $(OSNAME) = 'HP-UX' ] ; then \
+					$(LD) -o testlib $(LDFLAGS) `cat $(LINKFILE)` -L. lib$(PROJ).sl \
+						`./tools/getlibs.sh HP-UX` ; \
 				else \
-					make get_libs LINK_TARGET=link OUT=stestlib LIB=$(SLIBNAME) ; \
+					$(LD) -o testlib $(LDFLAGS) `cat $(LINKFILE)` -L. $(SLIBNAME) \
+						`./tools/getlibs.sh autodetect` ; \
 				fi
 				@rm -f $(LINKFILE)
 
@@ -1694,31 +1293,6 @@ stestlib:		$(TESTOBJS)
 #*																			*
 #****************************************************************************
 
-# gcc changed its CPU architecture-specific tuning option from -mcpu to
-# -march in about 2003, so when using gcc to build for x86 systems (where
-# we specify the architecture as P5 rather than the default 386) we have
-# to use an intermediate build rule that changes the compiler arguments
-# based on compiler version info.  The reason for the change was to
-# distinguish -march (choice of instruction set used) from -mtune
-# (scheduling of instructions), so for example -march=pentium
-# -mtune=pentium4 would generate instructions from the pentium instruction
-# set but scheduled for the P4 CPU.
-#
-# (The changeover is in fact somewhat messier than that, newer 2.9.x versions
-# (as well as 3.x onwards) recognised -march (depending on the CPU they
-# targeted and patch level) and all versions still recognise -mcpu, however
-# as of about 3.4.x the compiler complains about deprecated options whenever
-# it sees -mcpu used, which is why we use -march for 3.x and newer).
-
-gcc-x86:
-	@if [ `gcc -v 2>&1 | grep "gcc version" | tr -d '[A-Za-z]. ' | cut -c 1` -gt 2 ] ; then \
-		make $(DEFINES) EXTRAOBJS="$(EXTRAOBJS)" \
-			CFLAGS="$(CFLAGS) -march=pentium" ; \
-	else \
-		make $(DEFINES) EXTRAOBJS="$(EXTRAOBJS)" \
-			CFLAGS="$(CFLAGS) -mcpu=pentium" ; \
-	fi
-
 # Aches: A vaguely Unix-compatible OS designed by IBM.  The maxmem option
 #		 is to give the optimizer more headroom, it's not really needed
 #		 but avoids millions of informational messages telling you to
@@ -1727,6 +1301,7 @@ gcc-x86:
 #		 the compiler).
 
 AIX:
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	make $(DEFINES) CFLAGS="$(CFLAGS) -O2 -qmaxmem=-1 -qroconst -D_REENTRANT"
 
 # Apollo: Yeah, this makefile has been around for awhile.  Why do you ask?
@@ -1744,8 +1319,8 @@ A/UX:
 #			cc is gcc except when it isn't.  Most are still using a.out,
 #			although some are slowly going to ELF, which we can autodetect by
 #			checking whether the compiler defines __ELF__.  If the compiler
-#			check doesn't work then [ `uname -r | cut -f 1` -ge 4 ] (for
-#			FreeBSD) and -ge 2 (for OpenBSD) should usually work.
+#			check doesn't work then [ `uname -r | cut -f 1 -d '.'` -ge 4 ]
+#			(for FreeBSD) and -ge 2 (for OpenBSD) should usually work.
 #
 #			NetBSD for many years (up until around 1999-2000) used an
 #			incredibly old version of as that didn't handle 486 opcodes (!!),
@@ -1760,50 +1335,29 @@ A/UX:
 #			entry for an example.
 
 BSD386:
-	@make asm_out OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
-		-fomit-frame-pointer -O3 -mcpu=pentium"
+		-fomit-frame-pointer -O3"
 iBSD:
-	@make asm_out OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
-		-fomit-frame-pointer -O3 -mcpu=pentium"
+		-fomit-frame-pointer -O3"
 BSD/OS:
-	@if test "`echo __ELF__ | $(CC) -E - | grep __ELF__`" = "" ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-	else \
-		make asm_out OBJPATH=$(OBJPATH) ; \
-	fi
-	@make gcc-x86 DEFINES="$(DEFINES)" CC=gcc EXTRAOBJS="$(ASMOBJS)" \
-		CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3"
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3"
 FreeBSD:
-	@if test "`echo __ELF__ | $(CC) -E - | grep __ELF__`" = "" ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-	else \
-		make asm_out OBJPATH=$(OBJPATH) ; \
-	fi
-	@if [ `uname -r | cut -f 1 -d '.'` -eq 4 ] ; then \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3 -pthread" ; \
-	else \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3" ; \
-	fi
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3 -pthread"
 NetBSD:
-	@if test "`echo __ELF__ | $(CC) -E - | grep __ELF__`" = "" ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-	else \
-		make asm_out OBJPATH=$(OBJPATH) ; \
-	fi
-	make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-		CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3 -pthread"
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3 -pthread"
 OpenBSD:
-	@if test "`echo __ELF__ | $(CC) -E - | grep __ELF__`" = "" ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-	else \
-		make asm_out OBJPATH=$(OBJPATH) ; \
-	fi
-	@make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-		CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3"
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3"
 
 # Convex:
 
@@ -1819,30 +1373,17 @@ Convex:
 CRAY:
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -h nomessage=256:265 -O2"
 
-# Cygwin32: cc is gcc, but without allowing -fPIC (see the SCFLAGS comment
-#			for more details), so we remove the -fPIC in SCFLAGS (without
-#			removing it anywhere else).  Note that this has to be done very
-#			carefully: The grep checks for the original SCFLAGS with -fPIC,
-#			the sed then changes the full string in SCFLAGS, being itself
-#			changed by the command but not affecting the preceding grep, and
-#			then on future runs the -fPIC grep doesn't match any more and no
-#			further changes are made.
+# Cygwin: cc is gcc.
 
 CYGWIN_NT-5.0:
-	@- if grep "-fPIC -c" makefile > /dev/null ; then \
-		sed s/"-fPIC -c -D__UNIX__"/"-c -D__UNIX__"/g makefile > makefile.tmp || exit 1 ; \
-		mv -f makefile.tmp makefile || exit 1 ; \
-	fi
-	@make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-		CFLAGS="$(CFLAGS) -O3 -D__CYGWIN__ -I/usr/local/include"
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3 -D__CYGWIN__ -I/usr/local/include"
 
 CYGWIN_NT-5.1:
-	@- if grep "-fPIC -c" makefile > /dev/null ; then \
-		sed s/"-fPIC -c"//g makefile > makefile.tmp || exit 1 ; \
-		mv -f makefile.tmp makefile || exit 1 ; \
-	fi
-	@make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-		CFLAGS="$(CFLAGS) -O3 -D__CYGWIN__ -I/usr/local/include"
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
+	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+		-fomit-frame-pointer -O3 -D__CYGWIN__ -I/usr/local/include"
 
 # DGUX: cc is a modified gcc.
 
@@ -1935,7 +1476,7 @@ dgux:
 #		one a run for its money.
 
 HP-UX:
-	@if [ `$(CC) +O3 endian.c 2>&1 | grep -c "ANSI C product"` = '1' ] ; then \
+	@if [ `$(CC) +O3 ./tools/endian.c -o /dev/null 2>&1 | grep -c "ANSI C product"` = '1' ] ; then \
 		echo "Warning: This system appears to be running the HP bundled C++ compiler as" ; \
 		echo "         its cc.  You need to install a proper C compiler to build cryptlib." ; \
 		echo "" ; \
@@ -1944,13 +1485,13 @@ HP-UX:
 	@if [ `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` -eq 11 ] ; then \
 		if [ $(CC) = "gcc" ] ; then \
 			if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0" ; \
-			else \
-				make $(DEFINES) CFLAGS="$(CFLAGS) -O3" ; \
-			fi ; \
+				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0 -D_REENTRANT" ; \
+  			else \
+				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
+  			fi ; \
 		else \
 			if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-				make asm_phux OBJPATH=$(OBJPATH) || exit 1 ; \
+				./tools/buildasm.sh $(AS) $(OBJPATH) ; \
 				make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae -D_REENTRANT" ; \
 			else \
 				make $(DEFINES) CFLAGS="$(CFLAGS) +O3 -D_REENTRANT" ; \
@@ -1969,27 +1510,27 @@ HP-UX:
 # Irix: Use cc.
 
 IRIX:
-	@make asm_mips OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -O3"
 IRIX64:
-	@make asm_mips OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -O3"
 
 # ISC Unix: Use gcc.
 
 ISC:
-	@make asm_out OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -mcpu=pentium"
 
 # Linux: cc is gcc.
 
 Linux:
 	@if uname -m | grep "i[3,4,5,6]86" > /dev/null; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3 -D_REENTRANT"; \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -D_REENTRANT" ; \
 	else \
-		make $(DEFINES) CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -D_REENTRANT"; \
+		make $(DEFINES) CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -D_REENTRANT" ; \
 	fi
 
 # Mac OS X: BSD variant.
@@ -2016,7 +1557,7 @@ NeXT:
 #		 change the optimization CFLAGS.
 
 OSF1:
-	@make asm_alpha OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -D_REENTRANT"
 
 # QNX: Older versions of QNX use braindamaged old DOS-style Watcom tools
@@ -2033,7 +1574,7 @@ QNX-asm:
 		sed s/"s -o "/"s -fo="/g makefile > makefile.tmp || exit 1 ; \
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
-	@make asm_elf OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM -O4"
 
 # SCO: Unlike the entire rest of the world, SCO doesn't use -On, although it
@@ -2054,9 +1595,7 @@ QNX-asm:
 #	   and cc/as barf on bni80386.s.  Even compiling the straight C code
 #	   gives a whole slew of internal compiler errors/failed assertions.  If
 #	   you have a setup that works (i.e.with GNU tools installed) then you
-#	   can add the following to build the library.
-#
-#		@make asm_elf
+#	   can call buildasm.sh to use the asm routines.
 #
 #	   For another taste of the wonderful SCO compiler, take the trivial lex
 #	   example from the dragon book, lex it, and compile it.  Either the
@@ -2111,22 +1650,22 @@ QNX-asm:
 #	   other Unix variants put together.
 
 SCO:
-	if gcc -v > /dev/null 2>&1 ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3 -D_REENTRANT"; \
+	@if gcc -v > /dev/null 2>&1 ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -D_REENTRANT"; \
 	else \
-		@echo "Please read the entry for SCO in the makefile before continuing." ; \
-		@make $(TARGET) CFLAGS="$(CFLAGS) -O" ; \
+		echo "Please read the entry for SCO in the makefile before continuing." ; \
+		make $(TARGET) CFLAGS="$(CFLAGS) -O" ; \
 	fi
 UnixWare:
-	if gcc -v > /dev/null 2>&1 ; then \
-		make asm_elf OBJPATH=$(OBJPATH) ; \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(CFLAGS) -DUSE_ASM -fomit-frame-pointer -O3 -D_REENTRANT"; \
+	@if gcc -v > /dev/null 2>&1 ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -D_REENTRANT"; \
 	else \
-		@echo "Please read the entry for UnixWare in the makefile before continuing." ; \
-		@make $(DEFINES) CFLAGS="$(CFLAGS) -O -Xa -Khost -Kthread" ; \
+		echo "Please read the entry for UnixWare in the makefile before continuing." ; \
+		make $(DEFINES) CFLAGS="$(CFLAGS) -O -Xa -Khost -Kthread" ; \
 	fi
 
 itgoaway:
@@ -2141,11 +1680,7 @@ itgoaway:
 #				bogus warnings about signed vs.unsigned chars).
 
 SunOS:
-	@if [ "$(USE_ASM)" != "no" -a `uname -m` = 'i86pc' ] ; then \
-		make asm_sol OBJPATH=$(OBJPATH) ; \
-	elif [ "$(USE_ASM)" != "no" ] ; then \
-		make asm_sparc OBJPATH=$(OBJPATH) CC=$(CC) ; \
-	fi
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@- if [ `uname -r | tr -d '[A-Z].' | cut -c 1` = '4' ] ; then \
 		make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3" ; \
 	else \
@@ -2168,7 +1703,7 @@ SVR4:
 # Ultrix: Use vcc or gcc.
 
 ULTRIX:
-	@make asm_mips OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3"
 
 # Amdahl UTS 4:
@@ -2197,9 +1732,8 @@ BeOS:
 	fi
 	@if [ `uname -m` = 'BePC' ]; then \
 		make asm_elf OBJPATH=$(OBJPATH) ; \
-		make gcc-x86 DEFINES="$(DEFINES)" EXTRAOBJS="$(ASMOBJS)" \
-			CFLAGS="$(XCFLAGS) -DUSE_ASM -D__BEOS__ -fomit-frame-pointer \
-			-O3 -D_REENTRANT" ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(XCFLAGS) -DUSE_ASM \
+			-D__BEOS__ -fomit-frame-pointer -O3 -D_REENTRANT" ; \
 	else \
 		make $(DEFINES) CFLAGS="$(CFLAGS) -U__UNIX__ -D__BEOS__ \
 			-fomit-frame-pointer -O3 -D_REENTRANT" ; \
@@ -2239,7 +1773,7 @@ OS/390:
 	@if grep "unix\.o" makefile > /dev/null ; then \
 		sed s/unix\.o/mvs\.o/g makefile | sed s/unix\.c/mvs\.c/g > makefile.tmp || exit 1 ; \
 	fi
-	@make asm_mvs OBJPATH=$(OBJPATH)
+	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) OSOBJS="$(OBJPATH)mvsent.o" CFLAGS="$(XCFLAGS) -O2 \
 		-W c,'langlvl(extended) csect rent roc ros targ(osv2r7) enum(4)' \
 		-W c,'CONVLIT(ISO8859-1)' -DDDNAME_IO -D_OPEN_THREADS \
@@ -2301,6 +1835,10 @@ NONSTOP_KERNEL:
 # Since we're cross-compiling here, we use $(XCFLAGS) and $(XDEFINES) instead
 # if the usual $(CFLAGS) and $(DEFINES), which assume that the target is a
 # Unix system.
+#
+# If you add a new entry here, you also need to update tools/osversion.sh to
+# return the appropriate OS version for the system you're cross-compiling
+# for.
 
 target-X:
 	@make directories
@@ -2333,15 +1871,13 @@ target-atmel:
 		-DCONFIG_DATA_LITTLEENDIAN -DCONFIG_NO_STDIO -DCONFIG_CONSERVE_MEMORY \
 		-DCONFIG_NO_DYNALLOC -fomit-frame-pointer -O3"
 
-# ucLinux on ARM: Little-endian, 2.x kernel.  Note that we use $(CFLAGS)
-# rather than $(XCFLAGS) since this is a Unix system, just not the same as
-# the source one.
+# ucLinux on ARM: Little-endian.  Note that we use $(CFLAGS) rather than
+# $(XCFLAGS) since this is a Unix system, just not the same as the source one.
 
 target-uclinux:
 	@make directories
 	make $(XDEFINES) OSNAME=ucLinux CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DCONFIG_CONSERVE_MEMORY -DOSVERSION=2 \
-		-fomit-frame-pointer -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -DCONFIG_CONSERVE_MEMORY -fomit-frame-pointer -O3"
 
 # PalmOS on ARM: Little-endian.  The first target is for the Palm tools, the
 # second for the PRC tools package.  The latter needs to have assorted extra
@@ -2382,7 +1918,7 @@ target-palmos:
 		-I$(PALMSDK_PATH)/headers/ \
 		-I$(PALMSDK_PATH)/headers/posix/ \
 		-nologo -D__PALMOS_KERNEL__ -DBUILD_TYPE=BUILD_TYPE_RELEASE \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=6 -O -wd112 -wd187 -wd189"
+		-DCONFIG_DATA_LITTLEENDIAN -O -wd112 -wd187 -wd189"
 
 target-palmos-prc:
 	@make directories
@@ -2393,8 +1929,7 @@ target-palmos-prc:
 	make $(XDEFINES) OSNAME=PalmOS-PRC CC=arm-palmos-gcc CFLAGS="$(XCFLAGS) \
 		-idirafter /usr/lib/gcc-lib/arm-palmos/3.2.2/include/ \
 		-D__PALMOS_KERNEL__ -D__PALMSOURCE__ -DBUILD_TYPE=BUILD_TYPE_RELEASE \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=6 \
-		-fomit-frame-pointer -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -fomit-frame-pointer -O3"
 
 # MinGW: Gnu Win32 SDK hosted under Cygwin or non-Windows OS.  This is
 # effectively a cross-compile since although the host environment is Unix
@@ -2406,12 +1941,19 @@ target-mingw:
 		sed s/unix\.o/win32\.o/g makefile | sed s/unix\.c/win32\.c/g > makefile.tmp || exit 1 ; \
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
+	@make asm_elf OBJPATH=$(OBJPATH)
 	make $(XDEFINES) OSNAME=MinGW CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=5 -DWIN32 \
-		-fomit-frame-pointer -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -DWIN32 -DUSE_ASM -fomit-frame-pointer -O3"
 
 # Xilinx XMK: Gnu toolchain under Unix or Cygwin.  There are two possible
-# compilers, gcc for MicroBlaze (Xilinx custom RISC core) or for PPC.
+# compilers, gcc for MicroBlaze (Xilinx custom RISC core) or for PPC.  The
+# MB gcc doesn't predefine any symbols allowing us to autoconfigure
+# ourselves, so we manually define __mb__.  It may also be necessary to use
+# the MicroBlaze-specific mb-ar instead of the standard ar.
+#
+# Note that the MB cores are highly reconfigurable and may have all sorts
+# of capabilities enabled or disabled.  You'll need to edit the 'xl'
+# options below based on your config.
 
 target-xmk-mb:
 	@make directories
@@ -2420,8 +1962,9 @@ target-xmk-mb:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=XMK CC=mb-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=3 -D__XMK__ \
-		-fomit-frame-pointer -O3"
+		-DCONFIG_DATA_BIGENDIAN -DCONFIG_CONSERVE_MEMORY -D__XMK__ \
+		-D__mb__ -mno-xl-soft-mul -mxl-barrel-shift -mno-xl-soft-div \
+		-fomit-frame-pointer -O2 -I../microblaze_0/include"
 
 target-xmk-ppc:
 	@make directories
@@ -2430,8 +1973,7 @@ target-xmk-ppc:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=XMK CC=powerpc-eabi-gcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=3 -D__XMK__ \
-		-fomit-frame-pointer -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -D__XMK__ -fomit-frame-pointer -O3"
 
 # VxWorks: VxWorks toolchain under Windows.
 
@@ -2442,7 +1984,7 @@ target-vxworks:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=VxWorks CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__VXWORKS__ -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -D__VXWORKS__ -O3"
 
 # Kadak AMX: Gnu toolchain under Unix or Cygwin or ARM cc for ARM CPUs.  The
 # entry below is for the ARM toolchain.
@@ -2454,7 +1996,7 @@ target-amx:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=AMX CC=armcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__AMX__ -O2"
+		-DCONFIG_DATA_LITTLEENDIAN -D__AMX__ -O2"
 
 # eCOS: Gnu toolchain under Unix.  The entry below is for the ARM toolchain.
 
@@ -2465,7 +2007,7 @@ target-ecos:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=eCOS CC=armcc CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=1 -D__ECOS__ -O2"
+		-DCONFIG_DATA_LITTLEENDIAN -D__ECOS__ -O2"
 
 # uC/OS-II: Generic toolchain for various architectures, the entry below is
 #			for x86..
@@ -2477,7 +2019,7 @@ target-ucos:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=UCOS CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=2 -D__UCOS__ -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -D__UCOS__ -O3"
 
 # ChorusOS: Generic toolchain for various architectures, the entry below is
 #			for x86..
@@ -2489,7 +2031,7 @@ target-chorus:
 		mv -f makefile.tmp makefile || exit 1 ; \
 	fi
 	make $(XDEFINES) OSNAME=CHORUS CFLAGS="$(XCFLAGS) \
-		-DCONFIG_DATA_LITTLEENDIAN -DOSVERSION=5 -D__CHORUS__ -O3"
+		-DCONFIG_DATA_LITTLEENDIAN -D__CHORUS__ -O3"
 
 #****************************************************************************
 #*																			*
@@ -2508,3 +2050,4 @@ clean:
 	@rm -f $(SHARED_OBJ_PATH)*.o
 	@if [ -d $(SHARED_OBJ_DIR) ] ; then rmdir $(SHARED_OBJ_DIR) ; fi
 	@if [ `uname -s` = 'CYGWIN_NT-5.0' ] ; then rm -f *.exe; fi
+	@if [ `uname -s` = 'HP-UX' ] ; then rm -f lib$(PROJ).sl; fi

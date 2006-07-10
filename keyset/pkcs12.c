@@ -13,19 +13,11 @@
    who shall remain anonymous put it, "We don't want to put our keys anywhere 
    where MS software can get to them" */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "keyset.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "keyset.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "crypt.h"
   #include "keyset/keyset.h"
@@ -746,7 +738,8 @@ static int unwrapOctetString( STREAM *stream, BYTE *buffer,
 	{
 	int bufPos = 0, status;
 
-	while( checkEOC( stream ) != TRUE )
+	status = checkEOC( stream );
+	while( !cryptStatusError( status ) && status != TRUE )
 		{
 		int length;
 
@@ -765,7 +758,11 @@ static int unwrapOctetString( STREAM *stream, BYTE *buffer,
 		if( cryptStatusError( status ) )
 			return( status );
 		bufPos += length;
+
+		status = checkEOC( stream );
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 
 	return( bufPos );
 	}

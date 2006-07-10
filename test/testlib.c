@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2005					*
+*						Copyright Peter Gutmann 1995-2006					*
 *																			*
 ****************************************************************************/
 
@@ -34,9 +34,9 @@ int keyReadOK = TRUE, doubleCertOK = FALSE;
 
 static struct {
 	const CRYPT_ATTRIBUTE_TYPE option;	/* Option */
-	const char *name;					/* Option name */
+	const char FAR_BSS *name;			/* Option name */
 	const BOOLEAN isNumeric;			/* Whether it's a numeric option */
-	} configOption[] = {
+	} FAR_BSS configOption[] = {
 	{ CRYPT_OPTION_INFO_DESCRIPTION, "CRYPT_OPTION_INFO_DESCRIPTION", FALSE },
 	{ CRYPT_OPTION_INFO_COPYRIGHT, "CRYPT_OPTION_INFO_COPYRIGHT", FALSE },
 	{ CRYPT_OPTION_INFO_MAJORVERSION, "CRYPT_OPTION_INFO_MAJORVERSION", TRUE },
@@ -300,7 +300,7 @@ void smokeTest( void );
 	  The testDevices() call will report the results of trying to use your
 	  driver.
 
-   Note that under Windows XP the path name changes from 'WinNT' to just 
+   Note that under Windows XP the path name changes from 'WinNT' to just
    'Windows' */
 
 static void updateConfig( void )
@@ -327,7 +327,7 @@ static void updateConfig( void )
 	const char *driverPath = "c:/winnt/system32/slbck.dll";		/* Schlumberger */
 	const char *driverPath = "c:/winnt/system32/SpyPK11.dll";	/* Spyrus */
 #endif /* 0 */
-	const char *driverPath = "c:/winnt/system32/SpyPK11.dll";	/* Spyrus */
+	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
 
 	printf( "Updating cryptlib configuration to load PKCS #11 driver\n  "
 			"'%s'\n  as default driver...", driverPath );
@@ -373,8 +373,137 @@ static void updateConfigCert( void )
    before any of the other tests are run and can be used to handle special-
    case tests that aren't part of the main test suite */
 
+#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
+#define KEY_LABEL		"Test RSA private key"
+#define MAXTHREADS		2 /*4*/
+#define UNEXPECTED(func, status) \
+		if (cryptStatusError(status)) \
+			{ printf("Cryptlib error in %s line %d status=%d\n", \
+			  func, __LINE__, status); exit(1); }
+
+#include <sys/types.h>
+#include <sys/stat.h>
+
+unsigned __stdcall SignTest(void *p)
+	{
+	char *key_a = TEST_PRIVKEY_FILE;
+	char *password = TEST_PRIVKEY_PASSWORD;
+	CRYPT_KEYSET keyset;
+	CRYPT_CONTEXT privateKeyContext;
+	CRYPT_ENVELOPE envelope;
+	int status;
+	char buffer[0x800];
+	int bytesCopied;
+	int count =  *((int *) p);
+	int i;
+
+	printf("SignTest %d\n", count);
+
+	for (i = 0; i < count; i++)
+		{
+		status = cryptKeysetOpen(&keyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+								key_a, CRYPT_KEYOPT_READONLY);
+		UNEXPECTED("cryptKeysetOpen", status);
+		status = cryptGetPrivateKey(keyset, &privateKeyContext, CRYPT_KEYID_NAME,
+									KEY_LABEL, password);
+		UNEXPECTED("cryptGetPrivateKey", status);
+		status = cryptCreateEnvelope(&envelope, CRYPT_UNUSED, CRYPT_FORMAT_CMS);
+		UNEXPECTED("cryptCreateEnvelope", status);
+		status = cryptSetAttribute(envelope, CRYPT_ENVINFO_SIGNATURE, privateKeyContext);
+		UNEXPECTED("cryptSetAttribute", status);
+		status = cryptPushData(envelope, "message", 7, &bytesCopied);
+		UNEXPECTED("cryptPushData", status);
+		status = cryptFlushData(envelope);
+		UNEXPECTED("cryptPushData", status);
+		status = cryptPopData(envelope, buffer, sizeof(buffer), &bytesCopied);
+		UNEXPECTED("cryptPopData", status);
+		cryptDestroyContext(privateKeyContext);
+		cryptKeysetClose(keyset);
+		cryptDestroyEnvelope(envelope);
+		}
+
+	return 0;
+	}
+
+unsigned __stdcall EncTest(void *p)
+	{
+	char *cert_c = "testdata/cert6.der";
+	CRYPT_ENVELOPE envelope;
+	CRYPT_CERTIFICATE certificate;
+	int status;
+	char buffer[0x800];
+	int bytesCopied;
+	int count =  *((int *) p);
+	int i;
+
+	printf("EncTest %d\n", count);
+
+
+	for (i = 0; i < count; i++)
+		{
+			{/* Get certificate */
+			struct _stat buf;
+			FILE *fp;
+			int certSize;
+
+			status = _stat( cert_c, &buf );
+			if (status != 0)
+				{
+				printf("File not found! (%s)\n", cert_c);
+				return -1;
+				}
+			certSize = buf.st_size;
+			if ((fp = fopen(cert_c, "rb")) != 0)
+				{
+				int bytesRead = fread(buffer, sizeof(char), certSize, fp);
+				fclose(fp);
+				}
+			status = cryptImportCert(buffer, certSize, CRYPT_UNUSED, &certificate);
+			UNEXPECTED("cryptImportCert", status);
+			}
+
+		status = cryptCreateEnvelope(&envelope, CRYPT_UNUSED, CRYPT_FORMAT_CMS);
+		UNEXPECTED("cryptCreateEnvelope", status);
+		status = cryptSetAttribute(envelope, CRYPT_ENVINFO_PUBLICKEY, certificate);
+		UNEXPECTED("cryptSetAttribute", status);
+		status = cryptPushData(envelope, buffer, 200, &bytesCopied);
+		UNEXPECTED("cryptPushData", status);
+		status = cryptFlushData(envelope);
+		UNEXPECTED("cryptPushData", status);
+		status = cryptPopData(envelope, buffer, sizeof(buffer), &bytesCopied);
+		UNEXPECTED("cryptPopData", status);
+		cryptDestroyCert(certificate);
+		cryptDestroyEnvelope(envelope);
+		}
+
+	return 0;
+	}
+#endif /* _MSC_VER */
+
 void testKludge( void )
 	{
+#if 0
+	HANDLE hThreads[MAXTHREADS];
+	unsigned dwThreadId[MAXTHREADS];
+	int status, i, j;
+
+	status = cryptAddRandom(NULL, CRYPT_RANDOM_SLOWPOLL);
+	UNEXPECTED("cryptAddRandom", status);
+
+	for (i = 0; i < 1000; i++)
+		{
+		hThreads[0] = (HANDLE) _beginthreadex(NULL, 0, EncTest, &i, 0, &dwThreadId[0]);
+		hThreads[1] = (HANDLE) _beginthreadex(NULL, 0, SignTest, &i, 0, &dwThreadId[1]);
+#if MAXTHREADS > 2
+		hThreads[2] = (HANDLE) _beginthreadex(NULL, 0, EncTest, &i, 0, &dwThreadId[2]);
+		hThreads[3] = (HANDLE) _beginthreadex(NULL, 0, SignTest, &i, 0, &dwThreadId[3]);
+#endif /* MAXTHREADS > 2 */
+		WaitForMultipleObjects(MAXTHREADS, hThreads, TRUE, INFINITE);
+		for (j=0; j < MAXTHREADS; j++)
+			CloseHandle(hThreads[j]);
+		}
+#endif
+
 	/* Create test key databases */
 #if 0
 	checkCreateDatabaseKeysets();
@@ -403,7 +532,7 @@ void testKludge( void )
 #endif /* 0 */
 
 	/* Functions that can be pressed into service in combination with the
-	   special-purpose defines at the start of testkeyf.c to generate custom
+	   special-purpose defines at the start of keyfile.c to generate custom
 	   certs/keys for the self-test */
 #if 0
 	testWriteFileCertChain();	/* To generate user/intermed.CA priv.key+cert */
@@ -430,10 +559,6 @@ void testKludge( void )
 *																			*
 ****************************************************************************/
 
-#ifdef __WINDOWS__
-  #define INC_CHILD
-#endif /* __WINDOWS__ */
-
 /* Comprehensive cryptlib stress test.  To get the following to run under
    WinCE as a native console app, it's necessary to change the entry point
    in Settings | Link | Output from WinMainCRTStartup to the undocumented
@@ -444,21 +569,23 @@ int main( int argc, char **argv )
 	{
 #ifdef TEST_LOWLEVEL
 	CRYPT_ALGO_TYPE cryptAlgo;
+	BOOLEAN algosEnabled;
 #endif /* TEST_LOWLEVEL */
 #ifdef TEST_CONFIG
 	int i;
 #endif /* TEST_CONFIG */
-#ifdef TEST_SELFTEST
+#if defined( TEST_SELFTEST ) || defined( TEST_CONFIG )
 	int value;
-#endif /* TEST_SELFTEST */
+#endif /* TEST_SELFTEST || TEST_CONFIG */
 	int status;
-	void testSystemSpecific( void );
+	void testSystemSpecific1( void );
+	void testSystemSpecific2( void );
 
 	/* Get rid of compiler warnings */
 	if( argc || argv );
 
-	/* Make sure various system-specific features are set right */
-	testSystemSpecific();
+	/* Make sure that various system-specific features are set right */
+	testSystemSpecific1();
 
 	/* VisualAge C++ doesn't set the TZ correctly.  The check for this isn't
 	   as simple as it would seem since most IBM compilers define the same
@@ -489,6 +616,10 @@ int main( int argc, char **argv )
 	   being run the right way */
 	if( !checkFileAccess() )
 		exit( EXIT_FAILURE );
+
+	/* Make sure that further system-specific features that require cryptlib 
+	   to be initialised to check are set right */
+	testSystemSpecific2();
 
 	/* For general testing purposes we can insert test code at this point to
 	   test special cases that aren't covered in the general tests below */
@@ -521,32 +652,59 @@ int main( int argc, char **argv )
 
 #ifdef TEST_LOWLEVEL
 	/* Test the conventional encryption routines */
+	algosEnabled = FALSE;
 	for( cryptAlgo = CRYPT_ALGO_FIRST_CONVENTIONAL;
 		 cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL; cryptAlgo++ )
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) && \
-			!testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-			goto errorExit;
+		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
+			{
+			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
+				goto errorExit;
+			algosEnabled = TRUE;
+			}
+	if( !algosEnabled )
+		puts( "(No conventional-encryption algorithms enabled)." );
 
 	/* Test the public-key encryption routines */
+	algosEnabled = FALSE;
 	for( cryptAlgo = CRYPT_ALGO_FIRST_PKC;
 		 cryptAlgo <= CRYPT_ALGO_LAST_PKC; cryptAlgo++ )
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) && \
-			!testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-			goto errorExit;
+		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
+			{
+			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
+				goto errorExit;
+			algosEnabled = TRUE;
+			}
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_RSA, NULL ) ) && \
+		!testRSAMinimalKey() )
+		goto errorExit;
+	if( !algosEnabled )
+		puts( "(No public-key algorithms enabled)." );
 
 	/* Test the hash routines */
+	algosEnabled = FALSE;
 	for( cryptAlgo = CRYPT_ALGO_FIRST_HASH;
 		 cryptAlgo <= CRYPT_ALGO_LAST_HASH; cryptAlgo++ )
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) && \
-			!testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-			goto errorExit;
+		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
+			{
+			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
+				goto errorExit;
+			algosEnabled = TRUE;
+			}
+	if( !algosEnabled )
+		puts( "(No hash algorithms enabled)." );
 
 	/* Test the MAC routines */
+	algosEnabled = FALSE;
 	for( cryptAlgo = CRYPT_ALGO_FIRST_MAC;
 		 cryptAlgo <= CRYPT_ALGO_LAST_MAC; cryptAlgo++ )
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) && \
-			!testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-			goto errorExit;
+		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
+			{
+			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
+				goto errorExit;
+			algosEnabled = TRUE;
+			}
+	if( !algosEnabled )
+		puts( "(No MAC algorithms enabled)." );
 
 	printf( "\n" );
 #else
@@ -573,8 +731,6 @@ int main( int argc, char **argv )
 		{
 		if( configOption[ i ].isNumeric )
 			{
-			int value;
-
 			cryptGetAttribute( CRYPT_UNUSED, configOption[ i ].option, &value );
 			printf( "%s = %d.\n", configOption[ i ].name, value );
 			}
@@ -620,20 +776,29 @@ int main( int argc, char **argv )
 		goto errorExit;
 	if( !testConventionalExportImport() )
 		goto errorExit;
-	if( !testMACExportImport() )
-		goto errorExit;
-	if( !testKeyExportImport() )
-		goto errorExit;
-	if( !testSignData() )
-		goto errorExit;
-/*	Disabled for now since there's no useful DH mechanism defined in any
-	standard.  Note that KEA is still tested via the Fortezza device test
-	if( !testKeyAgreement() )
-		goto errorExit; */
-	if( !testKeygen() )
-		goto errorExit;
-	if( !testKeygenAsync() )
-		goto errorExit;
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_HMAC_SHA1, NULL ) ) )
+		{
+		/* Only test the MAC functions of HMAC-SHA1 is enabled */
+		if( !testMACExportImport() )
+			goto errorExit;
+		}
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_RSA, NULL ) ) )
+		{
+		/* Only test the PKC functions if RSA is enabled */
+		if( !testKeyExportImport() )
+			goto errorExit;
+		if( !testSignData() )
+			goto errorExit;
+		/*	Disabled for now since there's no useful DH mechanism defined in
+		   any standard.  Note that KEA is still tested via the Fortezza
+		   device test.
+		if( !testKeyAgreement() )
+			goto errorExit; */
+		if( !testKeygen() )
+			goto errorExit;
+		if( !testKeygenAsync() )
+			goto errorExit;
+		}
 	/* No need for putchar, mid-level functions leave a blank line at end */
 #else
 	puts( "Skipping test of mid-level encryption routines...\n" );
@@ -695,9 +860,11 @@ int main( int argc, char **argv )
 		goto errorExit;
 	if( !testMiscImport() )
 		goto errorExit;
+	if( !testNonchainCert() )
+		goto errorExit;
 	if( !testCertComplianceLevel() )
 		goto errorExit;
-#if 0	/* This takes a while to run and produces a lot of output that won't 
+#if 0	/* This takes a while to run and produces a lot of output that won't
 		   be meaningful to anyone other than cryptlib developers so it's
 		   disabled by default */
 	if( !testPathProcessing() )
@@ -833,7 +1000,7 @@ int main( int argc, char **argv )
 		goto errorExit;
 	if( !testEnvelopeCompress() )
 		goto errorExit;
-	if( !testEnvelopeCompressedDataImport() )
+	if( !testPGPEnvelopeCompressedDataImport() )
 		goto errorExit;
 	if( !testEnvelopeSessionCrypt() )
 		goto errorExit;
@@ -843,23 +1010,25 @@ int main( int argc, char **argv )
 		goto errorExit;
 	if( !testEnvelopePasswordCrypt() )
 		goto errorExit;
-	if( !testEnvelopePasswordCryptImport() )
+	if( !testPGPEnvelopePasswordCryptImport() )
 		goto errorExit;
 	if( !testEnvelopePKCCrypt() )
 		goto errorExit;
-	if( !testEnvelopePKCCryptImport() )
+	if( !testPGPEnvelopePKCCryptImport() )
 		goto errorExit;
 	if( !testEnvelopeSign() )
 		goto errorExit;
 	if( !testEnvelopeSignOverflow() )
 		goto errorExit;
-	if( !testEnvelopeSignedDataImport() )
+	if( !testPGPEnvelopeSignedDataImport() )
 		goto errorExit;
 	if( !testEnvelopeAuthenticate() )
 		goto errorExit;
 	if( !testCMSEnvelopePKCCrypt() )
 		goto errorExit;
 	if( !testCMSEnvelopePKCCryptDoubleCert() )
+		goto errorExit;
+	if( !testCMSEnvelopePKCCryptImport() )
 		goto errorExit;
 	if( !testCMSEnvelopeSign() )
 		goto errorExit;
@@ -883,6 +1052,8 @@ int main( int argc, char **argv )
 			  "cryptlib,\nskipping the test of the secure session routines.\n" );
 	else
 		{
+		if( !testSessionAttributes() )
+			goto errorExit;
 		if( !testSessionSSHv1() )
 			goto errorExit;
 		if( !testSessionSSH() )
@@ -890,6 +1061,8 @@ int main( int argc, char **argv )
 		if( !testSessionSSHClientCert() )
 			goto errorExit;
 		if( !testSessionSSHPortforward() )
+			goto errorExit;
+		if( !testSessionSSHExec() )
 			goto errorExit;
 		if( !testSessionSSL() )
 			goto errorExit;
@@ -923,6 +1096,8 @@ int main( int argc, char **argv )
 			goto errorExit;
 		if( !testSessionSSHClientServerPortForward() )
 			goto errorExit;
+		if( !testSessionSSHClientServerExec() )
+			goto errorExit;
 		if( !testSessionSSHClientServerMultichannel() )
 			goto errorExit;
 		if( !testSessionSSLClientServer() )
@@ -932,6 +1107,8 @@ int main( int argc, char **argv )
 		if( !testSessionTLSClientServer() )
 			goto errorExit;
 		if( !testSessionTLSSharedKeyClientServer() )
+			goto errorExit;
+		if( !testSessionTLSNoSharedKeyClientServer() )
 			goto errorExit;
 		if( !testSessionTLSBulkTransferClientServer() )
 			goto errorExit;
@@ -1045,6 +1222,37 @@ uint32_t PilotMain( uint16_t cmd, void *cmdPBP, uint16_t launchFlags )
 	}
 #endif /* __PALMSOURCE__ */
 
+/* Symbian wrapper for main() */
+
+#ifdef __SYMBIAN__
+
+GLDEF_C TInt E32Main( void )
+	{
+	main( 0, NULL );
+
+	return( KErrNone );
+	}
+
+#ifdef __WINS__
+
+/* Support functions for use under the Windows emulator */
+
+EXPORT_C TInt WinsMain( void )
+	{
+	E32Main();
+
+	return( KErrNone );
+	}
+
+TInt E32Dll( TDllReason )
+	{
+	/* Entry point for the DLL loader */
+	return( KErrNone );
+	}
+#endif /* __WINS__ */
+
+#endif /* __SYMBIAN__ */
+
 /* Test the system-specific defines in crypt.h.  This is the last function in
    the file because we want to avoid any definitions in crypt.h messing with
    the rest of the test.c code.
@@ -1060,6 +1268,7 @@ uint32_t PilotMain( uint16_t cmd, void *cmdPBP, uint16_t launchFlags )
 #undef BYTE
 #undef FALSE
 #undef TRUE
+#undef FAR_BSS
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   #pragma convlit( resume )
 #endif /* Resume ASCII use on EBCDIC systems */
@@ -1097,7 +1306,7 @@ static time_t testTime( const int year )
 	}
 #endif /* !WinCE */
 
-void testSystemSpecific( void )
+void testSystemSpecific1( void )
 	{
 	int bigEndian;
 #ifndef _WIN32_WCE
@@ -1154,7 +1363,8 @@ void testSystemSpecific( void )
 			printf( "Warning: This system has a buggy mktime() that can't "
 					"handle dates beyond %d.\n         Some certificate tests "
 					"will fail, and long-lived CA certificates\n         won't "
-					"be correctly imported.\n", 2000 + i );
+					"be correctly imported.\nPress a key...\n", 2000 + i );
+			getchar();
 			break;
 			}
 		}
@@ -1188,4 +1398,39 @@ void testSystemSpecific( void )
 		}
 	}
 #endif /* UNIX_THREADS */
+	}
+
+void testSystemSpecific2( void )
+	{
+	CRYPT_CERTIFICATE cryptCert;
+	const time_t theTime = time( NULL ) - 5;
+	int status;
+
+	/* Make sure that the cryptlib and non-cryptlib code use the same time_t
+	   size (some systems are moving from 32- to 64-bit time_t, which can 
+	   lead to problems if the library and calling code are built with 
+	   different sizes) */
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		{
+		puts( "Couldn't create certificate object for time sanity-check." );
+		exit( EXIT_FAILURE );
+		}
+	status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_VALIDFROM,
+									  &theTime, sizeof( time_t ) );
+	cryptDestroyCert( cryptCert );
+	if( status == CRYPT_ERROR_PARAM4 )
+		{
+		printf( "Warning: The compiler is using a %d-bit time_t data type, "
+				"which appears to be\n         different to the one that "
+				"was used when cryptlib was built.  This\n         situation "
+				"usually occurs when the compiler allows the use of both\n"
+				"         32- and 64-bit time_t data types and different "
+				"options were\n         selected for building cryptlib and "
+				"the test app.  To resolve this,\n         ensure that both "
+				"cryptlib and the code that calls it use the same\n"
+				"         time_t data type.\n", sizeof( time_t ) * 8 );
+		exit( EXIT_FAILURE );
+		}
 	}

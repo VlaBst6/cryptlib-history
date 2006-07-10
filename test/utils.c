@@ -21,6 +21,10 @@
   #pragma convert( 0 )
 #endif /* IBM medium iron */
 
+#ifdef HAS_WIDECHAR
+  #include <wchar.h>
+#endif /* HAS_WIDECHAR */
+
 /****************************************************************************
 *																			*
 *							Import/Export Functions							*
@@ -36,9 +40,9 @@ int checkFileAccess( void )
 	FILE *filePtr;
 	int status;
 
-	/* First, check that the file actually exists so that we can return an 
+	/* First, check that the file actually exists so that we can return an
 	   appropriate error message */
-	if( ( filePtr = fopen( convertFileName( CA_PRIVKEY_FILE ), 
+	if( ( filePtr = fopen( convertFileName( CA_PRIVKEY_FILE ),
 						   "rb" ) ) == NULL )
 		{
 		printf( "Couldn't access cryptlib keyset file %s.  Please make "
@@ -55,6 +59,11 @@ int checkFileAccess( void )
 							  CA_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusError( status ) )
 		{
+		/* If file keyset access isn't available, the inability to access
+		   the keyset isn't an error */
+		if( status == CRYPT_ERROR_NOTAVAIL )
+			return( TRUE );
+
 		printf( "Couldn't access cryptlib keyset file %s even though the "
 				"file\nexists and is readable.  Please make sure that the "
 				"cryptlib self-test is\nbeing run from the correct "
@@ -102,16 +111,6 @@ int importCertFromTemplate( CRYPT_CERTIFICATE *cryptCert,
 #endif /* UNICODE_STRINGS */
 	}
 
-/* Get a line of text from the user */
-
-static void getText( char *input, const char *prompt )
-	{
-	printf( "Enter %s: ", prompt );
-	fflush( stdout );
-	fgets( input, CRYPT_MAX_TEXTSIZE - 1, stdin );
-	putchar( '\n' );
-	}
-
 /* Read a key from a key file */
 
 int getPublicKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
@@ -149,8 +148,8 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* If the key has a cert attached, make sure it's still valid before we 
-	   hand it back to the self-test functions that will report the problem 
+	/* If the key has a cert attached, make sure it's still valid before we
+	   hand it back to the self-test functions that will report the problem
 	   as being with the self-test rather than with the cert */
 	status = cryptGetAttributeString( *cryptContext,
 					CRYPT_CERTINFO_VALIDFROM, &validFrom, &dummy );
@@ -182,6 +181,88 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 		}
 #endif /* _WIN32_WCE */
 	return( CRYPT_OK );
+	}
+
+
+/****************************************************************************
+*																			*
+*							Key File Access Routines						*
+*																			*
+****************************************************************************/
+
+/* Key file and password-handling access routines */
+
+const C_STR getKeyfileName( const KEYFILE_TYPE type,
+							const BOOLEAN isPrivKey )
+	{
+	switch( type )
+		{
+		case KEYFILE_X509:
+			return( USER_PRIVKEY_FILE );
+		case KEYFILE_PGP:
+			return( isPrivKey ? PGP_PRIVKEY_FILE : PGP_PUBKEY_FILE );
+		case KEYFILE_OPENPGP:
+			return( isPrivKey ? OPENPGP_PRIVKEY_FILE : OPENPGP_PUBKEY_FILE );
+		case KEYFILE_OPENPGP_HASH:
+			return( isPrivKey ? OPENPGP_PRIVKEY_HASH_FILE : OPENPGP_PUBKEY_HASH_FILE );
+		case KEYFILE_OPENPGP_AES:
+			return( isPrivKey ? OPENPGP_PRIVKEY_AES_FILE : OPENPGP_PUBKEY_AES_FILE );
+		case KEYFILE_OPENPGP_RSA:
+			return( isPrivKey ? OPENPGP_PRIVKEY_RSA_FILE : OPENPGP_PUBKEY_RSA_FILE );
+		case KEYFILE_OPENPGP_PARTIAL:
+			return( OPENPGP_PRIVKEY_PART_FILE );
+		case KEYFILE_NAIPGP:
+			return( isPrivKey ? NAIPGP_PRIVKEY_FILE : NAIPGP_PUBKEY_FILE );
+		}
+	assert( 0 );
+	return( TEXT( "notfound" ) );
+	}
+
+const C_STR getKeyfilePassword( const KEYFILE_TYPE type )
+	{
+	switch( type )
+		{
+		case KEYFILE_X509:
+			return( TEST_PRIVKEY_PASSWORD );
+		case KEYFILE_PGP:
+		case KEYFILE_NAIPGP:
+			return( TEXT( "test10" ) );
+		case KEYFILE_OPENPGP:
+		case KEYFILE_OPENPGP_HASH:
+		case KEYFILE_OPENPGP_RSA:
+			return( TEXT( "test1" ) );
+		case KEYFILE_OPENPGP_AES:
+			return( TEXT( "testkey" ) );
+		case KEYFILE_OPENPGP_PARTIAL:
+			return( TEXT( "def" ) );
+		}
+	assert( 0 );
+	return( TEXT( "notfound" ) );
+	}
+
+const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
+							  const BOOLEAN isPrivKey )
+	{
+	/* If possible we specify user IDs for keys in the middle of the keyring
+	   to make sure that we test the ability to correctly handle multiple
+	   keys */
+	switch( type )
+		{
+		case KEYFILE_X509:
+			return( USER_PRIVKEY_LABEL );
+		case KEYFILE_PGP:
+			return( isPrivKey ? TEXT( "test" ) : TEXT( "test6" ) );
+		case KEYFILE_NAIPGP:
+			return( isPrivKey ? TEXT( "test" ) : TEXT( "test cryptlib" ) );
+		case KEYFILE_OPENPGP:
+		case KEYFILE_OPENPGP_HASH:
+		case KEYFILE_OPENPGP_RSA:
+			return( TEXT( "test1" ) );
+		case KEYFILE_OPENPGP_AES:
+			return( TEXT( "Max Mustermann" ) );
+		}
+	assert( 0 );
+	return( TEXT( "notfound" ) );
 	}
 
 /****************************************************************************
@@ -231,7 +312,7 @@ void delayThread( const int seconds )
 	}
 #endif /* Systems with threading support */
 
-/* Helper functions to make tracking down errors on systems with no console 
+/* Helper functions to make tracking down errors on systems with no console
    a bit less painful.  These just use the debug console as stdout */
 
 #ifdef _WIN32_WCE
@@ -243,7 +324,7 @@ void wcPrintf( const char *format, ... )
 	va_list argPtr;
 
 	va_start( argPtr, format );
-	vsprintf( buffer, format, argPtr ); 
+	vsprintf( buffer, format, argPtr );
 	va_end( argPtr );
 	mbstowcs( wcBuffer, buffer, strlen( buffer ) + 1 );
 	NKDbgPrintfW( wcBuffer );
@@ -255,7 +336,7 @@ void wcPuts( const char *string )
 	}
 #endif /* Console-less environments */
 
-/* Conversion functions used to get Unicode input into generic ASCII 
+/* Conversion functions used to get Unicode input into generic ASCII
    output */
 
 #ifdef UNICODE_STRINGS
@@ -273,27 +354,120 @@ const char *convertFileName( const C_STR fileName )
 /* Map a filename template to an actual filename, input in Unicode, output in
    ASCII */
 
-void filenameFromTemplate( char *buffer, const wchar_t *fileTemplate, 
+void filenameFromTemplate( char *buffer, const wchar_t *fileTemplate,
 						   const int count )
 	{
 	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
 	int length;
 
-	length = _snwprintf( wcBuffer, FILENAME_BUFFER_SIZE, fileTemplate, 
+	length = _snwprintf( wcBuffer, FILENAME_BUFFER_SIZE, fileTemplate,
 						 count );
 	wcstombs( buffer, wcBuffer, length + 1 );
 	}
 
-void filenameParamFromTemplate( wchar_t *buffer, 
-								const wchar_t *fileTemplate, 
+void filenameParamFromTemplate( wchar_t *buffer,
+								const wchar_t *fileTemplate,
 								const int count )
 	{
 	int length;
 
-	length = _snwprintf( buffer, FILENAME_BUFFER_SIZE, fileTemplate, 
+	length = _snwprintf( buffer, FILENAME_BUFFER_SIZE, fileTemplate,
 						 count );
 	}
 #endif /* UNICODE_STRINGS */
+
+/****************************************************************************
+*																			*
+*							Thread Support Functions						*
+*																			*
+****************************************************************************/
+
+#if defined( WINDOWS_THREADS )
+
+static HANDLE hMutex;
+
+void createMutex( void )
+	{
+	hMutex = CreateMutex( NULL, FALSE, NULL );
+	}
+void releaseMutex( void )
+	{
+	ReleaseMutex( hMutex );
+	}
+int waitMutex( void )
+	{
+	if( WaitForSingleObject( hMutex, 30000 ) == WAIT_TIMEOUT )
+		return( CRYPT_ERROR_TIMEOUT );
+
+	return( CRYPT_OK );
+	}
+void destroyMutex( void )
+	{
+	CloseHandle( hMutex );
+	}
+
+void waitForThread( const HANDLE hThread )
+	{
+	if( WaitForSingleObject( hThread, 15000 ) == WAIT_TIMEOUT )
+		{
+		puts( "Warning: Server thread is still active due to session "
+			  "negotiation failure,\n         this will cause an error "
+			  "condition when cryptEnd() is called due\n         to "
+			  "resources remaining allocated.  Press a key to continue." );
+		getchar();
+		}
+	CloseHandle( hThread );
+	}
+#elif defined( UNIX_THREADS )
+
+static pthread_mutex_t mutex;
+
+void createMutex( void )
+	{
+	pthread_mutex_init( &mutex, NULL );
+	}
+void releaseMutex( void )
+	{
+	pthread_mutex_unlock( &mutex );
+	}
+int waitMutex( void )
+	{
+	pthread_mutex_lock( &mutex );
+	return( CRYPT_OK );
+	}
+void destroyMutex( void )
+	{
+	pthread_mutex_destroy( &mutex );
+	}
+
+void waitForThread( const pthread_t hThread )
+	{
+	if( pthread_join( hThread, NULL ) < 0 )
+		{
+		puts( "Warning: Server thread is still active due to session "
+			  "negotiation failure,\n         this will cause an error "
+			  "condition when cryptEnd() is called due\n         to "
+			  "resources remaining allocated.  Press a key to continue." );
+		getchar();
+		}
+	}
+
+#else
+
+void createMutex( void )
+	{
+	}
+void releaseMutex( void )
+	{
+	}
+int waitMutex( void )
+	{
+	return( CRYPT_OK );
+	}
+void destroyMutex( void )
+	{
+	}
+#endif /* WINDOWS_THREADS */
 
 /****************************************************************************
 *																			*
@@ -387,16 +561,20 @@ BOOLEAN extErrorExit( const CRYPT_HANDLE cryptHandle,
 /* Some algorithms can be disabled to eliminate patent problems or reduce the
    size of the code.  The following functions are used to select generally
    equivalent alternatives if the required algorithm isn't available.  These
-   selections make certain assumptions (that the given algorithms are always
-   available, which is virtually guaranteed, and that they have the same
-   general properties as the algorithms they're replacing, which is also
-   usually the case - Blowfish for IDEA, RC2, or RC5, and MD5 for MD4) */
+   selections make certain assumptions, namely that at least one of the
+   algorithms in the fallback chain is always available (which is guaranteed,
+   3DES is used internally), and that they have the same general properties
+   as the algorithms they're replacing, which is also usually the case,
+   with Blowfish being a first-instance substitute for IDEA, RC2, or RC5, and
+   then 3DES as the fallback if Blowfish isn't available */
 
 CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm )
 	{
 	if( cryptStatusOK( cryptQueryCapability( algorithm, NULL ) ) )
 		return( algorithm );
-	return( CRYPT_ALGO_BLOWFISH );
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_BLOWFISH, NULL ) ) )
+		return( CRYPT_ALGO_BLOWFISH );
+	return( CRYPT_ALGO_3DES );
 	}
 
 /* Add a collection of fields to a certificate */
@@ -431,8 +609,8 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 				if( cryptStatusError( status ) )
 					printf( "cryptSetAttributeString() for field ID %d,\n"
 							"value '%s', failed with error code %d, line %d.\n",
-							certData[ i ].type, 
-							( char * ) certData[ i ].stringValue, status,  
+							certData[ i ].type,
+							( char * ) certData[ i ].stringValue, status,
 							__LINE__ );
 				break;
 
@@ -444,8 +622,9 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 				if( cryptStatusError( status ) )
 					printf( "cryptSetAttributeString() for field ID %d,\n"
 							"value '%s', failed with error code %d, line %d.\n",
-							certData[ i ].type, certData[ i ].stringValue,
-							status, __LINE__ );
+							certData[ i ].type,
+							( char * ) certData[ i ].stringValue, status,
+							__LINE__ );
 				break;
 #endif /* HAS_WIDECHAR */
 
@@ -610,7 +789,7 @@ int printConnectInfo( const CRYPT_SESSION cryptSession )
 #else
 	serverName[ serverNameLength ] = '\0';
 	time( &theTime );
-	printf( "SVR: Connect attempt from %s, port %d, on %s", serverName, 
+	printf( "SVR: Connect attempt from %s, port %d, on %s", serverName,
 			serverPort, ctime( &theTime ) );
 #endif /* UNICODE_STRINGS */
 
@@ -621,7 +800,7 @@ int printConnectInfo( const CRYPT_SESSION cryptSession )
 /* Print security info for the session */
 
 int printSecurityInfo( const CRYPT_SESSION cryptSession,
-					   const BOOLEAN isServer, 
+					   const BOOLEAN isServer,
 					   const BOOLEAN showFingerprint )
 	{
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE ];
@@ -649,8 +828,8 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 		return( TRUE );
 
 	/* Print the server key fingerprint */
-	status = cryptGetAttributeString( cryptSession, 
-									  CRYPT_SESSINFO_SERVER_FINGERPRINT, 
+	status = cryptGetAttributeString( cryptSession,
+									  CRYPT_SESSINFO_SERVER_FINGERPRINT,
 									  fingerPrint, &length );
 	if( cryptStatusError( status ) )
 		{
@@ -678,13 +857,13 @@ BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 
 	status = cryptSetAttributeString( cryptSession,
 									  CRYPT_SESSINFO_SERVER_NAME,
-									  TEXT( "localhost" ), 
+									  TEXT( "localhost" ),
 									  paramStrlen( TEXT( "localhost" ) ) );
 #ifdef __UNIX__
 	/* If we're running under Unix, set the port to a nonprivileged one so
 	   we don't have to run as root.  For anything other than very low-
-	   numbered ports (e.g. SSH), the way we determine the port is to repeat 
-	   the first digit, so e.g. TSA on 318 becomes 3318, this seems to be 
+	   numbered ports (e.g. SSH), the way we determine the port is to repeat
+	   the first digit, so e.g. TSA on 318 becomes 3318, this seems to be
 	   the method most commonly used */
 	if( cryptStatusOK( status ) && port < 1024 )
 		{
@@ -732,7 +911,7 @@ int displayAttributes( const CRYPT_HANDLE cryptHandle )
 		BOOLEAN firstAttr = TRUE;
 		int value;
 
-		status = cryptGetAttribute( cryptHandle, 
+		status = cryptGetAttribute( cryptHandle,
 									CRYPT_ATTRIBUTE_CURRENT_GROUP, &value );
 		if( cryptStatusError( status ) )
 			{
@@ -916,7 +1095,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 								CRYPT_UNUSED ) );
 		printDN( certificate );
 		if( cryptStatusOK( \
-				cryptGetAttribute( certificate, 
+				cryptGetAttribute( certificate,
 								   CRYPT_CERTINFO_ISSUERALTNAME, &value ) ) )
 			{
 			CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,
@@ -937,7 +1116,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 								CRYPT_UNUSED ) );
 		printDN( certificate );
 		if( cryptStatusOK( \
-				cryptGetAttribute( certificate, 
+				cryptGetAttribute( certificate,
 								   CRYPT_CERTINFO_SUBJECTALTNAME, &value ) ) )
 			{
 			CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,
@@ -972,11 +1151,11 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 										  &timeStamp, &length );
 		if( cryptStatusOK( status ) )
 			{
-			/* RTCS basic responses only return a minimal valid/not valid 
+			/* RTCS basic responses only return a minimal valid/not valid
 			   status, so failing to find a time isn't an error */
 			strcpy( tuBuffer, ctime( &timeStamp ) );
 			tuBuffer[ strlen( tuBuffer ) - 1 ] = '\0';		/* Stomp '\n' */
-			status = cryptGetAttributeString( certificate, 
+			status = cryptGetAttributeString( certificate,
 											  CRYPT_CERTINFO_NEXTUPDATE,
 											  &timeStamp, &length );
 			if( cryptStatusOK( status ) )
@@ -1060,7 +1239,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 #endif /* _WIN32_WCE */
 					strcpy( timeBuffer, "<None>" );
 
-				/* Make sure we don't print excessive amounts of 
+				/* Make sure we don't print excessive amounts of
 				   information */
 				if( noEntries >= 20 )
 					{
@@ -1073,7 +1252,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 				switch( certType )
 					{
 					case CRYPT_CERTTYPE_RTCS_RESPONSE:
-						printf( "  Certificate status = %d (%s).\n", 
+						printf( "  Certificate status = %d (%s).\n",
 								certStatus,
 								( certStatus == CRYPT_CERTSTATUS_VALID ) ? \
 									"valid" : \
@@ -1086,7 +1265,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 
 					case CRYPT_CERTTYPE_OCSP_RESPONSE:
 						printf( "  Entry %d, rev.status = %d (%s), rev.time "
-								"%s.\n", noEntries, revStatus, 
+								"%s.\n", noEntries, revStatus,
 								( revStatus == CRYPT_OCSPSTATUS_NOTREVOKED ) ? \
 									"not revoked" : \
 								( revStatus == CRYPT_OCSPSTATUS_REVOKED ) ? \
@@ -1132,7 +1311,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 	/* Display common attributes */
 	if( cryptStatusError( \
 			cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT_GROUP,
-							   CRYPT_CURSOR_FIRST ) == CRYPT_OK ) )
+							   CRYPT_CURSOR_FIRST ) ) )
 		{
 		puts( "  (No extensions/attributes)." );
 		return( TRUE );
@@ -1163,7 +1342,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 			printf( "  invalidityDate = %s", ctime( &theTime ) );
 #endif /* _WIN32_WCE */
 		if( cryptStatusOK( \
-				cryptGetAttribute( certificate, 
+				cryptGetAttribute( certificate,
 								   CRYPT_CERTINFO_ISSUINGDIST_FULLNAME, &value ) ) )
 			{
 			CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,
@@ -1283,7 +1462,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 			}
 		}
 	if( cryptStatusOK( \
-			cryptGetAttribute( certificate, 
+			cryptGetAttribute( certificate,
 							   CRYPT_CERTINFO_CRLDIST_FULLNAME, &value ) ) )
 		{
 		CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,

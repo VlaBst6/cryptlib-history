@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Data Size and Crypto-related Constants 			*
-*						Copyright Peter Gutmann 1992-2005					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
@@ -118,10 +118,22 @@
 #define MAX_ERRMSG_SIZE			512
 
 /* The maximum number of iterations that we allow for an iterated key setup
-   such as a hashed password.  This is used to prevent DOS attacks from data
+   such as a hashed password.  This is used to prevent DoS attacks from data
    containing excessive iteration counts */
 
 #define MAX_KEYSETUP_ITERATIONS	20000
+
+/* When looping on externally-supplied data, we perform a sanity check on
+   loop iterations to prevent DoS attacks due to malformed data.  The 
+   following bounds on loop iterations apply:
+
+	FAILSAFE_SMALL: Expect 1 but can have a few more.
+	FAILSAFE_MED: Expect 10-20 but can have a few more.
+	FAILSAFE_LARGE: Expect many, but not too many */
+
+#define FAILSAFE_ITERATIONS_SMALL	10
+#define FAILSAFE_ITERATIONS_MED		50
+#define FAILSAFE_ITERATIONS_LARGE	1000
 
 /* The minimum and maximum size of various Internet-related values, used for
    range checking */
@@ -185,8 +197,8 @@ typedef enum {
 	KEYFORMAT_NONE,		/* No key format */
 	KEYFORMAT_CERT,		/* X.509 SubjectPublicKeyInfo */
 /*	KEYFORMAT_PUBLIC,	// PKCS #15 public key - currently unused */
+	KEYFORMAT_SSH,		/* SSHv2 public key */
 	KEYFORMAT_SSH1,		/* SSHv1 public key */
-	KEYFORMAT_SSH2,		/* SSHv2 public key */
 	KEYFORMAT_SSL,		/* SSL public key */
 	KEYFORMAT_PGP,		/* PGP public key */
 	KEYFORMAT_PRIVATE,	/* Private key */

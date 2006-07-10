@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "stream.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "stream.h"
 #else
   #include "crypt.h"

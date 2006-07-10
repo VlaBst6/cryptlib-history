@@ -1,21 +1,13 @@
 /****************************************************************************
 *																			*
 *								ASN.1 Write Routines						*
-*						Copyright Peter Gutmann 1992-2004					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "bn.h"
-  #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../bn/bn.h"
   #include "asn1.h"
 #else
   #include "crypt.h"
@@ -33,6 +25,8 @@
 
 static int calculateLengthSize( const long length )
 	{
+	assert( length >= 0 );
+
 	/* Use the short form of the length octets if possible */
 	if( length <= 0x7F )
 		return( 1 );
@@ -52,7 +46,7 @@ static int calculateLengthSize( const long length )
 
 static int writeLength( STREAM *stream, const long length )
 	{
-	BYTE buffer[ 8 ];
+	BYTE buffer[ 8 + 8 ];
 	const int noLengthOctets = ( length <= 0xFF ) ? 1 : \
 							   ( length <= 0xFFFFL ) ? 2 : \
 							   ( length <= 0xFFFFFFL ) ? 3 : 4;
@@ -60,6 +54,13 @@ static int writeLength( STREAM *stream, const long length )
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( length >= 0 );
+
+	/* Sanity-check to catch bad length calculations */
+	if( length < 0 )
+		{
+		assert( NOTREACHED );
+		return( sSetError( stream, CRYPT_ERROR_FAILED ) );
+		}
 
 	/* Use the short form of the length octets if possible */
 	if( length <= 0x7F )
@@ -83,9 +84,12 @@ static int writeLength( STREAM *stream, const long length )
 
 static int writeNumeric( STREAM *stream, const long integer )
 	{
-	BYTE buffer[ 16 ];
+	BYTE buffer[ 16 + 8 ];
 	long intValue = integer;
 	int length = 0, i;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( integer >= 0 );
 
 	/* The value 0 is handled specially */
 	if( intValue == 0 )
@@ -146,6 +150,8 @@ long sizeofObject( const long length )
 			sizeof( BYTE ) + calculateLengthSize( length ) + length );
 	}
 
+#ifdef USE_PKC
+
 /* Determine the size of a bignum.  When we're writing these we can't use 
    sizeofObject() directly because the internal representation is unsigned 
    whereas the encoded form is signed */
@@ -156,6 +162,7 @@ int signedBignumSize( const void *bignum )
 
 	return( BN_num_bytes( bignum ) + BN_high_bit( ( BIGNUM * ) bignum ) );
 	}
+#endif /* USE_PKC */
 
 /****************************************************************************
 *																			*
@@ -192,6 +199,8 @@ int writeInteger( STREAM *stream, const BYTE *integer,
 	return( swrite( stream, integer, integerLength ) );
 	}
 
+#ifdef USE_PKC
+
 int writeBignumTag( STREAM *stream, const void *bignum, const int tag )
 	{
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
@@ -212,6 +221,7 @@ int writeBignumTag( STREAM *stream, const void *bignum, const int tag )
 	zeroise( buffer, CRYPT_MAX_PKCSIZE );
 	return( status );
 	}
+#endif /* USE_PKC */
 
 /* Write an enumerated value */
 
@@ -279,7 +289,7 @@ int writeCharacterString( STREAM *stream, const BYTE *string,
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( string, length ) );
-	assert( tag != DEFAULT_TAG );
+	assert( tag > 0 );
 
 	writeTag( stream, tag );
 	writeLength( stream, length );
@@ -290,7 +300,7 @@ int writeCharacterString( STREAM *stream, const BYTE *string,
 
 int writeBitString( STREAM *stream, const int bitString, const int tag )
 	{
-	BYTE buffer[ 16 ];
+	BYTE buffer[ 16 + 8 ];
 	unsigned int value = 0;
 	int data = bitString, noBits = 0, i;
 
@@ -337,12 +347,13 @@ int writeBitString( STREAM *stream, const int bitString, const int tag )
 static int writeTime( STREAM *stream, const time_t timeVal, const int tag,
 					  const BOOLEAN isUTCTime )
 	{
-	struct tm *timeInfo = gmtime( &timeVal );
-	char buffer[ 20 ];
+	struct tm timeInfo, *timeInfoPtr = &timeInfo;
+	char buffer[ 20 + 8 ];
 	const int length = isUTCTime ? 13 : 15;
 
 	/* Sanity check the input data */
-	if( timeInfo == NULL || timeInfo->tm_year <= 90 )
+	timeInfoPtr = gmTime_s( &timeVal, timeInfoPtr );
+	if( timeInfoPtr == NULL || timeInfoPtr->tm_year <= 90 )
 		{
 		assert( NOTREACHED );
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
@@ -352,15 +363,15 @@ static int writeTime( STREAM *stream, const time_t timeVal, const int tag,
 				  isUTCTime ? BER_TIME_UTC : BER_TIME_GENERALIZED;
 	buffer[ 1 ] = length;
 	if( isUTCTime )
-		sPrintf( buffer + 2, "%02d%02d%02d%02d%02d%02dZ", 
-				 timeInfo->tm_year % 100, timeInfo->tm_mon + 1, 
-				 timeInfo->tm_mday, timeInfo->tm_hour, timeInfo->tm_min, 
-				 timeInfo->tm_sec );
+		sPrintf_s( buffer + 2, 16, "%02d%02d%02d%02d%02d%02dZ", 
+				   timeInfoPtr->tm_year % 100, timeInfoPtr->tm_mon + 1, 
+				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
+				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );
 	else
-		sPrintf( buffer + 2, "%04d%02d%02d%02d%02d%02dZ", 
-				 timeInfo->tm_year + 1900, timeInfo->tm_mon + 1, 
-				 timeInfo->tm_mday, timeInfo->tm_hour, timeInfo->tm_min, 
-				 timeInfo->tm_sec );
+		sPrintf_s( buffer + 2, 16, "%04d%02d%02d%02d%02d%02dZ", 
+				   timeInfoPtr->tm_year + 1900, timeInfoPtr->tm_mon + 1, 
+				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
+				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );
 	return( swrite( stream, buffer, length + 2 ) );
 	}
 

@@ -5,25 +5,16 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "pgp.h"
   #include "keyset.h"
   #include "misc_rw.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../envelope/pgp.h"
-  #include "keyset.h"
-  #include "../misc/misc_rw.h"
+  #include "pgp.h"
 #else
   #include "crypt.h"
-  #include "envelope/pgp.h"
   #include "keyset/keyset.h"
   #include "misc/misc_rw.h"
+  #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGPKEYS
@@ -139,6 +130,18 @@ static int getMPIsize( STREAM *stream )
 	return( 2 + length );
 	}
 
+/* Determine the minimum allowed packet size for a given packet type.  The 
+   minimum-length packet that we can encounter is a single-byte trust 
+   packet, then two bytes for a userID, and three byte for a marker packet.  
+   Other than that, all packets must be at least eight bytes in length */
+
+static int getMinPacketSize( const int packetType )
+	{
+	return( ( packetType == PGP_PACKET_TRUST ) ? 1 : \
+			( packetType == PGP_PACKET_USERID ) ? 2 : \
+			( packetType == PGP_PACKET_MARKER ) ? 3 : 8 );
+	}
+
 /* Scan a sequence of key packets to find the extent of the packet group.  In
    addition to simply scanning, this function handles over-long packets by
    reporting their overall length and returning OK_SPECIAL, and will try to 
@@ -160,15 +163,15 @@ static int scanPacketGroup( const void *data, const int dataLength,
 	do
 		{
 		long length;
-		int ctb;
+		int ctb, type;
 
 		/* Get the next CTB.  If it's the start of another packet group,
 		   we're done */
 		ctb = status = sPeek( &stream );
 		if( cryptStatusOK( status ) )
 			{
-			assert( ctb & PGP_CTB );
-			if( !( ctb & PGP_CTB ) )
+			assert( pgpIsCTB( ctb ) );
+			if( !( pgpIsCTB( ctb ) ) )
 				status = CRYPT_ERROR_BADDATA;
 			}
 		if( cryptStatusError( status ) )
@@ -176,18 +179,17 @@ static int scanPacketGroup( const void *data, const int dataLength,
 			sMemDisconnect( &stream );
 			return( status );
 			}
+		type = pgpGetPacketType( ctb );
 		if( firstPacket )
 			{
 			/* If the packet group doesn't start with the expected packet
 			   type, skip packets to try to resync */
-			if( getCTB( ctb ) != PGP_PACKET_PUBKEY && \
-				getCTB( ctb ) != PGP_PACKET_SECKEY )
+			if( type != PGP_PACKET_PUBKEY && type != PGP_PACKET_SECKEY )
 				skipPackets = TRUE;
 			firstPacket = FALSE;
 			}
 		else
-			if( getCTB( ctb ) == PGP_PACKET_PUBKEY || \
-				getCTB( ctb ) == PGP_PACKET_SECKEY )
+			if( type == PGP_PACKET_PUBKEY || type == PGP_PACKET_SECKEY )
 				{
 				/* We've found the start of a new packet group, remember 
 				   where the current group ends and exit */
@@ -197,7 +199,8 @@ static int scanPacketGroup( const void *data, const int dataLength,
 				}
 
 		/* Skip the current packet in the buffer */
-		status = pgpReadPacketHeader( &stream, NULL, &length );
+		status = pgpReadPacketHeader( &stream, NULL, &length, \
+									  getMinPacketSize( type ) );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -523,7 +526,7 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 	PGP_KEYINFO *keyInfo = &pgpInfo->key;
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
-	BYTE hash[ CRYPT_MAX_HASHSIZE ], packetHeader[ 64 ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], packetHeader[ 64 + 8 ];
 	BOOLEAN isPublicKey = TRUE;
 	void *pubKeyPayload;
 	long packetLength;
@@ -532,7 +535,7 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 
 	/* Skip CTB, packet length, and version byte */
 	ctb = sPeek( stream );
-	switch( getCTB( ctb ) )
+	switch( pgpGetPacketType( ctb ) )
 		{
 		case PGP_PACKET_SECKEY_SUB:
 			keyInfo = &pgpInfo->subKey;
@@ -553,7 +556,7 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 			return( cryptStatusError( ctb ) ? \
 					CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_BADDATA );
 		}
-	status = pgpReadPacketHeader( stream, NULL, &packetLength );
+	status = pgpReadPacketHeader( stream, NULL, &packetLength, 64 );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( packetLength < 64 || sMemDataLeft( stream ) < packetLength )
@@ -647,8 +650,10 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 
 	/* Hash the data needed to generate the OpenPGP keyID */
 	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
-	hashFunction( hashInfo, NULL, packetHeader, 1 + 2 + 1 + 4, HASH_START );
-	hashFunction( hashInfo, hash, pubKeyPayload, pubKeyPayloadLen, HASH_END );
+	hashFunction( hashInfo, NULL, 0, packetHeader, 1 + 2 + 1 + 4, 
+				  HASH_START );
+	hashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE, 
+				  pubKeyPayload, pubKeyPayloadLen, HASH_END );
 	memcpy( keyInfo->openPGPkeyID, hash + hashSize - PGP_KEYID_SIZE,
 			PGP_KEYID_SIZE );
 
@@ -695,16 +700,17 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 			/* See what we've got.  If we've run out of input or it's a non-
 			   key-related packet, we're done */
 			ctb = status = sPeek( stream );
-			type = getCTB( ctb );
+			type = pgpGetPacketType( ctb );
 			if( cryptStatusError( status ) || \
 				( type != PGP_PACKET_TRUST && type != PGP_PACKET_SIGNATURE && \
-				  type != PGP_PACKET_USERATTR && !isPrivatePacket( type ) ) )
+				  type != PGP_PACKET_USERATTR && !pgpIsReservedPacket( type ) ) )
 				break;
 
 			/* Skip the packet.  If we get an error at this point, we don't
 			   immediately bail out but try and return at least a partial
 			   response */
-			status = pgpReadPacketHeader( stream, &ctb, &packetLength );
+			status = pgpReadPacketHeader( stream, &ctb, &packetLength, \
+										  getMinPacketSize( type ) );
 			if( cryptStatusOK( status ) )
 				status = sSkip( stream, packetLength );
 			}
@@ -725,7 +731,8 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 			}
 
 		/* Record the userID */
-		status = pgpReadPacketHeader( stream, &ctb, &packetLength );
+		status = pgpReadPacketHeader( stream, &ctb, &packetLength, \
+									  getMinPacketSize( type ) );
 		if( cryptStatusError( status ) )
 			return( status );
 		pgpInfo->userID[ pgpInfo->lastUserID ] = sMemBufPtr( stream );
@@ -1189,7 +1196,8 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 	if( itemType == KEYMGMT_ITEM_PRIVATEKEY )
 		{
 		setMessageData( &msgData, pgpInfo->userID[ 0 ],
-						pgpInfo->userIDlen[ 0 ] );
+						min( pgpInfo->userIDlen[ 0 ],
+							 CRYPT_MAX_TEXTSIZE ) );
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
 								  CRYPT_CTXINFO_LABEL );
@@ -1354,25 +1362,29 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 
 /* Shutdown functions */
 
-static void shutdownFunction( KEYSET_INFO *keysetInfo )
+static int shutdownFunction( KEYSET_INFO *keysetInfo )
 	{
-	if( keysetInfo->keyData != NULL )
+	PGP_INFO *pgpInfo = ( PGP_INFO * ) keysetInfo->keyData;
+
+	/* If there's no PGP info data cached, we're done */
+	if( pgpInfo == NULL )
+		return( CRYPT_OK );
+
+	/* Free the cached key info */
+	if( keysetInfo->subType == KEYSET_SUBTYPE_PGP_PRIVATE )
 		{
-		PGP_INFO *pgpInfo = ( PGP_INFO * ) keysetInfo->keyData;
+		int i;
 
-		if( keysetInfo->subType == KEYSET_SUBTYPE_PGP_PRIVATE )
-			{
-			int i;
-
-			for( i = 0; i < MAX_PGP_OBJECTS; i++ )
-				pgpFreeEntry( &pgpInfo[ i ] );
-			}
-		else
-			pgpFreeEntry( pgpInfo );
-		clFree( "shutdownFunction", pgpInfo );
-		keysetInfo->keyData = NULL;
-		keysetInfo->keyDataSize = 0;
+		for( i = 0; i < MAX_PGP_OBJECTS; i++ )
+			pgpFreeEntry( &pgpInfo[ i ] );
 		}
+	else
+		pgpFreeEntry( pgpInfo );
+	clFree( "shutdownFunction", pgpInfo );
+	keysetInfo->keyData = NULL;
+	keysetInfo->keyDataSize = 0;
+
+	return( CRYPT_OK );
 	}
 
 /* PGP public keyrings can be arbitrarily large so we don't try to do any

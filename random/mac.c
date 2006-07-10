@@ -18,8 +18,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include "crypt.h"
 
 /* OS-specific includes */

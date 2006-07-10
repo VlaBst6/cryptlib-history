@@ -225,7 +225,10 @@ SignerInfo ::= SEQUENCE {					-- CMS - cryptlib
    contains common object attributes, and every key or certificate object
    contains common key or cert class attributes.  In addition the public and
    private key subclasses contain subclass-specific attributes, but they
-   don't contain anything which isn't present elsewhere so they're omitted:
+   don't contain anything which isn't present elsewhere so they're omitted.
+   Note the explicit use of EXPLICIT tagging, this is required because dummy
+   parameters like TypeAttributes are always explict-tagged to ensure tag
+   uniqueness (it's like the CHOICE explicit-tag rule):
 
 					Key									Cert
 	SEQUENCE {
@@ -376,6 +379,14 @@ PKCS15PrivateKey ::= CHOICE {
 									  PKCS15PrivateDSAKeyAttributes }
 	}
 
+-/ This expands out to:
+
+	SEQUENCE {
+		keyAttr			PKCS15CommonKeyAttributes,
+		privKeyAttr		PKCS15CommonPrivateKeyAttributes,
+		keyData		[1]	{ SEQUENCE { [2] IMPLICIT { Enveloped key data } } }
+		} /-
+
 -/ Public key information (DLP = DSA/DH/KEA/etc) /-
 
 PKCS15PublicRSAKeyAttributes ::= SEQUENCE {
@@ -400,6 +411,14 @@ PKCS15PublicKey ::= CHOICE {
 									  PKCS15PublicDSAKeyAttributes }
 	}
 
+-/ This expands out to:
+
+	SEQUENCE {
+		keyAttr			PKCS15CommonKeyAttributes,
+		privKeyAttr		PKCS15CommonPublicKeyAttributes,
+		keyData		[1]	{ SEQUENCE { [0] { Public-key data } } }
+		} /-
+
 -/ Certificate information /-
 
 PKCS15X509CertificateAttributes ::= SEQUENCE {
@@ -412,6 +431,14 @@ PKCS15Certificate ::= CHOICE {
 									  NULL,
 									  PKCS15X509CertificateAttributes }
 	}
+
+-/ This expands out to:
+
+	SEQUENCE {
+		certAttr		PKCS15CommonCertificateAttributes,
+		classAttr		NULL,
+		certData	[1]	{ SEQUENCE { [0] IMPLICIT Certificate } }
+		} /-
 
 -/ Secret key information /-
 
@@ -426,6 +453,14 @@ PKCS15SecretKey ::= CHOICE {
 									  PKCS15CommonSecretKeyAttributes,
 									  PKCS15GenericSecretKeyAttributes },
 	}
+
+-/ This expands out to:
+
+	SEQUENCE {
+		keyAttr			PKCS15CommonKeyAttributes,
+		secKeyAttr		PKCS15CommonSecretKeyAttributes,
+		keyData		[1]	{ [2] { Enveloped key data } }
+		} /-
 
 -/ Data information /-
 
@@ -484,7 +519,7 @@ DataObjects ::= [7][0] SEQUENCE OF PKCS15Data
 
 -/ User information /-
 
--/ PKI user information needed for CMP.  The attributes always include an 
+-/ PKI user information needed for CMP.  The attributes always include an
    sKID (to uniquely identify the user info) and optionally additional
    template attributes that are applied to certificate(s) created for this
    user.  The dual use of the attributes is somewhat ugly, in theory we
@@ -915,6 +950,42 @@ EncryptedCert ::= SEQUENCE {
 	dummy			[3]	... OPTIONAL,		-- Ignored
 	dummy			[4] ... OPTIONAL,		-- Ignored
 	encData			BIT STRING
+	}
+
+------------------------------------------------------------------------------
+--																			--
+--						Certificate Messages over CMS						--
+--																			--
+------------------------------------------------------------------------------
+
+-/ CMC request and response messages.  Certificates are returned as signing
+   certs attached to the CMS signed data /-
+
+PKIData ::= SEQUENCE {
+	attributes		SEQUENCE OF TaggedAttribute, -- Control attrs.
+	requests		SEQUENCE OF TaggedReq,	-- Cert.requests
+	cms				SEQUENCE OF TaggedCMS,	-- CMS messages
+	other			SEQUENCE OF OtherMsg	-- Type-and-value pairs
+	}
+
+PKIResp ::= SEQUENCE {
+	attributes		SEQUENCE OF TaggedAttribute, -- Control attrs.
+	cms				SEQUENCE OF TaggedCMS,	-- CMS messages
+	other			SEQUENCE OF OtherMsg	-- Type-and-value pairs
+	}
+
+-/ TaggedXYZ types.  OtherMsg is identical to TaggedAttribute except that
+   the value field is ANY DEFINED BY /-
+
+TaggedAttribute ::= SEQUENCE {
+	iD				INTEGER,				-- Unique 32-bit ID for this attr.
+	type			OBJECT IDENTIFIER,
+	values			SEQUENCE OF Attribute
+	}
+
+TaggedCMS ::= SEQUENCE {
+	iD				INTEGER,				-- Unique 32-bit ID for this attr.
+	value			CMS
 	}
 
 END

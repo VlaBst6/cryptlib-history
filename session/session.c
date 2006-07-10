@@ -5,15 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "session.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "session.h"
 #else
   #include "crypt.h"
@@ -161,7 +154,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 	int status;
 
 	/* Make sure that everything is set up ready to go */
-	errorAttribute = ( sessionInfoPtr->flags & SESSION_ISSERVER ) ? \
+	errorAttribute = isServer( sessionInfoPtr ) ? \
 					 checkServerParameters( sessionInfoPtr ) : \
 					 checkClientParameters( sessionInfoPtr );
 	if( errorAttribute != CRYPT_ATTRIBUTE_NONE )
@@ -183,7 +176,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 
 		if( ( sessionInfoPtr->receiveBuffer = \
 						clAlloc( "activateConnection", \
-								 sessionInfoPtr->receiveBufSize ) ) == NULL )
+								 sessionInfoPtr->receiveBufSize + 8 ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
 		if( sessionInfoPtr->sendBufSize != CRYPT_UNUSED )
 			{
@@ -192,7 +185,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 			   buffer size */
 			if( ( sessionInfoPtr->sendBuffer = \
 						clAlloc( "activateConnection", \
-								 sessionInfoPtr->receiveBufSize ) ) == NULL )
+								 sessionInfoPtr->receiveBufSize + 8 ) ) == NULL )
 				{
 				clFree( "activateConnection", sessionInfoPtr->receiveBuffer );
 				sessionInfoPtr->receiveBuffer = NULL;
@@ -201,7 +194,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 			sessionInfoPtr->sendBufSize = sessionInfoPtr->receiveBufSize;
 			}
 		}
-	assert( ( sessionInfoPtr->flags & SESSION_ISSERVER ) || \
+	assert( isServer( sessionInfoPtr ) || \
 			findSessionAttribute( sessionInfoPtr->attributeList, 
 								  CRYPT_SESSINFO_SERVER_NAME ) != NULL || \
 			sessionInfoPtr->networkSocket != CRYPT_ERROR );
@@ -320,7 +313,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 static void cleanupReqResp( SESSION_INFO *sessionInfoPtr,
 							const BOOLEAN isPostTransaction )
 	{
-	const BOOLEAN isServer = ( sessionInfoPtr->flags & SESSION_ISSERVER );
+	const BOOLEAN isServer = isServer( sessionInfoPtr );
 
 	/* Clean up server requests left over from a previous transaction/
 	   created by the just-completed transaction */
@@ -559,18 +552,21 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 				strlen( protocolInfoPtr->serverContentType ) );
 
 	/* Save the client details for the caller, using the (always-present)
-	   receive buffer as the intermediate store.  We don't bother checking
-	   the return values for the call since it's not critical information,
-	   if it can't be added it's no big deal */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAME,
-			sessionInfoPtr->receiveBuffer, 0 );
+	   receive buffer as the intermediate store */
+	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAME,
+					 sessionInfoPtr->receiveBuffer, CRYPT_MAX_TEXTSIZE );
+	if( cryptStatusError( status ) )
+		/* No client info available, exit */
+		return( CRYPT_OK );
 	addSessionAttribute( &sessionInfoPtr->attributeList, 
 						 CRYPT_SESSINFO_CLIENT_NAME, 
 						 sessionInfoPtr->receiveBuffer,
 						 strlen( sessionInfoPtr->receiveBuffer ) );
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, &port, 0 );
-	addSessionAttribute( &sessionInfoPtr->attributeList, 
-						 CRYPT_SESSINFO_CLIENT_PORT, NULL, port );
+	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, 
+					 &port, 0 );
+	if( cryptStatusOK( status ) )
+		addSessionAttribute( &sessionInfoPtr->attributeList, 
+							 CRYPT_SESSINFO_CLIENT_PORT, NULL, port );
 
 	return( CRYPT_OK );
 	}
@@ -611,8 +607,7 @@ int initSessionIO( SESSION_INFO *sessionInfoPtr )
 	if( sessionInfoPtr->shutdownFunction == NULL )
 		sessionInfoPtr->shutdownFunction = defaultShutdownFunction;
 	if( sessionInfoPtr->connectFunction == NULL )
-		sessionInfoPtr->connectFunction = \
-			( sessionInfoPtr->flags & SESSION_ISSERVER ) ? 
+		sessionInfoPtr->connectFunction = isServer( sessionInfoPtr ) ? 
 			defaultServerStartupFunction : defaultClientStartupFunction;
 	if( protocolInfoPtr->isReqResp && \
 		sessionInfoPtr->getAttributeFunction == NULL )

@@ -1,13 +1,10 @@
 /****************************************************************************
 *																			*
 *						 cryptlib Crypto Device Routines					*
-*						Copyright Peter Gutmann 1997-2002					*
+*						Copyright Peter Gutmann 1997-2005					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include "crypt.h"
 #ifdef INC_ALL
   #include "device.h"
@@ -16,10 +13,10 @@
 #endif /* Compiler-specific includes */
 
 /* When we get random data from a device, we run the (practical) FIPS 140
-   tests over the output to make sure that it's really random (at least as 
-   far as the tests can tell us).  If the data fails the test, we get more 
-   and try again.  The following value defines how many times we retry 
-   before giving up.  In test runs, a count of 2 failures is reached every 
+   tests over the output to make sure that it's really random (at least as
+   far as the tests can tell us).  If the data fails the test, we get more
+   and try again.  The following value defines how many times we retry
+   before giving up.  In test runs, a count of 2 failures is reached every
    ~50,000 iterations, 5 is never reached (in fact with 1M tests, 3 is never
    reached) */
 
@@ -40,6 +37,16 @@ BOOLEAN checkEntropy( const BYTE *data, const int dataLength );
 
 int createCertificateIndirect( MESSAGE_CREATEOBJECT_INFO *createInfo,
 							   const void *auxDataPtr, const int auxValue );
+
+/* If certificates aren't available, we have to no-op out the cert creation
+   function */
+
+#ifndef USE_CERTIFICATES
+
+#define createCertificateIndirect( createInfo, auxDataPtr, auxValue ) \
+	    CRYPT_ERROR_NOTAVAIL
+
+#endif /* USE_CERTIFICATES */
 
 /****************************************************************************
 *																			*
@@ -78,6 +85,91 @@ static int getRandomData( DEVICE_INFO *deviceInfoPtr, void *data,
 	return( CRYPT_ERROR_RANDOM );
 	}
 
+/* Process a crypto mechanism message */
+
+static int processMechanismMessage( DEVICE_INFO *deviceInfoPtr,
+									const MESSAGE_TYPE action,
+									const MECHANISM_TYPE mechanism,
+									void *mechanismInfo )
+	{
+	CRYPT_DEVICE localCryptDevice = deviceInfoPtr->objectHandle;
+	MECHANISM_FUNCTION mechanismFunction = NULL;
+	int refCount, status;
+
+	/* Find the function to handle this action and mechanism */
+	if( deviceInfoPtr->mechanismFunctions != NULL )
+		{
+		int i = 0;
+
+		while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
+			{
+			if( deviceInfoPtr->mechanismFunctions[ i ].action == action && \
+				deviceInfoPtr->mechanismFunctions[ i ].mechanism == mechanism )
+				{
+				mechanismFunction = \
+					deviceInfoPtr->mechanismFunctions[ i ].function;
+				break;
+				}
+			i++;
+			}
+		}
+	if( mechanismFunction == NULL && \
+		localCryptDevice != SYSTEM_OBJECT_HANDLE )
+		{
+		int i = 0;
+
+		/* This isn't the system object, fall back to the system object and 
+		   see if it can handle the mechanism.  We do it this way rather 
+		   than sending the message through the kernel a second time because 
+		   all the kernel checking of message parameters has already been 
+		   done (in terms of access control checks, we can always send the 
+		   message to the system object so this isn't a problem), this saves 
+		   the overhead of a second, redundant kernel pass.  This code is 
+		   currently only ever used with Fortezza devices, with PKCS #11 
+		   devices the support for various mechanisms is too patchy to allow 
+		   us to rely on it, so we always use system mechanisms which we 
+		   know will get it right.  Because it should never be used in 
+		   normal use, we throw an exception if we get here inadvertently 
+		   (if this doesn't stop execution, the krnlAcquireObject() will 
+		   since it will refuse to allocate the system object) */
+		assert( NOTREACHED );
+		krnlSuspendObject( deviceInfoPtr->objectHandle, &refCount );
+		localCryptDevice = SYSTEM_OBJECT_HANDLE;
+		status = krnlAcquireObject( SYSTEM_OBJECT_HANDLE, /* Will always fail */
+									OBJECT_TYPE_DEVICE,
+									( void ** ) &deviceInfoPtr,
+									CRYPT_ERROR_SIGNALLED );
+		if( cryptStatusError( status ) )
+			return( status );
+		assert( deviceInfoPtr->mechanismFunctions != NULL );
+		while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
+			{
+			if( deviceInfoPtr->mechanismFunctions[ i ].action == action && \
+				deviceInfoPtr->mechanismFunctions[ i ].mechanism == mechanism )
+				{
+				mechanismFunction = \
+						deviceInfoPtr->mechanismFunctions[ i ].function;
+				break;
+				}
+			i++;
+			}
+		}
+	if( mechanismFunction == NULL )
+		return( CRYPT_ERROR_NOTAVAIL );
+
+	/* If the message has been sent to the system object, unlock it to allow 
+	   it to be used by others and dispatch the message */
+	if( localCryptDevice == SYSTEM_OBJECT_HANDLE )
+		{
+		krnlSuspendObject( SYSTEM_OBJECT_HANDLE, &refCount );
+		assert( refCount == 1 );
+		return( mechanismFunction( NULL, mechanismInfo ) );
+		}
+
+	/* Send the message to the device */
+	return( mechanismFunction( deviceInfoPtr, mechanismInfo ) );
+	}
+
 /****************************************************************************
 *																			*
 *						Device Attribute Handling Functions					*
@@ -86,7 +178,7 @@ static int getRandomData( DEVICE_INFO *deviceInfoPtr, void *data,
 
 /* Exit after setting extended error information */
 
-static int exitError( DEVICE_INFO *deviceInfoPtr, 
+static int exitError( DEVICE_INFO *deviceInfoPtr,
 					  const CRYPT_ATTRIBUTE_TYPE errorLocus,
 					  const CRYPT_ERRTYPE_TYPE errorType, const int status )
 	{
@@ -94,17 +186,17 @@ static int exitError( DEVICE_INFO *deviceInfoPtr,
 	return( status );
 	}
 
-static int exitErrorInited( DEVICE_INFO *deviceInfoPtr, 
+static int exitErrorInited( DEVICE_INFO *deviceInfoPtr,
 							const CRYPT_ATTRIBUTE_TYPE errorLocus )
 	{
-	return( exitError( deviceInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_PRESENT, 
+	return( exitError( deviceInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_PRESENT,
 					   CRYPT_ERROR_INITED ) );
 	}
 
-static int exitErrorNotFound( DEVICE_INFO *deviceInfoPtr, 
+static int exitErrorNotFound( DEVICE_INFO *deviceInfoPtr,
 							  const CRYPT_ATTRIBUTE_TYPE errorLocus )
 	{
-	return( exitError( deviceInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_ABSENT, 
+	return( exitError( deviceInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_ABSENT,
 					   CRYPT_ERROR_NOTFOUND ) );
 	}
 
@@ -153,7 +245,7 @@ static int processGetAttribute( DEVICE_INFO *deviceInfoPtr,
 				/* If it's a removable device, the user could implicitly log
 				   out by removing it, so we have to perform an explicit
 				   check to see whether it's still there */
-				status = deviceInfoPtr->controlFunction( deviceInfoPtr, 
+				status = deviceInfoPtr->controlFunction( deviceInfoPtr,
 													messageValue, NULL, 0 );
 				if( cryptStatusError( status ) )
 					return( status );
@@ -196,7 +288,7 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 					errorMessagePtr = "";
 				}
 			if( !*errorMessagePtr )
-				return( exitErrorNotFound( deviceInfoPtr, 
+				return( exitErrorNotFound( deviceInfoPtr,
 									CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
 			return( attributeCopy( msgData, errorMessagePtr,
 								   strlen( errorMessagePtr ) ) );
@@ -204,7 +296,7 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 
 		case CRYPT_DEVINFO_LABEL:
 			if( deviceInfoPtr->label == NULL )
-				return( exitErrorNotFound( deviceInfoPtr, 
+				return( exitErrorNotFound( deviceInfoPtr,
 										   CRYPT_DEVINFO_LABEL ) );
 			return( attributeCopy( msgData, deviceInfoPtr->label,
 								   strlen( deviceInfoPtr->label ) ) );
@@ -217,17 +309,17 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 
 		case CRYPT_IATTRIBUTE_RANDOM_NZ:
 			{
-			BYTE randomBuffer[ 128 ], *outBuffer = msgData->data;
+			BYTE randomBuffer[ 128 + 8 ], *outBuffer = msgData->data;
 			int count = msgData->length, status = CRYPT_OK;
 
 			if( deviceInfoPtr->getRandomFunction == NULL )
 				return( CRYPT_ERROR_RANDOM );
 
-			/* The extraction of data is a little complex because we don't 
-			   know how much data we'll need (as a rule of thumb it'll be 
-			   size + ( size / 256 ) bytes, but in a worst-case situation we 
-			   could need to draw out megabytes of data), so we copy out 128 
-			   bytes worth at a time (a typical value for a 1K bit key) and 
+			/* The extraction of data is a little complex because we don't
+			   know how much data we'll need (as a rule of thumb it'll be
+			   size + ( size / 256 ) bytes, but in a worst-case situation we
+			   could need to draw out megabytes of data), so we copy out 128
+			   bytes worth at a time (a typical value for a 1K bit key) and
 			   keep going until we've filled the output requirements */
 			while( count > 0 )
 				{
@@ -256,9 +348,9 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 
 			assert( deviceInfoPtr->controlFunction != NULL );
 
-			return( deviceInfoPtr->controlFunction( deviceInfoPtr, 
+			return( deviceInfoPtr->controlFunction( deviceInfoPtr,
 													CRYPT_IATTRIBUTE_RANDOM_NONCE,
-													msgData->data, 
+													msgData->data,
 													msgData->length ) );
 
 		case CRYPT_IATTRIBUTE_TIME:
@@ -271,9 +363,9 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 				return( CRYPT_ERROR_NOTAVAIL );
 
 			/* Get the time from the device */
-			status = deviceInfoPtr->controlFunction( deviceInfoPtr, 
+			status = deviceInfoPtr->controlFunction( deviceInfoPtr,
 													 CRYPT_IATTRIBUTE_TIME,
-													 msgData->data, 
+													 msgData->data,
 													 msgData->length );
 			if( cryptStatusOK( status ) )
 				{
@@ -306,7 +398,7 @@ static int processSetAttribute( DEVICE_INFO *deviceInfoPtr,
 	assert( deviceInfoPtr->controlFunction != NULL );
 
 	/* Send the control information to the device */
-	return( deviceInfoPtr->controlFunction( deviceInfoPtr, messageValue, NULL, 
+	return( deviceInfoPtr->controlFunction( deviceInfoPtr, messageValue, NULL,
 											*( ( int * ) messageDataPtr ) ) );
 	}
 
@@ -324,7 +416,7 @@ static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 
 	assert( deviceInfoPtr->controlFunction != NULL );
 
-	/* If it's a PIN attribute, make sure that a login is actually required 
+	/* If it's a PIN attribute, make sure that a login is actually required
 	   for the device */
 	if( isAuthent && !( deviceInfoPtr->flags & DEVICE_NEEDSLOGIN ) )
 		return( exitErrorInited( deviceInfoPtr, messageValue ) );
@@ -341,6 +433,7 @@ static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 					msgData->length > \
 							deviceInfoPtr->devicePKCS11->maxPinSize )
 					return( CRYPT_ARGERROR_NUM1 );
+				break;
 
 			case CRYPT_DEVICE_FORTEZZA:
 				if( msgData->length < \
@@ -348,6 +441,11 @@ static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 					msgData->length > \
 							deviceInfoPtr->deviceFortezza->maxPinSize )
 					return( CRYPT_ARGERROR_NUM1 );
+				break;
+			
+			default:
+				assert( NOTREACHED );
+				return( CRYPT_ERROR );
 			}
 
 	/* Send the control information to the device */
@@ -356,24 +454,24 @@ static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* If the user has logged in and the token has a hardware RNG, grab 256 
+	/* If the user has logged in and the token has a hardware RNG, grab 256
 	   bits of entropy and send it to the system device.  Since we have no
 	   idea how good this entropy is (it could be just a DES-based PRNG using
 	   a static key or even an LFSR, which some smart cards use), we don't
 	   set any entropy quality indication */
 	if( isAuthent && deviceInfoPtr->getRandomFunction != NULL )
 		{
-		BYTE buffer[ 32 ];
+		BYTE buffer[ 32 + 8 ];
 
-		status = deviceInfoPtr->getRandomFunction( deviceInfoPtr, 
+		status = deviceInfoPtr->getRandomFunction( deviceInfoPtr,
 												   buffer, 32 );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			RESOURCE_DATA msgData2;
 
-			setMessageData( &msgData, buffer, 32 );
-			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S, 
-							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			setMessageData( &msgData2, buffer, 32 );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData2, CRYPT_IATTRIBUTE_ENTROPY );
 			}
 		zeroise( buffer, 32 );
 		}
@@ -406,6 +504,7 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 								  const int messageValue )
 	{
 	DEVICE_INFO *deviceInfoPtr = ( DEVICE_INFO * ) objectInfoPtr;
+	int status;
 
 	/* Process the destroy object message */
 	if( message == MESSAGE_DESTROY )
@@ -445,92 +544,14 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 
 	/* Process action messages */
 	if( isMechanismActionMessage( message ) )
-		{
-		CRYPT_DEVICE localCryptDevice = deviceInfoPtr->objectHandle;
-		MECHANISM_FUNCTION mechanismFunction = NULL;
-		int status;
-
-		/* Find the function to handle this action and mechanism */
-		if( deviceInfoPtr->mechanismFunctions != NULL )
-			{
-			int i = 0;
-
-			while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
-				{
-				if( deviceInfoPtr->mechanismFunctions[ i ].action == message && \
-					deviceInfoPtr->mechanismFunctions[ i ].mechanism == messageValue )
-					{
-					mechanismFunction = \
-						deviceInfoPtr->mechanismFunctions[ i ].function;
-					break;
-					}
-				i++;
-				}
-			}
-		if( mechanismFunction == NULL && \
-			localCryptDevice != SYSTEM_OBJECT_HANDLE )
-			{
-			int i = 0;
-
-			/* This isn't the system object, fall back to the system object
-			   and see if it can handle the mechanism.  We do it this way
-			   rather than sending the message through the kernel a second
-			   time because all the kernel checking of message parameters has
-			   already been done (in terms of access control checks, we can
-			   always send the message to the system object so this isn't a
-			   problem), this saves the overhead of a second, redundant
-			   kernel pass.  This code is currently only ever used with 
-			   Fortezza devices, with PKCS #11 devices the support for 
-			   various mechanisms is too patchy to allow us to rely on it, 
-			   so we always use system mechanisms which we know will get it
-			   right.  Because it should never be used in normal use, we 
-			   throw an exception if we get here inadvertently (if this 
-			   doesn't stop execution, the krnlAcquireObject() will since it 
-			   will refuse to allocate the system object) */
-			assert( NOTREACHED );
-			krnlReleaseObject( deviceInfoPtr->objectHandle );
-			localCryptDevice = SYSTEM_OBJECT_HANDLE;
-			status = krnlAcquireObject( localCryptDevice, OBJECT_TYPE_DEVICE, 
-										( void ** ) &deviceInfoPtr, 
-										CRYPT_ERROR_SIGNALLED );
-			if( cryptStatusError( status ) )
-				return( status );
-			assert( deviceInfoPtr->mechanismFunctions != NULL );
-			while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
-				{
-				if( deviceInfoPtr->mechanismFunctions[ i ].action == message && \
-					deviceInfoPtr->mechanismFunctions[ i ].mechanism == messageValue )
-					{
-					mechanismFunction = \
-							deviceInfoPtr->mechanismFunctions[ i ].function;
-					break;
-					}
-				i++;
-				}
-			}
-		if( mechanismFunction == NULL )
-			{
-			krnlReleaseObject( deviceInfoPtr->objectHandle );
-			return( CRYPT_ERROR_NOTAVAIL );
-			}
-
-		/* If the message has been sent to the system object, unlock it to
-		   allow it to be used by others and dispatch the message */
-		if( localCryptDevice == SYSTEM_OBJECT_HANDLE )
-			{
-			krnlReleaseObject( deviceInfoPtr->objectHandle );
-			return( mechanismFunction( NULL, messageDataPtr ) );
-			}
-
-		/* Send the message to the device */
-		return( mechanismFunction( deviceInfoPtr, messageDataPtr ) );
-		}
+		return( processMechanismMessage( deviceInfoPtr, message, 
+										 messageValue, messageDataPtr ) );
 
 	/* Process messages that check a device */
 	if( message == MESSAGE_CHECK )
 		{
-		/* The check for whether this device type can contain an object that 
-		   can perform the requested operation has already been performed by 
+		/* The check for whether this device type can contain an object that
+		   can perform the requested operation has already been performed by
 		   the kernel, so there's nothing further to do here */
 		assert( ( messageValue == MESSAGE_CHECK_PKC_ENCRYPT_AVAIL || \
 				  messageValue == MESSAGE_CHECK_PKC_DECRYPT_AVAIL || \
@@ -554,8 +575,8 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 		return( deviceInfoPtr->getItemFunction( deviceInfoPtr,
 								&getkeyInfo->cryptHandle, messageValue,
 								getkeyInfo->keyIDtype, getkeyInfo->keyID,
-								getkeyInfo->keyIDlength, getkeyInfo->auxInfo, 
-								&getkeyInfo->auxInfoLength, 
+								getkeyInfo->keyIDlength, getkeyInfo->auxInfo,
+								&getkeyInfo->auxInfoLength,
 								getkeyInfo->flags ) );
 		}
 	if( message == MESSAGE_KEY_SETKEY )
@@ -628,7 +649,7 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 		CRYPT_DEVICE iCryptDevice = deviceInfoPtr->objectHandle;
 		CREATEOBJECT_FUNCTION createObjectFunction = NULL;
 		const void *auxInfo = NULL;
-		int status;
+		int refCount;
 
 		assert( messageValue > OBJECT_TYPE_NONE && \
 				messageValue < OBJECT_TYPE_LAST );
@@ -661,22 +682,23 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 			auxInfo = deviceInfoPtr->capabilityInfoList;
 
 		/* If the message has been sent to the system object, unlock it to
-		   allow it to be used by others and dispatch the message.  This is 
+		   allow it to be used by others and dispatch the message.  This is
 		   safe because the auxInfo for the system device is in a static,
 		   read-only segment and persists even if the system device is
 		   destroyed */
 		if( deviceInfoPtr->objectHandle == SYSTEM_OBJECT_HANDLE )
 			{
-			krnlReleaseObject( deviceInfoPtr->objectHandle );
-			status = createObjectFunction( messageDataPtr, auxInfo, 
+			krnlSuspendObject( SYSTEM_OBJECT_HANDLE, &refCount );
+			assert( refCount == 1 );
+			status = createObjectFunction( messageDataPtr, auxInfo,
 										   CREATEOBJECT_FLAG_NONE );
 			}
 		else
 			/* Create a dummy object, with all details handled by the device.
-			   Unlike the system device, we don't unlock the device info 
-			   before we call the create object function because there may be 
-			   auxiliary info held in the device object that we need in order 
-			   to create the object.  This is OK since we're not tying up the 
+			   Unlike the system device, we don't unlock the device info
+			   before we call the create object function because there may be
+			   auxiliary info held in the device object that we need in order
+			   to create the object.  This is OK since we're not tying up the
 			   system device but only some auxiliary crypto device */
 			status = createObjectFunction( messageDataPtr, auxInfo,
 										   CREATEOBJECT_FLAG_DUMMY );
@@ -692,16 +714,17 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 	if( message == MESSAGE_DEV_CREATEOBJECT_INDIRECT )
 		{
 		CRYPT_DEVICE iCryptDevice = deviceInfoPtr->objectHandle;
-		int status;
+		int refCount;
 
 		/* At the moment the only objects where can be created in this manner
 		   are certificates */
 		assert( messageValue == OBJECT_TYPE_CERTIFICATE );
 		assert( deviceInfoPtr->objectHandle == SYSTEM_OBJECT_HANDLE );
 
-		/* Unlock the system object to allow it to be used by others and 
+		/* Unlock the system object to allow it to be used by others and
 		   dispatch the message */
-		krnlReleaseObject( deviceInfoPtr->objectHandle );
+		krnlSuspendObject( SYSTEM_OBJECT_HANDLE, &refCount );
+		assert( refCount == 1 );
 		status = createCertificateIndirect( messageDataPtr, NULL, 0 );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -727,7 +750,7 @@ static int openDevice( CRYPT_DEVICE *device,
 					   DEVICE_INFO **deviceInfoPtrPtr )
 	{
 	DEVICE_INFO *deviceInfoPtr;
-	const int subType = \
+	const OBJECT_SUBTYPE subType = \
 			( deviceType == CRYPT_DEVICE_NONE ) ? SUBTYPE_DEV_SYSTEM : \
 			( deviceType == CRYPT_DEVICE_FORTEZZA ) ? SUBTYPE_DEV_FORTEZZA : \
 			( deviceType == CRYPT_DEVICE_PKCS11 ) ? SUBTYPE_DEV_PKCS11 : \
@@ -766,10 +789,10 @@ static int openDevice( CRYPT_DEVICE *device,
 		}
 
 	/* Create the device object and connect it to the device */
-	status = krnlCreateObject( ( void ** ) &deviceInfoPtr, 
-							   sizeof( DEVICE_INFO ) + storageSize, 
-							   OBJECT_TYPE_DEVICE, subType, 
-							   CREATEOBJECT_FLAG_NONE, cryptOwner, 
+	status = krnlCreateObject( ( void ** ) &deviceInfoPtr,
+							   sizeof( DEVICE_INFO ) + storageSize,
+							   OBJECT_TYPE_DEVICE, subType,
+							   CREATEOBJECT_FLAG_NONE, cryptOwner,
 							   ACTION_PERM_NONE_ALL, deviceMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -798,6 +821,10 @@ static int openDevice( CRYPT_DEVICE *device,
 			deviceInfoPtr->deviceCryptoAPI = \
 							( CRYPTOAPI_INFO * ) deviceInfoPtr->storage;
 			break;
+
+		default:
+			assert( NOTREACHED );
+			return( CRYPT_ERROR );
 		}
 	deviceInfoPtr->storageSize = storageSize;
 
@@ -822,9 +849,10 @@ static int openDevice( CRYPT_DEVICE *device,
 
 		default:
 			assert( NOTREACHED );
+			return( CRYPT_ERROR );
 		}
 	if( cryptStatusOK( status ) )
-		status = deviceInfoPtr->initFunction( deviceInfoPtr, name, 
+		status = deviceInfoPtr->initFunction( deviceInfoPtr, name,
 											  nameLength );
 	if( cryptStatusOK( status ) && \
 		deviceInfoPtr->createObjectFunctions == NULL )
@@ -847,8 +875,8 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	assert( auxDataPtr == NULL );
 	assert( auxValue == 0 );
 
-	/* Perform basic error checking.  This also catches any attempts to 
-	   create a second system device object, which has an (external) type of 
+	/* Perform basic error checking.  This also catches any attempts to
+	   create a second system device object, which has an (external) type of
 	   CRYPT_DEVICE_NONE */
 	if( createInfo->arg1 <= CRYPT_DEVICE_NONE || \
 		createInfo->arg1 >= CRYPT_DEVICE_LAST )
@@ -870,7 +898,7 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	if( deviceInfoPtr == NULL )
 		return( initStatus );	/* Create object failed, return immediately */
 	if( cryptStatusError( initStatus ) )
-		/* The init failed, make sure that the object gets destroyed when we 
+		/* The init failed, make sure that the object gets destroyed when we
 		   notify the kernel that the setup process is complete */
 		krnlSendNotifier( iCryptDevice, IMESSAGE_DESTROY );
 
@@ -881,10 +909,10 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	if( cryptStatusOK( status ) && \
 		createInfo->arg1 == CRYPT_DEVICE_CRYPTOAPI )
 		{
-		/* If it's a device that doesn't require an explicit login, move it 
+		/* If it's a device that doesn't require an explicit login, move it
 		   into the initialised state */
-		status = krnlSendMessage( iCryptDevice, IMESSAGE_SETATTRIBUTE, 
-								  MESSAGE_VALUE_UNUSED, 
+		status = krnlSendMessage( iCryptDevice, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_UNUSED,
 								  CRYPT_IATTRIBUTE_INITIALISED );
 		if( cryptStatusError( status ) )
 			krnlSendNotifier( iCryptDevice, IMESSAGE_DESTROY );
@@ -899,7 +927,7 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
    that it can't be destroyed through a normal message (it can only be done
    from one place in the kernel) so if the open fails we don't use the normal
    signalling mechanism to destroy it but simply return an error code to the
-   caller (the cryptlib init process).  This causes the init to fail and 
+   caller (the cryptlib init process).  This causes the init to fail and
    destroys the object when the kernel shuts down */
 
 static int createSystemDeviceObject( void )
@@ -929,8 +957,8 @@ static int createSystemDeviceObject( void )
 							  MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
 	if( cryptStatusOK( status ) )
 		{
-		status = krnlSendMessage( iSystemObject, IMESSAGE_SETATTRIBUTE, 
-								  MESSAGE_VALUE_UNUSED, 
+		status = krnlSendMessage( iSystemObject, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_UNUSED,
 								  CRYPT_IATTRIBUTE_INITIALISED );
 		if( cryptStatusError( status ) )
 			krnlSendNotifier( iSystemObject, IMESSAGE_DESTROY );
@@ -938,10 +966,10 @@ static int createSystemDeviceObject( void )
 	return( status );
 	}
 
-/* Generic management function for this class of object.  Unlike the usual 
-   multilevel init process which is followed for other objects, the devices 
-   have an OR rather than an AND relationship since the devices are 
-   logically independent, so we set a flag for each device type that is 
+/* Generic management function for this class of object.  Unlike the usual
+   multilevel init process which is followed for other objects, the devices
+   have an OR rather than an AND relationship since the devices are
+   logically independent, so we set a flag for each device type that is
    successfully initialised rather than recording an init level */
 
 #define DEV_NONE_INITED			0x00
@@ -957,7 +985,7 @@ int deviceManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			action == MANAGEMENT_ACTION_INIT || \
 			action == MANAGEMENT_ACTION_PRE_SHUTDOWN || \
 			action == MANAGEMENT_ACTION_SHUTDOWN );
-	
+
 	switch( action )
 		{
 		case MANAGEMENT_ACTION_PRE_INIT:
@@ -977,19 +1005,19 @@ int deviceManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			if( cryptStatusOK( deviceInitCryptoAPI() ) )
 				initFlags |= DEV_CRYPTOAPI_INITED;
 			return( CRYPT_OK );
-		
+
 		case MANAGEMENT_ACTION_PRE_SHUTDOWN:
-			/* In theory we could signal the background entropy poll to 
-			   start wrapping up at this point, however if the background 
+			/* In theory we could signal the background entropy poll to
+			   start wrapping up at this point, however if the background
 			   polling is being performed in a thread or task the shutdown
 			   is already signalled via the kernel shutdown flag.  If it's
-			   performed by forking off a process, as it is on Unix systems, 
-			   there's no easy way to communicate with this process so the 
-			   shutdown function just kill()s it.  Because of this we don't 
-			   try and do anything here, although this call is left in place 
+			   performed by forking off a process, as it is on Unix systems,
+			   there's no easy way to communicate with this process so the
+			   shutdown function just kill()s it.  Because of this we don't
+			   try and do anything here, although this call is left in place
 			   as a no-op in case it's needed in the future */
 			return( CRYPT_OK );
-		
+
 		case MANAGEMENT_ACTION_SHUTDOWN:
 			if( initFlags & DEV_FORTEZZA_INITED )
 				deviceEndFortezza();

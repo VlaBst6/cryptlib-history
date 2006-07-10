@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Thread/Mutex Handling  					*
-*						Copyright Peter Gutmann 1992-2005					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
@@ -207,7 +207,9 @@
 #define THREAD_SELF()			cjtkid()
 #define THREAD_SLEEP( ms )		cjtkdelay( cjtmconvert( ms ) )
 #define THREAD_YIELD()			cjtkdelay( 1 )
-#define THREAD_WAIT( sync )		cjsmwait( sync, threadPriority(), 0 ); \
+#define THREAD_WAIT( sync, status )	\
+								if( cjsmwait( sync, threadPriority(), 0 ) != CJ_EROK ) \
+									status = CRYPT_ERROR; \
 								cjsmdelete( sync )
 #define THREAD_CLOSE( sync )
 
@@ -307,10 +309,12 @@ int threadPriority( void );
 #define THREAD_SELF()			find_thread( NULL )
 #define THREAD_SLEEP( ms )		snooze( ms )
 #define THREAD_YIELD()			snooze( estimate_max_scheduling_latency( -1 ) + 1 )
-#define THREAD_WAIT( sync )		{ \
+#define THREAD_WAIT( sync, status ) \
+								{ \
 								status_t dummy; \
 								\
-								wait_for_thread( sync, &dummy ); \
+								if( wait_for_thread( sync, &dummy ) != B_NO_ERROR.) \
+									status = CRYPT_ERROR; \
 								}
 #define THREAD_CLOSE( sync )
 
@@ -419,7 +423,9 @@ int threadPriority( void );
 								threadDelay( &timeVal ); \
 								}
 #define THREAD_YIELD()			threadDelay( K_NOBLOCK )
-#define THREAD_WAIT( sync )		semP( sync, K_NOTIMEOUT )
+#define THREAD_WAIT( sync, status ) \
+								if( semP( sync, K_NOTIMEOUT ) < 0 ) \
+									status = CRYPT_ERROR
 #define THREAD_CLOSE( sync )
 
 /* Because of the problems with resource management of Chorus thread stack
@@ -553,7 +559,9 @@ int threadPriority( void );
 #define THREAD_SELF()			cyg_thread_self()
 #define THREAD_SLEEP( ms )		cyg_thread_delay( ( ms ) / 10 )
 #define THREAD_YIELD()			cyg_thread_yield()
-#define THREAD_WAIT( sync )		cyg_semaphore_wait( &sync ); \
+#define THREAD_WAIT( sync, status ) \
+								if( !cyg_semaphore_wait( &sync ) ) \
+									status = CRYPT_ERROR; \
 								cyg_semaphore_destroy( &sync )
 #define THREAD_CLOSE( sync )	cyg_thread_delete( &sync )
 
@@ -702,10 +710,13 @@ int threadPriority( void );
   #define THREAD_SLEEP( ms )	OSTimeDelay( max( ( ms * OS_TICKS_PER_SEC ) / 1000, 1 ) )
 #endif /* OS_TICKS_PER_SEC time scaling */
 #define THREAD_YIELD()			THREAD_SLEEP( 1 )
-#define THREAD_WAIT( sync )		{ \
+#define THREAD_WAIT( sync, status ) \
+								{ \
 								INT8U err; \
 								\
 								OSSemPend( sync, 0, &err ); \
+								if( err != OS_NO_ERR ) \
+									status = CRYPT_ERROR; \
 								OSSemDel( sync ); \
 								}
 #define THREAD_CLOSE( sync )
@@ -891,7 +902,9 @@ INT8U threadSelf( void );
 #define THREAD_SELF()			threadSelf()
 #define THREAD_SLEEP( ms )		dly_tsk( ms )
 #define THREAD_YIELD()			dly_tsk( 0 )
-#define THREAD_WAIT( sync )		wai_sem( sync ); \
+#define THREAD_WAIT( sync, status ) \
+								if( wai_sem( sync ) != E_OK ) \
+									status = CRYPT_ERROR; \
 								del_sem( sync )
 #define THREAD_CLOSE( sync )
 
@@ -965,7 +978,9 @@ ULONG DosGetThreadID( void );
 #define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
 #define THREAD_SLEEP( ms )		DosWait( ms )
 #define THREAD_YIELD()			DosWait( 0 )
-#define THREAD_WAIT( sync )		DosWaitThread( sync, INFINITE )
+#define THREAD_WAIT( sync, status ) \
+								if( DosWaitThread( sync, INFINITE ) != NO_ERROR ) \
+									status = CRYPT_ERROR
 #define THREAD_CLOSE( sync )
 
 /****************************************************************************
@@ -1045,7 +1060,9 @@ ULONG DosGetThreadID( void );
 #define THREAD_SELF()			SysCurrentThread()
 #define THREAD_SLEEP( ms )		SysThreadDelay( ( ms ) * 1000000L, P_ABSOLUTE_TIMEOUT )
 #define THREAD_YIELD()			SysThreadDelay( 0, P_POLL )
-#define THREAD_WAIT( sync )		SysSemaphoreWait( sync, P_WAIT_FOREVER, 0 ); \
+#define THREAD_WAIT( sync, status ) \
+								if( SysSemaphoreWait( sync, P_WAIT_FOREVER, 0 ) != errNone ) \
+									status = CRYPT_ERROR; \
 								SysSemaphoreDestroy( sync )
 #define THREAD_CLOSE( sync )
 
@@ -1162,8 +1179,11 @@ ULONG DosGetThreadID( void );
 #define THREAD_SELF()			threadSelf()
 #define THREAD_SLEEP( ms )		rtems_task_wake_after( ( ms ) / 10 )
 #define THREAD_YIELD()			rtems_task_wake_after( RTEMS_YIELD_PROCESSOR )
-#define THREAD_WAIT( sync )		rtems_semaphore_obtain( sync, RTEMS_WAIT, 0 ); \
-								rtems_semaphore_release( sync ); \
+#define THREAD_WAIT( sync, status ) \
+								if( rtems_semaphore_obtain( sync, RTEMS_WAIT, 0 ) != RTEMS_SUCCESSFUL ) \
+									status = CRYPT_ERROR; \
+								else \
+									rtems_semaphore_release( sync ); \
 								rtems_semaphore_delete( sync )
 #define THREAD_CLOSE( sync )
 
@@ -1340,7 +1360,8 @@ rtems_id threadSelf( void );
      to ENOSYS when sched_yield() is called, so we use this to fall back to
 	 the UI interface if necessary */
   #define THREAD_YIELD()		{ if( sched_yield() ) thr_yield(); }
-#elif defined( _AIX ) || ( defined( __hpux ) && ( OSVERSION >= 11 ) ) || \
+#elif defined( _AIX ) || defined( __CYGWIN__ ) || \
+	  ( defined( __hpux ) && ( OSVERSION >= 11 ) ) || \
 	  defined( __NetBSD__ ) || defined( __QNX__ )
   #define THREAD_YIELD()		sched_yield()
 #elif defined( __XMK__ )
@@ -1357,7 +1378,9 @@ rtems_id threadSelf( void );
 								tv.tv_usec = ( ms ) * 1000; \
 								select( 1, NULL, NULL, NULL, &tv ); \
 								}
-#define THREAD_WAIT( sync )		pthread_join( sync, NULL )
+#define THREAD_WAIT( sync, status ) \
+								if( pthread_join( sync, NULL ) < 0 ) \
+									status = CRYPT_ERROR
 #define THREAD_CLOSE( sync )
 
 /* OSF1 includes some ghastly kludgery to handle binary compatibility from
@@ -1532,8 +1555,11 @@ rtems_id threadSelf( void );
 #define THREAD_SELF()			taskIdSelf()
 #define THREAD_SLEEP( ms )		taskDelay( ms )
 #define THREAD_YIELD()			taskDelay( NO_WAIT )
-#define THREAD_WAIT( sync )		semTake( sync, WAIT_FOREVER ); \
-								semGive( sync ); \
+#define THREAD_WAIT( sync, status ) \
+								if( semTake( sync, WAIT_FOREVER ) != OK ) \
+									status = CRYPT_ERROR; \
+								else \
+									semGive( sync ); \
 								semDelete( sync )
 #define THREAD_CLOSE( sync )
 
@@ -1552,7 +1578,7 @@ rtems_id threadSelf( void );
 
 /* Object handles */
 
-#define THREAD_HANDLE			HANDLE
+#define THREAD_HANDLE			DWORD
 #define MUTEX_HANDLE			HANDLE
 
 /* Mutex management functions.  InitializeCriticalSection() doesn't return
@@ -1591,13 +1617,11 @@ rtems_id threadSelf( void );
    directly.
 
    There are two functions that we can call to get the current thread ID,
-   GetCurrentThread() and GetCurrentThreadId().  These are actually
-   implemented as the same function (once you get past the outer wrapper),
-   and the times for calling either are identical.  The only difference
-   between the two is that GetCurrentThread() returns a per-process
-   pseudohandle while GetCurrentThreadId() returns a systemwide, unique
-   handle.
-
+   GetCurrentThread() and GetCurrentThreadId().  GetCurrentThread() merely
+   returns a constant value that's interpreted by various functions to
+   mean "the current thread".  GetCurrentThreadId() returns the thread ID,
+   however this isn't the same as the thread handle.
+   
    An alternative to Sleep( 0 ) is SwitchToThread(), however this is only
    available under the NT code base for NT 4.0 and later, so it wouldn't
    work under the Win95 code base.
@@ -1612,37 +1636,60 @@ rtems_id threadSelf( void );
 #if defined( __WIN32__ )
   #define THREADFUNC_DEFINE( name, arg ) \
 				unsigned __stdcall name( void *arg )
-  #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+  #if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+	#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 				{ \
-				ULONG ulDummy; \
+				uintptr_t hThread; \
 				\
-				threadHandle = ( HANDLE ) \
-					_beginthreadex( NULL, 0, ( function ), ( arg ), 0, &ulDummy ); \
-				syncHandle = ( long ) threadHandle; \
-				status = !threadHandle ? CRYPT_ERROR : CRYPT_OK; \
+				hThread = _beginthreadex( NULL, 0, ( function ), ( arg ), 0, \
+										  &threadHandle ); \
+				syncHandle = ( MUTEX_HANDLE ) hThread; \
+				status = ( hThread == 0 ) ? CRYPT_ERROR : CRYPT_OK; \
 				}
+  #else
+	#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
+				{ \
+				unsigned long hThread; \
+				\
+				hThread = _beginthreadex( NULL, 0, ( function ), ( arg ), 0, \
+										  &threadHandle ); \
+				syncHandle = ( MUTEX_HANDLE ) hThread; \
+				status = ( hThread == 0 ) ? CRYPT_ERROR : CRYPT_OK; \
+				}
+  #endif /* Older vs. newer VC++ */
   #define THREAD_EXIT( sync )	_endthreadex( 0 ); return( 0 )
 #elif defined( __WINCE__ )
   #define THREADFUNC_DEFINE( name, arg ) \
 				DWORD WINAPI name( void *arg )
   #define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 				{ \
-				ULONG ulDummy; \
+				HANDLE hThread; \
 				\
-				threadHandle = ( HANDLE ) \
-					CreateThread( NULL, 0, ( function ), ( arg ), 0, &ulDummy ); \
-				syncHandle = ( long ) threadHandle; \
-				status = !threadHandle ? CRYPT_ERROR : CRYPT_OK; \
+				hThread = CreateThread( NULL, 0, ( function ), ( arg ), 0, \
+										&threadHandle ); \
+				syncHandle = hThread; \
+				status = ( hThread == NULL ) ? CRYPT_ERROR : CRYPT_OK; \
 				}
   #define THREAD_EXIT( sync )	ExitThread( 0 ); return( 0 )
 #endif /* Win32 vs. WinCE */
 #define THREAD_INITIALISER		0
-#define THREAD_SELF()			( THREAD_HANDLE ) GetCurrentThreadId()
+#define THREAD_SELF()			GetCurrentThreadId()
 #define THREAD_SAME( thread1, thread2 )	( ( thread1 ) == ( thread2 ) )
 #define THREAD_SLEEP( ms )		Sleep( ms )
-#define THREAD_YIELD()			Sleep( 0 )
-#define THREAD_WAIT( sync )		WaitForSingleObject( sync, INFINITE );
+#if defined( __WIN32__ )
+  #define THREAD_YIELD()		threadYield()
+#else
+  #define THREAD_YIELD()		Sleep( 0 )
+#endif /* Win32 vs. WinCE */
+#define THREAD_WAIT( sync, status ) \
+								if( WaitForSingleObject( sync, INFINITE ) != WAIT_OBJECT_0 ) \
+									status = CRYPT_ERROR
 #define THREAD_CLOSE( sync )	CloseHandle( sync )
+
+/* Yielding a thread on an SMP or HT system is a tricky process, so we have 
+   to use a custom function to do this */
+
+void threadYield( void );
 
 #elif defined( __WIN32__ ) && defined( NT_DRIVER )
 
@@ -1697,7 +1744,7 @@ rtems_id threadSelf( void );
 #define THREAD_SELF()							0
 #define THREAD_SLEEP( ms )
 #define THREAD_YIELD()
-#define THREAD_WAIT( sync )
+#define THREAD_WAIT( sync, status )
 #define THREAD_CLOSE( sync )
 
 #endif /* Resource ownership macros */

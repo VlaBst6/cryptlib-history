@@ -5,18 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-  #include "session.h"
-  #include "cmp.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
   #include "session.h"
   #include "cmp.h"
 #else
@@ -105,13 +97,13 @@ static void debugDump( const int type, const int phase,
 #ifndef DUMP_SERVER_MESSAGES
 	/* Server messages have complex names based on the server DN, so we only 
 	   dump them if explicitly requested */
-	if( sessionInfoPtr->flags & SESSION_ISSERVER )
+	if( isServer( sessionInfoPtr ) )
 		return;
 #endif /* !DUMP_SERVER_MESSAGES */
 
 /*	GetTempPath( 512, fileName ); */
 	strcpy( fileName, "/tmp/" );
-	if( sessionInfoPtr->flags & SESSION_ISSERVER )
+	if( isServer( sessionInfoPtr ) )
 		{
 		RESOURCE_DATA msgData;
 		const int pathLength = strlen( fileName );
@@ -134,7 +126,12 @@ static void debugDump( const int type, const int phase,
 	strcat( fileName, fnStringPtr[ phase - 1 ] );
 	strcat( fileName, ".der" );
 
+#ifdef __STDC_LIB_EXT1__
+	if( fopen_s( &filePtr, fileName, "wb" ) != 0 )
+		filePtr = NULL;
+#else
 	filePtr = fopen( fileName, "wb" );
+#endif /* __STDC_LIB_EXT1__ */
 	if( filePtr != NULL )
 		{
 		fwrite( sessionInfoPtr->receiveBuffer, 1,
@@ -351,6 +348,7 @@ int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr,
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_USERNAME );
 		char userID[ CRYPT_MAX_TEXTSIZE + 8 ];
+		int userIDlen;
 
 		if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE && \
 			userNamePtr->valueLength > 10 && \
@@ -358,13 +356,17 @@ int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr,
 			{
 			memcpy( userID, userNamePtr->value, userNamePtr->valueLength );
 			userID[ userNamePtr->valueLength ] = '\0';
+			userIDlen = userNamePtr->valueLength;
 			}
 		else
+			{
 			strcpy( userID, "the requested user" );
+			userIDlen = 18;
+			}
 		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
 		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
 				  "Couldn't find PKI user information for %s",
-				  sanitiseString( userID ) );
+				  sanitiseString( userID, userIDlen ) );
 		}
 	cmpInfo->userInfo = getkeyInfo.cryptHandle;
 	protocolInfo->userIDchanged = FALSE;
@@ -541,7 +543,7 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 									  CRYPT_SESSINFO_PASSWORD );
 	int status;
 
-	assert( !( sessionInfoPtr->flags & SESSION_ISSERVER ) );
+	assert( !isServer( sessionInfoPtr ) );
 
 	/* Determine what we need to do based on the request type */
 	protocolInfo->operation = clibReqToReq( cmpInfo->requestType );
@@ -612,12 +614,12 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 	/* We're using MAC authentication, initialise the protocol info */
 	if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE )
 		{
-		BYTE decodedValue[ CRYPT_MAX_TEXTSIZE ];
+		BYTE decodedValue[ 64 + 8 ];
 		int decodedValueLength;
 
 		/* It's a cryptlib-style encoded user ID, decode it into its binary 
 		   value */
-		decodedValueLength = decodePKIUserValue( decodedValue,
+		decodedValueLength = decodePKIUserValue( decodedValue, 64,
 												 userNamePtr->value, 
 												 userNamePtr->valueLength );
 		if( cryptStatusError( decodedValueLength ) )
@@ -641,12 +643,12 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 	/* Set up the MAC context used to authenticate messages */
 	if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
 		{
-		BYTE decodedValue[ CRYPT_MAX_TEXTSIZE ];
+		BYTE decodedValue[ 64 + 8 ];
 		int decodedValueLength;
 
 		/* It's a cryptlib-style encoded password, decode it into its binary 
 		   value */
-		decodedValueLength = decodePKIUserValue( decodedValue,
+		decodedValueLength = decodePKIUserValue( decodedValue, 64,
 						passwordPtr->value, passwordPtr->valueLength );
 		if( cryptStatusError( decodedValueLength ) )
 			{
@@ -940,6 +942,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 			   binary value */
 			protocolInfo.userIDsize = \
 					decodePKIUserValue( protocolInfo.userID,
+										CRYPT_MAX_TEXTSIZE,
 										userNamePtr->value,
 										userNamePtr->valueLength );
 		else
@@ -1537,7 +1540,7 @@ int setAccessMethodCMP( SESSION_INFO *sessionInfoPtr )
 
 	/* Set the access method pointers */
 	sessionInfoPtr->protocolInfo = &protocolInfo;
-	if( sessionInfoPtr->flags & SESSION_ISSERVER )
+	if( isServer( sessionInfoPtr ) )
 		sessionInfoPtr->transactFunction = serverTransact;
 	else
 		{

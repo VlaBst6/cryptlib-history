@@ -5,16 +5,9 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "misc_rw.h"
-  #include "session.h"
-  #include "ssh.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../misc/misc_rw.h"
   #include "session.h"
   #include "ssh.h"
 #else
@@ -24,31 +17,31 @@
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_SSH2
+#ifdef USE_SSH
 
-/* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs, in 
+/* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs, in
    preferred algorithm order.  See the comment in ssh2_svr.c for the reason
-   behind the difference in encryption algorithm tables for client and 
+   behind the difference in encryption algorithm tables for client and
    server */
 
-static const FAR_BSS ALGO_STRING_INFO algoStringKeyexTbl[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringKeyexTbl[] = {
 	{ "diffie-hellman-group-exchange-sha1", CRYPT_PSEUDOALGO_DHE },
 	{ "diffie-hellman-group1-sha1", CRYPT_ALGO_DH },
 	{ NULL, CRYPT_ALGO_NONE }
 	};
 
-static const FAR_BSS ALGO_STRING_INFO algoStringCoprTbl[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringCoprTbl[] = {
 	{ "none", CRYPT_PSEUDOALGO_COPR },
 	{ NULL, CRYPT_ALGO_NONE }
 	};
 
-static const FAR_BSS ALGO_STRING_INFO algoStringPubkeyTbl[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringPubkeyTbl[] = {
 	{ "ssh-rsa", CRYPT_ALGO_RSA },
 	{ "ssh-dss", CRYPT_ALGO_DSA },
 	{ NULL, CRYPT_ALGO_NONE }
 	};
 
-static const FAR_BSS ALGO_STRING_INFO algoStringEncrTblClient[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringEncrTblClient[] = {
 	{ "3des-cbc", CRYPT_ALGO_3DES },
 	{ "aes128-cbc", CRYPT_ALGO_AES },
 	{ "blowfish-cbc", CRYPT_ALGO_BLOWFISH },
@@ -57,7 +50,7 @@ static const FAR_BSS ALGO_STRING_INFO algoStringEncrTblClient[] = {
 	{ "arcfour", CRYPT_ALGO_RC4 },
 	{ NULL, CRYPT_ALGO_NONE }
 	};
-static const FAR_BSS ALGO_STRING_INFO algoStringEncrTblServer[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringEncrTblServer[] = {
 	{ "3des-cbc", CRYPT_ALGO_3DES },
 	{ "blowfish-cbc", CRYPT_ALGO_BLOWFISH },
 	{ "cast128-cbc", CRYPT_ALGO_CAST },
@@ -66,7 +59,7 @@ static const FAR_BSS ALGO_STRING_INFO algoStringEncrTblServer[] = {
 	{ NULL, CRYPT_ALGO_NONE }
 	};
 
-static const FAR_BSS ALGO_STRING_INFO algoStringMACTbl[] = {
+static const ALGO_STRING_INFO FAR_BSS algoStringMACTbl[] = {
 	{ "hmac-sha1", CRYPT_ALGO_HMAC_SHA },
 	{ "hmac-md5", CRYPT_ALGO_HMAC_MD5 },
 	{ NULL, CRYPT_ALGO_NONE }
@@ -83,30 +76,30 @@ static const FAR_BSS ALGO_STRING_INFO algoStringMACTbl[] = {
    as a comma-delimited list (in an otherwise binary protocol), so we have
    to unpack and pack them into this cumbersome format alongside just
    choosing which algorithm to use.  In addition, the algorithm selection
-   mechanism differs depending on whether we're the client or server, and 
-   what set of algorithms we're matching.  Unlike SSL, which uses the 
-   offered-suites/chosen-suites mechanism, in SSHv2 both sides offer a 
-   selection of cipher suites and the server chooses the first one that 
+   mechanism differs depending on whether we're the client or server, and
+   what set of algorithms we're matching.  Unlike SSL, which uses the
+   offered-suites/chosen-suites mechanism, in SSHv2 both sides offer a
+   selection of cipher suites and the server chooses the first one that
    appears on both it and the client's list, with special-case handling for
-   the keyex and signature algorithms if the match isn't the first one on 
-   the list.  This means that the client can choose as it pleases from the 
-   server's list if it waits for the server hello (see the comment in the 
-   client/server hello handling code on the annoying nature of this portion 
+   the keyex and signature algorithms if the match isn't the first one on
+   the list.  This means that the client can choose as it pleases from the
+   server's list if it waits for the server hello (see the comment in the
+   client/server hello handling code on the annoying nature of this portion
    of the SSHv2 handshake), but the server has to perform a complex double-
-   match of its own vs.the client's list.  The cases that we need to handle 
+   match of its own vs.the client's list.  The cases that we need to handle
    are:
 
 	get the first matching algorithm, used by the server to match the client.
 
-	get the first matching algorithm and warn if it isn't the first one on 
-		the list of possible algorithms, used by the server to match the 
+	get the first matching algorithm and warn if it isn't the first one on
+		the list of possible algorithms, used by the server to match the
 		client for the keyex and public-key algorithms.
 
 	get the best matching algorithm (that is, the one corresponding to the
 		strongest crypto mechanism), used by the client to match the server.
 
-   This is a sufficiently complex and screwball function that we need to 
-   define a composite structure to pass all of the control information in 
+   This is a sufficiently complex and screwball function that we need to
+   define a composite structure to pass all of the control information in
    and out */
 
 typedef enum {
@@ -133,7 +126,7 @@ typedef struct {
 	( algoIDInfo )->getAlgoType = ( getType ); \
 	}
 
-static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo, 
+static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 							 void *errorInfo )
 	{
 	BOOLEAN foundMatch = FALSE;
@@ -190,14 +183,14 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 			 algoIDInfo->algoInfo[ currentAlgoIndex ].name != NULL; \
 			 currentAlgoIndex++ )
 			if( substringLen == strlen( algoIDInfo->algoInfo[ currentAlgoIndex ].name ) && \
-				!memcmp( algoIDInfo->algoInfo[ currentAlgoIndex ].name, 
+				!memcmp( algoIDInfo->algoInfo[ currentAlgoIndex ].name,
 						 string + stringPos, substringLen ) )
 				break;
 		if( algoIDInfo->algoInfo[ currentAlgoIndex ].name == NULL || \
 			( !isPseudoAlgo( algoIDInfo->algoInfo[ currentAlgoIndex ].algo ) && \
 			  !algoAvailable( algoIDInfo->algoInfo[ currentAlgoIndex ].algo ) ) )
 			{
-			/* No match or the matched algorithm isn't available in this 
+			/* No match or the matched algorithm isn't available in this
 			   build, if we have to match the first algorithm on the list
 			   remember to warn the caller, then move on to the next name */
 			if( algoIDInfo->getAlgoType == GETALGO_FIRST_MATCH_WARN )
@@ -208,8 +201,8 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 		switch( algoIDInfo->getAlgoType )
 			{
 			case GETALGO_BEST_MATCH:
-				/* If we're looking for the best (highest-ranked algorithm) 
-				   match, see whether the current match ranks higher than 
+				/* If we're looking for the best (highest-ranked algorithm)
+				   match, see whether the current match ranks higher than
 				   the existing one */
 				if( currentAlgoIndex < algoIndex )
 					{
@@ -220,7 +213,7 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 				break;
 
 			case GETALGO_FIRST_MATCH:
-				/* If we've found an acceptable algorithm, remember it and 
+				/* If we've found an acceptable algorithm, remember it and
 				   exit */
 				if( algoIDInfo->preferredAlgo == CRYPT_ALGO_NONE || \
 					algoIDInfo->preferredAlgo == \
@@ -232,11 +225,11 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 				break;
 
 			case GETALGO_FIRST_MATCH_WARN:
-				/* If we found the algorithm that we're after, remember it 
+				/* If we found the algorithm that we're after, remember it
 				   and exit */
 				if( algoIDInfo->preferredAlgo != \
 							algoIDInfo->algoInfo[ currentAlgoIndex ].algo )
-					/* We didn't match the first algorithm on the list, warn 
+					/* We didn't match the first algorithm on the list, warn
 					   the caller */
 					algoIDInfo->prefAlgoMismatch = TRUE;
 				algoIndex = currentAlgoIndex;
@@ -251,7 +244,7 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 		{
 		char algoString[ 256 ];
 
-		/* We couldn't find anything to use, tell the caller what was 
+		/* We couldn't find anything to use, tell the caller what was
 		   available */
 		if( stringLen > min( MAX_ERRMSG_SIZE - 80, 255 ) )
 			stringLen = min( MAX_ERRMSG_SIZE - 80, 255 );
@@ -259,7 +252,7 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 		algoString[ stringLen ] = '\0';
 		retExt( errorInfo, CRYPT_ERROR_NOTAVAIL,
 				"No algorithm compatible with the remote system's selection "
-				"was found : %s", sanitiseString( algoString ) );
+				"was found : %s", sanitiseString( algoString, stringLen ) );
 		}
 
 	/* We found a more-preferred algorithm than the default, go with that */
@@ -267,8 +260,8 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 	return( CRYPT_OK );
 	}
 
-int readAlgoString( STREAM *stream, const ALGO_STRING_INFO *algoInfo, 
-					CRYPT_ALGO_TYPE *algo, const BOOLEAN useFirstMatch, 
+int readAlgoString( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
+					CRYPT_ALGO_TYPE *algo, const BOOLEAN useFirstMatch,
 					void *errorInfo )
 	{
 	ALGOID_INFO algoIDInfo;
@@ -281,7 +274,7 @@ int readAlgoString( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
 	/* Clear return value */
 	*algo = CRYPT_ALGO_NONE;
 
-	setAlgoIDInfo( &algoIDInfo, algoInfo, CRYPT_ALGO_NONE, 
+	setAlgoIDInfo( &algoIDInfo, algoInfo, CRYPT_ALGO_NONE,
 				   useFirstMatch ? GETALGO_FIRST_MATCH : \
 								   GETALGO_BEST_MATCH );
 	status = readAlgoStringEx( stream, &algoIDInfo, errorInfo );
@@ -290,15 +283,15 @@ int readAlgoString( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
 	return( status );
 	}
 
-/* Algorithms used to protect data packets are used in pairs, one for 
-   incoming and the other for outgoing data.  To keep things simple we 
-   always force these to be the same, first reading the algorithm for one 
-   direction and then making sure that the one for the other direction 
-   matches this.  All implementations seem to do this anyway, many aren't 
+/* Algorithms used to protect data packets are used in pairs, one for
+   incoming and the other for outgoing data.  To keep things simple we
+   always force these to be the same, first reading the algorithm for one
+   direction and then making sure that the one for the other direction
+   matches this.  All implementations seem to do this anyway, many aren't
    even capable of supporting asymmetric algorithm choices */
 
-static int readAlgoStringPair( STREAM *stream, const ALGO_STRING_INFO *algoInfo, 
-							   CRYPT_ALGO_TYPE *algo, const BOOLEAN isServer, 
+static int readAlgoStringPair( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
+							   CRYPT_ALGO_TYPE *algo, const BOOLEAN isServer,
 							   void *errorInfo )
 	{
 	CRYPT_ALGO_TYPE pairPreferredAlgo;
@@ -321,7 +314,7 @@ static int readAlgoStringPair( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
 	pairPreferredAlgo = algoIDInfo.algo;
 
 	/* Get the matched second algorithm */
-	setAlgoIDInfo( &algoIDInfo, algoInfo, pairPreferredAlgo, 
+	setAlgoIDInfo( &algoIDInfo, algoInfo, pairPreferredAlgo,
 				   GETALGO_FIRST_MATCH );
 	status = readAlgoStringEx( stream, &algoIDInfo, errorInfo );
 	if( cryptStatusError( status ) )
@@ -339,7 +332,7 @@ static int readAlgoStringPair( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
 
 int writeAlgoString( STREAM *stream, const CRYPT_ALGO_TYPE algo )
 	{
-	static const FAR_BSS ALGO_STRING_INFO algoStringMapTbl[] = {
+	static const ALGO_STRING_INFO FAR_BSS algoStringMapTbl[] = {
 		{ "ssh-rsa", CRYPT_ALGO_RSA },
 		{ "ssh-dss", CRYPT_ALGO_DSA },
 		{ "3des-cbc", CRYPT_ALGO_3DES },
@@ -375,7 +368,7 @@ int writeAlgoString( STREAM *stream, const CRYPT_ALGO_TYPE algo )
 
 /* Process a client/server hello packet */
 
-int processHelloSSH( SESSION_INFO *sessionInfoPtr, 
+int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 					 SSH_HANDSHAKE_INFO *handshakeInfo, int *keyexLength,
 					 const BOOLEAN isServer )
 	{
@@ -413,12 +406,12 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 	/* Read the keyex algorithm info */
 	if( isServer )
 		{
-		setAlgoIDInfo( &algoIDInfo, algoStringKeyexTbl, CRYPT_PSEUDOALGO_DHE, 
+		setAlgoIDInfo( &algoIDInfo, algoStringKeyexTbl, CRYPT_PSEUDOALGO_DHE,
 					   GETALGO_FIRST_MATCH_WARN );
 		}
 	else
 		{
-		setAlgoIDInfo( &algoIDInfo, algoStringKeyexTbl, CRYPT_ALGO_NONE, 
+		setAlgoIDInfo( &algoIDInfo, algoStringKeyexTbl, CRYPT_ALGO_NONE,
 					   GETALGO_BEST_MATCH );
 		}
 	status = readAlgoStringEx( &stream, &algoIDInfo, sessionInfoPtr );
@@ -432,19 +425,19 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 		   to discard any guessed keyex that may follow */
 		preferredAlgoMismatch = TRUE;
 	if( algoIDInfo.algo == CRYPT_PSEUDOALGO_DHE )
-		/* If we're using ephemeral rather than static DH keys, we need to 
+		/* If we're using ephemeral rather than static DH keys, we need to
 		   negotiate the keyex key before we can perform the exchange */
 		handshakeInfo->requestedServerKeySize = SSH2_DEFAULT_KEYSIZE;
 
 	/* Read the pubkey (signature) algorithm info */
 	if( isServer )
 		{
-		setAlgoIDInfo( &algoIDInfo, handshakeInfo->algoStringPubkeyTbl, 
+		setAlgoIDInfo( &algoIDInfo, handshakeInfo->algoStringPubkeyTbl,
 					   handshakeInfo->pubkeyAlgo, GETALGO_FIRST_MATCH_WARN );
 		}
 	else
 		{
-		setAlgoIDInfo( &algoIDInfo, handshakeInfo->algoStringPubkeyTbl, 
+		setAlgoIDInfo( &algoIDInfo, handshakeInfo->algoStringPubkeyTbl,
 					   CRYPT_ALGO_NONE, GETALGO_BEST_MATCH );
 		}
 	status = readAlgoStringEx( &stream, &algoIDInfo, sessionInfoPtr );
@@ -461,14 +454,13 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 		preferredAlgoMismatch = TRUE;
 
 	/* Read the encryption and MAC algorithm info */
-	status = readAlgoStringPair( &stream,
-						( sessionInfoPtr->flags & SESSION_ISSERVER ) ? \
-						  algoStringEncrTblServer : algoStringEncrTblClient, 
-						&sessionInfoPtr->cryptAlgo, isServer, 
+	status = readAlgoStringPair( &stream, isServer ? \
+							algoStringEncrTblServer : algoStringEncrTblClient,
+						&sessionInfoPtr->cryptAlgo, isServer,
 						sessionInfoPtr );
 	if( cryptStatusOK( status ) )
 		status = readAlgoStringPair( &stream, algoStringMACTbl,
-									 &sessionInfoPtr->integrityAlgo, 
+									 &sessionInfoPtr->integrityAlgo,
 									 isServer, sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		{
@@ -477,9 +469,9 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Read the remaining algorithm info.  The final reserved value should
-	   always be zero, but we don't specifically check for this since at 
+	   always be zero, but we don't specifically check for this since at
 	   some point in the future it may become non-zero */
-	status = readAlgoStringPair( &stream, algoStringCoprTbl, NULL, 
+	status = readAlgoStringPair( &stream, algoStringCoprTbl, NULL,
 								 isServer, sessionInfoPtr );
 	if( cryptStatusOK( status ) )
 		status = readUniversal32( &stream );
@@ -492,11 +484,11 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 		status = readUint32( &stream );	/* Reserved value */
 		}
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( sessionInfoPtr, status,
 				"Invalid hello packet compression algorithm/language string/"
 				"trailer" );
 
-	/* If there's a guessed keyex following this packet and we didn't match 
+	/* If there's a guessed keyex following this packet and we didn't match
 	   the first-choice keyex/pubkey algorithm, tell the caller to skip it */
 	if( guessedKeyex && preferredAlgoMismatch )
 		return( OK_SPECIAL );
@@ -537,12 +529,12 @@ static int readHeaderFunction( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( ( status == OK_SPECIAL ) ? CRYPT_OK : status );
 	assert( length >= ID_SIZE + PADLENGTH_SIZE + SSH2_MIN_PADLENGTH_SIZE );
-	status = macPayload( sessionInfoPtr->iAuthInContext, sshInfo->readSeqNo, 
-						 bufPtr, MIN_PACKET_SIZE - LENGTH_SIZE, length, 
+	status = macPayload( sessionInfoPtr->iAuthInContext, sshInfo->readSeqNo,
+						 bufPtr, MIN_PACKET_SIZE - LENGTH_SIZE, length,
 						 MAC_START, sessionInfoPtr->authBlocksize, TRUE );
 	if( cryptStatusError( status ) )
-		/* We don't return an extended status at this point because we 
-		   haven't completed message MAC calculation/check yet, so any 
+		/* We don't return an extended status at this point because we
+		   haven't completed message MAC calculation/check yet, so any
 		   errors will be cryptlib-internal ones */
 		return( status );
 
@@ -558,7 +550,7 @@ static int readHeaderFunction( SESSION_INFO *sessionInfoPtr,
 		STREAM stream;
 		long payloadLength;
 
-		/* Process the channel header and make sure that the payload length 
+		/* Process the channel header and make sure that the payload length
 		   matches the packet length */
 		sMemConnect( &stream, bufPtr, SSH2_HEADER_REMAINDER_SIZE );
 		sSkip( &stream, ID_SIZE + PADLENGTH_SIZE );
@@ -575,22 +567,22 @@ static int readHeaderFunction( SESSION_INFO *sessionInfoPtr,
 										sshInfo->padLength ) )
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 					"Invalid data packet payload length %ld, should be %ld",
-					payloadLength, 
+					payloadLength,
 					length - ( removedDataLength + sshInfo->padLength ) );
 		}
 
-	/* Move the remainder down to the start of the buffer.  The general idea 
-	   is to remove all of the header data so that only the payload remains 
-	   in the buffer, avoiding the need to move it down afterwards.  This is 
-	   complicated by the fact that (unlike SSL) all of the data (including 
-	   the header) is encrypted and MAC'ed, so we can't just read that 
-	   separately but have to process it as part of the payload, remove it, 
+	/* Move the remainder down to the start of the buffer.  The general idea
+	   is to remove all of the header data so that only the payload remains
+	   in the buffer, avoiding the need to move it down afterwards.  This is
+	   complicated by the fact that (unlike SSL) all of the data (including
+	   the header) is encrypted and MAC'ed, so we can't just read that
+	   separately but have to process it as part of the payload, remove it,
 	   and remember anything that's left for later */
 	assert( SSH2_HEADER_REMAINDER_SIZE - removedDataLength > 0 );
-	memmove( bufPtr, bufPtr + removedDataLength, 
+	memmove( bufPtr, bufPtr + removedDataLength,
 			 SSH2_HEADER_REMAINDER_SIZE - removedDataLength );
 
-	/* Determine how much data we'll be expecting, adjusted for the fixed 
+	/* Determine how much data we'll be expecting, adjusted for the fixed
 	   information that we've removed and the (implicitly present) MAC data */
 	sessionInfoPtr->pendingPacketLength = \
 			sessionInfoPtr->pendingPacketRemaining = \
@@ -632,9 +624,9 @@ static int processBodyFunction( SESSION_INFO *sessionInfoPtr,
 						 length, 0, MAC_END, sessionInfoPtr->authBlocksize,
 						 TRUE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE, 
-				"Bad message MAC for packet type %d, length %d",
-				sshInfo->packetType, 
+		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+				"Bad message MAC for packet type %d, length %ld",
+				sshInfo->packetType,
 				sessionInfoPtr->pendingPacketPartialLength + length );
 
 	/* Strip the padding and MAC and update the state information */
@@ -648,7 +640,7 @@ static int processBodyFunction( SESSION_INFO *sessionInfoPtr,
 		{
 		STREAM stream;
 
-		/* Process the control message and reset the receive buffer 
+		/* Process the control message and reset the receive buffer
 		   indicators to clear it */
 		sMemConnect( &stream, bufPtr, length );
 		status = processChannelControlMessage( sessionInfoPtr, &stream );
@@ -657,7 +649,7 @@ static int processBodyFunction( SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->pendingPacketLength = 0;
 		if( cryptStatusError( status ) )
 			{
-			/* If we got an OK_SPECIAL status, the packet was handled 
+			/* If we got an OK_SPECIAL status, the packet was handled
 			   internally and we can try again.  If it was a message that
 			   the user has to respond to, it's also not a fatal error
 			   condition and they can continue afterwards */
@@ -696,14 +688,14 @@ static int preparePacketFunction( SESSION_INFO *sessionInfoPtr )
 	   Since this is wrapping in-place data, we first open a write stream to
 	   add the header, then open a read stream covering the full buffer in
 	   preparation for wrapping the packet */
-	openPacketStreamSSH( &stream, sessionInfoPtr, SSH2_PAYLOAD_HEADER_SIZE, 
+	openPacketStreamSSH( &stream, sessionInfoPtr, SSH2_PAYLOAD_HEADER_SIZE,
 						 SSH2_MSG_CHANNEL_DATA );
 	writeUint32( &stream, getCurrentChannelNo( sessionInfoPtr, \
 											   CHANNEL_WRITE ) );
 	writeUint32( &stream, dataLength );
 	assert( sStatusOK( &stream ) );
 	sMemDisconnect( &stream );
-	sMemConnect( &stream, sessionInfoPtr->sendBuffer, 
+	sMemConnect( &stream, sessionInfoPtr->sendBuffer,
 				 sessionInfoPtr->sendBufSize );
 	sSkip( &stream, SSH2_HEADER_SIZE + SSH2_PAYLOAD_HEADER_SIZE + \
 					dataLength );
@@ -744,7 +736,7 @@ static void shutdownFunction( SESSION_INFO *sessionInfoPtr )
 		STREAM stream;
 		int status;
 
-		openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT, 
+		openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
 							 SSH2_MSG_DISCONNECT );
 		writeUint32( &stream, SSH2_DISCONNECT_PROTOCOL_ERROR );
 		writeString32( &stream, "Handshake failed", 16 );
@@ -754,7 +746,7 @@ static void shutdownFunction( SESSION_INFO *sessionInfoPtr )
 			{
 			const int length = stell( &stream );
 
-			sendCloseNotification( sessionInfoPtr, 
+			sendCloseNotification( sessionInfoPtr,
 								   sMemBufPtr( &stream ) - length,
 								   length );
 			}
@@ -763,7 +755,7 @@ static void shutdownFunction( SESSION_INFO *sessionInfoPtr )
 		return;
 		}
 
-	/* Close the channel */
+	/* Close all remaining channels */
 	closeChannel( sessionInfoPtr, TRUE );
 	}
 
@@ -786,7 +778,7 @@ void initSSH2processing( SESSION_INFO *sessionInfoPtr,
 			SESSION_NEEDS_PASSWORD | \
 			SESSION_NEEDS_KEYORPASSWORD | \
 			SESSION_NEEDS_PRIVKEYSIGN,
-				/* The client private key is optional, but if present it has 
+				/* The client private key is optional, but if present it has
 				   to be signature-capable */
 		SESSION_NEEDS_PRIVATEKEY |	/* Server attributes */
 			SESSION_NEEDS_PRIVKEYSIGN,
@@ -820,4 +812,4 @@ void initSSH2processing( SESSION_INFO *sessionInfoPtr,
 		handshakeInfo->algoStringPubkeyTbl = algoStringPubkeyTbl;
 		}
 	}
-#endif /* USE_SSH2 */
+#endif /* USE_SSH */

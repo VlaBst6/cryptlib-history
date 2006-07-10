@@ -7,19 +7,19 @@
 CFG=Test32 - Win32 Release
 !MESSAGE This is not a valid makefile. To build this project using NMAKE,
 !MESSAGE use the Export Makefile command and run
-!MESSAGE 
+!MESSAGE
 !MESSAGE NMAKE /f "Test32.mak".
-!MESSAGE 
+!MESSAGE
 !MESSAGE You can specify a configuration when running NMAKE
 !MESSAGE by defining the macro CFG on the command line. For example:
-!MESSAGE 
+!MESSAGE
 !MESSAGE NMAKE /f "Test32.mak" CFG="Test32 - Win32 Release"
-!MESSAGE 
+!MESSAGE
 !MESSAGE Possible choices for configuration are:
-!MESSAGE 
+!MESSAGE
 !MESSAGE "Test32 - Win32 Release" (based on "Win32 (x86) Console Application")
 !MESSAGE "Test32 - Win32 Debug" (based on "Win32 (x86) Console Application")
-!MESSAGE 
+!MESSAGE
 
 # Begin Project
 # PROP AllowPerConfigDependencies 0
@@ -74,7 +74,7 @@ F90=fl32.exe
 # ADD BASE F90 /I "test32/"
 # ADD F90 /I "test32/"
 # ADD BASE CPP /nologo /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /YX /c
-# ADD CPP /nologo /MDd /W3 /Gm /Zi /Od /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /FD /c
+# ADD CPP /nologo /MDd /W3 /Gm /Zi /Od /I ".\\" /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /FD /c
 # SUBTRACT CPP /YX
 # ADD BASE RSC /l 0x1409 /d "_DEBUG"
 # ADD RSC /l 0x1409 /d "_DEBUG"
@@ -85,7 +85,7 @@ LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /debug /machine:I386
 # ADD LINK32 kernel32.lib user32.lib wsock32.lib odbccp32.lib /nologo /subsystem:console /incremental:no /debug /machine:I386
 
-!ENDIF 
+!ENDIF
 
 # Begin Target
 
@@ -120,7 +120,7 @@ SOURCE=.\test\keyfile.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\test\keyload.c
+SOURCE=.\test\loadkey.c
 # End Source File
 # Begin Source File
 

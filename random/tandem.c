@@ -15,7 +15,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
 #include "crypt.h"
 
 /* OS-specific includes */

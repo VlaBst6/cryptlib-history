@@ -1,19 +1,13 @@
 /****************************************************************************
 *																			*
 *						cryptlib DNS Interface Routines						*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2006					*
 *																			*
 ****************************************************************************/
 
 #include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "stream.h"
-  #include "tcp.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "stream.h"
   #include "tcp.h"
 #else
@@ -37,11 +31,19 @@
    libraries */
 
 #if ( defined( sun ) && OSVERSION > 4 )
-#undef htonl	/* Slowaris has defines that conflict with our ones */
+#undef htonl		/* Slowaris has defines that conflict with our ones */
 #undef htons
 #undef ntohl
 #undef ntohs
 #endif /* Slowaris */
+
+#ifdef DnsQuery
+  #undef DnsQuery	/* Newer versions of the platform SDK have conflicting defines */
+#endif /* DnsQuery defined as a macro in windns.h */
+
+#ifndef TEXT
+  #define TEXT		/* Win32 windows.h defines this, but not the Win16 one */
+#endif /* TEXT */
 
 static INSTANCE_HANDLE hDNS;
 
@@ -53,16 +55,17 @@ typedef int ( SOCKET_API *GETADDRINFO )( const char *nodename,
 typedef struct hostent FAR * ( SOCKET_API *GETHOSTBYNAME )( const char FAR *name );
 typedef struct hostent FAR * ( SOCKET_API *GETHOSTNAME )( char FAR * name,
 														  int namelen );
-typedef int ( SOCKET_API *GETNAMEINFO )( const struct sockaddr *sa,
-										 SIZE_TYPE salen, char *node,
-										 SIZE_TYPE nodelen, char *service,
-										 SIZE_TYPE servicelen, int flags );
+typedef int ( SOCKET_API *GETNAMEINFO )( const struct sockaddr *sa, SIZE_TYPE salen,
+										 char *node, SIZE_TYPE nodelen,
+										 char *service, SIZE_TYPE servicelen,
+										 int flags );
 typedef u_long ( SOCKET_API *HTONL )( u_long hostlong );
 typedef u_short ( SOCKET_API *HTONS )( u_short hostshort );
 typedef unsigned long ( SOCKET_API *INET_ADDR )( const char FAR *cp );
 typedef char FAR * ( SOCKET_API *INET_NTOA )( struct in_addr in );
 typedef u_long ( SOCKET_API *NTOHL )( u_long netlong );
 typedef u_short ( SOCKET_API *NTOHS )( u_short netshort );
+#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
 typedef DNS_STATUS ( WINAPI *DNSQUERY )( const LPSTR lpstrName,
 										 const WORD wType, const DWORD fOptions,
 										 const PIP4_ARRAY aipServers,
@@ -75,6 +78,7 @@ typedef DNS_STATUS ( WINAPI *DNSQUERYCONFIG )( const DNS_CONFIG_TYPE Config,
 											   PDWORD pBufferLength );
 typedef VOID ( WINAPI *DNSRECORDLISTFREE )( PDNS_RECORD pRecordList,
 											DNS_FREE_TYPE FreeType );
+#endif /* 32-bit VC++ */
 typedef int ( SOCKET_API *WSAGETLASTERROR )( void );
 
 static FREEADDRINFO pfreeaddrinfo = NULL;
@@ -88,9 +92,11 @@ static INET_ADDR pinet_addr = NULL;
 static INET_NTOA pinet_ntoa = NULL;
 static NTOHL pntohl = NULL;
 static NTOHS pntohs = NULL;
+#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
 static DNSQUERY pDnsQuery = NULL;
 static DNSQUERYCONFIG pDnsQueryConfig = NULL;
 static DNSRECORDLISTFREE pDnsRecordListFree = NULL;
+#endif /* 32-bit VC++ */
 static WSAGETLASTERROR pWSAGetLastError = NULL;
 
 #define freeaddrinfo		pfreeaddrinfo
@@ -114,13 +120,13 @@ static WSAGETLASTERROR pWSAGetLastError = NULL;
   #define DYNLOAD_WSAGETLASTERROR
 #endif /* WSAGetLastError */
 
-static int SOCKET_API my_getaddrinfo( const char *nodename, 
+static int SOCKET_API my_getaddrinfo( const char *nodename,
 									  const char *servname,
 									  const struct addrinfo *hints,
 									  struct addrinfo **res );
 static void SOCKET_API my_freeaddrinfo( struct addrinfo *ai );
-static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, 
-									  SIZE_TYPE salen, char *node, 
+static int SOCKET_API my_getnameinfo( const struct sockaddr *sa,
+									  SIZE_TYPE salen, char *node,
 									  SIZE_TYPE nodelen, char *service,
 									  SIZE_TYPE servicelen, int flags );
 
@@ -165,11 +171,12 @@ int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr )
 	/* Get the required DNS functions if they're available */
 #if defined( __WIN16__ )
 	hDNS = NULL_INSTANCE;
-#elif defined( __WIN32__ )
+#else
+  #if defined( __WIN32__ )
 	hDNS = DynamicLoad( "dnsapi.dll" );
-#elif defined( __WINCE__ )
+  #elif defined( __WINCE__ )
 	hDNS = hTCP;
-#endif /* Win16/Win32/WinCE */
+  #endif /* Win32 vs.WinCE */
 	if( hDNS != NULL_INSTANCE )
 		{
 		DnsQuery = ( DNSQUERY ) DynamicBind( hDNS, TEXT( "DnsQuery_A" ) );
@@ -183,7 +190,8 @@ int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr )
 			return( CRYPT_ERROR );
 			}
 		}
-	
+#endif /* Win16 vs.Win32/WinCE */
+
 	return( CRYPT_OK );
 	}
 
@@ -236,7 +244,7 @@ static int addAddrInfo( struct addrinfo *prevAddrInfoPtr,
 
 	/* Set the port and address information.  In general we'd copy the
 	   address to the sockAddrPtr->sin_addr.s_addr member, however on
-	   Crays, which don't have 32-bit data types, this is a 32-bit 
+	   Crays, which don't have 32-bit data types, this is a 32-bit
 	   bitfield, so we have to use the encapsulating struct */
 	sockAddrPtr->sin_family = AF_INET;
 	sockAddrPtr->sin_port = htons( ( in_port_t ) port );
@@ -245,7 +253,7 @@ static int addAddrInfo( struct addrinfo *prevAddrInfoPtr,
 	return( 0 );
 	}
 
-static int SOCKET_API my_getaddrinfo( const char *nodename, 
+static int SOCKET_API my_getaddrinfo( const char *nodename,
 									  const char *servname,
 									  const struct addrinfo *hints,
 									  struct addrinfo **res )
@@ -330,10 +338,10 @@ static void SOCKET_API my_freeaddrinfo( struct addrinfo *ai )
 		}
 	}
 
-static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, 
-									  SIZE_TYPE salen, char *node, 
-									  SIZE_TYPE nodelen, char *service,
-									  SIZE_TYPE servicelen, int flags )
+static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, SIZE_TYPE salen,
+									  char *node, SIZE_TYPE nodelen,
+									  char *service, SIZE_TYPE servicelen,
+									  int flags )
 	{
 	const struct sockaddr_in *sockAddr = ( struct sockaddr_in * ) sa;
 	const char *ipAddress;
@@ -345,9 +353,11 @@ static int SOCKET_API my_getnameinfo( const struct sockaddr *sa,
 	/* Get the remote system's address and port number */
 	if( ( ipAddress = inet_ntoa( sockAddr->sin_addr ) ) == NULL )
 		return( -1 );
-	strncpy( node, ipAddress, nodelen );
+	memcpy( node, ipAddress, nodelen );
 	node[ nodelen - 1 ] = '\0';
-	sPrintf( service, "%d", ntohs( sockAddr->sin_port ) );
+	if( sPrintf_s( service, servicelen, "%d",
+				   ntohs( sockAddr->sin_port ) ) < 0 )
+		return( -1 );
 
 	return( 0 );
 	}
@@ -361,7 +371,7 @@ static int SOCKET_API my_getnameinfo( const struct sockaddr *sa,
 
 /* Use DNS SRV to auto-detect host information */
 
-#if defined( __WINDOWS__ )
+#if defined( __WINDOWS__ ) && !defined( __WIN16__ )
 
 static void convertToSrv( char *srvName, const char *hostName )
 	{
@@ -387,10 +397,10 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 	{
 	PDNS_RECORD pDns = NULL;
 	struct hostent *hostInfo;
-	static char cachedFQDN[ MAX_URL_SIZE + 1 ];
+	static char cachedFQDN[ MAX_URL_SIZE + 8 ];
 	static time_t lastFetchTime = 0;
 #ifdef __WINCE__
-	char fqdnBuffer[ MAX_URL_SIZE + 1 ], *fqdnPtr = fqdnBuffer;
+	char fqdnBuffer[ MAX_URL_SIZE + 8 ], *fqdnPtr = fqdnBuffer;
 #else
 	char *fqdnPtr;
 #endif /* Win32 vs. WinCE */
@@ -422,7 +432,8 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 			/* Reverse the byte order for the in-addr.arpa lookup and
 			   convert the address to dotted-decimal notation */
 			address.S_un.S_addr = *( ( DWORD * ) hostInfo->h_addr_list[ i ] );
-			sprintf( cachedFQDN, "%s.in-addr.arpa", inet_ntoa( address ) );
+			sPrintf_s( cachedFQDN, MAX_URL_SIZE, "%s.in-addr.arpa",
+					   inet_ntoa( address ) );
 
 			/* Check for a name */
 			if( DnsQuery( cachedFQDN, DNS_TYPE_PTR, DNS_QUERY_BYPASS_CACHE,
@@ -476,7 +487,7 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 
 	/* Perform a DNS SRV lookup to find the host info.  SRV has basic load-
 	   balancing facilities, but for now we just use the highest-priority
-	   host that we find (it's rarely-enough used that we'll be lucky to 
+	   host that we find (it's rarely-enough used that we'll be lucky to
 	   find SRV info, let alone any load-balancing setup) */
 	dwRet = DnsQuery( ( const LPSTR ) name, DNS_TYPE_SRV, DNS_QUERY_STANDARD,
 					  NULL, &pDns, NULL );
@@ -640,8 +651,8 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 		}
 
 	/* Process the answers.  SRV has basic load-balancing facilities, but
-	   for now we just use the highest-priority host that we find (it's 
-	   rarely-enough used that we'll be lucky to find SRV info, let alone 
+	   for now we just use the highest-priority host that we find (it's
+	   rarely-enough used that we'll be lucky to find SRV info, let alone
 	   any load-balancing setup) */
 	for( i = 0; i < aCount; i++ )
 		{
@@ -700,11 +711,11 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 /* Get a host's IP address */
 
 int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
-					const char *name, const int port, 
+					const char *name, const int port,
 					const BOOLEAN isServer )
 	{
 	struct addrinfo hints;
-	char nameBuffer[ MAX_URL_SIZE ], portBuffer[ 16 ];
+	char nameBuffer[ MAX_URL_SIZE + 8 ], portBuffer[ 16 ];
 	int localPort = port;
 
 	assert( isServer || name != NULL );
@@ -730,23 +741,23 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 	/* Set up the port information and hint information needed by
 	   getaddrinfo().  The use of PF_UNSPEC is a bit problematic because RFC
 	   2553 is usually interpreted to mean "look for all addresses" rather
-	   than the more sensible "look for any address".  The reason why this 
-	   is a problem is because getaddrinfo() ends up looking for unnecessary 
-	   IPv6 addresses, either by returning IPv6 addresses when the system 
-	   doesn't do IPv6 or spending a lot of time groping around for IPv6 
-	   stuff and/or further unnecessary addresses when it's already got what 
-	   it needs.  This is made worse by confusion over implementation 
-	   details, for example early implementations of getaddrinfo() in glibc 
-	   would always try an AAAA lookup even on an IPv4-only system/network, 
-	   resulting in long delays as the resolver timed out and fell back to a 
-	   straight A lookup.  There was some disagreement over whether this was 
-	   right or wrong, and how to fix it (IPv6 purists who never noticed the 
-	   problem seemed to think that it was right, everyone else thought that 
-	   it was wrong).  Variations of this problem exist, e.g. if an IPv4 
-	   address is in /etc/hosts and DNS is down, the resolver will still 
-	   spend ages (several minutes in some cases) groping around for an IPv6 
-	   address before it finally gives up and falls back to what it already 
-	   knows from /etc/hosts.  Switching the hint from AF_UNSPEC to AF_INET 
+	   than the more sensible "look for any address".  The reason why this
+	   is a problem is because getaddrinfo() ends up looking for unnecessary
+	   IPv6 addresses, either by returning IPv6 addresses when the system
+	   doesn't do IPv6 or spending a lot of time groping around for IPv6
+	   stuff and/or further unnecessary addresses when it's already got what
+	   it needs.  This is made worse by confusion over implementation
+	   details, for example early implementations of getaddrinfo() in glibc
+	   would always try an AAAA lookup even on an IPv4-only system/network,
+	   resulting in long delays as the resolver timed out and fell back to a
+	   straight A lookup.  There was some disagreement over whether this was
+	   right or wrong, and how to fix it (IPv6 purists who never noticed the
+	   problem seemed to think that it was right, everyone else thought that
+	   it was wrong).  Variations of this problem exist, e.g. if an IPv4
+	   address is in /etc/hosts and DNS is down, the resolver will still
+	   spend ages (several minutes in some cases) groping around for an IPv6
+	   address before it finally gives up and falls back to what it already
+	   knows from /etc/hosts.  Switching the hint from AF_UNSPEC to AF_INET
 	   bypasses this problem, but has the downside of disabling IPv6 use.
 
 	   This problem was partially fixed post-RFC 2553 by adding the
@@ -756,12 +767,12 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 	   which is how it should have behaved in the first place).
 	   Unfortunately this flag isn't very widely supported yet, so it usually
 	   ends up being no-op'd out by the auto-config.
-	   
+
 	   Bounds Checker may crash in the getaddrinfo() call if maximum checking
 	   is enabled.  To fix this, set the checking level to normal rather than
 	   maximum */
 	memset( &hints, 0, sizeof( struct addrinfo ) );
-	sPrintf( portBuffer, "%d", port );
+	sPrintf_s( portBuffer, 8, "%d", port );
 	hints.ai_flags = AI_NUMERICSERV | AI_ADDRCONFIG;
 	if( isServer )
 		/* If it's a server, set the AI_PASSIVE flag so that if the
@@ -780,7 +791,7 @@ void freeAddressInfo( struct addrinfo *addrInfoPtr )
 	freeaddrinfo( addrInfoPtr );
 	}
 
-void getNameInfo( const struct sockaddr *sockAddr, char *address, 
+void getNameInfo( const struct sockaddr *sockAddr, char *address,
 				  const int addressMaxLen, int *port )
 	{
 	char portBuf[ 32 ];
@@ -796,8 +807,8 @@ void getNameInfo( const struct sockaddr *sockAddr, char *address,
 	   would be anyway, cryptlib always treats the port as a numeric arg).
 	   Oddly enough the macro version of this function in wspiapi.h used for
 	   IPv4-only situations does get it correct */
-	if( getnameinfo( sockAddr, sizeof( struct sockaddr ), address, 
-					 addressMaxLen, portBuf, 32, 
+	if( getnameinfo( sockAddr, sizeof( struct sockaddr ), address,
+					 addressMaxLen, portBuf, 32,
 					 NI_NUMERICHOST | NI_NUMERICSERV ) == 0 )
 		{
 #ifdef EBCDIC_CHARS

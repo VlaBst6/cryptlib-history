@@ -5,18 +5,11 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL ) 
   #include "cert.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
-  #include "../misc/misc_rw.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
@@ -268,7 +261,7 @@ static int findLeafNode( const CHAIN_INFO *chainInfo,
 						 const int certChainSize )
 	{
 	CHAINING_INFO chainingInfo;
-	BOOLEAN certUsed[ MAX_CHAINLENGTH ], moreMatches;
+	BOOLEAN certUsed[ MAX_CHAINLENGTH + 8 ], moreMatches;
 	int lastCertPos, i;
 
 	assert( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
@@ -354,7 +347,7 @@ static int findIdentifiedLeafNode( const CHAIN_INFO *chainInfo,
 	readSequence( &stream, &length );				/* Issuer DN */
 	issuerDNsize = ( int ) sizeofObject( length );
 	sSkip( &stream, length );
-	readGenericHole( &stream, &serialNumberSize, BER_INTEGER );
+	readGenericHole( &stream, &serialNumberSize, 1, BER_INTEGER );
 	serialNumber = sMemBufPtr( &stream );			/* Serial number */
 	status = sSkip( &stream, serialNumberSize );
 	sMemDisconnect( &stream );
@@ -413,7 +406,7 @@ static int sortCertChain( CRYPT_CERTIFICATE *iCertChain,
 						  CHAINING_INFO *chainingInfo,
 						  const BOOLEAN useStrictChaining )
 	{
-	CRYPT_CERTIFICATE orderedChain[ MAX_CHAINLENGTH ];
+	CRYPT_CERTIFICATE orderedChain[ MAX_CHAINLENGTH + 8 ];
 	CHAINING_INFO localChainingInfo, *chainingInfoPtr = &localChainingInfo;
 	BOOLEAN moreMatches;
 	const int maxMatchLevel = useStrictChaining ? 1 : 0;
@@ -496,7 +489,7 @@ static int buildCertChain( CRYPT_CERTIFICATE *iLeafCert,
 						   const CRYPT_KEYID_TYPE keyIDtype,
 						   const void *keyID, const int keyIDlength )
 	{
-	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH ];
+	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH + 8 ];
 	CERT_INFO *certChainPtr;
 	CHAINING_INFO chainingInfo;
 	int leafNodePos, complianceLevel, status;
@@ -625,7 +618,7 @@ static int buildCertChain( CRYPT_CERTIFICATE *iLeafCert,
 /* Determine whether a cert is present in a cert collection based on its
    fingerprint */
 
-static BOOLEAN certPresent( BYTE certChainHashes[][ CRYPT_MAX_HASHSIZE ],
+static BOOLEAN certPresent( BYTE certChainHashes[][ CRYPT_MAX_HASHSIZE + 8 ],
 							const int certChainLen, 
 							const CRYPT_CERTIFICATE iCryptCert )
 	{
@@ -664,8 +657,8 @@ int copyCertChain( CERT_INFO *certInfoPtr, const CRYPT_HANDLE certChain,
 	CRYPT_CERTIFICATE iChainCert;
 	CERT_INFO *chainCertInfoPtr;
 	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
-	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH ];
-	BYTE certChainHashes[ MAX_CHAINLENGTH + 1 ][ CRYPT_MAX_HASHSIZE ];
+	CHAIN_INFO chainInfo[ MAX_CHAINLENGTH + 8 ];
+	BYTE certChainHashes[ MAX_CHAINLENGTH + 1 + 8 ][ CRYPT_MAX_HASHSIZE + 8 ];
 	const int oldChainEnd = certChainInfo->chainEnd;
 	int i, status;
 
@@ -810,7 +803,7 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				   const void *keyID, const int keyIDlength,
 				   const BOOLEAN dataOnlyCert )
 	{
-	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH ];
+	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ];
 	int certSequenceLength, endPos, certChainEnd = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -830,17 +823,17 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 		{
 		case CRYPT_CERTTYPE_CERTCHAIN:
 			{
-			BYTE oid[ MAX_OID_SIZE ];
+			BYTE oid[ MAX_OID_SIZE + 8 ];
 			long integer;
 			int length, oidLength;
 
 			/* Skip the contentType OID, read the content encapsulation and 
 			   header if necessary, and burrow down into the PKCS #7 content.  
-			   First we read the wrapper.  We use readRawObject() rather 
+			   First we read the wrapper.  We use readEncodedOID() rather 
 			   than readUniversal() to make sure that we're at least getting 
 			   an OID at this point */
-			status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
-									BER_OBJECT_IDENTIFIER );
+			status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE, 
+									 BER_OBJECT_IDENTIFIER );
 			if( cryptStatusError( status ) )
 				return( status );
 			readConstructed( stream, NULL, 0 );
@@ -859,7 +852,7 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				sSkip( stream, length );
 
 			/* Read the ContentInfo header, contentType OID (ignored) and 
-			   the inner content encapsulation.  We use readRawObject()
+			   the inner content encapsulation.  We use readEncodedOID()
 			   rather than readUniversal() to make sure that we're at least
 			   getting an OID at this point.
 
@@ -867,8 +860,8 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 			   (rather than degenerate zero-length data signifying a pure 
 			   cert chain), if there's data present we skip it */
 			readSequenceI( stream, &length );
-			status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
-									BER_OBJECT_IDENTIFIER );
+			status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE, 
+									 BER_OBJECT_IDENTIFIER );
 			if( cryptStatusError( status ) )
 				return( status );
 			if( length == CRYPT_UNUSED )
@@ -878,6 +871,8 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				   indefinite-length inner data present and we have to dig 
 				   down further */
 				status = checkEOC( stream );
+				if( cryptStatusError( status ) )
+					return( status );
 				if( status == FALSE )
 					{
 					int innerLength;
@@ -1013,7 +1008,7 @@ int assembleCertChain( CRYPT_CERTIFICATE *iCertificate,
 					   const void *keyID, const int keyIDlength,
 					   const int options )
 	{
-	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH ], lastCert;
+	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ], lastCert;
 	MESSAGE_KEYMGMT_INFO getnextcertInfo;
 	const int chainOptions = options & KEYMGMT_FLAG_DATAONLY_CERT;
 	int stateInfo = CRYPT_ERROR, certChainEnd = 1, status;
@@ -1188,7 +1183,7 @@ int sizeofCertCollection( const CERT_INFO *certInfoPtr,
 
 	if( certFormatType == CRYPT_ICERTFORMAT_SSL_CERTCHAIN )
 		{
-		int certSizeInfo[ MAX_CHAINLENGTH ];
+		int certSizeInfo[ MAX_CHAINLENGTH + 8 ];
 
 		return( sizeofCertPath( certInfoPtr, certSizeInfo ) );
 		}
@@ -1198,7 +1193,7 @@ int sizeofCertCollection( const CERT_INFO *certInfoPtr,
 int writeCertCollection( STREAM *stream, const CERT_INFO *certInfoPtr,
 						 const CRYPT_CERTFORMAT_TYPE certFormatType )
 	{
-	int certSizeInfo[ MAX_CHAINLENGTH ];
+	int certSizeInfo[ MAX_CHAINLENGTH + 8 ];
 	int *certSizePtr = \
 			( certFormatType == CRYPT_ICERTFORMAT_SSL_CERTCHAIN ) ? \
 			certSizeInfo : NULL;

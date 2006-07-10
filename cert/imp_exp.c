@@ -1,20 +1,14 @@
 /****************************************************************************
 *																			*
 *						Certificate Import/Export Routines					*
-*						Copyright Peter Gutmann 1997-2003					*
+*						Copyright Peter Gutmann 1997-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
   #include "asn1_ext.h"
-#elif defined( INC_CHILD )
-  #include "cert.h"
-  #include "../misc/asn1.h"
-  #include "../misc/asn1_ext.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
@@ -316,7 +310,7 @@
 
 static int decodeCertWrapper( STREAM *stream, int *offset )
 	{
-	BYTE oid[ MAX_OID_SIZE ];
+	BYTE oid[ MAX_OID_SIZE + 8 ];
 	BOOLEAN isCertChain = FALSE;
 	int oidLength, value, status;
 
@@ -324,8 +318,8 @@ static int decodeCertWrapper( STREAM *stream, int *offset )
 	   and read the content encapsulation and header.  It can be either
 	   a PKCS #7 cert chain, a Netscape cert sequence, or an X.509
 	   userCertificate (which is just an oddball cert wrapper) */
-	status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
-							BER_OBJECT_IDENTIFIER );
+	status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE, 
+							 BER_OBJECT_IDENTIFIER );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( !memcmp( oid, OID_CMS_SIGNEDDATA, oidLength ) )
@@ -375,8 +369,8 @@ static int decodeCertWrapper( STREAM *stream, int *offset )
 		   data signifying a pure cert chain), if there's data present we 
 		   skip it */
 		readSequenceI( stream, &innerLength );
-		status = readRawObject( stream, oid, &oidLength, MAX_OID_SIZE, 
-								BER_OBJECT_IDENTIFIER );
+		status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE, 
+								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
 			return( status );
 		if( innerLength == CRYPT_UNUSED )
@@ -553,12 +547,12 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 		readSequence( &stream, NULL );
 		readFixedOID( &stream, OID_CMS_DATA );
 		readConstructed( &stream, NULL, 0 );
-		readOctetStringHole( &stream, NULL, DEFAULT_TAG );
+		readOctetStringHole( &stream, NULL, 8, DEFAULT_TAG );
 		readSequence( &stream, NULL );
 		readSequence( &stream, NULL );
 		readFixedOID( &stream, OID_CMS_DATA );
 		readConstructed( &stream, NULL, 0 );
-		readOctetStringHole( &stream, NULL, DEFAULT_TAG );
+		readOctetStringHole( &stream, NULL, 8, DEFAULT_TAG );
 		readSequence( &stream, NULL );
 		readSequence( &stream, NULL );
 		readFixedOID( &stream, 
@@ -568,7 +562,7 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 		readFixedOID( &stream, 
 					  MKOID( "\x06\x0A\x2A\x86\x48\x86\xF7\x0D\x01\x09\x16\x01" ) );
 		readConstructed( &stream, NULL, 0 );
-		readOctetStringHole( &stream, &length, DEFAULT_TAG );
+		readOctetStringHole( &stream, &length, 8, DEFAULT_TAG );
 		offset = stell( &stream );	/* Certificate start */
 		readSequence( &stream, NULL );
 		status = readSequence( &stream, NULL );
@@ -797,15 +791,20 @@ int importCert( const void *certObject, const int certObjectLength,
 			if( decodedLength <= 128 || decodedLength > 8192 )
 				return( CRYPT_ERROR_BADDATA );
 			if( ( certObjectPtr = clAlloc( "importCert",
-										   decodedLength ) ) == NULL )
+										   decodedLength + 8 ) ) == NULL )
 				return( CRYPT_ERROR_MEMORY );
-			status = base64decode( certObjectPtr, decodedLength, 
-								   certObjectDataPtr, certObjectLength, 
-								   format );
-			if( cryptStatusError( status ) )
+			decodedLength = base64decode( certObjectPtr, decodedLength, 
+									certObjectDataPtr, certObjectLength, 
+									format );
+			if( cryptStatusError( decodedLength ) )
 				{
 				clFree( "importCert", certObjectPtr );
-				return( status );
+				return( decodedLength );
+				}
+			if( decodedLength <= 128 || decodedLength > 8192 )
+				{
+				clFree( "importCert", certObjectPtr );
+				return( CRYPT_ERROR_BADDATA );
 				}
 			isDecodedObject = TRUE;
 			objectLength = decodedLength;
@@ -877,6 +876,8 @@ int importCert( const void *certObject, const int certObjectLength,
 		certReadTable[ i ].readFunction == NULL )
 		{
 		assert( NOTREACHED );
+		if( isDecodedObject )
+			clFree( "importCert", certObjectPtr );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 	readCertObjectFunction = certReadTable[ i ].readFunction;
@@ -1064,6 +1065,7 @@ int exportCert( void *certObject, int *certObjectLength,
 		certFormatType == CRYPT_ICERTFORMAT_DATA )
 		{
 		memcpy( certObject, certInfoPtr->certificate, length );
+		assert( checkObjectEncoding( certObject, length ) > 0 );
 		return( CRYPT_OK );
 		}
 	if( certFormatType == CRYPT_CERTFORMAT_TEXT_CERTIFICATE || \
@@ -1091,6 +1093,8 @@ int exportCert( void *certObject, int *certObjectLength,
 		sMemOpen( &stream, certObject, length );
 		status = writeCertChain( &stream, certInfoPtr );
 		sMemDisconnect( &stream );
+		assert( cryptStatusError( status ) || \
+				checkObjectEncoding( certObject, length ) > 0 );
 		return( status );
 		}
 

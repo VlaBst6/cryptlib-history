@@ -5,23 +5,14 @@
 *																			*
 ****************************************************************************/
 
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include "crypt.h"
 #ifdef INC_ALL
+  #include "trustmgr.h"
   #include "asn1.h"
 #else
+  #include "cert/trustmgr.h"
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
-
-/* Prototypes for cert trust management functions */
-
-int addTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE cryptCert,
-				   const void *certObject, const int certObjectLength );
-int enumTrustedCerts( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCtl,
-					  const CRYPT_KEYSET iCryptKeyset );
 
 /****************************************************************************
 *																			*
@@ -71,16 +62,16 @@ typedef struct {
 #define MK_OPTION_NONE() \
 	{ CRYPT_ATTRIBUTE_NONE, OPTION_NONE, CRYPT_UNUSED, NULL, 0 }
 
-static const FAR_BSS FIXED_OPTION_INFO fixedOptionInfo[] = {
+static const FIXED_OPTION_INFO FAR_BSS fixedOptionInfo[] = {
 	/* Dummy entry for CRYPT_ATTRIBUTE_NONE */
 	MK_OPTION_NONE(),
 
 	/* cryptlib information (read-only) */
 	MK_OPTION_S( CRYPT_OPTION_INFO_DESCRIPTION, "cryptlib security toolkit", CRYPT_UNUSED ),
-	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2005", CRYPT_UNUSED ),
+	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2006", CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MAJORVERSION, 3, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 2, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 2, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 3, CRYPT_UNUSED ),
 
 	/* Context options, base = 0 */
 	/* Algorithm = Conventional encryption/hash/MAC options */
@@ -453,7 +444,7 @@ static int readTrustedCerts( const CRYPT_KEYSET iCryptKeyset,
 							 void *trustInfoPtr )
 	{
 	RESOURCE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_PKCSIZE + 1536 ];
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 1536 + 8 ];
 	int status;
 
 	/* Read each trusted cert from the keyset */
@@ -465,7 +456,7 @@ static int readTrustedCerts( const CRYPT_KEYSET iCryptKeyset,
 		/* Add the cert data as a trusted cert item and look for the next
 		   one */
 		addTrustEntry( trustInfoPtr, CRYPT_UNUSED, msgData.data,
-					   msgData.length );
+					   msgData.length, TRUE );
 		setMessageData( &msgData, buffer, CRYPT_MAX_PKCSIZE + 1536 );
 		status = krnlSendMessage( iCryptKeyset, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT );
@@ -487,7 +478,8 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 
 	/* Try and open the config file.  If we can't open it, it means the that
 	   file doesn't exist, which isn't an error */
-	fileBuildCryptlibPath( configFilePath, fileName, BUILDPATH_GETPATH );
+	fileBuildCryptlibPath( configFilePath, MAX_PATH_LENGTH, fileName,
+						   BUILDPATH_GETPATH );
 	setMessageCreateObjectInfo( &createInfo, CRYPT_KEYSET_FILE );
 	createInfo.arg2 = CRYPT_KEYOPT_READONLY;
 	createInfo.strArg1 = configFilePath;
@@ -576,7 +568,7 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 
 			/* It's a string value, set the option straight from the encoded
 			   data */
-			status = readGenericHole( &stream, &length, BER_STRING_UTF8 );
+			status = readGenericHole( &stream, &length, 1, BER_STRING_UTF8 );
 			if( cryptStatusError( status ) )
 				continue;
 			setMessageData( &msgData, sMemBufPtr( &stream ), length );
@@ -676,7 +668,8 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 			return( OK_SPECIAL );
 
 		/* There's nothing to write, delete the config file */
-		fileBuildCryptlibPath( configFilePath, fileName, BUILDPATH_GETPATH );
+		fileBuildCryptlibPath( configFilePath, MAX_PATH_LENGTH, fileName,
+							   BUILDPATH_GETPATH );
 		fileErase( configFilePath );
 		return( CRYPT_OK );
 		}
@@ -753,7 +746,8 @@ int commitConfigData( const CRYPT_USER cryptUser, const char *fileName,
 	int status;
 
 	/* Build the path to the config file and try and create it */
-	fileBuildCryptlibPath( configFilePath, fileName, BUILDPATH_CREATEPATH );
+	fileBuildCryptlibPath( configFilePath, MAX_PATH_LENGTH, fileName,
+						   BUILDPATH_CREATEPATH );
 	setMessageCreateObjectInfo( &createInfo, CRYPT_KEYSET_FILE );
 	createInfo.arg2 = CRYPT_KEYOPT_CREATE;
 	createInfo.strArg1 = configFilePath;

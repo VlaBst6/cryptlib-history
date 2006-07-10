@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Win32 Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2005	*
+*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2006	*
 *																			*
 ****************************************************************************/
 
@@ -28,14 +28,7 @@
 
 /* General includes */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#ifdef INC_CHILD
-  #include "../crypt.h"
-#else
-  #include "crypt.h"
-#endif /* Compiler-specific includes */
+#include "crypt.h"
 
 /* OS-specific includes */
 
@@ -45,13 +38,38 @@
 #include <process.h>
 
 /* Some new CPU opcodes aren't supported by all compiler versions, if
-   they're not available we define them here */
+   they're not available we define them here.  BC++ can only handle the
+   emit directive outside an asm block, so we have to terminate the current
+   block, emit the opcode, and then restart the asm block.  In addition
+   while the 16-bit versions of BC++ had built-in asm support, the 32-bit
+   versions removed it and generate a temporary asm file which is passed
+   to Tasm32.  This is only included with some high-end versions of BC++,
+   and it's not possible to order it separately, so if you're building with
+   BC++ and get error messages about a missing tasm32.exe, add NO_ASM to
+   Project Options | Compiler | Defines */
 
-#if defined( _MSC_VER ) && ( _MSC_VER <= 1100 )
-  #define cpuid		__asm _emit 0x0F __asm _emit 0xA2
-  #define rdtsc		__asm _emit 0x0F __asm _emit 0x31
-#endif /* VC++ 5.0 or earlier */
-#define xstore_rng	__asm _emit 0x0F __asm _emit 0xA7 __asm _emit 0xC0
+#if defined( _MSC_VER )
+  #if _MSC_VER <= 1100
+	#define cpuid		__asm _emit 0x0F __asm _emit 0xA2
+	#define rdtsc		__asm _emit 0x0F __asm _emit 0x31
+  #endif /* VC++ 5.0 or earlier */
+  #define xstore_rng	__asm _emit 0x0F __asm _emit 0xA7 __asm _emit 0xC0
+#endif /* VC++ */
+#if defined __BORLANDC__
+  #define cpuid			} __emit__( 0x0F, 0xA2 ); __asm {
+  #define rdtsc			} __emit__( 0x0F, 0x31 ); __asm {
+  #define xstore_rng	} __emit__( 0x0F, 0xA7, 0xC0 ); __asm {
+#endif /* BC++ */
+
+/* Map a value that may be 32 or 64 bits depending on the platform to a 
+   long */
+
+#if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+  #define addRandomHandle( randomState, handle ) \
+		  addRandomLong( randomState, PtrToUlong( handle ) )
+#else
+  #define addRandomHandle	addRandomValue
+#endif /* 32- vs. 64-bit VC++ */
 
 /* The size of the intermediate buffer used to accumulate polled data */
 
@@ -71,9 +89,9 @@ static DWORD threadID;		/* Background polling thread ID */
 *																			*
 ****************************************************************************/
 
-/* The number of bytes to read from the PIII RNG on each slow poll */
+/* The number of bytes to read from the system RNG on each slow poll */
 
-#define PIIIRNG_BYTES		64
+#define SYSTEMRNG_BYTES		64
 
 /* Intel Chipset CSP type and name */
 
@@ -94,6 +112,18 @@ typedef BOOL ( WINAPI *CRYPTGENRANDOM )( HCRYPTPROV hProv, DWORD dwLen,
 										 BYTE *pbBuffer );
 typedef BOOL ( WINAPI *CRYPTRELEASECONTEXT )( HCRYPTPROV hProv, DWORD dwFlags );
 
+/* Somewhat alternative functionality available as a direct call, for 
+   Windows XP and newer.  This is the CryptoAPI RNG, which isn't anywhere
+   near as good as the HW RNG, but we use it if it's present on the basis
+   that at least it can't make things any worse.  This direct access version 
+   is only available under Windows XP, we don't go out of our way to access
+   the more general CryptoAPI one since the main purpose of using it is to 
+   take advantage of any possible future hardware RNGs that may be added, 
+   for example via TCPA devices */
+
+typedef BOOL ( WINAPI *RTLGENRANDOM )( PVOID RandomBuffer, 
+									   ULONG RandomBufferLength );
+
 /* Global function pointers. These are necessary because the functions need
    to be dynamically linked since older versions of Win95 and NT don't contain
    them */
@@ -101,20 +131,18 @@ typedef BOOL ( WINAPI *CRYPTRELEASECONTEXT )( HCRYPTPROV hProv, DWORD dwFlags );
 static CRYPTACQUIRECONTEXT pCryptAcquireContext = NULL;
 static CRYPTGENRANDOM pCryptGenRandom = NULL;
 static CRYPTRELEASECONTEXT pCryptReleaseContext = NULL;
+static RTLGENRANDOM pRtlGenRandom = NULL;
 
 /* Handle to the RNG CSP */
 
-static HCRYPTPROV hProv;	/* Handle to Intel RNG CSP */
+static BOOLEAN systemRngAvailable;	/* Whether system RNG is available */
+static HCRYPTPROV hProv;			/* Handle to Intel RNG CSP */
 
-/* Try and connect to the PIII RNG CSP.  The AMD 768 southbridge (from the
-   760 MP chipset) also has a hardware RNG, but there doesn't appear to be
-   any driver support for this as there is for the Intel RNG so we can't do
-   much with it.  OTOH the Intel RNG is also effectively dead as well,
-   mostly due to virtually nonexistant support/marketing by Intel, it's
-   included here mostly for form's sake */
+/* Try and connect to the system RNG if there's one present */
 
-static void initPIIIRng( void )
+static void initSystemRNG( void )
 	{
+	systemRngAvailable = FALSE;
 	hProv = NULL;
 	if( ( hAdvAPI32 = GetModuleHandle( "AdvAPI32.dll" ) ) == NULL )
 		return;
@@ -131,41 +159,66 @@ static void initPIIIRng( void )
 	pCryptReleaseContext = ( CRYPTRELEASECONTEXT ) GetProcAddress( hAdvAPI32,
 													"CryptReleaseContext" );
 
-	/* Make sure we got valid pointers for every CryptoAPI function and that
-	   the required CSP is present */
-	if( pCryptAcquireContext == NULL || \
-		pCryptGenRandom == NULL || pCryptReleaseContext == NULL || \
-		pCryptAcquireContext( &hProv, NULL, INTEL_DEF_PROV,
-							  PROV_INTEL_SEC, 0 ) == FALSE )
+	/* Get a pointer to the native randomness function if it's available.  
+	   This isn't exported by name, so we have to get it by ordinal */
+	pRtlGenRandom = ( RTLGENRANDOM ) GetProcAddress( hAdvAPI32,
+													"SystemFunction036" );
+
+	/* Try and connect to the PIII RNG CSP.  The AMD 768 southbridge (from 
+	   the 760 MP chipset) also has a hardware RNG, but there doesn't appear 
+	   to be any driver support for this as there is for the Intel RNG so we 
+	   can't do much with it.  OTOH the Intel RNG is also effectively dead 
+	   as well, mostly due to virtually nonexistant support/marketing by 
+	   Intel, it's included here mostly for form's sake */
+	if( ( pCryptAcquireContext == NULL || \
+		  pCryptGenRandom == NULL || pCryptReleaseContext == NULL || \
+		  pCryptAcquireContext( &hProv, NULL, INTEL_DEF_PROV,
+								PROV_INTEL_SEC, 0 ) == FALSE ) && \
+		( pRtlGenRandom == NULL ) )
 		{
 		hAdvAPI32 = NULL;
 		hProv = NULL;
 		}
+	else
+		/* Remember that we have a system RNG available for use */
+		systemRngAvailable = TRUE;
 	}
 
-/* Read data from the PIII hardware RNG */
+/* Read data from the system RNG, hopefully the PIII hardware RNG but the
+   CryptoAPI software RNG as a fallback */
 
-static void readPIIIRng( void )
+static void readSystemRNG( void )
 	{
-	BYTE buffer[ PIIIRNG_BYTES ];
+	BYTE buffer[ SYSTEMRNG_BYTES + 8 ];
+	int quality = 0;
 
-	if( hProv == NULL )
+	if( !systemRngAvailable )
 		return;
 
-	/* Read 128 bytes from the PIII RNG.  We don't rely on this for all our
-	   randomness requirements in case it's broken in some way */
-	if( pCryptGenRandom( hProv, PIIIRNG_BYTES, buffer ) )
+	/* Read SYSTEMRNG_BYTES bytes from the system RNG.  We don't rely on 
+	   this for all our randomness requirements (particularly the software 
+	   RNG) in case it's broken in some way */
+	if( hProv != NULL )
+		{
+		if( pCryptGenRandom( hProv, SYSTEMRNG_BYTES, buffer ) )
+			quality = 80;
+		}
+	else
+		{
+		if( pRtlGenRandom( buffer, SYSTEMRNG_BYTES ) )
+			quality = 50;
+		}
+	if( quality > 0 )
 		{
 		RESOURCE_DATA msgData;
-		static const int quality = 90;
 
-		setMessageData( &msgData, buffer, PIIIRNG_BYTES );
+		setMessageData( &msgData, buffer, SYSTEMRNG_BYTES );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
 						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
 						 ( void * ) &quality,
 						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
-		zeroise( buffer, PIIIRNG_BYTES );
+		zeroise( buffer, SYSTEMRNG_BYTES );
 		}
 	}
 
@@ -321,8 +374,8 @@ static void readPnPData( void )
 		{
 		SP_DEVINFO_DATA devInfoData;
 		RANDOM_STATE randomState;
-		BYTE buffer[ RANDOM_BUFSIZE ];
-		BYTE pnpBuffer[ 512 ];
+		BYTE buffer[ RANDOM_BUFSIZE + 8 ];
+		BYTE pnpBuffer[ 512 + 8 ];
 		DWORD cbPnPBuffer;
 		int deviceCount;
 
@@ -365,7 +418,7 @@ void fastPoll( void )
 	HANDLE handle;
 	POINT point;
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 
 	if( krnlIsExiting() )
 		return;
@@ -380,23 +433,26 @@ void fastPoll( void )
 	   focus, whether system queue has any events, cursor position for last
 	   message, 1 ms time for last message, handle of window with clipboard
 	   open, handle of process heap, handle of procs window station, types of
-	   events in input queue, and milliseconds since Windows was started */
-	addRandomValue( randomState, GetActiveWindow() );
-	addRandomValue( randomState, GetCapture() );
-	addRandomValue( randomState, GetClipboardOwner() );
-	addRandomValue( randomState, GetClipboardViewer() );
-	addRandomValue( randomState, GetCurrentProcess() );
+	   events in input queue, and milliseconds since Windows was started.
+	   Since a HWND/HANDLE can be a 64-bit value on a 64-bit platform, we 
+	   have to use a mapping macro that discards the high 32 bits (which
+	   presumably won't be of much interest anyway) */
+	addRandomHandle( randomState, GetActiveWindow() );
+	addRandomHandle( randomState, GetCapture() );
+	addRandomHandle( randomState, GetClipboardOwner() );
+	addRandomHandle( randomState, GetClipboardViewer() );
+	addRandomHandle( randomState, GetCurrentProcess() );
 	addRandomValue( randomState, GetCurrentProcessId() );
-	addRandomValue( randomState, GetCurrentThread() );
+	addRandomHandle( randomState, GetCurrentThread() );
 	addRandomValue( randomState, GetCurrentThreadId() );
-	addRandomValue( randomState, GetDesktopWindow() );
-	addRandomValue( randomState, GetFocus() );
+	addRandomHandle( randomState, GetDesktopWindow() );
+	addRandomHandle( randomState, GetFocus() );
 	addRandomValue( randomState, GetInputState() );
 	addRandomValue( randomState, GetMessagePos() );
 	addRandomValue( randomState, GetMessageTime() );
-	addRandomValue( randomState, GetOpenClipboardWindow() );
-	addRandomValue( randomState, GetProcessHeap() );
-	addRandomValue( randomState, GetProcessWindowStation() );
+	addRandomHandle( randomState, GetOpenClipboardWindow() );
+	addRandomHandle( randomState, GetProcessHeap() );
+	addRandomHandle( randomState, GetProcessWindowStation() );
 	addRandomValue( randomState, GetTickCount() );
 	if( krnlIsExiting() )
 		return;
@@ -490,6 +546,7 @@ void fastPoll( void )
 	   To make things unambiguous, we detect a CPU new enough to call RDTSC
 	   directly by checking for CPUID capabilities, and fall back to QPC if
 	   this isn't present */
+#ifndef NO_ASM
 	if( sysCaps & SYSCAP_FLAG_RDTSC )
 		{
 		unsigned long value;
@@ -500,8 +557,9 @@ void fastPoll( void )
 			rdtsc
 			mov [value], eax	/* Ignore high 32 bits, which are > 1s res */
 			}
-		addRandomValue( randomState, &value );
+		addRandomValue( randomState, value );
 		}
+#endif /* NO_ASM */
 	else
 		if( QueryPerformanceCounter( &performanceCount ) )
 			addRandomData( randomState, &performanceCount,
@@ -518,6 +576,7 @@ void fastPoll( void )
 	   that we have to force alignment using a LONGLONG rather than a #pragma
 	   pack, since chars don't need alignment it would have no effect on the
 	   BYTE [] member */
+#ifndef NO_ASM
 	if( sysCaps & SYSCAP_FLAG_XSTORE )
 		{
 		struct alignStruct {
@@ -528,7 +587,7 @@ void fastPoll( void )
 		void *bufPtr = rngBuffer->buffer;	/* Get it into a form asm can handle */
 		int byteCount = 0;
 
-		_asm {
+		__asm {
 			push es
 			xor ecx, ecx		/* Tell VC++ that ECX will be trashed */
 			mov eax, 0xC0000001	/* Centaur extended feature flags */
@@ -550,6 +609,7 @@ void fastPoll( void )
 		if( byteCount > 0 )
 			addRandomData( randomState, bufPtr, byteCount );
 		}
+#endif /* NO_ASM */
 
 	/* Flush any remaining data through.  Quality = int( 33 1/3 % ) */
 	endRandomData( randomState, 34 );
@@ -601,7 +661,7 @@ static void slowPollWin95( void )
 	HEAPLIST32 hl32;
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
-	BYTE buffer[ BIG_RANDOM_BUFSIZE ];
+	BYTE buffer[ BIG_RANDOM_BUFSIZE + 8 ];
 	int listCount = 0;
 
 	/* The following are fixed for the lifetime of the process so we only
@@ -802,8 +862,18 @@ typedef DWORD ( WINAPI *NETAPIBUFFERFREE )( LPVOID lpBuffer );
 
 /* Type definitions for functions to call native NT functions */
 
-typedef DWORD ( WINAPI *NTQUERYSYSTEMINFO )( DWORD dwType, DWORD dwData,
-											 DWORD dwMaxSize, DWORD dwDataSize );
+typedef DWORD ( WINAPI *NTQUERYSYSTEMINFORMATION )( DWORD systemInformationClass,
+								PVOID systemInformation,
+								ULONG systemInformationLength,
+								PULONG returnLength );
+typedef DWORD ( WINAPI *NTQUERYINFORMATIONPROCESS )( HANDLE processHandle,
+								DWORD processInformationClass,
+								PVOID processInformation,
+								ULONG processInformationLength,
+								PULONG returnLength );
+typedef DWORD ( WINAPI *NTPOWERINFORMATION )( DWORD powerInformationClass,
+								PVOID inputBuffer, ULONG inputBufferLength,
+								PVOID outputBuffer, ULONG outputBufferLength );
 
 /* Global function pointers. These are necessary because the functions need to
    be dynamically linked since only the WinNT kernel currently contains them.
@@ -812,7 +882,9 @@ typedef DWORD ( WINAPI *NTQUERYSYSTEMINFO )( DWORD dwType, DWORD dwData,
 static NETSTATISTICSGET pNetStatisticsGet = NULL;
 static NETAPIBUFFERSIZE pNetApiBufferSize = NULL;
 static NETAPIBUFFERFREE pNetApiBufferFree = NULL;
-static NTQUERYSYSTEMINFO pNtQuerySystemInfo = NULL;
+static NTQUERYSYSTEMINFORMATION pNtQuerySystemInformation = NULL;
+static NTQUERYINFORMATIONPROCESS pNtQueryInformationProcess = NULL;
+static NTPOWERINFORMATION pNtPowerInformation = NULL;
 
 /* When we query the performance counters, we allocate an initial buffer and
    then reallocate it as required until RegQueryValueEx() stops returning
@@ -822,227 +894,19 @@ static NTQUERYSYSTEMINFO pNtQuerySystemInfo = NULL;
 #define PERFORMANCE_BUFFER_SIZE		65536	/* Start at 64K */
 #define PERFORMANCE_BUFFER_STEP		16384	/* Step by 16K */
 
-static void slowPollWinNT( void )
+static void registryPoll( void )
 	{
-	static BOOLEAN addedFixedItems = FALSE;
-	static int isWorkstation = CRYPT_ERROR;
 	static int cbPerfData = PERFORMANCE_BUFFER_SIZE;
-	RESOURCE_DATA msgData;
 	PPERF_DATA_BLOCK pPerfData;
-	HANDLE hDevice;
-	LPBYTE lpBuffer;
-	DWORD dwSize, status;
-	int nDrive, iterations = 0;
-
-	/* Find out whether this is an NT server or workstation if necessary */
-	if( isWorkstation == CRYPT_ERROR )
-		{
-		HKEY hKey;
-
-		if( RegOpenKeyEx( HKEY_LOCAL_MACHINE,
-						  "SYSTEM\\CurrentControlSet\\Control\\ProductOptions",
-						  0, KEY_READ, &hKey ) == ERROR_SUCCESS )
-			{
-			BYTE szValue[ 32 ];
-			dwSize = sizeof( szValue );
-
-			isWorkstation = TRUE;
-			status = RegQueryValueEx( hKey, "ProductType", 0, NULL,
-									  szValue, &dwSize );
-			if( status == ERROR_SUCCESS && stricmp( szValue, "WinNT" ) )
-				/* Note: There are (at least) three cases for ProductType:
-				   WinNT = NT Workstation, ServerNT = NT Server, LanmanNT =
-				   NT Server acting as a Domain Controller */
-				isWorkstation = FALSE;
-
-			RegCloseKey( hKey );
-			}
-		}
-
-	/* The following are fixed for the lifetime of the process so we only
-	   add them once */
-	if( !addedFixedItems )
-		{
-		readPnPData();
-		addedFixedItems = TRUE;
-		}
-
-	/* Initialize the NetAPI32 function pointers if necessary */
-	if( hNetAPI32 == NULL )
-		{
-		/* Obtain a handle to the module containing the Lan Manager functions */
-		if( ( hNetAPI32 = LoadLibrary( "NetAPI32.dll" ) ) != NULL )
-			{
-			/* Now get pointers to the functions */
-			pNetStatisticsGet = ( NETSTATISTICSGET ) GetProcAddress( hNetAPI32,
-														"NetStatisticsGet" );
-			pNetApiBufferSize = ( NETAPIBUFFERSIZE ) GetProcAddress( hNetAPI32,
-														"NetApiBufferSize" );
-			pNetApiBufferFree = ( NETAPIBUFFERFREE ) GetProcAddress( hNetAPI32,
-														"NetApiBufferFree" );
-
-			/* Make sure we got valid pointers for every NetAPI32 function */
-			if( pNetStatisticsGet == NULL ||
-				pNetApiBufferSize == NULL ||
-				pNetApiBufferFree == NULL )
-				{
-				/* Free the library reference and reset the static handle */
-				FreeLibrary( hNetAPI32 );
-				hNetAPI32 = NULL;
-				}
-			}
-		}
-
-	/* Initialize the NT kernel native API function pointers if necessary */
-	if( hNTAPI == NULL && \
-		( hNTAPI = GetModuleHandle( "NTDll.dll" ) ) != NULL )
-		{
-		/* Get a pointer to the NT native information query function */
-		pNtQuerySystemInfo = ( NTQUERYSYSTEMINFO ) GetProcAddress( hNTAPI,
-												"NtQuerySystemInformation" );
-		if( pNtQuerySystemInfo == NULL )
-			hNTAPI = NULL;
-		}
-	if( krnlIsExiting() )
-		return;
-
-	/* Get network statistics.  Note: Both NT Workstation and NT Server by
-	   default will be running both the workstation and server services.  The
-	   heuristic below is probably useful though on the assumption that the
-	   majority of the network traffic will be via the appropriate service. In
-	   any case the network statistics return almost no randomness */
-	if( hNetAPI32 != NULL &&
-		pNetStatisticsGet( NULL,
-						   isWorkstation ? L"LanmanWorkstation" : L"LanmanServer",
-						   0, 0, &lpBuffer ) == 0 )
-		{
-		pNetApiBufferSize( lpBuffer, &dwSize );
-		setMessageData( &msgData, lpBuffer, dwSize );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		pNetApiBufferFree( lpBuffer );
-		}
-
-	/* Get disk I/O statistics for all the hard drives */
-	for( nDrive = 0;; nDrive++ )
-		{
-		BYTE diskPerformance[ 256 ];
-		char szDevice[ 24 ];
-
-		/* Check whether we can access this device */
-		sprintf( szDevice, "\\\\.\\PhysicalDrive%d", nDrive );
-		hDevice = CreateFile( szDevice, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-							  NULL, OPEN_EXISTING, 0, NULL );
-		if( hDevice == INVALID_HANDLE_VALUE )
-			break;
-
-		/* Note: This only works if the user has turned on the disk
-		   performance counters with 'diskperf -y'.  These counters are
-		   usually disabled, although they appear to be enabled in newer
-		   installs of Win2K and XP.  In addition using the documented
-		   DISK_PERFORMANCE data structure to contain the returned data
-		   returns ERROR_INSUFFICIENT_BUFFER (which is wrong) and doesn't
-		   change dwSize (which is also wrong), so we pass in a larger
-		   buffer and pre-set dwSize to a safe value.  Finally, there is a
-		   bug in pre-SP4 Win2K in which enabling diskperf, installing a
-		   file system filter driver, and then disabling diskperf, causes
-		   diskperf to corrupt the registry key HKEY_LOCAL_MACHINE\SYSTEM\
-		   CurrentControlSet\Control\Class\{71A27CDD-812A-11D0-BEC7-
-		   08002BE2092F}\Upper Filters, resulting in a Stop 0x7B bugcheck */
-		dwSize = sizeof( diskPerformance );
-		if( DeviceIoControl( hDevice, IOCTL_DISK_PERFORMANCE, NULL, 0,
-							 &diskPerformance, sizeof( diskPerformance ),
-							 &dwSize, NULL ) )
-			{
-			if( krnlIsExiting() )
-				{
-				CloseHandle( hDevice );
-				return;
-				}
-			setMessageData( &msgData, &diskPerformance, dwSize );
-			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-			}
-		CloseHandle( hDevice );
-		}
-	if( krnlIsExiting() )
-		return;
-
-	/* In theory we should be using the Win32 performance query API to obtain
-	   unpredictable data from the system, however this is so unreliable (see
-	   the multiple sets of comments further down) that it's too risky to
-	   rely on it except as a fallback in emergencies.  Instead, we rely
-	   mostly on an NT native API function that has the dual advantages that
-	   it doesn't have as many (known) problems as the Win32 equivalent, and
-	   that it doesn't access the data indirectly via pseudo-registry keys,
-	   which means that it's much faster.  Note that the Win32 equivalent
-	   actually works almost all of the time, the problem is that on one or
-	   two systems it can fail in strange ways that are never the same and
-	   can't be reproduced on any other system, which is why we use the
-	   native API here.  Microsoft officially documented this function in
-	   early 2003, so it'll be fairly safe to use */
-	if( hNTAPI != NULL )
-		{
-		void *buffer = clAlloc( "slowPollNT", PERFORMANCE_BUFFER_SIZE );
-
-		if( buffer != NULL )
-			{
-			DWORD dwSize = PERFORMANCE_BUFFER_SIZE, dwType;
-			int noResults = 0;
-
-			/* Scan the first 64 possible information types (we don't bother
-			   with increasing the buffer size as we do with the Win32 version
-			   of the performance data read, we may miss a few classes but
-			   it's no big deal).  In addition the returned size value for
-			   some classes is wrong (e.g. 23 and 24 return a size of 0) so we
-			   miss a few more things, but again it's no big deal.  This scan
-			   typically yields around 20 pieces of data, there's nothing in
-			   the range 65...128 so chances are there won't be anything above
-			   there either */
-			for( dwType = 0; dwType < 64; dwType++ )
-				{
-				status = pNtQuerySystemInfo( dwType, ( DWORD ) buffer,
-											 32768, ( DWORD ) &dwSize );
-				if( status == ERROR_SUCCESS && dwSize > 0 )
-					{
-					if( krnlIsExiting() )
-						{
-						clFree( "slowPollWinNT", buffer );
-						return;
-						}
-					setMessageData( &msgData, buffer, dwSize );
-					status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-										IMESSAGE_SETATTRIBUTE_S, &msgData,
-										CRYPT_IATTRIBUTE_ENTROPY );
-					if( cryptStatusOK( status ) )
-						noResults++;
-					}
-				}
-			clFree( "slowPollWinNT", buffer );
-
-			/* If we got enough data, we can leave now without having to try
-			   for a Win32-level performance information query */
-			if( noResults > 15 )
-				{
-				static const int quality = 100;
-
-				if( krnlIsExiting() )
-					return;
-				krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-								 ( void * ) &quality,
-								 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
-				return;
-				}
-			}
-		}
-	if( krnlIsExiting() )
-		return;
+	RESOURCE_DATA msgData;
+	DWORD dwSize, dwStatus;
+	int iterations = 0, status;
 
 	/* Wait for any async keyset driver binding to complete.  You may be
-	   wondering what this call is doing here... the reason it's necessary is
-	   because RegQueryValueEx() will hang indefinitely if the async driver
-	   bind is in progress.  The problem occurs in the dynamic loading and
-	   linking of driver DLL's, which work as follows:
+	   wondering what this call is doing here... the reason why it's 
+	   necessary is because RegQueryValueEx() will hang indefinitely if the 
+	   async driver bind is in progress.  The problem occurs in the dynamic 
+	   loading and linking of driver DLL's, which work as follows:
 
 		hDriver = LoadLibrary( DRIVERNAME );
 		pFunction1 = ( TYPE_FUNC1 ) GetProcAddress( hDriver, NAME_FUNC1 );
@@ -1119,14 +983,13 @@ static void slowPollWinNT( void )
 	while( pPerfData != NULL && iterations++ < 10 )
 		{
 		dwSize = cbPerfData;
-		status = RegQueryValueEx( HKEY_PERFORMANCE_DATA, "Global", NULL,
-								  NULL, ( LPBYTE ) pPerfData, &dwSize );
-		if( status == ERROR_SUCCESS )
+		dwStatus = RegQueryValueEx( HKEY_PERFORMANCE_DATA, "Global", NULL,
+									NULL, ( LPBYTE ) pPerfData, &dwSize );
+		if( dwStatus == ERROR_SUCCESS )
 			{
 			if( !memcmp( pPerfData->Signature, L"PERF", 8 ) )
 				{
 				static const int quality = 100;
-				int status;
 
 				setMessageData( &msgData, pPerfData, dwSize );
 				status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -1142,7 +1005,7 @@ static void slowPollWinNT( void )
 			pPerfData = NULL;
 			}
 		else
-			if( status == ERROR_MORE_DATA )
+			if( dwStatus == ERROR_MORE_DATA )
 				{
 				cbPerfData += PERFORMANCE_BUFFER_STEP;
 				pPerfData = ( PPERF_DATA_BLOCK ) realloc( pPerfData, cbPerfData );
@@ -1155,6 +1018,343 @@ static void slowPollWinNT( void )
 	   isn't done then any system components that provide performance data
 	   can't be removed or changed while the handle remains active */
 	RegCloseKey( HKEY_PERFORMANCE_DATA );
+	}
+
+static void slowPollWinNT( void )
+	{
+	static BOOLEAN addedFixedItems = FALSE;
+	static int isWorkstation = CRYPT_ERROR;
+	RESOURCE_DATA msgData;
+	HANDLE hDevice;
+	LPBYTE lpBuffer;
+	ULONG ulSize;
+	DWORD dwType, dwSize, dwResult;
+	void *buffer;
+	int nDrive, noResults = 0, status;
+
+	/* Find out whether this is an NT server or workstation if necessary */
+	if( isWorkstation == CRYPT_ERROR )
+		{
+		HKEY hKey;
+
+		if( RegOpenKeyEx( HKEY_LOCAL_MACHINE,
+						  "SYSTEM\\CurrentControlSet\\Control\\ProductOptions",
+						  0, KEY_READ, &hKey ) == ERROR_SUCCESS )
+			{
+			BYTE szValue[ 32 + 8 ];
+			dwSize = 32;
+
+			isWorkstation = TRUE;
+			if( RegQueryValueEx( hKey, "ProductType", 0, NULL, szValue,
+								 &dwSize ) == ERROR_SUCCESS && \
+				stricmp( szValue, "WinNT" ) )
+				/* Note: There are (at least) three cases for ProductType:
+				   WinNT = NT Workstation, ServerNT = NT Server, LanmanNT =
+				   NT Server acting as a Domain Controller */
+				isWorkstation = FALSE;
+
+			RegCloseKey( hKey );
+			}
+		}
+
+	/* The following are fixed for the lifetime of the process so we only
+	   add them once */
+	if( !addedFixedItems )
+		{
+		readPnPData();
+		addedFixedItems = TRUE;
+		}
+
+	/* Initialize the NetAPI32 function pointers if necessary */
+	if( hNetAPI32 == NULL )
+		{
+		/* Obtain a handle to the module containing the Lan Manager functions */
+		if( ( hNetAPI32 = LoadLibrary( "NetAPI32.dll" ) ) != NULL )
+			{
+			/* Now get pointers to the functions */
+			pNetStatisticsGet = ( NETSTATISTICSGET ) GetProcAddress( hNetAPI32,
+														"NetStatisticsGet" );
+			pNetApiBufferSize = ( NETAPIBUFFERSIZE ) GetProcAddress( hNetAPI32,
+														"NetApiBufferSize" );
+			pNetApiBufferFree = ( NETAPIBUFFERFREE ) GetProcAddress( hNetAPI32,
+														"NetApiBufferFree" );
+
+			/* Make sure we got valid pointers for every NetAPI32 function */
+			if( pNetStatisticsGet == NULL ||
+				pNetApiBufferSize == NULL ||
+				pNetApiBufferFree == NULL )
+				{
+				/* Free the library reference and reset the static handle */
+				FreeLibrary( hNetAPI32 );
+				hNetAPI32 = NULL;
+				}
+			}
+		}
+
+	/* Initialize the NT kernel native API function pointers if necessary */
+	if( hNTAPI == NULL && \
+		( hNTAPI = GetModuleHandle( "NTDll.dll" ) ) != NULL )
+		{
+		/* Get a pointer to the NT native information query functions */
+		pNtQuerySystemInformation = ( NTQUERYSYSTEMINFORMATION ) \
+						GetProcAddress( hNTAPI, "NtQuerySystemInformation" );
+		pNtQueryInformationProcess = ( NTQUERYINFORMATIONPROCESS ) \
+						GetProcAddress( hNTAPI, "NtQueryInformationProcess" );
+		if( pNtQuerySystemInformation == NULL || \
+			pNtQueryInformationProcess == NULL )
+			hNTAPI = NULL;
+		pNtPowerInformation = ( NTPOWERINFORMATION ) \
+						GetProcAddress( hNTAPI, "NtPowerInformation" );
+		}
+	if( krnlIsExiting() )
+		return;
+
+	/* Get network statistics.  Note: Both NT Workstation and NT Server by
+	   default will be running both the workstation and server services.  The
+	   heuristic below is probably useful though on the assumption that the
+	   majority of the network traffic will be via the appropriate service. In
+	   any case the network statistics return almost no randomness */
+	if( hNetAPI32 != NULL &&
+		pNetStatisticsGet( NULL,
+						   isWorkstation ? L"LanmanWorkstation" : L"LanmanServer",
+						   0, 0, &lpBuffer ) == 0 )
+		{
+		pNetApiBufferSize( lpBuffer, &dwSize );
+		setMessageData( &msgData, lpBuffer, dwSize );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		pNetApiBufferFree( lpBuffer );
+		}
+
+	/* Get disk I/O statistics for all the hard drives */
+	for( nDrive = 0;; nDrive++ )
+		{
+		BYTE diskPerformance[ 256 + 8 ];
+		char szDevice[ 32 + 8 ];
+
+		/* Check whether we can access this device */
+		sPrintf_s( szDevice, 32, "\\\\.\\PhysicalDrive%d", nDrive );
+		hDevice = CreateFile( szDevice, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+							  NULL, OPEN_EXISTING, 0, NULL );
+		if( hDevice == INVALID_HANDLE_VALUE )
+			break;
+
+		/* Note: This only works if the user has turned on the disk
+		   performance counters with 'diskperf -y'.  These counters are
+		   usually disabled, although they appear to be enabled in newer
+		   installs of Win2K and XP.  In addition using the documented
+		   DISK_PERFORMANCE data structure to contain the returned data
+		   returns ERROR_INSUFFICIENT_BUFFER (which is wrong) and doesn't
+		   change dwSize (which is also wrong), so we pass in a larger
+		   buffer and pre-set dwSize to a safe value.  Finally, there is a
+		   bug in pre-SP4 Win2K in which enabling diskperf, installing a
+		   file system filter driver, and then disabling diskperf, causes
+		   diskperf to corrupt the registry key HKEY_LOCAL_MACHINE\SYSTEM\
+		   CurrentControlSet\Control\Class\{71A27CDD-812A-11D0-BEC7-
+		   08002BE2092F}\Upper Filters, resulting in a Stop 0x7B bugcheck */
+		dwSize = sizeof( diskPerformance );
+		if( DeviceIoControl( hDevice, IOCTL_DISK_PERFORMANCE, NULL, 0,
+							 &diskPerformance, 256, &dwSize, NULL ) )
+			{
+			if( krnlIsExiting() )
+				{
+				CloseHandle( hDevice );
+				return;
+				}
+			setMessageData( &msgData, &diskPerformance, dwSize );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			}
+		CloseHandle( hDevice );
+		}
+	if( krnlIsExiting() )
+		return;
+
+	/* In theory we should be using the Win32 performance query API to obtain
+	   unpredictable data from the system, however this is so unreliable (see
+	   the multiple sets of comments in registryPoll()) that it's too risky
+	   to rely on it except as a fallback in emergencies.  Instead, we rely
+	   mostly on the NT native API function NtQuerySystemInformation(), which
+	   has the dual advantages that it doesn't have as many (known) problems
+	   as the Win32 equivalent and that it doesn't access the data indirectly
+	   via pseudo-registry keys, which means that it's much faster.  Note
+	   that the Win32 equivalent actually works almost all of the time, the
+	   problem is that on one or two systems it can fail in strange ways that
+	   are never the same and can't be reproduced on any other system, which
+	   is why we use the native API here.  Microsoft officially documented
+	   this function in early 2003, so it'll be fairly safe to use */
+	if( ( hNTAPI == NULL ) || \
+		( buffer = clAlloc( "slowPollNT", PERFORMANCE_BUFFER_SIZE ) ) == NULL )
+		{
+		registryPoll();
+		return;
+		}
+
+	/* Scan the first 64 possible information types (we don't bother with
+	   increasing the buffer size as we do with the Win32 version of the
+	   performance data read, we may miss a few classes but it's no big deal).
+	   This scan typically yields around 20 pieces of data, there's nothing
+	   in the range 65...128 so chances are there won't be anything above
+	   there either */
+	for( dwType = 0; dwType < 64; dwType++ )
+		{
+		/* Some information types are write-only (the IDs are shared with
+		   a set-information call), we skip these */
+		if( dwType == 26 || dwType == 27 || dwType == 38 || \
+			dwType == 38 || dwType == 46 || dwType == 47 || \
+			dwType == 48 || dwType == 52 )
+			continue;
+
+		/* ID 53 = SystemSessionProcessInformation reads input from the
+		   output buffer, which has to contain a session ID and pointer
+		   to the actual buffer in which to store the session information.
+		   Because this isn't a standard query, we skip this */
+		if( dwType == 53 )
+			continue;
+
+		/* Query the info for this ID.  Some results (for example for
+		   ID = 6, SystemCallCounts) are only available in checked builds
+		   of the kernel.  A smaller subcless of results require that
+		   certain system config flags be set, for example
+		   SystemObjectInformation requires that the
+		   FLG_MAINTAIN_OBJECT_TYPELIST be set in NtGlobalFlags.  To avoid
+		   having to special-case all of these, we try reading each one and
+		   only use those for which we get a success status */
+		dwResult = pNtQuerySystemInformation( dwType, buffer,
+											  PERFORMANCE_BUFFER_SIZE - 2048,
+											  &ulSize );
+		if( dwResult != ERROR_SUCCESS )
+			continue;
+
+		/* Some calls (e.g. ID = 23, SystemProcessorStatistics, and ID = 24,
+		   SystemDpcInformation) incorrectly return a length of zero, so we
+		   manually adjust the length to the correct value */
+		if( ulSize == 0 )
+			{
+			if( dwType == 23 )
+				ulSize = 6 * sizeof( ULONG );
+			if( dwType == 24 )
+				ulSize = 5 * sizeof( ULONG );
+			}
+
+		/* If we got some data back, add it to the entropy pool */
+		if( ulSize > 0 && ulSize <= PERFORMANCE_BUFFER_SIZE - 2048 )
+			{
+			if( krnlIsExiting() )
+				{
+				clFree( "slowPollWinNT", buffer );
+				return;
+				}
+			setMessageData( &msgData, buffer, ulSize );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_ENTROPY );
+			if( cryptStatusOK( status ) )
+				noResults++;
+			}
+		}
+
+	/* Now do the same for the process information.  This call is rather ugly
+	   in that it requires an exact length match for the data returned,
+	   failing with a STATUS_INFO_LENGTH_MISMATCH error code (0xC0000004) if
+	   the length isn't an exact match */
+#if 0	/* This requires a compiler to handle complex nested structs,
+		   alignment issues, and so on, and without the headers in which
+		   the entries are declared it's almost impossible to do */
+	for( dwType = 0; dwType < 32; dwType++ )
+		{
+		static const struct { int type; int size; } processInfo[] = {
+			{ CRYPT_ERROR, CRYPT_ERROR }
+			};
+		int i;
+
+		for( i = 0; processInfo[ i ].type != CRYPT_ERROR; i++ )
+			{
+			/* Query the info for this ID */
+			dwResult = pNtQueryInformationProcess( GetCurrentProcess(),
+											processInfo[ i ].type, buffer,
+											processInfo[ i ].size, &ulSize );
+			if( dwResult != ERROR_SUCCESS )
+				continue;
+
+			/* If we got some data back, add it to the entropy pool */
+			if( ulSize > 0 && ulSize <= PERFORMANCE_BUFFER_SIZE - 2048 )
+				{
+				if( krnlIsExiting() )
+					{
+					clFree( "slowPollWinNT", buffer );
+					return;
+					}
+				setMessageData( &msgData, buffer, ulSize );
+				status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+										  IMESSAGE_SETATTRIBUTE_S, &msgData,
+										  CRYPT_IATTRIBUTE_ENTROPY );
+				if( cryptStatusOK( status ) )
+					noResults++;
+				}
+			}
+		}
+#endif /* 0 */
+
+	/* Finally, do the same for the system power status information.  There
+	   are only a limited number of useful information types available so we
+	   restrict ourselves to the useful types.  In addition since this
+	   function doesn't return length information, we have to hardcode in
+	   length data */
+	if( pNtPowerInformation != NULL )
+		{
+		static const struct { int type; int size; } powerInfo[] = {
+			{ 0, 128 },	/* SystemPowerPolicyAc */
+			{ 1, 128 },	/* SystemPowerPolicyDc */
+			{ 4, 64 },	/* SystemPowerCapabilities */
+			{ 5, 48 },	/* SystemBatteryState */
+			{ 11, 48 },	/* ProcessorInformation */
+			{ 12, 24 },	/* SystemPowerInformation */
+			{ CRYPT_ERROR, CRYPT_ERROR }
+			};
+		int i;
+
+		for( i = 0; powerInfo[ i ].type != CRYPT_ERROR; i++ )
+			{
+			/* Query the info for this ID */
+			dwResult = pNtPowerInformation( powerInfo[ i ].type, NULL, 0, buffer,
+											PERFORMANCE_BUFFER_SIZE - 2048 );
+			if( dwResult != ERROR_SUCCESS )
+				continue;
+			if( krnlIsExiting() )
+				{
+				clFree( "slowPollWinNT", buffer );
+				return;
+				}
+			setMessageData( &msgData, buffer, powerInfo[ i ].size );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_ENTROPY );
+			if( cryptStatusOK( status ) )
+				noResults++;
+			}
+		}
+	clFree( "slowPollWinNT", buffer );
+
+	/* If we got enough data, we can leave now without having to try for a
+	   Win32-level performance information query */
+	if( noResults > 15 )
+		{
+		static const int quality = 100;
+
+		if( krnlIsExiting() )
+			return;
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		return;
+		}
+	if( krnlIsExiting() )
+		return;
+
+	/* We couldn't get enough results from the kernel, fall back to the
+	   somewhat troublesome registry poll */
+	registryPoll();
 	}
 
 /* Perform a thread-safe slow poll for Windows NT */
@@ -1230,7 +1430,7 @@ void slowPoll( void )
 		return;
 
 	/* Read data from the various hardware sources */
-	readPIIIRng();
+	readSystemRNG();
 	readMBMData();
 
 	/* Start a threaded slow poll.  If a slow poll is already running, we
@@ -1239,7 +1439,7 @@ void slowPoll( void )
 	if( hThread )
 		return;
 	if( isWin95 )
-		hThread = ( HANDLE ) _beginthreadex( NULL, 0, &threadSafeSlowPollWin95,
+		hThread = ( HANDLE ) _beginthreadex( NULL, 0, threadSafeSlowPollWin95,
 											 NULL, 0, &threadID );
 	else
 		{
@@ -1250,7 +1450,7 @@ void slowPoll( void )
 			void *aclInfo = initACLInfo( THREAD_ALL_ACCESS );
 
 			hThread = ( HANDLE ) _beginthreadex( getACLInfo( aclInfo ),
-												 0, &threadSafeSlowPollWinNT,
+												 0, threadSafeSlowPollWinNT,
 												 NULL, 0, &threadID );
 			freeACLInfo( aclInfo );
 
@@ -1262,7 +1462,7 @@ void slowPoll( void )
 		  creation to fail.  Because of this problem, we don't set an ACL for
 		  the thread */
 		hThread = ( HANDLE ) _beginthreadex( NULL, 0,
-											 &threadSafeSlowPollWinNT,
+											 threadSafeSlowPollWinNT,
 											 NULL, 0, &threadID );
 		}
 	assert( hThread );
@@ -1275,34 +1475,33 @@ void slowPoll( void )
 
 void waitforRandomCompletion( const BOOLEAN force )
 	{
-	/* If there's not polling thread running, there's nothing to do */
-	if( !hThread )
+	const int timeout = force ? 2000 : INFINITE;
+
+	/* If there's no polling thread running, there's nothing to do.  Note
+	   that this isn't entirely thread-safe because someone may start
+	   another poll after we perform this check, but there's no way to
+	   handle this without some form of interlock mechanism with the
+	   randomness mutex and the WaitForSingleObject().  In any case all
+	   that'll happen is that the caller won't get all of the currently-
+	   polling entropy */
+	if( hThread == NULL )
 		return;
 
-	/* If this is a forced shutdown, tell the polling thread to exit */
-	if( force )
+	/* Wait for the polling thread to terminate.  If it's a forced shutdown,
+	   we only wait a fixed amount of time (2s) before we bail out.  In
+	   addition we don't check for an error return (WAIT_ABANDONED) because
+	   this just means that the thread has exited as well */
+	WaitForSingleObject( hThread, timeout );
+
+	/* Clean up */
+	if( cryptStatusError( krnlEnterMutex( MUTEX_RANDOM ) ) )
+		return;
+	if( hThread != NULL )
 		{
-		/* Wait for the polling thread to terminate.  Since this is a forced
-		   shutdown, we only wait a fixed amount of time (2s) before we bail
-		   out */
-		WaitForSingleObject( hThread, 2000 );
 		CloseHandle( hThread );
 		hThread = NULL;
-
-		return;
 		}
-
-	/* Sign the system object over to the polling thread to allow it to
-	   update the entropy data */
-	krnlRelinquishSystemObject( threadID );
-
-	/* Wait for the polling thread to terminate */
-	WaitForSingleObject( hThread, INFINITE );
-	CloseHandle( hThread );
-	hThread = NULL;
-
-	/* Return the system object to the calling thread */
-	krnlReacquireSystemObject();
+	krnlExitMutex( MUTEX_RANDOM );
 	}
 
 /* Initialise and clean up any auxiliary randomness-related objects */
@@ -1310,9 +1509,9 @@ void waitforRandomCompletion( const BOOLEAN force )
 void initRandomPolling( void )
 	{
 	/* Reset the various module and object handles and status info and
-	   initialise the PIII/P4 hardware RNG interface if it's present */
+	   initialise the system RNG interface if it's present */
 	hAdvAPI32 = hNetAPI32 = hThread = NULL;
-	initPIIIRng();
+	initSystemRNG();
 	}
 
 void endRandomPolling( void )

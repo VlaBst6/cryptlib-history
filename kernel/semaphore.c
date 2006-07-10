@@ -9,10 +9,6 @@
   #include "crypt.h"
   #include "acl.h"
   #include "kernel.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "acl.h"
-  #include "kernel.h"
 #else
   #include "crypt.h"
   #include "kernel/acl.h"
@@ -43,7 +39,7 @@ int initSemaphores( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	assert( MUTEX_LAST == 3 );
+	assert( MUTEX_LAST == 4 );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -59,6 +55,7 @@ int initSemaphores( KERNEL_DATA *krnlDataPtr )
 	/* Initialize the mutexes */
 	MUTEX_CREATE( mutex1 );
 	MUTEX_CREATE( mutex2 );
+	MUTEX_CREATE( mutex3 );
 
 	return( CRYPT_OK );
 	}
@@ -71,6 +68,7 @@ void endSemaphores( void )
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_MUTEXES;
 
 	/* Shut down the mutexes */
+	MUTEX_DESTROY( mutex3);
 	MUTEX_DESTROY( mutex2 );
 	MUTEX_DESTROY( mutex1 );
 
@@ -196,6 +194,7 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 	SEMAPHORE_INFO *semaphoreInfo;
 	MUTEX_HANDLE object;
 	BOOLEAN semaphoreSet = FALSE;
+	int status = CRYPT_OK;
 
 	/* Make sure that the selected semaphore is valid */
 	if( semaphore <= SEMAPHORE_NONE || semaphore >= SEMAPHORE_LAST )
@@ -235,7 +234,12 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 	/* Wait on the object */
 	assert( memcmp( &object, &SEMAPHORE_INFO_TEMPLATE.object,
 					sizeof( MUTEX_HANDLE ) ) );
-	THREAD_WAIT( object );
+	THREAD_WAIT( object, status );
+	if( cryptStatusError( status ) )
+		{
+		assert( NOTREACHED );
+		return( FALSE );
+		}
 
 	/* Lock the semaphore table, update the information, and unlock it
 	   again */
@@ -272,13 +276,13 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 
 /* Enter and exit a mutex */
 
-void krnlEnterMutex( const MUTEX_TYPE mutex )
+int krnlEnterMutex( const MUTEX_TYPE mutex )
 	{
 	/* Make sure that the selected mutex is valid */
 	if( mutex <= MUTEX_NONE || mutex >= MUTEX_LAST )
 		{
 		assert( NOTREACHED );
-		return;
+		return( CRYPT_ERROR_PERMISSION );
 		}
 
 	/* If we're in a shutdown and the mutexes have been destroyed, don't
@@ -286,11 +290,11 @@ void krnlEnterMutex( const MUTEX_TYPE mutex )
 	   should be set to a shutdown state in which any access fails, so this
 	   isn't a problem */
 	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES )
-		return;
+		return( CRYPT_ERROR_PERMISSION );
 
 	switch( mutex )
 		{
-		case MUTEX_SESSIONCACHE:
+		case MUTEX_SCOREBOARD:
 			MUTEX_LOCK( mutex1 );
 			break;
 
@@ -298,9 +302,15 @@ void krnlEnterMutex( const MUTEX_TYPE mutex )
 			MUTEX_LOCK( mutex2 );
 			break;
 
+		case MUTEX_RANDOM:
+			MUTEX_LOCK( mutex3 );
+			break;
+
 		default:
 			assert( NOTREACHED );
 		}
+
+	return( CRYPT_OK );
 	}
 
 void krnlExitMutex( const MUTEX_TYPE mutex )
@@ -321,12 +331,16 @@ void krnlExitMutex( const MUTEX_TYPE mutex )
 
 	switch( mutex )
 		{
-		case MUTEX_SESSIONCACHE:
+		case MUTEX_SCOREBOARD:
 			MUTEX_UNLOCK( mutex1 );
 			break;
 
 		case MUTEX_SOCKETPOOL:
 			MUTEX_UNLOCK( mutex2 );
+			break;
+
+		case MUTEX_RANDOM:
+			MUTEX_UNLOCK( mutex3 );
 			break;
 
 		default:

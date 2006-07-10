@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							File Stream I/O Functions						*
-*						Copyright Peter Gutmann 1993-2005					*
+*						Copyright Peter Gutmann 1993-2006					*
 *																			*
 ****************************************************************************/
 
@@ -16,12 +16,7 @@
 #endif /* Older Linux broken include-file dependencies */
 
 #include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
 #if defined( INC_ALL )
-  #include "stream.h"
-  #include "file.h"
-#elif defined( INC_CHILD )
   #include "stream.h"
   #include "file.h"
 #else
@@ -276,11 +271,17 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( pathMaxLen < 64 )
+		return;
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
@@ -503,11 +504,17 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( pathMaxLen < 64 )
+		return;
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
@@ -650,13 +657,13 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Truncate the file and if we're erasing the entire file, reset the
 	   timestamps.  This is only possible through a file handle on some
 	   systems, on others the caller has to do it via the filename */
-	chsize( fileHandle, position );
+	chsize( fileno( stream->filePtr ), position );
 	if( position <= 0 )
 		{
 		struct ftime fileTime;
 
 		memset( &fileTime, 0, sizeof( struct ftime ) );
-		setftime( fileHandle, &fileTime );
+		setftime( fileno( stream->filePtr ), &fileTime );
 		}
 	}
 
@@ -702,11 +709,6 @@ void fileErase( const char *fileName )
 	/* Truncate the file to 0 bytes if we couldn't do it in eraseFile, reset
 	   the time stamps, and delete it */
 	sFileClose( &stream );
-	/* Under Win16 we can't really do anything without resorting to MSDOS int
-	   21h calls, the best we can do is truncate the file using _lcreat() */
-	hFile = _lcreat( fileName, 0 );
-	if( hFile != HFILE_ERROR )
-		_lclose( hFile );
 
 	/* Finally, delete the file */
 	remove( fileName );
@@ -714,7 +716,8 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	if( option == BUILDPATH_RNDSEEDFILE )
@@ -947,7 +950,8 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	strcpy( path, ":" );
@@ -1305,11 +1309,17 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( pathMaxLen < 64 )
+		return;
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __IBM4758__ )
@@ -1566,7 +1576,8 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
@@ -1574,6 +1585,11 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 
 	/* Make sure that VFS services are available */
 	if( !checkVFSMgr() )
+		return;
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( 16 + strlen( fileName ) + 8 > pathMaxLen )
 		return;
 
 	/* Build the path to the configuration file if necessary */
@@ -1624,8 +1640,8 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
 
 /* Tandem doesn't have ftruncate() even though there's a manpage for it
-   (which claims it's prototyped in sys/types.h (!!)).  unistd.h has it
-   protected by ( _XOPEN_SOURCE_EXTENDED == 1 && _TNS_R_TARGET ), which
+   (which claims that it's prototyped in sys/types.h (!!)).  unistd.h has
+   it protected by ( _XOPEN_SOURCE_EXTENDED == 1 && _TNS_R_TARGET ), which
    implies that we'd better emulate it if we want to make use of it.  For
    now we do nothing, this is just a placeholder if the Guardian native
    file layer isn't available */
@@ -1792,7 +1808,11 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 
 			/* The file doesn't exist, create it with O_EXCL to make sure
 			   that an attacker can't slip in a file between the lstat() and
-			   open() */
+			   open().  Note that this still doesn't work for some non-
+			   local filesystems, for example it's not supported at all in
+			   NFSv2 and even for newer versions support can be hit-and-miss
+			   - under Linux for example it requires kernel versions 2.6.5
+			   or newer to work */
 			status = openFile( stream, fileName, O_CREAT | O_EXCL | O_RDWR,
 							   0600 );
 			if( cryptStatusError( status ) )
@@ -1853,7 +1873,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 
 	/* Set the file access permissions so that only the owner can access it */
 	if( mode & FILE_PRIVATE )
-		chmod( fileName, 0600 );
+		fchmod( stream->fd, 0600 );
 
 	/* Lock the file if possible to make sure that no-one else tries to do
 	   things to it.  If available we used the (BSD-style) flock(), if not we
@@ -1891,19 +1911,28 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 
 	   flock() sticks with the much more sensible 4.2BSD-based last-close
 	   semantics, however it doesn't usually work with NFS unless special
-	   hacks have been applied.  fcntl() passes lock requests to rpc.lockd
-	   to handle, but this is its own type of mess since it's often
-	   unreliable, so it's really not much worse than flock().  In addition
-	   locking support under filesystems like AFS is often nonexistant, with
-	   the lock apparently succeeding but no lock actually being applied.
-	   Finally, locking is almost always advisory only, but even mandatory
-	   locking can be bypassed by tricks such as copying the original,
-	   unlinking it, and renaming the copy back to the original (the
-	   unlinked - and still locked - original goes away once the handle is
-	   closed) - this mechanism is standard practice for many Unix utilities
-	   like text editors.  In addition mandatory locking is wierd in that an
-	   open for write (or read, on a write-locked file) will succeed, it's
-	   only a later attempt to read/write that will fail.
+	   hacks have been applied (for example under Linux it requires kernel
+	   versions >= 2.6.12 to work).  fcntl() passes lock requests to
+	   rpc.lockd to handle, but this is its own type of mess since it's
+	   often unreliable, so it's really not much worse than flock().  In
+	   addition locking support under filesystems like AFS is often
+	   nonexistant, with the lock apparently succeeding but no lock actually
+	   being applied.  Even under local filesystems, mandatory locking is
+	   only enabled if the filesystem is mounted with the "-o mand" option
+	   is used, which is rarely the case (it's off by default).
+
+	   Locking is almost always advisory only, but even mandatory locking
+	   can be bypassed by tricks such as copying the original, unlinking it,
+	   and renaming the copy back to the original (the unlinked - and still
+	   locked - original goes away once the handle is closed) - this
+	   mechanism is standard practice for many Unix utilities like text
+	   editors.  A common mandatory locking implementation uses the sgid bit
+	   (a directory bit that wouldn't normally be used for a file) to
+	   indicate that a file is subject to locking, which another process can
+	   turn off and therefore disable the locking.  Finally, mandatory
+	   locking is wierd in that an open for write (or read, on a write-
+	   locked file) will succeed, it's only a later attempt to read/write
+	   that will fail. Finally
 
 	   This mess is why dotfile-locking is still so popular, but that's
 	   probably going a bit far for simple keyset accesses */
@@ -1944,6 +1973,8 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 
 int sFileClose( STREAM *stream )
 	{
+	BOOLEAN closeOK = TRUE;
+
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( stream->type == STREAM_TYPE_FILE );
 
@@ -1954,10 +1985,37 @@ int sFileClose( STREAM *stream )
 #ifndef USE_FCNTL_LOCKING
 	flock( stream->fd, LOCK_UN );
 #endif /* !USE_FCNTL_LOCKING */
-	close( stream->fd );
+
+	/* Close the file.  In theory this shouldn't really be able to fail, but 
+	   NFS can elay the error reporting until this point rather than 
+	   reporting it during a write when it actually occurs.  Some disk quota 
+	   management systems can also cause problems, since the data is 
+	   buffered and the final size calculation doesn't occur until a set 
+	   quantization boundary is crossed or the file is closed.  AFS is even 
+	   worse, it caches copies of files being worked on locally and then 
+	   copies them back to the remote server, so the close can fail if the 
+	   copy fails, leaving nothing on the remote server, or a previous copy, 
+	   or a zero-length file.
+
+	   There's not too much that we can do in the case of this condition, 
+	   the status itself is a bit weird because (apart from an EBADF or 
+	   EINTR) the close has actually succeeded, what's failed is some other 
+	   operation unrelated to the close.  The fsync() that was used earlier 
+	   will catch most problems, but not ones like AFS' invisible copy-to-
+	   server operation on close.
+
+	   The best that we can do is return a write-problem error indicator if 
+	   the close fails.  There's nothing that can be done to recover from 
+	   this, but where possible the caller can at least try to clean up the 
+	   file rather than leaving an incomplete file on disk */
+	if( close( stream->fd ) == -1 )
+		{
+		assert( NOTREACHED );
+		closeOK = FALSE;
+		}
 	zeroise( stream, sizeof( STREAM ) );
 
-	return( CRYPT_OK );
+	return( closeOK ? CRYPT_OK : CRYPT_ERROR_WRITE );
 	}
 
 /* Read/write a block of data from/to a file stream */
@@ -1978,11 +2036,41 @@ int fileWrite( STREAM *stream, const void *buffer, const int length )
 	return( CRYPT_OK );
 	}
 
-/* Commit data in a file stream to backing storage */
+/* Commit data in a file stream to backing storage.  Unfortunately this
+   doesn't quite give the guarantees that it's supposed to because some
+   drives report a successful disk flush when all they've done is committed
+   the data to the drive's cache without actually having written it to disk
+   yet.  Directly-connected PATA/SATA drives mostly get it right, but
+   drives behind a glue layer like Firewire, USB, or RAID controllers often
+   ignore the SCSI SYNCHRONIZE CACHE / ATA FLUSH CACHE / FLUSH CACHE EXT /
+   FLUSH TRACK CACHE commands (that is, the glue layer discards them before
+   they get to the drive).  To get around this problem, Apple introducted
+   the FS_FULLFSYNC fcntl in OS X, but even this only works if the glue
+   layer doesn't discard cache flush commands that it generates.
+
+   The problem is endemic in drive design in general.  In order to produce
+   better benchmark results, drives issue write-completion notifications
+   when the data hits the track cache, in the hope that the host will issue
+   another write request to follow the current one so the two writes can
+   occur back-to-back.  The SCSI design solved this with tag queueing, which
+   allowed (typically) 16 write requests to be enqueued, rather than having
+   the host wait for each one to announce that it had completed.  This was
+   back-enginered into the ATA spec as tagged command queueing (TCQ), but 
+   ATA allowed the completion of a tagged request to depending on whether the
+   write cache was enabled or not (it was enabled by default, since disabling
+   it produced a ~50% performance hit).  As a result, it had no effect, since
+   the drive would still post the completion notification as soon as the data
+   hit the cache - TCQ added more complexity with no real benefit.
+
+   This was finally fixed with native command queueing (NCQ), which works 
+   more like the original SCSI tagged queueing in that there's a flag in
+   the write command that forces the drive to only report a write-completion 
+   when the data is committed to stable media */
 
 int fileFlush( STREAM *stream )
 	{
-	return( fsync( stream->fd ) == 0 ? CRYPT_OK : CRYPT_ERROR_WRITE );
+	return( ( fsync( stream->fd ) == 0 ) ? \
+			CRYPT_OK : CRYPT_ERROR_WRITE );
 	}
 
 /* Change the read/write position in a file */
@@ -2077,7 +2165,8 @@ void fileErase( const char *fileName )
 	struct stat fstatInfo;
 #if defined( __FreeBSD__ )
 	struct timeval timeVals[ 2 ];
-#elif  !defined( __APPLE__ )
+#elif !( defined( __APPLE__ ) || defined( __FreeBSD__ ) || \
+		 defined( __linux__ ) )
 	struct utimbuf timeStamp;
 #endif /* OS-specific variable declarations */
 #ifdef EBCDIC_CHARS
@@ -2108,17 +2197,37 @@ void fileErase( const char *fileName )
 	/* Reset the time stamps and delete the file.  On BSD filesystems that
 	   support creation times (e.g. UFS2), the handling of creation times
 	   has been kludged into utimes() by having it called twice.  The first
-	   call sets the creation time provided it's older than the current
-	   creation time (which it always is, since we set it to the epoch).
-	   The second call then works as utimes() normally would */
-	sFileClose( &stream );
+	   call sets the creation time provided that it's older than the
+	   current creation time (which it always is, since we set it to the
+	   epoch).  The second call then works as utimes() normally would.
+
+	   Both the unlink() and utimes() calls use filenames rather than
+	   handles, which unfortunately makes them subject to race conditions
+	   where an attacker renames the file before the access.  Some systems
+	   support the newer BSD futimes() (generally via glibc), but for the
+	   rest we're stuck with using the unsafe calls.  The problem of unsafe
+	   functions however is mitigated by the fact that we're acting on
+	   files in restricted-access directories for which attackers shouldn't
+	   be able to perform renames, and the fact that the file data is
+	   overwritten before it's unlinked, so the most that an attacker that
+	   can bypass the directory permissions can do is cause us to delete
+	   another file */
 #if defined( __APPLE__ )
-	utimes( fileName, NULL );
+	futimes( stream.fd, NULL );
+	sFileClose( &stream );
 #elif defined( __FreeBSD__ )
 	memset( timeVals, 0, sizeof( struct timeval ) * 2 );
-	utimes( fileName, timeVals );
-	utimes( fileName, timeVals );
+	futimes( stream.fd, timeVals );
+	futimes( stream.fd, timeVals );
+	sFileClose( &stream );
+#elif defined( __linux__ )
+	if( futimes( stream.fd, NULL ) == -1 )
+		status = errno;		/* futimes() isn't available on all platforms */
+	sFileClose( &stream );
+	if( errno == ENOSYS )	/* futimes() failed, fall back to utimes() */
+		utimes( fileName, NULL );
 #else
+	sFileClose( &stream );
 	memset( &timeStamp, 0, sizeof( struct utimbuf ) );
 	utime( fileName, &timeStamp );
 #endif /* OS-specific size and date-mangling */
@@ -2131,7 +2240,8 @@ void fileErase( const char *fileName )
 
 #ifdef DDNAME_IO
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* MVS dataset name userid.CRYPTLIB.filename.  We can't use a PDS since
@@ -2146,7 +2256,8 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 	}
 #else
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	struct passwd *passwd;
@@ -2169,10 +2280,28 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 	if( ( length = strlen( passwd->pw_dir ) ) > MAX_PATH_LENGTH - 64 )
 		/* You're kidding, right? */
 		return;
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+#if defined( __APPLE__ )
+	if( length + 32 + strlen( fileName ) + 8 > pathMaxLen )
+		return;
+#else
+	if( length + 16 + strlen( fileName ) + 8 > pathMaxLen )
+		return;
+#endif /* OS X */
+
+	/* Set up the path to the cryptlib directory */
 	memcpy( path, passwd->pw_dir, length );
 	if( path[ length - 1 ] != '/' )
 		path[ length++ ] = '/';
+#if defined( __APPLE__ )
+	/* Like Windows, OS X has a predefined location for storing user config
+	   data */
+	strcpy( path + length, "Library/Preferences/cryptlib" );
+#else
 	strcpy( path + length, ".cryptlib" );
+#endif /* OS X */
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
@@ -2492,11 +2621,17 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( pathMaxLen < 64 )
+		return;
 
 #if 0	/* Default path is just cwd, which isn't too useful */
 	ioDefPathGet( path );
@@ -2604,8 +2739,8 @@ static BOOLEAN isSpecialSID( SID *pUserSid )
 	SID_IDENTIFIER_AUTHORITY identifierAuthority = SECURITY_NT_AUTHORITY;
 
 	/* Create a SID for each special-case account and check whether it
-	   matches the current user's SID.  It would be easier to use 
-	   IsWellKnownSid() for this check, but this only appeared in Windows 
+	   matches the current user's SID.  It would be easier to use
+	   IsWellKnownSid() for this check, but this only appeared in Windows
 	   XP */
 	InitializeSid( pSid, &identifierAuthority, 1 );
 	*( GetSidSubAuthority( pSid, 0 ) ) = SECURITY_LOCAL_SYSTEM_RID;
@@ -2621,7 +2756,7 @@ static BOOLEAN isSpecialSID( SID *pUserSid )
 	return( FALSE );
 	}
 
-static BOOLEAN getUncName( UNIVERSAL_NAME_INFO *nameInfo, 
+static BOOLEAN getUncName( UNIVERSAL_NAME_INFO *nameInfo,
 						   const char **fileName )
 	{
 	typedef DWORD ( WINAPI *WNETGETUNIVERSALNAMEA )( LPCSTR lpLocalPath,
@@ -2632,21 +2767,21 @@ static BOOLEAN getUncName( UNIVERSAL_NAME_INFO *nameInfo,
 	DWORD uniBufSize = UNI_BUFFER_SIZE;
 	BOOLEAN gotUNC = FALSE;
 
-	/* Load the MPR library.  We can't (safely) use an opportunistic 
-	   GetModuleHandle() before the LoadLibrary() for this because the code 
-	   that originally loaded the DLL might do a FreeLibrary in another 
-	   thread, causing the library to be removed from under us.  In any case 
-	   LoadLibrary does this for us, merely incrementing the reference count 
+	/* Load the MPR library.  We can't (safely) use an opportunistic
+	   GetModuleHandle() before the LoadLibrary() for this because the code
+	   that originally loaded the DLL might do a FreeLibrary in another
+	   thread, causing the library to be removed from under us.  In any case
+	   LoadLibrary does this for us, merely incrementing the reference count
 	   if the DLL is already loaded */
 	hMPR = LoadLibrary( "Mpr.dll" );
 	if( hMPR == NULL )
-		/* Should never happen, we can't have a mapped network drive if no 
+		/* Should never happen, we can't have a mapped network drive if no
 		   network is available */
 		return( FALSE );
 
-	/* Get the translated UNC name.  The UNIVERSAL_NAME_INFO struct is one 
-	   of those variable-length ones where the lpUniversalName member points 
-	   to extra data stored off the end of the struct, so we overlay it onto 
+	/* Get the translated UNC name.  The UNIVERSAL_NAME_INFO struct is one
+	   of those variable-length ones where the lpUniversalName member points
+	   to extra data stored off the end of the struct, so we overlay it onto
 	   a much larger buffer */
 	pWNetGetUniversalNameA = ( WNETGETUNIVERSALNAMEA ) \
 							 GetProcAddress( hMPR, "WNetGetUniversalNameA" );
@@ -2697,7 +2832,10 @@ static BOOLEAN checkUserKnown( const char *fileName )
 
 	/* If there's a drive letter present, check whether it's a local or
 	   remote drive.  GetDriveType() is rather picky about what it'll accept
-	   so we have to extract just the drive letter from the path */
+	   so we have to extract just the drive letter from the path.  We could
+	   also use IsNetDrive() for this, but this requires dynamically pulling
+	   it in from shell32.dll, and even then it's only present in version 5.0
+	   or later, so it's easier to use GetDriveType() */
 	if( fileName[ 1 ] == ':' )
 		{
 		char drive[ 8 ];
@@ -2751,14 +2889,14 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	/* Check whether this is a special-case account that can't be mapped to
 	   an account on the server */
 	if( isSpecialSID( pTokenUser->User.Sid ) )
-		/* The user with this SID may be known to the server, but it 
+		/* The user with this SID may be known to the server, but it
 		   represents a different entity on the server than it does on the
 		   local system */
 		return( FALSE );
 
 	/* Check whether the user with this SID is known to the server.  We
 	   get some additional info in the form of the eUse value, which
-	   indicates the general class of the SID (e.g. SidTypeUser, 
+	   indicates the general class of the SID (e.g. SidTypeUser,
 	   SidTypeGroup, SidTypeDomain, SidTypeAlias, etc, but these aren't of
 	   much use to us */
 	if( !LookupAccountSid( pathBuffer, pTokenUser->User.Sid,
@@ -2840,10 +2978,10 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   around this, we need to perform an incredibly convoluted check (via
 	   checkUserKnown()) to see whether the path is a network path and if
 	   so, if the user is known to the server providing the network share.
-	   
+
 	   An extension of this problem occurs where the user *is* known on the
-	   local and server system, but the two are logically different.  This 
-	   occurs for the System/LocalSystem service account and,for Windows XP 
+	   local and server system, but the two are logically different.  This
+	   occurs for the System/LocalSystem service account and,for Windows XP
 	   and newer, LocalService and NetworkService.  To handle this,
 	   checkUserKnown() also checks whether the user is running under one of
 	   these accounts */
@@ -2919,13 +3057,13 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 									OPEN_EXISTING, FILE_FLAGS, NULL );
 #ifndef __WINCE__
 		if( stream->hFile != INVALID_HANDLE_VALUE && \
-			GetFileType( hFile ) != FILE_TYPE_DISK )
+			GetFileType( stream->hFile ) != FILE_TYPE_DISK )
 			{
 			/* This repeats the check that we made earlier before trying
 			   to open the file, and works around a potential race condition
 			   in which an attacker creates a special file after we perform
 			   the check */
-			CloseHandle( hFile );
+			CloseHandle( stream->hFile );
 			freeACLInfo( aclInfo );
 			SetErrorMode( uErrorMode );
 			return( CRYPT_ERROR_OPEN );
@@ -2958,6 +3096,13 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 				status = CRYPT_ERROR_OPEN;
 			}
 		}
+
+	/* In theory we could also use something like SHChangeNotify( 
+	   SHCNE_CREATE, SHCNF_PATH, fileName, NULL ) at this point to tell 
+	   other apps that we've created the file, but since this is a private 
+	   config/key file that's not really meant to be messed with by other 
+	   apps, we leave it up to them to discover that there's been a change 
+	   if they really feel they need to know this */
 
 	/* Clean up */
 	freeACLInfo( aclInfo );
@@ -3143,23 +3288,25 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 #if defined( __WIN32__ )
+  #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
+	#define HRESULT		DWORD	/* Not defined in older BC++ headers */
+  #endif /* BC++ before 5.5 */
 	typedef HRESULT ( WINAPI *SHGETFOLDERPATH )( HWND hwndOwner,
 										int nFolder, HANDLE hToken,
 										DWORD dwFlags, LPTSTR lpszPath );
 	SHGETFOLDERPATH pSHGetFolderPath;
 	OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
-	BOOLEAN gotPath = FALSE;
 	char *pathPtr = path;
 #elif defined( __WINCE__ )
-	wchar_t pathBuffer[ _MAX_PATH + 16 ], *pathPtr = pathBuffer;
-	BOOLEAN gotPath = FALSE;
-#elif defined( __WIN16__ )
-	char *pathPtr = path;
+	wchar_t pathBuffer[ _MAX_PATH + 8 ], *pathPtr = pathBuffer;
 #endif /* Win32 vs. WinCE */
+	BOOLEAN gotPath = FALSE;
+	int length;
 
 	assert( ( ( option == BUILDPATH_CREATEPATH || \
 				option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
@@ -3169,6 +3316,16 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 	*path = '\0';
 
 #if defined( __WIN32__ )
+	/* SHGetFolderPath() doesn't have an explicit buffer-size parameter to
+	   pass to the function, it always assumes a buffer of at least MAX_PATH
+	   bytes, so before we can call it we have to ensure that we've got at
+	   least this much room in the output buffer */
+	if( pathMaxLen < MAX_PATH )
+		{
+		assert( NOTREACHED );
+		return;
+		}
+
 	/* Build the path to the configuration file if necessary.  We can't
 	   (safely) use an opportunistic GetModuleHandle() before the
 	   LoadLibrary() for this because the code that originally loaded the
@@ -3191,7 +3348,7 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 		   mapped into the process' address space yet, so we have to check
 		   for the presence of these DLLs in memory as well as for the
 		   successful load of the kludge DLL */
-	 	hComCtl32 = LoadLibrary( "ComCtl32.dll" );
+		hComCtl32 = LoadLibrary( "ComCtl32.dll" );
 		if( ( hSHFolder = LoadLibrary( "SHFolder.dll" ) ) != NULL )
 			{
 			pSHGetFolderPath = ( SHGETFOLDERPATH ) \
@@ -3230,7 +3387,7 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 		   same problems as the Windows directory for non-admin users, but
 		   we try it just in case the user manually copied the config there
 		   as a last resort */
-		if( !GetWindowsDirectory( pathPtr, _MAX_PATH - 32 ) )
+		if( !GetWindowsDirectory( pathPtr, pathMaxLen - 8 ) )
 			*pathPtr = '\0';
 		}
 	else
@@ -3243,10 +3400,18 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 			   to its own directories, which is the Windows directory.  This
 			   is safe because LocalSystem always has permission to write
 			   there */
-			if( !GetWindowsDirectory( pathPtr, _MAX_PATH - 32 ) )
+			if( !GetWindowsDirectory( pathPtr, pathMaxLen - 8 ) )
 				*pathPtr = '\0';
 			}
-	strcat( pathPtr, "\\cryptlib" );
+	length = strlen( pathPtr );
+	if( length + 16 > pathMaxLen )
+		{
+		/* Make sure that the path buffer meets the minimum-length
+		   requirements */
+		*path = '\0';
+		return;
+		}
+	strcpy( pathPtr + length, "\\cryptlib" );
 #elif defined( __WINCE__ )
 	if( SHGetSpecialFolderPath( NULL, pathPtr, CSIDL_APPDATA, TRUE ) || \
 		SHGetSpecialFolderPath( NULL, pathPtr, CSIDL_PERSONAL, TRUE ) )
@@ -3257,10 +3422,14 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 		/* This should never happen under WinCE since the get-path
 		   functionality is always available */
 		wcscpy( pathPtr, L"\\Windows" );
+	length = wcslen( pathPtr );
+	if( ( length + 16 ) * sizeof( wchar_t ) > _MAX_PATH || \
+		length + 16 > pathMaxLen )
+		/* Make sure that the path buffer meets the minimum-length
+		   requirements.  We have to check both that the Unicode
+		   version of the string fits into the Unicode path buffer and that
+		   the resulting ASCII-converted form fits into the output buffer */
 	wcscat( pathPtr, L"\\cryptlib" );
-#elif defined( __WIN16__ )
-	GetWindowsDirectory( pathPtr, _MAX_PATH - 32 );
-	strcat( pathPtr, "\\cryptlib" );
 #endif /* Win32 vs. WinCE */
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
@@ -3287,6 +3456,14 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 	unicodeToAscii( path, pathPtr, wcslen( pathPtr ) + 1 );
 #endif /* __WINCE__ */
 
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( strlen( path ) + strlen( fileName ) + 8 > pathMaxLen )
+		{
+		*path = '\0';
+		return;
+		}
+
 	/* Add the filename to the path */
 	strcat( path, "\\" );
 	if( option == BUILDPATH_RNDSEEDFILE )
@@ -3310,8 +3487,9 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 
 int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	{
-	static const char *modes[] = { MODE_READ, MODE_READ,
-								   MODE_CREATE, MODE_READWRITE };
+	static const int modes[] = { MFS_MODE_READ, MFS_MODE_READ,
+								 MFS_MODE_CREATE, MFS_MODE_WRITE };
+	int openMode;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( fileName != NULL );
@@ -3429,11 +3607,17 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( 10 + strlen( fileName ) + 8 > pathMaxLen )
+		return;
 
 	/* Build the path to the configuration file if necessary */
 	strcpy( path, "/cryptlib/" );
@@ -3488,6 +3672,27 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 #ifndef W_OK
   #define W_OK				2
 #endif /* W_OK */
+
+/* Watcom C under DOS supports file-time access via DOS functions */
+
+#if defined( __WATCOMC__ ) && defined( __DOS__ )
+  #include <dos.h>
+
+  struct ftime {
+	unsigned short ft_tsec : 5;		/* Two seconds */
+	unsigned short ft_min : 6;		/* Minutes */
+	unsigned short ft_hour : 5;		/* Hours */
+	unsigned short ft_day : 5;		/* Days */
+	unsigned short ft_month : 4;	/* Months */
+	unsigned short ft_year : 7;		/* Year - 1980 */
+	};
+#endif /* Watcom C under DOS */
+
+/* Extra system-specific includes */
+
+#ifdef __WIN16__
+  #include <direct.h>
+#endif /* Win16 */
 
 /* Open/close a file stream */
 
@@ -3613,6 +3818,7 @@ BOOLEAN fileReadonly( const char *fileName )
 static void eraseFile( const STREAM *stream, long position, long length )
 	{
 	BYTE buffer[ BUFSIZ * 2 ];
+	int fileHandle = fileno( stream->filePtr );
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -3652,7 +3858,13 @@ static void eraseFile( const STREAM *stream, long position, long length )
 
 #if defined( __MSDOS16__ ) || defined( __MSDOS32__ )
 		memset( &fileTime, 0, sizeof( struct ftime ) );
+  #if defined( __WATCOMC__ )
+		_dos_setftime( fileHandle, \
+					   *( ( unsigned short * ) &fileTime + 1 ), \
+					   *( ( unsigned short * ) &fileTime ) );
+  #else
 		setftime( fileHandle, &fileTime );
+  #endif /* __WATCOMC__ */
 #endif /* OS-specific date mangling */
 		}
 	}
@@ -3701,7 +3913,7 @@ void fileErase( const char *fileName )
 	fseek( stream.filePtr, 0, SEEK_END );
 	length = ( int ) ftell( stream.filePtr );
 	fseek( stream.filePtr, 0, SEEK_SET );
-	eraseFile( stream, 0, length );
+	eraseFile( &stream, 0, length );
 
 	/* Truncate the file to 0 bytes if we couldn't do it in eraseFile, reset
 	   the time stamps, and delete it */
@@ -3732,7 +3944,8 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const char *fileName,
+void fileBuildCryptlibPath( char *path, const int pathMaxLen,
+							const char *fileName,
 							const BUILDPATH_OPTION_TYPE option )
 	{
 #if defined( __OS2__ )
@@ -3743,6 +3956,11 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
+
+	/* Make sure that the path buffer meets the minimum-length
+	   requirements */
+	if( pathMaxLen < 64 )
+		return;
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __MSDOS__ )
@@ -3755,14 +3973,15 @@ void fileBuildCryptlibPath( char *path, const char *fileName,
 		strcat( path, ".p15" );
 		}
 #elif defined( __WIN16__ )
-	GetWindowsDirectory( path, _MAX_PATH - 32 );
+	GetWindowsDirectory( path, pathMaxLen - 32 );
 	strcat( path, "\\cryptlib" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
-	   already exist, create it now */
+	   already exist, create it now.  There's no way to check for its
+	   existence in advance, so we try and create it unconditionally but
+	   ignore EACCESS errors */
 	if( ( option == BUILDPATH_CREATEPATH ) && \
-		GetFileAttributes( path ) == 0xFFFFFFFFUL && \
-		!CreateDirectory( path, NULL ) )
+		!_mkdir( path ) && ( errno != EACCES ) )
 		{
 		*path = '\0';
 		return;

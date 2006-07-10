@@ -10,8 +10,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include <sys/times.h>
 #include <sys/resource.h>
 #include "crypt.h"

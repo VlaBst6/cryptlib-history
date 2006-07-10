@@ -10,8 +10,6 @@
 
 /* General includes */
 
-#include <stdlib.h>
-#include <string.h>
 #include <sys/time.h>
 #ifdef _MSC_VER
   #include "../crypt.h"

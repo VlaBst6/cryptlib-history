@@ -1,18 +1,13 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Key Load Routines						*
-*						Copyright Peter Gutmann 1992-2004					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "context.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "context.h"
 #else
   #include "crypt.h"
@@ -190,6 +185,9 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 		/* Check the general and public components */
 		if( ( dlpKey->isPublicKey != TRUE && dlpKey->isPublicKey != FALSE ) )
 			return( CRYPT_ARGERROR_STR1 );
+		if( dlpKey->pLen <= 0 || dlpKey->qLen <= 0 || dlpKey->gLen <= 0 || \
+			dlpKey->yLen < 0 || dlpKey->xLen < 0 )
+			return( CRYPT_ARGERROR_STR1 );
 		if( dlpKey->pLen < MIN_PKCSIZE_BITS || \
 			dlpKey->pLen > MAX_PKCSIZE_BITS || \
 			dlpKey->qLen < 128 || dlpKey->qLen > MAX_PKCSIZE_BITS || \
@@ -209,9 +207,14 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 	/* Check the general and public components */
 	if( rsaKey->isPublicKey != TRUE && rsaKey->isPublicKey != FALSE )
 		return( CRYPT_ARGERROR_STR1 );
+	if( rsaKey->nLen <= 0 || rsaKey->eLen <= 0 || \
+		rsaKey->dLen < 0 || rsaKey->pLen < 0 || rsaKey->qLen < 0 || \
+		rsaKey->uLen < 0 || rsaKey->e1Len < 0 || rsaKey->e2Len < 0 )
+		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->nLen < MIN_PKCSIZE_BITS || \
 		rsaKey->nLen > MAX_PKCSIZE_BITS || \
-		rsaKey->eLen < 2 || rsaKey->eLen > MAX_PKCSIZE_BITS )
+		rsaKey->eLen < 2 || rsaKey->eLen > MAX_PKCSIZE_BITS || \
+		rsaKey->eLen > rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->isPublicKey )
 		return( CRYPT_OK );
@@ -231,10 +234,12 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 	   create u if necessary */
 	if( rsaKey->pLen < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
 		rsaKey->pLen > MAX_PKCSIZE_BITS || \
+		rsaKey->pLen >= rsaKey->nLen || \
 		rsaKey->qLen < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		rsaKey->qLen > MAX_PKCSIZE_BITS )
+		rsaKey->qLen > MAX_PKCSIZE_BITS || \
+		rsaKey->qLen >= rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
-	if( !rsaKey->dLen && !rsaKey->e1Len )
+	if( rsaKey->dLen <= 0 && rsaKey->e1Len <= 0 )
 		/* Must have either d or e1 et al */
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->dLen && \
@@ -291,14 +296,15 @@ static int loadKeyPKCFunction( CONTEXT_INFO *contextInfoPtr,
 		status = checkPKCparams( capabilityInfoPtr->cryptAlgo, key );
 		if( cryptStatusError( status ) )
 			return( status );
-		contextInfoPtr->flags |= 0x10;	/* Tell lib_kg to check params too */
+		contextInfoPtr->flags |= 0x08;	/* Tell lib_kg to check params too */
 		}
 #endif /* USE_FIPS140 */
 
 	/* Load the keying info */
 	status = capabilityInfoPtr->initKeyFunction( contextInfoPtr, key, 
 												 keyLength );
-	clearTempBignums( contextInfoPtr->ctxPKC );
+	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+		clearTempBignums( contextInfoPtr->ctxPKC );
 	return( status );
 	}
 
@@ -321,7 +327,7 @@ static int loadKeyMacFunction( CONTEXT_INFO *contextInfoPtr,
 
 #ifdef USE_THREADS
 
-void threadedKeygen( const THREAD_FUNCTION_PARAMS *threadParams )
+void threadedKeygen( const THREAD_PARAMS *threadParams )
 	{
 	CONTEXT_INFO *contextInfoPtr = threadParams->ptrParam;
 	int busyStatus = CRYPT_ERROR_TIMEOUT;
@@ -337,7 +343,8 @@ void threadedKeygen( const THREAD_FUNCTION_PARAMS *threadParams )
 		contextInfoPtr->flags |= CONTEXT_KEY_SET;	/* There's now a key loaded */
 	contextInfoPtr->flags &= ~CONTEXT_ASYNC_ABORT;
 	contextInfoPtr->flags |= CONTEXT_ASYNC_DONE;
-	clearTempBignums( contextInfoPtr->ctxPKC );
+	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+		clearTempBignums( contextInfoPtr->ctxPKC );
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
 	}
@@ -416,11 +423,9 @@ static int generateKeyPKCFunction( CONTEXT_INFO *contextInfoPtr,
 		contextInfoPtr->flags &= ~( CONTEXT_ASYNC_ABORT | CONTEXT_ASYNC_DONE );
 		contextInfoPtr->asyncStatus = CRYPT_OK;
 		contextInfoPtr->ctxPKC->keySizeBits = bytesToBits( keyLength );
-		initThreadParams( &contextInfoPtr->ctxPKC->threadParams, 
-						  contextInfoPtr, 0 );
 		status = krnlDispatchThread( threadedKeygen, 
-									 &contextInfoPtr->ctxPKC->threadParams, 
-									 SEMAPHORE_NONE );
+									 contextInfoPtr->ctxPKC->threadState, 
+									 contextInfoPtr, 0, SEMAPHORE_NONE );
 		if( cryptStatusOK( status ) )
 			return( OK_SPECIAL );
 
@@ -429,7 +434,8 @@ static int generateKeyPKCFunction( CONTEXT_INFO *contextInfoPtr,
 #endif /* OSes with threads */
 	status = capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
 												bytesToBits( keyLength ) );
-	clearTempBignums( contextInfoPtr->ctxPKC );
+	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+		clearTempBignums( contextInfoPtr->ctxPKC );
 	return( status );
 	}
 

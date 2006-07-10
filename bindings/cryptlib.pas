@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2005                      *
+*                    Copyright Peter Gutmann 1997-2006                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Mon Jul 18 02:47:56 2005, filesize = 82445.
+ "cryptlib.h" dated Wed Aug 30 01:34:02 2006, filesize = 82663.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -40,6 +40,9 @@ const
                  { symbolic link should be used for libcl.so -> libcl.so.3.x.y }
   {$ENDIF}
 
+
+const
+  CRYPTLIB_VERSION = 3230;
 
 
 {****************************************************************************
@@ -87,7 +90,8 @@ const
   
   { MAC's }
   CRYPT_ALGO_HMAC_MD5 = 300;  { HMAC-MD5 }
-  CRYPT_ALGO_HMAC_SHA = 301;  { HMAC-SHA }
+  CRYPT_ALGO_HMAC_SHA1 = 301;  { HMAC-SHA }
+  CRYPT_ALGO_HMAC_SHA = 301; { = CRYPT_ALGO_HMAC_SHA1 }  { Older form }
   CRYPT_ALGO_HMAC_RIPEMD160 = 302;  { HMAC-RIPEMD-160 }
   
   { Vendors may want to use their own algorithms that aren't part of the
@@ -753,8 +757,8 @@ const
   
   { 1 2 840 113549 1 9 16 2 2 essSecurityLabel }
   CRYPT_CERTINFO_CMS_SECURITYLABEL = 2520;  
-  CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION = 2521;  { securityClassification }
-  CRYPT_CERTINFO_CMS_SECLABEL_POLICY = 2522;  { securityPolicyIdentifier }
+  CRYPT_CERTINFO_CMS_SECLABEL_POLICY = 2521;  { securityPolicyIdentifier }
+  CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION = 2522;  { securityClassification }
   CRYPT_CERTINFO_CMS_SECLABEL_PRIVACYMARK = 2523;  { privacyMark }
   CRYPT_CERTINFO_CMS_SECLABEL_CATTYPE = 2524;  { securityCategories.securityCategory.type }
   CRYPT_CERTINFO_CMS_SECLABEL_CATVALUE = 2525;  { securityCategories.securityCategory.value }
@@ -904,9 +908,6 @@ const
   {********************}
   { Session attributes }
   {********************}
-  
-  { Pseudo-information on a session or meta-information which is used to
-  control the way that a session is managed }
   
   { Pseudo-information about the session }
   CRYPT_SESSINFO_ACTIVE = 6001;  { Whether session is active }
@@ -1458,6 +1459,7 @@ const
   CRYPT_ERROR_NOSECURE = -13; {  Opn.not avail.at requested sec.level  }
   CRYPT_ERROR_RANDOM = -14; {  No reliable random data available  }
   CRYPT_ERROR_FAILED = -15; {  Operation failed  }
+  CRYPT_ERROR_INTERNAL = -16; {  Internal consistency check failed  }
 
 {  Security violations  }
 

@@ -5,14 +5,9 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "context.h"
-  #include "keygen.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
   #include "context.h"
   #include "keygen.h"
 #else
@@ -452,7 +447,7 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	BIGNUM *p = &pkcInfo->dlpParam_p, *g = &pkcInfo->dlpParam_g;
 	BIGNUM *tmp = &pkcInfo->tmp1;
-	int bnStatus = BN_STATUS;
+	int length, bnStatus = BN_STATUS;
 
 	/* Make sure that the necessary key parameters have been initialised.  
 	   Since PKCS #3 doesn't use the q parameter, we only require it for 
@@ -465,10 +460,18 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	if( !isPKCS3 && BN_is_zero( &pkcInfo->dlpParam_q ) )
 		return( CRYPT_ARGERROR_STR1 );
 
-	/* Make sure that the key paramters are valid: p > MIN_PKCSIZE_BITS 
-	   (nominally 512 bits), 2 <= g <= p-2, and g a generator of order q if 
-	   the q parameter is present (i.e. it's a non-PKCS #3 key) */
-	if( BN_num_bits( p ) < MIN_PKCSIZE_BITS || BN_num_bits( g ) < 2 )
+	/* Make sure that the key paramters are valid:
+
+		pLen >= MIN_PKCSIZE_BITS, pLen <= MAX_PKCSIZE_BITS
+
+		2 <= g <= p - 2, g a generator of order q if the q parameter is 
+			present (i.e. it's a non-PKCS #3 key)
+
+		y < p */
+	length = BN_num_bits( p );
+	if( length < MIN_PKCSIZE_BITS || length > MAX_PKCSIZE_BITS )
+		return( CRYPT_ARGERROR_STR1 );
+	if( BN_num_bits( g ) < 2 )
 		return( CRYPT_ARGERROR_STR1 );
 	CKPTR( BN_copy( tmp, p ) );
 	CK( BN_sub_word( tmp, 1 ) );
@@ -481,6 +484,8 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 		if( bnStatusError( bnStatus ) || !BN_is_one( tmp ) )
 			return( CRYPT_ARGERROR_STR1 );
 		}
+	if( BN_cmp( &pkcInfo->dlpParam_y, p ) >= 0 )
+		return( CRYPT_ARGERROR_STR1 );
 
 	/* Make sure that the private key value is valid */
 	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
@@ -516,7 +521,6 @@ int initDLPkey( CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
 		if( cryptStatusError( status ) )
 			return( status );
 		contextInfoPtr->flags &= ~CONTEXT_ISPUBLICKEY;
-		contextInfoPtr->flags |= CONTEXT_ISPRIVATEKEY;
 		}
 
 	/* Some sources (specifically PKCS #11) don't make y available for

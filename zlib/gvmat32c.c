@@ -14,9 +14,6 @@
 #if defined( INC_ALL )
   #include "crypt.h"	/* For ASM override of longest-match */
   #include "deflate.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"	/* For ASM override of longest-match */
-  #include "deflate.h"
 #else
   #include "crypt.h"	/* For ASM override of longest-match */
   #include "zlib/deflate.h"

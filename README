@@ -1,3 +1,11 @@
+Changes in 3.2.3 release
+========================
+
+This release features a considerable number of internal changes to clean up
+some sections of the code that had grown beyond their original design, as well
+as ongoing minor updates and changes requested by users.  This is mainly a
+cleanup and consolidation release after 3.2.2.
+
 Changes in 3.2.2 release
 ========================
 
@@ -352,8 +360,8 @@ builds, and many interesting lesser variations such as the disastry builds
 that take PGP 2.x and update it to support OpenPGP ciphers without actually
 being OpenPGP.  An overview of different PGP versions can be found at
 http://rmarq.pair.com/pgp/, and detailed information on incompatibilities can
-be found at http://home.arcor.de/kraven/pgp/pgpindex.html.  cryptlib has been
-tested against most normal versions of PGP, but there will certainly be
+be found at http://www.spywarewarrior.com/uiuc/pgp-summ.htm.  cryptlib has
+been tested against most normal versions of PGP, but there will certainly be
 versions out there that produce data that cryptlib can't read (one example
 being a version that uses random key IDs in encrypted data in order to obscure
 who the data is encrypted for, which also makes it impossible to decrypt with

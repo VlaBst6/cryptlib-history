@@ -5,15 +5,10 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "ripemd.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "context.h"
-  #include "../crypt/ripemd.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
@@ -38,13 +33,13 @@ typedef struct {
 
 /* Test the HMAC-RIPEMD-160 output against the test vectors given in ???? */
 
-static const FAR_BSS struct {
-	const char *key;							/* HMAC key */
+static const struct {
+	const char FAR_BSS *key;					/* HMAC key */
 	const int keyLength;						/* Length of key */
-	const char *data;							/* Data to hash */
+	const char FAR_BSS *data;					/* Data to hash */
 	const int length;							/* Length of data */
 	const BYTE digest[ RIPEMD160_DIGEST_LENGTH ];	/* Digest of data */
-	} hmacValues[] = {
+	} FAR_BSS hmacValues[] = {
 	/* No known test vectors for this algorithm */
 	{ "", 0, NULL, 0, { 0 } }
 	};

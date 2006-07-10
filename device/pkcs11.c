@@ -5,25 +5,20 @@
 *																			*
 ****************************************************************************/
 
-#include <stdlib.h>
-#include <string.h>
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
   #include "device.h"
   #include "asn1.h"
-#elif defined( INC_CHILD )
-  #include "../crypt.h"
-  #include "../context/context.h"
-  #include "device.h"
-  #include "../misc/asn1.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
   #include "device/device.h"
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_PKCS11
 
 /* Before we can include the PKCS #11 headers we need to define a few OS-
    specific things that are required by the headers */
@@ -67,7 +62,7 @@
   #define NULL_PTR	NULL
 #endif /* NULL_PTR */
 
-#if defined( INC_ALL ) || defined( INC_CHILD )
+#if defined( INC_ALL )
   #include "pkcs11.h"
 #else
   #include "device/pkcs11.h"
@@ -106,8 +101,6 @@ const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
    using C_GetFunctionList() */
 
 /* #define USE_EXPLICIT_LINKING */
-
-#ifdef USE_PKCS11
 
 /****************************************************************************
 *																			*
@@ -769,7 +762,7 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 	certTemplate[ 5 ].ulValueLen = ( int ) sizeofObject( length );
 	sSkip( &stream, length );
 	certTemplate[ 6 ].pValue = sMemBufPtr( &stream );
-	readGenericHole( &stream, &length, BER_INTEGER );/* Serial number */
+	readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
 	certTemplate[ 6 ].ulValueLen = ( int ) sizeofObject( length );
 	assert( sStatusOK( &stream ) );
 	sMemDisconnect( &stream );
@@ -862,7 +855,7 @@ static int updateCertChain( PKCS11_INFO *pkcs11Info,
 		certTemplate[ 2 ].ulValueLen = ( int ) sizeofObject( length );
 		sSkip( &stream, length );
 		certTemplate[ 3 ].pValue = sMemBufPtr( &stream );
-		readGenericHole( &stream, &length, BER_INTEGER );/* Serial number */
+		readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
 		certTemplate[ 3 ].ulValueLen = ( int ) sizeofObject( length );
 		assert( sStatusOK( &stream ) );
 		sMemDisconnect( &stream );
@@ -1882,7 +1875,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		iAndSTemplate[ 2 ].ulValueLen = ( int ) sizeofObject( length );
 		sSkip( &stream, length );
 		iAndSTemplate[ 3 ].pValue = sMemBufPtr( &stream );
-		readGenericHole( &stream, &length, BER_INTEGER );/* Serial number */
+		readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
 		iAndSTemplate[ 3 ].ulValueLen = ( int ) sizeofObject( length );
 		memcpy( iAndSTemplateAlt, iAndSTemplate, sizeof( iAndSTemplate ) );
 		iAndSTemplateAlt[ 3 ].pValue = sMemBufPtr( &stream );
@@ -2249,7 +2242,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		strcpy( label, "Label-less PKCS #11 key" );
 		labelLength = strlen( label );
 		}
-	setMessageData( &msgData, label, labelLength );
+	setMessageData( &msgData, label, min( labelLength, CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
 	if( keyType == CKK_RSA )
@@ -3233,11 +3226,11 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	readSequence( &stream, NULL );					/* SEQUENCE */
 	readUniversal( &stream );							/* OID */
 	readSequence( &stream, NULL );						/* SEQUENCE */
-	readGenericHole( &stream, &length, BER_INTEGER  );		/* p */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
 	sread( &stream, dhKey.p, length );
 	dhKey.pLen = length;
 	readUniversal( &stream );								/* q */
-	readGenericHole( &stream, &length, BER_INTEGER  );		/* g */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
 	sread( &stream, dhKey.g, length );
 	dhKey.gLen = length;
 	assert( sStatusOK( &stream ) );
@@ -3946,9 +3939,10 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		sMemConnect( &stream, msgData.data, msgData.length );
 		readSequence( &stream, NULL );		/* SEQUENCE { */
 		readUniversal( &stream );				/* AlgoID */
-		readBitStringHole( &stream, NULL, DEFAULT_TAG );	/* BIT STRING */
-		readGenericHole( &stream, &yValueLength, BER_INTEGER  );/* INTEGER */
+		readBitStringHole( &stream, NULL, 16, DEFAULT_TAG );/* BIT STRING */
+		readGenericHole( &stream, &yValueLength, 16, BER_INTEGER  );/* INTEGER */
 		memcpy( yValue, sMemBufPtr( &stream ), yValueLength );
+		assert( sStatusOK( &stream ) );
 		sMemDisconnect( &stream );
 		}
 
@@ -4103,15 +4097,15 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	readSequence( &stream, NULL );					/* SEQUENCE */
 	readUniversal( &stream );							/* OID */
 	readSequence( &stream, NULL );						/* SEQUENCE */
-	readGenericHole( &stream, &length, BER_INTEGER  );		/* p */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
 	publicKeyTemplate[ 3 ].pValue = sMemBufPtr( &stream );
 	publicKeyTemplate[ 3 ].ulValueLen = length;
 	sSkip( &stream, length );
-	readGenericHole( &stream, &length, BER_INTEGER  );		/* q */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
 	publicKeyTemplate[ 4 ].pValue = sMemBufPtr( &stream );
 	publicKeyTemplate[ 4 ].ulValueLen = length;
 	sSkip( &stream, length );
-	readGenericHole( &stream, &length, BER_INTEGER  );		/* g */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
 	publicKeyTemplate[ 5 ].pValue = sMemBufPtr( &stream );
 	publicKeyTemplate[ 5 ].ulValueLen = length;
 	assert( sStatusOK( &stream ) );
@@ -4179,6 +4173,7 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	CRYPT_DEVICE iCryptDevice;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
 	DEVICE_INFO *deviceInfo;
+	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	BIGNUM *r, *s;
 	BYTE signature[ 40 ];
 	int cryptStatus;
@@ -4216,8 +4211,9 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 		{
 		BN_bin2bn( signature, 20, r );
 		BN_bin2bn( signature + 20, 20, s );
-		cryptStatus = encodeDLValues( dlpParams->outParam, dlpParams->outLen, 
-									  r, s, dlpParams->formatType );
+		cryptStatus = \
+			dsaKey->encodeDLValuesFunction( dlpParams->outParam, dlpParams->outLen, 
+											r, s, dlpParams->formatType );
 		if( !cryptStatusError( cryptStatus ) )
 			{
 			dlpParams->outLen = cryptStatus;
@@ -4235,6 +4231,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	CRYPT_DEVICE iCryptDevice;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
 	DEVICE_INFO *deviceInfo;
+	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	BIGNUM *r, *s;
 	BYTE signature[ 40 ];
 	int cryptStatus;
@@ -4257,8 +4254,9 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 
 	/* Decode the values from a DL data block and make sure r and s are
 	   valid */
-	cryptStatus = decodeDLValues( dlpParams->inParam2, dlpParams->inLen2, 
-								  &r, &s, dlpParams->formatType );
+	cryptStatus = \
+		dsaKey->decodeDLValuesFunction( dlpParams->inParam2, dlpParams->inLen2, 
+										&r, &s, dlpParams->formatType );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 

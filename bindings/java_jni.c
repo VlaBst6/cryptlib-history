@@ -53,6 +53,8 @@
 #define cryptlib_crypt_ALGO_SHA2 205L
 #undef cryptlib_crypt_ALGO_HMAC_MD5
 #define cryptlib_crypt_ALGO_HMAC_MD5 300L
+#undef cryptlib_crypt_ALGO_HMAC_SHA1
+#define cryptlib_crypt_ALGO_HMAC_SHA1 301L
 #undef cryptlib_crypt_ALGO_HMAC_SHA
 #define cryptlib_crypt_ALGO_HMAC_SHA 301L
 #undef cryptlib_crypt_ALGO_HMAC_RIPEMD160
@@ -393,56 +395,62 @@
 #define cryptlib_crypt_CERTINFO_FINGERPRINT_SHA 2006L
 #undef cryptlib_crypt_CERTINFO_CURRENT_CERTIFICATE
 #define cryptlib_crypt_CERTINFO_CURRENT_CERTIFICATE 2007L
+#undef cryptlib_crypt_CERTINFO_CURRENT_EXTENSION
+#define cryptlib_crypt_CERTINFO_CURRENT_EXTENSION 2008L
+#undef cryptlib_crypt_CERTINFO_CURRENT_FIELD
+#define cryptlib_crypt_CERTINFO_CURRENT_FIELD 2009L
+#undef cryptlib_crypt_CERTINFO_CURRENT_COMPONENT
+#define cryptlib_crypt_CERTINFO_CURRENT_COMPONENT 2010L
 #undef cryptlib_crypt_CERTINFO_TRUSTED_USAGE
-#define cryptlib_crypt_CERTINFO_TRUSTED_USAGE 2008L
+#define cryptlib_crypt_CERTINFO_TRUSTED_USAGE 2011L
 #undef cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT
-#define cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT 2009L
+#define cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT 2012L
 #undef cryptlib_crypt_CERTINFO_SIGNATURELEVEL
-#define cryptlib_crypt_CERTINFO_SIGNATURELEVEL 2010L
+#define cryptlib_crypt_CERTINFO_SIGNATURELEVEL 2013L
 #undef cryptlib_crypt_CERTINFO_VERSION
-#define cryptlib_crypt_CERTINFO_VERSION 2011L
+#define cryptlib_crypt_CERTINFO_VERSION 2014L
 #undef cryptlib_crypt_CERTINFO_SERIALNUMBER
-#define cryptlib_crypt_CERTINFO_SERIALNUMBER 2012L
+#define cryptlib_crypt_CERTINFO_SERIALNUMBER 2015L
 #undef cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO
-#define cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO 2013L
+#define cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO 2016L
 #undef cryptlib_crypt_CERTINFO_CERTIFICATE
-#define cryptlib_crypt_CERTINFO_CERTIFICATE 2014L
+#define cryptlib_crypt_CERTINFO_CERTIFICATE 2017L
 #undef cryptlib_crypt_CERTINFO_USERCERTIFICATE
-#define cryptlib_crypt_CERTINFO_USERCERTIFICATE 2014L
+#define cryptlib_crypt_CERTINFO_USERCERTIFICATE 2017L
 #undef cryptlib_crypt_CERTINFO_CACERTIFICATE
-#define cryptlib_crypt_CERTINFO_CACERTIFICATE 2015L
+#define cryptlib_crypt_CERTINFO_CACERTIFICATE 2018L
 #undef cryptlib_crypt_CERTINFO_ISSUERNAME
-#define cryptlib_crypt_CERTINFO_ISSUERNAME 2016L
+#define cryptlib_crypt_CERTINFO_ISSUERNAME 2019L
 #undef cryptlib_crypt_CERTINFO_VALIDFROM
-#define cryptlib_crypt_CERTINFO_VALIDFROM 2017L
+#define cryptlib_crypt_CERTINFO_VALIDFROM 2020L
 #undef cryptlib_crypt_CERTINFO_VALIDTO
-#define cryptlib_crypt_CERTINFO_VALIDTO 2018L
+#define cryptlib_crypt_CERTINFO_VALIDTO 2021L
 #undef cryptlib_crypt_CERTINFO_SUBJECTNAME
-#define cryptlib_crypt_CERTINFO_SUBJECTNAME 2019L
+#define cryptlib_crypt_CERTINFO_SUBJECTNAME 2022L
 #undef cryptlib_crypt_CERTINFO_ISSUERUNIQUEID
-#define cryptlib_crypt_CERTINFO_ISSUERUNIQUEID 2020L
+#define cryptlib_crypt_CERTINFO_ISSUERUNIQUEID 2023L
 #undef cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID
-#define cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID 2021L
+#define cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID 2024L
 #undef cryptlib_crypt_CERTINFO_CERTREQUEST
-#define cryptlib_crypt_CERTINFO_CERTREQUEST 2022L
+#define cryptlib_crypt_CERTINFO_CERTREQUEST 2025L
 #undef cryptlib_crypt_CERTINFO_THISUPDATE
-#define cryptlib_crypt_CERTINFO_THISUPDATE 2023L
+#define cryptlib_crypt_CERTINFO_THISUPDATE 2026L
 #undef cryptlib_crypt_CERTINFO_NEXTUPDATE
-#define cryptlib_crypt_CERTINFO_NEXTUPDATE 2024L
+#define cryptlib_crypt_CERTINFO_NEXTUPDATE 2027L
 #undef cryptlib_crypt_CERTINFO_REVOCATIONDATE
-#define cryptlib_crypt_CERTINFO_REVOCATIONDATE 2025L
+#define cryptlib_crypt_CERTINFO_REVOCATIONDATE 2028L
 #undef cryptlib_crypt_CERTINFO_REVOCATIONSTATUS
-#define cryptlib_crypt_CERTINFO_REVOCATIONSTATUS 2026L
+#define cryptlib_crypt_CERTINFO_REVOCATIONSTATUS 2029L
 #undef cryptlib_crypt_CERTINFO_CERTSTATUS
-#define cryptlib_crypt_CERTINFO_CERTSTATUS 2027L
+#define cryptlib_crypt_CERTINFO_CERTSTATUS 2030L
 #undef cryptlib_crypt_CERTINFO_DN
-#define cryptlib_crypt_CERTINFO_DN 2028L
+#define cryptlib_crypt_CERTINFO_DN 2031L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_ID
-#define cryptlib_crypt_CERTINFO_PKIUSER_ID 2029L
+#define cryptlib_crypt_CERTINFO_PKIUSER_ID 2032L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD
-#define cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD 2030L
+#define cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD 2033L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD
-#define cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD 2031L
+#define cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD 2034L
 #undef cryptlib_crypt_CERTINFO_COUNTRYNAME
 #define cryptlib_crypt_CERTINFO_COUNTRYNAME 2100L
 #undef cryptlib_crypt_CERTINFO_STATEORPROVINCENAME
@@ -805,10 +813,10 @@
 #define cryptlib_crypt_CERTINFO_CMS_RECEIPT_TO 2519L
 #undef cryptlib_crypt_CERTINFO_CMS_SECURITYLABEL
 #define cryptlib_crypt_CERTINFO_CMS_SECURITYLABEL 2520L
-#undef cryptlib_crypt_CERTINFO_CMS_SECLABEL_CLASSIFICATION
-#define cryptlib_crypt_CERTINFO_CMS_SECLABEL_CLASSIFICATION 2521L
 #undef cryptlib_crypt_CERTINFO_CMS_SECLABEL_POLICY
-#define cryptlib_crypt_CERTINFO_CMS_SECLABEL_POLICY 2522L
+#define cryptlib_crypt_CERTINFO_CMS_SECLABEL_POLICY 2521L
+#undef cryptlib_crypt_CERTINFO_CMS_SECLABEL_CLASSIFICATION
+#define cryptlib_crypt_CERTINFO_CMS_SECLABEL_CLASSIFICATION 2522L
 #undef cryptlib_crypt_CERTINFO_CMS_SECLABEL_PRIVACYMARK
 #define cryptlib_crypt_CERTINFO_CMS_SECLABEL_PRIVACYMARK 2523L
 #undef cryptlib_crypt_CERTINFO_CMS_SECLABEL_CATTYPE
@@ -1429,6 +1437,8 @@
 #define cryptlib_crypt_ERROR_RANDOM -14L
 #undef cryptlib_crypt_ERROR_FAILED
 #define cryptlib_crypt_ERROR_FAILED -15L
+#undef cryptlib_crypt_ERROR_INTERNAL
+#define cryptlib_crypt_ERROR_INTERNAL -16L
 #undef cryptlib_crypt_ERROR_NOTAVAIL
 #define cryptlib_crypt_ERROR_NOTAVAIL -20L
 #undef cryptlib_crypt_ERROR_PERMISSION
@@ -1725,57 +1735,64 @@ void releasePointerNIO(JNIEnv* env,jbyteArray array, jbyte* bytesPtr)
 
 int getPointerString(JNIEnv* env, jstring str, jbyte** bytesPtrPtr)
 {
-    jboolean isCopy;
-    jsize strLength;
-    const jbyte* rawBytesPtr;
-    jclass exClass;
+   jboolean isCopy;
+   jsize strLength;
+   const jbyte* rawBytesPtr;
+   jclass exClass;
 #ifdef __WINCE__
-	int status;
-#endif /* __WINCE__ */
+   int status;
+#endif // __WINCE__
 
-    if (str == NULL)
-    {
-        (*bytesPtrPtr) = NULL;
-        return 1;
-    }
 
-    rawBytesPtr = (*env)->GetStringUTFChars(env, str, &isCopy);
+   if (str == NULL)
+   {
+       (*bytesPtrPtr) = NULL;
+       return 1;
+   }
 
-    if (rawBytesPtr == NULL)
-    {
-        printf("java_jni.c:getPointerString - failed to get elements of String?!\n");
-        return 0;
-    }
+   rawBytesPtr = (*env)->GetStringUTFChars(env, str, &isCopy);
 
-    strLength = (*env)->GetStringUTFLength(env, str);
+   if (rawBytesPtr == NULL)
+   {
+       printf("java_jni.c:getPointerString - failed to get elements of String?!\n");
+       return 0;
+   }
 
-    (*bytesPtrPtr) = (jbyte*)malloc(strLength+1);
-    if (*bytesPtrPtr == NULL)
-    {
-        exClass = (*env)->FindClass(env, "java/lang/OutOfMemoryError");
-        if (exClass == 0)
-            printf("java_jni.c:getPointerString - no class?!\n");
-        else
-        if ((*env)->ThrowNew(env, exClass, "") < 0)
-            printf("java_jni.c:getPointerString - failed to throw?!\n");
-        (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
-        return 0;
-    }
+   strLength = (*env)->GetStringUTFLength(env, str);
 
 #ifdef __WINCE__
-	status = asciiToUnicode (*bytesPtrPtr, rawBytesPtr, strLength+1);
-	if (status == CRYPT_ERROR_BADDATA) {
-		(*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
-		return 0;
-	}
+   (*bytesPtrPtr) = (jbyte*)malloc(strLength*2+2); // this is unicode, therefore \0 is two bytes long
 #else
-	memcpy(*bytesPtrPtr, rawBytesPtr, strLength);
-	(*bytesPtrPtr)[strLength] = 0;
-#endif /* __WINCE__ */
-	(*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
+   (*bytesPtrPtr) = (jbyte*)malloc(strLength+1);
+#endif // __WINCE__
 
-	return 1;
-}
+   if (*bytesPtrPtr == NULL)
+   {
+       exClass = (*env)->FindClass(env, "java/lang/OutOfMemoryError");
+       if (exClass == 0)
+           printf("java_jni.c:getPointerString - no class?!\n");
+       else
+       if ((*env)->ThrowNew(env, exClass, "") < 0)
+           printf("java_jni.c:getPointerString - failed to throw?!\n");
+       (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
+       return 0;
+   }
+
+#ifdef __WINCE__
+   status = asciiToUnicode (*bytesPtrPtr, rawBytesPtr, strLength+1);
+   if (status == CRYPT_ERROR_BADDATA) {
+       (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
+       return 0;
+   }
+#else
+   memcpy(*bytesPtrPtr, rawBytesPtr, strLength);
+   (*bytesPtrPtr)[strLength] = 0;
+#endif // __WINCE__
+
+   (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
+
+   return 1;
+} 
 
 void releasePointerString(JNIEnv* env, jstring str, jbyte* bytesPtr)
 {
@@ -1793,9 +1810,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Init
   (JNIEnv * env, jclass cryptClass)
 {
 	int status = 0;
-
+	
 	status = cryptInit();
-
+	
 	processStatus(env, status);
 }
 
@@ -1808,9 +1825,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_End
   (JNIEnv * env, jclass cryptClass)
 {
 	int status = 0;
-
+	
 	status = cryptEnd();
-
+	
 	processStatus(env, status);
 }
 
@@ -1824,9 +1841,9 @@ JNIEXPORT jobject JNICALL Java_cryptlib_crypt_QueryCapability
 {
 	int status = 0;
 	CRYPT_QUERY_INFO cryptQueryInfo;
-
+	
 	status = cryptQueryCapability(cryptAlgo, &cryptQueryInfo);
-
+	
 	return(processStatusReturnCryptQueryInfo(env, status, cryptQueryInfo));
 }
 
@@ -1840,9 +1857,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateContext
 {
 	int status = 0;
 	jint cryptContext = 0;
-
+	
 	status = cryptCreateContext(&cryptContext, cryptUser, cryptAlgo);
-
+	
 	processStatus(env, status);
 	return(cryptContext);
 }
@@ -1856,9 +1873,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DestroyContext
   (JNIEnv * env, jclass cryptClass, jint cryptContext)
 {
 	int status = 0;
-
+	
 	status = cryptDestroyContext(cryptContext);
-
+	
 	processStatus(env, status);
 }
 
@@ -1871,9 +1888,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DestroyObject
   (JNIEnv * env, jclass cryptClass, jint cryptObject)
 {
 	int status = 0;
-
+	
 	status = cryptDestroyObject(cryptObject);
-
+	
 	processStatus(env, status);
 }
 
@@ -1886,9 +1903,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_GenerateKey
   (JNIEnv * env, jclass cryptClass, jint cryptContext)
 {
 	int status = 0;
-
+	
 	status = cryptGenerateKey(cryptContext);
-
+	
 	processStatus(env, status);
 }
 
@@ -1901,9 +1918,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_GenerateKeyAsync
   (JNIEnv * env, jclass cryptClass, jint cryptContext)
 {
 	int status = 0;
-
+	
 	status = cryptGenerateKeyAsync(cryptContext);
-
+	
 	processStatus(env, status);
 }
 
@@ -1916,9 +1933,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AsyncQuery
   (JNIEnv * env, jclass cryptClass, jint cryptObject)
 {
 	int status = 0;
-
+	
 	status = cryptAsyncQuery(cryptObject);
-
+	
 	processStatus(env, status);
 }
 
@@ -1931,9 +1948,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AsyncCancel
   (JNIEnv * env, jclass cryptClass, jint cryptObject)
 {
 	int status = 0;
-
+	
 	status = cryptAsyncCancel(cryptObject);
-
+	
 	processStatus(env, status);
 }
 
@@ -1947,15 +1964,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Encrypt__ILjava_nio_ByteBuffer_2II
 {
 	int status = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptEncrypt(cryptContext, bufferPtr + bufferOffset, length);
-
+	
 	finish:
 	releasePointerNIO(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -1971,15 +1988,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Encrypt__I_3BII
 {
 	int status = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesArray(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerArray(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptEncrypt(cryptContext, bufferPtr + bufferOffset, length);
-
+	
 	finish:
 	releasePointerArray(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -1995,15 +2012,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Decrypt__ILjava_nio_ByteBuffer_2II
 {
 	int status = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptDecrypt(cryptContext, bufferPtr + bufferOffset, length);
-
+	
 	finish:
 	releasePointerNIO(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -2019,15 +2036,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Decrypt__I_3BII
 {
 	int status = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesArray(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerArray(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptDecrypt(cryptContext, bufferPtr + bufferOffset, length);
-
+	
 	finish:
 	releasePointerArray(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -2042,9 +2059,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_SetAttribute
   (JNIEnv * env, jclass cryptClass, jint cryptHandle, jint attributeType, jint value)
 {
 	int status = 0;
-
+	
 	status = cryptSetAttribute(cryptHandle, attributeType, value);
-
+	
 	processStatus(env, status);
 }
 
@@ -2058,15 +2075,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_SetAttributeString__IILjava_nio_ByteB
 {
 	int status = 0;
 	jbyte* valuePtr = 0;
-
+	
 	if (!checkIndicesNIO(env, value, valueOffset, valueLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, value, &valuePtr))
 		goto finish;
-
+	
 	status = cryptSetAttributeString(cryptHandle, attributeType, valuePtr + valueOffset, valueLength);
-
+	
 	finish:
 	releasePointerNIO(env, value, valuePtr);
 	processStatus(env, status);
@@ -2082,15 +2099,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_SetAttributeString__II_3BII
 {
 	int status = 0;
 	jbyte* valuePtr = 0;
-
+	
 	if (!checkIndicesArray(env, value, valueOffset, valueLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, value, &valuePtr))
 		goto finish;
-
+	
 	status = cryptSetAttributeString(cryptHandle, attributeType, valuePtr + valueOffset, valueLength);
-
+	
 	finish:
 	releasePointerArray(env, value, valuePtr);
 	processStatus(env, status);
@@ -2106,9 +2123,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetAttribute
 {
 	int status = 0;
 	jint value = 0;
-
+	
 	status = cryptGetAttribute(cryptHandle, attributeType, &value);
-
+	
 	processStatus(env, status);
 	return(value);
 }
@@ -2124,18 +2141,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetAttributeString__IILjava_nio_ByteB
 	int status = 0;
 	jint valueLength = 0;
 	jbyte* valuePtr = 0;
-
+	
 	if (!processStatus(env, cryptGetAttributeString(cryptHandle, attributeType, NULL, &valueLength)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, value, valueOffset, valueLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, value, &valuePtr))
 		goto finish;
-
+	
 	status = cryptGetAttributeString(cryptHandle, attributeType, valuePtr + valueOffset, &valueLength);
-
+	
 	finish:
 	releasePointerNIO(env, value, valuePtr);
 	processStatus(env, status);
@@ -2153,18 +2170,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetAttributeString__II_3BI
 	int status = 0;
 	jint valueLength = 0;
 	jbyte* valuePtr = 0;
-
+	
 	if (!processStatus(env, cryptGetAttributeString(cryptHandle, attributeType, NULL, &valueLength)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, value, valueOffset, valueLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, value, &valuePtr))
 		goto finish;
-
+	
 	status = cryptGetAttributeString(cryptHandle, attributeType, valuePtr + valueOffset, &valueLength);
-
+	
 	finish:
 	releasePointerArray(env, value, valuePtr);
 	processStatus(env, status);
@@ -2180,9 +2197,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DeleteAttribute
   (JNIEnv * env, jclass cryptClass, jint cryptHandle, jint attributeType)
 {
 	int status = 0;
-
+	
 	status = cryptDeleteAttribute(cryptHandle, attributeType);
-
+	
 	processStatus(env, status);
 }
 
@@ -2196,15 +2213,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddRandom__Ljava_nio_ByteBuffer_2II
 {
 	int status = 0;
 	jbyte* randomDataPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, randomData, randomDataOffset, randomDataLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, randomData, &randomDataPtr))
 		goto finish;
-
+	
 	status = cryptAddRandom(randomDataPtr + randomDataOffset, randomDataLength);
-
+	
 	finish:
 	releasePointerNIO(env, randomData, randomDataPtr);
 	processStatus(env, status);
@@ -2220,15 +2237,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddRandom___3BII
 {
 	int status = 0;
 	jbyte* randomDataPtr = 0;
-
+	
 	if (!checkIndicesArray(env, randomData, randomDataOffset, randomDataLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, randomData, &randomDataPtr))
 		goto finish;
-
+	
 	status = cryptAddRandom(randomDataPtr + randomDataOffset, randomDataLength);
-
+	
 	finish:
 	releasePointerArray(env, randomData, randomDataPtr);
 	processStatus(env, status);
@@ -2243,9 +2260,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddRandom__I
   (JNIEnv * env, jclass cryptClass, jint pollType)
 {
 	int status = 0;
-
+	
 	status = cryptAddRandom(NULL, pollType);
-
+	
 	processStatus(env, status);
 }
 
@@ -2260,15 +2277,15 @@ JNIEXPORT jobject JNICALL Java_cryptlib_crypt_QueryObject__Ljava_nio_ByteBuffer_
 	int status = 0;
 	CRYPT_OBJECT_INFO cryptObjectInfo;
 	jbyte* objectDataPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, objectData, objectDataOffset, objectDataLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, objectData, &objectDataPtr))
 		goto finish;
-
+	
 	status = cryptQueryObject(objectDataPtr + objectDataOffset, objectDataLength, &cryptObjectInfo);
-
+	
 	finish:
 	releasePointerNIO(env, objectData, objectDataPtr);
 	return(processStatusReturnCryptObjectInfo(env, status, cryptObjectInfo));
@@ -2285,15 +2302,15 @@ JNIEXPORT jobject JNICALL Java_cryptlib_crypt_QueryObject___3BII
 	int status = 0;
 	CRYPT_OBJECT_INFO cryptObjectInfo;
 	jbyte* objectDataPtr = 0;
-
+	
 	if (!checkIndicesArray(env, objectData, objectDataOffset, objectDataLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, objectData, &objectDataPtr))
 		goto finish;
-
+	
 	status = cryptQueryObject(objectDataPtr + objectDataOffset, objectDataLength, &cryptObjectInfo);
-
+	
 	finish:
 	releasePointerArray(env, objectData, objectDataPtr);
 	return(processStatusReturnCryptObjectInfo(env, status, cryptObjectInfo));
@@ -2310,18 +2327,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportKey__Ljava_nio_ByteBuffer_2IIII
 	int status = 0;
 	jint encryptedKeyLength = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportKey(NULL, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptExportKey(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerNIO(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2339,18 +2356,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportKey___3BIIII
 	int status = 0;
 	jint encryptedKeyLength = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportKey(NULL, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptExportKey(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyMaxLength, &encryptedKeyLength, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerArray(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2368,18 +2385,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportKeyEx__Ljava_nio_ByteBuffer_2II
 	int status = 0;
 	jint encryptedKeyLength = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportKeyEx(NULL, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptExportKeyEx(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerNIO(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2397,18 +2414,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportKeyEx___3BIIIII
 	int status = 0;
 	jint encryptedKeyLength = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportKeyEx(NULL, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptExportKeyEx(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyMaxLength, &encryptedKeyLength, formatType, exportKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerArray(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2425,15 +2442,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_ImportKey__Ljava_nio_ByteBuffer_2IIII
 {
 	int status = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptImportKey(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyLength, importKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerNIO(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2449,15 +2466,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_ImportKey___3BIIII
 {
 	int status = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!checkIndicesArray(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptImportKey(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyLength, importKey, sessionKeyContext);
-
+	
 	finish:
 	releasePointerArray(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2474,15 +2491,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ImportKeyEx__Ljava_nio_ByteBuffer_2II
 	int status = 0;
 	jint returnedContext = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptImportKeyEx(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyLength, importKey, sessionKeyContext, &returnedContext);
-
+	
 	finish:
 	releasePointerNIO(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2500,15 +2517,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ImportKeyEx___3BIIII
 	int status = 0;
 	jint returnedContext = 0;
 	jbyte* encryptedKeyPtr = 0;
-
+	
 	if (!checkIndicesArray(env, encryptedKey, encryptedKeyOffset, encryptedKeyLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, encryptedKey, &encryptedKeyPtr))
 		goto finish;
-
+	
 	status = cryptImportKeyEx(encryptedKeyPtr + encryptedKeyOffset, encryptedKeyLength, importKey, sessionKeyContext, &returnedContext);
-
+	
 	finish:
 	releasePointerArray(env, encryptedKey, encryptedKeyPtr);
 	processStatus(env, status);
@@ -2526,18 +2543,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateSignature__Ljava_nio_ByteBuffer
 	int status = 0;
 	jint signatureLength = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!processStatus(env, cryptCreateSignature(NULL, signatureMaxLength, &signatureLength, signContext, hashContext)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCreateSignature(signaturePtr + signatureOffset, signatureMaxLength, &signatureLength, signContext, hashContext);
-
+	
 	finish:
 	releasePointerNIO(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2555,18 +2572,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateSignature___3BIIII
 	int status = 0;
 	jint signatureLength = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!processStatus(env, cryptCreateSignature(NULL, signatureMaxLength, &signatureLength, signContext, hashContext)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCreateSignature(signaturePtr + signatureOffset, signatureMaxLength, &signatureLength, signContext, hashContext);
-
+	
 	finish:
 	releasePointerArray(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2584,18 +2601,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateSignatureEx__Ljava_nio_ByteBuff
 	int status = 0;
 	jint signatureLength = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!processStatus(env, cryptCreateSignatureEx(NULL, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCreateSignatureEx(signaturePtr + signatureOffset, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData);
-
+	
 	finish:
 	releasePointerNIO(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2613,18 +2630,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateSignatureEx___3BIIIIII
 	int status = 0;
 	jint signatureLength = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!processStatus(env, cryptCreateSignatureEx(NULL, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCreateSignatureEx(signaturePtr + signatureOffset, signatureMaxLength, &signatureLength, formatType, signContext, hashContext, extraData);
-
+	
 	finish:
 	releasePointerArray(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2641,15 +2658,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_CheckSignature__Ljava_nio_ByteBuffer_
 {
 	int status = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!checkIndicesNIO(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCheckSignature(signaturePtr + signatureOffset, signatureLength, sigCheckKey, hashContext);
-
+	
 	finish:
 	releasePointerNIO(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2665,15 +2682,15 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_CheckSignature___3BIIII
 {
 	int status = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!checkIndicesArray(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCheckSignature(signaturePtr + signatureOffset, signatureLength, sigCheckKey, hashContext);
-
+	
 	finish:
 	releasePointerArray(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2690,15 +2707,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CheckSignatureEx__Ljava_nio_ByteBuffe
 	int status = 0;
 	jint extraData = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!checkIndicesNIO(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCheckSignatureEx(signaturePtr + signatureOffset, signatureLength, sigCheckKey, hashContext, &extraData);
-
+	
 	finish:
 	releasePointerNIO(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2716,15 +2733,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CheckSignatureEx___3BIIII
 	int status = 0;
 	jint extraData = 0;
 	jbyte* signaturePtr = 0;
-
+	
 	if (!checkIndicesArray(env, signature, signatureOffset, signatureLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, signature, &signaturePtr))
 		goto finish;
-
+	
 	status = cryptCheckSignatureEx(signaturePtr + signatureOffset, signatureLength, sigCheckKey, hashContext, &extraData);
-
+	
 	finish:
 	releasePointerArray(env, signature, signaturePtr);
 	processStatus(env, status);
@@ -2742,12 +2759,12 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_KeysetOpen
 	int status = 0;
 	jint keyset = 0;
 	jbyte* namePtr = 0;
-
+	
 	if (!getPointerString(env, name, &namePtr))
 		goto finish;
-
+	
 	status = cryptKeysetOpen(&keyset, cryptUser, keysetType, namePtr, options);
-
+	
 	finish:
 	releasePointerString(env, name, namePtr);
 	processStatus(env, status);
@@ -2763,9 +2780,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_KeysetClose
   (JNIEnv * env, jclass cryptClass, jint keyset)
 {
 	int status = 0;
-
+	
 	status = cryptKeysetClose(keyset);
-
+	
 	processStatus(env, status);
 }
 
@@ -2780,12 +2797,12 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetPublicKey
 	int status = 0;
 	jint cryptContext = 0;
 	jbyte* keyIDPtr = 0;
-
+	
 	if (!getPointerString(env, keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptGetPublicKey(keyset, &cryptContext, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);
 	processStatus(env, status);
@@ -2804,14 +2821,14 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetPrivateKey
 	jint cryptContext = 0;
 	jbyte* keyIDPtr = 0;
 	jbyte* passwordPtr = 0;
-
+	
 	if (!getPointerString(env, keyID, &keyIDPtr))
 		goto finish;
 	if (!getPointerString(env, password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptGetPrivateKey(keyset, &cryptContext, keyIDtype, keyIDPtr, passwordPtr);
-
+	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);
 	releasePointerString(env, password, passwordPtr);
@@ -2828,9 +2845,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddPublicKey
   (JNIEnv * env, jclass cryptClass, jint keyset, jint certificate)
 {
 	int status = 0;
-
+	
 	status = cryptAddPublicKey(keyset, certificate);
-
+	
 	processStatus(env, status);
 }
 
@@ -2844,12 +2861,12 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddPrivateKey
 {
 	int status = 0;
 	jbyte* passwordPtr = 0;
-
+	
 	if (!getPointerString(env, password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptAddPrivateKey(keyset, cryptKey, passwordPtr);
-
+	
 	finish:
 	releasePointerString(env, password, passwordPtr);
 	processStatus(env, status);
@@ -2865,12 +2882,12 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DeleteKey
 {
 	int status = 0;
 	jbyte* keyIDPtr = 0;
-
+	
 	if (!getPointerString(env, keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptDeleteKey(keyset, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);
 	processStatus(env, status);
@@ -2886,9 +2903,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateCert
 {
 	int status = 0;
 	jint certificate = 0;
-
+	
 	status = cryptCreateCert(&certificate, cryptUser, certType);
-
+	
 	processStatus(env, status);
 	return(certificate);
 }
@@ -2902,9 +2919,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DestroyCert
   (JNIEnv * env, jclass cryptClass, jint certificate)
 {
 	int status = 0;
-
+	
 	status = cryptDestroyCert(certificate);
-
+	
 	processStatus(env, status);
 }
 
@@ -2921,21 +2938,21 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetCertExtension__ILjava_lang_String_
 	jint criticalFlag = 0;
 	jbyte* oidPtr = 0;
 	jbyte* extensionPtr = 0;
-
+	
 	if (!getPointerString(env, oid, &oidPtr))
 		goto finish;
-
+	
 	if (!processStatus(env, cryptGetCertExtension(certificate, oidPtr, &criticalFlag, NULL, extensionMaxLength, &extensionLength)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, extension, extensionOffset, extensionLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, extension, &extensionPtr))
 		goto finish;
-
+	
 	status = cryptGetCertExtension(certificate, oidPtr, &criticalFlag, extensionPtr + extensionOffset, extensionMaxLength, &extensionLength);
-
+	
 	finish:
 	releasePointerNIO(env, extension, extensionPtr);
 	releasePointerString(env, oid, oidPtr);
@@ -2956,21 +2973,21 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetCertExtension__ILjava_lang_String_
 	jint criticalFlag = 0;
 	jbyte* oidPtr = 0;
 	jbyte* extensionPtr = 0;
-
+	
 	if (!getPointerString(env, oid, &oidPtr))
 		goto finish;
-
+	
 	if (!processStatus(env, cryptGetCertExtension(certificate, oidPtr, &criticalFlag, NULL, extensionMaxLength, &extensionLength)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, extension, extensionOffset, extensionLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, extension, &extensionPtr))
 		goto finish;
-
+	
 	status = cryptGetCertExtension(certificate, oidPtr, &criticalFlag, extensionPtr + extensionOffset, extensionMaxLength, &extensionLength);
-
+	
 	finish:
 	releasePointerArray(env, extension, extensionPtr);
 	releasePointerString(env, oid, oidPtr);
@@ -2989,18 +3006,18 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddCertExtension__ILjava_lang_String_
 	int status = 0;
 	jbyte* oidPtr = 0;
 	jbyte* extensionPtr = 0;
-
+	
 	if (!getPointerString(env, oid, &oidPtr))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, extension, extensionOffset, extensionLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, extension, &extensionPtr))
 		goto finish;
-
+	
 	status = cryptAddCertExtension(certificate, oidPtr, criticalFlag, extensionPtr + extensionOffset, extensionLength);
-
+	
 	finish:
 	releasePointerNIO(env, extension, extensionPtr);
 	releasePointerString(env, oid, oidPtr);
@@ -3018,18 +3035,18 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_AddCertExtension__ILjava_lang_String_
 	int status = 0;
 	jbyte* oidPtr = 0;
 	jbyte* extensionPtr = 0;
-
+	
 	if (!getPointerString(env, oid, &oidPtr))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, extension, extensionOffset, extensionLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, extension, &extensionPtr))
 		goto finish;
-
+	
 	status = cryptAddCertExtension(certificate, oidPtr, criticalFlag, extensionPtr + extensionOffset, extensionLength);
-
+	
 	finish:
 	releasePointerArray(env, extension, extensionPtr);
 	releasePointerString(env, oid, oidPtr);
@@ -3046,12 +3063,12 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DeleteCertExtension
 {
 	int status = 0;
 	jbyte* oidPtr = 0;
-
+	
 	if (!getPointerString(env, oid, &oidPtr))
 		goto finish;
-
+	
 	status = cryptDeleteCertExtension(certificate, oidPtr);
-
+	
 	finish:
 	releasePointerString(env, oid, oidPtr);
 	processStatus(env, status);
@@ -3066,9 +3083,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_SignCert
   (JNIEnv * env, jclass cryptClass, jint certificate, jint signContext)
 {
 	int status = 0;
-
+	
 	status = cryptSignCert(certificate, signContext);
-
+	
 	processStatus(env, status);
 }
 
@@ -3081,9 +3098,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_CheckCert
   (JNIEnv * env, jclass cryptClass, jint certificate, jint sigCheckKey)
 {
 	int status = 0;
-
+	
 	status = cryptCheckCert(certificate, sigCheckKey);
-
+	
 	processStatus(env, status);
 }
 
@@ -3098,15 +3115,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ImportCert__Ljava_nio_ByteBuffer_2III
 	int status = 0;
 	jint certificate = 0;
 	jbyte* certObjectPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, certObject, certObjectOffset, certObjectLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, certObject, &certObjectPtr))
 		goto finish;
-
+	
 	status = cryptImportCert(certObjectPtr + certObjectOffset, certObjectLength, cryptUser, &certificate);
-
+	
 	finish:
 	releasePointerNIO(env, certObject, certObjectPtr);
 	processStatus(env, status);
@@ -3124,15 +3141,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ImportCert___3BIII
 	int status = 0;
 	jint certificate = 0;
 	jbyte* certObjectPtr = 0;
-
+	
 	if (!checkIndicesArray(env, certObject, certObjectOffset, certObjectLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, certObject, &certObjectPtr))
 		goto finish;
-
+	
 	status = cryptImportCert(certObjectPtr + certObjectOffset, certObjectLength, cryptUser, &certificate);
-
+	
 	finish:
 	releasePointerArray(env, certObject, certObjectPtr);
 	processStatus(env, status);
@@ -3150,18 +3167,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportCert__Ljava_nio_ByteBuffer_2III
 	int status = 0;
 	jint certObjectLength = 0;
 	jbyte* certObjectPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportCert(NULL, certObjectMaxLength, &certObjectLength, certFormatType, certificate)))
 		goto finish;
-
+	
 	if (!checkIndicesNIO(env, certObject, certObjectOffset, certObjectLength))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, certObject, &certObjectPtr))
 		goto finish;
-
+	
 	status = cryptExportCert(certObjectPtr + certObjectOffset, certObjectMaxLength, &certObjectLength, certFormatType, certificate);
-
+	
 	finish:
 	releasePointerNIO(env, certObject, certObjectPtr);
 	processStatus(env, status);
@@ -3179,18 +3196,18 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_ExportCert___3BIIII
 	int status = 0;
 	jint certObjectLength = 0;
 	jbyte* certObjectPtr = 0;
-
+	
 	if (!processStatus(env, cryptExportCert(NULL, certObjectMaxLength, &certObjectLength, certFormatType, certificate)))
 		goto finish;
-
+	
 	if (!checkIndicesArray(env, certObject, certObjectOffset, certObjectLength))
 		goto finish;
-
+	
 	if (!getPointerArray(env, certObject, &certObjectPtr))
 		goto finish;
-
+	
 	status = cryptExportCert(certObjectPtr + certObjectOffset, certObjectMaxLength, &certObjectLength, certFormatType, certificate);
-
+	
 	finish:
 	releasePointerArray(env, certObject, certObjectPtr);
 	processStatus(env, status);
@@ -3206,9 +3223,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_CAAddItem
   (JNIEnv * env, jclass cryptClass, jint keyset, jint certificate)
 {
 	int status = 0;
-
+	
 	status = cryptCAAddItem(keyset, certificate);
-
+	
 	processStatus(env, status);
 }
 
@@ -3223,12 +3240,12 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CAGetItem
 	int status = 0;
 	jint certificate = 0;
 	jbyte* keyIDPtr = 0;
-
+	
 	if (!getPointerString(env, keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptCAGetItem(keyset, &certificate, certType, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);
 	processStatus(env, status);
@@ -3245,12 +3262,12 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_CADeleteItem
 {
 	int status = 0;
 	jbyte* keyIDPtr = 0;
-
+	
 	if (!getPointerString(env, keyID, &keyIDPtr))
 		goto finish;
-
+	
 	status = cryptCADeleteItem(keyset, certType, keyIDtype, keyIDPtr);
-
+	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);
 	processStatus(env, status);
@@ -3266,9 +3283,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CACertManagement
 {
 	int status = 0;
 	jint certificate = 0;
-
+	
 	status = cryptCACertManagement(&certificate, action, keyset, caKey, certRequest);
-
+	
 	processStatus(env, status);
 	return(certificate);
 }
@@ -3283,9 +3300,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateEnvelope
 {
 	int status = 0;
 	jint envelope = 0;
-
+	
 	status = cryptCreateEnvelope(&envelope, cryptUser, formatType);
-
+	
 	processStatus(env, status);
 	return(envelope);
 }
@@ -3299,9 +3316,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DestroyEnvelope
   (JNIEnv * env, jclass cryptClass, jint envelope)
 {
 	int status = 0;
-
+	
 	status = cryptDestroyEnvelope(envelope);
-
+	
 	processStatus(env, status);
 }
 
@@ -3315,9 +3332,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_CreateSession
 {
 	int status = 0;
 	jint session = 0;
-
+	
 	status = cryptCreateSession(&session, cryptUser, formatType);
-
+	
 	processStatus(env, status);
 	return(session);
 }
@@ -3331,9 +3348,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DestroySession
   (JNIEnv * env, jclass cryptClass, jint session)
 {
 	int status = 0;
-
+	
 	status = cryptDestroySession(session);
-
+	
 	processStatus(env, status);
 }
 
@@ -3348,15 +3365,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_PushData__ILjava_nio_ByteBuffer_2II
 	int status = 0;
 	jint bytesCopied = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesNIO(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptPushData(envelope, bufferPtr + bufferOffset, length, &bytesCopied);
-
+	
 	finish:
 	releasePointerNIO(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -3374,15 +3391,15 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_PushData__I_3BII
 	int status = 0;
 	jint bytesCopied = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	if (!checkIndicesArray(env, buffer, bufferOffset, length))
 		goto finish;
-
+	
 	if (!getPointerArray(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptPushData(envelope, bufferPtr + bufferOffset, length, &bytesCopied);
-
+	
 	finish:
 	releasePointerArray(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -3398,9 +3415,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_FlushData
   (JNIEnv * env, jclass cryptClass, jint envelope)
 {
 	int status = 0;
-
+	
 	status = cryptFlushData(envelope);
-
+	
 	processStatus(env, status);
 }
 
@@ -3415,17 +3432,17 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_PopData__ILjava_nio_ByteBuffer_2II
 	int status = 0;
 	jint bytesCopied = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	//CryptPopData is a special case that doesn't have the length querying call
-
+	
 	if (!checkIndicesNIO(env, buffer, bufferOffset, bytesCopied))
 		goto finish;
-
+	
 	if (!getPointerNIO(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptPopData(envelope, bufferPtr + bufferOffset, length, &bytesCopied);
-
+	
 	finish:
 	releasePointerNIO(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -3443,17 +3460,17 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_PopData__I_3BII
 	int status = 0;
 	jint bytesCopied = 0;
 	jbyte* bufferPtr = 0;
-
+	
 	//CryptPopData is a special case that doesn't have the length querying call
-
+	
 	if (!checkIndicesArray(env, buffer, bufferOffset, bytesCopied))
 		goto finish;
-
+	
 	if (!getPointerArray(env, buffer, &bufferPtr))
 		goto finish;
-
+	
 	status = cryptPopData(envelope, bufferPtr + bufferOffset, length, &bytesCopied);
-
+	
 	finish:
 	releasePointerArray(env, buffer, bufferPtr);
 	processStatus(env, status);
@@ -3471,12 +3488,12 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_DeviceOpen
 	int status = 0;
 	jint device = 0;
 	jbyte* namePtr = 0;
-
+	
 	if (!getPointerString(env, name, &namePtr))
 		goto finish;
-
+	
 	status = cryptDeviceOpen(&device, cryptUser, deviceType, namePtr);
-
+	
 	finish:
 	releasePointerString(env, name, namePtr);
 	processStatus(env, status);
@@ -3492,9 +3509,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_DeviceClose
   (JNIEnv * env, jclass cryptClass, jint device)
 {
 	int status = 0;
-
+	
 	status = cryptDeviceClose(device);
-
+	
 	processStatus(env, status);
 }
 
@@ -3508,9 +3525,9 @@ JNIEXPORT jobject JNICALL Java_cryptlib_crypt_DeviceQueryCapability
 {
 	int status = 0;
 	CRYPT_QUERY_INFO cryptQueryInfo;
-
+	
 	status = cryptDeviceQueryCapability(device, cryptAlgo, &cryptQueryInfo);
-
+	
 	return(processStatusReturnCryptQueryInfo(env, status, cryptQueryInfo));
 }
 
@@ -3524,9 +3541,9 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_DeviceCreateContext
 {
 	int status = 0;
 	jint cryptContext = 0;
-
+	
 	status = cryptDeviceCreateContext(device, &cryptContext, cryptAlgo);
-
+	
 	processStatus(env, status);
 	return(cryptContext);
 }
@@ -3543,14 +3560,14 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_Login
 	jint user = 0;
 	jbyte* namePtr = 0;
 	jbyte* passwordPtr = 0;
-
+	
 	if (!getPointerString(env, name, &namePtr))
 		goto finish;
 	if (!getPointerString(env, password, &passwordPtr))
 		goto finish;
-
+	
 	status = cryptLogin(&user, namePtr, passwordPtr);
-
+	
 	finish:
 	releasePointerString(env, name, namePtr);
 	releasePointerString(env, password, passwordPtr);
@@ -3567,9 +3584,9 @@ JNIEXPORT void JNICALL Java_cryptlib_crypt_Logout
   (JNIEnv * env, jclass cryptClass, jint user)
 {
 	int status = 0;
-
+	
 	status = cryptLogout(user);
-
+	
 	processStatus(env, status);
 }
 
