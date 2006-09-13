@@ -51,7 +51,7 @@ static int readMacInfo( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 						void *errorInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BYTE salt[ CRYPT_MAX_HASHSIZE ];
+	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];
 	long value;
 	int saltLength, iterations, status;
 
@@ -259,16 +259,19 @@ static int readEncryptedCert( STREAM *stream,
 
 static int readGeneralInfo( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	int generalInfoEndPos = stell( stream ), length, status;
+	int generalInfoEndPos = stell( stream ), length;
+	int iterationCount = 0, status;
 
 	/* Go through the various attributes looking for anything that we can
 	   use */
 	readConstructed( stream, NULL, CTAG_PH_GENERALINFO );
 	status = readSequence( stream, &length );
 	generalInfoEndPos += length;
-	while( cryptStatusOK( status ) && stell( stream ) < generalInfoEndPos )
+	while( cryptStatusOK( status ) && \
+		   stell( stream ) < generalInfoEndPos && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
-		BYTE oid[ MAX_OID_SIZE ];
+		BYTE oid[ MAX_OID_SIZE + 8 ];
 
 		/* Read the attribute.  Since there are only two attribute types
 		   that we use, we hardcode the read in here rather than performing
@@ -325,6 +328,8 @@ static int readGeneralInfo( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo )
 		/* It's something that we don't recognise, skip it */
 		status = readUniversal( stream );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( status );
 	}
@@ -382,17 +387,19 @@ static const char *getFailureString( const int value )
 			"already exists",
 		NULL
 		};
-	int bitIndex = 0, bitFlags = value;
+	int bitIndex = 0, bitFlags = value, iterationCount = 0;
 
 	/* Find the first failure string corresponding to a bit set in the
 	   failure info */
-	if( !bitFlags )
+	if( bitFlags == 0 )
 		return( "Missing PKI failure code" );
-	while( !( bitFlags & 1 ) )
+	while( !( bitFlags & 1 ) && iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		bitIndex++;
 		bitFlags >>= 1;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError_Ext( "Internal error" );
 	if( bitIndex >= sizeof( failureStrings ) / sizeof( char * ) )
 		return( "Unknown PKI failure code" );
 
@@ -458,7 +465,7 @@ int readPkiStatusInfo( STREAM *stream, int *errorCode, char *errorMessage )
 		}
 	if( stell( stream ) < endPos )
 		{
-		char textBitString[ 128 ], *textBitStringPtr = textBitString;
+		char textBitString[ 128 + 8 ], *textBitStringPtr = textBitString;
 		int bitString, textBitStringLen, errorMsgLen;
 		int i, noBits, bitMask, bitNo = -1;
 
@@ -568,8 +575,8 @@ static int readRequestBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 							const int messageType )
 	{
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	RESOURCE_DATA msgData;
-	BYTE authCertID[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE authCertID[ CRYPT_MAX_HASHSIZE + 8 ];
 	int value, length, status;
 
 	/* Import the CRMF request */
@@ -761,8 +768,8 @@ static int readResponseBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 static int readConfBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 						 CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	RESOURCE_DATA msgData;
-	BYTE certHash[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE certHash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, status;
 
 	/* Read the client's returned confirmation information */
@@ -922,7 +929,7 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 						  const BOOLEAN isServerInitialMessage )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo, hashAlgo;
-	BYTE buffer[ CRYPT_MAX_HASHSIZE ];
+	BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, streamPos, endPos, status;
 
 	/* Clear per-message state information */
@@ -1119,7 +1126,7 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 	   present in the general info */
 	if( protocolInfo->senderNonceSize > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, protocolInfo->senderNonce,
 						protocolInfo->senderNonceSize );
@@ -1420,7 +1427,7 @@ int readPkiMessage( SESSION_INFO *sessionInfoPtr,
 							protPartSize );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			setMessageData( &msgData, sMemBufPtr( &stream ),
 							protectionLength );
@@ -1440,7 +1447,7 @@ int readPkiMessage( SESSION_INFO *sessionInfoPtr,
 		{
 		if( !protocolInfo->isCryptlib )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			/* Make sure that the sig-check key that we'll be using is the
 			   correct one.  Because of CMP's use of a raw signature format

@@ -99,6 +99,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 		MKACP_UNUSED() } },
 
 	{ MECHANISM_NONE,
+	  { MKACP_END() } },
+	{ MECHANISM_NONE,
 	  { MKACP_END() } }
 	};
 
@@ -183,6 +185,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 		MKACP_UNUSED() } },
 
 	{ MECHANISM_NONE,
+	  { MKACP_END() } },
+	{ MECHANISM_NONE,
 	  { MKACP_END() } }
 	};
 
@@ -207,6 +211,8 @@ static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
 	{ MECHANISM_NONE,
+	  { MKACP_END() } },
+	{ MECHANISM_NONE,
 	  { MKACP_END() } }
 	};
 
@@ -230,6 +236,8 @@ static const MECHANISM_ACL FAR_BSS mechanismSigCheckACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Sig.check context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
+	{ MECHANISM_NONE,
+	  { MKACP_END() } },
 	{ MECHANISM_NONE,
 	  { MKACP_END() } }
 	};
@@ -287,6 +295,8 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
 
 	{ MECHANISM_NONE,
+	  { MKACP_END() } },
+	{ MECHANISM_NONE,
 	  { MKACP_END() } }
 	};
 
@@ -329,6 +339,10 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 				( ( message & MESSAGE_MASK ) == MESSAGE_DEV_EXPORT ) ? \
 				mechanismWrapACL : mechanismUnwrapACL;
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
+	const int mechanismAclSize = \
+				( ( message & MESSAGE_MASK ) == MESSAGE_DEV_EXPORT ) ? \
+				FAILSAFE_ARRAYSIZE( mechanismWrapACL, MECHANISM_ACL ) : \
+				FAILSAFE_ARRAYSIZE( mechanismUnwrapACL, MECHANISM_ACL );
 	BOOLEAN isRawMechanism;
 	int contextHandle, i;
 
@@ -349,7 +363,10 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; mechanismACL[ i ].type != messageValue && \
-				mechanismACL[ i ].type != MECHANISM_NONE; i++ );
+				mechanismACL[ i ].type != MECHANISM_NONE && \
+				i < mechanismAclSize; i++ );
+	if( i >= mechanismAclSize )
+		retIntError();
 	if( mechanismACL[ i ].type == MECHANISM_NONE )
 		{
 		assert( NOTREACHED );
@@ -474,6 +491,10 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 				( ( message & MESSAGE_MASK ) == MESSAGE_DEV_SIGN ) ? \
 				mechanismSignACL : mechanismSigCheckACL;
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
+	const int mechanismAclSize = \
+				( ( message & MESSAGE_MASK ) == MESSAGE_DEV_SIGN ) ? \
+				FAILSAFE_ARRAYSIZE( mechanismSignACL, MECHANISM_ACL ) : \
+				FAILSAFE_ARRAYSIZE( mechanismSigCheckACL, MECHANISM_ACL );
 	int contextHandle, i;
 
 	/* Precondition */
@@ -486,7 +507,10 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; mechanismACL[ i ].type != messageValue && \
-				mechanismACL[ i ].type != MECHANISM_NONE; i++ );
+				mechanismACL[ i ].type != MECHANISM_NONE && \
+				i < mechanismAclSize; i++ );
+	if( i >= mechanismAclSize )
+		retIntError();
 	if( mechanismACL[ i ].type == MECHANISM_NONE )
 		{
 		assert( NOTREACHED );
@@ -591,7 +615,11 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; mechanismACL[ i ].type != messageValue && \
-				mechanismACL[ i ].type != MECHANISM_NONE; i++ );
+				mechanismACL[ i ].type != MECHANISM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ) )
+		retIntError();
 	if( mechanismACL[ i ].type == MECHANISM_NONE )
 		{
 		assert( NOTREACHED );

@@ -43,6 +43,7 @@ static const CERTSTORE_READ_INFO certstoreReadInfo[] = {
 	{ "iAndSHash", 9, CRYPT_IKEYID_ISSUERANDSERIALNUMBER, CERTSTORE_FLAG_BASE64 },
 	{ "sKIDHash", 8, CRYPT_IKEYID_KEYID, CERTSTORE_FLAG_BASE64 },
 	{ NULL, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE },
+	{ NULL, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE }
 	};
 
 /****************************************************************************
@@ -103,7 +104,10 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 
 	/* Convert the search attribute type into a cryptlib key ID */
 	firstChar = toLower( queryInfo.attribute[ 0 ] );
-	for( i = 0; certstoreReadInfo[ i ].attrName != NULL; i++ )
+	for( i = 0; 
+		 certstoreReadInfo[ i ].attrName != NULL && \
+			i < FAILSAFE_ARRAYSIZE( certstoreReadInfo, CERTSTORE_READ_INFO ); 
+		 i++ )
 		{
 		if( queryInfo.attributeLen == certstoreReadInfo[ i ].attrNameLen && \
 			certstoreReadInfo[ i ].attrName[ 0 ] == firstChar && \
@@ -115,6 +119,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 			break;
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( certstoreReadInfo, CERTSTORE_READ_INFO ) )
+		retIntError();
 	if( certstoreInfoPtr == NULL )
 		{
 		sendErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );

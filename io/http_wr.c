@@ -37,7 +37,7 @@
 static void encodeRFC1866( STREAM *headerStream, const char *string, 
 						   const int stringLength )
 	{
-	static const char *allowedChars = "$-_.!*'(),\"/";	/* RFC 1738 + '/' */
+	static const char allowedChars[] = "$-_.!*'(),\"/";	/* RFC 1738 + '/' */
 	int index = 0;
 
 	assert( isWritePtr( headerStream, sizeof( STREAM ) ) );
@@ -58,8 +58,11 @@ static void encodeRFC1866( STREAM *headerStream, const char *string,
 			sputc( headerStream, '+' );
 			continue;
 			}
-		for( i = 0; allowedChars[ i ] && ch != allowedChars[ i ]; i++ );
-		if( allowedChars[ i ] )
+		for( i = 0; allowedChars[ i ] != '\0' && ch != allowedChars[ i ] && \
+					i < FAILSAFE_ARRAYSIZE( allowedChars, char ) + 1; i++ );
+		if( i >= FAILSAFE_ARRAYSIZE( allowedChars, char ) + 1 )
+			retIntError_Void();
+		if( allowedChars[ i ] != '\0' )
 			/* It's in the allowed-chars list, output it verbatim */
 			sputc( headerStream, ch );
 		else

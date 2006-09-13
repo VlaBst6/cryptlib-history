@@ -42,9 +42,13 @@ static int oidToText( const BYTE *binaryOID, const int binaryOidLen,
 	int i, j, length, subLen;
 	long value;
 
+	assert( isReadPtr( binaryOID, binaryOidLen ) );
+	assert( isWritePtr( oid, maxOidLen ) );
+
 	/* Perform a sanity check on the OID data.  This has already been done
 	   elsewhere, but we check it again here just to be safe */
-	if( oidDataLen < 5 || oidDataLen != binaryOidLen )
+	if( oidDataLen < 5 || oidDataLen > MAX_OID_SIZE || \
+		oidDataLen != binaryOidLen )
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Pick apart the OID.  This assumes that no OID component will be
@@ -102,10 +106,14 @@ static int scanValue( const char *string, const int strMaxLength,
 	long retVal = 0;
 	int dataLeft = strMaxLength;
 
+	assert( isReadPtr( string, strMaxLength ) );
+	assert( isWritePtr( value, sizeof( long ) ) );
+
 	/* Clear return value */
 	*value = -1L;
 
-	if( dataLeft <= 0 || !isDigit( *string ) )
+	if( dataLeft <= 0 || dataLeft > CRYPT_MAX_TEXTSIZE || \
+		!isDigit( *string ) )
 		return( -1 );
 	while( dataLeft > 0 && isDigit( *string ) )
 		{
@@ -129,13 +137,18 @@ static int scanValue( const char *string, const int strMaxLength,
 	return( strMaxLength - dataLeft );
 	}
 
-int textToOID( const char *oid, const int oidLength, BYTE *binaryOID )
+int textToOID( const char *oid, const int oidLength, BYTE *binaryOID,
+			   const int maxBinaryOidLen )
 	{
 	long value, value2;
 	int length = 3, subLen, dataLeft = oidLength;
 
+	assert( isReadPtr( oid, oidLength ) );
+	assert( isWritePtr( binaryOID, maxBinaryOidLen ) );
+	assert( maxBinaryOidLen >= 5 );
+
 	/* Clear return value */
-	memset( binaryOID, 0, 8 );
+	memset( binaryOID, 0, min( 8, maxBinaryOidLen ) );
 
 	/* Perform some basic checks on the OID data */
 	if( oidLength < MIN_ASCII_OIDSIZE || oidLength > CRYPT_MAX_TEXTSIZE )
@@ -173,12 +186,6 @@ int textToOID( const char *oid, const int oidLength, BYTE *binaryOID )
 		{
 		BOOLEAN hasHighBits = FALSE;
 
-		/* Make sure that we can fit the result in the output buffer.  We 
-		   need room for the 2-byte header plus up to four more bytes of
-		   data */
-		if( length > MAX_OID_SIZE - 6 )
-			return( CRYPT_ERROR_BADDATA );
-
 		/* Scan the next value and write the high octets (if necessary) with
 		   flag bits set, followed by the final octet */
 		subLen = scanValue( oid, dataLeft, &value );
@@ -188,21 +195,29 @@ int textToOID( const char *oid, const int oidLength, BYTE *binaryOID )
 		dataLeft -= subLen;
 		if( value >= 0x200000L )					/* 2^21 */
 			{
+			if( length >= maxBinaryOidLen )
+				return( CRYPT_ERROR_BADDATA );
 			binaryOID[ length++ ] = ( BYTE ) ( 0x80 | ( value >> 21 ) );
 			value %= 0x200000L;
 			hasHighBits = TRUE;
 			}
 		if( ( value >= 0x4000 ) || hasHighBits )	/* 2^14 */
 			{
+			if( length >= maxBinaryOidLen )
+				return( CRYPT_ERROR_BADDATA );
 			binaryOID[ length++ ] = ( BYTE ) ( 0x80 | ( value >> 14 ) );
 			value %= 0x4000;
 			hasHighBits = TRUE;
 			}
 		if( ( value >= 0x80 ) || hasHighBits )		/* 2^7 */
 			{
+			if( length >= maxBinaryOidLen )
+				return( CRYPT_ERROR_BADDATA );
 			binaryOID[ length++ ] = ( BYTE ) ( 0x80 | ( value >> 7 ) );
 			value %= 128;
 			}
+		if( length >= maxBinaryOidLen )
+			return( CRYPT_ERROR_BADDATA );
 		binaryOID[ length++ ] = ( BYTE ) value;
 		}
 	binaryOID[ 1 ] = length - 2;
@@ -367,11 +382,12 @@ static int findDnInExtension( CERT_INFO *certInfoPtr,
 	assert( selectionInfoConsistent( certInfoPtr ) );
 
 	/* Search for a DN in the current GeneralName */
-	for( attributeListPtr = certInfoPtr->attributeCursor; \
+	for( attributeListPtr = certInfoPtr->attributeCursor; 
 		 attributeListPtr != NULL && \
 			attributeListPtr->attributeID == attributeID && \
-			attributeListPtr->fieldID == fieldID; \
+			attributeListPtr->fieldID == fieldID; 
 		 attributeListPtr = attributeListPtr->next )
+		{
 		if( attributeListPtr->fieldType == FIELDTYPE_DN )
 			{
 			/* We found a DN, select it */
@@ -382,6 +398,7 @@ static int findDnInExtension( CERT_INFO *certInfoPtr,
 			assert( selectionInfoConsistent( certInfoPtr ) );
 			return( CRYPT_OK );
 			}
+		}
 
 	return( CRYPT_ERROR_NOTFOUND );
 	}
@@ -816,8 +833,10 @@ static int getCrlEntry( CERT_INFO *certInfoPtr, void *certInfo,
 	{
 	CERT_REV_INFO *certRevInfo = certInfoPtr->cCertRev;
 	STREAM stream;
+	const CERTWRITE_INFO *certWriteInfo;
 	const int maxLength = *certInfoLength;
-	int crlEntrySize, i, status;
+	const int certWriteInfoSize = sizeofCertWriteTable();
+	int crlEntrySize, iterationCount = 0, status;
 
 	assert( certInfoPtr->type == CRYPT_CERTTYPE_CRL );
 
@@ -830,16 +849,20 @@ static int getCrlEntry( CERT_INFO *certInfoPtr, void *certInfo,
 	   pseudo-sign the cert object in order to write the data, which 
 	   doesn't work for CRL entries where we could end up pseudo-singing it 
 	   multiple times */
-	for( i = 0; certWriteTable[ i ].type != CRYPT_CERTTYPE_CRL && \
-				certWriteTable[ i ].type != CRYPT_CERTTYPE_NONE; i++ );
-	if( certWriteTable[ i ].type == CRYPT_CERTTYPE_NONE )
+	for( certWriteInfo = getCertWriteTable();
+		 certWriteInfo->type != CRYPT_CERTTYPE_CRL && \
+			certWriteInfo->type != CRYPT_CERTTYPE_NONE && \
+			iterationCount++ < certWriteInfoSize; 
+		 certWriteInfo++ );
+	if( iterationCount >= certWriteInfoSize || \
+		certWriteInfo->type == CRYPT_CERTTYPE_NONE )
 		{
 		assert( NOTREACHED );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 	sMemOpen( &stream, NULL, 0 );
-	status = certWriteTable[ i ].writeFunction( &stream, certInfoPtr,
-												NULL, CRYPT_UNUSED );
+	status = certWriteInfo->writeFunction( &stream, certInfoPtr, NULL, 
+										   CRYPT_UNUSED );
 	crlEntrySize = stell( &stream );
 	sMemClose( &stream );
 	if( cryptStatusError( status ) )
@@ -852,8 +875,8 @@ static int getCrlEntry( CERT_INFO *certInfoPtr, void *certInfo,
 	if( crlEntrySize > maxLength )
 		return( CRYPT_ERROR_OVERFLOW );
 	sMemOpen( &stream, certInfo, crlEntrySize );
-	status = certWriteTable[ i ].writeFunction( &stream, certInfoPtr,
-												NULL, CRYPT_UNUSED );
+	status = certWriteInfo->writeFunction( &stream, certInfoPtr, NULL, 
+										   CRYPT_UNUSED );
 	sMemDisconnect( &stream );
 
 	return( status );
@@ -1251,7 +1274,7 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 
 		case CRYPT_CERTINFO_VALIDFROM:
 		case CRYPT_CERTINFO_THISUPDATE:
-			if( certInfoPtr->startTime > 0 )
+			if( certInfoPtr->startTime > MIN_CERT_TIME_VALUE )
 				{
 				data = &certInfoPtr->startTime;
 				dataLength = sizeof( time_t );
@@ -1261,7 +1284,7 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 
 		case CRYPT_CERTINFO_VALIDTO:
 		case CRYPT_CERTINFO_NEXTUPDATE:
-			if( certInfoPtr->endTime > 0 )
+			if( certInfoPtr->endTime > MIN_CERT_TIME_VALUE )
 				{
 				data = &certInfoPtr->endTime;
 				dataLength = sizeof( time_t );
@@ -1581,17 +1604,19 @@ int deleteCertComponent( CERT_INFO *certInfoPtr,
 		fieldID = certInfoPtr->attributeCursor->fieldID;
 
 		/* Delete each field in the GeneralName */
-		for( attributeListPtr = certInfoPtr->attributeCursor; \
+		for( attributeListPtr = certInfoPtr->attributeCursor; 
 			 attributeListPtr != NULL && \
 				attributeListPtr->attributeID == attributeID && \
-				attributeListPtr->fieldID == fieldID; \
+				attributeListPtr->fieldID == fieldID; 
 			 attributeListPtr = attributeListPtr->next )
+			{
 			if( deleteAttributeField( &certInfoPtr->attributes,
 						&certInfoPtr->attributeCursor, attributeListPtr,
 						certInfoPtr->currentSelection.dnPtr ) == OK_SPECIAL )
 				/* We've deleted the attribute containing the currently
 				   selected DN, deselect it */
 				certInfoPtr->currentSelection.dnPtr = NULL;
+			}
 		return( CRYPT_OK );
 		}
 	if( isGeneralNameComponent( certInfoType ) )

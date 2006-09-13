@@ -129,6 +129,12 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*FnQ*/	ST_NONE,
 		/*Obj*/	ST_NONE,
 		/*Flg*/	KEYMGMT_FLAG_NONE,
+		ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx ),
+	MK_KEYACL( KEYMGMT_ITEM_NONE,
+		/*RWD*/	ST_NONE,
+		/*FnQ*/	ST_NONE,
+		/*Obj*/	ST_NONE,
+		/*Flg*/	KEYMGMT_FLAG_NONE,
 		ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx )
 	};
 
@@ -143,7 +149,9 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 	int i;
 
 	/* Perform a consistency check on the cert management ACLs */
-	for( i = 0; keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE; i++ )
+	for( i = 0; keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ); 
+		 i++ )
 		{
 		const KEYMGMT_ACL *keyMgmtACL = &keyManagementACL[ i ];
 
@@ -204,6 +212,8 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 			keyMgmtACL->specificObjSubTypeB != ST_NONE )
 			return( CRYPT_ERROR_FAILED );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) )
+		retIntError();
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -259,7 +269,11 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; keyManagementACL[ i ].itemType != messageValue && \
-				keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE; i++ );
+				keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) )
+		retIntError();
 	if( keyManagementACL[ i ].itemType == KEYMGMT_ITEM_NONE )
 		{
 		assert( NOTREACHED );

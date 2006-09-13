@@ -49,10 +49,12 @@ BOOLEAN cmsCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
 /* Get the OID for a CMS content type.  If no type is explicitly given, we
    assume raw data */
 
-static const struct {
+typedef struct {
 	const CRYPT_CONTENT_TYPE contentType;
 	const BYTE *oid;
-	} FAR_BSS contentOIDs[] = {
+	} CONTENTOID_INFO;
+	
+static const CONTENTOID_INFO FAR_BSS contentOIDs[] = {
 	{ CRYPT_CONTENT_DATA, OID_CMS_DATA },
 	{ CRYPT_CONTENT_SIGNEDDATA, OID_CMS_SIGNEDDATA },
 	{ CRYPT_CONTENT_ENVELOPEDDATA, OID_CMS_ENVELOPEDDATA },
@@ -65,7 +67,7 @@ static const struct {
 	{ CRYPT_CONTENT_RTCSREQUEST, OID_CRYPTLIB_RTCSREQ },
 	{ CRYPT_CONTENT_RTCSRESPONSE, OID_CRYPTLIB_RTCSRESP },
 	{ CRYPT_CONTENT_RTCSRESPONSE_EXT, OID_CRYPTLIB_RTCSRESP_EXT },
-	{ 0, NULL }
+	{ 0, NULL }, { 0, NULL }
 	};
 
 static const BYTE *getContentOID( const CRYPT_CONTENT_TYPE contentType )
@@ -76,7 +78,7 @@ static const BYTE *getContentOID( const CRYPT_CONTENT_TYPE contentType )
 			contentType < CRYPT_CONTENT_LAST );
 
 	for( i = 0; contentOIDs[ i ].oid != NULL && \
-				i < FAILSAFE_ITERATIONS_MED; i++ )
+				i < FAILSAFE_ARRAYSIZE( contentOIDs, CONTENTOID_INFO ); i++ )
 		{
 		if( contentOIDs[ i ].contentType == contentType )
 			return( contentOIDs[ i ].oid );
@@ -120,8 +122,8 @@ static int copyFromAuxBuffer( ENVELOPE_INFO *envelopeInfoPtr )
 	/* If there's anything left, move it down in the buffer */
 	dataLeft = envelopeInfoPtr->auxBufPos - bytesCopied;
 	if( dataLeft > 0 )
-		memmove( envelopeInfoPtr->auxBuffer, envelopeInfoPtr->auxBuffer + bytesCopied,
-				 dataLeft );
+		memmove( envelopeInfoPtr->auxBuffer, \
+				 envelopeInfoPtr->auxBuffer + bytesCopied, dataLeft );
 	envelopeInfoPtr->auxBufPos = dataLeft;
 	assert( dataLeft >= 0 );
 
@@ -166,13 +168,15 @@ static int writeSignedDataHeader( STREAM *stream,
 	const BYTE *contentOID = getContentOID( envelopeInfoPtr->contentType );
 	ACTION_LIST *actionListPtr;
 	long dataSize;
-	int hashActionSize = 0;
+	int hashActionSize = 0, iterationCount;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
 	/* Determine the size of the hash actions */
-	for( actionListPtr = envelopeInfoPtr->actionList; actionListPtr != NULL;
+	iterationCount = 0;
+	for( actionListPtr = envelopeInfoPtr->actionList; 
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 actionListPtr = actionListPtr->next )
 		{
 		const int actionSize = \
@@ -182,7 +186,9 @@ static int writeSignedDataHeader( STREAM *stream,
 			return( actionSize );
 		hashActionSize += actionSize;
 		}
-
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
+	
 	/* Determine the size of the SignedData/DigestedData */
 	if( envelopeInfoPtr->payloadSize == CRYPT_UNUSED || \
 		( envelopeInfoPtr->dataFlags & ENVDATA_HASINDEFTRAILER ) )
@@ -208,7 +214,9 @@ static int writeSignedDataHeader( STREAM *stream,
 					FALSE );
 	writeShortInteger( stream, 1, DEFAULT_TAG );
 	writeSet( stream, hashActionSize );
-	for( actionListPtr = envelopeInfoPtr->actionList; actionListPtr != NULL;
+	iterationCount = 0;
+	for( actionListPtr = envelopeInfoPtr->actionList; 
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 actionListPtr = actionListPtr->next )
 		{
 		int status = writeContextAlgoID( stream,
@@ -217,6 +225,8 @@ static int writeSignedDataHeader( STREAM *stream,
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* Write the inner Data header */
 	return( writeCMSheader( stream, contentOID, envelopeInfoPtr->payloadSize,
@@ -496,7 +506,7 @@ static int processKeyexchangeAction( ENVELOPE_INFO *envelopeInfoPtr,
 	   so that we can create the session key object in it */
 	if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, originatorDomainParams,
 						 CRYPT_MAX_HASHSIZE );
@@ -520,7 +530,7 @@ static int processKeyexchangeAction( ENVELOPE_INFO *envelopeInfoPtr,
 										IMESSAGE_CHECK, NULL,
 										MESSAGE_CHECK_PKC_KA_EXPORT ) ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE domainParams[ CRYPT_MAX_HASHSIZE + 8 ];
 
 		if( originatorDomainParamSize <= 0 )
@@ -577,7 +587,7 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 	CRYPT_DEVICE iCryptDevice = CRYPT_ERROR;
 	ACTION_LIST *actionListPtr;
 	BOOLEAN hasIndefSizeActions = FALSE;
-	int totalSize, status;
+	int totalSize, iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( envelopeInfoPtr->usage == ACTION_CRYPT || \
@@ -588,7 +598,7 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 	   it into the envelope header */
 	if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		int status;
 
 		/* Determine how big the originator cert chain will be */
@@ -672,9 +682,10 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* Now walk down the list of key exchange actions evaluating their size
 	   and connecting each one to the session key action */
-	totalSize = 0;
+	totalSize = 0; iterationCount = 0;
 	for( actionListPtr = envelopeInfoPtr->preActionList;
-		 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+		 actionListPtr = actionListPtr->next )
 		{
 		status = processKeyexchangeAction( envelopeInfoPtr, actionListPtr,
 										   iCryptDevice );
@@ -686,6 +697,8 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 			}
 		totalSize += actionListPtr->encodedSize;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	envelopeInfoPtr->cryptActionSize = hasIndefSizeActions ? \
 									   CRYPT_UNUSED : totalSize;
 	return( CRYPT_OK );
@@ -816,7 +829,7 @@ static int processSignatureAction( ENVELOPE_INFO *envelopeInfoPtr,
 static int preEnvelopeSign( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr = envelopeInfoPtr->postActionList;
-	int status;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( envelopeInfoPtr->usage == ACTION_SIGN );
@@ -876,7 +889,7 @@ static int preEnvelopeSign( ENVELOPE_INFO *envelopeInfoPtr )
 			}
 		else
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			/* There's a single signing cert present, determine its size */
 			setMessageData( &msgData, NULL, 0 );
@@ -890,16 +903,20 @@ static int preEnvelopeSign( ENVELOPE_INFO *envelopeInfoPtr )
 		}
 
 	/* Evaluate the size of each signature action */
-	for( actionListPtr = envelopeInfoPtr->postActionList; actionListPtr != NULL;
+	iterationCount = 0;
+	for( actionListPtr = envelopeInfoPtr->postActionList; 
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 actionListPtr = actionListPtr->next )
 		{
 		status = processSignatureAction( envelopeInfoPtr, actionListPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		/* We're writing the signing cert chain and there are multiple
 		   signing certs present, get the size of the overall cert
@@ -1025,7 +1042,7 @@ static int writeEnvelopeHeader( ENVELOPE_INFO *envelopeInfoPtr )
 static int writeKeyex( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *lastActionPtr;
-	int status = CRYPT_OK;
+	int iterationCount = 0, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -1033,7 +1050,8 @@ static int writeKeyex( ENVELOPE_INFO *envelopeInfoPtr )
 	   If it's a conventional key exchange, we force the use of the CMS 
 	   format since there's no reason to use the cryptlib format */
 	for( lastActionPtr = envelopeInfoPtr->lastAction;
-		 lastActionPtr != NULL; lastActionPtr = lastActionPtr->next )
+		 lastActionPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 lastActionPtr = lastActionPtr->next )
 		{
 		const CRYPT_FORMAT_TYPE formatType = \
 						( lastActionPtr->action == ACTION_KEYEXCHANGE ) ? \
@@ -1060,6 +1078,8 @@ static int writeKeyex( ENVELOPE_INFO *envelopeInfoPtr )
 			break;
 		envelopeInfoPtr->bufPos += keyexSize;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	envelopeInfoPtr->lastAction = lastActionPtr;
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1325,7 +1345,7 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *lastActionPtr;
-	int status;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( envelopeInfoPtr->envState >= ENVSTATE_NONE && \
@@ -1409,8 +1429,10 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	assert( envelopeInfoPtr->envState == ENVSTATE_SIGNATURE );
 
 	/* Sign each hash using the associated signature key */
+	iterationCount = 0;
 	for( lastActionPtr = envelopeInfoPtr->lastAction;
-		 lastActionPtr != NULL; lastActionPtr = lastActionPtr->next )
+		 lastActionPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+		 lastActionPtr = lastActionPtr->next )
 		{
 		const int sigBufSize = min( envelopeInfoPtr->bufSize - \
 									envelopeInfoPtr->bufPos, 32767 );
@@ -1459,6 +1481,8 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 			break;
 		envelopeInfoPtr->bufPos += sigSize;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	envelopeInfoPtr->lastAction = lastActionPtr;
 	if( cryptStatusError( status ) )
 		return( status );

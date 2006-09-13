@@ -342,7 +342,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	CRYPT_CONTEXT iSessionKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MECHANISM_WRAP_INFO mechanismInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	QUERY_INFO queryInfo, contentQueryInfo;
 	STREAM stream;
 	const void *encryptedKey, *encryptedContent;
@@ -558,7 +558,7 @@ static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo,
 int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info, 
 				const int maxNoPkcs15objects, const long endPos )
 	{
-	int status = CRYPT_OK;
+	int iterationCount = 0, status = CRYPT_OK;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15info, sizeof( PKCS15_INFO ) ) );
@@ -566,12 +566,14 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 	assert( endPos > stell( stream ) );
 
 	/* Scan all of the objects in the file */
-	while( cryptStatusOK( status ) && stell( stream ) < endPos )
+	while( cryptStatusOK( status ) && stell( stream ) < endPos && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
-		static const struct {
+		typedef struct {
 			int tag;
 			PKCS15_OBJECT_TYPE type;
-			} tagToTypeTbl[] = {
+			} TAGTOTYPE_INFO;
+		static const TAGTOTYPE_INFO tagToTypeTbl[] = {
 			{ CTAG_PO_PRIVKEY, PKCS15_OBJECT_PRIVKEY },
 			{ CTAG_PO_PUBKEY, PKCS15_OBJECT_PUBKEY },
 			{ CTAG_PO_TRUSTEDPUBKEY, PKCS15_OBJECT_PUBKEY },
@@ -581,10 +583,11 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			{ CTAG_PO_USEFULCERT, PKCS15_OBJECT_CERT },
 			{ CTAG_PO_DATA, PKCS15_OBJECT_DATA },
 			{ CTAG_PO_AUTH, PKCS15_OBJECT_NONE },
+			{ CRYPT_ERROR, PKCS15_OBJECT_NONE }, 
 			{ CRYPT_ERROR, PKCS15_OBJECT_NONE }
 			};
 		PKCS15_OBJECT_TYPE type = PKCS15_OBJECT_NONE;
-		int tag, innerEndPos, i;
+		int tag, innerEndPos, i, innerIterationCount = 0;
 
 		/* Map the object tag to a PKCS #15 object type */
 		tag = peekTag( stream );
@@ -592,12 +595,17 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			return( tag );
 		tag = EXTRACT_CTAG( tag );
 		for( i = 0; tagToTypeTbl[ i ].tag != CRYPT_ERROR && \
-					i < FAILSAFE_ITERATIONS_MED; i++ )
+					i < FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ); 
+			 i++ )
+			{
 			if( tagToTypeTbl[ i ].tag == tag )
 				{
 				type = tagToTypeTbl[ i ].type;
 				break;
 				}
+			}
+		if( i >= FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ) )
+			retIntError();
 		if( type == PKCS15_OBJECT_NONE )
 			return( CRYPT_ERROR_BADDATA );
 
@@ -611,7 +619,8 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			return( CRYPT_ERROR_BADDATA );
 
 		/* Scan all objects of this type */
-		while( cryptStatusOK( status ) && stell( stream ) < innerEndPos )
+		while( cryptStatusOK( status ) && stell( stream ) < innerEndPos && \
+			   innerIterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 			{
 			PKCS15_INFO pkcs15objectInfo, *pkcs15infoPtr = NULL;
 			void *object;
@@ -667,7 +676,11 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			copyObjectPayloadInfo( pkcs15infoPtr, &pkcs15objectInfo,
 								   object, objectLength, type );
 			}
+		if( innerIterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( status );
 	}

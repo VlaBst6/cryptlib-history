@@ -109,7 +109,7 @@
 #if defined( _MSC_VER ) && ( _MSC_VER > 800 ) && \
 	defined( _M_IX86 ) && !defined( _WIN32_WCE )
   #define USE_VIA_ACE_IF_PRESENT
-  #define ASM_X86_V2
+  #define ASM_X86_V2C
 #endif /* VC++ on x86 under Win32 - pcg */
 
 #if defined( INC_ALL )

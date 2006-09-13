@@ -120,13 +120,14 @@ static const MANAGEMENT_FUNCTION asyncInitFunctions[] = {
   #ifdef USE_SESSIONS
 	sessionManagementFunction, 
   #endif /* USE_SESSIONS */
-	NULL 
+	NULL, NULL 
 	};
 static const MANAGEMENT_FUNCTION preShutdownFunctions[] = {
   #ifdef USE_SESSIONS
 	sessionManagementFunction, 
   #endif /* USE_SESSIONS */
-	deviceManagementFunction, NULL 
+	deviceManagementFunction, 
+	NULL, NULL 
 	};
 static const MANAGEMENT_FUNCTION shutdownFunctions[] = {
 	/*userManagementFunction,*/ /*deviceManagementFunction,*/ 
@@ -137,7 +138,7 @@ static const MANAGEMENT_FUNCTION shutdownFunctions[] = {
   #ifdef USE_SESSIONS
 	sessionManagementFunction, 
   #endif /* USE_SESSIONS */
-	NULL 
+	NULL, NULL 
 	};
 
 /* Dispatch a set of management actions */
@@ -153,7 +154,8 @@ static int dispatchManagementAction( const MANAGEMENT_FUNCTION *mgmtFunctions,
 		return( CRYPT_ERROR_PERMISSION );
 
 	/* Dispatch each management action in turn */
-	for( i = 0; mgmtFunctions[ i ] != NULL; i++ )
+	for( i = 0; mgmtFunctions[ i ] != NULL && \
+				i < FAILSAFE_ITERATIONS_MED; i++ )
 		{
 		const int localStatus = mgmtFunctions[ i ]( action );
 		if( cryptStatusError( localStatus ) && cryptStatusOK( status ) )
@@ -164,6 +166,8 @@ static int dispatchManagementAction( const MANAGEMENT_FUNCTION *mgmtFunctions,
 		if( ( action == MANAGEMENT_ACTION_INIT ) && krnlIsExiting() )
 			return( CRYPT_ERROR_PERMISSION );
 		}
+	if( i >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( status );
 	}
@@ -234,8 +238,7 @@ int initCryptlib( void )
   #endif /* DATA_LITTLEENDIAN */
 			{
 			/* We should probably sound klaxons as well at this point */
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_INVALID );
+			retIntError();
 			}
 #endif /* Big/little-endian override check */
 

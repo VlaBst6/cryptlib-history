@@ -159,7 +159,7 @@ static int copyPublicKeyInfo( CERT_INFO *certInfoPtr,
 	else
 		{
 		CRYPT_CONTEXT iCryptContext;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		/* Get the context handle.  All other checking has already been
 		   performed by the kernel */
@@ -310,6 +310,7 @@ static int sanitiseCertAttributes( CERT_INFO *certInfoPtr,
 								   const ATTRIBUTE_LIST *templateListPtr )
 	{
 	const ATTRIBUTE_LIST *attributeListCursor;
+	int iterationCount = 0;
 
 	/* If there's no attributes present or no disallowed attribute template,
 	   we're done */
@@ -320,7 +321,8 @@ static int sanitiseCertAttributes( CERT_INFO *certInfoPtr,
 	   the certificate attributes */
 	for( attributeListCursor = templateListPtr;
 		 attributeListCursor != NULL && \
-			!isBlobAttribute( attributeListCursor );
+			!isBlobAttribute( attributeListCursor ) && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
 		 attributeListCursor = attributeListCursor->next )
 		{
 		ATTRIBUTE_LIST *attributeList;
@@ -358,6 +360,8 @@ static int sanitiseCertAttributes( CERT_INFO *certInfoPtr,
 			}
 		attributeList->intValue = value;	/* Set adjusted value */
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	return( CRYPT_OK );
 	}
@@ -380,7 +384,7 @@ static int sanitiseCertAttributes( CERT_INFO *certInfoPtr,
 int setSerialNumber( CERT_INFO *certInfoPtr, const void *serialNumber,
 					 const int serialNumberLength )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ 128 + 8 ];
 	void *serialNumberPtr;
 	int length = ( serialNumberLength > 0 ) ? \
@@ -477,10 +481,10 @@ int setSerialNumber( CERT_INFO *certInfoPtr, const void *serialNumber,
    numbers incorrectly, so we normalise the values to have no leading zero,
    which is the lowest common denominator */
 
-int compareSerialNumber( const void *canonSerialNumber,
-						 const int canonSerialNumberLength,
-						 const void *serialNumber,
-						 const int serialNumberLength )
+BOOLEAN compareSerialNumber( const void *canonSerialNumber,
+							 const int canonSerialNumberLength,
+							 const void *serialNumber,
+							 const int serialNumberLength )
 	{
 	const BYTE *canonSerialNumberPtr = canonSerialNumber;
 	const BYTE *serialNumberPtr = serialNumber;
@@ -489,7 +493,7 @@ int compareSerialNumber( const void *canonSerialNumber,
 
 	/* Internal serial numbers are canonicalised, so all we need to do is
 	   strip a possible leading zero */
-	if( !canonSerialNumberPtr[ 0 ] )
+	if( canonSerialNumberPtr[ 0 ] == 0 )
 		{
 		canonSerialNumberPtr++;
 		canonSerialLength--;
@@ -498,7 +502,7 @@ int compareSerialNumber( const void *canonSerialNumber,
 
 	/* Serial numbers from external sources can be arbitarily strangely
 	   encoded, so we strip leading zeroes until we get to actual data */
-	while( serialLength > 0 && !serialNumberPtr[ 0 ] )
+	while( serialLength > 0 && serialNumberPtr[ 0 ] == 0 )
 		{
 		serialNumberPtr++;
 		serialLength--;
@@ -507,9 +511,9 @@ int compareSerialNumber( const void *canonSerialNumber,
 	/* Finally we've got them in a form where we can compare them */
 	if( canonSerialLength != serialLength || \
 		memcmp( canonSerialNumberPtr, serialNumberPtr, serialLength ) )
-		return( 1 );
+		return( TRUE );
 
-	return( 0 );
+	return( FALSE );
 	}
 
 /****************************************************************************
@@ -570,10 +574,10 @@ static int copyCertReqInfo( CERT_INFO *certInfoPtr,
 		/* We don't allow start times backdated by more than a year, or end
 		   times before the start time.  Since these are trivial things, we
 		   don't abort if there's a problem but just quietly fix the value */
-		if( certRequestInfoPtr->startTime > 0 && \
+		if( certRequestInfoPtr->startTime > MIN_TIME_VALUE && \
 			certRequestInfoPtr->startTime > currentTime - ( 86400L * 365 ) )
 			certInfoPtr->startTime = certRequestInfoPtr->startTime;
-		if( certRequestInfoPtr->endTime > 0 && \
+		if( certRequestInfoPtr->endTime > MIN_TIME_VALUE && \
 			certRequestInfoPtr->endTime > certInfoPtr->startTime )
 			certInfoPtr->endTime = certRequestInfoPtr->endTime;
 		}
@@ -778,10 +782,12 @@ static int copyToOCSPRequest( CERT_INFO *ocspRequestInfoPtr,
 	   used because non-cryptlib v1 responders won't understand it and 
 	   cryptlib uses RTCS, which doesn't have the OCSP problems */
 	if( status == CRYPT_ERROR_DUPLICATE )
+		{
 		/* If this cert is already present in the list, set the extended
 		   error code for it */
 		setErrorInfo( ocspRequestInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		}
 	return( status );
 	}
 
@@ -802,10 +808,12 @@ static int copyToRTCSRequest( CERT_INFO *rtcsRequestInfoPtr,
 								   &rtcsRequestInfoPtr->cCertVal->currentValidity,
 								   certHash, certHashLength );
 	if( status == CRYPT_ERROR_DUPLICATE )
+		{
 		/* If this cert is already present in the list, set the extended
 		   error code for it */
 		setErrorInfo( rtcsRequestInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		}
 	return( status );
 	}
 
@@ -1270,6 +1278,9 @@ static int setCertCursorInfo( CERT_INFO *certInfoPtr, const int value )
 		{
 		case CRYPT_CURSOR_FIRST:
 			if( isCertChain )
+				/* Set the chain position to -1 (= CRYPT_ERROR) to indicate 
+				   that it's at the leaf cert, which is logically at 
+				   position -1 in the chain */
 				certInfoPtr->cCertCert->chainPos = CRYPT_ERROR;
 			else
 				if( isRTCS )
@@ -1293,6 +1304,9 @@ static int setCertCursorInfo( CERT_INFO *certInfoPtr, const int value )
 		case CRYPT_CURSOR_PREVIOUS:
 			if( isCertChain )
 				{
+				/* Adjust the chain position.  Note that the value can go to
+				   -1 (= CRYPT_ERROR) to indicate that it's at the leaf 
+				   cert, which is logically at position -1 in the chain */
 				if( certInfoPtr->cCertCert->chainPos < 0 )
 					return( CRYPT_ERROR_NOTFOUND );
 				certInfoPtr->cCertCert->chainPos--;
@@ -1696,7 +1710,9 @@ int addCertComponent( CERT_INFO *certInfoPtr,
 
 				/* Perform a simple check to make sure that it hasn't been
 				   added already */
-				for( i = 0; i < certInfoPtr->cCertCert->chainEnd; i++ )
+				for( i = 0; i < certInfoPtr->cCertCert->chainEnd && \
+							i < MAX_CHAINLENGTH; i++ )
+					{
 					if( cryptStatusOK( \
 						krnlSendMessage( addedCert, IMESSAGE_COMPARE,
 										 &certInfoPtr->cCertCert->chain[ i ],
@@ -1707,6 +1723,9 @@ int addCertComponent( CERT_INFO *certInfoPtr,
 									  CRYPT_ERRTYPE_ATTR_PRESENT );
 						return( CRYPT_ERROR_INITED );
 						}
+					}
+				if( i >= MAX_CHAINLENGTH )
+					retIntError();
 
 				/* Add the user cert and increment its reference count */
 				krnlSendNotifier( addedCert, IMESSAGE_INCREFCOUNT );
@@ -1781,13 +1800,14 @@ int addCertComponent( CERT_INFO *certInfoPtr,
 			{
 			time_t certTime = *( ( time_t * ) certInfo );
 
-			if( certInfoPtr->startTime )
+			if( certInfoPtr->startTime > 0 )
 				{
 				setErrorInfo( certInfoPtr, certInfoType,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
 				return( CRYPT_ERROR_INITED );
 				}
-			if( certInfoPtr->endTime && certTime >= certInfoPtr->endTime )
+			if( certInfoPtr->endTime > 0 && \
+				certTime >= certInfoPtr->endTime )
 				{
 				setErrorInfo( certInfoPtr,
 							  ( certInfoType == CRYPT_CERTINFO_VALIDFROM ) ? \
@@ -1804,13 +1824,14 @@ int addCertComponent( CERT_INFO *certInfoPtr,
 			{
 			time_t certTime = *( ( time_t * ) certInfo );
 
-			if( certInfoPtr->endTime )
+			if( certInfoPtr->endTime > 0 )
 				{
 				setErrorInfo( certInfoPtr, certInfoType,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
 				return( CRYPT_ERROR_INITED );
 				}
-			if( certInfoPtr->startTime && certTime <= certInfoPtr->startTime )
+			if( certInfoPtr->startTime > 0 && \
+				certTime <= certInfoPtr->startTime )
 				{
 				setErrorInfo( certInfoPtr,
 							  ( certInfoType == CRYPT_CERTINFO_VALIDTO ) ? \
@@ -1849,7 +1870,7 @@ int addCertComponent( CERT_INFO *certInfoPtr,
 			time_t certTime = *( ( time_t * ) certInfo );
 			time_t *revocationTimePtr = getRevocationTimePtr( certInfoPtr );
 
-			if( *revocationTimePtr )
+			if( *revocationTimePtr > 0 )
 				{
 				setErrorInfo( certInfoPtr, certInfoType,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );

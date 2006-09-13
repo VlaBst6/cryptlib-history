@@ -340,7 +340,8 @@ static int checkCRL( CERT_INFO *certInfoPtr, const CRYPT_CERTIFICATE cryptCRL )
 	   for the leaf cert was pointless).  In any case it's easier to just do
 	   the check for all certs than to determine which cert the CRL applies
 	   to, so we check for all certs */
-	for( i = 0; i < certInfoPtr->cCertCert->chainEnd; i++ )
+	for( i = 0; i < certInfoPtr->cCertCert->chainEnd && \
+				i < MAX_CHAINLENGTH; i++ )
 		{
 		CERT_INFO *certChainInfoPtr;
 
@@ -363,6 +364,8 @@ static int checkCRL( CERT_INFO *certInfoPtr, const CRYPT_CERTIFICATE cryptCRL )
 			break;
 			}
 		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 
 	krnlReleaseObject( crlInfoPtr->objectHandle );
 	return( status );
@@ -438,7 +441,7 @@ int checkCertDetails( CERT_INFO *subjectCertInfoPtr,
 								 iIssuerPubKey, formatInfo );
 	if( cryptStatusError( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE subjectIssuerID[ CRYPT_MAX_HASHSIZE + 8 ];
 		BYTE issuerSubjectID[ CRYPT_MAX_HASHSIZE + 8 ];
 		int subjectIDlength, issuerIDlength;
@@ -711,7 +714,7 @@ int checkCertValidity( CERT_INFO *certInfoPtr, const CRYPT_HANDLE sigCheckKey )
 	   the signing key and, if the sig check object is a cert, the cert */
 	if( certInfoPtr->flags & CERT_FLAG_SELFSIGNED )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE keyID[ KEYID_SIZE + 8 ];
 
 		/* Check that the key in the cert and the key in the sig.check object

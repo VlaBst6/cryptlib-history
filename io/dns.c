@@ -423,9 +423,11 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 	if( gethostname( cachedFQDN, MAX_DNS_SIZE ) == 0 && \
 		( hostInfo = gethostbyname( cachedFQDN ) ) != NULL )
 		{
-		int i;
+		int i, iterationCount = 0;
 
-		for( i = 0; hostInfo->h_addr_list[ i ] != NULL; i++ )
+		for( i = 0; hostInfo->h_addr_list[ i ] != NULL && \
+					iterationCount++ < FAILSAFE_ITERATIONS_MED; \
+			 i++ )
 			{
 			struct in_addr address;
 
@@ -440,6 +442,8 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 						  NULL, &pDns, NULL ) == 0 )
 				break;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		}
 	if( pDns == NULL )
 		return( setSocketError( stream, "Couldn't determine FQDN of local "
@@ -495,11 +499,13 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 		return( getSocketError( stream, CRYPT_ERROR_NOTFOUND ) );
 	for( pDnsCursor = pDns; pDnsCursor != NULL;
 		 pDnsCursor = pDnsCursor->pNext )
+		{
 		if( pDnsCursor->Data.SRV.wPriority < priority )
 			{
 			priority = pDnsCursor->Data.SRV.wPriority;
 			pDnsInfo = pDnsCursor;
 			}
+		}
 #ifdef __WINCE__
 	if( pDnsInfo == NULL || \
 		wcslen( pDnsInfo->Data.SRV.pNameTarget ) > MAX_URL_SIZE - 1 )
@@ -507,7 +513,6 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 	if( pDnsInfo == NULL || \
 		strlen( pDnsInfo->Data.SRV.pNameTarget ) > MAX_URL_SIZE - 1 )
 #endif /* Win32 vs. WinCE */
-
 		{
 		DnsRecordListFree( pDns, DnsFreeRecordList );
 		return( setSocketError( stream, "Invalid DNS SRV entry for host",
@@ -542,7 +547,7 @@ static int getFQDN( STREAM *stream, char *fqdn )
 	{
 	struct hostent *hostInfo;
 	char *hostNamePtr = NULL;
-	int i;
+	int i, iterationCount = 0;
 
 	/* First, get the host name, and if it's the FQDN, exit */
 	if( gethostname( fqdn, MAX_DNS_SIZE ) == -1 )
@@ -554,10 +559,12 @@ static int getFQDN( STREAM *stream, char *fqdn )
 	/* Now get the hostent info and walk through it looking for the FQDN */
 	if( ( hostInfo = gethostbyname( fqdn ) ) == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
-	for( i = 0; hostInfo->h_addr_list[ i ] != NULL; i++ )
+	for( i = 0; hostInfo->h_addr_list[ i ] != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MED; i++ )
 		{
-		char **aliasPtrPtr;
-
+		char **aliasPtrPtr;	
+		int innerIterationCount = 0;
+	
 		/* If the hostname has a dot in it, it's the FQDN.  This should be
 		   the same as the gethostname() output, but we check again just in
 		   case */
@@ -571,14 +578,19 @@ static int getFQDN( STREAM *stream, char *fqdn )
 		if( hostInfo->h_aliases == NULL )
 			continue;
 		for( aliasPtrPtr = hostInfo->h_aliases;
-			 *aliasPtrPtr != NULL && !strchr( *aliasPtrPtr, '.' );
+			 *aliasPtrPtr != NULL && !strchr( *aliasPtrPtr, '.' ) && \
+				innerIterationCount++ < FAILSAFE_ITERATIONS_MED; 
 			 aliasPtrPtr++ );
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		if( *aliasPtrPtr != NULL )
 			{
 			hostNamePtr = *aliasPtrPtr;
 			break;
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	if( hostNamePtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 
@@ -592,10 +604,11 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 	{
 	union {
 		HEADER header;
-		BYTE buffer[ NS_PACKETSZ ];
+		BYTE buffer[ NS_PACKETSZ + 8 ];
 		} dnsQueryInfo;
 	char *namePtr, *endPtr;
-	int resultLen, nameLen, qCount, aCount, minPriority = 32767, i;
+	int resultLen, nameLen, qCount, aCount, minPriority = 32767;
+	int i, iterationCount;
 
 	/* If we're doing a full autodetect, we construct the SRV query using
 	   the local machine's FQDN.  This fails more often than not because of
@@ -641,7 +654,7 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 	/* Skip the queries */
 	namePtr = dnsQueryInfo.buffer + NS_HFIXEDSZ;
 	endPtr = dnsQueryInfo.buffer + resultLen;
-	for( i = 0; i < qCount; i++ )
+	for( i = 0; i < qCount && i++ < FAILSAFE_ITERATIONS_MED; i++ )
 		{
 		nameLen = dn_skipname( namePtr, endPtr );
 		if( nameLen <= 0 )
@@ -649,12 +662,15 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 		                            CRYPT_ERROR_BADDATA, FALSE ) );
 		namePtr += nameLen + NS_QFIXEDSZ;
 		}
+	if( i >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	/* Process the answers.  SRV has basic load-balancing facilities, but
 	   for now we just use the highest-priority host that we find (it's
 	   rarely-enough used that we'll be lucky to find SRV info, let alone
 	   any load-balancing setup) */
-	for( i = 0; i < aCount; i++ )
+	iterationCount = 0;
+	for( i = 0; i < aCount && i++ < FAILSAFE_ITERATIONS_MED; i++ )
 		{
 		int priority, port;
 
@@ -683,6 +699,8 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 		hostName[ nameLen ] = '\0';
 		namePtr += nameLen;
 		}
+	if( i >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 #ifdef EBCDIC_CHARS
 	ebcdicToAscii( hostName, strlen( hostName ) );
 #endif /* EBCDIC_CHARS */
@@ -715,7 +733,7 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 					const BOOLEAN isServer )
 	{
 	struct addrinfo hints;
-	char nameBuffer[ MAX_URL_SIZE + 8 ], portBuffer[ 16 ];
+	char nameBuffer[ MAX_URL_SIZE + 8 ], portBuffer[ 16 + 8 ];
 	int localPort = port;
 
 	assert( isServer || name != NULL );
@@ -794,7 +812,7 @@ void freeAddressInfo( struct addrinfo *addrInfoPtr )
 void getNameInfo( const struct sockaddr *sockAddr, char *address,
 				  const int addressMaxLen, int *port )
 	{
-	char portBuf[ 32 ];
+	char portBuf[ 32 + 8 ];
 
 	/* Clear return values */
 	strcpy( address, "<Unknown>" );

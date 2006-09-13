@@ -263,7 +263,7 @@ static int writeCryptlibSignature( STREAM *stream,
 								   const BYTE *signature,
 								   const int signatureLength )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
 	const int signAlgoIdSize = \
 				sizeofContextAlgoID( iSignContext, CRYPT_ALGO_NONE, 
@@ -320,13 +320,15 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 									const BOOLEAN isAuthenticated )
 	{
 	const int endPos = stell( stream ) + length;
+	int iterationCount = 0;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 	assert( length > 0 && length < 8192 );
 	assert( startPos >= 0 );
 
-	while( stell( stream ) < endPos )
+	while( stell( stream ) < endPos && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		const int subpacketLength = pgpReadShortLength( stream,
 														PGP_CTB_OPENPGP );
@@ -407,6 +409,8 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( CRYPT_OK );
 	}
@@ -745,10 +749,11 @@ static int writeSslSignature( STREAM *stream,
 *																			*
 ****************************************************************************/
 
-static const struct {
+typedef struct {
 	const SIGNATURE_TYPE type;
 	const READSIG_FUNCTION function;
-	} sigReadTable[] = {
+	} SIG_READ_INFO;
+static const SIG_READ_INFO sigReadTable[] = {
 	{ SIGNATURE_RAW, readRawSignature },
 	{ SIGNATURE_X509, readX509Signature },
 	{ SIGNATURE_CMS, readCmsSignature },
@@ -762,13 +767,14 @@ static const struct {
 #ifdef USE_SSL
 	{ SIGNATURE_SSL, readSslSignature },
 #endif /* USE_SSL */
-	{ SIGNATURE_NONE, NULL }
+	{ SIGNATURE_NONE, NULL }, { SIGNATURE_NONE, NULL }
 	};
 
-static const struct {
+typedef struct {
 	const SIGNATURE_TYPE type;
 	const WRITESIG_FUNCTION function;
-	} sigWriteTable[] = {
+	} SIG_WRITE_INFO;
+static const SIG_WRITE_INFO sigWriteTable[] = {
 	{ SIGNATURE_RAW, writeRawSignature },
 	{ SIGNATURE_X509, writeX509Signature },
 	{ SIGNATURE_CMS, writeCmsSignature },
@@ -782,17 +788,23 @@ static const struct {
 #ifdef USE_SSL
 	{ SIGNATURE_SSL, writeSslSignature },
 #endif /* USE_SSH */
-	{ SIGNATURE_NONE, NULL }
+	{ SIGNATURE_NONE, NULL }, { SIGNATURE_NONE, NULL }
 	};
 
 READSIG_FUNCTION getReadSigFunction( const SIGNATURE_TYPE sigType )
 	{
 	int i;
 
-	for( i = 0; sigReadTable[ i ].type != SIGNATURE_NONE && \
-				i < FAILSAFE_ITERATIONS_MED; i++ )
+	for( i = 0; 
+		 sigReadTable[ i ].type != SIGNATURE_NONE && \
+			i < FAILSAFE_ARRAYSIZE( sigReadTable, SIG_READ_INFO ); 
+		 i++ )
+		{
 		if( sigReadTable[ i ].type == sigType )
 			return( sigReadTable[ i ].function );
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( sigReadTable, SIG_READ_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -800,10 +812,16 @@ WRITESIG_FUNCTION getWriteSigFunction( const SIGNATURE_TYPE sigType )
 	{
 	int i;
 
-	for( i = 0; sigWriteTable[ i ].type != SIGNATURE_NONE && \
-				i < FAILSAFE_ITERATIONS_MED; i++ )
+	for( i = 0; 
+		 sigWriteTable[ i ].type != SIGNATURE_NONE && \
+			i < FAILSAFE_ARRAYSIZE( sigWriteTable, SIG_WRITE_INFO ); 
+		 i++ )
+		{
 		if( sigWriteTable[ i ].type == sigType )
 			return( sigWriteTable[ i ].function );
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( sigWriteTable, SIG_WRITE_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}

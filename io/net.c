@@ -70,7 +70,7 @@
 
 static int getSessionErrorInfo( STREAM *stream, const int errorStatus )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	status = krnlSendMessage( stream->iTransportSession,
@@ -90,59 +90,17 @@ static int getSessionErrorInfo( STREAM *stream, const int errorStatus )
 *																			*
 ****************************************************************************/
 
-/* Perform various string-processing operations */
-
-static int strFindCh( const char *str, const int strLen, const char findCh )
-	{
-	int i;
-
-	for( i = 0; i < strLen; i++ )
-		if( str[ i ] == findCh )
-			return( i );
-
-	return( -1 );
-	}
-
-static int strFindStr( const char *str, const int strLen,
-					   const char *findStr, const int findStrLen )
-	{
-	const char findCh = *findStr;
-	int i;
-
-	for( i = 0; i < strLen - findStrLen; i++ )
-		if( str[ i ] == findCh && \
-			!strCompare( str + i, findStr, findStrLen ) )
-			return( i );
-
-	return( -1 );
-	}
-
-static int strStripWhitespace( char **newStringPtr, const char *string,
-							   const int stringLen )
-	{
-	int startPos, endPos;
-
-	/* Skip leading and trailing whitespace */
-	for( startPos = 0;
-		 startPos < stringLen && string[ startPos ] <= ' ';
-		 startPos++ );
-	*newStringPtr = ( char * ) string + startPos;
-	for( endPos = stringLen;
-		 endPos > startPos && string[ endPos - 1 ] <= ' ';
-		 endPos-- );
-	return( endPos - startPos );
-	}
-
 /* Parse a URI into <schema>://[<user>@]<host>[:<port>]/<path>[?<query>] components */
 
 static int parseURL( URL_INFO *urlInfo, const char *url, const int urlLen,
 					 const int defaultPort )
 	{
-	static const struct {
+	typedef struct {
 		const char *schema;
 		const int schemaLength;
 		const URL_TYPE type;
-		} FAR_BSS urlSchemaInfo[] = {
+		} URL_SCHEMA_INFO;
+	static const URL_SCHEMA_INFO FAR_BSS urlSchemaInfo[] = {
 		{ "http://", 7, URL_TYPE_HTTP },
 		{ "https://", 8, URL_TYPE_HTTPS },
 		{ "ssh://", 6, URL_TYPE_SSH },
@@ -150,7 +108,7 @@ static int parseURL( URL_INFO *urlInfo, const char *url, const int urlLen,
 		{ "sftp://", 7, URL_TYPE_SSH },
 		{ "cmp://", 6, URL_TYPE_CMP },
 		{ "tsp://", 6, URL_TYPE_TSP },
-		{ NULL, 0, URL_TYPE_NONE }
+		{ NULL, 0, URL_TYPE_NONE }, { NULL, 0, URL_TYPE_NONE }
 		};
 	char *strPtr;
 	int offset, length;
@@ -182,11 +140,18 @@ static int parseURL( URL_INFO *urlInfo, const char *url, const int urlLen,
 			return( CRYPT_ERROR_BADDATA );
 
 		/* Check whether the schema is one that we recognise */
-		for( i = 0; urlSchemaInfo[ i ].type != URL_TYPE_NONE; i++ )
+		for( i = 0; 
+			 urlSchemaInfo[ i ].type != URL_TYPE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( urlSchemaInfo, URL_SCHEMA_INFO ); 
+			 i++ )
+			{
 			if( urlSchemaInfo[ i ].schemaLength == urlInfo->schemaLen && \
 				!strCompare( urlSchemaInfo[ i ].schema, urlInfo->schema,
 							 urlInfo->schemaLen ) )
 				break;
+			}
+		if( i >= FAILSAFE_ARRAYSIZE( urlSchemaInfo, URL_SCHEMA_INFO ) )
+			retIntError();
 		urlInfo->type = urlSchemaInfo[ i ].type;
 		}
 
@@ -272,7 +237,7 @@ static int parseURL( URL_INFO *urlInfo, const char *url, const int urlLen,
 	/* Parse the remainder of the URI into port/location */
 	if( *strPtr == ':' )
 		{
-		char portBuffer[ 16 ];
+		char portBuffer[ 16 + 8 ];
 		const int portStrLen = min( length - 1, 15 );
 		int port;
 
@@ -398,7 +363,7 @@ static BOOLEAN transportSessionOKFunction( void )
 static int transportSessionReadFunction( STREAM *stream, BYTE *buffer,
 										 const int length, const int flags )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int newTimeout = CRYPT_UNUSED, status;
 
 	/* Read data from the session, overriding the timeout handling if
@@ -429,7 +394,7 @@ static int transportSessionReadFunction( STREAM *stream, BYTE *buffer,
 static int transportSessionWriteFunction( STREAM *stream, const BYTE *buffer,
 										  const int length, const int flags )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	setMessageData( &msgData, ( void * ) buffer, length );
@@ -459,8 +424,8 @@ static int transportSessionWriteFunction( STREAM *stream, const BYTE *buffer,
 
 static int connectViaSocksProxy( STREAM *stream )
 	{
-	RESOURCE_DATA msgData;
-	BYTE socksBuffer[ 64 + CRYPT_MAX_TEXTSIZE ], *bufPtr = socksBuffer;
+	MESSAGE_DATA msgData;
+	BYTE socksBuffer[ 64 + CRYPT_MAX_TEXTSIZE + 8 ], *bufPtr = socksBuffer;
 	char userName[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int length, status;
 
@@ -534,7 +499,7 @@ static int connectViaSocksProxy( STREAM *stream )
 static int connectViaHttpProxy( STREAM *stream, int *errorCode,
 								char *errorMessage )
 	{
-	BYTE buffer[ 64 ];
+	BYTE buffer[ 64 + 8 ];
 	int status;
 
 	/* Open the connection via the proxy.  To do this we temporarily layer
@@ -912,7 +877,7 @@ static int bufferedTransportReadFunction( STREAM *stream, BYTE *buffer,
 	if( length <= bytesLeft )
 		{
 		if( length == 1 )
-			/* Optimisation for HTTP header reads */
+			/* Optimisation for char-at-a-time HTTP header reads */
 			*buffer = stream->buffer[ stream->bufPos++ ];
 		else
 			{
@@ -1247,7 +1212,7 @@ static BOOLEAN checkForProxy( STREAM *stream,
 							  const NET_CONNECT_INFO *connectInfo,
 							  char *proxyUrlBuffer )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Check for a local connection, which always bypasses the proxy.  We
@@ -1343,11 +1308,11 @@ static int completeConnect( STREAM *stream,
 			break;
 
 		case STREAM_PROTOCOL_CMP:
-#ifdef USE_CMP
+#ifdef USE_CMP_TRANSPORT
 			setStreamLayerCMP( stream );
 #else
 			return( CRYPT_ERROR_NOTAVAIL );
-#endif /* USE_CMP */
+#endif /* USE_CMP_TRANSPORT */
 			break;
 
 		case STREAM_PROTOCOL_TCPIP:

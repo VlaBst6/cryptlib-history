@@ -81,7 +81,7 @@ static int addStandardExtensions( CERT_INFO *certInfoPtr )
 										   CRYPT_CERTINFO_CA,
 										   CRYPT_ATTRIBUTE_NONE );
 	if( attributeListPtr != NULL )
-		isCA = attributeListPtr->intValue;
+		isCA = ( attributeListPtr->intValue > 0 ) ? TRUE : FALSE;
 
 	/* If there's no basicConstraints present, add one and make it a non-CA
 	   cert */
@@ -199,7 +199,7 @@ static BOOLEAN checkEmptyDnOK( CERT_INFO *subjectCertInfoPtr )
 	attributeListPtr = findAttributeField( subjectCertInfoPtr->attributes,
 										   CRYPT_CERTINFO_CA, 
 										   CRYPT_ATTRIBUTE_NONE );
-	if( attributeListPtr != NULL && attributeListPtr->intValue )
+	if( attributeListPtr != NULL && attributeListPtr->intValue > 0 )
 		/* It's a CA cert, the subject DN can't be empty */
 		return( FALSE );
 
@@ -635,6 +635,8 @@ static int writeCertInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 
 	/* Determine the size of the certificate information */
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = sizeofInteger( certCertInfo->serialNumber,
 							certCertInfo->serialNumberLength ) + \
 			 algoIdInfoSize + \
@@ -650,7 +652,7 @@ static int writeCertInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	writeSequence( stream, length );
 
 	/* If there are extensions present, mark this as a v3 certificate */
-	if( extensionSize )
+	if( extensionSize > 0 )
 		{
 		writeConstructed( stream, sizeofShortInteger( X509VERSION_3 ),
 						  CTAG_CE_VERSION );
@@ -745,6 +747,8 @@ static int writeAttributeCertInfo( STREAM *stream,
 
 	/* Determine the size of the certificate information */
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = ( int ) sizeofObject( sizeofDN( subjectCertInfoPtr->subjectName ) ) + \
 			 issuerNameSize + \
 			 algoIdInfoSize + \
@@ -838,6 +842,8 @@ static int writeCertRequestInfo( STREAM *stream,
 
 	/* Determine how big the encoded certificate request will be */
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = sizeofShortInteger( 0 ) + \
 			 sizeofDN( subjectCertInfoPtr->subjectName ) + \
 			 subjectCertInfoPtr->publicKeyInfoSize;
@@ -922,6 +928,8 @@ static int writeCrmfRequestInfo( STREAM *stream,
 	if( subjectCertInfoPtr->endTime > MIN_TIME_VALUE )
 		timeSize += sizeofObject( sizeofGeneralizedTime() );
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	payloadLength = ( ( timeSize > 0 ) ? sizeofObject( timeSize ) : 0 ) + \
 					( ( subjectDNsize > 0 ) ? sizeofObject( subjectDNsize ) : 0 ) + \
 					subjectCertInfoPtr->publicKeyInfoSize;
@@ -1013,6 +1021,8 @@ static int writeRevRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 
 	/* Determine how big the encoded certificate request will be */
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	payloadLength = sizeofInteger( subjectCertInfoPtr->cCertCert->serialNumber,
 								   subjectCertInfoPtr->cCertCert->serialNumberLength ) + \
 					sizeofObject( subjectCertInfoPtr->issuerDNsize ) + \
@@ -1087,10 +1097,15 @@ static int writeCRLInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	for( revocationInfo = certRevInfo->revocations;
 		 revocationInfo != NULL; revocationInfo = revocationInfo->next )
 		{
+		const int crlEntrySize = sizeofCRLentry( revocationInfo );
+
+		if( cryptStatusError( crlEntrySize ) )
+			return( crlEntrySize );
+		revocationInfoLength += crlEntrySize;
+
+		/* If there are per-entry extensions present it's a v2 CRL */
 		if( revocationInfo->attributes != NULL )
-			/* If there are per-entry extensions present it's a v2 CRL */
 			subjectCertInfoPtr->version = 2;
-		revocationInfoLength += sizeofCRLentry( revocationInfo );
 		}
 
 	/* If we're being asked to write a single CRL entry, we don't try and go
@@ -1106,6 +1121,8 @@ static int writeCRLInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	if( cryptStatusError( algoIdInfoSize ) )
 		return( algoIdInfoSize  );
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = algoIdInfoSize + \
 			 issuerCertInfoPtr->subjectDNsize + sizeofUTCTime() + \
 			 ( ( subjectCertInfoPtr->endTime > MIN_TIME_VALUE ) ? \
@@ -1231,6 +1248,8 @@ static int writeCmsAttributes( STREAM *stream, CERT_INFO *attributeInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	attributeSize = sizeofAttributes( attributeInfoPtr->attributes );
+	if( cryptStatusError( attributeSize ) )
+		return( attributeSize );
 
 	/* Write the attributes */
 	return( writeAttributes( stream, attributeInfoPtr->attributes,
@@ -1252,7 +1271,8 @@ static int writeRtcsRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	{
 	CERT_VAL_INFO *certValInfo = subjectCertInfoPtr->cCertVal;
 	VALIDITY_INFO *validityInfo;
-	int length, extensionSize, requestInfoLength = 0, status;
+	int length, extensionSize, requestInfoLength = 0;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -1269,7 +1289,7 @@ static int writeRtcsRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	if( sIsNullStream( stream ) )
 		{
 		ATTRIBUTE_LIST *attributeListPtr;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		/* To ensure freshness we always use a new nonce when we write an
 		   RTCS request */
@@ -1311,10 +1331,23 @@ static int writeRtcsRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 		}
 
 	/* Determine how big the encoded RTCS request will be */
+	iterationCount = 0;
 	for( validityInfo = certValInfo->validityInfo;
-		 validityInfo != NULL; validityInfo = validityInfo->next )
-		requestInfoLength += sizeofRtcsRequestEntry( validityInfo );
+		 validityInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
+		 validityInfo = validityInfo->next )
+		{
+		const int requestEntrySize = sizeofRtcsRequestEntry( validityInfo );
+		
+		if( cryptStatusError( requestEntrySize ) )
+			return( requestEntrySize );
+		requestInfoLength += requestEntrySize;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = sizeofObject( requestInfoLength ) + \
 			 ( ( extensionSize > 0 ) ? sizeofObject( extensionSize ) : 0 );
 
@@ -1323,10 +1356,16 @@ static int writeRtcsRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 
 	/* Write the SEQUENCE OF request wrapper and the request information */
 	status = writeSequence( stream, requestInfoLength );
+	iterationCount = 0;
 	for( validityInfo = certValInfo->validityInfo;
-		 cryptStatusOK( status ) && validityInfo != NULL;
+		 cryptStatusOK( status ) && validityInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
 		 validityInfo = validityInfo->next )
+		{
 		status = writeRtcsRequestEntry( stream, validityInfo );
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( status ) || extensionSize <= 0 )
 		return( status );
 
@@ -1351,7 +1390,8 @@ static int writeRtcsResponseInfo( STREAM *stream,
 	{
 	CERT_VAL_INFO *certValInfo = subjectCertInfoPtr->cCertVal;
 	VALIDITY_INFO *validityInfo;
-	int length = 0, extensionSize, validityInfoLength = 0, status;
+	int length = 0, extensionSize, validityInfoLength = 0;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -1374,25 +1414,41 @@ static int writeRtcsResponseInfo( STREAM *stream,
 		}
 
 	/* Determine how big the encoded RTCS response will be */
+	iterationCount = 0;
 	for( validityInfo = certValInfo->validityInfo;
-		 validityInfo != NULL; validityInfo = validityInfo->next )
-		validityInfoLength += \
+		 validityInfo != NULL && iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
+		 validityInfo = validityInfo->next )
+		{
+		const int responseEntrySize = \
 			sizeofRtcsResponseEntry( validityInfo,
 					certValInfo->responseType == RTCSRESPONSE_TYPE_EXTENDED );
+
+		if( cryptStatusError( responseEntrySize ) )
+			return( responseEntrySize );
+		validityInfoLength += responseEntrySize;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length += sizeofObject( validityInfoLength ) + \
 			  ( ( extensionSize > 0 ) ? sizeofObject( extensionSize ) : 0 );
 
 	/* Write the SEQUENCE OF status information wrapper and the cert status
 	   information */
 	status = writeSequence( stream, validityInfoLength );
+	iterationCount = 0;
 	for( validityInfo = certValInfo->validityInfo;
-		 cryptStatusOK( status ) && validityInfo != NULL;
+		 cryptStatusOK( status ) && validityInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
 		 validityInfo = validityInfo->next )
 		{
 		status = writeRtcsResponseEntry( stream, validityInfo,
 					certValInfo->responseType == RTCSRESPONSE_TYPE_EXTENDED );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( status ) || extensionSize <= 0 )
 		return( status );
 
@@ -1428,7 +1484,8 @@ static int writeOcspRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	{
 	CERT_REV_INFO *certRevInfo = subjectCertInfoPtr->cCertRev;
 	REVOCATION_INFO *revocationInfo;
-	int length, extensionSize, revocationInfoLength = 0, status;
+	int length, extensionSize, revocationInfoLength = 0;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -1447,7 +1504,7 @@ static int writeOcspRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	if( sIsNullStream( stream ) )
 		{
 		ATTRIBUTE_LIST *attributeListPtr;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		/* To ensure freshness we always use a new nonce when we write an
 		   OCSP request.  We don't check for problems (which, in any case,
@@ -1491,7 +1548,7 @@ static int writeOcspRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 			   nonce octet string, we have to tweak the first byte to ensure
 			   that the integer encoding works as a standard OCTET STRING */
 			noncePtr[ 0 ] &= 0x7F;
-			if( !noncePtr[ 0 ] )
+			if( noncePtr[ 0 ] == 0 )
 				noncePtr[ 0 ]++;
 			}
 
@@ -1514,10 +1571,23 @@ static int writeOcspRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 		}
 
 	/* Determine how big the encoded OCSP request will be */
+	iterationCount = 0;
 	for( revocationInfo = certRevInfo->revocations;
-		 revocationInfo != NULL; revocationInfo = revocationInfo->next )
-		revocationInfoLength += sizeofOcspRequestEntry( revocationInfo );
+		 revocationInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE;
+		 revocationInfo = revocationInfo->next )
+		{
+		const int requestEntrySize = sizeofOcspRequestEntry( revocationInfo );
+
+		if( cryptStatusError( requestEntrySize ) )
+			return( requestEntrySize );
+		revocationInfoLength += requestEntrySize;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = ( ( subjectCertInfoPtr->version == 2 ) ? \
 				 sizeofObject( sizeofShortInteger( CTAG_OR_VERSION ) ) : 0 ) + \
 			 ( ( issuerCertInfoPtr != NULL ) ? \
@@ -1549,10 +1619,16 @@ static int writeOcspRequestInfo( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
 	/* Write the SEQUENCE OF revocation information wrapper and the
 	   revocation information */
 	status = writeSequence( stream, revocationInfoLength );
+	iterationCount = 0;
 	for( revocationInfo = certRevInfo->revocations;
-		 cryptStatusOK( status ) && revocationInfo != NULL;
+		 cryptStatusOK( status ) && revocationInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE;
 		 revocationInfo = revocationInfo->next )
+		{
 		status = writeOcspRequestEntry( stream, revocationInfo );
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( status ) || extensionSize <= 0 )
 		return( status );
 
@@ -1578,7 +1654,8 @@ static int writeOcspResponseInfo( STREAM *stream,
 	{
 	CERT_REV_INFO *certRevInfo = subjectCertInfoPtr->cCertRev;
 	REVOCATION_INFO *revocationInfo;
-	int length = 0, extensionSize, revocationInfoLength = 0, status;
+	int length = 0, extensionSize, revocationInfoLength = 0;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -1597,10 +1674,23 @@ static int writeOcspResponseInfo( STREAM *stream,
 		}
 
 	/* Determine how big the encoded OCSP response will be */
+	iterationCount = 0;
 	for( revocationInfo = certRevInfo->revocations;
-		 revocationInfo != NULL; revocationInfo = revocationInfo->next )
-		revocationInfoLength += sizeofOcspResponseEntry( revocationInfo );
+		 revocationInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
+		 revocationInfo = revocationInfo->next )
+		{
+		const int responseEntrySize = sizeofOcspResponseEntry( revocationInfo );
+
+		if( cryptStatusError( responseEntrySize ) )
+			return( responseEntrySize );
+		revocationInfoLength += responseEntrySize;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	length = sizeofObject( sizeofShortInteger( CTAG_OP_VERSION ) ) + \
 			 sizeofObject( issuerCertInfoPtr->subjectDNsize ) + \
 			 sizeofGeneralizedTime() + \
@@ -1622,11 +1712,17 @@ static int writeOcspResponseInfo( STREAM *stream,
 	/* Write the SEQUENCE OF revocation information wrapper and the
 	   revocation information */
 	status = writeSequence( stream, revocationInfoLength );
+	iterationCount = 0;
 	for( revocationInfo = certRevInfo->revocations;
-		 cryptStatusOK( status ) && revocationInfo != NULL;
+		 cryptStatusOK( status ) && revocationInfo != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
 		 revocationInfo = revocationInfo->next )
+		{
 		status = writeOcspResponseEntry( stream, revocationInfo,
 										 subjectCertInfoPtr->startTime );
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( status ) || extensionSize <= 0 )
 		return( status );
 
@@ -1652,7 +1748,7 @@ int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 
 	if( sIsNullStream( stream ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE keyID[ 16 + 8 ];
 		int keyIDlength;
 
@@ -1692,7 +1788,7 @@ int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 		{
 		static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
 		MESSAGE_CREATEOBJECT_INFO createInfo;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		STREAM userInfoStream;
 
 		/* Create a stream-cipher encryption context and use it to generate
@@ -1789,6 +1885,8 @@ int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 	/* Write the user DN, encrypted user info, and any supplementary
 	   information */
 	extensionSize = sizeofAttributes( userInfoPtr->attributes );
+	if( cryptStatusError( extensionSize ) )
+		return( extensionSize );
 	writeDN( stream, userInfoPtr->subjectName, DEFAULT_TAG );
 	swrite( stream, algoID, algoIDsize );
 	writeOctetString( stream, userInfo, userInfoSize, DEFAULT_TAG );
@@ -1802,7 +1900,7 @@ int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 *																			*
 ****************************************************************************/
 
-const CERTWRITE_INFO FAR_BSS certWriteTable[] = {
+static const CERTWRITE_INFO FAR_BSS certWriteTable[] = {
 	{ CRYPT_CERTTYPE_CERTIFICATE, writeCertInfo },
 	{ CRYPT_CERTTYPE_CERTCHAIN, writeCertInfo },
 	{ CRYPT_CERTTYPE_ATTRIBUTE_CERT, writeAttributeCertInfo },
@@ -1818,3 +1916,13 @@ const CERTWRITE_INFO FAR_BSS certWriteTable[] = {
 	{ CRYPT_CERTTYPE_PKIUSER, writePkiUserInfo },
 	{ CRYPT_CERTTYPE_NONE, NULL }
 	};
+
+const CERTWRITE_INFO *getCertWriteTable( void )
+	{
+	return( certWriteTable );
+	}
+
+int sizeofCertWriteTable( void )
+	{
+	return( FAILSAFE_ARRAYSIZE( certWriteTable, CERTWRITE_INFO ) );
+	}

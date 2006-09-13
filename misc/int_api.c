@@ -42,9 +42,170 @@
   #include "io/stream.h"
 #endif /* Compiler-specific includes */
 
+/* Perform the FIPS-140 statistical checks that are feasible on a byte
+   string.  The full suite of tests assumes that an infinite source of
+   values (and time) is available, the following is a scaled-down version
+   used to sanity-check keys and other short random data blocks.  Note that
+   this check requires at least 64 bits of data in order to produce useful
+   results */
+
+BOOLEAN checkEntropy( const BYTE *data, const int dataLength )
+	{
+	const int delta = ( dataLength < 16 ) ? 1 : 0;
+	int bitCount[ 4 + 8 ] = { 0 }, noOnes, i;
+
+	assert( isReadPtr( data, dataLength ) );
+	assert( dataLength >= 8 );
+
+	for( i = 0; i < dataLength; i++ )
+		{
+		const int value = data[ i ];
+
+		bitCount[ value & 3 ]++;
+		bitCount[ ( value >> 2 ) & 3 ]++;
+		bitCount[ ( value >> 4 ) & 3 ]++;
+		bitCount[ value >> 6 ]++;
+		}
+
+	/* Monobit test: Make sure that at least 1/4 of the bits are ones and 1/4
+	   are zeroes */
+	noOnes = bitCount[ 1 ] + bitCount[ 2 ] + ( 2 * bitCount[ 3 ] );
+	if( noOnes < dataLength * 2 || noOnes > dataLength * 6 )
+		return( FALSE );
+
+	/* Poker test (almost): Make sure that each bit pair is present at least
+	   1/16 of the time.  The FIPS 140 version uses 4-bit values, but the
+	   numer of samples available from the keys is far too small for this.
+
+	   This isn't precisely 1/16, for short samples (< 128 bits) we adjust
+	   the count by one because of the small sample size, and for odd-length
+	   data we're getting four more samples so the actual figure is slightly
+	   less than 1/16 */
+	if( ( bitCount[ 0 ] + delta < dataLength / 2 ) || \
+		( bitCount[ 1 ] + delta < dataLength / 2 ) || \
+		( bitCount[ 2 ] + delta < dataLength / 2 ) || \
+		( bitCount[ 3 ] + delta < dataLength / 2 ) )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+/* Copy a string attribute to external storage, with various range checks
+   to follow the cryptlib semantics (these will already have been done by
+   the caller, this is just a backup check).  We also have a second function 
+   that's used internally for data-copying */
+
+int attributeCopy( MESSAGE_DATA *msgData, const void *attribute,
+				   const int attributeLength )
+	{
+	const int maxLength = msgData->length;
+
+	assert( isWritePtr( msgData, sizeof( MESSAGE_DATA ) ) );
+
+	/* Clear return value */
+	msgData->length = 0;
+
+	if( attributeLength <= 0 )
+		return( CRYPT_ERROR_NOTFOUND );
+	if( msgData->data != NULL )
+		{
+		assert( isReadPtr( attribute, attributeLength ) );
+
+		if( attributeLength > maxLength || \
+			!isWritePtr( msgData->data, attributeLength ) )
+			return( CRYPT_ARGERROR_STR1 );
+		memcpy( msgData->data, attribute, attributeLength );
+		}
+	msgData->length = attributeLength;
+
+	return( CRYPT_OK );
+	}
+
+int dataCopy( void *dest, const int destMaxLength, int *destLength,
+			  const void *source, const int sourceLength )
+	{
+	assert( isWritePtr( dest, destMaxLength ) );
+	assert( isWritePtr( destLength, sizeof( int ) ) );
+	assert( isReadPtr( source, sourceLength ) );
+
+	/* Clear return value */
+	*destLength = 0;
+
+	if( sourceLength <= 0 )
+		return( CRYPT_ERROR_NOTFOUND );
+	if( sourceLength > destMaxLength )
+		return( CRYPT_ERROR_OVERFLOW );
+	memcpy( dest, source, sourceLength );
+	*destLength = sourceLength;
+
+	return( CRYPT_OK );
+	}
+
+/* Check whether a given algorithm is available */
+
+BOOLEAN algoAvailable( const CRYPT_ALGO_TYPE cryptAlgo )
+	{
+	CRYPT_QUERY_INFO queryInfo;
+
+	assert( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
+
+	return( cryptStatusOK( krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									IMESSAGE_DEV_QUERYCAPABILITY, &queryInfo,
+									cryptAlgo ) ) ? TRUE : FALSE );
+	}
+
+/* For a given algorithm pair, check whether the first is stronger than the
+   second.  For hashes the order is:
+
+	SHA2 > RIPEMD160 > SHA-1 > all others */
+
+BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1,
+						const CRYPT_ALGO_TYPE algorithm2 )
+	{
+	static const CRYPT_ALGO_TYPE algoPrecedence[] = {
+		CRYPT_ALGO_SHA2, CRYPT_ALGO_RIPEMD160, CRYPT_ALGO_SHA,
+		CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
+	int algo1index, algo2index;
+
+	assert( algorithm1 >= CRYPT_ALGO_FIRST_HASH && \
+			algorithm1 <= CRYPT_ALGO_LAST_HASH );
+	assert( algorithm2 >= CRYPT_ALGO_FIRST_HASH && \
+			algorithm2 <= CRYPT_ALGO_LAST_HASH );
+
+	/* Find the relative positions on the scale of the two algorithms */
+	for( algo1index = 0; 
+		 algoPrecedence[ algo1index ] != algorithm1 && \
+			algo1index < FAILSAFE_ARRAYSIZE( algoPrecedence, CRYPT_ALGO_TYPE );
+		 algo1index++ )
+		{
+		/* If we've reached an unrated algorithm, it can't be stronger than 
+		   the other one */
+		if( algoPrecedence[ algo1index ] == CRYPT_ALGO_NONE )
+			return( FALSE );
+		}
+	if( algo1index >= FAILSAFE_ARRAYSIZE( algoPrecedence, CRYPT_ALGO_TYPE ) )
+		retIntError_Boolean();
+	for( algo2index = 0; 
+		 algoPrecedence[ algo2index ] != algorithm2 && \
+			algo2index < FAILSAFE_ARRAYSIZE( algoPrecedence, CRYPT_ALGO_TYPE );
+		 algo2index++ )
+		{
+		/* If we've reached an unrated algorithm, it's weaker than the other 
+		   one */
+		if( algoPrecedence[ algo2index ] == CRYPT_ALGO_NONE )
+			return( TRUE );
+		}
+	if( algo2index >= FAILSAFE_ARRAYSIZE( algoPrecedence, CRYPT_ALGO_TYPE ) )
+		retIntError_Boolean();
+
+	/* If the first algorithm has a smaller index than the second, it's a
+	   stronger algorithm */
+	return( ( algo1index < algo2index ) ? TRUE : FALSE );
+	}
+
 /****************************************************************************
 *																			*
-*								Internal API Functions						*
+*								Time Functions 								*
 *																			*
 ****************************************************************************/
 
@@ -60,20 +221,20 @@ time_t getTime( void )
 	{
 	const time_t theTime = time( NULL );
 
-	return( ( theTime < MIN_TIME_VALUE ) ? 0 : theTime );
+	return( ( theTime <= MIN_TIME_VALUE ) ? 0 : theTime );
 	}
 
 time_t getApproxTime( void )
 	{
 	const time_t theTime = time( NULL );
 
-	return( ( theTime < MIN_TIME_VALUE ) ? CURRENT_TIME_VALUE : theTime );
+	return( ( theTime <= MIN_TIME_VALUE ) ? CURRENT_TIME_VALUE : theTime );
 	}
 
 time_t getReliableTime( const CRYPT_HANDLE cryptHandle )
 	{
 	CRYPT_DEVICE cryptDevice;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	time_t theTime;
 	int status;
 
@@ -98,8 +259,14 @@ time_t getReliableTime( const CRYPT_HANDLE cryptHandle )
 								  CRYPT_IATTRIBUTE_TIME );
 	if( cryptStatusError( status ) )
 		return( 0 );
-	return( ( theTime < MIN_TIME_VALUE ) ? 0 : theTime );
+	return( ( theTime <= MIN_TIME_VALUE ) ? 0 : theTime );
 	}
+
+/****************************************************************************
+*																			*
+*							Checksum/Hash Functions							*
+*																			*
+****************************************************************************/
 
 /* Calculate a 16-bit Fletcher-like checksum of a block of data.  This isn't
    quite a pure Fletcher checksum because we don't bother keeping the
@@ -201,157 +368,61 @@ void getHashParameters( const CRYPT_ALGO_TYPE hashAlgorithm,
 	assert( NOTREACHED );
 	}
 
-/* Perform the FIPS-140 statistical checks that are feasible on a byte
-   string.  The full suite of tests assumes that an infinite source of
-   values (and time) is available, the following is a scaled-down version
-   used to sanity-check keys and other short random data blocks.  Note that
-   this check requires at least 64 bits of data in order to produce useful
-   results */
+/****************************************************************************
+*																			*
+*								String Functions							*
+*																			*
+****************************************************************************/
 
-BOOLEAN checkEntropy( const BYTE *data, const int dataLength )
+/* Perform various string-processing operations */
+
+int strFindCh( const char *str, const int strLen, const char findCh )
 	{
-	const int delta = ( dataLength < 16 ) ? 1 : 0;
-	int bitCount[ 4 + 8 ] = { 0 }, noOnes, i;
+	int i;
 
-	assert( isReadPtr( data, dataLength ) );
-	assert( dataLength >= 8 );
+	assert( isReadPtr( str, strLen ) );
 
-	for( i = 0; i < dataLength; i++ )
-		{
-		const int value = data[ i ];
+	for( i = 0; i < strLen; i++ )
+		if( str[ i ] == findCh )
+			return( i );
 
-		bitCount[ value & 3 ]++;
-		bitCount[ ( value >> 2 ) & 3 ]++;
-		bitCount[ ( value >> 4 ) & 3 ]++;
-		bitCount[ value >> 6 ]++;
-		}
-
-	/* Monobit test: Make sure that at least 1/4 of the bits are ones and 1/4
-	   are zeroes */
-	noOnes = bitCount[ 1 ] + bitCount[ 2 ] + ( 2 * bitCount[ 3 ] );
-	if( noOnes < dataLength * 2 || noOnes > dataLength * 6 )
-		return( FALSE );
-
-	/* Poker test (almost): Make sure that each bit pair is present at least
-	   1/16 of the time.  The FIPS 140 version uses 4-bit values, but the
-	   numer of samples available from the keys is far too small for this.
-
-	   This isn't precisely 1/16, for short samples (< 128 bits) we adjust
-	   the count by one because of the small sample size, and for odd-length
-	   data we're getting four more samples so the actual figure is slightly
-	   less than 1/16 */
-	if( ( bitCount[ 0 ] + delta < dataLength / 2 ) || \
-		( bitCount[ 1 ] + delta < dataLength / 2 ) || \
-		( bitCount[ 2 ] + delta < dataLength / 2 ) || \
-		( bitCount[ 3 ] + delta < dataLength / 2 ) )
-		return( FALSE );
-
-	return( TRUE );
+	return( -1 );
 	}
 
-/* Copy a string attribute to external storage, with various range checks
-   to follow the cryptlib semantics (these will already have been done by
-   the caller, this is just a backup check).  We also have a second function 
-   that's used internally for data-copying */
-
-int attributeCopy( RESOURCE_DATA *msgData, const void *attribute,
-				   const int attributeLength )
+int strFindStr( const char *str, const int strLen, 
+				const char *findStr, const int findStrLen )
 	{
-	const int maxLength = msgData->length;
+	const char findCh = *findStr;
+	int i;
 
-	assert( isWritePtr( msgData, sizeof( RESOURCE_DATA ) ) );
+	assert( isReadPtr( str, strLen ) );
+	assert( isReadPtr( findStr, findStrLen ) );
 
-	/* Clear return value */
-	msgData->length = 0;
+	for( i = 0; i < strLen - findStrLen; i++ )
+		if( str[ i ] == findCh && \
+			!strCompare( str + i, findStr, findStrLen ) )
+			return( i );
 
-	if( attributeLength <= 0 )
-		return( CRYPT_ERROR_NOTFOUND );
-	if( msgData->data != NULL )
-		{
-		assert( isReadPtr( attribute, attributeLength ) );
-
-		if( attributeLength > maxLength || \
-			!isWritePtr( msgData->data, attributeLength ) )
-			return( CRYPT_ARGERROR_STR1 );
-		memcpy( msgData->data, attribute, attributeLength );
-		}
-	msgData->length = attributeLength;
-
-	return( CRYPT_OK );
+	return( -1 );
 	}
 
-int dataCopy( void *dest, const int destMaxLength, int *destLength,
-			  const void *source, const int sourceLength )
+int strStripWhitespace( char **newStringPtr, const char *string,
+						const int stringLen )
 	{
-	assert( isWritePtr( dest, destMaxLength ) );
-	assert( isWritePtr( destLength, sizeof( int ) ) );
-	assert( isReadPtr( source, sourceLength ) );
+	int startPos, endPos;
 
-	/* Clear return value */
-	*destLength = 0;
+	assert( isWritePtr( newStringPtr, sizeof( char * ) ) );
+	assert( isReadPtr( string, stringLen ) );
 
-	if( sourceLength <= 0 )
-		return( CRYPT_ERROR_NOTFOUND );
-	if( sourceLength > destMaxLength )
-		return( CRYPT_ERROR_OVERFLOW );
-	memcpy( dest, source, sourceLength );
-	*destLength = sourceLength;
-
-	return( CRYPT_OK );
-	}
-
-/* Check whether a given algorithm is available */
-
-BOOLEAN algoAvailable( const CRYPT_ALGO_TYPE cryptAlgo )
-	{
-	CRYPT_QUERY_INFO queryInfo;
-
-	assert( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
-
-	return( cryptStatusOK( krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-									IMESSAGE_DEV_QUERYCAPABILITY, &queryInfo,
-									cryptAlgo ) ) ? TRUE : FALSE );
-	}
-
-/* For a given algorithm pair, check whether the first is stronger than the
-   second.  For hashes the order is:
-
-	SHA2 > RIPEMD160 > SHA-1 > all others */
-
-BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1,
-						const CRYPT_ALGO_TYPE algorithm2 )
-	{
-	static const CRYPT_ALGO_TYPE algoPrecedence[] = {
-		CRYPT_ALGO_SHA2, CRYPT_ALGO_RIPEMD160, CRYPT_ALGO_SHA,
-		CRYPT_ALGO_NONE };
-	int algo1index, algo2index;
-
-	assert( algorithm1 >= CRYPT_ALGO_FIRST_HASH && \
-			algorithm1 <= CRYPT_ALGO_LAST_HASH );
-	assert( algorithm2 >= CRYPT_ALGO_FIRST_HASH && \
-			algorithm2 <= CRYPT_ALGO_LAST_HASH );
-
-	/* Find the relative positions on the scale of the two algorithms */
-	for( algo1index = 0; algoPrecedence[ algo1index ] != algorithm1;
-		 algo1index++ )
-		{
-		/* If we've reached an unrated algorithm, it can't be stronger than 
-		   the other one */
-		if( algoPrecedence[ algo1index ] == CRYPT_ALGO_NONE )
-			return( FALSE );
-		}
-	for( algo2index = 0; algoPrecedence[ algo2index ] != algorithm2;
-		 algo2index++ )
-		{
-		/* If we've reached an unrated algorithm, it's weaker than the other 
-		   one */
-		if( algoPrecedence[ algo2index ] == CRYPT_ALGO_NONE )
-			return( TRUE );
-		}
-
-	/* If the first algorithm has a smaller index than the second, it's a
-	   stronger algorithm */
-	return( ( algo1index < algo2index ) ? TRUE : FALSE );
+	/* Skip leading and trailing whitespace */
+	for( startPos = 0;
+		 startPos < stringLen && string[ startPos ] <= ' ';
+		 startPos++ );
+	*newStringPtr = ( char * ) string + startPos;
+	for( endPos = stringLen;
+		 endPos > startPos && string[ endPos - 1 ] <= ' ';
+		 endPos-- );
+	return( endPos - startPos );
 	}
 
 /* Sanitise a string before passing it back to the user.  This is used to
@@ -368,8 +439,10 @@ char *sanitiseString( char *string, const int stringLength )
 
 	/* Remove any potentially unsafe characters from the string */
 	for( i = 0; i < stringLength; i++ )
+		{
 		if( !isPrint( string[ i ] ) )
 			string[ i ] = '.';
+		}
 
 	/* Terminate the string to allow it to be used in printf()-style
 	   functions */
@@ -420,7 +493,7 @@ int wcstombs_s( size_t *retval, char *dst, size_t dstmax,
 int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
 			   const CRYPT_ATTRIBUTE_TYPE attributeType )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const MESSAGE_TYPE message = \
 						( attributeType == CRYPT_CERTFORMAT_CERTIFICATE ) ? \
 						IMESSAGE_CRT_EXPORT : IMESSAGE_GETATTRIBUTE_S;
@@ -670,7 +743,7 @@ static int exportAttr( STREAM *stream, const CRYPT_HANDLE cryptHandle,
 					   const CRYPT_ATTRIBUTE_TYPE attributeType,
 					   const int length )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int attrLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -740,7 +813,7 @@ int exportCertToStream( void *streamPtr,
 						const CRYPT_CERTIFICATE cryptCertificate,
 						const CRYPT_CERTFORMAT_TYPE certFormatType )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM *stream = streamPtr;
 	int status;
 

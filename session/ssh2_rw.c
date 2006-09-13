@@ -61,9 +61,10 @@ static void formatErrorString( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 
 int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 	{
-	static const struct {
+	typedef struct {
 		const int sshStatus, cryptlibStatus;
-		} FAR_BSS errorMap[] = {
+		} ERRORMAP_INFO;
+	static const ERRORMAP_INFO FAR_BSS errorMap[] = {
 		/* A mapping of SSH error codes that have cryptlib equivalents to
 		   the equivalent cryptlib codes.  If there's no mapping available,
 		   we use a default of CRYPT_ERROR_READ */
@@ -72,6 +73,7 @@ int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 		{ SSH2_DISCONNECT_SERVICE_NOT_AVAILABLE, CRYPT_ERROR_NOTAVAIL },
 		{ SSH2_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, CRYPT_ERROR_NOTAVAIL },
 		{ SSH2_DISCONNECT_HOST_KEY_NOT_VERIFIABLE, CRYPT_ERROR_WRONGKEY },
+		{ CRYPT_ERROR, CRYPT_ERROR_READ },
 		{ CRYPT_ERROR, CRYPT_ERROR_READ }
 		};
 	int errorCode, i;
@@ -91,9 +93,14 @@ int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 					   "Received disconnect message: " );
 
 	/* Try and map the SSH status to an equivalent cryptlib one */
-	for( i = 0; errorMap[ i ].sshStatus != CRYPT_ERROR; i++ )
+	for( i = 0; errorMap[ i ].sshStatus != CRYPT_ERROR && \
+				i < FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP_INFO ); i++ )
+		{
 		if( errorMap[ i ].sshStatus == sessionInfoPtr->errorCode )
 			break;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP_INFO ) )
+		retIntError();
 	return( errorMap[ i ].cryptlibStatus );
 	}
 
@@ -596,7 +603,7 @@ int wrapPacketSSH2( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	bufPtr += payloadLength;
 	if( sessionInfoPtr->flags & SESSION_ISSECURE_WRITE )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		const int totalLength = SSH2_HEADER_SIZE + payloadLength + padLength;
 
 		/* Append the padding */

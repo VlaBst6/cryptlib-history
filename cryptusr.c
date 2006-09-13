@@ -172,7 +172,8 @@ static int findUser( const void *userIndexData, const int userIndexDataLength,
 					 const int userIDlength )
 	{
 	STREAM stream;
-	int fileReference = CRYPT_ERROR_NOTFOUND, status = CRYPT_OK;
+	int fileReference = CRYPT_ERROR_NOTFOUND;
+	int iterationCount = 0, status = CRYPT_OK;
 
 	assert( isReadPtr( userIndexData, userIndexDataLength ) );
 	assert( ( ( idType > USERID_NONE && idType < USERID_LAST ) && \
@@ -182,7 +183,8 @@ static int findUser( const void *userIndexData, const int userIndexDataLength,
 	/* Check each entry to make sure that the user name or ID aren't already
 	   present */
 	sMemConnect( &stream, userIndexData, userIndexDataLength );
-	while( stell( &stream ) < userIndexDataLength )
+	while( stell( &stream ) < userIndexDataLength && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		BYTE userData[ 128 + 8 ];
 		long newFileReference;
@@ -224,6 +226,8 @@ static int findUser( const void *userIndexData, const int userIndexDataLength,
 				break;
 				}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	sMemDisconnect( &stream );
 
 	return( cryptStatusError( status ) ? status : fileReference );
@@ -270,7 +274,7 @@ static int readUserData( const CRYPT_KEYSET iUserKeyset,
 						 void **data, int *dataLength,
 						 const int overallocSize )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	void *dataPtr = *data;
 	int status;
 
@@ -365,10 +369,13 @@ static int insertIndexEntry( const USER_INFO *userInfoPtr,
 
 	/* If there's already index data present, find the appropriate place to
 	   insert the new entry and the file reference to use */
-	if( *userIndexDataLength )
+	if( *userIndexDataLength > 0 )
 		{
+		int iterationCount = 0;
+		
 		sMemConnect( &stream, userIndexData, *userIndexDataLength );
-		while( stell( &stream ) < *userIndexDataLength )
+		while( stell( &stream ) < *userIndexDataLength && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 			{
 			long fileReference;
 			int status;
@@ -389,6 +396,8 @@ static int insertIndexEntry( const USER_INFO *userInfoPtr,
 			lastPos = stell( &stream );
 			newReference++;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		sMemDisconnect( &stream );
 		}
 
@@ -551,7 +560,7 @@ static int createSOKey( const CRYPT_KEYSET iUserKeyset,
 						const int passwordLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int keyLength = /*128*/64;
 	const int actionPerms = MK_ACTION_PERM( MESSAGE_CTX_SIGN,
 											ACTION_PERM_NONE_EXTERNAL ) | \
@@ -624,7 +633,7 @@ static int createCAKey( const CRYPT_KEYSET iUserKeyset,
 						const int passwordLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int actionPerms = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT,
 											ACTION_PERM_NONE_EXTERNAL ) | \
 							MK_ACTION_PERM( MESSAGE_CTX_DECRYPT,
@@ -685,7 +694,7 @@ static int writeUserInfo( const CRYPT_KEYSET iUserKeyset,
 						  const CRYPT_CONTEXT iSignContext )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE userInfoBuffer[ 1024 + 8 ];
 	static const int minBufferSize = MIN_BUFFER_SIZE;
@@ -776,12 +785,12 @@ static int writeUserInfo( const CRYPT_KEYSET iUserKeyset,
 static int zeroiseUsers( void )
 	{
 	CRYPT_KEYSET iIndexKeyset;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	static const BYTE zeroUserData[] = { 0x30, 0x00 };
 	BYTE buffer[ KEYSET_BUFFERSIZE + 8 ];
 	void *bufPtr = buffer;
-	int length, status;
+	int length, iterationCount = 0, status;
 
 	/* Open the index file and read the index entries from it.  We open it in
 	   exclusive mode and keep it open to ensure that noone else can access
@@ -822,7 +831,8 @@ static int zeroiseUsers( void )
 
 	/* Step through each entry clearing the user info for it */
 	sMemConnect( &stream, bufPtr, length );
-	while( stell( &stream ) < length )
+	while( stell( &stream ) < length && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		STREAM fileStream;
 		char userFilePath[ MAX_PATH_LENGTH + 128 ];	/* Protection for Windows */
@@ -850,6 +860,8 @@ static int zeroiseUsers( void )
 		sFileClose( &fileStream );
 		fileErase( userFilePath );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	sMemDisconnect( &stream );
 	if( bufPtr != buffer )
 		clFree( "zeroiseUsers", bufPtr );
@@ -897,6 +909,8 @@ static int createUserKeyset( CRYPT_KEYSET *iCreatedKeyset,
 	   user isn't already present */
 	if( !newIndex )
 		{
+		int iterationCount = 0;
+		
 		/* Read the index entries from the keyset */
 		status = readUserData( iIndexKeyset, CRYPT_IATTRIBUTE_USERINDEX,
 							   &bufPtr, &length, MAX_USERINDEX_SIZE );
@@ -926,7 +940,7 @@ static int createUserKeyset( CRYPT_KEYSET *iCreatedKeyset,
 							   userInfoPtr->userID, KEYID_SIZE );
 			if( !cryptStatusError( status ) )
 				{
-				RESOURCE_DATA msgData;
+				MESSAGE_DATA msgData;
 
 				setMessageData( &msgData, userInfoPtr->userID, KEYID_SIZE );
 				status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -934,7 +948,10 @@ static int createUserKeyset( CRYPT_KEYSET *iCreatedKeyset,
 										  CRYPT_IATTRIBUTE_RANDOM_NONCE );
 				}
 			}
-		while( !cryptStatusError( status ) );
+		while( !cryptStatusError( status ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 
 		/* Locate a new unused file reference that we can use */
 		fileRef = findUser( bufPtr, length, USERID_NONE, NULL, 0 );
@@ -959,7 +976,7 @@ static int createUserKeyset( CRYPT_KEYSET *iCreatedKeyset,
 	status = insertIndexEntry( userInfoPtr, bufPtr, &length );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, bufPtr, length );
 		status = krnlSendMessage( iIndexKeyset, IMESSAGE_SETATTRIBUTE_S,
@@ -1009,7 +1026,7 @@ static int setPassword( USER_INFO *userInfoPtr, const char *password,
 				( cryptStatusOK( status ) && userInfoPtr->fileRef == 0 ) );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			/* Since this user is created implicitly, there's no userID set
 			   by an explicit create so we set it now.  Since this is
@@ -1101,7 +1118,7 @@ static int userMessageFunction( const void *objectInfoPtr,
 
 		if( messageValue == CRYPT_USERINFO_PASSWORD )
 			{
-			RESOURCE_DATA *msgData = messageDataPtr;
+			MESSAGE_DATA *msgData = messageDataPtr;
 
 			return( setPassword( userInfoPtr, msgData->data,
 								 msgData->length ) );
@@ -1338,7 +1355,7 @@ static int userMessageFunction( const void *objectInfoPtr,
 		/* Get/set string attributes */
 		if( message == MESSAGE_GETATTRIBUTE_S )
 			{
-			RESOURCE_DATA *msgData = messageDataPtr;
+			MESSAGE_DATA *msgData = messageDataPtr;
 			const char *retVal = getOptionString( userInfoPtr->configOptions,
 												  messageValue );
 			if( retVal == NULL )
@@ -1354,7 +1371,7 @@ static int userMessageFunction( const void *objectInfoPtr,
 			}
 		if( message == MESSAGE_SETATTRIBUTE_S )
 			{
-			const RESOURCE_DATA *msgData = messageDataPtr;
+			const MESSAGE_DATA *msgData = messageDataPtr;
 
 			return( setOptionString( userInfoPtr->configOptions,
 									 messageValue, msgData->data,

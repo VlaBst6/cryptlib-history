@@ -332,7 +332,7 @@ int getSessionData( SESSION_INFO *sessionInfoPtr, void *data,
 					const int length, int *bytesCopied )
 	{
 	BYTE *dataPtr = data;
-	int dataLength = length, status = CRYPT_OK;
+	int dataLength = length, iterationCount = 0, status = CRYPT_OK;
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -355,7 +355,8 @@ int getSessionData( SESSION_INFO *sessionInfoPtr, void *data,
 	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, NULL,
 			sessionInfoPtr->readTimeout );
 
-	while( cryptStatusOK( status ) && dataLength > 0 )
+	while( cryptStatusOK( status ) && dataLength > 0 && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		int count;
 
@@ -385,6 +386,8 @@ int getSessionData( SESSION_INFO *sessionInfoPtr, void *data,
 		assert( sessionInfoPtr->receiveBufPos <= \
 				sessionInfoPtr->receiveBufEnd );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* If we got at least some data or encountered a soft timeout, the 
 	   operation was (nominally) successful, otherwise it's an error */
@@ -623,7 +626,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 					const int length, int *bytesCopied )
 	{
 	BYTE *dataPtr = ( BYTE * ) data;
-	int dataLength = length, status;
+	int dataLength = length, iterationCount = 0, status;
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -706,7 +709,8 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 	   host */
 	while( ( sessionInfoPtr->sendBufPos - \
 			 sessionInfoPtr->sendBufStartOfs ) + dataLength >= \
-		   sessionInfoPtr->maxPacketSize )
+		   sessionInfoPtr->maxPacketSize && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const int bytesToCopy = sessionInfoPtr->maxPacketSize - \
 								( sessionInfoPtr->sendBufPos + \
@@ -754,6 +758,8 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 			return( status );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* If there's anything left, it'll fit completely into the send buffer, 
 	   just copy it in */

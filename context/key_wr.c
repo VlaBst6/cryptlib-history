@@ -322,8 +322,7 @@ static int writePublicKeyRsaFunction( STREAM *stream,
 #endif /* USE_PGP */
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_FAILED );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 static int writePublicKeyDlpFunction( STREAM *stream, 
@@ -484,8 +483,7 @@ static int writePrivateKeyRsaFunction( STREAM *stream,
 			return( writeRsaPrivateKeyOld( stream, contextInfoPtr ) );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_FAILED );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 static int writePrivateKeyDlpFunction( STREAM *stream, 
@@ -508,7 +506,7 @@ static int writePrivateKeyDlpFunction( STREAM *stream,
 	if( strcmp( accessKey, "private" ) )
 		return( CRYPT_ERROR_PERMISSION );
 	if( formatType != KEYFORMAT_PRIVATE )
-		return( CRYPT_ERROR_FAILED );
+		retIntError();
 
 	/* When we're generating a DH key ID, only p, q, and g are initialised,
 	   so we write a special-case zero y value.  This is a somewhat ugly
@@ -536,8 +534,8 @@ static int generateDomainParameters( BYTE *domainParameters,
 									 const void *g, const int gLength )
 	{
 	STREAM stream;
-	BYTE hash[ CRYPT_MAX_HASHSIZE ];
-	BYTE dataBuffer[ 16 + ( CRYPT_MAX_PKCSIZE * 3 ) ];
+	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
+	BYTE dataBuffer[ 16 + ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ];
 	HASHFUNCTION hashFunction;
 	const int pSize = sizeofInteger( p, pLength );
 	const int qSize = sizeofInteger( q, qLength );
@@ -636,7 +634,7 @@ int writeFlatPublicKey( void *buffer, const int bufMaxSize,
 #ifdef USE_KEA
 	if( cryptAlgo == CRYPT_ALGO_KEA )
 		{
-		BYTE domainParameters[ 10 ];
+		BYTE domainParameters[ 10 + 8 ];
 		const int domainParameterLength = \
 					generateDomainParameters( domainParameters,
 											  component1, component1Length,

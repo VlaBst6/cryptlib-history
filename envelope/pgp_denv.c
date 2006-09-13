@@ -149,15 +149,17 @@ static int addContentListItem( STREAM *stream,
 	   multiple signatures by nesting them so this isn't a problem */
 	if( isContinuedSignature )
 		{
+		int iterationCount = 0;
+		
 		for( contentListItem = envelopeInfoPtr->contentList;
 			 contentListItem != NULL && \
-				contentListItem->envInfo != CRYPT_ENVINFO_SIGNATURE;
+				contentListItem->envInfo != CRYPT_ENVINFO_SIGNATURE && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 			 contentListItem = contentListItem->next );
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		if( contentListItem == NULL )
-			{
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_FAILED );
-			}
+			retIntError();
 		assert( contentListItem != NULL && \
 				contentListItem->object == NULL && \
 				contentListItem->objectSize == 0 );
@@ -523,9 +525,10 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 									PGP_DEENV_STATE *state )
 	{
-	static const struct {
+	typedef struct {
 		const int pgpType; const int cryptlibType;
-		} typeMapTbl[] = {
+		} TYPEMAP_INFO;
+	static const TYPEMAP_INFO typeMapTbl[] = {
 		{ PGP_PACKET_COPR, CRYPT_CONTENT_COMPRESSEDDATA },
 		{ PGP_PACKET_ENCR, CRYPT_CONTENT_ENCRYPTEDDATA },
 		{ PGP_PACKET_ENCR_MDC, CRYPT_CONTENT_ENCRYPTEDDATA },
@@ -533,7 +536,7 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 		{ PGP_PACKET_PKE, CRYPT_CONTENT_ENVELOPEDDATA },
 		{ PGP_PACKET_SIGNATURE, CRYPT_CONTENT_SIGNEDDATA },
 		{ PGP_PACKET_SIGNATURE_ONEPASS, CRYPT_CONTENT_SIGNEDDATA },
-		{ CRYPT_ERROR, CRYPT_ERROR },
+		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
 		};
 	STREAM headerStream;
 	BYTE buffer[ 32 + 256 + 8 ];	/* Max.data packet header size */
@@ -699,14 +702,17 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* If it's a known packet type, indicate it as the nested content type */
 	for( i = 0; typeMapTbl[ i ].pgpType != CRYPT_ERROR && \
-				i < FAILSAFE_ITERATIONS_MED; i++ )
+				i < FAILSAFE_ARRAYSIZE( typeMapTbl, TYPEMAP_INFO ); i++ )
+		{
 		if( typeMapTbl[ i ].pgpType == packetType )
 			{
 			envelopeInfoPtr->contentType = typeMapTbl[ i ].cryptlibType;
 			break;
 			}
-	if( typeMapTbl[ i ].pgpType == CRYPT_ERROR || \
-		i >= FAILSAFE_ITERATIONS_MED )
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( typeMapTbl, TYPEMAP_INFO ) )
+		retIntError();
+	if( typeMapTbl[ i ].pgpType == CRYPT_ERROR )
 		return( CRYPT_ERROR_BADDATA );
 
 #if 0	/* 12/4/06 See previous comment */
@@ -936,11 +942,7 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			else
 				state = PGP_DEENVSTATE_DONE;
 			if( !checkActions( envelopeInfoPtr ) )
-				{
-				/* Sanity check */
-				assert( NOTREACHED );
-				return( CRYPT_ERROR_FAILED );
-				}
+				retIntError();
 			}
 
 		/* Burrow down into the encrypted data to see what's next */
@@ -1002,7 +1004,7 @@ static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 			( envelopeInfoPtr->usage == ACTION_CRYPT && \
 			  ( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE ) ) ? \
 			TRUE : FALSE;
-	int status = CRYPT_OK;
+	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( envelopeInfoPtr->pgpDeenvState >= PGP_DEENVSTATE_NONE && \
@@ -1078,15 +1080,16 @@ static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	   could get ugly because there could be multiple one-pass signature
 	   packets present, however PGP handles multiple signatures by nesting
 	   them so this isn't a problem */
+	iterationCount = 0;
 	for( contentListPtr = envelopeInfoPtr->contentList;
 		 contentListPtr != NULL && \
-			contentListPtr->envInfo != CRYPT_ENVINFO_SIGNATURE;
+			contentListPtr->envInfo != CRYPT_ENVINFO_SIGNATURE && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 contentListPtr = contentListPtr->next );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	if( contentListPtr == NULL )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_FAILED );
-		}
+		retIntError();
 
 	/* PGP 2.x prepended (!!) signatures to the signed data, OpenPGP fixed 
 	   this by splitting the signature into a header with signature info and 

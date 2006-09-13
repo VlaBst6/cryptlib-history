@@ -32,7 +32,7 @@ static const OID_INFO FAR_BSS cryptlibDataOIDinfo[] = {
 	{ OID_CRYPTLIB_CONFIGDATA, CRYPT_IATTRIBUTE_CONFIGDATA },
 	{ OID_CRYPTLIB_USERINDEX, CRYPT_IATTRIBUTE_USERINDEX },
 	{ OID_CRYPTLIB_USERINFO, CRYPT_IATTRIBUTE_USERINFO },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 /****************************************************************************
@@ -46,13 +46,14 @@ static const OID_INFO FAR_BSS cryptlibDataOIDinfo[] = {
 static int readKeyIdentifiers( STREAM *stream, PKCS15_INFO *pkcs15infoPtr,
 							   const int endPos )
 	{
-	int status = CRYPT_OK;
+	int iterationCount = 0, status = CRYPT_OK;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( endPos > stell( stream ) );
 
-	while( cryptStatusOK( status ) && stell( stream ) < endPos )
+	while( cryptStatusOK( status ) && stell( stream ) < endPos && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		long value;
 		int payloadLength;
@@ -140,6 +141,8 @@ static int readKeyIdentifiers( STREAM *stream, PKCS15_INFO *pkcs15infoPtr,
 				status = readUniversal( stream );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( status );
 	}
@@ -149,7 +152,7 @@ static int readKeyIdentifiers( STREAM *stream, PKCS15_INFO *pkcs15infoPtr,
 static int getKeyIDs( PKCS15_INFO *pkcs15infoPtr,
 					  const CRYPT_HANDLE iCryptContext )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE sKIDbuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int status;
 
@@ -288,7 +291,7 @@ static int getCertIDs( PKCS15_INFO *pkcs15infoPtr,
 		}
 	if( pkcs15infoPtr->keyIDlength <= 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, pkcs15infoPtr->keyID, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
@@ -625,8 +628,7 @@ int readObjectAttributes( STREAM *stream, PKCS15_INFO *pkcs15infoPtr,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_INTERNAL );
+			retIntError();
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -804,9 +806,9 @@ int writeKeyAttributes( void *privKeyAttributes,
 	commonKeyAttributeSize = ( int ) sizeofObject( pkcs15infoPtr->iDlength ) + \
 							 sizeofBitString( keyUsage ) + \
 							 sizeofBitString( KEYATTR_ACCESS_PRIVATE );
-	if( pkcs15infoPtr->validFrom >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validFrom > MIN_TIME_VALUE )
 		commonKeyAttributeSize += sizeofGeneralizedTime();
-	if( pkcs15infoPtr->validTo >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validTo > MIN_TIME_VALUE )
 		commonKeyAttributeSize += sizeofGeneralizedTime();
 
 	/* Write the private key attributes */
@@ -819,10 +821,10 @@ int writeKeyAttributes( void *privKeyAttributes,
 					  DEFAULT_TAG );
 	writeBitString( &stream, keyUsage, DEFAULT_TAG );
 	status = writeBitString( &stream, KEYATTR_ACCESS_PRIVATE, DEFAULT_TAG );
-	if( pkcs15infoPtr->validFrom >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validFrom > MIN_TIME_VALUE )
 		status = writeGeneralizedTime( &stream, pkcs15infoPtr->validFrom, 
 									   DEFAULT_TAG );
-	if( pkcs15infoPtr->validTo >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validTo > MIN_TIME_VALUE )
 		status = writeGeneralizedTime( &stream, pkcs15infoPtr->validTo, 
 									   CTAG_KA_VALIDTO );
 	*privKeyAttributeSize = stell( &stream );
@@ -839,9 +841,9 @@ int writeKeyAttributes( void *privKeyAttributes,
 	commonKeyAttributeSize = ( int ) sizeofObject( pkcs15infoPtr->iDlength ) + \
 							 sizeofBitString( keyUsage ) + \
 							 sizeofBitString( KEYATTR_ACCESS_PUBLIC );
-	if( pkcs15infoPtr->validFrom >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validFrom > MIN_TIME_VALUE )
 		commonKeyAttributeSize += sizeofGeneralizedTime();
-	if( pkcs15infoPtr->validTo >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validTo > MIN_TIME_VALUE )
 		commonKeyAttributeSize += sizeofGeneralizedTime();
 
 	/* Write the public key attributes */
@@ -854,10 +856,10 @@ int writeKeyAttributes( void *privKeyAttributes,
 					  DEFAULT_TAG );
 	writeBitString( &stream, keyUsage, DEFAULT_TAG );
 	status = writeBitString( &stream, KEYATTR_ACCESS_PUBLIC, DEFAULT_TAG );
-	if( pkcs15infoPtr->validFrom >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validFrom > MIN_TIME_VALUE )
 		status = writeGeneralizedTime( &stream, pkcs15infoPtr->validFrom, 
 									   DEFAULT_TAG );
-	if( pkcs15infoPtr->validTo >= MIN_TIME_VALUE )
+	if( pkcs15infoPtr->validTo > MIN_TIME_VALUE )
 		status = writeGeneralizedTime( &stream, pkcs15infoPtr->validTo, 
 									   CTAG_KA_VALIDTO );
 	*pubKeyAttributeSize = stell( &stream );

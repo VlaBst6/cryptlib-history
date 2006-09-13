@@ -77,7 +77,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getRipemd160Capability();
 	CONTEXT_INFO contextInfo;
 	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE ];
+	BYTE keyData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test RIPEMD160 against the test vectors from the RIPEMD-160 paper */

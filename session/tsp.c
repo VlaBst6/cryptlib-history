@@ -45,9 +45,9 @@ enum { TSP_MESSAGE_REQUEST, TSP_MESSAGE_POLLREP, TSP_MESSAGE_POLLREQ,
    subfunctions that handle individual parts of the protocol */
 
 typedef struct {
-	BYTE msgImprint[ MAX_MSGIMPRINT_SIZE ];
+	BYTE msgImprint[ MAX_MSGIMPRINT_SIZE + 8 ];
 	int msgImprintSize;					/* Message imprint */
-	BYTE nonce[ CRYPT_MAX_HASHSIZE ];
+	BYTE nonce[ CRYPT_MAX_HASHSIZE + 8 ];
 	int nonceSize;						/* Nonce (if present) */
 	BOOLEAN includeSigCerts;			/* Whether to include signer certs */
 	} TSP_PROTOCOL_INFO;
@@ -154,7 +154,7 @@ static int signTSToken( BYTE *tsaResp, int *tsaRespLength,
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	DYNBUF essCertDB;
 	static const int minBufferSize = MIN_BUFFER_SIZE;
 	static const int contentType = CRYPT_CONTENT_TSTINFO;
@@ -547,9 +547,9 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 static int sendServerResponse( SESSION_INFO *sessionInfoPtr,
 							   TSP_PROTOCOL_INFO *protocolInfo )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
-	BYTE serialNo[ 16 ];
+	BYTE serialNo[ 16 + 8 ];
 	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
 	const time_t currentTime = getReliableTime( sessionInfoPtr->privateKey );
 	const int headerOfs = ( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT ) ? \
@@ -559,7 +559,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr,
 	/* If the time is screwed up we can't provide a signed indication of the
 	   time.  The error information is somewhat misleading, but there's not
 	   much else we can provide at this point */
-	if( currentTime < MIN_TIME_VALUE )
+	if( currentTime <= MIN_TIME_VALUE )
 		{
 		setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_VALIDFROM,
 					  CRYPT_ERRTYPE_ATTR_VALUE );
@@ -677,7 +677,7 @@ static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE *cryptEnvelopePtr = ( CRYPT_CERTIFICATE * ) data;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int dataSize = sessionInfoPtr->receiveBufEnd - \
 						 sessionInfoPtr->receiveBufPos;
 	const int bufSize = max( dataSize + 128, MIN_BUFFER_SIZE );
@@ -695,7 +695,7 @@ static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	/* If we're being asked for raw encoded timestamp data, return it
 	   directly to the caller */
 	if( type == CRYPT_IATTRIBUTE_ENC_TIMESTAMP )
-		return( attributeCopy( ( RESOURCE_DATA * ) data,
+		return( attributeCopy( ( MESSAGE_DATA * ) data,
 					sessionInfoPtr->receiveBuffer + sessionInfoPtr->receiveBufPos,
 					dataSize ) );
 
@@ -752,7 +752,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 							  &tspInfo->imprintAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, tspInfo->imprint, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( hashContext, IMESSAGE_GETATTRIBUTE_S,

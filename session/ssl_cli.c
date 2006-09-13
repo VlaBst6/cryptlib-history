@@ -38,11 +38,12 @@
 
 static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
 	{
-	const static struct {
+	typedef struct {
 		const CRYPT_ALGO_TYPE cryptAlgo;
 		const int cipherSuite;
 		const BOOLEAN isPSK;
-		} cipherSuiteList[] = {
+		} CIPHERSUITE_INFO;
+	const static CIPHERSUITE_INFO cipherSuiteList[] = {
 		{ CRYPT_ALGO_3DES, TLS_PSK_WITH_3DES_EDE_CBC_SHA, TRUE },
 		{ CRYPT_ALGO_AES, TLS_PSK_WITH_AES_256_CBC_SHA, TRUE },
 		{ CRYPT_ALGO_AES, TLS_PSK_WITH_AES_128_CBC_SHA, TRUE },
@@ -68,14 +69,17 @@ static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
 		{ CRYPT_ALGO_DES, SSL_RSA_WITH_DES_CBC_SHA, FALSE },
 		{ CRYPT_ALGO_DES, TLS_DHE_RSA_WITH_DES_CBC_SHA, FALSE },
 		{ CRYPT_ALGO_SHA, SSL_RSA_EXPORT_WITH_RC4_40_MD5, FALSE },	/* Canary */
+		{ CRYPT_ALGO_NONE, SSL_NULL_WITH_NULL, FALSE },
 		{ CRYPT_ALGO_NONE, SSL_NULL_WITH_NULL, FALSE }
 		};
-	int availableSuites[ 32 ], cipherSuiteCount = 0, suiteIndex = 0, status;
+	int availableSuites[ 32 + 8 ], cipherSuiteCount = 0, suiteIndex = 0;
+	int status;
 
 	/* Walk down the list of algorithms (and the corresponding cipher
 	   suites) remembering each one that's available for use */
 	while( cipherSuiteList[ suiteIndex ].cryptAlgo != CRYPT_ALGO_NONE && \
-		   cipherSuiteCount < 32 )
+		   cipherSuiteCount < 32 && \
+		   suiteIndex < FAILSAFE_ARRAYSIZE( cipherSuiteList, CIPHERSUITE_INFO ) )
 		{
 		const CRYPT_ALGO_TYPE cryptAlgo = \
 								cipherSuiteList[ suiteIndex ].cryptAlgo;
@@ -89,21 +93,29 @@ static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
 			}
 		if( !algoAvailable( cipherSuiteList[ suiteIndex ].cryptAlgo ) )
 			{
-			while( cipherSuiteList[ suiteIndex ].cryptAlgo == cryptAlgo )
+			while( cipherSuiteList[ suiteIndex ].cryptAlgo == cryptAlgo && \
+				   suiteIndex < FAILSAFE_ITERATIONS_MED )
 				suiteIndex++;
 			continue;
 			}
 		while( cipherSuiteList[ suiteIndex ].cryptAlgo == cryptAlgo && \
-			   cipherSuiteCount < 32 )
+			   cipherSuiteCount < 32 && \
+			   suiteIndex < FAILSAFE_ARRAYSIZE( cipherSuiteList, CIPHERSUITE_INFO ) )
+			{
 			availableSuites[ cipherSuiteCount++ ] = \
 						cipherSuiteList[ suiteIndex++ ].cipherSuite;
+			}
+		if( suiteIndex >= FAILSAFE_ARRAYSIZE( cipherSuiteList, CIPHERSUITE_INFO ) )
+			retIntError();
 		}
+	if( suiteIndex >= FAILSAFE_ARRAYSIZE( cipherSuiteList, CIPHERSUITE_INFO ) )
+		retIntError();
 	assert( cipherSuiteCount < 32 );
 
 	/* Encode the list of available cipher suites */
 	status = writeUint16( stream, cipherSuiteCount * UINT16_SIZE );
-	for( suiteIndex = 0; \
-		 cryptStatusOK( status ) && suiteIndex < cipherSuiteCount; \
+	for( suiteIndex = 0; 
+		 cryptStatusOK( status ) && suiteIndex < cipherSuiteCount; 
 		 suiteIndex++ )
 		status = writeUint16( stream, availableSuites[ suiteIndex ] );
 
@@ -123,8 +135,8 @@ static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
 
 static int checkURL( SESSION_INFO *sessionInfoPtr )
 	{
-	RESOURCE_DATA msgData;
-	char hostName[ MAX_URL_SIZE ];
+	MESSAGE_DATA msgData;
+	char hostName[ MAX_URL_SIZE + 8 ];
 	const int serverNameLength = strlen( sessionInfoPtr->serverName );
 	int hostNameLength, splatPos = CRYPT_ERROR, postSplatLen, i, status;
 
@@ -207,7 +219,7 @@ int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_USERNAME );
 #endif /* 0 */
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int packetOffset, length, status;
 
 	/* Get the nonce that's used to randomise all crypto ops */

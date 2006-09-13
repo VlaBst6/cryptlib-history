@@ -254,9 +254,7 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 	   reference count to reserve it for our exclusive use */
 	if( checkType == ACCESS_CHECK_EXTACCESS || \
 		checkType == ACCESS_CHECK_KEYACCESS )
-		{
 		objectInfoPtr->lockCount++;
-		}
 	else
 		{
 		/* If we're resuming use of an object that we suspended to allow 

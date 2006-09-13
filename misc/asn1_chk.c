@@ -91,7 +91,7 @@ static int getItem( STREAM *stream, ASN1_ITEM *item )
 	status = checkEOC( stream );
 	if( cryptStatusError( status ) )
 		return( STATE_ERROR );
-	if( status )
+	if( status == TRUE )
 		{
 		item->headerSize = 2;
 		return( STATE_NONE );
@@ -461,6 +461,7 @@ static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite
 	ASN1_ITEM item;
 	long lastPos = stell( stream );
 	ASN1_STATE status;
+	int iterationCount = 0;
 
 	assert( state >= STATE_NONE && state <= STATE_ERROR );
 	assert( level > 0 || length == LENGTH_MAGIC );
@@ -468,10 +469,12 @@ static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite
 			( !isIndefinite && length >= 0 ) );
 
 	/* Perform a sanity check of input data */
-	if( level >= MAX_NESTING_LEVEL || state == STATE_ERROR || length < 0 )
+	if( level < 0 || level >= MAX_NESTING_LEVEL || state == STATE_ERROR || \
+		length < 0 )
 		return( STATE_ERROR );
 
-	while( ( status = getItem( stream, &item ) ) == STATE_NONE )
+	while( ( status = getItem( stream, &item ) ) == STATE_NONE && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		/* If this is the top level (for which the level isn't known in
 		   advance) and the item has a definite length, set the length to 
@@ -520,6 +523,8 @@ static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite
 		if( length <= 0 )
 			return( ( length < 0 ) ? STATE_ERROR : state );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	return( ( status == STATE_NONE ) ? STATE_NONE : STATE_ERROR );
 	}

@@ -177,9 +177,9 @@ void fastPoll( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	DATETIME dt;
-	ULONG querybuffer[ 26 ];
+	ULONG querybuffer[ 26 + 8 ];
 	PTIB ptib = NULL;
 	PPIB ppib = NULL;
 	int bufIndex = 0;
@@ -257,7 +257,7 @@ void fastPoll( void )
 void slowPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	HWND hwndParent;
 	HWND hwndNext;
 	HENUM henum;
@@ -266,7 +266,7 @@ void slowPoll( void )
 	SHORT sLength=10;
 	PID pib;
 	TID tib;
-	char pchBuffer[ 10 ];
+	char pchBuffer[ 10 + 8 ];
 	RECTL rcl;
 	int bufIndex = 0;
 

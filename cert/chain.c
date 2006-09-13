@@ -194,7 +194,7 @@ static void freeCertChain( CRYPT_CERTIFICATE *iCertChain,
 	assert( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
 	assert( isWritePtr( iCertChain, sizeof( CRYPT_CERTIFICATE ) * certChainSize ) );
 
-	for( i = 0; i < certChainSize; i++ )
+	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
 		{
 		krnlSendNotifier( iCertChain[ i ], IMESSAGE_DESTROY );
 		iCertChain[ i ] = CRYPT_ERROR;
@@ -223,7 +223,7 @@ static int buildChainInfo( CHAIN_INFO *chainInfo,
 	   certificate.  Maintaining an external pointer into the internal
 	   structure is safe since the objects are reference-counted and won't be
 	   destroyed until the encapsulating cert is destroyed */
-	for( i = 0; i < certChainSize; i++ )
+	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
 		{
 		CERT_INFO *certChainPtr;
 		int status;
@@ -247,6 +247,8 @@ static int buildChainInfo( CHAIN_INFO *chainInfo,
 		chainInfo[ i ].serialNumberSize = certChainPtr->cCertCert->serialNumberLength;
 		krnlReleaseObject( certChainPtr->objectHandle );
 		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 
 	return( CRYPT_OK );
 	}
@@ -285,7 +287,8 @@ static int findLeafNode( const CHAIN_INFO *chainInfo,
 		moreMatches = FALSE;
 
 		/* Try and find a cert issued by the current cert */
-		for( i = 0; i < certChainSize; i++ )
+		for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+			{
 			if( !certUsed[ i ] && \
 				isIssuer( &chainingInfo, &chainInfo[ i ] ) )
 				{
@@ -298,6 +301,9 @@ static int findLeafNode( const CHAIN_INFO *chainInfo,
 				lastCertPos = i;
 				break;
 				}
+			}
+		if( i >= MAX_CHAINLENGTH )
+			retIntError();
 		}
 	while( moreMatches );
 
@@ -329,13 +335,16 @@ static int findIdentifiedLeafNode( const CHAIN_INFO *chainInfo,
 	   match */
 	if( keyIDtype == CRYPT_IKEYID_KEYID )
 		{
-		for( i = 0; i < certChainSize; i++ )
+		for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+			{
 			if( chainInfo[ i ].subjectKeyIDsize > MIN_SKID_SIZE && \
 				chainInfo[ i ].subjectKeyIDsize == keyIDlength && \
 				!memcmp( chainInfo[ i ].subjectKeyIdentifier, keyID,
 						 keyIDlength ) )
-			return( i );
-
+				return( i );
+			}
+		if( i >= MAX_CHAINLENGTH )
+			retIntError();
 		return( CRYPT_ERROR_NOTFOUND );
 		}
 
@@ -356,7 +365,8 @@ static int findIdentifiedLeafNode( const CHAIN_INFO *chainInfo,
 
 	/* Walk down the chain looking for the one identified by the 
 	   issuerAndSerialNumber */
-	for( i = 0; i < certChainSize; i++ )
+	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+		{
 		if( chainInfo[ i ].issuerDNsize > 0 && \
 			chainInfo[ i ].issuerDNsize == issuerDNsize && \
 			!memcmp( chainInfo[ i ].issuerDN, issuerDNptr,
@@ -365,6 +375,9 @@ static int findIdentifiedLeafNode( const CHAIN_INFO *chainInfo,
 								  chainInfo[ i ].serialNumberSize,
 								  serialNumber, serialNumberSize ) )
 			return( i );
+		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 
 	return( CRYPT_ERROR_NOTFOUND );
 	}
@@ -450,7 +463,8 @@ static int sortCertChain( CRYPT_CERTIFICATE *iCertChain,
 		for( matchLevel = maxMatchLevel; \
 			 !moreMatches && matchLevel >= 0; matchLevel-- )
 			{
-			for( i = 0; i < certChainSize; i++ )
+			for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+				{
 				if( chainInfo[ i ].subjectDN != NULL && \
 					isSubject( chainingInfoPtr, &chainInfo[ i ], 
 							   matchLevel ) )
@@ -463,15 +477,20 @@ static int sortCertChain( CRYPT_CERTIFICATE *iCertChain,
 					moreMatches = TRUE;
 					break;
 					}
+				}
+			if( i >= MAX_CHAINLENGTH )
+				retIntError();
 			}
 		}
 	while( moreMatches );
 
 	/* If there are any certs left, they're not needed for anything so we can
 	   free the resources */
-	for( i = 0; i < certChainSize; i++ )
+	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
+		{
 		if( chainInfo[ i ].subjectDN != NULL )
 			krnlSendNotifier( iCertChain[ i ], IMESSAGE_DECREFCOUNT );
+		}
 
 	/* Replace the existing chain with the ordered version */
 	memset( iCertChain, 0, sizeof( CRYPT_CERTIFICATE ) * MAX_CHAINLENGTH );
@@ -563,7 +582,7 @@ static int buildCertChain( CRYPT_CERTIFICATE *iLeafCert,
 		{
 		int i;
 
-		for( i = 0; i < certChainEnd - 1; i++ )
+		for( i = 0; i < certChainEnd - 1 && i < MAX_CHAINLENGTH; i++ )
 			{
 			CERT_INFO *certInfoPtr;
 			int value;
@@ -585,6 +604,8 @@ static int buildCertChain( CRYPT_CERTIFICATE *iLeafCert,
 			certInfoPtr->flags |= CERT_FLAG_PATHKLUDGE;
 			krnlReleaseObject( certInfoPtr->objectHandle );
 			}
+		if( i >= MAX_CHAINLENGTH )
+			retIntError();
 		}
 
 	/* Finally, we've got the leaf cert and a chain up to the root.  Make the
@@ -622,7 +643,7 @@ static BOOLEAN certPresent( BYTE certChainHashes[][ CRYPT_MAX_HASHSIZE + 8 ],
 							const int certChainLen, 
 							const CRYPT_CERTIFICATE iCryptCert )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int i, status;
 
 	/* Get the fingerprint of the (potential) next cert in the collection.  
@@ -637,10 +658,12 @@ static BOOLEAN certPresent( BYTE certChainHashes[][ CRYPT_MAX_HASHSIZE + 8 ],
 		return( status );
 
 	/* Make sure that it isn't already present in the collection */
-	for( i = 0; i < certChainLen; i++ )
+	for( i = 0; i < certChainLen && i < MAX_CHAINLENGTH; i++ )
+		{
 		if( !memcmp( certChainHashes[ i ], 
 					 certChainHashes[ certChainLen ], msgData.length ) )
 			return( TRUE );
+		}
 	return( FALSE );
 	}
 
@@ -676,9 +699,9 @@ int copyCertChain( CERT_INFO *certInfoPtr, const CRYPT_HANDLE certChain,
 	   chain */
 	if( isCertCollection )
 		{
-		for( i = 0; i < certChainInfo->chainEnd; i++ )
+		for( i = 0; i < certChainInfo->chainEnd && i < MAX_CHAINLENGTH; i++ )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			setMessageData( &msgData, certChainHashes[ i ], 
 							CRYPT_MAX_HASHSIZE );
@@ -688,6 +711,8 @@ int copyCertChain( CERT_INFO *certInfoPtr, const CRYPT_HANDLE certChain,
 			if( cryptStatusError( status ) )
 				return( status );
 			}
+		if( i >= MAX_CHAINLENGTH )
+			retIntError();
 		}
 
 	/* Extract the base certificate from the chain and copy it over (the
@@ -715,7 +740,9 @@ int copyCertChain( CERT_INFO *certInfoPtr, const CRYPT_HANDLE certChain,
 	   individual certs over rather than copying only the base cert and 
 	   relying on the chain held in that */
 	for( i = 0; cryptStatusOK( status ) && \
-				i < chainCertInfoPtr->cCertCert->chainEnd; i++ )
+				i < chainCertInfoPtr->cCertCert->chainEnd && \
+				i < MAX_CHAINLENGTH; i++ )
+		{
 		if( !isCertCollection || \
 			!certPresent( certChainHashes, certChainInfo->chainEnd,
 						  chainCertInfoPtr->cCertCert->chain[ i ] ) )
@@ -731,6 +758,9 @@ int copyCertChain( CERT_INFO *certInfoPtr, const CRYPT_HANDLE certChain,
 			krnlSendNotifier( iCopyCert, IMESSAGE_INCREFCOUNT );
 			certChainInfo->chain[ certChainInfo->chainEnd++ ] = iCopyCert;
 			}
+		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 	krnlReleaseObject( chainCertInfoPtr->objectHandle );
 	if( cryptStatusError( status ) )
 		{
@@ -804,7 +834,8 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				   const BOOLEAN dataOnlyCert )
 	{
 	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ];
-	int certSequenceLength, endPos, certChainEnd = 0, status;
+	int certSequenceLength, endPos, certChainEnd = 0;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
@@ -925,9 +956,14 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 
 	/* We've finally reached the certificate(s), read the collection of certs
 	   into cert objects.  We allow for a bit of slop for software that gets 
-	   the length encoding wrong by a few bytes */
-	while( certSequenceLength == CRYPT_UNUSED || \
-		   stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+	   the length encoding wrong by a few bytes.  Note that the limit is given
+	   as FAILSAFE_ITERATIONS_MED, since we're using it as a fallback check on
+	   the existing MAX_CHAINLENGTH check.  In other words anything over 
+	   MAX_CHAINLENGTH is handled as a normal error, and it's only if we exceed
+	   this that we have an internal error */
+	while( ( certSequenceLength == CRYPT_UNUSED || \
+			 stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		CRYPT_CERTIFICATE iNewCert;
 
@@ -956,7 +992,7 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 								CRYPT_CERTTYPE_CERTIFICATE );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			/* Add the newly-read cert to the chain and skip over its
 			   encoded data.  Unfortunately due to the mixing of stream and 
@@ -990,6 +1026,8 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 				break;
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	/* We must have read at least one cert in order to create a chain */
 	if( certChainEnd <= 0 )
@@ -1011,7 +1049,8 @@ int assembleCertChain( CRYPT_CERTIFICATE *iCertificate,
 	CRYPT_CERTIFICATE iCertChain[ MAX_CHAINLENGTH + 8 ], lastCert;
 	MESSAGE_KEYMGMT_INFO getnextcertInfo;
 	const int chainOptions = options & KEYMGMT_FLAG_DATAONLY_CERT;
-	int stateInfo = CRYPT_ERROR, certChainEnd = 1, status;
+	int stateInfo = CRYPT_ERROR, certChainEnd = 1;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isHandleRangeValid( iCertSource ) );
@@ -1029,10 +1068,13 @@ int assembleCertChain( CRYPT_CERTIFICATE *iCertificate,
 
 	/* Fetch subsequent certs that make up the chain based on the state
 	   information.  Since the basic options apply only to the leaf cert,
-	   we only allow the data-only-cert flag at this point */
+	   we only allow the data-only-cert flag at this point.  See the
+	   comment in readCertChain() for the use of FAILSAFE_ITERATIONS_MED
+	   for the bounds check */
 	setMessageKeymgmtInfo( &getnextcertInfo, CRYPT_KEYID_NONE, NULL, 0, 
 						   &stateInfo, sizeof( int ), chainOptions );
-	while( cryptStatusOK( status ) )
+	while( cryptStatusOK( status ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		int selfSigned;
 
@@ -1042,7 +1084,7 @@ int assembleCertChain( CRYPT_CERTIFICATE *iCertificate,
 		   present in the middle of a pre-built chain */
 		status = krnlSendMessage( lastCert, IMESSAGE_GETATTRIBUTE, 
 								  &selfSigned, CRYPT_CERTINFO_SELFSIGNED );
-		if( cryptStatusError( status ) || selfSigned )
+		if( cryptStatusError( status ) || selfSigned > 0 )
 			break;
 
 		/* Get the next cert in the chain from the source, import it, and 
@@ -1064,6 +1106,8 @@ int assembleCertChain( CRYPT_CERTIFICATE *iCertificate,
 
 		iCertChain[ certChainEnd++ ] = lastCert = getnextcertInfo.cryptHandle;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_NOTFOUND )
 		{
 		freeCertChain( iCertChain, certChainEnd );
@@ -1099,9 +1143,10 @@ static int sizeofCertPath( const CERT_INFO *certInfoPtr,
 		if( certSizeInfo != NULL )
 			length += 3;
 		}
-	for( i = 0; i < certInfoPtr->cCertCert->chainEnd; i++ )
+	for( i = 0; i < certInfoPtr->cCertCert->chainEnd && \
+				i < MAX_CHAINLENGTH; i++ )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		int status;
 
 		setMessageData( &msgData, NULL, 0 );
@@ -1117,6 +1162,8 @@ static int sizeofCertPath( const CERT_INFO *certInfoPtr,
 			length += 3;
 			}
 		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 
 	return( length );
 	}
@@ -1141,7 +1188,8 @@ static int writeCertPath( STREAM *stream, const CERT_INFO *certInfoPtr,
 						 certInfoPtr->certificateSize );
 		}
 	for( i = 0; cryptStatusOK( status ) && \
-				i < certInfoPtr->cCertCert->chainEnd; i++ )
+				i < certInfoPtr->cCertCert->chainEnd && \
+				i < MAX_CHAINLENGTH; i++ )
 		{
 		if( certSizeInfo != NULL )
 			{
@@ -1152,6 +1200,8 @@ static int writeCertPath( STREAM *stream, const CERT_INFO *certInfoPtr,
 									 certInfoPtr->cCertCert->chain[ i ], 
 									 CRYPT_CERTTYPE_CERTIFICATE );
 		}
+	if( i >= MAX_CHAINLENGTH )
+		retIntError();
 
 	return( status );
 	}

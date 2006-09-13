@@ -28,7 +28,7 @@ int envelopeWrap( const void *inData, const int inDataLength, void *outData,
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int minBufferSize = max( MIN_BUFFER_SIZE, inDataLength + 512 );
 	int status;
 
@@ -110,7 +110,7 @@ int envelopeUnwrap( const void *inData, const int inDataLength,
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int minBufferSize = max( MIN_BUFFER_SIZE, inDataLength );
 	int status;
 
@@ -194,7 +194,7 @@ int envelopeSign( const void *inData, const int inDataLength,
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int minBufferSize = max( MIN_BUFFER_SIZE, inDataLength + 1024 );
 	int status;
 
@@ -294,7 +294,7 @@ int envelopeSigCheck( const void *inData, const int inDataLength,
 	{
 	CRYPT_ENVELOPE iCryptEnvelope;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int minBufferSize = max( MIN_BUFFER_SIZE, inDataLength );
 	int status;
 

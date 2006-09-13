@@ -27,7 +27,9 @@ static int initMemoryStream( STREAM *stream, const void *buffer,
 		return( CRYPT_ERROR_WRITE );
 		}
 
-	/* Clear the stream data and make it a null stream if required */
+	/* Clear the stream data and make it a null stream if required.  Note 
+	   that we specifically check for length == 0, since the length < 0 case
+	   is handled below */
 	memset( stream, 0, sizeof( STREAM ) );
 	if( nullStreamOK && buffer == NULL && length == 0 )
 		{
@@ -59,10 +61,7 @@ static int shutdownMemoryStream( STREAM *stream,
 	{
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_WRITE );
-		}
+		retIntError();
 
 	/* Clear the stream structure */
 	if( clearStreamBuffer && stream->buffer != NULL && stream->bufEnd > 0 )

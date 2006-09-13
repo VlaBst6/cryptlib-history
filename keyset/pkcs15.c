@@ -40,7 +40,7 @@ static const CMS_CONTENT_INFO FAR_BSS oidInfoPkcs15Data = { 0, 0 };
 
 static const OID_INFO FAR_BSS keyFileOIDinfo[] = {
 	{ OID_PKCS15_CONTENTTYPE, CRYPT_OK, &oidInfoPkcs15Data },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 /****************************************************************************
@@ -284,7 +284,7 @@ static void pkcs15Free( PKCS15_INFO *pkcs15info, const int noPkcs15objects )
 int getValidityInfo( PKCS15_INFO *pkcs15info,
 					 const CRYPT_HANDLE cryptHandle )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	time_t validFrom, validTo;
 	int status;
 
@@ -461,7 +461,7 @@ static int setKeyAttributes( const CRYPT_HANDLE iCryptHandle,
 							 const PKCS15_INFO *pkcs15infoPtr,
 							 const int actionFlags )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status = CRYPT_OK;
 
 	assert( isHandleRangeValid( iCryptHandle ) );
@@ -481,7 +481,7 @@ static int setKeyAttributes( const CRYPT_HANDLE iCryptHandle,
 								  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
 		}
 	if( cryptStatusOK( status ) && \
-		pkcs15infoPtr->validFrom >= MIN_TIME_VALUE )
+		pkcs15infoPtr->validFrom > MIN_TIME_VALUE )
 		{
 		/* This isn't really used for anything, but is required to generate
 		   the OpenPGP keyID, which includes the key creation time in the
@@ -515,7 +515,7 @@ static int getTrustedCert( const PKCS15_INFO *pkcs15info,
 	/* If this is the first cert, reset the index value.  This is pretty
 	   ugly since this sort of state-information value should be stored with 
 	   the caller, however there's no way to pass this back and forth in a 
-	   RESOURCE_DATA without resorting to an even uglier hack and it's safe 
+	   MESSAGE_DATA without resorting to an even uglier hack and it's safe 
 	   since this attribute is only ever read by the init thread when it 
 	   reads the config keyset at startup */
 	if( resetCertIndex )
@@ -570,12 +570,14 @@ static int getConfigItem( const PKCS15_INFO *pkcs15info,
 
 	/* Find the particular data type that we're looking for */
 	for( i = 0; i < noPkcs15objects; i++ )
+		{
 		if( ( pkcs15info[ i ].type == PKCS15_SUBTYPE_DATA && \
 			  pkcs15info[ i ].dataType == dataType ) )
 			{
 			pkcs15infoPtr = &pkcs15info[ i ];
 			break;
 			}
+		}
 	if( pkcs15infoPtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 
@@ -607,7 +609,7 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 	CRYPT_CERTIFICATE iDataCert = CRYPT_ERROR;
 	CRYPT_CONTEXT iCryptContext;
 	const PKCS15_INFO *pkcs15infoPtr;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const BOOLEAN publicComponentsOnly = \
 					( itemType != KEYMGMT_ITEM_PRIVATEKEY ) ? TRUE : FALSE;
 	const int auxInfoMaxLength = *auxInfoLength;
@@ -847,7 +849,7 @@ static int getItem( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 	if( cryptStatusError( status ) )
 		return( status );
 	*iCertificate = createInfo.cryptHandle;
-	if( pkcs15infoPtr->validFrom <= 0 )
+	if( pkcs15infoPtr->validFrom <= MIN_TIME_VALUE )
 		/* Perform an opportunistic update of the validity info if this 
 		   hasn't already been set */
 		getValidityInfo( pkcs15info, createInfo.cryptHandle );
@@ -915,10 +917,7 @@ static int getNextItemFunction( KEYSET_INFO *keysetInfo,
 
 	/* Safety check */
 	if( lastEntry < 0 || lastEntry >= noPkcs15objects )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_INTERNAL );
-		}
+		retIntError();
 
 	/* Find the cert for which the subjectNameID matches this cert's
 	   issuerNameID */
@@ -946,7 +945,7 @@ static int checkAddInfo( const PKCS15_INFO *pkcs15infoPtr,
 						 const BOOLEAN pkcs15certPresent,
 						 BOOLEAN *isCertUpdate )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BOOLEAN unneededCert, unneededKey;
 	int status;
 
@@ -1046,7 +1045,7 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	{
 	CRYPT_CERTIFICATE iCryptCert;
 	PKCS15_INFO *pkcs15info = keysetInfo->keyData, *pkcs15infoPtr;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE iD[ CRYPT_MAX_HASHSIZE + 8 ];
 	BOOLEAN certPresent = FALSE, privkeyPresent;
 	BOOLEAN pkcs15certPresent = FALSE, pkcs15keyPresent = FALSE;

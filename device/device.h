@@ -200,6 +200,7 @@ typedef struct DI {
 	const MECHANISM_FUNCTION_INFO *mechanismFunctions;
 	const CREATEOBJECT_FUNCTION_INFO *createObjectFunctions;
 	void *randomInfo;
+	int mechanismFunctionCount, createObjectFunctionCount;
 
 	/* Error information */
 	CRYPT_ATTRIBUTE_TYPE errorLocus;/* Error locus */

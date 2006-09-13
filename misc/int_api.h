@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Internal API Header File 					*
-*						Copyright Peter Gutmann 1992-2005					*
+*						Copyright Peter Gutmann 1992-2006					*
 *																			*
 ****************************************************************************/
 
@@ -42,7 +42,7 @@ int iCryptExportKeyEx( void *encryptedKey, int *encryptedKeyLength,
    to follow the cryptlib external API semantics.  We also have a second
    function that's used internally for data-copying */
 
-int attributeCopy( RESOURCE_DATA *msgData, const void *attribute,
+int attributeCopy( MESSAGE_DATA *msgData, const void *attribute,
 				   const int attributeLength );
 int dataCopy( void *dest, const int destMaxLength, int *destLength,
 			  const void *source, const int sourceLength );
@@ -108,6 +108,14 @@ BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1,
    from strings passed back from untrusted sources */
 
 char *sanitiseString( char *string, const int stringLength );
+
+/* Perform various string-processing operations */
+
+int strFindCh( const char *str, const int strLen, const char findCh );
+int strFindStr( const char *str, const int strLen, 
+				const char *findStr, const int findStrLen );
+int strStripWhitespace( char **newStringPtr, const char *string,
+						const int stringLen );
 
 /* Read a line of text from a stream.  The caller passes in a character-read
    function callback that returns the next character from a supplied input
@@ -377,7 +385,7 @@ const void *attributeMoveCursor( const void *currentCursor,
    date */
 
 #define MIN_TIME_VALUE			( ( 2000 - 1970 ) * 365 * 86400L )
-#define CURRENT_TIME_VALUE		( MIN_TIME_VALUE + ( 86400L * 365 * 4 ) )
+#define CURRENT_TIME_VALUE		( MIN_TIME_VALUE + ( 86400L * 365 * 6 ) )
 
 #include <time.h>
 

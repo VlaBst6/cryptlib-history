@@ -24,6 +24,8 @@
 
 #ifdef USE_AES
 
+#if 0
+
 /* The size of an AES key and block and a keyscheduled AES key */
 
 #define AES_KEYSIZE				32
@@ -44,6 +46,52 @@ typedef struct {
 #define	ENC_KEY( convInfo )		&( ( AES_CTX * ) convInfo->key )->encKey
 #define	DEC_KEY( convInfo )		&( ( AES_CTX * ) convInfo->key )->decKey
 
+#else
+
+/* The size of an AES key and block and a keyscheduled AES key */
+
+#define AES_KEYSIZE			32
+#define AES_BLOCKSIZE		16
+#define AES_EXPANDED_KEYSIZE sizeof( AES_CTX )
+
+/* The scheduled AES key and key schedule control and function return 
+   codes */
+
+#define AES_EKEY			aes_encrypt_ctx
+#define AES_DKEY			aes_decrypt_ctx
+#define AES_2KEY			AES_CTX
+
+/* The AES code separates encryption and decryption to make it easier to
+   do encrypt-only or decrypt-only apps, however since we don't know
+   what the user will choose to do we have to do both key schedules (this
+   is a relatively minor overhead compared to en/decryption, so it's not a 
+   big problem) */
+
+#define L_SIZE( x )			( sizeof( x ) / sizeof( unsigned long ) )	
+#if defined( USE_VIA_ACE_IF_PRESENT )
+  /* Data is DWORD-aligned anyway but we need to have 16-byte alignment for
+     key data in case we're using the VIA ACE */
+  #define KS_SIZE			( sizeof( AES_EKEY ) + sizeof( AES_DKEY ) + 24 )
+  #define ALGN( x )			( ( unsigned long )( x ) & 0xFFFFFFF0 )
+  #define EKEY( x )			( ( AES_EKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + 3 ) )
+  #define DKEY( x )			( ( AES_DKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + \
+												   L_SIZE( AES_EKEY ) + 6 ) )
+#else
+  #define KS_SIZE			( sizeof( AES_EKEY ) + sizeof( AES_DKEY ) )
+  #define EKEY( x )			( ( AES_EKEY * )( ( ( AES_CTX * ) x )->ksch ) )
+  #define DKEY( x )			( ( AES_DKEY * )( ( ( AES_CTX * ) x )->ksch + \
+											  L_SIZE( AES_EKEY ) ) )
+#endif /* USE_VIA_ACE_IF_PRESENT */
+
+typedef struct {	
+	unsigned long ksch[ KS_SIZE >> 2 ];
+	} AES_CTX;
+
+#define	ENC_KEY( x )		EKEY( ( x )->key )
+#define	DEC_KEY( x )		DKEY( ( x )->key )
+
+#endif /* 0 */
+
 /****************************************************************************
 *																			*
 *								AES Self-test Routines						*
@@ -56,9 +104,9 @@ typedef struct {
 
 typedef struct {
 	const int keySize;
-	const BYTE key[ AES_KEYSIZE ];
-	const BYTE plaintext[ AES_BLOCKSIZE ];
-	const BYTE ciphertext[ AES_BLOCKSIZE ];
+	const BYTE key[ AES_KEYSIZE + 8 ];
+	const BYTE plaintext[ AES_BLOCKSIZE + 8 ];
+	const BYTE ciphertext[ AES_BLOCKSIZE + 8 ];
 	} AES_TEST;
 
 static const AES_TEST FAR_BSS testAES[] = {
@@ -108,7 +156,7 @@ static int updateKey( BYTE *key, const int keySize,
 					  const CAPABILITY_INFO *capabilityInfo,
 					  const BYTE *newKey1, const BYTE *newKey2 )
 	{
-	BYTE keyData[ AES_KEYSIZE ];
+	BYTE keyData[ AES_KEYSIZE + 8 ];
 	int i;
 
 	switch( keySize )
@@ -137,7 +185,8 @@ static int mct( CONTEXT_INFO *contextInfo,
 				const BYTE *initialKey, const int keySize,
 				const BYTE *initialIV, const BYTE *initialPT )
 	{
-	BYTE key[ AES_KEYSIZE ], iv[ AES_KEYSIZE ], temp[ AES_BLOCKSIZE ];
+	BYTE key[ AES_KEYSIZE + 8 ], iv[ AES_KEYSIZE + 8 ];
+	BYTE temp[ AES_BLOCKSIZE + 8 ];
 	int i;
 
 	memcpy( key, initialKey, keySize );
@@ -146,7 +195,7 @@ static int mct( CONTEXT_INFO *contextInfo,
 	memcpy( temp, initialPT, AES_BLOCKSIZE );
 	for( i = 0; i < 100; i++ )
 		{
-		BYTE prevTemp[ AES_BLOCKSIZE ];
+		BYTE prevTemp[ AES_BLOCKSIZE + 8 ];
 		int j, status;
 
 		status = capabilityInfo->initKeyFunction( contextInfo, key, 
@@ -175,7 +224,7 @@ static int mct( CONTEXT_INFO *contextInfo,
 														  AES_BLOCKSIZE );
 				if( iv != NULL )
 					{
-					BYTE tmpTemp[ AES_BLOCKSIZE ];
+					BYTE tmpTemp[ AES_BLOCKSIZE + 8 ];
 
 					memcpy( tmpTemp, temp, AES_BLOCKSIZE );
 					memcpy( temp, prevTemp, AES_BLOCKSIZE );
@@ -228,13 +277,13 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getAESCapability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ AES_EXPANDED_KEYSIZE ];
+	BYTE keyData[ AES_EXPANDED_KEYSIZE + 8 ];
 	int i, status;
 
 #if 1
 	for( i = 0; i < sizeof( testAES ) / sizeof( AES_TEST ); i++ )
 		{
-		BYTE temp[ AES_BLOCKSIZE ];
+		BYTE temp[ AES_BLOCKSIZE + 8 ];
 
 		memcpy( temp, testAES[ i ].plaintext, AES_BLOCKSIZE );
 		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
@@ -401,7 +450,6 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 					const int keyLength )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	AES_CTX *aesKey = convInfo->key;
 
 	/* Copy the key to internal storage */
 	if( convInfo->userKey != key )
@@ -410,9 +458,9 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	/* Call the AES key schedule code */
 	if( aes_encrypt_key( convInfo->userKey, keyLength, 
-						 &aesKey->encKey ) != EXIT_SUCCESS || \
+						 ENC_KEY( convInfo ) ) != EXIT_SUCCESS || \
 		aes_decrypt_key( convInfo->userKey, keyLength, 
-						 &aesKey->decKey ) != EXIT_SUCCESS )
+						 DEC_KEY( convInfo ) ) != EXIT_SUCCESS )
 		return( CRYPT_ERROR_FAILED );
 	return( CRYPT_OK );
 	}

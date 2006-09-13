@@ -130,6 +130,7 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	BYTE countBuffer[ 4 + 8 ];
 	BYTE *dataOutPtr = mechanismInfo->dataOut;
 	int hashSize, keyIndex, processedKeyLength, blockCount = 1;
+	int iterationCount = 0;
 
 	UNUSED( dummy );
 
@@ -149,7 +150,8 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 			 mechanismInfo->dataIn, mechanismInfo->dataInLength );
 
 	/* Produce enough blocks of output to fill the key */
-	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength;
+	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength && \
+					   iterationCount++ < FAILSAFE_ITERATIONS_MED; 	
 		 keyIndex += hashSize, dataOutPtr += hashSize )
 		{
 		const int noKeyBytes = \
@@ -168,7 +170,8 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		memcpy( dataOutPtr, block, noKeyBytes );
 
 		/* Calculate HMAC( T1 ) ^ HMAC( T1 ) ^ ... HMAC( Tc ) */
-		for( i = 0; i < mechanismInfo->iterations - 1; i++ )
+		for( i = 0; i < mechanismInfo->iterations - 1 && \
+					i < FAILSAFE_ITERATIONS_MAX; i++ )
 			{
 			int j;
 
@@ -182,7 +185,11 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 			for( j = 0; j < noKeyBytes; j++ )
 				dataOutPtr[ j ] ^= block[ j ];
 			}
+		if( i >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 	zeroise( initialHashInfo, sizeof( HASHINFO ) );
 	zeroise( processedKey, HMAC_DATASIZE );
@@ -200,7 +207,8 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION hashFunction;
-	BYTE p12_DSP[ P12_BLOCKSIZE + P12_BLOCKSIZE + ( P12_BLOCKSIZE * 3 ) + 8 ];
+	BYTE p12_DSP[ P12_BLOCKSIZE + P12_BLOCKSIZE + \
+				  ( ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 ) + 8 ];
 	BYTE p12_Ai[ P12_BLOCKSIZE + 8 ], p12_B[ P12_BLOCKSIZE + 8 ];
 	BYTE *bmpPtr = p12_DSP + P12_BLOCKSIZE + P12_BLOCKSIZE;
 	BYTE *dataOutPtr = mechanismInfo->dataOut;
@@ -211,7 +219,7 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 							P12_BLOCKSIZE : \
 						 ( mechanismInfo->dataInLength <= 62 ) ? \
 							( P12_BLOCKSIZE * 2 ) : ( P12_BLOCKSIZE * 3 );
-	int hashSize, keyIndex, i;
+	int hashSize, keyIndex, i, iterationCount = 0;
 
 	UNUSED( dummy );
 
@@ -224,18 +232,22 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		p12_DSP[ i ] = saltPtr[ 0 ];
 	expandData( p12_DSP + P12_BLOCKSIZE, P12_BLOCKSIZE, saltPtr + 1,
 				mechanismInfo->saltLength - 1 );
-	for( i = 0; i < mechanismInfo->dataInLength; i++ )
+	for( i = 0; i < mechanismInfo->dataInLength && \
+				i < CRYPT_MAX_TEXTSIZE; i++ )
 		{
 		*bmpPtr++ = '\0';
 		*bmpPtr++ = dataInPtr[ i ];
 		}
+	if( i >= CRYPT_MAX_TEXTSIZE )
+		retIntError();
 	*bmpPtr++ = '\0';
 	*bmpPtr++ = '\0';
 	expandData( p12_DSP + ( P12_BLOCKSIZE * 2 ) + bmpLen, p12_PLen - bmpLen,
 				p12_DSP + ( P12_BLOCKSIZE * 2 ), bmpLen );
 
 	/* Produce enough blocks of output to fill the key */
-	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength;
+	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength && \
+					   iterationCount++ < FAILSAFE_ITERATIONS_MED; 
 		 keyIndex += hashSize, dataOutPtr += hashSize )
 		{
 		const int noKeyBytes = \
@@ -247,8 +259,11 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		   output value */
 		hashFunction( NULL, p12_Ai, p12_DSP,
 					  P12_BLOCKSIZE + P12_BLOCKSIZE + p12_PLen, HASH_ALL );
-		for( i = 1; i < mechanismInfo->iterations; i++ )
+		for( i = 1; i < mechanismInfo->iterations && \
+					i < FAILSAFE_ITERATIONS_MAX; i++ )
 			hashFunction( NULL, p12_Ai, p12_Ai, hashSize, HASH_ALL );
+		if( i >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		memcpy( dataOutPtr, p12_Ai, noKeyBytes );
 		if( noKeyBytes <= hashSize)
 			break;
@@ -272,6 +287,8 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 				}
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	zeroise( p12_DSP, P12_BLOCKSIZE + P12_BLOCKSIZE + ( P12_BLOCKSIZE * 3 ) );
 	zeroise( p12_Ai, P12_BLOCKSIZE );
 	zeroise( p12_B, P12_BLOCKSIZE );
@@ -289,7 +306,7 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	HASHFUNCTION md5HashFunction, shaHashFunction;
 	HASHINFO hashInfo;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], counterData[ 16 + 8 ];
-	int md5HashSize, shaHashSize, counter = 0, keyIndex;
+	int md5HashSize, shaHashSize, counter = 0, keyIndex, iterationCount = 0;
 
 	UNUSED( dummy );
 
@@ -297,7 +314,8 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	getHashParameters( CRYPT_ALGO_SHA, &shaHashFunction, &shaHashSize );
 
 	/* Produce enough blocks of output to fill the key */
-	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength;
+	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength && \
+					   iterationCount++ < FAILSAFE_ITERATIONS_MED; 	
 		 keyIndex += md5HashSize )
 		{
 		const int noKeyBytes = \
@@ -306,8 +324,10 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		int i;
 
 		/* Set up the counter data */
-		for( i = 0; i <= counter; i++ )
+		for( i = 0; i <= counter && i < 16; i++ )
 			counterData[ i ] = 'A' + counter;
+		if( i >= 16 )
+			retIntError();
 		counter++;
 
 		/* Calculate SHA1( 'A'/'BB'/'CCC'/... || keyData || salt ) */
@@ -328,6 +348,8 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		/* Copy the result to the output */
 		memcpy( ( BYTE * )( mechanismInfo->dataOut ) + keyIndex, hash, noKeyBytes );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 	zeroise( hash, CRYPT_MAX_HASHSIZE );
 
@@ -353,7 +375,7 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	const void *s1, *s2;
 	const int sLen = ( mechanismInfo->dataInLength + 1 ) / 2;
 	int md5ProcessedKeyLength, shaProcessedKeyLength;
-	int md5HashSize, shaHashSize, keyIndex;
+	int md5HashSize, shaHashSize, keyIndex, iterationCount = 0;
 
 	UNUSED( dummy );
 
@@ -398,7 +420,8 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	/* Produce enough blocks of output to fill the key.  We use the MD5 hash
 	   size as the loop increment since this produces the smaller output
 	   block */
-	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength;
+	for( keyIndex = 0; keyIndex < mechanismInfo->dataOutLength && \
+					   iterationCount++ < FAILSAFE_ITERATIONS_MED; 	
 		 keyIndex += md5HashSize )
 		{
 		const int md5NoKeyBytes = \
@@ -441,6 +464,8 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		md5DataOutPtr += md5NoKeyBytes;
 		shaDataOutPtr += shaNoKeyBytes;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	zeroise( md5HashInfo, sizeof( HASHINFO ) );
 	zeroise( md5InitialHashInfo, sizeof( HASHINFO ) );
 	zeroise( md5AnHashInfo, sizeof( HASHINFO ) );
@@ -467,6 +492,7 @@ int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
 	int hashSize, iterations = mechanismInfo->iterations - 1;
+	int iterationCount = 0;
 
 	UNUSED( dummy );
 
@@ -479,10 +505,14 @@ int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 				  mechanismInfo->saltLength, HASH_END );
 
 	/* Iterate the hashing the remaining number of times */
-	while( iterations-- > 0 )
+	while( iterations-- > 0 && iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+		{
 		hashFunction( NULL, mechanismInfo->dataOut, 
 					  mechanismInfo->dataOutLength, mechanismInfo->dataOut,
 					  hashSize, HASH_ALL );
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 
 	return( CRYPT_OK );
@@ -500,7 +530,7 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	BYTE hashedKey[ CRYPT_MAX_KEYSIZE + 8 ];
 	long byteCount = ( long ) mechanismInfo->iterations << 6;
 	long secondByteCount = 0;
-	int hashSize;
+	int hashSize, iterationCount = 0;
 
 	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, &hashSize );
 
@@ -539,13 +569,16 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 						  mechanismInfo->saltLength, HASH_CONTINUE );
 		byteCount -= mechanismInfo->saltLength;
 		}
-	while( byteCount > 0 );
-	if( secondByteCount )
+	while( byteCount > 0 && iterationCount++ < FAILSAFE_ITERATIONS_MAX );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
+	if( secondByteCount > 0 )
 		{
 		/* Perform a second round of hashing, preloading the hash with a
 		   single zero byte */
 		hashFunction( hashInfo, NULL, 0, ( const BYTE * ) "\x00", 1,
 					  HASH_START );
+		iterationCount = 0;
 		do
 			{
 			if( secondByteCount <= mechanismInfo->saltLength )
@@ -569,7 +602,10 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 							  mechanismInfo->dataInLength, HASH_CONTINUE );
 			secondByteCount -= mechanismInfo->dataInLength;
 			}
-		while( secondByteCount > 0 );
+		while( secondByteCount > 0 && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX );
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		}
 	memcpy( mechanismInfo->dataOut, hashedKey, mechanismInfo->dataOutLength );
 	zeroise( hashInfo, sizeof( HASHINFO ) );

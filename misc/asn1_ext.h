@@ -38,7 +38,7 @@
 						 3 = cryptlibUserInfo
 						 4 = cryptlibRtcsRequest
 						 5 = cryptlibRtcsResponse
-						 5 = cryptlibRtcsResponseExt
+						 6 = cryptlibRtcsResponseExt
 					 x58 x59 x5A x5A x59 = XYZZY cert policy */
 
 /* A macro to make make declaring OIDs simpler */

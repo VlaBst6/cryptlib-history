@@ -66,7 +66,7 @@ int adjustPKCS1Data( BYTE *outData, const BYTE *inData, const int inLength,
 
 	/* If it's too long, try and strip leading zero bytes.  If it's still too
 	   long, complain */
-	while( length > keySize && !*inData )
+	while( length > keySize && *inData == 0 )
 		{
 		length--;
 		inData++;
@@ -172,7 +172,7 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 					  const PKCS1_WRAP_TYPE type )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE *wrappedData = mechanismInfo->wrappedData, *dataPtr;
 	int payloadSize, length, padSize, status;
 #ifdef USE_PGP
@@ -336,7 +336,7 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	STREAM stream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE decryptedData[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, status;
 
@@ -587,7 +587,7 @@ int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 	/* Pad the payload out with a random nonce if required */
 	if( padSize > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, keyBlockPtr + payloadSize, padSize );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
@@ -638,7 +638,7 @@ int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 
 int importCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ CRYPT_MAX_KEYSIZE + 16 + 8 ];
 	BYTE ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
 	BYTE *dataEndPtr = buffer + mechanismInfo->wrappedDataLength;

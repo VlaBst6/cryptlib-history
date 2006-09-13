@@ -467,8 +467,15 @@ pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
 
 static FILE *my_popen( struct RI *entry )
 	{
-	int pipedes[ 2 ];
+	int pipedes[ 2 + 8 ];
 	FILE *stream;
+
+	/* Sanity check for stdin and stdout */
+	if( STDIN_FILENO > 1 || STDOUT_FILENO > 1 )
+		{
+		assert( NOTREACHED );
+		return NULL;
+		}
 
 	/* Create the pipe.  Note that under QNX the pipe resource manager
 	   'pipe' must be running in order to use pipes */
@@ -601,7 +608,7 @@ static FILE *my_popen( struct RI *entry )
 static int my_pclose( struct RI *entry, struct rusage *rusage )
 	{
 	pid_t pid;
-	int status = 0;
+	int iterationCount = 0, status = 0;
 
 	/* Close the pipe */
 	fclose( entry->pipe );
@@ -614,10 +621,13 @@ static int my_pclose( struct RI *entry, struct rusage *rusage )
 	   filter out any programs that exit with a usage message without
 	   producing useful output */
 	do
+		{
 		/* We use wait4() instead of waitpid() to get the last bit of
 		   entropy data, the resource usage of the child */
 		pid = wait4( entry->pid, NULL, 0, rusage );
-	while( pid == -1 && errno == EINTR );
+		}
+	while( pid == -1 && errno == EINTR && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
 	if( pid != entry->pid )
 		status = -1;
 	entry->pid = 0;
@@ -641,7 +651,7 @@ static int my_pclose( struct RI *entry, struct rusage *rusage )
 void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 #if !( defined( _CRAY ) || defined( _M_XENIX ) )
 	struct timeval tv;
   #if !( defined( __QNX__ ) && OSVERSION <= 4 )
@@ -742,7 +752,7 @@ static int getKstatData( void )
 	kstat_ctl_t *kc;
 	kstat_t *ksp;
 	RANDOM_STATE randomState;
-	BYTE buffer[ BIG_RANDOM_BUFSIZE ];
+	BYTE buffer[ BIG_RANDOM_BUFSIZE + 8 ];
 	int noEntries = 0, quality;
 
 	/* Try and open a kernel stats handle */
@@ -757,12 +767,12 @@ static int getKstatData( void )
 	for( ksp = kc->kc_chain; ksp != NULL; ksp = ksp->ks_next )
 		{
 		if( kstat_read( kc, ksp, NULL ) == -1 || \
-			!ksp->ks_data_size )
+			ksp->ks_data_size <= 0 )
 			continue;
 		addRandomData( randomState, ksp, sizeof( kstat_t ) );
 		if( ksp->ks_data_size > BIG_RANDOM_BUFSIZE )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			setMessageData( &msgData, ksp->ks_data, ksp->ks_data_size );
 			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
@@ -806,7 +816,7 @@ static int getProcData( void )
 	prusage_t prUsage;
 #endif /* PIOCUSAGE */
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	char fileName[ 128 + 8 ];
 	int fd, noEntries = 0, quality;
 
@@ -873,8 +883,8 @@ static int getProcData( void )
 
 static int getDevRandomData( void )
 	{
-	RESOURCE_DATA msgData;
-	BYTE buffer[ DEVRANDOM_BYTES ];
+	MESSAGE_DATA msgData;
+	BYTE buffer[ DEVRANDOM_BYTES + 8 ];
 #if defined( __APPLE__ ) || ( defined( __FreeBSD__ ) && OSVERSION == 5 )
 	static const int quality = 50;	/* See comment below */
 #else
@@ -918,9 +928,9 @@ static int getDevRandomData( void )
 static int getEGDdata( void )
 	{
 	static const char *egdSources[] = {
-		"/var/run/egd-pool", "/dev/egd-pool", "/etc/egd-pool", NULL };
-	RESOURCE_DATA msgData;
-	BYTE buffer[ DEVRANDOM_BYTES ];
+		"/var/run/egd-pool", "/dev/egd-pool", "/etc/egd-pool", NULL, NULL };
+	MESSAGE_DATA msgData;
+	BYTE buffer[ DEVRANDOM_BYTES + 8 ];
 	static const int quality = 75;
 	int egdIndex, sockFD, noBytes = CRYPT_ERROR, status;
 
@@ -931,7 +941,9 @@ static int getEGDdata( void )
 	sockFD = socket( AF_UNIX, SOCK_STREAM, 0 );
 	if( sockFD < 0 )
 		return( 0 );
-	for( egdIndex = 0; egdSources[ egdIndex ] != NULL; egdIndex++ )
+	for( egdIndex = 0; egdSources[ egdIndex ] != NULL && \
+					   egdIndex < FAILSAFE_ITERATIONS_SMALL; 
+		 egdIndex++ )
 		{
 		struct sockaddr_un sockAddr;
 
@@ -942,6 +954,8 @@ static int getEGDdata( void )
 					 sizeof( struct sockaddr_un ) ) >= 0 )
 			break;
 		}
+	if( egdIndex >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError();
 	if( egdSources[ egdIndex ] == NULL )
 		{
 		close( sockFD );
@@ -999,14 +1013,16 @@ static int getProcFSdata( void )
 		"/proc/slabinfo", "/proc/stat", "/proc/sys/fs/inode-state",
 		"/proc/sys/fs/file-nr", "/proc/sys/fs/dentry-state",
 		"/proc/sysvipc/msg", "/proc/sysvipc/sem", "/proc/sysvipc/shm",
-		NULL };
-	RESOURCE_DATA msgData;
-	BYTE buffer[ 1024 ];
+		NULL, NULL };
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 1024 + 8 ];
 	int procIndex, procFD, procCount = 0, quality;
 
 	/* Read the first 1K of data from some of the more useful sources (most
 	   of these produce far less than 1K output) */
-	for( procIndex = 0; procSources[ procIndex ] != NULL; procIndex++ )
+	for( procIndex = 0; procSources[ procIndex ] != NULL && \
+						procIndex < FAILSAFE_ITERATIONS_MED; 
+		 procIndex++ )
 		{
 		if( ( procFD = open( procSources[ procIndex ], O_RDONLY ) ) >= 0 )
 			{
@@ -1027,6 +1043,8 @@ static int getProcFSdata( void )
 			close( procFD );
 			}
 		}
+	if( procIndex >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	zeroise( buffer, 1024 );
 	if( procCount < 5 )
 		return( 0 );
@@ -1180,7 +1198,7 @@ void slowPoll( void )
 	int maxFD = 0;
 #endif /* OS-specific brokenness */
 	int extraEntropy = 0, usefulness = 0;
-	int fd, bufPos, i;
+	int fd, bufPos, i, iterationCount;
 
 	/* Make sure we don't start more than one slow poll at a time */
 	lockPollingMutex();
@@ -1351,7 +1369,8 @@ void slowPoll( void )
 
 	/* Fire up each randomness source */
 	FD_ZERO( &fds );
-	for( i = 0; dataSources[ i ].path != NULL; i++ )
+	for( i = 0; dataSources[ i ].path != NULL && \
+				i < FAILSAFE_ITERATIONS_LARGE; i++ )
 		{
 		/* Check for the end-of-lightweight-sources marker */
 		if( dataSources[ i ].path[ 0 ] == '\0' )
@@ -1410,21 +1429,29 @@ void slowPoll( void )
 
 		/* If there are alternatives for this command, don't try and execute
 		   them */
-		while( dataSources[ i ].hasAlternative )
+		iterationCount = 0;
+		while( dataSources[ i ].hasAlternative && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MED ) 
 			{
 #ifdef DEBUG_RANDOM
 			printf( "rndunix: Skipping %s.\n", dataSources[ i + 1 ].path );
 #endif /* DEBUG_RANDOM */
 			i++;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError_Void();
 		}
+	if( i >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError_Void();
 	gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
 	bufPos = sizeof( GATHERER_INFO );	/* Start of buf.has status info */
 
 	/* Suck all the data that we can get from each of the sources */
 	moreSources = TRUE;
 	startTime = getTime();
-	while( moreSources && bufPos < gathererBufSize )
+	iterationCount = 0;
+	while( moreSources && bufPos < gathererBufSize && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		/* Wait for data to become available from any of the sources, with a
 		   timeout of 10 seconds.  This adds even more randomness since data
@@ -1441,30 +1468,42 @@ void slowPoll( void )
 			break;
 
 		/* One of the sources has data available, read it into the buffer */
-		for( i = 0; dataSources[ i ].path != NULL; i++ )
+		for( i = 0; dataSources[ i ].path != NULL && \
+					i < FAILSAFE_ITERATIONS_LARGE; i++ )
+			{
 			if( dataSources[ i ].pipe != NULL && \
 				FD_ISSET( dataSources[ i ].pipeFD, &fds ) )
 				usefulness += getEntropySourceData( &dataSources[ i ],
 													gathererBuffer + bufPos,
 													gathererBufSize - bufPos,
 													&bufPos );
+			}
+		if( i >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError_Void();
 
 		/* Check if there's more input available on any of the sources */
 		moreSources = FALSE;
 		FD_ZERO( &fds );
-		for( i = 0; dataSources[ i ].path != NULL; i++ )
+		for( i = 0; dataSources[ i ].path != NULL && \
+					i < FAILSAFE_ITERATIONS_LARGE; i++ )
+			{
 			if( dataSources[ i ].pipe != NULL )
 				{
 				FD_SET( dataSources[ i ].pipeFD, &fds );
 				moreSources = TRUE;
 				}
+			}
+		if( i >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError_Void();
 
 		/* If we've gone over our time limit, kill anything still hanging
 		   around and exit.  This prevents problems with input from blocked
 		   sources */
 		if( getTime() > startTime + SLOWPOLL_TIMEOUT )
 			{
-			for( i = 0; dataSources[ i ].path != NULL; i++ )
+			for( i = 0; dataSources[ i ].path != NULL && \
+						i < FAILSAFE_ITERATIONS_LARGE; i++ )
+				{
 				if( dataSources[ i ].pipe != NULL )
 					{
 #ifdef DEBUG_RANDOM
@@ -1476,6 +1515,9 @@ void slowPoll( void )
 					dataSources[ i ].pipe = NULL;
 					dataSources[ i ].pid = 0;
 					}
+				}
+			if( i >= FAILSAFE_ITERATIONS_LARGE )
+				retIntError_Void();
 			moreSources = FALSE;
 #ifdef DEBUG_RANDOM
 			puts( "rndunix: Poll timed out, probably due to blocked data "
@@ -1483,6 +1525,8 @@ void slowPoll( void )
 #endif /* DEBUG_RANDOM */
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 	gathererInfo->usefulness = usefulness;
 	gathererInfo->noBytes = bufPos;
 #ifdef DEBUG_RANDOM
@@ -1518,7 +1562,7 @@ void waitforRandomCompletion( const BOOLEAN force )
 	lockPollingMutex();
 	if( gathererProcess	)
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		GATHERER_INFO *gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
 		int quality, status;
 

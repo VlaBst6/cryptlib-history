@@ -205,8 +205,8 @@ static unsigned long calculateTruncatedMAC( const CRYPT_CONTEXT iMacContext,
 											const BYTE *data,
 											const int dataLength )
 	{
-	RESOURCE_DATA msgData;
-	BYTE macBuffer[ CRYPT_MAX_HASHSIZE ], *bufPtr = macBuffer;
+	MESSAGE_DATA msgData;
+	BYTE macBuffer[ CRYPT_MAX_HASHSIZE + 8 ], *bufPtr = macBuffer;
 	unsigned long macValue;
 	int status;
 
@@ -345,7 +345,7 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 	const ATTRIBUTE_LIST *attributeListPtr = \
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_SERVER_FINGERPRINT );
-	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE ];
+	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize;
 
 	getHashParameters( CRYPT_ALGO_MD5, &hashFunction, &hashSize );
@@ -449,7 +449,7 @@ static int processPublickeyData( SSH_HANDSHAKE_INFO *handshakeInfo,
 static int initSecurityInfoSSH1( SESSION_INFO *sessionInfoPtr,
 								 SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int keySize, ivSize, status;
 
 	/* Create the security contexts required for the session */
@@ -733,7 +733,7 @@ static int sendPacketSsh1( SESSION_INFO *sessionInfoPtr,
 						   const int packetType, const int dataLength,
 						   const int delta )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE *bufStartPtr = sessionInfoPtr->sendBuffer + \
 						( ( delta != CRYPT_UNUSED ) ? delta : 0 );
 	BYTE *bufPtr = bufStartPtr;
@@ -819,7 +819,7 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 								 SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE *bufPtr;
 	const BOOLEAN hasPassword = \
 			( findSessionAttribute( sessionInfoPtr->attributeList,
@@ -1007,8 +1007,8 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 							   SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MECHANISM_WRAP_INFO mechanismInfo;
-	RESOURCE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_PKCSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE *bufPtr = sessionInfoPtr->sendBuffer;
 	int length, dataLength, value, i, status;
 
@@ -1172,7 +1172,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 					}
 				else
 					{
-					RESOURCE_DATA msgData;
+					MESSAGE_DATA msgData;
 
 					setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
 									i );
@@ -1193,9 +1193,11 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		else
 			{
 			MECHANISM_WRAP_INFO mechanismInfo;
-			RESOURCE_DATA msgData;
-			BYTE challenge[ SSH1_CHALLENGE_SIZE ], response[ SSH1_RESPONSE_SIZE ];
-			BYTE modulusBuffer[ ( SSH1_MPI_LENGTH_SIZE + CRYPT_MAX_PKCSIZE ) * 2 ];
+			MESSAGE_DATA msgData;
+			BYTE challenge[ SSH1_CHALLENGE_SIZE + 8 ];
+			BYTE response[ SSH1_RESPONSE_SIZE ];
+			BYTE modulusBuffer[ ( ( SSH1_MPI_LENGTH_SIZE + \
+									CRYPT_MAX_PKCSIZE ) * 2 ) + 8 ];
 			BYTE *modulusPtr;
 
 			/* We're using RSA authentication, initially we send just the user's
@@ -1350,7 +1352,7 @@ static int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 								 SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE *bufPtr = sessionInfoPtr->sendBuffer;
 	static const int keyLength = bitsToBytes( 768 );
 	long value;
@@ -1465,7 +1467,8 @@ static int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 							   SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MECHANISM_WRAP_INFO mechanismInfo;
-	BYTE buffer[ CRYPT_MAX_PKCSIZE ], *bufPtr = sessionInfoPtr->receiveBuffer;
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
 	int length, keyLength, i, status;
 
 	/* Read the client's encrypted session key info:

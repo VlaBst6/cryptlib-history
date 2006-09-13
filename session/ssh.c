@@ -97,13 +97,13 @@ static int readVersionLine( STREAM *stream, BYTE *buffer )
 		length--;
 	buffer[ length ] = '\0';
 
-	return( CRYPT_OK );
+	return( length );
 	}
 
 static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	{
 	const char *versionStringPtr = sessionInfoPtr->receiveBuffer + SSH_ID_SIZE;
-	int linesRead = 0, status;
+	int linesRead = 0, iterationCount = 0, length, status;
 
 	/* Read the server version info, with the format for the ID string being
 	   "SSH-protocolversion-softwareversion comments", which (in the original
@@ -131,8 +131,8 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	   invalid ID error rather than a timeout error */
 	do
 		{
-		status = readVersionLine( &sessionInfoPtr->stream,
-								  sessionInfoPtr->receiveBuffer );
+		status = length = readVersionLine( &sessionInfoPtr->stream,
+										   sessionInfoPtr->receiveBuffer );
 		if( cryptStatusError( status ) )
 			{
 			if( status == CRYPT_ERROR_BADDATA )
@@ -165,7 +165,10 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 					"Peer sent excessive amounts of text without sending "
 					"any SSH version info" );
 		}
-	while( memcmp( sessionInfoPtr->receiveBuffer, SSH_ID, SSH_ID_SIZE ) );
+	while( memcmp( sessionInfoPtr->receiveBuffer, SSH_ID, SSH_ID_SIZE ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* Determine which version we're talking to */
 	if( *versionStringPtr == '1' )
@@ -203,15 +206,17 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	/* Find the end of the protocol version substring.  If there's no
 	   software version info present this isn't really correct, but no major
 	   reason for bailing out, so we just exit normally */
-	while( *versionStringPtr && *versionStringPtr != '-' )
+	while( length > 0 && *versionStringPtr != '-' )
+		{
 		versionStringPtr++;
-	if( !versionStringPtr[ 0 ] || !versionStringPtr[ 1 ] )
+		length--;
+		}
+	if( length < 4 )				/* Need at least '-xxx' */
 		return( CRYPT_OK );
-	versionStringPtr++;		/* Skip '-' */
+	versionStringPtr++, length--;	/* Skip '-' */
 
 	/* Check whether the peer is using cryptlib */
-	if( !memcmp( versionStringPtr, SSH2_ID_STRING + SSH_ID_SIZE + SSH_VERSION_SIZE,
-				 strlen( SSH2_ID_STRING + SSH_ID_SIZE + SSH_VERSION_SIZE ) ) )
+	if( length >= 8 && !memcmp( versionStringPtr, "cryptlib", 8 ) )
 		sessionInfoPtr->flags |= SESSION_ISCRYPTLIB;
 
 	/* Check for various servers that require special-case handling.  The
@@ -279,7 +284,9 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	   Further quirks and peculiarities exist, but fortunately these are rare
 	   enough (mostly for SSHv1) that we don't have to go out of our way to
 	   handle them */
-	if( !memcmp( versionStringPtr, "OpenSSH_", 8 ) )
+	assert( length >= 3 );	/* From earlier checks */
+	if( length >= 8 + 3 && \
+		!memcmp( versionStringPtr, "OpenSSH_", 8 ) )
 		{
 		const char *subVersionStringPtr = versionStringPtr + 8;
 
@@ -289,38 +296,44 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			!memcmp( subVersionStringPtr, "3.9", 3 ) || \
 			!memcmp( subVersionStringPtr, "3.10", 4 ) )
 			sessionInfoPtr->protocolFlags |= SSH_PFLAG_PAMPW;
+
+		return( CRYPT_OK );
 		}
 	if( isDigit( *versionStringPtr ) )
 		{
-		const char *vendorIDString;
+		const char *vendorIDString = versionStringPtr;
 		const char versionDigit = *versionStringPtr;
 
 		/* Find the vendor ID after the version info */
-		for( vendorIDString = versionStringPtr;
-			 *vendorIDString != '\0' && *vendorIDString != ' ';
-			 vendorIDString++ );
-		if( *vendorIDString == ' ' )
+		while( length > 0 && *vendorIDString != ' ' )
+			{
 			vendorIDString++;
-		if( *vendorIDString == '\0' )
-			vendorIDString = "[None]";	/* Should never happen */
+			length--;
+			}
+		if( length < 4 )			/* Need at least ' x.y' */
+			return( CRYPT_OK );
+		vendorIDString++, length--;	/* Skip ' ' */
 
 		switch( versionDigit )
 			{
 			case '1':
-				if( !memcmp( versionStringPtr, "1.7 SecureFX", 12 ) )
+				if( length >= 12 && \
+					!memcmp( versionStringPtr, "1.7 SecureFX", 12 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
 				if( !memcmp( versionStringPtr, "1.0", 3 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_CUTEFTP;
 				break;
 
 			case '2':
-				if( !memcmp( vendorIDString, "VShell", 6 ) )
+				if( length >= 6 && \
+					!memcmp( vendorIDString, "VShell", 6 ) )
 					break;	/* Make sure that it isn't VShell */
 
 				/* ssh.com 2.x versions have quite a number of bugs so we
 				   check for them as a group */
-				if( !memcmp( versionStringPtr, "2.0.0", 5 ) || \
-					!memcmp( versionStringPtr, "2.0.10", 6 ) )
+				if( length >= 6 && \
+					( !memcmp( versionStringPtr, "2.0.0", 5 ) || \
+					  !memcmp( versionStringPtr, "2.0.10", 6 ) ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHSECRET;
 				if( !memcmp( versionStringPtr, "2.0", 3 ) || \
 					!memcmp( versionStringPtr, "2.1", 3 ) )
@@ -342,12 +355,14 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 				break;
 
 			case '3':
-				if( !memcmp( versionStringPtr, "3.0 SecureCRT", 13 ) )
+				if( length >= 13 && \
+					!memcmp( versionStringPtr, "3.0 SecureCRT", 13 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
 				break;
 
 			case '5':
-				if( !memcmp( vendorIDString, "SSH Tectia", 10 ) )
+				if( length >= 10 && \
+					!memcmp( vendorIDString, "SSH Tectia", 10 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_TECTIA;
 			}
 		}
@@ -521,7 +536,7 @@ static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
 									  NULL, data );
 	else
 		{
-		RESOURCE_DATA *msgData = data;
+		MESSAGE_DATA *msgData = data;
 
 		status = getChannelAttribute( sessionInfoPtr, type,
 									  msgData->data, &msgData->length );
@@ -578,7 +593,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 									  NULL, *( int * ) data );
 	else
 		{
-		const RESOURCE_DATA *msgData = data;
+		const MESSAGE_DATA *msgData = data;
 
 		status = setChannelAttribute( sessionInfoPtr, type,
 									  msgData->data, msgData->length );

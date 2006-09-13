@@ -135,11 +135,11 @@ static void initSieve( BOOLEAN *sieveArray, const BIGNUM *candidate )
 		if( sieveIndex & 1 )
 			sieveIndex = ( step - sieveIndex ) / 2;
 		else
-			if( sieveIndex )
+			if( sieveIndex > 0 )
 				sieveIndex = ( ( step * 2 ) - sieveIndex ) / 2;
 
 		/* Mark each multiple of the divisor as being divisible */
-		while( sieveIndex < SIEVE_SIZE )
+		while( sieveIndex >= 0 && sieveIndex < SIEVE_SIZE )
 			{
 			sieveArray[ sieveIndex ] = 1;
 			sieveIndex += step;
@@ -389,7 +389,7 @@ int primeProbable( PKC_INFO *pkcInfo, BIGNUM *n, const int noChecks,
 				   const void *callbackArg )
 	{
 	BIGNUM *a = &pkcInfo->tmp1, *n_1 = &pkcInfo->tmp2, *u = &pkcInfo->tmp3;
-	int i, k, bnStatus = BN_STATUS, status;
+	int i, k, iterationCount = 0, bnStatus = BN_STATUS, status;
 
 	/* Set up various values */
 	CK( BN_MONT_CTX_set( &pkcInfo->montCTX1, n, pkcInfo->bnCTX ) );
@@ -401,7 +401,10 @@ int primeProbable( PKC_INFO *pkcInfo, BIGNUM *n, const int noChecks,
 	   since n starts out being odd */
 	CKPTR( BN_copy( n_1, n ) );
 	CK( BN_sub_word( n_1, 1 ) );
-	for( k = 1; !BN_is_bit_set( n_1, k ); k++ );
+	for( k = 1; !BN_is_bit_set( n_1, k ) && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; k++ );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	CK( BN_rshift( u, n_1, k ) );
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
@@ -463,10 +466,11 @@ int primeProbable( PKC_INFO *pkcInfo, BIGNUM *n, const int noChecks,
 int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits, 
 				   const long exponent, const void *callbackArg )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int noChecks = getNoPrimeChecks( noBits );
 	BOOLEAN *sieveArray;
-	int offset, oldOffset = 0, startPoint, bnStatus = BN_STATUS, status;
+	int offset, oldOffset = 0, startPoint, iterationCount = 0;
+	int bnStatus = BN_STATUS, status;
 
 	/* Start with a cryptographically strong odd random number ("There is a 
 	   divinity in odd numbers", William Shakespeare, "Merry Wives of 
@@ -483,6 +487,8 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 
 	do
 		{
+		int innerIterationCount = 0;
+
 		/* Set up the sieve array for the number and pick a random starting
 		   point */
 		initSieve( sieveArray, candidate );
@@ -496,7 +502,9 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 
 		/* Perform a random-probing search for a prime.  Poli, poli, di 
 		   umbuendo */
-		for( offset = nextEntry( startPoint ); offset != startPoint;
+		for( offset = nextEntry( startPoint ); \
+			 offset != startPoint && \
+				innerIterationCount++ < SIEVE_SIZE + 10; \
 			 offset = nextEntry( offset ) )
 			{
 #ifdef CHECK_PRIMETEST
@@ -507,7 +515,7 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 			long remainder;
 
 			/* If this candidate is divisible by anything, continue */
-			if( sieveArray[ offset ] )
+			if( sieveArray[ offset ] != 0 )
 				continue;
 
 			/* Adjust the candidate by the number of nonprimes we've
@@ -522,11 +530,11 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 			/* Perform a Fermat test to the base 2 (Fermat = a^p-1 mod p == 1
 			   -> a^p mod p == a, for all a), which isn't as reliable as
 			   Miller-Rabin but may be quicker if a fast base 2 modexp is
-			   available (currently it provides no improvement at all over the
-			   use of straight Miller-Rabin).  Currently it's only used to
-			   sanity-check the MR test, but if a faster version is 
-			   available, it can be used as a filter to weed out most
-			   pseudoprimes */
+			   available (currently it provides no improvement at all over 
+			   the use of straight Miller-Rabin).  At the moment it's only 
+			   used to sanity-check the MR test, but if a faster version is 
+			   ever made available, it can be used as a filter to weed out 
+			   most pseudoprimes */
 			CK( BN_MONT_CTX_set( &pkcInfo->montCTX1, candidate, 
 								 pkcInfo->bnCTX ) );
 			CK( BN_set_word( &pkcInfo->tmp1, 2 ) );
@@ -587,8 +595,13 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 			if( bnStatusOK( bnStatus ) && remainder )
 				break;	/* status = TRUE from above */
 			}
+		if( innerIterationCount >= SIEVE_SIZE + 10 )
+			retIntError();
 		}
-	while( status == FALSE );	/* -ve = error, TRUE = success */
+	while( status == FALSE &&	/* -ve = error, TRUE = success */
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* Clean up */
 	zeroise( sieveArray, SIEVE_SIZE * sizeof( BOOLEAN ) );
@@ -616,7 +629,7 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 int generateBignum( BIGNUM *bn, const int noBits, const BYTE high,
 					const BYTE low )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int noBytes = bitsToBytes( noBits ), status;
 

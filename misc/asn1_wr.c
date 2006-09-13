@@ -59,7 +59,7 @@ static int writeLength( STREAM *stream, const long length )
 	if( length < 0 )
 		{
 		assert( NOTREACHED );
-		return( sSetError( stream, CRYPT_ERROR_FAILED ) );
+		return( sSetError( stream, CRYPT_ERROR_INTERNAL ) );
 		}
 
 	/* Use the short form of the length octets if possible */
@@ -86,7 +86,7 @@ static int writeNumeric( STREAM *stream, const long integer )
 	{
 	BYTE buffer[ 16 + 8 ];
 	long intValue = integer;
-	int length = 0, i;
+	int length = 0, i, iterationCount = 0;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( integer >= 0 );
@@ -98,11 +98,14 @@ static int writeNumeric( STREAM *stream, const long integer )
 	/* Assemble the encoded value in little-endian order */
 	if( intValue > 0 )
 		{
-		while( intValue > 0 )
+		while( intValue > 0 && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_SMALL )
 			{
 			buffer[ length++ ] = intValue & 0xFF;
 			intValue >>= 8;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
+			retIntError();
 
 		/* Make sure that we don't inadvertently set the sign bit if the 
 		   high bit of the value is set */
@@ -111,12 +114,17 @@ static int writeNumeric( STREAM *stream, const long integer )
 		}
 	else
 		{
+		/* Write a negative integer values.  This code is never executed, 
+		   it's present only in case it's ever needed in the future */
 		do
 			{
 			buffer[ length++ ] = intValue & 0xFF;
 			intValue >>= 8;
 			}
-		while( intValue != -1 && length < sizeof( int ) );
+		while( intValue != -1 && length < sizeof( int ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_SMALL );
+		if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
+			retIntError();
 
 		/* Make sure that we don't inadvertently clear the sign bit if the 
 		   high bit of the value is clear */
@@ -239,7 +247,7 @@ int writeEnumerated( STREAM *stream, const int enumerated, const int tag )
 
 int writeNull( STREAM *stream, const int tag )
 	{
-	BYTE buffer[ 8 ];
+	BYTE buffer[ 8 + 8 ];
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -253,7 +261,7 @@ int writeNull( STREAM *stream, const int tag )
 
 int writeBoolean( STREAM *stream, const BOOLEAN boolean, const int tag )
 	{
-	BYTE buffer[ 8 ];
+	BYTE buffer[ 8 + 8 ];
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 

@@ -69,8 +69,8 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getRC5Capability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ RC5_EXPANDED_KEYSIZE ];
-	BYTE temp[ RC5_BLOCKSIZE ];
+	BYTE keyData[ RC5_EXPANDED_KEYSIZE + 8 ];
+	BYTE temp[ RC5_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testRC5 ) / sizeof( struct RC5_TEST ); i++ )
@@ -244,7 +244,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 	RC5_KEY *rc5Key = ( RC5_KEY * ) convInfo->key;
-	BYTE temp[ RC5_BLOCKSIZE ];
+	BYTE temp[ RC5_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

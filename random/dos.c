@@ -25,7 +25,7 @@
 
 void fastPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	time_t timeStamp = time( NULL );
 
 	/* There's not much we can do under DOS, we rely entirely on the
@@ -37,7 +37,7 @@ void fastPoll( void )
 
 void slowPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ 128 ];
 	int quality = 100, fd, count, total;
 

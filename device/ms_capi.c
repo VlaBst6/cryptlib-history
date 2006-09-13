@@ -383,11 +383,12 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	cryptoapiInfo->errorCode = ( int ) errorCode;
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM, NULL, errorCode, 0,
 				   cryptoapiInfo->errorMessage, MAX_ERRMSG_SIZE - 1, NULL );
-	messageLength = strlen( cryptoapiInfo->errorMessage );
-	while( messageLength > 0 && \
-		   ( cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\n' || \
-			 cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\r' ) )
-		cryptoapiInfo->errorMessage[ --messageLength ] = '\0';
+	for( messageLength = strlen( cryptoapiInfo->errorMessage );
+		 messageLength > 0 && \
+			( cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\n' || \
+			  cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\r' );
+		 messageLength-- )
+		cryptoapiInfo->errorMessage[ messageLength ] = '\0';
 
 	/* Translate the CAPI error code into the cryptlib equivalent */
 	switch( errorCode )
@@ -458,10 +459,12 @@ static int mapDeviceError( CONTEXT_INFO *contextInfoPtr, const int defaultError 
 
 /* Map cryptlib to/from CryptoAPI algorithm IDs */
 
-static const struct {
+typedef struct {
 	const CRYPT_ALGO_TYPE cryptAlgo;
 	const ALG_ID algID;
-	} algoMap[] = {
+	} ALGO_MAP_INFO;
+	
+static const ALGO_MAP_INFO algoMap[] = {
 	/* PKC algorithms */
 	{ CRYPT_ALGO_RSA, CALG_RSA_SIGN },
 	{ CRYPT_ALGO_RSA, CALG_RSA_KEYX },
@@ -479,16 +482,21 @@ static const struct {
 	{ CRYPT_ALGO_MD5, CALG_MD5 },
 	{ CRYPT_ALGO_SHA, CALG_SHA },
 
-	{ CRYPT_ALGO_NONE, 0 }
+	{ CRYPT_ALGO_NONE, 0 }, { CRYPT_ALGO_NONE, 0 }
 	};
 
 static ALG_ID cryptlibToCapiID( const CRYPT_ALGO_TYPE cryptAlgo )
 	{
 	int i;
 
-	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE; i++ )
+	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ); i++ )
+		{
 		if( algoMap[ i ].cryptAlgo == cryptAlgo )
 			break;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ) )
+		retIntError_Ext( 0 );
 	if( algoMap[ i ].cryptAlgo == CRYPT_ALGO_NONE )
 		return( 0 );
 	return( algoMap[ i ].algID );
@@ -498,11 +506,16 @@ static CRYPT_ALGO_TYPE capiToCryptlibID( const ALG_ID algID )
 	{
 	int i;
 
-	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE; i++ )
+	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ); i++ )
+		{
 		if( algoMap[ i ].algID == algID )
 			break;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ) )
+		retIntError_Ext( CRYPT_ALGO_NONE );
 	if( algoMap[ i ].cryptAlgo == CRYPT_ALGO_NONE )
-		return( 0 );
+		return( CRYPT_ALGO_NONE );
 	return( algoMap[ i ].cryptAlgo );
 	}
 
@@ -519,12 +532,14 @@ static BYTE *copyMPI( BYTE *dest, const BYTE *src, const int srcLen,
 		*dest-- = *src++;
 	dest += srcLen + 1;
 	if( srcLen < srcRequiredLen )
+		{
 		/* CryptoAPI blobs don't contain any length information but 
 		   implicitly specify all lengths in terms of the size of the
 		   main MPI component, so if the actual length is less than the
 		   assumed length we pad the remainder out with zeroes */
 		for( i = 0; i < srcRequiredLen - srcLen; i++ )
 			*dest++ = 0;
+		}
 	
 	return( dest );
 	}
@@ -718,7 +733,7 @@ static int capiToCryptlibContext( CRYPTOAPI_INFO *cryptoapiInfo,
 	{
 	CRYPT_PKCINFO_RSA rsaKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
 	int nLen, eLen, status;
 
@@ -1017,7 +1032,7 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 	ALG_ID algID;
 	DWORD dwDataLen = sizeof( ALG_ID );
 	const CAPABILITY_INFO *capabilityInfoPtr = NULL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Clear return values */
@@ -1140,6 +1155,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	/* Check whether a keyset name has been specified */
 	strcpy( keysetNameBuffer, "MY" );	/* Default keyset */
 	for( i = 1; i < nameLength - 1; i++ )
+		{
 		if( name[ i ] == ':' && name[ i + 1 ] == ':' )
 			{
 			const int keysetNameLength = nameLength - ( i + 2 );
@@ -1158,6 +1174,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 			keysetName = keysetNameBuffer;
 			break;
 			}
+		}
 
 	/* If we're auto-detecting the device, try various choices */
 	if( driverNameLength == 12 && \
@@ -1644,7 +1661,7 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	DWORD dwKeySpec = 0;
 	CRYPT_CERTIFICATE iCryptCert;
 	BOOLEAN seenNonDuplicate = FALSE;
-	int status;
+	int iterationCount = 0, status;
 
 	/* Lock the cert for our exclusive use (in case it's a cert chain, we 
 	   also select the first cert in the chain), update the device with the 
@@ -1766,8 +1783,11 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 		}
 	while( krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
 							MESSAGE_VALUE_CURSORNEXT,
-							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK );
-	
+							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
+
 	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, MESSAGE_VALUE_FALSE, 
 					 CRYPT_IATTRIBUTE_LOCKED );
 
@@ -2065,7 +2085,7 @@ static int rsaSetKeyInfo( CRYPTOAPI_INFO *cryptoapiInfo,
 	{
 	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int nLen, eLen, keyDataSize, status;
 
 	/* Extract the public-key components from the CryptoAPI context */
@@ -2439,7 +2459,7 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 						  const void *g, const int gLen,
 						  const void *y, const int yLen )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int keyDataSize, cryptStatus;
@@ -2611,7 +2631,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	CK_ATTRIBUTE yValueTemplate = { CKA_VALUE, NULL, CRYPT_MAX_PKCSIZE * 2 };
 	CK_OBJECT_HANDLE hPublicKey, hPrivateKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
 	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ], label[ 8 + 8 ];
@@ -3094,7 +3114,7 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 		bitsToBytes( 512 ), bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
 
 	/* Hier ist der Mast zu ende */
-	{ CRYPT_ERROR }
+	{ CRYPT_ERROR }, { CRYPT_ERROR }
 	};
 
 /* Mapping of CryptoAPI provider capabilities to cryptlib capabilities */
@@ -3171,7 +3191,8 @@ static const MECHANISM_INFO mechanismInfo[] = {
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
 #endif /* 0 */
-	{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
+	{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE },
+		{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
 	};
 
 /* Fill out a capability info based on CryptoAPI algorithm info */
@@ -3192,10 +3213,13 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 		if( ( capabilityInfo = \
 				clAlloc( "addCapability", sizeof( CAPABILITY_INFO ) ) ) == NULL )
 			return( NULL );
-		for( i = 0; \
+		for( i = 0; 
 			 capabilityTemplates[ i ].cryptAlgo != mechanismInfoPtr->cryptAlgo && \
-			 capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR; \
+				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR && \
+				i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ); \
 			 i++ );
+		if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) )
+			retIntError_Null();
 		assert( i < sizeof( capabilityTemplates ) / sizeof( CAPABILITY_INFO ) && \
 				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR );
 		memcpy( capabilityInfo, &capabilityTemplates[ i ],
@@ -3318,7 +3342,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 	CAPABILITY_INFO_LIST *capabilityInfoListTail = \
 				( CAPABILITY_INFO_LIST * ) deviceInfo->capabilityInfoList;
 	PROV_ENUMALGS_EX capiAlgoInfo;
-	int length = sizeof( PROV_ENUMALGS_EX );
+	int length = sizeof( PROV_ENUMALGS_EX ), iterationCount = 0;
 
 	assert( sizeof( CAPABILITY_INFO ) == sizeof( VARIABLE_CAPABILITY_INFO ) );
 
@@ -3336,11 +3360,17 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 
 		/* Check whether this algorithm type corresponds to a cryptlib
 		   capability */
-		for( i = 0; mechanismInfo[ i ].cryptAlgo != CRYPT_ALGO_NONE; i++ )
+		for( i = 0; mechanismInfo[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+					i < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ); 
+			 i++ )
+			{
 			if( mechanismInfo[ i ].algoID == capiAlgoInfo.aiAlgid || \
 				( mechanismInfo[ i ].altAlgoID != CRYPT_ERROR && \
 				  mechanismInfo[ i ].altAlgoID == capiAlgoInfo.aiAlgid ) )
 				break;
+			}
+		if( i >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+			retIntError();
 		if( mechanismInfo[ i ].cryptAlgo == CRYPT_ALGO_NONE )
 			continue;
 		cryptAlgo = mechanismInfo[ i ].cryptAlgo;
@@ -3395,7 +3425,10 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 		capabilityInfoListTail = newCapabilityList;
 		}
 	while( pCryptGetProvParam( cryptoapiInfo->hProv, PP_ENUMALGS_EX, 
-							   ( BYTE * ) &capiAlgoInfo, &length, 0 ) );
+							   ( BYTE * ) &capiAlgoInfo, &length, 0 ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	return( ( deviceInfo->capabilityInfoList == NULL ) ? CRYPT_ERROR : CRYPT_OK );
 	}
@@ -3442,7 +3475,7 @@ static const FAR_BSS MECHANISM_FUNCTION_INFO mechanismFunctions[] = {
 #ifdef USE_PKCS12
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_PKCS12, ( MECHANISM_FUNCTION ) derivePKCS12 },
 #endif /* USE_PKCS12 */
-	{ MESSAGE_NONE, MECHANISM_NONE, NULL }
+	{ MESSAGE_NONE, MECHANISM_NONE, NULL }, { MESSAGE_NONE, MECHANISM_NONE, NULL }
 	};
 
 /* Set up the function pointers to the device methods */
@@ -3464,6 +3497,8 @@ int setDeviceCryptoAPI( DEVICE_INFO *deviceInfo, const char *name,
 	deviceInfo->getNextItemFunction = getNextItemFunction;
 	deviceInfo->getRandomFunction = getRandomFunction;
 	deviceInfo->mechanismFunctions = mechanismFunctions;
+	deviceInfo->mechanismFunctionCount = \
+		FAILSAFE_ARRAYSIZE( mechanismFunctions, MECHANISM_FUNCTION_INFO );
 
 	return( CRYPT_OK );
 	}

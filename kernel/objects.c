@@ -208,7 +208,8 @@ static int destroySelectedObjects( const int currentDepth )
 	int objectHandle, status = CRYPT_OK;
 
 	for( objectHandle = NO_SYSTEM_OBJECTS; \
-		 objectHandle < krnlData->objectTableSize; \
+		 objectHandle < krnlData->objectTableSize && \
+			objectHandle < MAX_OBJECTS; \
 		 objectHandle++ )
 		{
 		const int dependentObject = \
@@ -251,6 +252,8 @@ static int destroySelectedObjects( const int currentDepth )
 			MUTEX_LOCK( objectTable );
 			}
 		}
+	if( objectHandle >= MAX_OBJECTS )
+		retIntError();
 
 	return( status );
 	}
@@ -406,7 +409,8 @@ static int findFreeResource( int value )
 
 	/* Step through the entire table looking for a free entry */
 	for( iterations = 0; isValidHandle( value ) && \
-						 iterations < krnlData->objectTableSize; \
+						 iterations < krnlData->objectTableSize && \
+						 iterations < MAX_OBJECTS; 
 		 iterations++ )
 		{
 		INV( iterations < krnlData->objectTableSize );
@@ -428,6 +432,8 @@ static int findFreeResource( int value )
 		if( isFreeObject( value ) || value == oldValue )
 			break;
 		}
+	if( iterations >= MAX_OBJECTS )
+		retIntError();
 	if( value == oldValue || iterations >= krnlData->objectTableSize || \
 		!isValidHandle( value ) )
 		{
@@ -479,9 +485,11 @@ static int expandObjectTable( void )
 	   allocated entries, and clear the old table */
 	memcpy( newTable, krnlData->objectTable,
 			krnlData->objectTableSize * sizeof( OBJECT_INFO ) );
-	for( i = krnlData->objectTableSize; \
-		 i < krnlData->objectTableSize * 2; i++ )
+	for( i = krnlData->objectTableSize; i < krnlData->objectTableSize * 2 && \
+										i < MAX_OBJECTS; i++ )
 		newTable[ i ] = OBJECT_INFO_TEMPLATE;
+	if( i >= MAX_OBJECTS )
+		retIntError();
 	zeroise( krnlData->objectTable, \
 			 krnlData->objectTableSize * sizeof( OBJECT_INFO ) );
 	clFree( "krnlCreateObject", krnlData->objectTable );

@@ -476,7 +476,7 @@ typedef enum {
 typedef struct {
 	void *data;							/* Data */
 	int length;							/* Length */
-	} RESOURCE_DATA;
+	} MESSAGE_DATA;
 
 #define setMessageData( msgDataPtr, dataPtr, dataLength ) \
 	{ \

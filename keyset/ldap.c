@@ -313,7 +313,7 @@ void dbxEndLDAP( void )
 static void assignFieldName( const CRYPT_USER cryptOwner, char *buffer,
 							 CRYPT_ATTRIBUTE_TYPE option )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	setMessageData( &msgData, buffer, CRYPT_MAX_TEXTSIZE );
@@ -501,11 +501,13 @@ static LDAPMod *copyAttribute( const char *attributeName,
 
 /* Encode DN information in the RFC 1779 reversed format.  We don't have to
    check for overflows because the cert.management code limits the size of
-   each component to a small fraction of the total buffer size */
+   each component to a small fraction of the total buffer size.  Besides 
+   which, it's LDAP, anyone using this crap as a cert store is asking for
+   it anyway :-) */
 
 static void copyComponent( char *dest, char *src )
 	{
-	while( *src )
+	while( *src != '\0' )
 		{
 		const char ch = *src++;
 
@@ -616,7 +618,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *server,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
-	char ldapServer[ MAX_URL_SIZE ], *ldapUser;
+	char ldapServer[ MAX_URL_SIZE + 8 ], *ldapUser;
 	int maxEntries = 2, timeout, ldapPort, ldapStatus = LDAP_OTHER, status;
 
 	/* Check the URL.  The Netscape and OpenLDAP APIs provide the function
@@ -919,14 +921,14 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 	{
 	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
-	LDAPMod *ldapMod[ MAX_LDAP_ATTRIBUTES ];
-	RESOURCE_DATA msgData;
-	BYTE keyData[ MAX_CERT_SIZE ];
-	char dn[ MAX_DN_STRINGSIZE ];
-	char C[ CRYPT_MAX_TEXTSIZE + 1 ], SP[ CRYPT_MAX_TEXTSIZE + 1 ],
-		L[ CRYPT_MAX_TEXTSIZE + 1 ], O[ CRYPT_MAX_TEXTSIZE + 1 ],
-		OU[ CRYPT_MAX_TEXTSIZE + 1 ], CN[ CRYPT_MAX_TEXTSIZE + 1 ],
-		email[ CRYPT_MAX_TEXTSIZE + 1 ];
+	LDAPMod *ldapMod[ MAX_LDAP_ATTRIBUTES + 8 ];
+	MESSAGE_DATA msgData;
+	BYTE keyData[ MAX_CERT_SIZE + 8 ];
+	char dn[ MAX_DN_STRINGSIZE + 8 ];
+	char C[ CRYPT_MAX_TEXTSIZE + 1 + 8 ], SP[ CRYPT_MAX_TEXTSIZE + 1 + 8 ],
+		L[ CRYPT_MAX_TEXTSIZE + 1 + 8 ], O[ CRYPT_MAX_TEXTSIZE + 1 + 8 ],
+		OU[ CRYPT_MAX_TEXTSIZE + 1 + 8 ], CN[ CRYPT_MAX_TEXTSIZE + 1 + 8 ],
+		email[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 	int keyDataLength, ldapModIndex = 1, status = CRYPT_OK;
 
 	*C = *SP = *L = *O = *OU = *CN = *email = '\0';
@@ -1054,7 +1056,8 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 	   possibly because it's trying to free the mod_values[] entries
 	   which are statically allocated, and for the MS client the
 	   function doesn't exist */
-	for( ldapModIndex = 0; ldapMod[ ldapModIndex ] != NULL;
+	for( ldapModIndex = 0; ldapMod[ ldapModIndex ] != NULL && \
+						   ldapModIndex < MAX_LDAP_ATTRIBUTES;
 		 ldapModIndex++ )
 		{
 		if( ldapMod[ ldapModIndex ]->mod_op & LDAP_MOD_BVALUES )
@@ -1062,6 +1065,8 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 		clFree( "addCert", ldapMod[ ldapModIndex ]->mod_values );
 		clFree( "addCert", ldapMod[ ldapModIndex ] );
 		}
+	if( ldapModIndex >= MAX_LDAP_ATTRIBUTES )
+		retIntError();
 	return( status );
 	}
 
@@ -1072,7 +1077,7 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 							const int flags )
 	{
 	BOOLEAN seenNonDuplicate = FALSE;
-	int type, status;
+	int type, iterationCount = 0, status;
 
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
 	assert( password == NULL ); assert( passwordLength == 0 );
@@ -1114,7 +1119,10 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	while( cryptStatusOK( status ) && \
 		   krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 							MESSAGE_VALUE_CURSORNEXT,
-							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK );
+							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE, 
 					 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
 	if( cryptStatusOK( status ) && !seenNonDuplicate )
@@ -1133,7 +1141,7 @@ static int deleteItemFunction( KEYSET_INFO *keysetInfo,
 							   const void *keyID, const int keyIDlength )
 	{
 	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
-	char dn[ MAX_DN_STRINGSIZE ];
+	char dn[ MAX_DN_STRINGSIZE + 8 ];
 	int ldapStatus;
 
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
@@ -1236,7 +1244,7 @@ static int getAttributeFunction( KEYSET_INFO *keysetInfo, void *data,
 static int setAttributeFunction( KEYSET_INFO *keysetInfo, const void *data,
 								 const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	const RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) data;
+	const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) data;
 	BYTE *attributeDataPtr = getAttributeDataPtr( keysetInfo, type );
 
 	assert( msgData->length <= CRYPT_MAX_TEXTSIZE );

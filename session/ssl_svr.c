@@ -79,7 +79,7 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 						  SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM *stream = &handshakeInfo->stream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int length, resumedSessionID = 0, packetOffset, status;
 
 	/* Read the hello packet from the client */
@@ -327,7 +327,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
 		{
 		MESSAGE_KEYMGMT_INFO getkeyInfo;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE certID[ KEYID_SIZE + 8 ];
 
 		/* Process the client cert chain */
@@ -456,9 +456,9 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			if( attributeListPtr == NULL )
 				{
 				sMemDisconnect( stream );
-				userID[ length ] = '\0';
 				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
-						"Unknown user name '%s'", userID );
+						"Unknown user name '%s'", 
+						sanitiseString( userID, length ) );
 				}
 
 			/* Select the attribute with the user ID and move on to the

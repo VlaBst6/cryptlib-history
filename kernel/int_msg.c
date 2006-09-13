@@ -68,7 +68,7 @@ static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
 	MK_DEPACL( OBJECT_TYPE_USER, ST_NONE, ST_USER_ANY, \
 			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
 
-	MK_DEPACL_END()
+	MK_DEPACL_END(), MK_DEPACL_END()
 	};
 
 /****************************************************************************
@@ -242,7 +242,9 @@ int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
 	int i;
 
 	/* Perform a consistency check on the object dependency ACL */
-	for( i = 0; dependencyACLTbl[ i ].type != OBJECT_TYPE_NONE; i++ )
+	for( i = 0; dependencyACLTbl[ i ].type != OBJECT_TYPE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ); 
+		 i++ )
 		{
 		const DEPENDENCY_ACL *dependencyACL = &dependencyACLTbl[ i ];
 
@@ -257,6 +259,8 @@ int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
 			( dependencyACL->dSubTypeB & SUBTYPE_CLASS_A ) )
 			return( CRYPT_ERROR_FAILED );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) )
+		retIntError();
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -743,7 +747,10 @@ int setDependentObject( const int objectHandle, const int option,
 	/* Find the dependency ACL entry for this object/dependent object
 	   combination.  Since there can be more than one dependent object
 	   type for an object, we check subtypes as well */
-	for( i = 0; dependencyACLTbl[ i ].type != OBJECT_TYPE_NONE; i++ )
+	for( i = 0; dependencyACLTbl[ i ].type != OBJECT_TYPE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ); 
+		 i++ )
+		{
 		if( dependencyACLTbl[ i ].type == objectInfoPtr->type && \
 			dependencyACLTbl[ i ].dType == dependentObjectInfoPtr->type && \
 			( isValidSubtype( dependencyACLTbl[ i ].dSubTypeA, \
@@ -754,6 +761,9 @@ int setDependentObject( const int objectHandle, const int option,
 			dependencyACL = &dependencyACLTbl[ i ];
 			break;
 			}
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) )
+		retIntError();
 	if( dependencyACL == NULL )
 		{
 		assert( NOTREACHED );

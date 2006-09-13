@@ -125,6 +125,20 @@
   #define EXIT_FAILURE	!EXIT_SUCCESS
 #endif /* EXIT_SUCCESS */
 
+/* Although min() and max() aren't in the ANSI standard, most compilers have
+   them in one form or another, but just enough don't that we need to define 
+   them ourselves in some cases */
+
+#if !defined( min )
+  #ifdef MIN
+	#define min		MIN
+	#define max		MAX
+  #else
+	#define min( a, b )	( ( ( a ) < ( b ) ) ? ( a ) : ( b ) )
+	#define max( a, b )	( ( ( a ) > ( b ) ) ? ( a ) : ( b ) )
+  #endif /* Various min/max macros */
+#endif /* !min/max */
+
 /* If we're using a 16-bit compiler, record this */
 
 #if defined( __MSDOS__ ) && !defined( __MSDOS32__ )
@@ -513,10 +527,14 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 						   CRYPT_CONTEXT *decryptContext,
 						   const C_STR cryptContextLabel,
 						   const C_STR decryptContextLabel,
+						   const BOOLEAN useLargeKey,
 						   const BOOLEAN useMinimalKey );
 BOOLEAN loadRSAContexts( const CRYPT_DEVICE cryptDevice,
 						 CRYPT_CONTEXT *cryptContext,
 						 CRYPT_CONTEXT *decryptContext );
+BOOLEAN loadRSAContextsLarge( const CRYPT_DEVICE cryptDevice,
+							  CRYPT_CONTEXT *cryptContext,
+							  CRYPT_CONTEXT *decryptContext );
 BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
 						   CRYPT_CONTEXT *signContext,
 						   CRYPT_CONTEXT *sigCheckContext,

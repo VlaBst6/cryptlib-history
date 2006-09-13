@@ -172,7 +172,7 @@ static int getProcessList( const short int cpuNo, short int *pidBuffer,
 void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	long long totalTime, busyTime, intTime, idleTime;
 	_cc_status cc;
 	short int value, error;
@@ -232,7 +232,7 @@ void fastPoll( void )
 void slowPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	const long cpuStatus = PROCESSORSTATUS() & 0xFFFFUL;
 	long cpuStatusMask;
 	short int cpuNo;
@@ -247,7 +247,7 @@ void slowPoll( void )
 		 cpuStatusMask > 0; \
 		 cpuStatusMask >>= 1, cpuNo++ )
 		{
-		short int pidBuffer[ NO_PROCESSES ];
+		short int pidBuffer[ NO_PROCESSES + 8 ];
 		short int noAttrs, error;
 		int i, noProcesses;
 

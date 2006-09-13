@@ -107,11 +107,12 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 						SSL_HANDSHAKE_INFO *handshakeInfo,
 						STREAM *stream, const int noSuites )
 	{
-	const static struct {
+	typedef struct {
 		const int cipherSuite;
 		const CRYPT_ALGO_TYPE keyexAlgo, authAlgo, cryptAlgo, macAlgo;
 		const int cryptKeySize, macBlockSize;
-		} cipherSuiteInfo[] = {
+		} CIPHERSUITE_INFO;
+	const static CIPHERSUITE_INFO cipherSuiteInfo[] = {
 		/* PSK suites */
 		{ TLS_PSK_WITH_3DES_EDE_CBC_SHA,
 		  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_3DES,
@@ -223,6 +224,8 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 
 		/* End-of-list marker */
 		{ SSL_NULL_WITH_NULL,
+		  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 0, 0 },
+		{ SSL_NULL_WITH_NULL,
 		  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 0, 0 }
 		};
 	CRYPT_QUERY_INFO queryInfo;
@@ -276,10 +279,13 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 					"encryption" );
 
 		/* Try and find the info for the proposed cipher suite */
-		for( suiteInfoIndex = 0; \
+		for( suiteInfoIndex = 0; 
 			 cipherSuiteInfo[ suiteInfoIndex ].cipherSuite != SSL_NULL_WITH_NULL && \
-			 cipherSuiteInfo[ suiteInfoIndex ].cipherSuite != currentSuite; \
+			 cipherSuiteInfo[ suiteInfoIndex ].cipherSuite != currentSuite && \
+			 suiteInfoIndex < FAILSAFE_ARRAYSIZE( cipherSuiteInfo, CIPHERSUITE_INFO ); \
 			 suiteInfoIndex++ );
+		if( suiteInfoIndex >= FAILSAFE_ARRAYSIZE( cipherSuiteInfo, CIPHERSUITE_INFO ) )
+			retIntError();
 		if( cipherSuiteInfo[ suiteInfoIndex ].cipherSuite == SSL_NULL_WITH_NULL )
 			continue;
 
@@ -355,7 +361,7 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 							  const int length )
 	{
-	int endPos = stell( stream ) + length, extListLen;
+	int endPos = stell( stream ) + length, extListLen, iterationCount = 0;
 
 	/* Read the extension header and make sure that it's valid */
 	if( length < UINT16_SIZE + UINT16_SIZE + UINT16_SIZE + 1 )
@@ -369,7 +375,8 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 				extListLen, length - UINT16_SIZE );
 
 	/* Process the extensions */
-	while( stell( stream ) < endPos )
+	while( stell( stream ) < endPos && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		int type, extLen, value;
 
@@ -490,6 +497,10 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 							"type %d", type );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
+				"Excessive number (%d) of TLS extensions encountered", 
+				iterationCount );
 
 	return( CRYPT_OK );
 	}
@@ -681,8 +692,8 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 	const ATTRIBUTE_LIST *fingerprintPtr = \
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_SERVER_FINGERPRINT );
-	RESOURCE_DATA msgData;
-	BYTE certFingerprint[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE certFingerprint[ CRYPT_MAX_HASHSIZE + 8 ];
 	const char *peerTypeName = isServer ? "Client" : "Server";
 	int chainLength, length, status;
 
@@ -1075,8 +1086,8 @@ static int completeHandshake( SESSION_INFO *sessionInfoPtr,
 	CRYPT_CONTEXT responderMD5context, responderSHA1context;
 	BYTE masterSecret[ SSL_SECRET_SIZE + 8 ];
 	BYTE keyBlock[ MAX_KEYBLOCK_SIZE + 8 ];
-	BYTE initiatorHashes[ CRYPT_MAX_HASHSIZE * 2 ];
-	BYTE responderHashes[ CRYPT_MAX_HASHSIZE * 2 ];
+	BYTE initiatorHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
+	BYTE responderHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
 	const void *sslInitiatorString, *sslResponderString;
 	const void *tlsInitiatorString, *tlsResponderString;
 	const BOOLEAN isInitiator = isResumedSession ? !isClient : isClient;
@@ -1356,7 +1367,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	const ATTRIBUTE_LIST *userNamePtr = \
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_USERNAME );
-	BYTE premasterSecret[ ( UINT16_SIZE + CRYPT_MAX_TEXTSIZE ) * 2 + 8 ];
+	BYTE premasterSecret[ ( ( UINT16_SIZE + CRYPT_MAX_TEXTSIZE ) * 2 ) + 8 ];
 	BYTE sessionID[ SESSIONID_SIZE + 8 ];
 	int uniqueID, premasterSecretLength, status;
 

@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Wed Aug 30 01:34:02 2006, filesize = 82663.
+'"cryptlib.h" dated Fri Sep  1 23:14:48 2006, filesize = 82545.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3230
+  Public Const CRYPTLIB_VERSION As Long = 3300
 
 
 '****************************************************************************
@@ -406,9 +406,6 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
         CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT
     CRYPT_CERTINFO_FINGERPRINT_SHA
     CRYPT_CERTINFO_CURRENT_CERTIFICATE ' Cursor mgt: Rel.pos in chain/CRL/OCSP 
-    CRYPT_CERTINFO_CURRENT_EXTENSION ' Cursor mgt: Rel.pos.or abs.extension 
-    CRYPT_CERTINFO_CURRENT_FIELD    ' Cursor mgt: Rel.pos.or abs.field in ext 
-    CRYPT_CERTINFO_CURRENT_COMPONENT ' Cursor mgt: Rel.pos in multival.field 
     CRYPT_CERTINFO_TRUSTED_USAGE    ' Usage that cert is trusted for 
     CRYPT_CERTINFO_TRUSTED_IMPLICIT ' Whether cert is implicitly trusted 
     CRYPT_CERTINFO_SIGNATURELEVEL   ' Amount of detail to include in sigs.
@@ -1261,28 +1258,30 @@ End Enum
 '  A magic value indicating that the default setting for this parameter
 '  should be used 
 
-  Public Const CRYPT_USE_DEFAULT As Long = -10
+  Public Const CRYPT_USE_DEFAULT As Long = -100
 
 ' A magic value for unused parameters 
 
-  Public Const CRYPT_UNUSED As Long = -11
+  Public Const CRYPT_UNUSED As Long = -101
+
+' Cursor positioning codes for certificate/CRL extensions 
+
+  Public Const CRYPT_CURSOR_FIRST As Long = -200
+  Public Const CRYPT_CURSOR_PREVIOUS As Long = -201
+  Public Const CRYPT_CURSOR_NEXT As Long = -202
+  Public Const CRYPT_CURSOR_LAST As Long = -203
+
+'  The type of information polling to perform to get random seed 
+'  information.  These values have to be negative because they're used
+'  as magic length values for cryptAddRandom() 
+
+  Public Const CRYPT_RANDOM_FASTPOLL As Long = -300
+  Public Const CRYPT_RANDOM_SLOWPOLL As Long = -301
 
 ' Whether the PKC key is a public or private key 
 
   Public Const CRYPT_KEYTYPE_PRIVATE As Long = 0
   Public Const CRYPT_KEYTYPE_PUBLIC As Long = 1
-
-' The type of information polling to perform to get random seed information 
-
-  Public Const CRYPT_RANDOM_FASTPOLL As Long = -10
-  Public Const CRYPT_RANDOM_SLOWPOLL As Long = -11
-
-' Cursor positioning codes for certificate/CRL extensions 
-
-  Public Const CRYPT_CURSOR_FIRST As Long = -20
-  Public Const CRYPT_CURSOR_PREVIOUS As Long = -21
-  Public Const CRYPT_CURSOR_NEXT As Long = -22
-  Public Const CRYPT_CURSOR_LAST As Long = -23
 
 ' Keyset open options 
 

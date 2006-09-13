@@ -252,6 +252,7 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 	CRYPT_ALGO_TYPE hashAlgo;
 	CERT_INFO *issuerCertInfoPtr = NULL;
 	STREAM stream;
+	const CERTWRITE_INFO *certWriteInfo;
 	const CRYPT_SIGNATURELEVEL_TYPE signatureLevel = \
 				( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST ) ? \
 					certInfoPtr->cCertRev->signatureLevel : \
@@ -262,14 +263,13 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 			  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN ) ? TRUE : FALSE;
 	BOOLEAN issuerCertAcquired = FALSE, nonSigningKey = FALSE;
 	BYTE certObjectBuffer[ 1024 + 8 ], *certObjectPtr = certObjectBuffer;
-	int ( *writeCertObjectFunction )( STREAM *stream, CERT_INFO *subjectCertInfoPtr,
-									  const CERT_INFO *issuerCertInfoPtr,
-									  const CRYPT_CONTEXT iIssuerCryptContext );
 	void *signedCertObject;
 	const time_t currentTime = ( signContext == CRYPT_UNUSED ) ? \
 							   getTime() : getReliableTime( signContext );
+	const int certWriteInfoSize = sizeofCertWriteTable();
 	int certObjectLength, signedCertObjectLength, signedCertAllocSize;
-	int extraDataLength = 0, complianceLevel, i, status = CRYPT_OK;
+	int extraDataLength = 0, complianceLevel;
+	int iterationCount = 0, status = CRYPT_OK;
 
 	assert( certInfoPtr->certificate == NULL );
 
@@ -384,7 +384,7 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 								 issuerCertInfoPtr, CRYPT_UNUSED );
 		else
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			assert( signatureLevel == CRYPT_SIGNATURELEVEL_ALL );
 
@@ -408,9 +408,12 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 		/* If there's a chain of certs present (for example from a previous
 		   signing attempt that wasn't completed due to an error), free
 		   them */
-		if( certInfoPtr->cCertCert->chainEnd )
+		if( certInfoPtr->cCertCert->chainEnd > 0 )
 			{
-			for( i = 0; i < certInfoPtr->cCertCert->chainEnd; i++ )
+			int i;
+			
+			for( i = 0; i < certInfoPtr->cCertCert->chainEnd && \
+						i < MAX_CHAINLENGTH; i++ )
 				krnlSendNotifier( certInfoPtr->cCertCert->chain[ i ],
 								  IMESSAGE_DECREFCOUNT );
 			certInfoPtr->cCertCert->chainEnd = 0;
@@ -421,7 +424,7 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 		   it anyway) */
 		if( certInfoPtr->flags & CERT_FLAG_SELFSIGNED )
 			{
-			if( certInfoPtr->cCertCert->chainEnd )
+			if( certInfoPtr->cCertCert->chainEnd > 0 )
 				{
 				setErrorInfo( certInfoPtr, CRYPT_CERTINFO_CERTIFICATE,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
@@ -448,11 +451,11 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 	   elsewhere */
 	if( ( isCertificate || certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
 		  certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE ) && \
-		certInfoPtr->startTime <= 0 )
+		certInfoPtr->startTime <= MIN_TIME_VALUE )
 		{
 		/* If the time is screwed up we can't provide a signed indication
 		   of the time */
-		if( currentTime < MIN_TIME_VALUE )
+		if( currentTime <= MIN_TIME_VALUE )
 			{
 			setErrorInfo( certInfoPtr, CRYPT_CERTINFO_VALIDFROM,
 						  CRYPT_ERRTYPE_ATTR_VALUE );
@@ -462,19 +465,22 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 			}
 		certInfoPtr->startTime = currentTime;
 		}
-	if( isCertificate && certInfoPtr->endTime <= 0 )
+	if( isCertificate && certInfoPtr->endTime <= MIN_TIME_VALUE )
 		{
 		int validity;
 
-		krnlSendMessage( certInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE,
-						 &validity, CRYPT_OPTION_CERT_VALIDITY );
+		status = krnlSendMessage( certInfoPtr->ownerHandle, 
+								  IMESSAGE_GETATTRIBUTE, &validity, 
+								  CRYPT_OPTION_CERT_VALIDITY );
+		if( cryptStatusError( status ) )
+			return( status );
 		certInfoPtr->endTime = certInfoPtr->startTime + \
 							   ( ( time_t ) validity * 86400L );
 		}
 	if( certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
 		certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE )
 		{
-		if( certInfoPtr->endTime <= 0 )
+		if( certInfoPtr->endTime <= MIN_TIME_VALUE )
 			{
 			if( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE )
 				/* OCSP responses come directly from the certificate store
@@ -487,15 +493,16 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 				{
 				int updateInterval;
 
-				krnlSendMessage( certInfoPtr->ownerHandle,
-								 IMESSAGE_GETATTRIBUTE, &updateInterval,
-								 CRYPT_OPTION_CERT_UPDATEINTERVAL );
-
+				status = krnlSendMessage( certInfoPtr->ownerHandle,
+										  IMESSAGE_GETATTRIBUTE, &updateInterval,
+										  CRYPT_OPTION_CERT_UPDATEINTERVAL );
+				if( cryptStatusError( status ) )
+					return( status );
 				certInfoPtr->endTime = certInfoPtr->startTime + \
 									   ( ( time_t ) updateInterval * 86400L );
 				}
 			}
-		if( certInfoPtr->cCertRev->revocationTime <= 0 )
+		if( certInfoPtr->cCertRev->revocationTime <= MIN_TIME_VALUE )
 			certInfoPtr->cCertRev->revocationTime = currentTime;
 		}
 
@@ -527,23 +534,26 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 
 	/* Select the function to use to write the certificate object to be
 	   signed */
-	for( i = 0; certWriteTable[ i ].type != certInfoPtr->type && \
-				certWriteTable[ i ].type != CRYPT_CERTTYPE_NONE; i++ );
-	if( certWriteTable[ i ].type == CRYPT_CERTTYPE_NONE )
+	for( certWriteInfo = getCertWriteTable();
+		 certWriteInfo->type != certInfoPtr->type && \
+			certWriteInfo->type != CRYPT_CERTTYPE_NONE && \
+			iterationCount++ < certWriteInfoSize; 
+		 certWriteInfo++ );
+	if( iterationCount >= certWriteInfoSize || \
+		certWriteInfo->type == CRYPT_CERTTYPE_NONE )
 		{
 		assert( NOTREACHED );
 		if( issuerCertAcquired )
 			krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
-	writeCertObjectFunction = certWriteTable[ i ].writeFunction;
 
 	/* Determine how big the encoded certificate information will be,
 	   allocate memory for it and the full signed certificate, and write the
 	   encoded certificate information */
 	sMemOpen( &stream, NULL, 0 );
-	status = writeCertObjectFunction( &stream, certInfoPtr, issuerCertInfoPtr,
-									  signContext );
+	status = certWriteInfo->writeFunction( &stream, certInfoPtr, 
+										   issuerCertInfoPtr, signContext );
 	certObjectLength = stell( &stream );
 	sMemClose( &stream );
 	if( cryptStatusError( status ) )
@@ -566,8 +576,8 @@ int signCert( CERT_INFO *certInfoPtr, const CRYPT_CONTEXT signContext )
 		return( CRYPT_ERROR_MEMORY );
 		}
 	sMemOpen( &stream, certObjectPtr, certObjectLength );
-	status = writeCertObjectFunction( &stream, certInfoPtr, issuerCertInfoPtr,
-									  signContext );
+	status = certWriteInfo->writeFunction( &stream, certInfoPtr, 
+										   issuerCertInfoPtr, signContext );
 	assert( certObjectLength == stream.bufPos );
 	sMemDisconnect( &stream );
 	assert( checkObjectEncoding( certObjectPtr, certObjectLength ) > 0 );

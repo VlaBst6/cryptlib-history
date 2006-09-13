@@ -156,6 +156,9 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 
 	{ CRYPT_CERTACTION_NONE,
 	  ACTION_PERM_NONE,
+	  { MKACP_END() } },
+	{ CRYPT_CERTACTION_NONE,
+	  ACTION_PERM_NONE,
 	  { MKACP_END() } }
 	};
 
@@ -170,7 +173,8 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 	int i;
 
 	/* Perform a consistency check on the cert management ACLs */
-	for( i = 0; certMgmtACLTbl[ i ].action != MECHANISM_NONE; i++ )
+	for( i = 0; certMgmtACLTbl[ i ].action != MECHANISM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ); i++ )
 		{
 		const CERTMGMT_ACL *certMgmtACL = &certMgmtACLTbl[ i ];
 
@@ -221,6 +225,8 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 		if( paramInfo( certMgmtACL, 0 ).valueType != PARAM_VALUE_UNUSED )
 			return( CRYPT_ERROR_FAILED );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) )
+		retIntError();
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -262,7 +268,11 @@ int preDispatchCheckCertMgmtAccess( const int objectHandle,
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; certMgmtACL[ i ].action != messageValue && \
-				certMgmtACL[ i ].action != MECHANISM_NONE; i++ );
+				certMgmtACL[ i ].action != MECHANISM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) )
+		retIntError();
 	if( certMgmtACL[ i ].action == MECHANISM_NONE )
 		{
 		assert( NOTREACHED );

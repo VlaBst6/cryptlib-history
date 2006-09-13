@@ -26,7 +26,7 @@
 
 void fastPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ SCC_RANDOM_SIZE ];
 
 	sccGetRandomNumber( buffer, RANDOM_RANDOM );
@@ -38,7 +38,7 @@ void fastPoll( void )
 
 void slowPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ SCC_RANDOM_SIZE * SCC_NO_CALLS ];
 	int quality = 100, i;
 

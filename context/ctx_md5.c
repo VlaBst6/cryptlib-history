@@ -63,7 +63,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getMD5Capability();
 	CONTEXT_INFO contextInfo;
 	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE ];
+	BYTE keyData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test MD5 against the test vectors given in RFC 1320 */

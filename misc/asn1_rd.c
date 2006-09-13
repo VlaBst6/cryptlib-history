@@ -88,12 +88,12 @@ static long readLengthValue( STREAM *stream, const READLENGTH_TYPE readType )
 	   for everything) we allow up to 8 bytes of non-DER length data, but 
 	   only the last 2 or 4 of these (for short or long lengths 
 	   respectively) can be nonzero */
-	if( !buffer[ 0 ] )
+	if( buffer[ 0 ] == 0 )
 		{
 		int i;
 
 		/* Oddball length encoding with leading zero(es) */
-		for( i = 0; i < noLengthOctets && !buffer[ i ]; i++ );
+		for( i = 0; i < noLengthOctets && buffer[ i ] == 0; i++ );
 		noLengthOctets -= i;
 		if( noLengthOctets <= 0 )
 			return( 0 );		/* Very broken encoding of a zero length */
@@ -132,7 +132,7 @@ static long readLengthValue( STREAM *stream, const READLENGTH_TYPE readType )
 
 static int readIntegerHeader( STREAM *stream, const int tag )
 	{
-	int length;
+	int length, iterationCount = 0;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -148,7 +148,8 @@ static int readIntegerHeader( STREAM *stream, const int tag )
 	   that has the high bit set.  If we get a value with the (supposed) 
 	   sign bit set we treat it as an unsigned value, since a number of 
 	   implementations get this wrong */
-	while( length > 0 && sPeek( stream ) == 0 )
+	while( length > 0 && sPeek( stream ) == 0 && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
 		int status;
 
@@ -157,6 +158,8 @@ static int readIntegerHeader( STREAM *stream, const int tag )
 			return( status );
 		length--;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	return( length );
 	}
 
@@ -220,7 +223,7 @@ static int readObjectHeader( STREAM *stream, int *length, const int minLength,
 		{
 		/* If we've asked for an indication of indefinite-length values and we
 		   got one, convert the length to CRYPT_UNUSED */
-		if( indefOK && dataLength == OK_SPECIAL )
+		if( dataLength == OK_SPECIAL )
 			dataLength = CRYPT_UNUSED;
 		else
 			return( dataLength );
@@ -636,7 +639,7 @@ int readOIDEx( STREAM *stream, const OID_INFO *oidSelection,
 	{
 	static const OID_INFO nullOidSelection = { NULL, CRYPT_ERROR, NULL };
 	BYTE buffer[ MAX_OID_SIZE + 8 ];
-	int length, oidEntry, status;
+	int length, oidEntry, iterationCount = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( oidSelection, sizeof( OID_INFO ) * 2 ) );
@@ -656,10 +659,16 @@ int readOIDEx( STREAM *stream, const OID_INFO *oidSelection,
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 
 	/* Try and find the entry for the OID */
-	for( oidEntry = 0; oidSelection[ oidEntry ].oid != NULL; oidEntry++ )
+	for( oidEntry = 0; oidSelection[ oidEntry ].oid != NULL && \
+					   iterationCount++ < FAILSAFE_ITERATIONS_MED; 
+		 oidEntry++ )
+		{
 		if( length == sizeofOID( oidSelection[ oidEntry ].oid ) && \
 			!memcmp( buffer, oidSelection[ oidEntry ].oid, length ) )
 			break;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	if( oidSelection[ oidEntry ].oid == NULL )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 
@@ -905,8 +914,10 @@ static int readTime( STREAM *stream, time_t *timePtr, const BOOLEAN isUTCTime )
 	if( cryptStatusError( status ) )
 		return( status );
 	for( i = 0; i < length - 1; i++ )
+		{
 		if( !isDigit( buffer[ i ] ) )
 			return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
+		}
 	if( buffer[ length - 1 ] != 'Z' )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 

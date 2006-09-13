@@ -89,10 +89,12 @@
 
 /* Table mapping extended key usage values to key usage flags */
 
-static const struct {
+typedef struct {
 	const CRYPT_ATTRIBUTE_TYPE usageType;
 	const int keyUsageFlags;
-	} FAR_BSS extendedUsageInfo[] = {
+	} EXT_USAGE_INFO;
+	
+static const EXT_USAGE_INFO FAR_BSS extendedUsageInfo[] = {
 	{ CRYPT_CERTINFO_EXTKEY_MS_INDIVIDUALCODESIGNING,/* individualCodeSigning */
 	  CRYPT_KEYUSAGE_DIGITALSIGNATURE },
 	{ CRYPT_CERTINFO_EXTKEY_MS_COMMERCIALCODESIGNING,/* commercialCodeSigning */
@@ -132,10 +134,12 @@ static const struct {
 
 /* Table mapping Netscape cert-type flags to extended key usage flags */
 
-static const struct {
+typedef struct {
 	const int certType;
 	const int keyUsageFlags;
-	} FAR_BSS certTypeInfo[] = {
+	} CERT_TYPE_INFO;
+	
+static const CERT_TYPE_INFO FAR_BSS certTypeInfo[] = {
 	{ CRYPT_NS_CERTTYPE_SSLCLIENT,
 	  CRYPT_KEYUSAGE_DIGITALSIGNATURE },
 	{ CRYPT_NS_CERTTYPE_SSLSERVER,
@@ -166,7 +170,9 @@ static int getExtendedKeyUsageFlags( const ATTRIBUTE_LIST *attributes,
 	{
 	int keyUsage = 0, i;
 
-	for( i = 0; extendedUsageInfo[ i ].usageType != CRYPT_ATTRIBUTE_NONE; i++ )
+	for( i = 0; extendedUsageInfo[ i ].usageType != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( extendedUsageInfo, EXT_USAGE_INFO ); 
+		 i++ )
 		{
 		const ATTRIBUTE_LIST *attributeListPtr = \
 					findAttributeField( attributes, extendedUsageInfo[ i ].usageType, 
@@ -187,7 +193,7 @@ static int getExtendedKeyUsageFlags( const ATTRIBUTE_LIST *attributes,
 
 		/* If there's no key usage consistent with the extended usage and the
 		   extended usage isn't some special-case usage, return an error */
-		if( !extendedUsage && extendedUsageInfo[ i ].keyUsageFlags )
+		if( extendedUsage == 0 && extendedUsageInfo[ i ].keyUsageFlags != 0 )
 			{
 			*errorLocus = extendedUsageInfo[ i ].usageType;
 			return( CRYPT_ERROR_INVALID );
@@ -195,6 +201,8 @@ static int getExtendedKeyUsageFlags( const ATTRIBUTE_LIST *attributes,
 
 		keyUsage |= extendedUsage;
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( extendedUsageInfo, EXT_USAGE_INFO ) )
+		retIntError();
 
 	return( keyUsage );
 	}
@@ -218,7 +226,8 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
 	/* The Netscape cert-type value is a bitfield containing the different
 	   cert types.  For each cert-type flag which is set, we set the
 	   corresponding keyUsage flags */
-	for( i = 0; certTypeInfo[ i ].certType; i++ )
+	for( i = 0; certTypeInfo[ i ].certType && \
+				i < FAILSAFE_ARRAYSIZE( certTypeInfo, CERT_TYPE_INFO ); i++ )
 		{
 		int nsUsage = 0;
 
@@ -236,7 +245,7 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
 
 		/* If there's no key usage consistent with the Netscape cert-type,
 		   return an error */
-		if( !nsUsage )
+		if( nsUsage == 0 )
 			{
 			*errorLocus = CRYPT_CERTINFO_NS_CERTTYPE;
 			return( CRYPT_ERROR_INVALID );
@@ -244,6 +253,8 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
 
 		keyUsage |= nsUsage;
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( certTypeInfo, CERT_TYPE_INFO ) )
+		retIntError();
 
 	return( keyUsage );
 	}
@@ -511,7 +522,7 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		{
 		const time_t currentTime = getTime();
 
-		if( currentTime < MIN_TIME_VALUE )
+		if( currentTime <= MIN_TIME_VALUE )
 			{
 			/* Time is broken, we can't reliably check for expiry times */
 			setErrorValues( CRYPT_CERTINFO_PRIVATEKEY_NOTBEFORE, 

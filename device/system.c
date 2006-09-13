@@ -59,7 +59,7 @@ static const MECHANISM_FUNCTION_INFO FAR_BSS mechanismFunctions[] = {
 	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_PGP, ( MECHANISM_FUNCTION ) importPrivateKeyPGP },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_OPENPGP, ( MECHANISM_FUNCTION ) importPrivateKeyOpenPGP },
 #endif /* USE_PGPKEYS */
-	{ MESSAGE_NONE, MECHANISM_NONE, NULL }
+	{ MESSAGE_NONE, MECHANISM_NONE, NULL }, { MESSAGE_NONE, MECHANISM_NONE, NULL }
 	};
 
 /* Object creation functions supported by the system device.  These are
@@ -97,7 +97,7 @@ static const CREATEOBJECT_FUNCTION_INFO FAR_BSS createObjectFunctions[] = {
 #endif /* USE_KEYSETS */
 	{ OBJECT_TYPE_DEVICE, createDevice },
 	{ OBJECT_TYPE_USER, createUser },
-	{ OBJECT_TYPE_NONE, NULL }
+	{ OBJECT_TYPE_NONE, NULL }, { OBJECT_TYPE_NONE, NULL }
 	};
 
 /* Prototypes for functions in random.c */
@@ -141,7 +141,7 @@ static int getNonce( SYSTEMDEV_INFO *systemInfo, const void *data,
 	/* If the nonce generator hasn't been initialised yet, we set up the
 	   hashing and get 64 bits of private nonce state.  What to do if the
 	   attempt to initialise the state fails is somewhat debatable.  Since
-	   nonces are only ever used in protocols alongside crypto keys, and an
+	   nonces are only ever used in protocols alongside crypto keys and an
 	   RNG failure will be detected when the key is generated, we can
 	   generally ignore a failure at this point.  However, nonces are
 	   sometimes also used in non-crypto contexts (for example to generate
@@ -156,7 +156,7 @@ static int getNonce( SYSTEMDEV_INFO *systemInfo, const void *data,
 	   during key generation */
 	if( !systemInfo->nonceDataInitialised )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		int status;
 
 		getHashParameters( CRYPT_ALGO_SHA, &systemInfo->hashFunction,
@@ -180,11 +180,18 @@ static int getNonce( SYSTEMDEV_INFO *systemInfo, const void *data,
 		systemInfo->nonceDataInitialised = TRUE;
 		}
 
+	/* Safety check to ensure that the hash function is initialised and that 
+	   the following loop will always terminate */
+	if( systemInfo->hashFunction == NULL || systemInfo->hashSize <= 0 )
+		retIntError();
+
 	/* Shuffle the public state and copy it to the output buffer until it's
 	   full */
 	while( nonceLength > 0 )
 		{
 		const int bytesToCopy = min( nonceLength, systemInfo->hashSize );
+
+		assert( nonceLength > 0 && systemInfo->hashSize > 0 );
 
 		/* Hash the state and copy the appropriate amount of data to the
 		   output buffer */
@@ -431,7 +438,7 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #endif /* USE_VENDOR_ALGOS */
 
 	/* End-of-list marker */
-	NULL
+	NULL, NULL
 	};
 
 static CAPABILITY_INFO_LIST FAR_BSS capabilityInfoList[ MAX_NO_CAPABILITIES ];
@@ -452,7 +459,10 @@ static void initCapabilities( void )
 	/* Build the list of available capabilities */
 	memset( capabilityInfoList, 0,
 			sizeof( CAPABILITY_INFO_LIST ) * MAX_NO_CAPABILITIES );
-	for( i = 0; getCapabilityTable[ i ] != NULL; i++ )
+	for( i = 0; 
+		 getCapabilityTable[ i ] != NULL && \
+			i < FAILSAFE_ARRAYSIZE( getCapabilityTable, GETCAPABILITY_FUNCTION ); 
+		 i++ )
 		{
 		const CAPABILITY_INFO *capabilityInfoPtr = getCapabilityTable[ i ]();
 
@@ -462,6 +472,8 @@ static void initCapabilities( void )
 		if( i > 0 )
 			capabilityInfoList[ i - 1 ].next = &capabilityInfoList[ i ];
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( getCapabilityTable, GETCAPABILITY_FUNCTION ) )
+		retIntError_Void();
 	}
 
 /****************************************************************************
@@ -480,7 +492,11 @@ int setDeviceSystem( DEVICE_INFO *deviceInfo )
 	deviceInfo->getRandomFunction = getRandomFunction;
 	deviceInfo->capabilityInfoList = capabilityInfoList;
 	deviceInfo->createObjectFunctions = createObjectFunctions;
+	deviceInfo->createObjectFunctionCount = \
+		FAILSAFE_ARRAYSIZE( createObjectFunctions, CREATEOBJECT_FUNCTION_INFO );
 	deviceInfo->mechanismFunctions = mechanismFunctions;
+	deviceInfo->mechanismFunctionCount = \
+		FAILSAFE_ARRAYSIZE( mechanismFunctions, MECHANISM_FUNCTION_INFO );
 
 	return( CRYPT_OK );
 	}

@@ -277,7 +277,7 @@ int getKeyID( char *keyIDbuffer, const CRYPT_HANDLE cryptHandle,
 	if( keyIDtype == CRYPT_CERTINFO_FINGERPRINT_SHA || \
 		keyIDtype == CRYPT_IATTRIBUTE_AUTHCERTID )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, hashBuffer, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
@@ -558,7 +558,7 @@ static int createDatabase( DBMS_INFO *dbmsInfo,
 			"CREATE UNIQUE INDEX logCertIDIdx ON certLog (certID)" );
 	if( cryptStatusOK( status ) && isCertStore( dbmsInfo ) )
 		{
-		char dummyCertID[ DBXKEYID_BUFFER_SIZE ];
+		char dummyCertID[ DBXKEYID_BUFFER_SIZE + 8 ];
 
 		/* Create a special dummy certID with an out-of-band value to mark
 		   the first entry in the log */

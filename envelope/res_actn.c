@@ -26,6 +26,8 @@
 ACTION_LIST *findAction( ACTION_LIST *actionListPtr,
 						 const ACTION_TYPE actionType )
 	{
+	int iterationCount = 0;
+	
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 	assert( actionType == ACTION_KEYEXCHANGE || \
@@ -35,12 +37,15 @@ ACTION_LIST *findAction( ACTION_LIST *actionListPtr,
 			actionType == ACTION_MAC || \
 			actionType == ACTION_CRYPT );
 
-	while( actionListPtr != NULL )
+	while( actionListPtr != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		if( actionListPtr->action == actionType )
 			return( actionListPtr );
 		actionListPtr = actionListPtr->next;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -48,6 +53,8 @@ ACTION_LIST *findAction( ACTION_LIST *actionListPtr,
 ACTION_LIST *findLastAction( ACTION_LIST *actionListPtr,
 							 const ACTION_TYPE actionType )
 	{
+	int iterationCount = 0;
+
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 	assert( actionType == ACTION_KEYEXCHANGE || \
@@ -64,8 +71,11 @@ ACTION_LIST *findLastAction( ACTION_LIST *actionListPtr,
 
 	/* Find the end of the action group */
 	while( actionListPtr->next != NULL && \
-		   actionListPtr->next->action == actionType )
+		   actionListPtr->next->action == actionType && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		actionListPtr = actionListPtr->next;
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 	return( actionListPtr );
 	}
 
@@ -84,6 +94,7 @@ ACTION_LIST *addAction( ACTION_LIST **actionListHeadPtrPtr,
 	{
 	ACTION_LIST *actionListPtr = *actionListHeadPtrPtr, *prevActionPtr = NULL;
 	ACTION_LIST *actionListItem;
+	int iterationCount = 0;
 
 	assert( isWritePtr( actionListHeadPtrPtr, sizeof( ACTION_LIST * ) ) );
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
@@ -108,11 +119,14 @@ ACTION_LIST *addAction( ACTION_LIST **actionListHeadPtrPtr,
 	actionListItem->iTspSession = CRYPT_ERROR;
 
 	/* Find the last action in the action group and append the new action */
-	while( actionListPtr != NULL && actionListPtr->action <= actionType )
+	while( actionListPtr != NULL && actionListPtr->action <= actionType && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		prevActionPtr = actionListPtr;
 		actionListPtr = actionListPtr->next;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 	if( prevActionPtr == NULL )
 		*actionListHeadPtrPtr = actionListItem;
 	else
@@ -147,6 +161,7 @@ void deleteAction( ACTION_LIST **actionListHead,
 				   ACTION_LIST *actionListItem )
 	{
 	ACTION_LIST *listPrevPtr;
+	int iterationCount = 0;
 
 	assert( isWritePtr( actionListHead, sizeof( ACTION_LIST * ) ) );
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
@@ -154,8 +169,11 @@ void deleteAction( ACTION_LIST **actionListHead,
 
 	/* Find the previons entry in the list */
 	for( listPrevPtr = *actionListHead;
-		 listPrevPtr != NULL && listPrevPtr->next != actionListItem;
+		 listPrevPtr != NULL && listPrevPtr->next != actionListItem && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 listPrevPtr = listPrevPtr->next );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 
 	/* Remove the item from the list */
 	deleteSingleListElement( actionListHead, listPrevPtr, actionListItem );
@@ -169,17 +187,22 @@ void deleteAction( ACTION_LIST **actionListHead,
 void deleteActionList( MEMPOOL_STATE memPoolState,
 					   ACTION_LIST *actionListPtr )
 	{
+	int iterationCount = 0;
+
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
-	while( actionListPtr != NULL )
+	while( actionListPtr != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		ACTION_LIST *actionListItem = actionListPtr;
 
 		actionListPtr = actionListPtr->next;
 		deleteActionListItem( memPoolState, actionListItem );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 	}
 
 /* Delete any orphaned actions, for example automatically-added hash actions
@@ -188,11 +211,13 @@ void deleteActionList( MEMPOOL_STATE memPoolState,
 void deleteUnusedActions( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr = envelopeInfoPtr->actionList;
+	int iterationCount = 0;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
 	/* Check for unattached hash/MAC or encryption actions and delete them */
-	while( actionListPtr != NULL )
+	while( actionListPtr != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		ACTION_LIST *actionListCurrent = actionListPtr;
 
@@ -204,6 +229,8 @@ void deleteUnusedActions( ENVELOPE_INFO *envelopeInfoPtr )
 			deleteAction( &envelopeInfoPtr->actionList,
 						  envelopeInfoPtr->memPoolState, actionListCurrent );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 	}
 
 /****************************************************************************
@@ -220,9 +247,9 @@ ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
 						   const CRYPT_HANDLE cryptHandle )
 	{
 	ACTION_LIST *actionListPtr = ( ACTION_LIST * ) actionListStart;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyID[ KEYID_SIZE + 8 ];
-	int cryptAlgo, status = CRYPT_OK;
+	int cryptAlgo, iterationCount, status = CRYPT_OK;
 
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
@@ -268,8 +295,10 @@ ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
 
 	/* Walk down the list from the first to the last action in the action
 	   group, checking each in turn */
+	iterationCount = 0;
 	for( actionListPtr = findAction( actionListPtr, actionType );
-		 actionListPtr != NULL && actionListPtr->action == actionType;
+		 actionListPtr != NULL && actionListPtr->action == actionType && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 actionListPtr = actionListPtr->next )
 		{
 		BOOLEAN isDuplicate = FALSE;
@@ -338,6 +367,8 @@ ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
 			return( ACTION_RESULT_INITED );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	return( ACTION_RESULT_OK );
 	}
@@ -394,7 +425,7 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 	   MAC actions */
 	if( envelopeInfoPtr->preActionList != NULL )
 		{
-		int actionCount = 0;
+		int actionCount = 0, iterationCount;
 
 		/* Make sure that the envelope has the appropriate usage for these 
 		   actions */
@@ -412,17 +443,24 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 			/* PGP can't have any conventional keyex actions, since the 
 			   password is used to directly derive the session key */
 			return( FALSE );
+		iterationCount = 0;
 		while( actionListPtr != NULL && \
-			   actionListPtr->action == ACTION_KEYEXCHANGE )
+			   actionListPtr->action == ACTION_KEYEXCHANGE && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 				actionListPtr = actionListPtr->next;
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Boolean();
 		if( actionListPtr != NULL )
 			return( FALSE );
 
 		/* Key exchange must be followed by a single crypt or one or more
 		   MAC actions */
 		assert( envelopeInfoPtr->actionList != NULL );
+		iterationCount = 0;
 		for( actionListPtr = envelopeInfoPtr->actionList;
-			 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+			 actionListPtr != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+			 actionListPtr = actionListPtr->next )
 			{
 			if( actionListPtr->action == ACTION_CRYPT )
 				actionCount++;
@@ -435,6 +473,8 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 					return( FALSE );
 				}
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Boolean();
 		if( actionCount > 1 )
 			return( FALSE );
 
@@ -448,7 +488,7 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 	/* If there are post-actions, it has to be a hash + signature actions */
 	if( envelopeInfoPtr->postActionList != NULL )
 		{
-		int hashActionCount = 0, sigActionCount = 0;
+		int hashActionCount = 0, sigActionCount = 0, iterationCount;
 
 		/* Make sure that the envelope has the appropriate usage for these 
 		   actions */
@@ -462,26 +502,36 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 		/* Signature must be preceded by one or more hash actions */
 		if( envelopeInfoPtr->actionList == NULL )
 			return( FALSE );
+		iterationCount = 0;
 		for( actionListPtr = envelopeInfoPtr->actionList;
-			 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+			 actionListPtr != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+			 actionListPtr = actionListPtr->next )
 			{
 			if( actionListPtr->action != ACTION_HASH )
 				return( FALSE );
 			hashActionCount++;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Boolean();
 
 		/* PGP can only have a single hash per signed envelope */
 		if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP && hashActionCount > 1 )
 			return( FALSE );
 
 		/* Hash actions must be followed by one or more signature actions */
+		iterationCount = 0;
 		for( actionListPtr = envelopeInfoPtr->postActionList;
-			 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+			 actionListPtr != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+			 actionListPtr = actionListPtr->next )
 			{
 			if( actionListPtr->action != ACTION_SIGN )
 				return( FALSE );
 			sigActionCount++;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Boolean();
 
 		/* PGP can only have a single signature, multiple signatures are 
 		   handled by nesting envelopes */
@@ -541,12 +591,17 @@ int checkActions( ENVELOPE_INFO *envelopeInfoPtr )
 	if( ( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) && \
 		actionListPtr->action == ACTION_HASH )
 		{
-		while( actionListPtr != NULL )
+		int iterationCount = 0;
+		
+		while( actionListPtr != NULL && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			if( actionListPtr->action != ACTION_HASH )
 				return( FALSE );
 			actionListPtr = actionListPtr->next;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Boolean();
 		return( TRUE );
 		}
 

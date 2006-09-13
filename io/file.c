@@ -200,8 +200,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ BUFSIZ * 2 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -435,8 +435,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ BUFSIZ * 2 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -634,12 +634,11 @@ BOOLEAN fileReadonly( const char *fileName )
 
 static void eraseFile( const STREAM *stream, long position, long length )
 	{
-	BYTE buffer[ BUFSIZ * 2 ];
-
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -884,8 +883,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ BUFSIZ * 2 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -923,7 +922,6 @@ void fileClearToEOF( const STREAM *stream )
 void fileErase( const char *fileName )
 	{
 	STREAM stream;
-	BYTE buffer[ BUFSIZ ];
 	int length, status;
 
 	assert( fileName != NULL );
@@ -1071,7 +1069,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 		{
 		FILE *filePtr;
 		fldata_t fileData;
-		char fileBuffer[ MAX_PATH_LENGTH ];
+		char fileBuffer[ MAX_PATH_LENGTH + 8 ];
 		int count;
 
 		/* Open the file and determine how large it is */
@@ -1198,7 +1196,7 @@ int fileFlush( STREAM *stream )
 	   to write a fixed-length single-record file containing all the data in
 	   one record, so we can't really do anything until the data is flushed */
 	FILE *filePtr;
-	char formatBuffer[ 64 ];
+	char formatBuffer[ 64 + 8 ];
 	int count;
 
 	sprintf( formatBuffer, "wb, recfm=F, lrecl=%d, noseek", stream->bufPos );
@@ -1273,7 +1271,7 @@ void fileErase( const char *fileName )
 	if( filePtr != NULL )
 		{
 		fldata_t fileData;
-		char fileBuffer[ MAX_PATH_LENGTH ];
+		char fileBuffer[ MAX_PATH_LENGTH + 8 ];
 		int status;
 
 		status = fldata( filePtr, fileBuffer, &fileData );
@@ -1287,8 +1285,8 @@ void fileErase( const char *fileName )
 	   private key files using the default stream buffer is OK for this */
 	if( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ STREAM_BUFSIZE ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ STREAM_BUFSIZE + 8 ];
 
 		length = max( length, STREAM_BUFSIZE );
 		setMessageData( &msgData, buffer, length );
@@ -1500,8 +1498,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ BUFSIZ * 2 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		uint32_t bytesWritten;
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
@@ -1674,7 +1672,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 								   MODE_WRITE, MODE_READWRITE };
 #pragma convlit( resume )
 	const char *openMode;
-	char fileNameBuffer[ MAX_PATH_LENGTH ];
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( fileName != NULL );
@@ -1756,7 +1754,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 #endif /* EBCDIC_CHARS */
 	int openMode = modes[ mode & FILE_RW_MASK ];
 #ifdef EBCDIC_CHARS
-	char fileNameBuffer[ MAX_PATH_LENGTH ];
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 #endif /* EBCDIC_CHARS */
 #ifdef USE_FCNTL_LOCKING
 	struct flock flockInfo;
@@ -2094,7 +2092,7 @@ int fileSeek( STREAM *stream, const long position )
 BOOLEAN fileReadonly( const char *fileName )
 	{
 #ifdef EBCDIC_CHARS
-	char fileNameBuffer[ MAX_PATH_LENGTH ];
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 
 	fileName = bufferToEbcdic( fileNameBuffer, fileName );
 #endif /* EBCDIC_CHARS */
@@ -2123,8 +2121,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	   You'll NEVER get rid of me, Toddy */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ 1024 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ 1024 + 8 ];
 		const int bytesToWrite = min( length, 1024 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -2170,7 +2168,7 @@ void fileErase( const char *fileName )
 	struct utimbuf timeStamp;
 #endif /* OS-specific variable declarations */
 #ifdef EBCDIC_CHARS
-	char fileNameBuffer[ MAX_PATH_LENGTH ];
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 #endif /* EBCDIC_CHARS */
 	int status;
 
@@ -2263,7 +2261,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 	struct passwd *passwd;
 	int length;
 #ifdef EBCDIC_CHARS
-	char fileNameBuffer[ MAX_PATH_LENGTH ];
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 #endif /* EBCDIC_CHARS */
 
 	/* Make sure that the open fails if we can't build the path */
@@ -2281,7 +2279,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 		/* You're kidding, right? */
 		return;
 
-	/* Make sure that the path buffer meets the minimum-length
+	/* Make sure that the path buffer meets the minimum length
 	   requirements */
 #if defined( __APPLE__ )
 	if( length + 32 + strlen( fileName ) + 8 > pathMaxLen )
@@ -2526,12 +2524,11 @@ BOOLEAN fileReadonly( const char *fileName )
 
 static void eraseFile( const STREAM *stream, long position, long length )
 	{
-	BYTE buffer[ BUFSIZ * 2 ];
-
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for
@@ -2719,7 +2716,6 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 
 #ifdef __WINCE__
   #define isWin95				TRUE
-  #define checkUserKnown( x )	TRUE
 #endif /* __WINCE__ */
 
 /* Check whether a user's SID is known to a server providing a network
@@ -2734,7 +2730,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 
 static BOOLEAN isSpecialSID( SID *pUserSid )
 	{
-	BYTE sidBuffer[ SID_BUFFER_SIZE ];
+	BYTE sidBuffer[ SID_BUFFER_SIZE + 8 ];
 	SID *pSid = ( PSID ) sidBuffer;
 	SID_IDENTIFIER_AUTHORITY identifierAuthority = SECURITY_NT_AUTHORITY;
 
@@ -2797,19 +2793,24 @@ static BOOLEAN getUncName( UNIVERSAL_NAME_INFO *nameInfo,
 	return( gotUNC );
 	}
 
-static BOOLEAN checkUserKnown( const char *fileName )
+static BOOLEAN checkUserKnown( const char *fileName, 
+							   const int fileNameLength )
 	{
 	HANDLE hToken;
-	BYTE uniBuffer[ UNI_BUFFER_SIZE ], tokenBuffer[ TOKEN_BUFFER_SIZE ];
-	char pathBuffer[ PATH_BUFFER_SIZE ], nameBuffer[ PATH_BUFFER_SIZE ];
-	char domainBuffer[ PATH_BUFFER_SIZE ], *fileNamePtr;
+	BYTE uniBuffer[ UNI_BUFFER_SIZE + 8 ];
+	BYTE tokenBuffer[ TOKEN_BUFFER_SIZE + 8 ];
+	char pathBuffer[ PATH_BUFFER_SIZE + 8 ];
+	char nameBuffer[ PATH_BUFFER_SIZE + 8 ];
+	char domainBuffer[ PATH_BUFFER_SIZE + 8 ];
+	char *fileNamePtr = ( char * ) fileName;
 	UNIVERSAL_NAME_INFO *nameInfo = ( UNIVERSAL_NAME_INFO * ) uniBuffer;
 	TOKEN_USER *pTokenUser = ( TOKEN_USER * ) tokenBuffer;
 	SID_NAME_USE eUse;
 	DWORD nameBufSize = PATH_BUFFER_SIZE, domainBufSize = PATH_BUFFER_SIZE;
 	BOOLEAN isMappedDrive = FALSE, tokenOK = FALSE;
-	int serverNameLength;
+	int fileNamePtrLength = fileNameLength, serverNameLength;
 
+	assert( isReadPtr( fileName, fileNameLength ) );
 	assert( sizeof( UNIVERSAL_NAME_INFO ) + _MAX_PATH <= UNI_BUFFER_SIZE );
 
 	/* Win95 doesn't have any ACL-based security, there's nothing to do */
@@ -2821,13 +2822,16 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	   necessary because while the Windows filesystem functions will accept
 	   Unix-style forward slashes in paths, the WNetGetUniversalName()
 	   networking function doesn't */
-	if( GetFullPathName( fileName, PATH_BUFFER_SIZE, pathBuffer,
-						 &fileNamePtr ) )
-		fileName = pathBuffer;
+	if( GetFullPathName( fileNamePtr, PATH_BUFFER_SIZE, pathBuffer, \
+						 NULL ) > 0 )
+		{
+		fileNamePtr = pathBuffer;
+		fileNamePtrLength = strlen( pathBuffer );
+		}
 
 	/* If the path is too short to contain a drive letter or UNC path, it
 	   must be local */
-	if( strlen( fileName ) <= 2 )
+	if( strlen( fileNamePtr ) <= 2 )
 		return( TRUE );
 
 	/* If there's a drive letter present, check whether it's a local or
@@ -2836,11 +2840,11 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	   also use IsNetDrive() for this, but this requires dynamically pulling
 	   it in from shell32.dll, and even then it's only present in version 5.0
 	   or later, so it's easier to use GetDriveType() */
-	if( fileName[ 1 ] == ':' )
+	if( fileNamePtr[ 1 ] == ':' )
 		{
-		char drive[ 8 ];
+		char drive[ 8 + 8 ];
 
-		memcpy( drive, fileName, 2 );
+		memcpy( drive, fileNamePtr, 2 );
 		drive[ 2 ] = '\0';
 		if( GetDriveType( drive ) != DRIVE_REMOTE )
 			/* It's a local drive, the user should be known */
@@ -2850,7 +2854,7 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	else
 		/* If it's not a UNC name, it's local (or something weird like a
 		   mapped web page to which we shouldn't be writing keys anyway) */
-		if( memcmp( fileName, "\\\\", 2 ) )
+		if( memcmp( fileNamePtr, "\\\\", 2 ) )
 			return( TRUE );
 
 	/* If it's a mapped network drive, get the name in UNC form.  What to do
@@ -2859,19 +2863,23 @@ static BOOLEAN checkUserKnown( const char *fileName )
 	   usual reason for this will be that there's a problem with the network
 	   and the share is a cached remnant of a persistent connection), all we
 	   can do is fail safe and hope that the user is known */
-	if( isMappedDrive && !getUncName( nameInfo, &fileName ) )
+	if( isMappedDrive && !getUncName( nameInfo, &fileNamePtr ) )
 		return( TRUE );
 
-	assert( !memcmp( fileName, "\\\\", 2 ) );
+	assert( !memcmp( fileNamePtr, "\\\\", 2 ) );
 
 	/* We've got the network share in UNC form, extract the server name.  If
 	   for some reason the name is still an absolute path, the following will
 	   convert it to "x:\", which is fine */
 	for( serverNameLength = 2; \
-		 fileName[ serverNameLength ] && fileName[ serverNameLength ] != '\\'; \
+		 serverNameLength < fileNamePtrLength && \
+			fileNamePtr[ serverNameLength ] != '\\'; \
 		 serverNameLength++ );
-	memmove( pathBuffer, fileName, serverNameLength );
-	memcpy( pathBuffer + serverNameLength, "\\", 2 );
+	if( serverNameLength >= PATH_BUFFER_SIZE - 2 )
+		/* Server name is too long, default to fail-safe handling */
+		return( TRUE );
+	memmove( pathBuffer, fileNamePtr, serverNameLength );
+	strcpy( pathBuffer + serverNameLength, "\\" );
 
 	/* Get the current user's SID */
 	if( OpenThreadToken( GetCurrentThread(), TOKEN_QUERY, FALSE, &hToken ) || \
@@ -2985,11 +2993,13 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   and newer, LocalService and NetworkService.  To handle this,
 	   checkUserKnown() also checks whether the user is running under one of
 	   these accounts */
+#ifndef __WINCE__
 	if( !isWin95 && ( mode & FILE_WRITE ) && ( mode & FILE_PRIVATE ) && \
-		checkUserKnown( fileNamePtr ) && \
+		checkUserKnown( fileNamePtr, strlen( fileNamePtr ) ) && \
 		( aclInfo = initACLInfo( FILE_GENERIC_READ | \
 								 FILE_GENERIC_WRITE ) ) == NULL )
 		return( CRYPT_ERROR_OPEN );
+#endif /* __WINCE__ */
 
 	/* Check that the file isn't a special file type, for example a device
 	   pseudo-file that can crash the system under Win95/98/ME/whatever.
@@ -3208,8 +3218,8 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	/* Wipe the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ 1024 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ 1024 + 8 ];
 		DWORD bytesWritten;
 		int bytesToWrite = min( length, 1024 );
 
@@ -3817,13 +3827,13 @@ BOOLEAN fileReadonly( const char *fileName )
 
 static void eraseFile( const STREAM *stream, long position, long length )
 	{
-	BYTE buffer[ BUFSIZ * 2 ];
 	int fileHandle = fileno( stream->filePtr );
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( BUFSIZ * 2 ) + 8 ];
 		int bytesToWrite = min( length, BUFSIZ * 2 );
 
 		/* We need to make sure that we fill the buffer with random data for

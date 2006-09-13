@@ -1358,7 +1358,7 @@ static const ATTRIBUTE_INFO FAR_BSS extensionInfo[] = {
 	  BER_OBJECT_IDENTIFIER, 0,
 	  FL_MULTIVALUED | FL_SEQEND, 3, MAX_OID_SIZE, 0, NULL },
 
-	{ NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
 	};
 
 /* Subtable for encoding the holdInstructionCode */
@@ -1381,7 +1381,7 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS holdInstructionInfo[] = {
 	  FIELDTYPE_IDENTIFIER, 0,
 	  FL_OPTIONAL, 0, 0, 0, NULL },
 
-	{ NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
 	};
 
 /****************************************************************************
@@ -1557,7 +1557,7 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS generalNameInfo[] = {
 	  BER_OBJECT_IDENTIFIER, CTAG( 8 ),
 	  FL_OPTIONAL, 3, MAX_OID_SIZE, 0, NULL },
 
-	{ NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
 	};
 
 /****************************************************************************
@@ -2232,7 +2232,7 @@ static const ATTRIBUTE_INFO FAR_BSS cmsAttributeInfo[] = {
 	  BER_STRING_IA5, MAKE_CTAG_PRIMITIVE( 0 ),
 	  FL_OPTIONAL | FL_SEQEND, MIN_URL_SIZE, MAX_URL_SIZE, 0, ( void * ) checkHTTP },
 
-	{ NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
 	};
 
 /* Subtable for encoding the contentType */
@@ -2287,10 +2287,11 @@ STATIC_DATA const ATTRIBUTE_INFO FAR_BSS contentTypeInfo[] = {
 	  FIELDTYPE_IDENTIFIER, 0,
 	  FL_OPTIONAL, 0, 0, 0, NULL },
 
-	{ NULL, CRYPT_ERROR }
+	{ NULL, CRYPT_ERROR }, { NULL, CRYPT_ERROR }
 	};
 
-/* Select the appropriate attribute info table for encoding/type checking */
+/* Select the appropriate attribute info table for encoding/type checking, 
+   and get its size */
 
 const ATTRIBUTE_INFO *selectAttributeInfo( const ATTRIBUTE_TYPE attributeType )
 	{
@@ -2312,6 +2313,16 @@ const ATTRIBUTE_INFO *selectAttributeInfo( const ATTRIBUTE_TYPE attributeType )
 
 	return( ( attributeType == ATTRIBUTE_CMS ) ? \
 			cmsAttributeInfo : extensionInfo );
+	}
+
+const int sizeofAttributeInfo( const ATTRIBUTE_TYPE attributeType )
+	{
+	assert( attributeType == ATTRIBUTE_CERTIFICATE || \
+			attributeType == ATTRIBUTE_CMS );
+
+	return( ( attributeType == ATTRIBUTE_CMS ) ? \
+			FAILSAFE_ARRAYSIZE( cmsAttributeInfo, ATTRIBUTE_INFO ) : \
+			FAILSAFE_ARRAYSIZE( extensionInfo, ATTRIBUTE_INFO ) );
 	}
 
 /****************************************************************************
@@ -2348,6 +2359,7 @@ static int checkURLString( const char *url, const int urlLength,
 	   malformed ":/" because this could be something like 
 	   "file:/dir/filename", which is valid */
 	for( i = 0; i < urlLength; i++ )
+		{
 		if( url[ i ] == ':' )
 			{
 			int offset = i + 1; /* Skip schema + ":" */
@@ -2363,6 +2375,7 @@ static int checkURLString( const char *url, const int urlLength,
 			length = urlLength - offset;
 			break;
 			}
+		}
 
 	/* Make sure that the start of the URL looks valid */
 	switch( urlType )

@@ -174,8 +174,8 @@ static int dispatchCommand( COMMAND_INFO *cmd, void *stateInfo,
 							DISPATCH_FUNCTION dispatchFunction )
 	{
 	COMMAND_INFO sentCmd = *cmd;
-	BYTE buffer[ DBX_IO_BUFSIZE ], *bufPtr = buffer;
-	BYTE header[ COMMAND_FIXED_DATA_SIZE ];
+	BYTE buffer[ DBX_IO_BUFSIZE + 8 ], *bufPtr = buffer;
+	BYTE header[ COMMAND_FIXED_DATA_SIZE + 8 ];
 	const int payloadLength = ( cmd->noArgs * COMMAND_WORDSIZE ) + \
 							  ( cmd->noStrArgs * COMMAND_WORDSIZE ) + \
 							  cmd->strArgLen[ 0 ] + cmd->strArgLen[ 1 ] + \
@@ -386,7 +386,7 @@ static int performUpdate( DBMS_INFO *dbmsInfo, const char *command,
 	static const COMMAND_INFO cmdTemplate = \
 		{ DBX_COMMAND_UPDATE, COMMAND_FLAG_NONE, 1, 1 };
 	COMMAND_INFO cmd;
-	BYTE encodedDate[ 8 ];
+	BYTE encodedDate[ 8 + 8 ];
 	int status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
@@ -432,7 +432,7 @@ static int performQuery( DBMS_INFO *dbmsInfo, const char *command,
 	static const COMMAND_INFO cmdTemplate = \
 		{ DBX_COMMAND_QUERY, COMMAND_FLAG_NONE, 2, 1 };
 	COMMAND_INFO cmd;
-	BYTE encodedDate[ 8 ];
+	BYTE encodedDate[ 8 + 8 ];
 	int argIndex, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
@@ -716,87 +716,96 @@ static int performStaticQuery( DBMS_INFO *dbmsInfo, const char *command,
    of backend-specific custom keywords and ways of escaping keywords that
    we can't know about and therefore can't easily strip */
 
-void dbmsFormatSQL( char *buffer, const char *format, ... )
+static int copyStringArg( char *buffer, const int bufMaxLen, 
+						  const char *strPtr )
+	{
+	int bufPos = 0;
+
+	assert( strPtr != NULL );	/* Catch a shortage of args */
+
+	/* Copy the string to the output buffer with conversion of any special 
+	   characters that are used by SQL */
+	while( *strPtr != '\0' )
+		{
+		int ch = *strPtr++;
+
+		/* If it's a control character, skip it */
+		if( ( ch & 0x7F ) < ' ' )
+			continue;
+
+		/* Escape metacharacters that could be misused in queries.  We catch 
+		   the obvious ' and ;, as well as the less obvious %, which could 
+		   be used to hide other metacharacters.  Note that none of these 
+		   characters are valid in base64, which makes it safe to escape 
+		   them in the few instances where they do occur */
+		if( ch == '\'' || ch == '\\' || ch == ';' || ch == '%' )
+			/* Escape the character */
+			buffer[ bufPos++ ] = SQL_ESCAPE;
+
+		/* Bypass various dangerous SQL "enhancements".  For Windows ODBC 
+		   the driver will execute anything delimited by '|'s as an 
+		   expression (an example being '|shell("cmd /c echo " & chr(124) & 
+		   " format c:")|').  Because of this we strip gazintas if we're 
+		   running under Windoze.  In addition generic ODBC uses '{' and '}' 
+		   as escape delimiters, so we also strip these */
+#if defined( __WINDOWS__ )
+		if( ch != '|' && ch != '{' && ch != '}' )
+#else
+		if( ch != '{' && ch != '}' )
+#endif /* Database-specific dangerous escape sequences */
+			buffer[ bufPos++ ] = ch;
+
+		/* Make sure that we haven't overflowed the input buffer.  We check 
+		   for bufMaxLen - 3 rather than bufMaxLen - 2 in case the next 
+		   character needs escaping, which expands it to two chars 
+		   (bufMaxLen - 1 is used for the '\0').  This overflowing can be 
+		   done deliberately, for example by using large numbers of escape 
+		   chars (which are in turn escaped) to force truncation of the 
+		   query beyond the injected SQL if the processing simply stops at a 
+		   given point */
+		if( bufPos > bufMaxLen - 3 )
+			return( CRYPT_ERROR );
+		}
+
+	return( bufPos );
+	}
+
+void dbmsFormatSQL( char *buffer, const int bufMaxLen, 
+					const char *format, ... )
 	{
 	va_list argPtr;
 	char *formatPtr = ( char * ) format;
 	int bufPos = 0;
 
 	va_start( argPtr, format );
-	while( *formatPtr )
+	while( *formatPtr != '\0' )
 		{
 		if( *formatPtr == '$' )
 			{
-			char *strPtr = va_arg( argPtr, char * );
+			int length;
 
-			assert( strPtr != NULL );	/* Catch a shortage of args */
-
-			/* Copy the string to the output buffer with conversion of any
-			   special characters that are used by SQL */
-			while( *strPtr )
+			/* Copy across the string arg.  Note that we refuse a query if 
+			   it overflows rather than trying to truncate it to a safe 
+			   length, both because it's better to fail than to try the 
+			   query anyway in truncated form, and because this could be 
+			   used by an attacker to ensure that the truncation occurs in 
+			   the middle of an escape sequence that de-fangs a dangerous 
+			   character, thus negating the escaping */
+			length = copyStringArg( buffer + bufPos, bufMaxLen - bufPos, 
+									va_arg( argPtr, char * ) );
+			if( cryptStatusError( length ) )
 				{
-				int ch = *strPtr++;
-
-				/* If it's a control character, skip it */
-				if( ( ch & 0x7F ) < ' ' )
-					continue;
-
-				/* Escape metacharacters that could be misused in queries.
-				   We catch the obvious ' and ;, as well as the less obvious
-				   %, which could be used to hide other metacharacters.
-				   Note that none of these characters are valid in base64,
-				   which makes it safe to escape them in the few instances
-				   where they do occur */
-				if( ch == '\'' || ch == '\\' || ch == ';' || ch == '%' )
-					/* Escape the character */
-					buffer[ bufPos++ ] = SQL_ESCAPE;
-
-				/* Bypass various dangerous SQL "enhancements".  For Windows
-				   ODBC the driver will execute anything delimited by '|'s
-				   as an expression (an example being '|shell("cmd /c echo "
-				   & chr(124) & " format c:")|').  Because of this we strip
-				   gazintas if we're running under Windoze.  In addition
-				   generic ODBC uses '{' and '}' as escape delimiters, so we
-				   also strip these */
-#if defined( __WINDOWS__ )
-				if( ch != '|' && ch != '{' && ch != '}' )
-#elif defined( USE_ODBC )
-				if( ch != '{' && ch != '}' )
-#endif /* Database-specific dangerous escape sequences */
-				buffer[ bufPos++ ] = ch;
-
-				/* Make sure that we haven't overflowed the input buffer.
-				   We check for MAX_SQL_QUERY_SIZE - 3 rather than
-				   MAX_SQL_QUERY_SIZE - 2 in case the next character needs
-				   escaping, which expands it to two chars
-				   (MAX_SQL_QUERY_SIZE - 1 is used for the '\0').  This
-				   overflowing can be done deliberately, for example by
-				   using large numbers of escape chars (which are in turn
-				   escaped) to force truncation of the query beyond the
-				   injected SQL if the processing simply stops at a given
-				   point.
-
-				   Note that we refuse a query if it overflows rather than
-				   trying to truncate it to a safe length, both because
-				   it's better to fail than to try the query anyway in
-				   truncated form, and because this could be used by an
-				   attacker to ensure that the truncation occurs in the
-				   middle of an escape sequence that de-fangs a dangerous
-				   character, thus negating the escaping */
-				if( bufPos > MAX_SQL_QUERY_SIZE - 3 )
-					{
-					bufPos = 0;
-					formatPtr = "\x00\x00";	/* Force exit on outer loop */
-					break;
-					}
+				bufPos = 0;
+				formatPtr = "\x00\x00";	/* Force exit on outer loop */
+				break;
 				}
-
+			bufPos += length;
 			formatPtr++;
 			}
 		else
 			{
 			/* Just copy the char over, with a length check */
-			if( bufPos > MAX_SQL_QUERY_SIZE - 1 )
+			if( bufPos > bufMaxLen - 1 )
 				{
 				bufPos = 0;
 				break;
@@ -812,8 +821,8 @@ void dbmsFormatSQL( char *buffer, const char *format, ... )
 /* Format input parameters into SQL queries, replacing meta-values with
    actual column names */
 
-int dbmsFormatQuery( char *output, const char *input, const int inputLength,
-					 const int maxLength )
+int dbmsFormatQuery( char *output, const int outMaxLength, 
+					 const char *input, const int inputLength )
 	{
 	int inPos = 0, outPos = 0, status = CRYPT_OK;
 
@@ -830,7 +839,7 @@ int dbmsFormatQuery( char *output, const char *input, const int inputLength,
 
 			/* Extract the field name and translate it into the table
 			   column name */
-			while( isAlpha( input[ inPos ] ) )
+			while( isAlpha( input[ inPos ] ) && inPos < inputLength )
 				inPos++;
 			length = inPos - fieldPos;
 			if( length <= 0 || length > 7 )
@@ -870,7 +879,7 @@ int dbmsFormatQuery( char *output, const char *input, const int inputLength,
 			length = strlen( outputFieldName );
 
 			/* Copy the translated name to the output buffer */
-			if( outPos + length >= maxLength - 1 )
+			if( outPos + length >= outMaxLength - 1 )
 				{
 				status = CRYPT_ERROR_OVERFLOW;
 				break;
@@ -883,7 +892,7 @@ int dbmsFormatQuery( char *output, const char *input, const int inputLength,
 			const char ch = input[ inPos++ ];
 
 			/* Just copy the char over, with a length check */
-			if( outPos > maxLength - 1 )
+			if( outPos > outMaxLength - 1 )
 				{
 				status = CRYPT_ERROR_OVERFLOW;
 				break;

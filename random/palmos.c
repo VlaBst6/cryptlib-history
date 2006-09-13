@@ -43,7 +43,7 @@
 void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	WinHandle winHandle;
 	Coord xCoord, yCoord;
 	Boolean flag;
@@ -89,7 +89,7 @@ void slowPoll( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	struct batteryInfoType {
 		uint16_t warnThreshold;		/* Percent left for warn */
 		uint16_t criticalThreshold;	/* Percent left for critical warn */

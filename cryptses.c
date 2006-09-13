@@ -90,7 +90,7 @@ int retExtExFnSession( SESSION_INFO *sessionInfoPtr,
 					   const int status, const CRYPT_HANDLE extErrorObject, 
 					   const char *format, ... )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	va_list argPtr;
 	int extErrorStatus;
 
@@ -216,7 +216,7 @@ static int addUrl( SESSION_INFO *sessionInfoPtr, const void *url,
 		}
 	if( cryptStatusOK( status ) && urlInfo.userInfoLen > 0 )
 		{
-		RESOURCE_DATA userInfoMsgData;
+		MESSAGE_DATA userInfoMsgData;
 
 		krnlSendMessage( sessionInfoPtr->objectHandle, 
 						 IMESSAGE_DELETEATTRIBUTE, NULL,
@@ -715,7 +715,7 @@ static int processGetAttributeS( SESSION_INFO *sessionInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr;
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 
 	/* Handle the various information types */
 	switch( messageValue )
@@ -759,7 +759,7 @@ static int processGetAttributeS( SESSION_INFO *sessionInfoPtr,
 static int processSetAttributeS( SESSION_INFO *sessionInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 
 	/* If we're in the middle of a paired-attribute add, make sure that the
 	   conditions under which it's occurring are valid */
@@ -841,7 +841,6 @@ static int processSetAttributeS( SESSION_INFO *sessionInfoPtr,
 			if( isPKIUserValue( msgData->data, msgData->length ) )
 				{
 				BYTE decodedValue[ 64 + 8 ];
-				int status;
 
 				/* It's an encoded value, make sure that it's in order */
 				status = decodePKIUserValue( decodedValue, 64, 
@@ -1109,7 +1108,7 @@ static int sessionMessageFunction( const void *objectInfoPtr,
 	/* Process object-specific messages */
 	if( message == MESSAGE_ENV_PUSHDATA )
 		{
-		RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+		MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 		const int length = msgData->length;
 		int bytesCopied, status;
 
@@ -1161,7 +1160,7 @@ static int sessionMessageFunction( const void *objectInfoPtr,
 		}
 	if( message == MESSAGE_ENV_POPDATA )
 		{
-		RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+		MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 		const int length = msgData->length;
 		int bytesCopied, status;
 
@@ -1206,11 +1205,12 @@ static int openSession( CRYPT_SESSION *iCryptSession,
 	{
 	SESSION_INFO *sessionInfoPtr;
 	const PROTOCOL_INFO *protocolInfoPtr;
-	static const struct {
+	typedef struct {
 		const CRYPT_SESSION_TYPE sessionType;
 		const CRYPT_SESSION_TYPE baseSessionType;
 		const OBJECT_SUBTYPE subType;
-		} sessionTypes[] = {
+		} SESSIONTYPE_INFO;
+	static const SESSIONTYPE_INFO sessionTypes[] = {
 	{ CRYPT_SESSION_SSH, CRYPT_SESSION_SSH, SUBTYPE_SESSION_SSH },
 	{ CRYPT_SESSION_SSH_SERVER, CRYPT_SESSION_SSH, SUBTYPE_SESSION_SSH_SVR },
 	{ CRYPT_SESSION_SSL, CRYPT_SESSION_SSL, SUBTYPE_SESSION_SSL },
@@ -1226,6 +1226,7 @@ static int openSession( CRYPT_SESSION *iCryptSession,
 	{ CRYPT_SESSION_SCEP, CRYPT_SESSION_SCEP, SUBTYPE_SESSION_SCEP },
 	{ CRYPT_SESSION_SCEP_SERVER, CRYPT_SESSION_SCEP, SUBTYPE_SESSION_SCEP_SVR },
 	{ CRYPT_SESSION_CERTSTORE_SERVER, CRYPT_SESSION_CERTSTORE_SERVER, SUBTYPE_SESSION_CERT_SVR },
+	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, CRYPT_ERROR },
 	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, CRYPT_ERROR }
 	};
 	int storageSize, i, status;
@@ -1238,9 +1239,15 @@ static int openSession( CRYPT_SESSION *iCryptSession,
 
 	/* Map the external session type to a base type and internal object
 	   subtype */
-	for( i = 0; sessionTypes[ i ].sessionType != CRYPT_SESSION_NONE; i++ )
+	for( i = 0; sessionTypes[ i ].sessionType != CRYPT_SESSION_NONE && \
+				i < FAILSAFE_ARRAYSIZE( sessionTypes, SESSIONTYPE_INFO ); 
+		 i++ )
+		{
 		if( sessionTypes[ i ].sessionType == sessionType )
 			break;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( sessionTypes, SESSIONTYPE_INFO ) )
+		retIntError();
 	assert( sessionTypes[ i ].sessionType != CRYPT_SESSION_NONE );
 
 	/* Set up subtype-specific information */

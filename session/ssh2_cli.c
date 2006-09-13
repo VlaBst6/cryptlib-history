@@ -451,7 +451,13 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusOK( status ) )
 			status = readUniversal32( &stream );		/* Language */
 		if( cryptStatusOK( status ) )
+			{
 			status = noPrompts = readUint32( &stream );	/* No.prompts */
+			if( !cryptStatusError( status ) && noPrompts > 8 )
+				/* Requesting more than a small number of prompts is 
+				   suspicious */
+				status = CRYPT_ERROR_BADDATA;
+			}
 		if( !cryptStatusError( status ) && noPrompts > 0 )
 			{
 			status = readString32( &stream, promptBuffer, &promptLength,
@@ -699,7 +705,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_ALGO_TYPE pubkeyAlgo;
 	STREAM stream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	void *keyPtr, *keyBlobPtr, *sigPtr;
 	int keyLength, keyBlobLength, sigLength, length, status;
 

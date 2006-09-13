@@ -483,7 +483,7 @@ int addTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 				   const BOOLEAN addSingleCert )
 	{
 	BOOLEAN seenNonDuplicate = FALSE;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( ( isHandleRangeValid( iCryptCert ) && certObject == NULL ) || \
 			( iCryptCert == CRYPT_UNUSED && certObject != NULL ) );
@@ -515,7 +515,10 @@ int addTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 	while( cryptStatusOK( status ) && !addSingleCert && \
 		   krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE,
 							MESSAGE_VALUE_CURSORNEXT,
-							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK );
+							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
 					 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
 	if( cryptStatusOK( status ) && !seenNonDuplicate )

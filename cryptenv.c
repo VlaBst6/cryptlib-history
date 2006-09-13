@@ -63,6 +63,7 @@ static BOOLEAN moveVirtualCursor( CONTENT_LIST *contentListPtr,
 	CONTENT_SIG_INFO *sigInfo = &contentListPtr->clSigInfo;
 	CRYPT_ATTRIBUTE_TYPE attributeType = sigInfo->attributeCursorEntry;
 	BOOLEAN doContinue;
+	int iterationCount = 0;
 
 	assert( attrGetType == ATTR_NEXT || attrGetType == ATTR_PREV );
 	assert( sigInfo->attributeCursorEntry != CRYPT_ATTRIBUTE_NONE );
@@ -74,9 +75,13 @@ static BOOLEAN moveVirtualCursor( CONTENT_LIST *contentListPtr,
 		/* Find the position of the current sub-attribute in the attribute 
 		   order list and use that to get its successor/predecessor sub-
 		   attribute */
-		for( i = 0; \
+		for( i = 0; 
 			 attributeOrderList[ i ] != attributeType && \
-			 attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE; i++ );
+				attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ); 
+			 i++ );
+		if( i >= FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ) )
+			retIntError();
 		if( attributeOrderList[ i ] == CRYPT_ATTRIBUTE_NONE )
 			attributeType = CRYPT_ATTRIBUTE_NONE;
 		else
@@ -120,7 +125,9 @@ static BOOLEAN moveVirtualCursor( CONTENT_LIST *contentListPtr,
 				return( FALSE );
 			}
 		}
-	while( doContinue );
+	while( doContinue && iterationCount++ < FAILSAFE_ITERATIONS_SMALL );
+	if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError();
 	sigInfo->attributeCursorEntry = attributeType;
 	
 	return( TRUE );
@@ -600,7 +607,7 @@ static int processGetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 								envelopeInfoPtr->contentListCurrent;
 			CONTENT_SIG_INFO *sigInfo = &contentListItem->clSigInfo;
 			MESSAGE_CREATEOBJECT_INFO createInfo;
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 			BYTE certData[ 2048 + 8 ], *certDataPtr = certData;
 
 			assert( contentListItem != NULL );
@@ -795,11 +802,12 @@ static int processSetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 	{
 	MESSAGE_CHECK_TYPE checkType = MESSAGE_CHECK_NONE;
 	ACTION_TYPE usage = ACTION_NONE;
-	static const struct {
+	typedef struct {
 		const CRYPT_ATTRIBUTE_TYPE type;	/* Attribute type */
 		const ACTION_TYPE usage;			/* Corresponding usage type */
 		const MESSAGE_CHECK_TYPE checkType;	/*  and check type */
-		} checkTable[] = {
+		} CHECK_INFO;
+	static const CHECK_INFO checkTable[] = {
 		/* The following checks are fairly stereotyped and can be selected 
 		   via a lookup table.  Envelope attributes that require more
 		   specialised checking are handled via custom code in a case 
@@ -817,7 +825,7 @@ static int processSetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 		{ CRYPT_ENVINFO_DETACHEDSIGNATURE, ACTION_SIGN, MESSAGE_CHECK_NONE },
 		{ CRYPT_IATTRIBUTE_INCLUDESIGCERT, ACTION_SIGN, MESSAGE_CHECK_NONE },
 		{ CRYPT_IATTRIBUTE_ATTRONLY, ACTION_SIGN, MESSAGE_CHECK_NONE },
-		{ CRYPT_ATTRIBUTE_NONE, ACTION_NONE }
+		{ CRYPT_ATTRIBUTE_NONE, ACTION_NONE }, { CRYPT_ATTRIBUTE_NONE, ACTION_NONE }
 		};
 	const int value = *( int * ) messageDataPtr;
 	int i, status;
@@ -924,7 +932,9 @@ static int processSetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 	   indeterminate time in the future.  Since much of the checking is
 	   similar, we use a table-driven check for most types and fall back to
 	   custom checking for special cases */
-	for( i = 0; checkTable[ i ].type != ACTION_NONE; i++ )
+	for( i = 0; checkTable[ i ].type != ACTION_NONE && \
+				i < FAILSAFE_ARRAYSIZE( checkTable, CHECK_INFO ); i++ )
+		{
 		if( checkTable[ i ].type == messageValue )
 			{
 			if( envelopeInfoPtr->usage != ACTION_NONE && \
@@ -934,6 +944,9 @@ static int processSetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 			checkType = checkTable[ i ].checkType;
 			break;
 			}
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( checkTable, CHECK_INFO ) )
+		retIntError();
 	if( usage != ACTION_NONE )
 		{
 		/* Make sure that the usage requirements for the item that we're 
@@ -1162,7 +1175,7 @@ static int processSetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 static int processSetAttributeS( ENVELOPE_INFO *envelopeInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	ACTION_TYPE usage = ACTION_NONE;
 	int status;
 
@@ -1790,7 +1803,7 @@ static int envelopeMessageFunction( const void *objectInfoPtr,
 	/* Process object-specific messages */
 	if( message == MESSAGE_ENV_PUSHDATA )
 		{
-		RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+		MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 		const int length = msgData->length;
 		int bytesCopied, status;
 
@@ -1868,7 +1881,7 @@ static int envelopeMessageFunction( const void *objectInfoPtr,
 		}
 	if( message == MESSAGE_ENV_POPDATA )
 		{
-		RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+		MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 		const int length = msgData->length;
 		int bytesCopied, status;
 

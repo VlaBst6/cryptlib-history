@@ -440,19 +440,19 @@ typedef struct {
 
 #define UNUSED( arg )	( ( arg ) = ( arg ) )
 
-/* Although min() and max() aren't in the ANSI standard, most stdlib.h's have
-   them anyway for historical reasons.  Just in case they're not defined
-   there by some pedantic compiler (some versions of Borland C do this), we
-   define them here */
+/* Although min() and max() aren't in the ANSI standard, most compilers have
+   them in one form or another, but just enough don't that we need to define 
+   them ourselves in some cases */
 
-#ifndef max
-  #define max( a, b )	( ( ( a ) > ( b ) ) ? ( ( int ) ( a ) ) : \
-											  ( ( int ) ( b ) ) )
-#endif /* !max */
-#ifndef min
-  #define min( a, b )	( ( ( a ) < ( b ) ) ? ( ( int ) ( a ) ) : \
-											  ( ( int ) ( b ) ) )
-#endif /* !min */
+#if !defined( min )
+  #ifdef MIN
+	#define min			MIN
+	#define max			MAX
+  #else
+	#define min( a, b )	( ( ( a ) < ( b ) ) ? ( a ) : ( b ) )
+	#define max( a, b )	( ( ( a ) > ( b ) ) ? ( a ) : ( b ) )
+  #endif /* Various min/max macros */
+#endif /* !min/max */
 
 /* Macros to convert to and from the bit counts used for some encryption
    parameters */
@@ -561,6 +561,36 @@ typedef struct {
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
 #endif /* Pointer check macros */
+
+/* Handle internal errors.  These follow a fixed pattern of "throw an 
+   exception, return an internal-error code" (with a few exceptions for
+   functions that return a pointer or void) */
+
+#define retIntError() \
+		{ \
+		assert( NOTREACHED ); \
+		return( CRYPT_ERROR_INTERNAL ); \
+		}
+#define retIntError_Null() \
+		{ \
+		assert( NOTREACHED ); \
+		return( NULL ); \
+		}
+#define retIntError_Boolean() \
+		{ \
+		assert( NOTREACHED ); \
+		return( FALSE ); \
+		}
+#define retIntError_Void() \
+		{ \
+		assert( NOTREACHED ); \
+		return; \
+		}
+#define retIntError_Ext( value ) \
+		{ \
+		assert( NOTREACHED ); \
+		return( value ); \
+		}
 
 /* Clear/set object error information */
 

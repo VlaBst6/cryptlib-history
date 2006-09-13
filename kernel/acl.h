@@ -541,11 +541,10 @@ typedef struct {
 			{ attribute, valueType, subTypeA, subTypeB, access, flags, \
 			  routing, range, allowed }
 
-  /* End-of-ACL canary.  Note that the comma is necessary in order to allow
-     the non-debug version to evaluate to nothing */
+  /* End-of-ACL canary */
   #define MKACL_END() \
-			, { CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, 0, 0, ACCESS_xxx_xxx, \
-				0, 0, NULL, 0, 0, NULL }
+			{ CRYPT_ERROR, ATTRIBUTE_VALUE_NONE, 0, 0, ACCESS_xxx_xxx, \
+			  0, 0, NULL, 0, 0, NULL }
 
   /* End-of-ACL marker, used to terminate variable-length sub-ACL lists.  The
      ST_ANY_A/B match ensures that it matches any object types */
@@ -600,7 +599,9 @@ typedef struct {
 			{ valueType, subTypeA, subTypeB, access, flags, routing, range, allowed }
 
   /* End-of-ACL canary */
-  #define MKACL_END()
+  #define MKACL_END() \
+			{ ATTRIBUTE_VALUE_NONE, 0, 0, ACCESS_xxx_xxx, \
+			  0, 0, NULL, 0, 0, NULL }
 
   /* End-of-ACL marker, used to terminate variable-length sub-ACL lists.  The
      ST_ANY_A/B match ensures that it matches any object types */

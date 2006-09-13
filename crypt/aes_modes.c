@@ -816,8 +816,8 @@ AES_RETURN aes_ctr_crypt(const unsigned char *ibuf, unsigned char *obuf,
     {
         memcpy(buf, cbuf, AES_BLOCK_SIZE);
         aes_ecb_encrypt(buf, buf, AES_BLOCK_SIZE, ctx);
-        while(b_pos < AES_BLOCK_SIZE && len--)
-            *obuf++ = *ibuf++ ^ buf[b_pos++];
+        while(b_pos < AES_BLOCK_SIZE && len)
+            *obuf++ = *ibuf++ ^ buf[b_pos++], --len;
         if(len)
             ctr_inc(cbuf), b_pos = 0;
     }

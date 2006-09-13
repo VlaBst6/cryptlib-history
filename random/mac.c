@@ -55,7 +55,7 @@
 void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 /*	BatteryTimeRec batteryTimeInfo;
 */	SMStatus soundStatus;
 	ThreadID threadID;
@@ -65,7 +65,7 @@ void fastPoll( void )
 	WindowPtr windowPtr;
 	PScrapStuff scrapInfo;
 	UnsignedWide usSinceStartup;
-	BYTE dataBuffer[ 2 ];
+	BYTE dataBuffer[ 2 + 8 ];
 	short driverRefNum;
 	UInt32 dateTime;
 	int count, dummy, bufIndex = 0;
@@ -204,7 +204,7 @@ void fastPoll( void )
 void slowPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	ProcessSerialNumber psn;
 	GDHandle deviceHandle;
 	GrafPtr currPort;

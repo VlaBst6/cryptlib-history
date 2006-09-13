@@ -510,7 +510,7 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 							 const BYTE *buffer, const int length )
 	{
 	BYTE *bufPtr = ( BYTE * ) buffer;
-	int currentLength = length, bytesCopied;
+	int currentLength = length, bytesCopied, iterationCount;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( length > 0 );
@@ -545,8 +545,11 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 		assert( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE );
 		assert( envelopeInfoPtr->actionList != NULL );
 
+		iterationCount = 0;
 		for( hashActionPtr = envelopeInfoPtr->actionList;
-			 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+			 hashActionPtr != NULL && \
+				hashActionPtr->action == ACTION_HASH && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MED;
 			 hashActionPtr = hashActionPtr->next )
 			{
 			status = krnlSendMessage( hashActionPtr->iCryptHandle,
@@ -555,6 +558,8 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 			if( cryptStatusError( status ) )
 				return( status );
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		return( currentLength );
 		}
 
@@ -562,6 +567,7 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 	   in any more data.  The code sequence within this loop acts as a simple
 	   FSM so that if we exit at any point then the next call to this
 	   function will resume where we left off */
+	iterationCount = 0;
 	do
 		{
 		int segmentCount, status;
@@ -634,7 +640,10 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 				  ( envelopeInfoPtr->payloadSize == CRYPT_UNUSED ) && \
 				  ( envelopeInfoPtr->segmentSize == CRYPT_UNUSED ) ) );
 		}
-	while( currentLength > 0 && bytesCopied > 0 );
+	while( currentLength > 0 && bytesCopied > 0 && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* Make sure that we've left everything in a valid state */
 	assert( envelopeInfoPtr->bufPos >= 0 && \
@@ -856,8 +865,13 @@ static int copyFromDeenvelope( ENVELOPE_INFO *envelopeInfoPtr, BYTE *buffer,
 
 		/* Hash the payload data if necessary */
 		if( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE )
+			{
+			int iterationCount = 0;
+			
 			for( hashActionPtr = envelopeInfoPtr->actionList;
-				 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+				 hashActionPtr != NULL && \
+					hashActionPtr->action == ACTION_HASH && \
+					iterationCount++ < FAILSAFE_ITERATIONS_MED;
 				 hashActionPtr = hashActionPtr->next )
 				{
 				int status;
@@ -868,6 +882,9 @@ static int copyFromDeenvelope( ENVELOPE_INFO *envelopeInfoPtr, BYTE *buffer,
 				if( cryptStatusError( status ) )
 					return( status );
 				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
+			}
 
 		/* We're not using compression, copy the data across directly */
 		memcpy( buffer, bufPtr, bytesToCopy );
@@ -979,6 +996,7 @@ static int processExtraData( ENVELOPE_INFO *envelopeInfoPtr,
 							 const void *buffer, const int length )
 	{
 	ACTION_LIST *hashActionPtr;
+	int iterationCount = 0;
 
 	assert( length >= 0 );
 
@@ -996,7 +1014,8 @@ static int processExtraData( ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Hash the data or wrap up the hashing as appropriate */
 	for( hashActionPtr = envelopeInfoPtr->actionList;
-		 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+		 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MED;
 		 hashActionPtr = hashActionPtr->next )
 		{
 		int status;
@@ -1007,6 +1026,8 @@ static int processExtraData( ENVELOPE_INFO *envelopeInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	/* If we've finished the hashing, clear the hashing-active flag to
 	   prevent data from being hashed again if it's processed by other

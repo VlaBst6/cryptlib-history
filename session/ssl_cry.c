@@ -244,7 +244,7 @@ int initDHcontextSSL( CRYPT_CONTEXT *iCryptContext, const void *keyData,
 					  const int keyDataLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( ( keyData == NULL && keyDataLength == 0 ) || \
@@ -430,7 +430,7 @@ int wrapPremasterSecret( SESSION_INFO *sessionInfoPtr,
 						 void *data, int *dataLength )
 	{
 	MECHANISM_WRAP_INFO mechanismInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Clear return value */
@@ -533,7 +533,7 @@ int premasterToMaster( const SESSION_INFO *sessionInfoPtr,
 					   void *masterSecret, const int masterSecretLength )
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
-	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE ];
+	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
 
 	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
 		{
@@ -569,7 +569,7 @@ int masterToKeys( const SESSION_INFO *sessionInfoPtr,
 				  void *keyBlock, const int keyBlockLength )
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
-	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE ];
+	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
 
 	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
 		{
@@ -601,7 +601,7 @@ int loadKeys( SESSION_INFO *sessionInfoPtr,
 			  const BOOLEAN isClient, const void *keyBlock )
 	{
 	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE *keyBlockPtr = ( BYTE * ) keyBlock;
 	int status;
 
@@ -691,7 +691,7 @@ int loadKeys( SESSION_INFO *sessionInfoPtr,
 
 int loadExplicitIV( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
 	int status;
 
@@ -808,11 +808,13 @@ int decryptData( SESSION_INFO *sessionInfoPtr, BYTE *data,
 			int i;
 
 			for( i = 0; i < padSize; i++ )
+				{
 				if( data[ length + i ] != padSize )
 					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 							"Invalid encryption padding byte 0x%02X at "
 							"position %d, should be 0x%02X",
 							data[ length + i ], length + i, padSize );
+				}
 			}
 		}
 
@@ -834,9 +836,9 @@ int macDataSSL( SESSION_INFO *sessionInfoPtr, const void *data,
 				const BOOLEAN noReportError )
 	{
 	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
-	BYTE buffer[ 128 ];
+	BYTE buffer[ 128 + 8 ];
 	const CRYPT_CONTEXT iHashContext = isRead ? \
 			sessionInfoPtr->iAuthInContext : sessionInfoPtr->iAuthOutContext;
 	const void *macSecret = isRead ? sslInfo->macReadSecret : \
@@ -931,9 +933,9 @@ int macDataTLS( SESSION_INFO *sessionInfoPtr, const void *data,
 				const BOOLEAN noReportError )
 	{
 	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
-	BYTE buffer[ 64 ];
+	BYTE buffer[ 64 + 8 ];
 	const CRYPT_CONTEXT iHashContext = isRead ? \
 			sessionInfoPtr->iAuthInContext : sessionInfoPtr->iAuthOutContext;
 	const long seqNo = isRead ? sslInfo->readSeqNo++ : sslInfo->writeSeqNo++;
@@ -1031,7 +1033,7 @@ int completeSSLDualMAC( const CRYPT_CONTEXT md5context,
 						const CRYPT_CONTEXT sha1context, BYTE *hashValues,
 						const char *label, const BYTE *masterSecret )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Generate the inner portion of the handshake message's MAC:
@@ -1102,8 +1104,8 @@ int completeTLSHashedMAC( const CRYPT_CONTEXT md5context,
 						  const char *label, const BYTE *masterSecret )
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
-	RESOURCE_DATA msgData;
-	BYTE hashBuffer[ 64 + CRYPT_MAX_HASHSIZE * 2 ];
+	MESSAGE_DATA msgData;
+	BYTE hashBuffer[ 64 + ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
 	const int labelLength = strlen( label );
 	int status;
 
@@ -1185,7 +1187,7 @@ int completeTLSHashedMAC( const CRYPT_CONTEXT md5context,
 static CRYPT_CONTEXT createCertVerifyHash( const SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE ];
+	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
 	int status;
 
 	/* Hash the client and server nonces */

@@ -102,8 +102,8 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getIDEACapability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ IDEA_EXPANDED_KEYSIZE ];
-	BYTE temp[ IDEA_BLOCKSIZE ];
+	BYTE keyData[ IDEA_EXPANDED_KEYSIZE + 8 ];
+	BYTE temp[ IDEA_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testIdea ) / sizeof( IDEA_TEST ); i++ )
@@ -287,7 +287,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 	IDEA_KEY *ideaKey = ( IDEA_KEY * ) convInfo->key;
-	BYTE temp[ IDEA_BLOCKSIZE ];
+	BYTE temp[ IDEA_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

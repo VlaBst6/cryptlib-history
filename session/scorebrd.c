@@ -107,14 +107,15 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 
 	/* If there's something wrong with the time, we can't perform (time-
 	   based) scoreboard management */
-	if( currentTime < MIN_TIME_VALUE )
+	if( currentTime <= MIN_TIME_VALUE )
 		return( 0 );
 
 	status = krnlEnterMutex( MUTEX_SCOREBOARD );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	for( i = 0; i < scoreboardInfo->lastEntry; i++ )
+	for( i = 0; i < scoreboardInfo->lastEntry && \
+				i < FAILSAFE_ITERATIONS_MAX; i++ )
 		{
 		SCOREBOARD_INDEX *scorebordIndexEntry = &scoreboardIndex[ i ];
 
@@ -171,6 +172,8 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 				}
 			}
 		}
+	if( i >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* If the total number of entries has shrunk due to old entries expiring,
 	   reduce the overall scoreboard-used size */
@@ -273,7 +276,8 @@ void deleteScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
 		return;
 
 	/* Search the scoreboard for the entry with the given ID */
-	for( i = 0; i < scoreboardInfo->lastEntry; i++ )
+	for( i = 0; i < scoreboardInfo->lastEntry && \
+				i < FAILSAFE_ITERATIONS_MAX; i++ )
 		{
 		SCOREBOARD_INDEX *scorebordIndexEntry = &scoreboardIndex[ i ];
 
@@ -285,6 +289,8 @@ void deleteScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
 			break;
 			}
 		}
+	if( i >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 
 	krnlExitMutex( MUTEX_SCOREBOARD );
 	}

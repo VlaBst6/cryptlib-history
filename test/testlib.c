@@ -21,6 +21,15 @@
   #pragma convert( 0 )
 #endif /* IBM medium iron */
 
+/* Optionally include and activate the Visual Leak Detector library if
+   we're running a debug build under VC++ 6.0.  Note that this can't be
+   run at the same time as Bounds Checker, since the two interefere with
+   each other */
+
+#if defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && 0
+  #include "binaries/vld.h"
+#endif /* VC++ 6.0 */
+
 /* Whether various keyset tests worked, the results are used later to test
    other routines.  We initially set the key read result to TRUE in case the
    keyset read tests are never called, so we can still trying reading the

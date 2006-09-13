@@ -409,7 +409,7 @@ static int addCert( PKCS15_INFO *pkcs15infoPtr,
 					const int privKeyAttributeSize,
 					const CERTADD_TYPE certAddType )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE certAttributes[ KEYATTR_BUFFER_SIZE + 8 ];
 	void *newCertData = pkcs15infoPtr->certData;
@@ -549,7 +549,7 @@ int addCertChain( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 				  const CRYPT_CERTIFICATE iCryptCert )
 	{
 	BOOLEAN seenNonDuplicate = FALSE;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( pkcs15info, \
 						sizeof( PKCS15_INFO ) * noPkcs15objects ) );
@@ -605,7 +605,10 @@ int addCertChain( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 	while( cryptStatusOK( status ) && \
 		   krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE,
 							MESSAGE_VALUE_CURSORNEXT,
-							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK );
+							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	if( cryptStatusOK( status ) && !seenNonDuplicate )
 		/* We reached the end of the chain without finding anything that we 
 		   could add, return a data duplicate error */
@@ -628,7 +631,7 @@ static int addPublicKey( PKCS15_INFO *pkcs15infoPtr,
 						 const CRYPT_ALGO_TYPE pkcCryptAlgo,
 						 const int modulusSize )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	void *newPubKeyData = pkcs15infoPtr->pubKeyData;
 	const int keyTypeTag = getKeyTypeTag( CRYPT_UNUSED, pkcCryptAlgo );
@@ -785,7 +788,7 @@ static int writeWrappedSessionKey( STREAM *stream,
 							  &iterations, CRYPT_CTXINFO_KEYING_ITERATIONS );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, ( void * ) password, passwordLength );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
@@ -1227,12 +1230,14 @@ int addConfigData( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 	   (which we'll replace with the new data) or, failing that, the first 
 	   free entry */
 	for( i = 0; i < noPkcs15objects; i++ )
+		{
 		if( pkcs15info[ i ].type == PKCS15_SUBTYPE_DATA && \
 			pkcs15info[ i ].dataType == flags )
 			{
 			pkcs15infoPtr = &pkcs15info[ i ];
 			break;
 			}
+		}
 	if( pkcs15infoPtr == NULL )
 		{
 		/* If we're trying to delete an existing entry then not finding what
@@ -1247,13 +1252,11 @@ int addConfigData( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 		pkcs15infoPtr = findFreeEntry( pkcs15info, noPkcs15objects, NULL );
 		}
 	if( pkcs15infoPtr == NULL )
-		{
 		/* The appropriate error value to return here is a 
 		   CRYPT_ERROR_OVERFLOW because we always try to add a new entry if
 		   we can't find an existing one, so the final error status is 
 		   always an overflow */
 		return( CRYPT_ERROR_OVERFLOW );
-		}
 
 	/* If we're clearing an existing entry, we're done */
 	if( isDataClear )
@@ -1301,7 +1304,7 @@ int addSecretKey( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 				  const CRYPT_CONTEXT iCryptContext )
 	{
 	PKCS15_INFO *pkcs15infoPtr = NULL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int status;
 

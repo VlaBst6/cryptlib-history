@@ -336,7 +336,7 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 
 	/* Finally, try it with a cert chain */
 	puts( "Adding cert chain." );
-	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 1 );
+	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
@@ -475,6 +475,7 @@ int testReadCert( void )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	C_CHR name[ CRYPT_MAX_TEXTSIZE + 1 ], email[ CRYPT_MAX_TEXTSIZE + 1 ];
+	C_CHR filenameBuffer[ FILENAME_BUFFER_SIZE ];
 	int length, status;
 
 	/* Get the DN from the cert that we wrote earlier */
@@ -545,10 +546,30 @@ int testReadCert( void )
 							 READ_OPTION_MULTIPLE );
 	if( !status )
 		return( FALSE );
+
+	/* Get the DN from the cert chain that we wrote earlier */
+	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
+	status = importCertFile( &cryptCert, filenameBuffer );
+	if( cryptStatusError( status ) )
+		{
+		puts( "Couldn't read cert chain from file." );
+		return( FALSE );
+		}
+	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,
+									  name, &length );
+	if( cryptStatusOK( status ) )
+		{
+#ifdef UNICODE_STRINGS
+		length /= sizeof( wchar_t );
+#endif /* UNICODE_STRINGS */
+		name[ length ] = TEXT( '\0' );
+		}
+	cryptDestroyCert( cryptCert );
+
+	/* Now read the complete cert chain */
 	puts( "Reading complete cert chain." );
 	status = testKeysetRead( DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME,
-	 						 CRYPT_KEYID_NAME,
-							 TEXT( "Thawte Freemail Member" ),
+	 						 CRYPT_KEYID_NAME, name,
 							 CRYPT_CERTTYPE_CERTCHAIN, READ_OPTION_NORMAL );
 	if( !status )
 		return( FALSE );

@@ -2308,114 +2308,102 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Cursor mgt: Rel.pos in chain/CRL/OCSP */
 
     v = Py_BuildValue("i", 2008);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_EXTENSION", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos.or abs.extension */
-
-    v = Py_BuildValue("i", 2009);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_FIELD", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos.or abs.field in ext */
-
-    v = Py_BuildValue("i", 2010);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_COMPONENT", v);
-    Py_DECREF(v); /* Cursor mgt: Rel.pos in multival.field */
-
-    v = Py_BuildValue("i", 2011);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_USAGE", v);
     Py_DECREF(v); /* Usage that cert is trusted for */
 
-    v = Py_BuildValue("i", 2012);
+    v = Py_BuildValue("i", 2009);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_IMPLICIT", v);
     Py_DECREF(v); /* Whether cert is implicitly trusted */
 
-    v = Py_BuildValue("i", 2013);
+    v = Py_BuildValue("i", 2010);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGNATURELEVEL", v);
     Py_DECREF(v); /* Amount of detail to include in sigs. */
 
-    v = Py_BuildValue("i", 2014);
+    v = Py_BuildValue("i", 2011);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VERSION", v);
     Py_DECREF(v); /* Cert.format version */
 
-    v = Py_BuildValue("i", 2015);
+    v = Py_BuildValue("i", 2012);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SERIALNUMBER", v);
     Py_DECREF(v); /* Serial number */
 
-    v = Py_BuildValue("i", 2016);
+    v = Py_BuildValue("i", 2013);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO", v);
     Py_DECREF(v); /* Public key */
 
-    v = Py_BuildValue("i", 2017);
+    v = Py_BuildValue("i", 2014);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTIFICATE", v);
     Py_DECREF(v); /* User certificate */
 
-    v = Py_BuildValue("i", 2017);
+    v = Py_BuildValue("i", 2014);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_USERCERTIFICATE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2018);
+    v = Py_BuildValue("i", 2015);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CACERTIFICATE", v);
     Py_DECREF(v); /* CA certificate */
 
-    v = Py_BuildValue("i", 2019);
+    v = Py_BuildValue("i", 2016);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERNAME", v);
     Py_DECREF(v); /* Issuer DN */
 
-    v = Py_BuildValue("i", 2020);
+    v = Py_BuildValue("i", 2017);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDFROM", v);
     Py_DECREF(v); /* Cert valid-from time */
 
-    v = Py_BuildValue("i", 2021);
+    v = Py_BuildValue("i", 2018);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDTO", v);
     Py_DECREF(v); /* Cert valid-to time */
 
-    v = Py_BuildValue("i", 2022);
+    v = Py_BuildValue("i", 2019);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTNAME", v);
     Py_DECREF(v); /* Subject DN */
 
-    v = Py_BuildValue("i", 2023);
+    v = Py_BuildValue("i", 2020);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERUNIQUEID", v);
     Py_DECREF(v); /* Issuer unique ID */
 
-    v = Py_BuildValue("i", 2024);
+    v = Py_BuildValue("i", 2021);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTUNIQUEID", v);
     Py_DECREF(v); /* Subject unique ID */
 
-    v = Py_BuildValue("i", 2025);
+    v = Py_BuildValue("i", 2022);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTREQUEST", v);
     Py_DECREF(v); /* Cert.request (DN + public key) */
 
-    v = Py_BuildValue("i", 2026);
+    v = Py_BuildValue("i", 2023);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_THISUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP current-update time */
 
-    v = Py_BuildValue("i", 2027);
+    v = Py_BuildValue("i", 2024);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NEXTUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP next-update time */
 
-    v = Py_BuildValue("i", 2028);
+    v = Py_BuildValue("i", 2025);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONDATE", v);
     Py_DECREF(v); /* CRL/OCSP cert-revocation time */
 
-    v = Py_BuildValue("i", 2029);
+    v = Py_BuildValue("i", 2026);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONSTATUS", v);
     Py_DECREF(v); /* OCSP revocation status */
 
-    v = Py_BuildValue("i", 2030);
+    v = Py_BuildValue("i", 2027);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTSTATUS", v);
     Py_DECREF(v); /* RTCS certificate status */
 
-    v = Py_BuildValue("i", 2031);
+    v = Py_BuildValue("i", 2028);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DN", v);
     Py_DECREF(v); /* Currently selected DN in string form */
 
-    v = Py_BuildValue("i", 2032);
+    v = Py_BuildValue("i", 2029);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ID", v);
     Py_DECREF(v); /* PKI user ID */
 
-    v = Py_BuildValue("i", 2033);
+    v = Py_BuildValue("i", 2030);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD", v);
     Py_DECREF(v); /* PKI user issue password */
 
-    v = Py_BuildValue("i", 2034);
+    v = Py_BuildValue("i", 2031);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_REVPASSWORD", v);
     Py_DECREF(v); /* PKI user revocation password */
 
@@ -4295,12 +4283,36 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_TEXTSIZE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", -10);
+    v = Py_BuildValue("i", -100);
     PyDict_SetItemString(moduleDict, "CRYPT_USE_DEFAULT", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", -11);
+    v = Py_BuildValue("i", -101);
     PyDict_SetItemString(moduleDict, "CRYPT_UNUSED", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -200);
+    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_FIRST", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -201);
+    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_PREVIOUS", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -202);
+    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_NEXT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -203);
+    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_LAST", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -300);
+    PyDict_SetItemString(moduleDict, "CRYPT_RANDOM_FASTPOLL", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", -301);
+    PyDict_SetItemString(moduleDict, "CRYPT_RANDOM_SLOWPOLL", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 0);
@@ -4309,30 +4321,6 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 1);
     PyDict_SetItemString(moduleDict, "CRYPT_KEYTYPE_PUBLIC", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -10);
-    PyDict_SetItemString(moduleDict, "CRYPT_RANDOM_FASTPOLL", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -11);
-    PyDict_SetItemString(moduleDict, "CRYPT_RANDOM_SLOWPOLL", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -20);
-    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_FIRST", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -21);
-    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_PREVIOUS", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -22);
-    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_NEXT", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", -23);
-    PyDict_SetItemString(moduleDict, "CRYPT_CURSOR_LAST", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 0);

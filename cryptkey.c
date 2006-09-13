@@ -447,7 +447,7 @@ static int processGetAttribute( KEYSET_INFO *keysetInfoPtr,
 static int processGetAttributeS( KEYSET_INFO *keysetInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 
 	switch( messageValue )
 		{
@@ -515,7 +515,7 @@ static int processSetAttribute( KEYSET_INFO *keysetInfoPtr,
 static int processSetAttributeS( KEYSET_INFO *keysetInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	int status;
 
 	switch( messageValue )

@@ -57,8 +57,8 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getSkipjackCapability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ SKIPJACK_EXPANDED_KEYSIZE ];
-	BYTE temp[ SKIPJACK_BLOCKSIZE ];
+	BYTE keyData[ SKIPJACK_EXPANDED_KEYSIZE + 8 ];
+	BYTE temp[ SKIPJACK_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testSkipjack ) / sizeof( struct SKIPJACK_TEST ); i++ )
@@ -174,7 +174,7 @@ static int decryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 					   int noBytes )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	BYTE temp[ SKIPJACK_BLOCKSIZE ];
+	BYTE temp[ SKIPJACK_BLOCKSIZE + 8 ];
 	int blockCount = noBytes / SKIPJACK_BLOCKSIZE;
 
 	while( blockCount-- > 0 )
@@ -268,7 +268,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 					   int noBytes )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	BYTE temp[ SKIPJACK_BLOCKSIZE ];
+	BYTE temp[ SKIPJACK_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

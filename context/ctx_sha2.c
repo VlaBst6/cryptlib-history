@@ -118,7 +118,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getSHA2Capability();
 	CONTEXT_INFO contextInfo;
 	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE ];
+	BYTE keyData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* SHA-2 requires the largest amount of context state so we check to

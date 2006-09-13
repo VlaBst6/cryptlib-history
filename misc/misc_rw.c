@@ -627,7 +627,7 @@ static int pgpReadLength( STREAM *stream, long *length, const int ctb,
 					   standard length encoding for the last sub-segment.
 					   So once we're in indefinite-length mode we have to
 					   record the current *type* of the length (as well as
-					   it's value) to determine whether more length packets
+					   its value) to determine whether more length packets
 					   follow */
 					localLength = 1 << ( localLength & 0x1F );
 					indefiniteLength = TRUE;

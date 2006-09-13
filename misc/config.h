@@ -216,30 +216,26 @@
 
 #ifndef CONFIG_NO_KEYSETS
 
-/* Database keysets */
+/* Database keysets.  This setting can also be enabled under Unix by the 
+   auto-config mechanism */
 
 #if defined( __WIN32__ ) && !defined( NT_DRIVER )
   #if !( defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) )
 	#define USE_ODBC
   #endif /* Old Borland C++ */
 #endif /* Windows */
-#if defined( __UNIX__ ) && defined( __APPLE__ )
-  #define USE_ODBC
-#endif /* Unix systems with ODBC support */
 #if defined( USE_ODBC ) || defined( USE_DATABASE ) || \
 						   defined( USE_DATABASE_PLUGIN )
   #define USE_DBMS
 #endif /* RDBMS types */
 
-/* Network keysets */
+/* Network keysets.  This setting can also be enabled under Unix by the
+   auto-config mechanism */
 
 #if defined( __WIN32__ ) && \
 	!( defined( NT_DRIVER ) || defined( __BORLANDC__ ) )
   #define USE_LDAP
 #endif /* Windows */
-#if defined( __UNIX__ ) && defined( __APPLE__ )
-  #define USE_LDAP
-#endif /* Unix systems with LDAP support */
 #ifdef USE_TCP
   #define USE_HTTP
 #endif /* TCP/IP networking */

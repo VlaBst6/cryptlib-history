@@ -844,7 +844,8 @@ int testRSAMinimalKey( void )
 
 	/* Load the RSA contexts from the minimal (non-CRT) RSA key */
 	status = loadRSAContextsEx( CRYPT_UNUSED, &cryptContext, &decryptContext,
-								RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, TRUE );
+								RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, FALSE, 
+								TRUE );
 	if( !status )
 		return( FALSE );
 

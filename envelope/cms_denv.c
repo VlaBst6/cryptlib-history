@@ -48,7 +48,7 @@ static const OID_INFO FAR_BSS envelopeOIDinfo[] = {
 	{ OID_CRYPTLIB_RTCSREQ, ACTION_NONE },
 	{ OID_CRYPTLIB_RTCSRESP, ACTION_NONE },
 	{ OID_CRYPTLIB_RTCSRESP_EXT, ACTION_NONE },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 static const OID_INFO FAR_BSS nestedContentOIDinfo[] = {
@@ -62,7 +62,7 @@ static const OID_INFO FAR_BSS nestedContentOIDinfo[] = {
 	{ OID_CRYPTLIB_RTCSREQ, CRYPT_CONTENT_RTCSREQUEST },
 	{ OID_CRYPTLIB_RTCSRESP, CRYPT_CONTENT_RTCSRESPONSE },
 	{ OID_CRYPTLIB_RTCSRESP_EXT, CRYPT_CONTENT_RTCSRESPONSE_EXT },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 /* Add information about an object to an envelope's content information list */
@@ -374,7 +374,7 @@ static int processHashHeader( ENVELOPE_INFO *envelopeInfoPtr, STREAM *stream )
 	CRYPT_ALGO_TYPE hashAlgo;
 	CRYPT_CONTEXT iHashContext;
 	ACTION_LIST *actionListPtr;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -391,7 +391,8 @@ static int processHashHeader( ENVELOPE_INFO *envelopeInfoPtr, STREAM *stream )
 	   through being supplied externally or from a duplicate entry in the 
 	   set */
 	for( actionListPtr = envelopeInfoPtr->actionList;
-		 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+		 actionListPtr = actionListPtr->next )
 		{
 		CRYPT_ALGO_TYPE actionHashAlgo;
 
@@ -406,6 +407,8 @@ static int processHashHeader( ENVELOPE_INFO *envelopeInfoPtr, STREAM *stream )
 			return( CRYPT_OK );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* We didn't find any duplicates, append the new hash action to the 
 	   action list and remember that hashing is now active */

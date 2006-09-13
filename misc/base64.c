@@ -126,10 +126,11 @@ static const BYTE FAR_BSS asciiToBin[ 256 ] =
 
 /* The headers and trailers used for base64-encoded certificate objects */
 
-static const struct {
+typedef struct {
 	const CRYPT_CERTTYPE_TYPE type;
 	const char FAR_BSS *header, FAR_BSS *trailer;
-	} FAR_BSS headerInfo[] = {
+	} HEADER_INFO;
+static const HEADER_INFO FAR_BSS headerInfo[] = {
 	{ CRYPT_CERTTYPE_CERTIFICATE,
 	  "-----BEGIN CERTIFICATE-----" EOL,
 	  "-----END CERTIFICATE-----" EOL },
@@ -148,6 +149,9 @@ static const struct {
 	{ CRYPT_CERTTYPE_CRL,
 	  "-----BEGIN CERTIFICATE REVOCATION LIST-----"  EOL,
 	  "-----END CERTIFICATE REVOCATION LIST-----" EOL },
+	{ CRYPT_CERTTYPE_NONE,			/* Universal catch-all */
+	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL,
+	  "-----END CERTIFICATE OBJECT-----" EOL },
 	{ CRYPT_CERTTYPE_NONE,			/* Universal catch-all */
 	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL,
 	  "-----END CERTIFICATE OBJECT-----" EOL }
@@ -229,7 +233,7 @@ static int checkPEMHeader( STREAM *stream )
 	{
 	BOOLEAN isSSH = FALSE, isPGP = FALSE;
 	char buffer[ 1024 + 8 ], *bufPtr = buffer;
-	int length;
+	int length, iterationCount = 0;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -284,7 +288,9 @@ static int checkPEMHeader( STREAM *stream )
 				return( length );
 			for( i = 0; i < length && buffer[ i ] != ':'; i++ );
 			}
-		while( i < length );
+		while( i < length && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		sseek( stream, position );
 		}
 	if( isPGP )
@@ -299,7 +305,9 @@ static int checkPEMHeader( STREAM *stream )
 			if( cryptStatusError( length ) )
 				return( length );
 			}
-		while( length > 0 );
+		while( length > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		}
 
 	return( stell( stream ) );
@@ -474,7 +482,7 @@ int base64checkHeader( const char *data, const int dataLength,
 	{
 	STREAM stream;
 	BOOLEAN seenTransferEncoding = FALSE, isBinaryEncoding = FALSE;
-	int position, ch, status;
+	int position, ch, iterationCount, status;
 
 	assert( isReadPtr( data, dataLength ) );
 	assert( isWritePtr( startPos, sizeof( int ) ) );
@@ -494,9 +502,13 @@ int base64checkHeader( const char *data, const int dataLength,
 	   fairly lenient with this.  Note that we can't use readTextLine() at
 	   this point because we don't know yet whether we're getting binary or
 	   ASCII data */
+	iterationCount = 0;
 	do
 		ch = sgetc( &stream );
-	while( ch == '\r' || ch == '\n' );
+	while( ch == '\r' || ch == '\n' && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( ch ) )
 		{
 		sMemDisconnect( &stream );
@@ -544,6 +556,7 @@ int base64checkHeader( const char *data, const int dataLength,
 	sseek( &stream, position );
 
 	/* It doesn't look like raw base64, check for an S/MIME header */
+	iterationCount = 0;
 	do
 		{
 		char buffer[ 1024 + 8 ];
@@ -569,7 +582,9 @@ int base64checkHeader( const char *data, const int dataLength,
 					seenTransferEncoding = isBinaryEncoding = TRUE;
 			}
 		}
-	while( status > 0 );
+	while( status > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( status ) || !seenTransferEncoding )
 		{
 		sMemDisconnect( &stream );
@@ -577,9 +592,13 @@ int base64checkHeader( const char *data, const int dataLength,
 		}
 
 	/* Skip trailing blank lines */
+	iterationCount = 0;
 	do
 		ch = sgetc( &stream );
-	while( ch == '\r' || ch == '\n' );
+	while( ch == '\r' || ch == '\n' && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( cryptStatusError( ch ) )
 		{
 		sMemDisconnect( &stream );
@@ -619,8 +638,11 @@ int base64encode( char *dest, const int destMaxLen, const void *src,
 		{
 		for( headerInfoIndex = 0;
 			 headerInfo[ headerInfoIndex ].type != certType && \
-				headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE;
+				headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE && \
+				headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO );
 			 headerInfoIndex++ );
+		if( headerInfoIndex >= FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) )
+			retIntError();
 		assert( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
 		destIndex = strlen( headerInfo[ headerInfoIndex ].header );
 		if( destIndex >= destMaxLen )
@@ -804,7 +826,7 @@ int base64decode( void *dest, const int destMaxLen, const char *src,
 int base64decodeLen( const char *data, const int dataLength )
 	{
 	STREAM stream;
-	int ch, length;
+	int ch, length, iterationCount = 0;
 
 	assert( isReadPtr( data, dataLength ) );
 
@@ -820,7 +842,9 @@ int base64decodeLen( const char *data, const int dataLength )
 			break;
 		ch = decode( ch );
 		}
-	while( ch != BERR );
+	while( ch != BERR && iterationCount++ < FAILSAFE_ITERATIONS_MAX );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	length = stell( &stream );
 	sMemDisconnect( &stream );
 
@@ -838,8 +862,11 @@ int base64encodeLen( const int dataLength,
 
 	for( headerInfoIndex = 0;
 		 headerInfo[ headerInfoIndex ].type != certType && \
-			headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE;
+			headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE && \
+			headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ); 
 		 headerInfoIndex++ );
+	if( headerInfoIndex >= FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) )
+		retIntError();
 	assert( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
 
 	/* Calculate the extra length due to EOL's */
@@ -859,7 +886,7 @@ int base64encodeLen( const int dataLength,
 /* En/decode text representations of binary keys */
 
 static const char codeTable[] = \
-						"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";	/* No O/0, I/1 */
+					"ABCDEFGHJKLMNPQRSTUVWXYZ23456789____";	/* No O/0, I/1 */
 static const int hiMask[] = { 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01 };
 static const int loMask[] = { 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0 };
 
@@ -976,18 +1003,20 @@ int decodePKIUserValue( BYTE *value, const int valueMaxLen,
 
 	assert( isReadPtr( encVal, encValLength ) );
 
-	/* Make sure that the input has a reasonable length.  We return
-	   CRYPT_ERROR_BADDATA rather than the more obvious CRYPT_ERROR_OVERFLOW
-	   since something returned from this low a level should be a consistent
-	   error code indicating that there's a problem with the PKI user value
-	   as a whole */
-	if( encValLength > CRYPT_MAX_TEXTSIZE )
+	/* Make sure that the input has a reasonable length (this should have 
+	   been checked by the caller using isPKIUserValue(), so we throw an
+	   exception if the check fails).  We return CRYPT_ERROR_BADDATA rather 
+	   than the more obvious CRYPT_ERROR_OVERFLOW since something returned 
+	   from this low a level should be a consistent error code indicating 
+	   that there's a problem with the PKI user value as a whole */
+	if( encValLength < ( 3 * 5 ) || encValLength > CRYPT_MAX_TEXTSIZE )
 		{
 		assert( NOTREACHED );
 		return( CRYPT_ERROR_BADDATA );
 		}
 
-	/* Undo the formatting of the encoded value */
+	/* Undo the formatting of the encoded value from XXXXX-XXXXX-XXXXX... 
+	   to XXXXXXXXXXXXXXX... */
 	while( i < encValLength )
 		{
 		int j;
@@ -1005,7 +1034,7 @@ int decodePKIUserValue( BYTE *value, const int valueMaxLen,
 		if( i < encValLength && encVal[ i++ ] != '-' )
 			return( CRYPT_ERROR_BADDATA );
 		}
-	if( length % 5 )
+	if( length % 5 || length > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Decode the text data into binary */
@@ -1050,7 +1079,7 @@ int decodePKIUserValue( BYTE *value, const int valueMaxLen,
 
 	/* Calculate the Fletcher checksum and make sure that it matches the
 	   value at the start of the data bytes */
-	if( bitCount )
+	if( bitCount > 0 )
 		byteCount++;	/* More bits in the last partial byte */
 	if( valBuf[ 0 ] != ( checksumData( valBuf + 1, byteCount - 1 ) & 0xFF ) )
 		return( CRYPT_ERROR_BADDATA );

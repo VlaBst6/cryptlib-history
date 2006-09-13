@@ -47,14 +47,14 @@ typedef struct {
 	int maxPacketSize;					/* Max allowed packet size */
 
 	/* Channel naming information */
-	char type[ CRYPT_MAX_TEXTSIZE ], arg1[ CRYPT_MAX_TEXTSIZE ];
-	char arg2[ CRYPT_MAX_TEXTSIZE ];
+	char type[ CRYPT_MAX_TEXTSIZE + 8 ], arg1[ CRYPT_MAX_TEXTSIZE + 8 ];
+	char arg2[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int typeLen, arg1Len, arg2Len;
 
 	/* Channel extra data.  This contains encoded oddball protocol-specific
 	   SSH packets to be sent or having been received */
 	BYTE extraData[ ( UINT_SIZE + CRYPT_MAX_TEXTSIZE ) + \
-					( UINT_SIZE * 4 ) ];
+					( UINT_SIZE * 4 ) + 8 ];
 	} SSH_CHANNEL_INFO;
 
 /* Check whether a channel corresponds to a null channel (a placeholder used
@@ -91,10 +91,12 @@ static BOOLEAN isChannelActive( const SESSION_INFO *sessionInfoPtr,
 								const int channelCount )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	int count = channelCount;
+	int count = channelCount, iterationCount = 0;
 
 	for( attributeListPtr = sessionInfoPtr->attributeList;
-		 attributeListPtr != NULL; attributeListPtr = attributeListPtr->next )
+		 attributeListPtr != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
@@ -116,6 +118,8 @@ static BOOLEAN isChannelActive( const SESSION_INFO *sessionInfoPtr,
 				return( TRUE );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Boolean();
 
 	return( FALSE );
 	}
@@ -134,6 +138,7 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 	SSH_CHANNEL_INFO *channelInfoPtr = attributeListPtr->value;
 	CRYPT_ATTRIBUTE_TYPE attributeType = channelInfoPtr->cursorPos;
 	BOOLEAN doContinue;
+	int iterationCount = 0;
 
 	/* If we've just moved the cursor onto this attribute, reset the
 	   position to the first internal attribute */
@@ -155,9 +160,13 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 		/* Find the position of the current sub-attribute in the attribute
 		   order list and use that to get its successor/predecessor sub-
 		   attribute */
-		for( i = 0; \
+		for( i = 0; 
 			 attributeOrderList[ i ] != attributeType && \
-			 attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE; i++ );
+				attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ); 
+			 i++ );
+		if( i >= FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ) )
+			retIntError_Boolean();
 		if( attributeOrderList[ i ] == CRYPT_ATTRIBUTE_NONE )
 			attributeType = CRYPT_ATTRIBUTE_NONE;
 		else
@@ -198,7 +207,9 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 				return( FALSE );
 			}
 		}
-	while( doContinue );
+	while( doContinue && iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError_Boolean();
 	channelInfoPtr->cursorPos = attributeType;
 
 	return( TRUE );
@@ -216,9 +227,12 @@ static ATTRIBUTE_LIST *findChannelAttr( const SESSION_INFO *sessionInfoPtr,
 										const long channelNo )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
+	int iterationCount = 0;
 
 	for( attributeListPtr = sessionInfoPtr->attributeList;
-		 attributeListPtr != NULL; attributeListPtr = attributeListPtr->next )
+		 attributeListPtr != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
@@ -242,6 +256,8 @@ static ATTRIBUTE_LIST *findChannelAttr( const SESSION_INFO *sessionInfoPtr,
 			channelInfoPtr->writeChannelNo == channelNo )
 			return( attributeListPtr );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -262,11 +278,14 @@ static SSH_CHANNEL_INFO *findChannelInfoID( const SESSION_INFO *sessionInfoPtr,
 											const int channelID )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
+	int iterationCount = 0;
 
 	assert( channelID != UNUSED_CHANNEL_ID );
 
 	for( attributeListPtr = sessionInfoPtr->attributeList;
-		 attributeListPtr != NULL; attributeListPtr = attributeListPtr->next )
+		 attributeListPtr != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
@@ -281,6 +300,8 @@ static SSH_CHANNEL_INFO *findChannelInfoID( const SESSION_INFO *sessionInfoPtr,
 		if( channelInfoPtr->channelID == channelID )
 			return( ( SSH_CHANNEL_INFO * ) channelInfoPtr );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -290,11 +311,14 @@ static SSH_CHANNEL_INFO *findChannelInfoAddr( const SESSION_INFO *sessionInfoPtr
 											  const int addrInfoLen )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
+	int iterationCount = 0;
 
 	assert( isReadPtr( addrInfo, addrInfoLen ) );
 
 	for( attributeListPtr = sessionInfoPtr->attributeList;
-		 attributeListPtr != NULL; attributeListPtr = attributeListPtr->next )
+		 attributeListPtr != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
@@ -310,6 +334,8 @@ static SSH_CHANNEL_INFO *findChannelInfoAddr( const SESSION_INFO *sessionInfoPtr
 			!memcmp( channelInfoPtr->arg1, addrInfo, addrInfoLen ) )
 			return( ( SSH_CHANNEL_INFO * ) channelInfoPtr );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -596,7 +622,7 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 	ATTRIBUTE_LIST *attributeListPtr;
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	SSH_CHANNEL_INFO channelInfo;
-	int channelCount = 0, status;
+	int channelCount = 0, iterationCount = 0, status;
 
 	assert( channelNo >= 0 );
 	assert( maxPacketSize >= 1024 && maxPacketSize <= 0x100000L );
@@ -617,9 +643,15 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 
 	/* Make sure that we haven't exceeded the maximum number of channels */
 	for( attributeListPtr = sessionInfoPtr->attributeList;
-		 attributeListPtr != NULL; attributeListPtr = attributeListPtr->next )
+		 attributeListPtr != NULL && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next )
+		{
 		if( attributeListPtr->attributeID == CRYPT_SESSINFO_SSH_CHANNEL )
 			channelCount++;
+		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	if( channelCount > SSH_MAX_CHANNELS )
 		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
 				"Maximum number (%d) of SSH channels reached",
@@ -651,14 +683,21 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 int createChannel( SESSION_INFO *sessionInfoPtr )
 	{
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
-	long channelNo;
+	int iterationCount = 0;
 
-	/* Create a channel with a new, unused channel number */
+	/* Find an unused channel number.  Since the peer can request the
+	   creation of arbitrary-numbered channels, we have to be careful to
+	   ensure that we don't clash with any existing peer-requested channel
+	   numbers when we create our own channel */
 	while( findChannelInfo( sessionInfoPtr, \
-							sshInfo->nextChannelNo ) != NULL )
+							sshInfo->nextChannelNo ) != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		sshInfo->nextChannelNo++;
-	channelNo = sshInfo->nextChannelNo++;
-	return( addChannel( sessionInfoPtr, channelNo,
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
+
+	/* Create a channel with the new channel number */
+	return( addChannel( sessionInfoPtr, sshInfo->nextChannelNo++,
 						sessionInfoPtr->sendBufSize - EXTRA_PACKET_SIZE,
 						"session", 7, NULL, 0 ) );
 	}

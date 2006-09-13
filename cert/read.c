@@ -56,13 +56,13 @@ static int readSerialNumber( STREAM *stream, CERT_INFO *certInfoPtr,
 								 status ) );
 
 	/* Some certs may have a serial number of zero, which is turned into a
-	   zero-length integer by the ASN.1 read code which truncates leading
+	   zero-length integer by the ASN.1 read code since it truncates leading
 	   zeroes that are added due to ASN.1 encoding requirements.  If we get
 	   a zero-length integer, we turn it into a single zero byte */
-	if( !integerLength )
+	if( integerLength <= 0 )
 		{
-		integerLength++;
 		integer[ 0 ] = 0;
+		integerLength = 1;
 		}
 
 	/* Copy the data across for the caller */
@@ -257,7 +257,10 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		long version;
 
 		readConstructed( stream, NULL, CTAG_CE_VERSION );
-		readShortInteger( stream, &version );
+		status = readShortInteger( stream, &version );
+		if( cryptStatusError( status ) )
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+									 status ) );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
 	else
@@ -342,7 +345,10 @@ static int readAttributeCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		{
 		long version;
 
-		readShortInteger( stream, &version );
+		status = readShortInteger( stream, &version );
+		if( cryptStatusError( status ) )
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+									 status ) );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
 	else
@@ -430,7 +436,10 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		{
 		long version;
 
-		readShortInteger( stream, &version );
+		status = readShortInteger( stream, &version );
+		if( cryptStatusError( status ) )
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+									 status ) );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
 	else
@@ -464,6 +473,11 @@ static int readCRLInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	if( stell( stream ) < endPos - MIN_ATTRIBUTE_SIZE && \
 		peekTag( stream ) == BER_SEQUENCE )
 		{
+		/* The following loop is a bit tricky to failsafe because it is
+		   actualy possible to encounter 100MB CRLs, which the failsafe
+		   would otherwise identify as an error.  Because CRLs can range so
+		   far outside what would be considered a sane value, we can't
+		   really bound the loop in any way */
 		status = readLongSequence( stream, &length );
 		if( cryptStatusOK( status ) && length == CRYPT_UNUSED )
 			/* If it's an (invalid) indefinite-length encoding we can't do
@@ -524,7 +538,10 @@ static int readCertRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 	/* Skip the outer SEQUENCE and read the version number */
 	readSequence( stream, NULL );
-	readShortInteger( stream, &version );
+	status = readShortInteger( stream, &version );
+	if( cryptStatusError( status ) )
+		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+								 status ) );
 	certInfoPtr->version = version + 1;	/* Zero-based */
 
 	/* Read the subject name and public key information */
@@ -562,7 +579,7 @@ static int readCertRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
-	int tag, status;
+	int tag, fieldsProcessed = 0, status;
 
 	/* Skip the outer SEQUENCE, request ID, and inner SEQUENCE */
 	readSequence( stream, NULL );
@@ -571,14 +588,18 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 	/* Skip any junk before the Validity, SubjectName, or
 	   SubjectPublicKeyInfo (the semantics of what we're stripping are at
-	   best undefined (version), at worst dangerous (serialNumber) */
+	   best undefined (version), at worst dangerous (serialNumber)) */
 	while( cryptStatusOK( status ) && \
-		   ( peekTag( stream ) != MAKE_CTAG( CTAG_CF_VALIDITY ) && \
-		     peekTag( stream ) != MAKE_CTAG( CTAG_CF_SUBJECT ) && \
-			 peekTag( stream ) != MAKE_CTAG( CTAG_CF_PUBLICKEY ) ) )
+		   peekTag( stream ) != MAKE_CTAG( CTAG_CF_VALIDITY ) && \
+		   peekTag( stream ) != MAKE_CTAG( CTAG_CF_SUBJECT ) && \
+		   peekTag( stream ) != MAKE_CTAG( CTAG_CF_PUBLICKEY ) && \
+		   fieldsProcessed++ < 8 )
 		status = readUniversal( stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( fieldsProcessed >= 8 )
+		/* We should have hit something useful by this point */
+		return( CRYPT_ERROR_BADDATA );
 
 	/* If there's validity data present, read it */
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_CF_VALIDITY ) )
@@ -653,7 +674,7 @@ static int readCrmfRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
-	int length, endPos, status;
+	int length, endPos, fieldsProcessed = 0, status;
 
 	/* Find out how much cert template is present */
 	status = readSequence( stream, &length );
@@ -661,13 +682,17 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 	/* Skip any junk before the serial number and read the serial number */
 	while( cryptStatusOK( status ) && \
-		   peekTag( stream ) != MAKE_CTAG_PRIMITIVE( CTAG_CF_SERIALNUMBER ) )
+		   peekTag( stream ) != MAKE_CTAG_PRIMITIVE( CTAG_CF_SERIALNUMBER ) && \
+		   fieldsProcessed++ < 8 )
 		status = readUniversal( stream );
 	if( cryptStatusOK( status ) )
 		status = readSerialNumber( stream, certInfoPtr,
 								   CTAG_CF_SERIALNUMBER );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( fieldsProcessed >= 8 )
+		/* We should have hit something useful by this point */
+		return( CRYPT_ERROR_BADDATA );
 
 	/* Skip any junk before the issuer name and read the issuer name.  We
 	   don't actually care about the contents but we have to decode them
@@ -684,8 +709,10 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 	/* Skip any further junk that may be present in the template and read
 	   the attributes */
+	fieldsProcessed = 0;
 	while( cryptStatusOK( status ) && \
-		   stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
+		   stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE && \
+		   fieldsProcessed++ < 8 )
 		{
 		const int tag = peekTag( stream );
 
@@ -703,6 +730,9 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		}
 	if( cryptStatusError( status ) )
 		return( status );
+	if( fieldsProcessed >= 8 )
+		/* We shouldn't encounter this many bits of junk */
+		return( CRYPT_ERROR_BADDATA );
 
 	/* Fix up any problems in attributes */
 	return( fixAttributes( certInfoPtr ) );
@@ -713,14 +743,15 @@ static int readRevRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
 	CERT_VAL_INFO *certValInfo = certInfoPtr->cCertVal;
-	int length, endPos, status;
+	int length, endPos, fieldsProcessed = 0, status;
 
 	/* Read the outer wrapper and SEQUENCE OF request info and make the
 	   currently selected one the start of the list */
 	readSequence( stream, &length );
 	endPos = stell( stream ) + length;
 	status = readSequence( stream, &length );
-	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
+	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		   fieldsProcessed++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const int innerStartPos = stell( stream );
 
@@ -728,6 +759,9 @@ static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 									   certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
+	if( cryptStatusOK( status ) && \
+		fieldsProcessed >= FAILSAFE_ITERATIONS_LARGE )
+		status = CRYPT_ERROR_OVERFLOW;
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
 		   data that arose from a user certificate so it's the most
@@ -755,13 +789,14 @@ static int readRtcsRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
 	CERT_VAL_INFO *certValInfo = certInfoPtr->cCertVal;
-	int length, endPos, status;
+	int length, endPos, fieldsProcessed = 0, status;
 
 	/* Read the SEQUENCE OF validity info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
 	endPos = stell( stream ) + length;
-	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
+	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		   fieldsProcessed++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const int innerStartPos = stell( stream );
 
@@ -769,6 +804,9 @@ static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 										certInfoPtr, FALSE );
 		length -= stell( stream ) - innerStartPos;
 		}
+	if( cryptStatusOK( status ) && \
+		fieldsProcessed >= FAILSAFE_ITERATIONS_LARGE )
+		status = CRYPT_ERROR_OVERFLOW;
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
 		   data that arose from a user certificate so it's the most
@@ -790,7 +828,7 @@ static int readRtcsResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
 	CERT_REV_INFO *certRevInfo = certInfoPtr->cCertRev;
-	int length, endPos, status;
+	int length, endPos, fieldsProcessed = 0, status;
 
 	/* Read the wrapper, version information, and requestor name */
 	readSequence( stream, &length );
@@ -802,7 +840,8 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		readConstructed( stream, NULL, CTAG_OR_VERSION );
 		status = readShortInteger( stream, &version );
 		if( cryptStatusError( status ) )
-			return( status );
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+									 status ) );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
 	else
@@ -813,7 +852,8 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	/* Read the SEQUENCE OF revocation info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
-	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
+	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		   fieldsProcessed++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const int innerStartPos = stell( stream );
 
@@ -821,6 +861,9 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 									   certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
+	if( cryptStatusOK( status ) && \
+		fieldsProcessed >= FAILSAFE_ITERATIONS_LARGE )
+		status = CRYPT_ERROR_OVERFLOW;
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
 		   data that arose from a user certificate so it's the most
@@ -848,7 +891,7 @@ static int readOcspRequestInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
 	CERT_REV_INFO *certRevInfo = certInfoPtr->cCertRev;
-	int length, endPos, status;
+	int length, endPos, fieldsProcessed = 0, status;
 
 	/* Read the wrapper, version information, and responder ID */
 	certInfoPtr->version = 1;
@@ -861,7 +904,8 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 		readConstructed( stream, NULL, CTAG_OP_VERSION );
 		status = readShortInteger( stream, &version );
 		if( cryptStatusError( status ) )
-			return( status );
+			return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
+									 status ) );
 		certInfoPtr->version = version + 1;	/* Zero-based */
 		}
 	if( peekTag( stream ) == MAKE_CTAG( 1 ) )
@@ -883,7 +927,8 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	/* Read the SEQUENCE OF revocation info and make the currently selected
 	   one the start of the list */
 	status = readSequence( stream, &length );
-	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE )
+	while( cryptStatusOK( status ) && length > MIN_ATTRIBUTE_SIZE && \
+		   fieldsProcessed++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const int innerStartPos = stell( stream );
 
@@ -891,6 +936,9 @@ static int readOcspResponseInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 										certInfoPtr );
 		length -= stell( stream ) - innerStartPos;
 		}
+	if( cryptStatusOK( status ) && \
+		fieldsProcessed >= FAILSAFE_ITERATIONS_LARGE )
+		status = CRYPT_ERROR_OVERFLOW;
 	if( cryptStatusError( status ) )
 		/* The invalid attribute isn't quite a user certificate, but it's the
 		   data that arose from a user certificate so it's the most
@@ -926,7 +974,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	QUERY_INFO queryInfo;
 	STREAM userInfoStream;
 	BYTE userInfo[ 128 + 8 ];
-	int userInfoSize, length, status;
+	int userInfoSize, length, iterationCount = 0, status;
 
 	/* Read the user name and encryption algorithm info and the start of the
 	   encrypted data */
@@ -963,7 +1011,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, "interop interop interop ", 24 );
 		status = krnlSendMessage( createInfo.cryptHandle,
@@ -973,7 +1021,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, queryInfo.iv, queryInfo.ivLength );
 		krnlSendMessage( iCryptContext,IMESSAGE_SETATTRIBUTE_S, &msgData,
@@ -1016,9 +1064,12 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	   any conflicting attributes that may be present in the cert */
 	for( attributeListCursor = userInfoPtr->attributes;
 		 attributeListCursor != NULL && \
-			!isBlobAttribute( attributeListCursor );
+			!isBlobAttribute( attributeListCursor ) && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
 		 attributeListCursor = attributeListCursor->next )
 		attributeListCursor->flags |= ATTR_FLAG_LOCKED;
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	return( CRYPT_OK );
 	}
@@ -1029,7 +1080,7 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 *																			*
 ****************************************************************************/
 
-const CERTREAD_INFO FAR_BSS certReadTable[] = {
+static const CERTREAD_INFO FAR_BSS certReadTable[] = {
 	{ CRYPT_CERTTYPE_CERTIFICATE, readCertInfo },
 	{ CRYPT_CERTTYPE_ATTRIBUTE_CERT, readAttributeCertInfo },
 	{ CRYPT_CERTTYPE_CERTREQUEST, readCertRequestInfo },
@@ -1046,3 +1097,14 @@ const CERTREAD_INFO FAR_BSS certReadTable[] = {
 	{ CRYPT_ICERTTYPE_SSL_CERTCHAIN, NULL },
 	{ CRYPT_CERTTYPE_NONE, NULL }
 	};
+
+const CERTREAD_INFO *getCertReadTable( void )
+	{
+	return( certReadTable );
+	}
+
+int sizeofCertReadTable( void )
+	{
+	return( FAILSAFE_ARRAYSIZE( certReadTable, CERTREAD_INFO ) );
+	}
+

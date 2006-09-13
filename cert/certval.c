@@ -260,8 +260,8 @@ int readRtcsRequestEntry( STREAM *stream, VALIDITY_INFO **listHeadPtr,
 			status = CRYPT_ERROR_BADDATA;
 		else
 			if( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE )
-			/* Skip the legacy ID */
-			status = readUniversal( stream );
+				/* Skip the legacy ID */
+				status = readUniversal( stream );
 		}
 	if( cryptStatusOK( status ) )
 		status = addValidityEntry( listHeadPtr, NULL, idBuffer, KEYID_SIZE );

@@ -137,7 +137,8 @@ static const HTTP_STATUS_INFO FAR_BSS httpStatusInfo[] = {
 	{ 505, "505", "HTTP Version not supported", CRYPT_ERROR_READ },
 	{ 510, "510", "HTTP-Ext: Not Extended", CRYPT_ERROR_READ },
 	{ 551, "551", "RTSP: Option not supported", CRYPT_ERROR_READ },
-	{ 0, NULL, "Unrecognised HTTP status condition", CRYPT_ERROR_READ }
+	{ 0, NULL, "Unrecognised HTTP status condition", CRYPT_ERROR_READ },
+		{ 0, NULL, "Unrecognised HTTP status condition", CRYPT_ERROR_READ }
 	};
 
 /* HTTP header parsing information as used by readHeaderLines() */
@@ -281,6 +282,7 @@ static int getChunkLength( const char *data, const int dataLength )
 	/* Chunk size information can have extensions tacked onto it following a
 	   ';', strip these before we start */
 	for( i = 0; i < length; i++ )
+		{
 		if( data[ i ] == ';' )
 			{
 			/* Move back to the end of the string that precedes the ';' */
@@ -288,6 +290,7 @@ static int getChunkLength( const char *data, const int dataLength )
 				i--;
 			length = i;	/* Adjust length and force loop exit */
 			}
+		}
 
 	/* The other side shouldn't be sending us more than 64K of data, given
 	   that what we're expecting is a short PKI message */
@@ -348,8 +351,12 @@ int sendHTTPError( STREAM *stream, char *headerBuffer,
 
 	/* Find the HTTP error string that corresponds to the HTTP status
 	   value */
-	for( i = 0; httpStatusInfo[ i ].httpStatus && \
-				httpStatusInfo[ i ].httpStatus != httpStatus; i++ );
+	for( i = 0; httpStatusInfo[ i ].httpStatus > 0 && \
+				httpStatusInfo[ i ].httpStatus != httpStatus && \
+				i < FAILSAFE_ARRAYSIZE( httpStatusInfo, HTTP_STATUS_INFO ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( httpStatusInfo, HTTP_STATUS_INFO ) )
+		retIntError();
 	if( httpStatusInfo[ i ].httpStatus )
 		{
 		statusString = httpStatusInfo[ i ].httpStatusString;
@@ -477,8 +484,12 @@ static int parseUriInfo( char *data, const int dataInLength,
 		length = status;	/* Record the new length of the decoded data */
 		}
 	if( i >= FAILSAFE_ITERATIONS_SMALL )
-		/* Sanity-check limit exceeded */
+		{
+		/* Sanity-check limit exceeded.  This could be either data error
+		   or an internal error, since we can't automatically tell which 
+		   we report it as a data error */
 		return( CRYPT_ERROR_BADDATA );
+		}
 	*dataOutLength = length;
 
 	/* We need to get at least 'x?xxx=xxx' */
@@ -580,7 +591,9 @@ static int readHTTPStatus( const char *data, const int dataLength,
 		retExtStream( errorStream, CRYPT_ERROR_BADDATA,
 					  "Invalid/missing HTTP status code" );
 	thirdChar = data[ 2 ];
-	for( i = 0; httpStatusInfo[ i ].httpStatus != 0; i++ )
+	for( i = 0; httpStatusInfo[ i ].httpStatus != 0 && \
+				i < FAILSAFE_ARRAYSIZE( httpStatusInfo, HTTP_STATUS_INFO ); 
+		 i++ )
 		{
 		/* We check the third digit (the one most likely to be different)
 		   for a mismatch to avoid a large number of calls to the string-
@@ -589,6 +602,8 @@ static int readHTTPStatus( const char *data, const int dataLength,
 			!strCompare( data, httpStatusInfo[ i ].httpStatusString, 3 ) )
 			break;
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( httpStatusInfo, HTTP_STATUS_INFO ) )
+		retIntError();
 	httpStatusPtr = &httpStatusInfo[ i ];
 	if( httpStatus != NULL )
 		{
@@ -632,7 +647,10 @@ static int processHeaderLine( const char *data, const int dataLength,
 	*headerType = HTTP_HEADER_NONE;
 
 	/* Look for a header line that we recognise */
-	for( i = 0; httpHeaderParseInfo[ i ].headerString != NULL; i++ )
+	for( i = 0; 
+		 httpHeaderParseInfo[ i ].headerString != NULL && \
+			i < FAILSAFE_ARRAYSIZE( httpHeaderParseInfo, HTTP_HEADER_PARSE_INFO ); 
+		 i++ )
 		{
 		if( httpHeaderParseInfo[ i ].headerString[ 0 ] == firstChar && \
 			dataLength >= httpHeaderParseInfo[ i ].headerStringLen && \
@@ -643,6 +661,8 @@ static int processHeaderLine( const char *data, const int dataLength,
 			break;
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( httpHeaderParseInfo, HTTP_HEADER_PARSE_INFO ) )
+		retIntError();
 	if( headerParseInfoPtr == NULL )
 		/* It's nothing that we can handle, exit */
 		return( 0 );
@@ -1174,12 +1194,16 @@ static int readRequestHeader( STREAM *stream, char *lineBuffer,
 		{
 		char reqNameBuffer[ 8 + 8 ];
 
+		/* Return the extended error information.  Note that we don't use
+		   sanitiseString() here because it's a static string that we
+		   supply, however we have to copy it into a temporary buffer so
+		   that we can strip the space character at the end */
 		sendHTTPError( stream, lineBuffer, lineBufSize, 501 );
 		memcpy( reqNameBuffer, reqName, reqNameLen );
 		reqNameBuffer[ reqNameLen - 1 ] = '\0';	/* Strip trailing space */
 		retExtStream( stream, CRYPT_ERROR_BADDATA,
 					  "Invalid HTTP request type, expected '%s'",
-					  reqNameBuffer );
+					  sanitiseString( reqNameBuffer, reqNameLen - 1 ) );
 		}
 	bufPtr = lineBuffer + reqNameLen;
 	length -= reqNameLen;
@@ -1212,6 +1236,7 @@ static int readRequestHeader( STREAM *stream, char *lineBuffer,
 		length -= offset;
 		}
 	else
+		{
 		/* For non-idempotent queries we don't care what the location is
 		   since it's not relevant for anything, so we just skip the URI.
 		   This also avoids complications with absolute vs. relative URLs,
@@ -1221,6 +1246,7 @@ static int readRequestHeader( STREAM *stream, char *lineBuffer,
 			bufPtr++;
 			length--;
 			}
+		}
 	if( length <= 0 || ( offset = skipWhitespace( bufPtr, length ) ) < 0 )
 		{
 		sendHTTPError( stream, lineBuffer, lineBufSize, 400 );

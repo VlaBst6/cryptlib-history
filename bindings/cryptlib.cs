@@ -260,34 +260,31 @@ public class crypt
 	public const int CERTINFO_FINGERPRINT_MD5                    = 2005;
 	public const int CERTINFO_FINGERPRINT_SHA                    = 2006;
 	public const int CERTINFO_CURRENT_CERTIFICATE                = 2007; // Cursor mgt: Rel.pos in chain/CRL/OCSP
-	public const int CERTINFO_CURRENT_EXTENSION                  = 2008; // Cursor mgt: Rel.pos.or abs.extension
-	public const int CERTINFO_CURRENT_FIELD                      = 2009; // Cursor mgt: Rel.pos.or abs.field in ext
-	public const int CERTINFO_CURRENT_COMPONENT                  = 2010; // Cursor mgt: Rel.pos in multival.field
-	public const int CERTINFO_TRUSTED_USAGE                      = 2011; // Usage that cert is trusted for
-	public const int CERTINFO_TRUSTED_IMPLICIT                   = 2012; // Whether cert is implicitly trusted
-	public const int CERTINFO_SIGNATURELEVEL                     = 2013; // Amount of detail to include in sigs.
-	public const int CERTINFO_VERSION                            = 2014; // Cert.format version
-	public const int CERTINFO_SERIALNUMBER                       = 2015; // Serial number
-	public const int CERTINFO_SUBJECTPUBLICKEYINFO               = 2016; // Public key
-	public const int CERTINFO_CERTIFICATE                        = 2017; // User certificate
-	public const int CERTINFO_USERCERTIFICATE                    = 2017;
-	public const int CERTINFO_CACERTIFICATE                      = 2018; // CA certificate
-	public const int CERTINFO_ISSUERNAME                         = 2019; // Issuer DN
-	public const int CERTINFO_VALIDFROM                          = 2020; // Cert valid-from time
-	public const int CERTINFO_VALIDTO                            = 2021; // Cert valid-to time
-	public const int CERTINFO_SUBJECTNAME                        = 2022; // Subject DN
-	public const int CERTINFO_ISSUERUNIQUEID                     = 2023; // Issuer unique ID
-	public const int CERTINFO_SUBJECTUNIQUEID                    = 2024; // Subject unique ID
-	public const int CERTINFO_CERTREQUEST                        = 2025; // Cert.request (DN + public key)
-	public const int CERTINFO_THISUPDATE                         = 2026; // CRL/OCSP current-update time
-	public const int CERTINFO_NEXTUPDATE                         = 2027; // CRL/OCSP next-update time
-	public const int CERTINFO_REVOCATIONDATE                     = 2028; // CRL/OCSP cert-revocation time
-	public const int CERTINFO_REVOCATIONSTATUS                   = 2029; // OCSP revocation status
-	public const int CERTINFO_CERTSTATUS                         = 2030; // RTCS certificate status
-	public const int CERTINFO_DN                                 = 2031; // Currently selected DN in string form
-	public const int CERTINFO_PKIUSER_ID                         = 2032; // PKI user ID
-	public const int CERTINFO_PKIUSER_ISSUEPASSWORD              = 2033; // PKI user issue password
-	public const int CERTINFO_PKIUSER_REVPASSWORD                = 2034; // PKI user revocation password
+	public const int CERTINFO_TRUSTED_USAGE                      = 2008; // Usage that cert is trusted for
+	public const int CERTINFO_TRUSTED_IMPLICIT                   = 2009; // Whether cert is implicitly trusted
+	public const int CERTINFO_SIGNATURELEVEL                     = 2010; // Amount of detail to include in sigs.
+	public const int CERTINFO_VERSION                            = 2011; // Cert.format version
+	public const int CERTINFO_SERIALNUMBER                       = 2012; // Serial number
+	public const int CERTINFO_SUBJECTPUBLICKEYINFO               = 2013; // Public key
+	public const int CERTINFO_CERTIFICATE                        = 2014; // User certificate
+	public const int CERTINFO_USERCERTIFICATE                    = 2014;
+	public const int CERTINFO_CACERTIFICATE                      = 2015; // CA certificate
+	public const int CERTINFO_ISSUERNAME                         = 2016; // Issuer DN
+	public const int CERTINFO_VALIDFROM                          = 2017; // Cert valid-from time
+	public const int CERTINFO_VALIDTO                            = 2018; // Cert valid-to time
+	public const int CERTINFO_SUBJECTNAME                        = 2019; // Subject DN
+	public const int CERTINFO_ISSUERUNIQUEID                     = 2020; // Issuer unique ID
+	public const int CERTINFO_SUBJECTUNIQUEID                    = 2021; // Subject unique ID
+	public const int CERTINFO_CERTREQUEST                        = 2022; // Cert.request (DN + public key)
+	public const int CERTINFO_THISUPDATE                         = 2023; // CRL/OCSP current-update time
+	public const int CERTINFO_NEXTUPDATE                         = 2024; // CRL/OCSP next-update time
+	public const int CERTINFO_REVOCATIONDATE                     = 2025; // CRL/OCSP cert-revocation time
+	public const int CERTINFO_REVOCATIONSTATUS                   = 2026; // OCSP revocation status
+	public const int CERTINFO_CERTSTATUS                         = 2027; // RTCS certificate status
+	public const int CERTINFO_DN                                 = 2028; // Currently selected DN in string form
+	public const int CERTINFO_PKIUSER_ID                         = 2029; // PKI user ID
+	public const int CERTINFO_PKIUSER_ISSUEPASSWORD              = 2030; // PKI user issue password
+	public const int CERTINFO_PKIUSER_REVPASSWORD                = 2031; // PKI user revocation password
 	public const int CERTINFO_COUNTRYNAME                        = 2100; // countryName
 	public const int CERTINFO_STATEORPROVINCENAME                = 2101; // stateOrProvinceName
 	public const int CERTINFO_LOCALITYNAME                       = 2102; // localityName
@@ -851,28 +848,30 @@ public class crypt
 	/* A magic value indicating that the default setting for this parameter
 	   should be used */
 	
-	public const int USE_DEFAULT                              = -10 ;
+	public const int USE_DEFAULT                              = -100;
 	
 	/* A magic value for unused parameters */
 	
-	public const int UNUSED                                   = -11 ;
+	public const int UNUSED                                   = -101;
+	
+	/* Cursor positioning codes for certificate/CRL extensions */
+	
+	public const int CURSOR_FIRST                             = -200;
+	public const int CURSOR_PREVIOUS                          = -201;
+	public const int CURSOR_NEXT                              = -202;
+	public const int CURSOR_LAST                              = -203;
+	
+	/* The type of information polling to perform to get random seed 
+	   information.  These values have to be negative because they're used
+	   as magic length values for cryptAddRandom() */
+	
+	public const int RANDOM_FASTPOLL                          = -300;
+	public const int RANDOM_SLOWPOLL                          = -301;
 	
 	/* Whether the PKC key is a public or private key */
 	
 	public const int KEYTYPE_PRIVATE                          = 0   ;
 	public const int KEYTYPE_PUBLIC                           = 1   ;
-	
-	/* The type of information polling to perform to get random seed information */
-	
-	public const int RANDOM_FASTPOLL                          = -10 ;
-	public const int RANDOM_SLOWPOLL                          = -11 ;
-	
-	/* Cursor positioning codes for certificate/CRL extensions */
-	
-	public const int CURSOR_FIRST                             = -20 ;
-	public const int CURSOR_PREVIOUS                          = -21 ;
-	public const int CURSOR_NEXT                              = -22 ;
-	public const int CURSOR_LAST                              = -23 ;
 	
 	/* Keyset open options */
 	

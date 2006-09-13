@@ -242,8 +242,7 @@ int krnlBeginInit( void )
 	if( getTime() <= MIN_TIME_VALUE )
 		{
 		MUTEX_UNLOCK( initialisation );
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_FAILED );
+		retIntError();
 		}
 
 	/* Initialise the ephemeral portions of the kernel data block.  Since
@@ -406,8 +405,9 @@ BOOLEAN krnlIsExiting( void )
 
 static BOOLEAN des3TestLoop( const DES_TEST *testData, int iterations )
 	{
-	BYTE temp[ DES_BLOCKSIZE ];
-	BYTE key1[ DES_SCHEDULE_SZ ], key2[ DES_SCHEDULE_SZ ], key3[ DES_SCHEDULE_SZ ];
+	BYTE temp[ DES_BLOCKSIZE + 8 ];
+	BYTE key1[ DES_SCHEDULE_SZ + 8 ], key2[ DES_SCHEDULE_SZ + 8 ];
+	BYTE key3[ DES_SCHEDULE_SZ + 8 ];
 	int i;
 
 	for( i = 0; i < iterations; i++ )
@@ -433,11 +433,13 @@ static BOOLEAN des3TestLoop( const DES_TEST *testData, int iterations )
 
 static BOOLEAN testGeneralAlgorithms( void )
 	{
-	static const struct {
+	typedef struct {
 		const char FAR_BSS *data;
 		const int length;
 		const BYTE hashValue[ 16 ];
-		} FAR_BSS md5Vectors[] = {	/* RFC 1321 MD5 test vectors */
+		} MD5_TEST_INFO;
+	static const MD5_TEST_INFO FAR_BSS md5Vectors[] = {
+		/* RFC 1321 MD5 test vectors */
 		{ "a", 1,
 		  { 0x0C, 0xC1, 0x75, 0xB9, 0xC0, 0xF1, 0xB6, 0xA8,
 			0x31, 0xC3, 0x99, 0xE2, 0x69, 0x77, 0x26, 0x61 } },
@@ -456,13 +458,15 @@ static BOOLEAN testGeneralAlgorithms( void )
 		{ "12345678901234567890123456789012345678901234567890123456789012345678901234567890", 80,
 		  { 0x57, 0xED, 0xF4, 0xA2, 0x2B, 0xE3, 0xC9, 0x55,
 			0xAC, 0x49, 0xDA, 0x2E, 0x21, 0x07, 0xB6, 0x7A } },
-		{ NULL, 0, { 0 } }
+		{ NULL, 0, { 0 } }, { NULL, 0, { 0 } }
 		};
-	static const struct {
+	typedef struct {
 		const char FAR_BSS *data;
 		const int length;
 		const BYTE hashValue[ 20 ];
-		} FAR_BSS sha1Vectors[] = {	/* FIPS 180-1 SHA-1 test vectors */
+		} SHA1_TEST_INFO;
+	static const SHA1_TEST_INFO FAR_BSS sha1Vectors[] = {
+		/* FIPS 180-1 SHA-1 test vectors */
 		{ "abc", 3,
 		  { 0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
 			0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
@@ -471,7 +475,7 @@ static BOOLEAN testGeneralAlgorithms( void )
 		  { 0x84, 0x98, 0x3E, 0x44, 0x1C, 0x3B, 0xD2, 0x6E,
 			0xBA, 0xAE, 0x4A, 0xA1, 0xF9, 0x51, 0x29, 0xE5,
 			0xE5, 0x46, 0x70, 0xF1 } },
-		{ NULL, 0, { 0 } }
+		{ NULL, 0, { 0 } }, { NULL, 0, { 0 } }
 		};
 	HASHFUNCTION hashFunction;
 	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
@@ -482,7 +486,8 @@ static BOOLEAN testGeneralAlgorithms( void )
 	getHashParameters( CRYPT_ALGO_MD5, &hashFunction, &hashSize );
 	if( hashFunction == NULL || hashSize != 16 )
 		return( FALSE );
-	for( i = 0; md5Vectors[ i ].data != NULL; i++ )
+	for( i = 0; md5Vectors[ i ].data != NULL && \
+				i < FAILSAFE_ARRAYSIZE( md5Vectors, MD5_TEST_INFO ); i++ )
 		{
 		hashFunction( NULL, hashValue, CRYPT_MAX_HASHSIZE,
 					  ( BYTE * ) md5Vectors[ i ].data,
@@ -490,13 +495,16 @@ static BOOLEAN testGeneralAlgorithms( void )
 		if( memcmp( hashValue, md5Vectors[ i ].hashValue, 16 ) )
 			return( FALSE );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( md5Vectors, MD5_TEST_INFO ) )
+		retIntError();
 #endif /* USE_MD5 */
 
 	/* Test the SHA-1 code against the values given in FIPS 180-1 */
 	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
 	if( hashFunction == NULL || hashSize != 20 )
 		return( FALSE );
-	for( i = 0; sha1Vectors[ i ].data != NULL; i++ )
+	for( i = 0; sha1Vectors[ i ].data != NULL && \
+				i < FAILSAFE_ARRAYSIZE( sha1Vectors, SHA1_TEST_INFO ); i++ )
 		{
 		hashFunction( NULL, hashValue, CRYPT_MAX_HASHSIZE,
 					  ( BYTE * ) sha1Vectors[ i ].data,
@@ -504,6 +512,8 @@ static BOOLEAN testGeneralAlgorithms( void )
 		if( memcmp( hashValue, sha1Vectors[ i ].hashValue, 20 ) )
 			return( FALSE );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( sha1Vectors, SHA1_TEST_INFO ) )
+		retIntError();
 
 	/* Test the 3DES code against the values given in NIST Special Pub.800-20,
 	   1999, which are actually the same as NBS Special Pub.500-20, 1980 since
@@ -556,10 +566,10 @@ static BOOLEAN testGeneralAlgorithms( void )
 static BOOLEAN testKernelMechanisms( void )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	CRYPT_CONTEXT cryptHandle;
 	static const BYTE FAR_BSS key[] = { 0x10, 0x46, 0x91, 0x34, 0x89, 0x98, 0x01, 0x31 };
-	BYTE buffer[ 128 ];
+	BYTE buffer[ 128 + 8 ];
 #ifdef USE_CERTIFICATES
 	time_t timeVal;
 #endif /* USE_CERTIFICATES */
@@ -896,11 +906,11 @@ static BOOLEAN testKernelMechanisms( void )
 	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
 		status = CRYPT_ERROR;
-	timeVal = MIN_TIME_VALUE - 1;	/* Lower bound fencepost error */
+	timeVal = MIN_TIME_VALUE;		/* Lower bound fencepost error */
 	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
 		status = CRYPT_ERROR;
-	timeVal = MIN_TIME_VALUE;		/* Lower bound */
+	timeVal = MIN_TIME_VALUE + 1;	/* Lower bound */
 	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_OK )
 		status = CRYPT_ERROR;

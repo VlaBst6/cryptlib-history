@@ -103,7 +103,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getHmacMD5Capability();
 	CONTEXT_INFO contextInfo;
 	MAC_INFO contextData;
-	BYTE keyData[ MAC_STATE_SIZE ];
+	BYTE keyData[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-MD5 against the test vectors given in RFC 2104 */
@@ -176,7 +176,7 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		MD5_Update( md5Info, buffer, noBytes );
 	else
 		{
-		BYTE hashBuffer[ MD5_CBLOCK ], digestBuffer[ MD5_CBLOCK ];
+		BYTE hashBuffer[ MD5_CBLOCK + 8 ], digestBuffer[ MD5_CBLOCK + 8 ];
 		int i;
 
 		/* Complete the inner hash and extract the digest */
@@ -213,7 +213,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	{
 	MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
 	MD5_CTX *md5Info = &( ( MAC_STATE * ) macInfo->macInfo )->macState;
-	BYTE hashBuffer[ MD5_CBLOCK ];
+	BYTE hashBuffer[ MD5_CBLOCK + 8 ];
 	int i;
 
 	MD5_Init( md5Info );

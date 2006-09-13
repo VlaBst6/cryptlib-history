@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Wed Aug 30 01:34:02 2006, filesize = 82663.
+ "cryptlib.h" dated Fri Sep  1 23:14:48 2006, filesize = 82545.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -42,7 +42,7 @@ const
 
 
 const
-  CRYPTLIB_VERSION = 3230;
+  CRYPTLIB_VERSION = 3300;
 
 
 {****************************************************************************
@@ -411,36 +411,33 @@ const
   CRYPT_CERTINFO_FINGERPRINT_MD5 = 2005; { = CRYPT_CERTINFO_FINGERPRINT }  
   CRYPT_CERTINFO_FINGERPRINT_SHA = 2006;  
   CRYPT_CERTINFO_CURRENT_CERTIFICATE = 2007;  { Cursor mgt: Rel.pos in chain/CRL/OCSP }
-  CRYPT_CERTINFO_CURRENT_EXTENSION = 2008;  { Cursor mgt: Rel.pos.or abs.extension }
-  CRYPT_CERTINFO_CURRENT_FIELD = 2009;  { Cursor mgt: Rel.pos.or abs.field in ext }
-  CRYPT_CERTINFO_CURRENT_COMPONENT = 2010;  { Cursor mgt: Rel.pos in multival.field }
-  CRYPT_CERTINFO_TRUSTED_USAGE = 2011;  { Usage that cert is trusted for }
-  CRYPT_CERTINFO_TRUSTED_IMPLICIT = 2012;  { Whether cert is implicitly trusted }
-  CRYPT_CERTINFO_SIGNATURELEVEL = 2013;  { Amount of detail to include in sigs.}
+  CRYPT_CERTINFO_TRUSTED_USAGE = 2008;  { Usage that cert is trusted for }
+  CRYPT_CERTINFO_TRUSTED_IMPLICIT = 2009;  { Whether cert is implicitly trusted }
+  CRYPT_CERTINFO_SIGNATURELEVEL = 2010;  { Amount of detail to include in sigs.}
   
   { General certificate object information }
-  CRYPT_CERTINFO_VERSION = 2014;  { Cert.format version }
-  CRYPT_CERTINFO_SERIALNUMBER = 2015;  { Serial number }
-  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO = 2016;  { Public key }
-  CRYPT_CERTINFO_CERTIFICATE = 2017;  { User certificate }
-  CRYPT_CERTINFO_USERCERTIFICATE = 2017; { = CRYPT_CERTINFO_CERTIFICATE }  
-  CRYPT_CERTINFO_CACERTIFICATE = 2018;  { CA certificate }
-  CRYPT_CERTINFO_ISSUERNAME = 2019;  { Issuer DN }
-  CRYPT_CERTINFO_VALIDFROM = 2020;  { Cert valid-from time }
-  CRYPT_CERTINFO_VALIDTO = 2021;  { Cert valid-to time }
-  CRYPT_CERTINFO_SUBJECTNAME = 2022;  { Subject DN }
-  CRYPT_CERTINFO_ISSUERUNIQUEID = 2023;  { Issuer unique ID }
-  CRYPT_CERTINFO_SUBJECTUNIQUEID = 2024;  { Subject unique ID }
-  CRYPT_CERTINFO_CERTREQUEST = 2025;  { Cert.request (DN + public key) }
-  CRYPT_CERTINFO_THISUPDATE = 2026;  { CRL/OCSP current-update time }
-  CRYPT_CERTINFO_NEXTUPDATE = 2027;  { CRL/OCSP next-update time }
-  CRYPT_CERTINFO_REVOCATIONDATE = 2028;  { CRL/OCSP cert-revocation time }
-  CRYPT_CERTINFO_REVOCATIONSTATUS = 2029;  { OCSP revocation status }
-  CRYPT_CERTINFO_CERTSTATUS = 2030;  { RTCS certificate status }
-  CRYPT_CERTINFO_DN = 2031;  { Currently selected DN in string form }
-  CRYPT_CERTINFO_PKIUSER_ID = 2032;  { PKI user ID }
-  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD = 2033;  { PKI user issue password }
-  CRYPT_CERTINFO_PKIUSER_REVPASSWORD = 2034;  { PKI user revocation password }
+  CRYPT_CERTINFO_VERSION = 2011;  { Cert.format version }
+  CRYPT_CERTINFO_SERIALNUMBER = 2012;  { Serial number }
+  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO = 2013;  { Public key }
+  CRYPT_CERTINFO_CERTIFICATE = 2014;  { User certificate }
+  CRYPT_CERTINFO_USERCERTIFICATE = 2014; { = CRYPT_CERTINFO_CERTIFICATE }  
+  CRYPT_CERTINFO_CACERTIFICATE = 2015;  { CA certificate }
+  CRYPT_CERTINFO_ISSUERNAME = 2016;  { Issuer DN }
+  CRYPT_CERTINFO_VALIDFROM = 2017;  { Cert valid-from time }
+  CRYPT_CERTINFO_VALIDTO = 2018;  { Cert valid-to time }
+  CRYPT_CERTINFO_SUBJECTNAME = 2019;  { Subject DN }
+  CRYPT_CERTINFO_ISSUERUNIQUEID = 2020;  { Issuer unique ID }
+  CRYPT_CERTINFO_SUBJECTUNIQUEID = 2021;  { Subject unique ID }
+  CRYPT_CERTINFO_CERTREQUEST = 2022;  { Cert.request (DN + public key) }
+  CRYPT_CERTINFO_THISUPDATE = 2023;  { CRL/OCSP current-update time }
+  CRYPT_CERTINFO_NEXTUPDATE = 2024;  { CRL/OCSP next-update time }
+  CRYPT_CERTINFO_REVOCATIONDATE = 2025;  { CRL/OCSP cert-revocation time }
+  CRYPT_CERTINFO_REVOCATIONSTATUS = 2026;  { OCSP revocation status }
+  CRYPT_CERTINFO_CERTSTATUS = 2027;  { RTCS certificate status }
+  CRYPT_CERTINFO_DN = 2028;  { Currently selected DN in string form }
+  CRYPT_CERTINFO_PKIUSER_ID = 2029;  { PKI user ID }
+  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD = 2030;  { PKI user issue password }
+  CRYPT_CERTINFO_PKIUSER_REVPASSWORD = 2031;  { PKI user revocation password }
   
   { X.520 Distinguished Name components.  This is a composite field, the
   DN to be manipulated is selected through the addition of a
@@ -1267,28 +1264,30 @@ const
 {  A magic value indicating that the default setting for this parameter
    should be used  }
 
-  CRYPT_USE_DEFAULT = -10;
+  CRYPT_USE_DEFAULT = -100;
 
 {  A magic value for unused parameters  }
 
-  CRYPT_UNUSED = -11;
+  CRYPT_UNUSED = -101;
+
+{  Cursor positioning codes for certificate/CRL extensions  }
+
+  CRYPT_CURSOR_FIRST = -200;
+  CRYPT_CURSOR_PREVIOUS = -201;
+  CRYPT_CURSOR_NEXT = -202;
+  CRYPT_CURSOR_LAST = -203;
+
+{  The type of information polling to perform to get random seed 
+   information.  These values have to be negative because they're used
+   as magic length values for cryptAddRandom()  }
+
+  CRYPT_RANDOM_FASTPOLL = -300;
+  CRYPT_RANDOM_SLOWPOLL = -301;
 
 {  Whether the PKC key is a public or private key  }
 
   CRYPT_KEYTYPE_PRIVATE = 0;
   CRYPT_KEYTYPE_PUBLIC = 1;
-
-{  The type of information polling to perform to get random seed information  }
-
-  CRYPT_RANDOM_FASTPOLL = -10;
-  CRYPT_RANDOM_SLOWPOLL = -11;
-
-{  Cursor positioning codes for certificate/CRL extensions  }
-
-  CRYPT_CURSOR_FIRST = -20;
-  CRYPT_CURSOR_PREVIOUS = -21;
-  CRYPT_CURSOR_NEXT = -22;
-  CRYPT_CURSOR_LAST = -23;
 
 {  Keyset open options  }
 

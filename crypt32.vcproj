@@ -16,7 +16,7 @@
 		<Configuration
 			Name="Debug|Win32"
 			OutputDirectory=".\binaries"
-			IntermediateDirectory=".\debug"
+			IntermediateDirectory=".\debug_vs"
 			ConfigurationType="2"
 			InheritedPropertySheets="$(VCInstallDir)VCProjectDefaults\UpgradeFromVC60.vsprops"
 			UseOfMFC="0"
@@ -111,7 +111,7 @@
 		<Configuration
 			Name="Release|Win32"
 			OutputDirectory=".\binaries"
-			IntermediateDirectory=".\release"
+			IntermediateDirectory=".\release_vs"
 			ConfigurationType="2"
 			InheritedPropertySheets="$(VCInstallDir)VCProjectDefaults\UpgradeFromVC60.vsprops"
 			UseOfMFC="0"

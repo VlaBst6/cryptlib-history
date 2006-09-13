@@ -335,7 +335,7 @@ static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
 								hStmt : \
 							 ( errorLevel == SQL_ERRLVL_DBC ) ? \
 								dbmsInfo->hDbc : dbmsInfo->hEnv;
-	char szSqlState[ SQL_SQLSTATE_SIZE ];
+	char szSqlState[ SQL_SQLSTATE_SIZE + 8 ];
 	SQLUINTEGER dwNativeError = 0;
 	SQLSMALLINT dummy;
 	SQLRETURN sqlStatus;
@@ -369,7 +369,7 @@ static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
 		{
 		/* Make sure that the caller gets a sensible error message if they
 		   try to examine the extended error information */
-		if( !*dbmsInfo->errorMessage )
+		if( *dbmsInfo->errorMessage == '\0' )
 			strcpy( dbmsInfo->errorMessage, "No data found" );
 		return( CRYPT_ERROR_NOTFOUND );
 		}
@@ -530,7 +530,7 @@ static int getDatatypeInfo( DBMS_STATE_INFO *dbmsInfo, int *featureFlags )
 	SQLUSMALLINT transactBehaviour;
 	SQLINTEGER attrLength;
 	SQLUINTEGER privileges;
-	char buffer[ 8 ];
+	char buffer[ 8 + 8 ];
 	int count;
 
 	/* First we see what the back-end's blob data type is.  Usually it'll
@@ -720,7 +720,7 @@ static int getAdditionalInfo( DBMS_STATE_INFO *dbmsInfo )
 	{
 	SQLRETURN sqlStatus;
 	SQLSMALLINT bufLen;
-	char buffer[ 128 ];
+	char buffer[ 128 + 8 ];
 
 	/* Check for various back-ends that require special-case handling */
 	sqlStatus = SQLGetInfo( dbmsInfo->hDbc, SQL_DBMS_NAME, buffer,
@@ -1158,7 +1158,7 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 			/* Execute the query */
 			if( queryEntry == DBMS_CACHEDQUERY_NONE )
 				{
-				char query[ MAX_SQL_QUERY_SIZE ];
+				char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
 				convertQuery( dbmsInfo, query, command );
 				sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );
@@ -1208,7 +1208,7 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 			/* Execute the SQL statement and fetch the results */
 			if( queryEntry == DBMS_CACHEDQUERY_NONE )
 				{
-				char query[ MAX_SQL_QUERY_SIZE ];
+				char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
 				convertQuery( dbmsInfo, query, command );
 				sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );
@@ -1315,7 +1315,7 @@ static int performUpdate( DBMS_STATE_INFO *dbmsInfo, const char *command,
 		sqlStatus = SQLExecute( hStmt );
 	else
 		{
-		char query[ MAX_SQL_QUERY_SIZE ];
+		char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
 		convertQuery( dbmsInfo, query, command );
 		sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );

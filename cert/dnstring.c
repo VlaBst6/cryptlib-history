@@ -22,12 +22,12 @@
    bloated versions of another string type, so we need to account for these 
    as well.
 
-   UTF-8 strings are a pain because they're not supported as any native
-   format.  For this reason we convert them to a more useful local
+   UTF-8 strings are a pain because they're almost never supported as any 
+   native format.  For this reason we convert them to a more useful local
    character set (ASCII, 8859-1, or Unicode as appropriate) when we read 
    them to make them usable.  Although their use is required after the 
    cutover date of December 2003, by unspoken unanimous consensus of 
-   implementors everywhere, implementations are sticking with the existing 
+   implementors everywhere implementations are sticking with the existing 
    DN encoding to avoid breaking things */
 
 typedef enum {
@@ -282,7 +282,7 @@ static ASN1_STRINGTYPE getAsn1StringType( const BYTE *string,
 	   using > 8-bit characters everyone will be using UTF8Strings, because 
 	   there's no easy way to distinguish between a byte string which is a 
 	   > 8-bit BMPString and a 7/8-bit string */
-	if( !( stringLen % UCSIZE ) && !*string )
+	if( !( stringLen % UCSIZE ) && *string == '\0' )
 		{
 		BOOLEAN notPrintable = FALSE, notIA5 = FALSE;
 		int length;
@@ -685,6 +685,7 @@ int copyFromAsn1String( void *dest, int *destLen, const int maxLen,
 		int length = sourceLen, i;
 
 		for( i = 0; i < length - 1; i++ )
+			{
 			if( destPtr[ i ] == 0xC8 )
 				{
 				int ch = destPtr[ i + 1 ];
@@ -696,9 +697,8 @@ int copyFromAsn1String( void *dest, int *destLen, const int maxLen,
 					ch == 0x6F || ch == 0x4F ||		/* o, O */
 					ch == 0x75 || ch == 0x55 )		/* u, U */
 					{
-					static const struct {
-						int src, dest;
-						} charMap[] = {
+					typedef struct { int src, dest; } CHARMAP_INFO;
+					static const CHARMAP_INFO charMap[] = {
 						{ 0x61, 0xE4 }, { 0x41, 0xC4 },	/* a, A */
 						{ 0x6F, 0xF6 }, { 0x4F, 0xD6 },	/* o, O */
 						{ 0x75, 0xFC }, { 0x55, 0xDC },	/* u, U */
@@ -706,8 +706,13 @@ int copyFromAsn1String( void *dest, int *destLen, const int maxLen,
 						};
 					int charIndex;
 
-					for( charIndex = 0; charMap[ charIndex ].src && \
-										charMap[ charIndex ].src != ch; charIndex++ );
+					for( charIndex = 0; 
+						 charMap[ charIndex ].src && \
+							charMap[ charIndex ].src != ch && \
+							charIndex < FAILSAFE_ARRAYSIZE( charMap, CHARMAP_INFO ); 
+						 charIndex++ );
+					if( charIndex >= FAILSAFE_ARRAYSIZE( charMap, CHARMAP_INFO ) )
+						retIntError();
 					destPtr[ i ] = charMap[ charIndex ].dest;
 					if( length - i > 2 )
 						memmove( destPtr + i + 1, destPtr + i + 2,
@@ -715,6 +720,7 @@ int copyFromAsn1String( void *dest, int *destLen, const int maxLen,
 					length--;
 					}
 				}
+			}
 		*destLen = length;
 		}
 

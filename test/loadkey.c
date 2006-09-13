@@ -523,12 +523,14 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 						   CRYPT_CONTEXT *decryptContext,
 						   const C_STR cryptContextLabel,
 						   const C_STR decryptContextLabel,
+						   const BOOLEAN useLargeKey,
 						   const BOOLEAN useMinimalKey )
 	{
 	CRYPT_PKCINFO_RSA *rsaKey;
-	const RSA_KEY *rsaKeyTemplate = &rsa512TestKey;
+	const RSA_KEY *rsaKeyTemplate = useLargeKey ? \
+									&rsa1024TestKey : &rsa512TestKey;
 	const BOOLEAN isDevice = ( cryptDevice != CRYPT_UNUSED ) ? TRUE : FALSE;
-	BOOLEAN useLargeKey = FALSE;
+	BOOLEAN loadLargeKey = useLargeKey;
 	int status;
 
 	/* Allocate room for the public-key components */
@@ -555,7 +557,7 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 				return( FALSE );
 				}
 			rsaKeyTemplate = &rsa1024TestKey;
-			useLargeKey = TRUE;
+			loadLargeKey = TRUE;
 			}
 		}
 
@@ -564,7 +566,7 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 		{
 		status = loadRSAPublicKey( cryptDevice, cryptContext,
 								   cryptContextLabel, rsaKey, isDevice,
-								   useLargeKey );
+								   loadLargeKey );
 		if( status == CRYPT_ERROR_NOTAVAIL && isDevice )
 			{
 			/* The device doesn't support public-key ops, use a native
@@ -573,7 +575,7 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 				  "using a cryptlib\n  native context instead." );
 			status = loadRSAPublicKey( CRYPT_UNUSED, cryptContext,
 									   cryptContextLabel, rsaKey, FALSE,
-									   useLargeKey );
+									   loadLargeKey );
 			}
 		if( cryptStatusError( status ) )
 			{
@@ -665,7 +667,16 @@ BOOLEAN loadRSAContexts( const CRYPT_DEVICE cryptDevice,
 						 CRYPT_CONTEXT *decryptContext )
 	{
 	return( loadRSAContextsEx( cryptDevice, cryptContext, decryptContext,
-							   RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, FALSE ) );
+							   RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, FALSE, 
+							   FALSE ) );
+	}
+BOOLEAN loadRSAContextsLarge( const CRYPT_DEVICE cryptDevice,
+							  CRYPT_CONTEXT *cryptContext,
+							  CRYPT_CONTEXT *decryptContext )
+	{
+	return( loadRSAContextsEx( cryptDevice, cryptContext, decryptContext,
+							   RSA_PUBKEY_LABEL, RSA_PRIVKEY_LABEL, TRUE, 
+							   FALSE ) );
 	}
 
 BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,

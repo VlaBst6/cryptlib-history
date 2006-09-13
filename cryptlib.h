@@ -9,9 +9,9 @@
 
 #define _CRYPTLIB_DEFINED
 
-/* The current cryptlib version: 3.2.3.0 */
+/* The current cryptlib version: 3.3.0.0 */
 
-#define CRYPTLIB_VERSION	3230
+#define CRYPTLIB_VERSION	3300
 
 /* Fixup for Windows support.  We need to include windows.h for various types
    and prototypes needed for DLL's.  In addition wincrypt.h defines some
@@ -508,11 +508,6 @@ typedef enum {
 		CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT,
 	CRYPT_CERTINFO_FINGERPRINT_SHA,
 	CRYPT_CERTINFO_CURRENT_CERTIFICATE,/* Cursor mgt: Rel.pos in chain/CRL/OCSP */
-#if 1	/* To be removed in cryptlib 3.3 */
-	CRYPT_CERTINFO_CURRENT_EXTENSION,/* Cursor mgt: Rel.pos.or abs.extension */
-	CRYPT_CERTINFO_CURRENT_FIELD,	/* Cursor mgt: Rel.pos.or abs.field in ext */
-	CRYPT_CERTINFO_CURRENT_COMPONENT,/* Cursor mgt: Rel.pos in multival.field */
-#endif /* 1 */
 	CRYPT_CERTINFO_TRUSTED_USAGE,	/* Usage that cert is trusted for */
 	CRYPT_CERTINFO_TRUSTED_IMPLICIT,/* Whether cert is implicitly trusted */
 	CRYPT_CERTINFO_SIGNATURELEVEL,	/* Amount of detail to include in sigs.*/
@@ -1440,28 +1435,30 @@ typedef enum {
 /* A magic value indicating that the default setting for this parameter
    should be used */
 
-#define CRYPT_USE_DEFAULT		-10
+#define CRYPT_USE_DEFAULT		-100
 
 /* A magic value for unused parameters */
 
-#define CRYPT_UNUSED			-11
+#define CRYPT_UNUSED			-101
+
+/* Cursor positioning codes for certificate/CRL extensions */
+
+#define CRYPT_CURSOR_FIRST		-200
+#define CRYPT_CURSOR_PREVIOUS	-201
+#define CRYPT_CURSOR_NEXT		-202
+#define CRYPT_CURSOR_LAST		-203
+
+/* The type of information polling to perform to get random seed 
+   information.  These values have to be negative because they're used
+   as magic length values for cryptAddRandom() */
+
+#define CRYPT_RANDOM_FASTPOLL	-300
+#define CRYPT_RANDOM_SLOWPOLL	-301
 
 /* Whether the PKC key is a public or private key */
 
 #define CRYPT_KEYTYPE_PRIVATE	0
 #define CRYPT_KEYTYPE_PUBLIC	1
-
-/* The type of information polling to perform to get random seed information */
-
-#define CRYPT_RANDOM_FASTPOLL	-10
-#define CRYPT_RANDOM_SLOWPOLL	-11
-
-/* Cursor positioning codes for certificate/CRL extensions */
-
-#define CRYPT_CURSOR_FIRST		-20
-#define CRYPT_CURSOR_PREVIOUS	-21
-#define CRYPT_CURSOR_NEXT		-22
-#define CRYPT_CURSOR_LAST		-23
 
 /* Keyset open options */
 
@@ -1604,7 +1601,7 @@ typedef struct {
 
 /* No error in function call */
 
-#define CRYPT_OK					0	/* No error */
+#define CRYPT_OK				0	/* No error */
 
 /* Error in parameters passed to function */
 

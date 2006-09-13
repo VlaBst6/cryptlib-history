@@ -165,7 +165,7 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 	BIGNUM *p = &pkcInfo->dlpParam_p, *q = &pkcInfo->dlpParam_q;
 	BIGNUM *g = &pkcInfo->dlpParam_g;
 	BIGNUM *j = &pkcInfo->tmp1, *gCounter = &pkcInfo->tmp2;
-	int bnStatus = BN_STATUS;
+	int bnStatus = BN_STATUS, iterationCount = 0;
 
 	/* j = (p - 1) / q */
 	CK( BN_sub_word( p, 1 ) );
@@ -185,7 +185,10 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 		CK( BN_add_word( gCounter, 1 ) );
 		CK( BN_mod_exp( g, gCounter, j, p, pkcInfo->bnCTX ) );
 		}
-	while( bnStatusOK( bnStatus ) && BN_is_one( g ) );
+	while( bnStatusOK( bnStatus ) && BN_is_one( g ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( getBnStatus( bnStatus ) );
 	}
@@ -199,11 +202,12 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 	{
 	const int safeExpSizeBits = getDLPexpSize( pBits );
 	const int noChecks = getNoPrimeChecks( pBits );
-	BIGNUM llPrimes[ MAX_NO_PRIMES ], llProducts[ MAX_NO_FACTORS ];
+	BIGNUM llPrimes[ MAX_NO_PRIMES + 8 ], llProducts[ MAX_NO_FACTORS + 8 ];
 	BIGNUM *p = &pkcInfo->dlpParam_p, *q = &pkcInfo->dlpParam_q;
 	BOOLEAN primeFound = FALSE;
-	int indices[ MAX_NO_FACTORS ];
-	int nPrimes, nFactors, factorBits, i, bnStatus = BN_STATUS, status;
+	int indices[ MAX_NO_FACTORS + 8 ];
+	int nPrimes, nFactors, factorBits, i, iterationCount = 0;
+	int bnStatus = BN_STATUS, status;
 
 	assert( p != NULL );
 	assert( pBits >= 512 && pBits <= MAX_PKCSIZE_BITS );
@@ -252,7 +256,7 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 
 	do
 		{
-		int indexMoved;
+		int indexMoved, innerIterationCount = 0;
 
 		/* Initialize the indices for the permutation.  We try the first 
 		   nFactors factors first, since any new primes are added at the end */
@@ -297,12 +301,14 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 			/* Find the lowest index which is not already at the lowest 
 			   possible point and move it down one */
 			for( i = 0; i < nFactors; i++ )
+				{
 				if( indices[ i ] > i )
 					{
 					indices[ i ]--;
 					indexMoved = i;
 					break;
 					}
+				}
 
 			/* If we moved down the highest index, we've exhausted all the 
 			   permutations so we have to start over with another prime */
@@ -315,7 +321,10 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 			for( i = indexMoved - 1; i >= 0; i-- )
 				indices[ i ] = indices[ i + 1 ] - 1;
 			} 
-		while( indices[ nFactors - 1 ] > 0 );
+		while( indices[ nFactors - 1 ] > 0 && \
+			   innerIterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		if( innerIterationCount >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 
 		/* If we haven't found a prime yet, add a new prime to the pool and
 		   try again */
@@ -335,7 +344,9 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 				goto cleanup;
 			}
 		}
-	while( !primeFound );
+	while( !primeFound && iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* Recover the original value of q by dividing by 2 and find a generator 
 	   suitable for p and q */

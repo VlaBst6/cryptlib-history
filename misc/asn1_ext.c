@@ -352,6 +352,7 @@ static const ALGOID_INFO FAR_BSS algoIDinfoTbl[] = {
 	  /* fortezzaConfidentialityAlgorithm (2 16 840 1 101 2 1 1 4) */
 #endif /* USE_SKIPJACK */
 
+	{ CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, NULL },
 	{ CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, NULL }
 	};
 
@@ -374,7 +375,8 @@ static CRYPT_ALGO_TYPE oidToAlgorithm( const BYTE *oid, const int oidLength,
 	/* Look for a matching OID.  For quick-reject matching we check the byte
 	   furthest inside the OID that's likely to not match, this rejects the
 	   majority of mismatches without requiring a full comparison */
-	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE; i++ )
+	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ); i++ )
 		{
 		const ALGOID_INFO *algoIDinfoPtr = &algoIDinfoTbl[ i ];
 
@@ -398,6 +400,8 @@ static CRYPT_ALGO_TYPE oidToAlgorithm( const BYTE *oid, const int oidLength,
 			return( algoIDinfoPtr->algorithm );
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+		retIntError_Ext( CRYPT_ALGO_NONE );
 
 	return( CRYPT_ALGO_NONE );
 	}
@@ -412,15 +416,23 @@ static const BYTE *algorithmToOID( const CRYPT_ALGO_TYPE algorithm,
 	{
 	int i;
 
-	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE; i++ )
+	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ); i++ )
+		{
 		if( algoIDinfoTbl[ i ].algorithm == algorithm )
 			break;
-	while( algoIDinfoTbl[ i ].algorithm == algorithm )
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+		retIntError_Null();
+	while( algoIDinfoTbl[ i ].algorithm == algorithm && \
+		   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
 		{
 		if( algoIDinfoTbl[ i ].parameter == parameter )
 			return( algoIDinfoTbl[ i ].oid );
 		i++;
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+		retIntError_Null();
 
 	assert( NOTREACHED );
 	return( NULL );	/* Get rid of compiler warning */
@@ -431,15 +443,23 @@ static const BYTE *algorithmToOIDcheck( const CRYPT_ALGO_TYPE algorithm,
 	{
 	int i;
 
-	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE; i++ )
+	for( i = 0; algoIDinfoTbl[ i ].algorithm != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ); i++ )
+		{
 		if( algoIDinfoTbl[ i ].algorithm == algorithm )
 			break;
-	while( algoIDinfoTbl[ i ].algorithm == algorithm )
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+		retIntError_Null();
+	while( algoIDinfoTbl[ i ].algorithm == algorithm && \
+		   i < FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
 		{
 		if( algoIDinfoTbl[ i ].parameter == parameter )
 			return( algoIDinfoTbl[ i ].oid );
 		i++;
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( algoIDinfoTbl, ALGOID_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -689,10 +709,13 @@ static int readAlgoIDInfo( STREAM *stream, QUERY_INFO *queryInfo,
 			paramTag = peekTag( stream );
 			if( queryInfo->cryptMode == CRYPT_MODE_CFB )
 				{
+				int itemsProcessed = 0;
+				
 				/* Skip the CFB r, k, and j parameters */
-				while( paramTag == MAKE_CTAG_PRIMITIVE( 0 ) || \
-					   paramTag == MAKE_CTAG_PRIMITIVE( 1 ) || \
-					   paramTag == MAKE_CTAG_PRIMITIVE( 2 ) )
+				while( ( paramTag == MAKE_CTAG_PRIMITIVE( 0 ) || \
+						 paramTag == MAKE_CTAG_PRIMITIVE( 1 ) || \
+						 paramTag == MAKE_CTAG_PRIMITIVE( 2 ) ) && \
+					   itemsProcessed++ < 4 )
 					{
 					long value;
 
@@ -703,6 +726,8 @@ static int readAlgoIDInfo( STREAM *stream, QUERY_INFO *queryInfo,
 						return( CRYPT_ERROR_NOTAVAIL );
 					paramTag = peekTag( stream );
 					}
+				if( itemsProcessed >= 4 )
+					return( CRYPT_ERROR_BADDATA );
 				return( readOctetStringTag( stream, queryInfo->iv,
 											&queryInfo->ivLength,
 											8, CRYPT_MAX_IVSIZE, 3 ) );
@@ -805,7 +830,7 @@ static int writeContextCryptAlgoID( STREAM *stream,
 	if( cryptStatusOK( status ) && !isStreamCipher( algorithm ) && \
 		needsIV( mode ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, iv, CRYPT_MAX_IVSIZE );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
@@ -1165,7 +1190,7 @@ int readContextAlgoID( STREAM *stream, CRYPT_CONTEXT *iCryptContext,
 								  CRYPT_CTXINFO_IVSIZE );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			setMessageData( &msgData, queryInfoPtr->iv,
 							min( ivLength, queryInfoPtr->ivLength ) );

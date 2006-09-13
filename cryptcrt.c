@@ -29,10 +29,6 @@
 BOOLEAN isValidField( const CRYPT_ATTRIBUTE_TYPE fieldID,
 					  const CRYPT_CERTTYPE_TYPE certType );
 
-/* Prototypes for functions in comp_get.c */
-
-int textToOID( const char *oid, const int oidLength, BYTE *binaryOID );
-
 #ifdef USE_CERTIFICATES
 
 /****************************************************************************
@@ -46,7 +42,7 @@ int textToOID( const char *oid, const int oidLength, BYTE *binaryOID );
 static int compareCertInfo( CERT_INFO *certInfoPtr, const int compareType,
 							const void *messageDataPtr )
 	{
-	const RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	int status;
 
 	switch( compareType )
@@ -327,14 +323,14 @@ static int checkCertUsage( CERT_INFO *certInfoPtr,
 
 static int exportCertData( CERT_INFO *certInfoPtr, 
 						   const CRYPT_CERTFORMAT_TYPE certFormat,
-						   RESOURCE_DATA *msgData )
+						   MESSAGE_DATA *msgData )
 	{
 	int status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( certFormat > CRYPT_CERTFORMAT_NONE && \
 			certFormat < CRYPT_CERTFORMAT_LAST );
-	assert( isWritePtr( msgData, sizeof( RESOURCE_DATA ) ) );
+	assert( isWritePtr( msgData, sizeof( MESSAGE_DATA ) ) );
 
 	/* Unsigned object types like CMS attributes aren't signed like other 
 	   cert.objects so they aren't pre-encoded when we sign them, and have 
@@ -344,22 +340,28 @@ static int exportCertData( CERT_INFO *certInfoPtr,
 	   buffer */
 	if( certInfoPtr->type == CRYPT_CERTTYPE_CMS_ATTRIBUTES )
 		{
+		const CERTWRITE_INFO *certWriteInfo;
 		STREAM stream;
-		int i;
+		const int certWriteInfoSize = sizeofCertWriteTable();
+		int iterationCount = 0;
 
 		assert( certFormat == CRYPT_ICERTFORMAT_DATA );
 
-		for( i = 0; \
-			 certWriteTable[ i ].type != CRYPT_CERTTYPE_CMS_ATTRIBUTES && \
-			 certWriteTable[ i ].type != CRYPT_CERTTYPE_NONE; i++ );
-		if( certWriteTable[ i ].type == CRYPT_CERTTYPE_NONE )
+		for( certWriteInfo = getCertWriteTable();
+			 certWriteInfo->type != CRYPT_CERTTYPE_CMS_ATTRIBUTES && \
+				certWriteInfo->type != CRYPT_CERTTYPE_NONE && \
+				iterationCount++ < certWriteInfoSize; 
+			 certWriteInfo++ );
+		if( iterationCount >= certWriteInfoSize )
+			retIntError();
+		if( certWriteInfo->type == CRYPT_CERTTYPE_NONE )
 			{
 			assert( NOTREACHED );
 			return( CRYPT_ERROR_NOTAVAIL );
 			}
 		sMemOpen( &stream, msgData->data, msgData->length );
-		status = certWriteTable[ i ].writeFunction( &stream, certInfoPtr,
-													NULL, CRYPT_UNUSED );
+		status = certWriteInfo->writeFunction( &stream, certInfoPtr, NULL, 
+											   CRYPT_UNUSED );
 		msgData->length = stell( &stream );
 		sMemDisconnect( &stream );
 
@@ -475,7 +477,7 @@ int iCryptReadSubjectPublicKey( void *streamPtr,
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM *stream = streamPtr;
 	void *spkiPtr = sMemBufPtr( stream );
 	int length, spkiLength, status;
@@ -544,7 +546,7 @@ static int processCertData( CERT_INFO *certInfoPtr,
 						    const MESSAGE_TYPE message,
 							void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	int *valuePtr = ( int * ) messageDataPtr;
 
 	/* Process get/set/delete attribute messages */
@@ -713,9 +715,14 @@ static int certificateMessageFunction( const void *objectInfoPtr,
 			{
 			int i;
 
-			for( i = 0; i < certInfoPtr->cCertCert->chainEnd; i++ )
+			for( i = 0; i < certInfoPtr->cCertCert->chainEnd && \
+						i < MAX_CHAINLENGTH; i++ )
+				{
 				krnlSendNotifier( certInfoPtr->cCertCert->chain[ i ],
 								  IMESSAGE_DECREFCOUNT );
+				}
+			if( i >= MAX_CHAINLENGTH )
+				retIntError();
 			}
 
 		return( CRYPT_OK );
@@ -1114,7 +1121,7 @@ C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	{
 	CERT_INFO *certInfoPtr;
 	ATTRIBUTE_LIST *attributeListPtr;
-	BYTE binaryOID[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BYTE binaryOID[ MAX_OID_SIZE + 8 ];
 #ifdef EBCDIC_CHARS
 	char asciiOID[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 #endif /* EBCDIC_CHARS */
@@ -1143,10 +1150,11 @@ C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #ifdef EBCDIC_CHARS
 	bufferToAscii( asciiOID, oid );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
-									 binaryOID ) )
+									 binaryOID, MAX_OID_SIZE ) )
 		return( CRYPT_ERROR_PARAM2 );
 #else
-	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID ) ) )
+	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID, 
+									 MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 #endif /* EBCDIC_CHARS */
 
@@ -1219,7 +1227,7 @@ C_RET cryptAddCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 							 C_IN int extensionLength )
 	{
 	CERT_INFO *certInfoPtr;
-	BYTE binaryOID[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BYTE binaryOID[ MAX_OID_SIZE + 8 ];
 #ifdef EBCDIC_CHARS
 	char asciiOID[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 #endif /* EBCDIC_CHARS */
@@ -1240,10 +1248,11 @@ C_RET cryptAddCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #ifdef EBCDIC_CHARS
 	bufferToAscii( asciiOID, oid );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
-						  binaryOID ) ) )
+									 binaryOID, MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 #else
-	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID ) ) )
+	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID,
+									 MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 #endif /* EBCDIC_CHARS */
 
@@ -1306,7 +1315,7 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	{
 	CERT_INFO *certInfoPtr;
 	ATTRIBUTE_LIST *attributeListPtr;
-	BYTE binaryOID[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BYTE binaryOID[ MAX_OID_SIZE + 8 ];
 #ifdef EBCDIC_CHARS
 	char asciiOID[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 #endif /* EBCDIC_CHARS */
@@ -1320,10 +1329,11 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #ifdef EBCDIC_CHARS
 	bufferToAscii( asciiOID, oid );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
-						  binaryOID ) ) )
+									 binaryOID, MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 #else
-	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID ) ) )
+	if( cryptStatusError( textToOID( oid, strlen( oid ), binaryOID,
+									 MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 #endif /* EBCDIC_CHARS */
 

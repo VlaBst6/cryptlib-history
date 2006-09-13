@@ -87,7 +87,7 @@ static int writeCmsSignerInfo( STREAM *stream,
 							   const void *signature, const int signatureSize,
 							   const CRYPT_HANDLE unsignedAttrObject )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	DYNBUF iAndSDB;
 	const int sizeofHashAlgoID = sizeofAlgoID( hashAlgo );
 	int timeStampSize, unsignedAttributeSize = 0, status;
@@ -224,7 +224,7 @@ static int hashCmsAttributes( CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 							  const CRYPT_CONTEXT iAttributeHash,
 							  const BOOLEAN lengthCheckOnly )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE temp, hash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int status;
 
@@ -568,7 +568,7 @@ int checkSignatureCMS( const void *signature, const int signatureLength,
 	CRYPT_ALGO_TYPE hashAlgo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	QUERY_INFO queryInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
 	int status;

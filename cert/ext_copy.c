@@ -232,6 +232,8 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 					CRYPT_ATTRIBUTE_TYPE *errorLocus, 
 					CRYPT_ERRTYPE_TYPE *errorType )
 	{
+	int iterationCount = 0;
+
 	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
@@ -259,7 +261,8 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 
 		for( attributeListCursor = srcListPtr;
 			 attributeListCursor != NULL && \
-				!isBlobAttribute( attributeListCursor );
+				!isBlobAttribute( attributeListCursor ) && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
 			 attributeListCursor = attributeListCursor->next )
 			{
 			assert( !isValidAttributeField( attributeListCursor->next ) || \
@@ -274,6 +277,8 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 				return( CRYPT_ERROR_DUPLICATE );
 				}
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		while( attributeListCursor != NULL )
 			{
 			assert( isBlobAttribute( attributeListCursor ) );
@@ -291,7 +296,9 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 		}
 
 	/* Make a second pass copying everything across */
-	while( srcListPtr != NULL && !isBlobAttribute( srcListPtr ) )
+	iterationCount = 0;
+	while( srcListPtr != NULL && !isBlobAttribute( srcListPtr ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		CRYPT_ATTRIBUTE_TYPE attributeID = srcListPtr->attributeID;
 		const ATTRIBUTE_INFO *attributeInfoPtr = \
@@ -318,6 +325,8 @@ int copyAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 		while( srcListPtr != NULL && srcListPtr->attributeID == attributeID )
 			srcListPtr = srcListPtr->next;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* If there are blob-type attributes left at the end of the list, copy
 	   them across last */
@@ -383,7 +392,7 @@ int copyIssuerAttributes( ATTRIBUTE_LIST **destListHeadPtr,
 	attributeListPtr = findAttributeField( *destListHeadPtr, 
 										   CRYPT_CERTINFO_CA, 
 										   CRYPT_ATTRIBUTE_NONE );
-	if( attributeListPtr != NULL && attributeListPtr->intValue )
+	if( attributeListPtr != NULL && attributeListPtr->intValue > 0 )
 		{
 		ATTRIBUTE_LIST *srcPermittedSubtrees, *srcExcludedSubtrees;
 

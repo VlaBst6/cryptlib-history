@@ -71,8 +71,15 @@ void appendContentListItem( ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Find the end of the list and add the new item */
 	if( contentListPtr != NULL )
-		while( contentListPtr->next != NULL )
+		{
+		int iterationCount = 0;
+		
+		while( contentListPtr->next != NULL && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			contentListPtr = contentListPtr->next;
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Void();
+		}
 	insertDoubleListElements( &envelopeInfoPtr->contentList, contentListPtr,
 							  contentListItem, contentListItem );
 	}
@@ -83,11 +90,13 @@ void deleteContentList( MEMPOOL_STATE memPoolState,
 						CONTENT_LIST **contentListHeadPtr )
 	{
 	CONTENT_LIST *contentListCursor = *contentListHeadPtr;
+	int iterationCount = 0;
 
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
 	assert( isWritePtr( contentListHeadPtr, sizeof( CONTENT_LIST * ) ) );
 
-	while( contentListCursor != NULL )
+	while( contentListCursor != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		CONTENT_LIST *contentListItem = contentListCursor;
 
@@ -121,6 +130,8 @@ void deleteContentList( MEMPOOL_STATE memPoolState,
 		zeroise( contentListItem, sizeof( CONTENT_LIST ) );
 		freeMemPool( memPoolState, contentListItem );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Void();
 	}
 
 /****************************************************************************
@@ -136,7 +147,7 @@ static int processTimestamp( CONTENT_LIST *contentListPtr,
 							 const int timestampLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int bufSize = max( timestampLength + 128, MIN_BUFFER_SIZE );
 	int status;
 
@@ -184,7 +195,7 @@ static int processUnauthAttributes( CONTENT_LIST *contentListPtr,
 									const int unauthAttrLength )
 	{
 	STREAM stream;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
 	assert( isReadPtr( unauthAttr, unauthAttrLength ) );
@@ -200,7 +211,8 @@ static int processUnauthAttributes( CONTENT_LIST *contentListPtr,
 	sMemConnect( &stream, unauthAttr, unauthAttrLength );
 	status = readConstructed( &stream, NULL, 1 );
 	while( cryptStatusOK( status ) && \
-		   sMemDataLeft( &stream ) > MIN_CRYPT_OBJECTSIZE )
+		   sMemDataLeft( &stream ) > MIN_CRYPT_OBJECTSIZE && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		BYTE oid[ MAX_OID_SIZE + 8 ];
 		int oidLength, length;
@@ -243,6 +255,8 @@ static int processUnauthAttributes( CONTENT_LIST *contentListPtr,
 		status = readUniversal( &stream );
 		continue;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	sMemDisconnect( &stream );
 
 	return( status );
@@ -257,7 +271,7 @@ static int importSessionKey( ENVELOPE_INFO *envelopeInfoPtr,
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	CONTENT_LIST *sessionKeyInfoPtr;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isReadPtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
@@ -281,8 +295,11 @@ static int importSessionKey( ENVELOPE_INFO *envelopeInfoPtr,
 	/* Look for the information required to recreate the session key context */
 	for( sessionKeyInfoPtr = envelopeInfoPtr->contentList;
 		 sessionKeyInfoPtr != NULL && \
-			sessionKeyInfoPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY;
+			sessionKeyInfoPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 sessionKeyInfoPtr = sessionKeyInfoPtr->next );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	if( sessionKeyInfoPtr == NULL )
 		/* We need to read more data before we can recreate the session key */
 		return( CRYPT_ERROR_UNDERFLOW );
@@ -328,7 +345,7 @@ static int addSignatureInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	{
 	CONTENT_SIG_INFO *sigInfo = &contentListPtr->clSigInfo;
 	ACTION_LIST *actionListPtr;
-	int status;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
@@ -341,7 +358,8 @@ static int addSignatureInfo( ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Find the hash action that we need to check this signature */
 	for( actionListPtr = envelopeInfoPtr->actionList;
-		 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+		 actionListPtr = actionListPtr->next )
 		{
 		int cryptAlgo;
 
@@ -353,6 +371,8 @@ static int addSignatureInfo( ENVELOPE_INFO *envelopeInfoPtr,
 			cryptAlgo == sigInfo->hashAlgo )
 			break;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	/* If we can't find a hash action to match this signature, return a bad 
 	   signature error since something must have altered the algorithm ID 
@@ -530,7 +550,7 @@ static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 		else
 #endif /* USE_PGP */
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			/* Load the derivation information into the context */
 			status = krnlSendMessage( createInfo.cryptHandle,
@@ -615,11 +635,17 @@ static int addDeenvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 		   the first information object of the correct type */
 		if( contentListPtr == NULL )
 			{
+			int iterationCount = 0;
+			
 			/* Look for the first information object matching the supplied
 			   information */
 			for( contentListPtr = envelopeInfoPtr->contentList;
-				 contentListPtr != NULL && contentListPtr->envInfo != envInfo;
+				 contentListPtr != NULL && \
+					contentListPtr->envInfo != envInfo && \
+					iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 				 contentListPtr = contentListPtr->next );
+			if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+				retIntError();
 			if( contentListPtr == NULL && \
 				envInfo == CRYPT_ENVINFO_PASSWORD && \
 				envelopeInfoPtr->iDecryptionKeyset != CRYPT_ERROR )
@@ -629,10 +655,14 @@ static int addDeenvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 				   be decrypted using the password.  This requires both a
 				   keyset/device to fetch the key from and a private key as a
 				   required info type */
+				iterationCount = 0;
 				for( contentListPtr = envelopeInfoPtr->contentList;
 					 contentListPtr != NULL && \
-						contentListPtr->envInfo != CRYPT_ENVINFO_PRIVATEKEY;
+						contentListPtr->envInfo != CRYPT_ENVINFO_PRIVATEKEY && \
+						iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 					 contentListPtr = contentListPtr->next );
+				if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+					retIntError();
 				}
 			if( contentListPtr == NULL )
 				return( CRYPT_ARGERROR_VALUE );
@@ -738,11 +768,9 @@ static int addDeenvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 							encrInfo->cryptAlgo, encrInfo->cryptMode,
 							encrInfo->saltOrIV, encrInfo->saltOrIVsize, TRUE );
 			if( cryptStatusOK( status ) )
-				{
 				/* The session key context is the newly-created internal 
 				   one */
 				iNewContext = envelopeInfoPtr->iCryptContext;
-				}
 			break;
 			}
 
@@ -759,14 +787,19 @@ static int addDeenvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isHandleRangeValid( iNewContext ) );
 	if( envInfo != CRYPT_ENVINFO_SESSIONKEY )
 		{
+		int iterationCount = 0;
+		
 		/* If we got as far as the encrypted data (indicated by the fact 
 		   that there's content info present), we can set up the decryption.  
 		   If we didn't get this far, it'll be set up by the de-enveloping 
 		   code when we reach it */
 		for( contentListPtr = envelopeInfoPtr->contentList;
 			 contentListPtr != NULL && \
-				contentListPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY;
+				contentListPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 			 contentListPtr = contentListPtr->next );
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		if( contentListPtr != NULL )
 			{
 			const CONTENT_ENCR_INFO *encrInfo = &contentListPtr->clEncrInfo;

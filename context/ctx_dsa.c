@@ -119,7 +119,7 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = getDSACapability();
 	DLP_PARAMS dlpParams;
-	BYTE buffer[ 128 ];
+	BYTE buffer[ 128 + 8 ];
 	int sigSize, status;
 
 	/* Generate a signature with the private key */

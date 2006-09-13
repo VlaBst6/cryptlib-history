@@ -52,6 +52,12 @@
 								  ( 3 * MAX_ENCODED_DBXKEYID_SIZE ) + \
 								  MAX_ENCODED_CERT_SIZE + 128 )
 
+/* For most of the queries that don't add cert data we don't need to use the 
+   worst-case buffer size, so we define an alternative smaller-size buffer for
+   use with standard queries */
+
+#define STANDARD_SQL_QUERY_SIZE	256
+
 /* When performing a query the database glue code limits the maximum returned
    data size to a certain size, the following define allows us to declare a
    fixed-size buffer that we know will always be big enough */
@@ -193,9 +199,10 @@ int cmdUpdate( void *stateInfo, COMMAND_INFO *cmd );
 
 /* Other non-macro functions */
 
-void dbmsFormatSQL( char *buffer, const char *format, ... );
-int dbmsFormatQuery( char *output, const char *input, const int inputLength,
-					 const int maxLength );
+void dbmsFormatSQL( char *buffer, const int bufMaxLen, 
+					const char *format, ... );
+int dbmsFormatQuery( char *output, const int outMaxLength, 
+					 const char *input, const int inputLength );
 int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name,
 				   const int lengthMarker );
 

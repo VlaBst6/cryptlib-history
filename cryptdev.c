@@ -94,14 +94,16 @@ static int processMechanismMessage( DEVICE_INFO *deviceInfoPtr,
 	{
 	CRYPT_DEVICE localCryptDevice = deviceInfoPtr->objectHandle;
 	MECHANISM_FUNCTION mechanismFunction = NULL;
-	int refCount, status;
+	int refCount, i, status;
 
 	/* Find the function to handle this action and mechanism */
 	if( deviceInfoPtr->mechanismFunctions != NULL )
 		{
-		int i = 0;
-
-		while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
+		for( i = 0;
+			 deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
+				i < deviceInfoPtr->mechanismFunctionCount && \
+				i < FAILSAFE_ITERATIONS_LARGE; 
+			 i++ )
 			{
 			if( deviceInfoPtr->mechanismFunctions[ i ].action == action && \
 				deviceInfoPtr->mechanismFunctions[ i ].mechanism == mechanism )
@@ -110,14 +112,14 @@ static int processMechanismMessage( DEVICE_INFO *deviceInfoPtr,
 					deviceInfoPtr->mechanismFunctions[ i ].function;
 				break;
 				}
-			i++;
 			}
+		if( i >= deviceInfoPtr->mechanismFunctionCount || \
+			i >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		}
 	if( mechanismFunction == NULL && \
 		localCryptDevice != SYSTEM_OBJECT_HANDLE )
 		{
-		int i = 0;
-
 		/* This isn't the system object, fall back to the system object and 
 		   see if it can handle the mechanism.  We do it this way rather 
 		   than sending the message through the kernel a second time because 
@@ -142,7 +144,11 @@ static int processMechanismMessage( DEVICE_INFO *deviceInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		assert( deviceInfoPtr->mechanismFunctions != NULL );
-		while( deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE )
+		for( i = 0; 
+			 deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
+				i < deviceInfoPtr->mechanismFunctionCount && \
+				i < FAILSAFE_ITERATIONS_LARGE; 
+			 i++ )
 			{
 			if( deviceInfoPtr->mechanismFunctions[ i ].action == action && \
 				deviceInfoPtr->mechanismFunctions[ i ].mechanism == mechanism )
@@ -151,8 +157,10 @@ static int processMechanismMessage( DEVICE_INFO *deviceInfoPtr,
 						deviceInfoPtr->mechanismFunctions[ i ].function;
 				break;
 				}
-			i++;
 			}
+		if( i >= deviceInfoPtr->mechanismFunctionCount || \
+			i >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		}
 	if( mechanismFunction == NULL )
 		return( CRYPT_ERROR_NOTAVAIL );
@@ -262,7 +270,7 @@ static int processGetAttribute( DEVICE_INFO *deviceInfoPtr,
 static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 
 	switch( messageValue )
 		{
@@ -310,7 +318,8 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 		case CRYPT_IATTRIBUTE_RANDOM_NZ:
 			{
 			BYTE randomBuffer[ 128 + 8 ], *outBuffer = msgData->data;
-			int count = msgData->length, status = CRYPT_OK;
+			int count = msgData->length;
+			int iterationCount = 0, status = CRYPT_OK;
 
 			if( deviceInfoPtr->getRandomFunction == NULL )
 				return( CRYPT_ERROR_RANDOM );
@@ -321,7 +330,7 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 			   could need to draw out megabytes of data), so we copy out 128
 			   bytes worth at a time (a typical value for a 1K bit key) and
 			   keep going until we've filled the output requirements */
-			while( count > 0 )
+			while( count > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 				{
 				int i;
 
@@ -329,13 +338,17 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 				status = getRandomData( deviceInfoPtr, randomBuffer, 128 );
 				if( cryptStatusError( status ) )
 					break;
-				for( i = 0; count && i < 128; i++ )
-					if( randomBuffer[ i ] )
+				for( i = 0; count > 0 && i < 128; i++ )
+					{
+					if( randomBuffer[ i ] != 0 )
 						{
 						*outBuffer++ = randomBuffer[ i ];
 						count--;
 						}
+					}
 				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+				retIntError();
 			zeroise( randomBuffer, 128 );
 			if( cryptStatusError( status ) )
 				zeroise( msgData->data, msgData->length );
@@ -373,7 +386,7 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 
 				/* Perform a sanity check on the returned value.  If it's
 				   too far out, we don't trust it */
-				if( *timePtr < MIN_TIME_VALUE )
+				if( *timePtr <= MIN_TIME_VALUE )
 					{
 					*timePtr = 0;
 					return( CRYPT_ERROR_NOTAVAIL );
@@ -405,7 +418,7 @@ static int processSetAttribute( DEVICE_INFO *deviceInfoPtr,
 static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 								 void *messageDataPtr, const int messageValue )
 	{
-	const RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	const BOOLEAN isAuthent = \
 			( messageValue == CRYPT_DEVINFO_AUTHENT_USER || \
 			  messageValue == CRYPT_DEVINFO_AUTHENT_SUPERVISOR ) ? TRUE : FALSE;
@@ -467,7 +480,7 @@ static int processSetAttributeS( DEVICE_INFO *deviceInfoPtr,
 												   buffer, 32 );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData2;
+			MESSAGE_DATA msgData2;
 
 			setMessageData( &msgData2, buffer, 32 );
 			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
@@ -661,9 +674,12 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 		/* Find the function to handle this object */
 		if( deviceInfoPtr->createObjectFunctions != NULL )
 			{
-			int i = 0;
-
-			while( deviceInfoPtr->createObjectFunctions[ i ].type != OBJECT_TYPE_NONE )
+			int i;
+			
+			for( i = 0;
+				 deviceInfoPtr->createObjectFunctions[ i ].type != OBJECT_TYPE_NONE && \
+					i < deviceInfoPtr->createObjectFunctionCount && \
+					i < FAILSAFE_ITERATIONS_MED; i++ )
 				{
 				if( deviceInfoPtr->createObjectFunctions[ i ].type == messageValue )
 					{
@@ -671,8 +687,10 @@ static int deviceMessageFunction( const void *objectInfoPtr,
 						deviceInfoPtr->createObjectFunctions[ i ].function;
 					break;
 					}
-				i++;
 				}
+			if( i >= deviceInfoPtr->createObjectFunctionCount || \
+				i >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
 			}
 		if( createObjectFunction  == NULL )
 			return( CRYPT_ERROR_NOTAVAIL );

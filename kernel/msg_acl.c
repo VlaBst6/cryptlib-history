@@ -70,6 +70,8 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 
 	/* End-of-ACL marker */
 	{ MESSAGE_COMPARE_NONE,
+	  MK_CMPACL_END() },
+	{ MESSAGE_COMPARE_NONE,
 	  MK_CMPACL_END() }
 	};
 
@@ -113,6 +115,8 @@ static const CHECK_ALT_ACL FAR_BSS checkCAACLTbl[] = {
 					 MESSAGE_CHECK_PKC_SIGCHECK ) },
 
 	/* End-of-ACL marker */
+	{ OBJECT_TYPE_NONE,
+	  MK_CHKACL_ALT_END() },
 	{ OBJECT_TYPE_NONE,
 	  MK_CHKACL_ALT_END() }
 	};
@@ -230,6 +234,8 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 
 	/* End-of-ACL marker */
 	{ MESSAGE_CHECK_NONE,
+	  MK_CHKACL_END() },
+	{ MESSAGE_CHECK_NONE,
 	  MK_CHKACL_END() }
 	};
 
@@ -309,6 +315,9 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ACCESS_xxx_xxx,
 		ROUTE( OBJECT_TYPE_NONE ), RANGE( 0, 0 ) ),
+	MKACL_S_ALT(
+		CRYPT_CERTFORMAT_NONE, ST_NONE, ST_NONE, ACCESS_xxx_xxx,
+		ROUTE( OBJECT_TYPE_NONE ), RANGE( 0, 0 ) )
 	};
 
 /****************************************************************************
@@ -365,12 +374,15 @@ static BOOLEAN checkAttributeRangeSpecial( const RANGEVAL_TYPE rangeType,
 		const int *allowedValuesInfo = rangeInfo;
 		int i;
 
-		for( i = 0; allowedValuesInfo[ i ] != CRYPT_ERROR; i++ )
+		for( i = 0; allowedValuesInfo[ i ] != CRYPT_ERROR && \
+					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
 			INV( i < 5 );
 			if( value == allowedValuesInfo[ i ] )
 				return( TRUE );
 			}
+		if( i >= FAILSAFE_ITERATIONS_SMALL )
+			retIntError_Boolean();
 		return( FALSE );
 		}
 
@@ -381,13 +393,16 @@ static BOOLEAN checkAttributeRangeSpecial( const RANGEVAL_TYPE rangeType,
 		const RANGE_SUBRANGE_TYPE *allowedValuesInfo = rangeInfo;
 		int i;
 
-		for( i = 0; allowedValuesInfo[ i ].lowRange != CRYPT_ERROR; i++ )
+		for( i = 0; allowedValuesInfo[ i ].lowRange != CRYPT_ERROR && \
+					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
 			INV( i < 5 );
 			if( checkNumericRange( value, allowedValuesInfo[ i ].lowRange,
 								   allowedValuesInfo[ i ].highRange ) )
 				return( TRUE );
 			}
+		if( i >= FAILSAFE_ITERATIONS_SMALL )
+			retIntError_Boolean();
 		return( FALSE );
 		}
 
@@ -512,7 +527,10 @@ static int findCheckACL( const int messageValue,
 		int i;
 
 		for( i = 0; checkAltACL[ i ].object != CRYPT_OBJECT_NONE && \
-					checkAltACL[ i ].object != objectType; i++ );
+					checkAltACL[ i ].object != objectType && \
+					i < FAILSAFE_ITERATIONS_MED; i++ );
+		if( i >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		if( checkAltACL[ i ].object == CRYPT_OBJECT_NONE )
 			return( CRYPT_ARGERROR_OBJECT );
 		checkAltACL = &checkAltACL[ i ];
@@ -550,7 +568,8 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 	int i;
 
 	/* Perform a consistency check on the compare ACL */
-	for( i = 0; compareACLTbl[ i ].compareType != MESSAGE_COMPARE_NONE; i++ )
+	for( i = 0; compareACLTbl[ i ].compareType != MESSAGE_COMPARE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ); i++ )
 		{
 		const COMPARE_ACL *compareACL = &compareACLTbl[ i ];
 
@@ -583,9 +602,12 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 				return( CRYPT_ERROR_FAILED );
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ) )
+		retIntError();
 
 	/* Perform a consistency check on the check ACL */
-	for( i = 0; checkACLTbl[ i ].checkType != MESSAGE_CHECK_NONE; i++ )
+	for( i = 0; checkACLTbl[ i ].checkType != MESSAGE_CHECK_NONE && \
+				i < FAILSAFE_ARRAYSIZE( checkACLTbl, CHECK_ACL ); i++ )
 		{
 		const CHECK_ACL *checkACL = &checkACLTbl[ i ];
 		int j;
@@ -607,7 +629,8 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 			return( CRYPT_ERROR_FAILED );
 		if( checkACL->altACL == NULL )
 			continue;
-		for( j = 0; checkACL->altACL[ j ].object != OBJECT_TYPE_NONE; j++ )
+		for( j = 0; checkACL->altACL[ j ].object != OBJECT_TYPE_NONE && \
+					j < FAILSAFE_ITERATIONS_MED; j++ )
 			{
 			const CHECK_ALT_ACL *checkAltACL = &checkACL->altACL[ j ];
 
@@ -630,10 +653,16 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 				checkAltACL->fdCheckType >= MESSAGE_CHECK_LAST )
 				return( CRYPT_ERROR_FAILED );
 			}
+		if( j >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( checkACLTbl, CHECK_ACL ) )
+		retIntError();
 
 	/* Perform a consistency check on the cert export pseudo-ACL */
-	for( i = 0; formatPseudoACL[ i ].attribute != CRYPT_CERTFORMAT_NONE; i++ )
+	for( i = 0; formatPseudoACL[ i ].attribute != CRYPT_CERTFORMAT_NONE && \
+				i < FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT ); 
+		 i++ )
 		{
 		const ATTRIBUTE_ACL_ALT *formatACL = &formatPseudoACL[ i ];
 
@@ -661,6 +690,8 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 			formatACL->extendedInfo != NULL )
 			return( CRYPT_ERROR_FAILED );
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT ) )
+		retIntError();
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -801,7 +832,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 					( attributeACL->valueType == ATTRIBUTE_VALUE_STRING || \
 					  attributeACL->valueType == ATTRIBUTE_VALUE_WCSTRING || \
 					  attributeACL->valueType == ATTRIBUTE_VALUE_TIME ) ? \
-						sizeof( RESOURCE_DATA ) : sizeof( int ) ) )
+						sizeof( MESSAGE_DATA ) : sizeof( int ) ) )
 		{
 		assert( NOTREACHED );
 		return( CRYPT_ARGERROR_NUM1 );
@@ -978,13 +1009,13 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 		case ATTRIBUTE_VALUE_STRING:
 		case ATTRIBUTE_VALUE_WCSTRING:
 			{
-			const RESOURCE_DATA *msgData = messageDataPtr;
+			const MESSAGE_DATA *msgData = messageDataPtr;
 
 			/* Inner precondition: If it's an internal message, it must be
 			   a valid string value or a null value if we're obtaining a
 			   length.  Polled entropy data can be arbitrarily large so we
 			   don't check its length */
-			PRE( isReadPtr( messageDataPtr, sizeof( RESOURCE_DATA ) ) );
+			PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
 			PRE( !isInternalMessage || \
 				 ( ( localMessage == MESSAGE_GETATTRIBUTE_S && \
 					 ( ( msgData->data == NULL && msgData->length == 0 ) || \
@@ -1048,11 +1079,11 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 
 		case ATTRIBUTE_VALUE_TIME:
 			{
-			const RESOURCE_DATA *msgData = messageDataPtr;
+			const MESSAGE_DATA *msgData = messageDataPtr;
 
 			/* Inner precondition: If it's an internal message, it must be
 			   a string value corresponding to a time_t */
-			PRE( isReadPtr( messageDataPtr, sizeof( RESOURCE_DATA ) ) );
+			PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
 			PRE( !isInternalMessage || \
 				 ( ( localMessage == MESSAGE_GETATTRIBUTE_S || \
 					 localMessage == MESSAGE_SETATTRIBUTE_S ) && \
@@ -1088,7 +1119,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 
 			/* Must contain a time_t in a sensible range */
 			if( !isReadPtr( msgData->data, sizeof( time_t ) ) || \
-				*( ( time_t * ) msgData->data ) < MIN_TIME_VALUE )
+				*( ( time_t * ) msgData->data ) <= MIN_TIME_VALUE )
 				return( CRYPT_ARGERROR_STR1 );
 			if( msgData->length != sizeof( time_t ) )
 				return( CRYPT_ARGERROR_NUM1 );
@@ -1096,14 +1127,22 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			}
 
 		case ATTRIBUTE_VALUE_SPECIAL:
+			{
+			int iterationCount = 0;
+			
 			/* It's an ACL with an object-subtype-specific sub-ACL, find the
 			   precise ACL for this object subtype */
-			for( attributeACL = getSpecialRangeInfo( attributeACL ); \
-				 attributeACL->valueType != ATTRIBUTE_VALUE_NONE; \
+			for( attributeACL = getSpecialRangeInfo( attributeACL ); 
+				 attributeACL->valueType != ATTRIBUTE_VALUE_NONE && \
+					iterationCount++ < FAILSAFE_ITERATIONS_MED;  
 				 attributeACL++ )
+				{
 				if( isValidSubtype( attributeACL->subTypeA, subType ) || \
 					isValidSubtype( attributeACL->subTypeB, subType ) )
 					break;
+				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
 			if( attributeACL->valueType == ATTRIBUTE_VALUE_NONE )
 				{
 				assert( NOTREACHED );
@@ -1113,6 +1152,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			/* Recursively check the message against the sub-ACL */
 			return( preDispatchCheckAttributeAccess( objectHandle, message,
 							messageDataPtr, messageValue, attributeACL ) );
+			}
 
 		default:
 			assert( NOTREACHED );
@@ -1185,7 +1225,7 @@ int preDispatchCheckCompareParam( const int objectHandle,
 		}
 	else
 		{
-		const RESOURCE_DATA *msgData = messageDataPtr;
+		const MESSAGE_DATA *msgData = messageDataPtr;
 
 		PRE( checkParamString( paramInfo( compareACL, 0 ),
 							   msgData->data, msgData->length ) );
@@ -1196,10 +1236,10 @@ int preDispatchCheckCompareParam( const int objectHandle,
 	POST( ( messageValue == MESSAGE_COMPARE_CERTOBJ && \
 			isValidHandle( *( ( CRYPT_HANDLE * ) messageDataPtr ) ) ) || \
 		  ( messageValue != MESSAGE_COMPARE_CERTOBJ && \
-			isReadPtr( messageDataPtr, sizeof( RESOURCE_DATA ) ) && \
-			( ( RESOURCE_DATA * ) messageDataPtr )->length >= 2 && \
-			isReadPtr( ( ( RESOURCE_DATA * ) messageDataPtr )->data, \
-					   ( ( RESOURCE_DATA * ) messageDataPtr )->length ) ) );
+			isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) && \
+			( ( MESSAGE_DATA * ) messageDataPtr )->length >= 2 && \
+			isReadPtr( ( ( MESSAGE_DATA * ) messageDataPtr )->data, \
+					   ( ( MESSAGE_DATA * ) messageDataPtr )->length ) ) );
 
 	return( CRYPT_OK );
 	}
@@ -1481,18 +1521,21 @@ int preDispatchCheckExportAccess( const int objectHandle,
 		return( CRYPT_ARGERROR_VALUE );
 
 	/* Find the appropriate ACL for this export type */
-	for( i = 0; formatPseudoACL[ i ].attribute != messageValue && \
-				formatPseudoACL[ i ].attribute != CRYPT_CERTFORMAT_NONE; \
+	for( i = 0; formatPseudoACL[ i ].attribute != messageValue && 
+				formatPseudoACL[ i ].attribute != CRYPT_CERTFORMAT_NONE && \
+				i < FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT );
 		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT ) )
+		retIntError();
 	if( formatPseudoACL[ i ].attribute == CRYPT_CERTFORMAT_NONE )
 		{
 		assert( NOTREACHED );
 		return( CRYPT_ARGERROR_VALUE );
 		}
-	formatACL = ( ATTRIBUTE_ACL * ) &formatPseudoACL[ i ];
 
 	/* The easiest way to handle this check is to use an ACL, treating the
 	   format type as a pseudo-attribute type */
+	formatACL = ( ATTRIBUTE_ACL * ) &formatPseudoACL[ i ];
 	POST( formatACL->attribute == messageValue );
 
 	return( preDispatchCheckAttributeAccess( objectHandle,
@@ -1511,11 +1554,11 @@ int preDispatchCheckData( const int objectHandle,
 						  const void *dummy )
 	{
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
-	const RESOURCE_DATA *msgData = messageDataPtr;
+	const MESSAGE_DATA *msgData = messageDataPtr;
 
 	/* Precondition */
 	PRE( isValidObject( objectHandle ) );
-	PRE( isReadPtr( messageDataPtr, sizeof( RESOURCE_DATA ) ) );
+	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
 	PRE( messageValue == 0 );
 
 	/* Make sure that it's either a flush (buffer = NULL, length = 0)

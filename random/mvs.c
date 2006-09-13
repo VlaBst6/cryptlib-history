@@ -31,7 +31,7 @@ int readRandom( int length, unsigned char *buffer );
 
 void fastPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ RANDOM_BUFSIZE ];
 	int quality = 10, status;
 
@@ -49,7 +49,7 @@ void fastPoll( void )
 
 void slowPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ RANDOM_BUFSIZE ];
 	int quality = 90, status;
 

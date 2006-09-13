@@ -34,9 +34,9 @@
 /* CAST test vectors from CAST specification */
 
 static const struct CAST_TEST {
-	BYTE key[ CAST_KEY_LENGTH ];
-	BYTE plainText[ CAST_BLOCKSIZE ];
-	BYTE cipherText[ CAST_BLOCKSIZE ];
+	BYTE key[ CAST_KEY_LENGTH + 8 ];
+	BYTE plainText[ CAST_BLOCKSIZE + 8 ];
+	BYTE cipherText[ CAST_BLOCKSIZE + 8 ];
 	} FAR_BSS testCAST[] = {
 	{ { 0x01, 0x23, 0x45, 0x67, 0x12, 0x34, 0x56, 0x78,
 		0x23, 0x45, 0x67, 0x89, 0x34, 0x56, 0x78, 0x9A },
@@ -51,8 +51,8 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getCASTCapability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ CAST_EXPANDED_KEYSIZE ];
-	BYTE temp[ CAST_BLOCKSIZE ];
+	BYTE keyData[ CAST_EXPANDED_KEYSIZE + 8 ];
+	BYTE temp[ CAST_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testCAST ) / sizeof( struct CAST_TEST ); i++ )
@@ -223,7 +223,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 					   int noBytes )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	BYTE temp[ CAST_BLOCKSIZE ];
+	BYTE temp[ CAST_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

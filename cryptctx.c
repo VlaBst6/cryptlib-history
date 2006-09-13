@@ -244,7 +244,7 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 
 		if( convInfo->saltLength <= 0 )
 			{
-			RESOURCE_DATA nonceMsgData;
+			MESSAGE_DATA nonceMsgData;
 
 			setMessageData( &nonceMsgData, convInfo->salt, PKCS5_SALT_SIZE );
 			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -275,7 +275,7 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 
 		if( macInfo->saltLength <= 0 )
 			{
-			RESOURCE_DATA nonceMsgData;
+			MESSAGE_DATA nonceMsgData;
 
 			setMessageData( &nonceMsgData, macInfo->salt, PKCS5_SALT_SIZE );
 			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -738,7 +738,7 @@ static int processGetAttributeS( CONTEXT_INFO *contextInfoPtr,
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	const CONTEXT_TYPE contextType = contextInfoPtr->type;
-	RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	int status;
 
 	switch( messageValue )
@@ -1035,7 +1035,7 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	const CONTEXT_TYPE contextType = contextInfoPtr->type;
-	const RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+	const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 	int status;
 
 	switch( messageValue )
@@ -1339,6 +1339,8 @@ static int contextMessageFunction( const void *objectInfoPtr,
 						 CRYPT_IATTRIBUTE_STATUS );
 		if( status & OBJECT_FLAG_BUSY )
 			{
+			int iterationCount = 0;
+
 			/* Unlock the object so that the background thread can access it.
 			   Nothing else will get in because the object is in the
 			   signalled state */
@@ -1351,7 +1353,10 @@ static int contextMessageFunction( const void *objectInfoPtr,
 				krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
 								 &status, CRYPT_IATTRIBUTE_STATUS );
 				}
-			while( status & OBJECT_FLAG_BUSY );
+			while( ( status & OBJECT_FLAG_BUSY ) && \
+				   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+			if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+				retIntError();
 
 			getCheckInternalResource( cryptContext, contextInfoPtr, OBJECT_TYPE_CONTEXT );
 			}
@@ -1481,7 +1486,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 	/* Process messages that compare object properties or clone the object */
 	if( message == MESSAGE_COMPARE )
 		{
-		const RESOURCE_DATA *msgData = ( RESOURCE_DATA * ) messageDataPtr;
+		const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
 
 		assert( messageValue == MESSAGE_COMPARE_HASH || \
 				messageValue == MESSAGE_COMPARE_KEYID || \
@@ -1657,7 +1662,7 @@ static int contextMessageFunction( const void *objectInfoPtr,
 		}
 	if( message == MESSAGE_CTX_GENIV )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE buffer[ CRYPT_MAX_IVSIZE + 8 ];
 
 		assert( contextInfoPtr->type == CONTEXT_CONV );

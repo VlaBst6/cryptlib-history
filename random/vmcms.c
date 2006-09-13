@@ -21,7 +21,7 @@
 
 void fastPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	time_t timeStamp = time( NULL );
 
 	/* There's not much we can do under VM */
@@ -32,7 +32,7 @@ void fastPoll( void )
 
 void slowPoll( void )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ 128 ];
 	int quality = 1, total = 128;
 

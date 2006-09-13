@@ -49,7 +49,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getHmacRipemd160Capability();
 	CONTEXT_INFO contextInfo;
 	MAC_INFO contextData;
-	BYTE keyData[ MAC_STATE_SIZE ];
+	BYTE keyData[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-RIPEMD-160 against the test vectors given in RFC ???? */
@@ -122,7 +122,8 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		RIPEMD160_Update( ripemdInfo, buffer, noBytes );
 	else
 		{
-		BYTE hashBuffer[ RIPEMD160_CBLOCK ], digestBuffer[ RIPEMD160_DIGEST_LENGTH ];
+		BYTE hashBuffer[ RIPEMD160_CBLOCK + 8 ];
+		BYTE digestBuffer[ RIPEMD160_DIGEST_LENGTH + 8 ];
 		int i;
 
 		/* Complete the inner hash and extract the digest */
@@ -159,7 +160,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	{
 	MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
 	RIPEMD160_CTX *ripemdInfo = &( ( MAC_STATE * ) macInfo->macInfo )->macState;
-	BYTE hashBuffer[ RIPEMD160_CBLOCK ];
+	BYTE hashBuffer[ RIPEMD160_CBLOCK + 8 ];
 	int i;
 
 	RIPEMD160_Init( ripemdInfo );

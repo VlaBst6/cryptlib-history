@@ -415,7 +415,7 @@ static int flushEnvelopeData( ENVELOPE_INFO *envelopeInfoPtr )
 	ACTION_LIST *hashActionPtr;
 	BOOLEAN needNewSegment = envelopeInfoPtr->dataFlags & \
 							 ENVDATA_NEEDSPADDING;
-	int status;
+	int iterationCount, status;
 
 	/* If we're using an explicit payload length, make sure that we copied
 	   in as much data as was explicitly declared */
@@ -533,8 +533,10 @@ static int flushEnvelopeData( ENVELOPE_INFO *envelopeInfoPtr )
 	/* We've finished processing everything, complete each hash action if
 	   necessary */
 	assert( envelopeInfoPtr->actionList != NULL );
+	iterationCount = 0;
 	for( hashActionPtr = envelopeInfoPtr->actionList;
-		 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+		 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MED;
 		 hashActionPtr = hashActionPtr->next )
 		{
 		status = krnlSendMessage( hashActionPtr->iCryptHandle,
@@ -542,6 +544,8 @@ static int flushEnvelopeData( ENVELOPE_INFO *envelopeInfoPtr )
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	return( 0 );
 	}
@@ -580,6 +584,8 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 	   exit */
 	if( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG )
 		{
+		int iterationCount = 0;
+		
 		/* Unlike CMS, PGP handles authenticated attributes by extending the
 		   hashing of the payload data to cover the additional attributes,
 		   so if this is a flush and we're using the PGP format we can't
@@ -589,7 +595,9 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 
 		assert( envelopeInfoPtr->actionList != NULL );
 		for( hashActionPtr = envelopeInfoPtr->actionList;
-			 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+			 hashActionPtr != NULL && \
+				hashActionPtr->action == ACTION_HASH && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MED;
 			 hashActionPtr = hashActionPtr->next )
 			{
 			status = krnlSendMessage( hashActionPtr->iCryptHandle,
@@ -598,6 +606,8 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 			if( cryptStatusError( status ) )
 				return( status );
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		return( length );
 		}
 
@@ -625,11 +635,7 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 	bufPtr = envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos;
 	bytesToCopy = envelopeInfoPtr->bufSize - envelopeInfoPtr->bufPos;
 	if( bytesToCopy <= 0 || envelopeInfoPtr->bufPos < 0 )
-		{
-		/* Safety check */
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_FAILED );
-		}
+		retIntError();
 #ifdef USE_COMPRESSION
 	if( envelopeInfoPtr->flags & ENVELOPE_ZSTREAMINITED )
 		{
@@ -669,8 +675,13 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 
 		/* Hash the data if necessary */
 		if( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE )
+			{
+			int iterationCount = 0;
+			
 			for( hashActionPtr = envelopeInfoPtr->actionList;
-				 hashActionPtr != NULL && hashActionPtr->action == ACTION_HASH;
+				 hashActionPtr != NULL && \
+					hashActionPtr->action == ACTION_HASH && \
+					iterationCount++ < FAILSAFE_ITERATIONS_MED;
 				 hashActionPtr = hashActionPtr->next )
 				{
 				status = krnlSendMessage( hashActionPtr->iCryptHandle,
@@ -679,6 +690,9 @@ static int copyToEnvelope( ENVELOPE_INFO *envelopeInfoPtr,
 				if( cryptStatusError( status ) )
 					return( status );
 				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
+			}
 
 		/* If the buffer is full (i.e. we've been fed more input data than we
 		   could copy into the buffer) we need to close off the segment */
@@ -735,10 +749,7 @@ static int copyFromEnvelope( ENVELOPE_INFO *envelopeInfoPtr, BYTE *buffer,
 
 	/* Sanity-check the envelope state */
 	if( !sanityCheck( envelopeInfoPtr ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_FAILED );
-		}
+		retIntError();
 
 	/* If the caller wants more data than there is available in the set of
 	   completed segments, try to wrap up the next segment to make more data

@@ -146,7 +146,7 @@ int initEnvelopeEncryption( ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		if( iv != NULL )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 			int ivSize;
 
 			status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
@@ -183,6 +183,7 @@ static CRYPT_ATTRIBUTE_TYPE checkMissingInfo( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr;
 	BOOLEAN signingKeyPresent = FALSE;
+	int iterationCount;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -256,8 +257,10 @@ static CRYPT_ATTRIBUTE_TYPE checkMissingInfo( ENVELOPE_INFO *envelopeInfoPtr )
 	/* If there are signature-related options present (signature envelope,
 	   detached-sig flag set, hash context present, or CMS attributes or a
 	   TSA session present), there must be a signing key also present */
+	iterationCount = 0;
 	for( actionListPtr = envelopeInfoPtr->postActionList;
-		 actionListPtr != NULL; actionListPtr = actionListPtr->next )
+		 actionListPtr != NULL && iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
+		 actionListPtr = actionListPtr->next )
 		{
 		if( actionListPtr->iExtraData != CRYPT_ERROR || \
 			actionListPtr->iTspSession != CRYPT_ERROR )
@@ -267,6 +270,8 @@ static CRYPT_ATTRIBUTE_TYPE checkMissingInfo( ENVELOPE_INFO *envelopeInfoPtr )
 				return( CRYPT_ENVINFO_SIGNATURE );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 
 	return( CRYPT_ATTRIBUTE_NONE );
 	}
@@ -373,7 +378,7 @@ static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 #ifdef USE_PGP
 	if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE salt[ PGP_SALTSIZE + 8 ];
 		static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
 
@@ -407,7 +412,7 @@ static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	else
 #endif /* USE_PGP */
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		ACTION_RESULT actionResult;
 
 		setMessageData( &msgData, ( void * ) password, passwordLength );

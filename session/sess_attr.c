@@ -44,6 +44,7 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 	USER_INFO *userInfoPtr = attributeListPtr->value;
 	CRYPT_ATTRIBUTE_TYPE attributeID = userInfoPtr->cursorPos;
 	BOOLEAN doContinue;
+	int iterationCount = 0;
 
 	/* If we've just moved the cursor onto this attribute, reset the 
 	   position to the first internal attribute */
@@ -65,9 +66,13 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 		/* Find the position of the current sub-attribute in the attribute 
 		   order list and use that to get its successor/predecessor sub-
 		   attribute */
-		for( i = 0; \
+		for( i = 0; 
 			 attributeOrderList[ i ] != attributeID && \
-			 attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE; i++ );
+				attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ); 
+			 i++ );
+		if( i >= FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ) )
+			retIntError_False();
 		if( attributeOrderList[ i ] == CRYPT_ATTRIBUTE_NONE )
 			attributeID = CRYPT_ATTRIBUTE_NONE;
 		else
@@ -106,7 +111,9 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 				return( FALSE );
 			}
 		}
-	while( doContinue );
+	while( doContinue && iterationCount++ < FAILSAFE_ITERATIONS_SMALL );
+	if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError_False();
 	attributeListPtr->attributeCursorEntry = attributeID;
 	
 	return( TRUE );
@@ -214,10 +221,13 @@ CRYPT_ATTRIBUTE_TYPE checkMissingInfo( const ATTRIBUTE_LIST *attributeListHead,
 	   elsewhere */
 	if( isServer )
 		{
+		int iterationCount = 0;
+
 		while( ( attributeListPtr = \
 					attributeFind( attributeListPtr, getAttrFunction, 
 								   CRYPT_SESSINFO_USERNAME, 
-								   CRYPT_ATTRIBUTE_NONE ) ) != NULL )
+								   CRYPT_ATTRIBUTE_NONE ) ) != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			/* Make sure that there's a matching authentication attribute */
 			if( ( attributeListPtr = attributeListPtr->next ) == NULL )
@@ -232,6 +242,8 @@ CRYPT_ATTRIBUTE_TYPE checkMissingInfo( const ATTRIBUTE_LIST *attributeListHead,
 			/* Move on to the next attribute */
 			attributeListPtr = attributeListPtr->next;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Ext( CRYPT_SESSINFO_ACTIVE );
 		}
 
 	return( CRYPT_ATTRIBUTE_NONE );
@@ -375,6 +387,7 @@ const ATTRIBUTE_LIST *findSessionAttributeEx( const ATTRIBUTE_LIST *attributeLis
 								const void *value, const int valueLength )
 	{
 	const ATTRIBUTE_LIST *attributeListCursor;
+	int iterationCount = 0;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
@@ -390,7 +403,8 @@ const ATTRIBUTE_LIST *findSessionAttributeEx( const ATTRIBUTE_LIST *attributeLis
 	   attributeFindNextInstance() to help us because that finds the next 
 	   instance of the current attribute in an attribute group, not the next 
 	   instance in an interleaved set of attributes */
-	while( attributeListCursor != NULL )
+	while( attributeListCursor != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		if( attributeListCursor->attributeID == attributeID && \
 			attributeListCursor->valueLength == valueLength && \
@@ -398,6 +412,8 @@ const ATTRIBUTE_LIST *findSessionAttributeEx( const ATTRIBUTE_LIST *attributeLis
 			break;
 		attributeListCursor = attributeListCursor->next;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( attributeListCursor );
 	}
@@ -442,8 +458,11 @@ static int addAttribute( ATTRIBUTE_LIST **listHeadPtr,
 	if( *listHeadPtr != NULL )
 		{
 		ATTRIBUTE_LIST *prevElement = NULL;
+		int iterationCount = 0;
 
-		for( insertPoint = *listHeadPtr; insertPoint != NULL;
+		for( insertPoint = *listHeadPtr; 
+			 insertPoint != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 			 insertPoint = insertPoint->next )
 			{
 			/* If this is a non-multivalued attribute, make sure that it
@@ -454,6 +473,8 @@ static int addAttribute( ATTRIBUTE_LIST **listHeadPtr,
 
 			prevElement = insertPoint;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		insertPoint = prevElement;
 		}
 
@@ -610,6 +631,7 @@ void deleteSessionAttributes( ATTRIBUTE_LIST **attributeListHead,
 							  ATTRIBUTE_LIST **attributeListCurrent )
 	{
 	ATTRIBUTE_LIST *attributeListCursor = *attributeListHead;
+	int iterationCount = 0;
 
 	assert( isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isWritePtr( attributeListCurrent, sizeof( ATTRIBUTE_LIST * ) ) );
@@ -622,7 +644,8 @@ void deleteSessionAttributes( ATTRIBUTE_LIST **attributeListHead,
 		}
 
 	/* Destroy any remaining list items */
-	while( attributeListCursor != NULL )
+	while( attributeListCursor != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		ATTRIBUTE_LIST *itemToFree = attributeListCursor;
 

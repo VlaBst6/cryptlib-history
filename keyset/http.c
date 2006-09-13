@@ -109,7 +109,7 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 	if( keyIDlength != 6 || strCompare( keyID, "[none]", 6 ) )
 		{
 		const char *keyName = getKeyName( keyIDtype );
-		char queryBuffer[ 1024 ], *queryBufPtr = queryBuffer;
+		char queryBuffer[ 1024 + 8 ], *queryBufPtr = queryBuffer;
 		const int keyNameLen = strlen( keyName );
 
 		if( keyIDlength > 1024 - 64 && \

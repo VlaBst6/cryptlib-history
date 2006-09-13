@@ -49,6 +49,14 @@
   #endif /* 16-bit bignum components */
 #endif /* RSA_PUBLIC_EXPONENT */
 
+/* The minimum allowed public exponent.  In theory this could go as low as 3,
+   however there are all manner of obscure corner cases that have to be 
+   checked if this exponent is used, an in general the necessary checking 
+   presents a more or less intractable problem.  To avoid this minefield, we
+   require a minimum exponent of 17, the next generally-used value above 3 */
+
+#define MIN_PUBLIC_EXPONENT			17
+
 /* Adjust p and q if necessary to ensure that the CRT decrypt works */
 
 static int fixCRTvalues( PKC_INFO *pkcInfo, const BOOLEAN fixPKCSvalues )
@@ -273,14 +281,20 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 			 829, 839, 853, 857, 859, 863, 877, 881,
 			 883, 887, 907, 911, 919, 929, 937, 941,
 			 947, 953, 967, 971, 977, 983, 991, 997,
-			 0
+			 0, 0
 			 };
 		int i;
 
-		for( i = 0; eWord > smallPrimes[ i ] && \
-					smallPrimes[ i ] != 0; i++ )
+		for( i = 0; 
+			 eWord > smallPrimes[ i ] && smallPrimes[ i ] > 0 && \
+				i < FAILSAFE_ARRAYSIZE( smallPrimes, int ); 
+			 i++ )
+			{
 			if( eWord % smallPrimes[ i ] == 0 )
 				return( FALSE );
+			}
+		if( i >= FAILSAFE_ARRAYSIZE( smallPrimes, int ) )
+			retIntError();
 		}
 
 	/* Verify that:
@@ -338,23 +352,18 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 
 		nLen >= MIN_PKCSIZE_BITS, nLen <= MAX_PKCSIZE_BITS
 
-		e >= 3, e < n
+		e >= MIN_PUBLIC_EXPONENT, e < n
 		
 		|p-q| > 128 bits
 		
-	   Since e is commonly set to F4, we have to special-case the check for 
-	   systems where the bignum components are 16-bit values */
+	   BN_get_word() works even on 16-bit systems because it returns 
+	   BN_MASK2 (== UINT_MAX) if the value can't be represented in a machine
+	   word */
 	length = BN_num_bits( n );
 	if( length < MIN_PKCSIZE_BITS || length > MAX_PKCSIZE_BITS )
 		return( CRYPT_ARGERROR_STR1 );
-#ifdef SIXTEEN_BIT
-	BN_set_word( &pkcInfo->tmp1, 3 );
-	if( BN_cmp( e, &pkcInfo->tmp1 ) < 0 )
+	if( BN_get_word( e ) < MIN_PUBLIC_EXPONENT )
 		return( CRYPT_ARGERROR_STR1 );
-#else
-	if( BN_get_word( e ) < 3 )
-		return( CRYPT_ARGERROR_STR1 );
-#endif /* Systems without 32 * 32 -> 64 ops */
 	if( BN_cmp( e, n ) >= 0 )
 		return( CRYPT_ARGERROR_STR1 );
 	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
@@ -419,7 +428,7 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 		{
 		BIGNUM *k = &pkcInfo->rsaParam_blind_k;
 		BIGNUM *kInv = &pkcInfo->rsaParam_blind_kInv;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 		int noBytes = bitsToBytes( pkcInfo->keySizeBits );
 

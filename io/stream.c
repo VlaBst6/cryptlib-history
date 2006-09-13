@@ -164,10 +164,7 @@ int sgetc( STREAM *stream )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 	if( stream->bufPos < 0 || stream->bufPos > stream->bufEnd )
 		{
 		assert( NOTREACHED );
@@ -222,10 +219,7 @@ int sread( STREAM *stream, void *buffer, const int length )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 	if( stream->bufPos < 0 || stream->bufPos > stream->bufEnd || \
 		!isWritePtr( buffer, length ) )
 		{
@@ -256,13 +250,15 @@ int sread( STREAM *stream, void *buffer, const int length )
 		case STREAM_TYPE_FILE:
 			{
 			BYTE *bufPtr = buffer;
-			int dataLength = length, bytesCopied = 0;
+			int dataLength = length, bytesCopied = 0, iterationCount = 0;
 
 			assert( !( stream->flags & ~STREAM_FFLAG_MASK ) );
 
 			/* Read the data from the file */
-			while( dataLength > 0 )
+			while( dataLength > 0 && \
+				   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 				{
+				const int oldDataLength = dataLength;
 				int bytesToCopy;
 
 				/* If the stream buffer is empty, try and refill it */
@@ -284,7 +280,11 @@ int sread( STREAM *stream, void *buffer, const int length )
 				bufPtr += bytesToCopy;
 				bytesCopied += bytesToCopy;
 				dataLength -= bytesToCopy;
+				if( dataLength >= oldDataLength )
+					retIntError();
 				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+				retIntError();
 
 			/* Usually reads are atomic so we just return an all-OK 
 			   indicator, however if we're performing partial reads we need
@@ -363,10 +363,7 @@ int sputc( STREAM *stream, const int ch )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_WRITE );
-		}
+		retIntError();
 	if( stream->type != STREAM_TYPE_NULL && \
 		( stream->bufPos < 0 || stream->bufPos > stream->bufSize ) )
 		{
@@ -443,10 +440,7 @@ int swrite( STREAM *stream, const void *buffer, const int length )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_WRITE );
-		}
+		retIntError();
 	if( ( stream->type != STREAM_TYPE_NULL && \
 		  stream->type != STREAM_TYPE_NETWORK && \
 		  ( stream->bufPos < 0 || stream->bufPos > stream->bufSize ) ) || \
@@ -488,12 +482,13 @@ int swrite( STREAM *stream, const void *buffer, const int length )
 		case STREAM_TYPE_FILE:
 			{
 			const BYTE *bufPtr = buffer;
-			int dataLength = length;
+			int dataLength = length, iterationCount = 0;
 
 			assert( !( stream->flags & ~STREAM_FFLAG_MASK ) );
 
 			/* Write the data to the file */
-			while( dataLength > 0 )
+			while( dataLength > 0 && \
+				   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 				{
 				const int bytesToCopy = \
 						min( dataLength, stream->bufSize - stream->bufPos );
@@ -515,6 +510,8 @@ int swrite( STREAM *stream, const void *buffer, const int length )
 						return( status );
 					}
 				}
+			if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+				retIntError();
 			stream->flags |= STREAM_FFLAG_DIRTY;
 
 			return( CRYPT_OK );
@@ -569,10 +566,7 @@ int sflush( STREAM *stream )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_WRITE );
-		}
+		retIntError();
 	if( !isReadPtr( stream->buffer, stream->bufSize ) )
 		{
 		assert( NOTREACHED );
@@ -620,10 +614,7 @@ int sseek( STREAM *stream, const long position )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 	if( position < 0 )
 		{
 		assert( NOTREACHED );
@@ -712,10 +703,7 @@ int sSkip( STREAM *stream, const long offset )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 	if( offset <= 0 )
 		{
 		assert( NOTREACHED );
@@ -737,10 +725,7 @@ int sPeek( STREAM *stream )
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 	if( stream->bufPos < 0 || stream->bufPos > stream->bufEnd || \
 		!isReadPtr( stream->buffer, stream->bufSize ) )
 		{
@@ -803,10 +788,7 @@ int sioctl( STREAM *stream, const STREAM_IOCTL_TYPE type, void *data,
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtr( stream, sizeof( STREAM ) ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 
 	switch( type )
 		{
@@ -1078,10 +1060,7 @@ int sFileToMemStream( STREAM *memStream, STREAM *fileStream,
 	if( !isWritePtr( memStream, sizeof( STREAM ) ) || \
 		!isWritePtr( fileStream, sizeof( STREAM ) ) || \
 		length <= 0 )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_READ );
-		}
+		retIntError();
 
 	/* Clear return value */
 	memset( memStream, 0, sizeof( STREAM ) );

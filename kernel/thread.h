@@ -1636,7 +1636,7 @@ rtems_id threadSelf( void );
 #if defined( __WIN32__ )
   #define THREADFUNC_DEFINE( name, arg ) \
 				unsigned __stdcall name( void *arg )
-  #if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+  #if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER )
 	#define THREAD_CREATE( function, arg, threadHandle, syncHandle, status ) \
 				{ \
 				uintptr_t hThread; \

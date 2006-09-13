@@ -27,6 +27,7 @@ void *attributeFindStart( const void *attributePtr,
 						  GETATTRFUNCTION getAttrFunction )
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID;
+	int iterationCount;
 
 	if( attributePtr == NULL )
 		return( NULL );
@@ -36,7 +37,8 @@ void *attributeFindStart( const void *attributePtr,
 						 ATTR_CURRENT ) == NULL )
 		return( NULL );
 	assert( groupID != CRYPT_ATTRIBUTE_NONE );
-	while( TRUE )
+	for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_MAX; 
+		 iterationCount++ )
 		{
 		CRYPT_ATTRIBUTE_TYPE prevGroupID;
 		const void *prevPtr;
@@ -49,6 +51,8 @@ void *attributeFindStart( const void *attributePtr,
 			break;
 		attributePtr = prevPtr;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( ( void * ) attributePtr );
 	}
@@ -57,6 +61,7 @@ void *attributeFindEnd( const void *attributePtr,
 						GETATTRFUNCTION getAttrFunction )
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID;
+	int iterationCount;
 
 	if( attributePtr == NULL )
 		return( NULL );
@@ -67,7 +72,8 @@ void *attributeFindEnd( const void *attributePtr,
 						 ATTR_CURRENT ) == NULL )
 		return( NULL );
 	assert( groupID != CRYPT_ATTRIBUTE_NONE );
-	while( TRUE )
+	for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_MAX; 
+		 iterationCount++ )
 		{
 		CRYPT_ATTRIBUTE_TYPE nextGroupID;
 		const void *nextPtr;
@@ -80,6 +86,8 @@ void *attributeFindEnd( const void *attributePtr,
 			break;
 		attributePtr = nextPtr;
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	return( ( void * ) attributePtr );
 	}
@@ -92,6 +100,7 @@ void *attributeFind( const void *attributePtr,
 					 const CRYPT_ATTRIBUTE_TYPE instanceID )
 	{
 	CRYPT_ATTRIBUTE_TYPE currAttributeID, currInstanceID;
+	int iterationCount = 0;
 
 	assert( isAttribute( attributeID ) || isInternalAttribute( attributeID ) );
 	assert( instanceID == CRYPT_ATTRIBUTE_NONE || \
@@ -104,10 +113,13 @@ void *attributeFind( const void *attributePtr,
 	attributePtr = getAttrFunction( attributePtr, NULL, &currAttributeID, 
 									NULL, ATTR_CURRENT );
 	assert( attributePtr == NULL || currAttributeID != CRYPT_ATTRIBUTE_NONE );
-	while( attributePtr != NULL && currAttributeID != attributeID )
+	while( attributePtr != NULL && currAttributeID != attributeID && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )	
 		attributePtr = getAttrFunction( attributePtr, NULL,
 										&currAttributeID, NULL,
 										ATTR_NEXT );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 	if( attributePtr == NULL || instanceID == CRYPT_ATTRIBUTE_NONE )
 		/* If the attribute isn't present or we're not looking for a 
 		   particular instance, we're done */
@@ -117,7 +129,9 @@ void *attributeFind( const void *attributePtr,
 	attributePtr = getAttrFunction( attributePtr, NULL, &currAttributeID, 
 									&currInstanceID, ATTR_CURRENT );
 	assert( currAttributeID != CRYPT_ATTRIBUTE_NONE );
-	while( attributePtr != NULL && currAttributeID == attributeID )
+	iterationCount = 0;
+	while( attributePtr != NULL && currAttributeID == attributeID && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )	
 		{
 		if( currInstanceID == instanceID )
 			return( ( void * ) attributePtr );
@@ -125,6 +139,8 @@ void *attributeFind( const void *attributePtr,
 										&currAttributeID, &currInstanceID,
 										ATTR_NEXT );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 	return( NULL );
 	}
 
@@ -137,6 +153,7 @@ void *attributeFindNextInstance( const void *attributePtr,
 	{
 	CRYPT_ATTRIBUTE_TYPE groupID, attributeID;
 	CRYPT_ATTRIBUTE_TYPE currGroupID, currAttributeID;
+	int iterationCount = 0;
 
 	if( attributePtr == NULL )
 		return( NULL );
@@ -153,7 +170,8 @@ void *attributeFindNextInstance( const void *attributePtr,
 
 	/* Step through the remaining attributes in the group looking for
 	   another occurrence of the current attribute */
-	while( attributePtr != NULL && currGroupID == groupID )
+	while( attributePtr != NULL && currGroupID == groupID && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		if( currAttributeID == attributeID )
 			return( ( void * ) attributePtr );
@@ -161,6 +179,8 @@ void *attributeFindNextInstance( const void *attributePtr,
 										&currAttributeID, NULL,
 										ATTR_NEXT );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 
 	/* We couldn't find another instance of the attribute in this group */
 	return( NULL );
@@ -186,8 +206,10 @@ static const void *moveCursorByGroup( const void *currentCursor,
 									  int count, const BOOLEAN absMove )
 	{
 	const void *newCursor = currentCursor, *lastCursor = NULL;
+	int iterationCount = 0;
 
-	while( count-- > 0 && newCursor != NULL )
+	while( count-- > 0 && newCursor != NULL && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		lastCursor = newCursor;
 		if( cursorMoveType == CRYPT_CURSOR_FIRST || \
@@ -212,6 +234,8 @@ static const void *moveCursorByGroup( const void *currentCursor,
 											 ATTR_NEXT );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError_Null();
 	assert( lastCursor != NULL );	/* We went through the loop at least once */
 
 	/* If the new cursor is NULL, we've reached the start or end of the
@@ -251,6 +275,7 @@ static const void *moveCursorByAttribute( const void *currentCursor,
 	CRYPT_ATTRIBUTE_TYPE groupID;
 	BOOLEAN cursorMoved = FALSE;
 	const void *newCursor = currentCursor;
+	int iterationCount = 0;
 
 	if( getAttrFunction( currentCursor, &groupID, NULL, NULL, 
 						 ATTR_CURRENT ) == NULL )
@@ -265,13 +290,16 @@ static const void *moveCursorByAttribute( const void *currentCursor,
 		prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL, 
 									  NULL, ATTR_PREV );
 		while( prevCursor != NULL && count-- > 0 && \
-			   prevGroupID == groupID )
+			   prevGroupID == groupID && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			newCursor = prevCursor;
 			prevCursor = getAttrFunction( newCursor, &prevGroupID, NULL, 
 										  NULL, ATTR_PREV );
 			cursorMoved = TRUE;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Null();
 		}
 	else
 		{
@@ -281,13 +309,16 @@ static const void *moveCursorByAttribute( const void *currentCursor,
 		nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL,
 									  NULL, ATTR_NEXT );
 		while( nextCursor != NULL && count-- > 0 && \
-			   nextGroupID == groupID )
+			   nextGroupID == groupID && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			newCursor = nextCursor;
 			nextCursor = getAttrFunction( newCursor, &nextGroupID, NULL,
 										  NULL, ATTR_NEXT );
 			cursorMoved = TRUE;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Null();
 		}
 
 	if( !absMove && !cursorMoved )
@@ -303,6 +334,7 @@ static const void *moveCursorByInstance( const void *currentCursor,
 	CRYPT_ATTRIBUTE_TYPE groupID, attributeID, instanceID;
 	BOOLEAN cursorMoved = FALSE;
 	const void *newCursor = currentCursor;
+	int iterationCount = 0;
 
 	if( getAttrFunction( currentCursor, &groupID, &attributeID, 
 						 &instanceID, ATTR_CURRENT ) == NULL )
@@ -320,7 +352,8 @@ static const void *moveCursorByInstance( const void *currentCursor,
 									  ATTR_PREV );
 		while( prevCursor != NULL && count-- > 0 && \
 			   prevGroupID == groupID && prevAttrID == attributeID && \
-			   prevInstID == instanceID )
+			   prevInstID == instanceID && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			newCursor = prevCursor;
 			prevCursor = getAttrFunction( newCursor, &prevGroupID,
@@ -328,6 +361,8 @@ static const void *moveCursorByInstance( const void *currentCursor,
 										  ATTR_PREV );
 			cursorMoved = TRUE;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Null();
 		}
 	else
 		{
@@ -339,7 +374,8 @@ static const void *moveCursorByInstance( const void *currentCursor,
 									  ATTR_NEXT );
 		while( nextCursor != NULL && count-- > 0 && \
 			   nextGroupID == groupID && nextAttrID == attributeID && \
-			   nextInstID == instanceID )
+			   nextInstID == instanceID && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 			{
 			newCursor = nextCursor;
 			nextCursor = getAttrFunction( newCursor, &nextGroupID,
@@ -347,6 +383,8 @@ static const void *moveCursorByInstance( const void *currentCursor,
 										  ATTR_NEXT );
 			cursorMoved = TRUE;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Null();
 		}
 
 	if( !absMove && !cursorMoved )

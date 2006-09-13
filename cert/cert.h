@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				Certificate Management Structures and Prototypes 			*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2005					*
 *																			*
 ****************************************************************************/
 
@@ -49,12 +49,16 @@
 #define PKIUSER_AUTHENTICATOR_SIZE		12
 #define PKIUSER_ENCR_AUTHENTICATOR_SIZE	32
 
-/* When processing items such as nested attributes, we include guards on some
-   of the more complex loops to avoid getting stuck in an endless loop.  The
-   following value defines how many times we can iterate a loop before
-   bailing out */
+/* The size of the FIFO used to encode nested SEQUENCEs */
 
-#define	CERT_MAX_ITERATIONS		256
+#define ENCODING_FIFO_SIZE				10
+
+/* Normally we check for a valid time by making sure that it's more recent 
+   than MIN_TIME_VALUE, however when reading a cert the time can be much 
+   earlier than this if it's an old cert.  To handle this, we define a
+   cert-specific time value that we use as the oldest valid time value */
+
+#define MIN_CERT_TIME_VALUE		( ( 1996 - 1970 ) * 365 * 86400L )
 
 /* Attribute information flags.  These are:
 
@@ -256,10 +260,10 @@ typedef struct AL {
 	   containing a given field, we store the lengths and pointers to the
 	   table entries used to encode them in a fifo, with the innermost one
 	   first and successive outer ones following it */
-	int sizeFifo[ 10 ];				/* Encoded size of SEQUENCE containing
+	int sizeFifo[ ENCODING_FIFO_SIZE ];	/* Encoded size of SEQUENCE containing
 									   this field, if present */
-	void *encodingFifo[ 10 ];		/* Encoding table entry used to encode
-									   this SEQUENCE */
+	void *encodingFifo[ ENCODING_FIFO_SIZE ];/* Encoding table entry used to 
+									   encode this SEQUENCE */
 	int fifoEnd;					/* End of list of SEQUENCE sizes */
 	int fifoPos;					/* Current position in list */
 
@@ -647,8 +651,10 @@ typedef struct {
 							const CRYPT_CONTEXT iIssuerCryptContext );
 	} CERTWRITE_INFO;
 
-extern const CERTREAD_INFO FAR_BSS certReadTable[];
-extern const CERTWRITE_INFO FAR_BSS certWriteTable[];
+const CERTREAD_INFO *getCertReadTable( void );
+const CERTWRITE_INFO *getCertWriteTable( void );
+int sizeofCertReadTable( void );
+int sizeofCertWriteTable( void );
 
 /****************************************************************************
 *																			*
@@ -1109,9 +1115,20 @@ int exportCert( void *certObject, int *certObjectLength,
 
 int setSerialNumber( CERT_INFO *certInfoPtr, const void *serialNumber,
 					 const int serialNumberLength );
-int compareSerialNumber( const void *canonSerialNumber,
-						 const int canonSerialNumberLength,
-						 const void *serialNumber,
-						 const int serialNumberLength );
+BOOLEAN compareSerialNumber( const void *canonSerialNumber,
+							 const int canonSerialNumberLength,
+							 const void *serialNumber,
+							 const int serialNumberLength );
+
+/****************************************************************************
+*																			*
+*							Miscellaneous Functions							*
+*																			*
+****************************************************************************/
+
+/* Convert a text-form OID to its binary form */
+
+int textToOID( const char *oid, const int oidLength, BYTE *binaryOID,
+			   const int maxBinaryOidLen );
 
 #endif /* _CERT_DEFINED */

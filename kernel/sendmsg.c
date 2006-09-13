@@ -37,6 +37,7 @@ static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
 					 ST_KEYSET_DBMS,
 		ST_SESS_RTCS | ST_SESS_OCSP } },
 
+	{ MESSAGE_NONE, { ST_NONE, ST_NONE } },
 	{ MESSAGE_NONE, { ST_NONE, ST_NONE } }
 	};
 
@@ -86,10 +87,16 @@ static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
 	/* Precondition: It's a message that takes an object parameter */
 	PRE( isParamMessage( message ) );
 
-	/* Find the ACL entry for this message type */
-	for( i = 0; messageParamACLTbl[ i ].type != MESSAGE_NONE; i++ )
+	/* Find the ACL entry for this message type.  There's no need to 
+	   explicitly handle the internal-error condition since any loop
+	   exit is treated as an error */
+	for( i = 0; messageParamACLTbl[ i ].type != MESSAGE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ); 
+		 i++ )
+		{
 		if( messageParamACLTbl[ i ].type == message )
 			return( &messageParamACLTbl[ i ] );
+		}
 
 	/* Postcondition: We found a matching ACL entry */
 	POST( NOTREACHED );
@@ -149,7 +156,7 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	PRE( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) );
 
 	/* While the object is busy, put the thread to sleep ("Pauzele lungi si
-	   dese;  Cheia marilor succese").  This is the only really portable way
+	   dese; Cheia marilor succese").  This is the only really portable way
 	   to wait on the resource, which gives up this thread's timeslice to
 	   allow other threads (including the one using the object) to run.
 	   Somewhat better methods methods such as mutexes with timers are
@@ -198,123 +205,6 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 
 	return( CRYPT_OK );
 	}
-
-#if 0	/* 18/2/04 No need for copy-on-write any more since we can just copy
-				   across the instance data referenced in the object table */
-
-/* Handle an object that has been cloned and is subject to copy-on-write */
-
-static int handleAliasedObject( const int objectHandle,
-								const MESSAGE_TYPE message,
-								const void *messageDataPtr,
-								const int messageValue )
-	{
-	OBJECT_INFO *objectTable = krnlData->objectTable;
-	OBJECT_INFO *objectInfoPtr =  &objectTable[ objectHandle ];
-	CRYPT_CONTEXT originalObject = objectHandle;
-	CRYPT_CONTEXT clonedObject = objectInfoPtr->clonedObject;
-	int status;
-
-	/* Preconditions */
-	PRE( isValidObject( objectHandle ) && \
-		 objectHandle >= NO_SYSTEM_OBJECTS );
-	PRE( isValidObject( clonedObject ) && \
-		 clonedObject >= NO_SYSTEM_OBJECTS );
-	PRE( objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
-	PRE( objectTable[ clonedObject ].type == OBJECT_TYPE_CONTEXT );
-	PRE( objectHandle != clonedObject );
-	PRE( isAliasedObject( objectHandle ) && isAliasedObject( clonedObject ) );
-	PRE( isClonedObject( objectHandle ) || isClonedObject( clonedObject ) );
-
-	/* If it's a destroy-object message, make sure that the (incomplete)
-	   clone is the one that gets destroyed rather than the original */
-	if( message == MESSAGE_DESTROY )
-		{
-		OBJECT_INFO *originalObjectInfoPtr, *clonedObjectInfoPtr;
-		OBJECT_INFO tempObjectInfo;
-
-		/* If we're destroying the clone, we're done */
-		if( isClonedObject( objectHandle ) )
-			return( CRYPT_OK );
-
-		/* We're trying to destroy the original, switch it with the clone */
-		memcpy( &tempObjectInfo, &objectTable[ objectHandle ],
-				sizeof( OBJECT_INFO ) );
-		memcpy( &objectTable[ objectHandle ], &objectTable[ clonedObject ],
-				sizeof( OBJECT_INFO ) );
-		memcpy( &objectTable[ clonedObject ], &tempObjectInfo,
-				sizeof( OBJECT_INFO ) );
-
-		/* Inner precondition: Now the original is the clone and the clone is
-		   the original */
-		PRE( isClonedObject( objectHandle ) );
-		PRE( !isClonedObject( clonedObject ) );
-
-		/* We've now swapped the clone and the original, mark them as normal
-		   (non-aliased) objects since we're about to destroy the clone */
-		originalObjectInfoPtr =  &objectTable[ clonedObject ];
-		clonedObjectInfoPtr = &objectTable[ objectHandle ];
-		originalObjectInfoPtr->flags &= ~OBJECT_FLAG_ALIASED;
-		clonedObjectInfoPtr->flags &= ~( OBJECT_FLAG_ALIASED | OBJECT_FLAG_CLONE );
-		originalObjectInfoPtr->clonedObject = \
-			clonedObjectInfoPtr->clonedObject = CRYPT_ERROR;
-
-		/* Postconditions: The two objects are back to being normal objects */
-		POST( !isAliasedObject( objectHandle ) && !isClonedObject( objectHandle ) );
-		POST( !isAliasedObject( clonedObject ) && !isClonedObject( clonedObject ) );
-
-		return( CRYPT_OK );
-		}
-
-	/* If it's not a message that modifies the object's state, we're done */
-	if( !isActionMessage( message ) && \
-		!( message == MESSAGE_SETATTRIBUTE || \
-		   message == MESSAGE_SETATTRIBUTE_S || \
-		   message == MESSAGE_DELETEATTRIBUTE ) && \
-		!( message == MESSAGE_CTX_GENIV || message == MESSAGE_CLONE ) )
-		return( CRYPT_OK );
-
-	/* If the object that we've been passed is the clone, get the original
-	   and clone into their correct roles */
-	if( isClonedObject( objectHandle ) )
-		{
-		clonedObject = objectHandle;
-		originalObject = objectInfoPtr->clonedObject;
-		objectInfoPtr = &objectTable[ originalObject ];
-		}
-
-	/* Inner precondition: We've sorted out the original vs.the clone, and
-	   the two are distinct */
-	PRE( isClonedObject( clonedObject ) );
-	PRE( clonedObject != originalObject );
-
-	/* We're about to modify one of the two aliased objects, create distinct
-	   objects to enforce copy-on-write semantics and reset the cloned/
-	   aliased status.  We also create two distinct objects if a second
-	   attempt is made to clone the original rather than allowing the
-	   creation of multiple aliased objects.  This is done for two reasons,
-	   firstly because handling arbitrarily large collections of cloned
-	   objects, while possible, complicates the kernel since it's no longer
-	   a straighforward message filter that needs to add relatively complex
-	   processing to manage chains of cloned objects.  Secondly, having
-	   multiple aliased objects is exceedingly rare (it can only happen if a
-	   user, for some reason, pushes the same session key or hash into
-	   multiple envelopes), so the extra overhead of a forced clone is
-	   negligible */
-	status = cloneContext( clonedObject, originalObject );
-	if( cryptStatusOK( status ) )
-		{
-		OBJECT_INFO *clonedObjectInfoPtr = &objectTable[ clonedObject ];
-
-		objectInfoPtr->clonedObject = \
-			clonedObjectInfoPtr->clonedObject = CRYPT_ERROR;
-		objectInfoPtr->flags &= ~OBJECT_FLAG_ALIASED;
-		clonedObjectInfoPtr->flags &= ~( OBJECT_FLAG_ALIASED | OBJECT_FLAG_CLONE );
-		clonedObjectInfoPtr->flags |= OBJECT_FLAG_HIGH;
-		}
-	return( status );
-	}
-#endif /* 0 */
 
 /****************************************************************************
 *																			*
@@ -383,11 +273,7 @@ int findTargetType( const int originalObjectHandle, const long targets )
 			  objectTable[ originalObjectHandle ].owner == objectHandle );
 		}
 	if( iterations >= 3 )
-		{
-		/* The object table has been corrupted in some way, bail out */
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_OBJECT );
-		}
+		retIntError();
 
 	/* Postcondition: We ran out of options or we reached the target object */
 	POST( iterations < 3 );
@@ -771,7 +657,9 @@ int initSendMessage( KERNEL_DATA *krnlDataPtr )
 	assert( ACTION_PERM_COUNT == 6 );
 
 	/* Perform a consistency check on the parameter ACL */
-	for( i = 0; messageParamACLTbl[ i ].type != MESSAGE_NONE; i++ )
+	for( i = 0; messageParamACLTbl[ i ].type != MESSAGE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ); 
+		 i++ )
 		{
 		const MESSAGE_ACL *messageParamACL = &messageParamACLTbl[ i ];
 
@@ -783,6 +671,8 @@ int initSendMessage( KERNEL_DATA *krnlDataPtr )
 			return( CRYPT_ERROR_FAILED );
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ) )
+		retIntError();
 
 	/* Perform a consistency check on the message handling information */
 	for( i = 0; i < MESSAGE_LAST; i++ )
@@ -826,7 +716,7 @@ static int enqueueMessage( const int objectHandle,
 						   const int messageValue )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
-	int queuePos, i;
+	int queuePos, i, iterationCount;
 
 	/* Precondition: It's a valid message being sent to a valid object */
 	PRE( isValidObject( objectHandle ) );
@@ -850,9 +740,14 @@ static int enqueueMessage( const int objectHandle,
 
 	/* Check whether a message to this object is already present in the
 	   queue */
-	for( queuePos = krnlData->queueEnd - 1; queuePos >= 0; queuePos-- )
+	for( queuePos = krnlData->queueEnd - 1, iterationCount = 0; 
+		 queuePos >= 0 && iterationCount++ < MESSAGE_QUEUE_SIZE; queuePos-- )
+		{
 		if( messageQueue[ queuePos ].objectHandle == objectHandle )
 			break;
+		}
+	if( iterationCount >= MESSAGE_QUEUE_SIZE )
+		retIntError();
 
 	/* Postcondition: queuePos = -1 if not present, position in queue if
 	   present */
@@ -861,15 +756,18 @@ static int enqueueMessage( const int objectHandle,
 
 	/* Enqueue the message */
 	queuePos++;		/* Insert after current position */
-	for( i = krnlData->queueEnd - 1; i >= queuePos; i-- )
+	for( i = krnlData->queueEnd - 1, iterationCount = 0; 
+		 i >= queuePos && iterationCount++ < MESSAGE_QUEUE_SIZE; i-- )
 		messageQueue[ i + 1 ] = messageQueue[ i ];
+	if( iterationCount >= MESSAGE_QUEUE_SIZE )
+		retIntError();
 	messageQueue[ queuePos ].objectHandle = objectHandle;
 	messageQueue[ queuePos ].handlingInfoPtr = handlingInfoPtr;
 	messageQueue[ queuePos ].message = message;
 	messageQueue[ queuePos ].messageDataPtr = messageDataPtr;
 	messageQueue[ queuePos ].messageValue = messageValue;
 	krnlData->queueEnd++;
-	if( queuePos )
+	if( queuePos > 0 )
 		/* A message for this object is already present, tell the caller to
 		   defer processing */
 		return( OK_SPECIAL );
@@ -882,14 +780,18 @@ static int enqueueMessage( const int objectHandle,
 static void dequeueMessage( const int messagePosition )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
-	int i;
+	int i, iterationCount;
 
 	/* Precondition: We're deleting a valid queue position */
 	PRE( messagePosition >= 0 && messagePosition < krnlData->queueEnd );
 
 	/* Move the remaining messages down and clear the last entry */
-	for( i = messagePosition; i < krnlData->queueEnd - 1; i++ )
+	for( i = messagePosition, iterationCount = 0; 
+		 i < krnlData->queueEnd - 1 && \
+			iterationCount++ < MESSAGE_QUEUE_SIZE; i++ )
 		messageQueue[ i ] = messageQueue[ i + 1 ];
+	if( iterationCount >= MESSAGE_QUEUE_SIZE )
+		retIntError_Void();
 	zeroise( &messageQueue[ krnlData->queueEnd - 1 ],
 			 sizeof( MESSAGE_QUEUE_DATA ) );
 	krnlData->queueEnd--;
@@ -916,7 +818,7 @@ static BOOLEAN getNextMessage( const int objectHandle,
 	/* Find the next message for this object.  Since other messages can have
 	   come and gone in the meantime, we have to scan from the start each
 	   time */
-	for( i = 0; i < krnlData->queueEnd; i++ )
+	for( i = 0; i < krnlData->queueEnd && i < MESSAGE_QUEUE_SIZE; i++ )
 		{
 		if( messageQueue[ i ].objectHandle == objectHandle )
 			{
@@ -926,6 +828,8 @@ static BOOLEAN getNextMessage( const int objectHandle,
 			return( TRUE );
 			}
 		}
+	if( i >= MESSAGE_QUEUE_SIZE )
+		retIntError_Boolean();
 
 	/* Postcondition: There are no more messages for this object present in
 	   the queue */
@@ -939,8 +843,13 @@ static BOOLEAN getNextMessage( const int objectHandle,
 
 static void dequeueAllMessages( const int objectHandle )
 	{
+	int iterationCount = 0;
+	
 	/* Dequeue all messages for a given object */
-	while( getNextMessage( objectHandle, NULL ) );
+	while( getNextMessage( objectHandle, NULL ) && \
+		   iterationCount++ < MESSAGE_QUEUE_SIZE );
+	if( iterationCount >= MESSAGE_QUEUE_SIZE )
+		retIntError_Void();
 
 	/* Postcondition: There are no more messages for this object present in
 	   the queue */
@@ -1050,7 +959,8 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 						( message & MESSAGE_FLAG_INTERNAL ) ? TRUE : FALSE;
 	const void *aclPtr = NULL;
 	MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
-	int localObjectHandle = objectHandle, status = CRYPT_OK;
+	int localObjectHandle = objectHandle, iterationCount = 0;
+	int status = CRYPT_OK;
 
 	/* Preconditions.  For external messages we don't provide any assertions
 	   at this point since they're coming straight from the user and could
@@ -1324,25 +1234,9 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		status = CRYPT_OK;
 		}
 
-#if 0	/* 18/2/04 No need for copy-on-write any more since we can just copy
-				   across the instance data referenced in the object table */
-	/* If this is an aliased object (one that's been cloned and is subject
-	   to copy-on-write), handle it specially */
-	if( isAliasedObject( localObjectHandle ) )
-		{
-		status = handleAliasedObject( localObjectHandle, localMessage,
-									  messageDataPtr, messageValue );
-		if( cryptStatusError( status ) )
-			{
-			MUTEX_UNLOCK( objectTable );
-			return( status );
-			}
-		}
-#else
 	/* We shouldn't have aliased objects since we don't use copy-on-write
 	   any more */
 	assert( !isAliasedObject( localObjectHandle ) );
-#endif /* 0 */
 
 	/* If the object isn't already processing a message and the message isn't
 	   a special type such as MESSAGE_DESTROY, dispatch it immediately rather
@@ -1464,8 +1358,15 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 	   and dispatch them.  Since messages will only be enqueued if
 	   krnlSendMessage() is called recursively, we only dequeue messages for
 	   the current object in this loop.  Queued messages for other objects
-	   will be handled at a different level of recursion */
-	while( getNextMessage( localObjectHandle, &enqueuedMessageData ) )
+	   will be handled at a different level of recursion.
+	   
+	   Bounding this loop is a bit tricky, since new messages can arrive as
+	   the existing ones are dequeued, so that in theory the arrival rate
+	   could match the dispatch rate.  However in practice a situation like
+	   this would be extremely unusual, so we bound the loop at
+	   FAILSAFE_ITERATIONS_LARGE */
+	while( getNextMessage( localObjectHandle, &enqueuedMessageData ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const BOOLEAN isDestroy = \
 			( ( enqueuedMessageData.message & MESSAGE_MASK ) == MESSAGE_DESTROY );
@@ -1536,6 +1437,8 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 			if( cryptStatusError( status ) )
 				dequeueAllMessages( localObjectHandle );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* Unlock the object table to allow access by other threads */
 	MUTEX_UNLOCK( objectTable );

@@ -127,6 +127,7 @@ int getKeysize( CONTEXT_INFO *contextInfoPtr, const int requestedKeyLength )
 						capabilityInfoPtr->keySize : \
 						capabilityInfoPtr->maxKeySize;
 
+#if defined( USE_RC2 ) || defined( USE_RC4 )
 		/* Although RC2 will handle keys of up to 1024 bits and RC4 up to 
 		   2048 bits, they're never used with this maximum size but (at 
 		   least in non-crippled implementations) always fixed at 128 bits, 
@@ -135,6 +136,7 @@ int getKeysize( CONTEXT_INFO *contextInfoPtr, const int requestedKeyLength )
 		if( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC2 || \
 			capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC4 )
 			keyLength = capabilityInfoPtr->keySize;
+#endif /* USE_RC2 || USE_RC4 */
 		}
 	else
 		{
@@ -359,7 +361,7 @@ static int generateKeyConvFunction( CONTEXT_INFO *contextInfoPtr,
 									const BOOLEAN isAsync )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int keyLength, status;
 
 	assert( contextInfoPtr->type == CONTEXT_CONV );
@@ -443,7 +445,7 @@ static int generateKeyMacFunction( CONTEXT_INFO *contextInfoPtr,
 								   const BOOLEAN isAsync )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int keyLength, status;
 
 	assert( contextInfoPtr->type == CONTEXT_MAC );

@@ -131,7 +131,8 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 	{
 	BOOLEAN foundMatch = FALSE;
 	const char *string;
-	int stringPos, stringLen, substringLen, algoIndex = 999, status;
+	int stringPos, stringLen, substringLen, algoIndex = 999;
+	int iterationCount = 0, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( algoIDInfo, sizeof( ALGOID_INFO ) ) );
@@ -165,7 +166,9 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 			   ^   ^		   ^
 			   |substrLen	   |
 		  stringPos			stringLen */
-	for( stringPos = 0; stringPos < stringLen && !foundMatch; \
+	for( stringPos = 0; 
+		 stringPos < stringLen && !foundMatch && \
+			iterationCount++ < FAILSAFE_ITERATIONS_LARGE; 
 		 stringPos += substringLen + 1 )
 		{
 		int currentAlgoIndex;
@@ -179,13 +182,18 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 			continue;	/* Empty or too-short algorithm name, continue */
 
 		/* Check whether it's something that we can handle */
-		for( currentAlgoIndex = 0; \
-			 algoIDInfo->algoInfo[ currentAlgoIndex ].name != NULL; \
+		for( currentAlgoIndex = 0; 
+			 algoIDInfo->algoInfo[ currentAlgoIndex ].name != NULL && \
+				currentAlgoIndex < FAILSAFE_ITERATIONS_MED; 
 			 currentAlgoIndex++ )
+			{
 			if( substringLen == strlen( algoIDInfo->algoInfo[ currentAlgoIndex ].name ) && \
 				!memcmp( algoIDInfo->algoInfo[ currentAlgoIndex ].name,
 						 string + stringPos, substringLen ) )
 				break;
+			}
+		if( currentAlgoIndex >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		if( algoIDInfo->algoInfo[ currentAlgoIndex ].name == NULL || \
 			( !isPseudoAlgo( algoIDInfo->algoInfo[ currentAlgoIndex ].algo ) && \
 			  !algoAvailable( algoIDInfo->algoInfo[ currentAlgoIndex ].algo ) ) )
@@ -240,9 +248,11 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 				assert( NOTREACHED );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( algoIndex > 50 )
 		{
-		char algoString[ 256 ];
+		char algoString[ 256 + 8 ];
 
 		/* We couldn't find anything to use, tell the caller what was
 		   available */
@@ -346,7 +356,8 @@ int writeAlgoString( STREAM *stream, const CRYPT_ALGO_TYPE algo )
 		{ "hmac-sha1", CRYPT_ALGO_HMAC_SHA },
 		{ "hmac-md5", CRYPT_ALGO_HMAC_MD5 },
 		{ "none", CRYPT_PSEUDOALGO_COPR },
-		{ "none", CRYPT_ALGO_LAST }		/* Catch-all */
+		{ "none", CRYPT_ALGO_LAST },	/* Catch-all */
+		{ "none", CRYPT_ALGO_LAST }
 		};
 	int i;
 
@@ -355,7 +366,11 @@ int writeAlgoString( STREAM *stream, const CRYPT_ALGO_TYPE algo )
 
 	/* Locate the name for this algorithm and encode it as an SSH string */
 	for( i = 0; algoStringMapTbl[ i ].algo != CRYPT_ALGO_LAST && \
-				algoStringMapTbl[ i ].algo != algo; i++ );
+				algoStringMapTbl[ i ].algo != algo && \
+				i < FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO ) )
+		retIntError();
 	assert( algoStringMapTbl[ i ].algo != CRYPT_ALGO_LAST );
 	return( writeString32( stream, algoStringMapTbl[ i ].name, 0 ) );
 	}

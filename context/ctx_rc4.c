@@ -208,8 +208,8 @@ static int rc4Test( const BYTE *key, const int keySize,
 	const CAPABILITY_INFO *capabilityInfo = getRC4Capability();
 	CONTEXT_INFO contextInfo;
 	CONV_INFO contextData;
-	BYTE keyData[ RC4_EXPANDED_KEYSIZE ];
-	BYTE temp[ 512 ];
+	BYTE keyData[ RC4_EXPANDED_KEYSIZE + 8 ];
+	BYTE temp[ 512 + 8 ];
 	int status;
 
 	staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,

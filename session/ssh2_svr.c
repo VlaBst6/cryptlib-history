@@ -33,19 +33,22 @@
    Note that these lists must match the algoStringXXXTbl values in ssh2.c */
 
 static const CRYPT_ALGO_TYPE FAR_BSS algoKeyexList[] = {
-	CRYPT_PSEUDOALGO_DHE, CRYPT_ALGO_DH, CRYPT_ALGO_NONE };
+	CRYPT_PSEUDOALGO_DHE, CRYPT_ALGO_DH, 
+	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 static const CRYPT_ALGO_TYPE FAR_BSS algoEncrList[] = {
 	/* We can't list AES as an option because the peer can pick up anything
 	   it wants from the list as its preferred choice, which means that if
 	   we're talking to any non-cryptlib implementation they always go for
-	   AES even though it doesn't currently have the provenance of 3DES.
+	   AES even though it doesn't yet have the full provenance of 3DES.  
 	   Once AES passes the five-year test this option can be enabled */
 	CRYPT_ALGO_3DES, /*CRYPT_ALGO_AES,*/ CRYPT_ALGO_BLOWFISH,
-	CRYPT_ALGO_CAST, CRYPT_ALGO_IDEA, CRYPT_ALGO_RC4, CRYPT_ALGO_NONE };
+	CRYPT_ALGO_CAST, CRYPT_ALGO_IDEA, CRYPT_ALGO_RC4, 
+	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 static const CRYPT_ALGO_TYPE FAR_BSS algoMACList[] = {
-	CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_MD5, CRYPT_ALGO_NONE };
+	CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_MD5, 
+	CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 static const CRYPT_ALGO_TYPE FAR_BSS algoStringUserauthentList[] = {
-	CRYPT_PSEUDOALGO_PASSWORD, CRYPT_ALGO_NONE };
+	CRYPT_PSEUDOALGO_PASSWORD, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 
 /* Encode a list of available algorithms */
 
@@ -66,21 +69,30 @@ static int writeAlgoList( STREAM *stream, const CRYPT_ALGO_TYPE *algoList )
 		{ "hmac-md5", CRYPT_ALGO_HMAC_MD5 },
 		{ "password", CRYPT_PSEUDOALGO_PASSWORD },
 		{ "none", CRYPT_ALGO_NONE },
+		{ "none", CRYPT_ALGO_NONE }
 		};
-	const char *availableAlgos[ 16 ];
+	const char *availableAlgos[ 16 + 8 ];
 	int noAlgos = 0, length = 0, algoIndex, status;
 
 	/* Walk down the list of algorithms remembering the encoded name of each
 	   one that's available for use */
-	for( algoIndex = 0; algoList[ algoIndex ] != CRYPT_ALGO_NONE && \
-						algoIndex < 16; algoIndex++ )
+	for( algoIndex = 0; \
+		 algoList[ algoIndex ] != CRYPT_ALGO_NONE && \
+			algoIndex < FAILSAFE_ITERATIONS_SMALL; 
+		 algoIndex++ )
+		{
 		if( algoAvailable( algoList[ algoIndex ] ) || \
 			isPseudoAlgo( algoList[ algoIndex ] ) )
 			{
 			int i;
 
-			for( i = 0; algoStringMapTbl[ i ].algo != CRYPT_ALGO_NONE && \
-						algoStringMapTbl[ i ].algo != algoList[ algoIndex ]; i++ );
+			for( i = 0; 
+				 algoStringMapTbl[ i ].algo != CRYPT_ALGO_NONE && \
+					algoStringMapTbl[ i ].algo != algoList[ algoIndex ] && \
+					i < FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO ); 
+				 i++ );
+			if( i >= FAILSAFE_ARRAYSIZE( algoStringMapTbl, ALGO_STRING_INFO ) )
+				retIntError();
 			assert( algoStringMapTbl[ i ].algo != CRYPT_ALGO_NONE );
 			assert( noAlgos < 16 );
 			availableAlgos[ noAlgos++ ] = algoStringMapTbl[ i ].name;
@@ -88,11 +100,14 @@ static int writeAlgoList( STREAM *stream, const CRYPT_ALGO_TYPE *algoList )
 			if( noAlgos > 1 )
 				length++;			/* Room for comma delimiter */
 			}
+		}
+	if( algoIndex >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError();
 
 	/* Encode the list of available algorithms into a comma-separated string */
 	status = writeUint32( stream, length );
-	for( algoIndex = 0; \
-		 cryptStatusOK( status ) && algoIndex < noAlgos; algoIndex++ )
+	for( algoIndex = 0; cryptStatusOK( status ) && algoIndex < noAlgos; 
+		 algoIndex++ )
 		{
 		if( algoIndex > 0 )
 			sputc( stream, ',' );	/* Add comma delimiter */
@@ -237,7 +252,6 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 	return( status );
 	}
 
-
 /* Handle user authentication:
 
 	byte	type = SSH2_MSG_USERAUTH_REQUEST
@@ -250,6 +264,36 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
    The client can send a method-type of "none" to indicate that it'd like
    the server to return a list of allowed authentication types, if we get a
    packet of this kind we return our allowed types list.
+
+   This can get a bit complicated because of the way the multi-pass user
+   auth affects the handling of username and password information.  If 
+   there's no caller-supplied list of { username, password } pairs present
+   then the first time around we remember the user name but then get an 
+   auth.type of "none", which means we have to go for a second iteration to 
+   get the password.  On the second iteration we have a remembered user name 
+   present, but no password yet.  In addition we have to be careful about
+   potential attacks, e.g. the client entering a privileged user name the
+   first time around and then authenticating the second time round as an
+   unprivileged user.  If the calling app just grabs the first username it
+   finds, it'll treat the client as being an authenticated privileged user.
+
+   The handling of authentication information is as follows:
+
+	Client		| Caller-supplied	| No caller-supplied
+	  sends...	|	list			|	list
+	------------+-------------------+-------------------
+	Name, pw	| Match name, pw	| Add name, pw
+	------------+-------------------+-------------------
+	Name, none	| Match	name		| Add name
+	Name, pw	| Match	name, pw	| Match name
+				|					| Add pw
+	------------+-------------------+-------------------
+	Name, none	| Match	name		| Add name
+	Name2, pw	| Match name2, fail	| Match name2, fail
+	------------+-------------------+-------------------
+	Retry		| Match name		| (As for caller-supplied 
+	 Name, pw2	| Match pw2			| list, since this is present
+				|					| from previous round).
 
    Unlike SSHv1, SSHv2 properly identifies public keys, however because of
    its complexity (several more states added to the state machine because of
@@ -291,6 +335,8 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 	if( findSessionAttribute( sessionInfoPtr->attributeList,
 							  CRYPT_SESSINFO_USERNAME ) != NULL )
 		{
+		/* There's user name info present, make sure that the newly-
+		   submitted one matches one of the existing ones */
 		attributeListPtr = \
 					findSessionAttributeEx( sessionInfoPtr->attributeList,
 											CRYPT_SESSINFO_USERNAME,
@@ -298,18 +344,31 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		if( attributeListPtr == NULL )
 			{
 			sMemDisconnect( &stream );
-			userNameBuffer[ userNameLength ] = '\0';
-			retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
-					"Unknown user name '%s'", userNameBuffer );
+			if( attributeListPtr == NULL )
+				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+						"Unknown user name '%s'", 
+						sanitiseString( userNameBuffer, userNameLength ) );
 			}
-		userNamePresent = TRUE;
 
-		/* Select the attribute with the user ID and move on to the
-		   associated password */
+		/* We've matched an existing user name, select the attribute that
+		   contains it */
 		sessionInfoPtr->attributeListCurrent = \
-							( ATTRIBUTE_LIST * ) attributeListPtr;
-		attributeListPtr = attributeListPtr->next;
-		assert( attributeListPtr->attributeID == CRYPT_SESSINFO_PASSWORD );
+								( ATTRIBUTE_LIST * ) attributeListPtr;
+
+		/* If it's just a saved name that was entered during a previous 
+		   round of the authentication process (so there's no associated
+		   password) then we treat it as a newly-entered name.  Otherwise, 
+		   it's a match to a caller-supplied list of allowed { username, 
+		   password } pairs, and we move on to the corresponding password */
+		if( attributeListPtr->next != NULL )
+			{
+			userNamePresent = TRUE;
+
+			/* Move on to the associated password */
+			attributeListPtr = attributeListPtr->next;
+			if( attributeListPtr->attributeID != CRYPT_SESSINFO_PASSWORD )
+				retIntError();
+			}
 		}
 	else
 		{
@@ -319,9 +378,9 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
-			userNameBuffer[ userNameLength ] = '\0';
 			retExt( sessionInfoPtr, status,
-					"Error recording user name '%s'", userNameBuffer );
+					"Error recording user name '%s'", 
+					sanitiseString( userNameBuffer, userNameLength ) );
 			}
 		}
 
@@ -351,7 +410,6 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 			 !memcmp( stringBuffer, "password", 8 ) ) ) )
 		{
 		sMemDisconnect( &stream );
-		stringBuffer[ stringLength ] = '\0';
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 				"Unknown user auth method name '%s'",
 				sanitiseString( stringBuffer, stringLength ) );
@@ -392,11 +450,9 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		{
 		if( stringLength != attributeListPtr->valueLength || \
 			memcmp( stringBuffer, attributeListPtr->value, stringLength ) )
-			{
-			userNameBuffer[ userNameLength ] = '\0';
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-					"Invalid password for user '%s'", userNameBuffer );
-			}
+					"Invalid password for user '%s'", 
+					sanitiseString( userNameBuffer, userNameLength ) );
 		}
 	else
 		{
@@ -404,12 +460,9 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 									  CRYPT_SESSINFO_PASSWORD,
 									  stringBuffer, stringLength );
 		if( cryptStatusError( status ) )
-			{
-			userNameBuffer[ userNameLength ] = '\0';
 			retExt( sessionInfoPtr, status,
 					"Error recording password for user '%s'",
-					userNameBuffer );
-			}
+					sanitiseString( userNameBuffer, userNameLength ) );
 		}
 
 	return( OK_SPECIAL );
@@ -743,7 +796,7 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 									SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM stream;
-	int length, status;
+	int length, iterationCount = 0, status;
 
 	/* If this is the first time through, set up the security info and wait
 	   for the first part of the authentication */
@@ -811,8 +864,8 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 			/* Since the userAuth negotiation can (in theory) go on
 			   indefinitely, we limit it to three iterations to avoid
 			   potential DoS problems */
-			for( retryCount = 0; status != OK_SPECIAL && \
-								 retryCount < 3; retryCount++ )
+			for( retryCount = 0; status != OK_SPECIAL && retryCount < 3; 
+				 retryCount++ )
 				{
 				status = processUserAuth( sessionInfoPtr, handshakeInfo );
 				if( cryptStatusError( status ) && status != OK_SPECIAL )
@@ -849,7 +902,10 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 			sessionInfoPtr->authResponse = CRYPT_UNUSED;
 		sshInfo->authRead = FALSE;
 		}
-	while( sessionInfoPtr->authResponse != TRUE );
+	while( sessionInfoPtr->authResponse != TRUE && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 
 	/* Handle the channel open */
 	length = readPacketSSH2( sessionInfoPtr, SSH2_MSG_CHANNEL_OPEN,

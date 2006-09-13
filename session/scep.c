@@ -59,8 +59,8 @@ typedef struct {
 	
 	   In order to accommodate nonstandard implementations, we allow for 
 	   nonces that are slightly larger than the required size */
-	BYTE transID[ CRYPT_MAX_HASHSIZE ];		/* Transaction nonce */
-	BYTE nonce[ CRYPT_MAX_HASHSIZE ];		/* Nonce */
+	BYTE transID[ CRYPT_MAX_HASHSIZE + 8 ];	/* Transaction nonce */
+	BYTE nonce[ CRYPT_MAX_HASHSIZE + 8 ];	/* Nonce */
 	int transIDsize, nonceSize;
 
 	/* When sending/receiving SCEP messages, the user has to sign the
@@ -102,7 +102,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_USERNAME );
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyIDbuffer[ 64 + 8 ], *keyIDptr = userNamePtr->value;
 	BYTE requestPassword[ CRYPT_MAX_TEXTSIZE + 8 ];
 	BYTE userPassword[ CRYPT_MAX_TEXTSIZE + 8 ];
@@ -195,8 +195,8 @@ static int getStatusValue( const CRYPT_CERTIFICATE iCmsAttributes,
 						   const CRYPT_ATTRIBUTE_TYPE attributeType,
 						   int *value )
 	{
-	RESOURCE_DATA msgData;
-	BYTE buffer[ 128 ];
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 128 + 8 ];
 	int status;
 
 	*value = CRYPT_ERROR;
@@ -227,8 +227,8 @@ static int createDataOnlyCert( CRYPT_CERTIFICATE *iNewCert,
 							   const CRYPT_CERTIFICATE iCryptCert )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
-	BYTE buffer[ 2048 ], *bufPtr = buffer;
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 2048 + 8 ], *bufPtr = buffer;
 	int status;
 
 	*iNewCert = CRYPT_ERROR;
@@ -271,7 +271,7 @@ static int createScepCert( SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE iNewCert;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Create a certificate, add the cert request and other information 
@@ -366,7 +366,7 @@ static int createScepRequest( SESSION_INFO *sessionInfoPtr )
 	const ATTRIBUTE_LIST *attributeListPtr = \
 				findSessionAttribute( sessionInfoPtr->attributeList,
 									  CRYPT_SESSINFO_PASSWORD );
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status = CRYPT_ERROR_NOTINITED;
 
 	/* Add the password to the PKCS #10 request as a ChallengePassword
@@ -404,7 +404,7 @@ static int createScepAttributes( SESSION_INFO *sessionInfoPtr,
 									  CRYPT_SESSINFO_USERNAME );
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Clear return value */
@@ -538,7 +538,7 @@ static int createPkcsRequest( SESSION_INFO *sessionInfoPtr,
 							  SCEP_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int dataLength, status;
 
 	/* Extract the request data into the session buffer */
@@ -594,8 +594,8 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int dataLength, sigResult, value, status;
 
 	/* Phase 1: Sig.check the data using the CA's key */
@@ -693,7 +693,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int dataLength, sigResult, value, status;
 
 	/* Phase 1: Sig.check the self-signed data */
@@ -807,7 +807,7 @@ static int createPkcsResponse( SESSION_INFO *sessionInfoPtr,
 							   SCEP_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int dataLength, status;
 
 	/* Extract the response data into the session buffer */

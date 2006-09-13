@@ -117,11 +117,34 @@
 *																			*
 ****************************************************************************/
 
+/* Visual C++ capabilities have changed somewhat over the years, the 
+   following defines make explicit what we're testing for in a check of 
+   _MSC_VER.
+
+	Visual C++ 1.5 _MSC_VER = 800
+	Visual C++ 5.0 _MSC_VER = 1100
+	Visual C++ 6.0 _MSC_VER = 1200
+	Visual C++ 7.0 (VC2002) _MSC_VER = 1300
+	Visual C++ 7.1 (VC2003) _MSC_VER = 1310
+	Visual C++ 8.0 (VC2005) _MSC_VER = 1400 */
+
+#ifdef _MSC_VER
+  #define VC_16BIT( _MSC_VER )		( _MSC_VER <= 800 )
+  #define VC_LT_2005( _MSC_VER )	( _MSC_VER < 1400 )
+  #define VC_GE_2005( _MSC_VER )	( _MSC_VER >= 1400 )
+#else
+  /* These aren't specifically required on non-VC++ systems, but some 
+     preprocessors get confused if they aren't defined since they're used */
+  #define VC_16BIT( _MSC_VER )		0
+  #define VC_LT_2005( _MSC_VER )	0
+  #define VC_GE_2005( _MSC_VER )	0
+#endif /* Visual C++ */
+
 /* If we're compiling under VC++ with the maximum level of warnings, turn
    off some of the more irritating warnings */
 
 #if defined( _MSC_VER )
-  #if ( _MSC_VER <= 800 )
+  #if VC_16BIT( _MSC_VER )
 	#pragma warning( disable: 4135 )/* Conversion bet.diff.integral types */
 	#pragma warning( disable: 4761 )/* Integral size mismatch in argument */
   #endif /* 16-bit VC++ */
@@ -164,7 +187,7 @@
    define __STDC_LIB_EXT1__, so if we detect this version of the compiler we 
    define it ourselves */
 
-#if defined( _MSC_VER ) && ( _MSC_VER >= 1400 ) && \
+#if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER ) && \
 	!defined( __STDC_LIB_EXT1__ )
   #define __STDC_LIB_EXT1__
 #endif /* VC++ 2005 without __STDC_LIB_EXT1__ defined */
@@ -843,7 +866,7 @@ typedef unsigned char		BYTE;
    possible or using wrapper functions if not */
 
 #ifdef __STDC_LIB_EXT1__
-  #if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+  #if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER )
 	/* The VC++ implementation of TR 24731 is based on preliminary versions 
 	   of the design for the spec, and in some cases needs re-mapping onto 
 	   the final versions.  Instances of this are:
@@ -871,7 +894,7 @@ typedef unsigned char		BYTE;
 
   /* printf() */
   #define vsprintf_s					vsnprintf
-  #if defined( _MSC_VER ) && ( _MSC_VER <= 1200 )
+  #if defined( _MSC_VER ) && VC_LT_2005( _MSC_VER )
 	#define sprintf_s					_snprintf
   #elif defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
 	#define sprintf_s					bcSnprintf

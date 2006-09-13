@@ -1073,7 +1073,7 @@ static int createCmpRequest( const CERT_DATA *requestData,
 			/* Use a fixed private key, for testing purposes */
 			if( cryptAlgo == CRYPT_ALGO_RSA )
 				loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
-								   USER_PRIVKEY_LABEL, FALSE );
+								   USER_PRIVKEY_LABEL, FALSE, FALSE );
 			else
 				loadDSAContextsEx( CRYPT_UNUSED, &cryptContext, NULL,
 								   USER_PRIVKEY_LABEL, NULL );

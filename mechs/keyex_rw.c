@@ -89,7 +89,7 @@ static int readKeyDerivationInfo( STREAM *stream, QUERY_INFO *queryInfo )
 static int writeKeyDerivationInfo( STREAM *stream,
 								   const CRYPT_CONTEXT iCryptContext )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];
 	int keySetupIterations, derivationInfoSize, status;
 
@@ -150,7 +150,7 @@ static int writeCmsKek( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 						const BYTE *encryptedKey, const int encryptedKeyLength )
 	{
 	STREAM localStream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE kekInfo[ 128 + 8 ], label[ CRYPT_MAX_TEXTSIZE + 8 ];
 	const int algoIdInfoSize = \
 				sizeofContextAlgoID( iCryptContext, CRYPT_ALGO_NONE, 
@@ -279,7 +279,7 @@ static int writeCryptlibKek( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 		hasKeyDerivationInfo = FALSE;
 
 #if 0	/* 21/4/06 Disabled since it was never used */
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		/* There's no password-derivation information present, see if there's
 		   a label present */
@@ -429,7 +429,7 @@ static int writePgpKek( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 						&cryptAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, salt, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
@@ -608,7 +608,7 @@ static int writeCryptlibKeytrans( STREAM *stream,
 								  const void *auxInfo,
 								  const int auxInfoLength )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
 	const int algoIdInfoSize = \
 				sizeofContextAlgoID( iCryptContext, CRYPT_ALGO_NONE, 
@@ -734,7 +734,7 @@ static int writePgpKeytrans( STREAM *stream,
 							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, keyID, PGP_KEYID_SIZE );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
@@ -803,7 +803,7 @@ int readKeyAgreeInfo( STREAM *stream, QUERY_INFO *queryInfo,
 	   it */
 	if( iKeyAgreeContext == NULL )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, queryInfo->keyID,
 						queryInfo->keyIDlength );
@@ -829,7 +829,7 @@ int writeKeyAgreeInfo( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 					   const void *ukm, const int ukmLength,
 					   const void *auxInfo, const int auxInfoLength )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE rKeyID[ 1024 + 8 ];
 	int rKeyIDlength, recipientKeyInfoSize, status;
 
@@ -886,62 +886,72 @@ int writeKeyAgreeInfo( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 *																			*
 ****************************************************************************/
 
-static const struct {
+typedef struct {
 	const KEYEX_TYPE type;
 	const READKEYTRANS_FUNCTION function;
-	} keytransReadTable[] = {
+	} KEYTRANS_READ_INFO;
+static const KEYTRANS_READ_INFO keytransReadTable[] = {
 	{ KEYEX_CMS, readCmsKeytrans },
 	{ KEYEX_CRYPTLIB, readCryptlibKeytrans },
 #ifdef USE_PGP
 	{ KEYEX_PGP, readPgpKeytrans },
 #endif /* USE_PGP */
-	{ KEYEX_NONE, NULL }
+	{ KEYEX_NONE, NULL }, { KEYEX_NONE, NULL }
 	};
 
-static const struct {
+typedef struct {
 	const KEYEX_TYPE type;
 	const WRITEKEYTRANS_FUNCTION function;
-	} keytransWriteTable[] = {
+	} KEYTRANS_WRITE_INFO;
+static const KEYTRANS_WRITE_INFO keytransWriteTable[] = {
 	{ KEYEX_CMS, writeCmsKeytrans },
 	{ KEYEX_CRYPTLIB, writeCryptlibKeytrans },
 #ifdef USE_PGP
 	{ KEYEX_PGP, writePgpKeytrans },
 #endif /* USE_PGP */
-	{ KEYEX_NONE, NULL }
+	{ KEYEX_NONE, NULL }, { KEYEX_NONE, NULL }
 	};
 
-static const struct {
+typedef struct {
 	const KEYEX_TYPE type;
 	const READKEK_FUNCTION function;
-	} kekReadTable[] = {
+	} KEK_READ_INFO;
+static const KEK_READ_INFO kekReadTable[] = {
 	{ KEYEX_CMS, readCryptlibKek },
 	{ KEYEX_CRYPTLIB, readCryptlibKek },
 #ifdef USE_PGP
 	{ KEYEX_PGP, readPgpKek },
 #endif /* USE_PGP */
-	{ KEYEX_NONE, NULL }
+	{ KEYEX_NONE, NULL }, { KEYEX_NONE, NULL }
 	};
 
-static const struct {
+typedef struct {
 	const KEYEX_TYPE type;
 	const WRITEKEK_FUNCTION function;
-	} kekWriteTable[] = {
+	} KEK_WRITE_INFO;
+static const KEK_WRITE_INFO kekWriteTable[] = {
 	{ KEYEX_CMS, writeCryptlibKek },
 	{ KEYEX_CRYPTLIB, writeCryptlibKek },
 #ifdef USE_PGP
 	{ KEYEX_PGP, writePgpKek },
 #endif /* USE_PGP */
-	{ KEYEX_NONE, NULL }
+	{ KEYEX_NONE, NULL }, { KEYEX_NONE, NULL }
 	};
 
 READKEYTRANS_FUNCTION getReadKeytransFunction( const KEYEX_TYPE keyexType )
 	{
 	int i;
 
-	for( i = 0; keytransReadTable[ i ].type != KEYEX_NONE && \
-				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+	for( i = 0; 
+		 keytransReadTable[ i ].type != KEYEX_NONE && \
+			i < FAILSAFE_ARRAYSIZE( keytransReadTable, KEYTRANS_READ_INFO ); 
+		 i++ )
+		{
 		if( keytransReadTable[ i ].type == keyexType )
 			return( keytransReadTable[ i ].function );
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( keytransReadTable, KEYTRANS_READ_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -949,10 +959,16 @@ WRITEKEYTRANS_FUNCTION getWriteKeytransFunction( const KEYEX_TYPE keyexType )
 	{
 	int i;
 
-	for( i = 0; keytransWriteTable[ i ].type != KEYEX_NONE && \
-				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+	for( i = 0; 
+		 keytransWriteTable[ i ].type != KEYEX_NONE && \
+			i < FAILSAFE_ARRAYSIZE( keytransWriteTable, KEYTRANS_WRITE_INFO ); 
+		 i++ )
+		{
 		if( keytransWriteTable[ i ].type == keyexType )
 			return( keytransWriteTable[ i ].function );
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( keytransWriteTable, KEYTRANS_WRITE_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}
@@ -960,21 +976,33 @@ READKEK_FUNCTION getReadKekFunction( const KEYEX_TYPE keyexType )
 	{
 	int i;
 
-	for( i = 0; kekReadTable[ i ].type != KEYEX_NONE && \
-				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+	for( i = 0; 
+		 kekReadTable[ i ].type != KEYEX_NONE && \
+			i < FAILSAFE_ARRAYSIZE( kekReadTable, KEK_READ_INFO ); 
+		 i++ )
+		{
 		if( kekReadTable[ i ].type == keyexType )
 			return( kekReadTable[ i ].function );
-
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( kekReadTable, KEK_READ_INFO ) )
+		retIntError_Null();
+		
 	return( NULL );
 	}
 WRITEKEK_FUNCTION getWriteKekFunction( const KEYEX_TYPE keyexType )
 	{
 	int i;
 
-	for( i = 0; kekWriteTable[ i ].type != KEYEX_NONE && \
-				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+	for( i = 0; 
+		 kekWriteTable[ i ].type != KEYEX_NONE && \
+			i < FAILSAFE_ARRAYSIZE( kekWriteTable, KEK_WRITE_INFO ); 
+		 i++ )
+		{
 		if( kekWriteTable[ i ].type == keyexType )
 			return( kekWriteTable[ i ].function );
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( kekWriteTable, KEK_WRITE_INFO ) )
+		retIntError_Null();
 
 	return( NULL );
 	}

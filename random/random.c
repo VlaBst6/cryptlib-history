@@ -273,7 +273,7 @@ int addRandomData( void *statePtr, const void *value,
 				   const int valueLength )
 	{
 	RANDOM_STATE_INFO *state = ( RANDOM_STATE_INFO * ) statePtr;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const BYTE *valuePtr = value;
 	int length = min( valueLength, state->bufSize - state->bufPos );
 	int totalLength = valueLength, status;
@@ -358,7 +358,7 @@ int endRandomData( void *statePtr, const int quality )
 	if( state->bufPos > 0 && state->bufPos <= state->bufSize && \
 		state->bufSize >= 16 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, state->buffer, state->bufPos );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -681,7 +681,7 @@ static int generateX917( RANDOM_INFO *randomInfo, BYTE *data,
 			ORIGINAL_INT_VAR( lsb2, randomInfo->x917DT[ X917_POOLSIZE - 2 ] );
 			ORIGINAL_INT_VAR( lsb3, randomInfo->x917DT[ X917_POOLSIZE - 3 ] );
 
-#if 1
+#if 1 /* Big-endian */
 			for( i = X917_POOLSIZE - 1; i >= 0; i-- )
 				{
 				randomInfo->x917DT[ i ]++;
@@ -689,7 +689,7 @@ static int generateX917( RANDOM_INFO *randomInfo, BYTE *data,
 					break;
 				i = i;
 				}
-#else
+#else /* Little-endian */
 			for( i = 0; i < X917_POOLSIZE; i++ )
 				{
 				randomInfo->x917DT[ i ]++;
@@ -924,6 +924,7 @@ static void addStoredSeedData( RANDOM_INFO *randomInfo )
 		assert( NOTREACHED );
 		return;
 		}
+	assert( length > 0 );
 	randomInfo->seedSize = length;
 
 	/* Precondition: We got at least some non-zero data */
@@ -1052,10 +1053,12 @@ static int tryGetRandomOutput( RANDOM_INFO *randomInfo,
 	   output with samples from the previous RANDOMPOOL_SAMPLES outputs */
 	sample = mgetLong( samplePtr );
 	for( i = 0; i < RANDOMPOOL_SAMPLES; i++ )
+		{
 		if( randomInfo->prevOutput[ i ] == sample )
 			/* We're repeating previous output, tell the caller to try
 			   again */
 			return( OK_SPECIAL );
+		}
 
 	/* Postcondition: There are no values seen during a previous run present
 	   in the output */
@@ -1078,6 +1081,7 @@ static int tryGetRandomOutput( RANDOM_INFO *randomInfo,
 	   if all the bits match */
 	sample = mgetLong( x917SamplePtr );
 	for( i = 0; i < RANDOMPOOL_SAMPLES; i++ )
+		{
 		if( randomInfo->x917PrevOutput[ i ] == sample )
 			{
 			/* If we've failed on the first sample and the full match also
@@ -1095,6 +1099,7 @@ static int tryGetRandomOutput( RANDOM_INFO *randomInfo,
 			   again */
 			return( OK_SPECIAL );
 			}
+		}
 
 	/* Postcondition: There are no values seen during a previous run present
 	   in the output */
@@ -1220,7 +1225,7 @@ static int getRandomOutput( RANDOM_INFO *randomInfo, BYTE *buffer,
 int getRandomData( RANDOM_INFO *randomInfo, void *buffer, const int length )
 	{
 	BYTE *bufPtr = buffer;
-	int randomQuality, count, status;
+	int randomQuality, count, iterationCount, status;
 
 	/* Preconditions: The input data is valid */
 	PRE( isWritePtr( randomInfo, sizeof( RANDOM_INFO ) ) );
@@ -1287,12 +1292,16 @@ restartPoint:
 	   perform a final quick poll of the system to get any last bit of
 	   entropy, and mix the entire pool.  If the pool hasn't been sufficiently
 	   mixed, we iterate until we've reached the minimum mix count */
+	iterationCount = 0;
 	do
 		{
 		fastPoll();
 		mixRandomPool( randomInfo );
 		}
-	while( randomInfo->randomPoolMixes < RANDOMPOOL_MIXES );
+	while( randomInfo->randomPoolMixes < RANDOMPOOL_MIXES && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* Keep producing RANDOMPOOL_OUTPUTSIZE bytes of output until the request
 	   is satisfied */
@@ -1662,11 +1671,13 @@ static int des3TestLoop( const DES_TEST *testData, int iterations )
 
 static int algorithmSelfTest( void )
 	{
-	static const struct {
+	typedef struct {
 		const char FAR_BSS *data;
 		const int length;
 		const BYTE hashValue[ 20 + 8 ];
-		} FAR_BSS hashData[] = {	/* FIPS 180-1 SHA-1 test vectors */
+		} HASHDATA_INFO;
+	static const HASHDATA_INFO FAR_BSS hashData[] = {
+		/* FIPS 180-1 SHA-1 test vectors */
 		{ "abc", 3,
 		  { 0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
 			0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
@@ -1675,18 +1686,21 @@ static int algorithmSelfTest( void )
 		  { 0x84, 0x98, 0x3E, 0x44, 0x1C, 0x3B, 0xD2, 0x6E,
 			0xBA, 0xAE, 0x4A, 0xA1, 0xF9, 0x51, 0x29, 0xE5,
 			0xE5, 0x46, 0x70, 0xF1 } },
-		{ NULL, 0, { 0 } }
+		{ NULL, 0, { 0 } }, { NULL, 0, { 0 } }
 		};
 	HASHFUNCTION hashFunction;
 	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
-	int hashSize, i;
+	int hashSize, i, iterationCount = 0;
 
 	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
 
 	/* Test the SHA-1 code against the values given in FIPS 180-1.  We don't
 	   perform the final test (using 10MB of data) because this takes too
 	   long to run */
-	for( i = 0; hashData[ i ].data != NULL; i++ )
+	for( i = 0; 
+		 hashData[ i ].data != NULL && \
+			iterationCount++ < FAILSAFE_ARRAYSIZE( hashData, HASHDATA_INFO ); 
+		 i++ )
 		{
 		hashFunction( NULL, hashValue, CRYPT_MAX_HASHSIZE, 
 					  ( BYTE * ) hashData[ i ].data, hashData[ i ].length, 
@@ -1694,6 +1708,8 @@ static int algorithmSelfTest( void )
 		if( memcmp( hashValue, hashData[ i ].hashValue, hashSize ) )
 			return( CRYPT_ERROR_FAILED );
 		}
+	if( iterationCount >= FAILSAFE_ARRAYSIZE( hashData, HASHDATA_INFO ) )
+		retIntError();
 
 	/* Test the 3DES code against the values given in NIST Special Pub.800-20,
 	   1999, which are actually the same as 500-20, 1980, since they require
@@ -1958,16 +1974,13 @@ C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength )
 	   purposes */
 	if( randomData != NULL )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
-#ifndef NDEBUG	/* For debugging tests only */
+#if defined( __WINDOWS__ ) && !defined( NDEBUG )	/* For debugging tests only */
 if( randomDataLength == 5 && !memcmp( randomData, "xyzzy", 5 ) )
 {
-BYTE buffer[ 256 ];
+BYTE buffer[ 256 + 8 ];
 int kludge = 100;
-#if !defined( __MAC__ ) && !defined( __WIN16__ )
-printf( "Kludging randomness, file " __FILE__ ", line %d.\n", __LINE__ );
-#endif /* Systems without stdio */
 memset( buffer, '*', 256 );
 setMessageData( &msgData, buffer, 256 );
 krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
@@ -1975,7 +1988,7 @@ krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
 krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
 				 &kludge, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 }
-#endif /* NDEBUG */
+#endif /* Windows debug */
 
 		setMessageData( &msgData, ( void * ) randomData, randomDataLength );
 		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE,

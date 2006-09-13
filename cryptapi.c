@@ -414,7 +414,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 	/* Make sure the IV has been set */
 	if( needsIV( cryptMode ) && !isStreamCipher( cryptAlgo ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, NULL, 0 );
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE_S,
@@ -593,7 +593,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 	/* If there's no IV set, generate one ourselves */
 	if( needsIV( cryptMode ) && !isStreamCipher( cryptAlgo ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, NULL, 0 );
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE_S,
@@ -620,7 +620,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdExportObject( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( cmd->type == COMMAND_EXPORTOBJECT );
@@ -693,7 +693,7 @@ static int cmdExportObject( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdFlushData( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( cmd->type == COMMAND_FLUSHDATA );
@@ -734,7 +734,7 @@ static int cmdGenKey( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( cmd->type == COMMAND_GETATTRIBUTE );
@@ -893,7 +893,7 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdPopData( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( cmd->type == COMMAND_POPDATA );
@@ -920,7 +920,7 @@ static int cmdPopData( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdPushData( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( cmd->type == COMMAND_PUSHDATA );
@@ -1022,7 +1022,7 @@ static int cmdServerQuery( void *stateInfo, COMMAND_INFO *cmd )
 
 static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 
 	assert( cmd->type == COMMAND_SETATTRIBUTE );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
@@ -1369,11 +1369,13 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 		   their length check in the API function, and all other string
 		   args are given as (data, length) pairs  */
 		for( i = 0; i < sentCmd.noStrArgs; i++ )
+			{
 			if( sentCmd.strArgLen[ i ] > maxLength )
 				{
 				maxLength = sentCmd.strArgLen[ i ];
 				maxPos = i;
 				}
+			}
 		return( CRYPT_ARGERROR_NUM1 - maxPos );
 		}
 
@@ -1805,7 +1807,7 @@ typedef enum {
 	ARG_V,			/* Value (attribute) */
 	ARG_N,			/* Numeric arg */
 	ARG_S,			/* String arg */
-	ARG_LAST
+	ARG_LAST,
 	} ERRORMAP;
 
 static int mapError( const ERRORMAP *errorMap, const int status )
@@ -1842,9 +1844,14 @@ static int mapError( const ERRORMAP *errorMap, const int status )
 		default:
 			assert( NOTREACHED );
 		}
-	for( i = 0; errorMap[ i ] != ARG_LAST; i++ )
+	for( i = 0; errorMap[ i ] != ARG_LAST && \
+				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+		{
 		if( errorMap[ i ] == type && !count-- )
 			return( CRYPT_ERROR_PARAM1 - i );
+		}
+	if( i >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError();
 	assert( NOTREACHED );
 	return( CRYPT_ERROR );	/* Get rid of compiler warning */
 	}
@@ -2371,17 +2378,6 @@ C_RET cryptGetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	if( cryptHandle != CRYPT_UNUSED )
 		cmd.arg[ 0 ] = cryptHandle;
-#if 1	/* Re-mapping for cryptlib < 3.2 use */
-	if( attributeType == CRYPT_CERTINFO_CURRENT_EXTENSION )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_GROUP;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_FIELD )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_COMPONENT )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_INSTANCE;
-	else
-#endif /* 1 */
 	cmd.arg[ 1 ] = attributeType;
 	status = DISPATCH_COMMAND( cmdGetAttribute, cmd );
 	if( cryptStatusOK( status ) )
@@ -2425,17 +2421,6 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		}
 	if( cryptHandle != CRYPT_UNUSED )
 		cmd.arg[ 0 ] = cryptHandle;
-#if 1	/* Re-mapping for cryptlib < 3.2 use */
-	if( attributeType == CRYPT_CERTINFO_CURRENT_EXTENSION )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_GROUP;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_FIELD )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_COMPONENT )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_INSTANCE;
-	else
-#endif /* 1 */
 	cmd.arg[ 1 ] = attributeType;	/* arg[ 2 ] = TRUE from template */
 	cmd.strArg[ 0 ] = value;
 	cmd.strArgLen[ 0 ] = RETURN_VALUE( MAX_ATTRIBUTE_SIZE );
@@ -2487,17 +2472,6 @@ C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	if( cryptHandle != CRYPT_UNUSED )
 		cmd.arg[ 0 ] = cryptHandle;
-#if 1	/* Re-mapping for cryptlib < 3.2 use */
-	if( attributeType == CRYPT_CERTINFO_CURRENT_EXTENSION )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_GROUP;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_FIELD )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_COMPONENT )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_INSTANCE;
-	else
-#endif /* 1 */
 	cmd.arg[ 1 ] = attributeType;
 	cmd.arg[ 2 ] = value;
 	status = DISPATCH_COMMAND( cmdSetAttribute, cmd );
@@ -2557,17 +2531,6 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	if( cryptHandle != CRYPT_UNUSED )
 		cmd.arg[ 0 ] = cryptHandle;
-#if 1	/* Re-mapping for cryptlib < 3.2 use */
-	if( attributeType == CRYPT_CERTINFO_CURRENT_EXTENSION )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_GROUP;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_FIELD )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_COMPONENT )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_INSTANCE;
-	else
-#endif /* 1 */
 	cmd.arg[ 1 ] = attributeType;
 	cmd.strArg[ 0 ] = ( void * ) value;
 	cmd.strArgLen[ 0 ] = length;
@@ -2600,17 +2563,6 @@ C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	if( cryptHandle != CRYPT_UNUSED )
 		cmd.arg[ 0 ] = cryptHandle;
-#if 1	/* Re-mapping for cryptlib < 3.2 use */
-	if( attributeType == CRYPT_CERTINFO_CURRENT_EXTENSION )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_GROUP;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_FIELD )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-	else
-	if( attributeType == CRYPT_CERTINFO_CURRENT_COMPONENT )
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT_INSTANCE;
-	else
-#endif /* 1 */
 	cmd.arg[ 1 ] = attributeType;
 	status = DISPATCH_COMMAND( cmdDeleteAttribute, cmd );
 	if( cryptStatusOK( status ) )
@@ -3221,22 +3173,9 @@ C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( envelope ) )
 		return( CRYPT_ERROR_PARAM1 );
-#if 1
-	if( !length )
-		{
-		/* If the length is zero it's probably meant to be a 3.0-style
-		   implicit flush, turn it into a 3.1-style explicit flush.  This
-		   backwards-compatibility feature will be discontinued in 3.3 */
-		if( buffer != NULL )
-			return( CRYPT_ERROR_PARAM2 );
-		if( bytesCopied != NULL )
-			return( CRYPT_ERROR_PARAM4 );
-		return( cryptFlushData( envelope ) );
-		}
-#endif /* 1 */
 	if( !isReadPtr( buffer, length ) )
 		return( CRYPT_ERROR_PARAM2 );
-	if( length < 0 )
+	if( length <= 0 )
 		return( CRYPT_ERROR_PARAM3 );
 	if( bytesCopied == NULL )
 		/* If the user isn't interested in the bytes copied count, point at a

@@ -274,7 +274,7 @@ int importConventionalKey( const void *encryptedKey,
 	MECHANISM_WRAP_INFO mechanismInfo;
 	const READKEK_FUNCTION readKeyexFunction = getReadKekFunction( keyexType );
 	QUERY_INFO queryInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	int status;
 
@@ -350,7 +350,7 @@ int importPublicKey( const void *encryptedKey, const int encryptedKeyLength,
 	MECHANISM_WRAP_INFO mechanismInfo;
 	const READKEYTRANS_FUNCTION readKetransFunction = getReadKeytransFunction( keyexType );
 	QUERY_INFO queryInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	int compareType, status;
 
@@ -515,7 +515,7 @@ int importKeyAgreeKey( const void *encryptedKey, const int encryptedKeyLength,
 		{
 		static const BYTE *salt = ( BYTE * ) "\x00\x00\x00\x00\x00\x00\x00\x00";
 		static const int iterations = 100;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		krnlSendMessage( iSessionKeyContext, IMESSAGE_SETATTRIBUTE,
 						 ( int * ) &iterations, CRYPT_CTXINFO_KEYING_ITERATIONS );

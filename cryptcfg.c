@@ -70,8 +70,8 @@ static const FIXED_OPTION_INFO FAR_BSS fixedOptionInfo[] = {
 	MK_OPTION_S( CRYPT_OPTION_INFO_DESCRIPTION, "cryptlib security toolkit", CRYPT_UNUSED ),
 	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2006", CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MAJORVERSION, 3, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 2, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 3, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 3, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 0, CRYPT_UNUSED ),
 
 	/* Context options, base = 0 */
 	/* Algorithm = Conventional encryption/hash/MAC options */
@@ -150,7 +150,7 @@ static const FIXED_OPTION_INFO FAR_BSS fixedOptionInfo[] = {
 	MK_OPTION( CRYPT_OPTION_SELFTESTOK, FALSE, CRYPT_UNUSED ),
 
 	/* End-of-list marker */
-	MK_OPTION_NONE()
+	MK_OPTION_NONE(), MK_OPTION_NONE()
 	};
 
 /* The last option that's written to disk.  Further options beyond this one
@@ -390,12 +390,18 @@ int initOptions( OPTION_INFO **optionListPtr )
 
 	/* Walk through the config table setting up each option to contain
 	   its default value */
-	for( i = 1; fixedOptionInfo[ i ].option != CRYPT_ATTRIBUTE_NONE; i++ )
+	for( i = 1; fixedOptionInfo[ i ].option != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+		 i++ )
+		{
 		if( fixedOptionInfo[ i ].type == OPTION_STRING )
 			optionList[ i ].strValue = \
 						( char * ) fixedOptionInfo[ i ].strDefault;
 		else
 			optionList[ i ].intValue = fixedOptionInfo[ i ].intDefault;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ) )
+		retIntError();
 	*optionListPtr = optionList;
 
 	return( CRYPT_OK );
@@ -406,7 +412,9 @@ void endOptions( OPTION_INFO *optionList )
 	int i;
 
 	/* Walk through the config table clearing and freeing each option */
-	for( i = 1; fixedOptionInfo[ i ].option != CRYPT_ATTRIBUTE_NONE; i++ )
+	for( i = 1; fixedOptionInfo[ i ].option != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+		 i++ )
 		{
 		const FIXED_OPTION_INFO *fixedOptionInfoPtr = &fixedOptionInfo[ i ];
 		OPTION_INFO *optionInfoPtr = &optionList[ i ];
@@ -423,6 +431,8 @@ void endOptions( OPTION_INFO *optionList )
 				}
 			}
 		}
+	if( i >= FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ) )
+		retIntError_Void();
 
 	/* Clear and free the config table */
 	memset( optionList, 0, OPTION_INFO_SIZE );
@@ -443,15 +453,16 @@ void endOptions( OPTION_INFO *optionList )
 static int readTrustedCerts( const CRYPT_KEYSET iCryptKeyset,
 							 void *trustInfoPtr )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 1536 + 8 ];
-	int status;
+	int iterationCount = 0, status;
 
 	/* Read each trusted cert from the keyset */
 	setMessageData( &msgData, buffer, CRYPT_MAX_PKCSIZE + 1536 );
 	status = krnlSendMessage( iCryptKeyset, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_TRUSTEDCERT );
-	while( cryptStatusOK( status ) )
+	while( cryptStatusOK( status ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		/* Add the cert data as a trusted cert item and look for the next
 		   one */
@@ -461,6 +472,8 @@ static int readTrustedCerts( const CRYPT_KEYSET iCryptKeyset,
 		status = krnlSendMessage( iCryptKeyset, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	return( ( status == CRYPT_ERROR_NOTFOUND ) ? CRYPT_OK : status );
 	}
@@ -470,11 +483,11 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 	{
 	CRYPT_KEYSET iCryptKeyset;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	DYNBUF configDB;
 	char configFilePath[ MAX_PATH_LENGTH + 128 ];	/* Protection for Windows */
-	int status;
+	int iterationCount = 0, status;
 
 	/* Try and open the config file.  If we can't open it, it means the that
 	   file doesn't exist, which isn't an error */
@@ -512,7 +525,8 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 	/* Read each config option */
 	sMemConnect( &stream, dynData( configDB ), dynLength( configDB ) );
 	while( cryptStatusOK( status ) && \
-		   stell( &stream ) < dynLength( configDB ) )
+		   stell( &stream ) < dynLength( configDB ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		CRYPT_ATTRIBUTE_TYPE attributeType;
 		long option;
@@ -529,9 +543,16 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 		status = readShortInteger( &stream, &option );
 		if( cryptStatusError( status ) )
 			continue;
-		for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION; i++ )
+		for( i = 1; 
+			 fixedOptionInfo[ i ].option <= LAST_STORED_OPTION && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+			 i++ )
+			{
 			if( fixedOptionInfo[ i ].index == option )
 				break;
+			}
+		if( i >= FAILSAFE_ITERATIONS_LARGE )
+			retIntError();
 		if( fixedOptionInfo[ i ].option > LAST_STORED_OPTION || \
 			fixedOptionInfo[ i ].index == CRYPT_UNUSED )
 			{
@@ -577,6 +598,8 @@ int readConfig( const CRYPT_USER iCryptUser, const char *fileName,
 			status = sSkip( &stream, length );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	sMemDisconnect( &stream );
 
 	/* Clean up */
@@ -610,9 +633,15 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 
 	/* If neither the config options nor any cert trust settings have
 	   changed, there's nothing to do */
-	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION; i++ )
+	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+		 i++ )
+		{
 		if( optionList[ i ].dirty )
 			break;
+		}
+	if( i >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	if( fixedOptionInfo[ i ].option >= LAST_STORED_OPTION && \
 		!trustedCertsPresent )
 		return( CRYPT_OK );
@@ -622,7 +651,9 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 	   can't just check the isDirty flag because if a value is reset to its
 	   default setting the encoded size will be zero even though the isDirty
 	   flag is set */
-	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION; i++ )
+	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+		 i++ )
 		{
 		const FIXED_OPTION_INFO *fixedOptionInfoPtr = &fixedOptionInfo[ i ];
 		const OPTION_INFO *optionInfoPtr = &optionList[ i ];
@@ -655,6 +686,8 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 						  sizeofBoolean() ) );
 			}
 		}
+	if( i >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 
 	/* If we've gone back to all default values from having non-default ones
 	   stored, we either have to write only trusted certs or nothing at all */
@@ -682,7 +715,9 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 
 	/* Write the config options */
 	sMemOpen( &stream, *data, *length );
-	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION; i++ )
+	for( i = 1; fixedOptionInfo[ i ].option <= LAST_STORED_OPTION && \
+				i < FAILSAFE_ARRAYSIZE(fixedOptionInfo, FIXED_OPTION_INFO ); 
+		 i++ )
 		{
 		const FIXED_OPTION_INFO *fixedOptionInfoPtr = &fixedOptionInfo[ i ];
 		const OPTION_INFO *optionInfoPtr = &optionList[ i ];
@@ -729,6 +764,8 @@ int encodeConfigData( OPTION_INFO *optionList, const char *fileName,
 			writeBoolean( &stream, optionInfoPtr->intValue, DEFAULT_TAG );
 			}
 		}
+	if( i >= FAILSAFE_ITERATIONS_LARGE )
+		retIntError();
 	assert( sGetStatus( &stream ) == CRYPT_OK );
 	sMemDisconnect( &stream );
 
@@ -741,7 +778,7 @@ int commitConfigData( const CRYPT_USER cryptUser, const char *fileName,
 					  const void *data, const int length )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	char configFilePath[ MAX_PATH_LENGTH + 128 ];	/* Protection for Windows */
 	int status;
 

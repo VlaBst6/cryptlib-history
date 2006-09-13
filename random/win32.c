@@ -210,7 +210,7 @@ static void readSystemRNG( void )
 		}
 	if( quality > 0 )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, buffer, SYSTEMRNG_BYTES );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
@@ -287,7 +287,7 @@ static void readMBMData( void )
 		if( ( mbmDataPtr = ( SharedData * ) \
 				MapViewOfFile( hMBMData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 			static const int quality = 20;
 
 			setMessageData( &msgData, mbmDataPtr, sizeof( SharedData ) );
@@ -377,14 +377,16 @@ static void readPnPData( void )
 		BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 		BYTE pnpBuffer[ 512 + 8 ];
 		DWORD cbPnPBuffer;
-		int deviceCount;
+		int deviceCount, iterationCount = 0;
 
 		/* Enumerate all PnP devices */
 		initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 		memset( &devInfoData, 0, sizeof( devInfoData ) );
 		devInfoData.cbSize = sizeof( SP_DEVINFO_DATA );
 		for( deviceCount = 0;
-			 pSetupDiEnumDeviceInfo( hDevInfo, deviceCount, &devInfoData );
+			 pSetupDiEnumDeviceInfo( hDevInfo, deviceCount, 
+									 &devInfoData ) && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
 			 deviceCount++ )
 			{
 			if( pSetupDiGetDeviceRegistryProperty( hDevInfo, &devInfoData,
@@ -392,6 +394,8 @@ static void readPnPData( void )
 												   pnpBuffer, 512, &cbPnPBuffer ) )
 				addRandomData( randomState, pnpBuffer, cbPnPBuffer );
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError_Void();
 		pSetupDiDestroyDeviceInfoList( hDevInfo );
 		endRandomData( randomState, 5 );
 		}
@@ -662,7 +666,7 @@ static void slowPollWin95( void )
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
 	BYTE buffer[ BIG_RANDOM_BUFSIZE + 8 ];
-	int listCount = 0;
+	int listCount = 0, iterationCount;
 
 	/* The following are fixed for the lifetime of the process so we only
 	   add them once */
@@ -792,6 +796,7 @@ static void slowPollWin95( void )
 
 	/* Walk through all processes */
 	pe32.dwSize = sizeof( PROCESSENTRY32 );
+	iterationCount = 0;
 	if( pProcess32First( hSnapshot, &pe32 ) )
 		do
 			{
@@ -802,10 +807,12 @@ static void slowPollWin95( void )
 				}
 			addRandomData( randomState, &pe32, sizeof( PROCESSENTRY32 ) );
 			}
-		while( pProcess32Next( hSnapshot, &pe32 ) );
+		while( pProcess32Next( hSnapshot, &pe32 ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Walk through all threads */
 	te32.dwSize = sizeof( THREADENTRY32 );
+	iterationCount = 0;
 	if( pThread32First( hSnapshot, &te32 ) )
 		do
 			{
@@ -816,10 +823,12 @@ static void slowPollWin95( void )
 				}
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
-	while( pThread32Next( hSnapshot, &te32 ) );
+	while( pThread32Next( hSnapshot, &te32 ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Walk through all modules associated with the process */
 	me32.dwSize = sizeof( MODULEENTRY32 );
+	iterationCount = 0;
 	if( pModule32First( hSnapshot, &me32 ) )
 		do
 			{
@@ -830,7 +839,8 @@ static void slowPollWin95( void )
 				}
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
-	while( pModule32Next( hSnapshot, &me32 ) );
+	while( pModule32Next( hSnapshot, &me32 ) && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Clean up the snapshot */
 	CloseHandle( hSnapshot );
@@ -898,7 +908,7 @@ static void registryPoll( void )
 	{
 	static int cbPerfData = PERFORMANCE_BUFFER_SIZE;
 	PPERF_DATA_BLOCK pPerfData;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	DWORD dwSize, dwStatus;
 	int iterations = 0, status;
 
@@ -1024,7 +1034,7 @@ static void slowPollWinNT( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
 	static int isWorkstation = CRYPT_ERROR;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	HANDLE hDevice;
 	LPBYTE lpBuffer;
 	ULONG ulSize;
@@ -1127,7 +1137,7 @@ static void slowPollWinNT( void )
 		}
 
 	/* Get disk I/O statistics for all the hard drives */
-	for( nDrive = 0;; nDrive++ )
+	for( nDrive = 0; nDrive < FAILSAFE_ITERATIONS_MED; nDrive++ )
 		{
 		BYTE diskPerformance[ 256 + 8 ];
 		char szDevice[ 32 + 8 ];
@@ -1268,7 +1278,8 @@ static void slowPollWinNT( void )
 			};
 		int i;
 
-		for( i = 0; processInfo[ i ].type != CRYPT_ERROR; i++ )
+		for( i = 0; processInfo[ i ].type != CRYPT_ERROR && \
+					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
 			/* Query the info for this ID */
 			dwResult = pNtQueryInformationProcess( GetCurrentProcess(),
@@ -1293,6 +1304,8 @@ static void slowPollWinNT( void )
 					noResults++;
 				}
 			}
+		if( i >= FAILSAFE_ITERATIONS_SMALL )
+			retIntError_Void();
 		}
 #endif /* 0 */
 
@@ -1314,7 +1327,8 @@ static void slowPollWinNT( void )
 			};
 		int i;
 
-		for( i = 0; powerInfo[ i ].type != CRYPT_ERROR; i++ )
+		for( i = 0; powerInfo[ i ].type != CRYPT_ERROR && \
+					i < FAILSAFE_ITERATIONS_MED; i++ )
 			{
 			/* Query the info for this ID */
 			dwResult = pNtPowerInformation( powerInfo[ i ].type, NULL, 0, buffer,
@@ -1333,6 +1347,8 @@ static void slowPollWinNT( void )
 			if( cryptStatusOK( status ) )
 				noResults++;
 			}
+		if( i >= FAILSAFE_ITERATIONS_MED )
+			retIntError_Void();
 		}
 	clFree( "slowPollWinNT", buffer );
 

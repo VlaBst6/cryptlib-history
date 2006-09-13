@@ -232,7 +232,7 @@ int initDHcontextSSH( CRYPT_CONTEXT *iCryptContext, int *keySize,
 					  const int requestedKeySize )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int length, status;
 
 	assert( ( isReadPtr( keyData, keyDataLength ) && \
@@ -355,7 +355,7 @@ static int loadCryptovariable( const CRYPT_CONTEXT iCryptContext,
 							   const HASHINFO initialHashInfo, const BYTE *nonce,
 							   const BYTE *data, const int dataLen )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	HASHINFO hashInfo;
 	BYTE buffer[ CRYPT_MAX_KEYSIZE + 8 ];
 	int status;
@@ -557,7 +557,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 		}
 	else
 		{
-		BYTE header[ 8 ], *headerPtr = header;
+		BYTE header[ 8 + 8 ], *headerPtr = header;
 		const int mpiLength = \
 					sizeofInteger32( handshakeInfo->secretValue,
 									 handshakeInfo->secretValueLength ) - \
@@ -661,7 +661,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 int hashAsString( const CRYPT_CONTEXT iHashContext,
 				  const BYTE *data, const int dataLength )
 	{
-	BYTE buffer[ 128 ], *bufPtr = buffer;
+	BYTE buffer[ 128 + 8 ], *bufPtr = buffer;
 	int status;
 
 	/* Prepend the string length to the data and hash it.  If it'll fit into
@@ -688,7 +688,7 @@ int hashAsString( const CRYPT_CONTEXT iHashContext,
 int hashAsMPI( const CRYPT_CONTEXT iHashContext, const BYTE *data,
 			   const int dataLength )
 	{
-	BYTE buffer[ 8 ], *bufPtr = buffer;
+	BYTE buffer[ 8 + 8 ], *bufPtr = buffer;
 	const int length = ( data[ 0 ] & 0x80 ) ? dataLength + 1 : dataLength;
 	int headerLength = LENGTH_SIZE;
 
@@ -729,7 +729,7 @@ int macPayload( const CRYPT_CONTEXT iMacContext, const long seqNo,
 	   packet in two parts */
 	if( macType == MAC_START || macType == MAC_ALL )
 		{
-		BYTE buffer[ 16 ], *bufPtr = buffer;
+		BYTE buffer[ 16 + 8 ], *bufPtr = buffer;
 		int length = ( macType == MAC_ALL ) ? dataLength : packetDataLength;
 
 		assert( ( macType == MAC_ALL && packetDataLength == 0 ) || \
@@ -753,7 +753,7 @@ int macPayload( const CRYPT_CONTEXT iMacContext, const long seqNo,
 								  ( void * ) data, dataLength );
 	if( macType == MAC_END || macType == MAC_ALL )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, "", 0 );
 		if( cryptStatusError( status ) )
@@ -786,7 +786,7 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 				   const BOOLEAN isServer )
 	{
 	KEYAGREE_PARAMS keyAgreeParams;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	int status;
 
@@ -834,7 +834,7 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 	   encoded values here */
 	if( handshakeInfo->requestedServerKeySize > 0 )
 		{
-		BYTE keyexBuffer[ 128 + ( CRYPT_MAX_PKCSIZE * 2 ) ];
+		BYTE keyexBuffer[ 128 + ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 		const int extraLength = LENGTH_SIZE + sizeofString32( "ssh-dh", 6 );
 
 		krnlSendMessage( handshakeInfo->iExchangeHashcontext,

@@ -48,7 +48,7 @@ static int writePgpSigPacketHeader( void *dataBuffer, const int dataBufSize,
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	STREAM stream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE keyID[ PGP_KEYID_SIZE + 8 ];
 	BYTE iAndSHeader[ 64 + 8 ];
 	const time_t currentTime = getApproxTime();
@@ -177,7 +177,7 @@ int createSignaturePGP( void *signature, int *signatureLength,
 						const CRYPT_CONTEXT iSignContext,
 						const CRYPT_CONTEXT iHashContext )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE signatureData[ CRYPT_MAX_PKCSIZE + 128 + 8 ];

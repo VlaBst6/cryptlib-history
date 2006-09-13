@@ -119,7 +119,7 @@ static BOOLEAN pkcs11Initialised = FALSE;
    them and access the appropriate one by name */
 
 typedef struct {
-	char name[ 32 + 1 ];			/* Name of device */
+	char name[ 32 + 1 + 8 ];		/* Name of device */
 	INSTANCE_HANDLE hPKCS11;		/* Handle to driver */
 	CK_FUNCTION_LIST_PTR functionListPtr;	/* Driver access info */
 #ifdef USE_EXPLICIT_LINKING
@@ -156,7 +156,7 @@ typedef struct {
 #endif /* USE_EXPLICIT_LINKING */
 	} PKCS11_DRIVER_INFO;
 
-static PKCS11_DRIVER_INFO pkcs11InfoTbl[ MAX_PKCS11_DRIVERS ];
+static PKCS11_DRIVER_INFO pkcs11InfoTbl[ MAX_PKCS11_DRIVERS + 8 ];
 
 /* The use of dynamically bound function pointers vs.statically linked
    functions requires a bit of sleight of hand since we can't give the
@@ -459,8 +459,8 @@ int deviceInitPKCS11( void )
 	   in default user object */
 	for( optionIndex = 0; optionIndex < MAX_PKCS11_DRIVERS; optionIndex++ )
 		{
-		RESOURCE_DATA msgData;
-		char deviceDriverName[ MAX_PATH_LENGTH + 1 ];
+		MESSAGE_DATA msgData;
+		char deviceDriverName[ MAX_PATH_LENGTH + 1 + 8 ];
 		int status;
 
 		setMessageData( &msgData, deviceDriverName, MAX_PATH_LENGTH );
@@ -593,7 +593,7 @@ static int mapError( PKCS11_INFO *pkcs11Info, const CK_RV errorCode,
 static time_t getTokenTime( CK_TOKEN_INFO *tokenInfo )
 	{
 	STREAM stream;
-	BYTE buffer[ 32 ];
+	BYTE buffer[ 32 + 8 ];
 	time_t theTime = MIN_TIME_VALUE + 1;
 	int length, status;
 
@@ -633,7 +633,7 @@ static int findDeviceObjects( PKCS11_INFO *pkcs11Info,
 							  const CK_ULONG templateCount,
 							  const BOOLEAN onlyOne )
 	{
-	CK_OBJECT_HANDLE hObjectArray[ 2 ];
+	CK_OBJECT_HANDLE hObjectArray[ 2 + 8 ];
 	CK_ULONG ulObjectCount;
 	CK_RV status;
 
@@ -702,10 +702,10 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 		};
 	CK_OBJECT_HANDLE hObject;
 	CK_RV status;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	DYNBUF subjectDB, iAndSDB, certDB;
-	BYTE keyID[ CRYPT_MAX_HASHSIZE ];
+	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, cryptStatus;
 
 	/* Get the keyID from the cert */
@@ -810,7 +810,7 @@ static int updateCertChain( PKCS11_INFO *pkcs11Info,
 		{ CKA_SERIAL_NUMBER, NULL_PTR, 0 },
 		};
 	BOOLEAN isLeafCert = TRUE, seenNonDuplicate = FALSE;
-	int value, cryptStatus;
+	int value, iterationCount = 0, cryptStatus;
 
 	/* If we've been passed a standalone cert, check whether it's implicitly
 	   trusted, which allows to be added without the presence of a 
@@ -874,7 +874,10 @@ static int updateCertChain( PKCS11_INFO *pkcs11Info,
 		}
 	while( krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
 							MESSAGE_VALUE_CURSORNEXT,
-							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK );
+							CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
+		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+		retIntError();
 	
 	return( seenNonDuplicate ? CRYPT_OK : CRYPT_ERROR_DUPLICATE );
 	}
@@ -920,7 +923,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 						 const int nameLength )
 	{
 	CK_SESSION_HANDLE hSession;
-	CK_SLOT_ID slotList[ MAX_PKCS11_SLOTS ];
+	CK_SLOT_ID slotList[ MAX_PKCS11_SLOTS + 8 ];
 	CK_ULONG slotCount = MAX_PKCS11_SLOTS;
 	CK_SLOT_INFO slotInfo;
 	CK_TOKEN_INFO tokenInfo;
@@ -967,14 +970,18 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		else
 			{
 			/* Check each (named) slot for a token matching the given name */
-			for( tokenSlot = 0; tokenSlot < slotCount; tokenSlot++ )
+			for( tokenSlot = 0; tokenSlot < slotCount && \
+								tokenSlot < FAILSAFE_ITERATIONS_MED; 
+				 tokenSlot++ )
 				{
 				status = C_GetTokenInfo( slotList[ tokenSlot ], &tokenInfo );
 				if( status == CKR_OK && \
 					!strnicmp( tokenName, tokenInfo.label, tokenNameLength ) )
 					break;
-				};
-			if( tokenSlot == slotCount )
+				}
+			if( tokenSlot >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
+			if( tokenSlot >= slotCount )
 				return( CRYPT_ERROR_NOTFOUND );
 			}
 		}
@@ -1344,7 +1351,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		type == CRYPT_DEVINFO_ZEROISE )
 		{
 		CK_SESSION_HANDLE hSession;
-		CK_CHAR label[ 32 ];
+		CK_CHAR label[ 32 + 8 ];
 
 		/* If there's a session active with the device, log out and terminate
 		   the session, since the token init will reset this */
@@ -1413,7 +1420,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		status = C_GetTokenInfo( pkcs11Info->slotID, &tokenInfo );
 		if( status != CKR_OK )
 			return( mapError( pkcs11Info, status, CRYPT_ERROR_SIGNALLED ) );
-		if( ( theTime = getTokenTime( &tokenInfo ) ) < MIN_TIME_VALUE )
+		if( ( theTime = getTokenTime( &tokenInfo ) ) <= MIN_TIME_VALUE )
 			return( CRYPT_ERROR_NOTAVAIL );
 		*timePtr = theTime;
 		return( CRYPT_OK );
@@ -1451,7 +1458,7 @@ static int getObjectLabel( PKCS11_INFO *pkcs11Info,
 	CK_ATTRIBUTE keyLabelTemplate = \
 		{ CKA_LABEL, NULL_PTR, 0 };
 	CK_RV status;
-	char labelBuffer[ CRYPT_MAX_TEXTSIZE ], *labelPtr = labelBuffer;
+	char labelBuffer[ CRYPT_MAX_TEXTSIZE + 8 ], *labelPtr = labelBuffer;
 
 	status = C_GetAttributeValue( pkcs11Info->hSession, hObject,
 								  &keyLabelTemplate, 1 );
@@ -1493,7 +1500,7 @@ static int instantiateCert( PKCS11_INFO *pkcs11Info,
 		{ CKA_VALUE, NULL_PTR, 0 };
 	CK_RV status;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BYTE buffer[ MAX_BUFFER_SIZE ], *bufPtr = buffer;
+	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
 	*iCryptCert = CRYPT_ERROR;
@@ -1547,7 +1554,7 @@ static int getCertChain( PKCS11_INFO *pkcs11Info,
 	CK_ATTRIBUTE idTemplate = \
 		{ CKA_ID, NULL_PTR, 0 };
 	CK_RV status;
-	BYTE keyID[ MAX_BUFFER_SIZE ];
+	BYTE keyID[ MAX_BUFFER_SIZE + 8 ];
 
 	/* Find the ID for this cert */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hCertificate, 
@@ -1669,7 +1676,7 @@ static int findCertFromObject( PKCS11_INFO *pkcs11Info,
 	CK_ATTRIBUTE idTemplate = \
 		{ CKA_ID, NULL_PTR, 0 };
 	CK_RV status;
-	BYTE buffer[ MAX_BUFFER_SIZE ], *bufPtr = buffer;
+	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
 	*iCryptCert = CRYPT_ERROR;
@@ -1748,7 +1755,7 @@ static int findObjectFromObject( PKCS11_INFO *pkcs11Info,
 	CK_ATTRIBUTE idTemplate = \
 		{ CKA_ID, NULL_PTR, 0 };
 	CK_RV status;
-	BYTE buffer[ MAX_BUFFER_SIZE ], *bufPtr = buffer;
+	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
 	*hObject = CRYPT_ERROR;
@@ -1848,11 +1855,11 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	CRYPT_CERTIFICATE iCryptCert;
 	CRYPT_ALGO_TYPE cryptAlgo;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BOOLEAN certViaPrivateKey = FALSE, privateKeyViaCert = FALSE;
 	BOOLEAN certPresent = FALSE;
 	BOOLEAN cryptAllowed = FALSE, sigAllowed = FALSE;
-	char label[ CRYPT_MAX_TEXTSIZE ];
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int keySize, actionFlags = 0, labelLength, cryptStatus;
 
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
@@ -2901,7 +2908,7 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
-	BYTE paramDataBuffer[ 64 ];
+	BYTE paramDataBuffer[ 64 + 8 ];
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
 	int paramSize, cryptStatus;
 
@@ -2957,7 +2964,7 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
-	BYTE paramDataBuffer[ 64 ], ivBuffer[ CRYPT_MAX_IVSIZE ];
+	BYTE paramDataBuffer[ 64 + 8 ], ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
 	int paramSize, cryptStatus;
 
@@ -3174,8 +3181,8 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	{
 	CRYPT_PKCINFO_DLP dhKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
-	BYTE pubkeyBuffer[ CRYPT_MAX_PKCSIZE * 3 ], label[ 8 ];
+	MESSAGE_DATA msgData;
+	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 	STREAM stream;
 	long length;
 	int keyLength = bitsToBytes( keysizeBits ), cryptStatus;
@@ -3363,9 +3370,9 @@ static int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	CK_ATTRIBUTE nTemplate = { CKA_MODULUS, NULL_PTR, CRYPT_MAX_PKCSIZE };
 	CK_ATTRIBUTE eTemplate = { CKA_PUBLIC_EXPONENT, NULL_PTR, CRYPT_MAX_PKCSIZE };
 	CK_RV status;
-	BYTE n[ CRYPT_MAX_PKCSIZE ], e[ CRYPT_MAX_PKCSIZE ];
-	BYTE keyDataBuffer[ CRYPT_MAX_PKCSIZE * 2 ];
-	RESOURCE_DATA msgData;
+	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
+	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
+	MESSAGE_DATA msgData;
 	int keyDataSize, cryptStatus;
 
 	/* Get the public key components from the device.  The odd two-phase 
@@ -3427,8 +3434,8 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 						  const CK_OBJECT_HANDLE hPrivateKey,
 						  const CK_OBJECT_HANDLE hPublicKey )
 	{
-	RESOURCE_DATA msgData;
-	BYTE idBuffer[ KEYID_SIZE ];
+	MESSAGE_DATA msgData;
+	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int cryptStatus;
 
 	/* Remember what we've set up */
@@ -3677,7 +3684,7 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	static const CK_MECHANISM mechanism = { CKM_RSA_X_509, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
-	BYTE data[ CRYPT_MAX_PKCSIZE ];
+	BYTE data[ CRYPT_MAX_PKCSIZE + 8 ];
 	const int keySize = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
 	int cryptStatus;
 
@@ -3796,8 +3803,9 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 						  const void *g, const int gLen,
 						  const void *y, const int yLen )
 	{
-	RESOURCE_DATA msgData;
-	BYTE keyDataBuffer[ CRYPT_MAX_PKCSIZE * 3 ], idBuffer[ KEYID_SIZE ];
+	MESSAGE_DATA msgData;
+	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ];
+	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int keyDataSize, cryptStatus;
 
 	/* Send the public key data to the context.  We send the keying info as
@@ -3880,7 +3888,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	PKCS11_INFO *pkcs11Info;
 	CK_OBJECT_HANDLE hDsaKey;
 	CK_RV status;
-	BYTE yValue[ CRYPT_MAX_PKCSIZE ];
+	BYTE yValue[ CRYPT_MAX_PKCSIZE + 8 ];
 	const int templateCount = dsaKey->isPublicKey ? 9 : 10;
 	int yValueLength, cryptStatus;
 
@@ -3896,9 +3904,9 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( !dsaKey->isPublicKey )
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		STREAM stream;
-		BYTE pubkeyBuffer[ CRYPT_MAX_PKCSIZE * 3 ], label[ 8 ];
+		BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 
 		/* Create a native private-key DSA context, which generates the y 
 		   value internally */
@@ -4038,11 +4046,11 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	CK_ATTRIBUTE yValueTemplate = { CKA_VALUE, NULL, CRYPT_MAX_PKCSIZE * 2 };
 	CK_OBJECT_HANDLE hPublicKey, hPrivateKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	CRYPT_DEVICE iCryptDevice;
 	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
-	BYTE pubkeyBuffer[ CRYPT_MAX_PKCSIZE * 3 ], label[ 8 ];
+	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 	CK_RV status;
 	STREAM stream;
 	long length;
@@ -4175,7 +4183,7 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	DEVICE_INFO *deviceInfo;
 	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	BIGNUM *r, *s;
-	BYTE signature[ 40 ];
+	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
 
 	assert( length == sizeof( DLP_PARAMS ) );
@@ -4206,22 +4214,26 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	   but this isn't a big deal since DSA signing via tokens is almost never 
 	   used */
 	r = BN_new();
+	if( r == NULL )
+		return( CRYPT_ERROR_MEMORY );
 	s = BN_new();
-	if( r != NULL && s != NULL )
+	if( s == NULL )
 		{
-		BN_bin2bn( signature, 20, r );
-		BN_bin2bn( signature + 20, 20, s );
-		cryptStatus = \
-			dsaKey->encodeDLValuesFunction( dlpParams->outParam, dlpParams->outLen, 
-											r, s, dlpParams->formatType );
-		if( !cryptStatusError( cryptStatus ) )
-			{
-			dlpParams->outLen = cryptStatus;
-			cryptStatus = CRYPT_OK;	/* encodeDLValues() returns a byte count */
-			}
-		BN_clear_free( s );
-		BN_clear_free( r );
+		BN_free( r );
+		return( CRYPT_ERROR_MEMORY );
 		}
+	BN_bin2bn( signature, 20, r );
+	BN_bin2bn( signature + 20, 20, s );
+	cryptStatus = \
+		dsaKey->encodeDLValuesFunction( dlpParams->outParam, dlpParams->outLen, 
+										r, s, dlpParams->formatType );
+	if( !cryptStatusError( cryptStatus ) )
+		{
+		dlpParams->outLen = cryptStatus;
+		cryptStatus = CRYPT_OK;	/* encodeDLValues() returns a byte count */
+		}
+	BN_clear_free( s );
+	BN_clear_free( r );
 	return( cryptStatus );
 	}
 
@@ -4233,7 +4245,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	DEVICE_INFO *deviceInfo;
 	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	BIGNUM *r, *s;
-	BYTE signature[ 40 ];
+	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
 
 	/* This function is present but isn't used as part of any normal 
@@ -4296,7 +4308,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	  ( algo ) == CRYPT_ALGO_DSA || ( algo ) == CRYPT_ALGO_RC2 || \
 	  ( algo ) == CRYPT_ALGO_RC4 || ( algo ) == CRYPT_ALGO_RC5 || \
 	  ( algo ) == CRYPT_ALGO_CAST )
-#define keysizeBytes( algo ) \
+#define keysizeInBytes( algo ) \
 	( ( algo ) == CRYPT_ALGO_RC5 || ( algo ) == CRYPT_ALGO_CAST )
 
 /* Templates for the various capabilities.  These contain only basic 
@@ -4347,7 +4359,7 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 		bitsToBytes( MIN_PKCSIZE_BITS ), bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
 
 	/* Hier ist der Mast zu ende */
-	{ CRYPT_ERROR }
+	{ CRYPT_ERROR }, { CRYPT_ERROR }
 	};
 
 /* Mapping of PKCS #11 device capabilities to cryptlib capabilities.  We 
@@ -4468,7 +4480,8 @@ static const MECHANISM_INFO mechanismInfo[] = {
 	{ CKM_SKIPJACK_OFB64, CRYPT_ERROR, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_OFB, CKK_SKIPJACK,
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncryptOFB, cipherDecryptOFB, NULL, NULL },
-	{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
+	{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE },
+		{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
 	};
 
 /* Get a PKCS #11 mechanism type corresponding to a cryptlib algorithm and
@@ -4477,16 +4490,22 @@ static const MECHANISM_INFO mechanismInfo[] = {
 static CK_MECHANISM_TYPE getMechanism( const CRYPT_ALGO_TYPE cryptAlgo,
 									   const CRYPT_MODE_TYPE cryptMode )
 	{
-	int i = 0;
+	int i;
 
-	while( mechanismInfo[ i ].cryptAlgo != cryptAlgo && \
-		   mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR )
-		i++;
+	for( i = 0; mechanismInfo[ i ].cryptAlgo != cryptAlgo && \
+				mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR && \
+				i < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO );
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+		retIntError();
 	assert( i < sizeof( mechanismInfo ) / sizeof( MECHANISM_INFO ) && \
 			mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR );
 	while( mechanismInfo[ i ].cryptMode != cryptMode && \
-		   mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR )
+		   mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR && \
+		   i < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
 		i++;
+	if( i >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+		retIntError();
 	assert( i < sizeof( mechanismInfo ) / sizeof( MECHANISM_INFO ) && \
 			mechanismInfo[ i ].cryptAlgo != CRYPT_ERROR );
 
@@ -4504,7 +4523,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	CK_RV status;
 	const CRYPT_ALGO_TYPE cryptAlgo = mechanismInfoPtr->cryptAlgo;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
-	int hardwareOnly, i;
+	int hardwareOnly, i, iterationCount = 0;
 
 	/* Get the information for this mechanism.  Since many PKCS #11 drivers
 	   implement some of their capabilities using God knows what sort of 
@@ -4524,10 +4543,12 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	if( ( capabilityInfo = clAlloc( "getCapability", \
 									sizeof( CAPABILITY_INFO ) ) ) == NULL )
 		return( NULL );
-	for( i = 0; \
-		 capabilityTemplates[ i ].cryptAlgo != cryptAlgo && \
-		 capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR; \
+	for( i = 0; capabilityTemplates[ i ].cryptAlgo != cryptAlgo && \
+				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR && \
+				i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ); 
 		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) )
+		retIntError_Null();
 	assert( i < sizeof( capabilityTemplates ) / sizeof( CAPABILITY_INFO ) && \
 			capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR );
 	memcpy( capabilityInfo, &capabilityTemplates[ i ],
@@ -4546,7 +4567,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		   cryptlib native max.key size, both for consistency and because
 		   cryptlib performs buffer allocation based on the maximum native
 		   buffer size */
-		if( !keysizeBytes( cryptAlgo ) )
+		if( !keysizeInBytes( cryptAlgo ) )
 			{
 			minKeySize = bitsToBytes( minKeySize );
 			maxKeySize = bitsToBytes( maxKeySize );
@@ -4585,6 +4606,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	if( mechanismInfo.flags & CKF_VERIFY )
 		capabilityInfo->sigCheckFunction = mechanismInfoPtr->sigCheckFunction;
 	if( mechanismInfo.flags & CKF_ENCRYPT )
+		{
 		/* Not all devices implement all modes, so we have to be careful to 
 		   set up the pointer for the exact mode that's supported */
 		switch( mechanismInfoPtr->cryptMode )
@@ -4605,7 +4627,9 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				capabilityInfo->encryptFunction = mechanismInfoPtr->encryptFunction;
 				break;
 			}
+		}
 	if( mechanismInfo.flags & CKF_DECRYPT )
+		{
 		/* Not all devices implement all modes, so we have to be careful to 
 		   set up the pointer for the exact mode that's supported */
 		switch( mechanismInfoPtr->cryptMode )
@@ -4626,6 +4650,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				capabilityInfo->decryptFunction = mechanismInfoPtr->decryptFunction;
 				break;
 			}
+		}
 	if( cryptAlgo == CRYPT_ALGO_DH && mechanismInfo.flags & CKF_DERIVE )
 		{
 		/* DH is a special-case that doesn't really have an encrypt function 
@@ -4665,7 +4690,9 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	   particular algorithm we check for each mechanism in turn and set up 
 	   the appropriate function pointers if it's available */
 	capabilityInfo->paramKeyType = mechanismInfoPtr->keyType;
-	for( mechanismInfoPtr++; mechanismInfoPtr->cryptAlgo == cryptAlgo; 
+	for( mechanismInfoPtr++; 
+		 mechanismInfoPtr->cryptAlgo == cryptAlgo && \
+			iterationCount++ < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ); 
 		 mechanismInfoPtr++ )
 		{
 		/* There's a different form of the existing mechanism available,
@@ -4708,6 +4735,8 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				assert( NOTREACHED );
 			}
 		}
+	if( iterationCount >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+		retIntError_Null();
 
 	return( ( CAPABILITY_INFO * ) capabilityInfo );
 	}
@@ -4749,7 +4778,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 	assert( sizeof( CAPABILITY_INFO ) == sizeof( VARIABLE_CAPABILITY_INFO ) );
 
 	/* Add capability information for each recognised mechanism type */
-	for( i = 0; mechanismInfo[ i ].mechanism != CRYPT_ERROR; i++ )
+	for( i = 0; mechanismInfo[ i ].mechanism != CRYPT_ERROR && \
+				i < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ); i++ )
 		{
 		CAPABILITY_INFO_LIST *newCapabilityList;
 		CAPABILITY_INFO *newCapability;
@@ -4790,9 +4820,14 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 		/* Since there may be alternative mechanisms to the current one 
 		   defined, we have to skip mechanisms until we find a ones for a
 		   new algorithm */
-		while( mechanismInfo[ i + 1 ].cryptAlgo == cryptAlgo )
+		while( mechanismInfo[ i + 1 ].cryptAlgo == cryptAlgo && \
+			   i < FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
 			i++;
+		if( i >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+			retIntError();
 		}
+	if( i >= FAILSAFE_ARRAYSIZE( mechanismInfo, MECHANISM_INFO ) )
+		retIntError();
 
 	return( ( deviceInfo->capabilityInfoList == NULL ) ? CRYPT_ERROR : CRYPT_OK );
 	}
@@ -4840,7 +4875,7 @@ static const FAR_BSS MECHANISM_FUNCTION_INFO mechanismFunctions[] = {
 #ifdef USE_PKCS12
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_PKCS12, ( MECHANISM_FUNCTION ) derivePKCS12 },
 #endif /* USE_PKCS12 */
-	{ MESSAGE_NONE, MECHANISM_NONE, NULL }
+	{ MESSAGE_NONE, MECHANISM_NONE, NULL }, { MESSAGE_NONE, MECHANISM_NONE, NULL }
 	};
 
 /* Set up the function pointers to the device methods */
@@ -4892,7 +4927,7 @@ int setDevicePKCS11( DEVICE_INFO *deviceInfo, const char *name,
 		for( i = 0; i < MAX_PKCS11_DRIVERS; i++ )
 			if( !strnicmp( pkcs11InfoTbl[ i ].name, name, driverNameLength ) )
 				break;
-		if( i == MAX_PKCS11_DRIVERS )
+		if( i >= MAX_PKCS11_DRIVERS )
 			return( CRYPT_ERROR_NOTFOUND );
 		pkcs11Info->deviceNo = i;
 		}
@@ -4908,6 +4943,8 @@ int setDevicePKCS11( DEVICE_INFO *deviceInfo, const char *name,
 	deviceInfo->getNextItemFunction = getNextItemFunction;
 	deviceInfo->getRandomFunction = getRandomFunction;
 	deviceInfo->mechanismFunctions = mechanismFunctions;
+	deviceInfo->mechanismFunctionCount = \
+		FAILSAFE_ARRAYSIZE( mechanismFunctions, MECHANISM_FUNCTION_INFO );
 	deviceInfo->devicePKCS11->functionListPtr = \
 					pkcs11InfoTbl[ pkcs11Info->deviceNo ].functionListPtr;
 

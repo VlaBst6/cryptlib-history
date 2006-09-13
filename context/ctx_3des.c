@@ -52,15 +52,15 @@ typedef struct {
 static int testLoop( const DES_TEST *testData, int iterations )
 	{
 	const CAPABILITY_INFO *capabilityInfo = get3DESCapability();
-	BYTE temp[ DES_BLOCKSIZE ];
+	BYTE temp[ DES_BLOCKSIZE + 8 ];
 	int i;
 
 	for( i = 0; i < iterations; i++ )
 		{
 		CONTEXT_INFO contextInfo;
 		CONV_INFO contextData;
-		BYTE keyData[ DES3_KEYSIZE ];
-		BYTE desKeyData[ DES_BLOCKSIZE * 3 ];
+		BYTE keyData[ DES3_KEYSIZE + 8 ];
+		BYTE desKeyData[ ( DES_BLOCKSIZE * 3 ) + 8 ];
 		int status;
 
 		memcpy( temp, testData[ i ].plaintext, DES_BLOCKSIZE );
@@ -267,7 +267,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 	DES3_KEY *des3Key = ( DES3_KEY * ) convInfo->key;
-	BYTE temp[ DES_BLOCKSIZE ];
+	BYTE temp[ DES_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

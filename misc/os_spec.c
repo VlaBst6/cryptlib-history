@@ -356,6 +356,7 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 	{
 	BYTE formatBuffer[ MAX_ATTRIBUTE_SIZE + 8 ];
 	va_list argPtr;
+	const int formatLen = strlen( format ) - 1;
 #ifndef NDEBUG
 	int i;
 #endif /* NDEBUG */
@@ -364,7 +365,7 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 #ifndef NDEBUG
 	/* Make sure that we don't have any string args, which would require
 	   their own conversion to EBCDIC */
-	for( i = 0; i < strlen( format ) - 1; i++ )
+	for( i = 0; i < formatLen; i++ )
 		if( format[ i ] == '%' && format[ i + 1 ] == 's' )
 			assert( NOTREACHED );
 #endif /* NDEBUG */
@@ -499,7 +500,7 @@ long getTickCount( long startTime )
 	timeLSB = tv.tv_usec;
 
 	/* If we're getting an initial time, return an absolute value */
-	if( !startTime )
+	if( startTime <= 0 )
 		return( timeLSB );
 
 	/* We're getting a time difference */
@@ -641,7 +642,7 @@ long getTickCount( long startTime )
 #endif /* BC++ vs. everything else */
 
 	/* If we're getting an initial time, return an absolute value */
-	if( !startTime )
+	if( startTime <= 0 )
 		return( timeLSB );
 
 	/* We're getting a time difference */

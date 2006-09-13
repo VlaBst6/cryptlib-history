@@ -74,7 +74,7 @@ int createSignature( void *signature, int *signatureLength,
 	/* DLP signatures are handled somewhat specially */
 	if( isDlpAlgo( signAlgo ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 
 		/* Extract the hash value from the context.  If we're doing a length
@@ -254,7 +254,7 @@ int checkSignature( const void *signature, const int signatureLength,
 	if( signatureType == SIGNATURE_CRYPTLIB || \
 		signatureType == SIGNATURE_PGP )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, queryInfo.keyID, queryInfo.keyIDlength );
 		status = krnlSendMessage( iSigCheckContext, IMESSAGE_COMPARE,
@@ -281,7 +281,7 @@ int checkSignature( const void *signature, const int signatureLength,
 	if( isDlpAlgo( signAlgo ) )
 		{
 		DLP_PARAMS dlpParams;
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 		BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 
 		/* Extract the hash value from the context */

@@ -405,7 +405,7 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* Make sure that we're not being fed suspiciously short data
 	   quantities */
 	for( i = 0; i < length; i++ )
-		if( buffer[ i ] )
+		if( buffer[ i ] != 0 )
 			break;
 	if( length - i < 56 )
 		return( CRYPT_ERROR_BADDATA );

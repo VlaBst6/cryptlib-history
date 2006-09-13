@@ -56,7 +56,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getSHA1Capability();
 	CONTEXT_INFO contextInfo;
 	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE ];
+	BYTE keyData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test SHA-1 against values given in FIPS 180-1 */

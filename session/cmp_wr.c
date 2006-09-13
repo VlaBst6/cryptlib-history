@@ -144,8 +144,8 @@ int createRawSignature( void *signature, int *signatureLength,
 
 static int writeCertID( STREAM *stream, const CRYPT_CONTEXT iCryptCert )
 	{
-	RESOURCE_DATA msgData;
-	BYTE certHash[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE certHash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int essCertIDSize, payloadSize, status;
 
 	/* Find out how big the payload will be */
@@ -276,7 +276,7 @@ static int writeRequestBody( STREAM *stream,
 	const CRYPT_CERTFORMAT_TYPE certType = \
 				( protocolInfo->operation == CTAG_PB_RR ) ? \
 				CRYPT_ICERTFORMAT_DATA : CRYPT_CERTFORMAT_CERTIFICATE;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	UNUSED( protocolInfo );
@@ -307,7 +307,7 @@ static int writeResponseBody( STREAM *stream,
 							  const SESSION_INFO *sessionInfoPtr,
 							  const CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	const int startPos = stell( stream );
 	int payloadSize = sizeofShortInteger( 0 ), dataLength, status;
 
@@ -404,8 +404,8 @@ static int writeConfBody( STREAM *stream,
 						  const SESSION_INFO *sessionInfoPtr,
 						  const CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	RESOURCE_DATA msgData;
-	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE ];
+	MESSAGE_DATA msgData;
+	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, status;
 
 	/* Get the certificate hash */
@@ -435,7 +435,7 @@ static int writeGenMsgBody( STREAM *stream,
 							const CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_CERTIFICATE iCTL;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	UNUSED( protocolInfo );
@@ -543,7 +543,7 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 	const CRYPT_HANDLE recipNameObject = isServer( sessionInfoPtr ) ? \
 			sessionInfoPtr->iCertResponse : sessionInfoPtr->iAuthInContext;
 	STREAM nullStream;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 #ifdef USE_FULL_HEADERS
 	const BOOLEAN useFullHeader = TRUE;
 #else
@@ -803,7 +803,7 @@ int writePkiMessage( SESSION_INFO *sessionInfoPtr,
 					 CMP_PROTOCOL_INFO *protocolInfo,
 					 const CMPBODY_TYPE bodyType )
 	{
-	BYTE protInfo[ 64 + MAX_PKCENCRYPTED_SIZE ], headerBuffer[ 8 ];
+	BYTE protInfo[ 64 + MAX_PKCENCRYPTED_SIZE + 8 ], headerBuffer[ 8 + 8 ];
 	STREAM stream;
 	int headerSize, protInfoSize, status;
 
@@ -869,13 +869,13 @@ int writePkiMessage( SESSION_INFO *sessionInfoPtr,
 	/* Generate the MAC or signature as appropriate */
 	if( protocolInfo->useMACsend )
 		{
-		BYTE macValue[ CRYPT_MAX_HASHSIZE ];
+		BYTE macValue[ CRYPT_MAX_HASHSIZE + 8 ];
 
 		status = hashMessageContents( protocolInfo->iMacContext,
 						sessionInfoPtr->receiveBuffer, stell( &stream ) );
 		if( cryptStatusOK( status ) )
 			{
-			RESOURCE_DATA msgData;
+			MESSAGE_DATA msgData;
 
 			setMessageData( &msgData, macValue, CRYPT_MAX_HASHSIZE );
 			status = krnlSendMessage( protocolInfo->iMacContext,

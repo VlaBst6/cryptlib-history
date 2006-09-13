@@ -46,7 +46,7 @@ typedef struct {
 void fastPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	struct timeval tv;
 	system_info info;
 	bigtime_t idleTime;
@@ -84,7 +84,7 @@ void fastPoll( void )
 void slowPoll( void )
 	{
 	RANDOM_STATE randomState;
-	BYTE buffer[ RANDOM_BUFSIZE ];
+	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	key_info keyInfo;
 	team_info teami;
 	thread_info threadi;
@@ -99,8 +99,8 @@ void slowPoll( void )
 
 	if( ( fd = open( "/dev/urandom", O_RDONLY ) ) >= 0 )
 		{
-		RESOURCE_DATA msgData;
-		BYTE buffer[ DEVRANDOM_BITS / 8 ];
+		MESSAGE_DATA msgData;
+		BYTE buffer[ ( DEVRANDOM_BITS / 8 ) + 8 ];
 		static const int quality = 100;
 
 		/* Read data from /dev/urandom, which won't block (although the

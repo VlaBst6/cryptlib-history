@@ -25,11 +25,12 @@
 
 /* Convert algorithm IDs from cryptlib to PGP and back */
 
-static const struct {
+typedef struct {
 	const int pgpAlgo;
 	const PGP_ALGOCLASS_TYPE pgpAlgoClass;
 	const CRYPT_ALGO_TYPE cryptlibAlgo;
-	} FAR_BSS pgpAlgoMap[] = {
+	} PGP_ALGOMAP_INFO;
+static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	/* Encryption algos */
 	{ PGP_ALGO_3DES, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_3DES },
 	{ PGP_ALGO_BLOWFISH, PGP_ALGOCLASS_CRYPT, CRYPT_ALGO_BLOWFISH },
@@ -65,6 +66,7 @@ static const struct {
 	{ PGP_ALGO_RIPEMD160, PGP_ALGOCLASS_HASH, CRYPT_ALGO_RIPEMD160 },
 	{ PGP_ALGO_SHA2_256, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA2 },
 
+	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE },
 	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE }
 	};
 
@@ -79,7 +81,11 @@ CRYPT_ALGO_TYPE pgpToCryptlibAlgo( const int pgpAlgo,
 	for( i = 0;
 		 ( pgpAlgoMap[ i ].pgpAlgo != pgpAlgo || \
 		   pgpAlgoMap[ i ].pgpAlgoClass != pgpAlgoClass ) && \
-		 pgpAlgoMap[ i ].pgpAlgo != PGP_ALGO_NONE; i++ );
+			pgpAlgoMap[ i ].pgpAlgo != PGP_ALGO_NONE && \
+			i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) )
+		retIntError_Ext( CRYPT_ALGO_NONE );
 	return( pgpAlgoMap[ i ].cryptlibAlgo );
 	}
 
@@ -90,8 +96,13 @@ int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo )
 	assert( cryptlibAlgo > CRYPT_ALGO_NONE && \
 			cryptlibAlgo < CRYPT_ALGO_LAST );
 
-	for( i = 0; pgpAlgoMap[ i ].cryptlibAlgo != cryptlibAlgo && \
-				pgpAlgoMap[ i ].cryptlibAlgo != CRYPT_ALGO_NONE; i++ );
+	for( i = 0; 
+		 pgpAlgoMap[ i ].cryptlibAlgo != cryptlibAlgo && \
+			pgpAlgoMap[ i ].cryptlibAlgo != CRYPT_ALGO_NONE && \
+			i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ); 
+		 i++ );
+	if( i >= FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) )
+		retIntError_Ext( PGP_ALGO_NONE );
 	return( pgpAlgoMap[ i ].pgpAlgo );
 	}
 
@@ -109,7 +120,7 @@ int pgpPasswordToKey( CRYPT_CONTEXT iCryptContext, const int optKeyLength,
 					  const int iterations )
 	{
 	CRYPT_ALGO_TYPE algorithm;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	BYTE hashedKey[ CRYPT_MAX_KEYSIZE + 8 ];
 	int keySize, status;
 
@@ -194,8 +205,8 @@ int pgpProcessIV( const CRYPT_CONTEXT iCryptContext, BYTE *ivInfo,
 				  const int ivSize, const BOOLEAN isEncrypt,
 				  const BOOLEAN resyncIV )
 	{
-	static const BYTE zeroIV[ CRYPT_MAX_IVSIZE + 8 ] = { 0 };
-	RESOURCE_DATA msgData;
+	static const BYTE zeroIV[ CRYPT_MAX_IVSIZE ] = { 0 };
+	MESSAGE_DATA msgData;
 	int status;
 
 	assert( isHandleRangeValid( iCryptContext ) );

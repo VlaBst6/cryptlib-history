@@ -31,8 +31,8 @@
 # zero because patches imply bugs and my code is perfect.
 
 MAJ		= 3
-MIN		= 2
-PLV		= 3
+MIN		= 3
+PLV		= 0
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)

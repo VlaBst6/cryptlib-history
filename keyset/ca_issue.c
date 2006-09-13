@@ -34,8 +34,8 @@ static int getCertIssueType( DBMS_INFO *dbmsInfo,
 							 const CRYPT_CERTIFICATE iCertificate,
 							 const BOOLEAN isCert )
 	{
-	BYTE certData[ MAX_QUERY_RESULT_SIZE ];
-	char certID[ DBXKEYID_BUFFER_SIZE ];
+	BYTE certData[ MAX_QUERY_RESULT_SIZE + 8 ];
+	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
 	int certIDlength, length, status;
 
 	/* Get the certID of the request that resulted in the cert creation */
@@ -101,8 +101,8 @@ static int completeCert( DBMS_INFO *dbmsInfo,
 						 const CRYPT_CERTIFICATE iCertificate,
 						 const CERTADD_TYPE addType )
 	{
-	char sqlBuffer[ MAX_SQL_QUERY_SIZE ];
-	char certID[ DBXKEYID_BUFFER_SIZE ];
+	char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
+	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
 	int length, status;
 
 	assert( addType == CERTADD_PARTIAL || \
@@ -119,7 +119,7 @@ static int completeCert( DBMS_INFO *dbmsInfo,
 					  DBMS_UPDATE_BEGIN );
 	if( cryptStatusOK( status ) )
 		{
-		char specialCertID[ DBXKEYID_BUFFER_SIZE ];
+		char specialCertID[ DBXKEYID_BUFFER_SIZE + 8 ];
 
 		/* Turn the general certID into the form required for special-case
 		   cert data */
@@ -128,7 +128,7 @@ static int completeCert( DBMS_INFO *dbmsInfo,
 				( addType == CERTADD_RENEWAL_COMPLETE ) ? \
 				KEYID_ESC2 : KEYID_ESC1, KEYID_ESC_SIZE );
 		specialCertID[ MAX_ENCODED_DBXKEYID_SIZE ] = '\0';
-		dbmsFormatSQL( sqlBuffer,
+		dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
 			"DELETE FROM certificates WHERE certID = '$'",
 					   specialCertID );
 		status = dbmsUpdate( sqlBuffer, NULL, 0, 0,
@@ -163,7 +163,7 @@ int completeCertRenewal( DBMS_INFO *dbmsInfo,
 						 const CRYPT_CERTIFICATE iReplaceCertificate )
 	{
 	CRYPT_CERTIFICATE iOrigCertificate;
-	char keyID[ DBXKEYID_BUFFER_SIZE ];
+	char keyID[ DBXKEYID_BUFFER_SIZE + 8 ];
 	int dummy, length, status;
 
 	/* Extract the key ID from the new cert and use it to fetch the existing
@@ -203,9 +203,10 @@ int caIssueCert( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 	{
 	CRYPT_CERTIFICATE iLocalCertificate;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BYTE certData[ MAX_CERT_SIZE ];
-	char issuerID[ DBXKEYID_BUFFER_SIZE ], certID[ DBXKEYID_BUFFER_SIZE ];
-	char reqCertID[ DBXKEYID_BUFFER_SIZE ];
+	BYTE certData[ MAX_CERT_SIZE + 8 ];
+	char issuerID[ DBXKEYID_BUFFER_SIZE + 8 ];
+	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
+	char reqCertID[ DBXKEYID_BUFFER_SIZE + 8 ];
 	CERTADD_TYPE addType = CERTADD_NORMAL;
 	int certDataLength, issueType, status;
 
@@ -307,7 +308,7 @@ int caIssueCert( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 						   CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
 	if( !cryptStatusError( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, certData, MAX_CERT_SIZE );
 		status = krnlSendMessage( iLocalCertificate, IMESSAGE_CRT_EXPORT,
@@ -356,7 +357,7 @@ int caIssueCert( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 		   is detected at a later stage than it normally would be */
 		if( issueType == CERTADD_PARTIAL )
 			{
-			char keyID[ DBXKEYID_BUFFER_SIZE ];
+			char keyID[ DBXKEYID_BUFFER_SIZE + 8 ];
 			int length;
 
 			status = length = getCertKeyID( keyID, iLocalCertificate );
@@ -390,9 +391,9 @@ int caIssueCert( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 								DBMS_UPDATE_CONTINUE );
 	if( cryptStatusOK( status ) )
 		{
-		char sqlBuffer[ MAX_SQL_QUERY_SIZE ];
+		char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
 
-		dbmsFormatSQL( sqlBuffer,
+		dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
 			"DELETE FROM certRequests WHERE certID = '$'",
 					   reqCertID );
 		status = dbmsUpdate( sqlBuffer, NULL, 0, 0, DBMS_UPDATE_COMMIT );
@@ -429,7 +430,7 @@ int caIssueCertComplete( DBMS_INFO *dbmsInfo,
 						 const CRYPT_CERTIFICATE iCertificate,
 						 const CRYPT_CERTACTION_TYPE action )
 	{
-	char certID[ DBXKEYID_BUFFER_SIZE ];
+	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
 	int status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
@@ -469,9 +470,9 @@ int caIssueCertComplete( DBMS_INFO *dbmsInfo,
 	   incomplete cert and exit */
 	if( action == CRYPT_CERTACTION_CERT_CREATION_DROP )
 		{
-		char sqlBuffer[ MAX_SQL_QUERY_SIZE ];
+		char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
 
-		dbmsFormatSQL( sqlBuffer,
+		dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
 			"DELETE FROM certificates WHERE certID = '" KEYID_ESC1 "$'",
 					   certID + 2 );
 		status = dbmsUpdate( sqlBuffer, NULL, 0, 0, DBMS_UPDATE_BEGIN );

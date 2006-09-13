@@ -123,7 +123,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfoPtr = getRSACapability();
 	CONTEXT_INFO contextInfoPtr;
 	PKC_INFO pkcInfoStorage, *pkcInfo;
-	BYTE buffer[ 64 ];
+	BYTE buffer[ 64 + 8 ];
 	int status;
 
 	/* Initialise the key components */
@@ -243,7 +243,7 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* Make sure that we're not being fed suspiciously short data
 	   quantities */
 	for( i = 0; i < length; i++ )
-		if( buffer[ i ] )
+		if( buffer[ i ] != 0 )
 			break;
 	if( length - i < 56 )
 		return( CRYPT_ERROR_BADDATA );
@@ -318,7 +318,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BIGNUM *e2 = &pkcInfo->rsaParam_exponent2;
 	BIGNUM *data = &pkcInfo->tmp1, *p2 = &pkcInfo->tmp2, *q2 = &pkcInfo->tmp3;
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
-	int i, bnStatus = BN_STATUS;
+	int i, iterationCount = 0, bnStatus = BN_STATUS;
 
 	assert( noBytes == length );
 
@@ -327,7 +327,7 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   weird signatures, which sign a raw concatenated MD5 and SHA-1 hash
 	   with a total length of 36 bytes */
 	for( i = 0; i < length; i++ )
-		if( buffer[ i ] )
+		if( buffer[ i ] != 0 )
 			break;
 	if( ( length - i < 56 ) && ( length - i ) != 36 )
 		return( CRYPT_ERROR_BADDATA );
@@ -360,12 +360,14 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   cases (q2 large, p2 small) we have to add p twice to get p2
 	   positive */
 	CK( BN_sub( p2, p2, q2 ) );
-	while( p2->neg )
+	while( p2->neg && iterationCount++ < FAILSAFE_ITERATIONS_SMALL )
 		{
 		CK( BN_add( p2, p2, p ) );
 		if( bnStatusError( bnStatus ) )
 			return( getBnStatus( bnStatus ) );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
+		retIntError();
 
 	/* M = ( ( ( p2 * u ) mod p ) * q ) + q2 */
 	CK( BN_mod_mul( data, p2, u, p,		/* data = ( p2 * u ) mod p */

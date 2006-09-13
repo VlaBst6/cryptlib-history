@@ -112,7 +112,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getHmacSHA1Capability();
 	CONTEXT_INFO contextInfo;
 	MAC_INFO contextData;
-	BYTE keyData[ MAC_STATE_SIZE ];
+	BYTE keyData[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-SHA against the test vectors given in RFC ???? */
@@ -185,7 +185,8 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		SHA1_Update( shaInfo, buffer, noBytes );
 	else
 		{
-		BYTE hashBuffer[ SHA_CBLOCK ], digestBuffer[ SHA_DIGEST_LENGTH ];
+		BYTE hashBuffer[ SHA_CBLOCK + 8 ];
+		BYTE digestBuffer[ SHA_DIGEST_LENGTH + 8 ];
 		int i;
 
 		/* Complete the inner hash and extract the digest */
@@ -222,7 +223,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	{
 	MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
 	SHA_CTX *shaInfo = &( ( MAC_STATE * ) macInfo->macInfo )->macState;
-	BYTE hashBuffer[ SHA_CBLOCK ];
+	BYTE hashBuffer[ SHA_CBLOCK + 8 ];
 	int i;
 
 	SHA1_Init( shaInfo );

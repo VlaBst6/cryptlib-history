@@ -2653,6 +2653,70 @@ int testPKIUser( void )
 
 /* Test certificate import code */
 
+static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert, 
+								const int certNo, const int errorCode )
+	{
+	int errorLocus, status;
+
+	printf( "\n" );
+	status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_ERRORLOCUS, 
+								&errorLocus );
+	if( cryptStatusError( status ) )
+		{
+		puts( "Couldn't get error locus for certificate check failure." );
+		return( FALSE );
+		}
+
+	/* Some old certs use deprecated or now-broken algorithms which will 
+	   produce a CRYPT_ERROR_NOTAVAIL if we try and verify the signature, 
+	   treat this as a special case */
+	if( certNo == 1 && errorCode == CRYPT_ERROR_NOTAVAIL )
+		{
+		puts( "Warning: The hash/signature algorithm required to verify "
+			  "this certificate\n         isn't enabled in this build of "
+			  "cryptlib, can't verify the cert\n         signature." );
+		return( TRUE );
+		}
+
+	/* Make sure that we don't fail just because the cert that we're using 
+	   as a test has expired */
+	if( errorLocus == CRYPT_CERTINFO_VALIDTO )
+		{
+		puts( "Warning: Validity check failed because the certificate has "
+			  "expired." );
+		return( TRUE );
+		}
+
+	/* RegTP CA certs are marked as non-CA certs, report the problem and 
+	   continue */
+	if( certNo == 4 && errorLocus == CRYPT_CERTINFO_CA )
+		{
+		puts( "Warning: Validity check failed due to RegTP CA certificate "
+			  "incorrectly\n         marked as non-CA certificate." );
+		return( TRUE );
+		}
+
+	/* Cert #26 is a special-case test cert used to check the ability to 
+	   detect invalid PKCS #1 padding */
+	if( certNo == 26 )
+		{
+		puts( "Warning: Certificate contains invalid PKCS #1 padding for "
+			  "exponent-3 RSA\n         key, the certificate signature is "
+			  "invalid." );
+		if( errorCode == CRYPT_ERROR_BADDATA )
+			{
+			puts( "  (This is the correct result for this test)." );
+			return( TRUE );
+			}
+
+		/* Not detecting this is an error */
+		puts( "  (This should have been detected but wasn't)." );
+		return( FALSE );
+		}
+
+	return( FALSE );
+	}
+
 static int certImport( const int certNo, const BOOLEAN isBase64 )
 	{
 	CRYPT_CERTIFICATE cryptCert;
@@ -2708,40 +2772,9 @@ static int certImport( const int certNo, const BOOLEAN isBase64 )
 		status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 		if( cryptStatusError( status ) )
 			{
-			int errorLocus;
-
-			printf( "\n" );
-			if( status == CRYPT_ERROR_NOTAVAIL && certNo == 1 )
-				{
-				/* Some old certs use deprecated or now-broken algorithms
-				   which will produce a CRYPT_ERROR_NOTAVAIL if we try and
-				   verify the signature, treat this as a special case */
-				puts( "Warning: The hash/signature algorithm required to "
-					  "verify this certificate\n         isn't enabled in "
-					  "this build of cryptlib, can't verify the "
-					  "cert\n         signature." );
-				}
-			else
-				{
-				cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_ERRORLOCUS,
-								   &errorLocus );
-				if( errorLocus == CRYPT_CERTINFO_VALIDTO )
-					/* Make sure that we don't fail just because the cert
-					   we're using as a test has expired */
-					puts( "Validity check failed because the certificate "
-						  "has expired." );
-				else
-					/* RegTP CA certs are marked as non-CA certs, report the
-					   problem and continue */
-					if( ( certNo == 4 ) && \
-						( errorLocus == CRYPT_CERTINFO_CA ) )
-						puts( "Validity check failed due to RegTP CA "
-							  "certificate incorrectly marked as non-\n  CA "
-							  "certificate." );
-					else
-						return( attrErrorExit( cryptCert, "cryptCheckCert()",
-											   status, __LINE__ ) );
-				}
+			if( !handleCertError( cryptCert, certNo, status ) )
+				return( attrErrorExit( cryptCert, "cryptCheckCert()", 
+									   status, __LINE__ ) );
 			}
 		else
 			puts( "signature verified." );
@@ -2793,7 +2826,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 25; i++ )
+	for( i = 1; i <= 26; i++ )
 		if( !certImport( i, FALSE ) )
 			return( FALSE );
 	return( TRUE );
@@ -2839,20 +2872,8 @@ static int certReqImport( const int certNo )
 	printf( "Checking signature... " );
 	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
-		{
-		if( status == CRYPT_ERROR_NOTAVAIL && certNo == -1 )/* Should never occur */
-			{
-			/* Some old requests use deprecated or now-broken algorithms
-			   which will produce a CRYPT_ERROR_NOTAVAIL if we try and
-			   verify the signature, treat this as a special case */
-			puts( "The hash/signature algorithm required to verify this "
-				  "cert.request isn't\n  enabled in this build of "
-				  "cryptlib, can't verify the request signature." );
-			}
-		else
-			return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
-								   __LINE__ ) );
-		}
+		return( attrErrorExit( cryptCert, "cryptCheckCert()", status, 
+							   __LINE__ ) );
 	puts( "signature verified." );
 
 	/* Print information on what we've got */
@@ -2936,6 +2957,117 @@ int testCRLImport( void )
 	return( TRUE );
 	}
 
+static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain, 
+									 const int certNo, const int errorCode )
+	{
+	int trustValue = CRYPT_UNUSED, complianceValue = CRYPT_UNUSED;
+	int errorLocus, status;
+
+	/* If the chain contains a single non-CA cert, we'll get a parameter 
+	   error since we haven't supplied a signing cert */
+	if( errorCode == CRYPT_ERROR_PARAM2 )
+		{
+		cryptSetAttribute( cryptCertChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+						   CRYPT_CURSOR_FIRST );
+		if( cryptSetAttribute( cryptCertChain,
+							   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+							   CRYPT_CURSOR_NEXT ) == CRYPT_ERROR_NOTFOUND )
+			{
+			/* There's only a single cert present, we can't do much with 
+			   it */
+			puts( "\nCertificate chain contains only a single standalone "
+				  "cert, skipping\nsignature check..." );
+			return( TRUE );
+			}
+		}
+
+	/* If it's not a problem with validity, we can't go any further */
+	if( errorCode != CRYPT_ERROR_INVALID )
+		return( attrErrorExit( cryptCertChain, "cryptCheckCert()", 
+							   errorCode, __LINE__ ) );
+
+	/* Check the nature of the problem */
+	status = cryptGetAttribute( cryptCertChain, CRYPT_ATTRIBUTE_ERRORLOCUS,
+								&errorLocus );
+	if( cryptStatusError( status ) )
+		{
+		puts( "Couldn't get error locus for certificate check failure." );
+		return( FALSE );
+		}
+
+	/* Try to work around the error */
+	status = errorCode;
+	if( errorLocus == CRYPT_CERTINFO_TRUSTED_IMPLICIT || \
+		errorLocus == CRYPT_CERTINFO_TRUSTED_USAGE )
+		{
+		/* The error occured because of a problem with the root cert, try 
+		   again with an implicitly-trusted root */
+		if( errorLocus == CRYPT_CERTINFO_TRUSTED_IMPLICIT )
+			printf( "\nWarning: The certificate chain didn't verify "
+					"because it didn't end in a\n         trusted root "
+					"certificate.  Checking again using an "
+					"implicitly\n         trusted root..." );
+		else
+			printf( "\nWarning: The certificate chain didn't verify "
+					"because the root certificate's\n         key isn't "
+					"enabled for this usage.  Checking again using "
+					"an\n         implicitly trusted root..." );
+		if( cryptStatusError( \
+				setRootTrust( cryptCertChain, &trustValue, 1 ) ) )
+			{
+			printf( "\nAttempt to make chain root implicitly trusted "
+					"failed, status = %d, line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
+		if( status == CRYPT_ERROR_INVALID )
+			cryptGetAttribute( cryptCertChain, CRYPT_ATTRIBUTE_ERRORLOCUS,
+							   &errorLocus );
+		}
+	if( errorLocus == CRYPT_CERTINFO_VALIDTO )
+		{
+		/* One (or more) certs in the chain have expired, try again with the 
+		   compliance level wound down to nothing */
+		puts( "\nThe certificate chain didn't verify because one or more "
+			  "certificates in it\nhave expired.  Trying again in oblivious "
+			  "mode..." );
+		cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   &complianceValue );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+		status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
+		}
+
+	/* If we changed settings, restore their original values */
+	if( trustValue != CRYPT_UNUSED )
+		setRootTrust( cryptCertChain, NULL, trustValue );
+	if( complianceValue != CRYPT_UNUSED )
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   complianceValue );
+
+	/* Some old certs use deprecated or now-broken algorithms which will 
+	   produce a CRYPT_ERROR_NOTAVAIL if we try and verify the signature, 
+	   treat this as a special case */
+	if( certNo == 2 && status == CRYPT_ERROR_NOTAVAIL )
+		{
+		puts( "\nWarning: The hash/signature algorithm required to verify "
+			  "this certificate\n         isn't enabled in this build of "
+			  "cryptlib, can't verify the cert\n         signature." );
+		return( TRUE );
+		}
+
+	/* If the lowered-limits check still didn't work, it's an error */
+	if( cryptStatusError( status ) )
+		{
+		putchar( '\n' );
+		return( attrErrorExit( cryptCertChain, "cryptCheckCert()", status, 
+							   __LINE__ ) );
+		}
+
+	puts( "signatures verified." );
+	return( TRUE );
+	}
+
 static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 	{
 	CRYPT_CERTIFICATE cryptCertChain;
@@ -2969,101 +3101,30 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 							  &cryptCertChain );
 	if( cryptStatusError( status ) )
 		{
+		/* If we failed on the RSA e=3 cert, this is a valid result */
+		if( certNo == 3 && status == CRYPT_ERROR_BADDATA )
+			{
+			printf( "Import of certificate with invalid e=3 key failed, "
+					"line %d.\n", __LINE__ );
+			puts( "  (This is the correct result for this test)." );
+			return( TRUE );
+			}
 		printf( "cryptImportCert() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		return( FALSE );
 		}
+	if( certNo == 3 )
+		{
+		printf( "Import of certificate with invalid e=3 key succeeded when "
+				"it should have\n  failed, line %d.\n", __LINE__ );
+		return( FALSE );
+		}
 	printf( "Checking signatures... " );
 	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		{
-		int trustValue = CRYPT_UNUSED, complianceValue = CRYPT_UNUSED;
-		int errorLocus;
-
-		/* If the chain contains a single non-CA cert, we'll get a parameter
-		   error since we haven't supplied a signing cert */
-		if( status == CRYPT_ERROR_PARAM2 )
-			{
-			cryptSetAttribute( cryptCertChain,
-							   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
-							   CRYPT_CURSOR_FIRST );
-			if( cryptSetAttribute( cryptCertChain,
-								   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
-								   CRYPT_CURSOR_NEXT ) == CRYPT_ERROR_NOTFOUND )
-				{
-				/* There's only a single cert present, we can't do much with
-				   it, display the info on it and exit */
-				puts( "\nCertificate chain contains only a single standalone "
-					  "cert, skipping\nsignature check..." );
-				if( !printCertChainInfo( cryptCertChain ) )
-					return( FALSE );
-				cryptDestroyCert( cryptCertChain );
-				puts( "Certificate chain import succeeded.\n" );
-				return( TRUE );
-				}
-			}
-
-		/* If it's not a problem with validity, we can't go any further */
-		if( status != CRYPT_ERROR_INVALID )
-			return( attrErrorExit( cryptCertChain, "cryptCheckCert()",
-								   status, __LINE__ ) );
-
-		/* Check whether the problem is due to an expired cert */
-		status = cryptGetAttribute( cryptCertChain,
-									CRYPT_ATTRIBUTE_ERRORLOCUS,
-									&errorLocus );
-		if( cryptStatusOK( status ) && \
-			errorLocus == CRYPT_CERTINFO_TRUSTED_IMPLICIT )
-			{
-			/* The error occured because the default certs weren't installed.
-			   Try again with an implicitly-trusted root */
-			puts( "\nThe certificate chain didn't verify because you "
-				  "haven't installed the\ndefault CA certificates using "
-				  "the 'certinst' utility as described in the\nmanual.  "
-				  "Checking using implicitly trusted root..." );
-			status = setRootTrust( cryptCertChain, &trustValue, 1 );
-			if( cryptStatusError( status ) )
-				{
-				printf( "Attempt to make chain root implicitly trusted "
-						"failed, status = %d, line %d.\n", status,
-						__LINE__ );
-				return( FALSE );
-				}
-			status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
-			if( status == CRYPT_ERROR_INVALID )
-				status = cryptGetAttribute( cryptCertChain,
-											CRYPT_ATTRIBUTE_ERRORLOCUS,
-											&errorLocus );
-			}
-		if( cryptStatusOK( status ) && \
-			errorLocus == CRYPT_CERTINFO_VALIDTO )
-			{
-			/* One (or more) certs in the chain have expired, try again with
-			   the compliance level wound down to nothing */
-			puts( "The certificate chain didn't verify because one or more "
-				  "certificates in it\nhave expired.  Trying again in "
-				  "oblivious mode..." );
-			cryptGetAttribute( CRYPT_UNUSED,
-							   CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-							   &complianceValue );
-			cryptSetAttribute( CRYPT_UNUSED,
-							   CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-							   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
-			status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
-			}
-		if( trustValue != CRYPT_UNUSED )
-			setRootTrust( cryptCertChain, NULL, trustValue );
-		if( complianceValue != CRYPT_UNUSED )
-			cryptSetAttribute( CRYPT_UNUSED,
-							   CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-							   complianceValue );
-		if( cryptStatusError( status ) )
-			return( attrErrorExit( cryptCertChain, "cryptCheckCert()", status,
-								   __LINE__ ) );
-		puts( "signatures verified." );
-		}
-	else
-		puts( "signatures verified." );
+	if( cryptStatusError( status ) && \
+		!handleCertChainError( cryptCertChain, certNo, status ) )
+		return( FALSE );	
+	puts( "signatures verified." );
 
 	/* Display info on each cert in the chain */
 	if( !printCertChainInfo( cryptCertChain ) )

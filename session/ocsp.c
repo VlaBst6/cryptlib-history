@@ -68,7 +68,7 @@ static BOOLEAN checkNonce( const CRYPT_CERTIFICATE iCertResponse,
 						   const void *requestNonce, 
 						   const int requestNonceLength )
 	{
-	RESOURCE_DATA responseMsgData;
+	MESSAGE_DATA responseMsgData;
 	BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 
 	/* Make sure that the nonce has a plausible length */
@@ -121,7 +121,7 @@ static const OID_INFO FAR_BSS ocspOIDinfo[] = {
 
 static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Get the encoded request data.  We store this in the send buffer, which
@@ -148,7 +148,7 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_CERTIFICATE iCertResponse;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int value, responseType, length, status;
@@ -352,7 +352,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 
 static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	STREAM stream;
 	int responseLength, responseDataLength, status;
 
@@ -456,7 +456,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 								 const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const CRYPT_CERTIFICATE ocspRequest = *( ( CRYPT_CERTIFICATE * ) data );
-	RESOURCE_DATA msgData = { NULL, 0 };
+	MESSAGE_DATA msgData = { NULL, 0 };
 	int status;
 
 	assert( type == CRYPT_SESSINFO_REQUEST );

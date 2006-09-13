@@ -395,62 +395,56 @@
 #define cryptlib_crypt_CERTINFO_FINGERPRINT_SHA 2006L
 #undef cryptlib_crypt_CERTINFO_CURRENT_CERTIFICATE
 #define cryptlib_crypt_CERTINFO_CURRENT_CERTIFICATE 2007L
-#undef cryptlib_crypt_CERTINFO_CURRENT_EXTENSION
-#define cryptlib_crypt_CERTINFO_CURRENT_EXTENSION 2008L
-#undef cryptlib_crypt_CERTINFO_CURRENT_FIELD
-#define cryptlib_crypt_CERTINFO_CURRENT_FIELD 2009L
-#undef cryptlib_crypt_CERTINFO_CURRENT_COMPONENT
-#define cryptlib_crypt_CERTINFO_CURRENT_COMPONENT 2010L
 #undef cryptlib_crypt_CERTINFO_TRUSTED_USAGE
-#define cryptlib_crypt_CERTINFO_TRUSTED_USAGE 2011L
+#define cryptlib_crypt_CERTINFO_TRUSTED_USAGE 2008L
 #undef cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT
-#define cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT 2012L
+#define cryptlib_crypt_CERTINFO_TRUSTED_IMPLICIT 2009L
 #undef cryptlib_crypt_CERTINFO_SIGNATURELEVEL
-#define cryptlib_crypt_CERTINFO_SIGNATURELEVEL 2013L
+#define cryptlib_crypt_CERTINFO_SIGNATURELEVEL 2010L
 #undef cryptlib_crypt_CERTINFO_VERSION
-#define cryptlib_crypt_CERTINFO_VERSION 2014L
+#define cryptlib_crypt_CERTINFO_VERSION 2011L
 #undef cryptlib_crypt_CERTINFO_SERIALNUMBER
-#define cryptlib_crypt_CERTINFO_SERIALNUMBER 2015L
+#define cryptlib_crypt_CERTINFO_SERIALNUMBER 2012L
 #undef cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO
-#define cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO 2016L
+#define cryptlib_crypt_CERTINFO_SUBJECTPUBLICKEYINFO 2013L
 #undef cryptlib_crypt_CERTINFO_CERTIFICATE
-#define cryptlib_crypt_CERTINFO_CERTIFICATE 2017L
+#define cryptlib_crypt_CERTINFO_CERTIFICATE 2014L
 #undef cryptlib_crypt_CERTINFO_USERCERTIFICATE
-#define cryptlib_crypt_CERTINFO_USERCERTIFICATE 2017L
+#define cryptlib_crypt_CERTINFO_USERCERTIFICATE 2014L
 #undef cryptlib_crypt_CERTINFO_CACERTIFICATE
-#define cryptlib_crypt_CERTINFO_CACERTIFICATE 2018L
+#define cryptlib_crypt_CERTINFO_CACERTIFICATE 2015L
 #undef cryptlib_crypt_CERTINFO_ISSUERNAME
-#define cryptlib_crypt_CERTINFO_ISSUERNAME 2019L
+#define cryptlib_crypt_CERTINFO_ISSUERNAME 2016L
 #undef cryptlib_crypt_CERTINFO_VALIDFROM
-#define cryptlib_crypt_CERTINFO_VALIDFROM 2020L
+#define cryptlib_crypt_CERTINFO_VALIDFROM 2017L
 #undef cryptlib_crypt_CERTINFO_VALIDTO
-#define cryptlib_crypt_CERTINFO_VALIDTO 2021L
+#define cryptlib_crypt_CERTINFO_VALIDTO 2018L
 #undef cryptlib_crypt_CERTINFO_SUBJECTNAME
-#define cryptlib_crypt_CERTINFO_SUBJECTNAME 2022L
+#define cryptlib_crypt_CERTINFO_SUBJECTNAME 2019L
 #undef cryptlib_crypt_CERTINFO_ISSUERUNIQUEID
-#define cryptlib_crypt_CERTINFO_ISSUERUNIQUEID 2023L
+#define cryptlib_crypt_CERTINFO_ISSUERUNIQUEID 2020L
 #undef cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID
-#define cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID 2024L
+#define cryptlib_crypt_CERTINFO_SUBJECTUNIQUEID 2021L
 #undef cryptlib_crypt_CERTINFO_CERTREQUEST
-#define cryptlib_crypt_CERTINFO_CERTREQUEST 2025L
+#define cryptlib_crypt_CERTINFO_CERTREQUEST 2022L
 #undef cryptlib_crypt_CERTINFO_THISUPDATE
-#define cryptlib_crypt_CERTINFO_THISUPDATE 2026L
+#define cryptlib_crypt_CERTINFO_THISUPDATE 2023L
 #undef cryptlib_crypt_CERTINFO_NEXTUPDATE
-#define cryptlib_crypt_CERTINFO_NEXTUPDATE 2027L
+#define cryptlib_crypt_CERTINFO_NEXTUPDATE 2024L
 #undef cryptlib_crypt_CERTINFO_REVOCATIONDATE
-#define cryptlib_crypt_CERTINFO_REVOCATIONDATE 2028L
+#define cryptlib_crypt_CERTINFO_REVOCATIONDATE 2025L
 #undef cryptlib_crypt_CERTINFO_REVOCATIONSTATUS
-#define cryptlib_crypt_CERTINFO_REVOCATIONSTATUS 2029L
+#define cryptlib_crypt_CERTINFO_REVOCATIONSTATUS 2026L
 #undef cryptlib_crypt_CERTINFO_CERTSTATUS
-#define cryptlib_crypt_CERTINFO_CERTSTATUS 2030L
+#define cryptlib_crypt_CERTINFO_CERTSTATUS 2027L
 #undef cryptlib_crypt_CERTINFO_DN
-#define cryptlib_crypt_CERTINFO_DN 2031L
+#define cryptlib_crypt_CERTINFO_DN 2028L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_ID
-#define cryptlib_crypt_CERTINFO_PKIUSER_ID 2032L
+#define cryptlib_crypt_CERTINFO_PKIUSER_ID 2029L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD
-#define cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD 2033L
+#define cryptlib_crypt_CERTINFO_PKIUSER_ISSUEPASSWORD 2030L
 #undef cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD
-#define cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD 2034L
+#define cryptlib_crypt_CERTINFO_PKIUSER_REVPASSWORD 2031L
 #undef cryptlib_crypt_CERTINFO_COUNTRYNAME
 #define cryptlib_crypt_CERTINFO_COUNTRYNAME 2100L
 #undef cryptlib_crypt_CERTINFO_STATEORPROVINCENAME
@@ -1382,25 +1376,25 @@
 #undef cryptlib_crypt_MAX_TEXTSIZE
 #define cryptlib_crypt_MAX_TEXTSIZE 64L
 #undef cryptlib_crypt_USE_DEFAULT
-#define cryptlib_crypt_USE_DEFAULT -10L
+#define cryptlib_crypt_USE_DEFAULT -100L
 #undef cryptlib_crypt_UNUSED
-#define cryptlib_crypt_UNUSED -11L
+#define cryptlib_crypt_UNUSED -101L
+#undef cryptlib_crypt_CURSOR_FIRST
+#define cryptlib_crypt_CURSOR_FIRST -200L
+#undef cryptlib_crypt_CURSOR_PREVIOUS
+#define cryptlib_crypt_CURSOR_PREVIOUS -201L
+#undef cryptlib_crypt_CURSOR_NEXT
+#define cryptlib_crypt_CURSOR_NEXT -202L
+#undef cryptlib_crypt_CURSOR_LAST
+#define cryptlib_crypt_CURSOR_LAST -203L
+#undef cryptlib_crypt_RANDOM_FASTPOLL
+#define cryptlib_crypt_RANDOM_FASTPOLL -300L
+#undef cryptlib_crypt_RANDOM_SLOWPOLL
+#define cryptlib_crypt_RANDOM_SLOWPOLL -301L
 #undef cryptlib_crypt_KEYTYPE_PRIVATE
 #define cryptlib_crypt_KEYTYPE_PRIVATE 0L
 #undef cryptlib_crypt_KEYTYPE_PUBLIC
 #define cryptlib_crypt_KEYTYPE_PUBLIC 1L
-#undef cryptlib_crypt_RANDOM_FASTPOLL
-#define cryptlib_crypt_RANDOM_FASTPOLL -10L
-#undef cryptlib_crypt_RANDOM_SLOWPOLL
-#define cryptlib_crypt_RANDOM_SLOWPOLL -11L
-#undef cryptlib_crypt_CURSOR_FIRST
-#define cryptlib_crypt_CURSOR_FIRST -20L
-#undef cryptlib_crypt_CURSOR_PREVIOUS
-#define cryptlib_crypt_CURSOR_PREVIOUS -21L
-#undef cryptlib_crypt_CURSOR_NEXT
-#define cryptlib_crypt_CURSOR_NEXT -22L
-#undef cryptlib_crypt_CURSOR_LAST
-#define cryptlib_crypt_CURSOR_LAST -23L
 #undef cryptlib_crypt_KEYOPT_NONE
 #define cryptlib_crypt_KEYOPT_NONE 0L
 #undef cryptlib_crypt_KEYOPT_READONLY

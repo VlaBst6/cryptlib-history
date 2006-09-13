@@ -88,7 +88,7 @@ static int writeSignatureInfoPacket( STREAM *stream,
 								  &signAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, keyID, PGP_KEYID_SIZE );
 		status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE_S, 
@@ -289,7 +289,7 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice = CRYPT_ERROR;
 	ACTION_LIST *actionListPtr;
-	int status;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( envelopeInfoPtr->usage == ACTION_CRYPT );
@@ -326,10 +326,12 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 	/* Now walk down the list of key exchange actions connecting each one to 
 	   the session key action. The caller has already guaranteed that there's 
 	   at least one PKC keyex action present */
+	iterationCount = 0;
 	for( actionListPtr = findAction( envelopeInfoPtr->preActionList,
 									 ACTION_KEYEXCHANGE_PKC );
 		 actionListPtr != NULL && \
-			actionListPtr->action == ACTION_KEYEXCHANGE_PKC;
+			actionListPtr->action == ACTION_KEYEXCHANGE_PKC && \
+			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
 		 actionListPtr = actionListPtr->next )
 		{
 		/* If the session key context is tied to a device, make sure that 
@@ -360,6 +362,8 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+		retIntError();
 	return( CRYPT_OK );
 	}
 
@@ -440,11 +444,7 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 		/* We're ready to go, prepare to emit the outer header */
 		envelopeInfoPtr->envState = ENVSTATE_HEADER;
 		if( !checkActions( envelopeInfoPtr ) )
-			{
-			/* Sanity check */
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_INTERNAL );
-			}
+			retIntError();
 		}
 
 	/* Emit the outer header.  This always follows directly from the final
@@ -463,11 +463,14 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 	if( envelopeInfoPtr->envState == ENVSTATE_KEYINFO )
 		{
 		ACTION_LIST *lastActionPtr;
+		int iterationCount = 0;
 
 		/* Export the session key using each of the PKC keys, or write the 
 		   derivation information needed to recreate the session key */
 		for( lastActionPtr = envelopeInfoPtr->lastAction; 
-			 lastActionPtr != NULL; lastActionPtr = lastActionPtr->next )
+			 lastActionPtr != NULL && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
+			 lastActionPtr = lastActionPtr->next )
 			{
 			void *bufPtr = envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos;
 			const int dataLeft = min( envelopeInfoPtr->bufSize - \
@@ -495,6 +498,8 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 				break;
 			envelopeInfoPtr->bufPos += keyexSize;
 			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+			retIntError();
 		envelopeInfoPtr->lastAction = lastActionPtr;
 		if( cryptStatusError( status ) )
 			return( status );

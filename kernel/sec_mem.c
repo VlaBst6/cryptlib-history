@@ -188,35 +188,6 @@ static void touchAllocatedPages( void )
 	}
 #endif /* 0 */
 
-#if 0	/* 9/3/04 No longer needed since the kernel tracks allocated obj.data */
-
-/* Determine the size of a krnlMemalloc()'d memory block */
-
-int krnlMemsize( const void *pointer )
-	{
-	MEMLOCK_INFO *memBlockPtr;
-	BYTE *memPtr = ( BYTE * ) pointer;
-
-	/* Make sure that it's a valid pointer */
-	if( !isReadPtr( memPtr, sizeof( MEMLOCK_INFO ) ) )
-		{
-		assert( NOTREACHED );
-		return( 0 );
-		}
-
-	/* Find out how big the memory block is */
-	memPtr -= MEMLOCK_HEADERSIZE;
-	memBlockPtr = ( MEMLOCK_INFO * ) memPtr;
-
-	/* Make sure that nothing's overwritten our memory */
-	assert( !memcmp( memBlockPtr->canary, CANARY_STARTVALUE, CANARY_SIZE ) );
-	assert( !memcmp( memPtr + memBlockPtr->size - CANARY_SIZE,
-					 CANARY_ENDVALUE, CANARY_SIZE ) );
-
-	return( memBlockPtr->size - MEMLOCK_HEADERSIZE );
-	}
-#endif /* 0 */
-
 /****************************************************************************
 *																			*
 *							Init/Shutdown Functions							*

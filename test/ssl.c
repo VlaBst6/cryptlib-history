@@ -1012,16 +1012,15 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				cryptDestroySession( cryptSession );
 				return( FALSE );
 				}
-			buffer[ bytesCopied ] = '\0';
+			buffer[ min( bytesCopied, 4096 ) ] = '\0';
 #if defined( __MVS__ ) || defined( __VMCMS__ )
 			asciiToEbcdic( buffer, bytesCopied );
 #endif /* EBCDIC systems */
 			printf( "---- Server sent %d bytes ----\n", bytesCopied );
-#if SSL_SERVER_NO == 3
-			puts( "  (Large data quantity omitted)" );
-#else
 			puts( buffer );
-#endif /* SSL_SERVER_NO == 3 */
+			if( bytesCopied > 4096 )
+				printf( "  (Further %d bytes data omitted)\n", 
+						bytesCopied - 4096 );
 			puts( "---- End of output ----" );
 
 #if SSL_SERVER_NO == 3

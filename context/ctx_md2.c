@@ -65,7 +65,7 @@ static int selfTest( void )
 	const CAPABILITY_INFO *capabilityInfo = getMD2Capability();
 	CONTEXT_INFO contextInfo;
 	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE ];
+	BYTE keyData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test MD2 against the test vectors given in RFC 1319 */

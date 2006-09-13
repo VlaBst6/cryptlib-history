@@ -35,7 +35,7 @@ typedef enum {
 typedef struct {
 	/* State variable information.  The nonce is copied from the request to
 	   the response to prevent replay attacks */
-	BYTE nonce[ CRYPT_MAX_HASHSIZE ];
+	BYTE nonce[ CRYPT_MAX_HASHSIZE + 8 ];
 	int nonceSize;
 	} RTCS_PROTOCOL_INFO;
 
@@ -87,7 +87,7 @@ static int checkRtcsHeader( const void *rtcsData, const int rtcsDataLength,
 
 static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 	{
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Get the encoded request data and wrap it up for sending */
@@ -121,9 +121,9 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	ACTION_TYPE actionType;
-	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE ];
+	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int dataLength, sigResult, status;
 
 	/* Read the response from the responder */
@@ -159,8 +159,8 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA responseMsgData;
-		BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE ];
+		MESSAGE_DATA responseMsgData;
+		BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 
 		setMessageData( &responseMsgData, responseNonceBuffer,
 						CRYPT_MAX_HASHSIZE );
@@ -211,7 +211,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 							  RTCS_PROTOCOL_INFO *protocolInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	ACTION_TYPE actionType;
 	int dataLength, status;
 
@@ -282,7 +282,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr,
 							   RTCS_PROTOCOL_INFO *protocolInfo )
 	{
 	CRYPT_CERTIFICATE iCmsAttributes = CRYPT_UNUSED;
-	RESOURCE_DATA msgData;
+	MESSAGE_DATA msgData;
 	int status;
 
 	/* Check the entries from the request against the cert store and sign
@@ -387,7 +387,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 								 const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const CRYPT_CERTIFICATE rtcsRequest = *( ( CRYPT_CERTIFICATE * ) data );
-	RESOURCE_DATA msgData = { NULL, 0 };
+	MESSAGE_DATA msgData = { NULL, 0 };
 	int status;
 
 	assert( type == CRYPT_SESSINFO_REQUEST );
@@ -408,7 +408,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	if( findSessionAttribute( sessionInfoPtr->attributeList,
 							  CRYPT_SESSINFO_SERVER_NAME ) == NULL )
 		{
-		char buffer[ MAX_URL_SIZE ];
+		char buffer[ MAX_URL_SIZE + 8 ];
 
 		setMessageData( &msgData, buffer, MAX_URL_SIZE );
 		status = krnlSendMessage( rtcsRequest, IMESSAGE_GETATTRIBUTE_S,

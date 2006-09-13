@@ -124,8 +124,17 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 			status = loadDSAContexts( CRYPT_UNUSED, &signContext,
 									  &checkContext );
 		else
-			status = loadRSAContexts( CRYPT_UNUSED, &checkContext,
-									  &signContext );
+			{
+			if( useSHA2 )
+				/* If we're using SHA-2 then we have to use a larger RSA key
+				   to ensure that the hash values fits into the signature 
+				   data */
+				status = loadRSAContextsLarge( CRYPT_UNUSED, &checkContext,
+											   &signContext );
+			else
+				status = loadRSAContexts( CRYPT_UNUSED, &checkContext,
+										  &signContext );
+			}
 		if( !status )
 			return( FALSE );
 		}
@@ -204,8 +213,8 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 	cryptDestroyContext( hashContext );
 	if( externalSignContext == CRYPT_UNUSED )
 		destroyContexts( CRYPT_UNUSED, checkContext, signContext );
-	printf( "Generation and checking of %s digital signature via %d-bit "
-			"data block\n  succeeded.\n\n", algoName, PKC_KEYSIZE );
+	printf( "Generation and checking of %s digital signature succeeded.\n\n", 
+			algoName );
 	return( TRUE );
 	}
 

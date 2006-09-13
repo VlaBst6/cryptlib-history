@@ -42,14 +42,14 @@
 static int testLoop( const DES_TEST *testData, int iterations, BOOLEAN isEncrypt )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getDESCapability();
-	BYTE temp[ DES_BLOCKSIZE ];
+	BYTE temp[ DES_BLOCKSIZE + 8 ];
 	int i;
 
 	for( i = 0; i < iterations; i++ )
 		{
 		CONTEXT_INFO contextInfo;
 		CONV_INFO contextData;
-		BYTE keyData[ DES_KEYSIZE ];
+		BYTE keyData[ DES_KEYSIZE + 8 ];
 		int status;
 
 		memcpy( temp, testData[ i ].plaintext, DES_BLOCKSIZE );
@@ -248,7 +248,7 @@ static int decryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 					   int noBytes )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	BYTE temp[ DES_BLOCKSIZE ];
+	BYTE temp[ DES_BLOCKSIZE + 8 ];
 	int i, ivCount = convInfo->ivCount;
 
 	/* If there's any encrypted material left in the IV, use it now */

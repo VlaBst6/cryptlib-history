@@ -188,7 +188,7 @@ static int calculateKeyID( CONTEXT_INFO *contextInfoPtr )
 	   or PGP ID/genuine OpenPGP ID (signing) */
 	if( ( cryptAlgo == CRYPT_ALGO_RSA || cryptAlgo == CRYPT_ALGO_DSA || \
 		  cryptAlgo == CRYPT_ALGO_ELGAMAL ) && \
-		publicKey->pgpCreationTime )
+		publicKey->pgpCreationTime > MIN_TIME_VALUE )
 		{
 		HASHFUNCTION hashFunction;
 		HASHINFO hashInfo;
@@ -404,7 +404,7 @@ int readSshRsaPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 						 int *actionFlags )
 	{
 	PKC_INFO *rsaKey = contextInfoPtr->ctxPKC;
-	char buffer[ 16 ];
+	char buffer[ 16 + 8 ];
 	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -441,7 +441,7 @@ int readSshDlpPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	const BOOLEAN isDH = \
 			( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_DH );
-	char buffer[ 16 ];
+	char buffer[ 16 + 8 ];
 	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -997,8 +997,7 @@ static int readPrivateKeyRsaFunction( STREAM *stream,
 #endif /* USE_PGP */
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_FAILED );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 static int readPrivateKeyDlpFunction( STREAM *stream, 
@@ -1025,8 +1024,7 @@ static int readPrivateKeyDlpFunction( STREAM *stream,
 #endif /* USE_PGP */
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_FAILED );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /****************************************************************************

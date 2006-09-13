@@ -33,7 +33,7 @@ static int readAddressAndPort( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 							   char *hostInfo, int *hostInfoLen )
 	{
 	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	char portBuffer[ 16 ];
+	char portBuffer[ 16 + 8 ];
 	int stringLength, port, portLength, status;
 
 	/* Clear return value */
@@ -632,6 +632,7 @@ static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
 
 		/* Disallowed requests */
 		{ "x11-req", REQUEST_DISALLOWED, REQUEST_FLAG_NONE },
+		{ NULL, REQUEST_NONE, REQUEST_FLAG_NONE },
 		{ NULL, REQUEST_NONE, REQUEST_FLAG_NONE }
 		};
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
@@ -671,7 +672,10 @@ static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
 				isChannelRequest ? "channel" : "global" );
 
 	/* Try and identify the request type */
-	for( i = 0; requestInfo[ i ].requestName != NULL; i++ )
+	for( i = 0; requestInfo[ i ].requestName != NULL && \
+				i < FAILSAFE_ARRAYSIZE( requestInfo, REQUEST_TYPE_INFO ); 
+		 i++ )
+		{
 		if( stringLength == strlen( requestInfo[ i ].requestName ) && \
 			!memcmp( stringBuffer, requestInfo[ i ].requestName,
 					 stringLength ) )
@@ -684,6 +688,9 @@ static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
 					TRUE : FALSE;
 			break;
 			}
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( requestInfo, REQUEST_TYPE_INFO ) )
+		retIntError();
 
 	/* If it's an explicitly disallowed request type or if we're the client
 	   and it's anything other than a no-op request (for example a request
@@ -773,6 +780,7 @@ static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
 		case REQUEST_PORTFORWARD_CANCEL:
 			{
 			const int offset = stell( stream );
+			int iterationCount = 0;
 
 			/* Check that this is a request to close a port for which
 			   forwarding was actually requested.  Since there could be
@@ -791,7 +799,10 @@ static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
 				if( cryptStatusOK( status ) )
 					requestOK = TRUE;
 				}
-			while( cryptStatusOK( status ) );
+			while( cryptStatusOK( status ) && \
+				   iterationCount++ < FAILSAFE_ITERATIONS_MED );
+			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+				retIntError();
 			break;
 			}
 
@@ -885,9 +896,9 @@ int processChannelOpen( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 		if( typeLen != 12 || strCompare( typeString, "direct-tcpip", 12 ) )
 			{
 			/* It's something else, report it as an error */
-			typeString[ typeLen ] = '\0';
 			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-					"Invalid channel open channel type '%s'", typeString );
+					"Invalid channel open channel type '%s'", 
+					sanitiseString( typeString, typeLen ) );
 			}
 		isPortForwarding = TRUE;
 		}
@@ -1159,7 +1170,7 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 
 		default:
 			{
-			BYTE buffer[ 16 ];
+			BYTE buffer[ 16 + 8 ];
 
 			/* We got something unexpected, throw an exception in the debug
 			   version and let the caller know the details */
@@ -1362,20 +1373,26 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 	/* Close one or all channels */
 	if( closeAllChannels )
 		{
+		int iterationCount = 0;
+
 		/* Get the first available channel (which must succeed, since we
 		   just checked it above) and close each successive channel in
 		   turn */
 		status = selectChannel( sessionInfoPtr, CRYPT_USE_DEFAULT,
 								CHANNEL_WRITE );
-		for( noChannels = 0; \
+		for( noChannels = 0; 
 			 cryptStatusOK( status ) && \
-			 cryptStatusOK( \
-				selectChannel( sessionInfoPtr, CRYPT_USE_DEFAULT,
-							   CHANNEL_WRITE ) ); \
+				cryptStatusOK( selectChannel( sessionInfoPtr, CRYPT_USE_DEFAULT,
+											   CHANNEL_WRITE ) ) && \
+				iterationCount++ < FAILSAFE_ITERATIONS_MED; 
 			 noChannels++ )
+			{
 			status = sendChannelClose( sessionInfoPtr,
 						getCurrentChannelNo( sessionInfoPtr, CHANNEL_WRITE ),
 						CHANNEL_WRITE, closeAllChannels );
+			}
+		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
+			retIntError();
 		}
 	else
 		{
@@ -1448,7 +1465,7 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 	   here is the absolute minimum needed to clear the stream
 	   (sendCloseNotification() has set the necessary (small) nonzero
 	   timeout for us) */
-	while( noChannels-- > 0 )
+	while( noChannels-- > 0 )	/* Range-checked earlier */
 		{
 		status = sessionInfoPtr->readHeaderFunction( sessionInfoPtr, &readInfo );
 		if( !cryptStatusError( status ) )
