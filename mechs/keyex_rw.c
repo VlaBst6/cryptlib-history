@@ -243,8 +243,7 @@ static int readCryptlibKek( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Finally, read the encrypted key */
 	status = readOctetStringHole( stream, &queryInfo->dataLength, 
-								  bitsToBytes( MIN_KEYSIZE_BITS ), 
-								  DEFAULT_TAG );
+								  MIN_KEYSIZE, DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -519,8 +518,7 @@ static int readCmsKeytrans( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Finally, read the encrypted key */
 	status = readOctetStringHole( stream, &queryInfo->dataLength, 
-								  bitsToBytes( MIN_PKCSIZE_BITS ), 
-								  DEFAULT_TAG );
+								  MIN_PKCSIZE, DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -593,8 +591,7 @@ static int readCryptlibKeytrans( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Finally, read the encrypted key */
 	status = readOctetStringHole( stream, &queryInfo->dataLength, 
-								  bitsToBytes( MIN_KEYSIZE_BITS ),
-								  DEFAULT_TAG );
+								  MIN_KEYSIZE, DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -686,8 +683,7 @@ static int readPgpKeytrans( STREAM *stream, QUERY_INFO *queryInfo )
 		{
 		queryInfo->dataStart = ( stell( stream ) + UINT16_SIZE ) - startPos;
 		status = readInteger16Ubits( stream, NULL, &queryInfo->dataLength,
-									 bitsToBytes( MIN_PKCSIZE_BITS ),
-									 CRYPT_MAX_PKCSIZE );
+									 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -698,14 +694,12 @@ static int readPgpKeytrans( STREAM *stream, QUERY_INFO *queryInfo )
 		/* Read the Elgamal-encrypted key, recording the position and
 		   combined lengths of the MPI pair */
 		queryInfo->dataStart = stell( stream ) - startPos;
-		status = readInteger16Ubits( stream, NULL, &value,
-									 bitsToBytes( MIN_PKCSIZE_BITS ),
+		status = readInteger16Ubits( stream, NULL, &value, MIN_PKCSIZE,
 									 CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 		queryInfo->dataLength = UINT16_SIZE + value;	/* Incl.size of MPI hdr.*/
-		status = readInteger16Ubits( stream, NULL, &value,
-									 bitsToBytes( MIN_PKCSIZE_BITS ),
+		status = readInteger16Ubits( stream, NULL, &value, MIN_PKCSIZE,
 									 CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			return( status );

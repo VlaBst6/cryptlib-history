@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2006					*
+*						Copyright Peter Gutmann 1995-2007					*
 *																			*
 ****************************************************************************/
 
@@ -28,7 +28,7 @@
 #endif /* 0 */
 #if 1
 #define TEST_SESSION		/* Test session functions */
-#define TEST_USER			/* Test user management functions */
+/*#define TEST_USER			/* Test user management functions */
 #endif /* 0 */
 
 /* The crypto device tests are disabled by default since relatively few users
@@ -36,9 +36,13 @@
    just produce a cascade of device-not-present warnings */
 
 /* #define TEST_DEVICE */
-#if defined( TEST_DEVICE ) && !defined( TEST_LOWLEVEL )
-  #define TEST_LOWLEVEL
-  #define TEST_ENVELOPE
+#if defined( TEST_DEVICE )
+  #ifndef TEST_LOWLEVEL
+	#define TEST_LOWLEVEL
+  #endif /* TEST_LOWLEVEL */
+  #ifndef TEST_ENVELOPE
+	#define TEST_ENVELOPE
+  #endif /* TEST_ENVELOPE */
 #endif /* Low-level and envelope tests are called by the device tests */
 
 /* Some of the device tests can be rather slow, the following defines disable
@@ -196,12 +200,16 @@
 #endif /* Win16 */
 
 /* Generic buffer size and dynamically-allocated file I/O buffer size.  The
-   generic buffer has to be of a reasonable size so we can handle S/MIME
-   signature chains, the file buffer should be less than the 16-bit INT_MAX
-   for testing on 16-bit machines */
+   generic buffer has to be of a reasonable size so that we can handle 
+   S/MIME signature chains, the file buffer should be less than the 16-bit 
+   INT_MAX for testing on 16-bit machines and less than 32K for testing on 
+   the (16-bit DOS-derived) Watcom C 10 */
 
 #if defined( __MSDOS16__ ) || defined( __WIN16__ )
   #define BUFFER_SIZE			4096
+  #define FILEBUFFER_SIZE		20000
+#elif defined( __QNX__ ) && defined( __WATCOMC__ ) && ( __WATCOMC__ < 1100 )
+  #define BUFFER_SIZE			8192
   #define FILEBUFFER_SIZE		20000
 #else
   #define BUFFER_SIZE			8192
@@ -237,22 +245,10 @@
 #endif /* Console-less environments */
 
 /* Try and detect OSes that have threading support, this is needed for some
-   operations like async keygen and sleep calls.  Under OSF/1 pthread.h
-   includes c_asm.h which contains a declaration
+   operations like async keygen and sleep calls */
 
-	long asm( const char *,...);
-
-   that conflicts with the gcc asm keyword.  This asm stuff is only used
-   when inline asm alternatives to the Posix threading functions are enabled,
-   which isn't done by default so in theory we could also fix this by
-   defining asm to something else before including pthread.h, but it's safer
-   to just disable inclusion of c_asm.h by pre-defining the guard define,
-   which should result in a more useful warning if for some reason inline
-   threading functions with asm are enabled */
-
-#if( defined( _AIX ) || defined( __alpha__ ) || defined( __APPLE__ ) || \
-	 defined( __linux__ ) || defined( __osf__ ) || \
-	 ( defined( sun ) && ( OSVERSION > 4 ) ) )
+#if( ( defined( _AIX ) || defined( __APPLE__ ) || defined( __linux__ ) || \
+	   ( defined( sun ) && ( OSVERSION > 4 ) ) ) && !defined( NO_THREADS ) )
   #define UNIX_THREADS
 
   /* We need to include pthread.h at this point because any number of other
@@ -261,11 +257,8 @@
      detection of values defined in pthread.h.  Because of this we need to
      include it here as a rubber chicken before other files are pulled in
      even though it's not explicitly needed */
-  #if defined( __osf__ ) || defined( __alpha__ )
-	#define __C_ASM_H		/* See comment in cryptos.h */
-  #endif /* Alpha */
   #include <pthread.h>
-#endif /* AIX || OSF1/DEC Unix || OS/X || Linux || Slowaris */
+#endif /* AIX || OS/X || Linux || Slowaris */
 #if ( defined( WIN32 ) || defined( _WIN32 ) ) && !defined( _WIN32_WCE )
   /* We don't test the loopback functionality under WinCE because the
 	 _beginthreadx() vs. CreateThread() issue (normally hidden in
@@ -286,8 +279,8 @@
   #define HAS_WIDECHAR
 #endif /* OSes with widechar support */
 
-/* If we're running on an EBCDIC system, ensure we're compiled in EBCDIC mode
-   to test the conversion of character strings */
+/* If we're running on an EBCDIC system, ensure that we're compiled in 
+   EBCDIC mode to test the conversion of character strings */
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   #pragma convlit( suspend )
@@ -433,12 +426,14 @@ typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 #define ELGAMAL_PRIVKEY_LABEL	TEXT( "Test Elgamal private key" )
 #define DH_KEY1_LABEL			TEXT( "Test DH key #1" )
 #define DH_KEY2_LABEL			TEXT( "Test DH key #2" )
+#define ECDSA_PUBKEY_LABEL		TEXT( "Test ECDSA sigcheck key" )
+#define ECDSA_PRIVKEY_LABEL		TEXT( "Test ECDSA signing key" )
 #define CA_PRIVKEY_LABEL		TEXT( "Test RSA private key" )
 #define USER_PRIVKEY_LABEL		TEXT( "Test user key" )
 #define USER_EMAIL				TEXT( "dave@wetaburgers.com" )
 #define DUAL_SIGNKEY_LABEL		TEXT( "Test signing key" )
 #define DUAL_ENCRYPTKEY_LABEL	TEXT( "Test encryption key" )
-#define SSH_PRIVKEY_LABEL		TEXT( "SSH host key" )
+#define SYMMETRIC_KEY_LABEL		TEXT( "Test symmetric key" )
 
 /****************************************************************************
 *																			*
@@ -464,7 +459,7 @@ int importCertFile( CRYPT_CERTIFICATE *cryptCert, const C_STR fileName );
 int importCertFromTemplate( CRYPT_CERTIFICATE *cryptCert,
 							const C_STR fileTemplate, const int number );
 int addCertFields( const CRYPT_CERTIFICATE certificate,
-				   const CERT_DATA *certData );
+				   const CERT_DATA *certData, const int lineNo );
 int checkFileAccess( void );
 int getPublicKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 				  const C_STR keyName );
@@ -547,6 +542,8 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 							 CRYPT_CONTEXT *decryptContext );
 BOOLEAN loadDHContexts( CRYPT_CONTEXT *cryptContext1,
 						CRYPT_CONTEXT *cryptContext2 );
+BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
+						   CRYPT_CONTEXT *sigCheckContext );
 void destroyContexts( const CRYPT_DEVICE cryptDevice,
 					  CRYPT_CONTEXT cryptContext,
 					  CRYPT_CONTEXT decryptContext );
@@ -563,7 +560,7 @@ int testRSAMinimalKey( void );
 int testCMSEnvelopeSignEx( const CRYPT_CONTEXT signContext );
 int testCMSEnvelopePKCCryptEx( const CRYPT_HANDLE encryptContext,
 							   const CRYPT_HANDLE decryptKeyset,
-							   const C_STR password );
+							   const C_STR password, const C_STR recipient );
 
 /* Prototypes for functions in sreqresp.c */
 
@@ -584,7 +581,6 @@ int testConventionalExportImport( void );
 int testMACExportImport( void );
 int testKeyExportImport( void );
 int testSignData( void );
-int testKeyAgreement( void );
 int testKeygen( void );
 int testKeygenAsync( void );
 int testKeyExportImportCMS( void );
@@ -689,6 +685,7 @@ int testMiscImport( void );
 int testNonchainCert( void );
 int testCertComplianceLevel( void );
 int testPathProcessing( void );
+int testPKCS1Padding( void );
 int testCertProcess( void );
 int testCertManagement( void );
 
@@ -742,6 +739,7 @@ int testSessionTLSServer( void );
 int testSessionTLSServerSharedKey( void );
 int testSessionTLS11( void );
 int testSessionTLS11Server( void );
+int testSessionTLS12( void );
 
 /* Functions to test local client/server sessions.  These require threading
    support since they run the client and server in different threads */

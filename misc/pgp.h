@@ -153,10 +153,6 @@
 #define PGP_VERSION_SIZE	1
 #define PGP_ALGOID_SIZE		1
 
-/* The maximum size of an MPI (4096 bits) */
-
-#define PGP_MAX_MPISIZE		512
-
 /* The maximum size of a PGP user ID.  Note that this is larger than the
    cryptlib-wide maximum user ID size */
 

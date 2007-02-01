@@ -71,28 +71,44 @@ typedef struct {
 typedef struct {
 	/* General device information */
 	int minPinSize, maxPinSize;		/* Minimum, maximum PIN lengths */
-	char labelBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];		/* Device label */
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
+	int labelLen;
 
 	/* Device type-specific information */
 	unsigned long hSession;			/* Session handle */
 	long slotID;					/* Slot ID for multi-slot device */
 	int deviceNo;					/* Index into PKCS #11 token table */
 	void *functionListPtr;			/* PKCS #11 driver function list pointer */
-	char defaultSSOPIN[ CRYPT_MAX_TEXTSIZE + 8 ];	/* SSO PIN from dev.init */
+	char defaultSSOPin[ CRYPT_MAX_TEXTSIZE + 8 ];	/* SSO PIN from dev.init */
+	int defaultSSOPinLen;
+
+	/* Device state information.  This records the active object for multi-
+	   part operations where we can only perform one per hSession.  Because
+	   we have to set this to CRYPT_ERROR if there's none active, we make
+	   it a signed long rather than the unsigned long that's usually used
+	   for PKCS #11 handles */
+	long hActiveSignObject;			/* Currently active sig.object */
 
 	/* Last-error information returned from lower-level code */
 	int errorCode;
 	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
 	} PKCS11_INFO;
 
+#ifdef ULONG_PTR
+  #define CAPI_HANDLE ULONG_PTR		/* May be 64 bits on Win64 */
+#else
+  #define CAPI_HANDLE unsigned long	/* Always 32 bits on Win32 */
+#endif /* Older vs.newer CryptoAPI types */
+
 typedef struct {
 	/* General device information */
-	char labelBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];		/* Device label */
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
+	int labelLen;
 
 	/* Device type-specific information */
-	int hProv;						/* CryptoAPI provider handle */
+	CAPI_HANDLE hProv;				/* CryptoAPI provider handle */
 	void *hCertStore;				/* Cert store for key/cert storage */
-	int hPrivateKey;				/* Key for session key import/export */
+	CAPI_HANDLE hPrivateKey;		/* Key for session key import/export */
 	int privateKeySize;				/* Size of import/export key */
 	const void *hCertChain;			/* Cached copy of current cert chain */
 
@@ -104,7 +120,8 @@ typedef struct {
 typedef struct {
 	/* General device information */
 	int minPinSize, maxPinSize;		/* Minimum, maximum PIN lengths */
-	char labelBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];		/* Device label */
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
+	int labelLen;
 
 	/* Device type-specific information */
 	int socketIndex;				/* Slot index for multi-slot reader */
@@ -121,7 +138,8 @@ typedef struct {
 
 	/* Other information */
 	BYTE leafString[ 16 ];			/* LEAF-suppressed string */
-	char initPIN[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Initialisation PIN */
+	char initPin[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Initialisation PIN */
+	int initPinLen;
 
 	/* Last-error information returned from lower-level code */
 	int errorCode;
@@ -148,6 +166,7 @@ typedef struct DI {
 	CRYPT_DEVICE_TYPE type;			/* Device type */
 	int flags;						/* Device information flags */
 	char *label;					/* Device label */
+	int labelLen;
 
 	/* Each device provides various capabilities which are held in the 
 	   following list.  When we need to create an object via the device, we
@@ -254,13 +273,16 @@ int exportPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int exportPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
+int exportOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
+int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int exportPrivateKey( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importPrivateKey( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int exportPrivateKeyPKCS8( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importPrivateKeyPKCS8( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKeyPGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
+int importPrivateKeyPGP2( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
+int importPrivateKeyOpenPGPOld( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 int importPrivateKeyOpenPGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
 
 /* Prototypes for device mapping functions */

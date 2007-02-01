@@ -896,12 +896,14 @@ static void addStoredSeedData( RANDOM_INFO *randomInfo )
 	{
 	STREAM stream;
 	BYTE streamBuffer[ STREAM_BUFSIZE + 8 ], seedBuffer[ 1024 + 8 ];
-	char seedFilePath[ MAX_PATH_LENGTH + 128 ];	/* Protection for Windows */
+	char seedFilePath[ MAX_PATH_LENGTH + 8 ];
 	int poolCount = RANDOMPOOL_SIZE, length, status;
 
 	/* Try and access the stored seed data */
-	fileBuildCryptlibPath( seedFilePath, NULL, BUILDPATH_RNDSEEDFILE );
-	status = sFileOpen( &stream, seedFilePath, FILE_READ );
+	status = fileBuildCryptlibPath( seedFilePath, MAX_PATH_LENGTH, NULL, 
+									BUILDPATH_RNDSEEDFILE );
+	if( cryptStatusOK( status ) )
+		status = sFileOpen( &stream, seedFilePath, FILE_READ );
 	if( cryptStatusError( status ) )
 		{
 		/* The seed data isn't present, don't try and access it again */
@@ -1285,7 +1287,35 @@ int getRandomData( RANDOM_INFO *randomInfo, void *buffer, const int length )
 	/* If the process has forked, we need to restart the generator output
 	   process, but we can't determine this until after we've already
 	   produced the output.  If we do need to restart, we do it from this
-	   point */
+	   point.
+
+	   There is one variant of this problem that we can't work around, and 
+	   that's where we're running inside a VM with rollback support.  Some 
+	   VMs can take periodic snapshots of the system state to allow rollback 
+	   to a known-good state if an error occurs.  Since the VM's rollback is 
+	   transparent to the OS, there's no way to detect that it's occcurred.  
+	   In this case we'd roll back to a previous state of the RNG and 
+	   continue from there.  OTOH it's hard to identify a situation in which 
+	   this would pose a serious threat.  Consider for example SSL or SSH 
+	   session key setup/generation, if we haven't committed the data to the 
+	   remote system yet it's no problem, and if we have then we're now out 
+	   of sync with the remote system and the handshake will fail.  
+	   Similarly, if we're generating a DSA signature then we'll end up 
+	   generating the same signature again, but since it's over the same 
+	   data there's no threat involved.  Being able to cause a change in the 
+	   data being signed after the random DSA k value is generated would be 
+	   a problem, but k is only generated after the data has already been 
+	   hashed and the signature is about to be generated.
+
+	   In general this type of attack would require the ability to generate 
+	   information based on random state, communicate it to an external 
+	   party, and then generate different information from the same state.  
+	   In other words it would require cooperation between the VM and a 
+	   hostile external party (to, for example, ignore the fact that the VM 
+	   has rolled back to an earlier point in the protocol so a repeat of a 
+	   previous handshake message will be seen), or in other words control 
+	   over the VM by an external party.  Anyone faced with this level of 
+	   attack has bigger things to worry about than RNG state rollback */
 restartPoint:
 
 	/* Prepare to get data from the randomness pool.  Before we do this, we
@@ -1633,93 +1663,27 @@ static void printVectors( const BYTE *key, const BYTE *dt, const BYTE *v,
 
 #define DES_BLOCKSIZE	X917_POOLSIZE
 #if defined( INC_ALL )
-  #include "testdes.h"
+  #include "capabil.h"
 #else
-  #include "crypt/testdes.h"
+  #include "device/capabil.h"
 #endif /* Compiler-specific includes */
-
-static int des3TestLoop( const DES_TEST *testData, int iterations )
-	{
-	BYTE temp[ DES_BLOCKSIZE + 8 ];
-	BYTE key1[ DES_KEYSIZE + 8 ], key2[ DES_KEYSIZE + 8 ];
-	BYTE key3[ DES_KEYSIZE + 8 ];
-	int i;
-
-	for( i = 0; i < iterations; i++ )
-		{
-		memcpy( temp, testData[ i ].plaintext, DES_BLOCKSIZE );
-
-		/* Some of the old NBS test vectors have bad key parity values so we
-		   explicitly call the key-schedule function that ignores parity
-		   bits */
-		des_set_key_unchecked( ( C_Block * ) testData[ i ].key,
-							   *( ( Key_schedule * ) key1 ) );
-		des_set_key_unchecked( ( C_Block * ) testData[ i ].key,
-							   *( ( Key_schedule * ) key2 ) );
-		des_set_key_unchecked( ( C_Block * ) testData[ i ].key,
-							   *( ( Key_schedule * ) key3 ) );
-		des_ecb3_encrypt( ( C_Block * ) temp, ( C_Block * ) temp,
-						  *( ( Key_schedule * ) key1 ),
-						  *( ( Key_schedule * ) key2 ),
-						  *( ( Key_schedule * ) key3 ), DES_ENCRYPT );
-		if( memcmp( testData[ i ].ciphertext, temp, DES_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
-		}
-
-	return( CRYPT_OK );
-	}
 
 static int algorithmSelfTest( void )
 	{
-	typedef struct {
-		const char FAR_BSS *data;
-		const int length;
-		const BYTE hashValue[ 20 + 8 ];
-		} HASHDATA_INFO;
-	static const HASHDATA_INFO FAR_BSS hashData[] = {
-		/* FIPS 180-1 SHA-1 test vectors */
-		{ "abc", 3,
-		  { 0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
-			0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
-			0x9C, 0xD0, 0xD8, 0x9D } },
-		{ "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", 56,
-		  { 0x84, 0x98, 0x3E, 0x44, 0x1C, 0x3B, 0xD2, 0x6E,
-			0xBA, 0xAE, 0x4A, 0xA1, 0xF9, 0x51, 0x29, 0xE5,
-			0xE5, 0x46, 0x70, 0xF1 } },
-		{ NULL, 0, { 0 } }, { NULL, 0, { 0 } }
-		};
-	HASHFUNCTION hashFunction;
-	BYTE hashValue[ CRYPT_MAX_HASHSIZE + 8 ];
-	int hashSize, i, iterationCount = 0;
+	const CAPABILITY_INFO *capabilityInfo;
+	int status;
 
-	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
+	/* Test the SHA-1 functionality */
+	capabilityInfo = getSHA1Capability();
+	status = capabilityInfo->selfTestFunction();
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* Test the SHA-1 code against the values given in FIPS 180-1.  We don't
-	   perform the final test (using 10MB of data) because this takes too
-	   long to run */
-	for( i = 0; 
-		 hashData[ i ].data != NULL && \
-			iterationCount++ < FAILSAFE_ARRAYSIZE( hashData, HASHDATA_INFO ); 
-		 i++ )
-		{
-		hashFunction( NULL, hashValue, CRYPT_MAX_HASHSIZE, 
-					  ( BYTE * ) hashData[ i ].data, hashData[ i ].length, 
-					  HASH_ALL );
-		if( memcmp( hashValue, hashData[ i ].hashValue, hashSize ) )
-			return( CRYPT_ERROR_FAILED );
-		}
-	if( iterationCount >= FAILSAFE_ARRAYSIZE( hashData, HASHDATA_INFO ) )
-		retIntError();
-
-	/* Test the 3DES code against the values given in NIST Special Pub.800-20,
-	   1999, which are actually the same as 500-20, 1980, since they require
-	   that K1 = K2 = K3 */
-	if( ( des3TestLoop( testIP, sizeof( testIP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
-		( des3TestLoop( testVP, sizeof( testVP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
-		( des3TestLoop( testKP, sizeof( testKP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
-		( des3TestLoop( testDP, sizeof( testDP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
-		( des3TestLoop( testSB, sizeof( testSB ) / sizeof( DES_TEST ) ) != CRYPT_OK ) )
-		return( CRYPT_ERROR_FAILED );
+	/* Test the 3DES (and DES) functionality */
+	capabilityInfo = get3DESCapability();
+	status = capabilityInfo->selfTestFunction();
+	if( cryptStatusError( status ) )
+		return( status );
 
 	return( CRYPT_OK );
 	}

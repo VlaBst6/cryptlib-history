@@ -49,43 +49,34 @@ typedef struct {
    since they require that K1 = K2 = K3, but we do it anyway so we can claim
    compliance) */
 
-static int testLoop( const DES_TEST *testData, int iterations )
+static int testLoop( const DES_TEST *testDES, int iterations )
 	{
 	const CAPABILITY_INFO *capabilityInfo = get3DESCapability();
-	BYTE temp[ DES_BLOCKSIZE + 8 ];
-	int i;
+	BYTE keyData[ DES3_KEYSIZE + 8 ];
+	int i, status;
 
 	for( i = 0; i < iterations; i++ )
 		{
-		CONTEXT_INFO contextInfo;
-		CONV_INFO contextData;
-		BYTE keyData[ DES3_KEYSIZE + 8 ];
 		BYTE desKeyData[ ( DES_BLOCKSIZE * 3 ) + 8 ];
-		int status;
 
-		memcpy( temp, testData[ i ].plaintext, DES_BLOCKSIZE );
-		memcpy( desKeyData, testData[ i ].key, DES_BLOCKSIZE );
-		memcpy( desKeyData + DES_BLOCKSIZE, testData[ i ].key, DES_BLOCKSIZE );
-		memcpy( desKeyData + ( DES_BLOCKSIZE * 2 ), testData[ i ].key, DES_BLOCKSIZE );
+		memcpy( desKeyData, testDES[ i ].key, DES_BLOCKSIZE );
+		memcpy( desKeyData + DES_BLOCKSIZE, testDES[ i ].key, 
+				DES_BLOCKSIZE );
+		memcpy( desKeyData + ( DES_BLOCKSIZE * 2 ), testDES[ i ].key, 
+				DES_BLOCKSIZE );
 
 		/* The self-test uses weak keys, which means they'll be rejected by 
 		   the key-load function if it checks for these.  For the OpenSSL
 		   DES implementation we can kludge around this by temporarily 
 		   clearing the global des_check_key value, but for other 
 		   implementations some alternative workaround will be necessary */
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
 		des_check_key = FALSE;
-		status = capabilityInfo->initKeyFunction( &contextInfo, desKeyData,
-												  DES_BLOCKSIZE * 3 );
+		status = testCipher( capabilityInfo, keyData, desKeyData, 
+							 DES_BLOCKSIZE * 3, testDES[ i ].plaintext,
+							 testDES[ i ].ciphertext );
 		des_check_key = TRUE;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp, 
-													  DES_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testData[ i ].ciphertext, temp, DES_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -100,7 +91,7 @@ static int selfTest( void )
 		( testLoop( testKP, sizeof( testKP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
 		( testLoop( testDP, sizeof( testDP ) / sizeof( DES_TEST ) ) != CRYPT_OK ) || \
 		( testLoop( testSB, sizeof( testSB ) / sizeof( DES_TEST ) ) != CRYPT_OK ) )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 
 	return( CRYPT_OK );
 	}

@@ -154,7 +154,7 @@ static int tryRead( SESSION_INFO *sessionInfoPtr, READSTATE_INFO *readInfo )
 		sessionInfoPtr->pendingPacketPartialLength < 0 )
 		{
 		assert( NOTREACHED );
-		retExt( sessionInfoPtr, CRYPT_ERROR_FAILED,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
 				"Internal error: Inconsistent state detected in session "
 				"read stream" );
 		}
@@ -172,8 +172,7 @@ static int tryRead( SESSION_INFO *sessionInfoPtr, READSTATE_INFO *readInfo )
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	if( status <= 0 )
@@ -216,7 +215,7 @@ static int getData( SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->receiveBufEnd > sessionInfoPtr->receiveBufSize )
 		{
 		assert( NOTREACHED );
-		retExt( sessionInfoPtr, CRYPT_ERROR_FAILED,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
 				"Internal error: Inconsistent state detected in session "
 				"read stream" );
 		}
@@ -451,8 +450,7 @@ int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
 			return( status );
 
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 
@@ -465,7 +463,7 @@ int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
 			{
 			if( sessionInfoPtr->flags & SESSION_NOREPORTERROR )
 				return( status );
-			retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 					"Timeout during packet header read, only got %d of %d "
 					"bytes", status, headerSize );
 			}
@@ -583,8 +581,7 @@ static int flushData( SESSION_INFO *sessionInfoPtr )
 		   return the error details to the caller */
 		sessionInfoPtr->writeErrorState = status;
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 
@@ -641,7 +638,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 		sessionInfoPtr->sendBufPartialBufPos >= sessionInfoPtr->sendBufPos )
 		{
 		assert( NOTREACHED );
-		retExt( sessionInfoPtr, CRYPT_ERROR_FAILED,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
 				"Internal error: Inconsistent state detected in session "
 				"write stream" );
 		}
@@ -684,12 +681,12 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 		   write into a timeout error */
 		bytesWritten = sessionInfoPtr->sendBufPartialBufPos - oldBufPos;
 		if( bytesWritten > 0 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 					"Timeout during flush, only %d bytes were written "
 					"before the timeout of %d seconds expired",
 					sessionInfoPtr->sendBufPartialBufPos, 
 					sessionInfoPtr->writeTimeout );
-		retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 				"Timeout during flush, no data could be written before the "
 				"timeout of %d seconds expired", 
 				sessionInfoPtr->writeTimeout );
@@ -799,8 +796,7 @@ int readPkiDatagram( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	if( status < 4 )
@@ -808,7 +804,7 @@ int readPkiDatagram( SESSION_INFO *sessionInfoPtr )
 		   assertions in the debug build, and provides somewhat more
 		   specific information for the caller than the invalid-encoding
 		   error that we'd get later */
-		retExt( sessionInfoPtr, CRYPT_ERROR_UNDERFLOW,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_UNDERFLOW,
 				"Invalid PKI message length %d", status );
 
 	/* Find out how much data we got and perform a firewall check that
@@ -817,7 +813,7 @@ int readPkiDatagram( SESSION_INFO *sessionInfoPtr )
 	   processed, avoids any vagaries of server implementation oddities */
 	length = checkObjectEncoding( sessionInfoPtr->receiveBuffer, status );
 	if( cryptStatusError( length ) )
-		retExt( sessionInfoPtr, length, "Invalid PKI message encoding" );
+		retExt( SESSION_ERRINFO, length, "Invalid PKI message encoding" );
 	sessionInfoPtr->receiveBufEnd = length;
 	return( CRYPT_OK );
 	}
@@ -834,8 +830,7 @@ int writePkiDatagram( SESSION_INFO *sessionInfoPtr )
 					 sessionInfoPtr->receiveBufEnd );
 	if( cryptStatusError( status ) )
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 	sessionInfoPtr->receiveBufEnd = 0;
 
 	return( CRYPT_OK );	/* swrite() returns a byte count */

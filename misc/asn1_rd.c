@@ -742,7 +742,7 @@ int readEncodedOID( STREAM *stream, BYTE *oid, int *oidLength,
 
 static int readString( STREAM *stream, BYTE *string, int *stringLength,
 					   const int minLength, const int maxLength, 
-					   const int tag, const BOOLEAN useLiteralTag )
+					   const int tag, const BOOLEAN isOctetString )
 	{
 	int length;
 
@@ -753,21 +753,28 @@ static int readString( STREAM *stream, BYTE *string, int *stringLength,
 		*stringLength = 0;
 		}
 
-	/* Read the string, limiting the size to the maximum buffer size */
-	if( useLiteralTag )
+	/* Read the string, limiting the size to the maximum buffer size.  If 
+	   it's an octet string we make this a hard limit, however if it's a 
+	   text string we simply read as much as will fit in the buffer and 
+	   discard the rest.  This is required to handle the widespread ignoring
+	   of string length limits in certificates and other PKI-related data */
+	if( isOctetString )
 		{
-		if( readTag( stream ) != tag )
+		if( tag != NO_TAG && \
+			readTag( stream ) != selectTag( tag, BER_OCTETSTRING ) )
 			return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 		}
 	else
 		{
-		if( tag != NO_TAG && readTag( stream ) != selectTag( tag, BER_OCTETSTRING ) )
+		if( readTag( stream ) != tag )
 			return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 		}
 	length = readLengthValue( stream, READLENGTH_SHORT );
 	if( cryptStatusError( length ) )
 		return( length );
 	if( length < minLength )
+		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
+	if( isOctetString && length > maxLength )
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 	if( length <= 0 )
 		return( length );	/* Zero length */
@@ -787,7 +794,7 @@ int readOctetStringTag( STREAM *stream, BYTE *string, int *stringLength,
 	assert( maxLength > 0 );
 
 	return( readString( stream, string, stringLength, minLength, maxLength, \
-						tag, FALSE ) );
+						tag, TRUE ) );
 	}
 
 /* Read a character string.  This handles any of the myriad ASN.1 character
@@ -809,7 +816,7 @@ int readCharacterString( STREAM *stream, BYTE *string, int *stringLength,
 	assert( tag > 0 );
 
 	return( readString( stream, string, stringLength, 1, maxLength, \
-						tag, TRUE ) );
+						tag, FALSE ) );
 	}
 
 /* Read a bit string */

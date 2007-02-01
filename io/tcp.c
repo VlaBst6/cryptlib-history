@@ -521,13 +521,14 @@ static int mapError( STREAM *stream, const BOOLEAN useHostErrorInfo,
 					FAILSAFE_ARRAYSIZE( socketErrorInfo, SOCKETERROR_INFO );
 	int i;
 
-	*stream->errorMessage = '\0';
+	*stream->errorInfo->errorString = '\0';
 	for( i = 0; errorInfo[ i ].errorCode != CRYPT_ERROR && \
 				i < errorInfoSize; i++ )
 		{
-		if( errorInfo[ i ].errorCode == stream->errorCode )
+		if( errorInfo[ i ].errorCode == stream->errorInfo->errorCode )
 			{
-			strcpy( stream->errorMessage, errorInfo[ i ].errorString );
+			strlcpy_s( stream->errorInfo->errorString, MAX_ERRMSG_SIZE, 
+					   errorInfo[ i ].errorString );
 			if( errorInfo[ i ].cryptSpecificCode != CRYPT_OK )
 				/* There's a more specific error code than the generic one
 				   that we've been given available, use that instead */
@@ -547,7 +548,7 @@ int getSocketError( STREAM *stream, const int status )
 	{
 	/* Get the low-level error code and map it to an error string if
 	   possible */
-	stream->errorCode = getErrorCode();
+	stream->errorInfo->errorCode = getErrorCode();
 	return( mapError( stream, FALSE, status ) );
 	}
 
@@ -555,7 +556,7 @@ int getHostError( STREAM *stream, const int status )
 	{
 	/* Get the low-level error code and map it to an error string if
 	   possible */
-	stream->errorCode = getHostErrorCode();
+	stream->errorInfo->errorCode = getHostErrorCode();
 	return( mapError( stream, TRUE, status ) );
 	}
 
@@ -564,8 +565,9 @@ int setSocketError( STREAM *stream, const char *errorMessage,
 	{
 	/* Set a cryptlib-supplied socket error message.  Since this doesn't
 	   correspond to any system error, we clear the error code */
-	stream->errorCode = 0;
-	strcpy( stream->errorMessage, errorMessage );
+	stream->errorInfo->errorCode = 0;
+	strlcpy_s( stream->errorInfo->errorString, MAX_ERRMSG_SIZE, 
+			   errorMessage );
 	if( isFatal )
 		/* It's a fatal error, make it persistent for the stream */
 		stream->status = status;
@@ -968,12 +970,40 @@ void netSignalShutdown( void )
 *																			*
 ****************************************************************************/
 
-/* Wait for I/O to become possible on a socket */
+/* Wait for I/O to become possible on a socket.  The particular use of 
+   select that we employ here is reasonably optimal under load because we're 
+   only asking select() to monitor a single descriptor.  There are a variety 
+   of inefficiencies related to select that fall into either the category of 
+   user <-> kernel copying, or of descriptor list scanning.  For the first 
+   category, when calling select() the system has to copy an entire list of 
+   descriptors into kernel space and then back out again.  Large selects can 
+   potentially contain hundreds or thousands of descriptors, which can in 
+   turn involve allocating memory in the kernel and freeing it on return.  
+   We're only using one so the amount of data to copy is minimal.
+
+   The second category involves scanning the descriptor list, an O(n) 
+   activity.  First the kernel has to scan the list to see whether there's 
+   pending activity on a descriptor.  If there aren't any descriptors with 
+   activity pending, it has to update the descriptor's selinfo entry in the 
+   event that the calling process calls tsleep() (used to handle event-based 
+   process blocking in the kernel) while waiting for activity on the 
+   descriptor.  After the select() returns or the process is woken up from a 
+   tsleep(), the user process in turn has to scan the list to see which 
+   descriptors the kernel indicated as needing attention.  As a result, the 
+   list has to be scanned three times.
+
+   These problems arise because select() (and it's cousin poll()) are 
+   stateless by design, so everything has to be recalculated on each call.  
+   After various false starts the kqueue interface is now seen as the best 
+   solution to this problem.  However, cryptlib's use of only a single 
+   descriptor per select() avoids the need to use system-specific and rather 
+   non-portable interfaces like kqueue (and earlier alternatives like Sun's 
+   /dev/poll, FreeBSD's get_next_event(), and SGI's /dev/imon) */
 
 typedef enum { IOWAIT_READ, IOWAIT_WRITE, IOWAIT_CONNECT,
 			   IOWAIT_ACCEPT } IOWAIT_TYPE;
 
-static int ioWait( STREAM *stream, const time_t timeout,
+static int ioWait( STREAM *stream, const int timeout,
 				   const int currentByteCount, const IOWAIT_TYPE type )
 	{
 	static const struct {
@@ -986,7 +1016,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 		{ CRYPT_ERROR_OPEN, "accept" },
 		{ CRYPT_ERROR_OPEN, "unknown" }
 		};
-	const time_t startTime = getTime();
+	MONOTIMER_INFO timerInfo;
 	struct timeval tv;
 	fd_set readfds, writefds, exceptfds;
 	fd_set *readFDPtr = ( type == IOWAIT_READ || \
@@ -1024,6 +1054,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 	   and writeable if there's an error on the socket or if there's data
 	   already waiting on the connection (i.e. it arrives as part of the
 	   connect).  It's up to the caller to check for these conditions */
+	setMonoTimer( &timerInfo, timeout );
 	do
 		{
 		if( readFDPtr != NULL )
@@ -1052,7 +1083,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 			return( getSocketError( stream, errorInfo[ type ].status ) );
 		}
 	while( isSocketError( status ) && \
-		   ( getTime() - startTime ) < timeout && \
+		   !checkMonoTimerExpired( &timerInfo ) && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
 		retIntError();
@@ -1076,7 +1107,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 			return( OK_SPECIAL );
 
 		/* The select() timed out, exit */
-		sPrintf_s( errorMessage, 128,
+		sprintf_s( errorMessage, 128,
 				   "Timeout on %s (select()) after %ld seconds",
 				   errorInfo[ type ].errorString, timeout );
 		return( setSocketError( stream, errorMessage, CRYPT_ERROR_TIMEOUT,
@@ -1122,7 +1153,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 	if( FD_ISSET( stream->netSocket, &exceptfds ) )
 		{
 		status = getSocketError( stream, errorInfo[ type ].status );
-		if( stream->errorCode == 0 )
+		if( stream->errorInfo->errorCode == 0 )
 			{
 			/* If there's a (supposed) exception condition present but no
 			   error information available then this may be a mis-handled
@@ -1133,7 +1164,7 @@ static int ioWait( STREAM *stream, const time_t timeout,
 			   implementations don't treat a soft timeout as an error, and
 			   at least one (Tandem) returns EINPROGRESS rather than
 			   ETIMEDOUT, so we insert a timeout error code ourselves */
-			stream->errorCode = TIMEOUT_ERROR;
+			stream->errorInfo->errorCode = TIMEOUT_ERROR;
 			mapError( stream, FALSE, CRYPT_UNUSED );
 			}
 		return( status );
@@ -1475,13 +1506,26 @@ static int openServerSocket( STREAM *stream, const char *server, const int port 
 	return( CRYPT_OK );
 	}
 
-static int openSocketFunction( STREAM *stream, const char *server,
-							   const int port )
+static int openSocketFunction( STREAM *stream, const char *host, 
+							   const int hostNameLen, const int port )
 	{
+	char hostNameBuffer[ MAX_DNS_SIZE + 1 + 8 ];
 	int status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( ( host == NULL && hostNameLen == 0 ) || \
+			isReadPtr( host, hostNameLen ) );
 	assert( port >= 22 );
-	assert( ( stream->flags & STREAM_NFLAG_ISSERVER ) || server != NULL );
+	assert( ( stream->flags & STREAM_NFLAG_ISSERVER ) || host != NULL );
+
+	/* Convert the host name into the null-terminated string required by the 
+	   sockets API */
+	if( host != NULL )
+		{
+		memcpy( hostNameBuffer, host, hostNameLen );
+		hostNameBuffer[ hostNameLen ] = '\0';
+		host = hostNameBuffer;
+		}
 
 	/* If it's a server stream, open a listening socket */
 	if( stream->flags & STREAM_NFLAG_ISSERVER )
@@ -1497,7 +1541,7 @@ static int openSocketFunction( STREAM *stream, const char *server,
 		   server always waits forever for an incoming connection to
 		   appear */
 		stream->timeout = INT_MAX - 1;
-		status = openServerSocket( stream, server, port );
+		status = openServerSocket( stream, host, port );
 		stream->timeout = savedTimeout;
 		return( status );
 		}
@@ -1506,7 +1550,7 @@ static int openSocketFunction( STREAM *stream, const char *server,
 	   the two portions are performed back-to-back, in the future we can
 	   interleave the two and perform general crypto processing (e.g. hash/
 	   MAC context setup for SSL) while the open is completing */
-	status = preOpenSocket( stream, server, port );
+	status = preOpenSocket( stream, host, port );
 	if( cryptStatusOK( status ) )
 		status = completeOpen( stream );
 	assert( ( cryptStatusError( status ) && \
@@ -1568,6 +1612,8 @@ static int openSocketFunction( STREAM *stream, const char *server,
 static void closeSocketFunction( STREAM *stream,
 								 const BOOLEAN fullDisconnect )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
 	/* If it's a partial disconnect, close only the send side of the channel.
 	   The send-side close can help with ensuring that all data queued for
 	   transmission is sent */
@@ -1596,6 +1642,8 @@ static void closeSocketFunction( STREAM *stream,
 static int checkSocketFunction( STREAM *stream )
 	{
 	int value;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that we've been passed a valid network socket, and that it's
 	   blocking */
@@ -1650,16 +1698,20 @@ static int checkSocketFunction( STREAM *stream )
 static int readSocketFunction( STREAM *stream, BYTE *buffer,
 							   const int length, const int flags )
 	{
-	const time_t startTime = getTime();
+	MONOTIMER_INFO timerInfo;
 	BYTE *bufPtr = buffer;
-	time_t timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
-					 ( flags & TRANSPORT_FLAG_BLOCKING ) ? \
+	const int timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
+						( flags & TRANSPORT_FLAG_BLOCKING ) ? \
 						max( 30, stream->timeout ) : stream->timeout;
 	int bytesToRead = length, byteCount = 0, iterationCount = 0;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	assert( timeout >= 0 );
+	setMonoTimer( &timerInfo, timeout );
 	while( bytesToRead > 0 && \
-		   ( ( getTime() - startTime < timeout || timeout <= 0 ) ) && \
+		   ( timeout <= 0 || !checkMonoTimerExpired( &timerInfo ) ) && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		int bytesRead, status;
@@ -1748,8 +1800,13 @@ static int readSocketFunction( STREAM *stream, BYTE *buffer,
 		   if data is trickling in at a few bytes a second */
 		if( ( flags & TRANSPORT_FLAG_BLOCKING ) && \
 			( byteCount / timeout ) >= 1000 && \
-			( getTime() - startTime ) > ( timeout - 5 ) )
-			timeout += 5;
+			checkMonoTimerExpiryImminent( &timerInfo, 5 ) )
+			{
+			/* The timer expiry is imminent but data is still flowing in, 
+			   extend the timing duration to allow for further data to
+			   arrive */
+			extendMonoTimer( &timerInfo, 5 );
+			}
 		}
 	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
 		retIntError();
@@ -1767,12 +1824,15 @@ static int readSocketFunction( STREAM *stream, BYTE *buffer,
 static int writeSocketFunction( STREAM *stream, const BYTE *buffer,
 								const int length, const int flags )
 	{
-	const time_t startTime = getTime();
+	MONOTIMER_INFO timerInfo;
 	const BYTE *bufPtr = buffer;
-	time_t timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
-					 ( flags & TRANSPORT_FLAG_BLOCKING ) ? \
+	const int timeout = ( flags & TRANSPORT_FLAG_NONBLOCKING ) ? 0 : \
+						( flags & TRANSPORT_FLAG_BLOCKING ) ? \
 						max( 30, stream->timeout ) : stream->timeout;
 	int bytesToWrite = length, byteCount = 0, iterationCount = 0;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( buffer, length ) );
 
 	/* Send data to the remote system.  As with the receive-data code, we
 	   have to work around a large number of quirks and socket
@@ -1797,8 +1857,9 @@ static int writeSocketFunction( STREAM *stream, const BYTE *buffer,
 	   WSAGetLastError() indicates there's no error, so we treat it as noise
 	   and try again */
 	assert( timeout >= 0 );
+	setMonoTimer( &timerInfo, timeout );
 	while( bytesToWrite > 0 && \
-		   ( ( getTime() - startTime < timeout || timeout <= 0 ) ) && \
+		   ( timeout <= 0 || !checkMonoTimerExpired( &timerInfo ) ) && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
 		{
 		int bytesWritten, status;

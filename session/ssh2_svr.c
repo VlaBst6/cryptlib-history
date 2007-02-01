@@ -166,11 +166,11 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 	streamBookmarkComplete( &stream, keyexInfoLength );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Invalid ephemeral DH key data request packet" );
-	if( keyLength < MIN_PKCSIZE_BITS || \
+	if( keyLength < bytesToBits( MIN_PKCSIZE ) || \
 		keyLength > bytesToBits( CRYPT_MAX_PKCSIZE ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Client requested invalid ephemeral DH key size %d bits",
 				keyLength );
 	memcpy( handshakeInfo->encodedReqKeySizes, keyexInfoPtr,
@@ -329,7 +329,7 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		userNameLength <= 0 || userNameLength > CRYPT_MAX_TEXTSIZE )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid user auth user name" );
 		}
 	if( findSessionAttribute( sessionInfoPtr->attributeList,
@@ -345,9 +345,10 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 			{
 			sMemDisconnect( &stream );
 			if( attributeListPtr == NULL )
-				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 						"Unknown user name '%s'", 
-						sanitiseString( userNameBuffer, userNameLength ) );
+						sanitiseString( userNameBuffer, userNameLength,
+										userNameLength ) );
 			}
 
 		/* We've matched an existing user name, select the attribute that
@@ -378,9 +379,10 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Error recording user name '%s'", 
-					sanitiseString( userNameBuffer, userNameLength ) );
+					sanitiseString( userNameBuffer, userNameLength, 
+									userNameLength ) );
 			}
 		}
 
@@ -392,7 +394,7 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		stringLength != 14 || memcmp( stringBuffer, "ssh-connection", 14 ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid user auth service name" );
 		}
 	status = readString32( &stream, stringBuffer, &stringLength,
@@ -401,7 +403,7 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 		stringLength <= 0 || stringLength > CRYPT_MAX_TEXTSIZE )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid user auth method name" );
 		}
 	if( !( ( stringLength == 4 && \
@@ -410,9 +412,10 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 			 !memcmp( stringBuffer, "password", 8 ) ) ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Unknown user auth method name '%s'",
-				sanitiseString( stringBuffer, stringLength ) );
+				sanitiseString( stringBuffer, stringLength, 
+								stringLength ) );
 		}
 	sgetc( &stream );	/* Skip boolean flag */
 
@@ -444,15 +447,16 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) || \
 		stringLength <= 0 || stringLength > CRYPT_MAX_TEXTSIZE )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid user auth payload" );
 	if( userNamePresent )
 		{
 		if( stringLength != attributeListPtr->valueLength || \
 			memcmp( stringBuffer, attributeListPtr->value, stringLength ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid password for user '%s'", 
-					sanitiseString( userNameBuffer, userNameLength ) );
+					sanitiseString( userNameBuffer, userNameLength,
+									userNameLength ) );
 		}
 	else
 		{
@@ -460,9 +464,10 @@ static int processUserAuth( SESSION_INFO *sessionInfoPtr,
 									  CRYPT_SESSINFO_PASSWORD,
 									  stringBuffer, stringLength );
 		if( cryptStatusError( status ) )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Error recording password for user '%s'",
-					sanitiseString( userNameBuffer, userNameLength ) );
+					sanitiseString( userNameBuffer, userNameLength,
+									userNameLength ) );
 		}
 
 	return( OK_SPECIAL );
@@ -635,7 +640,7 @@ static int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 			status = readPacketSSH2( sessionInfoPtr,
 						( handshakeInfo->requestedServerKeySize > 0 ) ? \
 							SSH2_MSG_KEXDH_GEX_INIT : SSH2_MSG_KEXDH_INIT,
-						ID_SIZE + sizeofString32( "", bitsToBytes( MIN_PKCSIZE_BITS ) ) );
+						ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) );
 			}
 	if( !cryptStatusError( status ) )	/* rPSSH2() returns a byte count */
 		status = hashAsString( handshakeInfo->iExchangeHashcontext,
@@ -659,7 +664,7 @@ static int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 	length = readPacketSSH2( sessionInfoPtr,
 					( handshakeInfo->requestedServerKeySize > 0 ) ? \
 					  SSH2_MSG_KEXDH_GEX_INIT : SSH2_MSG_KEXDH_INIT,
-					ID_SIZE + sizeofString32( "", bitsToBytes( MIN_PKCSIZE_BITS ) ) );
+					ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) );
 	if( cryptStatusError( length ) )
 		return( length );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
@@ -671,7 +676,7 @@ static int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) || \
 		!isValidDHsize( handshakeInfo->clientKeyexValueLength,
 						handshakeInfo->serverKeySize, LENGTH_SIZE ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH phase 1 keyex value" );
 	return( CRYPT_OK );
 	}
@@ -838,8 +843,8 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) || \
 			stringLength != 12 || memcmp( stringBuffer, "ssh-userauth", 12 ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-						"Invalid service request packet" );
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
+					"Invalid service request packet" );
 		openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
 							 SSH2_MSG_SERVICE_ACCEPT );
 		writeString32( &stream, "ssh-userauth", 0 );
@@ -872,7 +877,7 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 					return( status );
 				}
 			if( retryCount >= 3 )
-				retExt( sessionInfoPtr, CRYPT_ERROR_PERMISSION,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_PERMISSION,
 						"Too many iterations of negotiation during user "
 						"auth request processing" );
 

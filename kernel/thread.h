@@ -1345,7 +1345,7 @@ rtems_id threadSelf( void );
 			{ \
 			status = pthread_create( &threadHandle, NULL, function, arg ) ? \
 					 CRYPT_ERROR : CRYPT_OK; \
-			syncHandle = ( long ) threadHandle; \
+			syncHandle = threadHandle; \
 			}
 #define THREAD_EXIT( sync )		pthread_exit( ( void * ) 0 )
 #define THREAD_INITIALISER		0
@@ -1356,10 +1356,14 @@ rtems_id threadSelf( void );
 #elif defined( __MVS__ )
   #define THREAD_YIELD()		pthread_yield( NULL )
 #elif defined( sun )
-  /* Slowaris gets a bit complex, SunOS 4.x always returns -1 and sets errno
-     to ENOSYS when sched_yield() is called, so we use this to fall back to
-	 the UI interface if necessary */
-  #define THREAD_YIELD()		{ if( sched_yield() ) thr_yield(); }
+  #if OSVERSION <= 6
+	/* Older Slowaris gets a bit complex, SunOS 4.x always returns -1 and 
+	   sets errno to ENOSYS when sched_yield() is called, so we use this to 
+	   fall back to the UI interface if necessary */
+	#define THREAD_YIELD()		{ if( sched_yield() ) thr_yield(); }
+  #else
+	#define THREAD_YIELD()		sched_yield()
+  #endif /* Slowaris 5.7 / 7.x or newer */
 #elif defined( _AIX ) || defined( __CYGWIN__ ) || \
 	  ( defined( __hpux ) && ( OSVERSION >= 11 ) ) || \
 	  defined( __NetBSD__ ) || defined( __QNX__ )
@@ -1581,13 +1585,75 @@ rtems_id threadSelf( void );
 #define THREAD_HANDLE			DWORD
 #define MUTEX_HANDLE			HANDLE
 
-/* Mutex management functions.  InitializeCriticalSection() doesn't return
+/* Mutex management functions.  InitializeCriticalSection() doesn't return 
    an error code but can throw a STATUS_NO_MEMORY exception in certain low-
    memory situations, however this exception isn't raised in an exception-
-   safe manner (the critical section object is left in a corrupted state) so
-   it can't be safely caught and recovered from.  The result is that there's
-   no point in trying to catch it (this is a known design flaw in the
-   function) */
+   safe manner (the critical section object is left in a corrupted state) so 
+   it can't be safely caught and recovered from.  The result is that there's 
+   no point in trying to catch it (this is a known design flaw in the 
+   function).
+
+   EnterCriticalSection() is a bit more problematic.  Apart from the
+   EXCEPTION_POSSIBLE_DEADLOCK exception (which is raised if the critical 
+   section is corrupted, there's not much that can be done here), this can 
+   also raise an out-of-memory exception due to on-demand allocation of the 
+   event handle required by the critical section.  In Windows NT these were 
+   always allocated by InitializeCriticalSection(), however in the Win2K 
+   timeframe applications with hundreds of threads and hundreds or even 
+   thousands of critical sections were starting to appear, many of which 
+   were never user.  To avoid resource-exhaustion problems, Win2K was 
+   changed to perform on-demand allocation of event handles in critical 
+   sections, and even then only on the first contended acquire (rather than 
+   the first time EnterCriticalSection() is called).  To avoid this problem, 
+   InitializeCriticalSectionAndSpinCount() was kludged under Win2K to always 
+   allocate the event handle if the high bit of the dwSpinCount value was 
+   set, but this behaviour was disabled again in WinXP.
+
+   Because of this behaviour, there's no easy safe way to initialise a 
+   critical section.  What we'd have to do is create a second thread to 
+   force an initialisation by trying to enter the section while another 
+   thread holds the lock, forcing the allocation of an event handle.  In 
+   theory we could do this (since cryptlib only uses a handful of critical 
+   sections), but in practice if the system is so short of resources that it 
+   can't allocate event handles any more then the user has bigger things to 
+   worry about.  If we were running exclusively under Vista we could use the 
+   extremely useful slim reader/writer (SRW) locks, but it'll be awhile yet 
+   before we can rely on these (they're also non-reentrant due to their 
+   extreme slimness, which means that they have to be managed very 
+   carefully).
+
+   Critical sections can lead to lock convoys, a variant of the thundering 
+   herd problem that occurs due to an optimisation in lock management used 
+   under Windows where a lock with another thread waiting would be handed 
+   off to the waiting thread without ever being released.  In other words 
+   the handoff consisted of handing ownership over to the waiting thread 
+   (without unlocking the lock) instead of unlocking and re-locking with the 
+   new thread. This was done to implement fair locking in which threads were 
+   serviced in strictly FIFO order.
+
+   This leads to a problem because it extends the lock hold time by the 
+   thread context switch latency.  Consider a lock for which a thread 
+   arrives every 2000 cycles and executes inside the lock for 1000 cycles.  
+   With thread T0 holding the lock, a new thread T1 arrives 500 cycles into 
+   the execution.  T0 releases the lock after 1000 cycles, and T1 takes 
+   ownership.  However, the context switch time is 4000 cycles (up to 10K 
+   cycles), so it can't actually start running inside the lock until cycle 
+   5000, even if there are other threads ready to run immediately.  Windows 
+   Vista fixed this by making locks slightly unfair, so that an active 
+   thread can steal the lock from the one at the front of the wait queue if 
+   the latter isn't scheduled to be run.
+
+   Finally, special handling of critical sections occurs during a process 
+   shutdown.  Firstly, every thread but the one that initiated the shutdown 
+   is killed in a fairly hostile manner.  Then, in order to avoid deadlocks, 
+   the system effectively ignores calls to Enter/LeaveCriticalSection(), 
+   since the lock may have been held by one of the killed threads.  What 
+   this means is that if the thread left lock-protected data in an 
+   inconsistent state when it was killed and the shutdown thread comes along 
+   and tries to use it, it's going to run into problems.  This is a 
+   difficult problem to solve (the MT CRT apparently has a number of 
+   problems with this in internal code paths), but luckily is triggered 
+   extremely rarely, if ever */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
 		CRITICAL_SECTION name##CriticalSection; \
@@ -1622,10 +1688,6 @@ rtems_id threadSelf( void );
    mean "the current thread".  GetCurrentThreadId() returns the thread ID,
    however this isn't the same as the thread handle.
    
-   An alternative to Sleep( 0 ) is SwitchToThread(), however this is only
-   available under the NT code base for NT 4.0 and later, so it wouldn't
-   work under the Win95 code base.
-
    After we wait for the thread, we need to close the handle.  This is
    complicated by the fact that we can only close it once all threads have
    exited the wait, which requires further calisthenics in the function that

@@ -87,7 +87,7 @@ BOOLEAN capabilityInfoOK( const CAPABILITY_INFO *capabilityInfoPtr,
 		{
 		if( ( capabilityInfoPtr->blockSize < bitsToBytes( 8 ) || \
         	  capabilityInfoPtr->blockSize > CRYPT_MAX_IVSIZE ) || \
-			( capabilityInfoPtr->minKeySize < bitsToBytes( MIN_KEYSIZE_BITS ) || \
+			( capabilityInfoPtr->minKeySize < MIN_KEYSIZE || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE ) )
 			return( FALSE );
 		if( capabilityInfoPtr->initKeyParamsFunction == NULL || \
@@ -115,8 +115,11 @@ BOOLEAN capabilityInfoOK( const CAPABILITY_INFO *capabilityInfoPtr,
 	if( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 		cryptAlgo <= CRYPT_ALGO_LAST_PKC )
 		{
+		const int minKeySize = isEccAlgo( cryptAlgo ) ? \
+							   MIN_PKCSIZE_ECC : MIN_PKCSIZE;
+
 		if( capabilityInfoPtr->blockSize || \
-			( capabilityInfoPtr->minKeySize < bitsToBytes( MIN_PKCSIZE_BITS ) || \
+			( capabilityInfoPtr->minKeySize < minKeySize || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_PKCSIZE ) )
 			return( FALSE );
 		if( capabilityInfoPtr->initKeyFunction == NULL )
@@ -136,7 +139,7 @@ BOOLEAN capabilityInfoOK( const CAPABILITY_INFO *capabilityInfoPtr,
 		{
 		if( ( capabilityInfoPtr->blockSize < bitsToBytes( 128 ) || \
 			  capabilityInfoPtr->blockSize > CRYPT_MAX_HASHSIZE ) || \
-			( capabilityInfoPtr->minKeySize < bitsToBytes( MIN_KEYSIZE_BITS ) || \
+			( capabilityInfoPtr->minKeySize < MIN_KEYSIZE || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE ) )
 			return( FALSE );
 		if( capabilityInfoPtr->initKeyFunction == NULL )
@@ -153,8 +156,8 @@ void getCapabilityInfo( CRYPT_QUERY_INFO *cryptQueryInfo,
 						const CAPABILITY_INFO FAR_BSS *capabilityInfoPtr )
 	{
 	memset( cryptQueryInfo, 0, sizeof( CRYPT_QUERY_INFO ) );
-	strcpy_s( ( char * ) cryptQueryInfo->algoName, CRYPT_MAX_TEXTSIZE,
-			  capabilityInfoPtr->algoName );
+	strlcpy_s( ( char * ) cryptQueryInfo->algoName, CRYPT_MAX_TEXTSIZE,
+			   capabilityInfoPtr->algoName );
 	cryptQueryInfo->blockSize = capabilityInfoPtr->blockSize;
 	cryptQueryInfo->minKeySize = capabilityInfoPtr->minKeySize;
 	cryptQueryInfo->keySize = capabilityInfoPtr->keySize;
@@ -295,7 +298,7 @@ void freeContextBignums( PKC_INFO *pkcInfo, int contextFlags )
 
 /****************************************************************************
 *																			*
-*								Misc. Functions								*
+*							Self-test Support Functions						*
 *																			*
 ****************************************************************************/
 
@@ -339,4 +342,127 @@ void staticInitContext( CONTEXT_INFO *contextInfoPtr,
 void staticDestroyContext( CONTEXT_INFO *contextInfoPtr )
 	{
 	memset( contextInfoPtr, 0, sizeof( CONTEXT_INFO ) );
+	}
+
+/* Perform a self-test of a cipher, encrypting and decrypting one block of 
+   data and comparing it to a fixed test value */
+
+int testCipher( const CAPABILITY_INFO *capabilityInfo, 
+				void *keyDataStorage, const void *key, 
+				const int keySize, const void *plaintext,
+				const void *ciphertext )
+	{
+	CONTEXT_INFO contextInfo;
+	CONV_INFO contextData;
+	BYTE temp[ CRYPT_MAX_IVSIZE + 8 ];
+	int status;
+
+	assert( isReadPtr( capabilityInfo, sizeof( CAPABILITY_INFO ) ) );
+	assert( isWritePtr( keyDataStorage, \
+						capabilityInfo->getInfoFunction( CAPABILITY_INFO_STATESIZE,
+														 NULL, 0 ) ) );
+	assert( isReadPtr( key, keySize ) );
+	assert( isReadPtr( plaintext, capabilityInfo->blockSize ) );
+	assert( isReadPtr( ciphertext, capabilityInfo->blockSize ) );
+
+	memcpy( temp, plaintext, capabilityInfo->blockSize );
+
+	staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
+					   &contextData, sizeof( CONV_INFO ), 
+					   keyDataStorage );
+	status = capabilityInfo->initKeyFunction( &contextInfo, key, keySize );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfo->encryptFunction( &contextInfo, temp, 
+												  capabilityInfo->blockSize );
+	if( cryptStatusOK( status ) && \
+		memcmp( ciphertext, temp, capabilityInfo->blockSize ) )
+		status = CRYPT_ERROR_FAILED;
+	if( cryptStatusOK( status ) )
+		status = capabilityInfo->decryptFunction( &contextInfo, temp, 
+												  capabilityInfo->blockSize );
+	staticDestroyContext( &contextInfo );
+	if( cryptStatusError( status ) || \
+		memcmp( plaintext, temp, capabilityInfo->blockSize ) )
+		return( CRYPT_ERROR_FAILED );
+	
+	return( CRYPT_OK );
+	}
+
+/* Perform a self-test of a hash or MAC */
+
+int testHash( const CAPABILITY_INFO *capabilityInfo, 
+			  void *hashDataStorage, const void *data, const int dataLength,
+			  const void *hashValue )
+	{
+	CONTEXT_INFO contextInfo;
+	HASH_INFO contextData;
+	int status = CRYPT_OK;
+
+	assert( isReadPtr( capabilityInfo, sizeof( CAPABILITY_INFO ) ) );
+	assert( isWritePtr( hashDataStorage, \
+						capabilityInfo->getInfoFunction( CAPABILITY_INFO_STATESIZE,
+														 NULL, 0 ) ) );
+	assert( ( data == NULL && dataLength == 0 ) || \
+			isReadPtr( data, dataLength ) );
+	assert( isReadPtr( hashValue, capabilityInfo->blockSize ) );
+
+	staticInitContext( &contextInfo, CONTEXT_HASH, capabilityInfo,
+					   &contextData, sizeof( HASH_INFO ), hashDataStorage );
+	if( cryptStatusOK( status ) && data != NULL )
+		{
+		/* Some of the test vector sets start out with empty strings, so we 
+		   only call the hash function if we've actually been fed data to 
+		   hash */
+		status = capabilityInfo->encryptFunction( &contextInfo, 
+												  ( void * ) data, 
+												  dataLength );
+		contextInfo.flags |= CONTEXT_HASH_INITED;
+		}
+	if( cryptStatusOK( status ) )
+		status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
+	if( cryptStatusOK( status ) && \
+		memcmp( contextInfo.ctxHash->hash, hashValue, 
+				capabilityInfo->blockSize ) )
+		status = CRYPT_ERROR_FAILED;
+	staticDestroyContext( &contextInfo );
+
+	return( status );
+	}
+
+int testMAC( const CAPABILITY_INFO *capabilityInfo, 
+			 void *macDataStorage, const void *key, 
+			 const int keySize, const void *data, const int dataLength,
+			 const void *hashValue )
+	{
+	CONTEXT_INFO contextInfo;
+	MAC_INFO contextData;
+	int status = CRYPT_OK;
+
+	assert( isReadPtr( capabilityInfo, sizeof( CAPABILITY_INFO ) ) );
+	assert( isWritePtr( macDataStorage, \
+						capabilityInfo->getInfoFunction( CAPABILITY_INFO_STATESIZE,
+														 NULL, 0 ) ) );
+	assert( isReadPtr( key, keySize ) );
+	assert( isReadPtr( data, dataLength ) );
+	assert( isReadPtr( hashValue, capabilityInfo->blockSize ) );
+
+	staticInitContext( &contextInfo, CONTEXT_MAC, capabilityInfo,
+					   &contextData, sizeof( MAC_INFO ), macDataStorage );
+	status = capabilityInfo->initKeyFunction( &contextInfo, key, keySize );
+	if( cryptStatusOK( status ) )
+		{
+		status = capabilityInfo->encryptFunction( &contextInfo, 
+												  ( void * ) data, 
+												  dataLength );
+		contextInfo.flags |= CONTEXT_HASH_INITED;
+		}
+	if( cryptStatusOK( status ) )
+		status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
+	if( cryptStatusOK( status ) && \
+		memcmp( contextInfo.ctxMAC->mac, hashValue, 
+				capabilityInfo->blockSize ) )
+		status = CRYPT_ERROR_FAILED;
+	staticDestroyContext( &contextInfo );
+
+	return( status );
 	}

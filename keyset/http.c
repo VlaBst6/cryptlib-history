@@ -110,14 +110,16 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 		{
 		const char *keyName = getKeyName( keyIDtype );
 		char queryBuffer[ 1024 + 8 ], *queryBufPtr = queryBuffer;
+		const int queryBufSize = ( keyIDlength <= 1024 - 64 ) ? \
+								 1024 : keyIDlength + 64;
 		const int keyNameLen = strlen( keyName );
 
-		if( keyIDlength > 1024 - 64 && \
+		if( queryBufSize > 1024 && \
 		    ( queryBufPtr = clDynAlloc( "getItemFunction", \
-										keyIDlength + 64 ) ) == NULL )
+										queryBufSize ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
-		strcpy( queryBufPtr, keyName );
-		strcat( queryBufPtr + keyNameLen, "=" );
+		strlcpy_s( queryBufPtr, queryBufSize, keyName );
+		strlcat_s( queryBufPtr + keyNameLen, queryBufSize, "=" );
 		memcpy( queryBufPtr + keyNameLen + 1, keyID, keyIDlength );
 		sioctl( &httpInfo->stream, STREAM_IOCTL_QUERY, queryBufPtr, 
 				keyNameLen + 1 + keyIDlength );
@@ -149,8 +151,7 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 					keysetInfo->keyDataSize );
 	if( cryptStatusError( status ) )
 		{
-		sNetGetErrorInfo( &httpInfo->stream, httpInfo->errorMessage, 
-						  &httpInfo->errorCode );
+		sNetGetErrorInfo( &httpInfo->stream, &keysetInfo->errorInfo );
 
 		/* If it's a not-found error, this is non-fatal condition (it just
 		   means that the requested cert wasn't found, but doesn't prevent 
@@ -185,22 +186,20 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 /* Prepare to open a connection to an HTTP server */
 
 static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
+						 const int nameLength,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	HTTP_INFO *httpInfo = keysetInfo->keysetHTTP;
 	NET_CONNECT_INFO connectInfo;
-	int status;
 
 	/* Set up the HTTP connection */
 	initNetConnectInfo( &connectInfo, keysetInfo->ownerHandle, CRYPT_ERROR, 
 						CRYPT_ERROR, NET_OPTION_HOSTNAME );
 	connectInfo.name = name;
-	connectInfo.nameLength = strlen( name );
+	connectInfo.nameLength = nameLength;
 	connectInfo.port = 80;
-	status = sNetConnect( &httpInfo->stream, STREAM_PROTOCOL_HTTP, 
-						  &connectInfo, httpInfo->errorMessage, 
-						  &httpInfo->errorCode );
-	return( status );
+	return( sNetConnect( &httpInfo->stream, STREAM_PROTOCOL_HTTP, 
+						 &connectInfo, &keysetInfo->errorInfo ) );
 	}
 
 /* Close a previously-opened HTTP connection */

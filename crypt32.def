@@ -18,7 +18,6 @@
 ; in one of the source modules, but this is even uglier than the .DEF hack.
 
 LIBRARY		CL32
-DESCRIPTION	'cryptlib Encryption DLL'
 EXPORTS		cryptAddCertExtension
 			cryptAddPrivateKey
 			cryptAddPublicKey
@@ -62,6 +61,7 @@ EXPORTS		cryptAddCertExtension
 			cryptGetAttribute
 			cryptGetAttributeString
 			cryptGetCertExtension
+			cryptGetKey
 			cryptGetPrivateKey
 			cryptGetPublicKey
 			cryptImportCert

@@ -131,12 +131,12 @@ static void waitWarn( const int objectHandle, const int waitCount )
 	char buffer[ 128 + 8 ];
 
 	if( objectHandle == SYSTEM_OBJECT_HANDLE )
-		strcpy( buffer, "system object" );
+		strlcpy_s( buffer, 128, "system object" );
 	else
 		if( objectHandle == DEFAULTUSER_OBJECT_HANDLE )
-			strcpy( buffer, "default user object" );
+			strlcpy_s( buffer, 128, "default user object" );
 		else
-			sPrintf_s( buffer, 128, "object %d (%s, subtype %lX)",
+			sprintf_s( buffer, 128, "object %d (%s, subtype %lX)",
 					   objectHandle, objectTypeNames[ objectInfoPtr->type ],
 					   objectInfoPtr->subType );
 	fprintf( stderr, "\nWarning: Thread %X waited %d iteration%s for %s.\n",
@@ -580,11 +580,11 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_DEV_CREATEOBJECT,		/* Device: Create object */
 	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_OBJTYPE,
-	  PRE_POST_DISPATCH( SetObjectOwner, MakeObjectExternal ) },
+	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ) },
 	{ MESSAGE_DEV_CREATEOBJECT_INDIRECT,/* Device: Create obj.from data */
 	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_OBJTYPE,
-	  PRE_POST_DISPATCH( SetObjectOwner, MakeObjectExternal ) },
+	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ) },
 
 	/* Object-type-specific messages: Envelopes */
 	{ MESSAGE_ENV_PUSHDATA,			/* Envelope: Push data */
@@ -666,10 +666,7 @@ int initSendMessage( KERNEL_DATA *krnlDataPtr )
 		if( !isParamMessage( messageParamACL->type ) || \
 			( messageParamACL->objectACL.subTypeA & SUBTYPE_CLASS_B ) || \
 			( messageParamACL->objectACL.subTypeB & SUBTYPE_CLASS_A ) )
-			{
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_FAILED );
-			}
+			retIntError();
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ) )
 		retIntError();
@@ -684,10 +681,7 @@ int initSendMessage( KERNEL_DATA *krnlDataPtr )
 			messageInfo->paramCheck >= PARAMTYPE_LAST || \
 			( messageInfo->subTypeA & SUBTYPE_CLASS_B ) || \
 			( messageInfo->subTypeB & SUBTYPE_CLASS_A ) )
-			{
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_FAILED );
-			}
+			retIntError();
 		}
 
 	/* Set up the reference to the kernel data block */

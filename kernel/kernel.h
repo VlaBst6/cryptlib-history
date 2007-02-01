@@ -464,11 +464,11 @@ int preDispatchCheckData( const int objectHandle,
 						  const void *messageDataPtr,
 						  const int messageValue,
 						  const void *dummy );
-int preDispatchSetObjectOwner( const int objectHandle,
-							   const MESSAGE_TYPE message,
-							   const void *messageDataPtr,
-							   const int messageValue,
-							   const void *dummy );
+int preDispatchCheckCreate( const int objectHandle,
+							const MESSAGE_TYPE message,
+							const void *messageDataPtr,
+							const int messageValue,
+							const void *dummy );
 int postDispatchMakeObjectExternal( const int dummy,
 									const MESSAGE_TYPE message,
 									const void *messageDataPtr,

@@ -149,18 +149,20 @@ CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
 			  $(OBJPATH)rc4enc.o $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o \
 			  $(OBJPATH)rc5enc.o $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
 
-CTXOBJS		= $(OBJPATH)kg_dlp.o $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o \
-			  $(OBJPATH)keyload.o $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o \
-			  $(OBJPATH)ctx_3des.o $(OBJPATH)ctx_aes.o $(OBJPATH)ctx_bf.o \
+CTXOBJS		= $(OBJPATH)ctx_3des.o $(OBJPATH)ctx_aes.o $(OBJPATH)ctx_bf.o \
 			  $(OBJPATH)ctx_cast.o $(OBJPATH)ctx_des.o $(OBJPATH)ctx_dh.o \
-			  $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_hmd5.o \
-			  $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_idea.o \
-			  $(OBJPATH)ctx_md2.o $(OBJPATH)ctx_md4.o $(OBJPATH)ctx_md5.o \
-			  $(OBJPATH)ctx_misc.o $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o \
-			  $(OBJPATH)ctx_rc5.o $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o \
-			  $(OBJPATH)ctx_sha.o $(OBJPATH)ctx_sha2.o $(OBJPATH)ctx_skip.o
+			  $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdsa.o $(OBJPATH)ctx_elg.o \
+			  $(OBJPATH)ctx_hmd5.o $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o \
+			  $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md2.o $(OBJPATH)ctx_md4.o \
+			  $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o $(OBJPATH)ctx_rc2.o \
+			  $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o $(OBJPATH)ctx_ripe.o \
+			  $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o $(OBJPATH)ctx_sha2.o \
+			  $(OBJPATH)ctx_skip.o $(OBJPATH)kg_dlp.o $(OBJPATH)kg_ecc.o \
+			  $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o $(OBJPATH)keyload.o \
+			  $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o
 
-DEVOBJS		= $(OBJPATH)fortezza.o $(OBJPATH)pkcs11.o $(OBJPATH)system.o
+DEVOBJS		= $(OBJPATH)fortezza.o $(OBJPATH)pkcs11.o $(OBJPATH)pkcs11_init.o \
+			  $(OBJPATH)pkcs11_pkc.o $(OBJPATH)pkcs11_rw.o $(OBJPATH)system.o
 
 ENVOBJS		= $(OBJPATH)cms_denv.o $(OBJPATH)cms_env.o $(OBJPATH)decode.o \
 			  $(OBJPATH)encode.o $(OBJPATH)pgp_denv.o $(OBJPATH)pgp_env.o \
@@ -186,22 +188,22 @@ KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
 			  $(OBJPATH)msg_acl.o $(OBJPATH)obj_acc.o $(OBJPATH)objects.o \
 			  $(OBJPATH)sec_mem.o $(OBJPATH)semaphore.o $(OBJPATH)sendmsg.o
 
-LIBOBJS		= $(OBJPATH)cryptapi.o $(OBJPATH)cryptcfg.o $(OBJPATH)cryptcrt.o \
-			  $(OBJPATH)cryptctx.o $(OBJPATH)cryptdev.o $(OBJPATH)cryptenv.o \
-			  $(OBJPATH)cryptkey.o $(OBJPATH)cryptlib.o $(OBJPATH)cryptses.o \
-			  $(OBJPATH)cryptusr.o
+LIBOBJS		= $(OBJPATH)cryptapi.o $(OBJPATH)cryptcrt.o $(OBJPATH)cryptctx.o \
+			  $(OBJPATH)cryptdev.o $(OBJPATH)cryptenv.o $(OBJPATH)cryptkey.o \
+			  $(OBJPATH)cryptlib.o $(OBJPATH)cryptses.o $(OBJPATH)cryptusr.o
 
 MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_int.o $(OBJPATH)keyex_rw.o \
-			  $(OBJPATH)mech_drv.o $(OBJPATH)mech_enc.o $(OBJPATH)mech_sig.o \
-			  $(OBJPATH)mech_wrp.o $(OBJPATH)obj_qry.o $(OBJPATH)sign.o \
-			  $(OBJPATH)sign_cms.o $(OBJPATH)sign_int.o $(OBJPATH)sign_pgp.o \
-			  $(OBJPATH)sign_rw.o $(OBJPATH)sign_x509.o
+			  $(OBJPATH)mech_drv.o $(OBJPATH)mech_enc.o $(OBJPATH)mech_int.o \
+			  $(OBJPATH)mech_sig.o $(OBJPATH)mech_wrp.o $(OBJPATH)obj_qry.o \
+			  $(OBJPATH)sign.o $(OBJPATH)sign_cms.o $(OBJPATH)sign_int.o \
+			  $(OBJPATH)sign_pgp.o $(OBJPATH)sign_rw.o $(OBJPATH)sign_x509.o
 
 MISCOBJS	= $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o $(OBJPATH)asn1_wr.o \
 			  $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o $(OBJPATH)int_api.o \
 			  $(OBJPATH)int_attr.o $(OBJPATH)int_env.o $(OBJPATH)java_jni.o \
 			  $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o $(OBJPATH)pgp_misc.o \
-			  $(OBJPATH)random.o $(OBJPATH)unix.o
+			  $(OBJPATH)random.o $(OBJPATH)unix.o $(OBJPATH)user.o \
+			  $(OBJPATH)user_cfg.o 
 
 SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_rd.o \
 			  $(OBJPATH)cmp_wr.o $(OBJPATH)ocsp.o $(OBJPATH)pnppki.o \
@@ -288,40 +290,8 @@ default:
 		echo "The c89 environment variable _C89_CCMODE must be set to 1." >&2 ; \
 		exit 1 ; \
 	fi
-	@case $(OSNAME) in \
-		'BeOS') \
-			make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-				-DOSVERSION=`./tools/osversion.sh BeOS` \
-				-D_STATIC_LINKING" BeOS ;; \
-		'HP-UX') \
-			if gcc -v > /dev/null 2>&1 ; then \
-				make CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc` \
-					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
-			else \
-				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
-			fi ;; \
-		'SunOS') \
-			if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
-				make CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc` \
-					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
-			else \
-				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
-			fi ;; \
-		*) \
-			if [ `uname -m | cut -c 1-4` = 'CRAY' ] ; then \
-				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-					-DOSVERSION=`./tools/osversion.sh CRAY`" OSNAME="CRAY" CRAY ; \
-			elif [ '$(CROSSCOMPILE)x' = '1x' ] ; then \
-				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-					-DOSVERSION=`./tools/osversion.sh $(OSNAME)`" $(OSNAME) ; \
-			else \
-				make CFLAGS="$(CFLAGS) `./tools/ccopts.sh $(CC)` \
-					-DOSVERSION=`./tools/osversion.sh autodetect`" $(OSNAME) ; \
-			fi ;; \
-	esac
-
+	@./tools/buildall.sh $(OSNAME) $(CC) $(CFLAGS)
+	
 shared:
 	@make directories
 	@make toolscripts
@@ -345,7 +315,7 @@ shared:
 					-DOSVERSION=`./tools/osversion.sh HP-UX`" HP-UX ; \
 			fi ;; \
 		'SunOS') \
-			if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
+			if [ `/usr/ucb/cc 2>&1 | grep -c installed` = '1' ] ; then \
 				make TARGET=$(SLIBNAME) OBJPATH=$(SHARED_OBJ_PATH) \
 					CC=gcc LD=gcc CFLAGS="$(CFLAGS) `./tools/ccopts.sh gcc SunOS` \
 					-DOSVERSION=`./tools/osversion.sh SunOS`" SunOS ; \
@@ -371,13 +341,9 @@ directories:
 	@- if [ ! -d $(SHARED_OBJ_PATH) ] ; then mkdir $(SHARED_OBJ_DIR) ; fi
 
 toolscripts:
-	@- if [ ! -x ./tools/buildasm.sh ] ; then chmod +x ./tools/buildasm.sh ; fi
-	@- if [ ! -x ./tools/buildlib.sh ] ; then chmod +x ./tools/buildlib.sh ; fi
-	@- if [ ! -x ./tools/buildsharedlib.sh ] ; then chmod +x ./tools/buildsharedlib.sh ; fi
-	@- if [ ! -x ./tools/ccopts.sh ] ; then chmod +x ./tools/ccopts.sh ; fi
-	@- if [ ! -x ./tools/getlibs.sh ] ; then chmod +x ./tools/getlibs.sh ; fi
-	@- if [ ! -x ./tools/mkhdr.sh ] ; then chmod +x ./tools/mkhdr.sh ; fi
-	@- if [ ! -x ./tools/osversion.sh ] ; then chmod +x ./tools/osversion.sh ; fi
+	@for file in ./tools/*.sh ; do \
+		if [ ! -x $$file ] ; then chmod +x $$file ; fi \
+	done
 
 # Frohe Ostern.
 
@@ -401,12 +367,8 @@ love:
 
 # Main directory
 
-$(OBJPATH)cryptapi.o:	$(CRYPT_DEP) crypt/md2.h crypt/md4.h crypt/md5.h \
-						crypt/sha.h cryptapi.c
+$(OBJPATH)cryptapi.o:	$(CRYPT_DEP) cryptapi.c
 						$(CC) $(CFLAGS) cryptapi.c -o $(OBJPATH)cryptapi.o
-
-$(OBJPATH)cryptcfg.o:	$(CRYPT_DEP) cryptcfg.c
-						$(CC) $(CFLAGS) cryptcfg.c -o $(OBJPATH)cryptcfg.o
 
 $(OBJPATH)cryptcrt.o:	$(CRYPT_DEP) cert/cert.h cryptcrt.c
 						$(CC) $(CFLAGS) cryptcrt.c -o $(OBJPATH)cryptcrt.o
@@ -427,10 +389,10 @@ $(OBJPATH)cryptkey.o:	$(CRYPT_DEP) keyset/keyset.h cryptkey.c
 $(OBJPATH)cryptlib.o:	$(CRYPT_DEP) cryptlib.c
 						$(CC) $(CFLAGS) cryptlib.c -o $(OBJPATH)cryptlib.o
 
-$(OBJPATH)cryptses.o:	$(CRYPT_DEP) cryptses.c
+$(OBJPATH)cryptses.o:	$(CRYPT_DEP) session/session.h cryptses.c
 						$(CC) $(CFLAGS) cryptses.c -o $(OBJPATH)cryptses.o
 
-$(OBJPATH)cryptusr.o:	$(CRYPT_DEP) cryptusr.c
+$(OBJPATH)cryptusr.o:	$(CRYPT_DEP) misc/user.h cryptusr.c
 						$(CC) $(CFLAGS) cryptusr.c -o $(OBJPATH)cryptusr.o
 
 # Additional modules whose use needs to be explicitly enabled by the user.
@@ -558,24 +520,6 @@ $(OBJPATH)write.o:		$(CRYPT_DEP) $(ASN1_DEP) cert/cert.h cert/write.c
 
 # context subdirectory
 
-$(OBJPATH)kg_dlp.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_dlp.c
-						$(CC) $(CFLAGS) context/kg_dlp.c -o $(OBJPATH)kg_dlp.o
-
-$(OBJPATH)kg_prime.o:	$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_prime.c
-						$(CC) $(CFLAGS) context/kg_prime.c -o $(OBJPATH)kg_prime.o
-
-$(OBJPATH)kg_rsa.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_rsa.c
-						$(CC) $(CFLAGS) context/kg_rsa.c -o $(OBJPATH)kg_rsa.o
-
-$(OBJPATH)keyload.o:	$(CRYPT_DEP) context/context.h context/keyload.c
-						$(CC) $(CFLAGS) context/keyload.c -o $(OBJPATH)keyload.o
-
-$(OBJPATH)key_rd.o:		$(CRYPT_DEP) $(ASN1_DEP) context/key_rd.c
-						$(CC) $(CFLAGS) context/key_rd.c -o $(OBJPATH)key_rd.o
-
-$(OBJPATH)key_wr.o:		$(CRYPT_DEP) $(ASN1_DEP) context/key_wr.c
-						$(CC) $(CFLAGS) context/key_wr.c -o $(OBJPATH)key_wr.o
-
 $(OBJPATH)ctx_3des.o:	$(CRYPT_DEP) context/context.h crypt/des.h context/ctx_3des.c
 						$(CC) $(CFLAGS) context/ctx_3des.c -o $(OBJPATH)ctx_3des.o
 
@@ -598,6 +542,9 @@ $(OBJPATH)ctx_dh.o:		$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_dh.c
 
 $(OBJPATH)ctx_dsa.o:	$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_dsa.c
 						$(CC) $(CFLAGS) context/ctx_dsa.c -o $(OBJPATH)ctx_dsa.o
+
+$(OBJPATH)ctx_ecdsa.o:	$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_ecdsa.c
+						$(CC) $(CFLAGS) context/ctx_ecdsa.c -o $(OBJPATH)ctx_ecdsa.o
 
 $(OBJPATH)ctx_elg.o:	$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_elg.c
 						$(CC) $(CFLAGS) context/ctx_elg.c -o $(OBJPATH)ctx_elg.o
@@ -649,6 +596,27 @@ $(OBJPATH)ctx_sha2.o:	$(CRYPT_DEP) context/context.h crypt/sha2.h context/ctx_sh
 
 $(OBJPATH)ctx_skip.o:	$(CRYPT_DEP) context/context.h context/ctx_skip.c
 						$(CC) $(CFLAGS) context/ctx_skip.c -o $(OBJPATH)ctx_skip.o
+
+$(OBJPATH)kg_dlp.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_dlp.c
+						$(CC) $(CFLAGS) context/kg_dlp.c -o $(OBJPATH)kg_dlp.o
+
+$(OBJPATH)kg_ecc.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_ecc.c
+						$(CC) $(CFLAGS) context/kg_ecc.c -o $(OBJPATH)kg_ecc.o
+
+$(OBJPATH)kg_prime.o:	$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_prime.c
+						$(CC) $(CFLAGS) context/kg_prime.c -o $(OBJPATH)kg_prime.o
+
+$(OBJPATH)kg_rsa.o:		$(CRYPT_DEP) context/context.h bn/bn_prime.h context/kg_rsa.c
+						$(CC) $(CFLAGS) context/kg_rsa.c -o $(OBJPATH)kg_rsa.o
+
+$(OBJPATH)keyload.o:	$(CRYPT_DEP) context/context.h context/keyload.c
+						$(CC) $(CFLAGS) context/keyload.c -o $(OBJPATH)keyload.o
+
+$(OBJPATH)key_rd.o:		$(CRYPT_DEP) $(ASN1_DEP) context/key_rd.c
+						$(CC) $(CFLAGS) context/key_rd.c -o $(OBJPATH)key_rd.o
+
+$(OBJPATH)key_wr.o:		$(CRYPT_DEP) $(ASN1_DEP) context/key_wr.c
+						$(CC) $(CFLAGS) context/key_wr.c -o $(OBJPATH)key_wr.o
 
 # crypt subdirectory - crypt algos
 
@@ -764,8 +732,20 @@ $(OBJPATH)sha2.o:		crypt/osconfig.h crypt/sha.h crypt/sha1locl.h crypt/sha2.c
 $(OBJPATH)fortezza.o:	$(CRYPT_DEP) device/device.h device/fortezza.c
 						$(CC) $(CFLAGS) device/fortezza.c -o $(OBJPATH)fortezza.o
 
-$(OBJPATH)pkcs11.o:		$(CRYPT_DEP) device/device.h device/pkcs11.c
+$(OBJPATH)pkcs11.o:		$(CRYPT_DEP) device/device.h device/pkcs11_api.h device/pkcs11.c
 						$(CC) $(CFLAGS) device/pkcs11.c -o $(OBJPATH)pkcs11.o
+
+$(OBJPATH)pkcs11_init.o: $(CRYPT_DEP) device/device.h device/pkcs11_api.h \
+						device/pkcs11_init.c
+						$(CC) $(CFLAGS) device/pkcs11_init.c -o $(OBJPATH)pkcs11_init.o
+
+$(OBJPATH)pkcs11_pkc.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
+						device/pkcs11_pkc.c
+						$(CC) $(CFLAGS) device/pkcs11_pkc.c -o $(OBJPATH)pkcs11_pkc.o
+
+$(OBJPATH)pkcs11_rw.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
+						device/pkcs11_rw.c
+						$(CC) $(CFLAGS) device/pkcs11_rw.c -o $(OBJPATH)pkcs11_rw.o
 
 $(OBJPATH)system.o:		$(CRYPT_DEP) device/device.h device/capabil.h device/system.c
 						$(CC) $(CFLAGS) device/system.c -o $(OBJPATH)system.o
@@ -943,6 +923,9 @@ $(OBJPATH)mech_drv.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_drv.c
 $(OBJPATH)mech_enc.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_enc.c
 						$(CC) $(CFLAGS) mechs/mech_enc.c -o $(OBJPATH)mech_enc.o
 
+$(OBJPATH)mech_int.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_int.c
+						$(CC) $(CFLAGS) mechs/mech_int.c -o $(OBJPATH)mech_int.o
+
 $(OBJPATH)mech_sig.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/mech_sig.c
 						$(CC) $(CFLAGS) mechs/mech_sig.c -o $(OBJPATH)mech_sig.o
 
@@ -1010,6 +993,12 @@ $(OBJPATH)random.o:		$(CRYPT_DEP) random/random.c
 
 $(OBJPATH)unix.o:		$(CRYPT_DEP) random/unix.c
 						$(CC) $(CFLAGS) random/unix.c -o $(OBJPATH)unix.o
+
+$(OBJPATH)user.o:		$(CRYPT_DEP) misc/user.h misc/user.c
+						$(CC) $(CFLAGS) misc/user.c -o $(OBJPATH)user.o
+
+$(OBJPATH)user_cfg.o:	$(CRYPT_DEP) misc/user.h misc/user_cfg.c
+						$(CC) $(CFLAGS) misc/user_cfg.c -o $(OBJPATH)user_cfg.o
 
 # session subdirectory
 
@@ -1346,18 +1335,36 @@ BSD/OS:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
 		-fomit-frame-pointer -O3"
+
 FreeBSD:
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
-	make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
-		-fomit-frame-pointer -O3 -pthread"
+	@if uname -m | grep "i[3,4,5,6]86" > /dev/null; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -pthread" ; \
+	else \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -pthread" ; \
+	fi
+	
 NetBSD:
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
-	make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
-		-fomit-frame-pointer -O3 -pthread"
+	@if uname -m | grep "i[3,4,5,6]86" > /dev/null; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -pthread" ; \
+	else \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -pthread" ; \
+	fi
+
 OpenBSD:
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
-	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
-		-fomit-frame-pointer -O3"
+	@if uname -m | grep "i[3,4,5,6]86" > /dev/null; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3" ; \
+	else \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3" ; \
+	fi
 
 # Convex:
 
@@ -1482,30 +1489,32 @@ HP-UX:
 		echo "" ; \
 		fi
 	@rm -f a.out
-	@if [ `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` -eq 11 ] ; then \
-		if [ $(CC) = "gcc" ] ; then \
-			if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0 -D_REENTRANT" ; \
-  			else \
-				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
-  			fi ; \
-		else \
-			if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-				./tools/buildasm.sh $(AS) $(OBJPATH) ; \
-				make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae -D_REENTRANT" ; \
+	@case `./tools/osversion.sh HP-UX` in \
+		8) \
+		9) \
+			make $(DEFINES) CFLAGS="$(CFLAGS) -Aa -D_HPUX_SOURCE +O3" ;; \
+		10) \
+			if [ $(CC) = "gcc" ] ; then \
+				make $(DEFINES) CFLAGS="$(CFLAGS) -O3" ; \
 			else \
-				make $(DEFINES) CFLAGS="$(CFLAGS) +O3 -D_REENTRANT" ; \
-			fi ; \
-		fi ; \
-	elif [ `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` -eq 10 ] ; then \
-		if [ $(CC) = "gcc" ] ; then \
-			make $(DEFINES) CFLAGS="$(CFLAGS) -O3" ; \
-		else \
-			make $(DEFINES) CFLAGS="$(CFLAGS) -Ae +O3" ; \
-		fi ; \
-	else \
-		make $(DEFINES) CFLAGS="$(CFLAGS) -Aa -D_HPUX_SOURCE +O3" ; \
-	fi
+				make $(DEFINES) CFLAGS="$(CFLAGS) -Ae +O3" ; \
+			fi ;; \
+		11) \
+			if [ $(CC) = "gcc" ] ; then \
+				if [ `getconf CPU_VERSION` -ge 532 ] ; then \
+					make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0 -D_REENTRANT" ; \
+	  			else \
+					make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
+	  			fi ; \
+			else \
+				if [ `getconf CPU_VERSION` -ge 532 ] ; then \
+					./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 +ESlit +DA2.0 +DS2.0 -Ae -D_REENTRANT" ; \
+				else \
+					make $(DEFINES) CFLAGS="$(CFLAGS) +O3 -D_REENTRANT" ; \
+				fi ; \
+			fi ;; \
+	esac
 
 # Irix: Use cc.
 
@@ -1560,22 +1569,30 @@ OSF1:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -D_REENTRANT"
 
-# QNX: Older versions of QNX use braindamaged old DOS-style Watcom tools
-#	   that can't handle Unix-style code (or behaviour).  To get around this
-#	   we rewrite the asm command-line to make it more DOS-like, however the
-#	   assembler can't handle either ELF or a.out formats either so we leave
-#	   it as a user-specified option.
+# QNX: Older versions of QNX (4.x) use braindamaged old 16-bit MSDOS-era 
+#	   Watcom tools that can't handle Unix-style code (or behaviour).  
+#	   The handling of compiler flags is particularly painful, in order to
+#	   save space under DOS the compiler uses variable-size enums, in theory
+#	   there's a compiler option -ei to make them the same size as an int
+#	   but because the system 'cc' is just a wrapper for the DOS-style wcc386
+#	   compiler we need to first use '-Wc' to tell the wrapper that an option
+#	   for the compiler follows and then '-ei' for the compiler option itself.
+#	   In addition to these problems the tools can't handle either ELF or 
+#	   a.out asm formats so we can't use the asm code unless we're building
+#	   with gcc.
 
 QNX:
-	@make $(DEFINES) CFLAGS="$(CFLAGS) -O4"
-
-QNX-asm:
-	@- if grep "s -o" makefile > /dev/null ; then \
-		sed s/"s -o "/"s -fo="/g makefile > makefile.tmp || exit 1 ; \
-		mv -f makefile.tmp makefile || exit 1 ; \
+	@if gcc -v > /dev/null 2>&1 ; then \
+		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM \
+			-fomit-frame-pointer -O3 -D_REENTRANT"; \
+	else \
+		if [ `./tools/osversion.sh QNX` = '4' ] ; then \
+			make $(DEFINES) CFLAGS="$(CFLAGS) -O4 -Wc,-ei -zc" ; \
+		else \
+			make $(DEFINES) CFLAGS="$(CFLAGS) -O4 -ei -zc" ; \
+		fi ; \
 	fi
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
-	@make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CFLAGS="$(CFLAGS) -DUSE_ASM -O4"
 
 # SCO: Unlike the entire rest of the world, SCO doesn't use -On, although it
 #	   does recognise -O3 to mean "turn off pass 3 optimization".  The SCO cc
@@ -1658,6 +1675,7 @@ SCO:
 		echo "Please read the entry for SCO in the makefile before continuing." ; \
 		make $(TARGET) CFLAGS="$(CFLAGS) -O" ; \
 	fi
+
 UnixWare:
 	@if gcc -v > /dev/null 2>&1 ; then \
 		./tools/buildasm.sh $(AS) $(OBJPATH) ; \
@@ -1682,14 +1700,26 @@ itgoaway:
 SunOS:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@- if [ `uname -r | tr -d '[A-Z].' | cut -c 1` = '4' ] ; then \
-		make $(DEFINES) CC=gcc CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3" ; \
+		make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=gcc \
+			CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3" ; \
 	else \
-		if [ `/usr/ucb/cc | grep -c installed` = '1' ] ; then \
-			make $(DEFINES) CC=$(CC) CFLAGS="$(CFLAGS) -fomit-frame-pointer \
-				-O3 -D_REENTRANT" ; \
+		if [ `/usr/ucb/cc 2>&1 | grep -c installed` = '1' ] ; then \
+			if [ `uname -m` = 'i86pc' ] ; then \
+				make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" CC=$(CC) \
+					CFLAGS="$(CFLAGS) -fomit-frame-pointer -O3 -DUSE_ASM -D_REENTRANT" ; \
+			else \
+				make $(DEFINES) CC=$(CC) CFLAGS="$(CFLAGS) -fomit-frame-pointer \
+					-O3 -D_REENTRANT" ; \
+			fi ; \
 		else \
-			make $(DEFINES) CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
-				-xO3 -D_REENTRANT" ; \
+			if [ `uname -m` = 'i86pc' ] ; then \
+				make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" \
+					CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
+					-xO3 -DUSE_ASM -D_REENTRANT" ; \
+			else \
+				make $(DEFINES) CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
+					-xO3 -D_REENTRANT" ; \
+			fi ; \
 		fi ; \
 	fi
 
@@ -1757,27 +1787,21 @@ EPOC:
 	@make CFLAGS="$(XCFLAGS) -D__EPOC__" $(DEFINES)
 
 # IBM MVS (a.k.a.OS/390, z/OS): File naming behaviour is controlled by the
-#								DDNAME_IO define:
+#								DDNAME_IO define.
 #
-#	DDNAME_IO defined:
-#		Use ddnames for all I/O.  User options will be saved in dynamically
-#		allocated datasets userid.CRYPTLIB.filename.
+#	DDNAME_IO defined: Use ddnames for all I/O.  User options will be saved 
+#		in dynamically allocated datasets userid.CRYPTLIB.filename.
 #
-#	DDNAME_IO not defined:
-#		Use HFS for all I/O.  User options will be saved in directory
-#		$HOME/.cryptlib.
-#
-#	Note: Tested on OS/390 2.10.
+#	DDNAME_IO not defined: Use HFS for all I/O.  User options will be saved 
+#		in directory $HOME/.cryptlib.
 
 OS/390:
 	@if grep "unix\.o" makefile > /dev/null ; then \
 		sed s/unix\.o/mvs\.o/g makefile | sed s/unix\.c/mvs\.c/g > makefile.tmp || exit 1 ; \
 	fi
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
-	@make $(DEFINES) OSOBJS="$(OBJPATH)mvsent.o" CFLAGS="$(XCFLAGS) -O2 \
+	@make $(DEFINES) CFLAGS="$(XCFLAGS) -O2 \
 		-W c,'langlvl(extended) csect rent roc ros targ(osv2r7) enum(4)' \
-		-W c,'CONVLIT(ISO8859-1)' -DDDNAME_IO -D_OPEN_THREADS \
-		-D_XOPEN_SOURCE_EXTENDED=1"
+		-W c,'CONVLIT(ISO8859-1)' -D_OPEN_THREADS -D_XOPEN_SOURCE_EXTENDED=1"
 
 # Tandem NSK/OSS: Use c89.  There are two variants of the OS here, OSS
 #				  (Posix-like layer over NSK) and NSK hosted on OSS (many

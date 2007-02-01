@@ -541,7 +541,8 @@ int krnlCreateObject( void **objectDataPtr, const int objectDataSize,
 						( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 2 ) & 011111111111L ) ) != 0 );
 	PRE( ( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 == 1 );
 	PRE( !( createObjectFlags & \
-			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY ) ) );
+			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY | \
+			   CREATEOBJECT_FLAG_PERSISTENT ) ) );
 	PRE( owner == CRYPT_UNUSED || isValidHandle( owner ) );
 	PRE( actionFlags >= 0 && actionFlags < ACTION_PERM_LAST );
 	PRE( messageFunction != NULL );
@@ -555,7 +556,8 @@ int krnlCreateObject( void **objectDataPtr, const int objectDataSize,
 		!isValidType( type ) || \
 		( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 != 1 || \
 		( createObjectFlags & \
-			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY ) ) || \
+			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY | \
+			   CREATEOBJECT_FLAG_PERSISTENT ) ) || \
 		( owner != CRYPT_UNUSED && !isValidHandle( owner ) ) || \
 		actionFlags < 0 || actionFlags >= ACTION_PERM_LAST || \
 		messageFunction == NULL )

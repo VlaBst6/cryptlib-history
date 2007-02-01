@@ -346,8 +346,10 @@ int getCertKeyID( char *keyID, const CRYPT_CERTIFICATE iCryptCert )
 
 int resetErrorInfo( DBMS_INFO *dbmsInfo )
 	{
-	dbmsInfo->errorCode = 0;
-	memset( dbmsInfo->errorMessage, 0, MAX_ERRMSG_SIZE );
+	DBMS_STATE_INFO *dbmsStateInfo = dbmsInfo->stateInfo;
+	ERROR_INFO *errorInfo = &dbmsStateInfo->errorInfo;
+
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 	return( CRYPT_OK );
 	}
 
@@ -643,14 +645,16 @@ static BOOLEAN isBusyFunction( KEYSET_INFO *keysetInfo )
 /* Open a connection to a database */
 
 static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
+						 const int nameLength,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	DBMS_INFO *dbmsInfo = keysetInfo->keysetDBMS;
 	int featureFlags, status;
 
 	/* Perform a database back-end specific open */
-	status = dbmsOpen( name, ( options == CRYPT_KEYOPT_READONLY ) ? \
-							 options : CRYPT_KEYOPT_NONE, &featureFlags );
+	status = dbmsOpen( name, nameLength,
+					   ( options == CRYPT_KEYOPT_READONLY ) ? \
+							options : CRYPT_KEYOPT_NONE, &featureFlags );
 	if( cryptStatusError( status ) )
 		{
 		endDbxSession( keysetInfo );
@@ -747,8 +751,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	/* Since the failure of the query above will set the extended error
 	   information, we have to explicitly clear it here to avoid making the
 	   (invisible) query side-effects visible to the user */
-	dbmsInfo->errorCode = 0;
-	memset( dbmsInfo->errorMessage, 0, MAX_ERRMSG_SIZE );
+	resetErrorInfo( dbmsInfo );
 
 	return( CRYPT_OK );
 	}

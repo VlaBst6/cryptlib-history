@@ -217,10 +217,15 @@ int pgpProcessIV( const CRYPT_CONTEXT iCryptContext, BYTE *ivInfo,
 	   the data with ivSize bytes of random information (which is effectively
 	   the IV) followed by two bytes of key check value after which there's a
 	   resync boundary that requires reloading the IV from the last ivSize
-	   bytes of ciphertext.  An exception is the encrypted private key,
+	   bytes of ciphertext.  Two exceptions are the encrypted private key,
 	   which does use an IV (although this can also be regarded as an
-	   ivSize-byte prefix), however there's no key check or resync.  First,
-	   we load the all-zero IV */
+	   ivSize-byte prefix), however there's no key check or resync, and an
+	   encrypted packet with MDC, which doesn't do the resync (if it weren't
+	   for that, it would be trivial to roll an MDC packet back to a non-MDC
+	   packet, only the non-resync prevents this since the first bytes of the
+	   encapsulated data packet will be corrupted).
+	   
+	   First, we load the all-zero IV */
 	setMessageData( &msgData, ( void * ) zeroIV, ivSize );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 							  &msgData, CRYPT_CTXINFO_IV );

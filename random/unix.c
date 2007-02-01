@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Unix Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2006		*
+*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2007		*
 *																			*
 ****************************************************************************/
 
@@ -103,15 +103,9 @@
   #include <sys/shm.h>
 #endif /* QNX || Cygwin */
 #if defined( __linux__ ) && ( defined(__i386__) || defined(__x86_64__) )
-  #include <asm/msr.h>
+  #include <linux/timex.h>	/* For rdtsc() */
 #endif /* Linux on x86 */
-#ifndef __MVS__
-  #if 0		/* Deprecated - 6/4/03 */
-	#include <sys/signal.h>
-  #else
-	#include <signal.h>
-  #endif /* 0 */
-#endif /* !MVS */
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>	/* Verschiedene komische Typen */
@@ -404,12 +398,9 @@ typedef struct {
 *																			*
 ****************************************************************************/
 
-#if defined( __hpux ) && ( OSVERSION == 0 || OSVERSION == 9 )
+#if defined( __hpux ) && ( OSVERSION == 9 )
 
-/* PHUX 9.x doesn't support getrusage in libc (wonderful...).  The reason we
-   check for a version 0 as well as 9 is that some PHUX unames report the
-   version as 09 rather than 9, which looks like version 0 when you take the
-   first digit */
+/* PHUX 9.x doesn't support getrusage in libc (wonderful...) */
 
 #include <syscall.h>
 
@@ -419,9 +410,9 @@ static int getrusage( int who, struct rusage *rusage )
 	}
 #endif /* __hpux */
 
-#if defined( __hpux )
+#if defined( __MVS__ ) || defined( __hpux )
 
-/* PHUX doesn't have wait4() either so we emulate it with waitpid() and
+/* MVS USS and PHUX don't have wait4() so we emulate it with waitpid() and
    getrusage() */
 
 pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
@@ -431,7 +422,7 @@ pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
 	getrusage( RUSAGE_CHILDREN, rusage );
 	return( waitPid );
 	}
-#endif /* PHUX */
+#endif /* MVS || PHUX */
 
 /* Cray Unicos and QNX 4.x have neither wait4() nor getrusage, so we fake
    it */
@@ -669,6 +660,9 @@ void fastPoll( void )
 #if ( defined( __QNX__ ) && OSVERSION >= 5 )
 	uint64_t clockCycles;
 #endif /* QNX */
+#if defined( _POSIX_TIMERS ) && ( _POSIX_TIMERS > 0 ) && 0	/* See below */
+	struct timespec timeSpec;
+#endif /* _POSIX_TIMERS > 0 */
 
 	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
 
@@ -725,6 +719,22 @@ void fastPoll( void )
 	clockCycles = ClockCycles();
 	addRandomData( randomState, &clockCycles, sizeof( uint64_t ) );
 #endif /* QNX */
+	/* Get real-time (or as close to it as possible) clock information if 
+	   it's available.  These values are platform-specific, but typically use 
+	   a high-resolution source like the Pentium TSC.
+	   
+	   (Unfortunately we can't safely use this function because it's often 
+	   not present in libc but needs to be pulled in via the real-time 
+	   extensions library librt instead, which causes all sorts of 
+	   portability problems) */
+#if defined( _POSIX_TIMERS ) && ( _POSIX_TIMERS > 0 ) && 0
+	if( clock_gettime( CLOCK_REALTIME, &timeSpec ) == 0 )
+		addRandomData( randomState, &timeSpec, sizeof( struct timespec ) );
+	if( clock_gettime( CLOCK_PROCESS_CPUTIME_ID, &timeSpec ) == 0 )
+		addRandomData( randomState, &timeSpec, sizeof( struct timespec ) );
+	if( clock_gettime( CLOCK_THREAD_CPUTIME_ID, &timeSpec ) == 0 )
+		addRandomData( randomState, &timeSpec, sizeof( struct timespec ) );
+#endif /* _POSIX_TIMERS > 0 */
 
 	/* Flush any remaining data through */
 	endRandomData( randomState, 0 );
@@ -821,7 +831,7 @@ static int getProcData( void )
 	int fd, noEntries = 0, quality;
 
 	/* Try and open the process info for this process */
-	sPrintf_s( fileName, 128, "/proc/%d", getpid() );
+	sprintf_s( fileName, 128, "/proc/%d", getpid() );
 	if( ( fd = open( fileName, O_RDONLY ) ) == -1 )
 		return( 0 );
 
@@ -833,7 +843,7 @@ static int getProcData( void )
 	if( ioctl( fd, PIOCSTATUS, &prStatus ) != -1 )
 		{
 #ifdef DEBUG_RANDOM
-		printf( "rndunix: PIOCSTATUS contributed %d bytes.\n",
+		printf( __FILE__ ": PIOCSTATUS contributed %d bytes.\n",
 				sizeof( prstatus_t ) );
 #endif /* DEBUG_RANDOM */
 		addRandomData( randomState, &prStatus, sizeof( prstatus_t ) );
@@ -844,7 +854,7 @@ static int getProcData( void )
 	if( ioctl( fd, PIOCPSINFO, &prMisc ) != -1 )
 		{
 #ifdef DEBUG_RANDOM
-		printf( "rndunix: PIOCPSINFO contributed %d bytes.\n",
+		printf( __FILE__ ": PIOCPSINFO contributed %d bytes.\n",
 				sizeof( prpsinfo_t ) );
 #endif /* DEBUG_RANDOM */
 		addRandomData( randomState, &prMisc, sizeof( prpsinfo_t ) );
@@ -855,7 +865,7 @@ static int getProcData( void )
 	if( ioctl( fd, PIOCUSAGE, &prUsage ) != -1 )
 		{
 #ifdef DEBUG_RANDOM
-		printf( "rndunix: PIOCUSAGE contributed %d bytes.\n",
+		printf( __FILE__ ": PIOCUSAGE contributed %d bytes.\n",
 				sizeof( prusage_t ) );
 #endif /* DEBUG_RANDOM */
 		addRandomData( randomState, &prUsage, sizeof( prusage_t ) );
@@ -909,7 +919,7 @@ static int getDevRandomData( void )
 	if( noBytes < 1 )
 		return( 0 );
 #ifdef DEBUG_RANDOM
-	printf( "rndunix: /dev/random contributed %d bytes.\n",
+	printf( __FILE__ ": /dev/random contributed %d bytes.\n",
 			DEVRANDOM_BYTES );
 #endif /* DEBUG_RANDOM */
 	setMessageData( &msgData, buffer, DEVRANDOM_BYTES );
@@ -949,7 +959,8 @@ static int getEGDdata( void )
 
 		memset( &sockAddr, 0, sizeof( struct sockaddr_un ) );
 		sockAddr.sun_family = AF_UNIX;
-		strcpy( sockAddr.sun_path, egdSources[ egdIndex ] );
+		strlcpy_s( sockAddr.sun_path, sizeof( sockAddr.sun_path ), 
+				   egdSources[ egdIndex ] );
 		if( connect( sockFD, ( struct sockaddr * ) &sockAddr,
 					 sizeof( struct sockaddr_un ) ) >= 0 )
 			break;
@@ -987,7 +998,7 @@ static int getEGDdata( void )
 
 	/* Send the data to the pool */
 #ifdef DEBUG_RANDOM
-	printf( "rndunix: EGD (%s) contributed %d bytes.\n",
+	printf( __FILE__ ": EGD (%s) contributed %d bytes.\n",
 			egdSources[ egdIndex ], DEVRANDOM_BYTES );
 #endif /* DEBUG_RANDOM */
 	setMessageData( &msgData, buffer, noBytes );
@@ -1031,7 +1042,7 @@ static int getProcFSdata( void )
 			if( count > 16 )
 				{
 #ifdef DEBUG_RANDOM
-				printf( "rndunix: %s contributed %d bytes.\n",
+				printf( __FILE__ ": %s contributed %d bytes.\n",
 						procSources[ procIndex ], count );
 #endif /* DEBUG_RANDOM */
 				setMessageData( &msgData, buffer, count );
@@ -1089,7 +1100,7 @@ static int getEntropySourceData( struct RI *dataSource, BYTE *bufPtr,
 				total = dataSource->length / dataSource->usefulness;
 			}
 #ifdef DEBUG_RANDOM
-		printf( "rndunix: %s %s contributed %d bytes (compressed), "
+		printf( __FILE__ ": %s %s contributed %d bytes (compressed), "
 				"usefulness = %d.\n", dataSource->path,
 				( dataSource->arg != NULL ) ? dataSource->arg : "",
 				dataSource->length, total );
@@ -1140,199 +1151,25 @@ static int getEntropySourceData( struct RI *dataSource, BYTE *bufPtr,
 	return( 0 );
 	}
 
-/* Unix slow poll.  If a few of the randomness sources create a large amount
-   of output then the slowPoll() stops once the buffer has been filled (but
-   before all the randomness sources have been sucked dry) so that the
-   'usefulness' factor remains below the threshold.  For this reason the
-   gatherer buffer has to be fairly sizeable on moderately loaded systems.
+/* The child process that performs the polling, forked from slowPoll() */
 
-   An alternative strategy, suggested by Massimo Squillace, is to use a
-   chunk of shared memory protected by a semaphore, with the first
-   sizeof( int ) bytes at the start serving as a high-water mark.  The
-   process forks and waitpid()'s for the child's pid.  The child forks all
-   the entropy-gatherers and exits, allowing the parent to resume execution.
-   The child's children are inherited by init (double-fork paradigm), when
-   each one is finished it takes the semaphore, writes data to the shared
-   memory segment at the given offset, updates the offset, releases the
-   semaphore again, and exits, to be reaped by init.
-
-   The parent monitors the shared memory offset and when enough data is
-   available takes the semaphore, grabs the data, and releases the shared
-   memory area and semaphore.  If any children are still running they'll get
-   errors when they try to access the semaphore or shared memory and
-   silently exit.
-
-   This approach has the advantage that all of the forked processes are
-   managed by init rather than having the parent have to wait for them, but
-   the disadvantage that the end-of-job handling is rather less rigorous.
-   An additional disadvantage is that the existing code has had a lot of
-   real-world testing, which would have to be repeated for any new version */
-
-#define SHARED_BUFSIZE		49152	/* Usually about 25K are filled */
 #define SLOWPOLL_TIMEOUT	30		/* Time out after 30 seconds */
 
-void slowPoll( void )
+static void childPollingProcess( const int existingEntropy )
 	{
 	GATHERER_INFO *gathererInfo;
+	MONOTIMER_INFO timerInfo;
 	BOOLEAN moreSources;
 	struct timeval tv;
 	struct rlimit rl = { 0, 0 };
-	struct sigaction act;
 	fd_set fds;
-	time_t startTime;
-#if defined( _CRAY ) || defined( __hpux ) || defined( _M_XENIX ) || \
-	defined( __aux )
-  #if defined( _SC_PAGESIZE )
-	const int pageSize = sysconf( _SC_PAGESIZE );
-  #elif defined( _SC_PAGE_SIZE )
-	const int pageSize = sysconf( _SC_PAGE_SIZE );
-  #else
-	const int pageSize = 4096;
-  #endif /* Systems without getpagesize() */
-#else
-	const int pageSize = getpagesize();
-#endif /* Unix variant-specific brokenness */
 #if defined( __hpux )
 	size_t maxFD = 0;
 #else
 	int maxFD = 0;
 #endif /* OS-specific brokenness */
-	int extraEntropy = 0, usefulness = 0;
+	int usefulness = 0;
 	int fd, bufPos, i, iterationCount;
-
-	/* Make sure we don't start more than one slow poll at a time */
-	lockPollingMutex();
-	if( gathererProcess	)
-		{
-		unlockPollingMutex();
-		return;
-		}
-
-	/* Some systems provide further info that we can grab before we start
-	   the slow poll.  If this is sufficient to satisfy the polling
-	   requirements, we don't have to try the full slow poll (a number of
-	   these additional sources, things like procfs and kstats, duplicate
-	   the sources polled in the slow poll anyway, so we're not adding
-	   much by polling these extra sources if we've already got the data
-	   directly) */
-	extraEntropy += getDevRandomData();
-	if( !access( "/proc/interrupts", R_OK ) )
-		extraEntropy += getProcFSdata();
-	extraEntropy += getEGDdata();
-#ifdef USE_KSTAT
-	extraEntropy += getKstatData();
-#endif /* USE_KSTAT */
-#ifdef USE_PROC
-	extraEntropy += getProcData();
-#endif /* USE_PROC */
-#ifdef DEBUG_RANDOM
-	printf( "rndunix: Got %d additional entropy from direct sources.\n",
-			extraEntropy );
-	if( extraEntropy >= 100 )
-		puts( "  (Skipping full slowpoll since sufficient entropy is "
-			  "available)." );
-#endif /* DEBUG_RANDOM */
-	if( extraEntropy >= 100 )
-		{
-		/* We got enough entropy from the additional sources, we don't
-		   have to go through with the full (heavyweight) poll */
-		unlockPollingMutex();
-		return;
-		}
-
-	/* QNX 4.x doesn't have SYSV shared memory, so we can't go beyond this
-	   point */
-#if !( defined( __QNX__ ) && OSVERSION <= 4 )
-
-	/* Reset the SIGCHLD handler to the system default.  This is necessary
-	   because if the program that cryptlib is a part of installs its own
-	   SIGCHLD handler, it will end up reaping the cryptlib children before
-	   cryptlib can.  As a result, my_pclose() will call waitpid() on a
-	   process that has already been reaped by the installed handler and
-	   return an error, so the read data won't be added to the randomness
-	   pool */
-	memset( &act, 0, sizeof( act ) );
-	act.sa_handler = SIG_DFL;
-	sigemptyset( &act.sa_mask );
-	if( sigaction( SIGCHLD, &act, &gathererOldHandler ) < 0 )
-		{
-		/* This assumes that stderr is open, i.e. that we're not a daemon
-		   (this should be the case at least during the development/debugging
-		   stage) */
-		fprintf( stderr, "cryptlib: sigaction() failed, errno = %d, "
-				 "file = %s, line = %d.\n", errno, __FILE__, __LINE__ );
-		abort();
-		}
-
-	/* Check for handler override. */
-	if( gathererOldHandler.sa_handler != SIG_DFL && \
-		gathererOldHandler.sa_handler != SIG_IGN )
-		{
-#ifdef DEBUG_CONFLICTS
-		/* We overwrote the caller's handler, warn them about this */
-		fprintf( stderr, "cryptlib: Conflicting SIGCHLD handling detected "
-				 "in randomness polling code,\nfile " __FILE__ ", line %d.  "
-				 "See the source code for more\ninformation.\n", __LINE__ );
-#endif /* DEBUG_CONFLICTS */
-		}
-
-	/* Set up the shared memory */
-	gathererBufSize = ( SHARED_BUFSIZE / pageSize ) * ( pageSize + 1 );
-	if( ( gathererMemID = shmget( IPC_PRIVATE, gathererBufSize,
-								  IPC_CREAT | 0600 ) ) == -1 || \
-		( gathererBuffer = ( BYTE * ) shmat( gathererMemID,
-											 NULL, 0 ) ) == ( BYTE * ) -1 )
-		{
-		/* There was a problem obtaining the shared memory, warn the user
-		   and exit */
-#ifdef _CRAY
-		if( errno == ENOSYS )
-			/* Unicos supports shmget/shmat, but older Crays don't implement
-			   it and return ENOSYS */
-			fprintf( stderr, "cryptlib: SYSV shared memory required for "
-					 "random number gathering isn't\n  supported on this "
-					 "type of Cray hardware (ENOSYS),\n  file = %s, line = "
-					 "%d.\n", __FILE__, __LINE__ );
-#endif /* Cray */
-#ifdef DEBUG_CONFLICTS
-		fprintf( stderr, "cryptlib: shmget()/shmat() failed, errno = %d, "
-				 "file = %s, line = %d.\n", errno, __FILE__, __LINE__ );
-#endif /* DEBUG_CONFLICTS */
-		if( gathererMemID != -1 )
-			shmctl( gathererMemID, IPC_RMID, NULL );
-		if( gathererOldHandler.sa_handler != SIG_DFL )
-			sigaction( SIGCHLD, &gathererOldHandler, NULL );
-		unlockPollingMutex();
-		return; /* Something broke */
-		}
-
-	/* At this point we have a possible race condition since we need to set
-	   the gatherer PID value inside the mutex but messing with mutexes
-	   across a fork() is somewhat messy.  To resolve this, we set the PID
-	   to a nonzero value (which marks it as busy) and exit the mutex, then
-	   overwrite it with the real PID (also nonzero) from the fork */
-	gathererProcess = -1;
-	unlockPollingMutex();
-
-	/* Fork off the gatherer, the parent process returns to the caller */
-	if( ( gathererProcess = fork() ) != 0 )
-		{
-		/* If the fork() failed, clean up and reset the gatherer PID to make
-		   sure that we're not locked out of retrying the poll later */
-		if( gathererProcess == -1 )
-			{
-#ifdef DEBUG_CONFLICTS
-			fprintf( stderr, "cryptlib: fork() failed, errno = %d, "
-					 "file = %s, line = %d.\n", errno, __FILE__, __LINE__ );
-#endif /* DEBUG_CONFLICTS */
-			lockPollingMutex();
-			shmctl( gathererMemID, IPC_RMID, NULL );
-			sigaction( SIGCHLD, &gathererOldHandler, NULL );
-			gathererProcess = 0;
-			unlockPollingMutex();
-			}
-		return;	/* Error/parent process returns */
-		}
 
 	/* General housekeeping: Make sure that we can never dump core, and close
 	   all inherited file descriptors.  We need to do this because if we
@@ -1378,10 +1215,10 @@ void slowPoll( void )
 			/* If we're only polling lightweight sources because we've
 			   already obtained entropy from additional sources,we're
 			   done */
-			if( extraEntropy >= 50 )
+			if( existingEntropy >= 50 )
 				{
 #ifdef DEBUG_RANDOM
-				puts( "rndunix: All lightweight sources polled, exiting "
+				puts( __FILE__ ": All lightweight sources polled, exiting "
 					  "without polling\nheavyweight ones." );
 #endif /* DEBUG_RANDOM */
 				break;
@@ -1392,12 +1229,12 @@ void slowPoll( void )
 			continue;
 			}
 
-		/* Since popen() is a fairly heavy function, we check to see whether
-		   the executable exists before we try to run it */
+		/* Since popen() is a fairly heavyweight function, we check to see 
+		   whether the executable exists before we try to run it */
 		if( access( dataSources[ i ].path, X_OK ) )
 			{
 #ifdef DEBUG_RANDOM
-			printf( "rndunix: %s not present%s.\n", dataSources[ i ].path,
+			printf( __FILE__ ": %s not present%s.\n", dataSources[ i ].path,
 					dataSources[ i ].hasAlternative ? \
 						", has alternatives" : "" );
 #endif /* DEBUG_RANDOM */
@@ -1434,7 +1271,7 @@ void slowPoll( void )
 			   iterationCount++ < FAILSAFE_ITERATIONS_MED ) 
 			{
 #ifdef DEBUG_RANDOM
-			printf( "rndunix: Skipping %s.\n", dataSources[ i + 1 ].path );
+			printf( __FILE__ ": Skipping %s.\n", dataSources[ i + 1 ].path );
 #endif /* DEBUG_RANDOM */
 			i++;
 			}
@@ -1446,9 +1283,9 @@ void slowPoll( void )
 	gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
 	bufPos = sizeof( GATHERER_INFO );	/* Start of buf.has status info */
 
-	/* Suck all the data that we can get from each of the sources */
+	/* Suck up all of the data that we can get from each of the sources */
 	moreSources = TRUE;
-	startTime = getTime();
+	setMonoTimer( &timerInfo, SLOWPOLL_TIMEOUT );
 	iterationCount = 0;
 	while( moreSources && bufPos < gathererBufSize && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
@@ -1499,7 +1336,7 @@ void slowPoll( void )
 		/* If we've gone over our time limit, kill anything still hanging
 		   around and exit.  This prevents problems with input from blocked
 		   sources */
-		if( getTime() > startTime + SLOWPOLL_TIMEOUT )
+		if( checkMonoTimerExpired( &timerInfo ) )
 			{
 			for( i = 0; dataSources[ i ].path != NULL && \
 						i < FAILSAFE_ITERATIONS_LARGE; i++ )
@@ -1507,8 +1344,8 @@ void slowPoll( void )
 				if( dataSources[ i ].pipe != NULL )
 					{
 #ifdef DEBUG_RANDOM
-					printf( "rndunix: Aborting read of %s due to timeout.\n",
-							dataSources[ i ].path );
+					printf( __FILE__ ": Aborting read of %s due to "
+							"timeout.\n", dataSources[ i ].path );
 #endif /* DEBUG_RANDOM */
 					fclose( dataSources[ i ].pipe );
 					kill( dataSources[ i ].pid, SIGKILL );
@@ -1520,7 +1357,7 @@ void slowPoll( void )
 				retIntError_Void();
 			moreSources = FALSE;
 #ifdef DEBUG_RANDOM
-			puts( "rndunix: Poll timed out, probably due to blocked data "
+			puts( __FILE__ ": Poll timed out, probably due to blocked data "
 				  "source." );
 #endif /* DEBUG_RANDOM */
 			}
@@ -1530,13 +1367,212 @@ void slowPoll( void )
 	gathererInfo->usefulness = usefulness;
 	gathererInfo->noBytes = bufPos;
 #ifdef DEBUG_RANDOM
-	printf( "rndunix: Got %d bytes, usefulness = %d.\n", bufPos,
+	printf( __FILE__ ": Got %d bytes, usefulness = %d.\n", bufPos,
 			usefulness );
 #endif /* DEBUG_RANDOM */
 
 	/* "Thou child of the daemon, ... wilt thou not cease...?"
 	   -- Acts 13:10 */
 	exit( 0 );
+	}
+
+/* Unix slow poll.  If a few of the randomness sources create a large amount
+   of output then the slowPoll() stops once the buffer has been filled (but
+   before all of the randomness sources have been sucked dry) so that the
+   'usefulness' factor remains below the threshold.  For this reason the
+   gatherer buffer has to be fairly sizeable on moderately loaded systems.
+
+   An alternative strategy, suggested by Massimo Squillace, is to use a
+   chunk of shared memory protected by a semaphore, with the first
+   sizeof( int ) bytes at the start serving as a high-water mark.  The
+   process forks and waitpid()'s for the child's pid.  The child forks all
+   the entropy-gatherers and exits, allowing the parent to resume execution.
+   The child's children are inherited by init (double-fork paradigm), when
+   each one is finished it takes the semaphore, writes data to the shared
+   memory segment at the given offset, updates the offset, releases the
+   semaphore again, and exits, to be reaped by init.
+
+   The parent monitors the shared memory offset and when enough data is
+   available takes the semaphore, grabs the data, and releases the shared
+   memory area and semaphore.  If any children are still running they'll get
+   errors when they try to access the semaphore or shared memory and
+   silently exit.
+
+   This approach has the advantage that all of the forked processes are
+   managed by init rather than having the parent have to wait for them, but
+   the disadvantage that the end-of-job handling is rather less rigorous.
+   An additional disadvantage is that the existing code has had a lot of
+   real-world testing and adaptation to system-specific quirks, which would 
+   have to be repeated for any new version */
+
+#define SHARED_BUFSIZE		49152	/* Usually about 25K are filled */
+
+void slowPoll( void )
+	{
+	struct sigaction act;
+#if defined( _CRAY ) || defined( __hpux ) || defined( _M_XENIX ) || \
+	defined( __aux )
+  #if defined( _SC_PAGESIZE )
+	const int pageSize = sysconf( _SC_PAGESIZE );
+  #elif defined( _SC_PAGE_SIZE )
+	const int pageSize = sysconf( _SC_PAGE_SIZE );
+  #else
+	const int pageSize = 4096;	/* Close enough for most systems */
+  #endif /* Systems without getpagesize() */
+#else
+	const int pageSize = getpagesize();
+#endif /* Unix variant-specific brokenness */
+	int extraEntropy = 0;
+
+	/* Make sure that we don't start more than one slow poll at a time.  The
+	   gathererProcess value may be positive (a PID) or -1 (error), so we
+	   compare it to the specific value 0 (= not-used) in the check */
+	lockPollingMutex();
+	if( gathererProcess	!= 0 )
+		{
+		unlockPollingMutex();
+		return;
+		}
+
+	/* The popen()-level slow poll is the screen-scraping interface of last
+	   resort that we use only if we can't get the entropy in any other
+	   way.  If the system provides entropy from alternate sources, we don't 
+	   have have to try the screen-scraping slow poll (a number of these 
+	   additional sources, things like procfs and kstats, duplicate the 
+	   sources polled in the slow poll anyway, so we're not adding much by 
+	   polling these extra sources if we've already got the data directly) */
+	extraEntropy += getDevRandomData();
+	if( !access( "/proc/interrupts", R_OK ) )
+		extraEntropy += getProcFSdata();
+	extraEntropy += getEGDdata();
+#ifdef USE_KSTAT
+	extraEntropy += getKstatData();
+#endif /* USE_KSTAT */
+#ifdef USE_PROC
+	extraEntropy += getProcData();
+#endif /* USE_PROC */
+#ifdef DEBUG_RANDOM
+	printf( __FILE__ ": Got %d additional entropy from direct sources.\n",
+			extraEntropy );
+	if( extraEntropy >= 100 )
+		puts( "  (Skipping full slowpoll since sufficient entropy is "
+			  "available)." );
+#endif /* DEBUG_RANDOM */
+	if( extraEntropy >= 100 )
+		{
+		/* We got enough entropy from the additional sources, we don't
+		   have to go through with the full (heavyweight) poll */
+		unlockPollingMutex();
+		return;
+		}
+
+	/* QNX 4.x doesn't have SYSV shared memory, so we can't go beyond this
+	   point, all that we can do is warn the user that they'll have to use
+	   the entropy mechanisms for embedded systems (without proper entropy
+	   sources) */
+#if defined( __QNX__ ) && OSVERSION <= 4
+	fprintf( stderr, "cryptlib: QNX 4.x doesn't contain the OS mechanisms "
+			 "required to provide\n          system entropy sources that "
+			 "can be used for key generation.  In\n          order to use "
+			 "cryptlib in this environment, you need to apply the\n"
+			 "          randomness mechanisms for embedded systems "
+			 "described in the\n          cryptlib manual.\n" );
+	abort();
+#else
+
+	/* Reset the SIGCHLD handler to the system default.  This is necessary
+	   because if the program that cryptlib is a part of installs its own
+	   SIGCHLD handler, it will end up reaping the cryptlib children before
+	   cryptlib can.  As a result, my_pclose() will call waitpid() on a
+	   process that has already been reaped by the installed handler and
+	   return an error, so the read data won't be added to the randomness
+	   pool */
+	memset( &act, 0, sizeof( act ) );
+	act.sa_handler = SIG_DFL;
+	sigemptyset( &act.sa_mask );
+	if( sigaction( SIGCHLD, &act, &gathererOldHandler ) < 0 )
+		{
+		/* This assumes that stderr is open, i.e. that we're not a daemon
+		   (this should be the case at least during the development/debugging
+		   stage) */
+		fprintf( stderr, "cryptlib: sigaction() failed, errno = %d, "
+				 "file " __FILE__ ", line %d.\n", errno, __LINE__ );
+		abort();
+		}
+
+	/* Check for handler override */
+	if( gathererOldHandler.sa_handler != SIG_DFL && \
+		gathererOldHandler.sa_handler != SIG_IGN )
+		{
+#ifdef DEBUG_CONFLICTS
+		/* We overwrote the caller's handler, warn them about this */
+		fprintf( stderr, "cryptlib: Conflicting SIGCHLD handling detected "
+				 "in randomness polling code,\nfile " __FILE__ ", line %d.  "
+				 "See the source code for more\ninformation.\n", __LINE__ );
+#endif /* DEBUG_CONFLICTS */
+		}
+
+	/* Set up the shared memory */
+	gathererBufSize = ( SHARED_BUFSIZE / pageSize ) * ( pageSize + 1 );
+	if( ( gathererMemID = shmget( IPC_PRIVATE, gathererBufSize,
+								  IPC_CREAT | 0600 ) ) == -1 || \
+		( gathererBuffer = ( BYTE * ) shmat( gathererMemID,
+											 NULL, 0 ) ) == ( BYTE * ) -1 )
+		{
+		/* There was a problem obtaining the shared memory, warn the user
+		   and exit */
+#ifdef _CRAY
+		if( errno == ENOSYS )
+			/* Unicos supports shmget/shmat, but older Crays don't implement
+			   it and return ENOSYS */
+			fprintf( stderr, "cryptlib: SYSV shared memory required for "
+					 "random number gathering isn't\n  supported on this "
+					 "type of Cray hardware (ENOSYS),\n  file " __FILE__ 
+					 ", line %d.\n", __LINE__ );
+#endif /* Cray */
+#ifdef DEBUG_CONFLICTS
+		fprintf( stderr, "cryptlib: shmget()/shmat() failed, errno = %d, "
+				 "file " __FILE__ ", line %d.\n", errno, __LINE__ );
+#endif /* DEBUG_CONFLICTS */
+		if( gathererMemID != -1 )
+			shmctl( gathererMemID, IPC_RMID, NULL );
+		if( gathererOldHandler.sa_handler != SIG_DFL )
+			sigaction( SIGCHLD, &gathererOldHandler, NULL );
+		unlockPollingMutex();
+		return; /* Something broke */
+		}
+
+	/* At this point we have a possible race condition since we need to set
+	   the gatherer PID value inside the mutex but messing with mutexes
+	   across a fork() is somewhat messy.  To resolve this, we set the PID
+	   to a nonzero value (which marks it as busy) and exit the mutex, then
+	   overwrite it with the real PID (also nonzero) from the fork */
+	gathererProcess = -1;
+	unlockPollingMutex();
+
+	/* Fork off the gatherer, the parent process returns to the caller */
+	if( ( gathererProcess = fork() ) != 0 )
+		{
+		/* If we're the parent, we're done */
+		if( gathererProcess != -1 )
+			return;
+
+		/* The fork() failed, clean up and reset the gatherer PID to make 
+		   sure that we're not locked out of retrying the poll later */
+#ifdef DEBUG_CONFLICTS
+		fprintf( stderr, "cryptlib: fork() failed, errno = %d, file " 
+				 __FILE__ ", line %d.\n", errno, __LINE__ );
+#endif /* DEBUG_CONFLICTS */
+		lockPollingMutex();
+		shmctl( gathererMemID, IPC_RMID, NULL );
+		sigaction( SIGCHLD, &gathererOldHandler, NULL );
+		gathererProcess = 0;
+		unlockPollingMutex();
+		return;
+		}
+
+	/* Make the child an explicitly distinct function */
+	childPollingProcess( extraEntropy );
 #endif /* !QNX 4.x */
 	}
 
@@ -1549,7 +1585,7 @@ void slowPoll( void )
 
 static void my_sched_yield( void )
 	{
-	/* sched_yield() is only supported if sysconf() tells us it is */
+	/* sched_yield() is only supported if sysconf() tells us that it is */
 	if( sysconf( _SC_PRIORITY_SCHEDULING ) > 0 )
 		sched_yield();
 	}
@@ -1560,7 +1596,7 @@ static void my_sched_yield( void )
 void waitforRandomCompletion( const BOOLEAN force )
 	{
 	lockPollingMutex();
-	if( gathererProcess	)
+	if( gathererProcess	> 0 )
 		{
 		MESSAGE_DATA msgData;
 		GATHERER_INFO *gathererInfo = ( GATHERER_INFO * ) gathererBuffer;

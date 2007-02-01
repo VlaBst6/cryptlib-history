@@ -43,8 +43,8 @@
 
 static const struct RC2_TEST {
 	const BYTE key[ 16 ];
-	const BYTE plainText[ 8 ];
-	const BYTE cipherText[ 8 ];
+	const BYTE plaintext[ 8 ];
+	const BYTE ciphertext[ 8 ];
 	} FAR_BSS testRC2[] = {
 	{ { 0x88, 0xBC, 0xA9, 0x0E, 0x90, 0x87, 0x5A, 0x7F,
 		0x0F, 0x79, 0xC3, 0x84, 0x62, 0x7B, 0xAF, 0xB2 },
@@ -57,26 +57,16 @@ static const struct RC2_TEST {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getRC2Capability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ RC2_EXPANDED_KEYSIZE + 8 ];
-	BYTE temp[ RC2_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testRC2 ) / sizeof( struct RC2_TEST ); i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		memcpy( temp, testRC2[ i ].plainText, RC2_BLOCKSIZE );
-		status = capabilityInfo->initKeyFunction( &contextInfo,
-												  testRC2[ i ].key, 16 );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp,
-													  RC2_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testRC2[ i ].cipherText, temp, RC2_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		status = testCipher( capabilityInfo, keyData, testRC2[ i ].key, 
+							 16, testRC2[ i ].plaintext, 
+							 testRC2[ i ].ciphertext );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -428,7 +418,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), bitsToBytes( 1024 ),
+	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 1024 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB

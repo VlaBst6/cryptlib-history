@@ -371,12 +371,12 @@ static int writeTime( STREAM *stream, const time_t timeVal, const int tag,
 				  isUTCTime ? BER_TIME_UTC : BER_TIME_GENERALIZED;
 	buffer[ 1 ] = length;
 	if( isUTCTime )
-		sPrintf_s( buffer + 2, 16, "%02d%02d%02d%02d%02d%02dZ", 
+		sprintf_s( buffer + 2, 16, "%02d%02d%02d%02d%02d%02dZ", 
 				   timeInfoPtr->tm_year % 100, timeInfoPtr->tm_mon + 1, 
 				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
 				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );
 	else
-		sPrintf_s( buffer + 2, 16, "%04d%02d%02d%02d%02d%02dZ", 
+		sprintf_s( buffer + 2, 16, "%04d%02d%02d%02d%02d%02dZ", 
 				   timeInfoPtr->tm_year + 1900, timeInfoPtr->tm_mon + 1, 
 				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
 				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );

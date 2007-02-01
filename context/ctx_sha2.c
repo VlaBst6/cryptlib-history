@@ -19,6 +19,10 @@
 
 #define HASH_STATE_SIZE		sizeof( sha2_ctx )
 
+#if defined( USE_SHA2_512 ) && !defined( SHA512_DIGEST_SIZE )
+  #error SHA2-512 can only be used on a system with 64-bit data type support
+#endif /* USE_SHA2_512 on system without 64-bit data type */
+
 /****************************************************************************
 *																			*
 *							SHA2 Self-test Routines							*
@@ -48,7 +52,7 @@ static const struct {
 	const BYTE dig256[ SHA256_DIGEST_SIZE ];	/* Digest of data */
 	const BYTE dig384[ SHA384_DIGEST_SIZE ];	/* Digest of data */
 	const BYTE dig512[ SHA512_DIGEST_SIZE ];	/* Digest of data */
-	} FAR_BSS sha2Values[] = {
+	} FAR_BSS digestValues[] = {
 	{ "abc", 3,
 	  { 0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
 	    0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
@@ -116,30 +120,20 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getSHA2Capability();
-	CONTEXT_INFO contextInfo;
-	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* SHA-2 requires the largest amount of context state so we check to
-	   make sure that the HASH_STATE_SIZE is large enough */
-	assert( sizeof( HASHINFO ) <= HASH_STATE_SIZE );
+	   make sure that the HASHINFO is large enough.  Unfortunately the
+	   terminology is a bit confusing here, HASHINFO is an opaque memory
+	   block used to contain the low-level hash algorithm state, HASH_INFO
+	   is the high-level hash info held inside a CONTEXT_INFO */
+	assert( sizeof( HASHINFO ) >= HASH_STATE_SIZE );
 
-	for( i = 0; sha2Values[ i ].data != NULL; i++ )
+	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_HASH, capabilityInfo,
-						   &contextData, sizeof( HASH_INFO ), keyData );
-		status = capabilityInfo->encryptFunction( &contextInfo,
-							( BYTE * ) sha2Values[ i ].data,
-							sha2Values[ i ].length );
-		contextInfo.flags |= CONTEXT_HASH_INITED;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxHash->hash, sha2Values[ i ].dig256,
-					SHA256_DIGEST_SIZE ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+						   digestValues[ i ].length, digestValues[ i ].dig256 );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -197,6 +191,7 @@ void sha2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 	{
 	sha2_ctx *shaInfo = ( sha2_ctx * ) hashInfo;
 	
+	assert( sizeof( HASHINFO ) >= HASH_STATE_SIZE );
 	assert( ( hashState == HASH_ALL && hashInfo == NULL ) || \
 			( hashState != HASH_ALL && \
 			  isWritePtr( hashInfo, sizeof( HASHINFO ) ) ) );
@@ -238,6 +233,67 @@ void sha2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 			assert( NOTREACHED );
 		}
 	}
+
+#ifdef USE_SHA2_512
+
+void sha2_512HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
+						 const int outBufMaxLength, const BYTE *inBuffer, 
+						 const int inLength, const HASH_STATE hashState )
+	{
+	sha2_ctx *shaInfo = ( sha2_ctx * ) hashInfo;
+
+	assert( sizeof( HASHINFO ) >= HASH_STATE_SIZE );
+	assert( ( hashState == HASH_ALL && hashInfo == NULL ) || \
+			( hashState != HASH_ALL && \
+			  isWritePtr( hashInfo, sizeof( HASHINFO ) ) ) );
+	assert( ( ( hashState != HASH_END && hashState != HASH_ALL ) && \
+			  outBuffer == NULL && outBufMaxLength == 0 ) || \
+			( ( hashState == HASH_END || hashState == HASH_ALL ) && \
+			  isWritePtr( outBuffer, outBufMaxLength ) && \
+			  outBufMaxLength >= 32 ) );
+	assert( inBuffer == NULL || isReadPtr( inBuffer, inLength ) );
+
+	switch( hashState )
+		{
+		case HASH_START:
+			if( sha2_begin( SHA512_DIGEST_SIZE, shaInfo ) != EXIT_SUCCESS )
+				{
+				assert( NOTREACHED );
+				return;
+				}
+			/* Drop through */
+
+		case HASH_CONTINUE:
+			sha2_hash( ( BYTE * ) inBuffer, inLength, shaInfo );
+			break;
+
+		case HASH_END:
+			if( inBuffer != NULL )
+				sha2_hash( ( BYTE * ) inBuffer, inLength, shaInfo );
+			sha2_end( outBuffer, shaInfo );
+			break;
+
+		case HASH_ALL:
+			{
+			sha2_ctx shaInfoBuffer;
+
+			if( sha2_begin( SHA512_DIGEST_SIZE, &shaInfoBuffer ) != EXIT_SUCCESS )
+				{
+				memset( outBuffer, 0, outBufMaxLength );
+				assert( NOTREACHED );
+				return;
+				}
+			sha2_hash( ( BYTE * ) inBuffer, inLength, &shaInfoBuffer );
+			sha2_end( outBuffer, &shaInfoBuffer );
+			zeroise( &shaInfoBuffer, sizeof( sha2_ctx ) );
+			break;
+			}
+
+		default:
+			assert( NOTREACHED );
+		}
+	}
+#endif /* USE_SHA2_512 */
 
 /****************************************************************************
 *																			*

@@ -85,11 +85,11 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 
 	/* Access secret key */
 	MK_KEYACL( KEYMGMT_ITEM_SECRETKEY,
-		/*RWD*/	ST_KEYSET_FILE,
+		/*RWD*/	ST_KEYSET_FILE | ST_DEV_P11,
 		/*FnQ*/	ST_NONE,
 		/*Obj*/	ST_CTX_CONV,
-		/*Flg*/	KEYMGMT_FLAG_NONE,
-		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxRWx ),
+		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY,
+		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxXXx ),
 
 	/* Access cert request */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_REQUEST,
@@ -160,57 +160,57 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->keysetR_subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->keysetW_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetW_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->keysetW_subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->keysetD_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetD_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->keysetD_subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->keysetFN_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetFN_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->keysetFN_subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->keysetQ_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetQ_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 ) ) != 0 || \
 			keyMgmtACL->keysetQ_subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->objSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->objSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY | ST_CTX_PKC | ST_CTX_CONV ) ) != 0 || \
 			keyMgmtACL->objSubTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( keyMgmtACL->allowedFlags < KEYMGMT_FLAG_NONE || \
 			keyMgmtACL->allowedFlags >= KEYMGMT_FLAG_LAST )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->specificKeysetSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->specificKeysetSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->specificKeysetSubTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		if( ( keyMgmtACL->specificObjSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->specificObjSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) != 0 || \
 			keyMgmtACL->specificObjSubTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) )
 		retIntError();
@@ -368,14 +368,16 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 
 	   Since the semantics of passwords for private keys are too complex to
 	   express with a simple ACL entry, this check is hardcoded */
-	if( messageValue == KEYMGMT_ITEM_PRIVATEKEY )
+	if( messageValue == KEYMGMT_ITEM_PRIVATEKEY || \
+		messageValue == KEYMGMT_ITEM_SECRETKEY )
 		{
 		if( objectTable[ objectHandle ].type == OBJECT_TYPE_KEYSET )
 			{
 			if( localMessage == MESSAGE_KEY_SETKEY && \
 				( mechanismInfo->auxInfo == NULL || \
 				  mechanismInfo->auxInfoLength < 1 ) )
-				/* Private key writes to a keyset must provide a password */
+				/* Private/secret key writes to a keyset must provide a 
+				   password */
 				return( CRYPT_ARGERROR_STR1 );
 			}
 		else
@@ -385,10 +387,10 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			if( ( mechanismInfo->flags != KEYMGMT_FLAG_LABEL_ONLY ) && \
 				( mechanismInfo->auxInfo != NULL || \
 				  mechanismInfo->auxInfoLength != 0 ) )
-				/* Private key access to a device doesn't use a password,
-				   however the auxInfo parameter is also used to contain
-				   the label for key label reads so we only check it if
-				   it's a standard key read */
+				/* Private/secret key access to a device doesn't use a 
+				   password, however the auxInfo parameter is also used to 
+				   contain the label for key label reads so we only check 
+				   it if it's a standard key read */
 				return( ( keymgmtACL->idUseFlags & accessType ) ? \
 						CRYPT_ARGERROR_STR2 : CRYPT_ARGERROR_STR1 );
 			}
@@ -420,7 +422,8 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 		   mechanismInfo->keyIDtype == CRYPT_KEYID_NONE && \
 		   mechanismInfo->keyID == NULL && \
 		   mechanismInfo->keyIDlength == 0 ) );
-	PRE( ( messageValue == KEYMGMT_ITEM_PRIVATEKEY && \
+	PRE( ( ( messageValue == KEYMGMT_ITEM_PRIVATEKEY || \
+			 messageValue == KEYMGMT_ITEM_SECRETKEY ) && \
 		   localMessage == MESSAGE_KEY_GETKEY ) ||
 		 localMessage == MESSAGE_KEY_GETFIRSTCERT ||
 		 localMessage == MESSAGE_KEY_GETNEXTCERT ||

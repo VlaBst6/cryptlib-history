@@ -67,19 +67,10 @@ if (ul != 0) \
 	r-=((r)>>16); \
 	} \
 else \
-	r=(-(int)a-b+1); /* assuming a or b is 0 and in range */ \
+	r=(-(int)a-b+1); /* assuming a or b is 0 and in range */ 
 
-#ifdef undef
-#define idea_mul(r,a,b,ul,sl) \
-if (a == 0) r=(0x10001-b)&0xffff; \
-else if (b == 0) r=(0x10001-a)&0xffff; \
-else	{ \
-	ul=(unsigned long)a*b; \
-	sl=(ul&0xffff)-(ul>>16); \
-	if (sl <= 0) sl+=0x10001; \
-	r=sl; \
-	} 
-#endif
+/* Removed spurious trailing '\' in previous line and non-used macro 
+   here - pcg */
 
 /*  7/12/95 - Many thanks to Rhys Weatherley <rweather@us.oracle.com>
  * for pointing out that I was assuming little endian

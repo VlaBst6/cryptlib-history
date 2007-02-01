@@ -33,8 +33,6 @@
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getBlowfishCapability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ BLOWFISH_EXPANDED_KEYSIZE + 8 ];
 	BYTE *plain1 = ( BYTE * ) "BLOWFISH";
 	BYTE *key1 = ( BYTE * ) "abcdefghijklmnopqrstuvwxyz";
@@ -45,51 +43,18 @@ static int selfTest( void )
 	BYTE plain3[] = { 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10 };
 	BYTE key3[] = { 0x41, 0x79, 0x6E, 0xA0, 0x52, 0x61, 0x6E, 0xE4 };
 	BYTE cipher3[] = { 0xE1, 0x13, 0xF4, 0x10, 0x2C, 0xFC, 0xCE, 0x43 };
-	BYTE buffer[ 8 + 8 ];
 	int status;
 
 	/* Test the Blowfish implementation */
-	staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-					   &contextData, sizeof( CONV_INFO ), keyData );
-	memcpy( buffer, plain1, 8 );
-	status = capabilityInfo->initKeyFunction( &contextInfo, key1,
-											  strlen( ( char * ) key1 ) );
+	status = testCipher( capabilityInfo, keyData, key1, 
+						 strlen( ( char * ) key1 ), plain1, cipher1 );
 	if( cryptStatusOK( status ) )
-		status = capabilityInfo->encryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, cipher1, 8 ) )
-		status = CRYPT_ERROR;
+		status = testCipher( capabilityInfo, keyData, key2, 
+							 strlen( ( char * ) key2 ), plain2, cipher2 );
 	if( cryptStatusOK( status ) )
-		status = capabilityInfo->decryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, plain1, 8 ) )
-		status = CRYPT_ERROR;
-
-	memcpy( buffer, plain2, 8 );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->initKeyFunction( &contextInfo, key2,
-												  strlen( ( char * ) key2 ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->encryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, cipher2, 8 ) )
-		status = CRYPT_ERROR;
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->decryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, plain2, 8 ) )
-		status = CRYPT_ERROR;
-
-	memcpy( buffer, plain3, 8 );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->initKeyFunction( &contextInfo, key3, 8 );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->encryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, cipher3, 8 ) )
-		status = CRYPT_ERROR;
-	if( cryptStatusOK( status ) )
-		status = capabilityInfo->decryptFunction( &contextInfo, buffer, 8 );
-	if( cryptStatusOK( status ) && memcmp( buffer, plain3, 8 ) )
-		status = CRYPT_ERROR;
-	staticDestroyContext( &contextInfo );
-
-	return( cryptStatusError( status ) ? CRYPT_ERROR : CRYPT_OK );
+		status = testCipher( capabilityInfo, keyData, key3, 8, plain3, 
+							 cipher3 );
+	return( status );
 	}
 
 /****************************************************************************
@@ -435,7 +400,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_BLOWFISH, bitsToBytes( 64 ), "Blowfish",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), bitsToBytes( 448 ),
+	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 448 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB

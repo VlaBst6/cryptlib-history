@@ -29,10 +29,6 @@ const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
 void getCapabilityInfo( CRYPT_QUERY_INFO *cryptQueryInfo,
 						const void FAR_BSS *capabilityInfoPtr );
 
-/* Prototypes for functions in cryptmis.c */
-
-BOOLEAN checkEntropy( const BYTE *data, const int dataLength );
-
 /* Prototypes for functions in cryptcrt.c */
 
 int createCertificateIndirect( MESSAGE_CREATEOBJECT_INFO *createInfo,
@@ -56,8 +52,8 @@ int createCertificateIndirect( MESSAGE_CREATEOBJECT_INFO *createInfo,
 
 /* Get a random data block with FIPS 140 checking */
 
-static int getRandomData( DEVICE_INFO *deviceInfoPtr, void *data,
-						  const int length )
+static int getRandomChecked( DEVICE_INFO *deviceInfoPtr, void *data,
+							 const int length )
 	{
 	int i;
 
@@ -312,8 +308,8 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 		case CRYPT_IATTRIBUTE_RANDOM:
 			if( deviceInfoPtr->getRandomFunction == NULL )
 				return( CRYPT_ERROR_RANDOM );
-			return( getRandomData( deviceInfoPtr, msgData->data,
-								   msgData->length ) );
+			return( getRandomChecked( deviceInfoPtr, msgData->data,
+									  msgData->length ) );
 
 		case CRYPT_IATTRIBUTE_RANDOM_NZ:
 			{
@@ -335,7 +331,7 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 				int i;
 
 				/* Copy as much as we can from the randomness pool */
-				status = getRandomData( deviceInfoPtr, randomBuffer, 128 );
+				status = getRandomChecked( deviceInfoPtr, randomBuffer, 128 );
 				if( cryptStatusError( status ) )
 					break;
 				for( i = 0; count > 0 && i < 128; i++ )
@@ -347,6 +343,8 @@ static int processGetAttributeS( DEVICE_INFO *deviceInfoPtr,
 						}
 					}
 				}
+			FORALL( i, 0, msgData->length, \
+					( ( BYTE * ) msgData->data )[ i ] != 0 );
 			if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
 				retIntError();
 			zeroise( randomBuffer, 128 );
@@ -511,7 +509,7 @@ static const CREATEOBJECT_FUNCTION_INFO defaultCreateFunctions[] = {
 
 /* Handle a message sent to a device object */
 
-static int deviceMessageFunction( const void *objectInfoPtr,
+static int deviceMessageFunction( void *objectInfoPtr,
 								  const MESSAGE_TYPE message,
 								  void *messageDataPtr,
 								  const int messageValue )
@@ -874,10 +872,14 @@ static int openDevice( CRYPT_DEVICE *device,
 											  nameLength );
 	if( cryptStatusOK( status ) && \
 		deviceInfoPtr->createObjectFunctions == NULL )
+		{
 		/* The device-specific code hasn't set up anything, use the default
 		   create-object functions (which just create encryption contexts
 		   using the device capability information) */
 		deviceInfoPtr->createObjectFunctions = defaultCreateFunctions;
+		deviceInfoPtr->createObjectFunctionCount = \
+			FAILSAFE_ARRAYSIZE( defaultCreateFunctions, CREATEOBJECT_FUNCTION_INFO );
+		}
 	return( status );
 	}
 
@@ -892,17 +894,11 @@ int createDevice( MESSAGE_CREATEOBJECT_INFO *createInfo,
 
 	assert( auxDataPtr == NULL );
 	assert( auxValue == 0 );
-
-	/* Perform basic error checking.  This also catches any attempts to
-	   create a second system device object, which has an (external) type of
-	   CRYPT_DEVICE_NONE */
-	if( createInfo->arg1 <= CRYPT_DEVICE_NONE || \
-		createInfo->arg1 >= CRYPT_DEVICE_LAST )
-		return( CRYPT_ARGERROR_NUM1 );
-	if( ( createInfo->arg1 == CRYPT_DEVICE_PKCS11 || \
-		  createInfo->arg1 == CRYPT_DEVICE_CRYPTOAPI ) && \
-		createInfo->strArgLen1 <= MIN_NAME_LENGTH )
-		return( CRYPT_ARGERROR_STR1 );
+	assert( createInfo->arg1 > CRYPT_DEVICE_NONE && \
+			createInfo->arg1 < CRYPT_DEVICE_LAST );
+	assert( ( createInfo->arg1 != CRYPT_DEVICE_PKCS11 && \
+			  createInfo->arg1 != CRYPT_DEVICE_CRYPTOAPI ) || \
+			createInfo->strArgLen1 > MIN_NAME_LENGTH );
 
 	/* Wait for any async device driver binding to complete */
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
@@ -952,36 +948,40 @@ static int createSystemDeviceObject( void )
 	{
 	CRYPT_DEVICE iSystemObject;
 	DEVICE_INFO *deviceInfoPtr;
-	int status;
+	int initStatus, status;
 
 	/* Pass the call on to the lower-level open function.  This device is
-	   unique and has no owner or type */
-	status = openDevice( &iSystemObject, CRYPT_UNUSED, CRYPT_DEVICE_NONE,
-						 NULL, 0, &deviceInfoPtr );
+	   unique and has no owner or type.
+
+	   Normally if an object init fails we tell the kernel to destroy it by 
+	   sending it a destroy message, which is processed after the object's 
+	   status has been set to normal.  However we don't have the privileges 
+	   to do this for the system object (or the default user object) so we 
+	   just pass the error code back to the caller, which causes the 
+	   cryptlib init to fail.
+	   
+	   In addition the init can fail in one of two ways, the object isn't
+	   even created (deviceInfoPtr == NULL, nothing to clean up), in which 
+	   case we bail out immediately, or the object is created but wasn't set 
+	   up properly (deviceInfoPtr is allocated, but the object can't be 
+	   used), in which case we bail out after we update its status */
+	initStatus = openDevice( &iSystemObject, CRYPT_UNUSED, CRYPT_DEVICE_NONE,
+							 NULL, 0, &deviceInfoPtr );
 	if( deviceInfoPtr == NULL )
-		return( status );	/* Create object failed, return immediately */
-	if( cryptStatusError( status ) )
-		/* The device open failed, we'd normally have to signal the device
-		   object to destroy itself when the init completes, however we don't
-		   have the privileges to do this so we just pass the error code back
-		   to the caller which causes the cryptlib init to fail */
-		return( status );
+		return( initStatus );	/* Create object failed, return immediately */
 	assert( iSystemObject == SYSTEM_OBJECT_HANDLE );
 
 	/* We've finished setting up the object-type-specific info, tell the
-	   kernel the object is ready for use and move it into the initialised
-	   state */
+	   kernel that the object is ready for use */
 	status = krnlSendMessage( iSystemObject, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
-	if( cryptStatusOK( status ) )
-		{
-		status = krnlSendMessage( iSystemObject, IMESSAGE_SETATTRIBUTE,
-								  MESSAGE_VALUE_UNUSED,
-								  CRYPT_IATTRIBUTE_INITIALISED );
-		if( cryptStatusError( status ) )
-			krnlSendNotifier( iSystemObject, IMESSAGE_DESTROY );
-		}
-	return( status );
+	if( cryptStatusError( initStatus ) || cryptStatusError( status ) )
+		return( cryptStatusError( initStatus ) ? initStatus : status );
+
+	/* The object has been initialised, move it into the initialised state */
+	return( krnlSendMessage( iSystemObject, IMESSAGE_SETATTRIBUTE,
+							 MESSAGE_VALUE_UNUSED,
+							 CRYPT_IATTRIBUTE_INITIALISED ) );
 	}
 
 /* Generic management function for this class of object.  Unlike the usual

@@ -17,13 +17,18 @@
 
 #ifdef USE_SSL
 
+/* The maximum size of any data value to be stored in the scoreboard.  
+   Currently this is SSL_SECRET_SIZE, 48 bytes */
+
+#define SCOREBOARD_DATA_SIZE	SSL_SECRET_SIZE
+
 /* Scoreboard data and index information */
 
-typedef BYTE SCOREBOARD_DATA[ SSL_SECRET_SIZE ];
+typedef BYTE SCOREBOARD_DATA[ SCOREBOARD_DATA_SIZE ];
 typedef struct {
 	/* Identification information: The checksum and hash of the session ID */
 	int checkValue;
-	BYTE hashValue[ 20 ];
+	BYTE hashValue[ HASH_DATA_SIZE + 4 ];
 
 	/* Misc info */
 	time_t timeStamp;		/* Time entry was added to the scoreboard */
@@ -34,13 +39,21 @@ typedef struct {
 /* A template used to initialise scoreboard entries */
 
 static const SCOREBOARD_INDEX SCOREBOARD_INDEX_TEMPLATE = \
-								{ 0, { 0 }, 0, 0, 0 };
+								{ 0, { 0 }, 0, 0, FALSE };
 
-/* The maximum amount of time that an entry is retained in the scoreboard */
+/* The maximum amount of time that an entry is retained in the scoreboard,
+   1 hour */
 
 #define SCOREBOARD_TIMEOUT		3600
 
-/* The action to perform on the scoreboard */
+/* The action to perform on the scoreboard.  These are:
+
+	ADD: Add the given key and value.
+
+	LOOKUP: Look up the given key and return the associated value.
+
+	PRESENCECHECK: Check whether the given key is present and return its 
+		uniqueID value if it is */
 
 typedef enum { 
 	SCOREBOARD_ACTION_NONE,		/* No scoreboard action */
@@ -52,67 +65,43 @@ typedef enum {
 
 /****************************************************************************
 *																			*
-*								Utility Functions							*
+*						Scoreboard Management Functions						*
 *																			*
 ****************************************************************************/
 
-/* Hash data */
+/* Find an entry, returning its position in the scoreboard.  This function 
+   currently uses a straightforward linear search with entries clustered 
+   towards the start of the scoreboard.  Although this may seem somewhat 
+   suboptimal, since cryptlib isn't a high-performance server the scoreboard 
+   will rarely contain more than a handful of entries (if any).  In any case 
+   a quick scan through a small number of integers is probably still faster 
+   than the complex in-memory database lookup schemes used by many servers, 
+   and is also required to handle things like scoreboard LRU management */
 
-static void hashData( BYTE *hash, const int hashMaxLength, 
-					  const void *data, const int dataLength )
-	{
-	static HASHFUNCTION hashFunction = NULL;
-
-	/* Get the hash algorithm information if necessary */
-	if( hashFunction == NULL )
-		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, NULL );
-
-	/* Hash the data */
-	hashFunction( NULL, hash, hashMaxLength, ( BYTE * ) data, dataLength, 
-				  HASH_ALL );
-	}
-
-/* Handle the scoreboard.  This function currently uses a straightforward
-   linear search with entries clustered towards the start of the scoreboard.
-   Although this may seem somewhat suboptimal, since cryptlib isn't a high-
-   performance server the scoreboard will rarely contain more than a handful 
-   of entries (if any).  In any case a quick scan through a small number of
-   integers is probably still faster than the complex in-memory database
-   lookup schemes used by many servers, and is also required to handle things
-   like scoreboard LRU management */
-
-static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
-							 const void *sessionID, const int sessionIDlength, 
-							 void *masterKey, const BOOLEAN isFixedEntry,
-							 const SCOREBOARD_ACTION action )
+static int findEntry( SCOREBOARD_INFO *scoreboardInfo,
+					  const void *key, const int keyLength, 
+					  const time_t currentTime, int *position )
 	{
 	SCOREBOARD_INDEX *scoreboardIndex = scoreboardInfo->index;
 	SCOREBOARD_DATA *scoreboardData = scoreboardInfo->data;
-	BYTE hashValue[ 20 + 8 ];
+	BYTE hashValue[ HASH_DATA_SIZE + 8 ];
 	BOOLEAN dataHashed = FALSE;
-	const time_t currentTime = getTime();
 	time_t oldestTime = currentTime;
-	const int checkValue = checksumData( sessionID, sessionIDlength );
+	const int checkValue = checksumData( key, keyLength );
 	int nextFreeEntry = CRYPT_ERROR, lastUsedEntry = 0, oldestEntry = 0;
-	int position, uniqueID = 0, i, status;
+	int i;
 
-	assert( isReadPtr( sessionID, sessionIDlength ) && sessionIDlength >= 8 );
-	assert( ( action == SCOREBOARD_ACTION_PRESENCECHECK && masterKey == NULL ) || \
-			( action == SCOREBOARD_ACTION_LOOKUP && masterKey != NULL ) || \
-			( action == SCOREBOARD_ACTION_ADD && masterKey != NULL ) );
+	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) && keyLength >= 8 );
+	assert( currentTime > MIN_TIME_VALUE );
+	assert( isWritePtr( position, sizeof( int ) ) );
 	assert( isWritePtr( scoreboardIndex,
 						scoreboardInfo->size * sizeof( SCOREBOARD_INDEX ) ) );
 	assert( isWritePtr( scoreboardData,
 						scoreboardInfo->size * sizeof( SCOREBOARD_DATA ) ) );
 
-	/* If there's something wrong with the time, we can't perform (time-
-	   based) scoreboard management */
-	if( currentTime <= MIN_TIME_VALUE )
-		return( 0 );
-
-	status = krnlEnterMutex( MUTEX_SCOREBOARD );
-	if( cryptStatusError( status ) )
-		return( status );
+	/* Clear return value */
+	*position = CRYPT_ERROR;
 
 	for( i = 0; i < scoreboardInfo->lastEntry && \
 				i < FAILSAFE_ITERATIONS_MAX; i++ )
@@ -129,7 +118,7 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 		/* Check for a free entry and the oldest non-free entry.  We could
 		   perform an early-out once we find a free entry, but this would
 		   prevent any following expired entries from being deleted */
-		if( scorebordIndexEntry->timeStamp <= 0 )
+		if( scorebordIndexEntry->timeStamp <= MIN_TIME_VALUE )
 			{
 			/* We've found a free entry, remember it for future use if
 			   required and continue */
@@ -152,23 +141,17 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 			{
 			if( !dataHashed )
 				{
-				hashData( hashValue, 20, sessionID, sessionIDlength );
+				hashData( hashValue, HASH_DATA_SIZE, key, keyLength );
 				dataHashed = TRUE;
 				}
-			if( !memcmp( scorebordIndexEntry->hashValue, hashValue, 20 ) )
+			if( !memcmp( scorebordIndexEntry->hashValue, hashValue, 
+						 HASH_DATA_SIZE ) )
 				{
-				uniqueID = scorebordIndexEntry->uniqueID;
-
-				/* We've found a matching entry in the scoreboard, if we're
-				   looking for an existing entry return its data */
-				if( action == SCOREBOARD_ACTION_LOOKUP )
-					{
-					memcpy( masterKey, scoreboardData[ i ], SSL_SECRET_SIZE );
-					scorebordIndexEntry->timeStamp = currentTime;
-					}
-
-				krnlExitMutex( MUTEX_SCOREBOARD );
-				return( uniqueID );
+				/* Remember the match position.  We can't immediately exit 
+				   at this point because we still need to look for the last 
+				   used entry and potentually shrink the scoreboard-used 
+				   size */
+				*position = i;
 				}
 			}
 		}
@@ -180,22 +163,146 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 	if( lastUsedEntry + 1 < scoreboardInfo->lastEntry )
 		scoreboardInfo->lastEntry = lastUsedEntry + 1;
 
-	/* No match found, if we're adding a new entry, add it at the
-	   appropriate location */
-	if( action == SCOREBOARD_ACTION_ADD )
+	/* If we've found a match, we're done */
+	if( *position >= 0 )
+		return( CRYPT_OK );
+
+	/* The entry wasn't found, return the location where we can add a new 
+	   entry */
+	if( nextFreeEntry > 0 )
+		/* We've freed up an existing position (which will be before any 
+		   remaining free entries), add the new entry there */
+		*position = nextFreeEntry;
+	else
 		{
-		if( !dataHashed )
-			hashData( hashValue, 20, sessionID, sessionIDlength );
-		position = ( nextFreeEntry > 0 ) ? nextFreeEntry : \
-				   ( scoreboardInfo->lastEntry >= scoreboardInfo->size ) ? \
-				   oldestEntry : scoreboardInfo->lastEntry++;
-		assert( position >= 0 && position < scoreboardInfo->size );
-		scoreboardIndex[ position ].checkValue = checkValue;
-		memcpy( scoreboardIndex[ position ].hashValue, hashValue, 20 );
-		scoreboardIndex[ position ].timeStamp = currentTime;
-		scoreboardIndex[ position ].uniqueID = uniqueID = \
-											scoreboardInfo->uniqueID++;
-		memcpy( scoreboardData[ position ], masterKey, SSL_SECRET_SIZE );
+		/* If there are still free positions in the scoreboard, use the next
+		   available one */
+		if( scoreboardInfo->lastEntry < scoreboardInfo->size )
+			*position = scoreboardInfo->lastEntry;
+		else
+			/* There are no free positions, overwrite the oldest entry */
+			*position = oldestEntry;
+		}
+	return( CRYPT_ERROR );
+	}
+
+/* Add an entry to the scoreboard */
+
+static int addEntry( SCOREBOARD_INFO *scoreboardInfo, const int position,
+					 const void *key, const int keyLength, 
+					 const void *value, const int valueLength,
+					 const time_t currentTime )
+	{
+	SCOREBOARD_INDEX *scoreboardIndex = scoreboardInfo->index;
+	SCOREBOARD_INDEX *scorebordIndexEntry = &scoreboardIndex[ position ];
+	SCOREBOARD_DATA *scoreboardData = scoreboardInfo->data;
+	const int checkValue = checksumData( key, keyLength );
+
+	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) && keyLength >= 8 );
+	assert( isReadPtr( value, valueLength ) );
+	assert( currentTime > MIN_TIME_VALUE );
+	assert( isWritePtr( scoreboardIndex,
+						scoreboardInfo->size * sizeof( SCOREBOARD_INDEX ) ) );
+	assert( isWritePtr( scoreboardData,
+						scoreboardInfo->size * sizeof( SCOREBOARD_DATA ) ) );
+
+	/* Clear the entry (this should already be done, but we make it explicit
+	   here just in case) */
+	*scorebordIndexEntry = SCOREBOARD_INDEX_TEMPLATE;
+	zeroise( scoreboardData[ position ], sizeof( SCOREBOARD_DATA ) );
+
+	/* Copy across the key and value */
+	scorebordIndexEntry->checkValue = checkValue;
+	hashData( scorebordIndexEntry->hashValue, HASH_DATA_SIZE, 
+			  key, keyLength );
+	scorebordIndexEntry->timeStamp = currentTime;
+	scorebordIndexEntry->uniqueID = scoreboardInfo->uniqueID++;
+	memcpy( scoreboardData[ position ], value, valueLength );
+
+	/* If we've used a new entry, update the position-used index */
+	if( position >= scoreboardInfo->lastEntry )
+		scoreboardInfo->lastEntry = position + 1;
+
+	return( scoreboardIndex[ position ].uniqueID );
+	}
+
+/* Umbrella interface for all scoreboard operations */
+
+static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
+							 const SCOREBOARD_ACTION action,
+							 const void *key, const int keyLength, 
+							 void *value, const int valueLength )
+	{
+	SCOREBOARD_INDEX *scoreboardIndex = scoreboardInfo->index;
+	SCOREBOARD_DATA *scoreboardData = scoreboardInfo->data;
+	const time_t currentTime = getTime();
+	int position, uniqueID = SCOREBOARD_UNIQUEID_NONE, status;
+
+	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) && keyLength >= 8 );
+	assert( ( value == NULL && valueLength == 0 ) || \
+			isReadPtr( value, valueLength ) );
+	assert( ( action == SCOREBOARD_ACTION_PRESENCECHECK && value == NULL ) || \
+			( action == SCOREBOARD_ACTION_LOOKUP && value != NULL ) || \
+			( action == SCOREBOARD_ACTION_ADD && value != NULL ) );
+	assert( isWritePtr( scoreboardIndex,
+						scoreboardInfo->size * sizeof( SCOREBOARD_INDEX ) ) );
+	assert( isWritePtr( scoreboardData,
+						scoreboardInfo->size * sizeof( SCOREBOARD_DATA ) ) );
+
+	/* If there's something wrong with the time, we can't perform (time-
+	   based) scoreboard management */
+	if( currentTime <= MIN_TIME_VALUE )
+		return( SCOREBOARD_UNIQUEID_NONE );
+
+	status = krnlEnterMutex( MUTEX_SCOREBOARD );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Try and find this entry in the scoreboard */
+	status = findEntry( scoreboardInfo, key, keyLength, currentTime, 
+						&position );
+	assert( position >= 0 && position < scoreboardInfo->size );
+	if( cryptStatusError( status ) )
+		{
+		/* No match found, if we're adding a new entry, add it at the
+		   appropriate location */
+		if( action == SCOREBOARD_ACTION_ADD )
+			uniqueID = addEntry( scoreboardInfo, position, key, keyLength, 
+								 value, valueLength, currentTime );
+		}
+	else
+		{
+		SCOREBOARD_INDEX *scorebordIndexEntry = &scoreboardIndex[ position ];
+		SCOREBOARD_DATA *scoreboardDataEntry = &scoreboardData[ position ];
+
+		/* If we're trying to add an entry that matches an existing key, 
+		   clear the existing entry and don't add the new one.  Attempting
+		   to re-add a value using an existing key is a sign that something
+		   suspicious is going on, if we simply ignore the add attempt then
+		   it'll appear to the caller that we've added the new value when in
+		   fact we've retained the old value.  If on the other hand we
+		   overwrite the old value with the new one it'll allow an attacker
+		   to replace existing scoreboard contents with attacker-controlled
+		   ones */
+		if( action == SCOREBOARD_ACTION_ADD )
+			{
+			scoreboardIndex[ position ] = SCOREBOARD_INDEX_TEMPLATE;
+			zeroise( scoreboardDataEntry, sizeof( SCOREBOARD_DATA ) );
+			uniqueID = SCOREBOARD_UNIQUEID_NONE;
+			}
+		else
+			{
+			/* If we're looking for an existing entry return its data and 
+			   update the last-access date */
+			if( action == SCOREBOARD_ACTION_LOOKUP )
+				{
+				memcpy( value, scoreboardDataEntry, SCOREBOARD_DATA_SIZE );
+				scorebordIndexEntry->timeStamp = currentTime;
+				}
+			uniqueID = scorebordIndexEntry->uniqueID;
+			}
 		}
 
 	krnlExitMutex( MUTEX_SCOREBOARD );
@@ -212,53 +319,51 @@ static int handleScoreboard( SCOREBOARD_INFO *scoreboardInfo,
    for the local scoreboard-access function, for use by external code */
 
 int findScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
-						 const void *sessionID, const int sessionIDlength,
-						 void *masterSecret, int *masterSecretLength )
+						 const void *key, const int keyLength,
+						 void *value, const int maxValueLength,
+						 int *valueLength )
 	{
 	int resumedSessionID;
 
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
-	assert( isReadPtr( sessionID, sessionIDlength ) );
-	assert( isWritePtr( masterSecret, sizeof( void * ) ) );
-	assert( isWritePtr( masterSecretLength, sizeof( int ) ) );
+	assert( isReadPtr( key, keyLength ) );
+	assert( isWritePtr( value, maxValueLength ) );
+	assert( isWritePtr( valueLength, sizeof( int ) ) );
+
+	/* Clear return value */
+	memset( value, 0, maxValueLength );
+	*valueLength = 0;
 
 	resumedSessionID = handleScoreboard( scoreboardInfo, 
-								sessionID, sessionIDlength, masterSecret, 
-								FALSE, SCOREBOARD_ACTION_LOOKUP );
-	*masterSecretLength = ( resumedSessionID != 0 ) ? SSL_SECRET_SIZE : 0;
+								SCOREBOARD_ACTION_LOOKUP,
+								key, keyLength, value, maxValueLength );
+	if( resumedSessionID != SCOREBOARD_UNIQUEID_NONE )
+		*valueLength = SCOREBOARD_DATA_SIZE;
 	return( resumedSessionID );
 	}
 
 int findScoreboardEntryID( SCOREBOARD_INFO *scoreboardInfo,
-						   const void *sessionID, const int sessionIDlength )
+						   const void *key, const int keyLength )
 	{
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
-	assert( isReadPtr( sessionID, sessionIDlength ) );
+	assert( isReadPtr( key, keyLength ) );
 
-	return( handleScoreboard( scoreboardInfo, sessionID, sessionIDlength, 
-							  NULL, FALSE, SCOREBOARD_ACTION_PRESENCECHECK ) );
+	return( handleScoreboard( scoreboardInfo, SCOREBOARD_ACTION_PRESENCECHECK,
+							  key, keyLength, NULL, 0 ) );
 	}
 
 int addScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
-						const void *sessionID, const int sessionIDlength, 
-						const void *masterSecret, 
-						const int masterSecretLength, 
-						const BOOLEAN isFixedEntry )
+						const void *key, const int keyLength, 
+						const void *value, const int valueLength )
 	{
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
-	assert( isReadPtr( sessionID, sessionIDlength ) );
-	assert( isReadPtr( masterSecret, masterSecretLength ) && \
-			masterSecretLength == SSL_SECRET_SIZE );
-
-	/* If we're not doing resumes (or the ID is suspiciously short), don't
-	   try and update the scoreboard */
-	if( sessionIDlength < 8 )
-		return( 0 );
+	assert( isReadPtr( key, keyLength ) );
+	assert( isReadPtr( value, valueLength ) && \
+			valueLength <= SCOREBOARD_DATA_SIZE );
 
 	/* Add the entry to the scoreboard */
-	return( handleScoreboard( scoreboardInfo, sessionID, sessionIDlength,
-							  ( void * ) masterSecret, isFixedEntry,
-							  SCOREBOARD_ACTION_ADD ) );
+	return( handleScoreboard( scoreboardInfo, SCOREBOARD_ACTION_ADD,
+							  key, keyLength, ( void * ) value, valueLength ) );
 	}
 
 void deleteScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo, 
@@ -269,7 +374,7 @@ void deleteScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
 	int i, status;
 
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
-	assert( uniqueID > 0 );
+	assert( uniqueID > SCOREBOARD_UNIQUEID_NONE );
 
 	status = krnlEnterMutex( MUTEX_SCOREBOARD );
 	if( cryptStatusError( status ) )
@@ -312,14 +417,15 @@ int initScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
 	assert( scoreboardSize > 16 && scoreboardSize <= 8192 );
 
-	/* Initialise the scoreboard */
-	memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
-	scoreboardInfo->uniqueID = 1;
-	scoreboardInfo->size = scoreboardSize;
-
 	krnlEnterMutex( MUTEX_SCOREBOARD );
 
 	/* Initialise the scoreboard */
+	memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
+	scoreboardInfo->uniqueID = SCOREBOARD_UNIQUEID_NONE + 1;
+	scoreboardInfo->lastEntry = 0;
+	scoreboardInfo->size = scoreboardSize;
+
+	/* Initialise the scoreboard data */
 	if( ( scoreboardInfo->index = clAlloc( "initScoreboard", \
 				scoreboardSize * sizeof( SCOREBOARD_INDEX ) ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
@@ -336,8 +442,6 @@ int initScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 		scoreboardIndex[ i ] = SCOREBOARD_INDEX_TEMPLATE;
 	memset( scoreboardInfo->data, 0, scoreboardSize * \
 									 sizeof( SCOREBOARD_DATA ) );
-	scoreboardInfo->lastEntry = 0;
-	scoreboardInfo->uniqueID = 1;
 
 	krnlExitMutex( MUTEX_SCOREBOARD );
 	return( CRYPT_OK );

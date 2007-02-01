@@ -497,6 +497,9 @@ static int insertDNstring( void **dnListHead, const CRYPT_ATTRIBUTE_TYPE type,
 		{
 		BYTE *dnStrPtr = newElement->value;
 
+		/* Note: When the code is run under BoundsChecker, the toUpper() 
+		   conversion will produce garbage on any call after the first one, 
+		   resulting in the following checks failing */
 		dnStrPtr[ 0 ] = toUpper( dnStrPtr[ 0 ] );
 		dnStrPtr[ 1 ] = toUpper( dnStrPtr[ 1 ] );
 		if( flags & DN_FLAG_NOCHECK )
@@ -517,7 +520,6 @@ static int insertDNstring( void **dnListHead, const CRYPT_ATTRIBUTE_TYPE type,
 					*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
 				return( CRYPT_ERROR_INVALID );
 				}
-
 		}
 
 	/* Link it into the list */
@@ -540,21 +542,12 @@ int insertDNComponent( void **dnListHead,
 
 static int deleteComponent( void **dnListHead, DN_COMPONENT *theElement )
 	{
-	DN_COMPONENT *listPrevPtr, *listNextPtr;
-
 	if( theElement == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 	assert( isWritePtr( theElement, sizeof( DN_COMPONENT ) ) );
-	listPrevPtr = theElement->prev;
-	listNextPtr = theElement->next;
 
 	/* Remove the item from the list */
-	if( theElement == *dnListHead )
-		*dnListHead = listNextPtr;			/* Delete from start */
-	else
-		listPrevPtr->next = listNextPtr;	/* Delete from middle or end */
-	if( listNextPtr != NULL )
-		listNextPtr->prev = listPrevPtr;
+	deleteDoubleListElement( dnListHead, theElement );
 
 	/* Clear all data in the list item and free the memory */
 	endVarStruct( theElement, DN_COMPONENT );

@@ -851,6 +851,33 @@ static PyObject* python_cryptGetPrivateKey(PyObject* self, PyObject* args)
 	return(processStatusReturnCryptHandle(status, cryptContext));
 }
 
+static PyObject* python_cryptGetKey(PyObject* self, PyObject* args)
+{
+	int status = 0;
+	int cryptContext = 0;
+	int keyset = 0;
+	int keyIDtype = 0;
+	PyObject* keyID = NULL;
+	PyObject* password = NULL;
+	unsigned char* keyIDPtr = 0;
+	unsigned char* passwordPtr = 0;
+	
+	if (!PyArg_ParseTuple(args, "iiOO", &keyset, &keyIDtype, &keyID, &password))
+	    return(NULL);
+	
+	if (!getPointerReadString(keyID, &keyIDPtr))
+		goto finish;
+	if (!getPointerReadString(password, &passwordPtr))
+		goto finish;
+	
+	status = cryptGetKey(keyset, &cryptContext, keyIDtype, keyIDPtr, passwordPtr);
+	
+	finish:
+	releasePointerString(keyID, keyIDPtr);
+	releasePointerString(password, passwordPtr);
+	return(processStatusReturnCryptHandle(status, cryptContext));
+}
+
 static PyObject* python_cryptAddPublicKey(PyObject* self, PyObject* args)
 {
 	int status = 0;
@@ -1420,6 +1447,7 @@ static PyMethodDef module_functions[] =
 	{ "cryptKeysetClose", python_cryptKeysetClose, METH_VARARGS }, 
 	{ "cryptGetPublicKey", python_cryptGetPublicKey, METH_VARARGS }, 
 	{ "cryptGetPrivateKey", python_cryptGetPrivateKey, METH_VARARGS }, 
+	{ "cryptGetKey", python_cryptGetKey, METH_VARARGS }, 
 	{ "cryptAddPublicKey", python_cryptAddPublicKey, METH_VARARGS }, 
 	{ "cryptAddPrivateKey", python_cryptAddPrivateKey, METH_VARARGS }, 
 	{ "cryptDeleteKey", python_cryptDeleteKey, METH_VARARGS }, 
@@ -1594,6 +1622,10 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 104);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_KEA", v);
     Py_DECREF(v); /* KEA */
+
+    v = Py_BuildValue("i", 105);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_ECDSA", v);
+    Py_DECREF(v); /* ECDSA */
 
     v = Py_BuildValue("i", 200);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_MD2", v);
@@ -2268,6 +2300,10 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Label for private/secret key */
 
     v = Py_BuildValue("i", 1017);
+    PyDict_SetItemString(moduleDict, "CRYPT_CTXINFO_PERSISTENT", v);
+    Py_DECREF(v); /* Obj.is backed by device or keyset */
+
+    v = Py_BuildValue("i", 1018);
     PyDict_SetItemString(moduleDict, "CRYPT_CTXINFO_LAST", v);
     Py_DECREF(v);
 
@@ -4273,6 +4309,10 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 512);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_PKCSIZE", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 32);
+    PyDict_SetItemString(moduleDict, "CRYPT_MAX_PKCSIZE_ECC", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 32);

@@ -58,7 +58,7 @@ if [ "$4" = "" ] ; then
 	exit 1 ;
 fi
 
-# Juggle the args around to get them the way we want them.
+# Juggle the args around to get them the way that we want them.
 
 OSNAME=$1
 LIBNAME=$2

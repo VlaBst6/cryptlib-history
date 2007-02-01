@@ -458,7 +458,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	/* Import the encrypted key into the PKC context */
 	setMechanismWrapInfo( &mechanismInfo, ( void * ) encryptedContent,
 						  encryptedContentLength, NULL, 0, iCryptContext,
-						  iSessionKey, CRYPT_UNUSED );
+						  iSessionKey );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT,
 							  &mechanismInfo, MECHANISM_PRIVATEKEYWRAP );
 	clearMechanismInfo( &mechanismInfo );

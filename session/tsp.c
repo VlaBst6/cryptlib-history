@@ -52,10 +52,10 @@ typedef struct {
 	BOOLEAN includeSigCerts;			/* Whether to include signer certs */
 	} TSP_PROTOCOL_INFO;
 
-/* Prototypes for functions in cmp.c.  This code is shared due to TSP's use
-   of random elements cut&pasted from CMP */
+/* Prototypes for functions in cmp_rd.c.  This code is shared due to TSP's use
+   of random elements cut & pasted from CMP */
 
-int readPkiStatusInfo( STREAM *stream, int *errorCode, char *errorMessage );
+int readPkiStatusInfo( STREAM *stream, ERROR_INFO *errorInfo );
 
 /****************************************************************************
 *																			*
@@ -76,7 +76,7 @@ static int readTSPRequest( STREAM *stream, TSP_PROTOCOL_INFO *protocolInfo,
 	readSequence( stream, NULL );
 	status = readShortInteger( stream, &value );
 	if( cryptStatusError( status ) || value != TSP_VERSION )
-		retExt( errorInfo, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_BADDATA,
 				"Invalid request version %ld", value );
 
 	/* Read the message imprint.  We don't really care what this is so we
@@ -86,7 +86,7 @@ static int readTSPRequest( STREAM *stream, TSP_PROTOCOL_INFO *protocolInfo,
 	if( cryptStatusError( status ) || \
 		length < MIN_MSGIMPRINT_SIZE || length > MAX_MSGIMPRINT_SIZE || \
 		cryptStatusError( sSkip( stream, length ) ) )
-		retExt( errorInfo, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_BADDATA,
 				"Invalid request data length %d", length );
 	length = ( int ) sizeofObject( length );
 	memcpy( protocolInfo->msgImprint, bufPtr, length );
@@ -140,7 +140,8 @@ static int readTSPRequest( STREAM *stream, TSP_PROTOCOL_INFO *protocolInfo,
 		status = readUniversal( stream );
 		}
 	if( cryptStatusError( status ) )
-		retExt( errorInfo, CRYPT_ERROR_BADDATA, "Invalid request data" );
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_BADDATA, 
+				"Invalid request data" );
 	return( CRYPT_OK );
 	}
 
@@ -339,8 +340,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  sessionInfoPtr->errorMessage,
-							  &sessionInfoPtr->errorCode );
+							  &sessionInfoPtr->errorInfo );
 			return( status );
 			}
 		packetLength = mgetLong( bufPtr );
@@ -348,7 +348,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr,
 			packetLength > sessionInfoPtr->receiveBufSize || \
 			( *bufPtr != TSP_MESSAGE_REQUEST && \
 			  *bufPtr != TSP_MESSAGE_RESPONSE ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid TSP socket protocol data" );
 
 		/* Fiddle the read buffer size to make sure we only try and read as
@@ -371,7 +371,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr,
 		   bother trying to feed it to the cert handling code, in theory to
 		   save a few cycles but mostly to avoid triggering sanity checks
 		   within the code for too-short objects */
-		retExt( sessionInfoPtr, CRYPT_ERROR_INVALID,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_INVALID,
 				"TSA returned error response" );
 
 	/* Strip off the header and check the PKIStatus wrapper to make sure
@@ -379,8 +379,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr,
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
 	readSequence( &stream, NULL );
-	status = readPkiStatusInfo( &stream, &sessionInfoPtr->errorCode,
-								sessionInfoPtr->errorMessage );
+	status = readPkiStatusInfo( &stream, &sessionInfoPtr->errorInfo );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -421,7 +420,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr,
 	sMemDisconnect( &stream );
 
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				( status == CRYPT_ERROR_BADDATA ) ? \
 					"Invalid timestamp data" : \
 					"Timestamp message imprint doesn't match message "
@@ -502,8 +501,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  sessionInfoPtr->errorMessage,
-							  &sessionInfoPtr->errorCode );
+							  &sessionInfoPtr->errorInfo );
 			return( status );
 			}
 		packetLength = mgetLong( bufPtr );
@@ -511,7 +509,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 			packetLength > sessionInfoPtr->receiveBufSize || \
 			( *bufPtr != TSP_MESSAGE_REQUEST && \
 			  *bufPtr != TSP_MESSAGE_RESPONSE ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid TSP socket protocol data" );
 
 		/* Fiddle the read buffer size to make sure we only try and read as

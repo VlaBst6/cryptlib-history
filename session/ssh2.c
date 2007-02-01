@@ -155,7 +155,7 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 			status = CRYPT_ERROR_BADDATA;
 		}
 	if( cryptStatusError( status ) )
-		retExt( errorInfo, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_BADDATA,
 				"Invalid algorithm ID string" );
 
 	/* Walk down the string looking for a recognised algorithm.  Since our
@@ -253,16 +253,17 @@ static int readAlgoStringEx( STREAM *stream, ALGOID_INFO *algoIDInfo,
 	if( algoIndex > 50 )
 		{
 		char algoString[ 256 + 8 ];
+		const int algoStringLen = min( stringLen, \
+									   min( MAX_ERRMSG_SIZE - 80, 255 ) );
 
 		/* We couldn't find anything to use, tell the caller what was
 		   available */
-		if( stringLen > min( MAX_ERRMSG_SIZE - 80, 255 ) )
-			stringLen = min( MAX_ERRMSG_SIZE - 80, 255 );
-		memcpy( algoString, string, stringLen );
-		algoString[ stringLen ] = '\0';
-		retExt( errorInfo, CRYPT_ERROR_NOTAVAIL,
-				"No algorithm compatible with the remote system's selection "
-				"was found : %s", sanitiseString( algoString, stringLen ) );
+		if( algoStringLen > 0 )
+			memcpy( algoString, string, algoStringLen );
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_NOTAVAIL,
+				"No algorithm compatible with the remote system's "
+				"selection was found: '%s'", 
+				sanitiseString( algoString, algoStringLen, stringLen ) );
 		}
 
 	/* We found a more-preferred algorithm than the default, go with that */
@@ -330,7 +331,7 @@ static int readAlgoStringPair( STREAM *stream, const ALGO_STRING_INFO *algoInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( pairPreferredAlgo != algoIDInfo.algo )
-		retExt( errorInfo, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO_VOID, CRYPT_ERROR_BADDATA,
 				"Client algorithm %d doesn't match server algorithm %d in "
 				"algorithm pair", pairPreferredAlgo, algoIDInfo.algo );
 	if( algo != NULL )
@@ -499,7 +500,7 @@ int processHelloSSH( SESSION_INFO *sessionInfoPtr,
 		status = readUint32( &stream );	/* Reserved value */
 		}
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Invalid hello packet compression algorithm/language string/"
 				"trailer" );
 
@@ -580,7 +581,7 @@ static int readHeaderFunction( SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		if( payloadLength != length - ( removedDataLength + \
 										sshInfo->padLength ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid data packet payload length %ld, should be %ld",
 					payloadLength,
 					length - ( removedDataLength + sshInfo->padLength ) );
@@ -639,7 +640,7 @@ static int processBodyFunction( SESSION_INFO *sessionInfoPtr,
 						 length, 0, MAC_END, sessionInfoPtr->authBlocksize,
 						 TRUE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 				"Bad message MAC for packet type %d, length %ld",
 				sshInfo->packetType,
 				sessionInfoPtr->pendingPacketPartialLength + length );

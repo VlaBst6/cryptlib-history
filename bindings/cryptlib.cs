@@ -34,6 +34,7 @@ public class crypt
 	public const int ALGO_DSA                = 102; // DSA
 	public const int ALGO_ELGAMAL            = 103; // ElGamal
 	public const int ALGO_KEA                = 104; // KEA
+	public const int ALGO_ECDSA              = 105; // ECDSA
 	public const int ALGO_MD2                = 200; // MD2
 	public const int ALGO_MD4                = 201; // MD4
 	public const int ALGO_MD5                = 202; // MD5
@@ -250,7 +251,8 @@ public class crypt
 	public const int CTXINFO_IV                                  = 1014; // IV
 	public const int CTXINFO_HASHVALUE                           = 1015; // Hash value
 	public const int CTXINFO_LABEL                               = 1016; // Label for private/secret key
-	public const int CTXINFO_LAST                                = 1017;
+	public const int CTXINFO_PERSISTENT                          = 1017; // Obj.is backed by device or keyset
+	public const int CTXINFO_LAST                                = 1018;
 	public const int CERTINFO_FIRST                              = 2000; // ************************
 	public const int CERTINFO_SELFSIGNED                         = 2001; // Cert is self-signed
 	public const int CERTINFO_IMMUTABLE                          = 2002; // Cert is signed and immutable
@@ -833,9 +835,11 @@ public class crypt
 	
 	public const int MAX_IVSIZE                               = 32  ;
 	
-	/* The maximum public-key component size - 4096 bits */
+	/* The maximum public-key component size - 4096 bits, and maximum component
+	   size for ECCs - 256 bits */
 	
 	public const int MAX_PKCSIZE                              = 512 ;
+	public const int MAX_PKCSIZE_ECC                          = 32  ;
 	
 	/* The maximum hash size - 256 bits */
 	
@@ -984,6 +988,40 @@ public class crypt
 	//	unsigned char x[ CRYPT_MAX_PKCSIZE ];	/* Private random integer */
 	//	int xLen;					/* Length of private integer in bits */
 	//	} CRYPT_PKCINFO_DLP;
+	
+	//CRYPTLIBCONVERTER - NOT SUPPORTED:
+	//typedef struct {
+	//	/* Status information */
+	//	int isPublicKey;			/* Whether this is a public or private key */
+	//
+	//	/* Curve */
+	//	unsigned char p[ CRYPT_MAX_PKCSIZE ];	/* Prime defining Fq */
+	//	int pLen;					/* Length of prime in bits */
+	//	unsigned char a[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining curve */
+	//	int aLen;					/* Length of element a in bits */
+	//	unsigned char b[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining curve */
+	//	int bLen;					/* Length of element b in bits */
+	//
+	//	/* Generator */
+	//	unsigned char gx[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining point */
+	//	int gxLen;					/* Length of element gx in bits */
+	//	unsigned char gy[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining point */
+	//	int gyLen;					/* Length of element gy in bits */
+	//	unsigned char r[ CRYPT_MAX_PKCSIZE ];	/* Order of point */
+	//	int rLen;					/* Length of order in bits */
+	//	unsigned char h[ CRYPT_MAX_PKCSIZE ];	/* Optional cofactor */
+	//	int hLen;					/* Length of cofactor in bits */
+	//
+	//	/* Public components */
+	//	unsigned char qx[ CRYPT_MAX_PKCSIZE ];	/* Point Q on the curve */
+	//	int qxLen;					/* Length of point xq in bits */
+	//	unsigned char qy[ CRYPT_MAX_PKCSIZE ];	/* Point Q on the curve */
+	//	int qyLen;					/* Length of point xy in bits */
+	//
+	//	/* Private components */
+	//	unsigned char d[ CRYPT_MAX_PKCSIZE ];	/* Random integer */
+	//	int dLen;					/* Length of integer in bits */
+	//	} CRYPT_PKCINFO_ECC;
 	
 	/* Macros to initialise and destroy the structure that stores the components
 	   of a public key */
@@ -1728,7 +1766,7 @@ public class crypt
 		processStatus(wrapped_KeysetClose(keyset));
 	}
 	
-	/* Get a key from a keyset */
+	/* Get a key from a keyset or device */
 	
 	public static int GetPublicKey(
 								int keyset, // CRYPT_KEYSET
@@ -1782,7 +1820,36 @@ public class crypt
 		}
 	}
 	
-	/* Add/delete a key to/from a keyset */
+	public static int GetKey(
+								int keyset, // CRYPT_KEYSET
+								int keyIDtype, // CRYPT_KEYID_TYPE
+								String keyID,
+								String password
+								)
+	{
+		IntPtr cryptContextPtr = Marshal.AllocHGlobal(4);
+		GCHandle keyIDHandle = new GCHandle();
+		IntPtr keyIDPtr = IntPtr.Zero;
+		byte[] keyIDArray = new UTF8Encoding().GetBytes(keyID);
+		GCHandle passwordHandle = new GCHandle();
+		IntPtr passwordPtr = IntPtr.Zero;
+		byte[] passwordArray = new UTF8Encoding().GetBytes(password);
+		try
+		{
+			getPointer(keyIDArray, 0, ref keyIDHandle, ref keyIDPtr);
+			getPointer(passwordArray, 0, ref passwordHandle, ref passwordPtr);
+			processStatus(wrapped_GetKey(keyset, cryptContextPtr, keyIDtype, keyIDPtr, passwordPtr));
+			return Marshal.ReadInt32(cryptContextPtr);
+		}
+		finally
+		{
+			Marshal.FreeHGlobal(cryptContextPtr);
+			releasePointer(keyIDHandle);
+			releasePointer(passwordHandle);
+		}
+	}
+	
+	/* Add/delete a key to/from a keyset or device */
 	
 	public static void AddPublicKey(
 								int keyset, // CRYPT_KEYSET
@@ -2468,6 +2535,9 @@ public class crypt
 
 	[DllImport("cl32.dll", EntryPoint="cryptGetPrivateKey")]
 	private static extern int wrapped_GetPrivateKey(int keyset, IntPtr cryptContext, int keyIDtype, IntPtr keyID, IntPtr password);
+
+	[DllImport("cl32.dll", EntryPoint="cryptGetKey")]
+	private static extern int wrapped_GetKey(int keyset, IntPtr cryptContext, int keyIDtype, IntPtr keyID, IntPtr password);
 
 	[DllImport("cl32.dll", EntryPoint="cryptAddPublicKey")]
 	private static extern int wrapped_AddPublicKey(int keyset, int certificate);

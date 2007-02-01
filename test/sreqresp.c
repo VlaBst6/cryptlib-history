@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -23,8 +18,9 @@
 
 /* Prototypes for functions in testcert.c */
 
-int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, const int number,
-			  const BOOLEAN multipleCerts );
+int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, 
+			  const CRYPT_CERTIFICATE cryptCertificateTemplate,
+			  const int number, const BOOLEAN multipleCerts );
 int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 			  const BOOLEAN ocspv2, const BOOLEAN revokedCert,
 			  const BOOLEAN multipleCerts,
@@ -271,7 +267,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			localSession ? "local " : "" );
 
 	/* Acquire the init mutex if we're the server */
-	if( isServer )
+	if( localSession && isServer )
 		waitMutex();
 
 	/* Create the RTCS session */
@@ -340,14 +336,37 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 								   status, __LINE__ ) );
 
 		/* Tell the client that we're ready to go */
-		releaseMutex();
+		if( localSession )
+			releaseMutex();
 		}
 	else
 		{
-		/* Create the RTCS request */
-		if( !initRTCS( &cryptRTCSRequest, localSession ? 1 : RTCS_SERVER_NO,
-					   multipleCerts ) )
+		CRYPT_KEYSET cryptKeyset;
+		CRYPT_CERTIFICATE cryptCert;
+
+		/* Get the cert whose status we're checking */
+		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
+								  DATABASE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
+								  CRYPT_KEYOPT_READONLY );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetPublicKey( cryptKeyset, &cryptCert, 
+										CRYPT_KEYID_NAME, 
+										TEXT( "Test user 1" ) );
+			cryptKeysetClose( cryptKeyset );
+			}
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't read cert for RTCS status check, error "
+					"code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
+			}
+
+		/* Create the RTCS request */
+		if( !initRTCS( &cryptRTCSRequest, cryptCert, localSession ? \
+							1 : RTCS_SERVER_NO, multipleCerts ) )
+			return( FALSE );
+		cryptDestroyCert( cryptCert );
 
 		/* Set up the server information and activate the session.  In
 		   theory the RTCS request will contain all the information needed
@@ -379,7 +398,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 #endif /* Kludges for incorrect/missing authorityInfoAccess values */
 
 		/* Wait for the server to finish initialising */
-		if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+		if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
 			{
 			printf( "Timed out waiting for server to initialise, line %d.\n",
 					__LINE__ );
@@ -597,7 +616,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			localSession ? "local " : "" );
 
 	/* Acquire the init mutex if we're the server */
-	if( isServer )
+	if( localSession && isServer )
 		waitMutex();
 
 	/* Create the OCSP session */
@@ -657,7 +676,8 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 								   status, __LINE__ ) );
 
 		/* Tell the client that we're ready to go */
-		releaseMutex();
+		if( localSession )
+			releaseMutex();
 		}
 	else
 		{
@@ -706,7 +726,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			}
 
 		/* Wait for the server to finish initialising */
-		if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+		if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
 			{
 			printf( "Timed out waiting for server to initialise, line %d.\n",
 					__LINE__ );
@@ -979,7 +999,7 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 	else
 		/* We're the server, if this is the first connect tell the client 
 		   that we're ready to go */
-		if( !isRecycledConnection )
+		if( localSession && !isRecycledConnection )
 			releaseMutex();
 
 	/* Activate the session and timestamp the message */
@@ -1056,7 +1076,7 @@ static int connectTSP( const CRYPT_SESSION_TYPE sessionType,
 			localSession ? "local " : "" );
 
 	/* Acquire the init mutex if we're the server */
-	if( isServer )
+	if( localSession && isServer )
 		waitMutex();
 
 	/* Create the TSP session */

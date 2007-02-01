@@ -447,6 +447,7 @@ void krnlMemfree( void **pointer )
 #if defined( __osf__ ) || defined( __alpha__ )
   #include <sys/mman.h>
 #elif defined( sun )
+  #include <sys/mman.h>
   #include <sys/types.h>
 #else
   int mlock( void *address, size_t length );

@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2006                      *
+*                    Copyright Peter Gutmann 1997-2007                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Fri Sep  1 23:14:48 2006, filesize = 82545.
+ "cryptlib.h" dated Thu Feb  1 01:54:58 2007, filesize = 85398.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -42,7 +42,7 @@ const
 
 
 const
-  CRYPTLIB_VERSION = 3300;
+  CRYPTLIB_VERSION = 3310;
 
 
 {****************************************************************************
@@ -79,6 +79,7 @@ const
   CRYPT_ALGO_DSA = 102;  { DSA }
   CRYPT_ALGO_ELGAMAL = 103;  { ElGamal }
   CRYPT_ALGO_KEA = 104;  { KEA }
+  CRYPT_ALGO_ECDSA = 105;  { ECDSA }
   
   { Hash algorithms }
   CRYPT_ALGO_MD2 = 200;  { MD2 }
@@ -389,9 +390,10 @@ const
   
   { Misc.information }
   CRYPT_CTXINFO_LABEL = 1016;  { Label for private/secret key }
+  CRYPT_CTXINFO_PERSISTENT = 1017;  { Obj.is backed by device or keyset }
   
   { Used internally }
-  CRYPT_CTXINFO_LAST = 1017;  CRYPT_CERTINFO_FIRST = 2000;  
+  CRYPT_CTXINFO_LAST = 1018;  CRYPT_CERTINFO_FIRST = 2000;  
   
   {************************}
   { Certificate attributes }
@@ -1249,9 +1251,11 @@ const
 
   CRYPT_MAX_IVSIZE = 32;
 
-{  The maximum public-key component size - 4096 bits  }
+{  The maximum public-key component size - 4096 bits, and maximum component
+   size for ECCs - 256 bits  }
 
   CRYPT_MAX_PKCSIZE = 512;
+  CRYPT_MAX_PKCSIZE_ECC = 32;
 
 {  The maximum hash size - 256 bits  }
 
@@ -1405,6 +1409,41 @@ type
     { Private components }
     x: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Private random integer }
     xLen: Integer;                   { Length of private integer in bits }
+    
+
+  end;
+
+  CRYPT_PKCINFO_ECC = record  
+    { Status information }
+    isPublicKey: Integer;            { Whether this is a public or private key }
+
+    { Curve }
+    p: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Prime defining Fq }
+    pLen: Integer;                   { Length of prime in bits }
+    a: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Element in Fq defining curve }
+    aLen: Integer;                   { Length of element a in bits }
+    b: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Element in Fq defining curve }
+    bLen: Integer;                   { Length of element b in bits }
+
+    { Generator }
+    gx: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Element in Fq defining point }
+    gxLen: Integer;                  { Length of element gx in bits }
+    gy: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Element in Fq defining point }
+    gyLen: Integer;                  { Length of element gy in bits }
+    r: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Order of point }
+    rLen: Integer;                   { Length of order in bits }
+    h: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Optional cofactor }
+    hLen: Integer;                   { Length of cofactor in bits }
+
+    { Public components }
+    qx: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Point Q on the curve }
+    qxLen: Integer;                  { Length of point xq in bits }
+    qy: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Point Q on the curve }
+    qyLen: Integer;                  { Length of point xy in bits }
+
+    { Private components }
+    d: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Random integer }
+    dLen: Integer;                   { Length of integer in bits }
     
 
   end;
@@ -1700,7 +1739,7 @@ function cryptKeysetClose( const keyset: CRYPT_KEYSET ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
-{  Get a key from a keyset  }
+{  Get a key from a keyset or device  }
 
 function cryptGetPublicKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
@@ -1715,8 +1754,15 @@ function cryptGetPrivateKey( const keyset: CRYPT_KEYSET;
   const password: PChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
+function cryptGetKey( const keyset: CRYPT_KEYSET;
+  var cryptContext: CRYPT_CONTEXT;
+  const keyIDtype: CRYPT_KEYID_TYPE;
+  const keyID: PChar;
+  const password: PChar ): Integer;
+{$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
-{  Add/delete a key to/from a keyset  }
+
+{  Add/delete a key to/from a keyset or device  }
 
 function cryptAddPublicKey( const keyset: CRYPT_KEYSET;
   const certificate: CRYPT_CERTIFICATE ): Integer;

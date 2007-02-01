@@ -2315,7 +2315,7 @@ const ATTRIBUTE_INFO *selectAttributeInfo( const ATTRIBUTE_TYPE attributeType )
 			cmsAttributeInfo : extensionInfo );
 	}
 
-const int sizeofAttributeInfo( const ATTRIBUTE_TYPE attributeType )
+int sizeofAttributeInfo( const ATTRIBUTE_TYPE attributeType )
 	{
 	assert( attributeType == ATTRIBUTE_CERTIFICATE || \
 			attributeType == ATTRIBUTE_CMS );

@@ -174,8 +174,8 @@ typedef struct {
    assume the existence of a variable 'dbmsInfo' that contains DBMS access
    state information */
 
-#define dbmsOpen( name, options, featureFlags ) \
-		dbmsInfo->openDatabaseFunction( dbmsInfo, name, options, featureFlags )
+#define dbmsOpen( name, nameLen, options, featureFlags ) \
+		dbmsInfo->openDatabaseFunction( dbmsInfo, name, nameLen, options, featureFlags )
 #define dbmsClose() \
 		dbmsInfo->closeDatabaseFunction( dbmsInfo )
 #define dbmsStaticUpdate( command ) \
@@ -203,8 +203,8 @@ void dbmsFormatSQL( char *buffer, const int bufMaxLen,
 					const char *format, ... );
 int dbmsFormatQuery( char *output, const int outMaxLength, 
 					 const char *input, const int inputLength );
-int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name,
-				   const int lengthMarker );
+int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name, 
+				   const int nameLen, const int lengthMarker );
 
 /* Prototypes for interface routines in dbms.c */
 

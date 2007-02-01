@@ -327,6 +327,7 @@ void dbxEndODBC( void )
 static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
 						 SQLHSTMT hStmt, const int defaultStatus )
 	{
+	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
 	const SQLSMALLINT handleType = ( errorLevel == SQL_ERRLVL_STMT ) ? \
 										SQL_HANDLE_STMT : \
 								   ( errorLevel == SQL_ERRLVL_DBC ) ? \
@@ -342,20 +343,20 @@ static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
 
 	/* Get the ODBC error info at the most detailed level we can manage */
 	sqlStatus = SQLGetDiagRec( handleType, handle, 1, szSqlState,
-							   &dwNativeError, dbmsInfo->errorMessage,
+							   &dwNativeError, errorInfo->errorString,
 							   MAX_ERRMSG_SIZE - 1, &dummy );
 	if( !sqlStatusOK( sqlStatus ) && errorLevel == SQL_ERRLVL_STMT )
 		/* If we couldn't get info at the statement-handle level, try again
 		   at the connection handle level */
 		sqlStatus = SQLGetDiagRec( SQL_HANDLE_DBC, dbmsInfo->hDbc, 1,
 								   szSqlState, &dwNativeError,
-								   dbmsInfo->errorMessage,
+								   errorInfo->errorString,
 								   MAX_ERRMSG_SIZE - 1, &dummy );
 	if( !sqlStatusOK( sqlStatus ) )
 		{
 		assert( NOTREACHED );	/* Catch this if it ever occurs */
-		strcpy( dbmsInfo->errorMessage, "Couldn't get error information "
-				"from database backend" );
+		strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+				   "Couldn't get error information from database backend" );
 		return( CRYPT_ERROR_FAILED );
 		}
 
@@ -369,8 +370,9 @@ static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
 		{
 		/* Make sure that the caller gets a sensible error message if they
 		   try to examine the extended error information */
-		if( *dbmsInfo->errorMessage == '\0' )
-			strcpy( dbmsInfo->errorMessage, "No data found" );
+		if( errorInfo->errorString[ 0 ] == '\0' )
+			strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE, 
+					   "No data found" );
 		return( CRYPT_ERROR_NOTFOUND );
 		}
 
@@ -401,13 +403,13 @@ static int getErrorInfo( DBMS_STATE_INFO *dbmsInfo, const int errorLevel,
    and work around problems with some back-end types (and we're specifically
    talking Access here) */
 
-static void convertQuery( DBMS_STATE_INFO *dbmsInfo, char *query,
-						  const char *command )
+static void convertQuery( DBMS_STATE_INFO *dbmsInfo, char *query, 
+						  const int queryMaxLen, const char *command )
 	{
 	char *keywordPtr;
 
 	assert( command != NULL );
-	strcpy( query, command );
+	strlcpy_s( query, queryMaxLen, command );
 
 	/* If it's a CREATE TABLE command, rewrite the blob and date types to
 	   the appropriate values for the database backend */
@@ -524,6 +526,7 @@ static int getBlobInfo( DBMS_STATE_INFO *dbmsInfo, const SQLSMALLINT type )
 
 static int getDatatypeInfo( DBMS_STATE_INFO *dbmsInfo, int *featureFlags )
 	{
+	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
 	const SQLHSTMT hStmt = dbmsInfo->hStmt[ 0 ];
 	SQLRETURN sqlStatus;
 	SQLSMALLINT bufLen;
@@ -548,9 +551,9 @@ static int getDatatypeInfo( DBMS_STATE_INFO *dbmsInfo, int *featureFlags )
 	   report it back as a database open failure */
 	if( count < MAX_ENCODED_CERT_SIZE )
 		{
-		sprintf( dbmsInfo->errorMessage, "Database blob type can only "
-				 "store %d bytes, we need at least %d", count,
-				 MAX_ENCODED_CERT_SIZE );
+		sprintf_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+				   "Database blob type can only store %d bytes, we need at "
+				   "least %d", count, MAX_ENCODED_CERT_SIZE );
 		return( CRYPT_ERROR_OPEN );
 		}
 
@@ -567,9 +570,10 @@ static int getDatatypeInfo( DBMS_STATE_INFO *dbmsInfo, int *featureFlags )
 	if( sqlStatusOK( sqlStatus ) && \
 		attrLength > 0 && attrLength < MAX_SQL_QUERY_SIZE )
 		{
-		sprintf( dbmsInfo->errorMessage, "Database back-end can only "
-				 "transmit %d bytes per message, we need at least %d",
-				 attrLength, MAX_SQL_QUERY_SIZE );
+		sprintf_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+				   "Database back-end can only transmit %d bytes per "
+				   "message, we need at least %d", attrLength, 
+				   MAX_SQL_QUERY_SIZE );
 		return( CRYPT_ERROR_OPEN );
 		}
 
@@ -634,7 +638,8 @@ static int getDatatypeInfo( DBMS_STATE_INFO *dbmsInfo, int *featureFlags )
 		   actual value used by the backend */
 		if( dbmsInfo->backendType == DBMS_POSTGRES )
 			{
-			strcpy( dbmsInfo->dateTimeName, "timestamp" );
+			strlcpy_s( dbmsInfo->dateTimeName, CRYPT_MAX_TEXTSIZE, 
+					   "timestamp" );
 			dbmsInfo->dateTimeNameColSize = 16;
 			sqlStatus = SQL_SUCCESS;
 			}
@@ -910,14 +915,16 @@ static void closeDatabase( DBMS_STATE_INFO *dbmsInfo )
    be directed through the primary hStmt, at some loss in performance */
 
 static int openDatabase( DBMS_STATE_INFO *dbmsInfo, const char *name,
-						 const int options, int *featureFlags )
+						 const int nameLen, const int options, 
+						 int *featureFlags )
 	{
+	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
 	DBMS_NAME_INFO nameInfo;
 	SQLRETURN sqlStatus;
 	int i, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
-	assert( isReadPtr( name, 2 ) );
+	assert( isReadPtr( name, nameLen ) );
 	assert( isWritePtr( featureFlags, sizeof( int ) ) );
 
 	/* Clear return values */
@@ -931,7 +938,7 @@ static int openDatabase( DBMS_STATE_INFO *dbmsInfo, const char *name,
 #endif /* DYNAMIC_LOAD */
 
 	/* Parse the data source into its individual components */
-	status = dbmsParseName( &nameInfo, name, SQL_NTS );
+	status = dbmsParseName( &nameInfo, name, nameLen, SQL_NTS );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -952,12 +959,13 @@ static int openDatabase( DBMS_STATE_INFO *dbmsInfo, const char *name,
 		   ODBC install or config (on non-Windows systems where it's not
 		   part of the OS), since the ODBC driver can't initialise itself */
 #ifdef __WINDOWS__
-		strcpy( dbmsInfo->errorMessage, "Couldn't allocate database "
-				"connection handle" );
+		strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+				   "Couldn't allocate database connection handle" );
 #else
-		strcpy( dbmsInfo->errorMessage, "Couldn't allocate database "
-				"connection handle, this is probably due to an incorrect "
-				"ODBC driver install or an invalid configuration" );
+		strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+				   "Couldn't allocate database connection handle, this is "
+				   "probably due to an incorrect ODBC driver install or an "
+				   "invalid configuration" );
 #endif /* __WINDOWS__ */
 		return( CRYPT_ERROR_OPEN );
 		}
@@ -1054,6 +1062,7 @@ static int fetchData( const SQLHSTMT hStmt, char *data,
 					  const DBMS_QUERY_TYPE queryType,
 					  DBMS_STATE_INFO *dbmsInfo )
 	{
+	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
 	const SQLSMALLINT dataType = ( dbmsInfo->hasBinaryBlobs ) ? \
 								 SQL_C_BINARY : SQL_C_CHAR;
 	SQLRETURN sqlStatus;
@@ -1073,7 +1082,8 @@ static int fetchData( const SQLHSTMT hStmt, char *data,
 		   info to be fetched by SQLGetDiagRec() */
 		if( sqlStatus == SQL_NO_DATA )
 			{
-			strcpy( dbmsInfo->errorMessage, "No data found" );
+			strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+					   "No data found" );
 			return( CRYPT_ERROR_NOTFOUND );
 			}
 		return( getErrorInfo( dbmsInfo, SQL_ERRLVL_STMT, hStmt,
@@ -1101,11 +1111,11 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 						 const DBMS_CACHEDQUERY_TYPE queryEntry,
 						 const DBMS_QUERY_TYPE queryType )
 	{
-	/* We have to explicitly set the maximum length indicator because some
-	   sources will helpfully zero-pad the data to the maximum indicated size,
-	   which is smaller for binary data */
 	const int maxLength = dbmsInfo->hasBinaryBlobs ? \
 						  MAX_CERT_SIZE : MAX_QUERY_RESULT_SIZE;
+		/* We have to explicitly set the maximum length indicator because 
+		   some sources will helpfully zero-pad the data to the maximum 
+		   indicated size, which is smaller for binary data */
 	const SQLHSTMT hStmt = dbmsInfo->hStmt[ queryEntry ];
 	TIMESTAMP_STRUCT timeStamp;
 	SQLINTEGER lengthInfo;
@@ -1134,7 +1144,7 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 			{
 			char query[ MAX_SQL_QUERY_SIZE ];
 
-			convertQuery( dbmsInfo, query, command );
+			convertQuery( dbmsInfo, query, MAX_SQL_QUERY_SIZE, command );
 			sqlStatus = SQLPrepare( hStmt, query, SQL_NTS );
 			if( !sqlStatusOK( sqlStatus ) )
 				return( getErrorInfo( dbmsInfo, SQL_ERRLVL_STMT, hStmt,
@@ -1160,7 +1170,7 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 				{
 				char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
-				convertQuery( dbmsInfo, query, command );
+				convertQuery( dbmsInfo, query, MAX_SQL_QUERY_SIZE, command );
 				sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );
 				}
 			else
@@ -1210,7 +1220,7 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 				{
 				char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
-				convertQuery( dbmsInfo, query, command );
+				convertQuery( dbmsInfo, query, MAX_SQL_QUERY_SIZE, command );
 				sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );
 				}
 			else
@@ -1238,15 +1248,17 @@ static int performQuery( DBMS_STATE_INFO *dbmsInfo, const char *command,
 
 /* Fetch extended error information from the database state info */
 
-static void performErrorQuery( DBMS_STATE_INFO *dbmsInfo, int *errorCode,
-							   char *errorMessage )
+static void performErrorQuery( DBMS_STATE_INFO *dbmsInfo, 
+							   ERROR_INFO *errorInfo )
 	{
-	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
-	assert( isWritePtr( errorCode, sizeof( int ) ) );
-	assert( isWritePtr( errorMessage, MAX_ERRMSG_SIZE ) );
+	ERROR_INFO *dbmsErrorInfo = &dbmsInfo->errorInfo;
 
-	*errorCode = dbmsInfo->errorCode;
-	strcpy( errorMessage, dbmsInfo->errorMessage );
+	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	errorInfo->errorCode = dbmsErrorInfo->errorCode;
+	strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE, 
+			   dbmsErrorInfo->errorString );
 	}
 
 /****************************************************************************
@@ -1317,7 +1329,7 @@ static int performUpdate( DBMS_STATE_INFO *dbmsInfo, const char *command,
 		{
 		char query[ MAX_SQL_QUERY_SIZE + 8 ];
 
-		convertQuery( dbmsInfo, query, command );
+		convertQuery( dbmsInfo, query, MAX_SQL_QUERY_SIZE, command );
 		sqlStatus = SQLExecDirect( hStmt, query, SQL_NTS );
 		}
 	if( !sqlStatusOK( sqlStatus ) )

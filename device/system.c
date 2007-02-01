@@ -26,6 +26,8 @@ static const MECHANISM_FUNCTION_INFO FAR_BSS mechanismFunctions[] = {
 	{ MESSAGE_DEV_SIGCHECK, MECHANISM_SIG_PKCS1, ( MECHANISM_FUNCTION ) sigcheckPKCS1 },
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_PKCS1_RAW, ( MECHANISM_FUNCTION ) exportPKCS1 },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_ENC_PKCS1_RAW, ( MECHANISM_FUNCTION ) importPKCS1 },
+	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_OAEP, ( MECHANISM_FUNCTION ) exportOAEP },
+	{ MESSAGE_DEV_IMPORT, MECHANISM_ENC_OAEP, ( MECHANISM_FUNCTION ) importOAEP },
 #endif /* USE_PKC */
 #ifdef USE_PGP
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_PKCS1_PGP, ( MECHANISM_FUNCTION ) exportPKCS1PGP },
@@ -56,7 +58,8 @@ static const MECHANISM_FUNCTION_INFO FAR_BSS mechanismFunctions[] = {
 	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_PKCS8, ( MECHANISM_FUNCTION ) importPrivateKeyPKCS8 },
 #endif /* USE_PKC */
 #ifdef USE_PGPKEYS
-	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_PGP, ( MECHANISM_FUNCTION ) importPrivateKeyPGP },
+	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_PGP2, ( MECHANISM_FUNCTION ) importPrivateKeyPGP2 },
+	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD, ( MECHANISM_FUNCTION ) importPrivateKeyOpenPGPOld },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_PRIVATEKEYWRAP_OPENPGP, ( MECHANISM_FUNCTION ) importPrivateKeyOpenPGP },
 #endif /* USE_PGPKEYS */
 	{ MESSAGE_NONE, MECHANISM_NONE, NULL }, { MESSAGE_NONE, MECHANISM_NONE, NULL }
@@ -208,6 +211,63 @@ static int getNonce( SYSTEMDEV_INFO *systemInfo, const void *data,
 	return( CRYPT_OK );
 	}
 
+/* Perform the algorithm self-test.  This tests either the algorithm 
+   indicated by the caller, or all algorithms if CRYPT_USE_DEFAULT is 
+   given */
+
+static int selfTest( CAPABILITY_INFO_LIST **capabilityInfoListPtrPtr,
+					 const int algoType )
+	{
+	CAPABILITY_INFO_LIST *capabilityInfoListPtr = *capabilityInfoListPtrPtr;
+	CAPABILITY_INFO_LIST *capabilityInfoListPrevPtr = NULL;
+	BOOLEAN algoTested = FALSE;
+	int status = CRYPT_OK;
+
+	assert( isReadPtr( capabilityInfoListPtrPtr, \
+					   sizeof( CAPABILITY_INFO_LIST * ) ) );
+
+	/* Test each available capability */
+	for( capabilityInfoListPtr = *capabilityInfoListPtrPtr;
+		 capabilityInfoListPtr != NULL; 
+		 capabilityInfoListPtr = capabilityInfoListPtr->next )
+		{
+		const CAPABILITY_INFO *capabilityInfoPtr = capabilityInfoListPtr->info;
+		int localStatus;
+
+		assert( capabilityInfoPtr->selfTestFunction != NULL );
+
+		/* If we're not testing this algorithm, continue */
+		if( algoType != CRYPT_USE_DEFAULT && \
+			algoType != capabilityInfoPtr->cryptAlgo )
+			{
+			capabilityInfoListPrevPtr = capabilityInfoListPtr;
+			continue;
+			}
+
+		/* Perform the self-test for this algorithm type */
+		localStatus = capabilityInfoPtr->selfTestFunction();
+		if( cryptStatusError( localStatus ) )
+			{
+			/* The self-test failed, remember the status if it's the first 
+			   failure and disable this algorithm */
+			if( cryptStatusOK( status ) )
+				status = localStatus;
+			deleteSingleListElement( capabilityInfoListPtrPtr, 
+									 capabilityInfoListPrevPtr, 
+									 capabilityInfoListPtr );
+			}
+		else
+			{
+			algoTested = TRUE;
+
+			/* Remember the last successfully-tested capability */
+			capabilityInfoListPrevPtr = capabilityInfoListPtr;
+			}
+		}
+
+	return( algoTested ? status : CRYPT_ERROR_NOTFOUND );
+	}
+
 /****************************************************************************
 *																			*
 *					Device Init/Shutdown/Device Control Routines			*
@@ -234,6 +294,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	   active */
 	initCapabilities();
 	deviceInfo->label = "cryptlib system device";
+	deviceInfo->labelLen = strlen( deviceInfo->label );
 	deviceInfo->flags = DEVICE_ACTIVE | DEVICE_LOGGEDIN | DEVICE_TIME;
 	return( CRYPT_OK );
 	}
@@ -307,38 +368,10 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 	if( type == CRYPT_IATTRIBUTE_RANDOM_NONCE )
 		return( getNonce( deviceInfo->deviceSystem, data, dataLength ) );
 
-	/* Handle algorithm self-test.  This tests either the algorithm indicated
-	   by the caller, or all algorithms if CRYPT_USE_DEFAULT is given */
+	/* Handle algorithm self-test */
 	if( type == CRYPT_IATTRIBUTE_SELFTEST )
-		{
-		const CAPABILITY_INFO_LIST *capabilityInfoListPtr = \
-									deviceInfo->capabilityInfoList;
-		BOOLEAN algoTested = FALSE;
-
-		while( capabilityInfoListPtr != NULL )
-			{
-			const CAPABILITY_INFO *capabilityInfoPtr = capabilityInfoListPtr->info;
-			const CRYPT_ALGO_TYPE cryptAlgo = capabilityInfoPtr->cryptAlgo;
-
-			assert( capabilityInfoPtr->selfTestFunction != NULL );
-
-			/* Perform the self-test for this algorithm type and skip to the
-			   next algorithm */
-			if( dataLength == CRYPT_USE_DEFAULT || \
-				capabilityInfoPtr->cryptAlgo == dataLength )
-				{
-				const int status = capabilityInfoPtr->selfTestFunction();
-				if( cryptStatusError( status ) )
-					return( status );
-				algoTested = TRUE;
-				}
-			while( capabilityInfoListPtr != NULL && \
-				   capabilityInfoListPtr->info->cryptAlgo == cryptAlgo )
-				capabilityInfoListPtr = capabilityInfoListPtr->next;
-			}
-
-		return( algoTested ? CRYPT_OK : CRYPT_ERROR_NOTFOUND );
-		}
+		return( selfTest( ( CAPABILITY_INFO_LIST ** ) &deviceInfo->capabilityInfoList, 
+						  dataLength ) );
 
 	/* Handle high-reliability time */
 	if( type == CRYPT_IATTRIBUTE_TIME )
@@ -428,6 +461,9 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #ifdef USE_RSA
 	getRSACapability,
 #endif /* USE_RSA */
+#ifdef USE_ECC
+	getECDSACapability,
+#endif /* USE_ECC */
 
 	/* Vendors may want to use their own algorithms, which aren't part of the
 	   general cryptlib suite.  The following provides the ability to include

@@ -7,22 +7,15 @@
 
 #ifdef INC_ALL
   #include "crypt.h"
+  #include "mech_int.h"
   #include "asn1.h"
   #include "asn1_ext.h"
 #else
   #include "crypt.h"
+  #include "mechs/mech_int.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
-
-/* Prototypes for functions in mech_enc.c */
-
-int adjustPKCS1Data( BYTE *outData, const BYTE *inData, const int inLength, 
-					 const int keySize );
-BOOLEAN pgpCalculateChecksum( BYTE *dataPtr, const int length,
-							  const BOOLEAN writeChecksum );
-int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, STREAM *stream,
-				   const int length );
 
 /****************************************************************************
 *																			*
@@ -30,30 +23,35 @@ int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Decode PKCS #1 padding */
+/* Unlike PKCS #1 encryption there isn't any minimum-weight requirement for 
+   the PKCS #1 signature padding, however we require a set minimum number of 
+   bytes of 0xFF padding because if they're not present then there's 
+   something funny going on.  For a MIN_PKCSIZE key, we have MIN_PKCSIZE - 
+   ( 3 bytes other PKCS #1 + 15 bytes ASN.1 wrapper + CRYPT_MAX_HASHSIZE 
+   bytes hash ) */
+
+#define MIN_PADDING_BYTES	( MIN_PKCSIZE - ( 3 + 15 + CRYPT_MAX_HASHSIZE ) )
+#if MIN_PADDING_BYTES < 1
+  #error Minimum PKCS #1 padding byte count should be at least 1
+#endif /* MIN_PADDING_BYTES safety check */
+
+/* Decode PKCS #1 signature formatting */
 
 static int decodePKCS1( STREAM *stream, const int length )
 	{
 	int ch = 0xFF, i;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
 	/* Decode the payload using the PKCS #1 format:
 
 		[ 0 ][ 1 ][ 0xFF padding ][ 0 ][ payload ]
 
-	   Unlike PKCS #1 encryption there isn't any minimum-weight requirement 
-	   for the padding, however we require at least 16 bytes 0xFF padding 
-	   because if they're not present then there's something funny going on.  
-	   For a minimum-length 512-bit key, we have 64 bytes data - ( 3 bytes 
-	   other PKCS #1 + 15 bytes ASN.1 wrapper + 20 bytes SHA1 hash ) = 26 
-	   bytes, so requiring at least 16 is a safe limit (in theory someone
-	   could be using one of the larger SHA2's, but doing that with a 512-
-	   bit key doesn't make any sense so there shouldn't be a problem 
-	   rejecting a signature like that).
-			
 	   Note that some implementations may have bignum code that zero-
-	   truncates the result, which would produce a CRYPT_ERROR_BADDATA error, 
-	   it's the responsibility of the lower-level crypto layer to reformat 
-	   the data to return a correctly-formatted result if necessary */
+	   truncates the RSA data, which would remove the leading zero from the
+	   PKCS #1 padding and produce a CRYPT_ERROR_BADDATA error.  It's the 
+	   responsibility of the lower-level crypto layer to reformat the data 
+	   to return a correctly-formatted result if necessary */
 	if( sgetc( stream ) != 0 || sgetc( stream ) != 1 )
 		/* No [ 0 ][ 1 ] at start */
 		return( CRYPT_ERROR_BADDATA );
@@ -63,8 +61,8 @@ static int decodePKCS1( STREAM *stream, const int length )
 		if( cryptStatusError( ch ) )
 			return( CRYPT_ERROR_BADDATA );
 		}
-	if( ch != 0 || i < 16 )
-		/* No [ 0 ] at end or unsufficient 0xFF padding */
+	if( ch != 0 || i < MIN_PADDING_BYTES || i >= length - 3 )
+		/* No [ 0 ] at end or insufficient 0xFF padding */
 		return( CRYPT_ERROR_BADDATA );
 
 	return( CRYPT_OK );
@@ -93,10 +91,8 @@ static int sign( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 	BOOLEAN useSideChannelProtection;
 	int hashSize, hashSize2, length, i, status;
 
-	/* Sanity check the input data */
-	assert( ( mechanismInfo->signature == NULL && \
-			  mechanismInfo->signatureLength == 0 ) || \
-			( mechanismInfo->signatureLength >= 64 ) );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
+	assert( type == SIGN_PKCS1 || type == SIGN_SSL );
 
 	/* Clear the return value */
 	if( mechanismInfo->signature != NULL )
@@ -104,13 +100,11 @@ static int sign( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 				mechanismInfo->signatureLength );
 
 	/* Get various algorithm and config parameters */
-	status = krnlSendMessage( mechanismInfo->hashContext,
-							  IMESSAGE_GETATTRIBUTE, &hashAlgo,
-							  CRYPT_CTXINFO_ALGO );
+	status = getPkcAlgoParams( mechanismInfo->signContext, NULL,
+							   &length );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( mechanismInfo->signContext,
-								  IMESSAGE_GETATTRIBUTE, &length,
-								  CRYPT_CTXINFO_KEYSIZE );
+		status = getHashAlgoParams( mechanismInfo->hashContext,
+									&hashAlgo, NULL );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( mechanismInfo->signContext, 
 								  IMESSAGE_GETATTRIBUTE, 
@@ -195,8 +189,8 @@ static int sign( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 		}
 
 	/* If we're using side-channel protection, remember a copy of the 
-	   signature data for later so we can check it against the recovered 
-	   signature data */
+	   signature data for later so that we can check it against the 
+	   recovered signature data */
 	if( useSideChannelProtection )
 		memcpy( preSigData, mechanismInfo->signature, length );
 
@@ -247,22 +241,20 @@ int sigcheck( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], hash2[ CRYPT_MAX_HASHSIZE + 8 ];
 	int length, hashSize, hashSize2 = 0, status;
 
-	/* Sanity check the input data */
-	assert( mechanismInfo->signatureLength >= 60 );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
+	assert( type == SIGN_PKCS1 || type == SIGN_SSL );
 
 	/* Get various algorithm parameters */
-	status = krnlSendMessage( mechanismInfo->hashContext,
-							  IMESSAGE_GETATTRIBUTE, &contextHashAlgo,
-							  CRYPT_CTXINFO_ALGO );
+	status = getPkcAlgoParams( mechanismInfo->signContext, NULL,
+							   &length );
+	if( cryptStatusOK( status ) )
+		status = getHashAlgoParams( mechanismInfo->hashContext,
+									&contextHashAlgo, NULL );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Format the input data as required for the sig check to work */
-	status = krnlSendMessage( mechanismInfo->signContext,
-							  IMESSAGE_GETATTRIBUTE, &length,
-							  CRYPT_CTXINFO_KEYSIZE );
-	if( cryptStatusOK( status ) )
-		status = adjustPKCS1Data( decryptedSignature,
+	status = adjustPKCS1Data( decryptedSignature, CRYPT_MAX_PKCSIZE,
 					mechanismInfo->signature, mechanismInfo->signatureLength,
 					length );
 	if( cryptStatusError( status ) )
@@ -294,7 +286,7 @@ int sigcheck( MECHANISM_SIGN_INFO *mechanismInfo, const SIGN_TYPE type )
 
 			/* The payload is [ MD5 hash ][ SHA1 hash ] */
 			hashSize = 16; hashSize2 = 20;
-			status = decodePKCS1( &stream, hashSize + hashSize2 );
+			status = decodePKCS1( &stream, length );
 			if( cryptStatusOK ( status ) )
 				status = sread( &stream, hash, hashSize );
 			if( cryptStatusOK( status ) )
@@ -336,12 +328,16 @@ int signPKCS1( void *dummy, MECHANISM_SIGN_INFO *mechanismInfo )
 	{
 	UNUSED( dummy );
 
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
+
 	return( sign( mechanismInfo, SIGN_PKCS1 ) );
 	}
 
 int sigcheckPKCS1( void *dummy, MECHANISM_SIGN_INFO *mechanismInfo )
 	{
 	UNUSED( dummy );
+
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
 
 	return( sigcheck( mechanismInfo, SIGN_PKCS1 ) );
 	}
@@ -352,12 +348,16 @@ int signSSL( void *dummy, MECHANISM_SIGN_INFO *mechanismInfo )
 	{
 	UNUSED( dummy );
 
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
+
 	return( sign( mechanismInfo, SIGN_SSL ) );
 	}
 
 int sigcheckSSL( void *dummy, MECHANISM_SIGN_INFO *mechanismInfo )
 	{
 	UNUSED( dummy );
+
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_SIGN_INFO ) ) );
 
 	return( sigcheck( mechanismInfo, SIGN_SSL ) );
 	}

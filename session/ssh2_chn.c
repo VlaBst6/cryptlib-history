@@ -630,7 +630,7 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 
 	/* Make sure that this channel doesn't already exist */
 	if( findChannelInfo( sessionInfoPtr, channelNo ) != NULL )
-		retExt( sessionInfoPtr, CRYPT_ERROR_DUPLICATE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_DUPLICATE,
 				"Attempt to add duplicate channel %ld", channelNo );
 
 	/* SSH channels are allocated unique IDs for tracking by cryptlib,
@@ -653,7 +653,7 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
 		retIntError();
 	if( channelCount > SSH_MAX_CHANNELS )
-		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_OVERFLOW,
 				"Maximum number (%d) of SSH channels reached",
 				SSH_MAX_CHANNELS );
 

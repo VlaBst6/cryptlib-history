@@ -260,7 +260,7 @@ static int SOCKET_API my_getaddrinfo( const char *nodename,
 	{
 	struct hostent *pHostent;
 	struct addrinfo *currentAddrInfoPtr = NULL;
-	const int port = aToI( servname );
+	const int port = atoi( servname );
 	int hostErrno, i;
 	gethostbyname_vars();
 
@@ -347,15 +347,15 @@ static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, SIZE_TYPE salen
 	const char *ipAddress;
 
 	/* Clear return values */
-	strcpy( node, "<Unknown>" );
-	strcpy( service, "0" );
+	strlcpy_s( node, nodelen, "<Unknown>" );
+	strlcpy_s( service, servicelen, "0" );
 
 	/* Get the remote system's address and port number */
 	if( ( ipAddress = inet_ntoa( sockAddr->sin_addr ) ) == NULL )
 		return( -1 );
 	memcpy( node, ipAddress, nodelen );
 	node[ nodelen - 1 ] = '\0';
-	if( sPrintf_s( service, servicelen, "%d",
+	if( sprintf_s( service, servicelen, "%d",
 				   ntohs( sockAddr->sin_port ) ) < 0 )
 		return( -1 );
 
@@ -373,7 +373,8 @@ static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, SIZE_TYPE salen
 
 #if defined( __WINDOWS__ ) && !defined( __WIN16__ )
 
-static void convertToSrv( char *srvName, const char *hostName )
+static void convertToSrv( char *srvName, const int srvNameMaxLen, 
+						  const char *hostName )
 	{
 	const int nameLength = strlen( hostName );
 	int i;
@@ -384,16 +385,14 @@ static void convertToSrv( char *srvName, const char *hostName )
 	for( i = 0; i < nameLength; i++ )
 		if( hostName[ i ] == '.' )
 			break;
-	if( i < nameLength && ( nameLength - i ) < MAX_URL_SIZE - 16 )
-		{
-		memcpy( srvName, "_pkiboot._tcp.", 14 );
-		memcpy( srvName + 14, hostName + i, nameLength - i + 1 );
-		}
+	strlcpy_s( srvName, srvNameMaxLen, "_pkiboot._tcp." );
+	if( i < nameLength && ( nameLength - i ) < srvNameMaxLen - 16 )
+		strlcat_s( srvName, srvNameMaxLen, hostName + i );
 	else
-		strcpy( srvName, "_pkiboot._tcp.localhost" );
+		strlcat_s( srvName, srvNameMaxLen, "localhost" );
 	}
 
-static int getSrvFQDN( STREAM *stream, char *fqdn )
+static int getSrvFQDN( STREAM *stream, char *fqdn, const int fqdnMaxLen )
 	{
 	PDNS_RECORD pDns = NULL;
 	struct hostent *hostInfo;
@@ -410,7 +409,7 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 	   we only try a new one once a minute */
 	if( lastFetchTime >= getTime() - 60 )
 		{
-		strcpy( fqdn, cachedFQDN );
+		strlcpy_s( fqdn, fqdnMaxLen, cachedFQDN );
 		return( CRYPT_OK );
 		}
 
@@ -434,7 +433,7 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 			/* Reverse the byte order for the in-addr.arpa lookup and
 			   convert the address to dotted-decimal notation */
 			address.S_un.S_addr = *( ( DWORD * ) hostInfo->h_addr_list[ i ] );
-			sPrintf_s( cachedFQDN, MAX_URL_SIZE, "%s.in-addr.arpa",
+			sprintf_s( cachedFQDN, MAX_URL_SIZE, "%s.in-addr.arpa",
 					   inet_ntoa( address ) );
 
 			/* Check for a name */
@@ -454,23 +453,24 @@ static int getSrvFQDN( STREAM *stream, char *fqdn )
 #else
 	fqdnPtr = pDns->Data.PTR.pNameHost;
 #endif /* Win32 vs. WinCE */
-	convertToSrv( cachedFQDN, fqdnPtr );
+	convertToSrv( cachedFQDN, MAX_URL_SIZE, fqdnPtr );
 	DnsRecordListFree( pDns, DnsFreeRecordList );
 
 	/* Remember the value that we just found to lighten the load on the
 	   resolver when we perform repeat queries */
-	strcpy( fqdn, cachedFQDN );
+	strlcpy_s( fqdn, fqdnMaxLen, cachedFQDN );
 	lastFetchTime = getTime();
 
 	return( CRYPT_OK );
 	}
 
-static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
+static int findHostInfo( STREAM *stream, char *hostName, 
+						 const int hostNameMaxLen, int *hostPort, 
 						 const char *name )
 	{
 	PDNS_RECORD pDns = NULL, pDnsInfo = NULL, pDnsCursor;
 	DWORD dwRet;
-	int nameLength, priority = 32767;
+	int priority = 32767;
 
 	/* If we're running on anything other than a heavily-SP'd Win2K or WinXP,
 	   there's not much that we can do */
@@ -483,7 +483,7 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 	   NATing and the use of private networks, but at least we can try */
 	if( !strCompareZ( name, "[Autodetect]" ) )
 		{
-		const int status = getSrvFQDN( stream, hostName );
+		const int status = getSrvFQDN( stream, hostName, hostNameMaxLen );
 		if( cryptStatusError( status ) )
 			return( status );
 		name = hostName;
@@ -521,11 +521,10 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 
 	/* Copy over the host info for this SRV record */
 #ifdef __WINCE__
-	nameLength = wcslen( pDnsInfo->Data.SRV.pNameTarget ) + 1;
-	unicodeToAscii( hostName, pDnsInfo->Data.SRV.pNameTarget, nameLength );
+	unicodeToAscii( hostName, pDnsInfo->Data.SRV.pNameTarget, 
+					wcslen( pDnsInfo->Data.SRV.pNameTarget ) + 1 );
 #else
-	nameLength = strlen( pDnsInfo->Data.SRV.pNameTarget ) + 1;
-	memcpy( hostName, pDnsInfo->Data.SRV.pNameTarget, nameLength );
+	strlcpy_s( hostName, hostNameMaxLen, pDnsInfo->Data.SRV.pNameTarget );
 #endif /* Win32 vs. WinCE */
 	*hostPort = pDnsInfo->Data.SRV.wPort;
 
@@ -543,15 +542,22 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 #define SRV_PORT_OFFSET		( NS_RRFIXEDSZ + 4 )
 #define SRV_NAME_OFFSET		( NS_RRFIXEDSZ + 6 )
 
-static int getFQDN( STREAM *stream, char *fqdn )
+static int getFQDN( STREAM *stream, char *fqdn, const int fqdnMaxLen )
 	{
 	struct hostent *hostInfo;
 	char *hostNamePtr = NULL;
 	int i, iterationCount = 0;
 
-	/* First, get the host name, and if it's the FQDN, exit */
+	/* First, get the host name, and if it's the FQDN, exit.  gethostname()
+	   has the idiotic property that if the name doesn't fit into the given
+	   buffer the function will return a (possibly non-null-terminated) 
+	   truncated value instead of reporting an error (or at least that's 
+	   what the spec says, hopefully no implementation is stupid enough to
+	   actually do this), so to be safe we force null-termination after 
+	   we've called the function */
 	if( gethostname( fqdn, MAX_DNS_SIZE ) == -1 )
 		return( CRYPT_ERROR_NOTFOUND );
+	fqdn[ MAX_DNS_SIZE - 1 ] = '\0';
 	if( strchr( fqdn, '.' ) != NULL )
 		/* If the hostname has a dot in it, it's the FQDN */
 		return( CRYPT_OK );
@@ -595,11 +601,12 @@ static int getFQDN( STREAM *stream, char *fqdn )
 		return( CRYPT_ERROR_NOTFOUND );
 
 	/* We found the FQDN, return it to the caller */
-	strcpy( fqdn, hostNamePtr );
+	strlcpy_s( fqdn, fqdnMaxLen, hostNamePtr );
 	return( CRYPT_OK );
 	}
 
-static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
+static int findHostInfo( STREAM *stream, char *hostName, 
+						 const int hostNameMaxLen, int *hostPort, 
 						 const char *name )
 	{
 	union {
@@ -615,7 +622,7 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 	   NATing and the use of private networks, but at least we can try */
 	if( !strCompareZ( name, "[Autodetect]" ) )
 		{
-		const int status = getFQDN( stream, hostName );
+		const int status = getFQDN( stream, hostName, hostNameMaxLen );
 		if( cryptStatusError( status ) )
 			return( status );
 		name = hostName;
@@ -686,7 +693,7 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
 			{
 			/* We've got a new higher-priority host, use that */
 			nameLen = dn_expand( dnsQueryInfo.buffer, endPtr,
-								 namePtr, hostName, MAX_URL_SIZE - 1 );
+								 namePtr, hostName, hostNameMaxLen );
 			*hostPort = port;
 			minPriority = priority;
 			}
@@ -715,8 +722,8 @@ static int findHostInfo( STREAM *stream, char *hostName, int *hostPort,
    effect is necessary because the #define otherwise no-ops it out, leading
    to declared-but-not-used warnings from some compilers */
 
-#define findHostInfo( stream, nameBuffer, localPort, name )	\
-		CRYPT_ERROR_NOTFOUND; *( localPort ) = -1
+#define findHostInfo( stream, hostName, hostNameLen, hostPort, name )	\
+		CRYPT_ERROR_NOTFOUND; *( hostPort ) = -1
 
 #endif /* OS-specific host detection */
 
@@ -745,15 +752,30 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 		{
 		int status;
 
-		status = findHostInfo( stream, nameBuffer, &localPort, name );
+		status = findHostInfo( stream, nameBuffer, MAX_URL_SIZE, &localPort, 
+							   name );
 		if( cryptStatusError( status ) )
 			return( status );
 		name = nameBuffer;
 		}
 
+	/* Convert the port into the text-string format required by 
+	   getaddrinfo().  The reason why this is given as a string rather than
+	   a port number is that we can also optionally specify the port to
+	   connect to via a service name.  Of course it's more or less pot luck
+	   whether the service you want is a recognised one so everyone 
+	   specifies the port anyway, however the reason why this unnecessary
+	   flexibility is there is because getaddrinfo() was seen as a universal
+	   replacement for a pile of other functions, including (for this case)
+	   getservbyname() */
+	sprintf_s( portBuffer, 8, "%d", port );
+
+	/* Conver the address information to the system character set if 
+	   required */
 #ifdef EBCDIC_CHARS
 	if( name != NULL )
 		name = bufferToEbcdic( nameBuffer, name );
+	bufferToEbcdic( portBuffer, portBuffer );
 #endif /* EBCDIC_CHARS */
 
 	/* Set up the port information and hint information needed by
@@ -790,7 +812,6 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 	   is enabled.  To fix this, set the checking level to normal rather than
 	   maximum */
 	memset( &hints, 0, sizeof( struct addrinfo ) );
-	sPrintf_s( portBuffer, 8, "%d", port );
 	hints.ai_flags = AI_NUMERICSERV | AI_ADDRCONFIG;
 	if( isServer )
 		/* If it's a server, set the AI_PASSIVE flag so that if the
@@ -815,7 +836,7 @@ void getNameInfo( const struct sockaddr *sockAddr, char *address,
 	char portBuf[ 32 + 8 ];
 
 	/* Clear return values */
-	strcpy( address, "<Unknown>" );
+	strlcpy_s( address, addressMaxLen, "<Unknown>" );
 	*port = 0;
 
 	/* Some Windows implementations of getnameinfo() call down to
@@ -830,10 +851,10 @@ void getNameInfo( const struct sockaddr *sockAddr, char *address,
 					 NI_NUMERICHOST | NI_NUMERICSERV ) == 0 )
 		{
 #ifdef EBCDIC_CHARS
-		ebcdicToAscii( address, strlen( address ) );
-		ebcdicToAscii( portBuf, strlen( portBuf ) );
+		ebcdicToAscii( address, address, strlen( address ) );
+		ebcdicToAscii( portBuf, portBuf, strlen( portBuf ) );
 #endif /* EBCDIC_CHARS */
-		*port = aToI( portBuf );
+		*port = atoi( portBuf );
 		}
 	}
 #endif /* USE_TCP */

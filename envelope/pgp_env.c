@@ -26,7 +26,7 @@
 /* Check that a requested algorithm type is valid with PGP data */
 
 BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo, 
-					  const CRYPT_ALGO_TYPE cryptMode )
+					  const CRYPT_MODE_TYPE cryptMode )
 	{
 	assert( cryptAlgo > CRYPT_ALGO_NONE && \
 			cryptAlgo < CRYPT_ALGO_LAST );

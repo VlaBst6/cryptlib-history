@@ -83,7 +83,7 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 	   we just calculated */
 	if( attributeListPtr->valueLength != hashSize || \
 		memcmp( attributeListPtr->value, fingerPrint, hashSize ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 				"Server key fingerprint doesn't match requested "
 				"fingerprint" );
 
@@ -139,7 +139,7 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 		   through most of the handshake but failed at the authentication
 		   stage */
 		if( status == CRYPT_ERROR_NOTAVAIL )
-			retExt( sessionInfoPtr, CRYPT_ERROR_NOTAVAIL,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTAVAIL,
 					"Remote system supports neither password nor "
 					"public-key authentication" );
 
@@ -165,12 +165,12 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 			{
 			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_PASSWORD,
 						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			retExt( sessionInfoPtr, CRYPT_ERROR_NOTINITED,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTINITED,
 					"Server requested password authentication but only a "
 					"public/private key was available" );
 			}
 
-		retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 				"Server reported: Invalid public-key authentication" );
 		}
 
@@ -188,12 +188,12 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 		{
 		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_PRIVATEKEY,
 					  CRYPT_ERRTYPE_ATTR_ABSENT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_NOTINITED,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTINITED,
 				"Server requested public-key authentication but only a "
 				"password was available" );
 		}
 
-	retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+	retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 			"Server reported: Invalid password" );
 	}
 
@@ -255,21 +255,19 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 		mpint	p
 		mpint	g */
 	length = readPacketSSH2( sessionInfoPtr, SSH2_MSG_KEXDH_GEX_GROUP,
-					ID_SIZE + \
-					sizeofString32( "", bitsToBytes( MIN_PKCSIZE_BITS ) ) + \
-					sizeofString32( "", 1 ) );
+							 ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) + \
+							 sizeofString32( "", 1 ) );
 	if( cryptStatusError( length ) )
 		return( length );
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
 	sgetc( stream );		/* Skip packet type */
 	streamBookmarkSet( stream, keyexInfoPtr, keyexInfoLength );
-	readInteger32( stream, NULL, NULL, bitsToBytes( MIN_PKCSIZE_BITS ),
-				   CRYPT_MAX_PKCSIZE );
+	readInteger32( stream, NULL, NULL, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 	status = readInteger32( stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
 	streamBookmarkComplete( stream, keyexInfoLength );
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH ephemeral key data packet" );
 
 	/* Since this phase of the key negotiation exchanges raw key components
@@ -405,15 +403,15 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			   just in case */
 			if( pamIteration == 0 )
 				{
-				char userNameBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
+				char userNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
 
 				memcpy( userNameBuffer, userNamePtr->value,
 						userNamePtr->valueLength );
-				userNameBuffer[ userNamePtr->valueLength ] = '\0';
-				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 						"Server reported: Invalid user name '%s'",
 						sanitiseString( userNameBuffer,
-									    userNamePtr->valueLength ) );
+									    userNamePtr->valueLength,
+										userNamePtr->valueLength ) );
 				}
 
 			/* It's a failure after we've tried to authenticate ourselves,
@@ -467,7 +465,7 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			}
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Invalid PAM authentication request packet" );
 
 		/* If we got a prompt, make sure that we're being asked for some
@@ -478,11 +476,15 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		if( noPrompts > 0 && \
 			( promptLength < 8 || \
 			  strCompare( promptBuffer, "Password", 8 ) ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			{
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Server requested unknown PAM authentication type "
 					"'%s'", ( nameLength > 0 ) ? \
-						sanitiseString( nameBuffer, nameLength ) : \
-						sanitiseString( promptBuffer, promptLength ) );
+						sanitiseString( nameBuffer, nameLength, 
+										nameLength ) : \
+						sanitiseString( promptBuffer, promptLength, 
+										promptLength ) );
+			}
 
 		/* Send back the PAM user-auth response:
 
@@ -508,7 +510,7 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			return( status );
 		}
 
-	retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+	retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 			"Too many iterations of negotiation during PAM authentication" );
 	}
 
@@ -538,8 +540,7 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 
@@ -730,8 +731,8 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 					SSH2_MSG_KEXDH_GEX_REPLY : SSH2_MSG_KEXDH_REPLY,
 					ID_SIZE + LENGTH_SIZE + sizeofString32( "", 6 ) + \
 					sizeofString32( "", 1 ) + \
-					sizeofString32( "", bitsToBytes( MIN_PKCSIZE_BITS ) ) + \
-					sizeofString32( "", bitsToBytes( MIN_PKCSIZE_BITS ) ) + \
+					sizeofString32( "", MIN_PKCSIZE ) + \
+					sizeofString32( "", MIN_PKCSIZE ) + \
 					LENGTH_SIZE + sizeofString32( "", 6 ) + 40 );
 	if( cryptStatusError( length ) )
 		return( length );
@@ -749,7 +750,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( pubkeyAlgo != handshakeInfo->pubkeyAlgo )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH phase 2 public key algorithm %d, expected %d",
 				pubkeyAlgo, handshakeInfo->pubkeyAlgo );
 		}
@@ -758,19 +759,16 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		{
 		/* RSA e, n */
 		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-		status = readInteger32( &stream, NULL, NULL,
-								bitsToBytes( MIN_PKCSIZE_BITS ),
+		status = readInteger32( &stream, NULL, NULL, MIN_PKCSIZE,
 								CRYPT_MAX_PKCSIZE );
 		}
 	else
 		{
 		/* DSA p, q, g, y */
-		readInteger32( &stream, NULL, NULL, bitsToBytes( MIN_PKCSIZE_BITS ),
-					   CRYPT_MAX_PKCSIZE );
+		readInteger32( &stream, NULL, NULL, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
 		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-		status = readInteger32( &stream, NULL, NULL,
-								bitsToBytes( MIN_PKCSIZE_BITS ),
+		status = readInteger32( &stream, NULL, NULL, MIN_PKCSIZE,
 								CRYPT_MAX_PKCSIZE );
 		}
 	streamBookmarkComplete( &stream, keyBlobLength );
@@ -778,7 +776,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH phase 2 packet" );
 		}
 	setMessageData( &msgData, keyPtr, keyLength );
@@ -788,7 +786,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, cryptArgError( status ) ? \
+		retExt( SESSION_ERRINFO, cryptArgError( status ) ? \
 				CRYPT_ERROR_BADDATA : status,
 				"Invalid server key/certificate" );
 		}
@@ -819,7 +817,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 						handshakeInfo->serverKeySize, LENGTH_SIZE ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH phase 2 keyex value" );
 		}
 	status = completeKeyex( sessionInfoPtr, handshakeInfo, FALSE );
@@ -837,7 +835,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid DH phase 2 packet signature data" );
 		}
 	streamBookmarkComplete( &stream, sigLength );
@@ -899,7 +897,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 							sessionInfoPtr->iKeyexAuthContext,
 							handshakeInfo->iExchangeHashcontext, NULL );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Bad handshake data signature" );
+		retExt( SESSION_ERRINFO, status, "Bad handshake data signature" );
 
 	/* We don't need the hash context any more, get rid of it */
 	krnlSendNotifier( handshakeInfo->iExchangeHashcontext,
@@ -1017,7 +1015,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		stringLength != 12 || memcmp( stringBuffer, "ssh-userauth", 12 ) )
 		/* More of a sanity check than anything else, the MAC should have
 		   caught any keying problems */
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid service accept packet" );
 
 	/* The buggy Tectia (ssh.com) server requires a dummy request for

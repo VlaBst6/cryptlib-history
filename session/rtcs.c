@@ -97,7 +97,7 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get RTCS request data from RTCS request object" );
 	status = envelopeWrap( sessionInfoPtr->receiveBuffer, msgData.length,
 						   sessionInfoPtr->receiveBuffer,
@@ -106,7 +106,7 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_RTCSREQUEST,
 						   CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't CMS wrap RTCS request data" );
 	DEBUG_DUMP( "rtcs_req", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );
@@ -135,9 +135,9 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	status = checkRtcsHeader( sessionInfoPtr->receiveBuffer,
 							  sessionInfoPtr->receiveBufEnd, &actionType );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid RTCS response header" );
+		retExt( SESSION_ERRINFO, status, "Invalid RTCS response header" );
 	if( actionType != ACTION_SIGN )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Unexpected RTCS encapsulation type %d", actionType );
 
 	/* Sig.check the data using the responder's key */
@@ -148,7 +148,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 							   CRYPT_UNUSED, &sigResult, NULL,
 							   &iCmsAttributes );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Invalid RTCS response data (CMS enveloped data)" );
 
 	/* Make sure that the nonce in the response matches the one in the
@@ -180,7 +180,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 		   we sent, we can't trust it.  The best error that we can return
 		   here is a signature error to indicate that the integrity check
 		   failed */
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				( status != CRYPT_ERROR_SIGNATURE ) ? \
 				"RTCS response doesn't contain a nonce" : \
 				"RTCS response nonce doesn't match the one in the request" );
@@ -193,7 +193,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid RTCS response contents" );
+		retExt( SESSION_ERRINFO, status, "Invalid RTCS response contents" );
 	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
 
 	return( CRYPT_OK );
@@ -226,16 +226,16 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 	status = checkRtcsHeader( sessionInfoPtr->receiveBuffer,
 							  sessionInfoPtr->receiveBufEnd, &actionType );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid RTCS request header" );
+		retExt( SESSION_ERRINFO, status, "Invalid RTCS request header" );
 	if( actionType != ACTION_UNWRAP )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Unexpected RTCS encapsulation type %d", actionType );
 	status = envelopeUnwrap( sessionInfoPtr->receiveBuffer,
 							 sessionInfoPtr->receiveBufEnd,
 							 sessionInfoPtr->receiveBuffer, &dataLength,
 							 sessionInfoPtr->receiveBufSize, CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Invalid RTCS request data (CMS enveloped data)" );
 
 	/* Create an RTCS response.  We always create this since an empty
@@ -256,7 +256,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid RTCS request contents" );
+		retExt( SESSION_ERRINFO, status, "Invalid RTCS request contents" );
 	setMessageData( &msgData, protocolInfo->nonce, CRYPT_MAX_HASHSIZE );
 	status = krnlSendMessage( createInfo.cryptHandle,
 							  IMESSAGE_GETATTRIBUTE_S, &msgData,
@@ -271,7 +271,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr,
 							  CRYPT_IATTRIBUTE_RTCSREQUEST );
 	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create RTCS response from request" );
 	return( CRYPT_OK );
 	}
@@ -293,7 +293,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_CRT_SIGCHECK, NULL,
 							  sessionInfoPtr->cryptKeyset );
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_INVALID )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't check RTCS request against certificate store" );
 
 	/* If there's a nonce present, create CMS attributes to contain it */
@@ -337,7 +337,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr,
 	if( iCmsAttributes != CRYPT_UNUSED )
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create RTCS response (CMS enveloped data)" );
 	DEBUG_DUMP( "rtcs_sresp", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );

@@ -18,7 +18,7 @@
 /* Prototypes for functions in cms_env.c */
 
 BOOLEAN cmsCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
-					  const CRYPT_ALGO_TYPE cryptMode );
+					  const CRYPT_MODE_TYPE cryptMode );
 
 #ifdef USE_ENVELOPES
 
@@ -362,7 +362,7 @@ static int processEncryptionHeader( ENVELOPE_INFO *envelopeInfoPtr,
 	   action in response to the CRYPT_ERROR_UNDERFLOW error */
 	return( initEnvelopeEncryption( envelopeInfoPtr,
 							envelopeInfoPtr->actionList->iCryptHandle,
-							queryInfo.cryptMode, queryInfo.cryptMode,
+							queryInfo.cryptAlgo, queryInfo.cryptMode,
 							queryInfo.iv, queryInfo.ivLength,
 							FALSE ) );
 	}

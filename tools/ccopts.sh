@@ -8,7 +8,7 @@
 # in the makefile, so this shell script is used instead.
 
 CCARGS=""
-OSNAME=""
+OSNAME=`uname`
 
 # Make sure that we've been given either single argument consisting of the
 # compiler name or the compiler name and an OS name for the shared-lib cc
@@ -19,9 +19,7 @@ if [ "$1" = "" ] ; then
 	exit 1 ;
 fi
 if [ $# -eq 2 ] ; then
-	if [ "$2" = "autodetect" ] ; then
-		OSNAME=`uname` ;
-	else
+	if [ "$2" != "autodetect" ] ; then
 		OSNAME=$2 ;
 	fi ;
 else
@@ -55,15 +53,49 @@ CCARGS="`./tools/endian`"
 # Determine whether various optional system features are installed and
 # enable their use if they're present.  Since these additional libs are
 # dynamically loaded, we only check for them on systems with dynamic
-# loading support.
+# loading support.  We could also check for the presence of 
+# /usr/include/dlfcn.h, but this can lead to false positives on systems
+# that have dummy a dlfcn.h for compatibility reasons.
 
-if [ "$OSNAME" = "Darwin" -o "$OSNAME" = "Linux" -o "$OSNAME" = "FreeBSD" -o \
-	 \( "$OSNAME" = "SunOS" -a `uname -r | cut -f 1 -d '.'` -gt 4 \) ] ; then
+HASDYNLOAD=0
+case $OSNAME in
+	'Darwin'|'Linux'|'FreeBSD')
+		HASDYNLOAD=1 ;;
+	
+	'SunOS')
+		if [ `./tools/osversion.sh SunOS` -gt 4 ] ; then
+			HASDYNLOAD=1 ;
+		fi ;;
+	
+	'HP-UX')
+		if [ `./tools/osversion.sh SunOS` -gt 10 ] ; then
+			HASDYNLOAD=1 ;
+		fi ;;
+esac	
+if [ $HASDYNLOAD -gt 0 ] ; then
 	if [ -f /usr/include/sql.h ] ; then
+		echo "ODBC interface detected, enabling ODBC support." >&2 ;
 		CCARGS="$CCARGS -DUSE_ODBC" ;
+	elif [ -f /usr/local/include/sql.h ] ; then
+		echo "ODBC interface detected, enabling ODBC support." >&2 ;
+		CCARGS="$CCARGS -DUSE_ODBC -I/usr/local/include" ;
+	elif [ "$OSNAME" = "HP-UX" -a -f /usr/include/hpodbc/sql.h ] ; then
+		echo "ODBC interface detected, enabling ODBC support." >&2 ;
+		CCARGS="$CCARGS -DUSE_ODBC -I/usr/include/hpodbc" ;
 	fi
 	if [ -f /usr/include/ldap.h ] ; then
+		echo "LDAP interface detected, enabling LDAP support" >&2 ;
 		CCARGS="$CCARGS -DUSE_LDAP" ;
+	fi
+	if [ -f /usr/include/pkcs11.h -o -f /usr/include/security/pkcs11.h -o \
+		 -f /usr/include/opensc/pkcs11.h -o -f /usr/local/include/pkcs11.h ] ; then
+		echo "PKCS #11 interface detected, enabling PKCS #11 support." >&2 ;
+		CCARGS="$CCARGS -DUSE_PKCS11" ;
+	fi
+	if [ -f /opt/nfast/toolkits/pkcs11/libcknfast.so -o \
+		 -f /usr/lib/libcknfast.so ] ; then
+		echo "  (Enabling use of nCipher PKCS #11 extensions)." >&2 ;
+		CCARGS="$CCARGS -DNCIPHER_PKCS11" ;
 	fi
 fi
 
@@ -81,7 +113,7 @@ fi
 # of large-displacement jumps, so if you're tuning the code for size/speed
 # you can try -fpic to see if you get any improvement.
 
-if [ "$OSNAME" != "" ] ; then
+if [ $# -eq 2 ] ; then
 	case $OSNAME in
 		'CYGWIN_NT-5.0'|'CYGWIN_NT-5.1'|'IRIX'|'IRIX64')
 			;;

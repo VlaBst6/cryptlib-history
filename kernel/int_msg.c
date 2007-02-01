@@ -252,12 +252,12 @@ int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
 			dependencyACL->type >= OBJECT_TYPE_LAST || \
 			dependencyACL->dType <= OBJECT_TYPE_NONE || \
 			dependencyACL->dType >= OBJECT_TYPE_LAST )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( ( dependencyACL->subTypeA & SUBTYPE_CLASS_B ) || \
 			( dependencyACL->subTypeB & SUBTYPE_CLASS_A ) || \
 			( dependencyACL->dSubTypeA & SUBTYPE_CLASS_B ) || \
 			( dependencyACL->dSubTypeB & SUBTYPE_CLASS_A ) )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) )
 		retIntError();

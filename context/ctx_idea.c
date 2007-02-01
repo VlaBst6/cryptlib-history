@@ -100,34 +100,16 @@ static const IDEA_TEST FAR_BSS testIdea[] = {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getIDEACapability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ IDEA_EXPANDED_KEYSIZE + 8 ];
-	BYTE temp[ IDEA_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testIdea ) / sizeof( IDEA_TEST ); i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		memcpy( temp, testIdea[ i ].plaintext, IDEA_BLOCKSIZE );
-		status = capabilityInfo->initKeyFunction( &contextInfo,
-												  testIdea[ i ].key, 16 );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp,
-													  IDEA_BLOCKSIZE );
-		if( cryptStatusOK( status ) && \
-			memcmp( testIdea[ i ].ciphertext, temp, IDEA_BLOCKSIZE ) )
-			status = CRYPT_ERROR;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->decryptFunction( &contextInfo, temp,
-													  IDEA_BLOCKSIZE );
-		if( cryptStatusOK( status ) && \
-			memcmp( temp, testIdea[ i ].plaintext, IDEA_BLOCKSIZE ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testCipher( capabilityInfo, keyData, testIdea[ i ].key, 
+							 16, testIdea[ i ].plaintext, 
+							 testIdea[ i ].ciphertext );
 		if( cryptStatusError( status ) )
-			return( CRYPT_ERROR );
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -482,7 +464,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), bitsToBytes( 128 ),
+	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB

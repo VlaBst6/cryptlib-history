@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -119,7 +114,8 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	cryptGetAttribute( cryptCert, CRYPT_CERTINFO_CERTTYPE, &value );
 	if( value != type )
 		{
-		printf( "Expecting certificate object type %d, got %d.", type, value );
+		printf( "Expecting certificate object type %d, got %d, line %d.", 
+				type, value, __LINE__ );
 		return( FALSE );
 		}
 	if( value == CRYPT_CERTTYPE_CERTCHAIN || value == CRYPT_CERTTYPE_CRL )
@@ -199,12 +195,16 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	/* Import the certificate from a file - this is easier than creating one
 	   from scratch.  We use one of the later certs in the text set, since
 	   this contains an email address, which the earlier ones don't */
-	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 5 );
+	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 15 );
+	if( cryptStatusOK( status ) )
+		/* Make sure that the cert contains an email address */
+		status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
+										  name, &length );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read certificate from file, skipping test of keyset "
-			  "write..." );
-		return( TRUE );
+		printf( "Couldn't read certificate from file, status %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
 		}
 
 	/* Create the database keyset with a check to make sure this access
@@ -280,10 +280,9 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 		status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 2 );
 		if( cryptStatusError( status ) )
 			{
-			puts( "Couldn't read second certificate from file, skipping "
-				  "remaining keyset write tests..." );
-			cryptKeysetClose( cryptKeyset );
-			return( TRUE );
+			printf( "Couldn't read certificate from file, status %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
 			}
 		status = cryptAddPublicKey( cryptKeyset, cryptCert );
 		if( status == CRYPT_ERROR_DUPLICATE )
@@ -317,8 +316,8 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	status = importCertFromTemplate( &cryptCert, CRL_FILE_TEMPLATE, 1 );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read CRL from file, skipping test of keyset "
-			  "write..." );
+		printf( "Couldn't read CRL from file, status %d, line %d.\n", 
+				status, __LINE__ );
 		return( TRUE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
@@ -328,8 +327,9 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
 	if( status != CRYPT_ERROR_DUPLICATE )
 		{
-		puts( "Addition of duplicate item to keyset failed to produce "
-			  "CRYPT_ERROR_DUPLICATE" );
+		printf( "Addition of duplicate item to keyset failed to produce "
+			    "CRYPT_ERROR_DUPLICATE, status %d, line %d.\n", status,
+				__LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyCert( cryptCert );
@@ -340,7 +340,8 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read cert chain from file." );
+		printf( "Couldn't read cert chain from file, status %d, line %d.\n", 
+				status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
@@ -358,7 +359,8 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 						   USER_PRIVKEY_LABEL );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read user cert from file." );
+		printf( "Couldn't read user cert from file, status %d, line %d.\n", 
+				status, __LINE__ );
 		return( FALSE );
 		}
 	cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,
@@ -478,13 +480,14 @@ int testReadCert( void )
 	C_CHR filenameBuffer[ FILENAME_BUFFER_SIZE ];
 	int length, status;
 
-	/* Get the DN from the cert that we wrote earlier */
-	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 5 );
+	/* Get the DN from one of the test certs (the one that we wrote to the
+	   keyset earlier with testKeysetWrite() */
+	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 15 );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read certificate from file, skipping test of keyset "
-			  "write..." );
-		return( TRUE );
+		printf( "Couldn't read certificate from file, status %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
 		}
 	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,
 									  name, &length );
@@ -547,12 +550,13 @@ int testReadCert( void )
 	if( !status )
 		return( FALSE );
 
-	/* Get the DN from the cert chain that we wrote earlier */
+	/* Get the DN from one of the test cert chains */
 	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't read cert chain from file." );
+		printf( "Couldn't read cert.chain from file, status %d, line %d.\n",
+				status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,

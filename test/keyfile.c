@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -26,31 +21,6 @@
    are disabled */
 
 extern int keyReadOK, doubleCertOK;
-
-/* When using the code below to generate test CA or other special-purpose
-   certs, the following will enable special-case extensions such as
-   extKeyUsages or protocol-specific AIA entries, as well as a validity
-   period of 5 years instead of the usual 1 to avoid problems when users
-   run the self-test on very old copies of the code */
-
-/*#define CREATE_CA_CERT*/		/* CA, 5-year validity */
-/*#define CREATE_ICA_CERT*/		/* Intermediate CA in chain, 5-year validity */
-/*#define CREATE_SCEPCA_CERT*/	/* keyUsage allows encr+sig, 5-year validity */
-/*#define CREATE_TSA_CERT*/		/* TSP extKeyUsage, 5-year validity */
-/*#define CREATE_SERVER_CERT*/	/* CN=localhost, OCSP AIA, 5-year validity */
-/*#define CREATE_USER_CERT*/	/* email address */
-/*#define CREATE_SSH_KEY*/		/* Raw SSH key */
-
-#if defined( CREATE_CA_CERT ) || defined( CREATE_ICA_CERT ) || \
-	defined( CREATE_SCEPCA_CERT ) || defined( CREATE_TSA_CERT ) || \
-	defined( CREATE_SERVER_CERT ) || defined( CREATE_USER_CERT ) || \
-	defined( CREATE_SSH_KEY )
-  #define CREATE_CUSTOM_CERT
-#endif /* Use of custom cert creation procedure */
-#ifdef CREATE_SSH_KEY
-  #undef RSA_PRIVKEY_LABEL
-  #define RSA_PRIVKEY_LABEL	SSH_PRIVKEY_LABEL
-#endif /* SSH key */
 
 #ifdef TEST_KEYSET
 
@@ -444,13 +414,10 @@ int testReadWriteFileKey( void )
 	status = writeFileKey( TRUE, FALSE, FALSE );
 	if( status )
 		status = readFileKey( TRUE );
-#ifndef CREATE_CUSTOM_CERT
-	/* CA test keys only uses RSA */
 	if( status )
 		status = writeFileKey( FALSE, FALSE, FALSE );
 	if( status )
 		status = readFileKey( FALSE );
-#endif /* CREATE_CUSTOM_CERT */
 	return( status );
 	}
 
@@ -593,7 +560,8 @@ static int readCert( const char *certTypeName,
 									&value );
 		if( cryptStatusError( status ) || value != certType )
 			{
-			printf( "Returned object isn't a %s.\n", certTypeName );
+			printf( "Returned object isn't a %s, line %d.\n", certTypeName, 
+					__LINE__ );
 			return( FALSE );
 			}
 
@@ -624,7 +592,8 @@ static int readCert( const char *certTypeName,
 		status = cryptGetAttribute( cryptCert, CRYPT_CERTINFO_CERTTYPE, &value );
 		if( cryptStatusError( status ) || value != certType )
 			{
-			printf( "Returned object isn't a %s.\n", certTypeName );
+			printf( "Returned object isn't a %s, line %d.\n", certTypeName, 
+					__LINE__ );
 			return( FALSE );
 			}
 		cryptDestroyCert( cryptCert );
@@ -750,7 +719,7 @@ int testAddGloballyTrustedCert( void )
 	if( cryptStatusError( status ) )
 		{
 		printf( "Globally trusted certificate add failed with error code "
-				"%d.\n", status );
+				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -761,7 +730,7 @@ int testAddGloballyTrustedCert( void )
 	if( cryptStatusError( status ) )
 		{
 		printf( "Globally trusted certificate delete failed with error code "
-				"%d.\n", status );
+				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -781,14 +750,8 @@ static const CERT_DATA FAR_BSS cACertData[] = {
 	{ CRYPT_CERTINFO_SELFSIGNED, IS_NUMERIC, TRUE },
 
 	/* CA key usage */
-#if defined( CREATE_SCEPCA_CERT )
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN | \
-										   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-										   CRYPT_KEYUSAGE_KEYENCIPHERMENT },
-#else
 	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC,
 	  CRYPT_KEYUSAGE_KEYCERTSIGN | CRYPT_KEYUSAGE_CRLSIGN },
-#endif /* SCEP vs.standard CA */
 	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
@@ -805,54 +768,28 @@ int testUpdateFileCert( void )
 
 	/* Create a self-signed CA certificate using the in-memory key (which is
 	   the same as the one in the keyset) */
-#if defined( CREATE_CA_CERT ) || defined( CREATE_SCEPCA_CERT )
-	status = cryptCreateContext( &cryptKey, CRYPT_UNUSED, CRYPT_ALGO_RSA );
-	if( cryptStatusOK( status ) )
-		status = cryptSetAttributeString( cryptKey, CRYPT_CTXINFO_LABEL,
-										  USER_PRIVKEY_LABEL,
-										  paramStrlen( USER_PRIVKEY_LABEL ) );
-	if( cryptStatusOK( status ) )
-		{
-		cryptSetAttribute( cryptKey, CRYPT_CTXINFO_KEYSIZE, 64 );
-		status = cryptGenerateKey( cryptKey );
-		}
-	if( cryptStatusError( status ) )
-		{
-		printf( "Test key generation failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
-#else
 	if( !loadRSAContexts( CRYPT_UNUSED, &publicKeyContext, &privateKeyContext ) )
 		return( FALSE );
-#endif /* Special-purpose cert creation */
 	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
 							  CRYPT_CERTTYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptCreateCert() failed with error code %d.\n", status );
+		printf( "cryptCreateCert() failed with error code %d, line %d.\n", 
+				status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, publicKeyContext );
-	if( cryptStatusOK( status ) && !addCertFields( cryptCert, cACertData ) )
+	if( cryptStatusOK( status ) && \
+		!addCertFields( cryptCert, cACertData, __LINE__ ) )
 		return( FALSE );
-#ifdef CREATE_CUSTOM_CERT
-	{
-	const time_t validity = time( NULL ) + ( 86400L * 365 * 5 );
-
-	/* Make it valid for 5 years instead of 1 to avoid problems when users
-	   run the self-test with very old copies of the code */
-	cryptSetAttributeString( cryptCert,
-					CRYPT_CERTINFO_VALIDTO, &validity, sizeof( time_t ) );
-	}
-#endif /* CREATE_CUSTOM_CERT */
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptCert, privateKeyContext );
 	destroyContexts( CRYPT_UNUSED, publicKeyContext, privateKeyContext );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Certificate creation failed with error code %d.\n", status );
+		printf( "Certificate creation failed with error code %d, "
+				"line %d.\n", status, __LINE__ );
 		cryptDestroyCert( status );
 		return( FALSE );
 		}
@@ -888,56 +825,20 @@ int testUpdateFileCert( void )
 
 /* Update a keyset to contain a cert chain */
 
-static const CERT_DATA FAR_BSS certRequestData[] = {
-	/* Identification information */
-	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
-	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
-#if defined( CREATE_SERVER_CERT )
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Server cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "localhost" ) },
-#elif defined( CREATE_ICA_CERT )
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Intermediate CA cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's Spare CA" ) },
-#elif defined( CREATE_SCEPCA_CERT )
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Intermediate CA cert" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's SCEP CA" ) },
-#else
-	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
-	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },	/* Re-select subject DN */
-#endif /* CREATE_SERVER_CERT */
-
-	/* Extensions for various special-case usages such as OCSP and CMP */
-#ifdef CREATE_TSA_CERT
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_DIGITALSIGNATURE },
-	{ CRYPT_CERTINFO_EXTKEY_TIMESTAMPING, IS_NUMERIC, CRYPT_UNUSED },
-#endif /* CREATE_TSA_CERT */
-#ifdef CREATE_SERVER_CERT
-	{ CRYPT_CERTINFO_AUTHORITYINFO_OCSP, IS_NUMERIC, CRYPT_UNUSED },
-	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://localhost" ) },
-#endif /* CREATE_SERVER_CERT */
-#if defined( CREATE_ICA_CERT )
-	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN },
-#elif defined( CREATE_SCEPCA_CERT )
-	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
-	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN | \
-										   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-										   CRYPT_KEYUSAGE_KEYENCIPHERMENT },
-#endif /* Assorted CA certs */
-	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
-	};
-
-static int writeFileCertChain( const BOOLEAN writeLongChain )
+static int writeFileCertChain( const CERT_DATA *certRequestData,
+							   const C_STR keyFileName,
+							   const C_STR certFileName,
+							   const BOOLEAN isTestRun,
+							   const BOOLEAN writeLongChain )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cryptCertChain;
 	CRYPT_CONTEXT cryptCAKey, cryptKey;
 	int status;
 
-	printf( "Testing %scert chain write to key file ...\n",
-			writeLongChain ? "long " : "" );
+	if( isTestRun )
+		printf( "Testing %scert chain write to key file ...\n",
+				writeLongChain ? "long " : "" );
 
 	/* Generate a key to certify.  We can't just reuse the built-in test key
 	   because this has already been used as the CA key and the keyset code
@@ -949,10 +850,7 @@ static int writeFileCertChain( const BOOLEAN writeLongChain )
 										  USER_PRIVKEY_LABEL,
 										  paramStrlen( USER_PRIVKEY_LABEL ) );
 	if( cryptStatusOK( status ) )
-		{
-		cryptSetAttribute( cryptKey, CRYPT_CTXINFO_KEYSIZE, 64 );
 		status = cryptGenerateKey( cryptKey );
-		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "Test key generation failed with error code %d, line %d.\n",
@@ -978,7 +876,7 @@ static int writeFileCertChain( const BOOLEAN writeLongChain )
 
 	/* Create the keyset and add the private key to it */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
-							  TEST_PRIVKEY_FILE, CRYPT_KEYOPT_CREATE );
+							  keyFileName, CRYPT_KEYOPT_CREATE );
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
@@ -1002,18 +900,19 @@ static int writeFileCertChain( const BOOLEAN writeLongChain )
 							CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptKey );
 	cryptDestroyContext( cryptKey );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptCertChain, certRequestData ) )
+		!addCertFields( cryptCertChain, certRequestData, __LINE__ ) )
 		return( FALSE );
-#ifdef CREATE_CUSTOM_CERT
-	{
-	const time_t validity = time( NULL ) + ( 86400L * 365 * 5 );
+#ifndef _WIN32_WCE	/* Windows CE doesn't support ANSI C time functions */
+	if( cryptStatusOK( status ) && !isTestRun )
+		{
+		const time_t validity = time( NULL ) + ( 86400L * 365 * 3 );
 
-	/* Make it valid for 5 years instead of 1 to avoid problems when users
-	   run the self-test with very old copies of the code */
-	cryptSetAttributeString( cryptCertChain,
+		/* Make it valid for 5 years instead of 1 to avoid problems when 
+		   users run the self-test with very old copies of the code */
+		status = cryptSetAttributeString( cryptCertChain,
 					CRYPT_CERTINFO_VALIDTO, &validity, sizeof( time_t ) );
-	}
-#endif /* CREATE_CUSTOM_CERT */
+		}
+#endif /* WinCE */
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptCertChain, cryptCAKey );
 	cryptDestroyContext( cryptCAKey );
@@ -1033,6 +932,29 @@ static int writeFileCertChain( const BOOLEAN writeLongChain )
 				status, __LINE__ );
 		return( FALSE );
 		}
+	if( certFileName != NULL )
+		{
+		FILE *filePtr;
+		BYTE certBuffer[ BUFFER_SIZE ];
+		int length;
+
+		/* Save the cert to disk for use in request/response protocols */
+		status = cryptExportCert( certBuffer, BUFFER_SIZE, &length,
+								  CRYPT_CERTFORMAT_CERTIFICATE, 
+								  cryptCertChain );
+		if( cryptStatusError( status ) )
+			{
+			printf( "cryptExportCert() failed with error code %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		if( ( filePtr = fopen( convertFileName( certFileName ), \
+							   "wb" ) ) != NULL )
+			{
+			fwrite( certBuffer, length, 1, filePtr );
+			fclose( filePtr );
+			}
+		}
 	cryptDestroyCert( cryptCertChain );
 	status = cryptKeysetClose( cryptKeyset );
 	if( cryptStatusError( status ) )
@@ -1042,18 +964,33 @@ static int writeFileCertChain( const BOOLEAN writeLongChain )
 		return( FALSE );
 		}
 
-	puts( "Cert chain write to key file succeeded.\n" );
+	if( isTestRun )
+		puts( "Cert chain write to key file succeeded.\n" );
 	return( TRUE );
 	}
 
+static const CERT_DATA FAR_BSS certRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
+	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
+	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },	/* Re-select subject DN */
+
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
 int testWriteFileCertChain( void )
 	{
-	return( writeFileCertChain( FALSE ) );
+	return( writeFileCertChain( certRequestData, TEST_PRIVKEY_FILE, NULL,
+								TRUE, FALSE ) );
 	}
 
 int testWriteFileLongCertChain( void )
 	{
-	return( writeFileCertChain( TRUE ) );
+	return( writeFileCertChain( certRequestData, TEST_PRIVKEY_FILE, NULL,
+								TRUE, TRUE ) );
 	}
 
 /* Delete a key from a file */
@@ -1182,18 +1119,21 @@ static int writeSingleStepFileCert( const BOOLEAN useAltKeyfile )
 							  CRYPT_CERTTYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptCreateCert() failed with error code %d.\n", status );
+		printf( "cryptCreateCert() failed with error code %d, line %d.\n", 
+				status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
-	if( cryptStatusOK( status ) && !addCertFields( cryptCert, cACertData ) )
+	if( cryptStatusOK( status ) && \
+		!addCertFields( cryptCert, cACertData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptCert, cryptContext );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Certificate creation failed with error code %d.\n", status );
+		printf( "Certificate creation failed with error code %d, "
+				"line %d.\n", status, __LINE__ );
 		cryptDestroyCert( status );
 		return( FALSE );
 		}
@@ -1321,10 +1261,7 @@ int testDoubleCertFile( void )
 							CRYPT_CTXINFO_LABEL, DUAL_SIGNKEY_LABEL,
 							paramStrlen( DUAL_SIGNKEY_LABEL ) );
 	if( cryptStatusOK( status ) )
-		{
-		cryptSetAttribute( cryptSigContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 		status = cryptGenerateKey( cryptSigContext );
-		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "Test key generation failed with error code %d, line %d.\n",
@@ -1338,10 +1275,7 @@ int testDoubleCertFile( void )
 							CRYPT_CTXINFO_LABEL, DUAL_ENCRYPTKEY_LABEL,
 							paramStrlen( DUAL_ENCRYPTKEY_LABEL ) );
 	if( cryptStatusOK( status ) )
-		{
-		cryptSetAttribute( cryptEncryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 		status = cryptGenerateKey( cryptEncryptContext );
-		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "Test key generation failed with error code %d, line %d.\n",
@@ -1361,7 +1295,7 @@ int testDoubleCertFile( void )
 		status = cryptSetAttribute( cryptSigCert,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptSigContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptSigCert, certRequestData ) )
+		!addCertFields( cryptSigCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		{
@@ -1390,7 +1324,7 @@ int testDoubleCertFile( void )
 		status = cryptSetAttribute( cryptEncryptCert,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptEncryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptEncryptCert, certRequestData ) )
+		!addCertFields( cryptEncryptCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		{
@@ -1543,7 +1477,7 @@ int testDoubleCertFile( void )
 
 /* Write a key and two certs of different validity periods to a file */
 
-#ifndef _WIN32_WCE
+#ifndef _WIN32_WCE	/* Windows CE doesn't support ANSI C time functions */
 
 int testRenewedCertFile( void )
 	{
@@ -1574,7 +1508,7 @@ int testRenewedCertFile( void )
 		status = cryptSetAttribute( cryptOldCert,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptOldCert, certRequestData ) )
+		!addCertFields( cryptOldCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		{
@@ -1604,7 +1538,7 @@ int testRenewedCertFile( void )
 		status = cryptSetAttribute( cryptNewCert,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptNewCert, certRequestData ) )
+		!addCertFields( cryptNewCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		{
@@ -1754,5 +1688,275 @@ int testRenewedCertFile( void )
 	return( TRUE );
 	}
 #endif /* WinCE */
+
+/****************************************************************************
+*																			*
+*								Test Key Generation							*
+*																			*
+****************************************************************************/
+
+/* The code to generate test CA or other special-purpose certs enables 
+   various special-case extensions such as extKeyUsages or protocol-specific 
+   AIA entries, as well as using a validity period of 5 years instead of the 
+   usual 1 year to avoid problems when users run the self-test on very old 
+   copies of the code.  The keys generated are:
+
+	File define			File			Description
+	-----------			----			-----------
+	CA_PRIVKEY_FILE		key_ca.p15		Root CA key.
+										Also writes CMP_CA_FILE.
+	ICA_PRIVKEY_FILE	key_ica.p15		Intermediate CA key + root CA cert.
+	SCEPCA_PRIVKEY_FILE	key_sca.p15		SCEP CA key + root CA cert, SCEP CA
+										keyUsage allows encryption + signing.
+										Also writes SCEP_CA_FILE.
+	SERVER_PRIVKEY_FILE	key_srv.p15		SSL server key + root CA cert, server
+										cert has CN = localhost, OCSP AIA.
+	SSH_PRIVKEY_FILE	key_ssh.p15		Raw SSH key.
+	TSA_PRIVKEY_FILE	key_tsa.p15		TSA server key + root CA cert, TSA 
+										cert has TSP extKeyUsage.
+	USER_PRIVKEY_FILE	key_user.p15	User key + root CA cert, user cert 
+										has email address.
+										
+										(OCSP_CA_FILE is written by the
+										testCertManagement() code) */
+
+#if 1
+
+/* Create a standalone private key + cert */
+
+static int createCAKeyFile( void )
+	{
+	CRYPT_KEYSET cryptKeyset;
+	CRYPT_CERTIFICATE cryptCert;
+	CRYPT_CONTEXT cryptContext;
+	FILE *filePtr;
+	BYTE certBuffer[ BUFFER_SIZE ];
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+	const time_t validity = time( NULL ) + ( 86400L * 365 * 3 );
+	int length, status;
+
+	/* Create a self-signed CA certificate */
+	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_RSA );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
+										  CA_PRIVKEY_LABEL,
+										  paramStrlen( CA_PRIVKEY_LABEL ) );
+	if( cryptStatusOK( status ) )
+		status = cryptGenerateKey( cryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CERTIFICATE );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptCert,
+						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( !addCertFields( cryptCert, cACertData, __LINE__ ) )
+		return( CRYPT_ERROR_FAILED );
+
+	/* Make it valid for 5 years instead of 1 to avoid problems when users
+	   run the self-test with very old copies of the code */
+	cryptSetAttributeString( cryptCert,
+					CRYPT_CERTINFO_VALIDTO, &validity, sizeof( time_t ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSignCert( cryptCert, cryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Open the keyset, update it with the certificate, and close it */
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+							  CA_PRIVKEY_FILE, CRYPT_KEYOPT_CREATE );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = cryptAddPrivateKey( cryptKeyset, cryptContext, 
+								 TEST_PRIVKEY_PASSWORD );
+	if( cryptStatusOK( status ) )
+		status = cryptAddPublicKey( cryptKeyset, cryptCert );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Save the cert to disk for use in request/response protocols */
+	status = cryptExportCert( certBuffer, BUFFER_SIZE, &length,
+							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
+	if( cryptStatusError( status ) )
+		return( status );
+	filenameFromTemplate( filenameBuffer, CMP_CA_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( filenameBuffer, "wb" ) ) != NULL )
+		{
+		fwrite( certBuffer, length, 1, filePtr );
+		fclose( filePtr );
+		}
+
+	cryptDestroyCert( cryptCert );
+	cryptDestroyContext( cryptContext );
+	cryptKeysetClose( cryptKeyset );
+
+	return( CRYPT_OK );
+	}
+
+/* Create a raw SSH private key */
+
+static int createSSHKeyFile( void )
+	{
+	CRYPT_KEYSET cryptKeyset;
+	CRYPT_CONTEXT cryptContext;
+	int status;
+
+	/* Create a private key */
+	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_RSA );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
+										  USER_PRIVKEY_LABEL,
+										  paramStrlen( USER_PRIVKEY_LABEL ) );
+	if( cryptStatusOK( status ) )
+		status = cryptGenerateKey( cryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Open the keyset, add the key, and close it */
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+							  SSH_PRIVKEY_FILE, CRYPT_KEYOPT_CREATE );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = cryptAddPrivateKey( cryptKeyset, cryptContext, 
+								 TEST_PRIVKEY_PASSWORD );
+	if( cryptStatusError( status ) )
+		return( status );
+	cryptDestroyContext( cryptContext );
+	cryptKeysetClose( cryptKeyset );
+
+	return( CRYPT_OK );
+	}
+
+/* Create a private key + cert + CA cert */
+
+static const CERT_DATA FAR_BSS serverCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Server cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "localhost" ) },
+
+	/* Add an OCSP AIA entry */
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_AUTHORITYINFO_OCSP },
+	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://localhost" ) },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS iCACertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Intermediate CA cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's Spare CA" ) },
+
+	/* Set the CA key usage extensions */
+	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS scepCACertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "SCEP CA cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's SCEP CA" ) },
+
+	/* Set the CA as well as generic sign+encrypt key usage extensions */
+	{ CRYPT_CERTINFO_CA, IS_NUMERIC, TRUE },
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_KEYCERTSIGN | \
+										   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
+										   CRYPT_KEYUSAGE_KEYENCIPHERMENT },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS tsaCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "TSA Cert" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave's TSA" ) },
+
+	/* Set the TSP extended key usage */
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC, CRYPT_KEYUSAGE_DIGITALSIGNATURE },
+	{ CRYPT_CERTINFO_EXTKEY_TIMESTAMPING, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+static const CERT_DATA FAR_BSS userCertRequestData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Dave Smith" ) },
+	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
+	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },	/* Re-select subject DN */
+
+	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
+	};
+
+int createTestKeys( void )
+	{
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+	int status;
+
+	puts( "Creating custom key files..." );
+
+	printf( "CA root key... " );
+	status = createCAKeyFile();
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSSH server key..." );
+		status = createSSHKeyFile();
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSSL server key..." );
+		if( !writeFileCertChain( serverCertRequestData, SERVER_PRIVKEY_FILE,
+								 NULL, FALSE, FALSE ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nIntermediate CA key..." );
+		if( !writeFileCertChain( iCACertRequestData, ICA_PRIVKEY_FILE,
+								 NULL, FALSE, FALSE ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nSCEP CA key..." );
+		filenameFromTemplate( filenameBuffer, SCEP_CA_FILE_TEMPLATE, 1 );
+		if( !writeFileCertChain( scepCACertRequestData, SCEPCA_PRIVKEY_FILE,
+								 filenameBuffer, FALSE, FALSE ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nTSA key..." );
+		if( !writeFileCertChain( tsaCertRequestData, TSA_PRIVKEY_FILE,
+								 NULL, FALSE, FALSE ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		printf( "done.\nUser key..." );
+		if( !writeFileCertChain( userCertRequestData, USER_PRIVKEY_FILE,
+								 NULL, FALSE, FALSE ) )
+			status = CRYPT_ERROR_FAILED;
+		}
+	if( cryptStatusError( status ) )
+		{
+		puts( "\nCustom key file create failed.\n" );
+		return( FALSE );
+		}
+	puts( "done." );
+
+	puts( "Custom key file creation succeeded.\n" );
+	return( TRUE );
+	}
+#endif /* 0 */
 
 #endif /* TEST_KEYSET */

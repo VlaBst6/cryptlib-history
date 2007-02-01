@@ -129,9 +129,11 @@ int sizeofAlgoIDex( const CRYPT_ALGO_TYPE algorithm,
 int writeAlgoID( STREAM *stream, const CRYPT_ALGO_TYPE algorithm );
 int writeAlgoIDex( STREAM *stream, const CRYPT_ALGO_TYPE algorithm,
 				   const int parameter, const int extraLength );
-int readAlgoID( STREAM *stream, CRYPT_ALGO_TYPE *cryptAlgo );
-int readAlgoIDex( STREAM *stream, CRYPT_ALGO_TYPE *cryptAlgo,
-				  CRYPT_ALGO_TYPE *altCryptAlgo, int *extraLength );
+int readAlgoID( STREAM *stream, CRYPT_ALGO_TYPE *algorithm );
+int readAlgoIDext( STREAM *stream, CRYPT_ALGO_TYPE *algorithm,
+				   CRYPT_ALGO_TYPE *altCryptAlgo );
+int readAlgoIDparams( STREAM *stream, CRYPT_ALGO_TYPE *algorithm, 
+					  int *extraLength );
 
 /* Alternative versions that read/write various algorithm ID types (algo and
    mode only or full details depending on the option parameter) from encryption

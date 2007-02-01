@@ -463,7 +463,7 @@ static int addPrivkeyPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 								   const int passwordLength )
 	{
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
-	int status;
+	int type, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isReadPtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
@@ -475,6 +475,23 @@ static int addPrivkeyPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 		setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_KEYSET_DECRYPT,
 					  CRYPT_ERRTYPE_ATTR_ABSENT );
 		return( CRYPT_ERROR_NOTINITED );
+		}
+
+	/* Make sure that we're trying to send the password to something for
+	   which it makes sense.  Private-key sources aren't just keysets but
+	   can also be devices, if we're trying to send a password to a device
+	   to get a private key then something's gone wrong, since it should
+	   be retrieved automatically on a unlocked device */
+	status = krnlSendMessage( envelopeInfoPtr->iDecryptionKeyset,
+							  IMESSAGE_GETATTRIBUTE, &type,
+							  CRYPT_IATTRIBUTE_TYPE );
+	if( cryptStatusError( status ) || type != OBJECT_TYPE_KEYSET )
+		{
+		/* This one is very difficult to report appropriately, the best that
+		   we can do is report the wrong key for this type of object */
+		setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_KEYSET_DECRYPT,
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ERROR_WRONGKEY );
 		}
 
 	/* Try and get the key information */
@@ -713,7 +730,7 @@ static int addDeenvelopeInfo( ENVELOPE_INFO *envelopeInfoPtr,
 				/* There's already a hash action present, we can't add 
 				   anything further */
 				setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_HASH,
-						  CRYPT_ERRTYPE_ATTR_PRESENT );
+							  CRYPT_ERRTYPE_ATTR_PRESENT );
 				return( CRYPT_ERROR_INITED );
 				}
 

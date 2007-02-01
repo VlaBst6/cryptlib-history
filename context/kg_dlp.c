@@ -18,6 +18,23 @@
 
 /****************************************************************************
 *																			*
+*							Utility Functions								*
+*																			*
+****************************************************************************/
+
+/* Enable various side-channel protection mechanisms */
+
+static int enableSidechannelProtection( PKC_INFO *pkcInfo )
+	{
+	/* Use constant-time modexp() to protect the private key from timing 
+	   channels */
+	BN_set_flags( &pkcInfo->dlpParam_x, BN_FLG_EXP_CONSTTIME );
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
 *						Determine Discrete Log Exponent Bits				*
 *																			*
 ****************************************************************************/
@@ -139,7 +156,7 @@ static int getDLPexpSize( const int primeBits )
 /* The maximum number of factors required to generate a prime using the Lim-
    Lee algorithm.  The value 160 is the minimum safe exponent size */
 
-#define MAX_NO_FACTORS	( ( MAX_PKCSIZE_BITS / 160 ) + 1 )
+#define MAX_NO_FACTORS	( ( bytesToBits( CRYPT_MAX_PKCSIZE ) / 160 ) + 1 )
 
 /* The maximum number of small primes required to generate a prime using the
    Lim-Lee algorithm.  There's no fixed bound on this value, but in the worst
@@ -210,9 +227,11 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 	int bnStatus = BN_STATUS, status;
 
 	assert( p != NULL );
-	assert( pBits >= 512 && pBits <= MAX_PKCSIZE_BITS );
+	assert( pBits >= bytesToBits( MIN_PKCSIZE ) && \
+			pBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	assert( q != NULL );
-	assert( ( qBits >= 160 && qBits <= MAX_PKCSIZE_BITS ) || \
+	assert( ( qBits >= 160 && \
+			  qBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) ) || \
 			qBits == CRYPT_USE_DEFAULT );
 	assert( callBackArg != NULL );
 	assert( getDLPexpSize( 512 ) == 160 );
@@ -440,7 +459,13 @@ int generateDLPkey( CONTEXT_INFO *contextInfoPtr, const int keyBits,
 		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, &pkcInfo->dlpParam_g,
 							 &pkcInfo->dlpParam_x, &pkcInfo->dlpParam_p, 
 							 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
-	return( getBnStatus( bnStatus ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
+
+	/* Enable side-channel protection if required */
+	if( !( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) )
+		return( CRYPT_OK );
+	return( enableSidechannelProtection( pkcInfo ) );
 	}
 
 /****************************************************************************
@@ -473,14 +498,17 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 
 	/* Make sure that the key paramters are valid:
 
-		pLen >= MIN_PKCSIZE_BITS, pLen <= MAX_PKCSIZE_BITS
+		pLen >= MIN_PKCSIZE, pLen <= CRYPT_MAX_PKCSIZE 
 
 		2 <= g <= p - 2, g a generator of order q if the q parameter is 
 			present (i.e. it's a non-PKCS #3 key)
 
 		y < p */
-	length = BN_num_bits( p );
-	if( length < MIN_PKCSIZE_BITS || length > MAX_PKCSIZE_BITS )
+	length = BN_num_bytes( p );
+	if( isShortPKCKey( length ) )
+		/* Special-case handling for insecure-sized public keys */
+		return( CRYPT_ERROR_NOSECURE );
+	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
 		return( CRYPT_ARGERROR_STR1 );
 	if( BN_num_bits( g ) < 2 )
 		return( CRYPT_ARGERROR_STR1 );
@@ -551,5 +579,11 @@ int initDLPkey( CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
 							 &pkcInfo->dlpParam_mont_p ) );
 
 	pkcInfo->keySizeBits = BN_num_bits( p );
-	return( getBnStatus( bnStatus ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
+
+	/* Enable side-channel protection if required */
+	if( !( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) )
+		return( CRYPT_OK );
+	return( enableSidechannelProtection( pkcInfo ) );
 	}

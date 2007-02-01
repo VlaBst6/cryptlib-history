@@ -1143,7 +1143,7 @@ static void slowPollWinNT( void )
 		char szDevice[ 32 + 8 ];
 
 		/* Check whether we can access this device */
-		sPrintf_s( szDevice, 32, "\\\\.\\PhysicalDrive%d", nDrive );
+		sprintf_s( szDevice, 32, "\\\\.\\PhysicalDrive%d", nDrive );
 		hDevice = CreateFile( szDevice, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
 							  NULL, OPEN_EXISTING, 0, NULL );
 		if( hDevice == INVALID_HANDLE_VALUE )

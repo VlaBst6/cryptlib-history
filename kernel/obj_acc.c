@@ -442,13 +442,17 @@ int krnlResumeObject( const int objectHandle, const int refCount )
   #include "context/context.h"
 #endif /* Compiler-specific includes */
 
-int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData )
+int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData, 
+					const int keyDataMaxLen )
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
 
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( isWritePtr( keyData, keyDataMaxLen ) );
+
 	/* Clear return value */
-	memset( keyData, 0, bitsToBytes( MIN_KEYSIZE_BITS ) );
+	memset( keyData, 0, keyDataMaxLen );
 
 	/* Make sure that we've been given a conventional encryption or MAC 
 	   context with a key loaded.  This has already been checked at a higher 
@@ -471,13 +475,19 @@ int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData )
 	switch( contextInfoPtr->type )
 		{
 		case CONTEXT_CONV:
-			memcpy( keyData, contextInfoPtr->ctxConv->userKey,
-					contextInfoPtr->ctxConv->userKeyLength );
+			if( contextInfoPtr->ctxConv->userKeyLength > keyDataMaxLen )
+				status = CRYPT_ERROR_OVERFLOW;
+			else
+				memcpy( keyData, contextInfoPtr->ctxConv->userKey,
+						contextInfoPtr->ctxConv->userKeyLength );
 			break;
 
 		case CONTEXT_MAC:
-			memcpy( keyData, contextInfoPtr->ctxMAC->userKey,
-					contextInfoPtr->ctxMAC->userKeyLength );
+			if( contextInfoPtr->ctxMAC->userKeyLength > keyDataMaxLen )
+				status = CRYPT_ERROR_OVERFLOW;
+			else
+				memcpy( keyData, contextInfoPtr->ctxMAC->userKey,
+						contextInfoPtr->ctxMAC->userKeyLength );
 			break;
 
 		default:
@@ -493,6 +503,10 @@ int exportPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
 
 	/* Make sure that we've been given a PKC context with a private key
 	   loaded.  This has already been checked at a higher level, but we
@@ -523,6 +537,10 @@ int importPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
 
 	/* Make sure that we've been given a PKC context with no private key
 	   loaded.  This has already been checked at a higher level, but we

@@ -156,6 +156,7 @@ const CAPABILITY_INFO *getDHCapability( void );
 const CAPABILITY_INFO *getDSACapability( void );
 const CAPABILITY_INFO *getElgamalCapability( void );
 const CAPABILITY_INFO *getRSACapability( void );
+const CAPABILITY_INFO *getECDSACapability( void );
 
 /* Fallback function to get context-specific information that isn't specific
    to a particular context.  The initial query goes to the context, if that

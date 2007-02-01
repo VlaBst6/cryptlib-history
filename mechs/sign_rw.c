@@ -77,8 +77,8 @@ static int readX509Signature( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Read the signature/hash algorithm information followed by the start
 	   of the signature */
-	status = readAlgoIDex( stream, &queryInfo->cryptAlgo,
-						   &queryInfo->hashAlgo, NULL );
+	status = readAlgoIDext( stream, &queryInfo->cryptAlgo,
+							&queryInfo->hashAlgo );
 	if( cryptStatusOK( status ) )
 		status = readBitStringHole( stream, &queryInfo->dataLength, 16 + 16,
 									DEFAULT_TAG );
@@ -475,7 +475,8 @@ int readOnepassSigPacket( STREAM *stream, QUERY_INFO *queryInfo )
 		byte	sigAlgo					byte[]	authenticated attributes
 		byte	hashAlgo				uint16	length of unauth.attributes
 		byte[2]	hash check				byte[]	unauthenticated attributes
-		mpi(s)	signature				byte[2]	hash check
+		mpi(s)	signature							-- Contains keyID
+										byte[2]	hash check
 										mpi(s)	signature */
 
 static int readPgpSignature( STREAM *stream, QUERY_INFO *queryInfo )
@@ -594,8 +595,7 @@ static int readPgpSignature( STREAM *stream, QUERY_INFO *queryInfo )
 		{
 		queryInfo->dataStart = ( stell( stream ) + UINT16_SIZE )  - startPos;
 		status = readInteger16Ubits( stream, NULL, &queryInfo->dataLength,
-									 bitsToBytes( MIN_PKCSIZE_BITS ),
-									 CRYPT_MAX_PKCSIZE );
+									 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -671,8 +671,7 @@ static int readSshSignature( STREAM *stream, QUERY_INFO *queryInfo )
 		}
 	else
 		{
-		if( length < bitsToBytes( MIN_PKCSIZE_BITS ) || \
-			length > CRYPT_MAX_PKCSIZE )
+		if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
 			return( CRYPT_ERROR_BADDATA );
 		}
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -717,8 +716,7 @@ static int readSslSignature( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Read the start of the signature */
 	length = readUint16( stream );
-	if( length < bitsToBytes( MIN_PKCSIZE_BITS ) || \
-		length > CRYPT_MAX_PKCSIZE )
+	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
 		return( CRYPT_ERROR_BADDATA );
 	queryInfo->dataStart = stell( stream ) - startPos;
 	queryInfo->dataLength = length;

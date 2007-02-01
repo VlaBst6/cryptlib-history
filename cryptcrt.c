@@ -110,9 +110,13 @@ static int compareCertInfo( CERT_INFO *certInfoPtr, const int compareType,
 				}
 
 			/* Compare the serialNumber */
-			readGenericHole( &stream, &serialNoLength, 1, BER_INTEGER );
-			dataStart = sMemBufPtr( &stream );
-			status = sSkip( &stream, serialNoLength );
+			status = readGenericHole( &stream, &serialNoLength, 1, 
+									  BER_INTEGER );
+			if( cryptStatusOK( status ) )
+				{
+				dataStart = sMemBufPtr( &stream );
+				status = sSkip( &stream, serialNoLength );
+				}
 			sMemDisconnect( &stream );
 			if( cryptStatusError( status ) )
 				return( CRYPT_ERROR );
@@ -499,12 +503,26 @@ int iCryptReadSubjectPublicKey( void *streamPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	spkiLength = ( int ) sizeofObject( length );
-	if( spkiLength < 8 + bitsToBytes( MIN_PKCSIZE_BITS ) || \
+	if( spkiLength < 8 + MIN_PKCSIZE || \
 		spkiLength > CRYPT_MAX_PKCSIZE * 4 || \
 		length > sMemDataLeft( stream ) )
+		{
+		/* If we're reading a cert with a comically short public key, we 
+		   should try and return something a bit more informative than a 
+		   generic bad-data error.  If we find a key like this, we return 
+		   an insecure-key error instead */
+		if( isShortPKCKey( spkiLength - 8 ) )
+			return( CRYPT_ERROR_NOSECURE );
+
 		return( CRYPT_ERROR_BADDATA );
-	readAlgoID( stream, &cryptAlgo );
-	status = readUniversal( stream );
+		}
+	status = readAlgoIDparams( stream, &cryptAlgo, &length );
+	if( cryptStatusOK( status ) && length > 0 )
+		/* There are algorithm parameters present, skip them */
+		status = readUniversal( stream );
+	if( cryptStatusOK( status ) )
+		/* Read the public-key data */
+		status = readUniversal( stream );
 	if( cryptStatusOK( status ) )
 		{
 		setMessageCreateObjectInfo( &createInfo, cryptAlgo );
@@ -617,7 +635,7 @@ static int processCertData( CERT_INFO *certInfoPtr,
 
 /* Handle a message sent to a certificate context */
 
-static int certificateMessageFunction( const void *objectInfoPtr,
+static int certificateMessageFunction( void *objectInfoPtr,
 									   const MESSAGE_TYPE message,
 									   void *messageDataPtr,
 									   const int messageValue )
@@ -1036,14 +1054,11 @@ int createCertificate( MESSAGE_CREATEOBJECT_INFO *createInfo,
 
 	assert( auxDataPtr == NULL );
 	assert( auxValue == 0 );
+	assert( createInfo->arg1 > CRYPT_CERTTYPE_NONE && \
+			createInfo->arg1 < CRYPT_CERTTYPE_LAST );
 	assert( createInfo->arg2 == 0 );
 	assert( createInfo->strArg1 == NULL );
 	assert( createInfo->strArgLen1 == 0 );
-
-	/* Perform basic error checking */
-	if( createInfo->arg1 <= CRYPT_CERTTYPE_NONE || \
-		createInfo->arg1 >= CRYPT_CERTTYPE_LAST )
-		return( CRYPT_ARGERROR_NUM1 );
 
 	/* Pass the call on to the lower-level open function */
 	status = createCertificateInfo( &certInfoPtr, createInfo->cryptOwner,
@@ -1053,7 +1068,7 @@ int createCertificate( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	iCertificate = status;
 
 	/* We've finished setting up the object-type-specific info, tell the 
-	   kernel the object is ready for use */
+	   kernel that the object is ready for use */
 	status = krnlSendMessage( iCertificate, IMESSAGE_SETATTRIBUTE, 
 							  MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
 	if( cryptStatusOK( status ) )
@@ -1072,7 +1087,7 @@ int createCertificateIndirect( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	assert( auxDataPtr == NULL );
 	assert( auxValue == 0 );
 	assert( createInfo->arg1 >= CRYPT_CERTTYPE_NONE && \
-			createInfo->arg1 < CERTFORMAT_LAST );
+			createInfo->arg1 < CRYPT_CERTTYPE_LAST );
 	assert( createInfo->strArg1 != NULL );
 	assert( createInfo->strArgLen1 > 16 );	/* May be CMS attr.*/
 	assert( ( createInfo->arg2 == 0 && createInfo->strArg2 == NULL && \
@@ -1101,16 +1116,6 @@ int certManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 	}
 
 /* Get/add/delete certificate attributes */
-
-#ifdef EBCDIC_CHARS
-
-static char *bufferToAscii( char *buffer, const char *string )
-	{
-	strcpy( buffer, string );
-	ebcdicToAscii( buffer, strlen( string ) );
-	return( buffer );
-	}
-#endif /* EBCDIC_CHARS */
 
 C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 							 C_IN char C_PTR oid, 
@@ -1148,7 +1153,8 @@ C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	if( strlen( oid ) > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
 #ifdef EBCDIC_CHARS
-	bufferToAscii( asciiOID, oid );
+	strlcpy_s( asciiOID, CRYPT_MAX_TEXTSIZE, oid );
+	ebcdicToAscii( asciiOID, asciiOID, strlen( asciiOID ) );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
 									 binaryOID, MAX_OID_SIZE ) )
 		return( CRYPT_ERROR_PARAM2 );
@@ -1246,7 +1252,8 @@ C_RET cryptAddCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	if( strlen( oid ) > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
 #ifdef EBCDIC_CHARS
-	bufferToAscii( asciiOID, oid );
+	strlcpy_s( asciiOID, CRYPT_MAX_TEXTSIZE, oid );
+	ebcdicToAscii( asciiOID, asciiOID, strlen( asciiOID ) );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
 									 binaryOID, MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
@@ -1327,7 +1334,8 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	if( strlen( oid ) > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
 #ifdef EBCDIC_CHARS
-	bufferToAscii( asciiOID, oid );
+	strlcpy_s( asciiOID, CRYPT_MAX_TEXTSIZE, oid );
+	ebcdicToAscii( asciiOID, asciiOID, strlen( asciiOID ) );
 	if( cryptStatusError( textToOID( asciiOID, strlen( asciiOID ), 
 									 binaryOID, MAX_OID_SIZE ) ) )
 		return( CRYPT_ERROR_PARAM2 );

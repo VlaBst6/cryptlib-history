@@ -41,7 +41,7 @@ static int getSuccessorCert( DBMS_INFO *dbmsInfo,
 
 	/* Walk through the chain of renewals in the cert log until we find the
 	   ultimate successor cert to the current one */
-	strcpy( certID, initialCertID );
+	strlcpy_s( certID, DBXKEYID_BUFFER_SIZE, initialCertID );
 	do
 		{
 		BYTE keyCertID[ DBXKEYID_SIZE + BASE64_OVFL_SIZE + 8 ];
@@ -262,22 +262,23 @@ int updateCertLog( DBMS_INFO *dbmsInfo, const int action, const char *certID,
 	   values may be NULL, so we have to insert them by naming the columns
 	   (some databases allow the use of the DEFAULT keyword but this isn't
 	   standardised enough to be safe) */
-	strcpy( sqlFormatBuffer,
-			"INSERT INTO certLog (action, actionTime, certID" );
+	strlcpy_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE,
+			  "INSERT INTO certLog (action, actionTime, certID" );
 	if( reqCertID != NULL )
-		strcat( sqlFormatBuffer, ", reqCertID" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ", reqCertID" );
 	if( subjCertID != NULL )
-		strcat( sqlFormatBuffer, ", subjCertID" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ", subjCertID" );
 	if( data != NULL )
-		strcat( sqlFormatBuffer, ", certData" );
-	strcat( sqlFormatBuffer, ") VALUES ($, ?, '$'" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ", certData" );
+	strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ") VALUES ($, ?, '$'" );
 	if( reqCertID != NULL )
-		strcat( sqlFormatBuffer, ", '$'" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ", '$'" );
 	if( subjCertID != NULL )
-		strcat( sqlFormatBuffer, ", '$'" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ", '$'" );
 	if( data != NULL )
-		strcat( sqlFormatBuffer, hasBinaryBlobs( dbmsInfo ) ? ", ?" : ", '$'" );
-	strcat( sqlFormatBuffer, ")" );
+		strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, 
+				  hasBinaryBlobs( dbmsInfo ) ? ", ?" : ", '$'" );
+	strlcat_s( sqlFormatBuffer, MAX_SQL_QUERY_SIZE, ")" );
 
 	/* Set up the appropriate parameter pointers to build the SQL command */
 	if( reqCertID == NULL )
@@ -336,7 +337,7 @@ int updateCertLog( DBMS_INFO *dbmsInfo, const int action, const char *certID,
 		}
 
 	/* Update the cert log */
-	sPrintf_s( actionString, 8, "%d", action );
+	sprintf_s( actionString, 8, "%d", action );
 	if( data != NULL && !hasBinaryBlobs( dbmsInfo ) )
 		{
 		dataPtrLength = base64encode( encodedCertData, MAX_ENCODED_CERT_SIZE,

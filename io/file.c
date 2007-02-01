@@ -69,14 +69,76 @@
 /* Symbolic defines for stdio-style file access modes */
 
 #if defined( DDNAME_IO )
+  #pragma convlit( suspend )
   #define MODE_READ			"rb,byteseek"
   #define MODE_WRITE		"wb,byteseek,recfm=*"
   #define MODE_READWRITE	"rb+,byteseek,recfm=*"
+  #pragma convlit( resume )
 #else
-  #define MODE_READ			"rb"
-  #define MODE_WRITE		"wb"
-  #define MODE_READWRITE	"rb+"
+  #if defined( EBCDIC_CHARS )
+	#pragma convlit( suspend )
+	#define MODE_READ		"rb"
+	#define MODE_WRITE		"wb"
+	#define MODE_READWRITE	"rb+"
+	#pragma convlit( resume )
+  #else
+	#define MODE_READ		"rb"
+	#define MODE_WRITE		"wb"
+	#define MODE_READWRITE	"rb+"
+  #endif /* EBCDIC_CHARS */
 #endif /* Standard vs. DDNAME I/O */
+
+/****************************************************************************
+*																			*
+*								Utility Functions							*
+*																			*
+****************************************************************************/
+
+/* Append a filename to a path and add the suffix */
+
+static int appendFilename( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen, 
+						   const BUILDPATH_OPTION_TYPE option )
+	{
+	const int partialPathLen = strlen( path );
+
+	assert( isWritePtr( path, pathMaxLen ) );
+	assert( isReadPtr( fileName, fileNameLen ) );
+	assert( option > BUILDPATH_NONE && option < BUILDPATH_LAST );
+
+	/* Clear return value */
+	*pathLen = 0;
+
+#ifdef EBCDIC_CHARS
+	#pragma convlit( suspend )
+#endif /* EBCDIC_CHARS */
+
+	/* If we're using a fixed filename it's quite simple, just append it
+	   and we're done */
+	if( option == BUILDPATH_RNDSEEDFILE )
+		{
+		if( partialPathLen + 12 > pathMaxLen )
+			return( CRYPT_ERROR_OVERFLOW );
+		memcpy( path + partialPathLen, "randseed.dat", 12 );
+		*pathLen = partialPathLen + 12;
+
+		return( CRYPT_OK );
+		}
+
+	/* User-defined filenames are a bit more complex because we have to
+	   safely append a variable-length quantity to the path */
+	if( partialPathLen + fileNameLen + 4 > pathMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );
+	memcpy( path + partialPathLen, fileName, fileNameLen );
+	memcpy( path + partialPathLen + fileNameLen, ".p15", 4 );
+	*pathLen = partialPathLen + fileNameLen + 4;
+
+#ifdef EBCDIC_CHARS
+	#pragma convlit( resume )
+#endif /* EBCDIC_CHARS */
+
+	return( CRYPT_OK );
+	}
 
 /****************************************************************************
 *																			*
@@ -271,21 +333,21 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
 	if( pathMaxLen < 64 )
-		return;
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
-	strcpy( path, "\\cryptlib\\" );
+	strlcpy_s( path, pathMaxLen, "\\cryptlib\\" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
@@ -293,20 +355,12 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 		{
 		/* The directory doesn't exist, try and create it */
 		if( fjmkdir( path ) < 0 )
-			{
-			*path = '\0';
-			return;
-			}
+			return( CRYPT_ERROR_OPEN );
 		}
 
 	/* Add the filename to the path */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -504,9 +558,9 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
@@ -514,11 +568,14 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
 	if( pathMaxLen < 64 )
-		return;
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
-	strcpy( path, "\\cryptlib\\" );
+	strlcpy_s( path, pathMaxLen, "\\cryptlib\\" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
@@ -532,21 +589,13 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 			{
 			/* The directory doesn't exist, try and create it */
 			if( FS_MkDir( path ) < 0 )
-				{
-				*path = '\0';
-				return;
-				}
+				return( CRYPT_ERROR_OPEN );
 			}
 		}
 
 	/* Add the filename to the path */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -715,17 +764,13 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcpy( path, "randseed.dat" );
-	else
-		{
-		strcpy( path, fileName );
-		strcat( path, ".p15" );
-		}
+	/* Add the filename to the path */
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -948,18 +993,15 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	strcpy( path, ":" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcpy_s( path, pathMaxLen, ":" );
+
+	/* Add the filename to the path */
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -970,12 +1012,12 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 
 #elif defined( CONFIG_NO_STDIO )
 
-#if defined( __VMCMS__ ) || defined( __IBM4758__ )
+#if defined( __VMCMS__ ) || defined( __IBM4758__ ) || defined( __TESTIO__ )
 
 /* Some environments place severe restrictions on what can be done with file
    I/O, either having no filesystem at all or having one with characteristics
    that don't fit the stdio model.  For these systems we used our own in-
-   memory buffers and make them look like memory streams until they're
+   memory buffers and make them look like virtual file streams until they're
    flushed, at which point they're written to backing store (flash RAM/
    EEPROM/DASD/whatever non-FS storage is being used) in one go.
 
@@ -986,9 +1028,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
    one that isn't too big.  16K is about right, since typical private key
    files with cert chains are 2K */
 
-#define STREAM_BUFSIZE	16384
-
-#endif /* __VMCMS__ || __IBM4758__ */
+#endif /* __VMCMS__ || __IBM4758__ || __TESTIO__ */
 
 /* Open/close a file stream */
 
@@ -997,17 +1037,19 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 #ifdef __IBM4758__
 	const BOOLEAN useBBRAM = ( mode & FILE_SENSITIVE ) ? TRUE : FALSE;
 #endif /* __IBM4758__ */
-	long length, status;
+	long length;
+	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( fileName != NULL );
 	assert( mode != 0 );
 
-	/* Initialise the stream structure */
+	/* Initialise the stream structure as a virtual file stream */
 	memset( stream, 0, sizeof( STREAM ) );
 	stream->type = STREAM_TYPE_MEMORY;
+	stream->flags = STREAM_MFLAG_VFILE;
 	if( ( mode & FILE_RW_MASK ) == FILE_READ )
-		stream->flags = STREAM_FLAG_READONLY;
+		stream->flags |= STREAM_FLAG_READONLY;
 
 #if defined( __IBM4758__ )
 	/* Make sure that the filename matches the 4758's data item naming
@@ -1017,7 +1059,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   caller */
 	if( strlen( fileName ) > 8 )
 		return( CRYPT_ERROR_OPEN );
-	strcpy( stream->name, fileName );
+	strlcpy_s( stream->name, 8, fileName );
 
 	/* If we're doing a read, fetch the data into memory */
 	if( mode & FILE_READ )
@@ -1045,13 +1087,14 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   committed, but it makes sense to at least check when the "file" is
 	   opened */
 	status = sccQueryPPDSpace( &length, useBBRAM ? PPD_BBRAM : PPD_FLASH );
-	if( status != PPDGood || length < STREAM_BUFSIZE )
+	if( status != PPDGood || length < STREAM_VFILE_BUFSIZE )
 		return( CRYPT_ERROR_OPEN );
 
 	/* Allocate the initial I/O buffer for the data */
-	if( ( stream->buffer = clAlloc( "sFileOpen", STREAM_BUFSIZE ) ) == NULL )
+	if( ( stream->buffer = clAlloc( "sFileOpen", 
+									STREAM_VFILE_BUFSIZE ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
-	stream->bufSize = STREAM_BUFSIZE;
+	stream->bufSize = STREAM_VFILE_BUFSIZE;
 	stream->isSensitive = useBBRAM;
 
 	return( CRYPT_OK );
@@ -1061,7 +1104,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   available since the open arg has to include the file format
 	   information, so all we can do at this point is remember the name for
 	   later use */
-	strcpy( stream->name, fileName );
+	strlcpy_s( stream->name, MAX_PATH_LENGTH, fileName );
 	asciiToEbcdic( stream->name, strlen( stream->name ) );
 
 	/* If we're doing a read, fetch the data into memory */
@@ -1070,7 +1113,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 		FILE *filePtr;
 		fldata_t fileData;
 		char fileBuffer[ MAX_PATH_LENGTH + 8 ];
-		int count;
+		int allocSize = STREAM_VFILE_BUFSIZE;
 
 		/* Open the file and determine how large it is */
 		filePtr = fopen( fileName, "rb" );
@@ -1083,21 +1126,84 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 			return( CRYPT_ERROR_OPEN );
 			}
 		length = fileData.__maxreclen;
+		if( stream->flags & STREAM_FLAG_READONLY )
+			/* If it's a read-only file we only need to allocate a buffer
+			   large enough to hold the existing data */
+			allocSize = length;
 
 		/* Fetch the data into a buffer large enough to contain the entire
 		   stream */
-		if( ( stream->buffer = clAlloc( "sFileOpen", length ) ) == NULL )
+		if( ( stream->buffer = clAlloc( "sFileOpen", allocSize ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
-		stream->bufSize = stream->bufEnd = length;
+		stream->bufSize = allocSize;
+		stream->bufEnd = length;
 		status = fread( stream->buffer, length, 1, filePtr );
 		fclose( filePtr );
-		return( ( status != 1 ) ? CRYPT_ERROR_READ : CRYPT_OK );
+		if( status != 1 )
+			{
+			clFree( "sFileOpen", stream->buffer );
+			return( CRYPT_ERROR_READ );
+			}
+		return( CRYPT_OK );
 		}
 
 	/* Allocate the initial I/O buffer for the data */
-	if( ( stream->buffer = clAlloc( "sFileOpen", STREAM_BUFSIZE ) ) == NULL )
+	if( ( stream->buffer = clAlloc( "sFileOpen", 
+									STREAM_VFILE_BUFSIZE ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
-	stream->bufSize = STREAM_BUFSIZE;
+	stream->bufSize = STREAM_VFILE_BUFSIZE;
+
+	return( CRYPT_OK );
+#elif defined( __TESTIO__ )
+	/* Remember the filename.  The __TESTIO__ pseudo-system allows emulation
+	   of a non-stdio system for test purposes, so this acts like one that
+	   that doesn't have file I/O */
+	strlcpy_s( stream->name, MAX_PATH_LENGTH, fileName );
+
+	/* If we're doing a read, fetch the data into memory */
+	if( mode & FILE_READ )
+		{
+		FILE *filePtr;
+		int allocSize = STREAM_VFILE_BUFSIZE;
+
+		/* Open the file and determine how large it is */
+		filePtr = fopen( fileName, "rb" );
+		if( filePtr == NULL )
+			return( CRYPT_ERROR_OPEN );
+		fseek( filePtr, 0L, SEEK_END );
+		length = ftell( filePtr );
+		fseek( filePtr, 0L, SEEK_SET );
+		if( length < 0 )
+			{
+			fclose( filePtr );
+			return( CRYPT_ERROR_OPEN );
+			}
+		if( stream->flags & STREAM_FLAG_READONLY )
+			/* If it's a read-only file we only need to allocate a buffer
+			   large enough to hold the existing data */
+			allocSize = length;
+
+		/* Fetch the data into a buffer large enough to contain the entire
+		   stream */
+		if( ( stream->buffer = clAlloc( "sFileOpen", allocSize ) ) == NULL )
+			return( CRYPT_ERROR_MEMORY );
+		stream->bufSize = allocSize;
+		stream->bufEnd = length;
+		status = fread( stream->buffer, length, 1, filePtr );
+		fclose( filePtr );
+		if( status != 1 )
+			{
+			clFree( "sFileOpen", stream->buffer );
+			return( CRYPT_ERROR_READ );
+			}
+		return( CRYPT_OK );
+		}
+
+	/* Allocate the initial I/O buffer for the data */
+	if( ( stream->buffer = clAlloc( "sFileOpen", 
+									STREAM_VFILE_BUFSIZE ) ) == NULL )
+		return( CRYPT_ERROR_MEMORY );
+	stream->bufSize = STREAM_VFILE_BUFSIZE;
 
 	return( CRYPT_OK );
 #else
@@ -1125,6 +1231,13 @@ int sFileClose( STREAM *stream )
 	zeroise( stream, sizeof( STREAM ) );
 
 	return( CRYPT_OK );
+#elif defined( __TESTIO__ )
+	/* Close the file and clear the stream structure */
+	zeroise( stream->buffer, stream->bufSize );
+	clFree( "sFileClose", stream->buffer );
+	zeroise( stream, sizeof( STREAM ) );
+
+	return( CRYPT_OK );
 #else
 	#error Need to add mechanism to disconnect stream from backing store
 	zeroise( stream, sizeof( STREAM ) );
@@ -1137,48 +1250,20 @@ int sFileClose( STREAM *stream )
 
 int fileRead( STREAM *stream, void *buffer, const int length )
 	{
-#if defined( __IBM4758__ ) || defined( __VMCMS__ )
 	/* These environments move all data into an in-memory buffer when the
-	   file is opened, so there's never any need to read more data from the
+	   file is opened so there's never any need to read more data from the
 	   stream */
+	assert( NOTREACHED );
 	return( CRYPT_ERROR_READ );
-#else
-	#error Need to add mechanism to read data from backing store
-	return( CRYPT_ERROR_READ );
-#endif /* Nonstandard I/O enviroments */
 	}
 
 int fileWrite( STREAM *stream, const void *buffer, const int length )
 	{
-#if defined( __IBM4758__ ) || defined( __VMCMS__ )
-	/* Expand the write buffer on demand when it fills up.  If it's a small
-	   buffer allocated when we initially read a file and it doesn't look
-	   like we'll be overflowing a standard-size buffer, we first expand it
-	   up to STREAM_BUFSIZE before increasing it in STREAM_BUFSIZE steps.
-	   The following routine does a safe realloc() that wipes the original
-	   buffer */
-	void *newBuffer;
-	const int newSize = ( stream->bufSize < STREAM_BUFSIZE && \
-						  stream->bufPos + length < STREAM_BUFSIZE - 1024 ) ? \
-						STREAM_BUFSIZE : stream->bufSize + STREAM_BUFSIZE;
-
-	/* Allocate the buffer and copy the new data across.  If the malloc
-	   fails we return CRYPT_ERROR_OVERFLOW rather than CRYPT_ERROR_MEMORY
-	   since the former is more appropriate for the emulated-I/O environment */
-	if( ( newBuffer = clDynAlloc( "expandBuffer", \
-								  stream->bufSize + STREAM_BUFSIZE ) ) == NULL )
-		return( CRYPT_ERROR_OVERFLOW );
-	memcpy( newBuffer, stream->buffer, stream->bufSize );
-	zeroise( stream->buffer, stream->bufSize );
-	clFree( "expandBuffer", stream->buffer );
-	stream->buffer = newBuffer;
-	stream->bufSize = newSize;
-
-	return( CRYPT_OK );
-#else
-	#error Need to add mechanism to write data to backing store
+	/* These environments keep all data in an in-memory buffer that's 
+	   committed to backing store when the file is closed so there's never 
+	   any need to write data to the stream */
+	assert( NOTREACHED );
 	return( CRYPT_ERROR_WRITE );
-#endif /* Nonstandard I/O enviroments */
 	}
 
 /* Commit data in a file stream to backing storage */
@@ -1199,8 +1284,19 @@ int fileFlush( STREAM *stream )
 	char formatBuffer[ 64 + 8 ];
 	int count;
 
-	sprintf( formatBuffer, "wb, recfm=F, lrecl=%d, noseek", stream->bufPos );
+	sprintf_s( formatBuffer, 64, "wb, recfm=F, lrecl=%d, noseek", 
+			   stream->bufPos );
 	filePtr = fopen( stream->name, formatBuffer );
+	if( filePtr == NULL )
+		return( CRYPT_ERROR_WRITE );
+	count = fwrite( stream->buffer, stream->bufEnd, 1, filePtr );
+	fclose( filePtr );
+	return( ( count != 1 ) ? CRYPT_ERROR_WRITE : CRYPT_OK );
+#elif defined( __TESTIO__ )
+	FILE *filePtr;
+	int count;
+
+	filePtr = fopen( stream->name, "wb" );
 	if( filePtr == NULL )
 		return( CRYPT_ERROR_WRITE );
 	count = fwrite( stream->buffer, stream->bufEnd, 1, filePtr );
@@ -1216,7 +1312,7 @@ int fileFlush( STREAM *stream )
 
 int fileSeek( STREAM *stream, const long position )
 	{
-#if defined( __IBM4758__ ) || defined( __VMCMS__ )
+#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* These environments move all data into an in-memory buffer when the
 	   file is opened, so there's never any need to move around in the
 	   stream */
@@ -1231,7 +1327,7 @@ int fileSeek( STREAM *stream, const long position )
 
 BOOLEAN fileReadonly( const char *fileName )
 	{
-#if defined( __IBM4758__ ) || defined( __VMCMS__ )
+#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* Since there's no filesystem, there's no concept of a read-only
 	   file - all data items are always accessible */
 	return( FALSE );
@@ -1247,7 +1343,7 @@ BOOLEAN fileReadonly( const char *fileName )
 
 void fileClearToEOF( const STREAM *stream )
 	{
-#if defined( __IBM4758__ ) || defined( __VMCMS__ )
+#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* Data updates on these systems are atomic so there's no remaining data
 	   left to clear */
 	UNUSED( stream );
@@ -1262,7 +1358,7 @@ void fileErase( const char *fileName )
 	sccDeletePPD( ( char * ) fileName );
 #elif defined( __VMCMS__ )
 	FILE *filePtr;
-	int length = CRYPT_ERROR, status;
+	int length = CRYPT_ERROR;
 
 	assert( fileName != NULL );
 
@@ -1272,10 +1368,8 @@ void fileErase( const char *fileName )
 		{
 		fldata_t fileData;
 		char fileBuffer[ MAX_PATH_LENGTH + 8 ];
-		int status;
 
-		status = fldata( filePtr, fileBuffer, &fileData );
-		if( status == 0 )
+		if( fldata( filePtr, fileBuffer, &fileData ) == 0 )
 			length = fileData.__maxreclen;
 		}
 
@@ -1286,9 +1380,45 @@ void fileErase( const char *fileName )
 	if( length > 0 )
 		{
 		MESSAGE_DATA msgData;
-		BYTE buffer[ STREAM_BUFSIZE + 8 ];
+		BYTE buffer[ STREAM_VFILE_BUFSIZE + 8 ];
 
-		length = max( length, STREAM_BUFSIZE );
+		length = max( length, STREAM_VFILE_BUFSIZE );
+		setMessageData( &msgData, buffer, length );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+		fwrite( buffer, 1, length, filePtr );
+		}
+	if( filePtr != NULL )
+		{
+		fflush( filePtr );
+		fclose( filePtr );
+		}
+	remove( fileName );
+#elif defined( __TESTIO__ )
+	FILE *filePtr;
+	int length = CRYPT_ERROR;
+
+	assert( fileName != NULL );
+
+	/* Determine how large the file is */
+	filePtr = fopen( fileName, "rb+" );
+	if( filePtr != NULL )
+		{
+		fseek( filePtr, 0, SEEK_END );
+		length = ( int ) ftell( filePtr );
+		fseek( filePtr, 0, SEEK_SET );
+		}
+
+	/* If we got a length, overwrite the data.  Since the file contains a
+	   single record we can't perform the write-until-done overwrite used
+	   on other OS'es, however since we're only going to be deleting short
+	   private key files using the default stream buffer is OK for this */
+	if( length > 0 )
+		{
+		MESSAGE_DATA msgData;
+		BYTE buffer[ STREAM_VFILE_BUFSIZE + 8 ];
+
+		length = max( length, STREAM_VFILE_BUFSIZE );
 		setMessageData( &msgData, buffer, length );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
 						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
@@ -1307,35 +1437,36 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
 	if( pathMaxLen < 64 )
-		return;
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __IBM4758__ )
 	if( option == BUILDPATH_RNDSEEDFILE )
 		/* Unlikely to really be necessary since we have a hardware RNG */
-		strcpy( path, "RANDSEED" );
+		strlcpy_s( path, pathMaxLen, "RANDSEED" );
 	else
-		strcpy( path, fileName );
+		strlcpy_s( path, pathMaxLen, fileName );
+	return( CRYPT_OK );
 #elif defined( __VMCMS__ )
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcpy( path, "randseed dat" );
-	else
-		{
-		strcpy( path, fileName );
-		strcat( path, " p15" );
-		}
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
+#elif defined( __TESTIO__ )
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 #else
   #error Need to add function to build path to config data in backing store
+
+	return( CRYPT_ERROR_OPEN );
 #endif /* OS-specific file path creation */
 	}
 
@@ -1574,24 +1705,24 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that VFS services are available */
 	if( !checkVFSMgr() )
-		return;
+		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
-	if( 16 + strlen( fileName ) + 8 > pathMaxLen )
-		return;
+	if( 16 + fileNameLen + 8 > pathMaxLen )
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary */
-	strcpy( path, "/PALM/cryptlib/" );
+	strlcpy_s( path, pathMaxLen, "/PALM/cryptlib/" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
@@ -1602,29 +1733,20 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
  		uint16_t volRefNum;
 
 		if( VFSVolumeEnumerate( &volRefNum, &volIterator ) != errNone )
-			{
-			*path = '\0';
-			return;
-			}
+			return( CRYPT_ERROR_OPEN );
 		if( VFSFileOpen( volRefNum, path, vfsModeRead, &fileRef ) == errNone )
 			VFSFileClose( fileRef );
 		else
+			{
 			/* The directory doesn't exist, try and create it */
 			if( VFSDirCreate( volRefNum, path ) != errNone )
-				{
-				*path = '\0';
-				return;
-				}
+				return( CRYPT_ERROR_OPEN );
+			}
 		}
 
 	/* Add the filename to the path */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -1874,10 +1996,12 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 		fchmod( stream->fd, 0600 );
 
 	/* Lock the file if possible to make sure that no-one else tries to do
-	   things to it.  If available we used the (BSD-style) flock(), if not we
+	   things to it.  If available we use the (BSD-style) flock(), if not we
 	   fall back to Posix fcntl() locking (both mechanisms are broken, but
-	   flock() is less broken).  fcntl() locking has two disadvantages over
-	   flock():
+	   flock() is less broken).  In addition there's lockf(), but that's
+	   just a wrapper around fcntl(), so there's no need to special-case it.
+	   
+	   fcntl() locking has two disadvantages over flock():
 
 	   1. Locking is per-process rather than per-thread (specifically it's
 		  based on processes and inodes rather than flock()'s file table
@@ -1930,7 +2054,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 	   turn off and therefore disable the locking.  Finally, mandatory
 	   locking is wierd in that an open for write (or read, on a write-
 	   locked file) will succeed, it's only a later attempt to read/write
-	   that will fail. Finally
+	   that will fail.
 
 	   This mess is why dotfile-locking is still so popular, but that's
 	   probably going a bit far for simple keyset accesses */
@@ -1948,7 +2072,7 @@ int sFileOpen( STREAM *stream, const char *fileName, const int mode )
 					   F_WRLCK : F_RDLCK;
 	flockInfo.l_whence = SEEK_SET;
 	flockInfo.l_start = flockInfo.l_len = 0;
-	if( fcntl( stream->fd, F_SETLK, flockInfo ) == -1 && \
+	if( fcntl( stream->fd, F_SETLK, &flockInfo ) == -1 && \
 		( errno == EACCES || errno == EDEADLK ) )
 		{
 		/* Now we're in a bind.  If we close the file and exit, the lock
@@ -2238,34 +2362,32 @@ void fileErase( const char *fileName )
 
 #ifdef DDNAME_IO
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
 	/* MVS dataset name userid.CRYPTLIB.filename.  We can't use a PDS since
 	   multiple members have to be opened in write mode simultaneously */
 	if( option == BUILDPATH_RNDSEEDFILE )
-		strcpy( path, "//RANDSEED" );
+		strlcpy_s( path, pathMaxLen, "//RANDSEED" );
 	else
 		{
-		strcpy( path, "//CRYPTLIB." );
-		strcat( path, fileName );
+		strlcpy_s( path, pathMaxLen, "//CRYPTLIB." );
+		strlcat_s( path, pathMaxLen, fileName );
 		}
 	}
 #else
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
 	struct passwd *passwd;
 	int length;
 #ifdef EBCDIC_CHARS
 	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
+	int status;
 #endif /* EBCDIC_CHARS */
-
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
 
 	/* Build the path to the configuration file if necessary */
 #ifdef EBCDIC_CHARS
@@ -2274,20 +2396,21 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 #endif /* EBCDIC_CHARS */
 	/* Get the path to the user's home directory */
 	if( ( passwd = getpwuid( getuid() ) ) == NULL )
-		return;		/* Huh?  User not in passwd file */
+		return( CRYPT_ERROR_OPEN );	/* Huh?  User not in passwd file */
 	if( ( length = strlen( passwd->pw_dir ) ) > MAX_PATH_LENGTH - 64 )
-		/* You're kidding, right? */
-		return;
+		return( CRYPT_ERROR_OPEN );	/* You're kidding, right? */
 
 	/* Make sure that the path buffer meets the minimum length
 	   requirements */
 #if defined( __APPLE__ )
-	if( length + 32 + strlen( fileName ) + 8 > pathMaxLen )
-		return;
+	if( length + 32 + fileNameLen + 8 > pathMaxLen )
 #else
-	if( length + 16 + strlen( fileName ) + 8 > pathMaxLen )
-		return;
+	if( length + 16 + fileNameLen + 8 > pathMaxLen )
 #endif /* OS X */
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Set up the path to the cryptlib directory */
 	memcpy( path, passwd->pw_dir, length );
@@ -2296,32 +2419,32 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 #if defined( __APPLE__ )
 	/* Like Windows, OS X has a predefined location for storing user config
 	   data */
-	strcpy( path + length, "Library/Preferences/cryptlib" );
+	strlcpy_s( path + length, pathMaxLen - length, 
+			  "Library/Preferences/cryptlib" );
 #else
-	strcpy( path + length, ".cryptlib" );
+	strlcpy_s( path + length, pathMaxLen - length, ".cryptlib" );
 #endif /* OS X */
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
 	if( ( option == BUILDPATH_CREATEPATH ) && access( path, F_OK ) == -1 && \
 		mkdir( path, 0700 ) == -1 )
-		{
-		*path = '\0';
-		return;
-		}
+		return( CRYPT_ERROR_OPEN );
 
 	/* Add the filename to the path */
-	strcat( path, "/" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
-#ifdef EBCDIC_CHARS
+	strlcat_s( path, pathMaxLen, "/" );
+#ifndef EBCDIC_CHARS
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
+#else
 	#pragma convlit( resume )
-	ebcdicToAscii( path, strlen( path ) );
+	status = appendFilename( path, pathMaxLen, pathLen, fileName, 
+							 fileNameLen, option );
+	if( cryptStatusError( status ) )
+		return( status );
+	ebcdicToAscii( path, path, pathLen );
+
+	return( CRYPT_OK );
 #endif /* EBCDIC_CHARS */
 	}
 #endif /* DDNAME_IO */
@@ -2618,30 +2741,27 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
 	if( pathMaxLen < 64 )
-		return;
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 #if 0	/* Default path is just cwd, which isn't too useful */
 	ioDefPathGet( path );
 #else
-	strcat( path, "/" );
+	strlcat_s( path, pathMaxLen, "/" );
 #endif /* 0 */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+
+	/* Add the filename to the path */
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -2879,7 +2999,8 @@ static BOOLEAN checkUserKnown( const char *fileName,
 		/* Server name is too long, default to fail-safe handling */
 		return( TRUE );
 	memmove( pathBuffer, fileNamePtr, serverNameLength );
-	strcpy( pathBuffer + serverNameLength, "\\" );
+	strlcpy_s( pathBuffer + serverNameLength, 
+			   PATH_BUFFER_SIZE - serverNameLength, "\\" );
 
 	/* Get the current user's SID */
 	if( OpenThreadToken( GetCurrentThread(), TOKEN_QUERY, FALSE, &hToken ) || \
@@ -3298,9 +3419,9 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
 #if defined( __WIN32__ )
   #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
@@ -3322,9 +3443,6 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 				option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
 			( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
 
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 #if defined( __WIN32__ )
 	/* SHGetFolderPath() doesn't have an explicit buffer-size parameter to
 	   pass to the function, it always assumes a buffer of at least MAX_PATH
@@ -3333,7 +3451,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 	if( pathMaxLen < MAX_PATH )
 		{
 		assert( NOTREACHED );
-		return;
+		return( CRYPT_ERROR_OPEN );
 		}
 
 	/* Build the path to the configuration file if necessary.  We can't
@@ -3401,6 +3519,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 			*pathPtr = '\0';
 		}
 	else
+		{
 		if( strlen( pathPtr ) < 3 )
 			{
 			/* Under WinNT and Win2K the LocalSystem account doesn't have
@@ -3413,15 +3532,16 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 			if( !GetWindowsDirectory( pathPtr, pathMaxLen - 8 ) )
 				*pathPtr = '\0';
 			}
+		}
 	length = strlen( pathPtr );
 	if( length + 16 > pathMaxLen )
 		{
 		/* Make sure that the path buffer meets the minimum-length
 		   requirements */
-		*path = '\0';
-		return;
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
 		}
-	strcpy( pathPtr + length, "\\cryptlib" );
+	strlcpy_s( pathPtr + length, pathMaxLen - length, "\\cryptlib" );
 #elif defined( __WINCE__ )
 	if( SHGetSpecialFolderPath( NULL, pathPtr, CSIDL_APPDATA, TRUE ) || \
 		SHGetSpecialFolderPath( NULL, pathPtr, CSIDL_PERSONAL, TRUE ) )
@@ -3457,10 +3577,7 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 			retVal = CreateDirectory( pathPtr, getACLInfo( aclInfo ) );
 		freeACLInfo( aclInfo );
 		if( !retVal )
-			{
-			*path = '\0';
-			return;
-			}
+			return( CRYPT_ERROR_OPEN );
 		}
 #if defined( __WINCE__ )
 	unicodeToAscii( path, pathPtr, wcslen( pathPtr ) + 1 );
@@ -3468,21 +3585,16 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
-	if( strlen( path ) + strlen( fileName ) + 8 > pathMaxLen )
+	if( strlen( path ) + fileNameLen + 8 > pathMaxLen )
 		{
-		*path = '\0';
-		return;
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
 		}
 
 	/* Add the filename to the path */
-	strcat( path, "\\" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcat_s( path, pathMaxLen, "\\" );
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -3617,20 +3729,20 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
-	if( 10 + strlen( fileName ) + 8 > pathMaxLen )
-		return;
+	if( 10 + fileNameLen + 8 > pathMaxLen )
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary */
-	strcpy( path, "/cryptlib/" );
+	strlcpy_s( path, pathMaxLen, "/cryptlib/" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now */
@@ -3638,20 +3750,12 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 		{
 		/* The directory doesn't exist, try and create it */
 		if( mfs_create_dir( path ) <= 0 )
-			{
-			*path = '\0';
-			return;
-			}
+			return( CRYPT_ERROR_OPEN );
 		}
 
 	/* Add the filename to the path */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 	}
 
 /****************************************************************************
@@ -3954,9 +4058,9 @@ void fileErase( const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-void fileBuildCryptlibPath( char *path, const int pathMaxLen,
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option )
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option )
 	{
 #if defined( __OS2__ )
 	ULONG aulSysInfo[ 1 ] = { 0 };
@@ -3964,27 +4068,22 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 	BOOLEAN gotPath = FALSE;
 #endif /* OS-specific info */
 
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
 	/* Make sure that the path buffer meets the minimum-length
 	   requirements */
 	if( pathMaxLen < 64 )
-		return;
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __MSDOS__ )
-	strcpy( path, "c:/dos/" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcpy_s( path, pathMaxLen, "c:/dos/" );
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 #elif defined( __WIN16__ )
 	GetWindowsDirectory( path, pathMaxLen - 32 );
-	strcat( path, "\\cryptlib" );
+	strlcat_s( path, pathMaxLen, "\\cryptlib" );
 
 	/* If we're being asked to create the cryptlib directory and it doesn't
 	   already exist, create it now.  There's no way to check for its
@@ -3992,51 +4091,36 @@ void fileBuildCryptlibPath( char *path, const int pathMaxLen,
 	   ignore EACCESS errors */
 	if( ( option == BUILDPATH_CREATEPATH ) && \
 		!_mkdir( path ) && ( errno != EACCES ) )
-		{
-		*path = '\0';
-		return;
-		}
+		return( CRYPT_ERROR_OPEN );
 
 	/* Add the filename to the path */
-	strcat( path, "\\" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcat_s( path, pathMaxLen, "\\" );
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 #elif defined( __OS2__ )
 	DosQuerySysInfo( QSV_BOOT_DRIVE, QSV_BOOT_DRIVE, ( PVOID ) aulSysInfo,
 					 sizeof( ULONG ) );		/* Get boot drive info */
 	if( *aulSysInfo == 0 )
-		return;		/* No boot drive info */
+		return( CRYPT_ERROR_OPEN );	/* No boot drive info */
 	path[ 0 ] = *aulSysInfo + 'A' - 1;
-	strcpy( path + 1, ":\\OS2\\" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcpy_s( path + 1, pathMaxLen - 1, ":\\OS2\\" );
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 #elif defined( __TANDEMNSK__ )
-	strcpy( path, "$system.system." );
+	strlcpy_s( path, pathMaxLen, "$system.system." );
 	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed" );
+		strlcat_s( path, pathMaxLen, "randseed" );
 	else
-		strcat( path, fileName );
+		strlcat_s( path, pathMaxLen, fileName );
+	return( CRYPT_OK );
 #elif defined( __SYMBIAN32__ )
-	strcpy( path, "C:\\SYSTEM\\DATA\\" );
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strcat( path, "randseed.dat" );
-	else
-		{
-		strcat( path, fileName );
-		strcat( path, ".p15" );
-		}
+	strlcpy_s( path, pathMaxLen, "C:\\SYSTEM\\DATA\\" );
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
 #else
   #error Need to add function to build the config file path
+
+	return( CRYPT_ERROR_OPEN );
 #endif /* OS-specific file path creation */
 	}
 #endif /* OS-specific file stream handling */

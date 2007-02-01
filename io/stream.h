@@ -57,16 +57,22 @@ typedef enum {
 #define STREAM_FLAG_READONLY	0x0001	/* Read-only stream */
 #define STREAM_FLAG_PARTIALREAD 0x0002	/* Allow read of less than req.amount */
 #define STREAM_FLAG_PARTIALWRITE 0x0004	/* Allow write of less than req.amount */
-#define STREAM_FLAG_MASK		0x0007	/* Mask for general-purpose flags */
+#define STREAM_FLAG_DIRTY		0x0008	/* Stream contains un-committed data */
+#define STREAM_FLAG_MASK		0x000F	/* Mask for general-purpose flags */
+
+/* Memory stream flags */
+
+#define STREAM_MFLAG_VFILE		0x0010	/* File stream emulated via mem.stream */
+#define STREAM_MFLAG_MASK		( 0x0010 | STREAM_FLAG_MASK )	
+										/* Mask for memory-only flags */
 
 /* File stream flags */
 
-#define STREAM_FFLAG_DIRTY		0x0010	/* Stream contains unwritten data */
 #define STREAM_FFLAG_EOF		0x0020	/* EOF reached on stream */
 #define STREAM_FFLAG_POSCHANGED	0x0040	/* File stream position has changed */
 #define STREAM_FFLAG_POSCHANGED_NOSKIP 0x0080	/* New stream pos.is in following block */
 #define STREAM_FFLAG_MMAPPED	0x0100	/* File stream is memory-mapped */
-#define STREAM_FFLAG_MASK		( 0x01F0 | STREAM_FLAG_MASK )	
+#define STREAM_FFLAG_MASK		( 0x01E0 | STREAM_FLAG_MASK )	
 										/* Mask for file-only flags */
 
 /* Network stream flags.  The ENCAPS flag indicates that the protocol is 
@@ -97,16 +103,6 @@ typedef enum {
 #define TRANSPORT_FLAG_FLUSH	0x01	/* Flush data on write */
 #define TRANSPORT_FLAG_NONBLOCKING 0x02	/* Explicitly perform nonblocking read */
 #define TRANSPORT_FLAG_BLOCKING	0x04	/* Explicitly perform blocking read */
-
-/* Occasionally we want to connect a memory stream to a fixed-length buffer
-   whose size is (by definition) big enough for the data it needs to hold, 
-   but of an unknown length (this is currently only used in keyex.c when 
-   writing a wrapped key to an output buffer and in sign.c when writing a 
-   signature to an output buffer, in both cases with data passed in by the
-   user through the cryptlib 2.0-era legacy functions).  Using the following 
-   as the length will avoid various checks on the input length */
-
-/* #define STREAMSIZE_UNKNOWN	-1 */
 
 /* When we're reading data of unknown size from an external source, we may
    need to dynamically increase the I/O buffer size during the read.  The 
@@ -191,10 +187,16 @@ typedef enum {
    storage media constraints) */
 
 #ifdef CONFIG_CONSERVE_MEMORY
-  #define STREAM_BUFSIZE	512
+  #define STREAM_BUFSIZE		512
 #else
-  #define STREAM_BUFSIZE	4096
+  #define STREAM_BUFSIZE		4096
 #endif /* CONFIG_CONSERVE_MEMORY */
+
+/* The size of the memory buffer used for virtual file streams, which are 
+   used in CONFIG_NO_STDIO environments to store data before it's committed
+   to backing storage */
+
+#define STREAM_VFILE_BUFSIZE	16384
 
 /****************************************************************************
 *																			*
@@ -220,11 +222,18 @@ typedef struct ST {
 	int bufCount;				/* File position quantised by buffer size */
 #if defined( __WIN32__ ) || defined( __WINCE__ )
 	HANDLE hFile;				/* Backing file for the stream */
+  #ifdef __TESTIO__
+	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
+  #endif /* __TESTIO__ */
 #elif defined( __AMX__ ) || defined( __BEOS__ ) || defined( __ECOS__ ) || \
-	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
-	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	  defined( __UNIX__ ) || defined( __VXWORKS__ ) || defined( __XMK__ )
+	  defined( __MVS__ ) || defined( __RTEMS__ ) || \
+	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
+	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
+	  defined( __VXWORKS__ ) || defined( __XMK__ )
 	int fd;						/* Backing file for the stream */
+  #ifdef __TESTIO__
+	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
+  #endif /* __TESTIO__ */
 #elif defined( __MAC__ )
 	short refNum;				/* File stream reference number */
 	FSSpec fsspec;				/* File system specification */
@@ -236,8 +245,8 @@ typedef struct ST {
   #if defined( __IBM4758__ )
 	char name[ 8 + 1 ];			/* Data item associated with stream */
 	BOOLEAN isSensitive;		/* Whether stream contains sensitive data */
-  #elif defined( __VMCMS__ )
-	char name[ FILENAME_MAX + 8 ];/* Data item associated with stream */
+  #elif defined( __VMCMS__ ) || defined( __TESTIO__ )
+	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
   #endif /* Nonstandard I/O enviroments */
 #else
 	FILE *filePtr;				/* The file associated with this stream */
@@ -260,6 +269,7 @@ typedef struct ST {
 	STREAM_PROTOCOL_TYPE protocol;/* Network protocol type */
 	CRYPT_SESSION iTransportSession;/* cryptlib session as transport layer */
 	char *host, *path;
+	int hostLen, pathLen;
 	int port;					/* Host name, path on host, and port */
 	int netSocket, listenSocket;/* Network socket */
 	int timeout, savedTimeout;	/* Network comms timeout */
@@ -282,8 +292,8 @@ typedef struct ST {
 	int ( *writeFunction )( struct ST *stream, const void *buffer,
 							const int length );
 	int ( *readFunction )( struct ST *stream, void *buffer, int length );
-	int ( *transportConnectFunction )( struct ST *stream, const char *server,
-									   const int port );
+	int ( *transportConnectFunction )( struct ST *stream, const char *host,
+									   const int hostLen, const int port );
 	void ( *transportDisconnectFunction )( struct ST *stream, 
 										   const BOOLEAN fullDisconnect );
 	int ( *transportReadFunction )( struct ST *stream, BYTE *buffer,
@@ -302,8 +312,9 @@ typedef struct ST {
 
 	/* Protocol-specific infomation for network I/O */
 	char contentType[ CRYPT_MAX_TEXTSIZE + 8 ];	/* HTTP content type */
+	int contentTypeLen;
 	char *query;				/* HTTP query URI portion */
-	int queryBufSize;
+	int queryLen, queryBufSize;
 	CALLBACKFUNCTION callbackFunction;
 	void *callbackParams;		/* Callback to change I/O buffer size */
 
@@ -312,8 +323,7 @@ typedef struct ST {
 	   allocate the error message storage since it's only used for network
 	   streams and would lead to a lot of wasted memory in memory streams,
 	   which are used constantly throughout cryptlib */
-	int errorCode;
-	char *errorMessage;
+	ERROR_INFO *errorInfo;
 #endif /* USE_TCP */
 	} STREAM;
 
@@ -425,32 +435,23 @@ int sPeek( STREAM *stream );
 								 ( error ) : ( stream )->status )
 #define sClearError( stream )		( stream )->status = CRYPT_OK
 
-/* Return after setting extended error information for the stream.  If the 
-   compiler doesn't support varargs macros then we have to use a macro set 
-   up to make it match the standard return statement.*/
-
-#if defined( USE_ERRMSGS ) || !defined( VARARGS_MACROS )
-  int retExtStreamFn( STREAM *stream, const int status, 
-					  const char *format, ... ) PRINTF_FN;
-
-  #define retExtStream		return retExtStreamFn
-#else
-  int retExtStreamFn( STREAM *stream, const int status );
-
-  #define retExtStream( stream, status, format, ... ) \
-		  return( retExtStreamFn( stream, status ) )
-#endif /* USE_ERRMSGS */
-
-/* Stream query functions to determine whether a stream is a null stream or
-   a memory-mapped file stream.  This is used to short-circuit unnecessary 
-   data transfers in higher-level code where writing to a null stream is 
-   used to determine overall data sizes and when we can eliminate extra
-   buffer allocation if all data is available in memory */
+/* Stream query functions to determine whether a stream is a null stream,
+   a memory-mapped file stream, or a virtual file stream.  The null stream 
+   check is used to short-circuit unnecessary data transfers in higher-level 
+   code where writing to a null stream is used to determine overall data 
+   sizes.  The memory-mapped stream check is used when we can eliminate 
+   extra buffer allocation if all data is available in memory.  The virtual
+   file stream check is used where the low-level access routines have
+   converted a file on a CONFIG_NO_STDIO system to a memory stream that acts
+   like a file stream */
 
 #define sIsNullStream( stream )		( ( stream )->type == STREAM_TYPE_NULL )
 #define sIsMemMappedStream( stream ) \
 		( ( ( stream )->type == STREAM_TYPE_FILE ) && \
 		  ( ( stream )->flags & STREAM_FFLAG_MMAPPED ) )
+#define sIsVirtualFileStream( stream ) \
+		( ( ( stream )->type == STREAM_TYPE_MEMORY ) && \
+		  ( ( stream )->flags & STREAM_MFLAG_VFILE ) )
 
 /* Determine the total size of a memory stream, the amount of data left to be
    read, and return a pointer to the current position in a streams internal
@@ -482,24 +483,23 @@ int sFileToMemStream( STREAM *memStream, STREAM *fileStream,
 
 /* Functions to work with network streams */
 
-int sNetParseURL( URL_INFO *urlInfo, const char *url, const int urlLen );
+int sNetParseURL( URL_INFO *urlInfo, const char *url, const int urlLen,
+				  const URL_TYPE urlTypeHint );
 int sNetConnect( STREAM *stream, const STREAM_PROTOCOL_TYPE protocol,
-				 const NET_CONNECT_INFO *connectInfo, char *errorMessage, 
-				 int *errorCode );
+				 const NET_CONNECT_INFO *connectInfo, ERROR_INFO *errorInfo );
 int sNetListen( STREAM *stream, const STREAM_PROTOCOL_TYPE protocol,
-				const NET_CONNECT_INFO *connectInfo, char *errorMessage,
-				int *errorCode );
+				const NET_CONNECT_INFO *connectInfo, ERROR_INFO *errorInfo );
 int sNetDisconnect( STREAM *stream );
-void sNetGetErrorInfo( STREAM *stream, char *errorString, int *errorCode );
+void sNetGetErrorInfo( STREAM *stream, ERROR_INFO *errorInfo );
 
 /* Special-case file I/O calls */
 
 BOOLEAN fileReadonly( const char *fileName );
 void fileClearToEOF( const STREAM *stream );
 void fileErase( const char *fileName );
-void fileBuildCryptlibPath( char *path, const int pathMaxLen, 
-							const char *fileName,
-							const BUILDPATH_OPTION_TYPE option );
+int fileBuildCryptlibPath( char *path, const int pathMaxLen, int *pathLen,
+						   const char *fileName, const int fileNameLen,
+						   const BUILDPATH_OPTION_TYPE option );
 
 /* Initialisation/shutdown functions for network stream interfaces */
 

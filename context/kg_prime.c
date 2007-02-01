@@ -500,8 +500,12 @@ int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
 			break;
 		startPoint &= SIEVE_SIZE - 1;
 
-		/* Perform a random-probing search for a prime.  Poli, poli, di 
-		   umbuendo */
+		/* Perform a random-probing search for a prime (poli, poli, di 
+		   umbuendo).  "On generation of probably primes by incremental
+		   search" by Jørgen Brandt and Ivan Damgård, Proceedings of
+		   Crypto'92, (LNCS Vol.740), p.358, shows that for an n-bit
+		   number we'll find a prime after O( n ) steps by incrementing
+		   the start value by 2 each time */
 		for( offset = nextEntry( startPoint ); \
 			 offset != startPoint && \
 				innerIterationCount++ < SIEVE_SIZE + 10; \

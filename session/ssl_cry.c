@@ -456,7 +456,7 @@ int wrapPremasterSecret( SESSION_INFO *sessionInfoPtr,
 	setMechanismWrapInfo( &mechanismInfo, data, CRYPT_MAX_PKCSIZE,
 						  handshakeInfo->premasterSecret,
 						  handshakeInfo->premasterSecretSize, CRYPT_UNUSED,
-						  sessionInfoPtr->iKeyexCryptContext, CRYPT_UNUSED );
+						  sessionInfoPtr->iKeyexCryptContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, MECHANISM_ENC_PKCS1_RAW );
 	if( cryptStatusOK( status ) )
@@ -485,7 +485,7 @@ int unwrapPremasterSecret( SESSION_INFO *sessionInfoPtr,
 	setMechanismWrapInfo( &mechanismInfo, ( void * ) data, dataLength,
 						  handshakeInfo->premasterSecret,
 						  handshakeInfo->premasterSecretSize, CRYPT_UNUSED,
-						  sessionInfoPtr->privateKey, CRYPT_UNUSED );
+						  sessionInfoPtr->privateKey );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT,
 							  &mechanismInfo, MECHANISM_ENC_PKCS1_RAW );
 	if( cryptStatusOK( status ) && \
@@ -510,16 +510,22 @@ int unwrapPremasterSecret( SESSION_INFO *sessionInfoPtr,
 			handshakeInfo->premasterSecret[ 1 ] == SSL_MINOR_VERSION_SSL && \
 			sessionInfoPtr->version == SSL_MINOR_VERSION_SSL && \
 			handshakeInfo->clientOfferedVersion == SSL_MINOR_VERSION_TLS )
-			strcpy( sessionInfoPtr->errorMessage,
-					"Warning: Accepting invalid premaster secret version "
-					"3.0 (MSIE bug)" );
+			{
+			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+
+			strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+					   "Warning: Accepting invalid premaster secret version "
+					   "3.0 (MSIE bug)" );
+			}
 		else
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			{
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid premaster secret version data 0x%02X 0x%02X, "
 					"expected 0x03 0x%02X",
 					handshakeInfo->premasterSecret[ 0 ],
 					handshakeInfo->premasterSecret[ 1 ],
 					handshakeInfo->clientOfferedVersion );
+			}
 		}
 
 	return( CRYPT_OK );
@@ -705,7 +711,7 @@ int loadExplicitIV( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 								  CRYPT_CTXINFO_IV );
 		}
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Packet IV read/load failed" );
+		retExt( SESSION_ERRINFO, status, "Packet IV read/load failed" );
 
 	/* The following alternate code, which decrypts and discards the first
 	   block, can be used when we can't reload an IV during decryption */
@@ -767,7 +773,7 @@ int decryptData( SESSION_INFO *sessionInfoPtr, BYTE *data,
 	status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
 							  IMESSAGE_CTX_DECRYPT, data, length );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Packet decryption failed" );
 
 	/* If it's a block cipher, we need to remove end-of-block padding.  Up
@@ -793,11 +799,11 @@ int decryptData( SESSION_INFO *sessionInfoPtr, BYTE *data,
 		if( padSize < 0 || \
 			( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL && \
 			  padSize > sessionInfoPtr->cryptBlocksize - 1 ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid encryption padding value 0x%02X", padSize );
 		length -= padSize + 1;
 		if( length < 0 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Encryption padding adjustment value %d is greater "
 					"than packet length %d", padSize, dataLength );
 
@@ -810,7 +816,7 @@ int decryptData( SESSION_INFO *sessionInfoPtr, BYTE *data,
 			for( i = 0; i < padSize; i++ )
 				{
 				if( data[ length + i ] != padSize )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid encryption padding byte 0x%02X at "
 							"position %d, should be 0x%02X",
 							data[ length + i ], length + i, padSize );
@@ -913,7 +919,7 @@ int macDataSSL( SESSION_INFO *sessionInfoPtr, const void *data,
 			if( noReportError )
 				return( CRYPT_ERROR_SIGNATURE );
 
-			retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 					"Bad message MAC for packet type %d, length %d",
 					type, dataLength );
 			}
@@ -983,7 +989,7 @@ int macDataTLS( SESSION_INFO *sessionInfoPtr, const void *data,
 			if( noReportError )
 				return( CRYPT_ERROR_SIGNATURE );
 
-			retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 					"Bad message MAC for packet type %d, length %d",
 					type, dataLength );
 			}
@@ -1355,7 +1361,7 @@ int checkKeyexSignature( SESSION_INFO *sessionInfoPtr,
 
 	/* Make sure that there's enough data present for at least a minimal-
 	   length signature */
-	if( sMemDataLeft( stream ) < bitsToBytes( MIN_PKCSIZE_BITS ) )
+	if( sMemDataLeft( stream ) < MIN_PKCSIZE )
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Hash the data to be signed */

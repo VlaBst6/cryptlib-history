@@ -119,8 +119,8 @@ typedef enum {
 		word: attribute type
 	COMMAND_GETKEY
 		word: handle				word: status
-		word: key ID type			word: handle
-		word: caItemType (optional)
+		word: itemType				word: handle
+		word: key ID type	
 		str : key ID (optional)
 		str : password (optional)
 	COMMAND_SETKEY

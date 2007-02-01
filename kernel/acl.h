@@ -793,7 +793,9 @@ typedef struct {
 /* Macros to check each parameter against a parameter ACL entry */
 
 #define checkParamNumeric( paramACL, value ) \
-		( ( paramACL.valueType == PARAM_VALUE_BOOLEAN && \
+		( ( paramACL.valueType == PARAM_VALUE_UNUSED && \
+			value == CRYPT_UNUSED ) || \
+		  ( paramACL.valueType == PARAM_VALUE_BOOLEAN && \
 			( value == TRUE || value == FALSE ) ) || \
 		  ( paramACL.valueType == PARAM_VALUE_NUMERIC && \
 			( value >= paramACL.lowRange && value <= paramACL.highRange ) ) )
@@ -844,8 +846,17 @@ typedef struct {
 
 typedef struct {
 	const MECHANISM_TYPE type;		/* Mechanism type */
-	const PARAM_ACL paramACL[ 5 ];	/* Parameter ACL information */
+	const PARAM_ACL paramACL[ 6 ];	/* Parameter ACL information */
 	} MECHANISM_ACL;
+
+/* Create-object ACL entry */
+
+typedef struct CRA {
+	const OBJECT_TYPE type;			/* Object type */
+	const PARAM_ACL paramACL[ 4 ];	/* Parameter ACL information */
+	const int exceptions[ 2 ];		/* Subtypes that need special handling */
+	const struct CRA *exceptionACL;	/* Special-handling ACL */
+	} CREATE_ACL;
 
 /* Cert mgmt.ACL entry.  These have parameters that work similarly to the
    mechanism ACLs, except that only a small subset (objects and unused) are
@@ -907,7 +918,7 @@ typedef struct CAA {
 	const MESSAGE_CHECK_TYPE checkType;	/* Check message type */
 	const OBJECT_TYPE depObject;	/* Dependent object type */
 	const OBJECT_ACL depObjectACL;	/* Valid objects for message type */
-	const MESSAGE_TYPE fdCheckType;	/* Fwded check type for related obj.*/
+	const MESSAGE_CHECK_TYPE fdCheckType; /* Fwded check type for related obj.*/
 	} CHECK_ALT_ACL;
 
 /* Macros to set up check ACLs.  For the standard check ACL the first

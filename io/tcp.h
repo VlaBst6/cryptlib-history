@@ -132,10 +132,10 @@
    wrappers for the necessary socket_nw()/accept_nw()/AWAITIOX() calls */
 
 #elif ( defined( __BEOS__ ) && defined( BONE_VERSION ) ) || \
-	  defined( __ECOS__ ) || defined( __PALMOS__ ) || \
-	  defined( __RTEMS__ ) || defined ( __SYMBIAN32__ ) || \
-	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	  defined( __UNIX__ )
+	  defined( __ECOS__ ) || defined( __MVS__ ) || \
+	  defined( __PALMOS__ ) || defined( __RTEMS__ ) || \
+	  defined ( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
+	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
 
 /* C_IN is a cryptlib.h value which is also defined in some versions of
    netdb.h, so we have to undefine it before we include any network header
@@ -877,14 +877,19 @@
    functions like setsockopt() on a file descriptor (for example stdout),
    so we can't even use this as a check for socket validity as it is under
    other OSes.  Because of this the check socket function will always
-   indicate that something vaguely handle-like is a valid socket */
+   indicate that something vaguely handle-like is a valid socket.
+
+   When we get the nonblocking status, if there's an error getting the
+   status we report it as a non-blocking socket, which results in the socket
+   being reported as invalid, the same as if it were a a genuine non-
+   blocking socket */
 
 #if defined( F_GETFL ) && defined( F_SETFL ) && defined( O_NONBLOCK )
   #define getSocketNonblockingStatus( socket, value ) \
 			{ \
 			value = fcntl( socket, F_GETFL, 0 ); \
-			if( !isSocketError( value ) ) \
-				value = ( value & O_NONBLOCK ) ? TRUE : FALSE; \
+			value = ( isSocketError( value ) || ( value & O_NONBLOCK ) ) ? \
+					TRUE : FALSE; \
 			}
   #define setSocketNonblocking( socket ) \
 			{ \
@@ -901,8 +906,7 @@
 			{ \
 			long nonBlock = FALSE; \
 			value = ioctlsocket( socket, FIONBIO, &nonBlock ); \
-			if( !isSocketError( value ) ) \
-				value = 0; \
+			value = isSocketError( value ) ? TRUE : FALSE; \
 			}
   #define setSocketNonblocking( socket ) \
 			{ \

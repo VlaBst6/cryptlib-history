@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -24,6 +19,16 @@
 #ifdef HAS_WIDECHAR
   #include <wchar.h>
 #endif /* HAS_WIDECHAR */
+
+/* The keys used with the test code have associated certs that expire at
+   some point.  The following value defines the number of days before the
+   expiry at which we start printing warnings */
+
+#if defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && !defined( NDEBUG )
+  #define EXPIRY_WARN_DAYS		90
+#else
+  #define EXPIRY_WARN_DAYS		30
+#endif /* VC 6 debug/development, give some advance warning */
 
 /****************************************************************************
 *																			*
@@ -150,7 +155,9 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 
 	/* If the key has a cert attached, make sure it's still valid before we
 	   hand it back to the self-test functions that will report the problem
-	   as being with the self-test rather than with the cert */
+	   as being with the self-test rather than with the cert.  We check not
+	   just the expiry date but also the expiry interval, to make sure that
+	   we don't get false positives on short-validity certs */
 	status = cryptGetAttributeString( *cryptContext,
 					CRYPT_CERTINFO_VALIDFROM, &validFrom, &dummy );
 	if( cryptStatusError( status ) )
@@ -159,16 +166,18 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 	cryptGetAttributeString( *cryptContext,
 					CRYPT_CERTINFO_VALIDTO, &validTo, &dummy );
 #ifndef _WIN32_WCE
-	if( ( validTo - validFrom > ( 86400 * 30 ) ) && \
-		validTo - time( NULL ) <= ( 86400 * 30 ) )
+	if( ( validTo - validFrom > ( 86400 * EXPIRY_WARN_DAYS ) ) && \
+		validTo - time( NULL ) <= ( 86400 * EXPIRY_WARN_DAYS ) )
 		{
+		const time_t currentTime = time( NULL );
+
 		puts( "                         ********************" );
-		if( validTo <= time( NULL ) )
+		if( validTo <= currentTime )
 			puts( "Warning: This key has expired.  Certificate-related "
-				  "operations may fail or\n         result in error "
+				  "operations will fail or\n         result in error "
 				  "messages from the test code." );
 		else
-			if( validTo - time( NULL ) <= 86400 )
+			if( validTo - currentTime <= 86400 )
 				puts( "Warning: This key expires today.  Certificate-"
 					  "related operations may fail\n         or result in "
 					  "error messages from the test code." );
@@ -176,8 +185,11 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 				printf( "Warning: This key will expire in %ld days.  "
 						"Certificate-related operations\n         may fail "
 						"or result in error messages from the test code.\n",
-						( validTo - time( NULL ) ) / 86400 );
+						( validTo - currentTime ) / 86400 );
 		puts( "                         ********************" );
+		printf( "Hit a key..." );
+		getchar();
+		putchar( '\r' );
 		}
 #endif /* _WIN32_WCE */
 	return( CRYPT_OK );
@@ -225,12 +237,12 @@ const C_STR getKeyfilePassword( const KEYFILE_TYPE type )
 		case KEYFILE_X509:
 			return( TEST_PRIVKEY_PASSWORD );
 		case KEYFILE_PGP:
-		case KEYFILE_NAIPGP:
-			return( TEXT( "test10" ) );
 		case KEYFILE_OPENPGP:
 		case KEYFILE_OPENPGP_HASH:
 		case KEYFILE_OPENPGP_RSA:
 			return( TEXT( "test1" ) );
+		case KEYFILE_NAIPGP:
+			return( TEXT( "test10" ) );
 		case KEYFILE_OPENPGP_AES:
 			return( TEXT( "testkey" ) );
 		case KEYFILE_OPENPGP_PARTIAL:
@@ -251,7 +263,7 @@ const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
 		case KEYFILE_X509:
 			return( USER_PRIVKEY_LABEL );
 		case KEYFILE_PGP:
-			return( isPrivKey ? TEXT( "test" ) : TEXT( "test6" ) );
+			return( TEXT( "test" ) );
 		case KEYFILE_NAIPGP:
 			return( isPrivKey ? TEXT( "test" ) : TEXT( "test cryptlib" ) );
 		case KEYFILE_OPENPGP:
@@ -580,7 +592,7 @@ CRYPT_ALGO_TYPE selectCipher( const CRYPT_ALGO_TYPE algorithm )
 /* Add a collection of fields to a certificate */
 
 int addCertFields( const CRYPT_CERTIFICATE certificate,
-				   const CERT_DATA *certData )
+				   const CERT_DATA *certData, const int lineNo )
 	{
 	int i;
 
@@ -594,10 +606,10 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 				status = cryptSetAttribute( certificate,
 							certData[ i ].type, certData[ i ].numericValue );
 				if( cryptStatusError( status ) )
-					printf( "cryptSetAttribute() for field ID %d, value %d, "
-							"failed with error code %d, line %d.\n",
-							certData[ i ].type, certData[ i ].numericValue,
-							status, __LINE__ );
+					printf( "cryptSetAttribute() for entry %d, field ID %d,\n"
+							"  value %d, failed with error code %d, line %d.\n",
+							i + 1, certData[ i ].type, certData[ i ].numericValue,
+							status, lineNo );
 				break;
 
 			case IS_STRING:
@@ -607,11 +619,29 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 								certData[ i ].numericValue : \
 								paramStrlen( certData[ i ].stringValue ) );
 				if( cryptStatusError( status ) )
-					printf( "cryptSetAttributeString() for field ID %d,\n"
-							"value '%s', failed with error code %d, line %d.\n",
-							certData[ i ].type,
+					{
+#if defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && !defined( NDEBUG )
+					if( status == CRYPT_ERROR_INVALID && \
+						paramStrlen( certData[ i ].stringValue ) == 2 && \
+						!memcmp( certData[ i ].stringValue, "NZ", 2 ) )
+						{
+						/* Warn about BoundsChecker-induced Heisenbugs */
+						puts( "                         ********************" );
+						puts( "If you're running this under BoundsChecker "
+							  "you need to disable it to complete\nthe test "
+							  "since it causes errors in the cert "
+							  "string-checking code.  The\nfollowing error "
+							  "is caused by BoundsChecker, not by the "
+							  "self-test failing." );
+						puts( "                         ********************" );
+						}
+#endif /* VC++ 6 */
+					printf( "cryptSetAttributeString() for entry %d, field ID %d,\n"
+							"  value '%s', failed with error code %d, line %d.\n",
+							i + 1, certData[ i ].type,
 							( char * ) certData[ i ].stringValue, status,
-							__LINE__ );
+							lineNo );
+					}
 				break;
 
 #ifdef HAS_WIDECHAR
@@ -620,11 +650,11 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 							certData[ i ].type, certData[ i ].stringValue,
 							wcslen( certData[ i ].stringValue ) * sizeof( wchar_t ) );
 				if( cryptStatusError( status ) )
-					printf( "cryptSetAttributeString() for field ID %d,\n"
-							"value '%s', failed with error code %d, line %d.\n",
-							certData[ i ].type,
+					printf( "cryptSetAttributeString() for entry %d, field ID %d,\n"
+							"  value '%s', failed with error code %d, line %d.\n",
+							i + 1, certData[ i ].type,
 							( char * ) certData[ i ].stringValue, status,
-							__LINE__ );
+							lineNo );
 				break;
 #endif /* HAS_WIDECHAR */
 
@@ -633,10 +663,10 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 							certData[ i ].type, &certData[ i ].timeValue,
 							sizeof( time_t ) );
 				if( cryptStatusError( status ) )
-					printf( "cryptSetAttributeString() for field ID %d,\n"
-							"value 0x%lX, failed with error code %d, line %d.\n",
-							certData[ i ].type, certData[ i ].timeValue,
-							status, __LINE__ );
+					printf( "cryptSetAttributeString() for entry %d, field ID %d,\n"
+							"  value 0x%lX, failed with error code %d, line %d.\n",
+							i + 1, certData[ i ].type, certData[ i ].timeValue,
+							status, lineNo );
 				break;
 
 			default:
@@ -1506,6 +1536,10 @@ int printCertChainInfo( const CRYPT_CERTIFICATE certChain )
 		}
 	while( cryptSetAttribute( certChain,
 			CRYPT_CERTINFO_CURRENT_CERTIFICATE, CRYPT_CURSOR_NEXT ) == CRYPT_OK );
+
+	/* Reset the cursor position in the chain */
+	CHK( cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+							CRYPT_CURSOR_FIRST ) );
 
 	return( TRUE );
 	}

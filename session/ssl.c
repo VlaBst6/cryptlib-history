@@ -242,7 +242,7 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 			{
 			currentSuite = sgetc( stream );
 			if( cryptStatusError( currentSuite ) )
-				retExt( sessionInfoPtr, currentSuite,
+				retExt( SESSION_ERRINFO, currentSuite,
 						"Invalid cipher suite information" );
 			if( currentSuite != 0 )
 				{
@@ -254,7 +254,7 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 		/* Get the cipher suite info */
 		currentSuite = readUint16( stream );
 		if( cryptStatusError( currentSuite ) )
-			retExt( sessionInfoPtr, currentSuite,
+			retExt( SESSION_ERRINFO, currentSuite,
 					"Invalid cipher suite information" );
 
 #if 0	/* When resuming a cached session, the client is required to offer
@@ -274,7 +274,7 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 		   resort suite from the server, the server is incapable of handling
 		   non-crippled crypto.  Veni, vidi, volo in domum redire */
 		if( !isServer && currentSuite == SSL_RSA_EXPORT_WITH_RC4_40_MD5 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_NOSECURE,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOSECURE,
 					"Server rejected attempt to connect using non-crippled "
 					"encryption" );
 
@@ -323,7 +323,7 @@ int processCipherSuite( SESSION_INFO *sessionInfoPtr,
 		}
 	if( currentSuiteIndex > 50 )
 		/* We couldn't find anything to use, exit */
-		retExt( sessionInfoPtr, CRYPT_ERROR_NOTAVAIL,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTAVAIL,
 				"No encryption mechanism compatible with the remote system "
 				"could be found" );
 
@@ -365,12 +365,12 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 
 	/* Read the extension header and make sure that it's valid */
 	if( length < UINT16_SIZE + UINT16_SIZE + UINT16_SIZE + 1 )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"TLS hello contains %d bytes extraneous data", length );
 	extListLen = readUint16( stream );
 	if( cryptStatusError( extListLen ) || \
 		extListLen != length - UINT16_SIZE )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid TLS extension data length %d, should be %d",
 				extListLen, length - UINT16_SIZE );
 
@@ -384,7 +384,7 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		type = readUint16( stream );
 		extLen = readUint16( stream );
 		if( cryptStatusError( extLen ) || extLen < 1 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid TLS extension list item header" );
 
 		/* Process the extension data.  The internal structure of some of
@@ -406,7 +406,7 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 					listLen != extLen - UINT16_SIZE || \
 					listLen < 1 + UINT16_SIZE || \
 					cryptStatusError( sSkip( stream, listLen ) ) )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS host name extension" );
 				/* Parsing of further SEQUENCE OF SEQUENCE data omitted */
 				break;
@@ -427,7 +427,7 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 				value = sgetc( stream );
 				if( cryptStatusError( value ) || \
 					extLen != 1 || value < 1 || value > 5 )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS fragment length extension" );
 /*				sessionInfoPtr->maxPacketSize = fragmentTbl[ value ]; */
 				break;
@@ -450,22 +450,24 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 				if( extLen < 1 + UINT16_SIZE + \
 							 UINT16_SIZE + MIN_URL_SIZE + 1 || \
 					cryptStatusError( sSkip( stream, extLen ) ) )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS client certificate URL extension" );
 				break;
 
 			case TLS_EXT_TRUSTED_CA_KEYS:
 				/* Response: Ignore.  This allows a client to specify which
 				   CA certs it trusts, and by extension which server certs
-				   it trusts.  God knows what actual problem this is
-				   intended to solve:
+				   it trusts, supposedly to reduce handshake messages in
+				   constrained clients.  Since the server usually has only
+				   a single cert signed by a single CA, specifying the CAs
+				   the client trusts doesn't serve much purpose:
 
 					uint16		caList
 						byte	idType
 						... */
 				if( extLen < UINT16_SIZE + 1 || \
 					cryptStatusError( sSkip( stream, extLen ) ) )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS trusted CA extension" );
 				break;
 
@@ -473,7 +475,7 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 				/* Truncate the HMAC to a nonstandard 80 bits (rather than
 				   the de facto IPsec cargo-cult standard of 96 bits) */
 				if( extLen != 0 )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS truncated HMAC extension" );
 				break;
 
@@ -485,20 +487,32 @@ static int processExtensions( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 					... */
 				if( extLen < 1 || \
 					cryptStatusError( sSkip( stream, extLen ) ) )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS status request extension" );
+				break;
+
+			case TLS_EXT_USER_MAPPING:
+				/* Response: Used with a complex RFC 4680 mechanism, ignore
+				   until someone actually asks for it:
+
+					byte	mappingLength
+					byte[]	mapping */
+				if( extLen < 1 + 1 || \
+					cryptStatusError( sSkip( stream, extLen ) ) )
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
+							"Invalid TLS user-mapping extension" );
 				break;
 
 			default:
 				/* Default: Ignore the extension */
 				if( cryptStatusError( sSkip( stream, extLen ) ) )
-					retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 							"Invalid TLS extension data for extension "
 							"type %d", type );
 			}
 		}
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_OVERFLOW,
 				"Excessive number (%d) of TLS extensions encountered", 
 				iterationCount );
 
@@ -518,14 +532,14 @@ static int processSessionID( SESSION_INFO *sessionInfoPtr,
 	/* Get the session ID info and if it's not one of ours, skip it */
 	if( cryptStatusError( sessionIDlength ) || \
 		sessionIDlength < 0 || sessionIDlength > MAX_SESSIONID_SIZE )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, "Invalid session ID" );
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA, "Invalid session ID" );
 	if( sessionIDlength != SESSIONID_SIZE )
 		{
 		if( sessionIDlength > 0 )
 			{
 			status = sSkip( stream, sessionIDlength );
 			if( cryptStatusError( status ) )
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid session ID" );
 			}
 		return( CRYPT_OK );
@@ -537,7 +551,7 @@ static int processSessionID( SESSION_INFO *sessionInfoPtr,
 	   whether it matches what we sent */
 	status = sread( stream, sessionID, SESSIONID_SIZE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, "Invalid session ID" );
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA, "Invalid session ID" );
 	if( !isServer( sessionInfoPtr ) )
 		{
 		const ATTRIBUTE_LIST *userNamePtr;
@@ -629,7 +643,7 @@ int processHelloSSL( SESSION_INFO *sessionInfoPtr,
 		suiteLength = readUint16( stream );
 		if( cryptStatusError( suiteLength ) || \
 			suiteLength < UINT16_SIZE || ( suiteLength % UINT16_SIZE ) != 0 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid cipher suite information" );
 		suiteLength /= UINT16_SIZE;
 		}
@@ -647,12 +661,12 @@ int processHelloSSL( SESSION_INFO *sessionInfoPtr,
 		   selection of suites preceded by a suite count */
 		suiteLength = sgetc( stream );
 		if( cryptStatusError( suiteLength ) || suiteLength < 1 )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid compression suite information" );
 		}
 	status = sSkip( stream, suiteLength );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid compression algorithm information" );
 
 	/* If there's extra data present at the end of the packet, check for TLS
@@ -725,17 +739,19 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 		   no-cert alert */
 		if( length == 0 || length == LENGTH_SIZE )
 			{
-			sessionInfoPtr->errorCode = SSL_ALERT_NO_CERTIFICATE;
-			retExt( sessionInfoPtr, CRYPT_ERROR_PERMISSION,
+			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+
+			errorInfo->errorCode = SSL_ALERT_NO_CERTIFICATE;
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_PERMISSION,
 					"Received TLS alert message: No certificate" );
 			}
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid certificate chain" );
 		}
 	chainLength = readUint24( stream );
 	if( cryptStatusError( chainLength ) || \
 		chainLength < MIN_CERTSIZE || chainLength != length - LENGTH_SIZE )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid cert chain length %d, should be %d",
 				chainLength, length - LENGTH_SIZE );
 
@@ -752,11 +768,11 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 		   message telling the user to try again with a reduced compliance
 		   level */
 		if( status == CRYPT_ERROR_BADDATA || status == CRYPT_ERROR_INVALID )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"%s provided a broken/invalid certificate, try again "
 					"with a reduced level of certificate compliance "
 					"checking", peerTypeName );
-		retExt( sessionInfoPtr, status, "Invalid certificate chain" );
+		retExt( SESSION_ERRINFO, status, "Invalid certificate chain" );
 		}
 	status = krnlSendMessage( *iCertChain, IMESSAGE_GETATTRIBUTE,
 							  &algorithm, CRYPT_CTXINFO_ALGO );
@@ -778,7 +794,7 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 	if( !isServer && algorithm != handshakeInfo->authAlgo )
 		{
 		krnlSendNotifier( *iCertChain, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 				"%s key algorithm %d doesn't match negotiated algorithm %d",
 				peerTypeName, algorithm, handshakeInfo->authAlgo );
 		}
@@ -794,7 +810,7 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 			memcmp( fingerprintPtr->value, certFingerprint, msgData.length ) )
 			{
 			krnlSendNotifier( *iCertChain, IMESSAGE_DECREFCOUNT );
-			retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 					"%s key didn't match key fingerprint", peerTypeName );
 			}
 		}
@@ -821,7 +837,7 @@ int readSSLCertChain( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( *iCertChain, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 				"%s provided a key incapable of being used for %s",
 				peerTypeName,
 				isServer ? "client authentication" : \
@@ -906,7 +922,7 @@ static int readHandshakeCompletionData( SESSION_INFO *sessionInfoPtr,
 	value = sgetc( &stream );
 	sMemDisconnect( &stream );
 	if( value != 1 )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid change cipher spec packet payload, expected 0x01, "
 				"got 0x%02X", value );
 
@@ -945,7 +961,7 @@ static int readHandshakeCompletionData( SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		if( status == CRYPT_ERROR_BADDATA || \
 			status == CRYPT_ERROR_SIGNATURE )
-			retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 					"Decrypted data was corrupt, probably due to incorrect "
 					"encryption keys being negotiated during the handshake" );
 		return( status );
@@ -966,7 +982,7 @@ static int readHandshakeCompletionData( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_BADDATA )
-			retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 					"Invalid handshake finished packet, probably due to "
 					"incorrect encryption keys being negotiated during the "
 					"handshake" );
@@ -976,7 +992,7 @@ static int readHandshakeCompletionData( SESSION_INFO *sessionInfoPtr,
 	/* Make sure that the dual MAC/hashed MAC of all preceding messages is
 	   valid */
 	if( memcmp( hashValues, macBuffer, macValueLength ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 				"Bad MAC for handshake messages, handshake messages were "
 				"corrupted/modified" );
 
@@ -1139,16 +1155,16 @@ static int completeHandshake( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* Everything is OK so far, if we're using session resumes add the 
-		   master secret to the session cache */
-		if( handshakeInfo->sessionIDlength > 0 )
+		/* Everything is OK so far, if we're using session resumes (and the 
+		   ID value is sufficient to be useful) add the master secret to the 
+		   session cache */
+		if( handshakeInfo->sessionIDlength > 8 )
 			{
 			sessionInfoPtr->sessionSSL->sessionCacheID = \
-					addScoreboardEntry( &sessionInfoPtr->sessionSSL->scoreboardInfo,
+					addScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
 										handshakeInfo->sessionID,
 										handshakeInfo->sessionIDlength,
-										masterSecret, SSL_SECRET_SIZE,
-										FALSE );
+										masterSecret, SSL_SECRET_SIZE );
 			}
 		}
 	else
@@ -1436,7 +1452,7 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 										  &premasterSecretLength,
 										  sessionInfoPtr );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create SSL master secret from shared "
 				"secret/password value" );
 
@@ -1612,10 +1628,10 @@ int setAccessMethodSSL( SESSION_INFO *sessionInfoPtr )
 			SESSION_NEEDS_PRIVKEYCERT | \
 			SESSION_NEEDS_KEYORPASSWORD,
 		SSL_MINOR_VERSION_TLS,		/* TLS 1.0 */
-			SSL_MINOR_VERSION_SSL, SSL_MINOR_VERSION_TLS11,
-			/* We default to TLS 1.0 rather than TLS 1.1 because it's likely
-			   that support for the latter will be hit-and-miss for some
-			   time */
+			SSL_MINOR_VERSION_SSL, SSL_MINOR_VERSION_TLS12,
+			/* We default to TLS 1.0 rather than TLS 1.1 or 1.2 because it's 
+			   likely that support for the latter will be hit-and-miss for 
+			   some time */
 		NULL, NULL,					/* Content-type */
 
 		/* Protocol-specific information */

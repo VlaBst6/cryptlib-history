@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib RSA Key Generation/Checking Routines				*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2006					*
 *																			*
 ****************************************************************************/
 
@@ -15,12 +15,6 @@
   #include "context/context.h"
   #include "context/keygen.h"
 #endif /* Compiler-specific includes */
-
-/****************************************************************************
-*																			*
-*							Generate an RSA Key								*
-*																			*
-****************************************************************************/
 
 /* We use F4 as the default public exponent e unless the user chooses to
    override this with some other value:
@@ -57,6 +51,69 @@
 
 #define MIN_PUBLIC_EXPONENT			17
 
+/****************************************************************************
+*																			*
+*							Utility Functions								*
+*																			*
+****************************************************************************/
+
+/* Enable various side-channel protection mechanisms */
+
+static int enableSidechannelProtection( PKC_INFO *pkcInfo, 
+										const BOOLEAN isPrivateKey )
+	{
+	BIGNUM *n = &pkcInfo->rsaParam_n, *e = &pkcInfo->rsaParam_e;
+	BIGNUM *k = &pkcInfo->rsaParam_blind_k;
+	BIGNUM *kInv = &pkcInfo->rsaParam_blind_kInv;
+	MESSAGE_DATA msgData;
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	int noBytes = bitsToBytes( pkcInfo->keySizeBits );
+	int bnStatus = BN_STATUS, status;
+
+	/* Generate a random bignum for blinding.  Since this merely has to be 
+	   unpredictable to an outsider but not cryptographically strong, and to 
+	   avoid having more crypto RNG output than necessary sitting around in 
+	   memory, we get it from the nonce PRNG rather than the crypto one */
+	setMessageData( &msgData, buffer, noBytes );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+	if( cryptStatusOK( status ) )
+		{
+		buffer[ 0 ] &= 255 >> ( -pkcInfo->keySizeBits & 7 );
+		status = ( BN_bin2bn( buffer, noBytes, k ) == NULL ) ? \
+				 CRYPT_ERROR_MEMORY : CRYPT_OK;
+		}
+	zeroise( buffer, noBytes );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Set up the blinding and unblinding values */
+	CK( BN_mod( k, k, n, pkcInfo->bnCTX ) );	/* k = rand() mod n */
+	CKPTR( BN_mod_inverse( kInv, k, n, pkcInfo->bnCTX ) );
+												/* kInv = k^-1 mod n */
+	CK( BN_mod_exp_mont( k, k, e, n, pkcInfo->bnCTX,
+						 &pkcInfo->rsaParam_mont_n ) );
+												/* k = k^e mod n */
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
+
+	/* Use constant-time modexp() to protect the private key from timing 
+	   channels if required */
+	if( isPrivateKey )
+		{
+		BN_set_flags( &pkcInfo->rsaParam_exponent1, BN_FLG_EXP_CONSTTIME );
+		BN_set_flags( &pkcInfo->rsaParam_exponent2, BN_FLG_EXP_CONSTTIME );
+		}
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Generate an RSA Key								*
+*																			*
+****************************************************************************/
+
 /* Adjust p and q if necessary to ensure that the CRT decrypt works */
 
 static int fixCRTvalues( PKC_INFO *pkcInfo, const BOOLEAN fixPKCSvalues )
@@ -81,13 +138,13 @@ static int fixCRTvalues( PKC_INFO *pkcInfo, const BOOLEAN fixPKCSvalues )
 
 /* Evaluate the Montgomery forms for public and private components */
 
-static int getRSAMontgomery( PKC_INFO *pkcInfo, const BOOLEAN isPublicKey )
+static int getRSAMontgomery( PKC_INFO *pkcInfo, const BOOLEAN isPrivateKey )
 	{
 	/* Evaluate the public value */
 	if( !BN_MONT_CTX_set( &pkcInfo->rsaParam_mont_n, &pkcInfo->rsaParam_n,
 						  pkcInfo->bnCTX ) )
 		return( CRYPT_ERROR_FAILED );
-	if( isPublicKey )
+	if( !isPrivateKey )
 		return( CRYPT_OK );
 
 	/* Evaluate the private values */
@@ -153,7 +210,14 @@ int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 		return( getBnStatus( bnStatus ) );
 
 	/* Evaluate the Montgomery forms */
-	return( getRSAMontgomery( pkcInfo, FALSE ) );
+	status = getRSAMontgomery( pkcInfo, TRUE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Enable side-channel protection if required */
+	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
+		status = enableSidechannelProtection( pkcInfo, TRUE );
+	return( status );
 	}
 
 /****************************************************************************
@@ -236,8 +300,9 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 
 	/* We don't allow bignum e values, both because it doesn't make sense to
 	   use them and because the tests below assume that e will fit into a
-	   machine word */
-	if( eWord == BN_MASK2 )
+	   machine word.  The check for a bignum e is eWord == BN_MASK2, but we
+	   make this a general check for valid e values */
+	if( eWord < MIN_PUBLIC_EXPONENT || eWord >= BN_MASK2 )
 		return( FALSE );
 
 	/* Verify that e is a small prime.  The easiest way to do this would be
@@ -257,7 +322,7 @@ static BOOLEAN checkRSAPrivateKeyComponents( PKC_INFO *pkcInfo )
 	   frequently, so it was hardcoded into OpenSSH.  In order to use
 	   OpenSSH keys, you need to comment out this test and the following
 	   one */
-	if( eWord != 3 && eWord != 17 && eWord != 257 && eWord != 65537L )
+	if( eWord != 17 && eWord != 257 && eWord != 65537L )
 		{
 		static const unsigned int FAR_BSS smallPrimes[] = {
 			   2,   3,   5,   7,  11,  13,  17,  19,
@@ -331,12 +396,14 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 	BIGNUM *n = &pkcInfo->rsaParam_n, *e = &pkcInfo->rsaParam_e;
 	BIGNUM *d = &pkcInfo->rsaParam_d, *p = &pkcInfo->rsaParam_p;
 	BIGNUM *q = &pkcInfo->rsaParam_q;
+	const BOOLEAN isPrivateKey = \
+		( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) ? FALSE : TRUE;
 	int length, bnStatus = BN_STATUS, status = CRYPT_OK;
 
 	/* Make sure that the necessary key parameters have been initialised */
 	if( BN_is_zero( n ) || BN_is_zero( e ) )
 		return( CRYPT_ARGERROR_STR1 );
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+	if( isPrivateKey )
 		{
 		if( BN_is_zero( p ) || BN_is_zero( q ) )
 			return( CRYPT_ARGERROR_STR1 );
@@ -350,7 +417,7 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 
 	/* Make sure that the key paramters are valid:
 
-		nLen >= MIN_PKCSIZE_BITS, nLen <= MAX_PKCSIZE_BITS
+		nLen >= MIN_PKCSIZE, nLen <= CRYPT_MAX_PKCSIZE
 
 		e >= MIN_PUBLIC_EXPONENT, e < n
 		
@@ -359,14 +426,17 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 	   BN_get_word() works even on 16-bit systems because it returns 
 	   BN_MASK2 (== UINT_MAX) if the value can't be represented in a machine
 	   word */
-	length = BN_num_bits( n );
-	if( length < MIN_PKCSIZE_BITS || length > MAX_PKCSIZE_BITS )
+	length = BN_num_bytes( n );
+	if( isShortPKCKey( length ) )
+		/* Special-case handling for insecure-sized public keys */
+		return( CRYPT_ERROR_NOSECURE );
+	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
 		return( CRYPT_ARGERROR_STR1 );
 	if( BN_get_word( e ) < MIN_PUBLIC_EXPONENT )
 		return( CRYPT_ARGERROR_STR1 );
 	if( BN_cmp( e, n ) >= 0 )
 		return( CRYPT_ARGERROR_STR1 );
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+	if( isPrivateKey )
 		{
 		/* Make sure that p and q differ by at least 128 bits */
 		CKPTR( BN_copy( &pkcInfo->tmp1, p ) );
@@ -378,7 +448,7 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 	/* If we're not using PKCS keys that have exponent1 = d mod ( p - 1 )
 	   and exponent2 = d mod ( q - 1 ) precalculated, evaluate them now.
 	   If there's no u precalculated, evaluate it now */
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+	if( isPrivateKey )
 		{
 		if( BN_is_zero( &pkcInfo->rsaParam_exponent1 ) )
 			{
@@ -405,61 +475,22 @@ int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr )
 
 	/* Make sure that p and q are set up correctly for the CRT decryption and
 	   precompute the Montgomery forms */
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+	if( isPrivateKey )
 		status = fixCRTvalues( pkcInfo, TRUE );
 	if( cryptStatusOK( status ) )
-		status = getRSAMontgomery( pkcInfo,
-							( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) ? \
-							TRUE : FALSE );
+		status = getRSAMontgomery( pkcInfo, isPrivateKey );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Now that we've got the various other values set up, perform further
 	   validity checks on the private key */
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) && \
-		!checkRSAPrivateKeyComponents( pkcInfo ) )
+	if( isPrivateKey && !checkRSAPrivateKeyComponents( pkcInfo ) )
 		return( CRYPT_ARGERROR_STR1 );
 
 	pkcInfo->keySizeBits = BN_num_bits( &pkcInfo->rsaParam_n );
 
-	/* Finally, if we're using blinding, calculate the initial blinding
-	   values */
+	/* Enable side-channel protection if required */
 	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
-		{
-		BIGNUM *k = &pkcInfo->rsaParam_blind_k;
-		BIGNUM *kInv = &pkcInfo->rsaParam_blind_kInv;
-		MESSAGE_DATA msgData;
-		BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
-		int noBytes = bitsToBytes( pkcInfo->keySizeBits );
-
-		/* Generate a random bignum.  Since this merely has to be
-		   unpredictable to an outsider but not cryptographically strong,
-		   and to avoid having more crypto RNG output than necessary sitting
-		   around in memory, we get it from the nonce PRNG rather than the
-		   crypto one */
-		setMessageData( &msgData, buffer, noBytes );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
-		if( cryptStatusOK( status ) )
-			{
-			buffer[ 0 ] &= 255 >> ( -pkcInfo->keySizeBits & 7 );
-			status = ( BN_bin2bn( buffer, noBytes, k ) == NULL ) ? \
-					 CRYPT_ERROR_MEMORY : CRYPT_OK;
-			}
-		zeroise( buffer, noBytes );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		/* Set up the blinding and unblinding values */
-		CK( BN_mod( k, k, n, pkcInfo->bnCTX ) );	/* k = rand() mod n */
-		CKPTR( BN_mod_inverse( kInv, k, n, pkcInfo->bnCTX ) );
-													/* kInv = k^-1 mod n */
-		CK( BN_mod_exp_mont( k, k, e, n, pkcInfo->bnCTX,
-							 &pkcInfo->rsaParam_mont_n ) );
-													/* k = k^e mod n */
-		if( bnStatusError( bnStatus ) )
-			return( getBnStatus( bnStatus ) );
-		}
-
+		status = enableSidechannelProtection( pkcInfo, isPrivateKey );
 	return( status );
 	}

@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -138,7 +133,7 @@ int testCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, certData ) )
+	if( !addCertFields( cryptCert, certData, __LINE__ ) )
 		return( FALSE );
 
 	/* Delete a component and replace it with something else */
@@ -287,7 +282,7 @@ int testCACert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, cACertData ) )
+	if( !addCertFields( cryptCert, cACertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certificate and print information on what we got */
@@ -429,7 +424,7 @@ int testXyzzyCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, xyzzyCertData ) )
+	if( !addCertFields( cryptCert, xyzzyCertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certificate and print information on what we got */
@@ -535,7 +530,7 @@ int testTextStringCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, textStringCertData ) )
+	if( !addCertFields( cryptCert, textStringCertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certificate and print information on what we got */
@@ -673,7 +668,7 @@ int testComplexCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, complexCertData ) )
+	if( !addCertFields( cryptCert, complexCertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Add an OID, read it back, and make sure that the OID en/decoding 
@@ -821,7 +816,7 @@ int testCertExtension( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, certData ) )
+	if( !addCertFields( cryptCert, certData, __LINE__ ) )
 		return( FALSE );
 
 	/* Add a nonstandard critical extension */
@@ -1054,7 +1049,7 @@ int testSETCert( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, setCertData ) )
+	if( !addCertFields( cryptCert, setCertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certificate and print information on what we got */
@@ -1145,7 +1140,7 @@ int testAttributeCert( void )
 	/* Add some certificate components.  Note that we don't add any
 	   attributes because these hadn't been defined yet (at least not as of
 	   the JTC1 SC21/ITU-T Q.17/7 draft of July 1997) */
-	if( !addCertFields( cryptCert, attributeCertData ) )
+	if( !addCertFields( cryptCert, attributeCertData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certificate and print information on what we got */
@@ -1236,7 +1231,7 @@ int testCertRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, certRequestData ) )
+	if( !addCertFields( cryptCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certification request and print information on what we got */
@@ -1345,7 +1340,7 @@ int testComplexCertRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, complexCertRequestData ) )
+	if( !addCertFields( cryptCert, complexCertRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certification request and print information on what we got */
@@ -1433,7 +1428,7 @@ int testCRMFRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, certRequestData ) )
+	if( !addCertFields( cryptCert, certRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certification request and print information on what we got */
@@ -1519,7 +1514,7 @@ int testComplexCRMFRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptCert, complexCertRequestData ) )
+	if( !addCertFields( cryptCert, complexCertRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Sign the certification request and print information on what we got */
@@ -1723,7 +1718,7 @@ int testComplexCRL( void )
 	/* Add some CRL components with per-entry attributes.  In this case the
 	   CA is revoking its own key because it was compromised (would you trust
 	   this CRL?) and some keys from test certs */
-	if( !addCertFields( cryptCRL, complexCRLData ) )
+	if( !addCertFields( cryptCRL, complexCRLData, __LINE__ ) )
 		return( FALSE );
 	status = cryptSetAttribute( cryptCRL, CRYPT_CERTINFO_CERTIFICATE,
 								cryptCAKey );
@@ -1843,8 +1838,8 @@ int testComplexCRL( void )
 							   __LINE__ ) );
 	if( revocationReason != CRYPT_CRLREASON_CACOMPROMISE )
 		{
-		printf( "Revocation reason was %d, should have been %d.\n",
-				revocationReason, CRYPT_CRLREASON_CACOMPROMISE );
+		printf( "Revocation reason was %d, should have been %d, line %d.\n",
+				revocationReason, CRYPT_CRLREASON_CACOMPROMISE, __LINE__ );
 		return( FALSE );
 		}
 
@@ -1907,7 +1902,7 @@ int testRevRequest( void )
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptRequest, "cryptSetAttribute()", status,
 							   __LINE__ ) );
-	if( !addCertFields( cryptRequest, revRequestData ) )
+	if( !addCertFields( cryptRequest, revRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Print information on what we've got */
@@ -1987,8 +1982,9 @@ static int createChain( CRYPT_CERTIFICATE *cryptCertChain,
 	status = cryptSetAttribute( *cryptCertChain,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, pubKeyContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( *cryptCertChain, useEmptyDN ? certRequestNoDNData : \
-													  certRequestData ) )
+		!addCertFields( *cryptCertChain, useEmptyDN ? \
+							certRequestNoDNData : certRequestData, 
+						__LINE__ ) )
 		return( FALSE );
 	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
 	if( cryptStatusError( status ) )
@@ -2186,7 +2182,7 @@ int testCMSAttributes( void )
 		}
 
 	/* Add some CMS attribute components */
-	if( !addCertFields( cryptAttributes, cmsAttributeData ) )
+	if( !addCertFields( cryptAttributes, cmsAttributeData, __LINE__ ) )
 		return( FALSE );
 
 	/* Print information on what we've got */
@@ -2214,23 +2210,13 @@ int testCMSAttributes( void )
    used for RTCS sessions, however the shared initRTCS() routine is used by
    the RTCS session code to test the rest of the functionality */
 
-int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, const int number,
+int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, 
+			  const CRYPT_CERTIFICATE cryptCert, const int number, 
 			  const BOOLEAN multipleCerts )
 	{
-	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CERTIFICATE cryptErrorObject = *cryptRTCSRequest;
 	C_CHR rtcsURL[ 512 ];
 	int count, status;
-
-	/* Import the EE certs */
-	status = importCertFromTemplate( &cryptCert, RTCS_FILE_TEMPLATE,
-									 number );
-	if( cryptStatusError( status ) )
-		{
-		printf( "EE cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
 
 	/* Select the RTCS responder location from the EE cert and read the URL/
 	   FQDN value (this isn't used but is purely for display to the user) */
@@ -2294,37 +2280,49 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest, const int number,
 	   expect an 'unknown' response */
 	if( multipleCerts )
 		{
-		cryptDestroyCert( cryptCert );
-		status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 1 );
+		CRYPT_CERTIFICATE cryptSecondCert;
+
+		status = importCertFromTemplate( &cryptSecondCert, 
+										 CERT_FILE_TEMPLATE, 1 );
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( *cryptRTCSRequest,
-										CRYPT_CERTINFO_CERTIFICATE, cryptCert );
+										CRYPT_CERTINFO_CERTIFICATE, 
+										cryptSecondCert );
 			if( status == CRYPT_ERROR_PARAM3 )
-				cryptErrorObject = cryptCert;
+				cryptErrorObject = cryptSecondCert;
 			}
 		if( cryptStatusError( status ) )
 			return( attrErrorExit( cryptErrorObject, "cryptSetAttribute()",
 								   status, __LINE__ ) );
+		cryptDestroyCert( cryptSecondCert );
 		}
-
-	/* Clean up */
-	cryptDestroyCert( cryptCert );
 
 	return( TRUE );
 	}
 
 int testRTCSReqResp( void )
 	{
-	CRYPT_CERTIFICATE cryptRTCSRequest;
+	CRYPT_CERTIFICATE cryptRTCSRequest, cryptCert;
 	int status;
 
 	puts( "Testing RTCS request creation..." );
 
+	/* Import the EE cert for the RTCS request */
+	status = importCertFromTemplate( &cryptCert, RTCS_FILE_TEMPLATE, 
+									 1 );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptImportCert() failed with error code %d, line %d.\n", 
+				status, __LINE__ );
+		return( FALSE );
+		}
+
 	/* Create the RTCS request using the certs and print information on what
 	   we've got */
-	if( !initRTCS( &cryptRTCSRequest, 1, FALSE ) )
+	if( !initRTCS( &cryptRTCSRequest, cryptCert, 1, FALSE ) )
 		return( FALSE );
+	cryptDestroyCert( cryptCert );
 	if( !printCertInfo( cryptRTCSRequest ) )
 		return( FALSE );
 
@@ -2621,10 +2619,11 @@ static int testPKIUserCreate( const CERT_DATA *pkiUserInfo )
 				status, __LINE__ );
 		return( FALSE );
 		}
-	if( !addCertFields( cryptPKIUser, pkiUserInfo ) )
+	if( !addCertFields( cryptPKIUser, pkiUserInfo, __LINE__ ) )
 		{
-		printf( "Couldn't create PKI user info for user '%s'.\n",
-				( char * ) pkiUserInfo[ PKIUSER_NAME_INDEX ].stringValue );
+		printf( "Couldn't create PKI user info for user '%s', line %d.\n",
+				( char * ) pkiUserInfo[ PKIUSER_NAME_INDEX ].stringValue, 
+				__LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyCert( cryptPKIUser );
@@ -2750,6 +2749,20 @@ static int certImport( const int certNo, const BOOLEAN isBase64 )
 		return( TRUE );		/* Skip this test and continue */
 		}
 #endif /* __UNIX__ */
+	if( status == CRYPT_ERROR_NOSECURE && \
+		( certNo == 5 || certNo == 13 || certNo == 14 || certNo == 21 || \
+		  certNo == 26 ) )
+		{
+		/* Some older certs use totally insecure 512-bit keys and can't be
+		   processed unless we deliberately allow insecure keys.  
+		   Unfortunately this also blocks out the cert that's used to check
+		   the ability to handle invalid PKCS #1 padding, since this only
+		   uses a 512-bit key, but if necessary it can be tested by lowering 
+		   MIN_PKCSIZE when building cryptlib */
+		puts( "Warning: Certificate import failed because the certificate "
+			  "uses a very short\n         (insecure) key." );
+		return( TRUE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptImportCert() for cert #%d failed with error code %d, "
@@ -2863,6 +2876,12 @@ static int certReqImport( const int certNo )
 		return( TRUE );		/* Skip this test and continue */
 		}
 #endif /* __UNIX__ */
+	if( status == CRYPT_ERROR_NOSECURE && certNo == 1 )
+		{
+		puts( "Warning: Cert.request import failed because the request "
+			  "uses a very short\n         (insecure) key." );
+		return( TRUE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptImportCert() failed with error code %d, line %d.\n",
@@ -3348,7 +3367,8 @@ int testNonchainCert( void )
 	if( status != CRYPT_ERROR_SIGNATURE )
 		{
 		printf( "Sig.check of incorrectly chained cert returned %d, should "
-				"have been %d.\n", status, CRYPT_ERROR_SIGNATURE );
+				"have been %d, line %d.\n", status, CRYPT_ERROR_SIGNATURE, 
+				__LINE__ );
 		return( FALSE );
 		}
 
@@ -3751,6 +3771,42 @@ int testPathProcessing( void )
 	return( TRUE );
 	}
 
+/* Test handling of invalid PKCS #1 padding in cert signatures.  Note that
+   running this test properly requires disabling the padding format check
+   in mech_sig.c, since the signatures have such an obviously dodgy format
+   that they don't even make it past the padding sanity check */
+
+int testPKCS1Padding( void )
+	{
+	CRYPT_CERTIFICATE cryptCert;
+	int i, status;
+
+	puts( "Testing invalid PKCS #1 padding handling..." );
+
+	for( i = 1; i <= 11; i++ )
+		{
+		status = importCertFromTemplate( &cryptCert, PADTEST_FILE_TEMPLATE,
+										 i );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't import cert for padding check, status %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
+		if( cryptStatusOK( status ) )
+			{
+			printf( "Cert with bad padding verified, should have failed, "
+					"line %d.\n", __LINE__ );
+			return( FALSE );
+			}
+		cryptDestroyCert( cryptCert );
+		}
+
+	puts( "Padding handling succeeded." );
+	return( TRUE );
+	}
+
 /* Generic test routines used for debugging.  These are only meant to be
    used interactively, and throw exceptions rather than returning status
    values */
@@ -3811,7 +3867,6 @@ static int createCertRequest( void *certRequest,
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 TEXT( "Private key" ),
 							 paramStrlen( TEXT( "Private key" ) ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -3825,7 +3880,7 @@ static int createCertRequest( void *certRequest,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( !addCertFields( cryptCert, complexCertRequestData ) )
+	if( !addCertFields( cryptCert, complexCertRequestData, __LINE__ ) )
 		return( -1 );
 #ifndef _WIN32_WCE
 	if( useCRMF )
@@ -3910,7 +3965,6 @@ static int createCertDirect( void *certificate,
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 TEXT( "Private key" ),
 							 paramStrlen( TEXT( "Private key" ) ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -3924,7 +3978,7 @@ static int createCertDirect( void *certificate,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( !addCertFields( cryptCert, certProcessData ) )
+	if( !addCertFields( cryptCert, certProcessData, __LINE__ ) )
 		return( FALSE );
 	status = cryptSignCert( cryptCert, caKeyContext );
 	if( cryptStatusOK( status ) )
@@ -4170,7 +4224,6 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 TEXT( "Private key" ),
 							 paramStrlen( TEXT( "Private key" ) ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusError( status ) )
 		{
@@ -4211,7 +4264,7 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCertRequest, "cryptSetAttribute()",
 							   status, __LINE__ ) );
-	if( !addCertFields( cryptCertRequest, certReqData ) )
+	if( !addCertFields( cryptCertRequest, certReqData, __LINE__ ) )
 		return( FALSE );
 	status = cryptSignCert( cryptCertRequest, cryptContext );
 	cryptDestroyContext( cryptContext );
@@ -4231,8 +4284,8 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 								  &cryptCertRequest );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't export/re-import cert request, status = %d.\n",
-				status );
+		printf( "Couldn't export/re-import cert request, status = %d, "
+				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -4283,7 +4336,7 @@ static int addRevRequest( const CRYPT_KEYSET cryptCertStore,
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCertRequest, "cryptSetAttribute()",
 							   status, __LINE__ ) );
-	if( !addCertFields( cryptCertRequest, revRequestData ) )
+	if( !addCertFields( cryptCertRequest, revRequestData, __LINE__ ) )
 		return( FALSE );
 
 	/* Add the request to the cert store */
@@ -4516,6 +4569,17 @@ int testCertManagement( void )
 		FILE *filePtr;
 		int length;
 
+		/* First save the CA cert */
+		filenameFromTemplate( fileName, OCSP_CA_FILE_TEMPLATE, 1 );
+		cryptExportCert( certBuffer, BUFFER_SIZE, &length,
+						 CRYPT_CERTFORMAT_CERTIFICATE, cryptCAKey );
+		if( ( filePtr = fopen( fileName, "wb" ) ) != NULL )
+			{
+			fwrite( certBuffer, length, 1, filePtr );
+			fclose( filePtr );
+			}
+
+		/* Then the EE cert */
 		filenameFromTemplate( fileName, OCSP_EEOK_FILE_TEMPLATE, 1 );
 		cryptExportCert( certBuffer, BUFFER_SIZE, &length,
 						 CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );

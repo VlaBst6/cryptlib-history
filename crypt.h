@@ -510,14 +510,25 @@ typedef struct {
 
 #define isSigAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_RSA || ( algorithm ) == CRYPT_ALGO_DSA || \
-	  ( algorithm ) == CRYPT_ALGO_ELGAMAL )
+	  ( algorithm ) == CRYPT_ALGO_ECDSA )
 #define isCryptAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_RSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL )
 #define isKeyxAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
 #define isDlpAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_DSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL || \
-	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
+	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA || \
+	  ( algorithm ) == CRYPT_ALGO_ECDSA )
+#define isEccAlgo( algorithm ) \
+	( ( algorithm ) == CRYPT_ALGO_ECDSA )
+
+/* A macro to check whether a public key is too short to be secure.  This
+   is a bit more complex than just a range check because any length below 
+   about 512 bits is probably a bad data error, while lengths from about
+   512 bits to MIN_PKCSIZE are too-short key errors */
+
+#define isShortPKCKey( keySize ) \
+		( ( keySize ) >= bitsToBytes( 504 ) && ( keySize ) < MIN_PKCSIZE )
 
 /* Check the validity of a pointer passed to a cryptlib function.  Usually
    the best that we can do is check that it's not null, but some OSes allow
@@ -534,17 +545,28 @@ typedef struct {
    If the exception is thrown, they fail.  The problem with this way of
    doing things is that if the memory address is a stack guard page used to
    grow the stack (when the system-level exception handler sees an access to
-   the bottom-of-stack guard page, it knows that it has to grow the stack),
-   IsBadXxxPtr() will catch the exception and the system will never see it,
-   so it can't grow the stack past the current limit.  In addition if it's
-   the last guard page then instead of getting an "out of stack" exception,
-   it's turned into a no-op.  The second time the last guard page is hit,
-   the application is terminated by the system, since it's passed its first-
-   chance exception.
+   the bottom-of-stack guard page, it knows that it has to grow the stack)
+   *and* the guard page is owned by another thread, IsBadXxxPtr() will catch 
+   the exception and the system will never see it, so it can't grow the 
+   stack past the current limit (note that this only occurs if the guard 
+   page that we hit is owned by a different thread; if we own in then the
+   kernel will catch the STATUS_GUARD_PAGE_VIOLATION exception and grow the
+   stack as required).  In addition if it's the last guard page then instead 
+   of getting an "out of stack" exception, it's turned into a no-op.  The 
+   second time the last guard page is hit, the application is terminated by 
+   the system, since it's passed its first-chance exception.
+
+   A variation of this is that the calling app could be deliberately passing
+   a pointer to a guard page and catching the guard page exception in order
+   to dynamically generate the data that would fill the page (this can 
+   happen for example when simulating a large address space with pointer 
+   swizzling), but this is a pretty weird programming technique that's 
+   unlikely to be used with a crypto library.
 
    A lesser problem is that there's a race condition in the checking, since
    the memory can be unmapped between the IsBadXxxPtr() check and the actual
-   access.
+   access, but you'd pretty much have to be trying to actively subvert the
+   checks to do something like this.
 
    For these reasons we use these functions mostly for debugging, wrapping
    them up in assert()s.  Under Windows Vista, they've actually been turned
@@ -701,8 +723,8 @@ typedef struct {
 	char fileName[ 1024 ]; \
 	\
 	GetTempPath( 512, fileName ); \
-	strcat( fileName, name ); \
-	strcat( fileName, ".der" ); \
+	strlcat_s( fileName, 1024, name ); \
+	strlcat_s( fileName, 1024, ".der" ); \
 	\
 	OPEN_FILE( filePtr, fileName ); \
 	if( filePtr != NULL ) \
@@ -721,8 +743,8 @@ typedef struct {
 	BYTE certData[ 2048 ]; \
 	\
 	GetTempPath( 512, fileName ); \
-	strcat( fileName, name ); \
-	strcat( fileName, ".der" ); \
+	strlcat_s( fileName, 1024, name ); \
+	strlcat_s( fileName, 1024, ".der" ); \
 	\
 	OPEN_FILE( filePtr, fileName ); \
 	if( filePtr != NULL ) \

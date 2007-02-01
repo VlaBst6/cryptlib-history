@@ -39,6 +39,8 @@
 #define cryptlib_crypt_ALGO_ELGAMAL 103L
 #undef cryptlib_crypt_ALGO_KEA
 #define cryptlib_crypt_ALGO_KEA 104L
+#undef cryptlib_crypt_ALGO_ECDSA
+#define cryptlib_crypt_ALGO_ECDSA 105L
 #undef cryptlib_crypt_ALGO_MD2
 #define cryptlib_crypt_ALGO_MD2 200L
 #undef cryptlib_crypt_ALGO_MD4
@@ -375,8 +377,10 @@
 #define cryptlib_crypt_CTXINFO_HASHVALUE 1015L
 #undef cryptlib_crypt_CTXINFO_LABEL
 #define cryptlib_crypt_CTXINFO_LABEL 1016L
+#undef cryptlib_crypt_CTXINFO_PERSISTENT
+#define cryptlib_crypt_CTXINFO_PERSISTENT 1017L
 #undef cryptlib_crypt_CTXINFO_LAST
-#define cryptlib_crypt_CTXINFO_LAST 1017L
+#define cryptlib_crypt_CTXINFO_LAST 1018L
 #undef cryptlib_crypt_CERTINFO_FIRST
 #define cryptlib_crypt_CERTINFO_FIRST 2000L
 #undef cryptlib_crypt_CERTINFO_SELFSIGNED
@@ -1371,6 +1375,8 @@
 #define cryptlib_crypt_MAX_IVSIZE 32L
 #undef cryptlib_crypt_MAX_PKCSIZE
 #define cryptlib_crypt_MAX_PKCSIZE 512L
+#undef cryptlib_crypt_MAX_PKCSIZE_ECC
+#define cryptlib_crypt_MAX_PKCSIZE_ECC 32L
 #undef cryptlib_crypt_MAX_HASHSIZE
 #define cryptlib_crypt_MAX_HASHSIZE 32L
 #undef cryptlib_crypt_MAX_TEXTSIZE
@@ -2822,6 +2828,33 @@ JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetPrivateKey
 		goto finish;
 	
 	status = cryptGetPrivateKey(keyset, &cryptContext, keyIDtype, keyIDPtr, passwordPtr);
+	
+	finish:
+	releasePointerString(env, keyID, keyIDPtr);
+	releasePointerString(env, password, passwordPtr);
+	processStatus(env, status);
+	return(cryptContext);
+}
+
+/*
+ * Class:     cryptlib_crypt
+ * Method:    GetKey
+ * Signature: (IILjava/lang/String;Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_cryptlib_crypt_GetKey
+  (JNIEnv * env, jclass cryptClass, jint keyset, jint keyIDtype, jstring keyID, jstring password)
+{
+	int status = 0;
+	jint cryptContext = 0;
+	jbyte* keyIDPtr = 0;
+	jbyte* passwordPtr = 0;
+	
+	if (!getPointerString(env, keyID, &keyIDPtr))
+		goto finish;
+	if (!getPointerString(env, password, &passwordPtr))
+		goto finish;
+	
+	status = cryptGetKey(keyset, &cryptContext, keyIDtype, keyIDPtr, passwordPtr);
 	
 	finish:
 	releasePointerString(env, keyID, keyIDPtr);

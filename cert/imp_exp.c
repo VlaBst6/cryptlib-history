@@ -314,6 +314,9 @@ static int decodeCertWrapper( STREAM *stream, int *offset )
 	BOOLEAN isCertChain = FALSE;
 	int oidLength, value, status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( offset, sizeof( int ) ) );
+
 	/* Read the contentType OID, determine the content type based on it,
 	   and read the content encapsulation and header.  It can be either
 	   a PKCS #7 cert chain, a Netscape cert sequence, or an X.509
@@ -396,11 +399,18 @@ static int decodeCertWrapper( STREAM *stream, int *offset )
 static int getCertObjectInfo( const void *object, const int objectTotalLength,
 							  int *objectOffset, int *objectLength, 
 							  CRYPT_CERTTYPE_TYPE *objectType,
-							  const CERTFORMAT_TYPE formatType )
+							  const CRYPT_CERTTYPE_TYPE formatHint )
 	{
 	STREAM stream;
 	BOOLEAN isContextTagged = FALSE, isLongData = FALSE;
 	int tag, length, status;
+
+	assert( isReadPtr( object, objectTotalLength ) );
+	assert( isWritePtr( objectOffset, sizeof( int ) ) );
+	assert( isWritePtr( objectLength, sizeof( int ) ) );
+	assert( isWritePtr( objectType, sizeof( CRYPT_CERTTYPE_TYPE ) ) );
+	assert( formatHint >= CRYPT_CERTTYPE_NONE && \
+			formatHint < CRYPT_CERTTYPE_LAST );
 
 	/* Set initial default values */
 	*objectOffset = 0;
@@ -409,7 +419,7 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 
 	/* If it's an SSL cert chain there's no recognisable tagging, however the
 	   caller will have told us what it is */
-	if( formatType == CRYPT_ICERTTYPE_SSL_CERTCHAIN )
+	if( formatHint == CRYPT_ICERTTYPE_SSL_CERTCHAIN )
 		{
 		*objectLength = objectTotalLength;
 		*objectType = CRYPT_ICERTTYPE_SSL_CERTCHAIN;
@@ -420,7 +430,7 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 
 	/* Check that the start of the object is in order and get its length */
 	if( peekTag( &stream ) == MAKE_CTAG( 0 ) || \
-		formatType == CRYPT_ICERTTYPE_CMS_CERTSET )
+		formatHint == CRYPT_ICERTTYPE_CMS_CERTSET )
 		isContextTagged = TRUE;
 	status = readConstructedI( &stream, &length, \
 							   isContextTagged ? 0 : DEFAULT_TAG );
@@ -470,38 +480,33 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 	   the type common in Windows software where data purportedly of type A 
 	   is auto-recognised as harmful type B and processed as such after being
 	   passed as type A by security-checking code */
-	if( formatType != CRYPT_CERTTYPE_NONE )
+	if( formatHint != CRYPT_CERTTYPE_NONE )
 		{
 		sMemDisconnect( &stream );
 
-		if( formatType > CRYPT_CERTTYPE_NONE && \
-			formatType < CRYPT_CERTTYPE_LAST )
-			*objectType = formatType;
-		else
-			switch( formatType )
-				{
-				case CERTFORMAT_DATAONLY:
-					/* Standard certificate but created without creating a 
-					   context for the accompanying public key */
-					*objectType = CRYPT_CERTTYPE_CERTIFICATE;
-					break;
+		switch( formatHint )
+			{
+			case CRYPT_ICERTTYPE_DATAONLY:
+				/* Standard certificate but created without creating a 
+				   context for the accompanying public key */
+				*objectType = CRYPT_CERTTYPE_CERTIFICATE;
+				break;
 
-				case CERTFORMAT_CTL:
-					/* Cert chain used as a container for trusted certs, 
-					   effectively a chain of CERTFORMAT_DATAONLY certs */
-					*objectType = CRYPT_CERTTYPE_CERTCHAIN;
-					break;
+			case CRYPT_ICERTTYPE_CTL:
+				/* Cert chain used as a container for trusted certs, 
+				   effectively a chain of CRYPT_ICERTTYPE_DATAONLY certs */
+				*objectType = CRYPT_CERTTYPE_CERTCHAIN;
+				break;
 
-				case CERTFORMAT_REVINFO:
-					/* Single CRL entry, treated as standard CRL with 
-					   portions missing */
-					*objectType = CRYPT_CERTTYPE_CRL;
-					break;
+			case CRYPT_ICERTTYPE_REVINFO:
+				/* Single CRL entry, treated as standard CRL with portions 
+				   missing */
+				*objectType = CRYPT_CERTTYPE_CRL;
+				break;
 
-				default:
-					assert( NOTREACHED );
-					return( CRYPT_ERROR_BADDATA );
-				}
+			default:
+				*objectType = formatHint;
+			}
 										
 		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
 		}
@@ -736,6 +741,119 @@ static int getCertObjectInfo( const void *object, const int objectTotalLength,
 	return( CRYPT_ERROR_BADDATA );
 	}
 
+/* Detect the encoded form of certificate data, either raw binary, raw
+   binary with a MIME header, or some form of text encoding.  Autodetection 
+   in the presence of EBCDIC gets a bit more complicated because the text
+   content can potentially be either EBCDIC or ASCII, so we have to add an
+   extra layer of checking for EBCDIC */
+
+static int checkTextEncoding( const void *certObject, 
+							  const int certObjectLength,
+							  void **newObject, int *newObjectLength )
+	{
+#ifdef EBCDIC_CHARS
+	void *asciiObject = NULL;
+#endif /* EBCDIC_CHARS */
+	int format, offset;
+
+	assert( isReadPtr( certObject, certObjectLength ) );
+	assert( isWritePtr( newObject, sizeof( void * ) ) );
+	assert( isWritePtr( newObjectLength, sizeof( int ) ) );
+
+	/* Initialise the return values to the default settings, the identity
+	   transformation */
+	*newObject = ( void * ) certObject;
+	*newObjectLength = certObjectLength;
+
+	/* Check for a header that identifies some form of encoded object */
+	format = base64checkHeader( certObject, certObjectLength, &offset );
+#ifdef EBCDIC_CHARS
+	if( cryptStatusError( format ) )
+		{
+		int status;
+
+		/* If we get a decoding error (i.e. it's not either an unencoded 
+		   object or some form of ASCII encoded object), try again assuming
+		   that the source is EBCDIC */
+		if( ( asciiObject = clAlloc( "checkTextEncoding",
+									 certObjectLength + 8 ) ) == NULL )
+			return( CRYPT_ERROR_MEMORY );
+		status = ebcdicToAscii( asciiObject, certObject, certObjectLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		certObject = asciiObject;
+		format = base64checkHeader( certObject, certObjectLength, &offset );
+		if( format != CRYPT_ICERTFORMAT_SMIME_CERTIFICATE && \
+			format != CRYPT_CERTFORMAT_TEXT_CERTIFICATE )
+			{
+			clFree( "checkTextEncoding", asciiObject );
+			asciiObject = NULL;
+			}
+		}
+#endif /* EBCDIC_CHARS */
+	if( cryptStatusError( format ) )
+		return( format );
+
+	if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE || \
+		format == CRYPT_CERTFORMAT_TEXT_CERTIFICATE )
+		{
+		const char *certObjectDataPtr = ( const char * ) certObject + offset;
+		void *newObjectPtr = NULL;
+		int decodedLength;
+
+		/* It's base64/PEM/SMIME-encoded, decode it into a temporary 
+		   buffer */
+		decodedLength = base64decodeLen( certObjectDataPtr, 
+										 certObjectLength );
+		if( decodedLength > 128 || decodedLength <= 8192 )
+			newObjectPtr = clAlloc( "checkTextEncoding", decodedLength + 8 );
+		if( newObjectPtr == NULL )
+			{
+#ifdef EBCDIC_CHARS
+			if( asciiObject != NULL )
+				clFree( "checkTextEncoding", asciiObject );
+#endif /* EBCDIC_CHARS */
+			return( CRYPT_ERROR_MEMORY );
+			}
+		decodedLength = base64decode( newObjectPtr, decodedLength, 
+									  certObjectDataPtr, certObjectLength, 
+									  format );
+#ifdef EBCDIC_CHARS
+		if( asciiObject != NULL )
+			clFree( "checkTextEncoding", asciiObject );
+#endif /* EBCDIC_CHARS */
+		if( cryptStatusError( decodedLength ) )
+			{
+			clFree( "checkTextEncoding", newObjectPtr );
+			return( decodedLength );
+			}
+		if( decodedLength <= 128 || decodedLength > 8192 )
+			{
+			clFree( "checkTextEncoding", newObjectPtr );
+			return( CRYPT_ERROR_BADDATA );
+			}
+		*newObject = newObjectPtr;
+		*newObjectLength = decodedLength;
+
+		/* Let the caller know that they have to free the temporary decoding
+		   buffer before they exit */
+		return( OK_SPECIAL );
+		}
+
+	/* If it's binary-encoded MIME data, we don't need to decode it but 
+	   still need to skip the MIME header */
+	if( format == CRYPT_CERTFORMAT_CERTIFICATE || \
+		format == CRYPT_CERTFORMAT_CERTCHAIN )
+		{
+		assert( offset > 0 );
+
+		*newObject = ( BYTE * ) certObject + offset;
+		*newObjectLength -= offset;
+		}
+
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
 *								Import/Export Functions						*
@@ -752,7 +870,7 @@ int importCert( const void *certObject, const int certObjectLength,
 				const CRYPT_USER cryptOwner,
 				const CRYPT_KEYID_TYPE keyIDtype,
 				const void *keyID, const int keyIDlength,
-				const CERTFORMAT_TYPE formatType )
+				const CRYPT_CERTTYPE_TYPE formatHint )
 	{
 	CERT_INFO *certInfoPtr;
 	CRYPT_CERTTYPE_TYPE type;
@@ -764,6 +882,18 @@ int importCert( const void *certObject, const int certObjectLength,
 	int objectLength = certObjectLength, length, offset = 0;
 	int complianceLevel, initStatus = CRYPT_OK, iterationCount = 0, status;
 
+	assert( isReadPtr( certObject, certObjectLength ) );
+	assert( isWritePtr( certificate, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( cryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+			isHandleRangeValid( cryptOwner ) );
+	assert( ( keyIDtype == CRYPT_KEYID_NONE && \
+			  keyID == NULL && keyIDlength == 0 ) || \
+			( keyIDtype != CRYPT_KEYID_NONE && \
+			  isReadPtr( keyID, keyIDlength ) ) );
+	assert( formatHint >= CRYPT_CERTTYPE_NONE && \
+			formatHint < CRYPT_CERTTYPE_LAST );
+
+	/* Clear return value */
 	*certificate = CRYPT_ERROR;
 
 	/* Determine how much checking we need to perform */
@@ -775,63 +905,28 @@ int importCert( const void *certObject, const int certObjectLength,
 
 	/* If it's not a pre-specified or special-case format, check whether it's 
 	   some form of encoded certificate object */
-	if( formatType == CRYPT_CERTTYPE_NONE )
+	if( formatHint == CRYPT_CERTTYPE_NONE )
 		{
-		const CRYPT_CERTFORMAT_TYPE format = \
-				base64checkHeader( certObject, certObjectLength, &offset );
-
-		if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE || \
-			format == CRYPT_CERTFORMAT_TEXT_CERTIFICATE )
+		status = checkTextEncoding( certObject, certObjectLength,
+									&certObjectPtr, &objectLength );
+		if( cryptStatusError( status ) )
 			{
-			const char *certObjectDataPtr = \
-								( const char * ) certObject + offset;
-			int decodedLength;
+			if( status != OK_SPECIAL )
+				return( status );
 
-			/* It's base64/PEM/SMIME-encoded, decode it into a temporary 
-			   buffer */
-			decodedLength = base64decodeLen( certObjectDataPtr, 
-											 certObjectLength );
-			if( decodedLength <= 128 || decodedLength > 8192 )
-				return( CRYPT_ERROR_BADDATA );
-			if( ( certObjectPtr = clAlloc( "importCert",
-										   decodedLength + 8 ) ) == NULL )
-				return( CRYPT_ERROR_MEMORY );
-			decodedLength = base64decode( certObjectPtr, decodedLength, 
-									certObjectDataPtr, certObjectLength, 
-									format );
-			if( cryptStatusError( decodedLength ) )
-				{
-				clFree( "importCert", certObjectPtr );
-				return( decodedLength );
-				}
-			if( decodedLength <= 128 || decodedLength > 8192 )
-				{
-				clFree( "importCert", certObjectPtr );
-				return( CRYPT_ERROR_BADDATA );
-				}
+			/* The cert object has been decoded into a temporary buffer, 
+			   remember that we have to free it before we exit */
 			isDecodedObject = TRUE;
-			objectLength = decodedLength;
-			}
-		else
-			/* If it's binary-encoded MIME data, we don't need to decode it 
-			   but still need to skip the MIME header */
-			if( format == CRYPT_CERTFORMAT_CERTIFICATE || \
-				format == CRYPT_CERTFORMAT_CERTCHAIN )
-				{
-				assert( offset > 0 );
-
-				certObjectPtr = ( BYTE * ) certObject + offset;
-				objectLength -= offset;
-				}
+			}		
 		}
 
 	/* Determine the object's type and length and check the encoding unless
 	   we're running in oblivious mode */
 	status = getCertObjectInfo( certObjectPtr, objectLength, &offset, 
-								&length, &type, formatType );
+								&length, &type, formatHint );
 	if( cryptStatusOK( status ) && \
 		complianceLevel > CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
-		formatType != CRYPT_ICERTTYPE_SSL_CERTCHAIN )
+		formatHint != CRYPT_ICERTTYPE_SSL_CERTCHAIN )
 		status = checkObjectEncoding( ( BYTE * ) certObjectPtr + offset, 
 									  length );
 	if( cryptStatusError( status ) )
@@ -860,8 +955,8 @@ int importCert( const void *certObject, const int certObjectLength,
 			readSequence( &stream, NULL );	/* Skip the outer wrapper */
 		status = readCertChain( &stream, certificate, cryptOwner, type, 
 								keyIDtype, keyID, keyIDlength, 
-								( formatType == CERTFORMAT_DATAONLY ||
-								  formatType == CERTFORMAT_CTL ) ? \
+								( formatHint == CRYPT_ICERTTYPE_DATAONLY ||
+								  formatHint == CRYPT_ICERTTYPE_CTL ) ? \
 									TRUE : FALSE );
 		sMemDisconnect( &stream );
 		if( isDecodedObject )
@@ -917,13 +1012,14 @@ int importCert( const void *certObject, const int certObjectLength,
 	/* If we're doing a deferred read of the public key components (they'll
 	   be decoded later when we know whether we need them), set the data-only
 	   flag to ensure we don't try to decode them */
-	if( formatType == CERTFORMAT_DATAONLY || formatType == CERTFORMAT_CTL )
+	if( formatHint == CRYPT_ICERTTYPE_DATAONLY || \
+		formatHint == CRYPT_ICERTTYPE_CTL )
 		certInfoPtr->flags |= CERT_FLAG_DATAONLY;
 
 	/* If we're reading a single entry from a CRL, indicate that the 
 	   resulting object is a standalone single CRL entry rather than a proper
 	   CRL */
-	if( formatType == CERTFORMAT_REVINFO )
+	if( formatHint == CRYPT_ICERTTYPE_REVINFO )
 		certInfoPtr->flags |= CERT_FLAG_CRLENTRY;
 
 	/* Copy in the certificate object for later use */

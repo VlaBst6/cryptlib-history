@@ -233,26 +233,6 @@
 				</FileConfiguration>
 			</File>
 			<File
-				RelativePath="cryptcfg.c"
-				>
-				<FileConfiguration
-					Name="Debug|Win32"
-					>
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions=""
-					/>
-				</FileConfiguration>
-				<FileConfiguration
-					Name="Release|Win32"
-					>
-					<Tool
-						Name="VCCLCompilerTool"
-						PreprocessorDefinitions=""
-					/>
-				</FileConfiguration>
-			</File>
-			<File
 				RelativePath="cryptcrt.c"
 				>
 				<FileConfiguration
@@ -1292,6 +1272,10 @@
 					</FileConfiguration>
 				</File>
 				<File
+					RelativePath=".\context\ctx_ecdsa.c"
+					>
+				</File>
+				<File
 					RelativePath="context\ctx_elg.c"
 					>
 					<FileConfiguration
@@ -1710,6 +1694,10 @@
 							PreprocessorDefinitions=""
 						/>
 					</FileConfiguration>
+				</File>
+				<File
+					RelativePath=".\context\kg_ecc.c"
+					>
 				</File>
 				<File
 					RelativePath="context\kg_prime.c"
@@ -2358,6 +2346,18 @@
 							PreprocessorDefinitions=""
 						/>
 					</FileConfiguration>
+				</File>
+				<File
+					RelativePath=".\device\pkcs11_init.c"
+					>
+				</File>
+				<File
+					RelativePath=".\device\pkcs11_pkc.c"
+					>
+				</File>
+				<File
+					RelativePath=".\device\pkcs11_rw.c"
+					>
 				</File>
 				<File
 					RelativePath="device\system.c"
@@ -3348,6 +3348,10 @@
 					</FileConfiguration>
 				</File>
 				<File
+					RelativePath=".\mechs\mech_int.c"
+					>
+				</File>
+				<File
 					RelativePath="mechs\mech_sig.c"
 					>
 					<FileConfiguration
@@ -3702,6 +3706,14 @@
 							PreprocessorDefinitions=""
 						/>
 					</FileConfiguration>
+				</File>
+				<File
+					RelativePath=".\misc\user.c"
+					>
+				</File>
+				<File
+					RelativePath=".\misc\user_cfg.c"
+					>
 				</File>
 				<File
 					RelativePath="random\win32.c"

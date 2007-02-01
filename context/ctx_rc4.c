@@ -222,16 +222,15 @@ static int rc4Test( const BYTE *key, const int keySize,
 	staticDestroyContext( &contextInfo );
 	if( cryptStatusError( status ) || \
 		memcmp( ciphertext, temp, length ) )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 
 	return( CRYPT_OK );
 	}
 
 static int selfTest( void )
 	{
-	/* The testing gets somewhat messy here because of the variable-length
-	   arrays, which isn't normally a problem with the fixed-length keys
-	   and data used in the block ciphers */
+	/* We can't use the standard testCipher() for this test because of the 
+	   variable-length arrays, so we have to perform the tests manually */
 	if( rc4Test( testRC4key1, sizeof( testRC4key1 ), testRC4plaintext1,
 				 testRC4ciphertext1, sizeof( testRC4plaintext1 ) ) != CRYPT_OK ||
 		rc4Test( testRC4key2, sizeof( testRC4key2 ), testRC4plaintext2,
@@ -244,7 +243,7 @@ static int selfTest( void )
 				 testRC4ciphertext5, sizeof( testRC4plaintext5 ) ) != CRYPT_OK ||
 		rc4Test( testRC4key6, sizeof( testRC4key6 ), testRC4plaintext6,
 				 testRC4ciphertext6, sizeof( testRC4plaintext6 ) ) != CRYPT_OK )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 
 	return( CRYPT_OK );
 	}
@@ -317,7 +316,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), 256,
+	MIN_KEYSIZE, bitsToBytes( 128 ), 256,
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	NULL, NULL, NULL, NULL, NULL, NULL, encryptFn, encryptFn
 	};

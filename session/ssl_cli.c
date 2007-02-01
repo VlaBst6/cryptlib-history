@@ -32,9 +32,10 @@
    SSL_RSA_EXPORT_WITH_RC4_40_MD5 as a canary to force IIS to send back a
    response that we can then turn into an error message.  The need to do
    this is somewhat unfortunate since it will appear to an observer that
-   cryptlib will use crippled crypto, but there's no other way to detect the
-   buggy IIS apart from completely restarting the session activation at the
-   session level with crippled-crypto advertised in the restarted session */
+   cryptlib will use crippled crypto (in fact it won't even load such a
+   key), but there's no other way to detect the buggy IIS apart from 
+   completely restarting the session activation at the session level with 
+   crippled-crypto advertised in the restarted session */
 
 static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
 	{
@@ -126,10 +127,11 @@ static int writeCipherSuiteList( STREAM *stream, const BOOLEAN usePSK )
    certificate.  This code isn't currently called because it's not certain
    what the best way is to report this to the user is, and more importantly
    because there are quite a few servers out there where the server name
-   doesn't match what's in the cert but for which the user will just click
-   "OK" anyway even if we can tunnel a warning indication back to them, so
-   we leave it to the caller to perform whatever checking and take whatever
-   action they consider necessary */
+   doesn't match what's in the cert (according to SecuritySpace, the 
+   majority of all web site certs are invalid for one reason or another) but 
+   for which the user will just click "OK" anyway even if we can tunnel a 
+   warning indication back to them, so we leave it to the caller to perform 
+   whatever checking and take whatever action they consider necessary */
 
 #if 0
 
@@ -150,7 +152,7 @@ static int checkURL( SESSION_INFO *sessionInfoPtr )
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_CERTINFO_COMMONNAME );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't read server name from server certificate" );
 	hostNameLength = msgData.length;
 
@@ -160,7 +162,7 @@ static int checkURL( SESSION_INFO *sessionInfoPtr )
 			{
 			if( splatPos != CRYPT_ERROR )
 				/* Can't have more than one splat in a host name */
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Server name in certificate contains more than one "
 						"wildcard" );
 			splatPos = i;
@@ -173,7 +175,7 @@ static int checkURL( SESSION_INFO *sessionInfoPtr )
 			strCompare( hostName, sessionInfoPtr->serverName,
 						serverNameLength ) )
 			/* Host doesn't match the name in the cert */
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Server name doesn't match name in server certificate" );
 
 		return( CRYPT_OK );
@@ -184,18 +186,18 @@ static int checkURL( SESSION_INFO *sessionInfoPtr )
 	if( postSplatLen + splatPos > serverNameLength )
 		/* The fixed name spec text is longer than the server name, a match
 		   can't be possible */
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Server name doesn't match name in server certificate" );
 
 	/* Check that the pre- and post-splat URL components match */
 	if( splatPos > 0 && \
 		strCompare( hostName, sessionInfoPtr->serverName, splatPos ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Server name doesn't match name in server certificate" );
 	if( strCompare( hostName + splatPos + 1,
 					sessionInfoPtr->serverName + serverNameLength - postSplatLen,
 					postSplatLen ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Server name doesn't match name in server certificate" );
 
 	return( CRYPT_OK );
@@ -321,7 +323,7 @@ int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 										   &handshakeInfo->premasterSecretSize,
 										   sessionInfoPtr );
 		if( cryptStatusError( status ) )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Couldn't create SSL master secret from shared "
 					"secret/password value" );
 		return( OK_SPECIAL );
@@ -344,6 +346,46 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	STREAM *stream = &handshakeInfo->stream;
 	BOOLEAN needClientCert = FALSE;
 	int packetOffset, status;
+
+	/* Process the optional server supplemental data:
+
+		byte		ID = SSL_HAND_SUPPLEMENTAL_DATA
+		uint24		len
+		uint16		type
+		uint16		len
+		byte[]		value */
+	status = refreshHSStream( sessionInfoPtr, handshakeInfo );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sPeek( stream ) == SSL_HAND_SUPPLEMENTAL_DATA )
+		{
+		int type, length;
+
+		status = checkHSPacketHeader( sessionInfoPtr, stream, 
+									  SSL_HAND_SUPPLEMENTAL_DATA, 
+									  UINT16_SIZE + UINT16_SIZE + 1 );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( stream );
+			return( status );
+			}
+		type = readUint16( stream );
+		if( cryptStatusError( type ) )
+			{
+			sMemDisconnect( stream );
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
+					"Invalid supplemental data type %04X", type );
+			}
+		length = readUint16( stream );
+		if( cryptStatusError( length ) || \
+			length < 0 || \
+			( length > 0 && cryptStatusError( sSkip( stream, length ) ) ) )
+			{
+			sMemDisconnect( stream );
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
+					"Invalid supplemental data" );
+			}
+		}
 
 	/* Process the optional server cert chain:
 
@@ -388,11 +430,11 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		length = checkHSPacketHeader( sessionInfoPtr, stream,
-							SSL_HAND_SERVER_KEYEXCHANGE,
-							UINT16_SIZE + bitsToBytes( MIN_PKCSIZE_BITS ) + \
-							UINT16_SIZE + 1 + \
-							UINT16_SIZE + bitsToBytes( MIN_PKCSIZE_BITS ) + \
-							UINT16_SIZE + bitsToBytes( MIN_PKCSIZE_BITS ) );
+									  SSL_HAND_SERVER_KEYEXCHANGE,
+									  UINT16_SIZE + MIN_PKCSIZE + \
+									  UINT16_SIZE + 1 + \
+									  UINT16_SIZE + MIN_PKCSIZE + \
+									  UINT16_SIZE + MIN_PKCSIZE );
 		if( cryptStatusError( length ) )
 			{
 			sMemDisconnect( stream );
@@ -403,8 +445,7 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
 		keyData = sMemBufPtr( stream );
 		keyDataOffset = stell( stream );
-		readInteger16U( stream, NULL, NULL, bitsToBytes( MIN_PKCSIZE_BITS ),
-						CRYPT_MAX_PKCSIZE );
+		readInteger16U( stream, NULL, NULL, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		status = readInteger16U( stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusOK( status ) )
 			status = initDHcontextSSL( &handshakeInfo->dhContext, keyData,
@@ -412,12 +453,11 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusOK( status ) )
 			status = readInteger16U( stream, keyAgreeParams.publicValue,
 									 &keyAgreeParams.publicValueLen,
-									 bitsToBytes( MIN_PKCSIZE_BITS ),
-									 CRYPT_MAX_PKCSIZE );
+									 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, cryptArgError( status ) ? \
+			retExt( SESSION_ERRINFO, cryptArgError( status ) ? \
 					CRYPT_ERROR_BADDATA : status,
 					"Invalid server key agreement parameters" );
 			}
@@ -429,7 +469,7 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Bad server key agreement parameter signature" );
 			}
 
@@ -494,7 +534,7 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 			length < 1 || cryptStatusError( sSkip( stream, length ) ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid cert request certificate type" );
 			}
 		length = readUint16( stream );
@@ -503,7 +543,7 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 			( length > 0 && cryptStatusError( sSkip( stream, length ) ) ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid cert request CA name list" );
 			}
 		needClientCert = TRUE;
@@ -620,7 +660,7 @@ int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 									&handshakeInfo->premasterSecretSize,
 									attributeListPtr );
 			if( cryptStatusError( status ) )
-				retExt( sessionInfoPtr, status,
+				retExt( SESSION_ERRINFO, status,
 						"Couldn't create SSL master secret from shared "
 						"secret/password value" );
 

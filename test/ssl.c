@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -97,6 +92,7 @@ typedef enum {
 #define SSL_SERVER_NO	2
 #define TLS_SERVER_NO	2
 #define TLS11_SERVER_NO	2
+#define TLS12_SERVER_NO	21
 
 static const struct {
 	const C_STR name;
@@ -123,6 +119,7 @@ static const struct {
 	/* 18 */ { TEXT( "https://www.openssl.org/" ), "/" },
 	/* 19 */ { TEXT( "https://secureads.ft.com/" ), "/" },
 	/* 20 */ { TEXT( "https://mail.maine.edu/" ), "/" },
+	/* 21 */ { TEXT( "https://www.mikestoolbox.net:4433/" ), "/" },
 	{ NULL, NULL }
 	};
 
@@ -354,7 +351,8 @@ static int negotiateSTARTTLS( int *protocol )
 				if( bufPos < 3 || strncmp( buffer, "250", 3 ) )
 					{
 					closesocket( netSocket );
-					printf( "Got response '%s', line %d.\n", buffer, __LINE__ );
+					printf( "Got response '%s', line %d.\n", buffer, 
+							__LINE__ );
 					return( CRYPT_OK );
 					}
 				printf( "  Server said: '%s'\n", buffer );
@@ -395,14 +393,16 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	CRYPT_SESSION cryptSession;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_SSL_SERVER ) ? \
 							   TRUE : FALSE;
-	const char *versionStr[] = { "SSL", "TLS", "TLS 1.1" };
+	const char *versionStr[] = { "SSL", "TLS", "TLS 1.1", "TLS 1.2" };
 	const C_STR serverName = ( testType == SSL_TEST_STARTTLS ) ? \
 								starttlsInfo[ STARTTLS_SERVER_NO ].name : \
 							 ( version == 0 ) ? \
 								sslInfo[ SSL_SERVER_NO ].name : \
 							 ( version == 1 ) ? \
 								sslInfo[ TLS_SERVER_NO ].name : \
-								sslInfo[ TLS11_SERVER_NO ].name;
+							 ( version == 2 ) ? \
+								sslInfo[ TLS11_SERVER_NO ].name : \
+								sslInfo[ TLS12_SERVER_NO ].name;
 	BYTE *bulkBuffer;
 	char buffer[ FILEBUFFER_SIZE ];
 #if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
@@ -419,6 +419,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			waitMutex();
 			}
 		else
+			{
 			/* We're the client Wait for the server to finish initialising */
 			if( waitMutex() == CRYPT_ERROR_TIMEOUT )
 				{
@@ -426,6 +427,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 						"line %d.\n", __LINE__ );
 				return( FALSE );
 				}
+			}
 		}
 
 	printf( "%sTesting %s%s session%s...\n", isServer ? "SVR: " : "",
@@ -449,7 +451,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				status, __LINE__ );
 		return( FALSE );
 		}
-	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_VERSION, version );
+	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_VERSION, 
+								version );
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptSetAttribute() failed with error code %d, line %d.\n",
@@ -668,7 +671,7 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	if( isServer && localSession )
+	if( localSession && isServer )
 		/* Tell the client that we're ready to go */
 		releaseMutex();
 #if ( SSL_SERVER_NO == 5 ) || ( STARTTLS_SERVER_NO == 8 )
@@ -685,8 +688,10 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 	if( isServer && testType != SSL_TEST_PSK_CLIONLY && \
 					testType != SSL_TEST_PSK_SVRONLY )
 		{
-		if( !printConnectInfo( cryptSession ) )
-			return( FALSE );
+		/* We don't check the return status for this since the session may
+		   be disconnected before we get the client info, which would cause
+		   us to bail out before we display the error info */
+		printConnectInfo( cryptSession );
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -837,8 +842,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				}
 			if( byteCount != BULKDATA_BUFFER_SIZE )
 				{
-				printf( "Only sent %ld of %ld bytes.\n", byteCount,
-						BULKDATA_BUFFER_SIZE );
+				printf( "Only sent %ld of %ld bytes, line %d.\n", byteCount,
+						BULKDATA_BUFFER_SIZE, __LINE__ );
 				return( FALSE );
 				}
 			}
@@ -870,14 +875,14 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				}
 			if( byteCount != BULKDATA_BUFFER_SIZE )
 				{
-				printf( "Only received %ld of %ld bytes.\n", byteCount,
-						BULKDATA_BUFFER_SIZE );
+				printf( "Only received %ld of %ld bytes, line %d.\n", 
+						byteCount, BULKDATA_BUFFER_SIZE, __LINE__ );
 				return( FALSE );
 				}
 			if( !handleBulkBuffer( bulkBuffer, FALSE ) )
 				{
-				puts( "Received buffer contents don't match sent buffer "
-					  "contents." );
+				printf( "Received buffer contents don't match sent buffer "
+						"contents, line %d.", __LINE__ );
 				return( FALSE );
 				}
 			}
@@ -1180,6 +1185,11 @@ int testSessionTLSServerSharedKey( void )
 int testSessionTLS11( void )
 	{
 	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 2, FALSE ) );
+	}
+
+int testSessionTLS12( void )
+	{
+	return( connectSSLTLS( CRYPT_SESSION_SSL, SSL_TEST_NORMAL, 3, FALSE ) );
 	}
 
 /* Perform a client/server loopback test */

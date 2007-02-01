@@ -115,7 +115,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_GETATTRIBUTE_S, &msgData, 
 							  CRYPT_CERTINFO_CHALLENGEPASSWORD );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get challenge password from PKCS #10 request" );
 	requestPasswordSize = msgData.length;
 
@@ -137,7 +137,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		zeroise( requestPassword, CRYPT_MAX_TEXTSIZE );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get PKI user information for requested user" );
 		}
 
@@ -150,7 +150,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 		{
 		zeroise( requestPassword, CRYPT_MAX_TEXTSIZE );
 		krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Couldn't read PKI user data from PKI user object" );
 		}
 	userPasswordSize = msgData.length;
@@ -166,7 +166,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 		zeroise( requestPassword, CRYPT_MAX_TEXTSIZE );
 		zeroise( userPassword, CRYPT_MAX_TEXTSIZE );
 		krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Supplied password doesn't match PKI user password" );
 		}
 	zeroise( userPassword, CRYPT_MAX_TEXTSIZE );
@@ -180,7 +180,7 @@ static int checkPkiUserInfo( SESSION_INFO *sessionInfoPtr,
 							  CRYPT_IATTRIBUTE_PKIUSERINFO );
 	krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_INVALID, 
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_INVALID, 
 				"User information in request can't be reconciled with our "
 				"information for the user" );
 
@@ -206,7 +206,7 @@ static int getStatusValue( const CRYPT_CERTIFICATE iCmsAttributes,
 	if( cryptStatusError( status ) )
 		return( status );
 	buffer[ msgData.length ] = '\0';
-	status = aToI( buffer );
+	status = atoi( buffer );
 	if( status == 0 && *buffer != '0' )
 		/* atoi() can't really indicate an error except by returning 0, 
 		   which is identical to an SCEP success status.  In order to
@@ -251,7 +251,7 @@ static int createDataOnlyCert( CRYPT_CERTIFICATE *iNewCert,
 		{
 		setMessageCreateObjectIndirectInfo( &createInfo, msgData.data,
 											msgData.length,
-											CERTFORMAT_DATAONLY );
+											CRYPT_ICERTTYPE_DATAONLY );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
@@ -332,7 +332,7 @@ static int createScepCert( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create ephemeral self-signed SCEP certificate" );
 		}
 
@@ -386,7 +386,7 @@ static int createScepRequest( SESSION_INFO *sessionInfoPtr )
 								  IMESSAGE_CRT_SIGN, NULL,
 								  sessionInfoPtr->privateKey );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't finalise PKCS #10 cert request" );
 	return( CRYPT_OK );
 	}
@@ -548,7 +548,7 @@ static int createPkcsRequest( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_CERTFORMAT_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get PKCS #10 request data from SCEP request object" );
 	DEBUG_DUMP( "scep_req0", sessionInfoPtr->receiveBuffer, msgData.length );
 
@@ -559,7 +559,7 @@ static int createPkcsRequest( SESSION_INFO *sessionInfoPtr,
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_NONE, 
 						   sessionInfoPtr->iAuthInContext );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't encrypt request data with CA key" );
 	DEBUG_DUMP( "scep_req1", sessionInfoPtr->receiveBuffer, dataLength );
 
@@ -567,7 +567,7 @@ static int createPkcsRequest( SESSION_INFO *sessionInfoPtr,
 	status = createScepAttributes( sessionInfoPtr, protocolInfo,  
 								   &iCmsAttributes, TRUE, CRYPT_OK );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create SCEP request signing attributes" );
 
 	/* Phase 2: Sign the data using the self-signed cert and SCEP attributes */
@@ -579,7 +579,7 @@ static int createPkcsRequest( SESSION_INFO *sessionInfoPtr,
 						   iCmsAttributes );
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't sign request data with ephemeral SCEP "
 				"certificate" );
 	DEBUG_DUMP( "scep_req2", sessionInfoPtr->receiveBuffer, 
@@ -608,13 +608,13 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 							   sessionInfoPtr->iAuthInContext, &sigResult,
 							   NULL, &iCmsAttributes );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Invalid CMS signed data in CA response" );
 	DEBUG_DUMP( "scep_res1", sessionInfoPtr->receiveBuffer, dataLength );
 	if( cryptStatusError( sigResult ) )
 		{
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, sigResult, 
+		retExt( SESSION_ERRINFO, sigResult, 
 				"Bad signature on CA response data" );
 		}
 
@@ -629,7 +629,7 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 		memcmp( buffer, protocolInfo->nonce, protocolInfo->nonceSize ) )
 		{
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 				"Returned nonce doesn't match our original nonce" );
 		}
 
@@ -643,16 +643,18 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 								 CRYPT_CERTINFO_SCEP_PKISTATUS, &value );
 	if( cryptStatusOK( status ) && value != MESSAGESTATUS_SUCCESS_VALUE )
 		{
-		sessionInfoPtr->errorCode = value;
+		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+
+		errorInfo->errorCode = value;
 		status = getStatusValue( iCmsAttributes,
 								 CRYPT_CERTINFO_SCEP_FAILINFO, &value );
 		if( cryptStatusOK( status ) )
-			sessionInfoPtr->errorCode = value;
+			errorInfo->errorCode = value;
 		status = CRYPT_ERROR_FAILED;
 		}
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"SCEP server reports that certificate issue operation "
 				"failed" );
 
@@ -662,7 +664,7 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 							 sessionInfoPtr->receiveBufSize,
 							 sessionInfoPtr->privateKey );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Couldn't decrypt CMS enveloped data in CA response" );
 	DEBUG_DUMP( "scep_res0", sessionInfoPtr->receiveBuffer, dataLength );
 
@@ -674,7 +676,7 @@ static int checkPkcsResponse( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Invalid PKCS #7 certificate chain in CA response" );
 	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
 	return( CRYPT_OK );
@@ -706,13 +708,13 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 							   CRYPT_UNUSED, &sigResult, 
 							   &protocolInfo->iScepCert, &iCmsAttributes );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Invalid CMS signed data in client request" );
 	DEBUG_DUMP( "scep_sreq1", sessionInfoPtr->receiveBuffer, dataLength );
 	if( cryptStatusError( sigResult ) )
 		{
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, sigResult, 
+		retExt( SESSION_ERRINFO, sigResult, 
 				"Bad signature on client request data" );
 		}
 
@@ -728,7 +730,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_INVALID, 
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_INVALID, 
 				"Ephemeral SCEP client certificate isn't valid for "
 				"signing/encryption" );
 		}
@@ -748,7 +750,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Request is missing nonce/transaction ID" );
 		}
 	protocolInfo->transIDsize = msgData.length;
@@ -775,7 +777,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 		status = CRYPT_ERROR_BADDATA;
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Incorrect SCEP message type %d",
+		retExt( SESSION_ERRINFO, status, "Incorrect SCEP message type %d",
 				value );
 
 	/* Phase 2: Decrypt the data using our CA key */
@@ -784,7 +786,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 							 sessionInfoPtr->receiveBufSize,
 							 sessionInfoPtr->privateKey );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Couldn't decrypt CMS enveloped data in client request" );
 
 	/* Finally, import the request as a PKCS #10 request */
@@ -795,7 +797,7 @@ static int checkPkcsRequest( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Invalid PKCS #10 request in client request" );
 	sessionInfoPtr->iCertRequest = createInfo.cryptHandle;
 	return( CRYPT_OK );
@@ -817,7 +819,7 @@ static int createPkcsResponse( SESSION_INFO *sessionInfoPtr,
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_CERTFORMAT_CERTCHAIN );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get PKCS #7 cert chain from SCEP response object" );
 	DEBUG_DUMP( "scep_sresp0", sessionInfoPtr->receiveBuffer, msgData.length );
 
@@ -828,7 +830,7 @@ static int createPkcsResponse( SESSION_INFO *sessionInfoPtr,
 						   CRYPT_FORMAT_CMS, CRYPT_CONTENT_NONE, 
 						   protocolInfo->iScepCert );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't encrypt response data with client key" );
 	DEBUG_DUMP( "scep_sresp1", sessionInfoPtr->receiveBuffer, dataLength );
 
@@ -836,7 +838,7 @@ static int createPkcsResponse( SESSION_INFO *sessionInfoPtr,
 	status = createScepAttributes( sessionInfoPtr, protocolInfo,  
 								   &iCmsAttributes, FALSE, CRYPT_OK );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create SCEP response signing attributes" );
 
 	/* Phase 2: Sign the data using the CA key and SCEP attributes */
@@ -848,7 +850,7 @@ static int createPkcsResponse( SESSION_INFO *sessionInfoPtr,
 						   iCmsAttributes );
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't sign response data with CA key" );
 	DEBUG_DUMP( "scep_sresp2", sessionInfoPtr->receiveBuffer, 
 				sessionInfoPtr->receiveBufEnd );
@@ -905,6 +907,7 @@ static int clientTransact( SESSION_INFO *sessionInfoPtr )
 static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	{
 	SCEP_PROTOCOL_INFO protocolInfo;
+	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	int status;
 
 	/* Read the initial message from the client.  We don't write an error
@@ -931,8 +934,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 								  IMESSAGE_KEY_SETKEY, &setkeyInfo, 
 								  KEYMGMT_ITEM_REQUEST );
 		if( cryptStatusError( status ) )
-			strcpy( sessionInfoPtr->errorMessage, 
-					"Request couldn't be added to cert store" );
+			strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+					   "Request couldn't be added to cert store" );
 		}
 	if( cryptStatusOK( status ) )
 		{
@@ -946,8 +949,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusOK( status ) )
 			sessionInfoPtr->iCertResponse = certMgmtInfo.cryptCert;
 		else
-			strcpy( sessionInfoPtr->errorMessage,
-					"Couldn't issue certificate for user" );
+			strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
+					   "Couldn't issue certificate for user" );
 		}
 	if( cryptStatusError( status ) )
 		{

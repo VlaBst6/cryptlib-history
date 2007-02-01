@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged VC++ include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -170,8 +165,8 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 		status = cryptCreateContext( cryptContext, CRYPT_UNUSED, cryptAlgo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d.\n",
-				isDevice ? "Device" : "", status );
+		printf( "crypt%sCreateContext() failed with error code %d, "
+				"line %d.\n", isDevice ? "Device" : "", status, __LINE__ );
 		return( FALSE );
 		}
 	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
@@ -185,8 +180,8 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 				/* This mode isn't available, return a special-case value to
 				   tell the calling code to continue */
 				return( status );
-			printf( "Encryption mode %d selection failed with status %d.\n",
-					cryptMode, status );
+			printf( "Encryption mode %d selection failed with status %d, "
+					"line %d.\n", cryptMode, status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -207,7 +202,8 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 			}
 		if( cryptStatusError( status ) )
 			{
-			printf( "Key load failed with error code %d.\n", status );
+			printf( "Encryption key load failed with error code %d, "
+					"line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -222,8 +218,9 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 										   cryptAlgo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "crypt%sCreateContext() failed with error code %d.\n",
-				( cryptDevice != CRYPT_UNUSED ) ? "Device" : "", status );
+		printf( "crypt%sCreateContext() failed with error code %d, "
+				"line %d.\n", ( cryptDevice != CRYPT_UNUSED ) ? \
+							  "Device" : "", status, __LINE__ );
 		return( FALSE );
 		}
 	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
@@ -237,8 +234,8 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 				/* This mode isn't available, return a special-case value to
 				   tell the calling code to continue */
 				return( status );
-			printf( "Encryption mode %d selection failed with status %d.\n",
-					cryptMode, status );
+			printf( "Encryption mode %d selection failed with status %d, "
+					"line %d.\n", cryptMode, status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -248,7 +245,8 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 										  key, adjustKey ? 16 : length );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Key load failed with error code %d.\n", status );
+			printf( "Decryption key load failed with error code %d, "
+					"line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -286,7 +284,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 								   TESTBUFFER_SIZE - 79 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't encrypt data, status = %d.\n", status );
+			printf( "Couldn't encrypt data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -300,15 +299,16 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 											  iv, &ivLength );
 			if( cryptStatusError( status ) )
 				{
-				printf( "Couldn't retrieve IV after encryption, status = %d.\n",
-						status );
+				printf( "Couldn't retrieve IV after encryption, status = %d, "
+						"line %d.\n", status, __LINE__ );
 				return( status );
 				}
 			status = cryptSetAttributeString( decryptContext, CRYPT_CTXINFO_IV,
 											  iv, ivLength );
 			if( cryptStatusError( status ) )
 				{
-				printf( "Couldn't load IV for decryption, status = %d.\n", status );
+				printf( "Couldn't load IV for decryption, status = %d, "
+						"line %d.\n", status, __LINE__ );
 				return( status );
 				}
 			}
@@ -320,7 +320,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 								   TESTBUFFER_SIZE - 125 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't decrypt data, status = %d.\n", status );
+			printf( "Couldn't decrypt data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -336,7 +337,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 								   TESTBUFFER_SIZE - 80 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't encrypt data, status = %d.\n", status );
+			printf( "Couldn't encrypt data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -349,12 +351,13 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			status = cryptGetAttributeString( cryptContext, CRYPT_CTXINFO_IV,
 											  iv, &ivLength );
 			if( cryptStatusError( status ) )
-				printf( "Couldn't retrieve IV after encryption, status = %d.\n",
-						status );
+				printf( "Couldn't retrieve IV after encryption, status = %d, "
+						"line %d.\n", status, __LINE__ );
 			status = cryptSetAttributeString( decryptContext, CRYPT_CTXINFO_IV,
 											  iv, ivLength );
 			if( cryptStatusError( status ) )
-				printf( "Couldn't load IV for decryption, status = %d.\n", status );
+				printf( "Couldn't load IV for decryption, status = %d, "
+						"line %d.\n", status, __LINE__ );
 			}
 
 		/* Decrypt the buffer in different odd-size chunks */
@@ -364,7 +367,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 								   TESTBUFFER_SIZE - 128 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't decrypt data, status = %d.\n", status );
+			printf( "Couldn't decrypt data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -393,8 +397,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 #endif /* 0 */
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't perform DH key agreement, status = %d.\n",
-					status );
+			printf( "Couldn't perform DH key agreement, status = %d, "
+					"line %d.\n", status, __LINE__ );
 			return( status );
 			}
 
@@ -421,8 +425,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		BOOLEAN encryptOK = TRUE;
 		int length;
 
-		/* Take a copy of the input so we can compare it with decrypted
-		   output and find out how much data we need to process */
+		/* Take a copy of the input so that we can compare it with the 
+		   decrypted output and find out how much data we need to process */
 		memcpy( testBuffer, buffer, TESTBUFFER_SIZE );
 		cryptGetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, &length );
 
@@ -449,17 +453,20 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		if( cryptStatusError( status ) )
 			{
 			if( !noWarnFail )
-				printf( "Couldn't encrypt data, status = %d.\n", status );
+				printf( "Couldn't encrypt data, status = %d, line %d.\n", 
+						status, __LINE__ );
 			return( status );
 			}
-		if( cryptAlgo == CRYPT_ALGO_RSA && !isDevice && \
+		if( cryptAlgo == CRYPT_ALGO_RSA && \
+			!isDevice && buffer != localBuffer && \
 			memcmp( buffer, ( length == 64 ) ? rsa512Value : rsa1024Value,
 					length ) )
 			{
 			/* For a non-randomized PKC the encryption of the fixed value
-			   produces known output, we make sure that this matches the
-			   expected value.  This makes diagnosing problems with crypto
-			   devices rather easier */
+			   produces known output, so if we're being called from with a
+			   fixed test key from testLowlevel() we make sure that this 
+			   matches the expected value.  This makes diagnosing problems 
+			   rather easier */
 			puts( "The actual encrypted value doesn't match the expected value." );
 			encryptOK = FALSE;
 			}
@@ -471,11 +478,12 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 				if( encryptOK )
 					printf( "Couldn't decrypt data even though the "
 							"encrypted input data was valid,\nstatus = "
-							"%d.\n", status );
+							"%d, line %d.\n", status, __LINE__ );
 				else
 					printf( "Couldn't decrypt data, probably because the "
 							"data produced by the encrypt step\nwas "
-							"invalid, status = %d.\n", status );
+							"invalid, status = %d, line %d.\n", status, 
+							__LINE__ );
 				}
 			return( status );
 			}
@@ -523,7 +531,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			status = cryptEncrypt( cryptContext, buffer + TESTBUFFER_SIZE, 0 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't hash data, status = %d.\n", status );
+			printf( "Couldn't hash data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -536,7 +545,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			status = cryptEncrypt( decryptContext, buffer + TESTBUFFER_SIZE, 0 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't hash data, status = %d.\n", status );
+			printf( "Couldn't hash data, status = %d, line %d.\n", 
+					status, __LINE__ );
 			return( status );
 			}
 
@@ -665,9 +675,13 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				status = loadElgamalContexts( &cryptContext, &decryptContext );
 				break;
 
+			case CRYPT_ALGO_ECDSA:
+				status = loadECDSAContexts( &cryptContext, &decryptContext );
+				break;
+
 			default:
 				printf( "Unknown encryption algorithm ID %d, cannot perform "
-						"encryption test\n", cryptAlgo );
+						"encryption test, line %d.\n", cryptAlgo, __LINE__ );
 				return( FALSE );
 			}
 		if( status == CRYPT_ERROR_NOTAVAIL )
@@ -682,7 +696,8 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 
 		/* DLP-based algorithms can't be called directly from user code
 		   because of the special data-formatting requirements */
-		if( cryptAlgo == CRYPT_ALGO_DSA || cryptAlgo == CRYPT_ALGO_ELGAMAL )
+		if( cryptAlgo == CRYPT_ALGO_DSA || cryptAlgo == CRYPT_ALGO_ELGAMAL || \
+			cryptAlgo == CRYPT_ALGO_ECDSA )
 			{
 			destroyContexts( cryptDevice, cryptContext, decryptContext );
 			return( TRUE );
@@ -730,7 +745,8 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 									 hash2, &length2 );
 			if( cryptStatusError( status ) )
 				{
-				printf( "Couldn't get hash information, status = %d.\n", status );
+				printf( "Couldn't get hash information, status = %d, "
+						"line %d.\n", status, __LINE__ );
 				destroyContexts( cryptDevice, cryptContext, decryptContext );
 				return( FALSE );
 				}
@@ -757,8 +773,8 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 											   CRYPT_CTXINFO_HASHVALUE );
 			if( cryptStatusError( status ) )
 				{
-				printf( "Deletion of hash/MAC value failed with status %d.\n",
-						status );
+				printf( "Deletion of hash/MAC value failed with status %d, "
+						"line %d.\n", status, __LINE__ );
 				destroyContexts( cryptDevice, cryptContext, decryptContext );
 				return( FALSE );
 				}
@@ -773,7 +789,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			if( cryptStatusError( status ) )
 				{
 				printf( "Couldn't get hash information for re-hashed data, "
-						"status = %d.\n", status );
+						"status = %d, line %d.\n", status, __LINE__ );
 				destroyContexts( cryptDevice, cryptContext, decryptContext );
 				return( FALSE );
 				}

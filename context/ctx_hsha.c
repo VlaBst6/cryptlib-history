@@ -71,7 +71,7 @@ static const struct {
 	  { 0x4C, 0x90, 0x07, 0xF4, 0x02, 0x62, 0x50, 0xC6,
 		0xBC, 0x84, 0x14, 0xF9, 0xBF, 0x50, 0xC8, 0x6C,
 		0x2D, 0x72, 0x35, 0xDA } },
-#if 0	/* Should be trunc.to 96 bits - we don't do truncation */
+#if 0	/* Should be truncated to 96 bits - we don't do truncation */
 	{ "\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C\x0C"
 	  "\x0C\x0C\x0C\x0C", 20,
 	  "Test With Truncation", 20,
@@ -110,30 +110,15 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getHmacSHA1Capability();
-	CONTEXT_INFO contextInfo;
-	MAC_INFO contextData;
-	BYTE keyData[ MAC_STATE_SIZE + 8 ];
+	BYTE macData[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-SHA against the test vectors given in RFC ???? */
 	for( i = 0; hmacValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_MAC, capabilityInfo,
-						   &contextData, sizeof( MAC_INFO ), keyData );
-		status = capabilityInfo->initKeyFunction( &contextInfo,
-						hmacValues[ i ].key, hmacValues[ i ].keyLength );
-		contextInfo.flags |= CONTEXT_HASH_INITED;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo,
-						( BYTE * ) hmacValues[ i ].data,
-						hmacValues[ i ].length );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxMAC->mac, hmacValues[ i ].digest,
-					SHA_DIGEST_LENGTH ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testMAC( capabilityInfo, macData, hmacValues[ i ].key, 
+						  hmacValues[ i ].keyLength, hmacValues[ i ].data, 
+						  hmacValues[ i ].length, hmacValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -259,6 +244,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		hashBuffer[ i ] ^= HMAC_IPAD;
 	SHA1_Update( shaInfo, hashBuffer, SHA_CBLOCK );
 	memset( hashBuffer, 0, SHA_CBLOCK );
+	contextInfoPtr->flags |= CONTEXT_HASH_INITED;
 
 	/* Save a copy of the initial state in case it's needed later */
 	memcpy( &( ( MAC_STATE * ) macInfo->macInfo )->initialMacState, shaInfo,

@@ -133,7 +133,7 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't get OCSP request data from OCSP request object" );
 	sessionInfoPtr->receiveBufEnd = msgData.length;
 	DEBUG_DUMP( "ocsp_req", sessionInfoPtr->receiveBuffer,
@@ -167,9 +167,10 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	status = readEnumerated( &stream, &value );
 	if( cryptStatusOK( status ) )
 		{
+		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 		const char *errorString = NULL;
 
-		sessionInfoPtr->errorCode = value;
+		errorInfo->errorCode = value;
 
 		/* If it's an error status, try and translate it into something a
 		   bit more meaningful (some of the translations are a bit
@@ -201,7 +202,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 				break;
 			}
 		if( errorString != NULL )
-			sPrintf_s( sessionInfoPtr->errorMessage, MAX_ERRMSG_SIZE,
+			sprintf_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
 					   "OCSP server returned status %d: %s",
 					   value, errorString );
 		}
@@ -222,13 +223,13 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, status, "Invalid OCSP response header" );
+		retExt( SESSION_ERRINFO, status, "Invalid OCSP response header" );
 		}
 	status = importCertFromStream( &stream, &iCertResponse,
 								   CRYPT_CERTTYPE_OCSP_RESPONSE, length );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid OCSP response data" );
+		retExt( SESSION_ERRINFO, status, "Invalid OCSP response data" );
 
 	/* If the request went out with a nonce included (which it does by
 	   default), make sure that it matches the nonce in the response */
@@ -244,7 +245,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 		   is a signature error to indicate that the integrity check 
 		   failed */
 		krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_SIGNATURE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
 				cryptStatusError( status ) ? \
 				"OCSP response doesn't contain a nonce" : \
 				"OCSP response nonce doesn't match the one in the request" );
@@ -306,7 +307,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 	status = readSequence( &stream, NULL );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Invalid OCSP request header" );
+		retExt( SESSION_ERRINFO, status, "Invalid OCSP request header" );
 
 	/* Import the request as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo,
@@ -319,7 +320,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, respBadRequest, RESPONSE_SIZE );
-		retExt( sessionInfoPtr, status, "Invalid OCSP request data" );
+		retExt( SESSION_ERRINFO, status, "Invalid OCSP request data" );
 		}
 	iOcspRequest = createInfo.cryptHandle;
 
@@ -341,7 +342,7 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 		{
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create OCSP response from request" );
 		}
 	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
@@ -366,7 +367,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_INVALID )
 		{
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't check OCSP request against certificate store" );
 		}
 	setMessageData( &msgData, NULL, 0 );
@@ -381,7 +382,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create signed OCSP response" );
 		}
 

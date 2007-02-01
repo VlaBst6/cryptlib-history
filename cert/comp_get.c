@@ -61,7 +61,7 @@ static int oidToText( const BYTE *binaryOID, const int binaryOidLen,
 		j += ( i - 2 ) * 40;
 		i = 2;
 		}
-	subLen = sPrintf_s( oid, maxOidLen, "%d %d", i, j );
+	subLen = sprintf_s( oid, maxOidLen, "%d %d", i, j );
 	if( subLen < 3 )
 		return( CRYPT_ERROR_BADDATA );
 	length = subLen;
@@ -78,7 +78,7 @@ static int oidToText( const BYTE *binaryOID, const int binaryOidLen,
 			return( CRYPT_ERROR_BADDATA );	/* Range error */
 		if( !( data & 0x80 ) )
 			{
-			subLen = sPrintf_s( oid + length, maxOidLen - length, 
+			subLen = sprintf_s( oid + length, maxOidLen - length, 
 								" %ld", value );
 			if( subLen < 2 )
 				return( CRYPT_ERROR_BADDATA );
@@ -224,7 +224,6 @@ int textToOID( const char *oid, const int oidLength, BYTE *binaryOID,
 
 	return( length );
 	}
-
 
 /* Copy data from a cert */
 
@@ -677,13 +676,12 @@ static int getCertAttributeComponentData( const ATTRIBUTE_LIST *attributeListPtr
 							textOID, CRYPT_MAX_TEXTSIZE * 2 );
 		if( cryptStatusError( length ) )
 			return( length );
+
 		*certInfoLength = length;
 		if( certInfo == NULL )
 			return( CRYPT_OK );
-		if( length > maxLength )
-			return( CRYPT_ERROR_OVERFLOW );
-		memcpy( certInfo, textOID, length );
-		return( CRYPT_OK );
+		return( attributeCopyParams( certInfo, maxLength, certInfoLength, 
+									 textOID, length ) );
 		}
 
 	/* If it's a basic data value, copy it over as an integer */
@@ -698,12 +696,10 @@ static int getCertAttributeComponentData( const ATTRIBUTE_LIST *attributeListPtr
 	*certInfoLength = attributeListPtr->valueLength;
 	if( certInfo == NULL )
 		return( CRYPT_OK );
-	if( attributeListPtr->valueLength > maxLength )
-		return( CRYPT_ERROR_OVERFLOW );
-	if( !isWritePtr( certInfo, attributeListPtr->valueLength ) )
-		return( CRYPT_ARGERROR_STR1 );
-	memcpy( certInfo, attributeListPtr->value, attributeListPtr->valueLength );
-	return( CRYPT_OK );
+
+	return( attributeCopyParams( certInfo, maxLength, certInfoLength, 
+								 attributeListPtr->value, 
+								 attributeListPtr->valueLength ) );
 	}
 
 static int getCertAttributeComponent( CERT_INFO *certInfoPtr,
@@ -900,8 +896,8 @@ static int getIAndS( CERT_INFO *certInfoPtr, void *certInfo,
 		   CRL entry */
 		assert( crlInfoPtr != NULL );
 
-		serialNumber = crlInfoPtr->dataPtr;
-		serialNumberLength = crlInfoPtr->dataLength;
+		serialNumber = crlInfoPtr->idPtr;
+		serialNumberLength = crlInfoPtr->idLength;
 		}
 	else
 		{
@@ -925,6 +921,153 @@ static int getIAndS( CERT_INFO *certInfoPtr, void *certInfo,
 	sMemDisconnect( &stream );
 
 	return( status );
+	}
+
+/* Get the certificate holder's name, usually the commonName but if that's
+   not present some commonName-equivalent */
+
+static int extractDnComponent( const char *encodedDn, 
+							   const int encodedDnLength, 
+							   const char *componentName, 
+							   const int componentNameLength,
+							   int *startPosPtr )
+	{
+	int startPos, endPos;
+
+	/* Clear return value */
+	*startPosPtr = 0;
+	
+	/* Try and find the component name in the encoded DN string */
+	startPos = strFindStr( encodedDn, encodedDnLength, 
+						   componentName, componentNameLength );
+	if( startPos < 0 )
+		return( -1 );
+	startPos += componentNameLength;	/* Skip type indicator */
+	
+	/* Extract the component value */
+	for( endPos = startPos; endPos < encodedDnLength && \
+							encodedDn[ endPos ] != ',' && \
+							encodedDn[ endPos ] != '+'; endPos++ );
+	if( encodedDn[ endPos ] == '+' && \
+		encodedDn[ endPos - 1 ] == ' ' )
+		endPos--;	/* Strip trailing space */
+	
+	*startPosPtr = startPos;
+	return( endPos - startPos );
+	}
+
+static int getNameFromDN( void *name, const int nameMaxLength, 
+						  int *nameLength, const char *encodedDn, 
+						  const int encodedDnLength )
+	{
+	int startPos, length;
+
+	/* Look for a pseudonym */
+	length = extractDnComponent( encodedDn, encodedDnLength, 
+								 "oid.2.5.4.65=", 13, &startPos );
+	if( length > 0 && length <= nameMaxLength )
+		return( attributeCopyParams( name, nameMaxLength, nameLength, 
+									 encodedDn + startPos, length ) );
+
+	/* Look for givenName + surname */
+	length = extractDnComponent( encodedDn, encodedDnLength, 
+								 "G=", 2, &startPos );
+	if( length > 0 && length <= nameMaxLength )
+		{
+		char nameBuffer[ MAX_ATTRIBUTE_SIZE + 8 ];
+		int startPos2, length2;
+
+		length2 = extractDnComponent( encodedDn, encodedDnLength, 
+									  "S=", 2, &startPos2 );
+		if( length2 > 0 && length + length2 <= nameMaxLength && \
+						   length + length2 < MAX_ATTRIBUTE_SIZE )
+			{
+			memcpy( nameBuffer, encodedDn + startPos, length );
+			memcpy( nameBuffer + length, encodedDn + startPos2, length2 );
+			return( attributeCopyParams( name, nameMaxLength, nameLength, 
+										 nameBuffer, length + length2 ) );
+			}
+		}
+
+	/* We couldn't find anything useful */	
+	return( CRYPT_ERROR_NOTFOUND );
+	}
+
+static int getHolderName( CERT_INFO *certInfoPtr, void *certInfo, 
+						  int *certInfoLength )
+	{
+	STREAM stream;
+	const int maxLength = ( certInfoLength != NULL ) ? *certInfoLength : 0;
+	char encodedDnBuffer[ MAX_ATTRIBUTE_SIZE + 8 ];
+	int status;
+
+	/* First, we try for a CN */
+	status = getDNComponentValue( certInfoPtr->subjectName, 
+								  CRYPT_CERTINFO_COMMONNAME, certInfo, 
+								  certInfoLength, maxLength );
+	if( cryptStatusOK( status ) )
+		return( status );
+
+	/* If that fails, we try for either a pseudonym or givenName + surname.
+	   Since these are part of the vast collection of oddball DN attributes
+	   that aren't handled directly, we have to get the encoded DN form and
+	   look for them by OID (ugh) */
+	sMemOpen( &stream, encodedDnBuffer, MAX_ATTRIBUTE_SIZE );
+	status = writeDNstring( &stream, certInfoPtr->subjectName );
+	if( cryptStatusOK( status ) )
+		status = getNameFromDN( certInfo, maxLength, certInfoLength, 
+								encodedDnBuffer, stell( &stream ) );
+	sMemDisconnect( &stream );
+	if( cryptStatusOK( status ) )
+		return( status );
+
+	/* It's possible (although highly unlikely) that a certificate won't 
+	   have a usable CN-equivalent in some form, in which case we use the OU
+	   instead.  If that also fails, we use the O.  This gets a bit messy, 
+	   but duplicating the OU / O into the CN seems to be the best way to 
+	   handle this */
+	status = getDNComponentValue( certInfoPtr->subjectName, 
+								  CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, 
+								  certInfo, certInfoLength, maxLength );
+	if( cryptStatusError( status ) )
+		status = getDNComponentValue( certInfoPtr->subjectName, 
+									  CRYPT_CERTINFO_ORGANIZATIONNAME, 
+									  certInfo, certInfoLength, maxLength );
+	return( status );
+	}
+
+/* Get the certificate holder's URI, usually an email address but sometimes
+   also a URL */
+
+static int getHolderURI( CERT_INFO *certInfoPtr, void *certInfo, 
+						 int *certInfoLength )
+	{
+	ATTRIBUTE_LIST *attributeListPtr;
+
+	/* Find the subjectAltName, which contains the URI info */
+	attributeListPtr = findAttribute( certInfoPtr->attributes,
+									  CRYPT_CERTINFO_SUBJECTALTNAME, 
+									  TRUE );
+	if( attributeListPtr == NULL )
+		return( CRYPT_ERROR_NOTFOUND );
+
+	/* There's altName data present, try for an email address and if that 
+	   fails, a URL and a FQDN */
+	attributeListPtr = findAttributeField( attributeListPtr, 
+										   CRYPT_CERTINFO_SUBJECTALTNAME,
+										   CRYPT_CERTINFO_RFC822NAME );
+	if( attributeListPtr == NULL )
+		attributeListPtr = findAttributeField( attributeListPtr, 
+											   CRYPT_CERTINFO_SUBJECTALTNAME,
+											   CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER );
+	if( attributeListPtr == NULL )
+		attributeListPtr = findAttributeField( attributeListPtr, 
+											   CRYPT_CERTINFO_SUBJECTALTNAME,
+											   CRYPT_CERTINFO_DNSNAME );
+	if( attributeListPtr == NULL )
+		return( CRYPT_ERROR_NOTFOUND );
+	return( getCertAttributeComponentData( attributeListPtr, certInfo,
+										   certInfoLength ) );
 	}
 
 /* Get the ESSCertID for a certificate */
@@ -1057,6 +1200,68 @@ time_t *getRevocationTimePtr( CERT_INFO *certInfoPtr )
 		}
 
 	return( timePtr );
+	}
+
+/* Create a copy of a cert object for external use.  This is used 
+   principally to sanitise internal cert objects, for example if they're 
+   attached to a private key or internal-use only.  Since the object can be 
+   either a standalone cert or a complete cert chain, we have to process it 
+   somewhat indirectly rather than just instantiating a new cert from the 
+   encoded cert data.
+
+   It's also used to convert to/from data-only certs, for example to convert 
+   from a stored data-only cert to a full cert capable of being used for sig 
+   checking, this is easier than trying to retroactively attach a public-key 
+   context to a data-only cert */
+
+static int getCertCopy( CERT_INFO *certInfoPtr, CRYPT_CERTIFICATE *certCopy,
+						const BOOLEAN isDataOnlyCert )
+	{
+	const CRYPT_CERTFORMAT_TYPE formatType = \
+		( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE ) ? \
+		CRYPT_CERTFORMAT_CERTIFICATE : CRYPT_CERTFORMAT_CERTCHAIN;
+	MESSAGE_DATA msgData;
+	BYTE certData[ 2048 + 8 ], *certDataPtr = certData;
+	int status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO  ) ) );
+	assert( isWritePtr( certCopy, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+			certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
+
+	setMessageData( &msgData, certDataPtr, 2048 );
+	status = krnlSendMessage( certInfoPtr->objectHandle, 
+							  IMESSAGE_CRT_EXPORT, &msgData, 
+							  formatType );
+	if( status == CRYPT_ERROR_OVERFLOW )
+		{
+		if( ( certDataPtr = clAlloc( "getCertCopy", \
+									 msgData.length + 8 ) ) == NULL )
+			return( CRYPT_ERROR_MEMORY );
+		setMessageData( &msgData, certDataPtr, msgData.length );
+		status = krnlSendMessage( certInfoPtr->objectHandle,
+								  IMESSAGE_CRT_EXPORT, &msgData,
+								  formatType );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		MESSAGE_CREATEOBJECT_INFO createInfo;
+
+		setMessageCreateObjectIndirectInfo( &createInfo, certDataPtr,
+											msgData.length,
+											isDataOnlyCert ? \
+												CRYPT_ICERTTYPE_DATAONLY : \
+												certInfoPtr->type );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, 
+								  &createInfo, OBJECT_TYPE_CERTIFICATE );
+		if( cryptStatusOK( status ) )
+			*certCopy = createInfo.cryptHandle;
+		}
+	if( certDataPtr != certData )
+		clFree( "getCertCopy", certDataPtr );
+
+	return( status );
 	}
 
 /****************************************************************************
@@ -1232,8 +1437,8 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 
 					if( revInfoPtr != NULL )
 						{
-						data = revInfoPtr->dataPtr;
-						dataLength = revInfoPtr->dataLength;
+						data = revInfoPtr->idPtr;
+						dataLength = revInfoPtr->idLength;
 						}
 					break;
 					}
@@ -1388,6 +1593,12 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 		case CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER:
 			return( getIAndS( certInfoPtr, certInfo, certInfoLength ) );
 
+		case CRYPT_IATTRIBUTE_HOLDERNAME:
+			return( getHolderName( certInfoPtr, certInfo, certInfoLength ) );
+
+		case CRYPT_IATTRIBUTE_HOLDERURI:
+			return( getHolderURI( certInfoPtr, certInfo, certInfoLength ) );
+
 		case CRYPT_IATTRIBUTE_SPKI:
 			{
 			BYTE *dataStartPtr = certInfo;
@@ -1442,6 +1653,27 @@ int getCertComponent( CERT_INFO *certInfoPtr,
 
 		case CRYPT_IATTRIBUTE_ESSCERTID:
 			return( getESSCertID( certInfoPtr, certInfo, certInfoLength ) );
+
+		case CRYPT_IATTRIBUTE_CERTCOPY:
+			{
+			CRYPT_CERTIFICATE certCopy;
+			int status;
+
+			status = getCertCopy( certInfoPtr, &certCopy, FALSE );
+			if( cryptStatusError( status ) )
+				return( status );
+			return( copyCertInfoValue( certInfo, certCopy ) );
+			}
+		case CRYPT_IATTRIBUTE_CERTCOPY_DATAONLY:
+			{
+			CRYPT_CERTIFICATE certCopy;
+			int status;
+
+			status = getCertCopy( certInfoPtr, &certCopy, TRUE );
+			if( cryptStatusError( status ) )
+				return( status );
+			return( copyCertInfoValue( certInfo, certCopy ) );
+			}
 		}
 
 	/* Everything else isn't available */

@@ -507,13 +507,17 @@ static int readAlgoIDheader( STREAM *stream, CRYPT_ALGO_TYPE *algorithm,
 	if( parameter != NULL )
 		*parameter = algoParam;
 
-	/* If the user isn't interested in the algorithm parameters, skip them */
+	/* If the caller has specified that there should be no parameters 
+	   present, make sure that there's either no data or an ASN.1 NULL
+	   present, and nothing else */
 	if( extraLength == NULL )
-		return( ( length > 0 ) ? sSkip( stream, length ) : CRYPT_OK );
+		return( ( length > 0 ) ? readNull( stream ) : CRYPT_OK );
 
-	/* Handle any remaining parameters */
+	/* If the parameters are null parameters, check them and exit */
 	if( length == sizeofNull() )
 		return( readNull( stream ) );
+
+	/* Handle any remaining parameters */
 	*extraLength = ( int ) length;
 	return( CRYPT_OK );
 	}
@@ -1047,35 +1051,50 @@ int writeAlgoID( STREAM *stream, const CRYPT_ALGO_TYPE algorithm  )
 	return( writeAlgoIDex( stream, algorithm, CRYPT_ALGO_NONE, 0 ) );
 	}
 
-/* Read an AlgorithmIdentifier record */
+/* Read an AlgorithmIdentifier record.  There are three versions of 
+   this:
 
-int readAlgoIDex( STREAM *stream, CRYPT_ALGO_TYPE *algorithm,
-				  CRYPT_ALGO_TYPE *altCryptAlgo, int *extraLength )
+	readAlgoID: Reads an algorithm, assumes that there are no algorithm 
+		parameters present and returns an error if there are.
+
+	readAlgoIDext: Reads an algorithm and secondary algorithm or mode, 
+		assumes that there are no algorithm parameters present and returns 
+		an error if there are.
+
+	readAlgoIDparams: Reads an algorithm and the length of the extra 
+		information */
+
+int readAlgoID( STREAM *stream, CRYPT_ALGO_TYPE *algorithm )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( algorithm, sizeof( CRYPT_ALGO_TYPE ) ) );
+
+	return( readAlgoIDheader( stream, algorithm, NULL, NULL, DEFAULT_TAG ) );
+	}
+
+int readAlgoIDext( STREAM *stream, CRYPT_ALGO_TYPE *algorithm,
+				   CRYPT_ALGO_TYPE *altCryptAlgo )
 	{
 	int altAlgo, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( algorithm == NULL || \
-			isWritePtr( algorithm, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( altCryptAlgo == NULL || \
-			isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
-	assert( extraLength == NULL || \
-			isWritePtr( extraLength, sizeof( int ) ) );
+	assert( isWritePtr( algorithm, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 
-	status = readAlgoIDheader( stream, algorithm, &altAlgo, extraLength, 
-							   DEFAULT_TAG );
+	status = readAlgoIDheader( stream, algorithm, &altAlgo, NULL, DEFAULT_TAG );
 	if( cryptStatusOK( status ) && ( altCryptAlgo != NULL ) )
 		*altCryptAlgo = altAlgo;	/* enum vs. int conversion */
 	return( status );
 	}
 
-int readAlgoID( STREAM *stream, CRYPT_ALGO_TYPE *algorithm )
+int readAlgoIDparams( STREAM *stream, CRYPT_ALGO_TYPE *algorithm, 
+					  int *extraLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( algorithm == NULL || \
-			isWritePtr( algorithm, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( isWritePtr( algorithm, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( isWritePtr( extraLength, sizeof( int ) ) );
 
-	return( readAlgoIDheader( stream, algorithm, NULL, NULL, DEFAULT_TAG ) );
+	return( readAlgoIDheader( stream, algorithm, NULL, extraLength, DEFAULT_TAG ) );
 	}
 
 /* Determine the size of an AlgorithmIdentifier record from an encryption

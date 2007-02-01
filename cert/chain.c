@@ -988,7 +988,7 @@ int readCertChain( STREAM *stream, CRYPT_CERTIFICATE *iCryptCert,
 		status = importCert( sMemBufPtr( stream ), sMemDataLeft( stream ),
 							 &iNewCert, cryptOwner, CRYPT_KEYID_NONE,
 							 NULL, 0, dataOnlyCert ? \
-								CERTFORMAT_DATAONLY : \
+								CRYPT_ICERTTYPE_DATAONLY : \
 								CRYPT_CERTTYPE_CERTIFICATE );
 		if( cryptStatusOK( status ) )
 			{
@@ -1198,7 +1198,7 @@ static int writeCertPath( STREAM *stream, const CERT_INFO *certInfoPtr,
 			}
 		status = exportCertToStream( stream,
 									 certInfoPtr->cCertCert->chain[ i ], 
-									 CRYPT_CERTTYPE_CERTIFICATE );
+									 CRYPT_CERTFORMAT_CERTIFICATE );
 		}
 	if( i >= MAX_CHAINLENGTH )
 		retIntError();

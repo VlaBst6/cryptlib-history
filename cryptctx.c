@@ -226,13 +226,20 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	int status;
+	int status = CRYPT_OK;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( contextInfoPtr->type == CONTEXT_CONV || \
 			contextInfoPtr->type == CONTEXT_MAC );
 	assert( needsKey( contextInfoPtr ) );
 	assert( isReadPtr( keyValue, keyValueLen ) );
+
+	/* If it's a persistent context, we need to have a key label set before 
+	   we can continue */
+	if( ( contextInfoPtr->flags & CONTEXT_PERSISTENT ) && \
+		contextInfoPtr->labelSize <= 0 )
+		return( exitErrorNotInited( contextInfoPtr, 
+									CRYPT_CTXINFO_LABEL ) );
 
 	/* Set up various derivation parameters if they're not already set.  
 	   Since there's only one MUST MAC algorithm for PKCS #5v2, we always 
@@ -263,9 +270,12 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 				convInfo->keySetupIterations );
 		if( mechanismInfo.iterations <= 0 )
 			{
-			krnlSendMessage( contextInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE, 
-							 &mechanismInfo.iterations, 
-							 CRYPT_OPTION_KEYING_ITERATIONS );
+			status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+									  IMESSAGE_GETATTRIBUTE, 
+									  &mechanismInfo.iterations, 
+									  CRYPT_OPTION_KEYING_ITERATIONS );
+			if( cryptStatusError( status ) )
+				return( status );
 			convInfo->keySetupIterations = mechanismInfo.iterations;
 			}
 		}
@@ -294,9 +304,12 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 				macInfo->keySetupIterations );
 		if( mechanismInfo.iterations <= 0 )
 			{
-			krnlSendMessage( contextInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE, 
-							 &mechanismInfo.iterations, 
-							 CRYPT_OPTION_KEYING_ITERATIONS );
+			status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+									  IMESSAGE_GETATTRIBUTE, 
+									  &mechanismInfo.iterations, 
+									  CRYPT_OPTION_KEYING_ITERATIONS );
+			if( cryptStatusError( status ) )
+				return( status );
 			macInfo->keySetupIterations = mechanismInfo.iterations;
 			}
 		}
@@ -310,11 +323,7 @@ static int deriveKey( CONTEXT_INFO *contextInfoPtr, void *keyValue,
 												  mechanismInfo.dataOut,
 												  mechanismInfo.dataOutLength );
 	if( cryptStatusOK( status ) )
-		{
-		contextInfoPtr->flags |= CONTEXT_KEY_SET | CONTEXT_EPHEMERAL;
-		if( contextInfoPtr->type == CONTEXT_MAC )
-			contextInfoPtr->flags |= CONTEXT_HASH_INITED;
-		}
+		contextInfoPtr->flags |= CONTEXT_KEY_SET;
 	return( status );
 	}
 
@@ -437,6 +446,8 @@ static int setKey( CONTEXT_INFO *contextInfoPtr,
 
 /* Load a composite key into a context */
 
+#ifndef USE_FIPS140
+
 static int setKeyComponents( CONTEXT_INFO *contextInfoPtr, 
 							 const void *keyData, const int keyDataLen )
 	{
@@ -444,6 +455,7 @@ static int setKeyComponents( CONTEXT_INFO *contextInfoPtr,
 		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_ALL );
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	BOOLEAN isPublicKey;
 	int status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
@@ -451,10 +463,21 @@ static int setKeyComponents( CONTEXT_INFO *contextInfoPtr,
 	assert( needsKey( contextInfoPtr ) );
 	assert( isReadPtr( keyData, keyDataLen ) );
 	assert( keyDataLen == sizeof( CRYPT_PKCINFO_RSA ) || \
-			keyDataLen == sizeof( CRYPT_PKCINFO_DLP ) );
+			keyDataLen == sizeof( CRYPT_PKCINFO_DLP ) || \
+			keyDataLen == sizeof( CRYPT_PKCINFO_ECC ) );
 
-	/* We need to have a key label set before we can continue */
-	if( contextInfoPtr->labelSize <= 0 )
+	/* If it's a private key we need to have a key label set before we can 
+	   continue.  The checking for this is a bit complex because at this
+	   point all that the context knows is that it's a generic PKC context,
+	   but it won't know whether it's a public- or private-key context until
+	   the key is actually loaded.  To determine what it'll become, we look
+	   into the key data to see what's being loaded */
+	isPublicKey = isEccAlgo( capabilityInfoPtr->cryptAlgo ) ? \
+					( ( CRYPT_PKCINFO_ECC * ) keyData )->isPublicKey : \
+				  isDlpAlgo( capabilityInfoPtr->cryptAlgo ) ? \
+					( ( CRYPT_PKCINFO_DLP * ) keyData )->isPublicKey : \
+					( ( CRYPT_PKCINFO_RSA * ) keyData )->isPublicKey;
+	if( !isPublicKey && contextInfoPtr->labelSize <= 0 )
 		return( exitErrorNotInited( contextInfoPtr, CRYPT_CTXINFO_LABEL ) );
 
 	/* Load the key components into the context */
@@ -462,7 +485,7 @@ static int setKeyComponents( CONTEXT_INFO *contextInfoPtr,
 											  keyDataLen );
 	if( cryptStatusError( status ) )
 		return( status );
-	contextInfoPtr->flags |= CONTEXT_KEY_SET | CONTEXT_EPHEMERAL | CONTEXT_PBO;
+	contextInfoPtr->flags |= CONTEXT_KEY_SET | CONTEXT_PBO;
 
 	/* Restrict the key usage to public-key-only actions if it's a public 
 	   key.  DH keys act as both public and private keys so we don't 
@@ -475,6 +498,7 @@ static int setKeyComponents( CONTEXT_INFO *contextInfoPtr,
 								  CRYPT_IATTRIBUTE_ACTIONPERMS );
 	return( status );
 	}
+#endif /* !USE_FIPS140 */
 
 /* Encrypt a block of data */
 
@@ -710,6 +734,11 @@ static int processGetAttribute( CONTEXT_INFO *contextInfoPtr,
 			*valuePtr = value;
 			return( CRYPT_OK );
 
+		case CRYPT_CTXINFO_PERSISTENT:
+			*valuePtr = ( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ? \
+						TRUE : FALSE;
+			return( CRYPT_OK );
+
 		case CRYPT_IATTRIBUTE_KEYFEATURES:
 			assert( contextType == CONTEXT_PKC );
 			*valuePtr = ( contextInfoPtr->flags & CONTEXT_PBO ) ? 1 : 0;
@@ -849,10 +878,12 @@ static int processGetAttributeS( CONTEXT_INFO *contextInfoPtr,
 			assert( contextType == CONTEXT_PKC );
 			assert( contextInfoPtr->flags & CONTEXT_KEY_SET );
 			if( contextInfoPtr->ctxPKC->publicKeyInfo != NULL )
+				{
 				/* If the data is available in pre-encoded form, copy it
 				   out */
 				return( attributeCopy( msgData, contextInfoPtr->ctxPKC->publicKeyInfo,
 									   contextInfoPtr->ctxPKC->publicKeyInfoSize ) );
+				}
 			/* Drop through */
 
 		case CRYPT_IATTRIBUTE_KEY_SSH:
@@ -985,10 +1016,51 @@ static int processSetAttribute( CONTEXT_INFO *contextInfoPtr,
 			*valuePtr = value;
 			return( CRYPT_OK );
 
+		case CRYPT_CTXINFO_PERSISTENT:
+			/* The is-object-persistent attribute functions as follows:
+
+					 | Software	| Hardware
+				-----+----------+-------------------
+				PKC	 | R/O (1)	| R/O (2)
+				-----+----------+-------------------
+				Conv | R/O (1)	| R/W low state (3)
+					 |			| R/O high state
+
+			   (1) = Set if stored to or read from a keyset.
+			   (2) = Always set.  Private-key objects are automatically
+					 created as persistent objects, public-key objects
+					 are (transparently) created as software objects since
+					 the operation is much faster on the host system than
+					 by going via the device.
+			   (3) = Can be set in the low state, if set then the object
+					 is created as a persistent object in the device.
+
+			   Most of these checks are enforced by the kernel, the one 
+			   thing that the ACL language can't specify is the requirement 
+			   that a persistent conventional-encryption object be tied to
+			   a device, which we do explicitly here */
+			if( value && !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+				return( CRYPT_ERROR_PERMISSION );
+
+			/* Set or clear the persistent flag as required */
+			if( value )
+				contextInfoPtr->flags |= CONTEXT_PERSISTENT;
+			else
+				contextInfoPtr->flags &= ~CONTEXT_PERSISTENT;
+			return( CRYPT_OK );
+
 		case CRYPT_IATTRIBUTE_INITIALISED:
 			return( CRYPT_OK );
 
 		case CRYPT_IATTRIBUTE_KEYSIZE:
+			/* If it's a private key context or a persistent context, we 
+			   need to have a key label set before we can continue */
+			if( ( ( contextInfoPtr->type == CONTEXT_PKC ) || \
+				  ( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ) && \
+				contextInfoPtr->labelSize <= 0 )
+				return( exitErrorNotInited( contextInfoPtr, 
+											CRYPT_CTXINFO_LABEL ) );
+
 			/* If the key is held outside the context (e.g. in a device), we
 			   need to manually supply the key-related information needed by 
 			   the context, which in this case is the key size.  Once this 
@@ -1001,10 +1073,6 @@ static int processSetAttribute( CONTEXT_INFO *contextInfoPtr,
 					break;
 
 				case CONTEXT_PKC:
-					if( contextInfoPtr->labelSize <= 0 )
-						/* PKC context must have a key label set */
-						return( exitErrorNotInited( contextInfoPtr,
-													CRYPT_CTXINFO_LABEL ) );
 					contextInfoPtr->ctxPKC->keySizeBits = bytesToBits( value );
 					break;
 
@@ -1070,6 +1138,13 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 					contextType == CONTEXT_MAC );
 			assert( needsKey( contextInfoPtr ) );
 
+			/* If it's a persistent context, we need to have a key label set 
+			   before we can continue */
+			if( ( contextInfoPtr->flags & CONTEXT_PERSISTENT ) && \
+				contextInfoPtr->labelSize <= 0 )
+				return( exitErrorNotInited( contextInfoPtr, 
+											CRYPT_CTXINFO_LABEL ) );
+
 			/* The kernel performs a general check on the size of this
 			   attribute but doesn't know about context subtype-specific
 			   limits, so we perform a context-specific check here */
@@ -1081,18 +1156,14 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 			status = contextInfoPtr->loadKeyFunction( contextInfoPtr,
 										msgData->data, msgData->length );
 			if( cryptStatusOK( status ) )
-				{
-				contextInfoPtr->flags |= CONTEXT_KEY_SET | CONTEXT_EPHEMERAL;
-				if( contextType == CONTEXT_MAC )
-					contextInfoPtr->flags |= CONTEXT_HASH_INITED;
-				}
+				contextInfoPtr->flags |= CONTEXT_KEY_SET;
 			return( status );
 
 #ifndef USE_FIPS140
 		case CRYPT_CTXINFO_KEY_COMPONENTS:
 			return( setKeyComponents( contextInfoPtr, msgData->data, 
 									  msgData->length ) );
-#endif /* USE_FIPS140 */
+#endif /* !USE_FIPS140 */
 
 		case CRYPT_CTXINFO_IV:
 			assert( contextType == CONTEXT_CONV );
@@ -1113,6 +1184,9 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 								msgData->data, msgData->length, CRYPT_MODE_NONE ) );
 
 		case CRYPT_CTXINFO_LABEL:
+			{
+			CRYPT_HANDLE cryptHandle;
+
 			if( contextInfoPtr->labelSize > 0 )
 				return( exitErrorInited( contextInfoPtr,
 										 CRYPT_CTXINFO_LABEL ) );
@@ -1126,45 +1200,61 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 			   context creation, on key load/generation, or at some other 
 			   point).  Because of this we perform a pre-emptive check for 
 			   duplicates to avoid a potentially confusing error condition 
-			   at some point in the future.  In addition, we can't send the 
-			   message to the context because the kernel won't forward this 
-			   message type (sending a get-key message to a context doesn't 
-			   make sense) so we have to explicitly get the dependent device 
-			   and send the get-key directly to it */
-			if( contextType == CONTEXT_PKC )
+			   at some point in the future.  Since objects are typed, we 
+			   have to check for the three possible { label, type }
+			   combinations.  In theory we could require that labels are
+			   only unique for an object type, but this can lead to problems
+			   with underlying devices or keysets that only support a check
+			   by label and not by { label, type } combination.
+			   
+			   In addition, we can't send the message to the context because 
+			   the kernel won't forward this message type (sending a get-key 
+			   message to a context doesn't make sense) so we have to 
+			   explicitly get the dependent device and send the get-key 
+			   directly to it */
+			status = krnlSendMessage( contextInfoPtr->objectHandle,
+									  IMESSAGE_GETDEPENDENT, &cryptHandle, 
+									  OBJECT_TYPE_DEVICE );
+			if( cryptStatusOK( status ) && \
+				( cryptHandle != SYSTEM_OBJECT_HANDLE ) )
 				{
-				CRYPT_HANDLE cryptHandle;
+				MESSAGE_KEYMGMT_INFO getkeyInfo;
 
-				status = krnlSendMessage( contextInfoPtr->objectHandle,
-										  IMESSAGE_GETDEPENDENT,
-										  &cryptHandle, OBJECT_TYPE_DEVICE );
+				setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, 
+									   msgData->data, msgData->length, 
+									   NULL, 0, KEYMGMT_FLAG_CHECK_ONLY );
+				status = krnlSendMessage( cryptHandle, IMESSAGE_KEY_GETKEY, 
+										  &getkeyInfo, KEYMGMT_ITEM_SECRETKEY );
+				if( cryptStatusError( status ) )
+					status = krnlSendMessage( cryptHandle, IMESSAGE_KEY_GETKEY, 
+											  &getkeyInfo,
+											  KEYMGMT_ITEM_PUBLICKEY );
+				if( cryptStatusError( status ) )
+					status = krnlSendMessage( cryptHandle, IMESSAGE_KEY_GETKEY, 
+											  &getkeyInfo,
+											  KEYMGMT_ITEM_PRIVATEKEY );
 				if( cryptStatusOK( status ) )
 					{
-					MESSAGE_KEYMGMT_INFO getkeyInfo;
-
-					setMessageKeymgmtInfo( &getkeyInfo,
-										CRYPT_KEYID_NAME, msgData->data,
-										msgData->length, NULL, 0,
-										KEYMGMT_FLAG_CHECK_ONLY );
-					status = krnlSendMessage( contextInfoPtr->objectHandle,
-										MESSAGE_KEY_GETKEY, &getkeyInfo,
-										KEYMGMT_ITEM_PUBLICKEY );
-					if( cryptStatusError( status ) )
-						{
-						setMessageKeymgmtInfo( &getkeyInfo,
-										CRYPT_KEYID_NAME, msgData->data,
-										msgData->length, NULL, 0,
-										KEYMGMT_FLAG_CHECK_ONLY );
-						status = krnlSendMessage( contextInfoPtr->objectHandle,
-										MESSAGE_KEY_GETKEY, &getkeyInfo,
-										KEYMGMT_ITEM_PRIVATEKEY );
-						}
-					if( cryptStatusOK( status ) )
-						/* We found something with this label already 
-						   present, we can't use it again */
-						return( CRYPT_ERROR_DUPLICATE );
+					/* We've found something with this label already 
+					   present, we can't use it again */
+					return( CRYPT_ERROR_DUPLICATE );
 					}
+				assert( !cryptArgError( status ) );
 				}
+			
+			/* Fall through */
+			}
+
+		case CRYPT_IATTRIBUTE_EXISTINGLABEL:
+			/* The difference between CRYPT_CTXINFO_LABEL and 
+			   CRYPT_IATTRIBUTE_EXISTINGLABEL is that the latter is used to 
+			   set a label for a context that's being instantiated from a 
+			   persistent object in a device.  We can't perform the 
+			   duplicate-label check in this case because we'll always get a 
+			   match for the device object's label */
+			if( contextInfoPtr->labelSize > 0 )
+				return( exitErrorInited( contextInfoPtr,
+										 CRYPT_CTXINFO_LABEL ) );
 
 			/* Set the label */
 			memcpy( contextInfoPtr->label, msgData->data, msgData->length );
@@ -1180,6 +1270,15 @@ static int processSetAttributeS( CONTEXT_INFO *contextInfoPtr,
 			memcpy( contextInfoPtr->ctxPKC->openPgpKeyID, msgData->data,
 					msgData->length );
 			contextInfoPtr->ctxPKC->openPgpKeyIDSet = TRUE;
+
+			/* If it's a non-PGP 2.x key type, set the PGP 2.x keyID to the 
+			   OpenPGP keyID.  This is necessary because non-PGP 2.x keys can
+			   be used with PGP 2.x message formats which would imply the use 
+			   of a PGP 2.x keyID, except that it's not defined for this key 
+			   type */
+			if( contextInfoPtr->capabilityInfo->cryptAlgo != CRYPT_ALGO_RSA )
+				memcpy( contextInfoPtr->ctxPKC->pgpKeyID, 
+						contextInfoPtr->ctxPKC->openPgpKeyID, PGP_KEYID_SIZE );
 			return( CRYPT_OK );
 
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
@@ -1314,7 +1413,7 @@ static int processDeleteAttribute( CONTEXT_INFO *contextInfoPtr,
 
 /* Handle a message sent to an encryption context */
 
-static int contextMessageFunction( const void *objectInfoPtr,
+static int contextMessageFunction( void *objectInfoPtr,
 								   const MESSAGE_TYPE message,
 								   void *messageDataPtr,
 								   const int messageValue )
@@ -1619,22 +1718,20 @@ static int contextMessageFunction( const void *objectInfoPtr,
 				contextInfoPtr->type == CONTEXT_PKC );
 		assert( needsKey( contextInfoPtr ) );
 
-		/* If it's a private key context, we need to have a key label set
-		   before we can continue */
-		if( contextInfoPtr->type == CONTEXT_PKC && \
+		/* If it's a private key context or a persistent context, we need to 
+		   have a key label set before we can continue */
+		if( ( ( contextInfoPtr->type == CONTEXT_PKC ) || \
+			  ( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ) && \
 			contextInfoPtr->labelSize <= 0 )
-			{
-			setErrorInfo( contextInfoPtr, CRYPT_CTXINFO_LABEL,
-						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			return( CRYPT_ERROR_NOTINITED );
-			}
+			return( exitErrorNotInited( contextInfoPtr, 
+										CRYPT_CTXINFO_LABEL ) );
 
 		/* Generate a new key into the context */
 		status = contextInfoPtr->generateKeyFunction( contextInfoPtr,
 													  messageValue );
 		if( cryptStatusOK( status ) )
 			/* There's now a key loaded */
-			contextInfoPtr->flags |= CONTEXT_KEY_SET | CONTEXT_EPHEMERAL;
+			contextInfoPtr->flags |= CONTEXT_KEY_SET;
 		else
 			/* If the status is OK_SPECIAL, it's an async keygen that has
 			   begun, but that hasn't resulted in the context containing a 
@@ -1711,8 +1808,7 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 							( needsSecureMemory( contextType ) ? \
 							CREATEOBJECT_FLAG_SECUREMALLOC : 0 );
 	int actionFlags = 0, actionPerms = ACTION_PERM_ALL;
-	int storageSize, stateStorageSize = 0;
-	int initStatus = CRYPT_OK, status;
+	int storageSize, stateStorageSize = 0, status;
 
 	assert( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST_MAC );
 
@@ -1890,7 +1986,8 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 	assert( contextInfoPtr->type == CONTEXT_HASH || \
 			( contextInfoPtr->loadKeyFunction != NULL && \
 			  contextInfoPtr->generateKeyFunction != NULL ) );
-	assert( cryptAlgo == CRYPT_ALGO_DSA || \
+	assert( ( cryptAlgo == CRYPT_ALGO_DSA || \
+			  cryptAlgo == CRYPT_ALGO_ECDSA ) || \
 			( contextInfoPtr->encryptFunction != NULL && \
 			  contextInfoPtr->decryptFunction != NULL ) );
 	assert( contextInfoPtr->type != CONTEXT_PKC || \
@@ -1900,30 +1997,32 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 			  contextInfoPtr->ctxPKC->readPrivateKeyFunction != NULL ) );
 
 	/* If this is a dummy object, remember that it's just a placeholder, 
-	   with actions handled externally */
+	   with actions handled externally.  If it's a persistent object (backed
+	   by a permanent key in a crypto device), record this */
 	if( objectFlags & CREATEOBJECT_FLAG_DUMMY )
 		contextInfoPtr->flags |= CONTEXT_DUMMY;
+	if( objectFlags & CREATEOBJECT_FLAG_PERSISTENT )
+		contextInfoPtr->flags |= CONTEXT_PERSISTENT;
 
 	/* We've finished setting up the object type-specific info, tell the
 	   kernel that the object is ready for use */
 	status = krnlSendMessage( *cryptContext, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
-	if( cryptStatusError( initStatus ) )
-		/* The initialisation failed, make the init error the returned status
-		   value */
-		status = initStatus;
+	if( cryptStatusOK( status ) && contextInfoPtr->type == CONTEXT_HASH )
+		{
+		/* If it's a hash context there's no explicit keygen or load so we
+		   need to send an "object initialised" message to get the kernel to
+		   move it into the high state.  If this isn't done, any attempt to
+		   use the object will be blocked */
+		status = krnlSendMessage( *cryptContext, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_UNUSED, 
+								  CRYPT_IATTRIBUTE_INITIALISED );
+		}
 	if( cryptStatusError( status ) )
 		{
 		*cryptContext = CRYPT_ERROR;
 		return( status );
 		}
-	if( contextInfoPtr->type == CONTEXT_HASH )
-		/* If it's a hash context there's no explicit keygen or load so we
-		   need to send an "object initialised" message to get the kernel to
-		   move it into the high state.  If this isn't done, any attempt to
-		   use the object will be blocked */
-		krnlSendMessage( *cryptContext, IMESSAGE_SETATTRIBUTE,
-						 MESSAGE_VALUE_UNUSED, CRYPT_IATTRIBUTE_INITIALISED );
 	return( CRYPT_OK );
 	}
 
@@ -1937,11 +2036,8 @@ int createContext( MESSAGE_CREATEOBJECT_INFO *createInfo,
 	int status;
 
 	assert( auxDataPtr != NULL );
-
-	/* Perform basic error checking */
-	if( createInfo->arg1 <= CRYPT_ALGO_NONE || \
-		createInfo->arg1 >= CRYPT_ALGO_LAST )
-		return( CRYPT_ARGERROR_NUM1 );
+	assert( createInfo->arg1 > CRYPT_ALGO_NONE && \
+			createInfo->arg1 < CRYPT_ALGO_LAST );
 
 	/* Find the capability corresponding to the algorithm */
 	capabilityInfoPtr = findCapabilityInfo( auxDataPtr, createInfo->arg1 );

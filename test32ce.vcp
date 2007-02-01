@@ -11,16 +11,16 @@
 CFG=Test32 - Win32 (WCE SH3) Debug
 !MESSAGE This is not a valid makefile. To build this project using NMAKE,
 !MESSAGE use the Export Makefile command and run
-!MESSAGE
+!MESSAGE 
 !MESSAGE NMAKE /f "test32ce.vcn".
-!MESSAGE
+!MESSAGE 
 !MESSAGE You can specify a configuration when running NMAKE
 !MESSAGE by defining the macro CFG on the command line. For example:
-!MESSAGE
+!MESSAGE 
 !MESSAGE NMAKE /f "test32ce.vcn" CFG="Test32 - Win32 (WCE SH3) Debug"
-!MESSAGE
+!MESSAGE 
 !MESSAGE Possible choices for configuration are:
-!MESSAGE
+!MESSAGE 
 !MESSAGE "Test32 - Win32 (WCE SH3) Release" (based on "Win32 (WCE SH3) Application")
 !MESSAGE "Test32 - Win32 (WCE SH3) Debug" (based on "Win32 (WCE SH3) Application")
 !MESSAGE "Test32 - Win32 (WCE MIPSIV) Release" (based on "Win32 (WCE MIPSIV) Application")
@@ -31,7 +31,7 @@ CFG=Test32 - Win32 (WCE SH3) Debug
 !MESSAGE "Test32 - Win32 (WCE ARMV4) Debug" (based on "Win32 (WCE ARMV4) Application")
 !MESSAGE "Test32 - Win32 (WCE x86) Release" (based on "Win32 (WCE x86) Application")
 !MESSAGE "Test32 - Win32 (WCE x86) Debug" (based on "Win32 (WCE x86) Application")
-!MESSAGE
+!MESSAGE 
 
 # Begin Project
 # PROP AllowPerConfigDependencies 0
@@ -359,7 +359,7 @@ RSC=rc.exe
 # ADD RSC /l 0x409 /d "$(CePlatform)" /d UNDER_CE=$(CEVersion) /d _WIN32_WCE=$(CEVersion) /d "UNICODE" /d "_UNICODE" /d "DEBUG" /d "_X86_" /d "x86" /d "_i386_" /r
 CPP=cl.exe
 # ADD BASE CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "_i386_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "i_386_" /D "UNICODE" /D "_UNICODE" /D "_X86_" /D "x86" /YX /Gs8192 /GF /c
-# ADD CPP /nologo /W3 /Zi /Od /D "DEBUG" /D "_i386_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "i_386_" /D "UNICODE" /D "_UNICODE" /D "_X86_" /D "x86" /YX /Gs8192 /GF /c
+# ADD CPP /nologo /W3 /Zi /Od /I ".\\" /D "DEBUG" /D "_i386_" /D UNDER_CE=$(CEVersion) /D _WIN32_WCE=$(CEVersion) /D "$(CePlatform)" /D "i_386_" /D "UNICODE" /D "_UNICODE" /D "_X86_" /D "x86" /YX /Gs8192 /GF /c
 MTL=midl.exe
 # ADD BASE MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
 # ADD MTL /nologo /D "_DEBUG" /mktyplib203 /o "NUL" /win32
@@ -370,7 +370,7 @@ LINK32=link.exe
 # ADD BASE LINK32 commctrl.lib coredll.lib $(CEx86Corelibc) /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"WinMainCRTStartup" /debug /nodefaultlib:"OLDNAMES.lib" /nodefaultlib:$(CENoDefaultLib) /subsystem:$(CESubsystem) /MACHINE:IX86
 # ADD LINK32 $(CEx86Corelibc) coredll.lib /nologo /base:"0x00010000" /stack:0x10000,0x1000 /entry:"mainACRTStartup" /debug /nodefaultlib:"OLDNAMES.lib" /nodefaultlib:$(CENoDefaultLib) /subsystem:$(CESubsystem) /MACHINE:IX86
 
-!ENDIF
+!ENDIF 
 
 # Begin Target
 
@@ -397,12 +397,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -410,12 +410,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -423,12 +423,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -436,12 +436,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -449,12 +449,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -462,12 +462,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -475,12 +475,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -488,12 +488,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -501,12 +501,12 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_CERTS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -514,14 +514,9 @@ DEP_CPP_CERTS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_CERTS=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -534,12 +529,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -547,12 +542,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -560,12 +555,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -573,12 +568,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -586,12 +581,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -599,12 +594,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -612,12 +607,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -625,12 +620,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -638,12 +633,12 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_DEVIC=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -651,14 +646,9 @@ DEP_CPP_DEVIC=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_DEVIC=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -671,12 +661,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -684,12 +674,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -697,12 +687,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -710,12 +700,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -723,12 +713,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -736,12 +726,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -749,12 +739,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -762,12 +752,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -775,12 +765,12 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_ENVEL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -788,14 +778,9 @@ DEP_CPP_ENVEL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_ENVEL=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -808,12 +793,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -821,12 +806,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -834,12 +819,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -847,12 +832,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -860,12 +845,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -873,12 +858,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -886,12 +871,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -899,12 +884,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -912,12 +897,12 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_HIGHL=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -925,14 +910,9 @@ DEP_CPP_HIGHL=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_HIGHL=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -945,12 +925,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -958,12 +938,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -971,12 +951,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -984,12 +964,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -997,12 +977,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -1010,12 +990,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -1023,12 +1003,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -1036,12 +1016,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -1049,12 +1029,12 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYDB=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -1062,14 +1042,9 @@ DEP_CPP_KEYDB=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_KEYDB=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1082,12 +1057,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -1095,12 +1070,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -1108,12 +1083,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -1121,12 +1096,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -1134,12 +1109,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -1147,12 +1122,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -1160,12 +1135,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -1173,12 +1148,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -1186,12 +1161,12 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_KEYFI=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -1199,14 +1174,9 @@ DEP_CPP_KEYFI=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_KEYFI=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1215,135 +1185,130 @@ SOURCE=.\test\loadkey.c
 
 !IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
-NODEP_CPP_KEYLO=\
+	
+NODEP_CPP_LOADK=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
-DEP_CPP_KEYLO=\
+DEP_CPP_LOADK=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_KEYLO=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1354,173 +1319,176 @@ SOURCE=.\test\lowlvl.c
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
 DEP_CPP_LOWLV=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
+	".\misc\config.h"\
+	".\misc\consts.h"\
+	".\misc\int_api.h"\
+	".\misc\os_spec.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_LOWLV=\
-	".\test\crypt.h"\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
+	".\config.h"\
+	".\consts.h"\
+	".\int_api.h"\
+	".\os_spec.h"\
+	
 
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1533,12 +1501,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -1546,12 +1514,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -1559,12 +1527,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -1572,12 +1540,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -1585,12 +1553,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -1598,12 +1566,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -1611,12 +1579,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -1624,12 +1592,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -1637,12 +1605,12 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SCERT=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -1650,14 +1618,9 @@ DEP_CPP_SCERT=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_SCERT=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1670,12 +1633,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -1683,12 +1646,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -1696,12 +1659,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -1709,12 +1672,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -1722,12 +1685,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -1735,12 +1698,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -1748,12 +1711,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -1761,12 +1724,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -1774,12 +1737,12 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SREQR=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -1787,14 +1750,9 @@ DEP_CPP_SREQR=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_SREQR=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -1807,30 +1765,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -1838,30 +1796,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -1869,30 +1827,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -1900,30 +1858,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -1931,30 +1889,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -1962,30 +1920,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -1993,30 +1951,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -2024,30 +1982,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -2055,30 +2013,30 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSH_C=\
 	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
 	".\crypt\crypt.h"\
+	".\cryptini.h"\
 	".\misc\bn.h"\
 	".\misc\bn\bn.h"\
 	".\misc\crypt.h"\
 	".\misc\misc\misc_rw.h"\
 	".\misc\misc\stream.h"\
+	".\misc\stream.h"\
 	".\test\cryptlib.h"\
 	".\test\misc\misc_rw.c"\
 	".\test\misc_rw.c"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -2086,32 +2044,31 @@ DEP_CPP_SSH_C=\
 	".\bn\bn.h"\
 	".\crypt.h"\
 	".\crypt\osconfig.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
+	".\io\stream.h"\
+	".\misc\config.h"\
+	".\misc\consts.h"\
+	".\misc\int_api.h"\
 	".\misc\misc_rw.c"\
 	".\misc\misc_rw.h"\
-	".\misc\stream.h"\
+	".\misc\os_spec.h"\
+	".\misc\pgp.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	{$(INCLUDE)}"stream.h"\
+	
 NODEP_CPP_SSH_C=\
-	".\bn\crypt\osconfig.h"\
 	".\bn\osconfig.h"\
-	".\crypt\crypt.h"\
+	".\config.h"\
+	".\consts.h"\
+	".\int_api.h"\
 	".\misc\bn.h"\
-	".\misc\bn\bn.h"\
-	".\misc\crypt.h"\
-	".\misc\misc\misc_rw.h"\
-	".\misc\misc\stream.h"\
-	".\test\cryptlib.h"\
-	".\test\misc\misc_rw.c"\
+	".\os_spec.h"\
 	".\test\misc_rw.c"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
+	
 
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -2124,12 +2081,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -2137,12 +2094,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -2150,12 +2107,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -2163,12 +2120,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -2176,12 +2133,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -2189,12 +2146,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -2202,12 +2159,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -2215,12 +2172,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -2228,12 +2185,12 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_SSL_C=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -2241,14 +2198,9 @@ DEP_CPP_SSL_C=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_SSL_C=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -2261,12 +2213,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -2274,12 +2226,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -2287,12 +2239,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -2300,12 +2252,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -2313,12 +2265,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -2326,12 +2278,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -2339,12 +2291,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -2352,12 +2304,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -2365,12 +2317,12 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_STRES=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -2378,14 +2330,9 @@ DEP_CPP_STRES=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_STRES=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -2396,173 +2343,177 @@ SOURCE=.\test\testlib.c
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
+	".\cryptini.h"\
 	".\test\crypt.h"\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
 DEP_CPP_TESTL=\
 	".\crypt.h"\
-	".\cryptini.h"\
 	".\cryptkrn.h"\
 	".\cryptlib.h"\
+	".\misc\config.h"\
+	".\misc\consts.h"\
+	".\misc\int_api.h"\
+	".\misc\os_spec.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_TESTL=\
-	".\test\crypt.h"\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
+	".\config.h"\
+	".\consts.h"\
+	".\int_api.h"\
+	".\os_spec.h"\
+	".\test\binaries\vld.h"\
+	
 
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File
@@ -2575,12 +2526,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
@@ -2588,12 +2539,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
@@ -2601,12 +2552,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
@@ -2614,12 +2565,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
@@ -2627,12 +2578,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
@@ -2640,12 +2591,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
@@ -2653,12 +2604,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
@@ -2666,12 +2617,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
@@ -2679,12 +2630,12 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
-
+	
 NODEP_CPP_UTILS=\
 	".\test\cryptlib.h"\
 	".\test\test\filename.h"\
 	".\test\test\test.h"\
-
+	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
@@ -2692,14 +2643,9 @@ DEP_CPP_UTILS=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\
+	
 
-NODEP_CPP_UTILS=\
-	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
-	".\test\test\test.h"\
-
-
-!ENDIF
+!ENDIF 
 
 # End Source File
 # Begin Source File

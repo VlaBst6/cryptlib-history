@@ -8,14 +8,14 @@
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "stream.h"
+  #include "asn1.h"
 #else
   #include "crypt.h"
   #include "io/stream.h"
+  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
-/* Base64 encode/decode tables from RFC 1113.  We convert from ASCII <->
-   EBCDIC on entry and exit, so there's no need for special-case EBCDIC
-   handling elsewhere */
+/* Base64 encode/decode tables from RFC 1113 */
 
 #define BPAD		'='		/* Padding for odd-sized output */
 #define BERR		0xFF	/* Illegal char marker */
@@ -23,8 +23,6 @@
 
 static const char FAR_BSS binToAscii[] = \
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-#ifndef EBCDIC_CHARS
 
 static const BYTE FAR_BSS asciiToBin[ 256 ] =
 	{ BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 00 */
@@ -60,56 +58,6 @@ static const BYTE FAR_BSS asciiToBin[ 256 ] =
 	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* F0 */
 	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR
 	};
-
-#else
-
-/* EBCDIC character mappings:
-		A-I C1-C9
-		J-R D1-D9
-		S-Z E2-E9
-		a-i 81-89
-		j-r 91-99
-		s-z A2-A9
-		0-9 F0-F9
-		+   4E
-		/   61
-		=   7E  Uses BEOF in table */
-
-static const BYTE FAR_BSS asciiToBin[ 256 ] =
-	{ BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 00 */
-	  BERR, BERR, BEOF, BERR, BERR, BEOF, BERR, BERR,		/*	CR, LF */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 10 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 20 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 30 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 40 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, 0x3E, BERR,		/*	+ */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 50 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, 0x3F, BERR, BERR, BERR, BERR, BERR, BERR,	/* 60	/ */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 70 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BEOF, BERR,		/*	= */
-	  BERR, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,	/* 80	a-i */
-	  0x21, 0x22, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,	/* 90	j-r */
-	  0x2A, 0x2B, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31,	/* A0	s-z */
-	  0x32, 0x33, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* B0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,	/* C0	A-I */
-	  0x07, 0x08, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,	/* D0	J-R */
-	  0x10, 0x11, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,	/* E0	S-Z */
-	  0x18, 0x19, BERR, BERR, BERR, BERR, BERR, BERR,
-	  0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,	/* F0	0-9 */
-	  0x3C, 0x3D, BERR, BERR, BERR, BERR, BERR, BERR
-	};
-#endif /* EBCDIC_CHARS */
 
 /* The size of lines for PEM-type formatting.  This is only used for encoding,
    for decoding we adjust to whatever size the sender has used */
@@ -290,7 +238,7 @@ static int checkPEMHeader( STREAM *stream )
 			}
 		while( i < length && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
 		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError();
+			return( CRYPT_ERROR_BADDATA );
 		sseek( stream, position );
 		}
 	if( isPGP )
@@ -307,7 +255,7 @@ static int checkPEMHeader( STREAM *stream )
 			}
 		while( length > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
 		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError();
+			return( CRYPT_ERROR_BADDATA );
 		}
 
 	return( stell( stream ) );
@@ -508,23 +456,24 @@ int base64checkHeader( const char *data, const int dataLength,
 	while( ch == '\r' || ch == '\n' && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
 	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+		return( CRYPT_ERROR_BADDATA );
 	if( cryptStatusError( ch ) )
 		{
 		sMemDisconnect( &stream );
 		return( ch );
 		}
 	position = stell( &stream ) - 1;
+	sseek( &stream, position );
 
-	/* Perform a quick check to weed out non-encoded cert data, which is
+	/* Perform a quick check to weed out unencoded cert data, which is 
 	   usually the case */
-	if( ( ch == 0x30 ) && ( !isAlpha( sgetc( &stream ) ) || \
-							!isAlpha( sgetc( &stream ) ) || \
-							!isAlpha( sgetc( &stream ) ) ) )
+	status = readSequenceI( &stream, NULL );
+	if( cryptStatusOK( status ) )
 		{
 		sMemDisconnect( &stream );
 		return( CRYPT_CERTFORMAT_NONE );
 		}
+	sClearError( &stream );
 	sseek( &stream, position );
 
 	/* If it starts with a dash, check for PEM header encapsulation */
@@ -584,7 +533,7 @@ int base64checkHeader( const char *data, const int dataLength,
 		}
 	while( status > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
 	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+		return( CRYPT_ERROR_BADDATA );
 	if( cryptStatusError( status ) || !seenTransferEncoding )
 		{
 		sMemDisconnect( &stream );
@@ -598,7 +547,7 @@ int base64checkHeader( const char *data, const int dataLength,
 	while( ch == '\r' || ch == '\n' && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
 	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+		return( CRYPT_ERROR_BADDATA );
 	if( cryptStatusError( ch ) )
 		{
 		sMemDisconnect( &stream );
@@ -709,16 +658,13 @@ int base64encode( char *dest, const int destMaxLen, const void *src,
 		{
 		const int length = strlen( headerInfo[ headerInfoIndex ].trailer );
 
-		if( destIndex + EOL_LEN + length >= destMaxLen )
+		if( destIndex + EOL_LEN + length > destMaxLen )
 			return( CRYPT_ERROR_OVERFLOW );
 		memcpy( dest + destIndex, EOL, EOL_LEN );
 		memcpy( dest + destIndex + EOL_LEN,
 				headerInfo[ headerInfoIndex ].trailer, length );
 		destIndex += EOL_LEN + length;
 		}
-#ifdef EBCDIC_CHARS
-	asciiToEbcdic( dest, dest, length );
-#endif /* EBCDIC_CHARS */
 
 	/* Return a count of encoded bytes */
 	return( destIndex );

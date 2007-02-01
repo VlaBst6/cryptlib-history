@@ -193,7 +193,7 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 	/* Remember the location and size of the signature data */
 	sigPtr = sMemBufPtr( &stream );
 	sigLength = sMemDataLeft( &stream );
-	status = readAlgoIDex( &stream, &signAlgo, &hashAlgo, NULL );
+	status = readAlgoIDext( &stream, &signAlgo, &hashAlgo );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );

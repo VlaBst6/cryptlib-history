@@ -37,7 +37,7 @@ static const struct {
 	const int length;							/* Length of data */
 	const BYTE digest[ RIPEMD160_DIGEST_LENGTH ];	/* Digest of data */
 	} FAR_BSS digestValues[] = {
-	{ "", 0,
+	{ NULL, 0,
 	  { 0x9C, 0x11, 0x85, 0xA5, 0xC5, 0xE9, 0xFC, 0x54,
 		0x61, 0x28, 0x08, 0x97, 0x7E, 0xE8, 0xF5, 0x48,
 		0xB2, 0x25, 0x8D, 0x31 } },
@@ -75,31 +75,14 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getRipemd160Capability();
-	CONTEXT_INFO contextInfo;
-	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test RIPEMD160 against the test vectors from the RIPEMD-160 paper */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_HASH, capabilityInfo,
-						   &contextData, sizeof( HASH_INFO ), keyData );
-		status = CRYPT_OK ;
-		if( digestValues[ i ].length > 0 )
-			{
-			status = capabilityInfo->encryptFunction( &contextInfo,
-								( BYTE * ) digestValues[ i ].data,
-								digestValues[ i ].length );
-			contextInfo.flags |= CONTEXT_HASH_INITED;
-			}
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxHash->hash, digestValues[ i ].digest,
-					RIPEMD160_DIGEST_LENGTH ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
 		}

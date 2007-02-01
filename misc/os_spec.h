@@ -443,26 +443,6 @@ typedef unsigned char		BYTE;
   #define mktime	my_mktime
 #endif /* __TANDEM_NSK__ || __TANDEM_OSS__ */
 
-/* Support for vsnprintf() (used for assembling the
-   CRYPT_ATTRIBUTE_INT_ERRORMESSAGE value) is a bit hit-and-miss on non-Unix
-   systems and also on older Unixen, if it's not available we alias it to
-   vsprintf().  Luckily this works because vs{n}printf() has a fixed arg
-   count, unlike s{n}printf(), which are varargs functions */
-
-#if defined( __ITRON__ ) || \
-	defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) || \
-	defined( __UNIX__ ) && \
-		( ( defined( __SCO_VERSION__ ) && OSVERSION < 5 ) || \
-		  ( defined( sun ) && OSVERSION < 5 ) || \
-		  defined( __SYMBIAN32__ ) )
-  #define vsnprintf( buf, count, format, arg )	vsprintf( buf, format, arg )
-#elif defined( 	__WINDOWS__ )
-  /* Microsoft provides vsnprintf() in all VC++ and eVC++ libraries, but
-     it's given as _vsnprintf() since it's not an ANSI/ISO C (pre-C99)
-	 function */
-  #define vsnprintf		_vsnprintf
-#endif /* Systems without vsnprintf() */
-
 /* Enable use of assembly-language alternatives to C functions if possible */
 
 #if defined( __WIN32__ ) && !defined( __BORLANDC__ )
@@ -523,9 +503,7 @@ typedef unsigned char		BYTE;
 	   running an older version of OS X and don't have the dlcompat wrapper
 	   installed, get Peter O'Gorman's dlopen() implementation, which wraps
 	   the dyld() interface */
-	#if !( defined( __APPLE__ ) && OSVERSION < 7 )
-	  #include <dlfcn.h>
-	#endif /* Mac OS X */
+	#include <dlfcn.h>
 	#define INSTANCE_HANDLE		void *
 	#define NULL_INSTANCE		NULL
 	#define DynamicLoad( name )	dlopen( name, RTLD_LAZY )
@@ -655,20 +633,14 @@ typedef unsigned char		BYTE;
 	#define MAX_PATH_LENGTH		PATH_MAX
   #elif defined( MAX_PATH )
 	#define MAX_PATH_LENGTH		MAX_PATH
-  #else
+  #elif defined( FILENAME_MAX )
 	#define MAX_PATH_LENGTH		FILENAME_MAX
+  #elif defined( __MSDOS16__ )
+	#define FILENAME_MAX	80
+  #else
+	#error Need to add a MAX_PATH_LENGTH define in misc/os_spec.h
   #endif /* PATH_MAX, MAX_PATH, or FILENAME_MAX */
 #endif /* PATH_MAX */
-#ifdef __UNIX__
-  /* SunOS 4.1.x doesn't define FILENAME_MAX in limits.h, however it does
-	 define a POSIX path length limit so we use that instead.  There are a
-	 number of places in various headers in which a max.path length is
-	 defined either as 255 or 1024, but we use the POSIX limit since this is
-	 the only thing defined in limits.h */
-  #if defined( sun ) && ( OSVERSION == 4 ) && !defined( FILENAME_MAX )
-	#define FILENAME_MAX		_POSIX_PATH_MAX
-  #endif /* SunOS 4.1.x FILENAME_MAX define */
-#endif /* __UNIX__ */
 
 /* SunOS 4 doesn't have memmove(), but Solaris does, so we define memmove()
    to bcopy() under 4.  In addition SunOS doesn't define the fseek()
@@ -727,8 +699,8 @@ typedef unsigned char		BYTE;
 	 stdlib.h even though there's no wchar support present, or PalmOS, which
 	 defines it in wchar.h but then defines it differently in stddef.h, and
 	 in any case has no wchar support present */
-  #if !( defined( __APPLE__ ) || defined( __OpenBSD__ ) || \
-		 defined( __PALMOS__ ) )
+  #if !( defined( __APPLE__ ) || defined( __MVS__ ) || \
+		 defined( __OpenBSD__ ) || defined( __PALMOS__ ) )
 	typedef unsigned short int wchar_t;
   #endif /* __APPLE__ */
   #define WCSIZE	( sizeof( wchar_t ) )
@@ -746,9 +718,9 @@ typedef unsigned char		BYTE;
   #define EOL_LEN	2
 #elif ( defined( __APPLE__ ) && !defined( __MAC__ ) ) || \
 	  defined( __BEOS__ ) || defined( __IBM4758__ ) || \
-	  defined( __PALMOS__ ) || defined( __TANDEM_NSK__ ) || \
-	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
-	  defined( __VMCMS__ )
+	  defined( __MVS__ ) || defined( __PALMOS__ ) || \
+	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
+	  defined( __UNIX__ ) || defined( __VMCMS__ )
   #define EOL		"\n"
   #define EOL_LEN	1
 #elif defined( __MAC__ )
@@ -811,8 +783,9 @@ typedef unsigned char		BYTE;
 		  ( ( asciiCtypeTbl[ ch ] & ASCII_LOWER ) ? ( ch ) - 32 : ( ch ) )
   int strCompareZ( const char *src, const char *dest );
   int strCompare( const char *src, const char *dest, int length );
-  int sPrintf_s( char *buffer, const int bufSize, const char *format, ... );
-  int aToI( const char *str );
+  #define atoi				aToI
+  #define sprintf_s			sPrintf_s
+  #define vsprintf_s		sPrintf_s
 #else
   #include <ctype.h>
 
@@ -827,8 +800,6 @@ typedef unsigned char		BYTE;
 							stricmp( str1, str2 )
   #define strCompare( str1, str2, len )	\
 							strnicmp( str1, str2, len )
-  #define sPrintf_s			sprintf_s
-  #define aToI				atoi
 #endif /* EBCDIC_CHARS */
 
 /* SunOS and older Slowaris have broken sprintf() handling.  In SunOS 4.x
@@ -863,7 +834,12 @@ typedef unsigned char		BYTE;
    additional parameter checking and avoid some types of common buffer
    overflows.  We use these if possible, if they're not available we map
    them down to the traditional stdlib equivalents, via the preprocessor if
-   possible or using wrapper functions if not */
+   possible or using wrapper functions if not.  In addition we use the 
+   OpenBSD et al strlcpy()/strlcat() functions, whose truncation semantics 
+   make them more useful than the TR 24731 equivalents (for example 
+   strcpy_s() does nothing on overflow while the equivalent strlcpy() copies
+   with truncation).  Microsoft recognise this as well, implementing them in
+   TR 24731 by allowing the caller to specify _TRUNCATE semantics */
 
 #ifdef __STDC_LIB_EXT1__
   #if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER )
@@ -879,12 +855,33 @@ typedef unsigned char		BYTE;
 	   gmTime_s(), which we then re-map to the VC++ gmtime_s() */
 	#define gmTime_s( timer, result )	\
 			( ( gmtime_s( result, timer ) == 0 ) ? result : NULL )
+
+	/* MS implements strlcpy/strlcat-equivalents via the TR 24731 
+	   functions */
+	#define strlcpy_s( s1, s1max, s2 )	strncpy_s( s1, s1max, s2, _TRUNCATE )
+	#define strlcat_s( s1, s1max, s2 )	strncat_s( s1, s1max, s2, _TRUNCATE )
   #else
 	#define gmTime_s						gmtime_s
   #endif /* VC++ 2005 */
 #else
-  /* String functions */
+  /* String functions.  The OpenBSD strlcpy()/strlcat() functions with their
+     truncation semantics are quite useful so we use these as well, 
+	 overlaying them with a macro that makes them match the TR 24731 look 
+	 and feel */
   #define strcpy_s( s1, s1max, s2 )		strcpy( s1, s2 )
+  #if defined( __UNIX__ ) && \
+	  ( defined( __APPLE__ ) || defined( __FreeBSD__ ) || \
+		defined( __NetBSD__ ) || defined( __OpenBSD__ ) || \
+		( defined( sun ) && OSVERSION >= 7 ) )
+	/* Despite the glibc maintainer's pigheaded opposition to these 
+	   functions, some Unix OSes support them via custom libc patches */
+	#define strlcpy_s( s1, s1max, s2 )	strlcpy( s1, s2, s1max )	
+	#define strlcat_s( s1, s1max, s2 )	strlcat( s1, s2, s1max )
+  #else
+	int strlcpy_s( char *dest, const int destLen, const char *src );
+	int strlcat_s( char *dest, const int destLen, const char *src );
+	#define NO_NATIVE_STRLCPY
+  #endif /* OpenBSD safe string functions */
 
   /* Widechar functions */
   int mbstowcs_s( size_t *retval, wchar_t *dst, size_t dstmax, \
@@ -893,13 +890,22 @@ typedef unsigned char		BYTE;
 				  const wchar_t *src, size_t len );
 
   /* printf() */
-  #define vsprintf_s					vsnprintf
   #if defined( _MSC_VER ) && VC_LT_2005( _MSC_VER )
 	#define sprintf_s					_snprintf
+	#define vsprintf_s					_vsnprintf
   #elif defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
 	#define sprintf_s					bcSnprintf
+	#define vsprintf_s					vsnprintf
+  #elif defined( __QNX__ ) && ( OSVERSION <= 4 )
+	/* snprintf() exists under QNX 4.x but causes a SIGSEGV when called */
+	#define sprintf_s					_bprintf
+	#define vsnprintf					_vbprintf
+  #elif defined( EBCDIC_CHARS )
+	/* We provide our own replacements for these functions which handle 
+	   output in ASCII (rather than EBCDIC) form */
   #else
 	#define sprintf_s					snprintf
+	#define vsprintf_s					vsnprintf
   #endif /* VC++ 6 or below */
 
   /* Misc.functions */

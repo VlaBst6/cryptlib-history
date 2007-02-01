@@ -128,52 +128,6 @@ static BOOLEAN isNamedObjectPresent( const CRYPT_HANDLE iCryptHandle,
 	return( cryptStatusOK( status ) ? TRUE : FALSE );
 	}
 
-/* Recreate a cert from an existing cert, either converting a standard cert
-   to a data-only cert or vice versa.  This is easier than trying to 
-   disconnect and re-connect certificate and context objects directly */
-
-static int recreateCert( CRYPT_CERTIFICATE *iNewCert,
-						 const CRYPT_CERTIFICATE iCryptCert,
-						 const BOOLEAN isDataOnlyCert )
-	{
-	MESSAGE_CREATEOBJECT_INFO createInfo;
-	MESSAGE_DATA msgData;
-	BYTE buffer[ 2048 + 8 ], *bufPtr = buffer;
-	int status;
-
-	*iNewCert = CRYPT_ERROR;
-
-	/* Recreate a cert by exporting the current cert and re-importing it in 
-	   the required format */
-	setMessageData( &msgData, NULL, 0 );
-	status = krnlSendMessage( iCryptCert, IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_CERTFORMAT_CERTIFICATE );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( msgData.length > 2048 && \
-		( bufPtr = clDynAlloc( "recreateCert", msgData.length ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	msgData.data = bufPtr;
-	status = krnlSendMessage( iCryptCert, IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_CERTFORMAT_CERTIFICATE );
-	if( cryptStatusOK( status ) )
-		{
-		setMessageCreateObjectIndirectInfo( &createInfo, msgData.data,
-											msgData.length,
-											isDataOnlyCert ? \
-												CERTFORMAT_DATAONLY : \
-												CRYPT_CERTTYPE_CERTIFICATE );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
-								  &createInfo, OBJECT_TYPE_CERTIFICATE );
-		}
-	if( bufPtr != buffer )
-		clFree( "recreateCert", bufPtr );
-	if( cryptStatusOK( status ) )
-		*iNewCert = createInfo.cryptHandle;
-	return( status );
-	}
-
 /* Get the identified CA/RA cert from a CTL */
 
 static int getCACert( CRYPT_CERTIFICATE *iNewCert, 
@@ -218,8 +172,11 @@ static int getCACert( CRYPT_CERTIFICATE *iNewCert,
 		}
 
 	/* We've found the identified cert, convert it from the data-only form
-	   in the CTL to a full cert that can be used to verify returned data */
-	return( recreateCert( iNewCert, iCTL, FALSE ) );
+	   in the CTL to a full cert that can be used to verify returned data.  
+	   This is easier than trying to disconnect and re-connect certificate 
+	   and context objects directly */
+	return( krnlSendMessage( iCTL, IMESSAGE_GETATTRIBUTE, iNewCert, 
+							 CRYPT_IATTRIBUTE_CERTCOPY ) );
 	}
 
 /****************************************************************************
@@ -487,14 +444,14 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	/* Make sure that the named objects that are about to be created aren't 
 	   already present in the keyset/device */
 	if( isNamedObjectPresent( sessionInfoPtr->privKeyset, keyType ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_DUPLICATE,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_DUPLICATE,
 				"%s is already present in keyset/device",
 				( keyType == KEYTYPE_SIGNATURE ) ? "Signature key" : "Key" );
 	if( sessionInfoPtr->type == CRYPT_SESSION_CMP )
 		{
 		if( isNamedObjectPresent( sessionInfoPtr->privKeyset, 
 								  KEYTYPE_ENCRYPTION ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_DUPLICATE,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_DUPLICATE,
 					"Encryption key is already present in keyset/device" );
 		}
 
@@ -516,7 +473,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		   remain open simplifies the implementation */
 		krnlSendNotifier( sessionInfoPtr->iCertResponse, 
 						  IMESSAGE_DECREFCOUNT );
-		retExt( sessionInfoPtr, CRYPT_ERROR_READ,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_READ,
 				"Server closed connection after PKIBoot phase before any "
 				"certificates could be issued" );
 		}
@@ -535,7 +492,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	krnlSendNotifier( sessionInfoPtr->iCertResponse, IMESSAGE_DECREFCOUNT );
 	sessionInfoPtr->iCertResponse = CRYPT_ERROR;
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Couldn't read CA/RA certificate from returned certificate "
 				"trust list" );
 	sessionInfoPtr->iAuthInContext = iCACert;
@@ -544,14 +501,14 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	status = generateKey( &iPrivateKey1, sessionInfoPtr->ownerHandle,
 						  iCryptDevice, keyType );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, status, "Couldn't create %s key",
+		retExt( SESSION_ERRINFO, status, "Couldn't create %s key",
 				( keyType == KEYTYPE_SIGNATURE ) ? "signature" : "private" );
 	status = createCertRequest( &iCertReq, iPrivateKey1, CRYPT_UNUSED, 
 								keyType );
 	if( cryptStatusError( status ) )
 		{
 		cleanupObject( iPrivateKey1, keyType );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create %skey cert request",
 				( keyType == KEYTYPE_SIGNATURE ) ? "signature " : "" );
 		}
@@ -592,7 +549,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		krnlSendNotifier( sessionInfoPtr->iCertResponse, 
 						  IMESSAGE_DECREFCOUNT );
 		sessionInfoPtr->iCertResponse = CRYPT_ERROR;
-		retExt( sessionInfoPtr, CRYPT_ERROR_READ,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_READ,
 				"Server closed connection before second (encryption) "
 				"certificate could be issued" );
 		}
@@ -614,8 +571,9 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		   second cert, we still need the current cert attached so that we 
 		   can use it as the base cert for the trusted cert update that
 		   we perform before we exit */
-		status = recreateCert( &iNewCert, sessionInfoPtr->iCertResponse, 
-							   TRUE );
+		status = krnlSendMessage( sessionInfoPtr->iCertResponse, 
+								  IMESSAGE_GETATTRIBUTE, &iNewCert, 
+								  CRYPT_IATTRIBUTE_CERTCOPY_DATAONLY );
 		if( cryptStatusOK( status ) )
 			krnlSendMessage( iPrivateKey1, IMESSAGE_SETDEPENDENT, &iNewCert, 
 							 SETDEP_OPTION_NOINCREF );
@@ -625,7 +583,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		cleanupObject( iPrivateKey1, keyType );
-		retExt( sessionInfoPtr, ( status == CRYPT_ARGERROR_NUM1 ) ? \
+		retExt( SESSION_ERRINFO, ( status == CRYPT_ARGERROR_NUM1 ) ? \
 				CRYPT_ERROR_INVALID : status,
 				"Couldn't update keyset/device with %skey/certificate",
 				isCAcert ? "CA " : \
@@ -658,7 +616,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
-		retExt( sessionInfoPtr, status, "Couldn't create encryption key" );
+		retExt( SESSION_ERRINFO, status, "Couldn't create encryption key" );
 		}
 	status = createCertRequest( &iCertReq, iPrivateKey2, iPrivateKey1,
 								KEYTYPE_ENCRYPTION );
@@ -666,7 +624,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		{
 		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
 		cleanupObject( iPrivateKey2, KEYTYPE_ENCRYPTION );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't create encryption key cert request" );
 		}
 
@@ -703,7 +661,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		{
 		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
 		cleanupObject( iPrivateKey2, KEYTYPE_ENCRYPTION );
-		retExt( sessionInfoPtr, status,
+		retExt( SESSION_ERRINFO, status,
 				"Couldn't update keyset/device with encryption "
 				"key/certificate" );
 		}

@@ -48,7 +48,7 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 	if( length < ID_SIZE + VERSIONINFO_SIZE + \
 				 ( UINT16_SIZE * 3 ) + 3 + 16 || \
 		length > sessionInfoPtr->receiveBufSize )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid legacy SSLv2 hello packet length %d", length );
 
 	/* Due to the different ordering of header fields in SSLv2, the type and 
@@ -60,7 +60,7 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 	if( value != SSL_HAND_CLIENT_HELLO )
 		{
 		sMemDisconnect( &stream );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Unexpected legacy SSLv2 packet type %d, should be %d", 
 				value, SSL_HAND_CLIENT_HELLO );
 		}
@@ -80,14 +80,13 @@ static int handleSSLv2Header( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	if( status < length )
 		/* If we timed out during the handshake phase, treat it as a hard 
 		   timeout error */
-		retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 				"Timeout during legacy SSLv2 hello packet read, only got "
 				"%d of %d bytes", status, length );
 	sessionInfoPtr->receiveBufPos = 0;
@@ -124,7 +123,7 @@ int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	/* Check the major version number */
 	version = sgetc( stream );
 	if( version != SSL_MAJOR_VERSION )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid major version number %d, should be 3", version );
 
 	/* Check the minor version number.  If we've already got the version
@@ -134,7 +133,7 @@ int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	if( clientVersion == NULL )
 		{
 		if( version != sessionInfoPtr->version )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid version number 3.%d, should be 3.%d", 
 					version, sessionInfoPtr->version );
 		return( CRYPT_OK );
@@ -154,10 +153,16 @@ int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 			break;
 
 		case SSL_MINOR_VERSION_TLS11:
-			/* If the other side can't do post-TLS 1.1, fall back to 
-			   TLS 1.1 */
-			if( sessionInfoPtr->version > SSL_MINOR_VERSION_TLS11 )
+			/* If the other side can't do TLS 1.2, fall back to TLS 1.1 */
+			if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
 				sessionInfoPtr->version = SSL_MINOR_VERSION_TLS11;
+			break;
+
+		case SSL_MINOR_VERSION_TLS12:
+			/* If the other side can't do post-TLS 1.2, fall back to 
+			   TLS 1.2 */
+			if( sessionInfoPtr->version > SSL_MINOR_VERSION_TLS12 )
+				sessionInfoPtr->version = SSL_MINOR_VERSION_TLS12;
 			break;
 
 		default:
@@ -171,7 +176,7 @@ int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 				}
 
 			/* It's nothing that we can handle */
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid protocol version 3.%d", version );
 		}
 
@@ -203,7 +208,7 @@ static int checkPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	/* Check the packet type */
 	value = sgetc( stream );
 	if( value != expectedPacketType )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Unexpected packet type %d, expected %d", 
 				value, expectedPacketType );
 	status = processVersionInfo( sessionInfoPtr, stream, 
@@ -227,7 +232,7 @@ static int checkPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 			value > sessionInfoPtr->receiveBufSize )
 			status = CRYPT_ERROR_BADDATA;
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid packet length %d for packet type %d", 
 				value, packetType );
 
@@ -239,7 +244,7 @@ static int checkPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 
 		status = loadExplicitIV( sessionInfoPtr, stream );
 		if( cryptStatusError( status ) )
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Error loading TLS explicit IV" );
 		value -= stell( stream ) - offset;
 		}
@@ -265,13 +270,13 @@ int checkHSPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		uint24		length */
 	type = sgetc( stream );
 	if( type != packetType )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid handshake packet type %d, expected %d", 
 				type, packetType );
 	length = readUint24( stream );
 	if( length < minSize || length > MAX_PACKET_SIZE || \
 		length > sMemDataLeft( stream ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid length %d for handshake packet type %d", 
 				length, type );
 	return( length );
@@ -315,7 +320,7 @@ int unwrapPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	/* Make sure that the length is a multiple of the block cipher size */
 	if( sessionInfoPtr->cryptBlocksize > 1 && \
 		( totaLength % sessionInfoPtr->cryptBlocksize ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid encrypted packet length %d relative to cipher "
 				"block size %d for packet type %d", totaLength, 
 				sessionInfoPtr->cryptBlocksize, packetType );
@@ -348,7 +353,7 @@ int unwrapPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		}
 	length -= sessionInfoPtr->authBlocksize;
 	if( length < 0 )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid packet payload length %d for packet type %d", 
 				length, packetType );
 
@@ -414,14 +419,13 @@ int readPacketSSL( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	if( status < length )
 		/* If we timed out during the handshake phase, treat it as a hard 
 		   timeout error */
-		retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 				"Timed out reading packet data for packet type %d, only "
 				"got %d of %d bytes", packetType, status, length );
 	sessionInfoPtr->receiveBufPos = 0;
@@ -692,8 +696,7 @@ int sendPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	return( CRYPT_OK );	/* swrite() returns a byte count */
@@ -762,6 +765,7 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 		{ TLS_ALERT_UNKNOWN_PSK_IDENTITY, "Unknown PSK identity", CRYPT_ERROR_NOTFOUND },
  		{ CRYPT_ERROR, NULL }, { CRYPT_ERROR, NULL }
 		};
+	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	STREAM stream;
 	BYTE buffer[ 256 + 8 ];
 	int length, type, i, status;
@@ -785,7 +789,7 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 			status = CRYPT_ERROR_BADDATA;
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid alert message length %d", length );
 
 	/* Read and process the alert packet */
@@ -793,8 +797,7 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	if( status < length )
@@ -805,7 +808,7 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 		   potentially stalling for ages trying to find a lost byte */
 		sendCloseAlert( sessionInfoPtr, TRUE );
 		sessionInfoPtr->flags |= SESSION_SENDCLOSED;
-		retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT, 
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT, 
 				"Timed out reading alert message, only got %d of %d bytes", 
 				status, length );
 		}
@@ -854,24 +857,23 @@ int processAlert( SESSION_INFO *sessionInfoPtr, const void *header,
 	   the connection is closed without a close alert having been sent */
 	if( buffer[ 0 ] != SSL_ALERTLEVEL_WARNING && \
 		buffer[ 0 ] != SSL_ALERTLEVEL_FATAL )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid alert message level %d", buffer[ 0 ] );
-	sessionInfoPtr->errorCode = type = buffer[ 1 ];
+	errorInfo->errorCode = type = buffer[ 1 ];
 	for( i = 0; alertInfo[ i ].type != CRYPT_ERROR && \
 				alertInfo[ i ].type != type && \
 				i < FAILSAFE_ARRAYSIZE( alertInfo, ALERT_INFO ); i++ );
 	if( i >= FAILSAFE_ARRAYSIZE( alertInfo, ALERT_INFO ) )
 		retIntError();
 	if( alertInfo[ i ].type == CRYPT_ERROR )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Unknown alert message type %d at alert level %d", 
 				type, buffer[ 0 ] );
-	strcpy( sessionInfoPtr->errorMessage,
-			( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL ) ? \
+	retExtStr( SESSION_ERRINFO, alertInfo[ i ].cryptlibError,
+			   alertInfo[ i ].message, 
+			   ( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL ) ? \
 				"Received SSL alert message: " : \
 				"Received TLS alert message: " );
-	strcat( sessionInfoPtr->errorMessage, alertInfo[ i ].message );
-	return( alertInfo[ i ].cryptlibError );
 	}
 
 /* Send a close alert, with appropriate protection if necessary */

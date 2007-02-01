@@ -784,8 +784,7 @@ int getAsn1StringInfo( const void *string, const int stringLen,
 			return( CRYPT_OK );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 int copyToAsn1String( void *dest, int *destLen, const int maxLen,
@@ -853,6 +852,5 @@ int copyToAsn1String( void *dest, int *destLen, const int maxLen,
 			return( CRYPT_OK );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}

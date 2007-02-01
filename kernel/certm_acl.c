@@ -181,17 +181,17 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 		/* Actions and permissions are consistent */
 		if( certMgmtACL->action <= CRYPT_CERTACTION_NONE || \
 			certMgmtACL->action >= CRYPT_CERTACTION_LAST )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( certMgmtACL->access != ACTION_PERM_NONE && \
 			certMgmtACL->access != ACTION_PERM_NONE_EXTERNAL && \
 			certMgmtACL->access != ACTION_PERM_ALL )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 
 		/* If it's a no-access ACL, all mechanisms should be blocked */
 		if( certMgmtACL->access == ACTION_PERM_NONE )
 			{
 			if( paramInfo( certMgmtACL, 0 ).valueType != PARAM_VALUE_NONE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			continue;
 			}
 
@@ -204,7 +204,7 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 					~( ST_CERT_CERTREQ | ST_CERT_REQ_CERT | \
 					   ST_CERT_REQ_REV | ST_CERT_CERT ) ) || \
 				paramInfo( certMgmtACL, 1 ).subTypeB != ST_NONE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 
 		/* If it requires a CA key parameter, it must be a private-key
@@ -214,16 +214,16 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 			if( paramInfo( certMgmtACL, 0 ).subTypeA != ST_CTX_PKC || \
 				paramInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
 				paramInfo( certMgmtACL, 0 ).flags != ACL_FLAG_HIGH_STATE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( ( secParamInfo( certMgmtACL, 0 ).subTypeA & \
 					~( ST_CERT_CERT | ST_CERT_CERTCHAIN ) ) || \
 				secParamInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
 				secParamInfo( certMgmtACL, 0 ).flags != ACL_FLAG_HIGH_STATE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			continue;
 			}
 		if( paramInfo( certMgmtACL, 0 ).valueType != PARAM_VALUE_UNUSED )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) )
 		retIntError();

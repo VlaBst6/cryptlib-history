@@ -70,73 +70,6 @@ static int exitErrorNotFound( SESSION_INFO *sessionInfoPtr,
 					   CRYPT_ERROR_NOTFOUND ) );
 	}
 
-/* Exit after saving a detailed error message.  This is used by lower-level 
-   session code to provide more information to the caller than a basic error 
-   code */
-
-int retExtFnSession( SESSION_INFO *sessionInfoPtr, const int status, 
-					 const char *format, ... )
-	{
-	va_list argPtr;
-
-	va_start( argPtr, format );
-	vsprintf_s( sessionInfoPtr->errorMessage, MAX_ERRMSG_SIZE, format, argPtr ); 
-	va_end( argPtr );
-	assert( !cryptArgError( status ) );	/* Catch leaks */
-	return( cryptArgError( status ) ? CRYPT_ERROR_FAILED : status );
-	}
-
-int retExtExFnSession( SESSION_INFO *sessionInfoPtr, 
-					   const int status, const CRYPT_HANDLE extErrorObject, 
-					   const char *format, ... )
-	{
-	MESSAGE_DATA msgData;
-	va_list argPtr;
-	int extErrorStatus;
-
-	/* Check whether there's any additional error information available */
-	va_start( argPtr, format );
-	setMessageData( &msgData, NULL, 0 );
-	extErrorStatus = krnlSendMessage( extErrorObject, MESSAGE_GETATTRIBUTE_S,
-									  &msgData, CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
-	if( cryptStatusOK( extErrorStatus ) )
-		{
-		char errorString[ MAX_ERRMSG_SIZE + 8 ];
-		char extraErrorString[ MAX_ERRMSG_SIZE + 8 ];
-		int errorStringLen, extraErrorStringLen;
-
-		/* There's additional information present via the additional object, 
-		   fetch it and append it to the session-level error message */
-		setMessageData( &msgData, extraErrorString, MAX_ERRMSG_SIZE );
-		extErrorStatus = krnlSendMessage( extErrorObject, MESSAGE_GETATTRIBUTE_S,
-										  &msgData, CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
-		if( cryptStatusOK( extErrorStatus ) )
-			extraErrorString[ msgData.length ] = '\0';
-		else
-			strcpy( extraErrorString, "(None available)" );
-		extraErrorStringLen = strlen( extraErrorString );
-		vsprintf_s( errorString, MAX_ERRMSG_SIZE, format, argPtr );
-		errorStringLen = strlen( errorString );
-		if( errorStringLen < MAX_ERRMSG_SIZE - 64 )
-			{
-			const int extErrorLenToCopy = \
-							min( MAX_ERRMSG_SIZE - ( 32 + errorStringLen ), 
-								 extraErrorStringLen );
-
-			strcpy( errorString + errorStringLen, ". Additional information: " );
-			memcpy( errorString + errorStringLen + 26, extraErrorString,
-					extErrorLenToCopy );
-			errorString[ errorStringLen + 26 + extErrorLenToCopy ] = '\0';
-			}
-		strcpy( sessionInfoPtr->errorMessage, errorString );
-		}
-	else
-		vsprintf_s( sessionInfoPtr->errorMessage, MAX_ERRMSG_SIZE, format, argPtr ); 
-	va_end( argPtr );
-	assert( !cryptArgError( status ) );	/* Catch leaks */
-	return( cryptArgError( status ) ? CRYPT_ERROR_FAILED : status );
-	}
-
 /* Add the contents of an encoded URL to a session.  This requires parsing
    the individual session attribute components out of the URL and then 
    adding each one in turn */
@@ -160,8 +93,17 @@ static int addUrl( SESSION_INFO *sessionInfoPtr, const void *url,
 		return( exitErrorInited( sessionInfoPtr, 
 								 CRYPT_SESSINFO_NETWORKSOCKET ) );
 
-	/* Parse the server name */
-	status = sNetParseURL( &urlInfo, url, urlLength );
+	/* Parse the server name.  The PKI protocols all use HTTP as their 
+	   substrate so if it's not SSH or SSL/TLS we require HTTP.  For TSP
+	   and CMP the user can also specify the braindamaged "TCP transport"
+	   protocol, but luckily this seems to have mostly sunk without trace,
+	   other portions of the session-handling code also discourage its
+	   use so we don't encourate it here */
+	status = sNetParseURL( &urlInfo, url, urlLength,
+						   ( sessionInfoPtr->type == CRYPT_SESSION_SSH ) ? \
+								URL_TYPE_SSH : \
+						   ( sessionInfoPtr->type == CRYPT_SESSION_SSL ) ? \
+								URL_TYPE_HTTPS : URL_TYPE_HTTP );
 	if( cryptStatusError( status ) )
 		return( exitError( sessionInfoPtr, CRYPT_SESSINFO_SERVER_NAME, 
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
@@ -325,8 +267,12 @@ static int processGetAttribute( SESSION_INFO *sessionInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_ATTRIBUTE_INT_ERRORCODE:
-			*valuePtr = sessionInfoPtr->errorCode;
+			{
+			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+
+			*valuePtr = errorInfo ->errorCode;
 			return( CRYPT_OK );
+			}
 
 		case CRYPT_SESSINFO_ACTIVE:
 			/* Only secure transport sessions can be persistently active,
@@ -695,8 +641,7 @@ static int processSetAttribute( SESSION_INFO *sessionInfoPtr,
 								NET_OPTION_NETWORKSOCKET_DUMMY );
 			connectInfo.networkSocket = value;
 			status = sNetConnect( &stream, STREAM_PROTOCOL_TCPIP, 
-								  &connectInfo, sessionInfoPtr->errorMessage, 
-								  &sessionInfoPtr->errorCode );
+								  &connectInfo, &sessionInfoPtr->errorInfo );
 			if( cryptStatusError( status ) )
 				return( status );
 			sNetDisconnect( &stream );
@@ -729,13 +674,17 @@ static int processGetAttributeS( SESSION_INFO *sessionInfoPtr,
 									   messageValue ) );
 
 		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
-			if( !*sessionInfoPtr->errorMessage )
+			{
+			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+
+			if( !*errorInfo->errorString )
 				/* We don't set extended error information for this atribute
 				   because it's usually read in response to an existing error, 
 				   which would overwrite the existing error information */
 				return( CRYPT_ERROR_NOTFOUND );
-			return( attributeCopy( msgData, sessionInfoPtr->errorMessage,
-								   strlen( sessionInfoPtr->errorMessage ) ) );
+			return( attributeCopy( msgData, errorInfo->errorString,
+								   strlen( errorInfo->errorString ) ) );
+			}
 
 		case CRYPT_SESSINFO_USERNAME:
 		case CRYPT_SESSINFO_PASSWORD:
@@ -971,7 +920,7 @@ static int processDeleteAttribute( SESSION_INFO *sessionInfoPtr,
 
 /* Handle a message sent to a session object */
 
-static int sessionMessageFunction( const void *objectInfoPtr,
+static int sessionMessageFunction( void *objectInfoPtr,
 								   const MESSAGE_TYPE message,
 								   void *messageDataPtr,
 								   const int messageValue )
@@ -1226,8 +1175,8 @@ static int openSession( CRYPT_SESSION *iCryptSession,
 	{ CRYPT_SESSION_SCEP, CRYPT_SESSION_SCEP, SUBTYPE_SESSION_SCEP },
 	{ CRYPT_SESSION_SCEP_SERVER, CRYPT_SESSION_SCEP, SUBTYPE_SESSION_SCEP_SVR },
 	{ CRYPT_SESSION_CERTSTORE_SERVER, CRYPT_SESSION_CERTSTORE_SERVER, SUBTYPE_SESSION_CERT_SVR },
-	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, CRYPT_ERROR },
-	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, CRYPT_ERROR }
+	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, SUBTYPE_NONE },
+	{ CRYPT_SESSION_NONE, CRYPT_SESSION_NONE, SUBTYPE_NONE }
 	};
 	int storageSize, i, status;
 
@@ -1397,7 +1346,7 @@ static int openSession( CRYPT_SESSION *iCryptSession,
 	/* If it's a session type that uses the scoreboard, set up the 
 	   scoreboard information for the session */
 	if( sessionType == CRYPT_SESSION_SSL_SERVER )
-		sessionInfoPtr->sessionSSL->scoreboardInfo = scoreboardInfo;
+		sessionInfoPtr->sessionSSL->scoreboardInfoPtr = &scoreboardInfo;
 
 	/* Check that the protocol info is OK */
 	protocolInfoPtr = sessionInfoPtr->protocolInfo;

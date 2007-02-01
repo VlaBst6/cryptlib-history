@@ -18,9 +18,10 @@
 /* General capabilities that affect further config options */
 
 #if defined( __BEOS__ ) || defined( __CHORUS__ ) || defined( __ECOS__ ) || \
-	defined( __PALMOS__ ) || defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
-	defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
-	defined( __UNIX__ ) || defined( __WINDOWS__ )
+	defined( __MVS__ ) || defined( __PALMOS__ ) || defined( __RTEMS__ ) || \
+	defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
+	defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
+	defined( __WINDOWS__ )
   #define USE_TCP
 #endif /* Systems with TCP/IP networking available */
 
@@ -72,11 +73,14 @@
   #define USE_RC5
 #endif /* Use of patented algorithms */
 
-/* Obsolete and/or weak algorithms */
+/* Obsolete and/or weak algorithms.  There are some algorithms that are
+   never enabled, among them KEA (which never gained any real acceptance,
+   and in any case when it was finally analysed by Kristin Lauter and Anton 
+   Mityagin was found to have a variety of problems) and MD4 (which is 
+   completely broken) */
 
 #ifdef USE_DEPRECATED_ALGORITHMS
   #define USE_MD2
-  #define USE_MD4
   #define USE_RC2
   #define USE_RC4
   #define USE_SKIPJACK
@@ -91,6 +95,14 @@
   #define USE_HMAC_RIPEMD160
   #define USE_RIPEMD160
 #endif /* Obscure algorithms */
+
+/* Algorithms not supported by most standards or implementations.  At the
+   moment we only enable these for the Windows debug build for testing
+   puropses */
+
+#if defined( __WIN32__ ) && !defined( NDEBUG ) && 0
+  #define USE_ECC
+#endif /* Win32 debug */
 
 /* Other algorithms.  Note that DES/3DES and SHA1 are always enabled, as
    they're used internally by cryptlib */
@@ -120,11 +132,21 @@
   #undef USE_DSA
   #undef USE_RSA
 #endif /* DOS */
+#if defined( __WIN32__ )
+  /* The slew of SHA-2 variants are still in a rather indeterminate state, 
+     it's uncertain (and probably very unlikely for the more obscure 
+	 versions) that they'll ever see much uptake, so we only support 
+	 SHA2-512 on systems where there's guaranteed standard 64-bit data type 
+	 support.  In addition this algorithm isn't externally visible, it's 
+	 only used internally for one PRF that requires it as an optional 
+	 algorithm */
+  #define USE_SHA2_512
+#endif /* __WIN32__ */
 
 /* General PKC context usage */
 
 #if defined( USE_DH ) || defined( USE_DSA ) || defined( USE_ELGAMAL ) || \
-	defined( USE_RSA )
+	defined( USE_RSA ) || defined( USE_ECC )
   #define USE_PKC
 #endif /* PKC types */
 
@@ -161,9 +183,11 @@
 #if defined( __WIN32__ )
   #define USE_FORTEZZA
   #ifndef __BORLANDC__
-	#define USE_CRYPTOAPI
 	#define USE_PKCS11
-  #endif /* __BORLANDC__ */
+  #endif /* Borland C can't handle PKCS #11 headers */
+  #ifndef NDEBUG
+	#define USE_CRYPTOAPI
+  #endif /* Windows debug mode only */
 #endif /* __WIN32__ */
 
 /* General device usage */

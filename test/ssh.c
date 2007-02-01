@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -334,7 +329,7 @@ int testSessionAttributes( void )
 		THREAD_EXIT();
 		}
 	status = getPrivateKey( &privateKey, SSH_PRIVKEY_FILE,
-							SSH_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+							USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusOK( status ) )
 		{
 		status = cryptSetAttribute( cryptSession,
@@ -719,7 +714,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 		if( !setLocalConnect( cryptSession, 22 ) )
 			return( FALSE );
 		status = getPrivateKey( &privateKey, SSH_PRIVKEY_FILE,
-								SSH_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( cryptSession,

@@ -292,6 +292,10 @@ SOURCE=.\context\ctx_dsa.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\context\ctx_ecdsa.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\ctx_elg.c
 # End Source File
 # Begin Source File
@@ -373,6 +377,10 @@ SOURCE=.\context\keyload.c
 # Begin Source File
 
 SOURCE=.\context\kg_dlp.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\kg_ecc.c
 # End Source File
 # Begin Source File
 
@@ -541,6 +549,18 @@ SOURCE=.\device\ms_capi.c
 # Begin Source File
 
 SOURCE=.\device\pkcs11.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\pkcs11_init.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\pkcs11_pkc.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\pkcs11_rw.c
 # End Source File
 # Begin Source File
 
@@ -780,6 +800,10 @@ SOURCE=.\mechs\mech_enc.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\mechs\mech_int.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\mechs\mech_sig.c
 # End Source File
 # Begin Source File
@@ -877,6 +901,14 @@ SOURCE=.\misc\pgp_misc.c
 # Begin Source File
 
 SOURCE=.\random\random.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\user.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\user_cfg.c
 # End Source File
 # Begin Source File
 
@@ -1041,10 +1073,6 @@ SOURCE=.\cryptapi.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\cryptcfg.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\cryptcrt.c
 # End Source File
 # Begin Source File
@@ -1079,6 +1107,10 @@ SOURCE=.\cryptusr.c
 # Begin Group "Header Files"
 
 # PROP Default_Filter "h;hpp;hxx;hm;inl;fi;fd"
+# Begin Source File
+
+SOURCE=.\kernel\acl.h
+# End Source File
 # Begin Source File
 
 SOURCE=.\misc\asn1.h
@@ -1153,7 +1185,7 @@ SOURCE=.\misc\os_spec.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\envelope\pgp.h
+SOURCE=.\misc\pgp.h
 # End Source File
 # Begin Source File
 
@@ -1174,6 +1206,10 @@ SOURCE=.\session\ssl.h
 # Begin Source File
 
 SOURCE=.\io\stream.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\user.h
 # End Source File
 # End Group
 # Begin Group "Resource Files"

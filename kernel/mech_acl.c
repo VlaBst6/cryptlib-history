@@ -36,6 +36,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* PKCS #1 encrypt using PGP formatting */
@@ -46,6 +47,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* PKCS #1 encrypt of raw data */
@@ -55,7 +57,22 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 		MKACP_UNUSED(),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
+
+	/* OAEP encrypt */
+	{ MECHANISM_ENC_OAEP,
+	  { MKACP_S_OPT( 64, MAX_PKCENCRYPTED_SIZE ),/* Wrapped key */
+		MKACP_S_NONE(),
+		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx containing key */
+				 ACL_FLAG_HIGH_STATE ),
+		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
+				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
+		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA2 + 1 ) } },
+			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
+			   for SHA2-512 until its fate/potential future usage becomes a
+			   bit clearer */
 
 	/* CMS key wrap */
 	{ MECHANISM_ENC_CMS,
@@ -65,6 +82,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* KEA key agreement */
@@ -76,7 +94,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Recipient KEA pubkey */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_O( ST_CTX_PKC,				/* Sender KEA privkey */
-				 ACL_FLAG_HIGH_STATE ) } },
+				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED() } },
 
 	/* Private key wrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -86,6 +105,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* Private key wrap */
@@ -96,6 +116,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_O( ST_CTX_CONV,				/* Wrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	{ MECHANISM_NONE,
@@ -113,6 +134,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* PKCS #1 decrypt using PGP formatting */
@@ -122,16 +144,32 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 		MKACP_UNUSED(),						/* Placeholder for ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* PKCS #1 decrypt of raw data */
 	{ MECHANISM_ENC_PKCS1_RAW,
-	  { MKACP_S_OPT( 64, CRYPT_MAX_PKCSIZE ),/* Wrapped raw data */
+	  { MKACP_S_OPT( 60, CRYPT_MAX_PKCSIZE ),/* Wrapped raw data */
 		MKACP_S( 8, CRYPT_MAX_PKCSIZE ),	/* Raw data */
 		MKACP_UNUSED(),
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
+
+	/* OAEP decrypt */
+	{ MECHANISM_ENC_OAEP,
+	  { MKACP_S_OPT( 60, CRYPT_MAX_PKCSIZE ),/* Wrapped key */
+		MKACP_S_NONE(),
+		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx to contain key */
+				 ACL_FLAG_LOW_STATE ),
+		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
+				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED(), 
+		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA2 + 1 ) } },
+			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
+			   for SHA2-512 until its fate/potential future usage becomes a
+			   bit clearer */
 
 	/* CMS key unwrap */
 	{ MECHANISM_ENC_CMS,
@@ -141,6 +179,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* KEA key agreement */
@@ -152,7 +191,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Recipient KEA privkey */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Sender KEA pubkey */
-				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
+				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
+		MKACP_UNUSED() } }, 
 
 	/* Private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
@@ -162,16 +202,29 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* Private key unwrap */
-	{ MECHANISM_PRIVATEKEYWRAP_PGP,
+	{ MECHANISM_PRIVATEKEYWRAP_PGP2,
 	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
+		MKACP_UNUSED() } },
+
+	/* Private key unwrap */
+	{ MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD,
+	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
+		MKACP_S_NONE(),
+		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
+				 ACL_FLAG_LOW_STATE ),
+		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
+				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	/* Private key unwrap */
@@ -182,6 +235,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_CONV,				/* Unwrap context */
 				 ACL_FLAG_HIGH_STATE ),
+		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
 	{ MECHANISM_NONE,
@@ -354,11 +408,13 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 	PRE( messageValue == MECHANISM_ENC_PKCS1 || \
 		 messageValue == MECHANISM_ENC_PKCS1_PGP || \
 		 messageValue == MECHANISM_ENC_PKCS1_RAW || \
+		 messageValue == MECHANISM_ENC_OAEP || \
 		 messageValue == MECHANISM_ENC_CMS || \
 		 messageValue == MECHANISM_ENC_KEA || \
 		 messageValue == MECHANISM_PRIVATEKEYWRAP || \
 		 messageValue == MECHANISM_PRIVATEKEYWRAP_PKCS8 || \
-		 messageValue == MECHANISM_PRIVATEKEYWRAP_PGP || \
+		 messageValue == MECHANISM_PRIVATEKEYWRAP_PGP2 || \
+		 messageValue == MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD || \
 		 messageValue == MECHANISM_PRIVATEKEYWRAP_OPENPGP );
 
 	/* Find the appropriate ACL for this mechanism */
@@ -389,6 +445,17 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 						   mechanismInfo->keyDataLength ) );
 	PRE( checkParamObject( paramInfo( mechanismACL, 4 ),
 						   mechanismInfo->auxContext ) );
+
+	/* Make the above checks explicit even in the release build */
+	if( !checkParamString( paramInfo( mechanismACL, 0 ),
+						   mechanismInfo->wrappedData,
+						   mechanismInfo->wrappedDataLength ) || \
+		!checkParamString( paramInfo( mechanismACL, 1 ),
+						   mechanismInfo->keyData,
+						   mechanismInfo->keyDataLength ) || \
+		!checkParamObject( paramInfo( mechanismACL, 4 ),
+						   mechanismInfo->auxContext ) )
+		retIntError();
 
 	/* Make sure that the user-supplied parameters are in order, part 1: The
 	   session key is a valid object of the correct type, and there's a key
@@ -445,6 +512,19 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 		contextHandle = mechanismInfo->wrapContext;
 	if( !checkParamObject( paramInfo( mechanismACL, 3 ), contextHandle ) )
 		return( CRYPT_ARGERROR_NUM2 );
+
+	/* Make sure that the user-supplied parameters are in order, part 3: Any
+	   auxiliary info needed for the wrapping/unwrapping is OK.  Reporting 
+	   the specific problem with these checks is a bit tricky because they
+	   apply to parameters coming from deep within cryptlib-internal 
+	   functions that will never been seen by the user, so it doesn't really
+	   make sense to report a parameter error for a parameter that the user
+	   doesn't know exists.  The best that we can do is return a bad-data 
+	   error, since the auxInfo value has been read from externally-supplied 
+	   encoded data */
+	if( !checkParamNumeric( paramInfo( mechanismACL, 5 ),
+							mechanismInfo->auxInfo ) )
+		return( CRYPT_ERROR_BADDATA );
 
 	/* Postcondition: The wrapping key and session key are of the appropriate
 	   type, there are keys loaded/not loaded as appropriate, and the access
@@ -526,6 +606,12 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 						   mechanismInfo->signature,
 						   mechanismInfo->signatureLength ) );
 
+	/* Make the above checks explicit even in the release build */
+	if( !checkParamString( paramInfo( mechanismACL, 0 ),
+						   mechanismInfo->signature,
+						   mechanismInfo->signatureLength ) )
+		retIntError();
+
 	/* Make sure that the user-supplied parameters are in order, part 1: The
 	   hash contexts are valid objects of the correct type.  If there's a
 	   secondary hash context present we report problems with it as a problem
@@ -597,10 +683,10 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 										   const int messageValue,
 										   const void *dummy )
 	{
+	const MECHANISM_DERIVE_INFO *mechanismInfo = \
+				( MECHANISM_DERIVE_INFO * ) messageDataPtr;
 	const MECHANISM_ACL *mechanismACL = mechanismDeriveACL;
 	int i;
-	TEMP_VAR( const MECHANISM_DERIVE_INFO *mechanismInfo = \
-					( MECHANISM_DERIVE_INFO * ) messageDataPtr );
 
 	/* Precondition */
 	PRE( isValidObject( objectHandle ) );
@@ -644,6 +730,22 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 						   mechanismInfo->saltLength ) );
 	PRE( checkParamNumeric( paramInfo( mechanismACL, 4 ),
 							mechanismInfo->iterations ) );
+
+	/* Make the above checks explicit even in the release build */
+	if( !checkParamString( paramInfo( mechanismACL, 0 ),
+						   mechanismInfo->dataOut,
+						   mechanismInfo->dataOutLength ) || \
+		!checkParamString( paramInfo( mechanismACL, 1 ),
+						   mechanismInfo->dataIn,
+						   mechanismInfo->dataInLength ) || \
+		!checkParamNumeric( paramInfo( mechanismACL, 2 ),
+							mechanismInfo->hashAlgo ) || \
+		!checkParamString( paramInfo( mechanismACL, 3 ),
+						   mechanismInfo->salt,
+						   mechanismInfo->saltLength ) || \
+		!checkParamNumeric( paramInfo( mechanismACL, 4 ),
+							mechanismInfo->iterations ) )
+		retIntError();
 
 	/* This is a pure data-transformation mechanism, there are no objects
 	   used so there are no further checks to perform */

@@ -1,17 +1,12 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2006					*
+*						Copyright Peter Gutmann 1995-2007					*
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged VC++ include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -108,6 +103,23 @@ static struct {
 #if defined( __MSDOS16__ ) && defined( __TURBOC__ )
   extern unsigned _stklen = 16384;
 #endif /* __MSDOS16__ && __TURBOC__ */
+
+/* Prototypes for general debug routines used to evaluate problems with certs
+   and envelopes from other apps */
+
+void xxxCertImport( const char *fileName );
+void xxxDataImport( const char *fileName );
+void xxxSignedDataImport( const char *fileName );
+void xxxEncryptedDataImport( const char *fileName );
+void xxxEnvTest( void );
+
+/* Prototypes for custom key-creation routines */
+
+int createTestKeys( void );
+
+/* Prototype for stress test interface routine */
+
+void smokeTest( void );
 
 /****************************************************************************
 *																			*
@@ -279,25 +291,6 @@ static void checkCreateDatabaseKeysets( void )
 	}
 #endif /* Win32 with VC++ */
 
-/****************************************************************************
-*																			*
-*								Misc.Kludges								*
-*																			*
-****************************************************************************/
-
-/* Prototypes for general debug routines used to evaluate problems with certs
-   and envelopes from other apps */
-
-void xxxCertImport( const char *fileName );
-void xxxDataImport( const char *fileName );
-void xxxSignedDataImport( const char *fileName );
-void xxxEncryptedDataImport( const char *fileName );
-void xxxEnvTest( void );
-
-/* Prototype for stress test interface routine */
-
-void smokeTest( void );
-
 /* Update the cryptlib config file.  This code can be used to set the
    information required to load PKCS #11 device drivers:
 
@@ -329,6 +322,9 @@ static void updateConfig( void )
 	const char *driverPath = "c:/program files/gemplus/gclib.dll";	/* Gemplus */
 	const char *driverPath = "c:/winnt/system32/cryptoki.dll";	/* IBM */
 	const char *driverPath = "c:/winnt/system32/cknfast.dll";	/* nCipher */
+	const char *driverPath = "/opt/nfast/toolkits/pkcs11/libcknfast.so";/* nCipher under Unix */
+	const char *driverPath = "/usr/lib/libcknfast.so";			/* nCipher under Unix */
+	const char *driverPath = "softokn3.dll";					/* Netscape */
 	const char *driverPath = "c:/winnt/system32/nxpkcs11.dll";	/* Nexus */
 	const char *driverPath = "c:/winnt/system32/micardoPKCS11.dll";	/* Orga Micardo */
 	const char *driverPath = "c:/winnt/system32/cryptoki22.dll";/* Rainbow HSM (for USB use Datakey dvr) */
@@ -378,11 +374,17 @@ static void updateConfigCert( void )
 	cryptEnd();
 	}
 
+/****************************************************************************
+*																			*
+*								Misc.Kludges								*
+*																			*
+****************************************************************************/
+
 /* Generic test code insertion point.  The following routine is called
    before any of the other tests are run and can be used to handle special-
    case tests that aren't part of the main test suite */
 
-#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
+#if defined( _MSC_VER ) && ( _MSC_VER > 800 ) && !defined( _WIN32_WCE )
 #define KEY_LABEL		"Test RSA private key"
 #define MAXTHREADS		2 /*4*/
 #define UNEXPECTED(func, status) \
@@ -539,27 +541,6 @@ void testKludge( void )
 	while( TRUE )
 		testSessionTSPServer();
 #endif /* 0 */
-
-	/* Functions that can be pressed into service in combination with the
-	   special-purpose defines at the start of keyfile.c to generate custom
-	   certs/keys for the self-test */
-#if 0
-	testWriteFileCertChain();	/* To generate user/intermed.CA priv.key+cert */
-#endif /* 0 */
-#if 0
-	testReadWriteFileKey();
-	testUpdateFileCert();		/* To generate CA priv.key+cert */
-#endif /* 0 */
-#if 0
-	puts( "Hit a key..." );
-	getchar();
-	if( cryptEnd() == CRYPT_ERROR_INCOMPLETE )
-		{
-		puts( "Objects remained allocated." );
-		getchar();
-		}
-	exit( 0 );
-#endif /* 0 */
 	}
 
 /****************************************************************************
@@ -609,7 +590,8 @@ int main( int argc, char **argv )
 	status = cryptInit();
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptInit() failed with error code %d.\n", status );
+		printf( "cryptInit() failed with error code %d, line %d.\n", status, 
+				__LINE__ );
 		exit( EXIT_FAILURE );
 		}
 
@@ -618,17 +600,25 @@ int main( int argc, char **argv )
 	   we bypass the randomness-handling by adding some junk.  This is only
 	   enabled when cryptlib is built in debug mode, so it won't work with
 	   any production systems */
+  #if defined( __MVS__ ) || defined( __VMCMS__ )
+	#pragma convlit( resume )
 	cryptAddRandom( "xyzzy", 5 );
+	#pragma convlit( suspend )
+  #else
+	cryptAddRandom( "xyzzy", 5 );
+  #endif /* Special-case EBCDIC handling */
 #endif /* TEST_RANDOM */
 
 	/* Perform a general sanity check to make sure that the self-test is
 	   being run the right way */
 	if( !checkFileAccess() )
-		exit( EXIT_FAILURE );
+		goto errorExit;
 
 	/* Make sure that further system-specific features that require cryptlib 
 	   to be initialised to check are set right */
+#ifndef _WIN32_WCE
 	testSystemSpecific2();
+#endif /* WinCE */
 
 	/* For general testing purposes we can insert test code at this point to
 	   test special cases that aren't covered in the general tests below */
@@ -647,14 +637,16 @@ int main( int argc, char **argv )
 	if( cryptStatusError( status ) )
 		{
 		printf( "Attempt to perform cryptlib algorithm self-test failed "
-				"with error code %d.\n", status );
-		exit( EXIT_FAILURE );
+				"with error code %d, line %d.\n", status, __LINE__ );
+		goto errorExit;
 		}
-	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, &value );
+	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, 
+								&value );
 	if( cryptStatusError( status ) || value != CRYPT_USE_DEFAULT )
 		{
-		puts( "cryptlib algorithm self-test failed." );
-		exit( EXIT_FAILURE );
+		printf( "cryptlib algorithm self-test failed, line %d.\n", 
+				__LINE__ );
+		goto errorExit;
 		}
 	puts( "cryptlib algorithm self-test succeeded.\n" );
 #endif /* TEST_SELFTEST */
@@ -798,11 +790,6 @@ int main( int argc, char **argv )
 			goto errorExit;
 		if( !testSignData() )
 			goto errorExit;
-		/*	Disabled for now since there's no useful DH mechanism defined in
-		   any standard.  Note that KEA is still tested via the Fortezza
-		   device test.
-		if( !testKeyAgreement() )
-			goto errorExit; */
 		if( !testKeygen() )
 			goto errorExit;
 		if( !testKeygenAsync() )
@@ -976,7 +963,9 @@ int main( int argc, char **argv )
 	puts( "Skipping test of keyset read routines...\n" );
 #endif /* TEST_KEYSET */
 
-	/* Test the certificate processing and CA cert management functionality */
+	/* Test the certificate processing and CA cert management functionality.
+	   A side-effect of the cert-management functionality is that the OCSP
+	   EE test certs are written to the test data directory */
 #ifdef TEST_CERTPROCESS
 	if( !testCertProcess() )
 		goto errorExit;
@@ -1081,6 +1070,10 @@ int main( int argc, char **argv )
 			goto errorExit;
 		if( !testSessionTLS11() )
 			goto errorExit;
+#if 0	/* Nothing to test against yet */
+		if( !testSessionTLS12() )
+			goto errorExit;
+#endif /* 0 */
 		if( !testSessionOCSP() )
 			goto errorExit;
 		if( !testSessionTSP() )
@@ -1166,7 +1159,8 @@ int main( int argc, char **argv )
 				  "happens occasionally due to network timing issues or\n"
 				  "thread scheduling differences." );
 		else
-			printf( "cryptEnd() failed with error code %d.\n", status );
+			printf( "cryptEnd() failed with error code %d, line %d.\n", 
+					status, __LINE__ );
 		goto errorExit1;
 		}
 
@@ -1174,15 +1168,8 @@ int main( int argc, char **argv )
 	return( EXIT_SUCCESS );
 
 	/* All errors end up here */
-#if defined( TEST_LOWLEVEL ) || defined( TEST_MIDLEVEL ) || \
-	defined( TEST_DEVICE ) || defined( TEST_CERT ) || \
-	defined( TEST_KEYSET ) || defined( TEST_CERTPROCESS ) || \
-	defined( TEST_CERTMANAGEMENT ) || defined( TEST_HIGHLEVEL ) || \
-	defined( TEST_ENVELOPE ) || defined( TEST_SESSION ) || \
-	defined( TEST_SESSION ) || defined( TEST_USER )
 errorExit:
 	cryptEnd();
-#endif /* Eliminate compiler warning about unreferenced label */
 errorExit1:
 	puts( "\nThe test was aborted due to an error being detected.  If you "
 		  "want to report\nthis problem, please provide as much information "
@@ -1409,6 +1396,8 @@ void testSystemSpecific1( void )
 #endif /* UNIX_THREADS */
 	}
 
+#ifndef _WIN32_WCE	/* Windows CE doesn't support ANSI C time functions */
+
 void testSystemSpecific2( void )
 	{
 	CRYPT_CERTIFICATE cryptCert;
@@ -1443,3 +1432,4 @@ void testSystemSpecific2( void )
 		exit( EXIT_FAILURE );
 		}
 	}
+#endif /* WinCE */

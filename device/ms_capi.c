@@ -5,6 +5,11 @@
 *																			*
 ****************************************************************************/
 
+/* The following code is purely a test framework used to test the ability to
+   work with CryptoAPI keys.  Much of the code is only present as a rough
+   sketch.  It's not part of cryptlib, and shouldn't be used as a cryptlib
+   component */
+
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -1153,7 +1158,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	int i, driverNameLength = nameLength, status;
 
 	/* Check whether a keyset name has been specified */
-	strcpy( keysetNameBuffer, "MY" );	/* Default keyset */
+	strlcpy_s( keysetNameBuffer, CRYPT_MAX_TEXTSIZE, "MY" );/* Default keyset */
 	for( i = 1; i < nameLength - 1; i++ )
 		{
 		if( name[ i ] == ':' && name[ i + 1 ] == ':' )
@@ -1200,9 +1205,11 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	/* Get information on device-specific capabilities */
 	value = CRYPT_MAX_TEXTSIZE + 1;
 	if( !CryptGetProvParam( cryptoapiInfo->hProv, PP_NAME, 
-							cryptoapiInfo->labelBuffer, &value, 0 ) )
+							cryptoapiInfo->label, &value, 0 ) )
 		return( mapError( cryptoapiInfo, CRYPT_ERROR_NOTFOUND ) );
-	deviceInfo->label = cryptoapiInfo->labelBuffer;
+	cryptoapiInfo->labelLen = value;
+	deviceInfo->label = cryptoapiInfo->label;
+	deviceInfo->labelLen = cryptoapiInfo->labelLen;
 	deviceInfo->flags |= DEVICE_ACTIVE;
 
 	/* Set up the capability information for this device */
@@ -1354,7 +1361,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		   key usage as a form of pseudo-label */
 		if( flags & KEYMGMT_FLAG_LABEL_ONLY )
 			{
-			strcpy( auxInfo, label );
+			strlcpy_s( auxInfo, *auxInfoLength, label );
 			*auxInfoLength = strlen( label );
 			pCryptDestroyKey( hKey ); 
 			return( CRYPT_OK );
@@ -1695,7 +1702,7 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	do
 		{
 		DYNBUF certDB;
-		BOOL result;
+		BOOL result = FALSE;
 
 		/* Get the certificate data and add it to the store */
 		status = dynCreate( &certDB, iCryptHandle, 
@@ -2047,7 +2054,7 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 		*stateInfo = CRYPT_ERROR;
 		return( status );
 		}
-	*stateInfo++;
+	( *stateInfo )++;
 	return( CRYPT_OK );
 	}
 
@@ -2567,7 +2574,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			BYTE q[ 20 ];
 			BYTE g[ 128 ];
 			BYTE y[ 128 ]; */
-	memset( keyBlob, 0, CRYPT_MAX_PKCSIZE * 8 );
+	memset( keyBlob, 0, CRYPT_MAX_PKCSIZE * 4 );
 	blobHeaderPtr = ( BLOBHEADER * ) keyBlob;
 	blobHeaderPtr->bType = ( dlpKey->isPublicKey ) ? \
 						   PUBLICKEYBLOB : PRIVATEKEYBLOB;
@@ -2601,7 +2608,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		contextInfoPtr->deviceObject = hKey;
 	else
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
-	zeroise( keyBlob, CRYPT_MAX_PKCSIZE * 8 );
+	zeroise( keyBlob, CRYPT_MAX_PKCSIZE * 4 );
 
 	krnlReleaseObject( deviceInfo->objectHandle );
 	return( status );

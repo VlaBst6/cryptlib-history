@@ -816,15 +816,13 @@ static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 	{
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
-	int itemType = ( cmd->noStrArgs >= 2 ) ? \
-				KEYMGMT_ITEM_PRIVATEKEY : KEYMGMT_ITEM_PUBLICKEY;
-	int messageType = ( cmd->arg[ 1 ] == CRYPT_KEYID_NONE ) ? \
+	int messageType = ( cmd->arg[ 2 ] == CRYPT_KEYID_NONE ) ? \
 				MESSAGE_KEY_GETNEXTCERT : MESSAGE_KEY_GETKEY;
 	int owner, status;
 
 	assert( cmd->type == COMMAND_GETKEY );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
-	assert( cmd->noArgs >= 2 && cmd->noArgs <= 3 );
+	assert( cmd->noArgs == 3 );
 	assert( cmd->noStrArgs >= 1 && cmd->noStrArgs <= 2 );
 
 	UNUSED( stateInfo );
@@ -837,11 +835,20 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 	   external API) */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
 		return( CRYPT_ARGERROR_OBJECT );
-	if( cmd->arg[ 1 ] < CRYPT_KEYID_NONE || \
-		cmd->arg[ 1 ] >= CRYPT_KEYID_LAST_EXTERNAL )
+	if( cmd->arg[ 1 ] <= KEYMGMT_ITEM_NONE || \
+		cmd->arg[ 1 ] >= KEYMGMT_ITEM_REVOCATIONINFO )
+		/* Item can only be a public key, private key, secret key, CA 
+		   request, or CA PKI user info */
 		return( CRYPT_ARGERROR_NUM1 );
-	if( cmd->arg[ 1 ] == CRYPT_KEYID_NONE )
+	if( cmd->arg[ 2 ] < CRYPT_KEYID_NONE || \
+		cmd->arg[ 2 ] >= CRYPT_KEYID_LAST_EXTERNAL )
+		return( CRYPT_ARGERROR_NUM2 );
+	if( cmd->arg[ 2 ] == CRYPT_KEYID_NONE )
 		{
+		if( cmd->arg[ 1 ] != KEYMGMT_ITEM_PUBLICKEY )
+			/* If we're doing a keyset query, it has to be for a 
+			   certificate */
+			return( CRYPT_ARGERROR_NUM1 );
 		if( cmd->strArgLen[ 0 ] )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
@@ -849,26 +856,15 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 		if( cmd->strArgLen[ 0 ] < MIN_NAME_LENGTH || \
 			cmd->strArgLen[ 0 ] >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ARGERROR_STR1 );
-	if( cmd->arg[ 2 ] )
-		{
-		/* It's a special-case object being fetched from a CA store */
-		if( cmd->arg[ 2 ] == CRYPT_CERTTYPE_REQUEST_CERT )
-			itemType = KEYMGMT_ITEM_REQUEST;
-		else
-			if( cmd->arg[ 2 ] == CRYPT_CERTTYPE_PKIUSER )
-				itemType = KEYMGMT_ITEM_PKIUSER;
-			else
-				return( CRYPT_ARGERROR_NUM2 );
-		}
 
 	/* Read the key from the keyset */
-	setMessageKeymgmtInfo( &getkeyInfo, cmd->arg[ 1 ],
+	setMessageKeymgmtInfo( &getkeyInfo, cmd->arg[ 2 ],
 						   cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : NULL,
 							cmd->strArgLen[ 0 ],
 						   cmd->strArgLen[ 1 ] ? cmd->strArg[ 1 ] : NULL,
 							cmd->strArgLen[ 1 ], KEYMGMT_FLAG_NONE );
 	status = krnlSendMessage( cmd->arg[ 0 ], messageType, &getkeyInfo,
-							  itemType );
+							  cmd->arg[ 1 ] );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1052,7 +1048,8 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			/* Public key components constitute a special case since the
 			   composite structures used are quite large */
 			if( cmd->strArgLen[ 0 ] != sizeof( CRYPT_PKCINFO_RSA ) && \
-				cmd->strArgLen[ 0 ] != sizeof( CRYPT_PKCINFO_DLP ) )
+				cmd->strArgLen[ 0 ] != sizeof( CRYPT_PKCINFO_DLP ) && \
+				cmd->strArgLen[ 0 ] != sizeof( CRYPT_PKCINFO_ECC ) )
 				return( CRYPT_ARGERROR_NUM2 );
 			}
 		else
@@ -1633,9 +1630,9 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 /* When the cryptlib client is using a different character set, we need to
    map from the internal to the external character set.  The following
    function checks for attribute values that contain text strings.  In
-   addition the functions cryptGetPrivateKey(), cryptAddPrivateKey(), and
-   cryptLogin() use text strings that need to be mapped to the internal
-   character set */
+   addition the functions cryptGetKey(), cryptGetPrivateKey(), 
+   cryptAddPrivateKey(), and cryptLogin() use text strings that need to be 
+   mapped to the internal character set */
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 
@@ -2047,7 +2044,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		return( CRYPT_ERROR_PARAM3 );
 	if( ( deviceType == CRYPT_DEVICE_PKCS11 || \
 		  deviceType == CRYPT_DEVICE_CRYPTOAPI ) && \
-		( !isReadPtr( name, 2 ) || \
+		( !isReadPtr( name, 2 ) || strParamLen( name ) < 2 || \
 		  strParamLen( name ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM4 );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
@@ -2152,7 +2149,7 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 		return( CRYPT_ERROR_PARAM2 );
 	if( keysetType <= CRYPT_KEYSET_NONE || keysetType >= CRYPT_KEYSET_LAST )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( name, 2 ) || \
+	if( !isReadPtr( name, 2 ) || strParamLen( name ) < 2 || \
 		strParamLen( name ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 	if( options < CRYPT_KEYOPT_NONE || \
@@ -2253,9 +2250,11 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 		return( CRYPT_ERROR_PARAM1 );
 	*user = CRYPT_ERROR;
 	if( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+		strParamLen( name ) < MIN_NAME_LENGTH || \
 		strParamLen( name ) >= CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		strParamLen( password ) < MIN_NAME_LENGTH || \
 		strParamLen( password ) >= CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM3 );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
@@ -2507,7 +2506,8 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		/* Public key components constitute a special case since the
 		   composite structures used are quite large */
 		if( valueLength != sizeof( CRYPT_PKCINFO_RSA ) && \
-			valueLength != sizeof( CRYPT_PKCINFO_DLP ) )
+			valueLength != sizeof( CRYPT_PKCINFO_DLP ) && \
+			valueLength != sizeof( CRYPT_PKCINFO_ECC ) )
 			return( CRYPT_ERROR_PARAM4 );
 		}
 	else
@@ -2523,7 +2523,9 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM3 );
 		value = valueBuffer;
+  #ifdef UNICODE_CHARS
 		length = status;
+  #endif /* UNICODE_CHARS */
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
@@ -2916,6 +2918,19 @@ C_RET cryptExportCert( C_OUT void C_PTR certObject,
 		{
 		*certObjectLength = ( certObject == NULL ) ? \
 							cmd.arg[ 0 ] : cmd.strArgLen[ 0 ];
+#if defined( EBCDIC_CHARS )
+		if( ( certFormatType == CRYPT_CERTFORMAT_TEXT_CERTIFICATE || \
+			  certFormatType == CRYPT_CERTFORMAT_TEXT_CERTCHAIN || \
+			  certFormatType == CRYPT_CERTFORMAT_XML_CERTIFICATE || \
+			  certFormatType == CRYPT_CERTFORMAT_XML_CERTCHAIN ) && \
+			certObject != NULL )
+			{
+			/* It's text-encoded cert data, convert it to the native text
+			   format before we return */
+			cryptlibToNativeString( certObject, certObject, 
+									*certObjectLength );
+			}
+#endif /* EBCDIC_CHARS */
 		return( CRYPT_OK );
 		}
 	return( mapError( errorMap, status ) );
@@ -2996,7 +3011,8 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 			return( CRYPT_ERROR_PARAM5 );
 		}
 	else
-		if( keyID == NULL || !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM5 );
 
@@ -3014,7 +3030,6 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
-	cmd.arg[ 1 ] = keyIDtype;
 	if( isCert )
 		/* If we're being asked for a standard cert, the caller should really
 		   be using cryptGetPublicKey(), however for orthogonality we convert
@@ -3024,10 +3039,11 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		   ask for a single cert or a single cert if we ask for a chain,
 		   depending on what's there), but it's less confusing than refusing
 		   any request to read a cert */
-		cmd.noArgs = 2;
+		cmd.arg[ 1 ] = KEYMGMT_ITEM_PUBLICKEY;
 	else
-		cmd.arg[ 2 ] = ( certType == CRYPT_CERTTYPE_PKIUSER ) ? \
-					   CRYPT_CERTTYPE_PKIUSER : CRYPT_CERTTYPE_REQUEST_CERT;
+		cmd.arg[ 1 ] = ( certType == CRYPT_CERTTYPE_PKIUSER ) ? \
+					   KEYMGMT_ITEM_PKIUSER : KEYMGMT_ITEM_REQUEST;
+	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
 	if( keyIDPtr != NULL )
 		cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
@@ -3070,6 +3086,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM3 );
 	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) > MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 
@@ -3270,7 +3287,7 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 						 C_IN C_STR keyID )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
-		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 2, 1 };
+		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
 		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_LAST };
 	COMMAND_INFO cmd;
@@ -3298,7 +3315,8 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 			return( CRYPT_ERROR_PARAM4 );
 		}
 	else
-		if( keyID == NULL || !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM4 );
 
@@ -3316,7 +3334,8 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
-	cmd.arg[ 1 ] = keyIDtype;
+	cmd.arg[ 1 ] = KEYMGMT_ITEM_PUBLICKEY;
+	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
 	if( keyIDPtr != NULL )
 		cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
@@ -3335,7 +3354,7 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 						  C_IN C_STR keyID, C_IN C_STR password )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
-		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 2, 2 };
+		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 2 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
 		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST };
 	COMMAND_INFO cmd;
@@ -3357,10 +3376,12 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM3 );
 	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 	if( password != NULL && \
 		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		  strParamLen( password ) < MIN_NAME_LENGTH || \
 		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM5 );
 
@@ -3382,7 +3403,82 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
-	cmd.arg[ 1 ] = keyIDtype;
+	cmd.arg[ 1 ] = KEYMGMT_ITEM_PRIVATEKEY;
+	cmd.arg[ 2 ] = keyIDtype;
+	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
+	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArg[ 1 ] = ( void * ) passwordPtr;
+	if( passwordPtr != NULL )
+		cmd.strArgLen[ 1 ] = strlen( passwordPtr );
+	status = DISPATCH_COMMAND( cmdGetKey, cmd );
+#if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
+	zeroise( passwordBuffer, MAX_ATTRIBUTE_SIZE + 1 );
+#endif /* EBCDIC_CHARS || UNICODE_CHARS */
+	if( cryptStatusOK( status ) )
+		{
+		*cryptContext = cmd.arg[ 0 ];
+		return( CRYPT_OK );
+		}
+	return( mapError( errorMap, status ) );
+	}
+
+C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
+				   C_OUT CRYPT_CONTEXT C_PTR cryptContext,
+				   C_IN CRYPT_KEYID_TYPE keyIDtype, C_IN C_STR keyID, 
+				   C_IN C_STR password )
+	{
+	static const COMMAND_INFO FAR_BSS cmdTemplate = \
+		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 2 };
+	static const ERRORMAP FAR_BSS errorMap[] = \
+		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST };
+	COMMAND_INFO cmd;
+#if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
+	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = keyIDBuffer;
+	BYTE passwordBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *passwordPtr = NULL;
+#else
+	const char *keyIDPtr = keyID, *passwordPtr = password;
+#endif /* EBCDIC_CHARS || UNICODE_CHARS */
+	int status;
+
+	/* Perform basic client-side error checking */
+	if( !isHandleRangeValid( keyset ) )
+		return( CRYPT_ERROR_PARAM1 );
+	if( !isWritePtr( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
+		return( CRYPT_ERROR_PARAM2 );
+	*cryptContext = CRYPT_ERROR;
+	if( keyIDtype <= CRYPT_KEYID_NONE || \
+		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
+		return( CRYPT_ERROR_PARAM3 );
+	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		strParamLen( keyID ) < MIN_NAME_LENGTH || \
+		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
+		return( CRYPT_ERROR_PARAM4 );
+	if( password != NULL && \
+		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		  strParamLen( password ) < MIN_NAME_LENGTH || \
+		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
+		return( CRYPT_ERROR_PARAM5 );
+
+#if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
+	status = nativeToCryptlibString( keyIDBuffer, keyID,
+									 nativeStrlen( keyID ) + 1 );
+	if( cryptStatusError( status ) )
+		return( CRYPT_ERROR_PARAM4 );
+	if( password != NULL )
+		{
+		status = nativeToCryptlibString( passwordBuffer, password,
+										 nativeStrlen( password ) + 1 );
+		if( cryptStatusError( status ) )
+			return( CRYPT_ERROR_PARAM5 );
+		passwordPtr = passwordBuffer;
+		}
+#endif /* EBCDIC_CHARS || UNICODE_CHARS */
+
+	/* Dispatch the command */
+	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
+	cmd.arg[ 0 ] = keyset;
+	cmd.arg[ 1 ] = KEYMGMT_ITEM_SECRETKEY;
+	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
 	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
 	cmd.strArg[ 1 ] = ( void * ) passwordPtr;
@@ -3452,6 +3548,7 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 	if( password != NULL && \
 		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
 		  isBadPassword( password ) || \
+		  strParamLen( password ) < MIN_NAME_LENGTH || \
 		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM3 );
 
@@ -3507,6 +3604,7 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) > MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM3 );
 
@@ -3679,3 +3777,19 @@ C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 	return( CRYPT_ERROR_NOTAVAIL );
 	}
 #endif /* !USE_CERTIFICATES */
+
+/****************************************************************************
+*																			*
+*							Custom Code Insertion Point						*
+*																			*
+****************************************************************************/
+
+/* This section can be used to insert custom code for application-specific
+   purposes.  It's normally not used, and isn't present in the standard
+   distribution */
+
+#if !defined( NDEBUG ) && 0
+
+#include "docs/cryptapi_ext.c"
+
+#endif /* Debug-mode only test code */

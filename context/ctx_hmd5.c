@@ -101,30 +101,15 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getHmacMD5Capability();
-	CONTEXT_INFO contextInfo;
-	MAC_INFO contextData;
-	BYTE keyData[ MAC_STATE_SIZE + 8 ];
+	BYTE macData[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-MD5 against the test vectors given in RFC 2104 */
 	for( i = 0; hmacValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_MAC, capabilityInfo,
-						   &contextData, sizeof( MAC_INFO ), keyData );
-		status = capabilityInfo->initKeyFunction( &contextInfo, 
-						hmacValues[ i ].key, hmacValues[ i ].keyLength );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, 
-						( BYTE * ) hmacValues[ i ].data, 
-						hmacValues[ i ].length );
-		contextInfo.flags |= CONTEXT_HASH_INITED;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxMAC->mac, hmacValues[ i ].digest,
-					MD5_DIGEST_LENGTH ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testMAC( capabilityInfo, macData, hmacValues[ i ].key, 
+						  hmacValues[ i ].keyLength, hmacValues[ i ].data, 
+						  hmacValues[ i ].length, hmacValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -250,6 +235,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		hashBuffer[ i ] ^= HMAC_IPAD;
 	MD5_Update( md5Info, hashBuffer, MD5_CBLOCK );
 	memset( hashBuffer, 0, MD5_CBLOCK );
+	contextInfoPtr->flags |= CONTEXT_HASH_INITED;
 
 	/* Save a copy of the initial state in case it's needed later */
 	memcpy( &( ( MAC_STATE * ) macInfo->macInfo )->initialMacState, md5Info, 

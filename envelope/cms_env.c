@@ -35,7 +35,7 @@
 /* Check that a requested algorithm type is valid with enveloped data */
 
 BOOLEAN cmsCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
-					  const CRYPT_ALGO_TYPE cryptMode )
+					  const CRYPT_MODE_TYPE cryptMode )
 	{
 	assert( cryptAlgo > CRYPT_ALGO_NONE && \
 			cryptAlgo < CRYPT_ALGO_LAST );
@@ -502,8 +502,7 @@ static int processKeyexchangeAction( ENVELOPE_INFO *envelopeInfoPtr,
 
 #ifdef USE_KEA
 	/* If there's an originator chain present, get the originator's domain
-	   parameters and if the key is tied to a device, get the device's handle
-	   so that we can create the session key object in it */
+	   parameters */
 	if( envelopeInfoPtr->iExtraCertChain != CRYPT_ERROR )
 		{
 		MESSAGE_DATA msgData;
@@ -516,11 +515,6 @@ static int processKeyexchangeAction( ENVELOPE_INFO *envelopeInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		originatorDomainParamSize = msgData.length;
-		status = krnlSendMessage( envelopeInfoPtr->iExtraCertChain,
-								  IMESSAGE_GETDEPENDENT, &iCryptDevice,
-								  OBJECT_TYPE_DEVICE );
-		if( cryptStatusError( status ) )
-			iCryptDevice = CRYPT_ERROR;
 		}
 
 	/* If it's a key agreement action, make sure that there's originator
@@ -542,7 +536,7 @@ static int processKeyexchangeAction( ENVELOPE_INFO *envelopeInfoPtr,
 		setMessageData( &msgData, domainParams, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
-								  CRYPT_IATTRIBUTE_KEY_DOMAINPARAMS );
+								  CRYPT_IATTRIBUTE_KEY_KEADOMAINPARAMS );
 		if( cryptStatusError( status ) )
 			return( status );
 		if( ( originatorDomainParamSize != msgData.length ) || \

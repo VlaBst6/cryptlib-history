@@ -279,7 +279,7 @@ int initCryptlib( void )
 			/* We use the kernel's thread storage for this thread, so we 
 			   specify the thread data storage as NULL */
 			status = krnlDispatchThread( threadedBind, NULL, 
-										 asyncInitFunctions, 
+										 ( void * ) asyncInitFunctions, 
 										 MANAGEMENT_ACTION_INIT,
 										 SEMAPHORE_DRIVERBIND );
 			if( cryptStatusError( status ) )

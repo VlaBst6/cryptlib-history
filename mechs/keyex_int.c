@@ -105,7 +105,7 @@ int exportConventionalKey( void *encryptedKey, int *encryptedKeyLength,
 
 	/* Encrypt the session key and write the result to the output stream */
 	setMechanismWrapInfo( &mechanismInfo, bufPtr, bufSize, NULL, 0, 
-						  iSessionKeyContext, iExportContext, CRYPT_UNUSED );
+						  iSessionKeyContext, iExportContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, MECHANISM_ENC_CMS );
 	if( cryptStatusOK( status ) )
@@ -166,7 +166,7 @@ int exportPublicKey( void *encryptedKey, int *encryptedKeyLength,
 
 	/* Encrypt the session key and write the result to the output stream */
 	setMechanismWrapInfo( &mechanismInfo, bufPtr, bufSize, NULL, 0, 
-						  iSessionKeyContext, iExportContext, CRYPT_UNUSED );
+						  iSessionKeyContext, iExportContext );
 	status = krnlSendMessage( iExportContext, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, ( keyexType == KEYEX_PGP ) ? \
 								MECHANISM_ENC_PKCS1_PGP : \
@@ -178,7 +178,7 @@ int exportPublicKey( void *encryptedKey, int *encryptedKeyLength,
 		sMemOpen( &stream, encryptedKey, encryptedKeyMaxLength );
 		status = writeKetransFunction ( &stream, iExportContext,
 										( encryptedKey != NULL ) ? \
-											mechanismInfo.wrappedData: buffer,
+											mechanismInfo.wrappedData : buffer,
 										mechanismInfo.wrappedDataLength,
 										auxInfo, auxInfoLength );
 		if( cryptStatusOK( status ) )
@@ -227,8 +227,9 @@ int exportKeyAgreeKey( void *encryptedKey, int *encryptedKeyLength,
 				CRYPT_ARGERROR_NUM2 : status );
 
 	/* Export the session key and write the result to the output stream */
-	setMechanismWrapInfo( &mechanismInfo, bufPtr, bufSize, NULL, 0, 
-						  iSessionKeyContext, iExportContext, iAuxContext );
+	setMechanismWrapInfoEx( &mechanismInfo, bufPtr, bufSize, NULL, 0, 
+							iSessionKeyContext, iExportContext, 
+							iAuxContext, CRYPT_UNUSED );
 	status = krnlSendMessage( iExportContext, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, MECHANISM_KEA );
 	if( cryptStatusOK( status ) )
@@ -328,7 +329,7 @@ int importConventionalKey( const void *encryptedKey,
 	setMechanismWrapInfo( &mechanismInfo,
 						  ( BYTE * ) encryptedKey + queryInfo.dataStart, 
 						  queryInfo.dataLength, NULL, 0, 
-						  iSessionKeyContext, iImportContext, CRYPT_UNUSED );
+						  iSessionKeyContext, iImportContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT,
 							  &mechanismInfo, MECHANISM_ENC_CMS );
 	krnlSendMessage( iImportContext, IMESSAGE_SETATTRIBUTE,
@@ -430,7 +431,7 @@ int importPublicKey( const void *encryptedKey, const int encryptedKeyLength,
 		setMechanismWrapInfo( &mechanismInfo,
 							  ( BYTE * ) encryptedKey + queryInfo.dataStart, 
 							  queryInfo.dataLength, NULL, 0, 
-							  iSessionKeyContext, iImportContext, CRYPT_UNUSED );
+							  iSessionKeyContext, iImportContext );
 		status = krnlSendMessage( iImportContext, IMESSAGE_DEV_IMPORT,
 								  &mechanismInfo, MECHANISM_ENC_PKCS1 );
 		}
@@ -444,7 +445,7 @@ int importPublicKey( const void *encryptedKey, const int encryptedKeyLength,
 		setMechanismWrapInfo( &mechanismInfo, 
 							  ( BYTE * ) encryptedKey + queryInfo.dataStart,
 							  queryInfo.dataLength, NULL, 0, 
-							  CRYPT_UNUSED, iImportContext, CRYPT_UNUSED );
+							  CRYPT_UNUSED, iImportContext );
 		status = krnlSendMessage( iImportContext, IMESSAGE_DEV_IMPORT,
 								  &mechanismInfo, MECHANISM_ENC_PKCS1_PGP );
 		if( cryptStatusOK( status ) )

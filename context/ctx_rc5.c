@@ -37,8 +37,8 @@
 
 static const struct RC5_TEST {
 	const BYTE key[ 16 ];
-	const BYTE plainText[ 8 ];
-	const BYTE cipherText[ 8 ];
+	const BYTE plaintext[ 8 ];
+	const BYTE ciphertext[ 8 ];
 	} FAR_BSS testRC5[] = {
 	{ { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
@@ -67,26 +67,16 @@ static const struct RC5_TEST {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getRC5Capability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ RC5_EXPANDED_KEYSIZE + 8 ];
-	BYTE temp[ RC5_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testRC5 ) / sizeof( struct RC5_TEST ); i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		memcpy( temp, testRC5[ i ].plainText, RC5_BLOCKSIZE );
-		status = capabilityInfo->initKeyFunction( &contextInfo,
-												  testRC5[ i ].key, 16 );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp,
-													  RC5_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testRC5[ i ].cipherText, temp, RC5_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		status = testCipher( capabilityInfo, keyData, testRC5[ i ].key, 
+							 16, testRC5[ i ].plaintext,
+							 testRC5[ i ].ciphertext );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -436,7 +426,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), bitsToBytes( 832 ),
+	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 832 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB

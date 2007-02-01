@@ -238,8 +238,9 @@ int asciiToEbcdic( char *dest, const char *src, const int length )
 	assert( isReadPtr( src, length ) );
 	assert( isWritePtr( dest, length ) );
 
-	memcpy( dest, src, length );
-	return( __atoe_l( string, stringLen ) < 0 ? \
+	if( dest != src )
+		memcpy( dest, src, length );
+	return( return( __atoe_l( dest, length ) < 0 ? \
 			CRYPT_ERROR_BADDATA : CRYPT_OK );
 	}
 
@@ -248,8 +249,9 @@ int ebcdicToAscii( char *dest, const char *src, const int length )
 	assert( isReadPtr( src, length ) );
 	assert( isWritePtr( dest, length ) );
 
-	memcpy( dest, src, length );
-	return( __etoa_l( string, stringLen ) < 0 ? \
+	if( dest != src )
+		memcpy( dest, src, length );
+	return( return( __etoa_l( dest, length ) < 0 ? \
 			CRYPT_ERROR_BADDATA : CRYPT_OK );
 	}
 #endif /* USE_ETOA */
@@ -260,7 +262,7 @@ int ebcdicToAscii( char *dest, const char *src, const int length )
 char *bufferToEbcdic( char *buffer, const char *string )
 	{
 	strcpy( buffer, string );
-	asciiToEbcdic( buffer, strlen( string ) );
+	asciiToEbcdic( buffer, buffer, strlen( string ) );
 	return( buffer );
 	}
 
@@ -338,7 +340,7 @@ int strCompare( const char *src, const char *dest, int length )
 	/* Convert the strings to EBCDIC and use a native compare */
 	src = bufferToEbcdic( buffer1, src );
 	dest = bufferToEbcdic( buffer2, dest );
-	return( strnicmp( src, dest, length ) );
+	return( strncasecmp( src, dest, length ) );
 	}
 
 int strCompareZ( const char *src, const char *dest )
@@ -350,7 +352,11 @@ int strCompareZ( const char *src, const char *dest )
 	return( strCompare( src, dest, length ) );
 	}
 
-/* sprintf_s() that takes an ASCII format string */
+/* sprintf_s() and vsprintf_s() that take ASCII format strings.  Since 
+   vsprintf_s() does the same thing as sprintf_s(), we map them both to
+   the same function in the os_spec.h header.  Unfortunately we have to
+   use vsprintf() to do the actual printing, since MVS doesn't support
+   vsnprintf() */
 
 int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 	{
@@ -366,14 +372,21 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 	/* Make sure that we don't have any string args, which would require
 	   their own conversion to EBCDIC */
 	for( i = 0; i < formatLen; i++ )
+		{
 		if( format[ i ] == '%' && format[ i + 1 ] == 's' )
+			{
 			assert( NOTREACHED );
+			strlcpy_s( buffer, bufSize, 
+					   "<<<Unable to format output string>>>" );
+			return( -1 );
+			}
+		}
 #endif /* NDEBUG */
 	format = bufferToEbcdic( formatBuffer, format );
 	va_start( argPtr, format );
-	status = vsnprintf( buffer, bufSize, format, argPtr );
+	status = vsprintf( buffer, format, argPtr );
 	if( status > 0 )
-		ebcdicToAscii( buffer, status );
+		ebcdicToAscii( buffer, buffer, status );
 	va_end( argPtr );
 	return( status );
 	}
@@ -386,9 +399,9 @@ int aToI( const char *str )
 
 	/* The maximum length of a numeric string value that can be converted
 	   to a 4-byte integer is considered as 10 characters (9,999,999,999) */
-	strncpy( buffer, str, 10 );
+	strlcpy_s( buffer, 10, str );
 	buffer[ 10 ] = '\0';
-	asciiToEbcdic( buffer, strlen( buffer ) );
+	asciiToEbcdic( buffer, buffer, strlen( buffer ) );
 	return( atoi( buffer ) );
 	}
 
@@ -526,9 +539,12 @@ long getTickCount( long startTime )
    runtime to see what we've got and adjusts its behaviour accordingly.  In
    fact it's much easier to fix than that, since we have to use vsprintf()
    anyway and this doesn't have the sprintf() problem, this fixes itself
-   simply from the use of the wrapper */
+   simply from the use of the wrapper (unfortunately we can't use 
+   vsnprintf() because these older OS versions don't include it yet) */
 
 #if defined( sun ) && ( OSVERSION <= 5 )
+
+#include <stdarg.h>
 
 int fixedSprintf( char *buffer, const int bufSize, const char *format, ... )
 	{
@@ -536,7 +552,7 @@ int fixedSprintf( char *buffer, const int bufSize, const char *format, ... )
 	int length;
 
 	va_start( argPtr, format );
-	length = vsnprintf( buffer, bufSize, format, argPtr );
+	length = vsprintf( buffer, format, argPtr );
 	va_end( argPtr );
 
 	return( length );
@@ -568,21 +584,17 @@ BOOLEAN isWin95;
    processors rather than an idle logical processor on a physical processor
    whose other logical processor is (potentially) busy.
 
-   There isn't really any easy way to fix this since it'd require a sleep
-   that works across all CPUs, however a somewhat suboptimal solution is
-   to make the thread sleep for a nonzero time limit iff it's running on a
-   multi-CPU system.  The following code implements this, performing a
-   standard yield on a uniprocessor system and a minimum-time-quantum sleep
-   on an HT/SMP system.
-
-   Another problem concerns thread priorities.  If we're at a higher
-   priority than the other thread then we can call Sleep( 0 ) as much as we
-   like, but the scheduler will never allow the other thread to run since
-   we're a higher-priority runnable thread, so as soon as we release our
-   timeslice the scheduler will restart us again (the Windows scheduler has a
-   starvation-prevention mechanism, but this various across scheduler
-   versions and isn't something that we want to rely on).  In theory we
-   could do:
+   There isn't really any easy way to fix this since it'd require a sleep 
+   that works across all CPUs, however one solution is to make the thread 
+   sleep for a nonzero time limit iff it's running on a multi-CPU system.  
+   There's a second problem though, which relates to thread priorities.  If 
+   we're at a higher priority than the other thread then we can call 
+   Sleep( 0 ) as much as we like, but the scheduler will never allow the 
+   other thread to run since we're a higher-priority runnable thread.  As a 
+   result, as soon as we release our timeslice the scheduler will restart us 
+   again (the Windows scheduler implements a starvation-prevention mechanism 
+   via the balance set manager, but this varies across scheduler versions 
+   and isn't something that we want to rely on).  In theory we could do:
 
 		x = GetThreadPriority( GetCurrentThread() );
 		SetThreadPriority( GetCurrentThread(), x - 5 );
@@ -591,15 +603,26 @@ BOOLEAN isWin95;
 		SetThreadPriority( GetCurrentThread(), x );
 		Sleep( 0 );
 
-	however this is somewhat problematic if the caller is also messing with
-	priorities at the same time.
+   however this is somewhat problematic if the caller is also messing with 
+   priorities at the same time.  In fact it can get downright nasty because 
+   the balance set manager will, if a thread has been starved for ~3-4 
+   seconds, give it its own priority boost to priority 15 (time-critical) to 
+   ensure that it'll be scheduled, with the priority slowly decaying back to 
+   the normal level each time that it's scheduled.  In addition it'll have 
+   its scheduling quantum boosted to 2x the normal duration for a client OS 
+   or 4x the normal duration for a server OS.
 
-	(Actually this simplified view isn't quite accurate since on a HT system
-	the scheduler executes the top *two* threads on the two logical
-	processors and on a dual-CPU system they're executed on a physical
-	processor.  In addition on a HT system a lower-priority thread on one
-	logical processor can compete with a higher-priority thread on the other
-	logical processor since the hardware isn't aware of thread priorities) */
+   To solve this, we always force our thread to go to sleep (to allow a 
+   potentially lower-priority thread to leap in and get some work done) even 
+   on a single-processor system, but use a slightly longer wait on an 
+   HT/multi-processor system.
+
+   (Actually this simplified view isn't quite accurate since on a HT system 
+   the scheduler executes the top *two* threads on the two logical 
+   processors and on a dual-CPU system they're executed on a physical 
+   processor.  In addition on a HT system a lower-priority thread on one 
+   logical processor can compete with a higher-priority thread on the other
+   logical processor since the hardware isn't aware of thread priorities) */
 
 void threadYield( void )
 	{
@@ -611,7 +634,7 @@ void threadYield( void )
 		SYSTEM_INFO systemInfo;
 
 		GetSystemInfo( &systemInfo );
-		sleepTime = ( systemInfo.dwNumberOfProcessors > 1 ) ? 5 : 0;
+		sleepTime = ( systemInfo.dwNumberOfProcessors > 1 ) ? 10 : 1;
 		}
 
 	/* Yield the CPU for this thread */
@@ -949,6 +972,50 @@ int CALLBACK WEP( int nSystemExit )
 	return( TRUE );
 	}
 
+/* Check whether we're running inside a VM, which is a potential risk for
+   cryptovariables.  It gets quite tricky to detect the various VMs so for
+   now the only one we detect is the most widespread one, VMware */
+
+#if defined( __WIN32__ )  && !defined( NO_ASM )
+
+BOOLEAN isRunningInVM( void )
+	{
+	unsigned int magicValue, version;
+
+	__try {
+	__asm {
+		push eax
+		push ebx
+		push ecx
+		push edx
+
+		/* Check for VMware via the VMware guest-to-host communications 
+		   channel */
+		mov eax, 'VMXh'		/* VMware magic value 0x564D5868 */
+		xor ebx, ebx		/* Clear parameters register */
+		mov ecx, 0Ah		/* Get-version command */
+		mov dx, 'VX'		/* VMware I/O port 0x5658 */
+		in eax, dx			/* Perform VMware call */
+		mov magicValue, ebx	/* VMware magic value */
+		mov version, ecx	/* VMware version */
+
+		pop edx
+		pop ecx
+		pop ebx
+		pop eax
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+	return( magicValue == 'VMXh' ) ? TRUE : FALSE );
+	}
+#else
+
+BOOLEAN isRunningInVM( void )
+	{
+	return( FALSE );
+	}
+#endif /* __WIN32__ && !NO_ASM */
+
 /****************************************************************************
 *																			*
 *									Windows CE								*
@@ -1164,6 +1231,69 @@ BOOL WINAPI DllMain( HANDLE hinstDLL, DWORD dwReason, LPVOID lpvReserved )
 	return( TRUE );
 	}
 #endif /* OS-specific support */
+
+/****************************************************************************
+*																			*
+*						Minimal Safe String Function Support				*
+*																			*
+****************************************************************************/
+
+#ifdef NO_NATIVE_STRLCPY
+
+/* Copy and concatenate a string, truncating it if necessary to fit the 
+   destination buffer.  Unfortunately the TR 24731 functions don't do this,
+   while the OpenBSD safe-string functions do (but don't implement any of
+   the rest of the TR 24731 functionality).  Because the idiot maintainer
+   of glibc objects to these functions (even Microsoft recognise their
+   utility with the _TRUNCATE semantics for strcpy_s/strcat_s), everyone has 
+   to manually implement them in their code, as we do here.  Note that these
+   aren't completely identical to the OpenBSD functions, in order to fit the 
+   TR 24731 pattern we make the length the second paramter, and give them a
+   TR 24731-like _s suffix to make them distinct from the standard OpenBSD
+   ones (a macro in os_spec.h is sufficient to map this to the proper 
+   functions where they're available in libc) */
+
+int strlcpy_s( char *dest, const int destLen, const char *src )
+	{
+	int i;
+
+	assert( isWritePtr( dest, destLen ) );
+	assert( isReadPtr( src, 1 ) );
+
+	/* Copy as much as we can of the source string onto the end of the 
+	   destination string */
+	for( i = 0; i < destLen - 1 && *src != '\0'; i++ )
+		dest[ i ] = *src++;
+	dest[ i ] = '\0';
+
+	return( 1 );
+	}
+
+int strlcat_s( char *dest, const int destLen, const char *src )
+	{
+	int i;
+
+	assert( isWritePtr( dest, destLen ) );
+
+	/* See how long the existing destination string is */
+	for( i = 0; i < destLen && dest[ i ] != '\0'; i++ );
+	if( i >= destLen )
+		{
+		assert( NOTREACHED );
+		dest[ destLen - 1 ] = '\0';
+
+		return( 1 );
+		}
+
+	/* Copy as much as we can of the source string onto the end of the 
+	   destination string */
+	while( i < destLen - 1 && *src != '\0' )
+		dest[ i++ ] = *src++;
+	dest[ i ] = '\0';
+
+	return( 1 );
+	}
+#endif /* NO_NATIVE_STRLCPY */
 
 /****************************************************************************
 *																			*

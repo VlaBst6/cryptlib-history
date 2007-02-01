@@ -252,7 +252,8 @@ static BOOLEAN wildcardMatch( const ATTRIBUTE_LIST *constrainedAttribute,
 			   performing the match we have to parse the URL and only use 
 			   the DNS name portion */
 			status = sNetParseURL( &urlInfo, constrainedString, 
-								   constrainedAttribute->valueLength );
+								   constrainedAttribute->valueLength, 
+								   URL_TYPE_NONE );
 			if( cryptStatusError( status ) )
 				return( FALSE );
 

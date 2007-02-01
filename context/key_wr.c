@@ -31,8 +31,8 @@
 
 	params = SEQ {
 		p INTEGER,
-		q INTEGER,				-- q for DSA
-		g INTEGER,				-- g for DSA
+		q INTEGER,
+		g INTEGER,
 		j INTEGER OPTIONAL,		-- X9.42 only
 		validationParams [...]	-- X9.42 only
 		}
@@ -561,7 +561,7 @@ static int generateDomainParameters( BYTE *domainParameters,
 	/* Hash the DSA/KEA parameters and reduce them down to get the domain
 	   identifier */
 	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
-	hashFunction( NULL, hash, dataBuffer, dataSize, HASH_ALL );
+	hashFunction( NULL, hash, hashSize, dataBuffer, dataSize, HASH_ALL );
 	zeroise( dataBuffer, CRYPT_MAX_PKCSIZE * 3 );
 	hashSize /= 2;	/* Output = hash result folded in half */
 	for( i = 0; i < hashSize; i++ )
@@ -574,7 +574,12 @@ static int generateDomainParameters( BYTE *domainParameters,
 /* If the keys are stored in a crypto device rather than being held in the
    context, all we have available are the public components in flat format.
    The following code writes flat-format public components in the X.509
-   SubjectPublicKeyInfo format */
+   SubjectPublicKeyInfo format.  The parameters are:
+
+	Algo	Comp1	Comp2	Comp3	Comp4
+	----	-----	-----	-----	-----
+	RSA		  n		  e		  -		  -
+	DLP		  p		  q		  g		  y */
 
 int writeFlatPublicKey( void *buffer, const int bufMaxSize, 
 						const CRYPT_ALGO_TYPE cryptAlgo, 
@@ -590,7 +595,9 @@ int writeFlatPublicKey( void *buffer, const int bufMaxSize,
 						  sizeofInteger( component3, component3Length );
 	const int comp4Size = ( component4 == NULL ) ? 0 : \
 						  sizeofInteger( component4, component4Length );
-	const int parameterSize = ( cryptAlgo == CRYPT_ALGO_DSA ) ? \
+	const int parameterSize = ( cryptAlgo == CRYPT_ALGO_DH || \
+								cryptAlgo == CRYPT_ALGO_DSA || \
+								cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? \
 				( int ) sizeofObject( comp1Size + comp2Size + comp3Size ) : \
 							  ( cryptAlgo == CRYPT_ALGO_KEA ) ? \
 				( int) sizeofObject( 10 ) : 0;
@@ -606,8 +613,9 @@ int writeFlatPublicKey( void *buffer, const int bufMaxSize,
 	assert( isReadPtr( component2, component2Length ) );
 	assert( comp3Size == 0 || isReadPtr( component3, component3Length ) );
 	assert( comp4Size == 0 || isReadPtr( component4, component4Length ) );
-	assert( cryptAlgo == CRYPT_ALGO_DSA || cryptAlgo == CRYPT_ALGO_KEA || \
-			cryptAlgo == CRYPT_ALGO_RSA );
+	assert( cryptAlgo == CRYPT_ALGO_DH || cryptAlgo == CRYPT_ALGO_RSA || \
+			cryptAlgo == CRYPT_ALGO_DSA || cryptAlgo == CRYPT_ALGO_ELGAMAL || \
+			cryptAlgo == CRYPT_ALGO_KEA );
 
 	/* Determine the size of the AlgorithmIdentifier and the BITSTRING-
 	   encapsulated public-key data (the +1 is for the bitstring) */
@@ -624,12 +632,20 @@ int writeFlatPublicKey( void *buffer, const int bufMaxSize,
 	writeAlgoIDex( &stream, cryptAlgo, CRYPT_ALGO_NONE, parameterSize );
 
 	/* Write the parameter data if necessary */
-	if( cryptAlgo == CRYPT_ALGO_DSA )
+	if( isDlpAlgo( cryptAlgo ) && cryptAlgo != CRYPT_ALGO_KEA )
 		{
 		writeSequence( &stream, comp1Size + comp2Size + comp3Size );
 		writeInteger( &stream, component1, component1Length, DEFAULT_TAG );
-		writeInteger( &stream, component2, component2Length, DEFAULT_TAG );
-		writeInteger( &stream, component3, component3Length, DEFAULT_TAG );
+		if( hasReversedParams( cryptAlgo ) )
+			{
+			writeInteger( &stream, component3, component3Length, DEFAULT_TAG );
+			writeInteger( &stream, component2, component2Length, DEFAULT_TAG );
+			}
+		else
+			{
+			writeInteger( &stream, component2, component2Length, DEFAULT_TAG );
+			writeInteger( &stream, component3, component3Length, DEFAULT_TAG );
+			}
 		}
 #ifdef USE_KEA
 	if( cryptAlgo == CRYPT_ALGO_KEA )
@@ -656,11 +672,13 @@ int writeFlatPublicKey( void *buffer, const int bufMaxSize,
 							   DEFAULT_TAG );
 		}
 	else
-		if( cryptAlgo == CRYPT_ALGO_DSA )
+#ifdef USE_KEA
+		if( cryptAlgo == CRYPT_ALGO_KEA )
+			status = swrite( &stream, component4, component4Length );
+		else
+#endif /* USE_KEA */
 			status = writeInteger( &stream, component4, component4Length, 
 								   DEFAULT_TAG );
-		else
-			status = swrite( &stream, component4, component4Length );
 
 	/* Clean up */
 	sMemDisconnect( &stream );

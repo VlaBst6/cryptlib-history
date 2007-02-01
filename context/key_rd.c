@@ -113,8 +113,7 @@ static int calculateKeyID( CONTEXT_INFO *contextInfoPtr )
 						 publicKey->publicKeyInfoSize );
 			readSequence( &stream, NULL );
 			readUniversal( &stream );
-			readBitStringHole( &stream, &length, 
-							   bitsToBytes( MIN_PKCSIZE_BITS ), DEFAULT_TAG );
+			readBitStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
 			readSequence( &stream, NULL );
 			readInteger( &stream, buffer, &length, CRYPT_MAX_PKCSIZE );
 			assert( readInteger( &stream, NULL, NULL, \
@@ -136,13 +135,11 @@ static int calculateKeyID( CONTEXT_INFO *contextInfoPtr )
 		readSequence( &stream, NULL );
 		readSequence( &stream, NULL );
 		readUniversal( &stream );
-		readOctetStringHole( &stream, &length, 
-							 bitsToBytes( MIN_PKCSIZE_BITS ), DEFAULT_TAG );
+		readOctetStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
 		publicKey->domainParamPtr = sMemBufPtr( &stream );
 		publicKey->domainParamSize = ( int ) length;
 		sSkip( &stream, length );
-		readBitStringHole( &stream, &length, bitsToBytes( MIN_PKCSIZE_BITS ), 
-						   DEFAULT_TAG );
+		readBitStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
 		publicKey->publicValuePtr = sMemBufPtr( &stream );
 		publicKey->publicValueSize = ( int ) length - 1;
 		assert( sSkip( &stream, length ) == CRYPT_OK );
@@ -242,6 +239,7 @@ static int calculateKeyID( CONTEXT_INFO *contextInfoPtr )
 static int readRsaSubjectPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 									int *actionFlags )
 	{
+	CRYPT_ALGO_TYPE dummy;
 	PKC_INFO *rsaKey = contextInfoPtr->ctxPKC;
 	int status;
 
@@ -256,9 +254,8 @@ static int readRsaSubjectPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr
 	   it may be context-specific-tagged if it's coming from a keyset (RSA
 	   public keys is the one place where PKCS #15 keys differ from X.509
 	   ones) or something odd from CRMF */
-	readGenericHole( stream, NULL, 8 + bitsToBytes( MIN_PKCSIZE_BITS ), 
-					 DEFAULT_TAG );
-	status = readAlgoID( stream, NULL );
+	readGenericHole( stream, NULL, 8 + MIN_PKCSIZE, DEFAULT_TAG );
+	status = readAlgoID( stream, &dummy );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -273,8 +270,7 @@ static int readRsaSubjectPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr
 				   MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL );
 
 	/* Read the BITSTRING encapsulation and the public key fields */
-	readBitStringHole( stream, NULL, bitsToBytes( MIN_PKCSIZE_BITS ), 
-					   DEFAULT_TAG );
+	readBitStringHole( stream, NULL, MIN_PKCSIZE, DEFAULT_TAG );
 	readSequence( stream, NULL );
 	status = readBignum( stream, &rsaKey->rsaParam_n );
 	if( cryptStatusOK( status ) )
@@ -299,10 +295,9 @@ static int readDlpSubjectPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr
 
 	/* Read the SubjectPublicKeyInfo header field and parameter data if
 	   there's any present */
-	readGenericHole( stream, NULL, \
-					 8 + ( bitsToBytes( MIN_PKCSIZE_BITS ) + \
-						   bitsToBytes( MIN_PKCSIZE_BITS ) ), DEFAULT_TAG );
-	status = readAlgoIDex( stream, &cryptAlgo, NULL, &extraLength );
+	readGenericHole( stream, NULL, 8 + ( MIN_PKCSIZE + MIN_PKCSIZE ), 
+					 DEFAULT_TAG );
+	status = readAlgoIDparams( stream, &cryptAlgo, &extraLength );
 	if( cryptStatusOK( status ) && extraLength > 0 )
 		{
 		assert( contextInfoPtr->capabilityInfo->cryptAlgo == cryptAlgo );
@@ -343,8 +338,7 @@ static int readDlpSubjectPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr
 									   ACTION_PERM_NONE_EXTERNAL );
 
 	/* Read the BITSTRING encapsulation and the public key fields */
-	readBitStringHole( stream, NULL, bitsToBytes( MIN_PKCSIZE_BITS ), 
-					   DEFAULT_TAG );
+	readBitStringHole( stream, NULL, MIN_PKCSIZE, DEFAULT_TAG );
 	return( readBignum( stream, &dlpKey->dlpParam_y ) );
 	}
 
@@ -370,7 +364,7 @@ int readSsh1RsaPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 	assert( isWritePtr( actionFlags, sizeof( int ) ) );
 
 	/* Make sure that the nominal keysize value is valid */
-	if( length < MIN_PKCSIZE_BITS || \
+	if( length < bytesToBits( MIN_PKCSIZE ) || \
 		length > bytesToBits( CRYPT_MAX_PKCSIZE ) )
 		return( CRYPT_ERROR_BADDATA );
 
@@ -383,7 +377,7 @@ int readSsh1RsaPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 	status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_e, 2, 256 );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_n,
-										   MIN_PKCSIZE_BITS, 
+										   bytesToBits( MIN_PKCSIZE_BITS ), 
 										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	return( status );
 	}
@@ -430,8 +424,7 @@ int readSshRsaPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 	status = readBignumInteger32( stream, &rsaKey->rsaParam_e, 1, 16 );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger32( stream, &rsaKey->rsaParam_n,
-									  bitsToBytes( MIN_PKCSIZE_BITS ), 
-									  CRYPT_MAX_PKCSIZE );
+									  MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 	return( status );
 	}
 
@@ -476,8 +469,7 @@ int readSshDlpPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 		   values we can end up with very small values for g, so we have to
 		   handle this specially */
 		status = readBignumInteger32( stream, &dsaKey->dlpParam_p,
-									  bitsToBytes( MIN_PKCSIZE_BITS ), 
-									  CRYPT_MAX_PKCSIZE );
+									  MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusOK( status ) )
 			status = readBignumInteger32( stream, &dsaKey->dlpParam_g,
 										  1, CRYPT_MAX_PKCSIZE );
@@ -499,16 +491,14 @@ int readSshDlpPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 
 	/* Read the SSH public key information */
 	status = readBignumInteger32( stream, &dsaKey->dlpParam_p,
-								  bitsToBytes( MIN_PKCSIZE_BITS ), 
-								  CRYPT_MAX_PKCSIZE );
+								  MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger32( stream, &dsaKey->dlpParam_q,
 									  bitsToBytes( 128 ), 
 									  CRYPT_MAX_PKCSIZE );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger32( stream, &dsaKey->dlpParam_g,
-									  bitsToBytes( MIN_PKCSIZE_BITS ), 
-									  CRYPT_MAX_PKCSIZE );
+									  MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 	if( cryptStatusOK( status ) && !isDH )
 		status = readBignumInteger32( stream, &dsaKey->dlpParam_y,
 									  bitsToBytes( 128 ), 
@@ -557,8 +547,7 @@ int readSslDlpPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 	   values we can end up with very small values for g, so we have to
 	   handle this specially */
 	status = readBignumInteger16U( stream, &dhKey->dlpParam_p,
-								   bitsToBytes( MIN_PKCSIZE_BITS ), 
-								   CRYPT_MAX_PKCSIZE );
+								   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16U( stream, &dhKey->dlpParam_g, 1, 
 									   CRYPT_MAX_PKCSIZE );
@@ -627,11 +616,11 @@ int readPgpRsaPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 
 	/* Read the PGP public key information */
 	status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_n, 
-									   MIN_PKCSIZE_BITS, 
-									   bytesToBits( PGP_MAX_MPISIZE ) );
+									   bytesToBits( MIN_PKCSIZE ), 
+									   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_e, 2, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	return( status );
 	}
 
@@ -679,18 +668,18 @@ int readPgpDlpPublicKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr,
 
 	/* Read the PGP public key information */
 	status = readBignumInteger16Ubits( stream, &dlpKey->dlpParam_p, 
-									   MIN_PKCSIZE_BITS, 
-									   bytesToBits( PGP_MAX_MPISIZE ) );
+									   bytesToBits( MIN_PKCSIZE ), 
+									   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) && value == PGP_ALGO_DSA )
 		status = readBignumInteger16Ubits( stream, &dlpKey->dlpParam_q, 155, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &dlpKey->dlpParam_g, 2, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &dlpKey->dlpParam_y, 
-										   MIN_PKCSIZE_BITS, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( MIN_PKCSIZE ), 
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	return( status );
 	}
 #endif /* USE_PGP */
@@ -878,9 +867,7 @@ static int readRsaPrivateKeyOld( STREAM *stream, CONTEXT_INFO *contextInfoPtr )
 			contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RSA );
 
 	/* Read the header and key components */
-	readOctetStringHole( stream, NULL, 
-						 ( 4 * bitsToBytes( MIN_PKCSIZE_BITS ) ), 
-						 DEFAULT_TAG );
+	readOctetStringHole( stream, NULL, ( 4 * MIN_PKCSIZE ), DEFAULT_TAG );
 	readSequence( stream, NULL );
 	readShortInteger( stream, NULL );
 	status = readBignum( stream, &rsaKey->rsaParam_n );
@@ -937,20 +924,20 @@ static int readPgpRsaPrivateKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr )
 
 	/* Read the PGP private key information */
 	status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_d, 
-									   MIN_PKCSIZE_BITS, 
-									   bytesToBits( PGP_MAX_MPISIZE ) );
+									   bytesToBits( MIN_PKCSIZE ), 
+									   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_p, 
-										   MIN_PKCSIZE_BITS / 2, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( MIN_PKCSIZE ) / 2, 
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_q, 
-										   MIN_PKCSIZE_BITS / 2, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( MIN_PKCSIZE ) / 2, 
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	if( cryptStatusOK( status ) )
 		status = readBignumInteger16Ubits( stream, &rsaKey->rsaParam_u, 
-										   MIN_PKCSIZE_BITS / 2, 
-										   bytesToBits( PGP_MAX_MPISIZE ) );
+										   bytesToBits( MIN_PKCSIZE ) / 2, 
+										   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 	return( status );
 	}
 
@@ -966,7 +953,7 @@ static int readPgpDlpPrivateKey( STREAM *stream, CONTEXT_INFO *contextInfoPtr )
 
 	/* Read the PGP private key information */
 	return( readBignumInteger16Ubits( stream, &dlpKey->dlpParam_x, 155, 
-									  bytesToBits( PGP_MAX_MPISIZE ) ) );
+									  bytesToBits( CRYPT_MAX_PKCSIZE ) ) );
 	}
 
 /* Umbrella private-key read functions */
@@ -1068,10 +1055,10 @@ static int decodeDLValuesFunction( const BYTE *buffer, const int bufSize,
 #ifdef USE_PGP
 		case CRYPT_FORMAT_PGP:
 			status = readBignumInteger16Ubits( &stream, *value1, 160 - 24,
-											   bytesToBits( PGP_MAX_MPISIZE ) );
+											   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 			if( cryptStatusOK( status ) )
 				status = readBignumInteger16Ubits( &stream, *value2, 160 - 24,
-												   bytesToBits( PGP_MAX_MPISIZE ) );
+												   bytesToBits( CRYPT_MAX_PKCSIZE ) );
 			break;
 #endif /* USE_PGP */
 	

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib DBMS Back-end Interface					*
-*						Copyright Peter Gutmann 1996-2005					*
+*						Copyright Peter Gutmann 1996-2006					*
 *																			*
 ****************************************************************************/
 
@@ -319,7 +319,8 @@ static int initQueryData( COMMAND_INFO *cmd, const COMMAND_INFO *cmdTemplate,
 /* Database access functions */
 
 static int openDatabase( DBMS_INFO *dbmsInfo, const char *name,
-						 const int options )
+						 const int nameLength, const int options, 
+						 int *featureFlags )
 	{
 	static const COMMAND_INFO cmdTemplate = \
 		{ DBX_COMMAND_OPEN, COMMAND_FLAG_NONE, 1, 1 };
@@ -332,7 +333,7 @@ static int openDatabase( DBMS_INFO *dbmsInfo, const char *name,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = options;
 	cmd.strArg[ 0 ] = ( void * ) name;
-	cmd.strArgLen[ 0 ] = strlen( name );
+	cmd.strArgLen[ 0 ] = nameLength;
 	status = DISPATCH_COMMAND_DBX( cmdOpen, cmd, dbmsInfo );
 	if( cryptStatusOK( status ) && \
 		( cmd.arg[ 0 ] & DBMS_HAS_BINARYBLOBS ) )
@@ -441,7 +442,7 @@ static int performQuery( DBMS_INFO *dbmsInfo, const char *command,
 	assert( ( queryData == NULL && queryDataLength == 0 ) || \
 			( queryDataLength > 0 && \
 			  isReadPtr( queryData, queryDataLength ) ) );
-	assert( DBMS_CACHEDQUERY_NONE >= 0 && \
+	assert( queryEntry >= DBMS_CACHEDQUERY_NONE && \
 			queryEntry < DBMS_CACHEDQUERY_LAST );
 	assert( queryType > DBMS_QUERY_NONE && queryType < DBMS_QUERY_LAST );
 
@@ -449,13 +450,14 @@ static int performQuery( DBMS_INFO *dbmsInfo, const char *command,
 	   a point query there can't already be one active, and if we're
 	   continuing or cancelling an existing query there has to be one
 	   already active */
-	assert( ( ( queryType == DBMS_QUERY_START || \
-				queryType == DBMS_QUERY_CHECK || \
-				queryType == DBMS_QUERY_NORMAL ) && \
-			  !( dbmsInfo->flags & DBMS_FLAG_QUERYACTIVE ) ) ||
-			( ( queryType == DBMS_QUERY_CONTINUE || \
-				queryType == DBMS_QUERY_CANCEL ) && \
-			  ( dbmsInfo->flags & DBMS_FLAG_QUERYACTIVE ) ) );
+	if( ( ( queryType == DBMS_QUERY_START || \
+			queryType == DBMS_QUERY_CHECK || \
+			queryType == DBMS_QUERY_NORMAL ) && \
+		  ( dbmsInfo->flags & DBMS_FLAG_QUERYACTIVE ) ) ||
+		( ( queryType == DBMS_QUERY_CONTINUE || \
+			queryType == DBMS_QUERY_CANCEL ) && \
+		  !( dbmsInfo->flags & DBMS_FLAG_QUERYACTIVE ) ) )
+		retIntError();
 
 	/* Clear return value */
 	if( data != NULL )
@@ -479,7 +481,7 @@ static int performQuery( DBMS_INFO *dbmsInfo, const char *command,
 		return( status );
 		}
 
-	/* Update the state information based on the query we've just
+	/* Update the state information based on the query that we've just
 	   performed */
 	if( queryType == DBMS_QUERY_START  )
 		dbmsInfo->flags |= DBMS_FLAG_QUERYACTIVE;
@@ -511,7 +513,8 @@ static int performStaticQuery( DBMS_INFO *dbmsInfo, const char *command,
 /* Database access functions */
 
 static int openDatabase( DBMS_INFO *dbmsInfo, const char *name,
-						 const int options, int *featureFlags )
+						 const int nameLen, const int options, 
+						 int *featureFlags )
 	{
 	DBMS_STATE_INFO *dbmsStateInfo = dbmsInfo->stateInfo;
 	int status;
@@ -523,8 +526,8 @@ static int openDatabase( DBMS_INFO *dbmsInfo, const char *name,
 	/* Clear return value */
 	*featureFlags = DBMS_HAS_NONE;
 
-	status = dbmsInfo->openDatabaseBackend( dbmsStateInfo, name, options,
-											featureFlags );
+	status = dbmsInfo->openDatabaseBackend( dbmsStateInfo, name, nameLen,
+											options, featureFlags );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -548,15 +551,14 @@ static void closeDatabase( DBMS_INFO *dbmsInfo )
 static void performErrorQuery( DBMS_INFO *dbmsInfo )
 	{
 	DBMS_STATE_INFO *dbmsStateInfo = dbmsInfo->stateInfo;
+	ERROR_INFO *errorInfo = &dbmsStateInfo->errorInfo;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
 
 	/* Clear the return values */
-	memset( dbmsInfo->errorMessage, 0, MAX_ERRMSG_SIZE );
-	dbmsInfo->errorCode = 0;
+	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 
-	dbmsInfo->performErrorQueryBackend( dbmsStateInfo, &dbmsInfo->errorCode,
-										dbmsInfo->errorMessage );
+	dbmsInfo->performErrorQueryBackend( dbmsStateInfo, errorInfo );
 	}
 
 static int performUpdate( DBMS_INFO *dbmsInfo, const char *command,
@@ -697,7 +699,7 @@ static int performStaticQuery( DBMS_INFO *dbmsInfo, const char *command,
    just belt-and-suspenders security.
 
 	';	The standard SQL-injection method, used with values like
-		'foo; DROP TABLE bar' or '1=1' to return all entries in a table.
+		'foo; DROP TABLE bar', or '1=1' to return all entries in a table.
 
 	--	Comment delimiter (other values also exist, e.g. MySQL's '#') to
 		truncate queries beyond the end of the injected SQL.
@@ -712,59 +714,78 @@ static int performStaticQuery( DBMS_INFO *dbmsInfo, const char *command,
    outer SELECT, requiring recursive stripping, or taking advantage of the
    fact that VARBINARY values are implicitly cast to VARCHARS, so that
    0x42434445 would turn into ABCD, or further escaping the encoding with
-   values like 'sel'+'ect') there are also any number
-   of backend-specific custom keywords and ways of escaping keywords that
-   we can't know about and therefore can't easily strip */
+   values like 'sel'+'ect') there are also any number of backend-specific 
+   custom keywords and ways of escaping keywords that we can't know about 
+   and therefore can't easily strip */
+
+static int copyChar( char *buffer, const int bufMaxLen, const int ch,
+					 const BOOLEAN escapeQuotes )
+	{
+	int bufPos = 0;
+
+	/* If it's a control character, skip it */
+	if( ( ch & 0x7F ) < ' ' )
+		return( 0 );
+
+	/* Escape metacharacters that could be misused in queries.  We catch the 
+	   obvious ' and ;, as well as the less obvious %, which could be used 
+	   to hide other metacharacters.  Note that none of these characters are 
+	   valid in base64, which makes it safe to escape them in the few 
+	   instances where they do occur */
+	if( ( ch == '\'' && escapeQuotes ) || \
+		ch == '\\' || ch == ';' || ch == '%' )
+		{
+		/* Escape the character */
+		buffer[ bufPos++ ] = SQL_ESCAPE;
+		if( bufPos >= bufMaxLen )
+			return( CRYPT_ERROR );
+		}
+
+	/* Bypass various dangerous SQL "enhancements".  For Windows ODBC the 
+	   driver will execute anything delimited by '|'s as an expression (an 
+	   example being '|shell("cmd /c echo " & chr(124) & " format c:")|').  
+	   Because of this we strip gazintas if we're running under Windoze.  
+	   In addition generic ODBC uses '{' and '}' as escape delimiters, so we 
+	   also strip these */
+#if defined( __WINDOWS__ )
+	if( ch != '|' && ch != '{' && ch != '}' )
+#else
+	if( ch != '{' && ch != '}' )
+#endif /* Database-specific dangerous escape sequences */
+		buffer[ bufPos++ ] = ch;
+
+	/* Make sure that we haven't overflowed the output buffer.  This 
+	   overflowing can be done deliberately, for example by using large 
+	   numbers of escape chars (which are in turn escaped) to force 
+	   truncation of the query beyond the injected SQL if the processing 
+	   simply stops at a given point */
+	return( ( bufPos >= bufMaxLen ) ? CRYPT_ERROR : bufPos );
+	}
 
 static int copyStringArg( char *buffer, const int bufMaxLen, 
 						  const char *strPtr )
 	{
 	int bufPos = 0;
 
-	assert( strPtr != NULL );	/* Catch a shortage of args */
+	assert( isWritePtr( buffer, bufMaxLen ) );
+	assert( isReadPtr( strPtr, 1 ) );
+
+	/* Make sure that there's room for at least one more character of 
+	   input */
+	if( bufMaxLen < 1 )
+		return( CRYPT_ERROR );
 
 	/* Copy the string to the output buffer with conversion of any special 
 	   characters that are used by SQL */
 	while( *strPtr != '\0' )
 		{
-		int ch = *strPtr++;
+		int status;
 
-		/* If it's a control character, skip it */
-		if( ( ch & 0x7F ) < ' ' )
-			continue;
-
-		/* Escape metacharacters that could be misused in queries.  We catch 
-		   the obvious ' and ;, as well as the less obvious %, which could 
-		   be used to hide other metacharacters.  Note that none of these 
-		   characters are valid in base64, which makes it safe to escape 
-		   them in the few instances where they do occur */
-		if( ch == '\'' || ch == '\\' || ch == ';' || ch == '%' )
-			/* Escape the character */
-			buffer[ bufPos++ ] = SQL_ESCAPE;
-
-		/* Bypass various dangerous SQL "enhancements".  For Windows ODBC 
-		   the driver will execute anything delimited by '|'s as an 
-		   expression (an example being '|shell("cmd /c echo " & chr(124) & 
-		   " format c:")|').  Because of this we strip gazintas if we're 
-		   running under Windoze.  In addition generic ODBC uses '{' and '}' 
-		   as escape delimiters, so we also strip these */
-#if defined( __WINDOWS__ )
-		if( ch != '|' && ch != '{' && ch != '}' )
-#else
-		if( ch != '{' && ch != '}' )
-#endif /* Database-specific dangerous escape sequences */
-			buffer[ bufPos++ ] = ch;
-
-		/* Make sure that we haven't overflowed the input buffer.  We check 
-		   for bufMaxLen - 3 rather than bufMaxLen - 2 in case the next 
-		   character needs escaping, which expands it to two chars 
-		   (bufMaxLen - 1 is used for the '\0').  This overflowing can be 
-		   done deliberately, for example by using large numbers of escape 
-		   chars (which are in turn escaped) to force truncation of the 
-		   query beyond the injected SQL if the processing simply stops at a 
-		   given point */
-		if( bufPos > bufMaxLen - 3 )
-			return( CRYPT_ERROR );
+		status = copyChar( buffer + bufPos, bufMaxLen - bufPos, *strPtr++, 
+						   TRUE );
+		if( cryptStatusError( status ) )
+			return( status );
+		bufPos += status;
 		}
 
 	return( bufPos );
@@ -780,10 +801,10 @@ void dbmsFormatSQL( char *buffer, const int bufMaxLen,
 	va_start( argPtr, format );
 	while( *formatPtr != '\0' )
 		{
+		int length;
+
 		if( *formatPtr == '$' )
 			{
-			int length;
-
 			/* Copy across the string arg.  Note that we refuse a query if 
 			   it overflows rather than trying to truncate it to a safe 
 			   length, both because it's better to fail than to try the 
@@ -793,25 +814,22 @@ void dbmsFormatSQL( char *buffer, const int bufMaxLen,
 			   character, thus negating the escaping */
 			length = copyStringArg( buffer + bufPos, bufMaxLen - bufPos, 
 									va_arg( argPtr, char * ) );
-			if( cryptStatusError( length ) )
-				{
-				bufPos = 0;
-				formatPtr = "\x00\x00";	/* Force exit on outer loop */
-				break;
-				}
-			bufPos += length;
 			formatPtr++;
 			}
 		else
 			{
-			/* Just copy the char over, with a length check */
-			if( bufPos > bufMaxLen - 1 )
-				{
-				bufPos = 0;
-				break;
-				}
-			buffer[ bufPos++ ] = *formatPtr++;
+			/* Just copy the char over, with a length check.  We don't 
+			   escape single quotes in this case because we use these 
+			   ourselves in SQL queries */
+			length = copyChar( buffer + bufPos, bufMaxLen - bufPos, 
+							   *formatPtr++, FALSE );
 			}
+		if( cryptStatusError( length ) )
+			{
+			bufPos = 0;
+			break;
+			}
+		bufPos += length;
 		}
 	buffer[ bufPos++ ] = '\0';	/* Add der terminador */
 
@@ -828,12 +846,25 @@ int dbmsFormatQuery( char *output, const int outMaxLength,
 
 	while( inPos < inputLength )
 		{
+		int length;
+
 		if( input[ inPos ] == '$' )
 			{
+			typedef struct {
+				char *sourceName, *destName;
+				int sourceLength;
+				} NAMEMAP_INFO;
+			static const NAMEMAP_INFO nameMapTbl[] = {
+				{ "C", "C", 1 }, { "SP", "SP", 2 },
+				{ "L", "L", 1 }, { "O", "O", 1 },
+				{ "OU", "OU", 2 }, { "CN", "CN", 2 },
+				{ "email", "email", 5 }, { "uri", "email", 5 },
+				{ "date", "validTo", 4 }, { NULL, NULL, 0 },
+				{ NULL, NULL, 0 }
+				};
 			const int fieldPos = inPos + 1;
 			const char *fieldName = input + fieldPos;
-			const char *outputFieldName;
-			int length;
+			int i;
 
 			inPos++;	/* Skip '$' */
 
@@ -842,77 +873,46 @@ int dbmsFormatQuery( char *output, const int outMaxLength,
 			while( isAlpha( input[ inPos ] ) && inPos < inputLength )
 				inPos++;
 			length = inPos - fieldPos;
-			if( length <= 0 || length > 7 )
+			if( length <= 0 || length > 5 )
 				{
 				status = CRYPT_ERROR_BADDATA;
 				break;
 				}
-			if( !strCompare( fieldName, "C", length ) )
-				outputFieldName = "C";
-			else
-			if( !strCompare( fieldName, "SP", length ) )
-				outputFieldName = "SP";
-			else
-			if( !strCompare( fieldName, "L", length ) )
-				outputFieldName = "L";
-			else
-			if( !strCompare( fieldName, "O", length ) )
-				outputFieldName = "O";
-			else
-			if( !strCompare( fieldName, "OU", length ) )
-				outputFieldName = "OU";
-			else
-			if( !strCompare( fieldName, "CN", length ) )
-				outputFieldName = "CN";
-			else
-			if( !strCompare( fieldName, "email", length ) || \
-				!strCompare( fieldName, "uri", length ) )
-				outputFieldName = "email";
-			else
-			if( !strCompare( fieldName, "date", length ) )
-				outputFieldName = "validTo";
-			else
+			for( i = 0; nameMapTbl[ i ].sourceName != NULL && \
+						i < FAILSAFE_ARRAYSIZE( nameMapTbl, NAMEMAP_INFO ); 
+				 i++ )
+				{
+				if( length == nameMapTbl[ i ].sourceLength && \
+					!strCompare( fieldName, nameMapTbl[ i ].sourceName, \
+								 length ) )
+					break;
+				}
+			if( i >= FAILSAFE_ARRAYSIZE( nameMapTbl, NAMEMAP_INFO ) )
+				retIntError();
+			if( nameMapTbl[ i ].sourceName == NULL )
 				{
 				status = CRYPT_ERROR_BADDATA;
 				break;
 				}
-			length = strlen( outputFieldName );
 
 			/* Copy the translated name to the output buffer */
-			if( outPos + length >= outMaxLength - 1 )
-				{
-				status = CRYPT_ERROR_OVERFLOW;
-				break;
-				}
-			memcpy( output + outPos, outputFieldName, length );
-			outPos += length;
+			length = copyStringArg( output + outPos, outMaxLength - outPos, 
+									nameMapTbl[ i ].destName );
 			}
 		else
 			{
-			const char ch = input[ inPos++ ];
-
-			/* Just copy the char over, with a length check */
-			if( outPos > outMaxLength - 1 )
-				{
-				status = CRYPT_ERROR_OVERFLOW;
-				break;
-				}
-
-			/* Safety checks from formatSQL.  We don't escape single quotes
-			   because we use those ourselves in SQL queries */
-			if( ( ch & 0x7F ) < ' ' )
-				continue;
-			if( ch == '\\' || ch == ';' || ch == '%' )
-				/* Escape the character */
-				output[ outPos++ ] = SQL_ESCAPE;
-
-#if defined( __WINDOWS__ )
-			if( ch != '|' && ch != '{' && ch != '}' )
-#elif defined( USE_ODBC )
-			if( ch != '{' && ch != '}' )
-#endif /* Database-specific dangerous escape sequences */
-			output[ outPos++ ] = ch;
+			/* Just copy the char over, with a length check.  We don't 
+			   escape single quotes in this case because we use these 
+			   ourselves in SQL queries */
+			length = copyChar( output + outPos, outMaxLength - outPos, 
+							   input[ inPos++ ], FALSE );
 			}
+		if( cryptStatusError( length ) )
+			{
+			status = CRYPT_ERROR_OVERFLOW;
+			break;
+			}
+		outPos += length;
 		}
 	if( cryptStatusError( status ) )
 		outPos = 0;
@@ -938,34 +938,33 @@ int dbmsFormatQuery( char *output, const int outMaxLength,
    and there's no server/name separator present, we treat it as a name
    rather than a server.  In other words @foo results in name=foo, while
    @foo/bar results in server=foo, name=bar.  This is because the most
-   common situation we have to handle is ODBC, which identifies the database
-   by name rather than by server.
+   common situation that we have to handle is ODBC, which identifies the 
+   database by name rather than by server.
 
    Some database types use a magic ID value to indicate the use of a C-style
    string for an arg instead of taking an actual length arg, if the caller
-   supplies one of these magic IDs we use that for the "length" rather than
-   the actual string length */
+   supplies one of these magic IDs we return that for the "length" of the
+   parsed components rather than using the actual string length */
 
-int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name,
-				   const int lengthMarker )
+int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name, 
+				   const int nameLen, const int lengthMarker )
 	{
-	const char *namePtr, *argEndPtr;
-	int length;
+	int offset, offset2, length;
 
 	memset( nameInfo, 0, sizeof( DBMS_NAME_INFO ) );
 
 	/* Check for a complex database name */
-	if( ( namePtr = strchr( name, ':' ) ) == NULL && \
-		( namePtr = strchr( name, '@' ) ) == NULL )
+	if( ( offset = strFindCh( name, nameLen, ':' ) ) < 0 && \
+		( offset = strFindCh( name, nameLen, '@' ) ) < 0 )
 		{
 		/* It's a straightforward name, use it directly */
 		nameInfo->name = ( char * ) name;
-		nameInfo->nameLen = lengthMarker ? lengthMarker : strlen( name );
+		nameInfo->nameLen = lengthMarker ? lengthMarker : nameLen;
 		return( CRYPT_OK );
 		}
 
 	/* Extract the user name */
-	length = min( namePtr - name, CRYPT_MAX_TEXTSIZE );
+	length = min( offset, CRYPT_MAX_TEXTSIZE );
 	if( length <= 0 )
 		return( CRYPT_ERROR_OPEN );
 	memcpy( nameInfo->userBuffer, name, length );
@@ -975,44 +974,45 @@ int dbmsParseName( DBMS_NAME_INFO *nameInfo, const char *name,
 
 	/* We're either at the server name or password, extract the password
 	   if there is one */
-	if( *namePtr++ == ':' )
+	assert( name[ offset ] == ':' || name[ offset ] == '@' );
+	if( name[ offset++ ] == ':' )
 		{
-		argEndPtr = strchr( namePtr, '@' );
-		if( argEndPtr == NULL )
-			argEndPtr = strchr( namePtr, '\0' );
-		length = min( argEndPtr - namePtr, CRYPT_MAX_TEXTSIZE );
+		offset2 = strFindCh( name + offset, nameLen - offset, '@' );
+		if( offset2 < 0 )
+			offset2 = nameLen;
+		length = min( offset2 - offset, CRYPT_MAX_TEXTSIZE );
 		if( length <= 0 )
 			return( CRYPT_ERROR_OPEN );
-		memcpy( nameInfo->passwordBuffer, namePtr, length );
+		memcpy( nameInfo->passwordBuffer, name + offset2, length );
 		nameInfo->passwordBuffer[ length ] = '\0';
 		nameInfo->password = nameInfo->passwordBuffer;
 		nameInfo->passwordLen = lengthMarker ? lengthMarker : length;
-		if( !*argEndPtr )
+		offset = offset2 + 1;
+		if( offset >= nameLen )
 			return( CRYPT_OK );
-		namePtr = argEndPtr + 1;
 		}
 
 	/* Separate the server and database name if necessary */
-	argEndPtr = strchr( namePtr, '/' );
-	if( argEndPtr != NULL )
+	offset2 = strFindCh( name + offset, nameLen - offset, '/' );
+	if( offset2 >= 0 )
 		{
 		/* There's a distinction between the server name and database name,
 		   extract the server name */
-		length = min( argEndPtr - namePtr, CRYPT_MAX_TEXTSIZE );
+		length = min( offset2 - offset, CRYPT_MAX_TEXTSIZE );
 		if( length <= 0 )
 			return( CRYPT_ERROR_OPEN );
-		memcpy( nameInfo->serverBuffer, namePtr, length );
+		memcpy( nameInfo->serverBuffer, name + offset2, length );
 		nameInfo->serverBuffer[ length ] = '\0';
 		nameInfo->server = nameInfo->serverBuffer;
 		nameInfo->serverLen = lengthMarker ? lengthMarker : length;
-		namePtr = argEndPtr + 1;
+		offset = offset2 + 1;
 		}
 
 	/* Extract the database name if there is one */
-	if( *namePtr )
+	if( offset < nameLen )
 		{
-		length = strlen( namePtr );
-		memcpy( nameInfo->nameBuffer, namePtr, length );
+		length = nameLen - offset;
+		memcpy( nameInfo->nameBuffer, name + offset, length );
 		nameInfo->nameBuffer[ length ] = '\0';
 		nameInfo->name = nameInfo->nameBuffer;
 		nameInfo->nameLen = lengthMarker ? lengthMarker : length;

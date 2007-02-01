@@ -32,17 +32,17 @@
 
 #define TRUSTINFO_SIZE		256
 
-/* The size of the hashed identifier info */
-
-#define HASH_SIZE			20
-
 /* Trusted certificate information */
 
 typedef struct TI {
 	/* Identification information, the checksum and hash of the cert
 	   subjectName and subjectKeyIdentifier */
-	int sCheck, kCheck;
-	BYTE sHash[ HASH_SIZE + 4 ], kHash[ HASH_SIZE + 4 ];
+	int sCheck;
+	BYTE sHash[ HASH_DATA_SIZE + 4 ];
+#if 0	/* sKID lookup isn't used at present */
+	int kCheck;
+	BYTE kHash[ HASH_DATA_SIZE + 4 ];
+#endif /* 0 */
 
 	/* The trusted certificate.  When we read trusted certs from a config
 	   file, the cert is stored in the encoded form to save creating a pile
@@ -60,31 +60,6 @@ typedef struct TI {
 
 /****************************************************************************
 *																			*
-*								Utility Routines							*
-*																			*
-****************************************************************************/
-
-/* Hash data */
-
-static void hashData( BYTE *hash, const int hashMaxLen, 
-					  const void *data, const int dataLength )
-	{
-	static HASHFUNCTION hashFunction = NULL;
-
-	/* Get the hash algorithm information if necessary */
-	if( hashFunction == NULL )
-		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, NULL );
-
-	/* Hash the data */
-	if( dataLength <= 0 )
-		memset( hash, 0, HASH_SIZE );
-	else
-		hashFunction( NULL, hash, hashMaxLen, ( BYTE * ) data, dataLength, 
-					  HASH_ALL );
-	}
-
-/****************************************************************************
-*																			*
 *							Retrieve Trusted Cert Info						*
 *																			*
 ****************************************************************************/
@@ -97,7 +72,7 @@ void *findTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 	TRUST_INFO **trustInfoIndex = ( TRUST_INFO ** ) trustInfoPtr;
 	const TRUST_INFO *trustInfoCursor;
 	DYNBUF nameDB;
-	BYTE sHash[ HASH_SIZE + 8 ];
+	BYTE sHash[ HASH_DATA_SIZE + 8 ];
 	BOOLEAN nameHashed = FALSE;
 	int sCheck, status;
 
@@ -133,10 +108,11 @@ void *findTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 			{
 			if( !nameHashed )
 				{
-				hashData( sHash, HASH_SIZE, dynData( nameDB ), dynLength( nameDB ) );
+				hashData( sHash, HASH_DATA_SIZE, dynData( nameDB ), 
+						  dynLength( nameDB ) );
 				nameHashed = TRUE;
 				}
-			if( !memcmp( trustInfoCursor->sHash, sHash, HASH_SIZE ) )
+			if( !memcmp( trustInfoCursor->sHash, sHash, HASH_DATA_SIZE ) )
 				{
 				dynDestroy( &nameDB );
 				return( ( TRUST_INFO * ) trustInfoCursor );
@@ -312,21 +288,24 @@ static int addEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 			hasSKID = TRUE;
 		newElement->sCheck = checksumData( dynData( subjectDB ), 
 										   dynLength( subjectDB ) );
-		hashData( newElement->sHash, HASH_SIZE, dynData( subjectDB ), 
+		hashData( newElement->sHash, HASH_DATA_SIZE, dynData( subjectDB ), 
 				  dynLength( subjectDB ) );
+#if 0	/* sKID lookup isn't used at present */
 		if( hasSKID )
 			{
 			newElement->kCheck = checksumData( dynData( subjectKeyDB ), 
 											   dynLength( subjectKeyDB ) );
-			hashData( newElement->kHash, HASH_SIZE, dynData( subjectKeyDB ), 
-					  dynLength( subjectKeyDB ) );
+			hashData( newElement->kHash, HASH_DATA_SIZE, 
+					  dynData( subjectKeyDB ), dynLength( subjectKeyDB ) );
 			dynDestroy( &subjectKeyDB );
 			}
 		else
 			{
+			/* No sKID, clear the sKID index entry data */
 			newElement->kCheck = 0;
-			hashData( newElement->kHash, HASH_SIZE, NULL, 0 );
+			memset( newElement->kHash, 0, HASH_DATA_SIZE );
 			}
+#endif /* 0 */
 		dynDestroy( &subjectDB );
 		}
 	if( certObject != NULL || recreateCert )
@@ -339,8 +318,8 @@ static int addEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 		if( recreateCert )
 			{
 			/* Get the encoded cert */
-			status = dynCreate( &certDB, iCryptCert, 
-								CRYPT_CERTFORMAT_CERTIFICATE );
+			status = dynCreateCert( &certDB, iCryptCert, 
+									CRYPT_CERTFORMAT_CERTIFICATE );
 			if( cryptStatusError( status ) )
 				return( status );
 			certObject = dynData( certDB );
@@ -427,12 +406,14 @@ static int addEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
 			/* Generate the checksum and hash of the encoded cert's subject 
 			   name and key ID */
 			newElement->sCheck = checksumData( subjectDNptr, subjectDNsize );
-			hashData( newElement->sHash, HASH_SIZE, 
+			hashData( newElement->sHash, HASH_DATA_SIZE, 
 					  subjectDNptr, subjectDNsize );
+#if 0	/* sKID lookup isn't used at present */
 			newElement->kCheck = checksumData( subjectKeyIDptr, 
 											   subjectKeyIDsize );
-			hashData( newElement->kHash, HASH_SIZE, 
+			hashData( newElement->kHash, HASH_DATA_SIZE, 
 					  subjectKeyIDptr, subjectKeyIDsize );
+#endif /* 0 */
 			}
 
 		/* Remember the trusted cert data for later use */

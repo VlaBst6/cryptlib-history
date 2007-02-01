@@ -91,6 +91,7 @@
 #define SSL_HAND_CLIENT_CERTVERIFY	0x0F
 #define SSL_HAND_CLIENT_KEYEXCHANGE	0x10
 #define SSL_HAND_FINISHED			0x14
+#define SSL_HAND_SUPPLEMENTAL_DATA	0x17
 
 /* SSL alert levels and types */
 
@@ -127,6 +128,10 @@
 #define TLS_ALERT_BAD_CERTIFICATE_STATUS_RESPONSE 113
 #define TLS_ALERT_BAD_CERTIFICATE_HASH_VALUE 114
 #define TLS_ALERT_UNKNOWN_PSK_IDENTITY		115
+
+/* SSL supplemental data subtypes */
+
+#define TLS_SUPPDATA_USERMAPPING			0
 
 /* SSL cipher suites */
 
@@ -204,9 +209,14 @@ typedef enum {
 /* TLS extension types */
 
 typedef enum {
-	TLS_EXT_SERVER_NAME, TLS_EXT_MAX_FRAGMENT_LENTH,
-	TLS_EXT_CLIENT_CERTIFICATE_URL, TLS_EXT_TRUSTED_CA_KEYS,
-	TLS_EXT_TRUNCATED_HMAC, TLS_EXT_STATUS_REQUEST, TLS_EXT_LAST
+	TLS_EXT_SERVER_NAME,		/* Name of virtual server to contact */
+	TLS_EXT_MAX_FRAGMENT_LENTH,	/* Max.fragment length if smaller than 2^14 bytes */
+	TLS_EXT_CLIENT_CERTIFICATE_URL,	/* Location for server to find client cert */
+	TLS_EXT_TRUSTED_CA_KEYS,	/* Indication of which CAs clients trust */
+	TLS_EXT_TRUNCATED_HMAC,		/* Use 80-bit truncated HMAC */
+	TLS_EXT_STATUS_REQUEST,		/* OCSP status request from server */
+	TLS_EXT_USER_MAPPING,		/* RFC 4681 mapping of user name to account */
+	TLS_EXT_LAST
 	} TLS_EXT_TYPE;
 
 /* SSL and TLS major and minor version numbers */
@@ -215,6 +225,7 @@ typedef enum {
 #define SSL_MINOR_VERSION_SSL	0
 #define SSL_MINOR_VERSION_TLS	1
 #define SSL_MINOR_VERSION_TLS11	2
+#define SSL_MINOR_VERSION_TLS12	3
 
 /* SSL sender label values for the finished message MAC */
 

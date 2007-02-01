@@ -1731,7 +1731,14 @@ static int writeOcspResponseInfo( STREAM *stream,
 							 CRYPT_CERTTYPE_OCSP_RESPONSE, extensionSize ) );
 	}
 
-/* Write PKI user info */
+/* Write PKI user info:
+
+	userData ::= SEQUENCE {
+		name				Name,			-- Name for CMP
+		encAlgo				AlgorithmIdentifier,-- Algo to encrypt passwords
+		encPW				OCTET STRING,	-- Encrypted passwords
+		attributes			Attributes
+		} */
 
 int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 					  const CERT_INFO *issuerCertInfoPtr,
@@ -1838,10 +1845,25 @@ int writePkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* Encrypt the user info.  Since user objects aren't fully
-		   implemented yet, we use a fixed key as the CA key for now.  When
-		   user objects are fully implemented, we'd need to lock the CA key
-		   around the following operations */
+		/* Encrypt (or at least mask) the user info.  For forwards-
+		   compatibility (and because the format requires the use of some
+		   for of encryption when encoding the data) we encrypt the user
+		   data, once user roles are fully implemented this can use the
+		   static data storage key associated with the CA user to perform
+		   the encryption instead of a fixed interop key.  This isn't a
+		   security issue because the CA database is assumed to be secure
+		   (or at least the CA is in serious trouble if it's database isn't
+		   secured), we encrypt because it's pretty much free and because
+		   it doesn't hurt either way.  Most CA guidelines merely require 
+		   that the CA protect its user database via standard (physical/ACL) 
+		   security measures, so this is no less secure than what's required 
+		   by various CA guidelines.
+
+		   When we do this for real we probably need an extra level of
+		   indirection to go from the CA secret to the database decryption 
+		   key so that we can change the encryption algorithm and so that we 
+		   don't have to directly apply the CA's static data storage key to 
+		   the user database */
 		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_3DES );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,

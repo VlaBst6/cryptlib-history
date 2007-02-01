@@ -136,16 +136,16 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusError( status ) )
 			{
 			if( status == CRYPT_ERROR_BADDATA )
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid SSH version string length" );
 			if( status == CRYPT_ERROR_UNDERFLOW )
-				retExt( sessionInfoPtr, CRYPT_ERROR_UNDERFLOW,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_UNDERFLOW,
 						"SSH version string read timed out before all data "
 						"could be read" );
 			if( status == CRYPT_ERROR_TIMEOUT && linesRead > 0 )
 				/* We timed out waiting for an ID to appear, this is an
 				   invalid ID error rather than a true timeout */
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid SSH version string 0x%02X 0x%02X 0x%02X "
 						"0x%02X",
 						sessionInfoPtr->receiveBuffer[ 0 ],
@@ -153,15 +153,14 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 						sessionInfoPtr->receiveBuffer[ 2 ],
 						sessionInfoPtr->receiveBuffer[ 3 ] );
 			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  sessionInfoPtr->errorMessage,
-							  &sessionInfoPtr->errorCode );
+							  &sessionInfoPtr->errorInfo );
 			return( status );
 			}
 		if( linesRead++ >= 100 )
 			/* The peer shouldn't be throwing infinite amounts of junk at us,
 			   if we don't get an SSH ID after reading 100 lines of input
 			   there's a problem */
-			retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_OVERFLOW,
 					"Peer sent excessive amounts of text without sending "
 					"any SSH version info" );
 		}
@@ -184,11 +183,11 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			/* If the caller has specifically asked for SSHv2 but all that
 			   the server offers is SSHv1, we can't continue */
 			if( sessionInfoPtr->version == 2 )
-				retExt( sessionInfoPtr, CRYPT_ERROR_NOSECURE,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_NOSECURE,
 						"Server can only do SSHv1 when SSHv2 was requested" );
 			sessionInfoPtr->version = 1;
 #else
-			retExt( sessionInfoPtr, CRYPT_ERROR_NOSECURE,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOSECURE,
 					"Server can only do SSHv1" );
 #endif /* USE_SSH1 */
 			}
@@ -199,7 +198,7 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			sessionInfoPtr->version = 2;
 		else
 #endif /* USE_SSH */
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid SSH version %c",
 					sessionInfoPtr->receiveBuffer[ 0 ] );
 

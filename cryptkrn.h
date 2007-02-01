@@ -144,6 +144,8 @@ typedef enum {
 #define SUBTYPE_CLASS_A				0x20000000L
 #define SUBTYPE_CLASS_B				0x40000000L
 
+#define SUBTYPE_NONE				0x00000000L
+
 #define SUBTYPE_CTX_CONV			0x20000001L
 #define SUBTYPE_CTX_PKC				0x20000002L
 #define SUBTYPE_CTX_HASH			0x20000004L
@@ -621,9 +623,10 @@ extern const int messageValueCursorPrevious, messageValueCursorLast;
 
 typedef enum {
 	MECHANISM_NONE,				/* No mechanism */
-	MECHANISM_ENC_PKCS1,		/* PKCS #1 encrypt */
+	MECHANISM_ENC_PKCS1,		/* PKCS #1 en/decrypt */
 	MECHANISM_ENC_PKCS1_PGP,	/* PKCS #1 using PGP formatting */
 	MECHANISM_ENC_PKCS1_RAW,	/* PKCS #1 returning uninterpreted data */
+	MECHANISM_ENC_OAEP,			/* OAEP en/decrypt */
 	MECHANISM_ENC_CMS,			/* CMS key wrap */
 	MECHANISM_ENC_KEA,			/* KEA key agreement */
 	MECHANISM_SIG_PKCS1,		/* PKCS #1 sign */
@@ -636,7 +639,8 @@ typedef enum {
 	MECHANISM_DERIVE_PGP,		/* OpenPGP S2K derive */
 	MECHANISM_PRIVATEKEYWRAP,	/* Private key wrap */
 	MECHANISM_PRIVATEKEYWRAP_PKCS8,	/* PKCS #8 private key wrap */
-	MECHANISM_PRIVATEKEYWRAP_PGP,	/* PGP private key wrap */
+	MECHANISM_PRIVATEKEYWRAP_PGP2,	/* PGP 2.x private key wrap */
+	MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD,/* Legacy OpenPGP private key wrap */
 	MECHANISM_PRIVATEKEYWRAP_OPENPGP,/* OpenPGP private key wrap */
 	MECHANISM_LAST				/* Last valid mechanism type */
 	} MECHANISM_TYPE;
@@ -651,26 +655,37 @@ typedef enum {
 				keyContext = context containing key
 				wrapContext = wrap/unwrap PKC context
 				auxContext = CRYPT_UNUSED
+				auxInfo = CRYPT_UNUSED
 	PKCS #1	raw	wrappedData = wrapped raw data
 				keyData = raw data
 				keyContext = CRYPT_UNUSED
 				wrapContext = wrap/unwrap PKC context
 				auxContext = CRYPT_UNUSED
+				auxInfo = CRYPT_UNUSED
+	OAEP		wrappedData = wrapped key
+				keyData = -
+				keyContext = context containing key
+				wrapContext = wrap/unwrap PKC context
+				auxContext = CRYPT_UNUSED
+				auxInfo = MGF1 algorithm
 	CMS			wrappedData = wrapped key
 				keyData = -
 				keyContext = context containing key
 				wrapContext = wrap/unwrap conventional context
 				auxContext = CRYPT_UNUSED
+				auxInfo = CRYPT_UNUSED
 	KEA			wrappedData = len + TEK( MEK ), len + UKM
 				keyData = -
 				keyContext = MEK
 				wrapContext = recipient KEA public key
 				auxContext = originator KEA private key
+				auxInfo = CRYPT_UNUSED
 	Private		wrappedData = padded encrypted private key components
 	key wrap	keyData = -
 				keyContext = context containing private key
 				wrapContext = wrap/unwrap conventional context
-				auxContext = CRYPT_UNUSED */
+				auxContext = CRYPT_UNUSED 
+				auxInfo = CRYPT_UNUSED */
 
 typedef struct {
 	void *wrappedData;			/* Wrapped key */
@@ -680,6 +695,7 @@ typedef struct {
 	CRYPT_HANDLE keyContext;	/* Context containing raw key */
 	CRYPT_HANDLE wrapContext;	/* Wrap/unwrap context */
 	CRYPT_HANDLE auxContext;	/* Auxiliary context */
+	int auxInfo;				/* Auxiliary info */
 	} MECHANISM_WRAP_INFO;
 
 /* A structure to hold information needed by the sign/sig check mechanism:
@@ -732,7 +748,19 @@ typedef struct {
 #define clearMechanismInfo( mechanismInfo ) \
 		memset( mechanismInfo, 0, sizeof( *mechanismInfo ) )
 
-#define setMechanismWrapInfo( mechanismInfo, wrapped, wrappedLen, key, keyLen, keyCtx, wrapCtx, auxCtx ) \
+#define setMechanismWrapInfo( mechanismInfo, wrapped, wrappedLen, key, keyLen, keyCtx, wrapCtx ) \
+		{ \
+		( mechanismInfo )->wrappedData = ( wrapped ); \
+		( mechanismInfo )->wrappedDataLength = ( wrappedLen ); \
+		( mechanismInfo )->keyData = ( key ); \
+		( mechanismInfo )->keyDataLength = ( keyLen ); \
+		( mechanismInfo )->keyContext = ( keyCtx ); \
+		( mechanismInfo )->wrapContext = ( wrapCtx ); \
+		( mechanismInfo )->auxContext = \
+			( mechanismInfo )->auxInfo = CRYPT_UNUSED; \
+		}
+
+#define setMechanismWrapInfoEx( mechanismInfo, wrapped, wrappedLen, key, keyLen, keyCtx, wrapCtx, auxCtx, auxInf ) \
 		{ \
 		( mechanismInfo )->wrappedData = ( wrapped ); \
 		( mechanismInfo )->wrappedDataLength = ( wrappedLen ); \
@@ -741,6 +769,7 @@ typedef struct {
 		( mechanismInfo )->keyContext = ( keyCtx ); \
 		( mechanismInfo )->wrapContext = ( wrapCtx ); \
 		( mechanismInfo )->auxContext = ( auxCtx ); \
+		( mechanismInfo )->auxInfo = ( auxInf ); \
 		}
 
 #define setMechanismSignInfo( mechanismInfo, sig, sigLen, hashCtx, hashCtx2, signCtx ) \
@@ -908,7 +937,7 @@ int endCryptlib( void );
 
 /* Prototype for an object's message-handling function */
 
-typedef int ( *MESSAGE_FUNCTION )( const void *objectInfoPtr,
+typedef int ( *MESSAGE_FUNCTION )( void *objectInfoPtr,
 								   const MESSAGE_TYPE message,
 								   void *messageDataPtr,
 								   const int messageValue );
@@ -924,6 +953,7 @@ typedef int ( *MESSAGE_FUNCTION )( const void *objectInfoPtr,
 #define CREATEOBJECT_FLAG_SECUREMALLOC \
 									0x01	/* Use krnlMemAlloc() to alloc.*/
 #define CREATEOBJECT_FLAG_DUMMY		0x02	/* Dummy obj.used as placeholder */
+#define CREATEOBJECT_FLAG_PERSISTENT 0x04	/* Obj.backed by key in device */
 
 int krnlCreateObject( void **objectDataPtr, const int objectDataSize,
 					  const OBJECT_TYPE type, const OBJECT_SUBTYPE subType,

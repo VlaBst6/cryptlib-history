@@ -239,6 +239,8 @@ typedef struct AL {
 
 /* Scoreboard information */
 
+#define SCOREBOARD_UNIQUEID_NONE	0	/* Scoreboard empty value ID */
+
 typedef struct {
 	/* Scoreboard index and data storage, and the total number of entries in
 	   the scoreboard */
@@ -287,7 +289,7 @@ typedef struct {
 	BYTE macWriteSecret[ CRYPT_MAX_HASHSIZE ];
 
 	/* The session scoreboard, used for the SSL session cache */
-	SCOREBOARD_INFO scoreboardInfo;		/* Session scoreboard */
+	SCOREBOARD_INFO *scoreboardInfoPtr;	/* Session scoreboard */
 	} SSL_INFO;
 
 typedef struct {
@@ -462,10 +464,8 @@ typedef struct SI {
 										/* Connect and data xfer.timeouts */
 	STREAM stream;						/* Network I/O stream */
 
-	/* Last-error information.  To help developers in debugging, we store
-	   the error code and error text (if available) */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
+	/* Low-level error information */
+	ERROR_INFO errorInfo;
 
 	/* Pointers to session access methods.  Stateful sessions use the read/
 	   write functions, stateless ones use the transact function */
@@ -505,36 +505,6 @@ typedef struct SI {
 *								Session Functions							*
 *																			*
 ****************************************************************************/
-
-/* Prototypes for utility functions in cryptses.c.  retExt() returns after 
-   setting extended error information for the session.  If the compiler
-   doesn't support varargs macros then we have to use a macro set up to make 
-   it match the standard return statement.
-   
-   In addition to the standard retExt() we also have an extended-form version
-   of the function that takes an additional parameter, a handle to an object
-   that may provide additional error information.  This is used when (for
-   example) an operation references a keyset, where the keyset also contains
-   extended error information */
-
-#if defined( USE_ERRMSGS ) || !defined( VARARGS_MACROS )
-  int retExtFnSession( SESSION_INFO *sessionInfoPtr, const int status, 
-					   const char *format, ... ) PRINTF_FN;
-  int retExtExFnSession( SESSION_INFO *sessionInfoPtr, 
-						 const int status, const CRYPT_HANDLE extErrorObject, 
-						 const char *format, ... ) PRINTF_FN_EX;
-
-  #define retExt		return retExtFnSession
-  #define retExtEx		return retExtExFnSession
-#else
-  int retExtFnSession( SESSION_INFO *sessionInfoPtr, const int status );
-  int retExtExFnSession( SESSION_INFO *sessionInfoPtr, const int status );
-
-  #define retExt( stream, status, format, ... ) \
-		  return( retExtFnSession( stream, status ) )
-  #define retExtEx( stream, status, extErrorObject, format, ... ) \
-		  return( retExtFnSession( stream, status ) )
-#endif /* USE_ERRMSGS */
 
 /* Macros to make handling of error reporting on shutdown a bit more 
    obvious */
@@ -594,15 +564,14 @@ CRYPT_ATTRIBUTE_TYPE checkMissingInfo( const ATTRIBUTE_LIST *attributeListHead,
 /* Session scoreboard management functions */
 
 int findScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
-						 const void *sessionID, const int sessionIDlength,
-						 void *masterSecret, int *masterSecretLength );
+						 const void *key, const int keyLength,
+						 void *value, const int maxValueLength,
+						 int *valueLength );
 int findScoreboardEntryID( SCOREBOARD_INFO *scoreboardInfo,
-						   const void *sessionID, const int sessionIDlength );
+						   const void *key, const int keyLength );
 int addScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo,
-						const void *sessionID, const int sessionIDlength, 
-						const void *masterSecret, 
-						const int masterSecretLength, 
-						const BOOLEAN isFixedEntry );
+						const void *key, const int keyLength, 
+						const void *value, const int valueLength );
 void deleteScoreboardEntry( SCOREBOARD_INFO *scoreboardInfo, 
 							const int uniqueID );
 

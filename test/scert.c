@@ -5,13 +5,8 @@
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -108,7 +103,7 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 				status, __LINE__ );
 		return( FALSE );
 		}
-	if( !addCertFields( cryptPKIUser, pkiUserData ) )
+	if( !addCertFields( cryptPKIUser, pkiUserData, __LINE__ ) )
 		return( FALSE );
 
 	/* Add the user info to the cert store */
@@ -400,7 +395,7 @@ static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ /*4*/ "Entrust", TEXT( "http://vpncerts.entrust.com/pkiclient.exe" ), TEXT( "????" ), TEXT( "????" ), NULL },
 	{ /*5*/ "EJBCA", TEXT( "http://q-rl-xp:8080/ejbca/publicweb/apply/scep/pkiclient.exe" ),
 			TEXT("test2"), TEXT("test2"),
-			"http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" },
+			TEXT( "http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" ) },
 	};
 
 /* Cert request data for the cert from the SCEP server.  Note that we have
@@ -571,7 +566,6 @@ static int connectSCEP( void )
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 USER_PRIVKEY_LABEL,
 							 paramStrlen( USER_PRIVKEY_LABEL ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusOK( status ) )
 #else
@@ -584,7 +578,7 @@ static int connectSCEP( void )
 		status = cryptSetAttribute( cryptRequest,
 							CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptRequest, scepRequestData ) )
+		!addCertFields( cryptRequest, scepRequestData, __LINE__ ) )
 		status = CRYPT_ERROR_FAILED;
 #if 0
 	if( cryptStatusOK( status ) )
@@ -679,7 +673,7 @@ int testSessionSCEPServer( void )
 
 	/* Set up the server-side objects */
 	if( !serverInit( &cryptCAKey, &cryptCertStore, SCEPCA_PRIVKEY_FILE,
-					 CA_PRIVKEY_LABEL, scepPkiUserData, NULL, "SCEP" ) )
+					 USER_PRIVKEY_LABEL, scepPkiUserData, NULL, "SCEP" ) )
 		return( FALSE );
 
 	/* Create the SCEP session and add the CA key and cert store */
@@ -1085,7 +1079,6 @@ static int createCmpRequest( const CERT_DATA *requestData,
 			cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 									 USER_PRIVKEY_LABEL,
 									 paramStrlen( USER_PRIVKEY_LABEL ) );
-			cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 			status = cryptGenerateKey( cryptContext );
 			}
 		if( cryptStatusOK( status ) )
@@ -1095,7 +1088,7 @@ static int createCmpRequest( const CERT_DATA *requestData,
 			status = cryptSetAttribute( cryptRequest,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 		if( cryptStatusOK( status ) && \
-			!addCertFields( cryptRequest, requestData ) )
+			!addCertFields( cryptRequest, requestData, __LINE__ ) )
 			status = CRYPT_ERROR_FAILED;
 		if( cryptStatusOK( status ) )
 			status = cryptSignCert( cryptRequest, cryptContext );
@@ -1252,7 +1245,7 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			printf( "Couldn't get private key to request new certificate, "
-					"status = %d.\n", status );
+					"status = %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -1264,7 +1257,7 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			printf( "Couldn't create keyset to store certificate to, "
-					"status = %d.\n", status );
+					"status = %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -1376,8 +1369,8 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 		status = cryptAddPublicKey( cryptKeyset, cryptCmpResponse );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't write certificate to keyset, status = %d.\n",
-					status );
+			printf( "Couldn't write certificate to keyset, status = %d, "
+					"line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		cryptKeysetClose( cryptKeyset );
@@ -1509,7 +1502,7 @@ static int revokeCert( const char *description, const CA_INFO *caInfoPtr,
 		cr + cp + certconf + pkiconf (success implies that ir/kur/rr
 						works since they've already been tested for RSA) */
 
-static int connectCMP( const BOOLEAN usePKIBoot )
+static int connectCMP( const BOOLEAN usePKIBoot, const BOOLEAN localSession )
 	{
 	CRYPT_CERTIFICATE cryptCACert = CRYPT_UNUSED, cryptCert;
 	C_CHR readFileName[ FILENAME_BUFFER_SIZE ];
@@ -1526,7 +1519,7 @@ static int connectCMP( const BOOLEAN usePKIBoot )
 
 #ifdef SERVER_IS_CRYPTLIB
 	/* Wait for the server to finish initialising */
-	if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+	if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
 		{
 		printf( "Timed out waiting for server to initialise, line %d.\n",
 				__LINE__ );
@@ -1639,8 +1632,8 @@ static int connectCMP( const BOOLEAN usePKIBoot )
 					 cmpRsaSignRequestNoDNData, CRYPT_ALGO_RSA, cryptCACert,
 					 FALSE, TRUE, NULL ) )
 		{
-		puts( "Duplicate init request wasn't detected by the CMP "
-			  "server.\n" );
+		printf( "Duplicate init request wasn't detected by the CMP server, "
+				"line %d.\n\n", __LINE__ );
 		cryptDestroyCert( cryptCACert );
 		return( FALSE );
 		}
@@ -1783,12 +1776,13 @@ static int connectCMP( const BOOLEAN usePKIBoot )
 
 int testSessionCMP( void )
 	{
-	return( connectCMP( FALSE ) );
+	return( connectCMP( FALSE, FALSE ) );
 	}
 
 /* Test the plug-and-play PKI functionality */
 
-static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
+static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice,
+						  const BOOLEAN localSession )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_KEYSET cryptKeyset;
@@ -1855,7 +1849,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 		}
 
 	/* Wait for the server to finish initialising */
-	if( waitMutex() == CRYPT_ERROR_TIMEOUT )
+	if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
 		{
 		printf( "Timed out waiting for server to initialise, line %d.\n",
 				__LINE__ );
@@ -1974,7 +1968,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice )
 
 int testSessionPNPPKI( void )
 	{
-	return( connectPNPPKI( FALSE, FALSE ) );
+	return( connectPNPPKI( FALSE, FALSE, FALSE ) );
 	}
 
 /* Test the CMP server */
@@ -2234,7 +2228,7 @@ int testSessionCMPClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server */
-	status = connectCMP( FALSE );
+	status = connectCMP( FALSE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2269,7 +2263,7 @@ int testSessionCMPPKIBootClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectCMP( TRUE );
+	status = connectCMP( TRUE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2298,7 +2292,7 @@ int testSessionPNPPKIClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( FALSE, FALSE );
+	status = connectPNPPKI( FALSE, FALSE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2327,7 +2321,7 @@ int testSessionPNPPKIDeviceClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( FALSE, TRUE );
+	status = connectPNPPKI( FALSE, TRUE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2353,7 +2347,7 @@ int testSessionPNPPKICAClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( TRUE, FALSE );
+	status = connectPNPPKI( TRUE, FALSE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );
@@ -2379,7 +2373,7 @@ int testSessionPNPPKIIntermedCAClientServer( void )
 	Sleep( 1000 );
 
 	/* Connect to the local server with PKIBoot enabled */
-	status = connectPNPPKI( FALSE, FALSE );
+	status = connectPNPPKI( FALSE, FALSE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
 	return( status );

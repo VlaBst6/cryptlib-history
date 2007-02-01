@@ -572,7 +572,8 @@ static int getDisconnectInfoSSH1( SESSION_INFO *sessionInfoPtr, BYTE *bufPtr )
 	if( length > MAX_ERRMSG_SIZE - 32 )
 		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
 				"Invalid error information size %d", length );
-	strcpy( sessionInfoPtr->errorMessage, "Received SSHv1 server message: " );
+	strlcpy_s( sessionInfoPtr->errorMessage, MAX_ERRMSG_SIZE,
+			   "Received SSHv1 server message: " );
 	memcpy( sessionInfoPtr->errorMessage + 31, bufPtr, length );
 	sessionInfoPtr->errorMessage[ 31 + length ] = '\0';
 
@@ -622,8 +623,7 @@ static int readPacketSSH1( SESSION_INFO *sessionInfoPtr, int expectedType )
 		if( cryptStatusError( status ) )
 			{
 			sNetGetErrorInfo( &sessionInfoPtr->stream,
-							  sessionInfoPtr->errorMessage,
-							  &sessionInfoPtr->errorCode );
+							  &sessionInfoPtr->errorInfo );
 			return( status );
 			}
 		if( status != padLength + length )
@@ -800,8 +800,7 @@ static int sendPacketSsh1( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	return( CRYPT_OK );	/* swrite() returns a byte count */
@@ -837,7 +836,7 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	   SSHv1 we use the lowest common denominator of our version (1.5,
 	   described in the only existing spec for SSHv1) and whatever the
 	   server can handle */
-	strcpy( sessionInfoPtr->sendBuffer, SSH1_ID_STRING "\n" );
+	strlcpy_s( sessionInfoPtr->sendBuffer, 128, SSH1_ID_STRING "\n" );
 	if( sessionInfoPtr->receiveBuffer[ 2 ] < \
 							SSH1_ID_STRING[ SSH_ID_SIZE + 2 ] )
 		sessionInfoPtr->sendBuffer[ SSH_ID_SIZE + 2 ] = \
@@ -847,8 +846,7 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 

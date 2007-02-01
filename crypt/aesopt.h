@@ -339,7 +339,8 @@
     statically into the binary file.  Otherwise the subroutine gen_tabs()
     must be called to compute them before the code is first used.
 */
-#if 1 && !(defined( _MSC_VER ) && ( _MSC_VER <= 800 )) 
+#if 1 && !(defined( _MSC_VER ) && ( _MSC_VER <= 800 )) && \
+		 !(defined( __QNX__ ) && ( OSVERSION <= 4 ))			/* pcg */
 #define FIXED_TABLES
 #endif
 

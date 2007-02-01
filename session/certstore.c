@@ -29,7 +29,7 @@
 typedef struct {
 	const char *attrName;					/* Attribute name from HTTP GET */
 	const int attrNameLen;					/* Attribute name length */
-	const CRYPT_ATTRIBUTE_TYPE attribute;	/* cryptlib attribute ID */
+	const CRYPT_KEYID_TYPE keyIDtype;		/* cryptlib attribute ID */
 	const int flags;						/* Processing flags */
 	} CERTSTORE_READ_INFO;
 
@@ -90,17 +90,15 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 					sizeof( HTTP_URI_INFO ) );
 	if( cryptStatusError( length ) )
 		{
-		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+		sNetGetErrorInfo( &sessionInfoPtr->stream, 
+						  &sessionInfoPtr->errorInfo );
 		return( length );
 		}
 
 	/* Save a copy of the query value for use in reporting errors */
 	length = min( queryInfo.valueLen, CRYPT_MAX_TEXTSIZE );
 	memcpy( sanitisedQueryValue, queryInfo.value, length );
-	buffer[ length ] = '\0';
-	sanitiseString( sanitisedQueryValue, length );
+	sanitiseString( sanitisedQueryValue, length, queryInfo.valueLen );
 
 	/* Convert the search attribute type into a cryptlib key ID */
 	firstChar = toLower( queryInfo.attribute[ 0 ] );
@@ -126,9 +124,9 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		sendErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
 		length = min( queryInfo.attributeLen, CRYPT_MAX_TEXTSIZE );
 		memcpy( buffer, queryInfo.attribute, length );
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, 
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA, 
 				"Invalid certificate store query attribute '%s'", 
-				sanitiseString( buffer, length ) );
+				sanitiseString( buffer, length, queryInfo.attributeLen ) );
 		}
 
 	/* If the value was base64-encoded in transit, decode it to get the 
@@ -140,7 +138,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusError( length ) )
 			{
 			sendErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA, 
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA, 
 					"Invalid base64-encoded query value '%s'", 
 					sanitisedQueryValue );
 			}
@@ -160,7 +158,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	   for a proper high-performance implementation the server would query
 	   the cert database directly and send the stored encoded value to the
 	   client */
-	setMessageKeymgmtInfo( &getkeyInfo, certstoreInfoPtr->attribute, 
+	setMessageKeymgmtInfo( &getkeyInfo, certstoreInfoPtr->keyIDtype, 
 						   valuePtr, valueLen, NULL, 0, KEYMGMT_FLAG_NONE );
 	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
 							  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
@@ -170,7 +168,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		/* Not finding a cert in response to a request isn't a real error so
 		   all we do is return a warning to the caller */
 		sendErrorResponse( sessionInfoPtr, status );
-		retExt( sessionInfoPtr, CRYPT_OK, 
+		retExt( SESSION_ERRINFO, CRYPT_OK, 
 				"Warning: Couldn't find certificate for '%s'", 
 				sanitisedQueryValue );
 		}
@@ -189,7 +187,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, status );
-		retExt( sessionInfoPtr, status, 
+		retExt( SESSION_ERRINFO, status, 
 				"Couldn't export requested certificate for '%s'", 
 				sanitisedQueryValue );
 		}
@@ -200,8 +198,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	return( CRYPT_OK );	/* swrite() returns a byte count */

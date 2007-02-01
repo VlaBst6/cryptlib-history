@@ -145,8 +145,8 @@ static int readHeader( STREAM *stream, BYTE *buffer, int *length,
 			}
 		else
 #endif /* 0 */
-			strcpy( stream->errorMessage,
-					"CMP transport-level protocol error encountered" );
+			strlcpy_s( stream->errorMessage, MAX_ERRMSG_SIZE,
+					   "CMP transport-level protocol error encountered" );
 
 		/* The appropriate status values to return for a problem at this
 		   level are pretty unclear, the most appropriate ones appear to be

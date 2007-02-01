@@ -7,10 +7,12 @@
 
 #ifdef INC_ALL
   #include "crypt.h"
+  #include "mech_int.h"
   #include "asn1.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "mechs/mech_int.h"
   #include "misc/asn1.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
@@ -31,6 +33,9 @@ static void expandData( BYTE *outPtr, const int outLen, const BYTE *inPtr,
 	{
 	int remainder = outLen;
 
+	assert( isWritePtr( outPtr, outLen ) );
+	assert( isReadPtr( inPtr, inLen ) );
+
 	while( remainder > 0 )
 		{
 		const int bytesToCopy = min( inLen, remainder );
@@ -44,7 +49,7 @@ static void expandData( BYTE *outPtr, const int outLen, const BYTE *inPtr,
 
 /****************************************************************************
 *																			*
-*							Key Derivation Mechanisms						*
+*								PRF Building Blocks							*
 *																			*
 ****************************************************************************/
 
@@ -52,7 +57,7 @@ static void expandData( BYTE *outPtr, const int outLen, const BYTE *inPtr,
 
 #define HMAC_DATASIZE		64
 
-static void prfInit( HASHFUNCTION hashFunction, void *hashState,
+static void prfInit( const HASHFUNCTION hashFunction, void *hashState,
 					 const int hashSize, void *processedKey,
 					 const int processedKeyMaxLength,
 					 int *processedKeyLength, const void *key,
@@ -61,8 +66,14 @@ static void prfInit( HASHFUNCTION hashFunction, void *hashState,
 	BYTE hashBuffer[ HMAC_DATASIZE + 8 ], *keyPtr = processedKey;
 	int i;
 
-	/* If the key size is larger than tha SHA data size, reduce it to the
-	   SHA hash size before processing it (yuck.  You're required to do this
+	assert( isWritePtr( hashState, sizeof( HASHINFO ) ) );
+	assert( hashSize >= 16 && hashSize <= CRYPT_MAX_HASHSIZE );
+	assert( isWritePtr( processedKey, processedKeyMaxLength ) );
+	assert( isWritePtr( processedKeyLength, sizeof( int ) ) );
+	assert( isReadPtr( key, keyLength ) );
+
+	/* If the key size is larger than the hash data size, reduce it to the
+	   hash size before processing it (yuck.  You're required to do this
 	   though) */
 	if( keyLength > HMAC_DATASIZE )
 		{
@@ -88,7 +99,7 @@ static void prfInit( HASHFUNCTION hashFunction, void *hashState,
 	zeroise( hashBuffer, HMAC_DATASIZE );
 	}
 
-static void prfEnd( HASHFUNCTION hashFunction, void *hashState,
+static void prfEnd( const HASHFUNCTION hashFunction, void *hashState,
 					const int hashSize, void *hash,
 					const int hashMaxSize, const void *processedKey, 
 					const int processedKeyLength )
@@ -96,6 +107,11 @@ static void prfEnd( HASHFUNCTION hashFunction, void *hashState,
 	BYTE hashBuffer[ HMAC_DATASIZE + 8 ];
 	BYTE digestBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	int i;
+
+	assert( isWritePtr( hashState, sizeof( HASHINFO ) ) );
+	assert( hashSize >= 16 && hashSize <= CRYPT_MAX_HASHSIZE );
+	assert( isWritePtr( hash, hashMaxSize ) );
+	assert( isReadPtr( processedKey, processedKeyLength ) );
 
 	/* Complete the inner hash and extract the digest */
 	hashFunction( hashState, digestBuffer, CRYPT_MAX_HASHSIZE, NULL, 0, 
@@ -115,6 +131,12 @@ static void prfEnd( HASHFUNCTION hashFunction, void *hashState,
 	zeroise( digestBuffer, CRYPT_MAX_HASHSIZE );
 	}
 
+/****************************************************************************
+*																			*
+*							Key Derivation Mechanisms						*
+*																			*
+****************************************************************************/
+
 /* Perform PKCS #5 v2 derivation */
 
 int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
@@ -133,6 +155,7 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	int iterationCount = 0;
 
 	UNUSED( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	/* Set up the block counter buffer.  This will never have more than the
 	   last few bits set (8 bits = 5100 bytes of key) so we only change the
@@ -181,7 +204,7 @@ int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 			prfEnd( hashFunction, hashInfo, hashSize, block, 
 					CRYPT_MAX_HASHSIZE, processedKey, processedKeyLength );
 
-			/* Xor the new PRF output into the existing PRF output */
+			/* XOR the new PRF output into the existing PRF output */
 			for( j = 0; j < noKeyBytes; j++ )
 				dataOutPtr[ j ] ^= block[ j ];
 			}
@@ -222,6 +245,7 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	int hashSize, keyIndex, i, iterationCount = 0;
 
 	UNUSED( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
 
@@ -289,7 +313,8 @@ int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 		}
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
 		retIntError();
-	zeroise( p12_DSP, P12_BLOCKSIZE + P12_BLOCKSIZE + ( P12_BLOCKSIZE * 3 ) );
+	zeroise( p12_DSP, P12_BLOCKSIZE + P12_BLOCKSIZE + \
+					  ( ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 ) );
 	zeroise( p12_Ai, P12_BLOCKSIZE );
 	zeroise( p12_B, P12_BLOCKSIZE );
 
@@ -306,9 +331,11 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	HASHFUNCTION md5HashFunction, shaHashFunction;
 	HASHINFO hashInfo;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], counterData[ 16 + 8 ];
+	BYTE *dataOutPtr = mechanismInfo->dataOut;
 	int md5HashSize, shaHashSize, counter = 0, keyIndex, iterationCount = 0;
 
 	UNUSED( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	getHashParameters( CRYPT_ALGO_MD5, &md5HashFunction, &md5HashSize );
 	getHashParameters( CRYPT_ALGO_SHA, &shaHashFunction, &shaHashSize );
@@ -346,7 +373,7 @@ int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 						 hash, shaHashSize, HASH_END );
 
 		/* Copy the result to the output */
-		memcpy( ( BYTE * )( mechanismInfo->dataOut ) + keyIndex, hash, noKeyBytes );
+		memcpy( dataOutPtr + keyIndex, hash, noKeyBytes );
 		}
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
 		retIntError();
@@ -378,6 +405,7 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	int md5HashSize, shaHashSize, keyIndex, iterationCount = 0;
 
 	UNUSED( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	getHashParameters( CRYPT_ALGO_MD5, &md5HashFunction, &md5HashSize );
 	getHashParameters( CRYPT_ALGO_SHA, &shaHashFunction, &shaHashSize );
@@ -387,7 +415,8 @@ int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	   ceil( dataInLength / 2 ), so there's a one-byte overlap if the input
 	   is an odd number of bytes long */
 	s1 = mechanismInfo->dataIn;
-	s2 = ( BYTE * ) mechanismInfo->dataIn + ( mechanismInfo->dataInLength - sLen );
+	s2 = ( BYTE * ) mechanismInfo->dataIn + \
+		 ( mechanismInfo->dataInLength - sLen );
 
 	/* The two hash functions have different block sizes that would require
 	   complex buffering to handle leftover bytes from SHA-1, a simpler
@@ -491,10 +520,10 @@ int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
-	int hashSize, iterations = mechanismInfo->iterations - 1;
-	int iterationCount = 0;
+	int hashSize, iterations;
 
 	UNUSED( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	/* Calculate SHA1( password || salt ) */
 	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, &hashSize );
@@ -505,13 +534,14 @@ int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 				  mechanismInfo->saltLength, HASH_END );
 
 	/* Iterate the hashing the remaining number of times */
-	while( iterations-- > 0 && iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+	for( iterations = 0; iterations < mechanismInfo->iterations && \
+						 iterations < FAILSAFE_ITERATIONS_MAX; iterations++ )
 		{
 		hashFunction( NULL, mechanismInfo->dataOut, 
 					  mechanismInfo->dataOutLength, mechanismInfo->dataOut,
 					  hashSize, HASH_ALL );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
+	if( iterations >= FAILSAFE_ITERATIONS_MAX )
 		retIntError();
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 
@@ -531,6 +561,8 @@ int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo )
 	long byteCount = ( long ) mechanismInfo->iterations << 6;
 	long secondByteCount = 0;
 	int hashSize, iterationCount = 0;
+
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, &hashSize );
 

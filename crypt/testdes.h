@@ -1,10 +1,8 @@
 /* DES test vectors, derived from "Validating the Correctness of Hardware
    Implementations of the NBS Data Encryption Standard", NBS Special
-   Publication 500-20, 1980 */
-
-/* The data structure for the ( key, plaintext, ciphertext ) triplets.  Each
-   set of tests also includes a string describing the test, suitable for
-   printing as "Testing <description string>" during the testing process */
+   Publication 500-20, 1980, reprinted in NIST Pub.800-17 and also re-used
+   for 3DES in NIST Pub.800-20 by setting k1 = k2 = k3 so the 3DES tests
+   degenerate into single DES tests */
 
 typedef struct {
 	const BYTE key[ DES_BLOCKSIZE ];

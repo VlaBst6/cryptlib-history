@@ -63,6 +63,7 @@ EXPORTS
 			cryptGetAttribute
 			cryptGetAttributeString
 			cryptGetCertExtension
+			cryptGetKey
 			cryptGetPrivateKey
 			cryptGetPublicKey
 			cryptImportCert

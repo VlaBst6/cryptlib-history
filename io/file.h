@@ -92,9 +92,10 @@
 *																			*
 ****************************************************************************/
 
-#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __RTEMS__ ) || \
-	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
-	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
+#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __MVS__ ) || \
+	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
+	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
+	  defined( __UNIX__ )
 
 #if defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ )
   /* Needed for lstat() in sys/lstat.h */
@@ -138,15 +139,17 @@
 /* By default we try and use flock()-locking, if this isn't available we
    fall back to fcntl() locking (see the long comment further on).  Actually
    Slowaris does have flock(), but there are lots of warnings in the manpage
-   about using it only on BSD platforms, and the result won't work with any
-   of the system libraries.  SunOS did support it without any problems, it's
-   only Slowaris that breaks it.  In addition UnixWare (== SCO) supports
-   something called flockfile() but this only provides thread-level locking
-   that isn't useful */
+   about using it only on BSD platforms, and it requires the BSD libraries to
+   work.  SunOS did support it without any problems, it's only the SVR4 
+   Slowaris that breaks it - the Solaris flock() is really just a 
+   compatibility hack around fcntl() locking, even up to the very latest 
+   versions (Solaris 10).  In addition UnixWare (== SCO) supports something 
+   called flockfile() but this only provides thread-level locking that isn't 
+   useful */
 
-#if defined( _AIX ) || defined( __BEOS__ ) || defined( __CYGWIN__ ) || \
-	defined( __hpux ) || defined( _MPRAS ) || defined( __MVS__ ) || \
-	defined( _M_XENIX ) || defined( __SCO_VERSION__ ) || \
+#if ( defined( _AIX ) && ( OSVERSION <= 4 ) )  || defined( __BEOS__ ) || \
+	defined( __CYGWIN__ ) || defined( __hpux ) || defined( _MPRAS ) || \
+	defined( __MVS__ ) || defined( _M_XENIX ) || defined( __SCO_VERSION__ ) || \
 	( defined( sun ) && ( OSVERSION >= 5 ) ) || \
 	defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ )
   #define USE_FCNTL_LOCKING

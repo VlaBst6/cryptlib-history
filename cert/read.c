@@ -247,6 +247,7 @@ static int readPublicKeyInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 
 static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	{
+	CRYPT_ALGO_TYPE dummy;
 	int length, endPos, status;
 
 	/* Read the outer SEQUENCE and version number if it's present */
@@ -275,8 +276,8 @@ static int readCertInfo( STREAM *stream, CERT_INFO *certInfoPtr )
 	   as an implicit indicator of the hash algorithm they'll use */
 	status = readSerialNumber( stream, certInfoPtr, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
-		status = readAlgoIDex( stream, NULL, \
-							   &certInfoPtr->cCertCert->hashAlgo, NULL );
+		status = readAlgoIDext( stream, &dummy, \
+								&certInfoPtr->cCertCert->hashAlgo );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -996,16 +997,8 @@ static int readPkiUserInfo( STREAM *stream, CERT_INFO *userInfoPtr )
 	/* Clone the CA key for our own use, load the IV from the encryption
 	   info, and use the cloned context to decrypt the user info.  We need to
 	   do this to prevent problems if multiple threads try to simultaneously
-	   decrypt with the CA key.  Since user objects aren't fully implemented
-	   yet, we use a fixed key as the CA key for now (most CA guidelines
-	   merely require that the CA protect its user database via standard
-	   (physical/ACL) security measures, so this is no less secure than what's
-	   required by various CA guidelines).
-
-	   When we do this for real we probably need an extra level of
-	   indirection to go from the CA secret to the database decryption key
-	   so that we can change the encryption algorithm and so that we don't
-	   have to directly apply the CA secret key to the user database */
+	   decrypt with the CA key.  See the comment in write.c for the use of
+	   the fixed interop key */
 	setMessageCreateObjectInfo( &createInfo, queryInfo.cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );

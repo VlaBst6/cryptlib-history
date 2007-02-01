@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2006                   *
+'*                       Copyright Peter Gutmann 1997-2007                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Fri Sep  1 23:14:48 2006, filesize = 82545.
+'"cryptlib.h" dated Thu Feb  1 01:54:58 2007, filesize = 85398.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3300
+  Public Const CRYPTLIB_VERSION As Long = 3310
 
 
 '****************************************************************************
@@ -63,6 +63,7 @@ Public Enum CRYPT_ALGO_TYPE
     CRYPT_ALGO_DSA                  ' DSA 
     CRYPT_ALGO_ELGAMAL              ' ElGamal 
     CRYPT_ALGO_KEA                  ' KEA 
+    CRYPT_ALGO_ECDSA                ' ECDSA 
 
     ' Hash algorithms 
     CRYPT_ALGO_MD2 = 200            ' MD2 
@@ -383,6 +384,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
 
     ' Misc.information 
     CRYPT_CTXINFO_LABEL             ' Label for private/secret key 
+    CRYPT_CTXINFO_PERSISTENT        ' Obj.is backed by device or keyset 
 
     ' Used internally 
     CRYPT_CTXINFO_LAST
@@ -1243,9 +1245,11 @@ End Enum
 
   Public Const CRYPT_MAX_IVSIZE As Long = 32
 
-' The maximum public-key component size - 4096 bits 
+'  The maximum public-key component size - 4096 bits, and maximum component
+'  size for ECCs - 256 bits 
 
   Public Const CRYPT_MAX_PKCSIZE As Long = 512
+  Public Const CRYPT_MAX_PKCSIZE_ECC As Long = 32
 
 ' The maximum hash size - 256 bits 
 
@@ -1399,6 +1403,41 @@ Public Type CRYPT_PKCINFO_DLP
     ' Private components 
     x(CRYPT_MAX_PKCSIZE-1) As Byte   ' Private random integer 
     xLen As Long                   ' Length of private integer in bits 
+    
+
+End Type
+
+Public Type CRYPT_PKCINFO_ECC 
+    ' Status information 
+    isPublicKey As Long            ' Whether this is a public or private key 
+
+    ' Curve 
+    p(CRYPT_MAX_PKCSIZE-1) As Byte   ' Prime defining Fq 
+    pLen As Long                   ' Length of prime in bits 
+    a(CRYPT_MAX_PKCSIZE-1) As Byte   ' Element in Fq defining curve 
+    aLen As Long                   ' Length of element a in bits 
+    b(CRYPT_MAX_PKCSIZE-1) As Byte   ' Element in Fq defining curve 
+    bLen As Long                   ' Length of element b in bits 
+
+    ' Generator 
+    gx(CRYPT_MAX_PKCSIZE-1) As Byte  ' Element in Fq defining point 
+    gxLen As Long                  ' Length of element gx in bits 
+    gy(CRYPT_MAX_PKCSIZE-1) As Byte  ' Element in Fq defining point 
+    gyLen As Long                  ' Length of element gy in bits 
+    r(CRYPT_MAX_PKCSIZE-1) As Byte   ' Order of point 
+    rLen As Long                   ' Length of order in bits 
+    h(CRYPT_MAX_PKCSIZE-1) As Byte   ' Optional cofactor 
+    hLen As Long                   ' Length of cofactor in bits 
+
+    ' Public components 
+    qx(CRYPT_MAX_PKCSIZE-1) As Byte  ' Point Q on the curve 
+    qxLen As Long                  ' Length of point xq in bits 
+    qy(CRYPT_MAX_PKCSIZE-1) As Byte  ' Point Q on the curve 
+    qyLen As Long                  ' Length of point xy in bits 
+
+    ' Private components 
+    d(CRYPT_MAX_PKCSIZE-1) As Byte   ' Random integer 
+    dLen As Long                   ' Length of integer in bits 
     
 
 End Type
@@ -1675,7 +1714,7 @@ Public Declare Function cryptKeysetOpen Lib "CL32.DLL" ( ByRef keyset As Long, _
 Public Declare Function cryptKeysetClose Lib "CL32.DLL" ( ByVal keyset As Long) As Long
 
 
-' Get a key from a keyset 
+' Get a key from a keyset or device 
 
 Public Declare Function cryptGetPublicKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByRef cryptContext As Long, _
@@ -1688,8 +1727,14 @@ Public Declare Function cryptGetPrivateKey Lib "CL32.DLL" ( ByVal keyset As Long
  ByVal keyID As String, _
  ByVal password As String) As Long
 
+Public Declare Function cryptGetKey Lib "CL32.DLL" ( ByVal keyset As Long, _
+ ByRef cryptContext As Long, _
+ ByVal keyIDtype As CRYPT_KEYID_TYPE, _
+ ByVal keyID As String, _
+ ByVal password As String) As Long
 
-' Add/delete a key to/from a keyset 
+
+' Add/delete a key to/from a keyset or device 
 
 Public Declare Function cryptAddPublicKey Lib "CL32.DLL" ( ByVal keyset As Long, _
  ByVal certificate As Long) As Long

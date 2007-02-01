@@ -21,7 +21,7 @@ if [ "$2" = "" ] ; then
 	exit 1 ;
 fi
 
-# Juggle the args around to get them the way we want them.
+# Juggle the args around to get them the way that we want them.
 
 AS=$1
 OBJPATH=$2
@@ -53,6 +53,11 @@ build_asm_files()
 	build_asm_file crypt/s1-$TARGET sha1asm
 	}
 
+# The only difference between the "sol" and the "elf" x86 formats is that 
+# ELF uses '#' as the comment delimiter while Slowaris uses '/'.  In the 
+# case where the file has no comments (bn-elf.s), it also functions as 
+# bn-sol.s.
+#
 # Only the bignum code is done in asm for non-x86 systems.  For gas on
 # OSF/1, it may be necessary to use -m<cpu_type> (where <cpu_type> is
 # anything, e.g.21064, 21164, etc) if gas dies with an illegal operand error

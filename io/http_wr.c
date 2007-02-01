@@ -71,7 +71,7 @@ static void encodeRFC1866( STREAM *headerStream, const char *string,
 			int escapeStringLen;
 
 			/* It's a special char, escape it */
-			escapeStringLen = sPrintf_s( escapeString, 8, "%%%02X", ch );
+			escapeStringLen = sprintf_s( escapeString, 8, "%%%02X", ch );
 			swrite( headerStream, escapeString, escapeStringLen );
 			}
 		}
@@ -104,9 +104,8 @@ int sendHTTPData( STREAM *stream, void *buffer, const int length,
 	if( status < length )
 		/* The write timed out, convert the incomplete HTTP header write to 
 		   the appropriate timeout error */
-		retExtStream( stream, CRYPT_ERROR_TIMEOUT,
-					  "HTTP write timed out before all data could be "
-					  "written" );
+		retExt( STREAM_ERRINFO, CRYPT_ERROR_TIMEOUT,
+				"HTTP write timed out before all data could be written" );
 	return( CRYPT_OK );
 	}
 
@@ -124,7 +123,6 @@ int writeRequestHeader( STREAM *stream, const int contentLength )
 	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
 	const int transportFlag = ( contentLength > 0 ) ? TRANSPORT_FLAG_NONE : \
 													  TRANSPORT_FLAG_FLUSH;
-	const int hostLen = strlen( stream->host );
 	int headerLength;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -145,7 +143,7 @@ int writeRequestHeader( STREAM *stream, const int contentLength )
 		   rather than just the relative location */
 		if( stream->flags & STREAM_NFLAG_HTTPPROXY )
 			swrite( &headerStream, "http://", 7 );
-		swrite( &headerStream, stream->host, hostLen );
+		swrite( &headerStream, stream->host, stream->hostLen );
 		if( stream->port != 80 )
 			{
 			char portString[ 16 + 8 ];
@@ -158,23 +156,22 @@ int writeRequestHeader( STREAM *stream, const int contentLength )
 		}
 	if( !( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) )
 		{
-		if( stream->path != NULL && *stream->path != '\0' )
-			swrite( &headerStream, stream->path, strlen( stream->path ) );
+		if( stream->path != NULL && stream->pathLen > 0 )
+			swrite( &headerStream, stream->path, stream->pathLen );
 		else
 			sputc( &headerStream, '/' );
 		}
-	if( stream->query != NULL && *stream->query != '\0' )
+	if( stream->query != NULL && stream->queryLen > 0 )
 		{
 		sputc( &headerStream, '?' );
-		encodeRFC1866( &headerStream, stream->query, 
-					   strlen( stream->query ) );
+		encodeRFC1866( &headerStream, stream->query, stream->queryLen );
 		}
 	if( isHTTP10( stream ) )
 		swrite( &headerStream, " HTTP/1.0\r\n", 11 );
 	else
 		{
 		swrite( &headerStream, " HTTP/1.1\r\nHost: ", 17 );
-		swrite( &headerStream, stream->host, hostLen );
+		swrite( &headerStream, stream->host, stream->hostLen );
 		swrite( &headerStream, "\r\n", 2 );
 		if( stream->flags & STREAM_NFLAG_LASTMSG )
 			swrite( &headerStream, "Connection: close\r\n", 19 );
@@ -185,10 +182,9 @@ int writeRequestHeader( STREAM *stream, const int contentLength )
 		int lengthStringLength;
 
 		swrite( &headerStream, "Content-Type: ", 14 );
-		swrite( &headerStream, stream->contentType, 
-				strlen( stream->contentType ) );
+		swrite( &headerStream, stream->contentType, stream->contentTypeLen );
 		swrite( &headerStream, "\r\nContent-Length: ", 18 );
-		lengthStringLength = sPrintf_s( lengthString, 8, "%d", 
+		lengthStringLength = sprintf_s( lengthString, 8, "%d", 
 										contentLength );
 		swrite( &headerStream, lengthString, lengthStringLength );
 		swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
@@ -222,10 +218,9 @@ static int writeResponseHeader( STREAM *stream, const int contentLength )
 			swrite( &headerStream, "Connection: close\r\n", 19 );
 		}
 	swrite( &headerStream, "Content-Type: ", 14 );
-	swrite( &headerStream, stream->contentType, 
-			strlen( stream->contentType ) );
+	swrite( &headerStream, stream->contentType, stream->contentTypeLen );
 	swrite( &headerStream, "\r\nContent-Length: ", 18 );
-	lengthStringLength = sPrintf_s( lengthString, 8, "%d", 
+	lengthStringLength = sprintf_s( lengthString, 8, "%d", 
 									contentLength );
 	swrite( &headerStream, lengthString, lengthStringLength );
 	swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
@@ -287,10 +282,10 @@ static int writeFunction( STREAM *stream, const void *buffer,
 	else
 		{
 		assert( ( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) || \
-				strlen( stream->contentType ) );
+				stream->contentTypeLen > 0 );
 		assert( !( ( stream->flags & STREAM_NFLAG_HTTPPROXY ) && 
 				   ( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) ) );
-		assert( stream->host != NULL );
+		assert( stream->host != NULL && stream->hostLen > 0 );
 
 		status = writeRequestHeader( stream, localLength );
 		}

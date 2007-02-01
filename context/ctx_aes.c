@@ -24,30 +24,6 @@
 
 #ifdef USE_AES
 
-#if 0
-
-/* The size of an AES key and block and a keyscheduled AES key */
-
-#define AES_KEYSIZE				32
-#define AES_BLOCKSIZE			16
-#define AES_EXPANDED_KEYSIZE	sizeof( AES_CTX )
-
-/* The AES code separates encryption and decryption to make it easier to
-   do encrypt-only or decrypt-only apps, however since we don't know
-   what the user will choose to do we have to do both key schedules (this
-   is a relatively minor overhead compared to en/decryption, so it's not a 
-   big problem) */
-
-typedef struct {
-	aes_encrypt_ctx encKey;
-	aes_decrypt_ctx decKey;
-	} AES_CTX;
-
-#define	ENC_KEY( convInfo )		&( ( AES_CTX * ) convInfo->key )->encKey
-#define	DEC_KEY( convInfo )		&( ( AES_CTX * ) convInfo->key )->decKey
-
-#else
-
 /* The size of an AES key and block and a keyscheduled AES key */
 
 #define AES_KEYSIZE			32
@@ -70,9 +46,13 @@ typedef struct {
 #define L_SIZE( x )			( sizeof( x ) / sizeof( unsigned long ) )	
 #if defined( USE_VIA_ACE_IF_PRESENT )
   /* Data is DWORD-aligned anyway but we need to have 16-byte alignment for
-     key data in case we're using the VIA ACE */
+     key data in case we're using the VIA ACE.  The value -16 expands to
+     0xFFFFFFF0 in 32-bit mode and 0xFFFFFFFFFFFFFFFF0 in 64-bit mode */
+  #if defined( _MSC_VER ) && VC_LT_2005( _MSC_VER )
+	#define ULONG_PTR		unsigned long
+  #endif /* VC++ 6 or below */
   #define KS_SIZE			( sizeof( AES_EKEY ) + sizeof( AES_DKEY ) + 24 )
-  #define ALGN( x )			( ( unsigned long )( x ) & 0xFFFFFFF0 )
+  #define ALGN( x )			( ( ULONG_PTR )( x ) & -16 )
   #define EKEY( x )			( ( AES_EKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + 3 ) )
   #define DKEY( x )			( ( AES_DKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + \
 												   L_SIZE( AES_EKEY ) + 6 ) )
@@ -89,8 +69,6 @@ typedef struct {
 
 #define	ENC_KEY( x )		EKEY( ( x )->key )
 #define	DEC_KEY( x )		DKEY( ( x )->key )
-
-#endif /* 0 */
 
 /****************************************************************************
 *																			*
@@ -275,37 +253,17 @@ static int selfTest( void )
 	static const BYTE FAR_BSS mctCFBPT[] = \
 		{ 0xF0, 0x66, 0xBE, 0x4B, 0xD6, 0x71, 0xEB, 0xC1, 0xC4, 0xCF, 0x3C, 0x00, 0x8E, 0xF2, 0xCF, 0x18 };
 	const CAPABILITY_INFO *capabilityInfo = getAESCapability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ AES_EXPANDED_KEYSIZE + 8 ];
 	int i, status;
 
 #if 1
 	for( i = 0; i < sizeof( testAES ) / sizeof( AES_TEST ); i++ )
 		{
-		BYTE temp[ AES_BLOCKSIZE + 8 ];
-
-		memcpy( temp, testAES[ i ].plaintext, AES_BLOCKSIZE );
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		status = capabilityInfo->initKeyFunction( &contextInfo, 
-												  testAES[ i ].key,
-												  testAES[ i ].keySize );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp, 
-													  AES_BLOCKSIZE );
-		if( cryptStatusOK( status ) && \
-			memcmp( testAES[ i ].ciphertext, temp, AES_BLOCKSIZE ) )
-			status = CRYPT_ERROR;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->decryptFunction( &contextInfo, temp, 
-													  AES_BLOCKSIZE );
-		if( cryptStatusOK( status ) && \
-			memcmp( testAES[ i ].plaintext, temp, AES_BLOCKSIZE ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testCipher( capabilityInfo, keyData, testAES[ i ].key, 
+							 testAES[ i ].keySize, testAES[ i ].plaintext,
+							 testAES[ i ].ciphertext );
 		if( cryptStatusError( status ) )
-			return( CRYPT_ERROR );
+			return( status );
 		}
 #endif
 
@@ -316,7 +274,7 @@ static int selfTest( void )
 				  NULL, mctECBPT );
 	staticDestroyContext( &contextInfo );
 	if( cryptStatusError( status ) )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 #endif
 #if 0	/* OK */
 	staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
@@ -325,7 +283,7 @@ static int selfTest( void )
 				  mctCBCIV, mctCBCPT );
 	staticDestroyContext( &contextInfo );
 	if( cryptStatusError( status ) )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 #endif
 
 	return( CRYPT_OK );

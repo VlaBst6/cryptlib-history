@@ -643,8 +643,7 @@ static int addPublicKey( PKCS15_INFO *pkcs15infoPtr,
 	assert( isReadPtr( pubKeyAttributes, pubKeyAttributeSize ) );
 	assert( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 			pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
-	assert( modulusSize >= bitsToBytes( MIN_PKCSIZE_BITS ) && \
-			modulusSize <= CRYPT_MAX_PKCSIZE );
+	assert( modulusSize >= MIN_PKCSIZE && modulusSize <= CRYPT_MAX_PKCSIZE );
 
 	if( cryptStatusError( keyTypeTag ) && ( keyTypeTag != DEFAULT_TAG ) )
 		return( keyTypeTag );
@@ -845,8 +844,7 @@ static int writeWrappedPrivateKey( void *wrappedKey,
 
 	/* Export the wrapped private key */
 	setMechanismWrapInfo( &mechanismInfo, wrappedKey, wrappedKeyMaxLength, 
-						  NULL, 0, iPrivKeyContext, iSessionKeyContext, 
-						  CRYPT_UNUSED );
+						  NULL, 0, iPrivKeyContext, iSessionKeyContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, MECHANISM_PRIVATEKEYWRAP );
 	length = mechanismInfo.wrappedDataLength;
@@ -882,8 +880,7 @@ static int writeWrappedPrivateKey( void *wrappedKey,
 
 	/* The data must contain at least p and q, or at most all key 
 	   components */
-	if( length < ( bitsToBytes( MIN_PKCSIZE_BITS ) * 2 ) || \
-		length > MAX_PRIVATE_KEYSIZE )
+	if( length < MIN_PKCSIZE * 2 || length > MAX_PRIVATE_KEYSIZE )
 		status = CRYPT_ERROR;
 	else
 		{
@@ -891,8 +888,7 @@ static int writeWrappedPrivateKey( void *wrappedKey,
 		status = readIntegerTag( &encDataStream, NULL, &length, 
 								 CRYPT_MAX_PKCSIZE, 3 );
 		if( cryptStatusOK( status ) && \
-			( length < bitsToBytes( MIN_PKCSIZE_BITS ) || \
-			  length > CRYPT_MAX_PKCSIZE ) )
+			( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE ) )
 			status = CRYPT_ERROR;
 		}
 	sMemDisconnect( &encDataStream );
@@ -928,8 +924,7 @@ static int addPrivateKey( PKCS15_INFO *pkcs15infoPtr,
 	assert( isReadPtr( privKeyAttributes, privKeyAttributeSize ) );
 	assert( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 			pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
-	assert( modulusSize >= bitsToBytes( MIN_PKCSIZE_BITS ) && \
-			modulusSize <= CRYPT_MAX_PKCSIZE );
+	assert( modulusSize >= MIN_PKCSIZE && modulusSize <= CRYPT_MAX_PKCSIZE );
 
 	if( cryptStatusError( keyTypeTag ) && ( keyTypeTag != DEFAULT_TAG ) )
 		return( keyTypeTag );
@@ -953,7 +948,7 @@ static int addPrivateKey( PKCS15_INFO *pkcs15infoPtr,
 
 	/* Calculate the eventual encrypted key size */
 	setMechanismWrapInfo( &mechanismInfo, NULL, 0, NULL, 0, iCryptContext,
-						  iSessionKeyContext, CRYPT_UNUSED );
+						  iSessionKeyContext );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_EXPORT,
 							  &mechanismInfo, MECHANISM_PRIVATEKEYWRAP );
 	privKeySize = mechanismInfo.wrappedDataLength;

@@ -33,29 +33,30 @@
 
 #define MAX_PRIVATE_KEYSIZE		( ( CRYPT_MAX_PKCSIZE * 8 ) + 256 )
 
-/* The minimum and maximum conventional key size in bits.  In order to avoid
-   problems with space inside shorter RSA-encrypted blocks, we limit the
-   total keysize to 256 bits, which is adequate for all purposes - the
-   limiting factor is AES-256.  Unfortunately when loading a default-length
-   key into a context we can't tell what the user is going to do with the
-   generated key (for example whether they will export it using a very short
-   public key) so we have to take the approach of using a practical length
-   that will work even with a 512-bit public key.  This means that for
-   Blowfish, RC2, RC4, and RC5 the keylength is shorter than strictly
-   necessary (actually for RC2 we have to limit the keysize to 128 bits for
-   CMS/SMIME compatibility) */
+/* The minimum and maximum working conventional key size in bits.  In order 
+   to avoid problems with space inside PKC-encrypted blocks when MIN_PKCSIZE 
+   is less than 1024 bits, we limit the total keysize to 256 bits, which is 
+   adequate for all purposes - the limiting factor is AES-256.  
+   Unfortunately when loading a default-length key into a context we can't 
+   tell what the user is going to do with the generated key (for example 
+   whether they'll export it using a very short public key) so we have to 
+   take the approach of using a practical working key length that will work 
+   even with a short public key.  This means that for Blowfish, RC2, RC4, 
+   and RC5 the working keylength is shorter than strictly necessary 
+   (actually for RC2 we have to limit the keysize to 128 bits for CMS/SMIME 
+   compatibility) */
 
-#define MIN_KEYSIZE_BITS		40
-#define MAX_KEYSIZE_BITS		256
+#define MIN_KEYSIZE				bitsToBytes( 56 )
+#define MAX_WORKING_KEYSIZE		bitsToBytes( 256 )
 
-/* The minimum and maximum public-key size in bits.  This is used to save
-   having to do lots of bit -> byte conversion when checking the lengths of
-   PKC values that have the length specified in bits.  The minimum size is
-   a bit less than the actual size because keygen specifics can lead to keys
-   that are slightly shorter than the nominal size */
+/* The minimum public key size (c.f. CRYPT_MAX_PKCSIZE).  This is a bit less 
+   than the actual size because keygen specifics can lead to keys that are 
+   slightly shorter than the nominal size.  In addition we have to have a 
+   special value for ECC keys, for which key sizes work differently that
+   conventional PKCs */
 
-#define MIN_PKCSIZE_BITS		( 512 - 8 )
-#define MAX_PKCSIZE_BITS		bytesToBits( CRYPT_MAX_PKCSIZE )
+#define MIN_PKCSIZE				( bitsToBytes( 1024 ) - 4 )
+#define MIN_PKCSIZE_ECC			( bitsToBytes( 192 ) - 4 )
 
 /* The size of the largest public-key wrapped value, corresponding to an
    ASN.1-encoded Elgamal-encrypted key */
@@ -244,26 +245,6 @@ typedef enum {
 	KEYFORMAT_PRIVATE_OLD,	/* Older format for backwards-compatibility */
 	KEYFORMAT_LAST		/* Last possible key format type */
 	} KEYFORMAT_TYPE;
-
-/* When importing certs for internal use we occasionally need to be able to
-   handle things that aren't normal certs.  Alongside the CRYPT_CERTTYPE_xxx
-   values to specify the data format, we can use the following values to tell
-   the cert import code to handle special-case data formats.
-   CERTFORMAT_DATAONLY is a special value that doesn't specifically contain
-   a data format hint but indicates that the certificate should be
-   instantiated without creating a corresponding context to contain the
-   associated public key.  This value is used by certs contained in cert
-   chains, where only the leaf cert actually needs to have a context
-   instantiated.  CERTFORMAT_CTL is the same as CERTFORMAT_DATAONLY but
-   covers cert chains, specifically CTLs that are used as containers for
-   trusted certs but never as true cert chains */
-
-typedef enum {
-	CERTFORMAT_DATAONLY = 100,		/* Data-only cert */
-	CERTFORMAT_CTL,					/* Data-only cert chain */
-	CERTFORMAT_REVINFO,				/* Revocation info/single CRL entry */
-	CERTFORMAT_LAST					/* Last cert format type */
-	} CERTFORMAT_TYPE;
 
 /* The different types of actions that can be signalled to the management
    function for each object class.  This instructs the management function

@@ -12,53 +12,6 @@
 /* Various include files needed by the DBMS libraries */
 
 #include <time.h>
-#ifdef USE_ODBC
-  #if defined( __WIN32__ ) && !defined( WIN32 )
-	/* As part of the ever-changing way of identifying Win32, Microsoft 
-	   changed the predefined constant from WIN32 to _WIN32 in VC++ 2.1.  
-	   However the ODBC header files still expect to find WIN32, and if this 
-	   isn't defined will use the default (i.e. C) calling convention 
-	   instead of the Pascal convention which is actually used by the ODBC 
-	   functions.  This means that both the caller and the callee clean up 
-	   the stack, so that for each ODBC call the stack creeps upwards by a 
-	   few bytes until eventually the local variables and/or return address 
-	   get trashed.  This problem is usually hidden by the fact that 
-	   something else defines WIN32 so everything works OK, but the October 
-	   1997 development platform upgrade changes this so that compiling the 
-	   code after this update is installed breaks things.  To avoid this 
-	   problem, we define WIN32 if it isn't defined, which ensures that the 
-	   ODBC header files work properly */
-	#define WIN32
-  #endif /* __WIN32__ && !WIN32 */
-  #if defined( __BORLANDC__ )
-	#include <mfc/sqltypes.h>
-  #else
-	#ifdef __WINDOWS__
-	  /* UnixODBC defines its own version of various Windows types, if we're
-		 building under Windows we have to disable this.  The UnixODBC 
-		 headers have a guard ALLREADY_HAVE_WINDOWS_TYPE (sic) but this is
-		 all-or-nothing, disabling the defining of Windows *and* SQL types.
-		 Defining the guard value fixes most compile problems, but in order
-		 to build it the commented-out typedefs also need to be defined.
-		 These are already defined in the standard (Windows) sqltypes.h so
-		 their use needs to be manually enabled for UnixODBC under Windows
-		 (which is unlikely to occur, given that it's a Unix-only driver) */
-	  #define ALLREADY_HAVE_WINDOWS_TYPE
-	  #if 0
-	  typedef signed short RETCODE;
-	  typedef short int SWORD;
-	  typedef long int SDWORD;
-	  typedef signed char SQLSCHAR;
-	  typedef HWND SQLHWND;
-	  #endif /* 0 */
-	#endif /* __WINDOWS__ */
-	#include <sql.h>
-	#include <sqlext.h>
-  #endif /* Borland vs.everything else */
-#endif /* USE_ODBC */
-#ifdef USE_DATABASE
-  #error Need to add database backend-specific includes
-#endif /* USE_DATABASE */
 #ifndef _STREAM_DEFINED
   #if defined( INC_ALL )
 	#include "stream.h"
@@ -69,14 +22,79 @@
 
 /****************************************************************************
 *																			*
+*							Database Keyset Headers							*
+*																			*
+****************************************************************************/
+
+/* Handle ODBC support.  This gets rather complex, with all sorts of special-
+   case handling of headers and types required across different systems */
+
+#ifdef USE_ODBC
+
+/* As part of the ever-changing way of identifying Win32, Microsoft changed 
+   the predefined constant from WIN32 to _WIN32 in VC++ 2.1.  However the 
+   ODBC header files still expect to find WIN32, and if this isn't defined 
+   will use the default (i.e. C) calling convention instead of the Pascal 
+   convention which is actually used by the ODBC functions.  This means that 
+   both the caller and the callee clean up the stack, so that for each ODBC 
+   call the stack creeps upwards by a few bytes until eventually the local 
+   variables and/or return address get trashed.  This problem is usually 
+   hidden by the fact that something else defines WIN32 so everything works 
+   OK, but the October 1997 development platform upgrade changes this so 
+   that compiling the code after this update is installed breaks things.  To 
+   avoid this problem, we define WIN32 if it isn't defined, which ensures 
+   that the ODBC header files work properly */
+#if defined( __WIN32__ ) && !defined( WIN32 )
+  #define WIN32
+#endif /* __WIN32__ && !WIN32 */
+
+#ifdef __WINDOWS__
+  /* Borland have their own weird place to put ODBC headers */
+  #if defined( __BORLANDC__ )
+	#include <mfc/sqltypes.h>
+  #else
+	/* UnixODBC defines its own version of various Windows types, if we're
+	   building under Windows we have to disable this.  The UnixODBC headers 
+	   have a guard ALLREADY_HAVE_WINDOWS_TYPE (sic) but this is all-or-
+	   nothing, disabling the defining of Windows *and* SQL types.  Defining 
+	   the guard value fixes most compile problems, but in order to build it 
+	   the commented-out typedefs also need to be defined.  These are 
+	   already defined in the standard (Windows) sqltypes.h so their use 
+	   needs to be manually enabled for UnixODBC under Windows (which is 
+	   unlikely to occur, given that it's a Unix-only driver) */
+	#define ALLREADY_HAVE_WINDOWS_TYPE
+	#if 0
+	typedef signed short RETCODE;
+	typedef short int SWORD;
+	typedef long int SDWORD;
+	typedef signed char SQLSCHAR;
+	typedef HWND SQLHWND;
+	#endif /* 0 */
+
+	#include <sql.h>
+	#include <sqlext.h>
+  #endif /* Compiler-specific include locations */
+#else
+  #include <sql.h>
+  #include <sqlext.h>
+#endif /* Windows vs.everything else */
+
+#endif /* USE_ODBC */
+
+#ifdef USE_DATABASE
+  #error Need to add database backend-specific includes
+#endif /* USE_DATABASE */
+
+/****************************************************************************
+*																			*
 *							Keyset Types and Constants						*
 *																			*
 ****************************************************************************/
 
 /* The maximum size of a cert in binary and base64-encoded form */
 
-#define MAX_CERT_SIZE		1536
-#define MAX_ENCODED_CERT_SIZE 2048	/* base64-encoded */
+#define MAX_CERT_SIZE		2048
+#define MAX_ENCODED_CERT_SIZE ( MAX_CERT_SIZE * 4 ) / 3
 
 /* Keyset information flags */
 
@@ -84,22 +102,6 @@
 #define KEYSET_EMPTY		0x02	/* Keyset is empty */
 #define KEYSET_DIRTY		0x04	/* Keyset data has been changed */
 #define KEYSET_STREAM_OPEN	0x08	/* Underlying file stream is open */
-
-/* Some older compilers don't yet have the ANSI FILENAME_MAX define so we
-   define a reasonable value here.  The length is checked when we open the
-   keyset so there's no chance that it'll overflow even if the OS path limit 
-   is higher than what's defined here */
-
-#ifndef FILENAME_MAX
-  #if defined( __MSDOS16__ )
-	#define FILENAME_MAX	80
-  #elif defined( __hpux )
-	#include <sys/param.h>	/* HPUX's stdio.h defines this to be 14 (!!) */
-	#define FILENAME_MAX	MAXPATHLEN
-  #else
-	#define FILENAME_MAX	256
-  #endif /* __MSDOS16__ */
-#endif /* FILENAME_MAX */
 
 /* The precise type of the key file that we're working with.  This is used 
    for type checking to make sure we don't try to find private keys in a
@@ -169,12 +171,10 @@ typedef struct {
 	/* DBMS status information */
 	BOOLEAN needsUpdate;			/* Whether data remains to be committed */
 	BOOLEAN hasBinaryBlobs;			/* Whether back-end supports binary blobs */
-	char blobName[ CRYPT_MAX_TEXTSIZE + 8 ];/* Name of blob data type */
 
-	/* Pointers to error information returned by the back-end.  This is 
-	   copied into the keyset object storage as required */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
+	/* Error information returned by the back-end.  This is copied over to 
+	   the keyset object as required */
+	ERROR_INFO errorInfo;
 
 	/* Database-specific information */
   #ifdef USE_ODBC
@@ -184,6 +184,7 @@ typedef struct {
 	SQLHSTMT hStmt[ NO_CACHED_QUERIES ];/* Statement handles */
 	BOOLEAN hStmtPrepared[ NO_CACHED_QUERIES ];/* Whether stmt is prepared on handle */
 	BOOLEAN transactIsDestructive;	/* Whether commit/rollback destroys prep'd queries */
+	char blobName[ CRYPT_MAX_TEXTSIZE + 8 ];/* Name of blob data type */
 	SQLSMALLINT blobType;			/* SQL type of blob data type */
 	char dateTimeName[ CRYPT_MAX_TEXTSIZE + 8 ];/* Name of datetime data type */
 	SQLINTEGER dateTimeNameColSize;	/* Back-end specific size of datetime column */
@@ -210,7 +211,7 @@ struct KI;	/* Forward declaration for argument to function pointers */
 typedef struct {
 	/* The I/O stream and file name */
 	STREAM stream;					/* I/O stream for key file */
-	char fileName[ FILENAME_MAX + 8 ];	/* Name of key file */
+	char fileName[ MAX_PATH_LENGTH + 8 ];/* Name of key file */
 	} FILE_INFO;
 
 typedef struct DI {
@@ -237,7 +238,8 @@ typedef struct DI {
 	void ( *dispatchFunction )( void *stateInfo, BYTE *buffer );
 #else
 	int ( *openDatabaseBackend )( void *dbmsStateInfo, const char *name,
-								  const int options, int *featureFlags );
+								  const int nameLen, const int options, 
+								  int *featureFlags );
 	void ( *closeDatabaseBackend )( void *dbmsStateInfo );
 	int ( *performUpdateBackend )( void *dbmsStateInfo, const char *command,
 								   const void *boundData, 
@@ -251,15 +253,16 @@ typedef struct DI {
 								  const time_t boundDate,
 								  const DBMS_CACHEDQUERY_TYPE queryEntry,
 								  const DBMS_QUERY_TYPE queryType );
-	void ( *performErrorQueryBackend )( void *dbmsStateInfo, int *errorCode,
-										char *errorMessage );
+	void ( *performErrorQueryBackend )( void *dbmsStateInfo, 
+										ERROR_INFO *errorInfo );
 #endif /* !USE_RPCAPI */
 	void *stateInfo;
 
 	/* Database back-end access functions.  These use the dispatch function/
 	   function pointers above to communicate with the back-end */
 	int ( *openDatabaseFunction )( struct DI *dbmsInfo, const char *name,
-								   const int options, int *featureFlags );
+								   const int nameLen, const int options, 
+								   int *featureFlags );
 	void ( *closeDatabaseFunction )( struct DI *dbmsInfo );
 	int ( *performUpdateFunction )( struct DI *dbmsInfo, const char *command,
 									const void *boundData, 
@@ -286,10 +289,6 @@ typedef struct DI {
 							   const CRYPT_CERTIFICATE caKey,
 							   const CRYPT_CERTIFICATE request,
 							   const CRYPT_CERTACTION_TYPE action );
-
-	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
 	} DBMS_INFO;
 
 typedef struct {
@@ -302,10 +301,6 @@ typedef struct {
 	   also allocate more buffer space on demand if required.  The following
 	   variables handle the on-demand re-allocation of buffer space */
 	int bufPos;						/* Current position in buffer */
-
-	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
 	} HTTP_INFO;
 
 typedef struct {
@@ -333,10 +328,6 @@ typedef struct {
 		OU[ CRYPT_MAX_TEXTSIZE + 8 ], CN[ CRYPT_MAX_TEXTSIZE + 8 ];
 	char email[ CRYPT_MAX_TEXTSIZE + 8 ];
 	time_t date;
-
-	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
 	} LDAP_INFO;
 
 /* Defines to make access to the union fields less messy */
@@ -358,13 +349,20 @@ typedef struct KI {
 	/* Keyset type-specific information */
 	union {
 		FILE_INFO *fileInfo;
+#ifdef USE_DBMS
 		DBMS_INFO *dbmsInfo;
+#endif /* USE_DBMS */
+#ifdef USE_HTTP
 		HTTP_INFO *httpInfo;
+#endif /* USE_HTTP */
+#ifdef USE_LDAP
 		LDAP_INFO *ldapInfo;
+#endif /* USE_LDAP */
 		} keysetInfo;
 
 	/* Pointers to keyset access methods */
 	int ( *initFunction )( struct KI *keysetInfo, const char *name,
+						   const int nameLength,
 						   const CRYPT_KEYOPT_TYPE options );
 	int ( *shutdownFunction )( struct KI *keysetInfo );
 	int ( *getAttributeFunction )( struct KI *keysetInfo, void *data,
@@ -412,6 +410,14 @@ typedef struct KI {
 	CRYPT_ATTRIBUTE_TYPE errorLocus;/* Error locus */
 	CRYPT_ERRTYPE_TYPE errorType;	/* Error type */
 
+	/* Low-level error information.  Since this is fairly space-consuming, we
+	   only use it if we're using one of the heavyweight keyset types that 
+	   require it */
+#if defined( USE_DBMS ) || defined( USE_HTTP ) || defined( USE_LDAP )
+	#define KEYSET_HAS_ERRORINFO
+	ERROR_INFO errorInfo;
+#endif /* USE_DBMS || USE_HTTP || USE_LDAP */
+
 	/* The object's handle and the handle of the user who owns this object.
 	   The former is used when sending messages to the object when only the
 	   xxx_INFO is available, the latter is used to avoid having to fetch the
@@ -428,23 +434,6 @@ typedef struct KI {
 *								Keyset Functions							*
 *																			*
 ****************************************************************************/
-
-/* Prototypes for various utility functions in cryptdbx.c.  retExt() returns 
-   after setting extended error information for the keyset.  If the compiler
-   doesn't support varargs macros then we have to use a macro set up to make 
-   it match the standard return statement */
-
-#if defined( USE_ERRMSGS ) || !defined( VARARGS_MACROS )
-  int retExtFnKeyset( KEYSET_INFO *keysetInfoPtr, const int status, 
-					  const char *format, ... ) PRINTF_FN;
-
-  #define retExt		return retExtFnKeyset
-#else
-  int retExtFnKeyset( KEYSET_INFO *keysetInfoPtr, const int status );
-
-  #define retExt( stream, status, format, ... ) \
-		  return( retExtFnKeyset( stream, status ) )
-#endif /* USE_ERRMSGS */
 
 /* Prototypes for keyset mapping functions */
 

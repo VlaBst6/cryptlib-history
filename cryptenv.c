@@ -603,12 +603,10 @@ static int processGetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 
 		case CRYPT_ENVINFO_SIGNATURE:
 			{
+			CRYPT_CERTIFICATE sigCheckCert;
 			CONTENT_LIST *contentListItem = \
 								envelopeInfoPtr->contentListCurrent;
 			CONTENT_SIG_INFO *sigInfo = &contentListItem->clSigInfo;
-			MESSAGE_CREATEOBJECT_INFO createInfo;
-			MESSAGE_DATA msgData;
-			BYTE certData[ 2048 + 8 ], *certDataPtr = certData;
 
 			assert( contentListItem != NULL );
 
@@ -648,33 +646,11 @@ static int processGetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 			   dangerous since it can act as a subliminal channel if it's 
 			   passed on to a different user (although exactly how this would 
 			   be exploitable is another question entirely).  To avoid this 
-			   problem, we completely isolate the added sig.check key by 
-			   exporting it and re-importing it as a new certificate object */
-			setMessageData( &msgData, certDataPtr, 2048 );
-			status = krnlSendMessage( sigInfo->iSigCheckKey,
-									  IMESSAGE_CRT_EXPORT, &msgData,
-									  CRYPT_CERTFORMAT_CERTCHAIN );
-			if( status == CRYPT_ERROR_OVERFLOW )
-				{
-				if( ( certDataPtr = clAlloc( "processGetAttribute", \
-											 msgData.length + 8 ) ) == NULL )
-					return( CRYPT_ERROR_MEMORY );
-				setMessageData( &msgData, certDataPtr, msgData.length );
-				status = krnlSendMessage( sigInfo->iSigCheckKey,
-										  IMESSAGE_CRT_EXPORT, &msgData,
-										  CRYPT_CERTFORMAT_CERTCHAIN );
-				}
-			if( cryptStatusOK( status ) )
-				{
-				setMessageCreateObjectIndirectInfo( &createInfo, certDataPtr,
-													msgData.length,
-													CRYPT_CERTTYPE_CERTCHAIN );
-				status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-										  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
-										  &createInfo, OBJECT_TYPE_CERTIFICATE );
-				}
-			if( certDataPtr != certData )
-				clFree( "processGetAttribute", certDataPtr );
+			   problem, we completely isolate the added sig.check key 
+			   returning a copy of the associated certificate object */
+			status = krnlSendMessage( sigInfo->iSigCheckKey, 
+									  IMESSAGE_GETATTRIBUTE, &sigCheckCert,
+									  CRYPT_IATTRIBUTE_CERTCOPY );
 			if( cryptStatusError( status ) )
 				return( exitError( envelopeInfoPtr, 
 								   CRYPT_ENVINFO_SIGNATURE, 
@@ -682,10 +658,11 @@ static int processGetAttribute( ENVELOPE_INFO *envelopeInfoPtr,
 								   status ) );
 
 			/* We've created a new instantiation of the sig.check key which 
-			   is distinct from the externally-supplied original, return it 
-			   to the caller */
+			   is distinct from the externally-supplied original, replace 
+			   the existing one with the new one and return it to the 
+			   caller */
 			krnlSendNotifier( sigInfo->iSigCheckKey, IMESSAGE_DECREFCOUNT );
-			*valuePtr = sigInfo->iSigCheckKey = createInfo.cryptHandle;
+			*valuePtr = sigInfo->iSigCheckKey = sigCheckCert;
 			return( CRYPT_OK );
 			}
 
@@ -1681,7 +1658,7 @@ static int deenvelopePop( ENVELOPE_INFO *envelopeInfoPtr, void *buffer,
 
 /* Handle a message sent to an envelope */
 
-static int envelopeMessageFunction( const void *objectInfoPtr,
+static int envelopeMessageFunction( void *objectInfoPtr,
 									const MESSAGE_TYPE message,
 									void *messageDataPtr,
 									const int messageValue )
@@ -1997,11 +1974,8 @@ int createEnvelope( MESSAGE_CREATEOBJECT_INFO *createInfo,
 
 	assert( auxDataPtr == NULL );
 	assert( auxValue == 0 );
-
-	/* Perform basic error checking */
-	if( createInfo->arg1 <= CRYPT_FORMAT_NONE || \
-		createInfo->arg1 >= CRYPT_FORMAT_LAST_EXTERNAL )
-		return( CRYPT_ARGERROR_NUM1 );
+	assert( createInfo->arg1 > CRYPT_FORMAT_NONE && \
+			createInfo->arg1 < CRYPT_FORMAT_LAST_EXTERNAL );
 
 	/* Pass the call on to the lower-level open function */
 	initStatus = initEnvelope( &iCryptEnvelope, createInfo->cryptOwner,

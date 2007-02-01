@@ -778,6 +778,7 @@ static int unwrapOctetString( STREAM *stream, BYTE *buffer,
    we can use later when we need to access it */
 
 static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
+						 const int nameLength,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	PKCS12_INFO *pkcs12info;
@@ -787,7 +788,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	long length;
 	int totalLength, status;
 
-	assert( name == NULL );
+	assert( name == NULL && nameLength == 0 );
 
 	/* Read the outer wrapper, version number field, and CMS data wrapper.  
 	   We do this before we perform any setup operations to weed out

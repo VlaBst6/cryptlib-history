@@ -40,12 +40,8 @@
 /* Context information flags.  Most of these flags are context-type-specific,
    and are only used with some context types:
 
-	CONTEXT_KEY_SET: The key has been initialised.
-
-	CONTEXT_IV_SET: The IV has been set.
-
-	CONTEXT_ISPUBLICKEY: The key is a public or private key.
-	CONTEXT_ISPRIVATEKEY:
+	CONTEXT_ASYNC_ABORT: Asynchronous operation state management flags
+	CONTEXT_ASYNC_DONE:
 
 	CONTEXT_DUMMY: The context is a dummy context with actions handled 
 			through an external crypto device.  When a device context is
@@ -61,20 +57,22 @@
 			needed to keep track of whether any cached parameters retained 
 			from the dummy state need to be set when the context is used.
 
-	CONTEXT_EPHEMERAL: The context is ephemeral rather than a long-term
-			context backed by a keyset or crypto device.
-
-	CONTEXT_SIDECHANNELPROTECTION: The context has side-channel protection
-			(additional checking for crypto operations, blinding, and so
-			on) enabled.
-
 	CONTEXT_HASH_INITED: The hash parameters have been inited.
-
 	CONTEXT_HASH_DONE: The hash operation is complete, no further hashing
 			can be done 
 
-	CONTEXT_ASYNC_ABORT: Asynchronous operation state management flags
-	CONTEXT_ASYNC_DONE: */
+	CONTEXT_ISPUBLICKEY: The key is a public or private key.
+	CONTEXT_ISPRIVATEKEY:
+
+	CONTEXT_IV_SET: The IV has been set.
+
+	CONTEXT_KEY_SET: The key has been initialised.
+
+	CONTEXT_PERSISTENT: The context is backed by a keyset or crypto device.
+
+	CONTEXT_SIDECHANNELPROTECTION: The context has side-channel protection
+			(additional checking for crypto operations, blinding, and so
+			on) enabled */
 
 #define CONTEXT_KEY_SET			0x0001	/* Key has been set */
 #define CONTEXT_IV_SET			0x0002	/* IV has been set */
@@ -82,13 +80,22 @@
 #define CONTEXT_ISPRIVATEKEY	0x0008	/* Key is a private key */
 #define CONTEXT_DUMMY			0x0010	/* Context actions handled externally */
 #define CONTEXT_DUMMY_INITED	0x0020	/* Dummy context is inited */
-#define CONTEXT_EPHEMERAL		0x0040	/* Context is ephemeral */
+#define CONTEXT_PERSISTENT		0x0040	/* Context is backed by dev.or keyset */
 #define CONTEXT_SIDECHANNELPROTECTION \
 								0x0080	/* Enabled side-channel prot.in ops */
 #define CONTEXT_HASH_INITED		0x0100	/* Hash parameters have been inited */
 #define CONTEXT_HASH_DONE		0x0200	/* Hash operation is complete */
 #define CONTEXT_ASYNC_ABORT		0x0400	/* Whether to abort async op.*/
 #define CONTEXT_ASYNC_DONE		0x0800	/* Async operation is complete */
+
+/* Predefined ECC parameter sets */
+
+typedef enum {
+	ECC_PARAM_NONE,		/* No ECC parameter type */
+	ECC_PARAM_P192,		/* NIST P192/X9.62 P192v1 curve */
+	ECC_PARAM_P256,		/* NIST P256/X9.62 P256v1 curve */
+	ECC_PARAM_LAST		/* Last valid ECC parameter type */
+	} ECC_PARAM_TYPE;
 
 /****************************************************************************
 *																			*
@@ -162,17 +169,24 @@ typedef struct {
 	   The algorithm-specific code refers to them by their actual names,
 	   which are implemented as symbolic defines of the form
 	   <algo>Param_<param_name>, e.g.rsaParam_e */
-	BIGNUM param1;
+	BIGNUM param1;					/* PKC key components */
 	BIGNUM param2;
 	BIGNUM param3;
 	BIGNUM param4;
 	BIGNUM param5;
 	BIGNUM param6;
 	BIGNUM param7;
-	BIGNUM param8;					/* The PKC key components */
-	BN_MONT_CTX montCTX1;
+	BIGNUM param8;
+#ifdef USE_ECC
+	BIGNUM param9;
+	BIGNUM param10;
+#endif /* USE_ECC */
+	BN_MONT_CTX montCTX1;			/* Precomputed Montgomery values */
 	BN_MONT_CTX montCTX2;
-	BN_MONT_CTX montCTX3;			/* Precomputed Montgomery values */
+	BN_MONT_CTX montCTX3;
+#ifdef USE_ECC
+	ECC_PARAM_TYPE eccParamType;
+#endif /* USE_ECC */
 
 	/* Temporary workspace values used to avoid having to allocate and
 	   deallocate them on each PKC operation, and to keep better control
@@ -180,7 +194,6 @@ typedef struct {
 	   temporary vars also reuse the last three general-purpose bignums
 	   above, since they're not used for keying material */
 	BIGNUM tmp1, tmp2, tmp3;
-/*	BN_CTX bnCTX;					// Temporary workspace */
 	BN_CTX *bnCTX;
 	#define CONTEXT_PBO	0x08
 
@@ -375,6 +388,19 @@ typedef struct CI {
 #define rsaParam_mont_p		montCTX2
 #define rsaParam_mont_q		montCTX3
 
+#define eccParam_p			param1
+#define eccParam_a			param2
+#define eccParam_b			param3
+#define eccParam_gx			param4
+#define eccParam_gy			param5
+#define eccParam_r			param6
+#define eccParam_h			param7
+#define eccParam_qx			param8
+#define eccParam_qy			param9
+#define eccParam_d			param10
+#define eccParam_mont_p		montCTX1
+#define eccParam_mont_r		montCTX2
+
 /* Because there's no really clean way to throw an exception in C and the
    bnlib routines don't carry around state information like cryptlib objects
    do, we need to perform an error check for most of the routines we call.
@@ -412,7 +438,8 @@ int createContextFromCapability( CRYPT_CONTEXT *cryptContext,
 						const CAPABILITY_INFO FAR_BSS *capabilityInfoPtr,
 						const int objectFlags );
 
-/* Statically init/destroy a context for the self-check */
+/* Statically init/destroy a context for the self-check, and perform various
+   types of self-check */
 
 void staticInitContext( CONTEXT_INFO *contextInfoPtr, 
 						const CONTEXT_TYPE type, 
@@ -420,6 +447,17 @@ void staticInitContext( CONTEXT_INFO *contextInfoPtr,
 						void *contextData, const int contextDataSize,
 						void *keyData );
 void staticDestroyContext( CONTEXT_INFO *contextInfoPtr );
+int testCipher( const CAPABILITY_INFO *capabilityInfo, 
+				void *keyDataStorage, const void *key, 
+				const int keySize, const void *plaintext,
+				const void *ciphertext );
+int testHash( const CAPABILITY_INFO *capabilityInfo, 
+			  void *hashDataStorage, const void *data, const int dataLength,
+			  const void *hashValue );
+int testMAC( const CAPABILITY_INFO *capabilityInfo, 
+			 void *macDataStorage, const void *key, 
+			 const int keySize, const void *data, const int dataLength,
+			 const void *hashValue );
 
 /* Shared functions.  These are used for all native contexts and also by 
    some device types */
@@ -437,6 +475,11 @@ int generateDLPkey( CONTEXT_INFO *contextInfoPtr, const int keyBits,
 					const int qBits, const BOOLEAN generateDomainParameters );
 int initCheckRSAkey( CONTEXT_INFO *contextInfoPtr );
 int generateRSAkey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits );
+int initECCkey( CONTEXT_INFO *contextInfoPtr );
+int checkECCkey( const CONTEXT_INFO *contextInfoPtr );
+int generateECCkey( CONTEXT_INFO *contextInfoPtr, const int keyBits );
+int loadECCparams( CONTEXT_INFO *contextInfoPtr, 
+				   const ECC_PARAM_TYPE eccParamType );
 int generateBignum( BIGNUM *bn, const int noBits, const BYTE high,
 					const BYTE low );
 int keygenCallback( void *callbackArg );

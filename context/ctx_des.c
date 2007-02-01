@@ -39,43 +39,26 @@
 /* Test the DES implementation against the test vectors given in NBS Special
    Publication 500-20, 1980 */
 
-static int testLoop( const DES_TEST *testData, int iterations, BOOLEAN isEncrypt )
+static int testLoop( const DES_TEST *testDES, int iterations, BOOLEAN isEncrypt )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getDESCapability();
-	BYTE temp[ DES_BLOCKSIZE + 8 ];
-	int i;
+	BYTE keyData[ DES_KEYSIZE + 8 ];
+	int i, status;
 
 	for( i = 0; i < iterations; i++ )
 		{
-		CONTEXT_INFO contextInfo;
-		CONV_INFO contextData;
-		BYTE keyData[ DES_KEYSIZE + 8 ];
-		int status;
-
-		memcpy( temp, testData[ i ].plaintext, DES_BLOCKSIZE );
-
 		/* The self-test uses weak keys, which means they'll be rejected by 
 		   the key-load function if it checks for these.  For the OpenSSL
 		   DES implementation we can kludge around this by temporarily 
 		   clearing the global des_check_key value, but for other 
 		   implementations some alternative workaround will be necessary */
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
 		des_check_key = FALSE;
-		status = capabilityInfo->initKeyFunction( &contextInfo, 
-												  testData[ i ].key,
-												  DES_BLOCKSIZE );
+		status = testCipher( capabilityInfo, keyData, testDES[ i ].key, 
+							 DES_BLOCKSIZE, testDES[ i ].plaintext,
+							 testDES[ i ].ciphertext );
 		des_check_key = TRUE;
-		if( cryptStatusOK( status ) )
-			status = isEncrypt ? \
-					 capabilityInfo->encryptFunction( &contextInfo, temp, 
-													  DES_BLOCKSIZE ) : \
-					 capabilityInfo->decryptFunction( &contextInfo, temp, 
-													  DES_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testData[ i ].ciphertext, temp, DES_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -83,20 +66,20 @@ static int testLoop( const DES_TEST *testData, int iterations, BOOLEAN isEncrypt
 
 static int selfTest( void )
 	{
-	/* Check the DES test vectors */
+	/* Check the DES test vectors.  Note that we don't explicitly test
+	   the RS values, however these are tested implicitly since they're
+	   just the decrypt side of the KP tests */
 	if( ( testLoop( testIP, sizeof( testIP ) / sizeof( DES_TEST ),
 					TRUE ) != CRYPT_OK ) || \
 		( testLoop( testVP, sizeof( testVP ) / sizeof( DES_TEST ),
 					TRUE ) != CRYPT_OK ) || \
 		( testLoop( testKP, sizeof( testKP ) / sizeof( DES_TEST ),
 					TRUE ) != CRYPT_OK ) || \
-		( testLoop( testRS, sizeof( testRS ) / sizeof( DES_TEST ),
-					FALSE ) != CRYPT_OK ) || \
 		( testLoop( testDP, sizeof( testDP ) / sizeof( DES_TEST ),
 					TRUE ) != CRYPT_OK ) || \
 		( testLoop( testSB, sizeof( testSB ) / sizeof( DES_TEST ),
 					TRUE ) != CRYPT_OK ) )
-		return( CRYPT_ERROR );
+		return( CRYPT_ERROR_FAILED );
 
 	return( CRYPT_OK );
 	}
@@ -449,7 +432,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_DES, bitsToBytes( 64 ), "DES",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 64 ), bitsToBytes( 64 ),
+	MIN_KEYSIZE, bitsToBytes( 64 ), bitsToBytes( 64 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB

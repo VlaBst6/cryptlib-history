@@ -261,7 +261,7 @@ const ATTRIBUTE_INFO *oidToAttribute( const ATTRIBUTE_TYPE attributeType,
    and get its size */
 
 const ATTRIBUTE_INFO *selectAttributeInfo( const ATTRIBUTE_TYPE attributeType );
-const int sizeofAttributeInfo( const ATTRIBUTE_TYPE attributeType );
+int sizeofAttributeInfo( const ATTRIBUTE_TYPE attributeType );
 
 /* Get the attribute and attributeID for a field ID */
 

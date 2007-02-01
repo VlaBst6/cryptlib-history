@@ -1,3 +1,18 @@
+Changes in 3.3.1 release
+========================
+
+This release features ongoing minor updates and changes requested by users, as
+well as updates to work with the (almost-) TR 24731 stdlib replacements in VS
+2005.  This is mainly a cleanup and consolidation release after 3.3.0, however
+one important reason to upgrade is that the pre-generated test keys will
+expire shortly after the 3.3.1 release, which will produce warnings in the
+self-test and self-test failures (X.509 certs have limited lifetimes due to
+their expiry dates, and the code is warning that they're past their use-by
+date).  cryptlib has to set some sort of expiry date for the keys because the
+format requires it, but an unfortunate side-effect of this is that every now
+and then the test keys needed for the self-test expire.  This release updates
+the test keys for another few years.
+
 Changes in 3.3 release
 ======================
 

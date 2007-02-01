@@ -320,6 +320,109 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 		ROUTE( OBJECT_TYPE_NONE ), RANGE( 0, 0 ) )
 	};
 
+/* Create-object ACLs */
+
+static const CREATE_ACL FAR_BSS deviceSpecialACL = {
+	OBJECT_TYPE_DEVICE,
+		/* PKCS #11 and CryptoAPI devices must include a device name */
+	{ MKACP_N( CRYPT_DEVICE_NONE + 1, CRYPT_DEVICE_LAST - 1 ),
+	  MKACP_N( 0, 0 ),
+	  MKACP_S( MIN_NAME_LENGTH,
+			   CRYPT_MAX_TEXTSIZE ),		/* Device name */
+	  MKACP_S_NONE() } 
+	};
+static const CREATE_ACL FAR_BSS createObjectACL[] = {
+	/* Context object */
+	{ OBJECT_TYPE_CONTEXT,
+	  { MKACP_N( CRYPT_ALGO_NONE + 1, CRYPT_ALGO_LAST - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S_NONE(),
+		MKACP_S_NONE() } },
+
+	/* Keyset object */
+	{ OBJECT_TYPE_KEYSET,
+	  { MKACP_N( CRYPT_KEYSET_NONE + 1, CRYPT_KEYSET_LAST - 1 ),
+		MKACP_N( CRYPT_KEYOPT_NONE, 
+				 CRYPT_KEYOPT_LAST - 1 ),	/* Keyset options (may be _NONE) */
+		MKACP_S( MIN_NAME_LENGTH, 
+				 MAX_ATTRIBUTE_SIZE - 1 ),	/* Keyset name */
+		MKACP_S_NONE() } },
+
+	/* Envelope object */
+	{ OBJECT_TYPE_ENVELOPE,
+	  { MKACP_N( CRYPT_FORMAT_NONE + 1, CRYPT_FORMAT_LAST_EXTERNAL - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S_NONE(),
+		MKACP_S_NONE() } },
+
+	/* Certificate object */
+	{ OBJECT_TYPE_CERTIFICATE,
+	  { MKACP_N( CRYPT_CERTTYPE_NONE + 1, CRYPT_CERTTYPE_LAST - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S_NONE(),
+		MKACP_S_NONE() } },
+
+	/* Device object */
+	{ OBJECT_TYPE_DEVICE,
+	  { MKACP_N( CRYPT_DEVICE_NONE + 1, CRYPT_DEVICE_LAST - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S_NONE(),						/* See exception list */
+		MKACP_S_NONE() }, 
+	  /* Exceptions: PKCS #11 and CryptoAPI devices have the device name as
+	     the first string parameter */
+	  { CRYPT_DEVICE_PKCS11, CRYPT_DEVICE_CRYPTOAPI }, &deviceSpecialACL },
+
+	/* Session object */
+	{ OBJECT_TYPE_SESSION,
+	  { MKACP_N( CRYPT_SESSION_NONE + 1, CRYPT_SESSION_LAST - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S_NONE(),
+		MKACP_S_NONE() } },
+
+	/* User object */
+	{ OBJECT_TYPE_USER,
+	  { MKACP_N( CRYPT_USER_NONE + 1, CRYPT_USER_LAST - 1 ),
+		MKACP_N( 0, 0 ),
+		MKACP_S( MIN_NAME_LENGTH, 
+				 CRYPT_MAX_TEXTSIZE ),		/* User name */
+		MKACP_S( MIN_NAME_LENGTH, 
+				 CRYPT_MAX_TEXTSIZE ) } },	/* User password */
+
+	{ OBJECT_TYPE_NONE, { 0 } },
+	{ OBJECT_TYPE_NONE, { 0 } }
+	};
+
+/* Create-object-indirect ACLs */
+
+static const CREATE_ACL FAR_BSS certSpecialACL = {
+	OBJECT_TYPE_CERTIFICATE,
+		/* PKCS #7/CMS certificate collections must include a identifier for 
+		   the leaf certificate in the collection, to allow the cert-import 
+		   code to pick and assemble the required certs into a chain */
+	{ MKACP_N( CRYPT_ICERTTYPE_CMS_CERTSET, 
+			   CRYPT_ICERTTYPE_CMS_CERTSET ),/* Cert.type hint */
+	  MKACP_N( CRYPT_IKEYID_KEYID, 
+			   CRYPT_IKEYID_ISSUERANDSERIALNUMBER ),/* Key ID type */
+	  MKACP_S( 16, MAX_INTLENGTH ),		/* Cert.object data */
+	  MKACP_S( 3, MAX_INTLENGTH ) }		/* Key ID */
+	};
+static const CREATE_ACL FAR_BSS createObjectIndirectACL[] = {
+	/* Certificate object instantiated from encoded data */
+	{ OBJECT_TYPE_CERTIFICATE,
+	  { MKACP_N( CRYPT_CERTTYPE_NONE, 
+				 CRYPT_CERTTYPE_LAST - 1 ),	/* Cert.type hint (may be _NONE) */
+		MKACP_N( 0, 0 ),					/* See exception list */
+		MKACP_S( 16, MAX_INTLENGTH ),		/* Cert.object data */
+		MKACP_S_NONE() },					/* See exception list */
+	  /* Exception: CMS certificate-set objects have a key ID type as the 
+	     second integer argument and a key ID as the second string 
+		 argument */
+	  { CRYPT_ICERTTYPE_CMS_CERTSET }, &certSpecialACL },
+
+	{ OBJECT_TYPE_NONE, { 0 } },
+	{ OBJECT_TYPE_NONE, { 0 } }
+	};
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -576,30 +679,30 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 		if( compareACL->compareType <= MESSAGE_COMPARE_NONE || \
 			compareACL->compareType >= MESSAGE_COMPARE_LAST || \
 			compareACL->compareType != i + 1 )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( ( compareACL->objectACL.subTypeA & ~( SUBTYPE_CLASS_A | \
 												  ST_CTX_ANY | ST_CERT_ANY ) ) || \
 			compareACL->objectACL.subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( ( compareACL->objectACL.flags != 0 ) && \
 			( compareACL->objectACL.flags != ACL_FLAG_HIGH_STATE ) )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( paramInfo( compareACL, 0 ).valueType == PARAM_VALUE_STRING )
 			{
 			if( paramInfo( compareACL, 0 ).lowRange < 2 || \
 				paramInfo( compareACL, 0 ).lowRange > \
 					paramInfo( compareACL, 0 ).highRange || \
 				paramInfo( compareACL, 0 ).highRange > MAX_ATTRIBUTE_SIZE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 		else
 			{
 			if( paramInfo( compareACL, 0 ).valueType != PARAM_VALUE_OBJECT )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( ( paramInfo( compareACL, 0 ).subTypeA & ~( SUBTYPE_CLASS_A | \
 														   ST_CERT_ANY ) ) || \
 				paramInfo( compareACL, 0 ).subTypeB != ST_NONE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ) )
@@ -615,18 +718,18 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 		if( checkACL->checkType <= MESSAGE_CHECK_NONE || \
 			checkACL->checkType >= MESSAGE_CHECK_LAST || \
 			checkACL->checkType != i + 1 )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( checkACL->actionType != MESSAGE_NONE && \
 			( checkACL->actionType < MESSAGE_CTX_ENCRYPT || \
 			  checkACL->actionType > MESSAGE_CRT_SIGCHECK ) )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( ( checkACL->objectACL.subTypeA & \
 					~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY | \
 										 ST_KEYSET_ANY | ST_DEV_ANY ) ) || \
 			checkACL->objectACL.subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( checkACL->objectACL.flags & ~ACL_FLAG_ANY_STATE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( checkACL->altACL == NULL )
 			continue;
 		for( j = 0; checkACL->altACL[ j ].object != OBJECT_TYPE_NONE && \
@@ -636,22 +739,22 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 
 			if( checkAltACL->object != OBJECT_TYPE_CONTEXT && \
 				checkAltACL->object != OBJECT_TYPE_CERTIFICATE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( checkAltACL->checkType <= MESSAGE_CHECK_NONE || \
 				checkAltACL->checkType >= MESSAGE_CHECK_LAST )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( checkAltACL->depObject != OBJECT_TYPE_CONTEXT && \
 				checkAltACL->depObject != OBJECT_TYPE_CERTIFICATE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( ( checkAltACL->depObjectACL.subTypeA & \
 						~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY ) ) || \
 				checkAltACL->depObjectACL.subTypeB != ST_NONE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( checkAltACL->depObjectACL.flags & ~ACL_FLAG_ANY_STATE )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			if( checkAltACL->fdCheckType <= MESSAGE_CHECK_NONE || \
 				checkAltACL->fdCheckType >= MESSAGE_CHECK_LAST )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 		if( j >= FAILSAFE_ITERATIONS_MED )
 			retIntError();
@@ -668,29 +771,105 @@ int initMessageACL( KERNEL_DATA *krnlDataPtr )
 
 		if( formatACL->attribute <= CRYPT_CERTTYPE_NONE || \
 			formatACL->attribute >= CRYPT_CERTTYPE_LAST )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( ( formatACL->subTypeA & ~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) || \
 			formatACL->subTypeB != ST_NONE )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		if( formatACL->attribute < CRYPT_CERTFORMAT_LAST_EXTERNAL )
 			{
 			if( formatACL->access != ACCESS_Rxx_xxx )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 		else
 			{
 			if( formatACL->access != ACCESS_INT_Rxx_xxx && \
 				formatACL->access != ACCESS_INT_Rxx_Rxx )
-				return( CRYPT_ERROR_FAILED );
+				retIntError();
 			}
 		if( formatACL->valueType != ATTRIBUTE_VALUE_STRING || \
 			formatACL->lowRange < 16 || \
 			formatACL->lowRange >= formatACL->highRange || \
 			formatACL->highRange > 8192 || \
 			formatACL->extendedInfo != NULL )
-			return( CRYPT_ERROR_FAILED );
+			retIntError();
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT ) )
+		retIntError();
+
+	/* Perform a consistency check on the create-object ACL */
+	for( i = 0; createObjectACL[ i ].type != OBJECT_TYPE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( createObjectACL, CREATE_ACL ); 
+		 i++ )
+		{
+		const CREATE_ACL *createACL = &createObjectACL[ i ];
+
+		if( !isValidType( createACL->type ) )
+			retIntError();
+		if( paramInfo( createACL, 0 ).valueType != PARAM_VALUE_NUMERIC || \
+			paramInfo( createACL, 1 ).valueType != PARAM_VALUE_NUMERIC || \
+			( paramInfo( createACL, 2 ).valueType != PARAM_VALUE_STRING_NONE && \
+			  paramInfo( createACL, 2 ).valueType != PARAM_VALUE_STRING ) || \
+			( paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING_NONE && \
+			  paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING ) )
+			retIntError();
+		if( createACL->type == OBJECT_TYPE_CONTEXT )
+			{
+			if( paramInfo( createACL, 0 ).lowRange <= CRYPT_ALGO_NONE || \
+				paramInfo( createACL, 0 ).highRange >= CRYPT_ALGO_LAST )
+				retIntError();
+			}
+		else
+			{
+			/* Perform a composite check for a vaguely sensible value.  
+			   CRYPT_CERTTYPE_LAST is the highest possible value for all of 
+			   the non-context object types */
+			if( paramInfo( createACL, 0 ).lowRange <= 0 || \
+				paramInfo( createACL, 0 ).highRange >= CRYPT_CERTTYPE_LAST )
+				retIntError();
+			}
+		if( createACL->exceptions[ 0 ] == 0 && \
+			createACL->exceptions[ 1 ] != 0 )
+			retIntError();
+		if( ( createACL->exceptions[ 0 ] != 0 || \
+			  createACL->exceptions[ 1 ] != 0 ) && \
+			createACL->exceptionACL == NULL )
+			retIntError();
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( createObjectACL, CREATE_ACL ) )
+		retIntError();
+
+	/* Perform a consistency check on the create-object-indirect ACL */
+	for( i = 0; createObjectIndirectACL[ i ].type != OBJECT_TYPE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( createObjectIndirectACL, CREATE_ACL ); 
+		 i++ )
+		{
+		const CREATE_ACL *createACL = &createObjectIndirectACL[ i ];
+
+		if( !isValidType( createACL->type ) )
+			retIntError();
+		if( paramInfo( createACL, 0 ).valueType != PARAM_VALUE_NUMERIC || \
+			paramInfo( createACL, 1 ).valueType != PARAM_VALUE_NUMERIC || \
+			paramInfo( createACL, 2 ).valueType != PARAM_VALUE_STRING || \
+			( paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING_NONE && \
+			  paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING ) )
+			retIntError();
+		if( paramInfo( createACL, 0 ).lowRange < 0 || \
+			paramInfo( createACL, 0 ).highRange >= CRYPT_CERTTYPE_LAST )
+			/* The low-range may be 0, which indicates that we're using 
+			   automatic format detection */
+			retIntError();
+		if( paramInfo( createACL, 2 ).lowRange < 16 || \
+			paramInfo( createACL, 2 ).highRange > MAX_INTLENGTH )
+			retIntError();
+		if( createACL->exceptions[ 0 ] == 0 && \
+			createACL->exceptions[ 1 ] != 0 )
+			retIntError();
+		if( ( createACL->exceptions[ 0 ] != 0 || \
+			  createACL->exceptions[ 1 ] != 0 ) && \
+			createACL->exceptionACL == NULL )
+			retIntError();
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( createObjectIndirectACL, CREATE_ACL ) )
 		retIntError();
 
 	/* Set up the reference to the kernel data block */
@@ -1586,25 +1765,80 @@ int preDispatchCheckData( const int objectHandle,
 	return( CRYPT_OK );
 	}
 
-/* We're creating a new object, set its owner to the owner of the object
-   that it's being created through */
+/* We're creating a new object, make sure that the create parameters are 
+   valid and set the new object's owner to the owner of the object that it's 
+   being created through */
 
-int preDispatchSetObjectOwner( const int objectHandle,
-							   const MESSAGE_TYPE message,
-							   const void *messageDataPtr,
-							   const int messageValue,
-							   const void *dummy )
+int preDispatchCheckCreate( const int objectHandle,
+							const MESSAGE_TYPE message,
+							const void *messageDataPtr,
+							const int messageValue,
+							const void *dummy )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
+	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
+	const CREATE_ACL *createACL = \
+			( localMessage == MESSAGE_DEV_CREATEOBJECT ) ? \
+			createObjectACL : createObjectIndirectACL;
+	const int createAclSize = \
+			( localMessage == MESSAGE_DEV_CREATEOBJECT ) ? \
+			FAILSAFE_ARRAYSIZE( createObjectACL, CREATE_ACL ) : \
+			FAILSAFE_ARRAYSIZE( createObjectIndirectACL, CREATE_ACL );
 	MESSAGE_CREATEOBJECT_INFO *createInfo = \
 					( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr;
+	int i;
 
 	/* Precondition */
 	PRE( fullObjectCheck( objectHandle, message ) && \
 		 objectTable[ objectHandle ].type == OBJECT_TYPE_DEVICE );
+	PRE( localMessage == MESSAGE_DEV_CREATEOBJECT || \
+		 localMessage == MESSAGE_DEV_CREATEOBJECT_INDIRECT );
 	PRE( messageDataPtr != NULL );
 	PRE( isValidType( messageValue ) );
+	PRE( createInfo->cryptHandle == CRYPT_ERROR );
 	PRE( createInfo->cryptOwner == CRYPT_ERROR );
+	
+	/* Find the appropriate ACL for this object create type */
+	for( i = 0; createACL[ i ].type != messageValue && 
+				createACL[ i ].type != CRYPT_CERTFORMAT_NONE && \
+				i < createAclSize; i++ );
+	if( i >= createAclSize )
+		retIntError();
+	if( createACL[ i ].type == OBJECT_TYPE_NONE )
+		{
+		assert( NOTREACHED );
+		return( CRYPT_ARGERROR_VALUE );
+		}
+	createACL = &createACL[ i ];
+
+	/* Check whether this object subtype requires special handling and if it
+	   does switch to the alternative ACL.  The default value for the 
+	   entries in the exceptions list is 0, but no valid exceptionally 
+	   processed sub-type has this value (which corresponds to 
+	   CRYPT_something_NONE) so we can never inadvertently match a valid 
+	   type.  We do however have to check for a nonzero subtype argument 
+	   since for indirect object creates the subtype arg.can be zero if type 
+	   autodetection is being used */
+	if( createInfo->arg1 != 0 && \
+		( createACL->exceptions[ 0 ] == createInfo->arg1 || \
+		  createACL->exceptions[ 1 ] == createInfo->arg1 ) )
+		createACL = createACL->exceptionACL;
+
+	/* Make sure that the subtype is valid for this object type */
+	if( !checkParamNumeric( paramInfo( createACL, 0 ), createInfo->arg1 ) )
+		return( CRYPT_ARGERROR_NUM1 );
+
+	/* Make sure that any additional numeric argument is valid */
+	if( !checkParamNumeric( paramInfo( createACL, 1 ), createInfo->arg2 ) )
+		retIntError();
+
+	/* Make sure that any string arguments are valid */
+	if( !checkParamString( paramInfo( createACL, 2 ), 
+						   createInfo->strArg1, createInfo->strArgLen1 ) )
+		return( CRYPT_ARGERROR_STR1 );
+	if( !checkParamString( paramInfo( createACL, 3 ), 
+						   createInfo->strArg2, createInfo->strArgLen2 ) )
+		return( CRYPT_ARGERROR_STR2 );
 
 	/* Set the new object's owner to the owner of the object that it's being
 	   created through.  If it's being created through the system device

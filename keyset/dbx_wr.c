@@ -21,108 +21,6 @@
 
 #ifdef USE_DBMS
 
-/* Get a commonName or commonName-equivalent from a certificate */
-
-static int extractDnComponent( const char *encodedDn, 
-							   const int encodedDnLength, 
-							   const char *componentName, 
-							   const int componentNameLength,
-							   int *startPosPtr )
-	{
-	int startPos, endPos;
-
-	/* Clear return value */
-	*startPosPtr = 0;
-	
-	/* Try and find the component name in the encoded DN string */
-	startPos = strFindStr( encodedDn, encodedDnLength, 
-						   componentName, componentNameLength );
-	if( startPos < 0 )
-		return( -1 );
-	startPos += componentNameLength;	/* Skip type indicator */
-	
-	/* Extract the component value */
-	for( endPos = startPos; endPos < encodedDnLength && \
-							encodedDn[ endPos ] != ',' && \
-							encodedDn[ endPos ] != '+'; endPos++ );
-	if( encodedDn[ endPos ] == '+' && \
-		encodedDn[ endPos - 1 ] == ' ' )
-		endPos--;	/* Strip trailing space */
-	
-	*startPosPtr = startPos;
-	return( endPos - startPos );
-	}
-
-static int getCommonName( CRYPT_CERTIFICATE iCryptCert, 
-						  char *CN, const int cnMaxLength,
-						  const char *OU, const char *O )
-	{
-	MESSAGE_DATA msgData;
-	char encodedDnBuffer[ MAX_ATTRIBUTE_SIZE + 8 ];
-	int encodedDnLength, startPos, length, status;
-
-	/* First, we try for a CN */
-	setMessageData( &msgData, CN, cnMaxLength );
-	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
-							  &msgData, CRYPT_CERTINFO_COMMONNAME );
-	if( cryptStatusOK( status ) )
-		return( msgData.length );
-
-	/* If that fails, we try for either a pseudonym or givenName + surname.
-	   Since these are part of the vast collection of oddball DN attributes
-	   that aren't handled directly, we have to get the encoded DN form and
-	   look for them by OID */
-	setMessageData( &msgData, encodedDnBuffer, MAX_ATTRIBUTE_SIZE );
-	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
-							  &msgData, CRYPT_CERTINFO_DN );
-	if( cryptStatusError( status ) )
-		return( status );
-	encodedDnLength = msgData.length;
-
-	/* Look for a pseudonym */
-	length = extractDnComponent( encodedDnBuffer, encodedDnLength, 
-								 "oid.2.5.4.65=", 13, &startPos );
-	if( length > 0 && length <= cnMaxLength )
-		{
-		memcpy( CN, encodedDnBuffer + startPos, length );
-		return( length );
-		}
-
-	/* Look for givenName + surname */
-	length = extractDnComponent( encodedDnBuffer, encodedDnLength, 
-								 "G=", 2, &startPos );
-	if( length > 0 && length <= cnMaxLength )
-		{
-		int startPos2, length2;
-
-		length2 = extractDnComponent( encodedDnBuffer, encodedDnLength, 
-									  "S=", 2, &startPos2 );
-		if( length2 > 0 && length + length2 <= cnMaxLength )
-			{
-			memcpy( CN, encodedDnBuffer + startPos, length );
-			memcpy( CN + length, encodedDnBuffer + startPos2, length2 );
-			return( length + length2 );
-			}
-		}
-
-	/* It's possible (although highly unlikely) that a certificate won't 
-	   have a usable CN-equivalent in some form, in which case we use the OU
-	   instead.  If that also fails, we use the O.  This gets a bit messy, 
-	   but duplicating the OU / O into the CN seems to be the best way to 
-	   handle this */
-	if( *OU != '\0' )
-		{
-		length = strlen( OU );
-		memcpy( CN, OU, length );
-		}
-	else
-		{
-		length = strlen( O );
-		memcpy( CN, O, length );
-		}
-	return( length );
-	}
-
 /* Add a certificate object (cert, cert request, PKI user) to a database.  
    Normally existing rows would be overwritten if we added duplicate entries, 
    but the UNIQUE constraint on the indices will catch this */
@@ -195,14 +93,15 @@ int addCert( DBMS_INFO *dbmsInfo, const CRYPT_HANDLE iCryptHandle,
 		}
 	if( cryptStatusOK( status ) || status == CRYPT_ERROR_NOTFOUND )
 		{
-		/* The handling of the CN (or CN-equivalent) is somewhat complex so 
-		   we use a separate function for this */
-		status = getCommonName( iCryptHandle, CN, CRYPT_MAX_TEXTSIZE, OU, O );
-		if( !cryptStatusError( status ) )
-			{
-			CN[ status ] = '\0';
-			status = CRYPT_OK;	/* getCommonName() returns a length */
-			}
+		/* The CommonName component is the generic "name" associated with
+		   the certificate, to make sure that there's always at least 
+		   something useful present to identify it we fetch the cert.
+		   holder name rather than the specific common name */
+		setMessageData( &msgData, CN, CRYPT_MAX_TEXTSIZE );
+		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
+								  &msgData, CRYPT_IATTRIBUTE_HOLDERNAME );
+		if( cryptStatusOK( status ) )
+			CN[ msgData.length ] = '\0';
 		}
 	if( ( cryptStatusOK( status ) || status == CRYPT_ERROR_NOTFOUND ) && \
 		( certType != CRYPT_CERTTYPE_PKIUSER ) )

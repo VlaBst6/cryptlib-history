@@ -1,13 +1,15 @@
 /****************************************************************************
 *																			*
 *							cryptlib Internal API							*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
 /* A generic module that implements a rug under which all problems not
    solved elsewhere are swept */
 
+#include <stdarg.h>
+#include <stdio.h>	/* Needed on some systems for macro-mapped *printf()'s */
 #if defined( INC_ALL )
   #include "crypt.h"
   #ifdef USE_MD2
@@ -92,33 +94,51 @@ BOOLEAN checkEntropy( const BYTE *data, const int dataLength )
 
 /* Copy a string attribute to external storage, with various range checks
    to follow the cryptlib semantics (these will already have been done by
-   the caller, this is just a backup check).  We also have a second function 
-   that's used internally for data-copying */
+   the caller, this is just a backup check).  There are two forms for this
+   function, one that takes a MESSAGE_DATA parameter containing all of the 
+   result parameters in one place and the other that takes distinct result
+   parameters, typically because they've been passed down through several
+   levels of function call beyond the point where they were in a 
+   MESSAGE_DATA.
+   
+   We also have a second function that's used internally for data-copying */
+
+int attributeCopyParams( void *dest, const int destMaxLength, 
+						 int *destLength, const void *source, 
+						 const int sourceLength )
+	{
+	assert( dest == NULL || isWritePtr( dest, destMaxLength ) );
+	assert( sourceLength == 0 || isReadPtr( source, sourceLength ) );
+
+	/* Clear return value */
+	*destLength = 0;
+
+	if( sourceLength <= 0 )
+		return( CRYPT_ERROR_NOTFOUND );
+	if( dest != NULL )
+		{
+		assert( isReadPtr( source, sourceLength ) );
+
+		if( sourceLength > destMaxLength || \
+			!isWritePtr( dest, sourceLength ) )
+			return( CRYPT_ARGERROR_STR1 );
+		memcpy( dest, source, sourceLength );
+		}
+	*destLength = sourceLength;
+
+	return( CRYPT_OK );
+	}
 
 int attributeCopy( MESSAGE_DATA *msgData, const void *attribute,
 				   const int attributeLength )
 	{
-	const int maxLength = msgData->length;
-
 	assert( isWritePtr( msgData, sizeof( MESSAGE_DATA ) ) );
+	assert( attributeLength == 0 || \
+			isReadPtr( attribute, attributeLength ) );
 
-	/* Clear return value */
-	msgData->length = 0;
-
-	if( attributeLength <= 0 )
-		return( CRYPT_ERROR_NOTFOUND );
-	if( msgData->data != NULL )
-		{
-		assert( isReadPtr( attribute, attributeLength ) );
-
-		if( attributeLength > maxLength || \
-			!isWritePtr( msgData->data, attributeLength ) )
-			return( CRYPT_ARGERROR_STR1 );
-		memcpy( msgData->data, attribute, attributeLength );
-		}
-	msgData->length = attributeLength;
-
-	return( CRYPT_OK );
+	return( attributeCopyParams( msgData->data, msgData->length, 
+								 &msgData->length, attribute, 
+								 attributeLength ) );
 	}
 
 int dataCopy( void *dest, const int destMaxLength, int *destLength,
@@ -205,13 +225,120 @@ BOOLEAN isStrongerHash( const CRYPT_ALGO_TYPE algorithm1,
 
 /****************************************************************************
 *																			*
+*							Error-handling Functions						*
+*																			*
+****************************************************************************/
+
+/* Exit after recording a detailed error message.  This is used by lower-
+   level code to provide more information to the caller than a basic error 
+   code */
+
+int retExtFn( ERROR_INFO *errorInfoPtr, const int status, 
+			  const char *format, ... )
+	{
+	va_list argPtr;
+
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
+	assert( isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isReadPtr( format, 4 ) );
+
+	va_start( argPtr, format );
+	vsprintf_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, format, argPtr ); 
+	va_end( argPtr );
+	assert( !cryptArgError( status ) );	/* Catch leaks */
+	return( cryptArgError( status ) ? CRYPT_ERROR_FAILED : status );
+	}
+
+int retExtObjFn( ERROR_INFO *errorInfoPtr, const int status, 
+				 const CRYPT_HANDLE extErrorObject, const char *format, ... )
+	{
+	MESSAGE_DATA msgData;
+	va_list argPtr;
+	int extErrorStatus;
+
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
+	assert( isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( extErrorObject == DEFAULTUSER_OBJECT_HANDLE || \
+			isHandleRangeValid( extErrorObject ) );
+	assert( isReadPtr( format, 4 ) );
+
+	/* Check whether there's any additional error information available */
+	va_start( argPtr, format );
+	setMessageData( &msgData, NULL, 0 );
+	extErrorStatus = krnlSendMessage( extErrorObject, MESSAGE_GETATTRIBUTE_S,
+									  &msgData, 
+									  CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
+	if( cryptStatusOK( extErrorStatus ) )
+		{
+		char extraErrorString[ MAX_ERRMSG_SIZE + 1 + 8 ];
+
+		/* There's additional information present via the additional object, 
+		   fetch it and append it to the session-level error message */
+		setMessageData( &msgData, extraErrorString, MAX_ERRMSG_SIZE );
+		extErrorStatus = krnlSendMessage( extErrorObject, MESSAGE_GETATTRIBUTE_S,
+										  &msgData, 
+										  CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
+		if( cryptStatusOK( extErrorStatus ) )
+			extraErrorString[ msgData.length ] = '\0';
+		else
+			strlcpy_s( extraErrorString, MAX_ERRMSG_SIZE, 
+					   "(None available)" );
+		vsprintf_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, format, 
+					argPtr );
+		if( strlen( errorInfoPtr->errorString ) < MAX_ERRMSG_SIZE - 64 )
+			{
+			strlcat_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, 
+					   ". Additional information: " );
+			strlcat_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, 
+					   extraErrorString );
+			}
+		}
+	else
+		vsprintf_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, format, argPtr ); 
+	va_end( argPtr );
+	assert( !cryptArgError( status ) );	/* Catch leaks */
+	return( cryptArgError( status ) ? CRYPT_ERROR_FAILED : status );
+	}
+
+int retExtStrFn( ERROR_INFO *errorInfoPtr, const int status, 
+				 const char *extErrorString, const char *format, ... )
+	{
+	char errorString[ MAX_ERRMSG_SIZE + 1 + 8 ];
+	va_list argPtr;
+
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
+	assert( isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isReadPtr( extErrorString, 4 ) );
+	assert( isReadPtr( format, 4 ) );
+
+	/* This function is typically used when the caller wants to convert 
+	   something like "Low-level error string" into "High-level error 
+	   string: Low-level error string".  If the low-level error string was
+	   generated by a retExt() call then it'll already be in the errorInfo
+	   buffer where the high-level error string needs to go.  To get around
+	   this we copy the string into a temporary buffer from where it can be
+	   appended back onto the string in the errorInfo buffer */
+	strlcpy_s( errorString, MAX_ERRMSG_SIZE, extErrorString );
+
+	va_start( argPtr, format );
+	vsprintf_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, format, argPtr );
+	if( strlen( errorInfoPtr->errorString ) < MAX_ERRMSG_SIZE - 64 )
+		strlcat_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, 
+				   errorString );
+	va_end( argPtr );
+	assert( !cryptArgError( status ) );	/* Catch leaks */
+	return( cryptArgError( status ) ? CRYPT_ERROR_FAILED : status );
+	}
+
+/****************************************************************************
+*																			*
 *								Time Functions 								*
 *																			*
 ****************************************************************************/
 
 /* Get the system time safely.  The first function implements hard failures,
    converting invalid time values to zero, which yield a warning date of
-   1/1/1970 rather than an out-of-bounds value or garbage value.  The second
+   1/1/1970 rather than an out-of-bounds or garbage value.  The second
    function implements soft failures, returning an estimate of the
    approximate current date.  The third function is used for operations such
    as signing certs and timestamping and tries to get the time from a
@@ -252,14 +379,180 @@ time_t getReliableTime( const CRYPT_HANDLE cryptHandle )
 	status = krnlSendMessage( cryptDevice, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_TIME );
 	if( cryptStatusError( status ) && cryptDevice != SYSTEM_OBJECT_HANDLE )
+		{
 		/* We couldn't get the time from a crypto token, fall back to the
 		   system device */
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_IATTRIBUTE_TIME );
+		}
 	if( cryptStatusError( status ) )
 		return( 0 );
 	return( ( theTime <= MIN_TIME_VALUE ) ? 0 : theTime );
+	}
+
+/* Monotonic timer interface that protect against the system clock being 
+   changed during a timing operation.  Even without deliberate fiddling
+   with the system clock, a timeout during a DST switch can cause something
+   like a 5s wait to turn into a 1hr 5s wait, so we have to abstract the
+   standard time API into a monotonic time API.  Since these functions are
+   purely peripheral to other operations (for example handling timeouts for
+   network I/O), they never fail but simply return good-enough results if
+   there's a problem (although they assert in debug mode).  This is because 
+   we don't want to abort a network session just because we've detected 
+   some trivial clock irregularity.
+
+   The way this works is that we record the following information for each
+   timing interval:
+
+										endTime
+	................+-----------------------+...............
+		^			|						|		^
+	currentTime		|<--- timeRemaining --->|	currentTime
+
+   When currentTime falls outside the timeRemaining interval, we know that a 
+   clock change has occurred and can try and correct it.  Moving forwards
+   by an unexpected amount is a bit more tricky because it's hard to define
+   "unexpected", so we use an estimation method that detects the typical
+   reasons for a clock leap (DST adjust) without yielding false positives */
+
+static void handleTimeOutOfBounds( MONOTIMER_INFO *timerInfo )
+	{
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+
+	assert( NOTREACHED );
+
+	/* We've run into an overflow condition, this is a bit tricky to handle 
+	   because we can't just give up on (say) performing network I/O just 
+	   because we can't reliably set a timeout.  The best that we can do is 
+	   warn in debug mode and set a zero timeout so that at least one lot of 
+	   I/O will still take place */
+	timerInfo->totalTimeout = timerInfo->timeRemaining = 0;
+	}
+
+static void correctMonoTimer( MONOTIMER_INFO *timerInfo,
+							  const time_t currentTime )
+	{
+	BOOLEAN needsCorrection = FALSE;
+
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+
+	/* If the clock has been rolled back to before the start time, we need 
+	   to correct this */
+	if( currentTime < timerInfo->endTime - timerInfo->timeRemaining )
+		needsCorrection = TRUE;
+	else
+		{
+		/* If we're past the timer end time, check to see whether it's 
+		   jumped by a suspicious amount.  If we're more than 30 minutes
+		   past the timeout (which will catch things like DST changes)
+		   and the initial timeout was less then the change (to avoid a
+		   false positive if we've been waiting > 30 minutes for a
+		   legitimate timeout), we need to correct this */
+		if( currentTime > timerInfo->endTime )
+			{
+			const time_t delta = currentTime - timerInfo->endTime;
+
+			if( delta > ( 30 * 60 ) && \
+				timerInfo->totalTimeout < delta )
+				needsCorrection = TRUE;
+			}
+		}
+	if( !needsCorrection )
+		return;
+
+	/* The time information has been changed, correct the recorded time
+	   information for the new time */
+	timerInfo->endTime = currentTime + timerInfo->timeRemaining;
+	if( timerInfo->endTime < currentTime + max( timerInfo->timeRemaining,
+												timerInfo->totalTimeout ) )
+		handleTimeOutOfBounds( timerInfo );
+	}
+
+void setMonoTimer( MONOTIMER_INFO *timerInfo, const int duration )
+	{
+	const time_t currentTime = getApproxTime();
+
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+	assert( duration >= 0 && duration < INT_MAX );
+
+	memset( timerInfo, 0, sizeof( MONOTIMER_INFO ) );
+	timerInfo->endTime = currentTime + duration;
+	timerInfo->timeRemaining = timerInfo->totalTimeout = duration;
+	if( duration == 0 )
+		return;	/* No-wait I/O, we're done */
+	correctMonoTimer( timerInfo, currentTime );
+	}
+
+void extendMonoTimer( MONOTIMER_INFO *timerInfo, const int duration )
+	{
+	const time_t currentTime = getApproxTime();
+
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+	assert( duration >= 0 && duration < INT_MAX );
+
+	/* Correct the timer for clock skew if required */
+	correctMonoTimer( timerInfo, currentTime );
+
+	/* Extend the monotonic timer's timeout interval to allow for further
+	   data to be processed */
+	timerInfo->totalTimeout += duration;
+	timerInfo->endTime += duration;
+	timerInfo->timeRemaining = timerInfo->endTime - currentTime;
+
+	/* Re-correct the timer in case overflow occurred */
+	correctMonoTimer( timerInfo, currentTime );
+	}
+
+BOOLEAN checkMonoTimerExpired( MONOTIMER_INFO *timerInfo )
+	{
+	const time_t currentTime = getApproxTime();
+	int timeRemaining;
+
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+
+	/* If the timeout has expired, don't try doing anything else */
+	if( timerInfo->timeRemaining <= 0 )
+		return( TRUE );
+
+	/* Correct the monotonic timer for clock skew if required */
+	correctMonoTimer( timerInfo, currentTime );
+
+	/* Check whether the time has expired */
+	timeRemaining = timerInfo->endTime - currentTime;
+	if( timeRemaining > timerInfo->timeRemaining )
+		{
+		handleTimeOutOfBounds( timerInfo );
+		timeRemaining = 0;
+		}
+	timerInfo->timeRemaining = timeRemaining;
+	return( ( timerInfo->timeRemaining <= 0 ) ? TRUE : FALSE );
+	}
+
+BOOLEAN checkMonoTimerExpiryImminent( MONOTIMER_INFO *timerInfo,
+									  const int timeLeft )
+	{
+	const time_t currentTime = getApproxTime();
+	int timeRemaining;
+
+	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
+
+	/* If the timeout has expired, don't try doing anything else */
+	if( timerInfo->timeRemaining <= 0 )
+		return( TRUE );
+
+	/* Correct the monotonic timer for clock skew if required */
+	correctMonoTimer( timerInfo, currentTime );
+
+	/* Check whether the time will expire within timeLeft seconds */
+	timeRemaining = timerInfo->endTime - currentTime;
+	if( timeRemaining > timerInfo->timeRemaining )
+		{
+		handleTimeOutOfBounds( timerInfo );
+		timeRemaining = 0;
+		}
+	timerInfo->timeRemaining = timeRemaining;
+	return( ( timerInfo->timeRemaining < timeLeft ) ? TRUE : FALSE );
 	}
 
 /****************************************************************************
@@ -283,6 +576,10 @@ int checksumData( const void *data, const int dataLength )
 
 	assert( isReadPtr( data, dataLength ) );
 
+	/* Error handling: If there's a problem, return a zero checksum */
+	if( data == NULL || dataLength <= 0 )
+		retIntError();
+
 	for( i = 0; i < dataLength; i++ )
 		{
 		sum1 += dataPtr[ i ];
@@ -290,6 +587,50 @@ int checksumData( const void *data, const int dataLength )
 		}
 
 	return( sum2 & 0xFFFF );
+	}
+
+/* Calculate the hash of a block of data.  We use SHA-1 because it's the 
+   built-in default, but any algorithm will do since we're only using it
+   to transform a variable-length value to a fixed-length one for easy
+   comparison purposes */
+
+void hashData( BYTE *hash, const int hashMaxLength, 
+			   const void *data, const int dataLength )
+	{
+	static HASHFUNCTION hashFunction = NULL;
+	static int hashSize;
+	BYTE hashBuffer[ 20 + 8 ];
+
+	assert( isWritePtr( hash, hashMaxLength ) );
+	assert( hashMaxLength >= HASH_DATA_SIZE );
+	assert( isReadPtr( data, dataLength ) );
+
+	/* Get the hash algorithm information if necessary */
+	if( hashFunction == NULL )
+		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
+
+	/* Error handling: If there's a problem, return a zero hash.  Note that
+	   this can lead to a false-positive match if we've called multiple 
+	   times with invalid input, in theory we could full the return buffer 
+	   with nonce data to ensure that we never get a false-positive match,
+	   but since this is a should-never-occur condition anyway it's not 
+	   certain whether forcing a match or forcing a non-match is the 
+	   preferred behaviour */
+	if( data == NULL || dataLength <= 0 || hashMaxLength > hashSize || \
+		hashFunction == NULL )
+		{
+		memset( hash, 0, hashMaxLength );
+		retIntError_Void();
+		}
+
+	/* Hash the data and copy as many bytes as the caller has requested to
+	   the output (typically they'll require only a subset of the full 
+	   amount, since all that we're doing is transforming a variable-length
+	   value to a fixed-length value for easy comparison purposes) */
+	hashFunction( NULL, hashBuffer, 20, ( BYTE * ) data, dataLength, 
+				  HASH_ALL );
+	memcpy( hash, hashBuffer, min( hashMaxLength, hashSize ) );
+	zeroise( hashBuffer, 20 );
 	}
 
 /* Determine the parameters for a particular hash algorithm */
@@ -309,6 +650,9 @@ void shaHashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 void sha2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
 					 const int outBufMaxLength, const BYTE *inBuffer, 
 					 const int inLength, const HASH_STATE hashState );
+void sha2_512HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
+						 const int outBufMaxLength, const BYTE *inBuffer, 
+						 const int inLength, const HASH_STATE hashState );
 
 void getHashParameters( const CRYPT_ALGO_TYPE hashAlgorithm,
 						HASHFUNCTION *hashFunction, int *hashSize )
@@ -356,6 +700,17 @@ void getHashParameters( const CRYPT_ALGO_TYPE hashAlgorithm,
 			if( hashSize != NULL )
 				*hashSize = SHA256_DIGEST_SIZE;
 			return;
+
+  /* SHA2-512 is only available on systems with 64-bit data type support,
+     at the moment this is only used internally for some PRFs so we have
+	 to handle it via a kludge on SHA2 */
+  #ifdef USE_SHA2_512
+		case CRYPT_ALGO_SHA2 + 1:
+			*hashFunction = sha2_512HashBuffer;
+			if( hashSize != NULL )
+				*hashSize = SHA512_DIGEST_SIZE;
+			return;
+  #endif /* USE_SHA2_512 */
 #endif /* USE_SHA2 */
 		}
 
@@ -365,7 +720,7 @@ void getHashParameters( const CRYPT_ALGO_TYPE hashAlgorithm,
 	*hashFunction = shaHashBuffer;
 	if( hashSize != NULL )
 		*hashSize = SHA_DIGEST_LENGTH;
-	assert( NOTREACHED );
+	retIntError_Void();
 	}
 
 /****************************************************************************
@@ -383,8 +738,10 @@ int strFindCh( const char *str, const int strLen, const char findCh )
 	assert( isReadPtr( str, strLen ) );
 
 	for( i = 0; i < strLen; i++ )
+		{
 		if( str[ i ] == findCh )
 			return( i );
+		}
 
 	return( -1 );
 	}
@@ -399,9 +756,11 @@ int strFindStr( const char *str, const int strLen,
 	assert( isReadPtr( findStr, findStrLen ) );
 
 	for( i = 0; i < strLen - findStrLen; i++ )
+		{
 		if( str[ i ] == findCh && \
 			!strCompare( str + i, findStr, findStrLen ) )
 			return( i );
+		}
 
 	return( -1 );
 	}
@@ -427,15 +786,24 @@ int strStripWhitespace( char **newStringPtr, const char *string,
 
 /* Sanitise a string before passing it back to the user.  This is used to
    clear potential problem characters (for example control characters)
-   from strings passed back from untrusted sources.  It returns a pointer
-   to the string to allow it to be used in the form 
-   printf( "..%s..", sanitiseString( string, length ) ) */
+   from strings passed back from untrusted sources.  As well as the length
+   of the string that we want to sanitise, we take an additional 
+   totalLength parameter that's used to calculate whether we should append 
+   a '[...]' to the string to show that there was further output present 
+   that was dropped.  Note that only ( string, stringLength ) is valid 
+   string data, totalLength may be an arbitrarily large value.
+   
+   The function returns a pointer to the string to allow it to be used in 
+   the form printf( "..%s..", sanitiseString( string, stringLength, 
+											  totalLength ) ) */
 
-char *sanitiseString( char *string, const int stringLength )
+char *sanitiseString( char *string, const int stringLength, 
+					  const int totalLength )
 	{
 	int i;
 
 	assert( isWritePtr( string, stringLength ) );
+	assert( stringLength <= totalLength );
 
 	/* Remove any potentially unsafe characters from the string */
 	for( i = 0; i < stringLength; i++ )
@@ -444,9 +812,15 @@ char *sanitiseString( char *string, const int stringLength )
 			string[ i ] = '.';
 		}
 
+	/* If there was more input than we could fit into the buffer and 
+	   there's room for a continuation indicator, add this to the output 
+	   string */
+	if( ( totalLength > stringLength ) && ( stringLength > 8 ) )
+		memcpy( string + stringLength - 5, "[...]", 5 );
+
 	/* Terminate the string to allow it to be used in printf()-style
 	   functions */
-	string[ i ] = '\0';
+	string[ stringLength ] = '\0';
 
 	return( string );
 	}
@@ -484,26 +858,22 @@ int wcstombs_s( size_t *retval, char *dst, size_t dstmax,
 ****************************************************************************/
 
 /* Dynamic buffer management functions.  When reading variable-length
-   attribute data we can usually fit the data in a small, fixed-length
-   buffer, but occasionally we have to cope with larger data amounts that
-   require a dynamically-allocated buffer.  The following routines manage
-   this process, dynamically allocating and freeing a larger buffer if
-   required */
+   object data we can usually fit the data into a small fixed-length buffer, 
+   but occasionally we have to cope with larger data amounts that require a 
+   dynamically-allocated buffer.  The following routines manage this 
+   process, dynamically allocating and freeing a larger buffer if required */
 
-int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
-			   const CRYPT_ATTRIBUTE_TYPE attributeType )
+static int getDynData( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
+					   const MESSAGE_TYPE message, const int messageParam )
 	{
 	MESSAGE_DATA msgData;
-	const MESSAGE_TYPE message = \
-						( attributeType == CRYPT_CERTFORMAT_CERTIFICATE ) ? \
-						IMESSAGE_CRT_EXPORT : IMESSAGE_GETATTRIBUTE_S;
 	void *dataPtr = NULL;
 	int status;
 
 	assert( isWritePtr( dynBuf, sizeof( DYNBUF ) ) );
-	assert( isHandleRangeValid( cryptHandle ) && \
-			( isAttribute( attributeType ) || \
-			  isInternalAttribute( attributeType ) ) );
+	assert( isHandleRangeValid( cryptHandle ) );
+	assert( message == IMESSAGE_GETATTRIBUTE_S || \
+			message == IMESSAGE_CRT_EXPORT );
 
 	/* Clear return value.  Note that we don't use the usual memset() to clear 
 	   the value since the structure contains the storage for the fixed-size
@@ -514,8 +884,7 @@ int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
 
 	/* Get the data from the object */
 	setMessageData( &msgData, NULL, 0 );
-	status = krnlSendMessage( cryptHandle, message, &msgData,
-							  attributeType );
+	status = krnlSendMessage( cryptHandle, message, &msgData, messageParam );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( msgData.length > DYNBUF_SIZE )
@@ -526,7 +895,7 @@ int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
 			return( CRYPT_ERROR_MEMORY );
 		msgData.data = dataPtr;
 		status = krnlSendMessage( cryptHandle, message, &msgData,
-								  attributeType );
+								  messageParam );
 		if( cryptStatusError( status ) )
 			{
 			clFree( "dynCreate", dataPtr );
@@ -540,12 +909,35 @@ int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
 		   the buffer */
 		msgData.data = dynBuf->data;
 		status = krnlSendMessage( cryptHandle, message, &msgData,
-								  attributeType );
+								  messageParam );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 	dynBuf->length = msgData.length;
 	return( CRYPT_OK );
+	}
+
+int dynCreate( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
+			   const CRYPT_ATTRIBUTE_TYPE attributeType )
+	{
+	assert( isWritePtr( dynBuf, sizeof( DYNBUF ) ) );
+	assert( isHandleRangeValid( cryptHandle ) );
+	assert( isAttribute( attributeType ) || \
+			isInternalAttribute( attributeType ) );
+
+	return( getDynData( dynBuf, cryptHandle, IMESSAGE_GETATTRIBUTE_S,
+						attributeType ) );
+	}
+
+int dynCreateCert( DYNBUF *dynBuf, const CRYPT_HANDLE cryptHandle,
+				   const CRYPT_CERTFORMAT_TYPE formatType )
+	{
+	assert( isWritePtr( dynBuf, sizeof( DYNBUF ) ) );
+	assert( isHandleRangeValid( cryptHandle ) );
+	assert( formatType == CRYPT_CERTFORMAT_CERTIFICATE );
+
+	return( getDynData( dynBuf, cryptHandle, IMESSAGE_CRT_EXPORT, 
+						formatType ) );
 	}
 
 void dynDestroy( DYNBUF *dynBuf )
@@ -637,7 +1029,7 @@ void freeMemPool( void *statePtr, void *memblock )
 
 #ifdef __WINCE__
 
-static void wcPrintf( const char *format, ... )
+static int wcPrintf( const char *format, ... )
 	{
 	wchar_t wcBuffer[ 1024 + 8 ];
 	char buffer[ 1024 + 8 ];
@@ -645,7 +1037,7 @@ static void wcPrintf( const char *format, ... )
 	int length;
 
 	va_start( argPtr, format );
-	length = vsprintf( buffer, format, argPtr );
+	length = vsprintf_s( buffer, 1024, format, argPtr );
 	va_end( argPtr );
 	mbstowcs( wcBuffer, buffer, length + 1 );
 	NKDbgPrintfW( wcBuffer );
@@ -664,9 +1056,7 @@ void *clAllocFn( const char *fileName, const char *fnName,
 	{
 	char buffer[ 512 + 8 ];
 	BYTE *memPtr;
-#ifndef __WINCE__
 	int length;
-#endif /* __WINCE__ */
 
 	/* Strip off the leading path components if we can to reduce the amount
 	   of noise in the output */
@@ -714,14 +1104,15 @@ void clFreeFn( const char *fileName, const char *fnName,
 #endif /* __WIN32__ || __UNIX__ */
 
 	index = mgetLong( memPtr );
-	length = printf( "ALLOC: %s:%s:%d", fileName, fnName, lineNo );
+	memPtr -= sizeof( LONG );		/* mgetLong() changes memPtr */
+	length = printf( "FREE : %s:%s:%d", fileName, fnName, lineNo );
 	while( length < 46 )
 		{
 		putchar( ' ' );
 		length++;
 		}
 	printf( " %4d.\n", index );
-	free( memPtr - sizeof( LONG ) );
+	free( memPtr );
 	}
 #endif /* CONFIG_DEBUG_MALLOC */
 
@@ -735,9 +1126,10 @@ void clFreeFn( const char *fileName, const char *fnName,
    have to export this via a dynbuf and then write it to the stream, however
    we can save some overhead by writing it directly to the stream's buffer.
    
-   Some attributes are variable-size (e.g. CRYPT_IATTRIBUTE_RANDOM_NONCE), so
-   we allow the caller to specify an optional length parameter indicating
-   how much of the attribute should be exported */
+   Some attributes have a user-defined size (e.g. 
+   CRYPT_IATTRIBUTE_RANDOM_NONCE) so we allow the caller to specify an 
+   optional length parameter indicating how much of the attribute should be 
+   exported */
 
 static int exportAttr( STREAM *stream, const CRYPT_HANDLE cryptHandle,
 					   const CRYPT_ATTRIBUTE_TYPE attributeType,
@@ -774,7 +1166,7 @@ static int exportAttr( STREAM *stream, const CRYPT_HANDLE cryptHandle,
 		attrLength = sMemDataLeft( stream );
 		}
 
-	/* Export the attribute to the stream */
+	/* Export the attribute directly into the stream buffer */
 	setMessageData( &msgData, sMemBufPtr( stream ), attrLength );
 	status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, attributeType );
@@ -831,7 +1223,7 @@ int exportCertToStream( void *streamPtr,
 		sMemDataLeft( stream ) < MIN_CRYPT_OBJECTSIZE )
 		return( CRYPT_ERROR_UNDERFLOW );
 
-	/* Export the cert to the stream */
+	/* Export the cert directly into the stream buffer */
 	setMessageData( &msgData, sMemBufPtr( stream ), sMemDataLeft( stream ) );
 	status = krnlSendMessage( cryptCertificate, IMESSAGE_CRT_EXPORT,
 							  &msgData, certFormatType );
@@ -842,7 +1234,7 @@ int exportCertToStream( void *streamPtr,
 
 int importCertFromStream( void *streamPtr,
 						  CRYPT_CERTIFICATE *cryptCertificate,
-						  const CRYPT_CERTTYPE_TYPE certType,
+						  const CRYPT_CERTTYPE_TYPE certType, 
 						  const int certDataLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -853,9 +1245,8 @@ int importCertFromStream( void *streamPtr,
 	assert( sStatusOK( stream ) );
 	assert( isWritePtr( cryptCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( certDataLength > 0 && certDataLength < INT_MAX );
-	assert( ( certType > CRYPT_CERTTYPE_NONE && \
-			  certType < CRYPT_CERTTYPE_LAST ) || \
-			( certType == CERTFORMAT_CTL ) );
+	assert( certType > CRYPT_CERTTYPE_NONE && \
+			certType < CRYPT_CERTTYPE_LAST );
 
 	/* Clear return value */
 	*cryptCertificate = CRYPT_ERROR;
@@ -868,7 +1259,7 @@ int importCertFromStream( void *streamPtr,
 		certDataLength > sMemDataLeft( stream ) )
 		return( CRYPT_ERROR_UNDERFLOW );
 
-	/* Import the cert from the stream */
+	/* Export the cert directly from the stream buffer */
 	setMessageCreateObjectIndirectInfo( &createInfo, sMemBufPtr( stream ),
 										certDataLength, certType );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
@@ -910,8 +1301,31 @@ int importCertFromStream( void *streamPtr,
 
 #define MAX_LINE_LENGTH		4096
 
+static int retTextLineError( STREAM *stream, const int status,
+							 const char *format, const int value1, 
+							 int value2 )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( format, 4 ) );
+
+	/* Currently only network streams can report extended error information,
+	   so if this is a non-network stream we don't try anything further.
+	   Note that we can't check for the absence of the error-info structure
+	   because that's not present in some builds */
+	if( stream->type != STREAM_TYPE_NETWORK )
+		return( status );
+
+	/* This extra level of indirection is necessary to turn the opaque 
+	   stream pointer back into a STREAM structure for use by the retExt()
+	   macro.  Normally this is handled via the STREAM_ERRINFO_VOID
+	   macro, but in this case the stream really is being used as an I/O
+	   stream (rather than just an errorInfo container) so we can't use
+	   this macro here */
+	retExt( STREAM_ERRINFO, CRYPT_ERROR_BADDATA, format, value1, value2 );
+	}
+
 int readTextLine( READCHARFUNCTION readCharFunction, void *streamPtr, 
-				  char *buffer, const int maxSize, BOOLEAN *textDataError )
+				  char *buffer, const int maxSize, BOOLEAN *localError )
 	{
 	BOOLEAN seenWhitespace, seenContinuation = FALSE;
 	int totalChars, bufPos = 0;
@@ -919,12 +1333,12 @@ int readTextLine( READCHARFUNCTION readCharFunction, void *streamPtr,
 	assert( isWritePtr( streamPtr, sizeof( STREAM ) ) );
 	assert( maxSize > 16 );
 	assert( isWritePtr( buffer, maxSize ) );
-	assert( textDataError == NULL || \
-			isWritePtr( textDataError, sizeof( BOOLEAN ) ) );
+	assert( localError == NULL || \
+			isWritePtr( localError, sizeof( BOOLEAN ) ) );
 
 	/* Clear return value */
-	if( textDataError != NULL )
-		*textDataError = FALSE;
+	if( localError != NULL )
+		*localError = FALSE;
 
 	/* Set the seen-whitespace flag initially to strip leading whitespace */
 	seenWhitespace = TRUE;
@@ -948,8 +1362,11 @@ int readTextLine( READCHARFUNCTION readCharFunction, void *streamPtr,
 			   binary data following the text header), bail out */
 			if( !isPrint( ch ) && ch != '\r' )
 				{
-				*textDataError = TRUE;
-				return( CRYPT_ERROR_BADDATA );
+				if( localError != NULL )
+					*localError = TRUE;
+				return( retTextLineError( streamPtr, CRYPT_ERROR_BADDATA,
+										  "Invalid character 0x%02X at "
+										  "position %d", ch, totalChars ) );
 				}
 			continue;
 			}
@@ -976,6 +1393,10 @@ int readTextLine( READCHARFUNCTION readCharFunction, void *streamPtr,
 			break;
 			}
 
+		/* Ignore any additional decoration that may accompany EOLs */
+		if( ch == '\r' )
+			continue;
+
 		/* Process whitespace.  We can't use isspace() for this because it
 		   includes all sorts of extra control characters */
 		if( ch == ' ' || ch == '\t' )
@@ -987,25 +1408,27 @@ int readTextLine( READCHARFUNCTION readCharFunction, void *streamPtr,
 			}
 
 		/* Process any remaining chars */
-		if( ch != '\r' )
+		if( !( isPrint( ch ) ) )
 			{
-			if( !( isPrint( ch ) ) )
-				{
-				*textDataError = TRUE;
-				return( CRYPT_ERROR_BADDATA );
-				}
-			buffer[ bufPos++ ] = ch;
-			seenWhitespace = ( ch == ' ' ) ? TRUE : FALSE;
-			seenContinuation = ( ch == ';' || ch == '\\' || \
-							     ( seenContinuation && \
-								   seenWhitespace ) ) ? \
-							   TRUE : FALSE;
+			if( localError != NULL )
+				*localError = TRUE;
+			return( retTextLineError( streamPtr, CRYPT_ERROR_BADDATA,
+									  "Invalid character 0x%02X at "
+									  "position %d", ch, totalChars ) );
 			}
+		buffer[ bufPos++ ] = ch;
+		seenWhitespace = ( ch == ' ' ) ? TRUE : FALSE;
+		seenContinuation = ( ch == ';' || ch == '\\' || \
+						     ( seenContinuation && \
+							   seenWhitespace ) ) ? \
+						   TRUE : FALSE;
 		}
 	if( totalChars >= MAX_LINE_LENGTH )
 		{
-		*textDataError = TRUE;
-		return( CRYPT_ERROR_OVERFLOW );
+		if( localError != NULL )
+			*localError = TRUE;
+		return( retTextLineError( streamPtr, CRYPT_ERROR_OVERFLOW,
+								  "Text line too long", 0, 0 ) );
 		}
 
 	return( bufPos );

@@ -61,6 +61,12 @@
 #else
   #include <ldap.h>
   #include <sys/time.h>				/* For 'struct timeval' */
+  #ifdef LDAP_API
+	/* Some OpenLDAP versions have their own LDAP_API macro which is 
+	   incompatible with the usage here, so we clear it before we define our
+	   own */
+	#undef LDAP_API
+  #endif /* LDAP_API */
   #define LDAP_API					/* OpenLDAP LDAP API type */
 #endif /* Different LDAP client types */
 
@@ -327,52 +333,52 @@ static void assignFieldName( const CRYPT_USER cryptOwner, char *buffer,
 
 static void getErrorInfo( KEYSET_INFO *keysetInfo, int ldapStatus )
 	{
+	ERROR_INFO *errorInfo = &keysetInfo->errorInfo;
+#ifndef __WINDOWS__ 
 	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+#endif /* !__WINDOWS__ */
 	char *errorMessage;
 
 #if defined( __WINDOWS__ )
-	ldapInfo->errorCode = LdapGetLastError();
-	if( ldapInfo->errorCode == LDAP_SUCCESS )
+	errorInfo->errorCode = LdapGetLastError();
+	if( errorInfo->errorCode == LDAP_SUCCESS )
 		/* In true Microsoft fashion LdapGetLastError() can return
 		   LDAP_SUCCESS with the error string set to "Success.", so if we
 		   get this we use the status value returned by the original LDAP
 		   function call instead */
-		ldapInfo->errorCode = ldapStatus;
-	errorMessage = ldap_err2string( ldapInfo->errorCode );
+		errorInfo->errorCode = ldapStatus;
+	errorMessage = ldap_err2string( errorInfo->errorCode );
   #if 0
 	/* The exact conditions under which ldap_err2string() does something
 	   useful are somewhat undefined, it may be necessary to use the
 	   following which works with general Windows error codes rather than
 	   special-case LDAP function result codes */
-	ldapInfo->errorCode = GetLastError();
+	errorInfo->errorCode = GetLastError();
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				   NULL, ldapInfo->errorCode,
+				   NULL, errorInfo->errorCode,
 				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
 				   ldapInfo->errorMessage, MAX_ERRMSG_SIZE - 1, NULL );
   #endif /* 0 */
 #elif defined( NETSCAPE_CLIENT )
-	ldapInfo->errorCode = ldap_get_lderrno( ldapInfo->ld, NULL,
-											&errorMessage );
+	errorInfo->errorCode = ldap_get_lderrno( ldapInfo->ld, NULL,
+											 &errorMessage );
 #else
   /* As usual there are various incompatible ways of getting the necessary
 	 information, we use whatever's available */
   #ifdef LDAP_OPT_ERROR_NUMBER
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_NUMBER, 
-					 &ldapInfo->errorCode );
+					 &errorInfo->errorCode );
   #else
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_RESULT_CODE, 
-					 &ldapInfo->errorCode );
+					 &errorInfo->errorCode );
   #endif /* Various ways of getting the error info */
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_STRING, 
 					 &errorMessage );
 #endif /* Different LDAP client types */
 	if( errorMessage != NULL )
-		{
-		strncpy( ldapInfo->errorMessage, errorMessage, MAX_ERRMSG_SIZE - 1 );
-		ldapInfo->errorMessage[ MAX_ERRMSG_SIZE - 1 ] = '\0';
-		}
+		strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE, errorMessage );
 	else
-		*ldapInfo->errorMessage = '\0';
+		errorInfo->errorString[ 0 ] = '\0';
 	}
 
 /* Map an LDAP error to the corresponding cryptlib error.  The various LDAP
@@ -500,58 +506,67 @@ static LDAPMod *copyAttribute( const char *attributeName,
 	}
 
 /* Encode DN information in the RFC 1779 reversed format.  We don't have to
-   check for overflows because the cert.management code limits the size of
+   explicitly check for overflows (which will lead to truncation of the 
+   resulting encoded DN) because the cert.management code limits the size of 
    each component to a small fraction of the total buffer size.  Besides 
-   which, it's LDAP, anyone using this crap as a cert store is asking for
-   it anyway :-) */
+   which, it's LDAP, anyone using this crap as a cert store is asking for it 
+   anyway */
 
-static void copyComponent( char *dest, char *src )
+static void catComponent( char *dest, const int destLen, char *src )
 	{
-	while( *src != '\0' )
+	int i;
+
+	/* Find the end of the existing destination string */
+	for( i = 0; i < destLen && dest[ i ] != '\0'; i++ );
+	if( i >= destLen )
+		{
+		assert( NOTREACHED );
+		return;
+		}
+
+	/* Append the source string, escaping special chars */
+	while( i < destLen - 1 && *src != '\0' )
 		{
 		const char ch = *src++;
 
 		if( ch == ',' )
-			*dest++ = '\\';
-		*dest++ = ch;
+			{
+			dest[ i++ ] = '\\';
+			if( i >= destLen )
+				break;
+			}
+		dest[ i++ ] = ch;
 		}
-	*dest++ = '\0';
+	dest[ i ] = '\0';
 	}
 
-static int encodeDN( char *dn, char *C, char *SP, char *L, char *O, char *OU,
-					 char *CN )
+static int encodeDN( char *dn, const int maxDnLen, char *C, char *SP, 
+					 char *L, char *O, char *OU, char *CN )
 	{
-	char *bufPtr = dn;
-
-	strcpy( dn, "CN=" );
-	strcpy( dn + 3, CN );
-	bufPtr += strlen( bufPtr );
+	strlcpy_s( dn, maxDnLen, "CN=" );
+	catComponent( dn, maxDnLen, CN );
 	if( *OU )
 		{
-		strcpy( bufPtr, ",OU=" );
-		copyComponent( bufPtr + 4, OU );
-		bufPtr += strlen( bufPtr );
+		strlcat_s( dn, maxDnLen, ",OU=" );
+		catComponent( dn, maxDnLen, OU );
 		}
 	if( *O )
 		{
-		strcpy( bufPtr, ",O=" );
-		copyComponent( bufPtr + 3, O );
-		bufPtr += strlen( bufPtr );
+		strlcat_s( dn, maxDnLen, ",O=" );
+		catComponent( dn, maxDnLen, O );
 		}
 	if( *L )
 		{
-		strcpy( bufPtr, ",L=" );
-		copyComponent( bufPtr + 3, L );
-		bufPtr += strlen( bufPtr );
+		strlcat_s( dn, maxDnLen, ",L=" );
+		catComponent( dn, maxDnLen, L );
 		}
 	if( *SP )
 		{
-		strcpy( bufPtr, ",ST=" );	/* Not to be confused with ST=street */
-		copyComponent( bufPtr + 4, SP );
-		bufPtr += strlen( bufPtr );
+		strlcat_s( dn, maxDnLen, ",ST=" );	/* Not to be confused with ST=street */
+		catComponent( dn, maxDnLen, SP );
 		}
-	strcpy( bufPtr, ",C=" );
-	copyComponent( bufPtr + 3, C );
+	strlcat_s( dn, maxDnLen, ",C=" );
+	catComponent( dn, maxDnLen, C );
 
 	return( CRYPT_OK );
 	}
@@ -583,7 +598,7 @@ static int parseURL( char *ldapServer, char **ldapUser, int *ldapPort )
 	if( ( strPtr = strchr( ldapServer, ':' ) ) != NULL )
 		{
 		*strPtr++ = '\0';
-		*ldapPort = aToI( strPtr );
+		*ldapPort = atoi( strPtr );
 		if( *ldapPort < 26 || *ldapPort > 65534L )
 			return( CRYPT_ERROR_BADDATA );
 		}
@@ -614,7 +629,8 @@ static int shutdownFunction( KEYSET_INFO *keysetInfo )
 
 /* Open a connection to an LDAP directory */
 
-static int initFunction( KEYSET_INFO *keysetInfo, const char *server,
+static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
+						 const int nameLength,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
@@ -624,9 +640,10 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *server,
 	/* Check the URL.  The Netscape and OpenLDAP APIs provide the function
 	   ldap_is_ldap_url() for this, but this requires a complete LDAP URL
 	   rather than just a server name and port */
-	if( strlen( server ) > MAX_URL_SIZE - 1 )
+	if( nameLength > MAX_URL_SIZE - 1 )
 		return( CRYPT_ARGERROR_STR1 );
-	strcpy( ldapServer, server );
+	memcpy( ldapServer, name, nameLength );
+	ldapServer[ nameLength ] = '\0';
 	status = parseURL( ldapServer, &ldapUser, &ldapPort );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ARGERROR_STR1 );
@@ -985,7 +1002,7 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 		CN[ msgData.length ] = '\0';
 	if( cryptStatusOK( status ) || status == CRYPT_ERROR_NOTFOUND )
 		/* Get the string form of the DN */
-		status = encodeDN( dn, C, SP, L, O, OU, CN );
+		status = encodeDN( dn, MAX_DN_STRINGSIZE, C, SP, L, O, OU, CN );
 	if( cryptStatusOK( status ) )
 		{
 		/* Get the certificate data */

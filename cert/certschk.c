@@ -146,14 +146,14 @@ int checkOCSPResponse( CERT_INFO *certInfoPtr,
 		REVOCATION_INFO *crlRevocationInfo;
 		int status;
 
-		assert( revocationInfo->type == CRYPT_KEYID_NONE || \
-				revocationInfo->type == CRYPT_IKEYID_CERTID || \
-				revocationInfo->type == CRYPT_IKEYID_ISSUERID );
+		assert( revocationInfo->idType == CRYPT_KEYID_NONE || \
+				revocationInfo->idType == CRYPT_IKEYID_CERTID || \
+				revocationInfo->idType == CRYPT_IKEYID_ISSUERID );
 
 		/* If it's an OCSPv1 ID, we can't really do anything with it because
 		   the one-way hashing process required by the standard destroys the
 		   information */
-		if( revocationInfo->type == CRYPT_KEYID_NONE )
+		if( revocationInfo->idType == CRYPT_KEYID_NONE )
 			{
 			revocationInfo->status = CRYPT_OCSPSTATUS_UNKNOWN;
 			continue;
@@ -171,8 +171,8 @@ int checkOCSPResponse( CERT_INFO *certInfoPtr,
 		   queries with IDs that match no known cert.  The best we can do is
 		   assume that a not-revoked status will be the most common, and if
 		   that fails fall back to a revoked status check */
-		setMessageKeymgmtInfo( &getkeyInfo, revocationInfo->type,
-							   revocationInfo->dataPtr, KEYID_SIZE, NULL, 0,
+		setMessageKeymgmtInfo( &getkeyInfo, revocationInfo->idType,
+							   revocationInfo->idPtr, KEYID_SIZE, NULL, 0,
 							   KEYMGMT_FLAG_CHECK_ONLY );
 		status = krnlSendMessage( cryptKeyset, IMESSAGE_KEY_GETKEY,
 								  &getkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
@@ -188,8 +188,8 @@ int checkOCSPResponse( CERT_INFO *certInfoPtr,
 		   not-OK now, but as it is we have to differentiate between revoked
 		   and unknown, so we perform a second query, this time of the
 		   revocation information */
-		setMessageKeymgmtInfo( &getkeyInfo, revocationInfo->type,
-							   revocationInfo->dataPtr, KEYID_SIZE, NULL, 0,
+		setMessageKeymgmtInfo( &getkeyInfo, revocationInfo->idType,
+							   revocationInfo->idPtr, KEYID_SIZE, NULL, 0,
 							   KEYMGMT_FLAG_NONE );
 		status = krnlSendMessage( cryptKeyset, IMESSAGE_KEY_GETKEY,
 								  &getkeyInfo, KEYMGMT_ITEM_REVOCATIONINFO );

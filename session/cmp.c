@@ -102,7 +102,7 @@ static void debugDump( const int type, const int phase,
 #endif /* !DUMP_SERVER_MESSAGES */
 
 /*	GetTempPath( 512, fileName ); */
-	strcpy( fileName, "/tmp/" );
+	strlcpy_s( fileName, 1024, "/tmp/" );
 	if( isServer( sessionInfoPtr ) )
 		{
 		MESSAGE_DATA msgData;
@@ -121,10 +121,10 @@ static void debugDump( const int type, const int phase,
 				ch == ',' || ch < ' ' || ch > 'z' )
 				fileName[ pathLength + i ] = '_';
 			}
-		strcat( fileName, "_" );
+		strlcat_s( fileName, 1024, "_" );
 		}
-	strcat( fileName, fnStringPtr[ phase - 1 ] );
-	strcat( fileName, ".der" );
+	strlcat_s( fileName, 1024, fnStringPtr[ phase - 1 ] );
+	strlcat_s( fileName, 1024, ".der" );
 
 #ifdef __STDC_LIB_EXT1__
 	if( fopen_s( &filePtr, fileName, "wb" ) != 0 )
@@ -369,18 +369,17 @@ int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr,
 			userNamePtr->valueLength < CRYPT_MAX_TEXTSIZE )
 			{
 			memcpy( userID, userNamePtr->value, userNamePtr->valueLength );
-			userID[ userNamePtr->valueLength ] = '\0';
 			userIDlen = userNamePtr->valueLength;
 			}
 		else
 			{
-			strcpy( userID, "the requested user" );
+			strlcpy_s( userID, CRYPT_MAX_TEXTSIZE, "the requested user" );
 			userIDlen = 18;
 			}
 		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "Couldn't find PKI user information for %s",
-				  sanitiseString( userID, userIDlen ) );
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "Couldn't find PKI user information for %s",
+				   sanitiseString( userID, userIDlen, userIDlen ) );
 		}
 	cmpInfo->userInfo = getkeyInfo.cryptHandle;
 	protocolInfo->userIDchanged = FALSE;
@@ -397,7 +396,7 @@ int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD );
 		if( cryptStatusError( status ) )
-			retExt( sessionInfoPtr, status, 
+			retExt( SESSION_ERRINFO, status, 
 					"Couldn't read PKI user data from PKI user object" );
 		updateSessionAttribute( &sessionInfoPtr->attributeList,
 								CRYPT_SESSINFO_PASSWORD, password, 
@@ -445,9 +444,9 @@ int initServerAuthentSign( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "Couldn't find PKI user information for owner of "
-				  "requesting cert" );
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "Couldn't find PKI user information for owner of "
+				   "requesting cert" );
 		}
 
 	/* If there's currently no user ID present or if it's present but it's a
@@ -465,7 +464,7 @@ int initServerAuthentSign( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			retExt( sessionInfoPtr, status, 
+			retExt( SESSION_ERRINFO, status, 
 					"Couldn't read PKI user data from PKI user object" );
 			}
 		updateSessionAttribute( &sessionInfoPtr->attributeList,
@@ -489,8 +488,8 @@ int initServerAuthentSign( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "Couldn't find certificate for requested user" );
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "Couldn't find certificate for requested user" );
 		}
 	sessionInfoPtr->iAuthInContext = getkeyInfo.cryptHandle;
 	protocolInfo->userIDchanged = FALSE;
@@ -641,7 +640,7 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( decodedValueLength ) )
 			{
 			assert( NOTREACHED );
-			retExt( sessionInfoPtr, decodedValueLength, 
+			retExt( SESSION_ERRINFO, decodedValueLength, 
 					"Invalid PKI user value" );
 			}
 		status = setProtocolInfo( protocolInfo, decodedValue,
@@ -669,7 +668,7 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( decodedValueLength ) )
 			{
 			assert( NOTREACHED );
-			retExt( sessionInfoPtr, decodedValueLength, 
+			retExt( SESSION_ERRINFO, decodedValueLength, 
 					"Invalid PKI user value" );
 			}
 		status = initMacInfo( protocolInfo->iMacContext, decodedValue, 
@@ -740,8 +739,7 @@ goto skipIO;
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
 		status = sNetConnect( &sessionInfoPtr->stream,
 							  STREAM_PROTOCOL_HTTP_TRANSACTION, 
-							  &connectInfo, sessionInfoPtr->errorMessage, 
-							  &sessionInfoPtr->errorCode );
+							  &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
 		const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
@@ -756,8 +754,7 @@ goto skipIO;
 			connectInfo.port = altProtocolInfoPtr->port;
 		status = sNetConnect( &sessionInfoPtr->stream, 
 							  altProtocolInfoPtr->type, 
-							  &connectInfo, sessionInfoPtr->errorMessage, 
-							  &sessionInfoPtr->errorCode );
+							  &connectInfo, &sessionInfoPtr->errorInfo );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1067,7 +1064,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		{
 		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
 		destroyProtocolInfo( &protocolInfo );
-		retExt( sessionInfoPtr, status, "Request signature check failed" );
+		retExt( SESSION_ERRINFO, status, "Request signature check failed" );
 		}
 
 	/* Add the request to the cert store */
@@ -1100,12 +1097,12 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		destroyProtocolInfo( &protocolInfo );
 		if( protocolInfo.operation == CTAG_PB_IR && \
 			status == CRYPT_ERROR_DUPLICATE )
-			retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-					  "Initialisation request couldn't be added to the "
-					  "cert store because another initialisation request "
-					  "has already been processed for this user" );
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "Request couldn't be added to the cert store" );
+			retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+					   "Initialisation request couldn't be added to the "
+					   "cert store because another initialisation request "
+					   "has already been processed for this user" );
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "Request couldn't be added to the cert store" );
 		}
 
 	/* Create or revoke a cert from the request */
@@ -1135,9 +1132,9 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 			status = CRYPT_ERROR_INVALID;
 		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
 		destroyProtocolInfo( &protocolInfo );
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "%s was denied by cert store",
-				  ( protocolInfo.operation != CTAG_PB_RR ) ? \
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "%s was denied by cert store",
+				   ( protocolInfo.operation != CTAG_PB_RR ) ? \
 					"Cert issue" : "Revocation" );
 		}
 
@@ -1226,8 +1223,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		{
 		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
 		destroyProtocolInfo( &protocolInfo );
-		retExtEx( sessionInfoPtr, status, sessionInfoPtr->cryptKeyset,
-				  "Cert issue completion failed" );
+		retExtObj( SESSION_ERRINFO, status, sessionInfoPtr->cryptKeyset,
+				   "Cert issue completion failed" );
 		}
 
 	/* Send back the final ack and clean up.  We don't bother checking the

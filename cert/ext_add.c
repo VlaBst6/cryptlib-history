@@ -17,7 +17,7 @@
 
 /* Prototypes for functions in ext.c */
 
-ATTRIBUTE_LIST *findAttributeStart( const ATTRIBUTE_LIST *attributeListPtr );
+ATTRIBUTE_LIST *findAttributeStart( ATTRIBUTE_LIST *attributeListPtr );
 
 /****************************************************************************
 *																			*

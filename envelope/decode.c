@@ -409,6 +409,8 @@ static int copyData( ENVELOPE_INFO *envelopeInfoPtr, const BYTE *buffer,
 	assert( envelopeInfoPtr->bufPos >= 0 && \
 			envelopeInfoPtr->bufPos <= envelopeInfoPtr->bufSize || \
 			envelopeInfoPtr->bufSize >= MIN_BUFFER_SIZE );
+	assert( envelopeInfoPtr->segmentSize == CRYPT_UNUSED || \
+			envelopeInfoPtr->segmentSize > 0 );
 	assert( ( envelopeInfoPtr->blockSize == 0 ) || \
 			( envelopeInfoPtr->blockBufferPos >= 0 && \
 			  envelopeInfoPtr->blockBufferPos < envelopeInfoPtr->blockSize ) );
@@ -456,6 +458,14 @@ static int copyData( ENVELOPE_INFO *envelopeInfoPtr, const BYTE *buffer,
 	   buffer-filling strategy */
 	bytesLeft = envelopeInfoPtr->bufSize - \
 				( envelopeInfoPtr->bufPos + envelopeInfoPtr->blockBufferPos );
+	if( bytesLeft == 0 )
+		/* There's no room left to copy anything in, return now.  We can't
+		   check this in the caller because it doesn't know about the 
+		   internal buffer-handling strategy that we use, so we perform an
+		   explicit check here.  Note that we check specifically for a size 
+		   of zero bytes, a below-zero value is an error that's caught 
+		   below */
+		return( 0 );
 	if( bytesLeft < bytesToCopy )
 		bytesToCopy = bytesLeft;
 	if( bytesToCopy <= 0 || envelopeInfoPtr->blockBufferPos < 0 ||
@@ -464,7 +474,7 @@ static int copyData( ENVELOPE_INFO *envelopeInfoPtr, const BYTE *buffer,
 		/* Sanity check that verifies segmentSize, length, bufPos, and
 		   blockBufferPos before we start into the following code */
 		assert( NOTREACHED );
-		return( CRYPT_ERROR_FAILED );
+		return( CRYPT_ERROR_INTERNAL );
 		}
 
 	/* If its a block encryption mode we need to provide special handling for
@@ -624,7 +634,12 @@ static int copyToDeenvelope( ENVELOPE_INFO *envelopeInfoPtr,
 		assert( currentLength > 0 );
 
 		/* Copy the data into the envelope, decrypting it as we go if
-		   necessary */
+		   necessary.  In theory we could also check to see whether any
+		   more data can fit into the buffer before trying to copy it in,
+		   but since this would require knowledge of the internal buffer-
+		   handling strategy used by copyData() we always call it and rely
+		   on a bytesCopied value of zero to indicate that the tank is
+		   full */
 		bytesCopied = copyData( envelopeInfoPtr, bufPtr, currentLength );
 		if( cryptStatusError( bytesCopied ) )
 			return( bytesCopied );

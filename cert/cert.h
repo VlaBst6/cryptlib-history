@@ -365,10 +365,10 @@ typedef struct RI {
 	   any useful way.  Usually the information fits in the data value, if
 	   it's longer than that (which can only occur with enormous serial
 	   numbers) it's held in the dynamically-allocated dataPtr value */
-	CRYPT_ATTRIBUTE_TYPE type;		/* ID type */
-	BYTE data[ 128 ], *dataPtr;
-	int dataLength;					/* ID information */
-	int dCheck;						/* Data checksum for quick match */
+	CRYPT_KEYID_TYPE idType;		/* ID type */
+	BYTE id[ 128 ], *idPtr;
+	int idLength;					/* ID information */
+	int idCheck;					/* Data checksum for quick match */
 
 	/* Revocation information */
 	int status;						/* OCSP revocation status */
@@ -1106,7 +1106,7 @@ int importCert( const void *certObject, const int certObjectLength,
 				const CRYPT_USER cryptOwner,
 				const CRYPT_KEYID_TYPE keyIDtype,
 				const void *keyID, const int keyIDlength,
-				const CERTFORMAT_TYPE formatType );
+				const CRYPT_CERTTYPE_TYPE formatHint );
 int exportCert( void *certObject, int *certObjectLength,
 				const CRYPT_CERTFORMAT_TYPE certFormatType,
 				const CERT_INFO *certInfoPtr, const int maxLength );

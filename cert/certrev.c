@@ -62,7 +62,7 @@ static int findRevocationEntry( const REVOCATION_INFO *listPtr,
 								const BOOLEAN sortEntries )
 	{
 	const REVOCATION_INFO *prevElement = NULL;
-	const int dCheck = checksumData( value, valueLength );
+	const int idCheck = checksumData( value, valueLength );
 
 	assert( isReadPtr( listPtr, sizeof( REVOCATION_INFO ) ) );
 	assert( insertPoint == NULL || \
@@ -80,10 +80,10 @@ static int findRevocationEntry( const REVOCATION_INFO *listPtr,
 	   can't tell whether it's safe to rely on it) */
 	while( listPtr != NULL )
 		{
-		if( ( sortEntries || dCheck == listPtr->dCheck ) && \
-			listPtr->dataLength == valueLength )
+		if( ( sortEntries || idCheck == listPtr->idCheck ) && \
+			listPtr->idLength == valueLength )
 			{
-			const int compareStatus = memcmp( listPtr->data,
+			const int compareStatus = memcmp( listPtr->id,
 											  value, valueLength );
 
 			if( !compareStatus )
@@ -98,7 +98,7 @@ static int findRevocationEntry( const REVOCATION_INFO *listPtr,
 				break;					/* Insert before this point */
 			}
 		else
-			if( sortEntries && listPtr->dataLength > valueLength )
+			if( sortEntries && listPtr->idLength > valueLength )
 				break;					/* Insert before this point */
 
 		prevElement = listPtr;
@@ -199,7 +199,7 @@ int addRevocationEntry( REVOCATION_INFO **listHeadPtr,
 
 	assert( isWritePtr( listHeadPtr, sizeof( REVOCATION_INFO * ) ) );
 	assert( isWritePtr( newEntryPosition, sizeof( REVOCATION_INFO * ) ) );
-	assert( sizeof( newElement->data ) == MAX_ID_SIZE );
+	assert( sizeof( newElement->id ) == MAX_ID_SIZE );
 	assert( valueType == CRYPT_KEYID_NONE || \
 			valueType == CRYPT_IKEYID_CERTID || \
 			valueType == CRYPT_IKEYID_ISSUERID || \
@@ -223,21 +223,21 @@ int addRevocationEntry( REVOCATION_INFO **listHeadPtr,
 			clAlloc( "addRevocationEntry", sizeof( REVOCATION_INFO ) ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
 	memset( newElement, 0, sizeof( REVOCATION_INFO ) );
-	if( valueLength > 128 )
+	if( valueLength > MAX_ID_SIZE )
 		{
-		if( ( newElement->dataPtr = clDynAlloc( "addRevocationEntry",
-												valueLength ) ) == NULL )
+		if( ( newElement->idPtr = clDynAlloc( "addRevocationEntry",
+											  valueLength ) ) == NULL )
 			{
 			clFree( "addRevocationEntry", newElement );
 			return( CRYPT_ERROR_MEMORY );
 			}
 		}
 	else
-		newElement->dataPtr = newElement->data;
-	newElement->type = valueType;
-	memcpy( newElement->dataPtr, value, valueLength );
-	newElement->dataLength = valueLength;
-	newElement->dCheck = checksumData( value, valueLength );
+		newElement->idPtr = newElement->id;
+	newElement->idType = valueType;
+	memcpy( newElement->idPtr, value, valueLength );
+	newElement->idLength = valueLength;
+	newElement->idCheck = checksumData( value, valueLength );
 
 	/* Insert the new element into the list */
 	if( noCheck )
@@ -270,10 +270,10 @@ void deleteRevocationEntries( REVOCATION_INFO **listHeadPtr )
 		REVOCATION_INFO *itemToFree = entryListPtr;
 
 		entryListPtr = entryListPtr->next;
-		if( itemToFree->dataPtr != itemToFree->data )
+		if( itemToFree->idPtr != itemToFree->id )
 			{
-			zeroise( itemToFree->dataPtr, itemToFree->dataLength );
-			clFree( "deleteRevocationEntries", itemToFree->dataPtr );
+			zeroise( itemToFree->idPtr, itemToFree->idLength );
+			clFree( "deleteRevocationEntries", itemToFree->idPtr );
 			}
 		if( itemToFree->attributes != NULL )
 			deleteAttributes( &itemToFree->attributes );
@@ -307,22 +307,22 @@ int copyRevocationEntries( REVOCATION_INFO **destListHeadPtr,
 							 sizeof( REVOCATION_INFO ) ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
 		memcpy( newElement, srcListCursor, sizeof( REVOCATION_INFO ) );
-		if( srcListCursor->dataLength > 128 )
+		if( srcListCursor->idLength > MAX_ID_SIZE )
 			{
 			/* If the ID information doesn't fit into the fixed buffer,
 			   allocate a variable-length one and copy it across */
-			if( ( newElement->dataPtr = \
+			if( ( newElement->idPtr = \
 					clDynAlloc( "copyRevocationEntries",
-								srcListCursor->dataLength ) ) == NULL )
+								srcListCursor->idLength ) ) == NULL )
 				{
 				clFree( "copyRevocationEntries", newElement );
 				return( CRYPT_ERROR_MEMORY );
 				}
-			memcpy( newElement->dataPtr, srcListCursor->data,
-					srcListCursor->dataLength );
+			memcpy( newElement->idPtr, srcListCursor->id,
+					srcListCursor->idLength );
 			}
 		else
-			newElement->dataPtr = newElement->data;
+			newElement->idPtr = newElement->id;
 		newElement->attributes = NULL;
 		newElement->next = NULL;
 
@@ -450,7 +450,7 @@ int sizeofCRLentry( REVOCATION_INFO *crlEntry )
 	crlEntry->attributeSize = sizeofAttributes( crlEntry->attributes );
 
 	return( ( int ) sizeofObject( \
-						sizeofInteger( crlEntry->data, crlEntry->dataLength ) + \
+						sizeofInteger( crlEntry->id, crlEntry->idLength ) + \
 						sizeofUTCTime() + \
 						( ( crlEntry->attributeSize > 0 ) ? \
 							( int ) sizeofObject( crlEntry->attributeSize ) : 0 ) ) );
@@ -505,7 +505,7 @@ int readCRLentry( STREAM *stream, REVOCATION_INFO **listHeadPtr,
 int writeCRLentry( STREAM *stream, const REVOCATION_INFO *crlEntry )
 	{
 	const int revocationLength = \
-				sizeofInteger( crlEntry->data, crlEntry->dataLength ) + \
+				sizeofInteger( crlEntry->id, crlEntry->idLength ) + \
 				sizeofUTCTime() + \
 				( ( crlEntry->attributeSize > 0 ) ? \
 					( int ) sizeofObject( crlEntry->attributeSize ) : 0 );
@@ -515,7 +515,7 @@ int writeCRLentry( STREAM *stream, const REVOCATION_INFO *crlEntry )
 
 	/* Write the CRL entry */
 	writeSequence( stream, revocationLength );
-	writeInteger( stream, crlEntry->data, crlEntry->dataLength, DEFAULT_TAG );
+	writeInteger( stream, crlEntry->id, crlEntry->idLength, DEFAULT_TAG );
 	status = writeUTCTime( stream, crlEntry->revocationTime, DEFAULT_TAG );
 	if( cryptStatusError( status ) || crlEntry->attributeSize <= 0 )
 		return( status );
@@ -557,12 +557,12 @@ int writeCRLentry( STREAM *stream, const REVOCATION_INFO *crlEntry )
 static int sizeofOcspID( const REVOCATION_INFO *ocspEntry )
 	{
 	assert( isReadPtr( ocspEntry, sizeof( REVOCATION_INFO ) ) );
-	assert( ocspEntry->type == CRYPT_KEYID_NONE );
+	assert( ocspEntry->idType == CRYPT_KEYID_NONE );
 
 	/* For now we don't try and handle anything except the v1 ID, since the
 	   status of v2 is uncertain (it doesn't add anything to v1 except even
 	   more broken IDs) */
-	return( ocspEntry->dataLength );
+	return( ocspEntry->idLength );
 	}
 
 static int readOcspID( STREAM *stream, CRYPT_KEYID_TYPE *idType,
@@ -634,7 +634,7 @@ static int readOcspID( STREAM *stream, CRYPT_KEYID_TYPE *idType,
 
 static int writeOcspID( STREAM *stream, const REVOCATION_INFO *ocspEntry )
 	{
-	return( swrite( stream, ocspEntry->data, ocspEntry->dataLength ) );
+	return( swrite( stream, ocspEntry->id, ocspEntry->idLength ) );
 	}
 
 /* Read/write an OCSP request entry:
@@ -647,7 +647,7 @@ static int writeOcspID( STREAM *stream, const REVOCATION_INFO *ocspEntry )
 int sizeofOcspRequestEntry( REVOCATION_INFO *ocspEntry )
 	{
 	assert( isWritePtr( ocspEntry, sizeof( REVOCATION_INFO ) ) );
-	assert( ocspEntry->type == CRYPT_KEYID_NONE );
+	assert( ocspEntry->idType == CRYPT_KEYID_NONE );
 
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */

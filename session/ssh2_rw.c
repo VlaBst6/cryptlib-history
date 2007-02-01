@@ -30,25 +30,26 @@
 static void formatErrorString( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 							   const char *prefixString )
 	{
+	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	const int stringLen = strlen( prefixString );
-	char *errorMessagePtr = sessionInfoPtr->errorMessage + stringLen;
+	char *errorMessageSuffix = errorInfo->errorString + stringLen;
 	int length, status;
 
 	/* Build the error message string from the prefix string and string
 	   supplied by the peer */
-	memcpy( sessionInfoPtr->errorMessage, prefixString, stringLen );
-	status = readString32( stream, errorMessagePtr, &length,
+	memcpy( errorInfo->errorString, prefixString, stringLen );
+	status = readString32( stream, errorMessageSuffix, &length,
 						   MAX_ERRMSG_SIZE - ( stringLen + 16 ) );
 	if( cryptStatusOK( status ) )
 		{
-		errorMessagePtr[ length ] = '\0';
-		sanitiseString( errorMessagePtr, length );
+		sanitiseString( errorMessageSuffix, length, length );
 		return;
 		}
 
 	/* There was an error with the peer-supplied string, insert a generic
 	   placeholder */
-	strcpy( errorMessagePtr, "<No details available>" );
+	strlcpy_s( errorMessageSuffix, MAX_ERRMSG_SIZE - stringLen, 
+			   "<No details available>" );
 	}
 
 /****************************************************************************
@@ -76,6 +77,7 @@ int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 		{ CRYPT_ERROR, CRYPT_ERROR_READ },
 		{ CRYPT_ERROR, CRYPT_ERROR_READ }
 		};
+	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	int errorCode, i;
 
 	/* Peer is disconnecting, find out why:
@@ -86,9 +88,9 @@ int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 		string	language_tag */
 	errorCode = readUint32( stream );
 	if( cryptStatusError( errorCode ) )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid status information in disconnect message" );
-	sessionInfoPtr->errorCode = errorCode;
+	errorInfo->errorCode = errorCode;
 	formatErrorString( sessionInfoPtr, stream,
 					   "Received disconnect message: " );
 
@@ -96,7 +98,7 @@ int getDisconnectInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 	for( i = 0; errorMap[ i ].sshStatus != CRYPT_ERROR && \
 				i < FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP_INFO ); i++ )
 		{
-		if( errorMap[ i ].sshStatus == sessionInfoPtr->errorCode )
+		if( errorMap[ i ].sshStatus == errorInfo->errorCode )
 			break;
 		}
 	if( i >= FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP_INFO ) )
@@ -144,7 +146,7 @@ int readPacketHeaderSSH2( SESSION_INFO *sessionInfoPtr,
 		if( !isServer( sessionInfoPtr ) && \
 			( expectedType == SSH2_MSG_SPECIAL_USERAUTH || \
 			  expectedType == SSH2_MSG_SPECIAL_USERAUTH_PAM ) )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"Remote server has closed the connection, possibly in "
 					"response to an incorrect password" );
 
@@ -155,7 +157,7 @@ int readPacketHeaderSSH2( SESSION_INFO *sessionInfoPtr,
 		if( isServer( sessionInfoPtr ) && \
 			( sessionInfoPtr->protocolFlags & SSH_PFLAG_CUTEFTP ) && \
 			expectedType == SSH2_MSG_NEWKEYS )
-			retExt( sessionInfoPtr, status,
+			retExt( SESSION_ERRINFO, status,
 					"CuteFTP client has aborted the handshake due to a "
 					"CuteFTP bug, please contact the CuteFTP vendor" );
 
@@ -213,9 +215,10 @@ int readPacketHeaderSSH2( SESSION_INFO *sessionInfoPtr,
 		   the other side has bailed out, we mark the channel as closed to
 		   prevent any attempt to perform a proper shutdown */
 		sessionInfoPtr->flags |= SESSION_SENDCLOSED;
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
-				"Remote SSH software has crashed, diagnostic was '%s'",
-				sanitiseString( bufPtr, MIN_PACKET_SIZE + length ) );
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
+				"Remote SSH software has crashed, diagnostic was: '%s'",
+				sanitiseString( bufPtr, MIN_PACKET_SIZE + length,
+								MIN_PACKET_SIZE + length ) );
 		}
 
 	/* Decrypt the header if necessary */
@@ -251,7 +254,7 @@ int readPacketHeaderSSH2( SESSION_INFO *sessionInfoPtr,
 	if( length + extraLength < SSH2_HEADER_REMAINDER_SIZE || \
 		length < ID_SIZE + PADLENGTH_SIZE + SSH2_MIN_PADLENGTH_SIZE || \
 		length + extraLength >= sessionInfoPtr->receiveBufSize )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid packet length %ld, should be %d...%d", length,
 				ID_SIZE + PADLENGTH_SIZE + SSH2_MIN_PADLENGTH_SIZE,
 				sessionInfoPtr->receiveBufSize - extraLength );
@@ -327,12 +330,11 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 			if( cryptStatusError( status ) )
 				{
 				sNetGetErrorInfo( &sessionInfoPtr->stream,
-								  sessionInfoPtr->errorMessage,
-								  &sessionInfoPtr->errorCode );
+								  &sessionInfoPtr->errorInfo );
 				return( status );
 				}
 			if( status != remainingLength )
-				retExt( sessionInfoPtr, CRYPT_ERROR_TIMEOUT,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
 						"Timeout during handshake packet remainder read, "
 						"only got %d of %ld bytes", status,
 						remainingLength );
@@ -369,12 +371,12 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 				   of bad data */
 				if( expectedType == SSH2_MSG_SERVICE_REQUEST || \
 					expectedType == SSH2_MSG_SERVICE_ACCEPT )
-					retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+					retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 							"Bad message MAC for handshake packet type %d, "
 							"length %ld, probably due to an incorrect key "
 							"being used to generate the MAC",
 							sessionInfoPtr->receiveBuffer[ 1 ], length );
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Bad message MAC for handshake packet type %d, "
 						"length %ld", sessionInfoPtr->receiveBuffer[ 1 ],
 						length );
@@ -393,7 +395,7 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 		   implementation that sends large numbers of no-op packets as cover
 		   traffic.  Complaining after 20 consecutive no-ops seems to be a
 		   safe tradeoff between catching DoS's and handling cover traffic */
-		retExt( sessionInfoPtr, CRYPT_ERROR_OVERFLOW,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_OVERFLOW,
 				"Peer sent an excessive number of no-op packets, it may be "
 				"stuck in a loop" );
 	sshInfo->packetType = packetType;
@@ -403,7 +405,7 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 	   present (there should always be at least one byte, the packet type) */
 	length -= PADLENGTH_SIZE + padLength;
 	if( length < minPacketSize )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid length %ld for handshake packet type %d, should "
 				"be at least %d", length, packetType, minPacketSize );
 
@@ -469,7 +471,7 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 			   a global or a channel request to tell us what to do next */
 			if( packetType != SSH2_MSG_GLOBAL_REQUEST && \
 				packetType != SSH2_MSG_CHANNEL_REQUEST )
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid handshake packet type %d, expected global "
 						"or channel request", packetType );
 			expectedType = packetType;
@@ -485,7 +487,7 @@ int readPacketSSH2( SESSION_INFO *sessionInfoPtr, int expectedType,
 			break;
 		}
 	if( packetType != expectedType )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid handshake packet type %d, expected %d", packetType,
 				expectedType );
 
@@ -655,8 +657,7 @@ int sendPacketSSH2( SESSION_INFO *sessionInfoPtr, STREAM *stream,
 		!( sessionInfoPtr->flags & SESSION_NOREPORTERROR ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
-						  sessionInfoPtr->errorMessage,
-						  &sessionInfoPtr->errorCode );
+						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
 	return( CRYPT_OK );	/* swrite() returns a byte count */

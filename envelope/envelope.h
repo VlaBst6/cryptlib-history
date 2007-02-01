@@ -630,7 +630,7 @@ typedef struct EI {
 					  const void *value, const int valueLength );
 	CRYPT_ATTRIBUTE_TYPE ( *checkMissingInfo )( struct EI *envelopeInfoPtr );
 	BOOLEAN ( *checkAlgo )( const CRYPT_ALGO_TYPE cryptAlgo, 
-							const CRYPT_ALGO_TYPE cryptMode );
+							const CRYPT_MODE_TYPE cryptMode );
 	int ( *processPreambleFunction )( struct EI *envelopeInfoPtr );
 	int ( *processPostambleFunction )( struct EI *envelopeInfoPtr );
 	int ( *copyToEnvelopeFunction )( struct EI *envelopeInfoPtr, 

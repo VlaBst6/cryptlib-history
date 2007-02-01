@@ -70,6 +70,7 @@ typedef struct {
 	BYTE salt[ PGP_SALTSIZE + 8 ];	/* Password hashing salt */
 	int saltSize;
 	int keySetupIterations;			/* Password hashing iterations */
+	BOOLEAN hashedChecksum;			/* Key checksum is SHA-1 hash */
 	} PGP_KEYINFO;
 
 /* The following structure contains the the information for one personality,
@@ -112,22 +113,16 @@ typedef struct {
 
 /* Get the size of an encoded MPI and skip the payload data */
 
-static int getMPIsize( STREAM *stream )
+static int getMPIsize( STREAM *stream, const int minMpiSize, 
+					   const int maxMpiSize )
 	{
-	int bitLength, length;
+	const long position = stell( stream );
+	int status;
 
-	/* Read the MPI length and make sure that it's in order */
-	bitLength = readUint16( stream );
-	length = bitsToBytes( bitLength );
-	if( length < 1 || length > PGP_MAX_MPISIZE || \
-		length > sMemDataLeft( stream ) )
-		{
-		sSetError( stream, CRYPT_ERROR_BADDATA );
-		return( 0 );	/* Dummy value */
-		}
-
-	sSkip( stream, length );
-	return( 2 + length );
+	status = readInteger16Ubits( stream, NULL, NULL, minMpiSize, 
+								 maxMpiSize );
+	return( cryptStatusError( status ) ? \
+			status : ( int ) stell( stream ) - position );
 	}
 
 /* Determine the minimum allowed packet size for a given packet type.  The 
@@ -452,7 +447,7 @@ static int readSecretKeyDecryptionInfo( STREAM *stream, PGP_KEYINFO *keyInfo )
 	   so many security check failures in the key unwrap code that it's not 
 	   even worth trying */
 	if( ctb == 0 )
-		return( OK_SPECIAL );
+		return( CRYPT_ERROR_NOSECURE );
 
 	/* If it's a direct algorithm specifier, it's a PGP 2.x packet with
 	   raw IDEA encryption */
@@ -503,6 +498,8 @@ static int readSecretKeyDecryptionInfo( STREAM *stream, PGP_KEYINFO *keyInfo )
 			}
 		if( value == 3 )
 			{
+			long iterations;
+
 			/* Salted iterated hash, get the iteration count, limited to a
 			   sane value.  The "iteration count" is actually a count of how
 			   many bytes are hashed, this is because the "iterated hashing"
@@ -511,15 +508,28 @@ static int readSecretKeyDecryptionInfo( STREAM *stream, PGP_KEYINFO *keyInfo )
 			   count bytes worth.  The value we calculate here (to prevent
 			   overflow on 16-bit machines) is the count without the
 			   base * 64 scaling, this also puts the range within the value
-			   of the standard sanity check */
+			   of the standard sanity check.  Note that there's a mutant GPG
+			   build used with loop-AES that uses 8M setup iterations, why
+			   this is used and why it writes PGP keys with this setting is
+			   uncertain, but cryptlib will reject keys with this value as
+			   being outside the range of sane values */
 			value = sgetc( stream );
 			if( cryptStatusError( value ) )
 				return( value );
-			keyInfo->keySetupIterations = \
-					( 16 + ( ( long ) value & 0x0F ) ) << ( value >> 4 );
-			if( keyInfo->keySetupIterations <= 0 || \
-				keyInfo->keySetupIterations > MAX_KEYSETUP_ITERATIONS )
+			iterations = ( 16 + ( ( long ) value & 0x0F ) ) << ( value >> 4 );
+			if( iterations <= 0 || iterations > MAX_KEYSETUP_ITERATIONS )
 				return( CRYPT_ERROR_BADDATA );
+			keyInfo->keySetupIterations = ( int ) iterations;
+			}
+		if( ctb == PGP_S2K_HASHED )
+			{
+			/* The legacy PGP 2.x key integrity protection format used a 
+			   simple 16-bit additive checksum of the encrypted MPI payload, 
+			   the newer OpenPGP format uses a SHA-1 MDC.  There's also a 
+			   halfway format used in older OpenPGP versions that still uses 
+			   the 16-bit checksum, but encrypts the entire MPI data block
+			   rather than just the payload */
+			keyInfo->hashedChecksum = TRUE;
 			}
 		}
 	status = sread( stream, keyInfo->iv, ivSize );
@@ -583,6 +593,7 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 	   to get the OpenPGP keyID.  This is generated anyway when the context
 	   is created, but we need to generate it here as well in order to locate
 	   the key in the first place:
+
 		byte		ctb = 0x99
 		byte[2]		length
 		byte		version = 4
@@ -614,12 +625,12 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 			keyInfo->usageFlags = KEYMGMT_FLAG_USAGE_CRYPT;
 		if( value != PGP_ALGO_RSA_ENCRYPT )
 			keyInfo->usageFlags |= KEYMGMT_FLAG_USAGE_SIGN;
-		length = 1 + getMPIsize( stream );
+		length = 1 + getMPIsize( stream, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( sStatusOK( stream ) && \
 			stell( stream ) - startPos > PGP_KEYID_SIZE )
 			memcpy( keyInfo->pgpKeyID, sMemBufPtr( stream ) - PGP_KEYID_SIZE,
 					PGP_KEYID_SIZE );
-		length += getMPIsize( stream );
+		length += getMPIsize( stream, 1, CRYPT_MAX_PKCSIZE );
 		}
 	else
 		{
@@ -627,7 +638,11 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 		if( value != PGP_ALGO_DSA && value != PGP_ALGO_ELGAMAL )
 			return( cryptStatusError( value ) ? value: OK_SPECIAL );
 
-		/* DSA/Elgamal: p + g + y */
+		/* DSA/Elgamal: p + g + y.  Note that we have to separate out the
+		   getMPIsize() calls in order to serialise them, otherwise some
+		   optimising compilers will reorder the operations, causing the 
+		   check to fail because the parameters are different for the
+		   different MPI values */
 		if( value == PGP_ALGO_DSA )
 			{
 			keyInfo->pkcAlgo = CRYPT_ALGO_DSA;
@@ -638,11 +653,12 @@ static int readKey( STREAM *stream, PGP_INFO *pgpInfo )
 			keyInfo->pkcAlgo = CRYPT_ALGO_ELGAMAL;
 			keyInfo->usageFlags = KEYMGMT_FLAG_USAGE_CRYPT;
 			}
-		length = 1 + getMPIsize( stream ) + getMPIsize( stream ) + \
-				 getMPIsize( stream );
-		if( value == PGP_ALGO_DSA )
+		length = 1 + getMPIsize( stream, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+		length += getMPIsize( stream, 1, CRYPT_MAX_PKCSIZE );
+		length += getMPIsize( stream, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+		if( value == PGP_ALGO_DSA )		/* Must be on sep.lines, see above */
 			/* DSA has q as well */
-			length += getMPIsize( stream );
+			length += getMPIsize( stream, bitsToBytes( 155 ), CRYPT_MAX_PKCSIZE );
 		}
 	status = sGetStatus( stream );
 	if( cryptStatusError( status ) )
@@ -788,14 +804,14 @@ static int processPacketGroup( STREAM *stream, PGP_INFO *pgpInfo,
 		retIntError();
 	if( cryptStatusError( status ) )
 		{
-		if( status != OK_SPECIAL )
+		if( status != OK_SPECIAL && status != CRYPT_ERROR_NOSECURE )
 			return( status );
 
-		/* There's something in the key information that we can't handle, 
-		   mark the keyring as read-only and skip the key */
+		/* There's either something in the key information that we can't 
+		   handle or it's stored with no security, skip the key */
 		if( keyMatchInfo == NULL )
 			pgpFreeEntry( pgpInfo );
-		return( OK_SPECIAL );
+		return( status );
 		}
 
 	/* If we're reading all keys, we're done */
@@ -901,7 +917,7 @@ static int processKeyringPackets( STREAM *stream, BYTE *buffer,
 	{
 	PGP_INFO *pgpInfo = ( PGP_INFO * ) keysetInfo->keyData;
 	BYTE streamBuffer[ STREAM_BUFSIZE + 8 ];
-	BOOLEAN moreData = TRUE;
+	BOOLEAN moreData = TRUE, insecureKeys = FALSE;
 	int bufEnd = 0, keyGroupNo = 0, iterationCount = 0, status;
 
 	assert( keyMatchInfo == NULL || \
@@ -1008,13 +1024,16 @@ static int processKeyringPackets( STREAM *stream, BYTE *buffer,
 			if( keyMatchInfo != NULL && status == CRYPT_ERROR_NOTFOUND )
 				continue;
 
-			if( status != OK_SPECIAL )
+			/* If it's not a recoverable error, exit */
+			if( status != OK_SPECIAL && status != CRYPT_ERROR_NOSECURE )
 				return( status );
 
 			/* There's something in the key information that we can't 
-			   handle, mark the keyring as read-only */
+			   handle or we've found an (unusable) unprotected key, mark 
+			   the keyring as read-only and continue */
 			keysetInfo->options = CRYPT_KEYOPT_READONLY;
-			status = CRYPT_OK;
+			if( status == CRYPT_ERROR_NOSECURE )
+				insecureKeys = TRUE;
 			continue;
 			}
 
@@ -1030,7 +1049,24 @@ static int processKeyringPackets( STREAM *stream, BYTE *buffer,
 	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
 		retIntError();
 
-	return( ( keyMatchInfo == NULL ) ? CRYPT_OK : CRYPT_ERROR_NOTFOUND );
+	/* If we were looking for a specific match, we haven't found it */
+	if( keyMatchInfo != NULL )
+		return( CRYPT_ERROR_NOTFOUND );
+
+	/* If we haven't found any keys that we can use, let the caller know.  
+	   The error code to return here is a bit complex because we can skip 
+	   keys either because there's something in the key data that we can't
+	   process or because the keys isn't sufficiently protected for us to
+	   trust it.  The most complex case is when both situations occur.  To
+	   keep it simple, if there are any insecure keys then we report
+	   CRYPT_ERROR_NOSECURE, on the basis that if the keys had been 
+	   appropriately secured then we might have been able to process them 
+	   and return one */
+	if( keyGroupNo <= 0 )
+		return( insecureKeys ? CRYPT_ERROR_NOSECURE : \
+							   CRYPT_ERROR_NOTFOUND );
+
+	return( CRYPT_OK );
 	}
 
 static int readKeyring( KEYSET_INFO *keysetInfo, 
@@ -1142,7 +1178,7 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 		if( flags & KEYMGMT_FLAG_LABEL_ONLY )
 			{
 			const int userIDsize = min( pgpInfo->userIDlen[ 0 ],
-										CRYPT_MAX_TEXTSIZE );
+										*auxInfoLength );
 
 			*auxInfoLength = userIDsize;
 			if( auxInfo != NULL )
@@ -1261,11 +1297,13 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 	/* Import the encrypted key into the PKC context */
 	setMechanismWrapInfo( &mechanismInfo, keyInfo->privKeyData,
 						  keyInfo->privKeyDataLen, NULL, 0, *iCryptHandle,
-						  iSessionKey, CRYPT_UNUSED );
+						  iSessionKey );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT, 
 							  &mechanismInfo, pgpInfo->isOpenPGP ? \
-								MECHANISM_PRIVATEKEYWRAP_OPENPGP : \
-								MECHANISM_PRIVATEKEYWRAP_PGP );
+								( keyInfo->hashedChecksum ?
+								  MECHANISM_PRIVATEKEYWRAP_OPENPGP : \
+								  MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD ) : \
+								MECHANISM_PRIVATEKEYWRAP_PGP2 );
 	clearMechanismInfo( &mechanismInfo );
 	krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
 	return( status );
@@ -1419,11 +1457,12 @@ static int shutdownFunction( KEYSET_INFO *keysetInfo )
    preprocessing, all we do at this point is allocate the key info */
 
 static int initPublicFunction( KEYSET_INFO *keysetInfo, const char *name,
+							   const int nameLength,
 							   const CRYPT_KEYOPT_TYPE options )
 	{
 	PGP_INFO *pgpInfo;
 
-	assert( name == NULL );
+	assert( name == NULL && nameLength == 0 );
 
 	/* Allocate memory for the key info */
 	if( ( pgpInfo = clAlloc( "initPublicFunction", \
@@ -1448,11 +1487,12 @@ static int initPublicFunction( KEYSET_INFO *keysetInfo, const char *name,
    that we can use later when we need to access it */
 
 static int initPrivateFunction( KEYSET_INFO *keysetInfo, const char *name,
+								const int nameLength,
 								const CRYPT_KEYOPT_TYPE options )
 	{
 	PGP_INFO *pgpInfo;
 
-	assert( name == NULL );
+	assert( name == NULL && nameLength == 0 );
 
 	/* Allocate the PGP object info */
 	if( ( pgpInfo = clAlloc( "initPrivateFunction", \

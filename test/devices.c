@@ -1,17 +1,12 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Device Test Routines						*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2006					*
 *																			*
 ****************************************************************************/
 
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -131,6 +126,13 @@
    complete objects) are only visible for the duration of the session that
    created them.
 
+   The Netscape soft-token (softokn3.dll, i.e. NSS) is a bit problematic to
+   use, it requires the presence of three additional libraries (nspr4.dll,
+   plc4.dll, and plds4.dll) in the same directory, and even then 
+   C_Initialize() returns with CKR_ARGUMENTS_BAD.  The easiest way to 
+   arrange to have all the files in the right place is to chdir to 
+   "C:/Program Files/Mozilla Firefox" before loading the DLL.
+
    The presence of a device entry in this table doesn't necessarily mean
    that the PKCS #11 driver that it comes with functions correctly, or at
    all.  In particular the iButton driver is still in beta so it has some
@@ -179,6 +181,7 @@ static const DEVICE_CONFIG_INFO pkcs11DeviceInfo[] = {
 	{ "SignLite security module", "IBM SignLite", "test", "Test user key" },
 	{ "Spyrus Rosetta", "Spyrus Rosetta", "test", "Test user key" },
 	{ "Spyrus Lynks", "Spyrus Lynks", "test", "Test user key" },
+	{ "Sun Metaslot", "nCipher on Solaris", "test", "Test user key" },
 	{ "TCrypt", "Telesec", "123456", "Test user key" },
 	{ "TrustCenter PKCS#11 Library", "GPKCS11", "12345678", "Test user key" },
 	{ NULL, NULL, NULL }
@@ -241,6 +244,8 @@ static const CERT_DATA userCertData[] = {
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, "NZ" },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, "Dave's Wetaburgers" },
 	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, "Dave's key" },
+	{ CRYPT_CERTINFO_EMAIL, IS_STRING, 0, TEXT( "dave@wetaburgers.com" ) },
+	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },	/* Re-select subject DN */
 
 	/* X.509v3 general-purpose certificate */
 	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC,
@@ -337,7 +342,7 @@ static BOOLEAN createKey( const CRYPT_DEVICE cryptDevice,
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptCert, certData ) )
+		!addCertFields( cryptCert, certData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptCert, isCA ? cryptContext : signingKey );
@@ -569,7 +574,7 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
 		if( cryptStatusOK( status ) && \
-			!addCertFields( cryptCert, paaCertData ) )
+			!addCertFields( cryptCert, paaCertData, __LINE__ ) )
 			return( FALSE );
 		if( cryptStatusOK( status ) )
 			status = cryptSignCert( cryptCert, signContext );
@@ -670,6 +675,95 @@ static BOOLEAN testDeviceCapabilities( const CRYPT_DEVICE cryptDevice,
 
 /* Test the high-level functionality provided by a device */
 
+static BOOLEAN testPersistentObject( const CRYPT_DEVICE cryptDevice )
+	{
+	CRYPT_ALGO_TYPE cryptAlgo = CRYPT_ALGO_HMAC_SHA1;
+	CRYPT_CONTEXT cryptContext;
+	int status;
+
+	printf( "Loading a persistent symmetric key into the device..." );
+
+	/* Find an encryption algorithm that we can use and create a context in
+	   the device */
+	status = cryptDeviceQueryCapability( cryptDevice, cryptAlgo, NULL );
+	if( cryptStatusError( status ) )
+		{
+		cryptAlgo = CRYPT_ALGO_DES;
+		status = cryptDeviceQueryCapability( cryptDevice, cryptAlgo, NULL );
+		}
+	if( cryptStatusOK( status ) )
+		status = cryptDeviceCreateContext( cryptDevice, &cryptContext, 
+										   cryptAlgo );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\nCouldn't create conventional-encryption context in "
+				"device, status = %d, line %d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Make it a persistent object and load a key */
+	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL, 
+							 SYMMETRIC_KEY_LABEL, 
+							 strlen( SYMMETRIC_KEY_LABEL ) );
+	status = cryptSetAttribute( cryptContext, CRYPT_CTXINFO_PERSISTENT, 
+								TRUE );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\nCouldn't make device context persistent, status = %d, "
+				"line %d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+	status = cryptGenerateKey( cryptContext );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\nCouldn't load key into persistent context, status = %d, "
+				"line %d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+	puts( " succeeded." );
+
+	/* Destroy the context.  Since it's persistent, it'll still be present 
+	   in the device */
+	cryptDestroyContext( cryptContext );
+
+	/* Recreate the object from the device */
+	printf( "Reading back symmetric key..." );
+	status = cryptGetKey( cryptDevice, &cryptContext, CRYPT_KEYID_NAME,
+						  SYMMETRIC_KEY_LABEL, NULL );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\nRead of symmetric key failed, status = %d, line %d.\n", 
+				status, __LINE__ );
+		return( FALSE );
+		}
+	puts( " succeeded." );
+
+	/* Re-destroy it and make sure that it's still there afterwards.  This 
+	   tests the persistence of read-back objects vs. created objects */
+	cryptDestroyContext( cryptContext );
+	printf( "Re-reading back symmetric key..." );
+	status = cryptGetKey( cryptDevice, &cryptContext, CRYPT_KEYID_NAME,
+						  SYMMETRIC_KEY_LABEL, NULL );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\nRe-read of symmetric key failed, status = %d, line %d.\n", 
+				status, __LINE__ );
+		return( FALSE );
+		}
+	puts( " succeeded." );
+
+	/* Perform an encrypt/decrypt test with the recreated object */
+	printf( "Performing encryption test with recovered key..." );
+	status = testCrypt( cryptContext, cryptContext, NULL, TRUE, FALSE );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	puts( " succeeded." );
+
+	/* Clean up */		
+	cryptDestroyContext( cryptContext );
+	return( TRUE );
+	}
+
 static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 									const CRYPT_DEVICE_TYPE deviceType,
 									const char *keyLabel,
@@ -769,8 +863,8 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 				status = cryptCheckCert( pubKeyContext, CRYPT_UNUSED );
 			if( cryptStatusError( status ) )
 				{
-				printf( "Signature on public key certificate is invalid, "
-						"line %d.\n", __LINE__ );
+				printf( "Signature on certificate is invalid, status %d, "
+						"line %d.\n", status, __LINE__ );
 				return( FALSE );
 				}
 			cryptSetAttribute( pubKeyContext,
@@ -824,7 +918,25 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 	/* If we got something, try some simple operations with it */
 	if( pubKeyContext != CRYPT_UNUSED )
 		{
-		if( !testCMSEnvelopePKCCryptEx( pubKeyContext, cryptDevice, password ) )
+		char emailAddress[ CRYPT_MAX_TEXTSIZE + 1 ];
+		int length;
+
+		if( !testCMSEnvelopePKCCryptEx( pubKeyContext, cryptDevice, 
+										password, NULL ) )
+			return( FALSE );
+		cryptSetAttribute( pubKeyContext, CRYPT_ATTRIBUTE_CURRENT, 
+						   CRYPT_CERTINFO_SUBJECTALTNAME );
+		status = cryptGetAttributeString( pubKeyContext, CRYPT_CERTINFO_EMAIL,
+										  emailAddress, &length );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't read recipient address from certificate, "
+					"status %d, line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		emailAddress[ length ] = '\0';
+		if( !testCMSEnvelopePKCCryptEx( CRYPT_UNUSED, cryptDevice, 
+										password, emailAddress ) )
 			return( FALSE );
 		}
 	else
@@ -838,6 +950,13 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 	else
 		puts( "Signed enveloping tests skipped because no key was "
 			  "available." );
+
+	/* Test persistent (non-public-key) object creation */
+	if( !isWriteProtected && TEST_KEYGEN )
+		{
+		if( !testPersistentObject( cryptDevice ) )
+			return( FALSE );
+		}
 
 	/* Clean up */
 	if( pubKeyContext == CRYPT_UNUSED && sigKeyContext == CRYPT_UNUSED )
@@ -965,6 +1084,7 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 				deleteTestKey( cryptDevice, RSA_PRIVKEY_LABEL, "RSA private" );
 				deleteTestKey( cryptDevice, DSA_PUBKEY_LABEL, "DSA public" );
 				deleteTestKey( cryptDevice, DSA_PRIVKEY_LABEL, "DSA private" );
+				deleteTestKey( cryptDevice, SYMMETRIC_KEY_LABEL, "symmetric" );
 				}
 			if( deviceType == CRYPT_DEVICE_FORTEZZA )
 				deleteTestKey( cryptDevice, "Test KEA key", "KEA" );
@@ -1271,7 +1391,7 @@ static int createCACert( const CRYPT_DEVICE cryptDevice )
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
-		!addCertFields( cryptCert, rootCACertData ) )
+		!addCertFields( cryptCert, rootCACertData, __LINE__ ) )
 		return( FALSE );
 	if( cryptStatusOK( status ) )
 		status = cryptSignCert( cryptCert, cryptContext );
@@ -1467,7 +1587,7 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
 		if( cryptStatusOK( status ) && \
-			!addCertFields( cryptCert, paaCertData ) )
+			!addCertFields( cryptCert, paaCertData, __LINE__ ) )
 			return( FALSE );
 		if( cryptStatusOK( status ) )
 			status = cryptSignCert( cryptCert, signContext );

@@ -473,8 +473,7 @@ static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
 		status = sNetConnect( &sessionInfoPtr->stream,
 							  STREAM_PROTOCOL_HTTP_TRANSACTION,
-							  &connectInfo, sessionInfoPtr->errorMessage,
-							  &sessionInfoPtr->errorCode );
+							  &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
 		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
@@ -489,14 +488,12 @@ static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
 				connectInfo.port = altProtocolInfoPtr->port;
 			status = sNetConnect( &sessionInfoPtr->stream,
 								  altProtocolInfoPtr->type,
-								  &connectInfo, sessionInfoPtr->errorMessage,
-								  &sessionInfoPtr->errorCode );
+								  &connectInfo, &sessionInfoPtr->errorInfo );
 			}
 		else
 			status = sNetConnect( &sessionInfoPtr->stream,
 								  STREAM_PROTOCOL_TCPIP,
-								  &connectInfo, sessionInfoPtr->errorMessage,
-								  &sessionInfoPtr->errorCode );
+								  &connectInfo, &sessionInfoPtr->errorInfo );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -519,8 +516,7 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
 		status = sNetListen( &sessionInfoPtr->stream,
 							 STREAM_PROTOCOL_HTTP_TRANSACTION,
-							 &connectInfo, sessionInfoPtr->errorMessage,
-							 &sessionInfoPtr->errorCode );
+							 &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
 		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
@@ -535,14 +531,12 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 				connectInfo.port = altProtocolInfoPtr->port;
 			status = sNetListen( &sessionInfoPtr->stream,
 								 altProtocolInfoPtr->type,
-								 &connectInfo, sessionInfoPtr->errorMessage,
-								 &sessionInfoPtr->errorCode );
+								 &connectInfo, &sessionInfoPtr->errorInfo );
 			}
 		else
 			status = sNetListen( &sessionInfoPtr->stream,
 								 STREAM_PROTOCOL_TCPIP,
-								 &connectInfo, sessionInfoPtr->errorMessage,
-								 &sessionInfoPtr->errorCode );
+								 &connectInfo, &sessionInfoPtr->errorInfo );
 		}
 	if( cryptStatusError( status ) )
 		return( status );

@@ -6,13 +6,8 @@
 ****************************************************************************/
 
 #include <limits.h>		/* To determine max.buffer size we can encrypt */
-#ifdef _MSC_VER
-  #include "../cryptlib.h"
-  #include "test.h"
-#else
-  #include "cryptlib.h"
-  #include "test/test.h"
-#endif /* Braindamaged MSC include handling */
+#include "cryptlib.h"
+#include "test/test.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -393,8 +388,8 @@ int testLargeBufferEncrypt( void )
 	for( i = 0; i < ( int ) length; i++ )
 		if( buffer[ i ] != '*' )
 			{
-			printf( "Decrypted data != original plaintext at position %d.\n",
-					i );
+			printf( "Decrypted data != original plaintext at position %d, "
+					"line %d.\n", i, __LINE__ );
 			return( FALSE );
 			}
 
@@ -408,33 +403,10 @@ int testLargeBufferEncrypt( void )
 /* Test the code to derive a fixed-length encryption key from a variable-
    length user key */
 
-int testDeriveKey( void )
+static int deriveKey( const C_STR userKey, const int userKeyLength )
 	{
 	CRYPT_CONTEXT cryptContext, decryptContext;
-	C_STR userKey = TEXT( "This is a long user key for key derivation testing" );
-	BYTE buffer[ 8 ];
-	int userKeyLength = paramStrlen( userKey ), value, status;
-
-	puts( "Testing key derivation..." );
-
-	/* Make sure that we can get/set the keying values with equivalent
-	   systemwide settings using either the context-specific or global
-	   option attributes */
-	cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_DES );
-	status = cryptSetAttribute( cryptContext,
-								CRYPT_CTXINFO_KEYING_ITERATIONS, 5 );
-	if( cryptStatusOK( status ) )
-		status = cryptGetAttribute( cryptContext,
-									CRYPT_OPTION_KEYING_ITERATIONS,
-									&value );
-	cryptDestroyContext( cryptContext );
-	if( cryptStatusError( status ) || value != 5 )
-		{
-		printf( "Failed to get/set context attribute via equivalent global "
-				"attribute, error\ncode %d, value %d (should be 5), line "
-				"%d.\n", status, value, __LINE__ );
-		return( FALSE );
-		}
+	int status;
 
 	/* Create IDEA/CBC encryption and decryption contexts and load them with
 	   identical salt values for the key derivation (this is easier than
@@ -474,6 +446,48 @@ int testDeriveKey( void )
 
 	/* Clean up */
 	destroyContexts( CRYPT_UNUSED, cryptContext, decryptContext );
+
+	return( TRUE );
+	}
+
+int testDeriveKey( void )
+	{
+	CRYPT_CONTEXT cryptContext;
+	C_STR shortUserKey = TEXT( "12345678" );
+	C_STR medUserKey = TEXT( "This is a long user key for key derivation testing" );
+	C_STR longUserKey = TEXT( "This is a really long user key that exceeds the HMAC input limit for keys" );
+	BYTE buffer[ 8 ];
+	int value, status;
+
+	puts( "Testing key derivation..." );
+
+	/* Make sure that we can get/set the keying values with equivalent
+	   systemwide settings using either the context-specific or global
+	   option attributes */
+	cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_DES );
+	status = cryptSetAttribute( cryptContext,
+								CRYPT_CTXINFO_KEYING_ITERATIONS, 5 );
+	if( cryptStatusOK( status ) )
+		status = cryptGetAttribute( cryptContext,
+									CRYPT_OPTION_KEYING_ITERATIONS,
+									&value );
+	cryptDestroyContext( cryptContext );
+	if( cryptStatusError( status ) || value != 5 )
+		{
+		printf( "Failed to get/set context attribute via equivalent global "
+				"attribute, error\ncode %d, value %d (should be 5), line "
+				"%d.\n", status, value, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Test the derivation of keys from short, medium, and long passwords */
+	status = deriveKey( shortUserKey, paramStrlen( shortUserKey ) );
+	if( status ) 
+		status = deriveKey( medUserKey, paramStrlen( medUserKey ) );
+	if( status ) 
+		status = deriveKey( longUserKey, paramStrlen( longUserKey ) );
+	if( !status ) 
+		return( FALSE );
 
 	/* Test the derivation process using fixed test data: password =
 	   "password", salt = { 0x12 0x34 0x56 0x78 0x78 0x56 0x34 0x12 },
@@ -529,11 +543,12 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 	int length, status;
 
 	/* Set the key for the exporting context */
-	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEYING_SALT,
-							 "\x12\x34\x56\x78\x78\x56\x34\x12", 8 );
-	status = cryptSetAttributeString( cryptContext,
-									  CRYPT_CTXINFO_KEYING_VALUE,
-									  userKey, userKeyLength );
+	status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEYING_SALT,
+									  "\x12\x34\x56\x78\x78\x56\x34\x12", 8 );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptContext,
+										  CRYPT_CTXINFO_KEYING_VALUE,
+										  userKey, userKeyLength );
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptSetAttributeString() failed with error code %d, line "
@@ -635,13 +650,27 @@ int testConventionalExportImport( void )
 
 	puts( "Testing conventional key export/import..." );
 
-	/* Create triple-DES contexts for the session key and a Blowfish context
-	   to export the session key */
+	/* Create triple-DES contexts for the session key */
 	cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED, CRYPT_ALGO_3DES );
-	cryptSetAttribute( sessionKeyContext1, CRYPT_CTXINFO_MODE, CRYPT_MODE_CFB );
-	cryptGenerateKey( sessionKeyContext1 );
-	cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED, CRYPT_ALGO_3DES );
-	cryptSetAttribute( sessionKeyContext2, CRYPT_CTXINFO_MODE, CRYPT_MODE_CFB );
+	status = cryptSetAttribute( sessionKeyContext1, CRYPT_CTXINFO_MODE, 
+								CRYPT_MODE_CFB );
+	if( cryptStatusOK( status ) )
+		status = cryptGenerateKey( sessionKeyContext1 );
+	if( cryptStatusOK( status ) )
+		{
+		cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED, 
+							CRYPT_ALGO_3DES );
+		status = cryptSetAttribute( sessionKeyContext2, CRYPT_CTXINFO_MODE, 
+									CRYPT_MODE_CFB );
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "Session key context setup failed with error code %d, line "
+				"%d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Create a Blowfish context to export the session key */
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED,
 								 selectCipher( CRYPT_ALGO_BLOWFISH ) );
 	if( cryptStatusError( status ) )
@@ -663,10 +692,23 @@ int testConventionalExportImport( void )
 	/* Create AES contexts for the session key and another AES context to
 	   export the session key */
 	cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED, CRYPT_ALGO_AES );
-	cryptSetAttribute( sessionKeyContext1, CRYPT_CTXINFO_MODE, CRYPT_MODE_CFB );
-	cryptGenerateKey( sessionKeyContext1 );
-	cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED, CRYPT_ALGO_AES );
-	cryptSetAttribute( sessionKeyContext2, CRYPT_CTXINFO_MODE, CRYPT_MODE_CFB );
+	status = cryptSetAttribute( sessionKeyContext1, CRYPT_CTXINFO_MODE, 
+								CRYPT_MODE_CFB );
+	if( cryptStatusOK( status ) )
+		status = cryptGenerateKey( sessionKeyContext1 );
+	if( cryptStatusOK( status ) )
+		{
+		cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED, 
+							CRYPT_ALGO_AES );
+		cryptSetAttribute( sessionKeyContext2, CRYPT_CTXINFO_MODE, 
+							CRYPT_MODE_CFB );
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "Session key context setup failed with error code %d, line "
+				"%d.\n", status, __LINE__ );
+		return( FALSE );
+		}
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_AES );
 	if( cryptStatusError( status ) )
 		{
@@ -848,114 +890,6 @@ int testSignData( void )
 	return( signData( "DSA", CRYPT_ALGO_DSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_PGP ) );
 	}						/* DSA, PGP format */
 
-/* Test the code to exchange a session key via Diffie-Hellman.  We're not as
-   picky with error-checking here since most of the functions have just
-   executed successfully */
-
-int testKeyAgreement( void )
-	{
-	CRYPT_OBJECT_INFO cryptObjectInfo;
-	CRYPT_CONTEXT cryptContext1, cryptContext2;
-	CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
-	BYTE *buffer;
-	int length, status;
-
-	puts( "Testing key agreement..." );
-
-	/* Create the DH encryption contexts, one with a key loaded and the
-	   other as a blank template for the import from the first one */
-	if( !loadDHContexts( &cryptContext1, NULL ) )
-		return( FALSE );
-	cryptCreateContext( &cryptContext2, CRYPT_UNUSED, CRYPT_ALGO_DH );
-
-	/* Create the session key templates */
-	cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
-						selectCipher( CRYPT_ALGO_RC5 ) );
-	cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED,
-						selectCipher( CRYPT_ALGO_RC5 ) );
-
-	/* Find out how big the exported key will be */
-	status = cryptExportKey( NULL, 0, &length, cryptContext1,
-							 sessionKeyContext1 );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptExportKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
-	printf( "cryptExportKey() reports exported key object will be %d bytes "
-			"long\n", length );
-	if( ( buffer = malloc( length ) ) == NULL )
-		return( FALSE );
-
-	/* Perform phase 1 of the exchange */
-	status = cryptExportKey( buffer, length, &length, cryptContext1,
-							 sessionKeyContext1 );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptExportKey() #1 failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		free( buffer );
-		return( FALSE );
-		}
-	status = cryptImportKey( buffer, length, cryptContext2,
-							 sessionKeyContext2 );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportKey() #1 failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		free( buffer );
-		return( FALSE );
-		}
-
-	/* Query the encrypted key object */
-	status = cryptQueryObject( buffer, length, &cryptObjectInfo );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptQueryObject() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		free( buffer );
-		return( FALSE );
-		}
-	printf( "cryptQueryObject() reports object type %d, algorithm %d, mode "
-			"%d.\n", cryptObjectInfo.objectType, cryptObjectInfo.cryptAlgo,
-			cryptObjectInfo.cryptMode );
-	memset( &cryptObjectInfo, 0, sizeof( CRYPT_OBJECT_INFO ) );
-	debugDump( "keyagree", buffer, length );
-
-	/* Perform phase 2 of the exchange */
-	status = cryptExportKey( buffer, length, &length, cryptContext2,
-							 sessionKeyContext2 );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptExportKey() #2 failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		free( buffer );
-		return( FALSE );
-		}
-	status = cryptImportKey( buffer, length, cryptContext1,
-							 sessionKeyContext1 );
-	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportKey() #2 failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		free( buffer );
-		return( FALSE );
-		}
-
-	/* Make sure that the two keys match */
-	if( !compareSessionKeys( sessionKeyContext1, sessionKeyContext2 ) )
-		return( FALSE );
-
-	/* Clean up */
-	destroyContexts( CRYPT_UNUSED, sessionKeyContext1, sessionKeyContext2 );
-	destroyContexts( CRYPT_UNUSED, cryptContext1, cryptContext2 );
-	printf( "Exchange of session key via %d-bit Diffie-Hellman succeeded.\n\n",
-			PKC_KEYSIZE );
-	free( buffer );
-	return( TRUE );
-	}
-
 /* Test normal and asynchronous public-key generation */
 
 static int keygen( const CRYPT_ALGO_TYPE cryptAlgo, const char *algoName )
@@ -973,7 +907,6 @@ static int keygen( const CRYPT_ALGO_TYPE cryptAlgo, const char *algoName )
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 TEXT( "Private key" ),
 							 paramStrlen( TEXT( "Private key" ) ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 64 );
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusError( status ) )
 		{
@@ -1092,7 +1025,8 @@ return( TRUE );
 		}
 	else
 		{
-		printf( "Unexpected encryption algorithm %d found.\n", cryptAlgo );
+		printf( "Unexpected encryption algorithm %d found, line %d.\n", 
+				cryptAlgo, __LINE__ );
 		return( FALSE );
 		}
 
@@ -1137,7 +1071,6 @@ int testKeygenAsync( void )
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
 							 TEXT( "Private key" ),
 							 paramStrlen( TEXT( "Private key" ) ) );
-	cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYSIZE, 384 );
 	status = cryptGenerateKeyAsync( cryptContext );
 	if( cryptStatusError( status ) )
 		{
@@ -1153,8 +1086,7 @@ int testKeygenAsync( void )
 	   seconds, so it can't be too high or the keygen will have finished.
 	   The following value was safe for a 700MHz PIII, but the next step
 	   would be to move to 4K bit keys (4096 bits, 512 in the above keygen
-	   call).  For the Unix version it's also going to cause problems on
-	   the faster systems */
+	   call) */
 	printf( "Delaying 2s to allow keygen to start..." );
 	delayThread( 2 );
 	puts( "done." );
@@ -1267,7 +1199,7 @@ int testRandomRoutines( void )
 		puts( "allow key generation and public-key encryption to function.  You will need to" );
 		puts( "change the randomness-polling code or reconfigure your system to allow the" );
 		puts( "randomness-gathering routines to function.  The code to change can be found" );
-		puts( "in misc/rndXXXX.c\n" );
+		puts( "in random/<osname>.c\n" );
 		return( FALSE );
 		}
 
@@ -1500,7 +1432,7 @@ int testSignDataCMS( void )
 	status = cryptCreateCert( &cmsAttributes, CRYPT_UNUSED,
 							  CRYPT_CERTTYPE_CMS_ATTRIBUTES );
 	if( cryptStatusError( status ) || \
-		!addCertFields( cmsAttributes, cmsAttributeData ) )
+		!addCertFields( cmsAttributes, cmsAttributeData, __LINE__ ) )
 		return( FALSE );
 	status = signDataCMS( "complex CMS signature", cmsAttributes );
 	cryptDestroyCert( cmsAttributes );

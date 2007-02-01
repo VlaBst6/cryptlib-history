@@ -37,7 +37,7 @@
  16 byte aligned if VIA ACE is being used
 */
 
-#include <memory.h>
+/* #include <memory.h> No idea what this is used for - pcg */
 #include <assert.h>
 
 #include "crypt/aesopt.h"

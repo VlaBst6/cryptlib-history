@@ -54,27 +54,14 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getSHA1Capability();
-	CONTEXT_INFO contextInfo;
-	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test SHA-1 against values given in FIPS 180-1 */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_HASH, capabilityInfo,
-						   &contextData, sizeof( HASH_INFO ), keyData );
-		status = capabilityInfo->encryptFunction( &contextInfo,
-							( BYTE * ) digestValues[ i ].data,
-							digestValues[ i ].length );
-		contextInfo.flags |= CONTEXT_HASH_INITED;
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxHash->hash, digestValues[ i ].digest,
-					SHA_DIGEST_LENGTH ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
 		}

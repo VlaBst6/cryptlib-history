@@ -32,7 +32,7 @@ static const struct {
 	const int length;						/* Length of data */
 	const BYTE digest[ MD4_DIGEST_LENGTH ];	/* Digest of data */
 	} FAR_BSS digestValues[] = {
-	{ "", 0,
+	{ NULL, 0,
 	  { 0x31, 0xD6, 0xCF, 0xE0, 0xD1, 0x6A, 0xE9, 0x31,
 		0xB7, 0x3C, 0x59, 0xD7, 0xE0, 0xC0, 0x89, 0xC0 } },
 	{ "a", 1,
@@ -59,31 +59,14 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getMD4Capability();
-	CONTEXT_INFO contextInfo;
-	HASH_INFO contextData;
-	BYTE keyData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashData[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test MD4 against the test vectors given in RFC 1320 */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_HASH, capabilityInfo,
-						   &contextData, sizeof( HASH_INFO ), keyData );
-		status = CRYPT_OK ;
-		if( digestValues[ i ].length > 0 )
-			{
-			status = capabilityInfo->encryptFunction( &contextInfo,
-								( BYTE * ) digestValues[ i ].data,
-								digestValues[ i ].length );
-			contextInfo.flags |= CONTEXT_HASH_INITED;
-			}
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, NULL, 0 );
-		if( cryptStatusOK( status ) && \
-			memcmp( contextInfo.ctxHash->hash, digestValues[ i ].digest,
-					MD4_DIGEST_LENGTH ) )
-			status = CRYPT_ERROR;
-		staticDestroyContext( &contextInfo );
+		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
 		}

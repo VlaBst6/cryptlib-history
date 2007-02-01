@@ -110,8 +110,8 @@ int getKeysize( CONTEXT_INFO *contextInfoPtr, const int requestedKeyLength )
 	int keyLength;
 
 	assert( requestedKeyLength == 0 || \
-			( requestedKeyLength >= bitsToBytes( MIN_KEYSIZE_BITS ) && \
-			  requestedKeyLength <= bitsToBytes( MAX_PKCSIZE_BITS ) ) );
+			( requestedKeyLength >= MIN_KEYSIZE && \
+			  requestedKeyLength <= CRYPT_MAX_PKCSIZE ) );
 
 	/* Determine the upper limit on the key size and make sure that the 
 	   requested length is valid */
@@ -149,15 +149,14 @@ int getKeysize( CONTEXT_INFO *contextInfoPtr, const int requestedKeyLength )
 			}
 		keyLength = requestedKeyLength;
 		}
-	assert( keyLength > bitsToBytes( MIN_KEYSIZE_BITS ) && \
-			keyLength <= bitsToBytes( MAX_PKCSIZE_BITS ) );
+	assert( keyLength > MIN_KEYSIZE && keyLength <= CRYPT_MAX_PKCSIZE );
 
 	/* If we're generating a conventional/MAC key we need to limit the
-	   maximum length in order to make it exportable via the smallest normal
-	   (i.e. non-elliptic-curve) public key */
+	   maximum working key length in order to make it exportable via the 
+	   smallest normal (i.e. non-elliptic-curve) public key */
 	if( contextInfoPtr->type != CONTEXT_PKC && \
-		keyLength > bitsToBytes( MAX_KEYSIZE_BITS ) )
-		keyLength = bitsToBytes( MAX_KEYSIZE_BITS );
+		keyLength > MAX_WORKING_KEYSIZE )
+		keyLength = MAX_WORKING_KEYSIZE;
 
 	return( keyLength );
 	}
@@ -177,45 +176,102 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 	{
 	const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) keyInfo;
 
-	/* The DLP check is simpler than the RSA one because there are less
-	   odd parameter combinations possible, so we get this one out of the
-	   way first */
+	/* The ECC check is somewhat different to the others because ECC key
+	   sizes work in different ways, so we have to special-case this one */
+	if( isEccAlgo( cryptAlgo ) )
+		{
+		const CRYPT_PKCINFO_ECC *eccKey = ( CRYPT_PKCINFO_ECC * ) keyInfo;
+
+		/* Check the general info */
+		if( ( eccKey->isPublicKey != TRUE && eccKey->isPublicKey != FALSE ) )
+			return( CRYPT_ARGERROR_STR1 );
+		if( eccKey->pLen <= 0 || eccKey->aLen <= 0 || eccKey->bLen <= 0 || \
+			eccKey->gxLen <= 0 || eccKey->gyLen <= 0 || eccKey->rLen <= 0 || \
+			eccKey->qxLen <= 0 || eccKey->qyLen <= 0 || eccKey->dLen < 0 )
+			return( CRYPT_ARGERROR_STR1 );
+
+		/* Check the parameters and public components */
+		if( eccKey->pLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->aLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->aLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->bLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->bLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->gxLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->gxLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->gyLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->gyLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->rLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->rLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+			return( CRYPT_ARGERROR_STR1 );
+		if( eccKey->qxLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->qxLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
+			eccKey->qyLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->qyLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+			return( CRYPT_ARGERROR_STR1 ); 
+		if( eccKey->isPublicKey )
+			return( CRYPT_OK );
+
+		/* Check the private components */
+		if( eccKey->dLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
+			eccKey->dLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+			return( CRYPT_ARGERROR_STR1 );
+		return( CRYPT_OK );
+		}
+
+	/* For the non-ECC algorithms, the DLP check is simpler than the RSA one 
+	   because there are less odd parameter combinations possible, so we get 
+	   this one out of the way first */
 	if( isDlpAlgo( cryptAlgo ) )
 		{
 		const CRYPT_PKCINFO_DLP *dlpKey = ( CRYPT_PKCINFO_DLP * ) keyInfo;
 
-		/* Check the general and public components */
+		/* Check the general info */
 		if( ( dlpKey->isPublicKey != TRUE && dlpKey->isPublicKey != FALSE ) )
 			return( CRYPT_ARGERROR_STR1 );
 		if( dlpKey->pLen <= 0 || dlpKey->qLen <= 0 || dlpKey->gLen <= 0 || \
 			dlpKey->yLen < 0 || dlpKey->xLen < 0 )
 			return( CRYPT_ARGERROR_STR1 );
-		if( dlpKey->pLen < MIN_PKCSIZE_BITS || \
-			dlpKey->pLen > MAX_PKCSIZE_BITS || \
-			dlpKey->qLen < 128 || dlpKey->qLen > MAX_PKCSIZE_BITS || \
-			dlpKey->gLen < 2 || dlpKey->gLen > MAX_PKCSIZE_BITS || \
-			dlpKey->yLen < 0 || dlpKey->yLen > MAX_PKCSIZE_BITS )
+
+		/* Check the public components */
+		if( isShortPKCKey( dlpKey->pLen ) )
+			/* Special-case handling for insecure-sized public keys */
+			return( CRYPT_ERROR_NOSECURE );
+		if( dlpKey->pLen < bytesToBits( MIN_PKCSIZE ) || \
+			dlpKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+			dlpKey->qLen < 128 || \
+			dlpKey->qLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+			dlpKey->gLen < 2 || \
+			dlpKey->gLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+			dlpKey->yLen < 0 || \
+			dlpKey->yLen > bytesToBits( CRYPT_MAX_PKCSIZE ) )
 			/* y may be 0 if only x and the public params are available */
 			return( CRYPT_ARGERROR_STR1 );
 		if( dlpKey->isPublicKey )
 			return( CRYPT_OK );
 
 		/* Check the private components */
-		if( dlpKey->xLen < 128 || dlpKey->xLen > MAX_PKCSIZE_BITS )
+		if( dlpKey->xLen < 128 || \
+			dlpKey->xLen > bytesToBits( CRYPT_MAX_PKCSIZE ) )
 			return( CRYPT_ARGERROR_STR1 );
 		return( CRYPT_OK );
 		}
 
-	/* Check the general and public components */
+	/* Check the general info */
 	if( rsaKey->isPublicKey != TRUE && rsaKey->isPublicKey != FALSE )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->nLen <= 0 || rsaKey->eLen <= 0 || \
 		rsaKey->dLen < 0 || rsaKey->pLen < 0 || rsaKey->qLen < 0 || \
 		rsaKey->uLen < 0 || rsaKey->e1Len < 0 || rsaKey->e2Len < 0 )
 		return( CRYPT_ARGERROR_STR1 );
-	if( rsaKey->nLen < MIN_PKCSIZE_BITS || \
-		rsaKey->nLen > MAX_PKCSIZE_BITS || \
-		rsaKey->eLen < 2 || rsaKey->eLen > MAX_PKCSIZE_BITS || \
+
+	/* Check the public components */
+	if( isShortPKCKey( rsaKey->nLen ) )
+		/* Special-case handling for insecure-sized public keys */
+		return( CRYPT_ERROR_NOSECURE );
+	if( rsaKey->nLen < bytesToBits( MIN_PKCSIZE ) || \
+		rsaKey->nLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+		rsaKey->eLen < 2 || rsaKey->eLen > bytesToBits( 128 ) || \
 		rsaKey->eLen > rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->isPublicKey )
@@ -234,29 +290,29 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 	   all for the CRT shortcut) or recreate them when the key is loaded.  If 
 	   only d, p, and q are present we recreate e1 and e2 from them, we also 
 	   create u if necessary */
-	if( rsaKey->pLen < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		rsaKey->pLen > MAX_PKCSIZE_BITS || \
+	if( rsaKey->pLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
+		rsaKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
 		rsaKey->pLen >= rsaKey->nLen || \
-		rsaKey->qLen < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		rsaKey->qLen > MAX_PKCSIZE_BITS || \
+		rsaKey->qLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
+		rsaKey->qLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
 		rsaKey->qLen >= rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->dLen <= 0 && rsaKey->e1Len <= 0 )
 		/* Must have either d or e1 et al */
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->dLen && \
-		( rsaKey->dLen < MIN_PKCSIZE_BITS || \
-		  rsaKey->dLen > MAX_PKCSIZE_BITS ) )
+		( rsaKey->dLen < bytesToBits( MIN_PKCSIZE ) || \
+		  rsaKey->dLen > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->e1Len && \
-		( rsaKey->e1Len < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		  rsaKey->e1Len > MAX_PKCSIZE_BITS || \
-		  rsaKey->e2Len < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		  rsaKey->e2Len > MAX_PKCSIZE_BITS ) )
+		( rsaKey->e1Len < bytesToBits( MIN_PKCSIZE ) / 2 || \
+		  rsaKey->e1Len > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+		  rsaKey->e2Len < bytesToBits( MIN_PKCSIZE ) / 2 || \
+		  rsaKey->e2Len > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->uLen && \
-		( rsaKey->uLen < ( MIN_PKCSIZE_BITS / 2 ) - 8 || \
-		  rsaKey->uLen > MAX_PKCSIZE_BITS ) )
+		( rsaKey->uLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
+		  rsaKey->uLen > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 	return( CRYPT_OK );
 	}
@@ -405,6 +461,11 @@ static int generateKeyPKCFunction( CONTEXT_INFO *contextInfoPtr,
 	int keyLength, status;
 
 	assert( contextInfoPtr->type == CONTEXT_PKC );
+	assert( capabilityInfoPtr->generateKeyFunction != NULL );
+
+	/* Safety check for absent key-generation capability */
+	if( capabilityInfoPtr->generateKeyFunction == NULL )
+		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Set up supplementary key information */
 	contextInfoPtr->ctxPKC->pgpCreationTime = getApproxTime();

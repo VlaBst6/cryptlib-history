@@ -156,8 +156,13 @@ PKCS15_INFO *findEntry( const PKCS15_INFO *pkcs15info,
 				break;
 
 			case CRYPT_IKEYID_PGPKEYID:
+				/* For the PGP keyID we compare both IDs for the reasons 
+				   given in the PGP keyset read code */
 				if( matchID( pkcs15infoPtr->pgp2KeyID,
 							 pkcs15infoPtr->pgp2KeyIDlength, keyID,
+							 keyIDlength ) || \
+					matchID( pkcs15infoPtr->openPGPKeyID,
+							 pkcs15infoPtr->openPGPKeyIDlength, keyID,
 							 keyIDlength ) )
 					return( ( PKCS15_INFO * ) pkcs15infoPtr );
 				break;
@@ -324,6 +329,7 @@ int getValidityInfo( PKCS15_INFO *pkcs15info,
    it we parse the contents into memory for later use */
 
 static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
+						 const int nameLength,
 						 const CRYPT_KEYOPT_TYPE options )
 	{
 	PKCS15_INFO *pkcs15info;
@@ -334,7 +340,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	assert( isWritePtr( keysetInfo, sizeof( KEYSET_INFO ) ) && \
 			keysetInfo->type == KEYSET_FILE && \
 			keysetInfo->subType == KEYSET_SUBTYPE_PKCS15 );
-	assert( name == NULL );
+	assert( name == NULL && nameLength == 0 );
 	assert( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* If we're opening an existing keyset, skip the outer header, optional
@@ -841,7 +847,7 @@ static int getItem( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
 	setMessageCreateObjectIndirectInfo( &createInfo, certDataPtr,
 			pkcs15infoPtr->certDataSize - pkcs15infoPtr->certOffset,
 			( options & KEYMGMT_FLAG_DATAONLY_CERT ) ? \
-				CERTFORMAT_DATAONLY : CRYPT_CERTTYPE_CERTIFICATE );
+				CRYPT_ICERTTYPE_DATAONLY : CRYPT_CERTTYPE_CERTIFICATE );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, &createInfo,
 							  OBJECT_TYPE_CERTIFICATE );

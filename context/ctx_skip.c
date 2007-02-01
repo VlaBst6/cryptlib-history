@@ -42,8 +42,8 @@ void skipjackDecrypt( BYTE tab[ SKIPJACK_KEYSIZE ][ 256 ],
 
 static const struct SKIPJACK_TEST {
 	const BYTE key[ 10 ];
-	const BYTE plainText[ 8 ];
-	const BYTE cipherText[ 8 ];
+	const BYTE plaintext[ 8 ];
+	const BYTE ciphertext[ 8 ];
 	} FAR_BSS testSkipjack[] = {
 	{ { 0x00, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 },
 	  { 0x33, 0x22, 0x11, 0x00, 0xDD, 0xCC, 0xBB, 0xAA },
@@ -55,26 +55,16 @@ static const struct SKIPJACK_TEST {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getSkipjackCapability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ SKIPJACK_EXPANDED_KEYSIZE + 8 ];
-	BYTE temp[ SKIPJACK_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testSkipjack ) / sizeof( struct SKIPJACK_TEST ); i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		memcpy( temp, testSkipjack[ i ].plainText, SKIPJACK_BLOCKSIZE );
-		status = capabilityInfo->initKeyFunction( &contextInfo,
-					( BYTE * ) testSkipjack[ i ].key, SKIPJACK_KEYSIZE );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp,
-													  SKIPJACK_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testSkipjack[ i ].cipherText, temp, SKIPJACK_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		status = testCipher( capabilityInfo, keyData, testSkipjack[ i ].key, 
+							 SKIPJACK_KEYSIZE, testSkipjack[ i ].plaintext,
+							 testSkipjack[ i ].ciphertext );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );

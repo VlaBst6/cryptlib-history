@@ -35,8 +35,8 @@
 
 static const struct CAST_TEST {
 	BYTE key[ CAST_KEY_LENGTH + 8 ];
-	BYTE plainText[ CAST_BLOCKSIZE + 8 ];
-	BYTE cipherText[ CAST_BLOCKSIZE + 8 ];
+	BYTE plaintext[ CAST_BLOCKSIZE + 8 ];
+	BYTE ciphertext[ CAST_BLOCKSIZE + 8 ];
 	} FAR_BSS testCAST[] = {
 	{ { 0x01, 0x23, 0x45, 0x67, 0x12, 0x34, 0x56, 0x78,
 		0x23, 0x45, 0x67, 0x89, 0x34, 0x56, 0x78, 0x9A },
@@ -49,27 +49,16 @@ static const struct CAST_TEST {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getCASTCapability();
-	CONTEXT_INFO contextInfo;
-	CONV_INFO contextData;
 	BYTE keyData[ CAST_EXPANDED_KEYSIZE + 8 ];
-	BYTE temp[ CAST_BLOCKSIZE + 8 ];
 	int i, status;
 
 	for( i = 0; i < sizeof( testCAST ) / sizeof( struct CAST_TEST ); i++ )
 		{
-		staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
-						   &contextData, sizeof( CONV_INFO ), keyData );
-		memcpy( temp, testCAST[ i ].plainText, CAST_BLOCKSIZE );
-		status = capabilityInfo->initKeyFunction( &contextInfo, 
-												  testCAST[ i ].key,
-												  CAST_KEY_LENGTH );
-		if( cryptStatusOK( status ) )
-			status = capabilityInfo->encryptFunction( &contextInfo, temp, 
-													  CAST_BLOCKSIZE );
-		staticDestroyContext( &contextInfo );
-		if( cryptStatusError( status ) || \
-			memcmp( testCAST[ i ].cipherText, temp, CAST_BLOCKSIZE ) )
-			return( CRYPT_ERROR );
+		status = testCipher( capabilityInfo, keyData, testCAST[ i ].key, 
+							 CAST_KEY_LENGTH, testCAST[ i ].plaintext,
+							 testCAST[ i ].ciphertext );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 
 	return( CRYPT_OK );
@@ -412,7 +401,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128",
-	bitsToBytes( MIN_KEYSIZE_BITS ), bitsToBytes( 128 ), bitsToBytes( 128 ),
+	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB 

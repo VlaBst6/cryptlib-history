@@ -105,7 +105,7 @@ extern "C"
 {
 #endif
 
-#if defined( __WATCOMC__)
+#if defined( __WATCOMC__ ) && ( __WATCOMC__ >= 1100 )
 #  define XP_DIR __cdecl
 #else
 #  define XP_DIR

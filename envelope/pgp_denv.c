@@ -18,7 +18,7 @@
 /* Prototypes for functions in pgp_env.c */
 
 BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo, 
-					  const CRYPT_ALGO_TYPE cryptMode );
+					  const CRYPT_MODE_TYPE cryptMode );
 
 #ifdef USE_PGP
 

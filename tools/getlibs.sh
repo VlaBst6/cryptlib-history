@@ -71,6 +71,7 @@ fi
 #			alternatives.
 #	-lw = Widechar support.
 
+OSVERSION=`./tools/osversion.sh $OSNAME`
 case $OSNAME in
 	'AIX')
 		echo "-lc_r -lpthreads" ;;
@@ -95,13 +96,11 @@ case $OSNAME in
 		echo "-lpthread" ;;
 
 	'HP-UX')
-		case `uname -r | sed 's/^[A-Z].//' | cut -f 1 -d '.'` in
-			9|10)
-				echo "" ;;
-
-			11)
-				echo "-lpthread" ;;
-		esac ;;
+		if [ $OSVERSION -lt 10 ] ; then
+			echo "" ;
+		else
+			echo "-lpthread" ;
+		fi ;;
 
 	'IRIX'|'IRIX64')
 		echo "-lw" ;;
@@ -110,17 +109,13 @@ case $OSNAME in
 		echo "-lresolv -lpthread" ;;
 
 	'SunOS')
-		case `uname -r | cut -f 1 -d '.'` in
-			4)
-				echo "-ldl -lnsl -lposix4" ;;
-
-			5|6)
-				echo "-lw -lsocket -lkstat -lnsl -lposix4 -lthread" ;;
-
-			7|8|9)
-				echo "-lw -lresolv -lsocket -lkstat -lrt -lnsl -lthread" ;;
-
-			esac ;;
+		if [ $OSVERSION -le 4 ] ; then
+			echo "-ldl -lnsl -lposix4" ;
+		elif [ $OSVERSION -le 6 ] ; then
+			echo "-lw -lsocket -lkstat -lnsl -lposix4 -lthread" ;
+		else
+			echo "-lw -lresolv -lsocket -lkstat -lrt -lnsl -lthread" ;
+		fi ;;
 
 	'UNIX_SV')
 		echo "-K xpg42 -lnsl -lsocket -lc89 -lresolv" ;;

@@ -55,7 +55,7 @@ static int processHelloSSLv2( SESSION_INFO *sessionInfoPtr,
 	if( suiteLength < 3 || ( suiteLength % 3 ) != 0 || \
 		sessionIDlength < 0 || sessionIDlength > MAX_SESSIONID_SIZE || \
 		nonceLength < 16 || nonceLength > SSL_NONCE_SIZE )
-		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 				"Invalid legacy SSLv2 hello packet" );
 	status = processCipherSuite( sessionInfoPtr, handshakeInfo, stream, 
 								 suiteLength / 3 );
@@ -106,11 +106,10 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 	/* Handle session resumption */
 	if( status == OK_SPECIAL && \
 		( resumedSessionID = \
-			findScoreboardEntry( &sessionInfoPtr->sessionSSL->scoreboardInfo,
-								 handshakeInfo->sessionID, 
-								 handshakeInfo->sessionIDlength,
-								 handshakeInfo->premasterSecret,
-								 &handshakeInfo->premasterSecretSize ) ) != 0 )
+			findScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+					handshakeInfo->sessionID, handshakeInfo->sessionIDlength,
+					handshakeInfo->premasterSecret, SSL_SECRET_SIZE,
+					&handshakeInfo->premasterSecretSize ) ) != SCOREBOARD_UNIQUEID_NONE )
 		{
 #if 0	/* Old PSK mechanism */
 		/* It's a resumed session, if it's a fixed entry that was added 
@@ -205,6 +204,14 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		dualMacData( handshakeInfo, stream, FALSE );
 		return( OK_SPECIAL );	/* Tell caller it's a resumed session */
 		}
+
+	/*	...	(optional server supplemental data)
+		byte		ID = SSL_HAND_SUPPLEMENTAL_DATA
+		uint24		len
+		uint16		type
+		uint16		len
+		byte[]		value
+		... */
 
 	/*	...
 		(optional server cert chain)
@@ -359,9 +366,9 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, CRYPT_ERROR_INVALID,
-					"Client certificate is not trusted for client "
-					"authentication" );
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_INVALID,
+					"Client certificate is not trusted for authentication "
+					"purposes" );
 			}
 
 		/* Read the next packet(s) if necessary */
@@ -398,12 +405,11 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
 		status = readInteger16U( stream, keyAgreeParams.publicValue,
 								 &keyAgreeParams.publicValueLen,
-								 bitsToBytes( MIN_PKCSIZE_BITS ),
-								 CRYPT_MAX_PKCSIZE );
+								 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
-			retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 					"Invalid DH key agreement data" );
 			}
 
@@ -446,7 +452,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 				cryptStatusError( sread( stream, userID, length ) ) )
 				{
 				sMemDisconnect( stream );
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid client user ID" );
 				}
 			attributeListPtr = \
@@ -456,9 +462,9 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			if( attributeListPtr == NULL )
 				{
 				sMemDisconnect( stream );
-				retExt( sessionInfoPtr, CRYPT_ERROR_WRONGKEY,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
 						"Unknown user name '%s'", 
-						sanitiseString( userID, length ) );
+						sanitiseString( userID, length, length ) );
 				}
 
 			/* Select the attribute with the user ID and move on to the
@@ -476,7 +482,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			if( cryptStatusError( status ) )
 				{
 				sMemDisconnect( stream );
-				retExt( sessionInfoPtr, status, 
+				retExt( SESSION_ERRINFO, status, 
 						"Couldn't create SSL master secret from shared "
 						"secret/password value" );
 				}
@@ -493,19 +499,17 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 				   omnes.  The spec itself is ambiguous on the topic).  This 
 				   was fixed in TLS (although the spec is still ambigous) so 
 				   the encoding differs slightly between SSL and TLS */
-				if( length < bitsToBytes( MIN_PKCSIZE_BITS ) || \
-					length > CRYPT_MAX_PKCSIZE || \
+				if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE || \
 					cryptStatusError( sread( stream, wrappedKey, length ) ) )
 					status = CRYPT_ERROR_BADDATA;
 				}
 			else
 				status = readInteger16U( stream, wrappedKey, &length, 
-										 bitsToBytes( MIN_PKCSIZE_BITS ),
-										 CRYPT_MAX_PKCSIZE );
+										 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 			if( cryptStatusError( status ) )
 				{
 				sMemDisconnect( stream );
-				retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
+				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
 						"Invalid RSA encrypted key data" );
 				}
 
@@ -534,7 +538,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			byte[]		signature */
 		length = checkHSPacketHeader( sessionInfoPtr, stream,
 									  SSL_HAND_CLIENT_CERTVERIFY, 
-									  bitsToBytes( MIN_PKCSIZE_BITS ) );
+									  MIN_PKCSIZE );
 		if( cryptStatusError( length ) )
 			{
 			sMemDisconnect( stream );
