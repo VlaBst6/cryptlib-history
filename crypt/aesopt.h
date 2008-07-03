@@ -1,25 +1,20 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 2003, Dr Brian Gladman, Worcester, UK.   All rights reserved.
+ Copyright (c) 1998-2007, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
- The free distribution and use of this software in both source and binary
- form is allowed (with or without changes) provided that:
+ The free distribution and use of this software is allowed (with or without
+ changes) provided that:
 
-   1. distributions of this source code include the above copyright
-      notice, this list of conditions and the following disclaimer;
+  1. source code distributions include the above copyright notice, this
+     list of conditions and the following disclaimer;
 
-   2. distributions in binary form include the above copyright
-      notice, this list of conditions and the following disclaimer
-      in the documentation and/or other associated materials;
+  2. binary distributions include the above copyright notice, this list
+     of conditions and the following disclaimer in their documentation;
 
-   3. the copyright holder's name is not used to endorse products
-      built using this software without specific written permission.
-
- ALTERNATIVELY, provided that this notice is retained in full, this product
- may be distributed under the terms of the GNU General Public License (GPL),
- in which case the provisions of the GPL apply INSTEAD OF those given above.
+  3. the name of the copyright holder is not used to endorse products
+     built using this software without specific written permission.
 
  DISCLAIMER
 
@@ -27,7 +22,7 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue Date: 20/12/2007
 
  This file contains the compilation options for AES (Rijndael) and code
  that is common across encryption, key scheduling and table generation.
@@ -70,7 +65,7 @@
                                                   const aes_decrypt_ctx cx[1]);
 
  IMPORTANT NOTE: If you are using this C interface with dynamic tables make sure that
- you call gen_tabs() before AES is used so that the tables are initialised.
+ you call aes_init() before AES is used so that the tables are initialised.
 
  C++ aes class subroutines:
 
@@ -107,16 +102,35 @@
    code - pcg */
 
 #if defined( _MSC_VER ) && ( _MSC_VER > 800 ) && \
-	defined( _M_IX86 ) && !defined( _WIN32_WCE )
-  #define USE_VIA_ACE_IF_PRESENT
-  #define ASM_X86_V2C
+	defined( _M_IX86 ) && \
+	!( defined( _WIN32_WCE ) || defined( NO_ASM ) )
+  #ifndef USE_VIA_ACE_IF_PRESENT
+    #define USE_VIA_ACE_IF_PRESENT
+  #endif
+#endif /* VC++ on x86 under Win32 - pcg */
+
+#if defined( _MSC_VER ) && ( _MSC_VER > 800 ) && \
+	!( defined( _WIN32_WCE ) || defined( NO_ASM ) )
+  /* The apparently redundant guards are necessary in case users manually
+     define the values to enable various asm options */
+  #if defined( _M_X64 )
+	#ifndef ASM_AMD64_C
+	  #define ASM_AMD64_C
+	#endif /* ASM_AMD64_C */
+  #elif defined( _M_IX86 )
+	#ifndef ASM_X86_V2C
+	  #define ASM_X86_V2C
+	#endif /* ASM_X86_V2C */
+  #else
+	#define NO_ASM
+  #endif /* Different x86 architectures */
 #endif /* VC++ on x86 under Win32 - pcg */
 
 #if defined( INC_ALL )
   #include "aes.h"
 #else
   #include "crypt/aes.h"
-#endif /* Compiler-specific includes */
+#endif /* Compiler-specific includes - pcg */
 
 /*  PLATFORM SPECIFIC INCLUDES */
 
@@ -124,7 +138,7 @@
   #include "brg_endian.h"
 #else
   #include "crypt/brg_endian.h"
-#endif /* Compiler-specific includes */
+#endif /* Compiler-specific includes - pcg */
 
 /*  CONFIGURATION - THE USE OF DEFINES
 
@@ -180,7 +194,7 @@
     This define will hence be redefined later (in section 4) if necessary
 */
 
-#if 1 
+#if 1
 #define ALGORITHM_BYTE_ORDER PLATFORM_BYTE_ORDER
 #elif 0
 #define ALGORITHM_BYTE_ORDER IS_LITTLE_ENDIAN
@@ -192,18 +206,18 @@
 
 /*  2. VIA ACE SUPPORT
 
-    Define this option if support for the VIA ACE is required. This uses 
-    inline assembler instructions and is only implemented for the Microsoft, 
+    Define this option if support for the VIA ACE is required. This uses
+    inline assembler instructions and is only implemented for the Microsoft,
     Intel and GCC compilers.  If VIA ACE is known to be present, then defining
-    ASSUME_VIA_ACE_PRESENT will remove the ordinary encryption/decryption 
+    ASSUME_VIA_ACE_PRESENT will remove the ordinary encryption/decryption
     code.  If USE_VIA_ACE_IF_PRESENT is defined then VIA ACE will be used if
-    it is detected (both present and enabled) but the normal AES code will 
-    also be present. 
-    
-    When VIA ACE is to be used, all AES encryption contexts MUST be 16 byte 
-    aligned; other input/output buffers do not need to be 16 byte aligned 
-    but there are very large performance gains if this can be arranged.  
-    VIA ACE also requires the decryption key schedule to be in reverse 
+    it is detected (both present and enabled) but the normal AES code will
+    also be present.
+
+    When VIA ACE is to be used, all AES encryption contexts MUST be 16 byte
+    aligned; other input/output buffers do not need to be 16 byte aligned
+    but there are very large performance gains if this can be arranged.
+    VIA ACE also requires the decryption key schedule to be in reverse
     order (which later checks below ensure).
 */
 
@@ -216,7 +230,7 @@
 #  endif
 
 #if defined ( _WIN64 ) || defined( _WIN32_WCE ) || \
-					defined( _MSC_VER ) && ( _MSC_VER <= 800 )
+                    defined( _MSC_VER ) && ( _MSC_VER <= 800 )
 #  if defined( USE_VIA_ACE_IF_PRESENT )
 #    undef USE_VIA_ACE_IF_PRESENT
 #  endif
@@ -231,39 +245,32 @@
     assembler code routines for encryption, decryption and key scheduling
     as follows:
 
-    ASM_X86_V1C uses the assembler (aes_x86_v1.asm) with large tables for 
+    ASM_X86_V1C uses the assembler (aes_x86_v1.asm) with large tables for
                 encryption and decryption and but with key scheduling in C
     ASM_X86_V2  uses assembler (aes_x86_v2.asm) with compressed tables for
                 encryption, decryption and key scheduling
-    ASM_X86_V2C	uses assembler (aes_x86_v2.asm) with compressed tables for
+    ASM_X86_V2C uses assembler (aes_x86_v2.asm) with compressed tables for
                 encryption and decryption and but with key scheduling in C
-    ASM_AMD64_C	uses assembler (aes_amd64.asm) with compressed tables for
+    ASM_AMD64_C uses assembler (aes_amd64.asm) with compressed tables for
                 encryption and decryption and but with key scheduling in C
 
-    Change one 'if 0' below to 'if 1' to select the version or define 
+    Change one 'if 0' below to 'if 1' to select the version or define
     as a compilation option.
 */
 
-#if defined ( ASM_X86_V1C ) || defined( ASM_X86_V2 ) || defined( ASM_X86_V2C )
-#  if defined( _M_IX86 )
-#    if 0 && !defined( ASM_X86_V1C )
-#      define ASM_X86_V1C
-#    elif 0 && !defined( ASM_X86_V2  )
-#      define ASM_X86_V2
-#    elif 0 && !defined( ASM_X86_V2C )
-#      define ASM_X86_V2C
-#    endif
-#  else
-#    error Assembler code is only available for x86 and AMD64 systems
-#  endif
-#elif defined( ASM_AMD64_C )
-#  if defined( _M_X64 )
-#    if 0 && !defined( ASM_AMD64_C )
-#      define ASM_AMD64_C
-#    endif
-#  else
-#    error Assembler code is only available for x86 and AMD64 systems
-#  endif
+#if 0 && !defined( ASM_X86_V1C )
+#  define ASM_X86_V1C
+#elif 0 && !defined( ASM_X86_V2  )
+#  define ASM_X86_V2
+#elif 0 && !defined( ASM_X86_V2C )
+#  define ASM_X86_V2C
+#elif 0 && !defined( ASM_AMD64_C )
+#  define ASM_AMD64_C
+#endif
+
+#if (defined ( ASM_X86_V1C ) || defined( ASM_X86_V2 ) || defined( ASM_X86_V2C )) \
+      && !defined( _M_IX86 ) || defined( ASM_AMD64_C ) && !defined( _M_X64 )
+#  error Assembler code is only available for x86 and AMD64 systems
 #endif
 
 /*  4. FAST INPUT/OUTPUT OPERATIONS.
@@ -336,15 +343,25 @@
 /*  8. FIXED OR DYNAMIC TABLES
 
     When this section is included the tables used by the code are compiled
-    statically into the binary file.  Otherwise the subroutine gen_tabs()
+    statically into the binary file.  Otherwise the subroutine aes_init()
     must be called to compute them before the code is first used.
 */
-#if 1 && !(defined( _MSC_VER ) && ( _MSC_VER <= 800 )) && \
-		 !(defined( __QNX__ ) && ( OSVERSION <= 4 ))			/* pcg */
+#if 1 && !(defined( _MSC_VER ) && ( _MSC_VER <= 800 ))
 #define FIXED_TABLES
 #endif
 
-/*  9. TABLE ALIGNMENT
+/*  9. MASKING OR CASTING FROM LONGER VALUES TO BYTES
+
+    In some systems it is better to mask to create a byte value rather than
+    casting
+*/
+#if 0
+#  define to_byte(x)  ((uint_8t)(x))
+#else
+#  define to_byte(x)  ((x) & 0xff)
+#endif
+
+/*  10. TABLE ALIGNMENT
 
     On some sytsems speed will be improved by aligning the AES large lookup
     tables on particular boundaries. This define should be set to a power of
@@ -357,8 +374,8 @@
 #define TABLE_ALIGN 32
 #endif
 
-/*  10. TABLE OPTIONS
-    
+/*  11. TABLE OPTIONS
+
     This cipher proceeds by repeating in a number of cycles known as 'rounds'
     which are implemented by a round function which can optionally be speeded
     up using tables.  The basic tables are each 256 32-bit words, with either
@@ -445,7 +462,7 @@
 /* Assembler support requires the use of platform byte order */
 
 #if ( defined( ASM_X86_V1C ) || defined( ASM_X86_V2C ) || defined( ASM_AMD64_C ) ) \
-	&& (ALGORITHM_BYTE_ORDER != PLATFORM_BYTE_ORDER)
+    && (ALGORITHM_BYTE_ORDER != PLATFORM_BYTE_ORDER)
 #undef  ALGORITHM_BYTE_ORDER
 #define ALGORITHM_BYTE_ORDER PLATFORM_BYTE_ORDER
 #endif
@@ -469,7 +486,7 @@
 
 /*  This implementation provides subroutines for encryption, decryption
     and for setting the three key lengths (separately) for encryption
-    and decryption. Since not all functions are needed, masks are set 
+    and decryption. Since not all functions are needed, masks are set
     up here to determine which will be implemented in C
 */
 
@@ -487,7 +504,7 @@
 #if !defined( AES_DECRYPT )
 #  define DFUNCS_IN_C   0
 #elif defined( ASSUME_VIA_ACE_PRESENT ) || defined( ASM_X86_V1C ) \
-    || defined( ASM_X86_V2C ) || defined( ASM_AMD64_C )	
+    || defined( ASM_X86_V2C ) || defined( ASM_AMD64_C )
 #  define DFUNCS_IN_C   DEC_KEYING_IN_C
 #elif !defined( ASM_X86_V2 )
 #  define DFUNCS_IN_C   ( DECRYPTION_IN_C | DEC_KEYING_IN_C )
@@ -552,7 +569,7 @@
 #if ( ALGORITHM_BYTE_ORDER == IS_LITTLE_ENDIAN )
 #define upr(x,n)        (((uint_32t)(x) << (8 * (n))) | ((uint_32t)(x) >> (32 - 8 * (n))))
 #define ups(x,n)        ((uint_32t) (x) << (8 * (n)))
-#define bval(x,n)       ((uint_8t)((x) >> (8 * (n))))
+#define bval(x,n)       to_byte((x) >> (8 * (n)))
 #define bytes2word(b0, b1, b2, b3)  \
         (((uint_32t)(b3) << 24) | ((uint_32t)(b2) << 16) | ((uint_32t)(b1) << 8) | (b0))
 #endif
@@ -560,7 +577,7 @@
 #if ( ALGORITHM_BYTE_ORDER == IS_BIG_ENDIAN )
 #define upr(x,n)        (((uint_32t)(x) >> (8 * (n))) | ((uint_32t)(x) << (32 - 8 * (n))))
 #define ups(x,n)        ((uint_32t) (x) >> (8 * (n)))
-#define bval(x,n)       ((uint_8t)((x) >> (24 - 8 * (n))))
+#define bval(x,n)       to_byte((x) >> (24 - 8 * (n)))
 #define bytes2word(b0, b1, b2, b3)  \
         (((uint_32t)(b0) << 24) | ((uint_32t)(b1) << 16) | ((uint_32t)(b2) << 8) | (b3))
 #endif

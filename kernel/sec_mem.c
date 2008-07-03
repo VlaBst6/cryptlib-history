@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Secure Memory Management						*
-*						Copyright Peter Gutmann 1995-2005					*
+*						Copyright Peter Gutmann 1995-2007					*
 *																			*
 ****************************************************************************/
 
@@ -25,9 +25,9 @@ static KERNEL_DATA *krnlData = NULL;
 
 #define MIN_ALLOC_SIZE		8
 #ifdef __MSDOS__
-  #define MAX_ALLOC_SIZE	16384
+  #define MAX_ALLOC_SIZE	8192
 #else
-  #define MAX_ALLOC_SIZE	65536L
+  #define MAX_ALLOC_SIZE	32768L
 #endif /* 16 vs. 32-bit systems */
 
 /* To support page locking we need to store some additional information with
@@ -72,73 +72,131 @@ static KERNEL_DATA *krnlData = NULL;
   #define checkMemCanary( memBlockPtr, memPtr )
 #endif /* NDEBUG */
 
-/* Insert and unlink a memory block from a list of memory blocks */
-
-#define insertMemBlock( allocatedListHead, allocatedListTail, memBlockPtr ) \
-		if( allocatedListHead == NULL ) \
-			allocatedListHead = allocatedListTail = memBlockPtr; \
-		else \
-			{ \
-			allocatedListTail->next = memBlockPtr; \
-			memBlockPtr->prev = allocatedListTail; \
-			allocatedListTail = memBlockPtr; \
-			}
-
-#define unlinkMemBlock( allocatedListHead, allocatedListTail, memBlockPtr ) \
-		{ \
-		MEMLOCK_INFO *nextBlockPtr, *prevBlockPtr; \
-		\
-		nextBlockPtr = memBlockPtr->next; \
-		prevBlockPtr = memBlockPtr->prev; \
-		if( memBlockPtr == allocatedListHead ) \
-			allocatedListHead = nextBlockPtr; \
-		else \
-			prevBlockPtr->next = nextBlockPtr; \
-		if( nextBlockPtr != NULL ) \
-			nextBlockPtr->prev = prevBlockPtr; \
-		if( memBlockPtr == allocatedListTail ) \
-			allocatedListTail = prevBlockPtr; \
-		}
-
-/* Prepare to allocate/free a block of secure memory */
-
-#define checkInitAlloc( ptr, size ) \
-		if( !isWritePtr( ptr, sizeof( void * ) ) || \
-			( size ) < MIN_ALLOC_SIZE || ( size ) > MAX_ALLOC_SIZE ) \
-			{ \
-			assert( NOTREACHED ); \
-			return( CRYPT_ERROR_MEMORY ); \
-			} \
-		*( ptr ) = NULL; \
-
-#define checkInitFree( ptr, memPtr, memBlockPtr ) \
-		if( !isReadPtr( ptr, sizeof( void * ) ) || \
-			!isReadPtr( *( ptr ), sizeof( MIN_ALLOC_SIZE ) ) ) \
-			{ \
-			assert( NOTREACHED ); \
-			return; \
-			} \
-		memPtr = ( ( BYTE * ) *( ptr ) ) - MEMLOCK_HEADERSIZE; \
-		if( !isReadPtr( memPtr, sizeof( MEMLOCK_INFO ) ) ) \
-			{ \
-			assert( NOTREACHED ); \
-			return; \
-			} \
-		memBlockPtr = ( MEMLOCK_INFO * ) memPtr; \
-		if( memBlockPtr->size < sizeof( MEMLOCK_INFO ) + MIN_ALLOC_SIZE || \
-			memBlockPtr->size > sizeof( MEMLOCK_INFO ) + MAX_ALLOC_SIZE || \
-			( memBlockPtr->isLocked != FALSE && \
-			  memBlockPtr->isLocked != TRUE ) ) \
-			{ \
-			assert( NOTREACHED ); \
-			return; \
-			}
-
 /****************************************************************************
 *																			*
 *								Misc Functions								*
 *																			*
 ****************************************************************************/
+
+/* Prepare to allocate/free a block of secure memory */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkInitAlloc( OUT void **allocPtrPtr, 
+						   IN_RANGE( MIN_ALLOC_SIZE, MAX_ALLOC_SIZE ) \
+							const int size )
+	{
+	/* Make sure that the parameters are in order */
+	if( !isWritePtr( allocPtrPtr, sizeof( void * ) ) )
+		retIntError();
+	
+	REQUIRES( size >= MIN_ALLOC_SIZE && size <= MAX_ALLOC_SIZE );
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int checkInitFree( void **freePtrPtr, OUT_PTR BYTE **memPtrPtr, 
+						  OUT_PTR MEMLOCK_INFO **memBlockPtrPtr )
+	{
+	MEMLOCK_INFO *memBlockPtr;
+	BYTE *memPtr;
+
+	PRE( isWritePtr( memPtrPtr, sizeof( BYTE * ) ) );
+	PRE( isWritePtr( memBlockPtrPtr, sizeof( MEMLOCK_INFO * ) ) );
+
+	/* Make sure that the parameters are in order */
+	if( !isReadPtr( freePtrPtr, sizeof( void * ) ) || \
+		!isReadPtr( *freePtrPtr, sizeof( MIN_ALLOC_SIZE ) ) )
+		retIntError();
+
+	/* Recover the actual allocated memory block data from the pointer */
+	memPtr = ( ( BYTE * ) *freePtrPtr ) - MEMLOCK_HEADERSIZE;
+	if( !isReadPtr( memPtr, sizeof( MEMLOCK_INFO ) ) )
+		retIntError();
+	memBlockPtr = ( MEMLOCK_INFO * ) memPtr;
+	REQUIRES( memBlockPtr->size >= sizeof( MEMLOCK_INFO ) + MIN_ALLOC_SIZE && \
+			  memBlockPtr->size <= sizeof( MEMLOCK_INFO ) + MAX_ALLOC_SIZE && \
+			  ( memBlockPtr->isLocked == FALSE || \
+				memBlockPtr->isLocked == TRUE ) );
+
+	*memPtrPtr = memPtr;
+	*memBlockPtrPtr = memBlockPtr;
+	return( CRYPT_OK );
+	}
+
+/* Insert and unlink a memory block from a list of memory blocks.  We can't 
+   use insertDoubleListElements()/deleteDoubleListElement() for this because 
+   they don't handle the end-of-list pointer, since they're intended for 
+   random-access lists rather than append-only lists */
+
+STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static void insertMemBlock( INOUT MEMLOCK_INFO **allocatedListHeadPtr, 
+							INOUT MEMLOCK_INFO **allocatedListTailPtr, 
+							INOUT MEMLOCK_INFO *memBlockPtr )
+	{
+	MEMLOCK_INFO *allocatedListHead = *allocatedListHeadPtr;
+	MEMLOCK_INFO *allocatedListTail = *allocatedListTailPtr;
+
+	assert( isWritePtr( allocatedListHeadPtr, sizeof( MEMLOCK_INFO * ) ) );
+	assert( allocatedListHead == NULL || \
+			isWritePtr( allocatedListHead, sizeof( MEMLOCK_INFO ) ) );
+	assert( isWritePtr( allocatedListTailPtr, sizeof( MEMLOCK_INFO * ) ) );
+	assert( allocatedListTail == NULL || \
+			isWritePtr( allocatedListTail, sizeof( MEMLOCK_INFO ) ) );
+	assert( isWritePtr( memBlockPtr, sizeof( MEMLOCK_INFO * ) ) );
+
+	/* If it's a new list, set up the head and tail pointers and return */
+	if( allocatedListHead == NULL )
+		{
+		*allocatedListHeadPtr = *allocatedListTailPtr = memBlockPtr;
+		return;
+		}
+
+	/* It's an existing list, add the new element to the end */
+	allocatedListTail->next = memBlockPtr;
+	memBlockPtr->prev = allocatedListTail;
+	*allocatedListTailPtr = memBlockPtr;
+	}
+
+STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static void unlinkMemBlock( INOUT MEMLOCK_INFO **allocatedListHeadPtr, 
+							INOUT MEMLOCK_INFO **allocatedListTailPtr, 
+							INOUT MEMLOCK_INFO *memBlockPtr )
+	{
+	MEMLOCK_INFO *allocatedListHead = *allocatedListHeadPtr;
+	MEMLOCK_INFO *allocatedListTail = *allocatedListTailPtr;
+	MEMLOCK_INFO *nextBlockPtr = memBlockPtr->next;
+	MEMLOCK_INFO *prevBlockPtr = memBlockPtr->prev;
+
+	assert( isWritePtr( allocatedListHeadPtr, sizeof( MEMLOCK_INFO * ) ) );
+	assert( allocatedListHead == NULL || \
+			isWritePtr( allocatedListHead, sizeof( MEMLOCK_INFO ) ) );
+	assert( isWritePtr( allocatedListTailPtr, sizeof( MEMLOCK_INFO * ) ) );
+	assert( allocatedListTail == NULL || \
+			isWritePtr( allocatedListTail, sizeof( MEMLOCK_INFO ) ) );
+	assert( isWritePtr( memBlockPtr, sizeof( MEMLOCK_INFO * ) ) );
+
+	/* If we're removing the block from the start of the list, make the
+	   start the next block */
+	if( memBlockPtr == allocatedListHead )
+		*allocatedListHeadPtr = nextBlockPtr;
+	else
+		{
+		assert( prevBlockPtr != NULL );
+
+		/* Delete from the middle or end of the list */
+		prevBlockPtr->next = nextBlockPtr;
+		}
+	if( nextBlockPtr != NULL )
+		nextBlockPtr->prev = prevBlockPtr;
+
+	/* If we're removed the last element, update the end pointer */
+	if( memBlockPtr == allocatedListTail )
+		*allocatedListTailPtr = prevBlockPtr;
+
+	/* Clear the current block's pointers, just to be clean */
+	memBlockPtr->next = memBlockPtr->prev = NULL;
+	}
 
 #if 0	/* Currently unused, in practice would be called from a worker thread
 		   that periodically touches all secure-data pages */
@@ -165,20 +223,25 @@ static void touchAllocatedPages( void )
 	for( memBlockPtr = krnlData->allocatedListHead; memBlockPtr != NULL;
 		 memBlockPtr = memBlockPtr->next )
 		{
-		if( memBlockPtr->size > 4096 )
+		const int pageSize = getSysVar( SYSVAR_PAGESIZE );
+
+		/* If the allocated region has pages beyond the first one (which 
+		   we've already touched by accessing the header), explicitly
+		   touch those pages as well */
+		if( memBlockPtr->size > pageSize )
 			{
-			BYTE *memPtr = ( BYTE * ) memBlockPtr + 4096;
+			BYTE *memPtr = ( BYTE * ) memBlockPtr + pageSize;
 			int memSize = memBlockPtr->size;
 
 			/* Touch each page.  The rather convoluted expression is to try
 			   and stop it from being optimised away - it always evaluates to
 			   true since we only get here if allocatedListHead != NULL, but
 			   hopefully the compiler won't be able to figure that out */
-			while( memSize > 4096 )
+			while( memSize > pageSize )
 				{
 				if( *memPtr || krnlData->allocatedListHead != NULL )
-					memPtr += 4096;
-				memSize -= 4096;
+					memPtr += pageSize;
+				memSize -= pageSize;
 				}
 			}
 		}
@@ -198,6 +261,10 @@ static void touchAllocatedPages( void )
 
 int initAllocation( KERNEL_DATA *krnlDataPtr )
 	{
+	int status;
+
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
 
@@ -206,7 +273,8 @@ int initAllocation( KERNEL_DATA *krnlDataPtr )
 
 	/* Initialize any data structures required to make the allocation thread-
 	   safe */
-	MUTEX_CREATE( allocation );
+	MUTEX_CREATE( allocation, status );
+	ENSURES( cryptStatusOK( status ) );
 
 	return( CRYPT_OK );
 	}
@@ -257,8 +325,14 @@ int krnlMemalloc( void **pointer, int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitAlloc( pointer, size );
+	status = checkInitAlloc( pointer, size );
+	if( cryptStatusError( status ) )
+		return( status );
+	
+	/* Clear return values */
+	*pointer = NULL;
 
 	/* Try and allocate the memory */
 	adjustMemCanary( size );	/* For canary at end of block */
@@ -286,9 +360,9 @@ int krnlMemalloc( void **pointer, int size )
 	   strange paging strategy and gradual creeping takeover of free memory
 	   for disk buffers, it can get paged even on a completely unloaded
 	   system).  However, attempts to force data to be paged under Win2K
-	   and XP under various conditions have been unsuccesful, so it may be
+	   and XP under various conditions have been unsuccesful so it may be
 	   that the behaviour changed in post-NT versions of the OS.  In any
-	   case, VirtualLock() under these newer OSes seems to be fairly
+	   case VirtualLock() under these newer OSes seems to be fairly
 	   effective in keeping data off disk.
 
 	   An additional concern is that although VirtualLock() takes arbitrary
@@ -309,8 +383,8 @@ int krnlMemalloc( void **pointer, int size )
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	insertMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 #ifdef USE_HEAP_CHECKING
 	/* Sanity check to detect memory chain corruption */
 	assert( _CrtIsValidHeapPointer( memBlockPtr ) );
@@ -333,8 +407,11 @@ void krnlMemfree( void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitFree( pointer, memPtr, memBlockPtr );
+	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
@@ -347,8 +424,8 @@ void krnlMemfree( void **pointer )
 	assert( memBlockPtr->prev == NULL || \
 			_CrtIsValidHeapPointer( memBlockPtr->prev ) );
 #endif /* USE_HEAP_CHECKING */
-	unlinkMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	unlinkMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 #if !defined( NT_DRIVER )
 	/* Because VirtualLock() works on a per-page basis, we can't unlock a
 	   memory block if there's another locked block on the same page.  The
@@ -366,16 +443,7 @@ void krnlMemfree( void **pointer )
 		{
 		MEMLOCK_INFO *currentBlockPtr;
 		PTR_TYPE block1PageAddress, block2PageAddress;
-		static int pageSize = 0;
-
-		/* If the page size hasn't been determined yet, set it up now */
-		if( pageSize <= 0 )
-			{
-			SYSTEM_INFO systemInfo;
-			
-			GetSystemInfo( &systemInfo );
-			pageSize = systemInfo.dwPageSize;
-			}
+		const int pageSize = getSysVar( SYSVAR_PAGESIZE );
 
 		/* Calculate the addresses of the page(s) in which the memory block
 		   resides */
@@ -484,8 +552,14 @@ int krnlMemalloc( void **pointer, int size )
 #if defined( __BEOS__ )
 	area_id areaID;
 #endif /* __BEOS__ && BeOS areas */
+	int status;
 
-	checkInitAlloc( pointer, size );
+	status = checkInitAlloc( pointer, size );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Clear return values */
+	*pointer = NULL;
 
 	/* Try and allocate the memory */
 	adjustMemCanary( size );	/* For canary at end of block */
@@ -537,8 +611,8 @@ int krnlMemalloc( void **pointer, int size )
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	insertMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -557,14 +631,17 @@ void krnlMemfree( void **pointer )
 #if defined( __BEOS__ )
 	area_id areaID;
 #endif /* __BEOS__ && BeOS areas */
+	int status;
 
-	checkInitFree( pointer, memPtr, memBlockPtr );
+	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	unlinkMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory was locked, unlock it now */
@@ -608,8 +685,14 @@ int krnlMemalloc( void **pointer, int size )
 	BYTE *memPtr;
 	KnRgnDesc rgnDesc = { K_ANYWHERE, size + MEMLOCK_HEADERSIZE, \
 						  K_WRITEABLE | K_NODEMAND };
+	int status;
 
-	checkInitAlloc( pointer, size );
+	status = checkInitAlloc( pointer, size );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Clear return values */
+	*pointer = NULL;
 
 	/* Try and allocate the memory */
 	adjustMemCanary( size );	/* For canary at end of block */
@@ -625,8 +708,8 @@ int krnlMemalloc( void **pointer, int size )
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	insertMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -643,14 +726,17 @@ void krnlMemfree( void **pointer )
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 	KnRgnDesc rgnDesc = { K_ANYWHERE, 0, 0 };
+	int status;
 
-	checkInitFree( pointer, memPtr, memBlockPtr );
+	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	unlinkMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* Zeroise the memory (including the memlock info), free it, and zero
@@ -678,8 +764,14 @@ int krnlMemalloc( void **pointer, int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitAlloc( pointer, size );
+	status = checkInitAlloc( pointer, size );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Clear return values */
+	*pointer = NULL;
 
 	/* Try and allocate the memory */
 	adjustMemCanary( size );	/* For canary at end of block */
@@ -706,8 +798,8 @@ int krnlMemalloc( void **pointer, int size )
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	insertMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -723,14 +815,17 @@ void krnlMemfree( void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitFree( pointer, memPtr, memBlockPtr );
+	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	unlinkMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory is locked, unlock it now */
@@ -765,8 +860,14 @@ int krnlMemalloc( void **pointer, int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitAlloc( pointer, size );
+	status = checkInitAlloc( pointer, size );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Clear return values */
+	*pointer = NULL;
 
 	/* Try and allocate the memory */
 	adjustMemCanary( size );	/* For canary at end of block */
@@ -789,8 +890,8 @@ int krnlMemalloc( void **pointer, int size )
 
 	/* Lock the memory list, insert the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
-	insertMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	insertMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	return( CRYPT_OK );
@@ -806,14 +907,17 @@ void krnlMemfree( void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
+	int status;
 
-	checkInitFree( pointer, memPtr, memBlockPtr );
+	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	if( cryptStatusError( status ) )
+		return;
 
 	/* Lock the memory list, unlink the new block, and unlock it again */
 	MUTEX_LOCK( allocation );
 	checkMemCanary( memBlockPtr, memPtr );
-	unlinkMemBlock( krnlData->allocatedListHead, krnlData->allocatedListTail,
-					memBlockPtr );
+	unlinkMemBlock( &krnlData->allocatedListHead, 
+					&krnlData->allocatedListTail, memBlockPtr );
 	MUTEX_UNLOCK( allocation );
 
 	/* If the memory is locked, unlock it now */

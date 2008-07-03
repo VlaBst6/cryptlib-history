@@ -1,18 +1,16 @@
 /****************************************************************************
 *																			*
 *					 cryptlib PGP Enveloping Routines						*
-*					 Copyright Peter Gutmann 1996-2006						*
+*					 Copyright Peter Gutmann 1996-2008						*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
   #include "envelope.h"
-  #include "misc_rw.h"
-  #include "pgp.h"
+  #include "pgp_rw.h"
 #else
   #include "envelope/envelope.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGP
@@ -23,18 +21,52 @@
 *																			*
 ****************************************************************************/
 
+/* Sanity-check the envelope state */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	/* Make sure that general envelope state is in order */
+	if( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE )
+		return( FALSE );
+	if( envelopeInfoPtr->envState < ENVSTATE_NONE || \
+		envelopeInfoPtr->envState >= ENVSTATE_LAST )
+		return( FALSE );
+
+	/* Make sure that the buffer position is within bounds */
+	if( envelopeInfoPtr->buffer == NULL || \
+		envelopeInfoPtr->bufPos < 0 || \
+		envelopeInfoPtr->bufPos > envelopeInfoPtr->bufSize || \
+		envelopeInfoPtr->bufSize < MIN_BUFFER_SIZE || \
+		envelopeInfoPtr->bufSize >= MAX_INTLENGTH )
+		return( FALSE );
+
+	/* If the auxBuffer isn't being used, make sure that all values related 
+	   to it are clear */
+	if( envelopeInfoPtr->auxBuffer != NULL || \
+		envelopeInfoPtr->auxBufPos != 0 || envelopeInfoPtr->auxBufSize != 0 )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
 /* Check that a requested algorithm type is valid with PGP data */
 
-BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo, 
-					  const CRYPT_MODE_TYPE cryptMode )
+CHECK_RETVAL_BOOL \
+BOOLEAN pgpCheckAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
+					  IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode )
 	{
-	assert( cryptAlgo > CRYPT_ALGO_NONE && \
-			cryptAlgo < CRYPT_ALGO_LAST );
-	assert( ( cryptMode == CRYPT_MODE_NONE ) || \
-			( cryptMode > CRYPT_MODE_NONE && \
-			  cryptMode < CRYPT_MODE_LAST ) );
+	int dummy;
 
-	if( ( cryptlibToPgpAlgo( cryptAlgo ) == PGP_ALGO_NONE ) )
+	REQUIRES_B( cryptAlgo > CRYPT_ALGO_NONE && \
+				cryptAlgo < CRYPT_ALGO_LAST );
+	REQUIRES_B( ( cryptMode == CRYPT_MODE_NONE ) || \
+				( cryptMode > CRYPT_MODE_NONE && \
+				  cryptMode < CRYPT_MODE_LAST ) );
+
+	if( cryptStatusError( cryptlibToPgpAlgo( cryptAlgo, &dummy ) ) )
 		return( FALSE );
 	if( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
 		cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
@@ -43,8 +75,10 @@ BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
 			return( FALSE );
 		}
 	else
+		{
 		if( cryptMode != CRYPT_MODE_NONE )
 			return( FALSE );
+		}
 
 	return( TRUE );
 	}
@@ -65,20 +99,22 @@ BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
 	byte	1 
 
    This is additional header data written at the start of a block of signed
-   data rather than a standard PGP packet, so we can't write it using the
+   data rather than a standard PGP packet so we can't write it using the 
    normal PGP packet read/write routines */
 
-static int writeSignatureInfoPacket( STREAM *stream, 
-									 const CRYPT_CONTEXT iSignContext,
-									 const CRYPT_CONTEXT iHashContext )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeSignatureInfoPacket( INOUT STREAM *stream, 
+									 IN_HANDLE const CRYPT_CONTEXT iSignContext,
+									 IN_HANDLE const CRYPT_CONTEXT iHashContext )
 	{
-	CRYPT_ALGO_TYPE hashAlgo, signAlgo;
+	CRYPT_ALGO_TYPE hashAlgo, signAlgo = DUMMY_INIT;
 	BYTE keyID[ PGP_KEYID_SIZE + 8 ];
-	int status;
+	int pgpHashAlgo, pgpCryptAlgo = DUMMY_INIT, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iSignContext ) );
-	assert( isHandleRangeValid( iHashContext ) );
+
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( isHandleRangeValid( iHashContext ) );
 
 	/* Get the signature information */
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE, 
@@ -96,17 +132,21 @@ static int writeSignatureInfoPacket( STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
+	status = cryptlibToPgpAlgo( hashAlgo, &pgpHashAlgo );
+	if( cryptStatusOK( status ) )
+		status = cryptlibToPgpAlgo( signAlgo, &pgpCryptAlgo );
+	ENSURES( cryptStatusOK( status ) );
 
-	/* Write the signature info packet.  Note that the version 3 is normally 
-	   used to identify a legal-kludged PGP 2.0, but in this case it denotes
-	   OpenPGP, which usually has the version 4 rather than 3 */
+	/* Write the signature info packet.  Note that the version 3 value is 
+	   normally used to identify a legal-kludged PGP 2.0 but in this case it 
+	   denotes OpenPGP, which usually has the version 4 value rather than 3 */
 	pgpWritePacketHeader( stream, PGP_PACKET_SIGNATURE_ONEPASS, \
 						  PGP_VERSION_SIZE + 1 + PGP_ALGOID_SIZE + \
 							PGP_ALGOID_SIZE + PGP_KEYID_SIZE + 1 );
 	sputc( stream, 3 );		/* Version = 3 (OpenPGP) */
-	sputc( stream, 0 );		/* Binary document sig. */
-	sputc( stream, cryptlibToPgpAlgo( hashAlgo ) );
-	sputc( stream, cryptlibToPgpAlgo( signAlgo ) );
+	sputc( stream, 0 );		/* Binary document signature */
+	sputc( stream, pgpHashAlgo );
+	sputc( stream, pgpCryptAlgo );
 	swrite( stream, keyID, PGP_KEYID_SIZE );
 	return( sputc( stream, 1 ) );
 	}
@@ -119,16 +159,17 @@ static int writeSignatureInfoPacket( STREAM *stream,
 
 /* Write the data header packet */
 
-static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeHeaderPacket( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	STREAM stream;
-	int length, status = CRYPT_OK;
+	int status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
 	/* If we're encrypting, set up the encryption-related information.  
 	   Since PGP doesn't perform a key exchange of a session key when 
-	   conventionally-encrypting data, the encryption information could be 
+	   conventionally-encrypting data the encryption information could be 
 	   coming from either an encryption action (derived from a password) or 
 	   a conventional key exchange action that results in the direct 
 	   creation of a session encryption key */
@@ -147,17 +188,21 @@ static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
 							findAction( envelopeInfoPtr->preActionList,
 										ACTION_KEYEXCHANGE_PKC );
 		if( envelopeInfoPtr->lastAction == NULL )
+			{
 			/* There's no key exchange action, we're using a raw session key 
 			   derived from a password */
 			envelopeInfoPtr->lastAction = envelopeInfoPtr->actionList;
+			}
 		envelopeInfoPtr->envState = ENVSTATE_KEYINFO;
-		
+
+		ENSURES( envelopeInfoPtr->lastAction != NULL );
+
 		return( CRYPT_OK );
 		}
 
 	/* If we're not encrypting data (i.e. there's only a single packet 
 	   present rather than a packet preceded by a pile of key exchange 
-	   actions), write the appropriate PGP header based on the envelope 
+	   actions) we write the appropriate PGP header based on the envelope 
 	   usage */
 	sMemOpen( &stream, envelopeInfoPtr->buffer, envelopeInfoPtr->bufSize );
 	switch( envelopeInfoPtr->usage )
@@ -172,9 +217,9 @@ static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
 					break;
 				}
 
-			/* Since we can only sign literal data, we need to explicitly 
+			/* Since we can only sign literal data we need to explicitly 
 			   write an inner data header */
-			assert( envelopeInfoPtr->contentType == CRYPT_CONTENT_DATA );
+			REQUIRES( envelopeInfoPtr->contentType == CRYPT_CONTENT_DATA );
 			envelopeInfoPtr->envState = ENVSTATE_DATA;
 			break;
 
@@ -189,31 +234,34 @@ static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
 
 		case ACTION_COMPRESS:
 			/* Compressed data packets use a special unkown-length encoding 
-			   that doesn't work like any other PGP packet type, so we can't 
+			   that doesn't work like any other PGP packet type so we can't 
 			   use pgpWritePacketHeader() for this packet type but have to 
 			   hand-assemble the header ourselves */
 			sputc( &stream, PGP_CTB_COMPRESSED );
 			status = sputc( &stream, PGP_ALGO_ZLIB );
+			if( cryptStatusError( status ) )
+				break;
 			if( envelopeInfoPtr->contentType == CRYPT_CONTENT_DATA )
-				/* If there's no inner content type, we need to explicitly 
+				{
+				/* If there's no inner content type we need to explicitly 
 				   write an inner data header */
 				envelopeInfoPtr->envState = ENVSTATE_DATA;
+				}
 			break;
 	
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_INTERNAL );
+			retIntError();
 		}
-	length = stell( &stream );
+	if( cryptStatusOK( status ) )
+		envelopeInfoPtr->bufPos = stell( &stream );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
-	envelopeInfoPtr->bufPos = length;
 
 	/* Reset the segmentation state.  Although PGP doesn't segment the 
-	   payload, we still have to reset the state to synchronise things like 
+	   payload we still have to reset the state to synchronise things like 
 	   payload hashing and encryption.  We also set the block size mask to 
-	   all ones if we're not encrypting, since we can begin and end data 
+	   all ones if we're not encrypting since we can begin and end data 
 	   segments on arbitrary boundaries */
 	envelopeInfoPtr->dataFlags |= ENVDATA_SEGMENTCOMPLETE;
 	if( envelopeInfoPtr->usage != ACTION_CRYPT )
@@ -230,6 +278,111 @@ static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
 
 /****************************************************************************
 *																			*
+*						Header/Trailer Processing Routines					*
+*																			*
+****************************************************************************/
+
+/* Write key exchange actions */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	ACTION_LIST *lastActionPtr;
+	int iterationCount, status = CRYPT_OK;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	/* Export the session key using each of the PKC keys, or write the 
+	   derivation information needed to recreate the session key */
+	for( lastActionPtr = envelopeInfoPtr->lastAction, iterationCount = 0; 
+		 lastActionPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 lastActionPtr = lastActionPtr->next, iterationCount++ )
+		{
+		void *bufPtr = envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos;
+		const int dataLeft = min( envelopeInfoPtr->bufSize - \
+									envelopeInfoPtr->bufPos, 
+								  MAX_INTLENGTH_SHORT - 1 );
+		int keyexSize;
+
+		/* Make sure that there's enough room to emit this key exchange 
+		   action */
+		if( lastActionPtr->encodedSize + 128 > dataLeft )
+			{
+			status = CRYPT_ERROR_OVERFLOW;
+			break;
+			}
+
+		/* Emit the key exchange action */
+		if( lastActionPtr->action == ACTION_KEYEXCHANGE_PKC )
+			{
+			status = iCryptExportKey( bufPtr, dataLeft, &keyexSize, 
+									  CRYPT_FORMAT_PGP, 
+									  envelopeInfoPtr->iCryptContext,
+									  lastActionPtr->iCryptHandle );
+			}
+		else
+			{
+			status = iCryptExportKey( bufPtr, dataLeft, &keyexSize, 
+									  CRYPT_FORMAT_PGP, CRYPT_UNUSED, 
+									  envelopeInfoPtr->iCryptContext );
+			}
+		if( cryptStatusError( status ) )
+			break;
+		envelopeInfoPtr->bufPos += keyexSize;
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED )
+	envelopeInfoPtr->lastAction = lastActionPtr;
+
+	return( status );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeEncryptedContentHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	STREAM stream;
+	BYTE ivInfoBuffer[ ( CRYPT_MAX_IVSIZE + 2 ) + 8 ];
+	const int dataLeft = min( envelopeInfoPtr->bufSize - \
+								envelopeInfoPtr->bufPos, 
+							  MAX_INTLENGTH_SHORT - 1 );
+	int ivSize, status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	/* Get the IV size and make sure that there's enough room to emit the 
+	   encrypted content header (+8 for slop space) */
+	status = krnlSendMessage( envelopeInfoPtr->iCryptContext,
+							  IMESSAGE_GETATTRIBUTE, &ivSize, 
+							  CRYPT_CTXINFO_IVSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( dataLeft < PGP_MAX_HEADER_SIZE + ( ivSize + 2 ) + 8 )
+		return( CRYPT_ERROR_OVERFLOW );
+
+	/* Set up the PGP IV information */
+	status = pgpProcessIV( envelopeInfoPtr->iCryptContext, 
+						   ivInfoBuffer, ivSize + 2, ivSize, TRUE, TRUE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the encrypted content header */
+	sMemOpen( &stream, envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos, 
+			  dataLeft );
+	pgpWritePacketHeader( &stream, PGP_PACKET_ENCR, 
+						  ( ivSize + 2 ) + 1 + \
+						  pgpSizeofLength( PGP_DATA_HEADER_SIZE + \
+										   envelopeInfoPtr->payloadSize ) + \
+						  PGP_DATA_HEADER_SIZE + \
+						  envelopeInfoPtr->payloadSize );
+	status = swrite( &stream, ivInfoBuffer, ivSize + 2 );
+	if( cryptStatusOK( status ) )
+		envelopeInfoPtr->bufPos += stell( &stream );
+	sMemDisconnect( &stream );
+
+	return( status );
+	}
+
+/****************************************************************************
+*																			*
 *					Envelope Pre/Post-processing Functions					*
 *																			*
 ****************************************************************************/
@@ -237,8 +390,10 @@ static int writeHeaderPacket( ENVELOPE_INFO *envelopeInfoPtr )
 /* The following functions take care of pre/post-processing of envelope data
    during the enveloping process */
 
-static int createSessionKey( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
+	CRYPT_CONTEXT iSessionKeyContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	static const CRYPT_MODE_TYPE mode = CRYPT_MODE_CFB;
 	int status;
@@ -251,6 +406,7 @@ static int createSessionKey( ENVELOPE_INFO *envelopeInfoPtr )
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	iSessionKeyContext = createInfo.cryptHandle;
 	if( envelopeInfoPtr->defaultAlgo == CRYPT_ALGO_BLOWFISH )
 		{
 		static const int keySize = 16;
@@ -259,42 +415,50 @@ static int createSessionKey( ENVELOPE_INFO *envelopeInfoPtr )
 		   it to a fixed length.  There shouldn't be any need for this 
 		   because the key length is communicated as part of the wrapped 
 		   key, but some implementations choke if it's not exactly 128 bits */
-		krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE, 
-						 ( void * ) &keySize, CRYPT_CTXINFO_KEYSIZE );
+		status = krnlSendMessage( iSessionKeyContext, IMESSAGE_SETATTRIBUTE, 
+								  ( void * ) &keySize, 
+								  CRYPT_CTXINFO_KEYSIZE );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iSessionKeyContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
 		}
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE, 
+	status = krnlSendMessage( iSessionKeyContext, IMESSAGE_SETATTRIBUTE, 
 							  ( void * ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( createInfo.cryptHandle, 
-								  IMESSAGE_CTX_GENKEY, NULL, FALSE );
+		status = krnlSendNotifier( iSessionKeyContext, IMESSAGE_CTX_GENKEY );
 	if( cryptStatusError( status ) )
 		{
-		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iSessionKeyContext, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
 
 	/* Add the session-key action to the action list */
-	if( addAction( &envelopeInfoPtr->actionList, 
-				   envelopeInfoPtr->memPoolState, ACTION_CRYPT, 
-				   createInfo.cryptHandle ) == NULL )
+	status = addAction( &envelopeInfoPtr->actionList, 
+						envelopeInfoPtr->memPoolState, ACTION_CRYPT, 
+						iSessionKeyContext );
+	if( cryptStatusError( status ) )
 		{
-		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-		return( CRYPT_ERROR_MEMORY );
+		krnlSendNotifier( iSessionKeyContext, IMESSAGE_DECREFCOUNT );
+		return( status );
 		}
 
 	return( CRYPT_OK );
 	}
 
-static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int preEnvelopeEncrypt( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice = CRYPT_ERROR;
 	ACTION_LIST *actionListPtr;
 	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->usage == ACTION_CRYPT );
-	assert( findAction( envelopeInfoPtr->preActionList, \
-						ACTION_KEYEXCHANGE_PKC ) != NULL );
+
+	REQUIRES( envelopeInfoPtr->usage == ACTION_CRYPT );
+	REQUIRES( findAction( envelopeInfoPtr->preActionList, \
+						  ACTION_KEYEXCHANGE_PKC ) != NULL );
 
 	/* Create the session key if necessary */
 	if( envelopeInfoPtr->actionList == NULL )
@@ -319,20 +483,23 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 	   envelope.  This is an internal object used only by the envelope so we
 	   tell the kernel not to increment its reference count when it attaches
 	   it */
-	krnlSendMessage( envelopeInfoPtr->objectHandle, IMESSAGE_SETDEPENDENT, 
-					 &envelopeInfoPtr->actionList->iCryptHandle, 
-					 SETDEP_OPTION_NOINCREF );
+	status = krnlSendMessage( envelopeInfoPtr->objectHandle, 
+							  IMESSAGE_SETDEPENDENT, 
+							  &envelopeInfoPtr->actionList->iCryptHandle, 
+							  SETDEP_OPTION_NOINCREF );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Now walk down the list of key exchange actions connecting each one to 
 	   the session key action. The caller has already guaranteed that there's 
 	   at least one PKC keyex action present */
-	iterationCount = 0;
 	for( actionListPtr = findAction( envelopeInfoPtr->preActionList,
-									 ACTION_KEYEXCHANGE_PKC );
+									 ACTION_KEYEXCHANGE_PKC ), \
+			iterationCount = 0;
 		 actionListPtr != NULL && \
 			actionListPtr->action == ACTION_KEYEXCHANGE_PKC && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 actionListPtr = actionListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MED;
+		 actionListPtr = actionListPtr->next, iterationCount++ )
 		{
 		/* If the session key context is tied to a device, make sure that 
 		   the key exchange object is in the same device */
@@ -355,34 +522,37 @@ static int preEnvelopeEncrypt( ENVELOPE_INFO *envelopeInfoPtr )
 		/* Evaluate the size of the exported action.  We only get PKC 
 		   actions at this point so we don't have to provide any special-
 		   case handling for other key exchange types */
-		status = iCryptExportKeyEx( NULL, &actionListPtr->encodedSize, 0,
+		status = iCryptExportKey( NULL, 0, &actionListPtr->encodedSize, 
 								CRYPT_FORMAT_PGP, 
 								envelopeInfoPtr->actionList->iCryptHandle,
 								actionListPtr->iCryptHandle );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+
 	return( CRYPT_OK );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int preEnvelopeSign( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr = envelopeInfoPtr->postActionList;
 
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->usage == ACTION_SIGN );
+
+	REQUIRES( envelopeInfoPtr->usage == ACTION_SIGN );
 
 	/* Make sure that there's at least one signing action present */
 	if( actionListPtr == NULL )
 		return( CRYPT_ERROR_NOTINITED );
 
 	assert( isWritePtr( actionListPtr, sizeof( ACTION_LIST ) ) );
-	assert( actionListPtr->associatedAction != NULL );
+	
+	REQUIRES( actionListPtr->associatedAction != NULL );
 
 	/* Evaluate the size of the signature action */
-	return( iCryptCreateSignatureEx( NULL, &actionListPtr->encodedSize, 0, 
+	return( iCryptCreateSignature( NULL, 0, &actionListPtr->encodedSize, 
 							CRYPT_FORMAT_PGP, actionListPtr->iCryptHandle, 
 							actionListPtr->associatedAction->iCryptHandle,
 							CRYPT_UNUSED, CRYPT_UNUSED ) );
@@ -396,13 +566,14 @@ static int preEnvelopeSign( const ENVELOPE_INFO *envelopeInfoPtr )
 
 /* Output as much of the preamble as possible into the envelope buffer */
 
-static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	int status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->envState >= ENVSTATE_NONE && \
-			envelopeInfoPtr->envState <= ENVSTATE_DONE );
+
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* If we've finished processing the header information, don't do
 	   anything */
@@ -423,7 +594,7 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			envelopeInfoPtr->segmentSize = envelopeInfoPtr->payloadSize;
 
 		/* Perform any remaining initialisation.  Since PGP derives the 
-		   session key directly from the user password, we only perform the
+		   session key directly from the user password we only perform the
 		   encryption initialisation if there are PKC key exchange actions 
 		   present */
 		if( envelopeInfoPtr->usage == ACTION_CRYPT && \
@@ -431,10 +602,19 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 						ACTION_KEYEXCHANGE_PKC ) != NULL )
 			status = preEnvelopeEncrypt( envelopeInfoPtr );
 		else
+			{
 			if( envelopeInfoPtr->usage == ACTION_SIGN )
 				status = preEnvelopeSign( envelopeInfoPtr );
+			}
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't perform final %s initialisation prior to "
+					  "enveloping data", 
+					  ( envelopeInfoPtr->usage == ACTION_SIGN ) ? \
+						"signing" : "encryption" ) );
+			}
 
 		/* Delete any orphaned actions such as automatically-added hash 
 		   actions that were overridden with user-supplied alternate 
@@ -443,66 +623,37 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 
 		/* We're ready to go, prepare to emit the outer header */
 		envelopeInfoPtr->envState = ENVSTATE_HEADER;
-		if( !checkActions( envelopeInfoPtr ) )
-			retIntError();
+
+		ENSURES( checkActions( envelopeInfoPtr ) );
 		}
 
 	/* Emit the outer header.  This always follows directly from the final
-	   initialisation step, but we keep the two logically distinct to 
+	   initialisation step but we keep the two logically distinct to 
 	   emphasise the fact that the former is merely finalised enveloping 
-	   actions without performing any header processing, while the latter is 
+	   actions without performing any header processing while the latter is 
 	   the first stage that actually emits header data */
 	if( envelopeInfoPtr->envState == ENVSTATE_HEADER )
 		{
 		status = writeHeaderPacket( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't create envelope header" ) );
+			}
 		}
 
 	/* Handle key export actions */
 	if( envelopeInfoPtr->envState == ENVSTATE_KEYINFO )
 		{
-		ACTION_LIST *lastActionPtr;
-		int iterationCount = 0;
-
-		/* Export the session key using each of the PKC keys, or write the 
-		   derivation information needed to recreate the session key */
-		for( lastActionPtr = envelopeInfoPtr->lastAction; 
-			 lastActionPtr != NULL && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-			 lastActionPtr = lastActionPtr->next )
-			{
-			void *bufPtr = envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos;
-			const int dataLeft = min( envelopeInfoPtr->bufSize - \
-									  envelopeInfoPtr->bufPos, 8192 );
-			int keyexSize;
-
-			/* Make sure that there's enough room to emit this key exchange 
-			   action */
-			if( lastActionPtr->encodedSize + 128 > dataLeft )
-				{
-				status = CRYPT_ERROR_OVERFLOW;
-				break;
-				}
-
-			/* Emit the key exchange action */
-			if( lastActionPtr->action == ACTION_KEYEXCHANGE_PKC )
-				status = iCryptExportKeyEx( bufPtr, &keyexSize, dataLeft,
-								CRYPT_FORMAT_PGP, envelopeInfoPtr->iCryptContext,
-								lastActionPtr->iCryptHandle );
-			else
-				status = iCryptExportKeyEx( bufPtr, &keyexSize, dataLeft,
-								CRYPT_FORMAT_PGP, CRYPT_UNUSED, 
-								envelopeInfoPtr->iCryptContext );
-			if( cryptStatusError( status ) )
-				break;
-			envelopeInfoPtr->bufPos += keyexSize;
-			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-			retIntError();
-		envelopeInfoPtr->lastAction = lastActionPtr;
+		status = writeKeyex( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't emit key exchange actions to envelope "
+					  "header" ) );
+			}
 
 		/* Move on to the next state */
 		envelopeInfoPtr->envState = ENVSTATE_ENCRINFO;
@@ -511,38 +662,15 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 	/* Handle encrypted content information */
 	if( envelopeInfoPtr->envState == ENVSTATE_ENCRINFO )
 		{
-		STREAM stream;
-		BYTE ivInfoBuffer[ CRYPT_MAX_IVSIZE + 2 + 8 ];
-		const int dataLeft = min( envelopeInfoPtr->bufSize - \
-								  envelopeInfoPtr->bufPos, 8192 );
-		int length;
-
-		/* Make sure that there's enough room to emit the encrypted content 
-		   header (+8 for slop space) */
-		if( dataLeft < PGP_MAX_HEADER_SIZE + ( PGP_IVSIZE + 2 ) + 8 )
-			return( CRYPT_ERROR_OVERFLOW );
-
-		/* Set up the PGP IV information */
-		status = pgpProcessIV( envelopeInfoPtr->iCryptContext, 
-							   ivInfoBuffer, PGP_IVSIZE, TRUE, TRUE );
-		if( cryptStatusError( status ) )
-			return( status );
-
 		/* Write the encrypted content header */
-		sMemOpen( &stream, envelopeInfoPtr->buffer + \
-						   envelopeInfoPtr->bufPos, dataLeft );
-		pgpWritePacketHeader( &stream, PGP_PACKET_ENCR, 
-							( PGP_IVSIZE + 2 ) + 1 + \
-							pgpSizeofLength( PGP_DATA_HEADER_SIZE + \
-											 envelopeInfoPtr->payloadSize ) + \
-							PGP_DATA_HEADER_SIZE + \
-							envelopeInfoPtr->payloadSize );
-		status = swrite( &stream, ivInfoBuffer, PGP_IVSIZE + 2 );
-		length = stell( &stream );
-		sMemDisconnect( &stream );
+		status = writeEncryptedContentHeader( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
-			return( status );
-		envelopeInfoPtr->bufPos += length;
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't emit encrypted content header to envelope "
+					  "header" ) );
+			}
 
 		/* Make sure that we start a new segment if we try to add any data */
 		envelopeInfoPtr->dataFlags |= ENVDATA_SEGMENTCOMPLETE;
@@ -559,30 +687,38 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 
 		/* Make sure that there's enough room to emit the data header (+8 
 		   for slop space) */
-		if( envelopeInfoPtr->bufSize - envelopeInfoPtr->bufPos < \
-			PGP_MAX_HEADER_SIZE + PGP_DATA_HEADER_SIZE + 8 )
+		if( envelopeInfoPtr->bufPos + PGP_MAX_HEADER_SIZE + \
+				PGP_DATA_HEADER_SIZE + 8 >= envelopeInfoPtr->bufSize )
 			return( CRYPT_ERROR_OVERFLOW );
 
-		/* Write the payload header.  Since this may be encrypted, we have to
+		/* Write the payload header.  Since this may be encrypted we have to
 		   do it indirectly via copyToEnvelope() */
 		sMemOpen( &stream, headerBuffer, 64 );
 		pgpWritePacketHeader( &stream, PGP_PACKET_DATA, 
 						PGP_DATA_HEADER_SIZE + envelopeInfoPtr->payloadSize );
-		swrite( &stream, PGP_DATA_HEADER, PGP_DATA_HEADER_SIZE );
-		if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
+		status = swrite( &stream, PGP_DATA_HEADER, PGP_DATA_HEADER_SIZE );
+		if( cryptStatusOK( status ) && \
+			envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
+			{
 			/* There's an absolute data length set, adjust the running total 
 			   count by the size of the additional header that's been 
 			   prepended */
 			envelopeInfoPtr->segmentSize += stell( &stream );
-		status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr,
+			}
+		if( cryptStatusOK( status ) )
+			status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr,
 											headerBuffer, stell( &stream ) );
 		sMemClose( &stream );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't emit data header into envelope header" ) );
+			}
 
 		/* We've processed the header, if this is signed data we start 
-		   hashing from this point.  The PGP RFCs are wrong in this regard, 
-		   only the payload is hashed, not the entire packet */
+		   hashing from this point.  The PGP RFCs are wrong in this regard 
+		   in that only the payload is hashed and not the entire packet */
 		if( envelopeInfoPtr->usage == ACTION_SIGN )
 			envelopeInfoPtr->dataFlags |= ENVDATA_HASHACTIONSACTIVE;
 
@@ -590,18 +726,21 @@ static int emitPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 		envelopeInfoPtr->envState = ENVSTATE_DONE;
 		}
 
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 	return( CRYPT_OK );
 	}
 
 /* Output as much of the postamble as possible into the envelope buffer */
 
-static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	int sigBufSize, sigSize, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->envState >= ENVSTATE_NONE && \
-			envelopeInfoPtr->envState <= ENVSTATE_DONE );
+
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* Before we can emit the trailer we need to flush any remaining data
 	   from internal buffers */
@@ -610,7 +749,12 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 		status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr, 
 														  ( BYTE * ) "", 0 );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't flush remaining data into envelope "
+					  "buffer" ) );
+			}
 		envelopeInfoPtr->envState = ENVSTATE_FLUSHED;
 		}
 
@@ -621,27 +765,34 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 		{
 		/* We're done */
 		envelopeInfoPtr->envState = ENVSTATE_DONE;
+
+		ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 		return( CRYPT_OK );
 		}
 
 	/* Check whether there's enough room left in the buffer to emit the 
-	   signature directly into it.  Since sigs are fairly small (a few 
-	   hundred bytes), we always require enough room in the buffer and don't 
+	   signature directly into it.  Since signatures are fairly small (a few 
+	   hundred bytes) we always require enough room in the buffer and don't 
 	   bother with any overflow handling via the auxBuffer */
 	sigBufSize = min( envelopeInfoPtr->bufSize - envelopeInfoPtr->bufPos, 
-					  8192 );
+					  MAX_INTLENGTH_SHORT - 1 );
 	if( envelopeInfoPtr->postActionList->encodedSize + 64 > sigBufSize )
 		return( CRYPT_ERROR_OVERFLOW );
 
 	/* Sign the data */
-	status = iCryptCreateSignatureEx( envelopeInfoPtr->buffer + \
-									  envelopeInfoPtr->bufPos, &sigSize, 
-									  sigBufSize, CRYPT_FORMAT_PGP, 
-									  envelopeInfoPtr->postActionList->iCryptHandle, 
-									  envelopeInfoPtr->actionList->iCryptHandle,
-									  CRYPT_UNUSED, CRYPT_UNUSED );
+	status = iCryptCreateSignature( envelopeInfoPtr->buffer + \
+					envelopeInfoPtr->bufPos, sigBufSize, &sigSize, 
+					CRYPT_FORMAT_PGP, 
+					envelopeInfoPtr->postActionList->iCryptHandle, 
+					envelopeInfoPtr->actionList->iCryptHandle, CRYPT_UNUSED, 
+					CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExt( status,
+				( status, ENVELOPE_ERRINFO,
+				  "Couldn't emit signature to envelope trailer" ) );
+		}
 	envelopeInfoPtr->bufPos += sigSize;
 
 	/* Now that we've written the final data, set the end-of-segment-data 
@@ -649,6 +800,8 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	   copyFromEnvelope() can copy out the remaining data */
 	envelopeInfoPtr->segmentDataEnd = envelopeInfoPtr->bufPos;
 	envelopeInfoPtr->envState = ENVSTATE_DONE;
+
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
 
 	return( CRYPT_OK );
 	}
@@ -659,10 +812,14 @@ static int emitPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 *																			*
 ****************************************************************************/
 
-void initPGPEnveloping( ENVELOPE_INFO *envelopeInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initPGPEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
+	int dummy, status;
+
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( !( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) );
+
+	REQUIRES_V( !( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) );
 
 	/* Set the access method pointers */
 	envelopeInfoPtr->processPreambleFunction = emitPreamble;
@@ -673,18 +830,24 @@ void initPGPEnveloping( ENVELOPE_INFO *envelopeInfoPtr )
 	envelopeInfoPtr->envState = ENVSTATE_NONE;
 
 	/* Remember the current default settings for use with the envelope.  
-	   Since the PGP algorithms represent only a subset of what's available, 
+	   Since the PGP algorithms represent only a subset of what's available 
 	   we have to drop back to fixed values if the caller has selected 
 	   something exotic */
-	krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-					 IMESSAGE_GETATTRIBUTE, &envelopeInfoPtr->defaultHash, 
-					 CRYPT_OPTION_ENCR_HASH );
-	if( cryptlibToPgpAlgo( envelopeInfoPtr->defaultHash ) == PGP_ALGO_NONE )
-		envelopeInfoPtr->defaultHash = CRYPT_ALGO_SHA;
-	krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-					 IMESSAGE_GETATTRIBUTE, &envelopeInfoPtr->defaultAlgo, 
-					 CRYPT_OPTION_ENCR_ALGO );
-	if( cryptlibToPgpAlgo( envelopeInfoPtr->defaultAlgo ) == PGP_ALGO_NONE )
+	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, 
+							  &envelopeInfoPtr->defaultHash, 
+							  CRYPT_OPTION_ENCR_HASH );
+	if( cryptStatusError( status ) || \
+		cryptStatusError( \
+			cryptlibToPgpAlgo( envelopeInfoPtr->defaultHash, &dummy ) ) )
+		envelopeInfoPtr->defaultHash = CRYPT_ALGO_SHA1;
+	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, 
+							  &envelopeInfoPtr->defaultAlgo, 
+							  CRYPT_OPTION_ENCR_ALGO );
+	if( cryptStatusError( status ) || \
+		cryptStatusError( \
+			cryptlibToPgpAlgo( envelopeInfoPtr->defaultAlgo, &dummy ) ) )
 		envelopeInfoPtr->defaultAlgo = CRYPT_ALGO_3DES;
 	envelopeInfoPtr->defaultMAC = CRYPT_ALGO_NONE;
 

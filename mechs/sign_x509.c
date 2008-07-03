@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							X.509/PKI Signature Routines					*
-*						Copyright Peter Gutmann 1993-2006					*
+*						Copyright Peter Gutmann 1993-2007					*
 *																			*
 ****************************************************************************/
 
@@ -36,20 +36,21 @@
 
    This is complicated by a variety of b0rken PKI protocols that couldn't
    quite manage a cut & paste of two lines of text, adding all sorts of
-   unnecessary extra tagging and wrappers to the signature.  To handle the
-   tagging and presence of extra data, we allow two extra parameters, a
-   tag/wrapper formatting info specifier and an extra data length value (with
-   the data being appended by the caller).  If the tag/wrapper is a small
-   integer value, it's treated as [n] { ... }; if it has the 7th bit set
-   (0x80), it's treated as [n] { SEQUENCE { ... }} */
+   unnecessary extra tagging and wrappers to the signature.  These odds and
+   ends are specified in the formatInfo structure */
 
-int createX509signature( void *signedObject, int *signedObjectLength,
-						 const int sigMaxLength,
-						 const void *object, const int objectLength,
-						 const CRYPT_CONTEXT iSignContext,
-						 const CRYPT_ALGO_TYPE hashAlgo,
-						 const int formatInfo, const int extraDataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
+int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
+							void *signedObject, 
+						 IN_LENGTH_Z const int sigMaxLength, 
+						 OUT_LENGTH_Z int *signedObjectLength,
+						 IN_BUFFER( objectLength ) const void *object, 
+						 IN_LENGTH const int objectLength,
+						 IN_HANDLE const CRYPT_CONTEXT iSignContext,
+						 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+						 IN_OPT const X509SIG_FORMATINFO *formatInfo )
 	{
+	CRYPT_CONTEXT iHashContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	STREAM stream;
 	BYTE dataSignature[ CRYPT_MAX_PKCSIZE + 128 + 8 ];
@@ -59,12 +60,29 @@ int createX509signature( void *signedObject, int *signedObjectLength,
 			isWritePtr( signedObject, sigMaxLength ) );
 	assert( isWritePtr( signedObjectLength, sizeof( int ) ) );
 	assert( isReadPtr( object, objectLength ) && \
-			checkObjectEncoding( object, objectLength ) > 0 );
-	assert( isHandleRangeValid( iSignContext ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
-	assert( ( formatInfo == CRYPT_UNUSED && extraDataLength == 0 ) || \
-			( formatInfo > 0 && extraDataLength >= 0 ) );
+			!cryptStatusError( checkObjectEncoding( object, \
+													objectLength ) ) );
+	assert( formatInfo == NULL || \
+			isReadPtr( formatInfo, sizeof( X509SIG_FORMATINFO ) ) );
+
+	REQUIRES( ( signedObject == NULL && sigMaxLength == 0 ) || \
+			  ( signedObject != NULL && \
+				sigMaxLength > MIN_CRYPT_OBJECTSIZE && \
+				sigMaxLength < MAX_INTLENGTH ) );
+	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( formatInfo == NULL || \
+			  ( ( formatInfo->tag >= 0 && \
+				  formatInfo->tag < MAX_CTAG_VALUE ) && \
+				( formatInfo->extraLength >= 0 && \
+				  formatInfo->extraLength < MAX_INTLENGTH_SHORT ) ) );
+
+	/* Clear return values */
+	if( signedObject != NULL )
+		memset( signedObject, 0, min( 16, sigMaxLength ) );
+	*signedObjectLength = 0;
 
 	/* Hash the data to be signed */
 	setMessageCreateObjectInfo( &createInfo, hashAlgo );
@@ -72,85 +90,121 @@ int createX509signature( void *signedObject, int *signedObjectLength,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-					 ( void * ) object, objectLength );
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-							  ( void * ) object, 0 );
+	iHashContext = createInfo.cryptHandle;
+	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
+							  ( void * ) object, objectLength );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, "", 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Create the signature and calculate the overall length of the payload, 
 	   optional signature wrapper, and signature data */
-	status = createSignature( dataSignature, &signatureLength, 
-							  CRYPT_MAX_PKCSIZE + 128, iSignContext, 
+	status = createSignature( dataSignature, CRYPT_MAX_PKCSIZE + 128, 
+							  &signatureLength, iSignContext, 
 							  createInfo.cryptHandle, CRYPT_UNUSED, 
 							  SIGNATURE_X509 );
 	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( formatInfo == CRYPT_UNUSED )
-		totalSigLength = signatureLength + extraDataLength;
+	if( formatInfo == NULL )
+		totalSigLength = signatureLength;
 	else
 		{
 		/* It's a nonstandard format, figure out the size due to the 
-		   additional signature wrapper */
-		if( !( formatInfo & 0x80 ) )
+		   additional signature wrapper and other odds and ends */
+		if( formatInfo->isExplicit )
+			{
 			totalSigLength = ( int ) \
-				sizeofObject( signatureLength + extraDataLength );
+				sizeofObject( \
+					sizeofObject( signatureLength + \
+								  formatInfo->extraLength ) );
+			}
 		else
+			{
 			totalSigLength = ( int ) \
-				sizeofObject( sizeofObject( signatureLength + extraDataLength ) );
+				sizeofObject( signatureLength + formatInfo->extraLength );
+			}
 		}
+	ENSURES( totalSigLength > 40 && totalSigLength < MAX_INTLENGTH );
+
+	/* If we're not just performing a length check, make sure that there's 
+	   enough room for the signed object in the output buffer.  This will be
+	   checked by the stream handling anyway but we make it explicit here */
+	if( signedObject != NULL && \
+		sizeofObject( objectLength + totalSigLength ) > sigMaxLength )
+		return( CRYPT_ERROR_OVERFLOW );
 
 	/* Write the outer SEQUENCE wrapper and copy the payload into place 
 	   behind it */
-	sMemOpen( &stream, signedObject, sigMaxLength );
+	sMemOpenOpt( &stream, signedObject, sigMaxLength );
 	writeSequence( &stream, objectLength + totalSigLength );
 	swrite( &stream, object, objectLength );
 
-	/* If it's a nonstandard (b0rken PKI protocol) signature, we have to 
-	   kludge in a variety of additional wrappers around the signature */
-	if( formatInfo != CRYPT_UNUSED )
+	/* If it's a nonstandard (b0rken PKI protocol) signature we have to 
+	   kludge in a variety of additional wrappers and other junk around the 
+	   signature */
+	if( formatInfo != NULL )
 		{
-		if( !( formatInfo & 0x80 ) )
-			writeConstructed( &stream, signatureLength + extraDataLength,
-							  formatInfo );
+		if( formatInfo->isExplicit )
+			{
+			writeConstructed( &stream, 
+							  sizeofObject( signatureLength + \
+											formatInfo->extraLength ),
+							  formatInfo->tag );
+			writeSequence( &stream, 
+						   signatureLength + formatInfo->extraLength );
+			}
 		else
 			{
-			writeConstructed( &stream,
-						sizeofObject( signatureLength + extraDataLength ),
-						formatInfo & 0x7F );
-			writeSequence( &stream, signatureLength + extraDataLength );
+			writeConstructed( &stream, 
+							  signatureLength + formatInfo->extraLength,
+							  formatInfo->tag );
 			}
 		}
 
 	/* Finally, append the signature */
 	status = swrite( &stream, dataSignature, signatureLength );
-	*signedObjectLength = stell( &stream );
+	if( cryptStatusOK( status ) )
+		*signedObjectLength = stell( &stream );
 	sMemDisconnect( &stream );
-	assert( extraDataLength > 0 || \
-			checkObjectEncoding( signedObject, *signedObjectLength ) > 0 );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	return( status );
+	assert( ( formatInfo != NULL && formatInfo->extraLength > 0 ) || \
+			!cryptStatusError( checkObjectEncoding( signedObject, \
+													*signedObjectLength ) ) );
+	return( CRYPT_OK );
 	}
 
-int checkX509signature( const void *signedObject, const int signedObjectLength,
-						const CRYPT_CONTEXT sigCheckContext,
-						const int formatInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject, 
+						IN_LENGTH const int signedObjectLength,
+						IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
+						IN_OPT const X509SIG_FORMATINFO *formatInfo )
 	{
 	CRYPT_ALGO_TYPE signAlgo, sigCheckAlgo, hashAlgo;
+	CRYPT_CONTEXT iHashContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	STREAM stream;
-	void *objectPtr, *sigPtr;
+	void *objectPtr = DUMMY_INIT_PTR, *sigPtr;
 	long length;
 	int status, sigLength;
 
 	assert( isReadPtr( signedObject, signedObjectLength ) );
-	assert( isHandleRangeValid( sigCheckContext ) );
-	assert( ( formatInfo == CRYPT_UNUSED ) || ( formatInfo >= 0 ) );
+	assert( formatInfo == NULL || \
+			isReadPtr( formatInfo, sizeof( X509SIG_FORMATINFO ) ) );
+
+	REQUIRES( signedObjectLength > 0 && signedObjectLength < MAX_INTLENGTH );
+	REQUIRES( isHandleRangeValid( iSigCheckContext ) );
+	REQUIRES( formatInfo == NULL || \
+			  ( ( formatInfo->tag >= 0 && \
+				  formatInfo->tag < MAX_CTAG_VALUE ) && \
+				( formatInfo->extraLength >= 0 && \
+				  formatInfo->extraLength < MAX_INTLENGTH_SHORT ) ) );
 
 	/* Make sure that the signing parameters are in order */
-	status = krnlSendMessage( sigCheckContext, IMESSAGE_GETATTRIBUTE,
+	status = krnlSendMessage( iSigCheckContext, IMESSAGE_GETATTRIBUTE,
 							  &sigCheckAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -160,13 +214,11 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 	   the length functions to handle mega-CRLs */
 	sMemConnect( &stream, signedObject, signedObjectLength );
 	readLongSequence( &stream, NULL );
-	objectPtr = sMemBufPtr( &stream );
-	length = getLongStreamObjectLength( &stream );
-	if( !cryptStatusError( length ) )
-		/* Move past the object */
+	status = getLongStreamObjectLength( &stream, &length );
+	if( cryptStatusOK( status ) )
+		status = sMemGetDataBlock( &stream, &objectPtr, length );
+	if( cryptStatusOK( status ) )
 		status = sSkip( &stream, length );
-	else
-		status = ( int ) length;
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -174,15 +226,15 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 		}
 
 	/* If it's a broken signature, process the extra encapsulation */
-	if( formatInfo != CRYPT_UNUSED )
+	if( formatInfo != NULL )
 		{
-		if( !( formatInfo & 0x80 ) )
-			status = readConstructed( &stream, NULL, formatInfo );
-		else
+		if( formatInfo->isExplicit )
 			{
-			readConstructed( &stream, NULL, formatInfo & 0x7F );
+			readConstructed( &stream, NULL, formatInfo->tag );
 			status = readSequence( &stream, NULL );
 			}
+		else
+			status = readConstructed( &stream, NULL, formatInfo->tag );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -191,14 +243,18 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 		}
 
 	/* Remember the location and size of the signature data */
-	sigPtr = sMemBufPtr( &stream );
-	sigLength = sMemDataLeft( &stream );
+	status = sMemGetDataBlockRemaining( &stream, &sigPtr, &sigLength );
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
+		return( status );
+		}
 	status = readAlgoIDext( &stream, &signAlgo, &hashAlgo );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* If the signature algorithm isn't what we expected, the best that we
+	/* If the signature algorithm isn't what we expected the best that we 
 	   can do is report a signature error */
 	if( sigCheckAlgo != signAlgo )
 		return( CRYPT_ERROR_SIGNATURE );
@@ -211,19 +267,22 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
+	iHashContext = createInfo.cryptHandle;
 
 	/* Hash the signed data and check the signature on the object */
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-					 objectPtr, length );
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-							  objectPtr, 0 );
+	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
+							  objectPtr, length );
 	if( cryptStatusOK( status ) )
-		status = checkSignature( sigPtr, sigLength, sigCheckContext,
-								 createInfo.cryptHandle, CRYPT_UNUSED,
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
+								  "", 0 );
+	if( cryptStatusOK( status ) )
+		{
+		status = checkSignature( sigPtr, sigLength, iSigCheckContext,
+								 iHashContext, CRYPT_UNUSED,
 								 SIGNATURE_X509 );
+		}
+	krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
 
-	/* Clean up */
-	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	return( status );
 	}
 
@@ -233,35 +292,46 @@ int checkX509signature( const void *signedObject, const int signedObjectLength,
 *																			*
 ****************************************************************************/
 
-/* The various cert management protocols are built using the twin design
-   guidelines that nothing should use a standard style of signature and no
-   two protocols should use the same nonstandard format, the only way to
-   handle these (without creating dozens of new signature types, each with
-   their own special-case handling) is to process most of the signature
+/* The various PKIX cert management protocols are built using the twin 
+   design guidelines that nothing should use a standard style of signature 
+   and no two protocols should use the same nonstandard format, the only way 
+   to handle these (without creating dozens of new signature types, each 
+   with their own special-case handling) is to process most of the signature
    information at the protocol level and just check the raw signature here */
 
-int createRawSignature( void *signature, int *signatureLength,
-						const int sigMaxLength,
-						const CRYPT_CONTEXT iSignContext,
-						const CRYPT_CONTEXT iHashContext )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int createRawSignature( OUT_BUFFER( sigMaxLength, *signatureLength ) \
+							void *signature, 
+						IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
+							const int sigMaxLength, 
+						OUT_LENGTH_SHORT_Z int *signatureLength, 
+						IN_HANDLE const CRYPT_CONTEXT iSignContext,
+						IN_HANDLE const CRYPT_CONTEXT iHashContext )
 	{
 	assert( isWritePtr( signature, sigMaxLength ) );
 	assert( isWritePtr( signatureLength, sizeof( int ) ) );
-	assert( isHandleRangeValid( iSignContext ) );
-	assert( isHandleRangeValid( iHashContext ) );
 
-	return( createSignature( signature, signatureLength, sigMaxLength,
+	REQUIRES( sigMaxLength >= MIN_CRYPT_OBJECTSIZE && \
+			  sigMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( isHandleRangeValid( iHashContext ) );
+
+	return( createSignature( signature, sigMaxLength, signatureLength, 
 							 iSignContext, iHashContext, CRYPT_UNUSED,
 							 SIGNATURE_RAW ) );
 	}
 
-int checkRawSignature( const void *signature, const int signatureLength,
-					   const CRYPT_CONTEXT iSigCheckContext,
-					   const CRYPT_CONTEXT iHashContext )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkRawSignature( IN_BUFFER( signatureLength ) const void *signature, 
+					   IN_LENGTH_SHORT const int signatureLength,
+					   IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
+					   IN_HANDLE const CRYPT_CONTEXT iHashContext )
 	{
 	assert( isReadPtr( signature, signatureLength ) );
-	assert( isHandleRangeValid( iSigCheckContext ) );
-	assert( isHandleRangeValid( iHashContext ) );
+
+	REQUIRES( signatureLength > 0 && signatureLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( isHandleRangeValid( iSigCheckContext ) );
+	REQUIRES( isHandleRangeValid( iHashContext ) );
 
 	return( checkSignature( signature, signatureLength, iSigCheckContext,
 							iHashContext, CRYPT_UNUSED, SIGNATURE_RAW ) );

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  Signature/Keyex Mechanism Header File					*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -74,115 +74,178 @@ typedef enum {
 	SIGNATURE_LAST		/* Last possible signature type */
 	} SIGNATURE_TYPE;
 
-/* Signature read/write methods for the different format types */
+/* Signature read/write methods for the different format types.  Specifying
+   input ranges gets a bit complicated because the functions are polymorphic 
+   so we have to provide the lowest common denominator of all functions */
 
-typedef int ( *READSIG_FUNCTION )( STREAM *stream, QUERY_INFO *queryInfo );
-typedef int ( *WRITESIG_FUNCTION )( STREAM *stream,
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+		int ( *READSIG_FUNCTION )( INOUT STREAM *stream, 
+								   INOUT QUERY_INFO *queryInfo );
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+		int ( *WRITESIG_FUNCTION )( INOUT STREAM *stream,
+									IN_HANDLE_OPT \
 									const CRYPT_CONTEXT iSignContext,
+									IN_ENUM_OPT( CRYPT_ALGO ) \
 									const CRYPT_ALGO_TYPE hashAlgo,
+									IN_ENUM_OPT( CRYPT_ALGO ) \
 									const CRYPT_ALGO_TYPE signAlgo,
+									IN_BUFFER( signatureLength ) \
 									const BYTE *signature,
+									IN_LENGTH_SHORT_MIN( 40 ) \
 									const int signatureLength );
 
-READSIG_FUNCTION getReadSigFunction( const SIGNATURE_TYPE sigType );
-WRITESIG_FUNCTION getWriteSigFunction( const SIGNATURE_TYPE sigType );
+CHECK_RETVAL_PTR \
+READSIG_FUNCTION getReadSigFunction( IN_ENUM( SIGNATURE ) \
+									 const SIGNATURE_TYPE sigType );
+CHECK_RETVAL_PTR \
+WRITESIG_FUNCTION getWriteSigFunction( IN_ENUM( SIGNATURE ) \
+									   const SIGNATURE_TYPE sigType );
 
-/* Key exchange read/write methods for the different format types */
+/* Key exchange read/write methods for the different format types.  Specifying
+   input ranges gets a bit complicated because the functions are polymorphic 
+   so we have to provide the lowest common denominator of all functions */
 
-typedef int ( *READKEYTRANS_FUNCTION )( STREAM *stream, QUERY_INFO *queryInfo );
-typedef int ( *WRITEKEYTRANS_FUNCTION )( STREAM *stream,
-										 const CRYPT_CONTEXT iCryptContext,
-										 const BYTE *buffer, const int length,
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+		int ( *READKEYTRANS_FUNCTION )( INOUT STREAM *stream, 
+										INOUT QUERY_INFO *queryInfo );
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+		int ( *WRITEKEYTRANS_FUNCTION )( INOUT STREAM *stream,
+										 IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+										 IN_BUFFER( encryptedKeyLength ) \
+										 const BYTE *encryptedKey, 
+										 IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+										 const int encryptedKeyLength,
+										 IN_BUFFER_OPT( auxInfoLength ) \
 										 const void *auxInfo,
+										 IN_LENGTH_SHORT_Z \
 										 const int auxInfoLength );
-typedef int ( *READKEK_FUNCTION )( STREAM *stream, QUERY_INFO *queryInfo );
-typedef int ( *WRITEKEK_FUNCTION )( STREAM *stream,
-									const CRYPT_CONTEXT iCryptContext,
-									const BYTE *buffer, const int length );
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+		int ( *READKEK_FUNCTION )( INOUT STREAM *stream, 
+								   INOUT QUERY_INFO *queryInfo );
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+		int ( *WRITEKEK_FUNCTION )( STREAM *stream,
+									IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+									IN_BUFFER_OPT( encryptedKeyLength ) \
+									const BYTE *encryptedKey, 
+									IN_LENGTH_SHORT_MIN( MIN_KEYSIZE ) \
+									const int encryptedKeyLength );
 
-READKEYTRANS_FUNCTION getReadKeytransFunction( const KEYEX_TYPE keyexType );
-WRITEKEYTRANS_FUNCTION getWriteKeytransFunction( const KEYEX_TYPE keyexType );
-READKEK_FUNCTION getReadKekFunction( const KEYEX_TYPE keyexType );
-WRITEKEK_FUNCTION getWriteKekFunction( const KEYEX_TYPE keyexType );
+CHECK_RETVAL_PTR \
+READKEYTRANS_FUNCTION getReadKeytransFunction( IN_ENUM( KEYEX ) \
+											   const KEYEX_TYPE keyexType );
+CHECK_RETVAL_PTR \
+WRITEKEYTRANS_FUNCTION getWriteKeytransFunction( IN_ENUM( KEYEX ) \
+												 const KEYEX_TYPE keyexType );
+CHECK_RETVAL_PTR \
+READKEK_FUNCTION getReadKekFunction( IN_ENUM( KEYEX ) \
+									 const KEYEX_TYPE keyexType );
+CHECK_RETVAL_PTR \
+WRITEKEK_FUNCTION getWriteKekFunction( IN_ENUM( KEYEX ) \
+									   const KEYEX_TYPE keyexType );
 
 /* Prototypes for keyex functions in keyex_int.c */
 
-int exportConventionalKey( void *encryptedKey, int *encryptedKeyLength,
-						   const int encryptedKeyMaxLength,
-						   const CRYPT_CONTEXT iSessionKeyContext,
-						   const CRYPT_CONTEXT iExportContext,
-						   const KEYEX_TYPE keyexType );
-int exportPublicKey( void *encryptedKey, int *encryptedKeyLength,
-					 const int encryptedKeyMaxLength,
-					 const CRYPT_CONTEXT iSessionKeyContext,
-					 const CRYPT_CONTEXT iExportContext,
-					 const void *auxInfo, const int auxInfoLength,
-					 const KEYEX_TYPE keyexType );
-int exportKeyAgreeKey( void *encryptedKey, int *encryptedKeyLength,
-					   const int encryptedKeyMaxLength,
-					   const CRYPT_CONTEXT iSessionKeyContext,
-					   const CRYPT_CONTEXT iExportContext,
-					   const CRYPT_CONTEXT iAuxContext,
-					   const void *auxInfo, const int auxInfoLength );
-int importConventionalKey( const void *encryptedKey, 
-						   const int encryptedKeyLength,
-						   const CRYPT_CONTEXT iSessionKeyContext,
-						   const CRYPT_CONTEXT iImportContext,
-						   const KEYEX_TYPE keyexType );
-int importPublicKey( const void *encryptedKey, const int encryptedKeyLength,
-					 const CRYPT_CONTEXT iSessionKeyContext,
-					 const CRYPT_CONTEXT iImportContext,
-					 CRYPT_CONTEXT *iReturnedContext, 
-					 const KEYEX_TYPE keyexType );
-int importKeyAgreeKey( const void *encryptedKey, const int encryptedKeyLength,
-					   const CRYPT_CONTEXT iSessionKeyContext,
-					   const CRYPT_CONTEXT iImportContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int exportConventionalKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
+						   void *encryptedKey, 
+						   IN_LENGTH const int encryptedKeyMaxLength,
+						   OUT_LENGTH_Z int *encryptedKeyLength,
+						   IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+						   IN_HANDLE const CRYPT_CONTEXT iExportContext,
+						   IN_ENUM( KEYEX ) const KEYEX_TYPE keyexType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int exportPublicKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
+					 void *encryptedKey, 
+					 IN_LENGTH const int encryptedKeyMaxLength,
+					 OUT_LENGTH_Z int *encryptedKeyLength,
+					 IN_HANDLE const CRYPT_CONTEXT iSessionKeyContext,
+					 IN_HANDLE const CRYPT_CONTEXT iExportContext,
+					 IN_BUFFER_OPT( auxInfoLength ) \
+					 const void *auxInfo, 
+					 IN_LENGTH_SHORT_Z const int auxInfoLength,
+					 IN_ENUM( KEYEX ) const KEYEX_TYPE keyexType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int importConventionalKey( IN_BUFFER( encryptedKeyLength ) \
+						   const void *encryptedKey, 
+						   IN_LENGTH_SHORT const int encryptedKeyLength,
+						   IN_HANDLE const CRYPT_CONTEXT iSessionKeyContext,
+						   IN_HANDLE const CRYPT_CONTEXT iImportContext,
+						   IN_ENUM( KEYEX ) const KEYEX_TYPE keyexType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int importPublicKey( IN_BUFFER( encryptedKeyLength ) \
+					 const void *encryptedKey, 
+					 IN_LENGTH_SHORT const int encryptedKeyLength,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+					 IN_HANDLE const CRYPT_CONTEXT iImportContext,
+					 OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iReturnedContext, 
+					 IN_ENUM( KEYEX ) const KEYEX_TYPE keyexType );
 
 /* Prototypes for signature functions in sign_cms.c */
 
-int createSignatureCMS( void *signature, int *signatureLength,
-						const int sigMaxLength, 
-						const CRYPT_CONTEXT signContext,
-						const CRYPT_CONTEXT iHashContext,
-						const CRYPT_CERTIFICATE extraData,
-						const CRYPT_SESSION iTspSession,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
+						void *signature, IN_LENGTH_Z const int sigMaxLength, 
+						OUT_LENGTH_Z int *signatureLength,
+						IN_HANDLE const CRYPT_CONTEXT signContext,
+						IN_HANDLE const CRYPT_CONTEXT iHashContext,
+						IN_HANDLE_OPT const CRYPT_CERTIFICATE extraData,
+						IN_HANDLE_OPT const CRYPT_SESSION iTspSession,
+						IN_ENUM( CRYPT_FORMAT ) \
 						const CRYPT_FORMAT_TYPE formatType );
-int checkSignatureCMS( const void *signature, const int signatureLength,
-					   const CRYPT_CONTEXT sigCheckContext,
-					   const CRYPT_CONTEXT iHashContext,
-					   CRYPT_CERTIFICATE *iExtraData,
-					   const CRYPT_HANDLE iSigCheckKey );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkSignatureCMS( IN_BUFFER( signatureLength ) \
+					   const void *signature, 
+					   IN_LENGTH_SHORT const int signatureLength,
+					   IN_HANDLE const CRYPT_CONTEXT sigCheckContext,
+					   IN_HANDLE const CRYPT_CONTEXT iHashContext,
+					   OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iExtraData,
+					   IN_HANDLE const CRYPT_HANDLE iSigCheckKey );
 
 /* Prototypes for signature functions in sign_pgp.c */
 
-int createSignaturePGP( void *signature, int *signatureLength,
-						const int sigMaxLength,
-						const CRYPT_CONTEXT iSignContext,
-						const CRYPT_CONTEXT iHashContext );
-int checkSignaturePGP( const void *signature, const int signatureLength,
-					   const CRYPT_CONTEXT sigCheckContext,
-					   const CRYPT_CONTEXT iHashContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
+						void *signature, IN_LENGTH_Z const int sigMaxLength, 
+						OUT_LENGTH_Z int *signatureLength, 
+						IN_HANDLE const CRYPT_CONTEXT iSignContext,
+						IN_HANDLE const CRYPT_CONTEXT iHashContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkSignaturePGP( IN_BUFFER( signatureLength ) \
+					   const void *signature, 
+					   IN_LENGTH_SHORT const int signatureLength,
+					   IN_HANDLE const CRYPT_CONTEXT sigCheckContext,
+					   IN_HANDLE const CRYPT_CONTEXT iHashContext );
 
 /* Prototypes for common low-level signature functions in sign_int.c */
 
-int createSignature( void *signature, int *signatureLength, 
-					 const int sigMaxLength, 
-					 const CRYPT_CONTEXT iSignContext,
-					 const CRYPT_CONTEXT iHashContext,
-					 const CRYPT_CONTEXT iHashContext2,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
+					 void *signature, IN_LENGTH_Z const int sigMaxLength, 
+					 OUT_LENGTH_Z int *signatureLength, 
+					 IN_HANDLE const CRYPT_CONTEXT iSignContext,
+					 IN_HANDLE const CRYPT_CONTEXT iHashContext,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iHashContext2,
+					 IN_ENUM( SIGNATURE ) \
 					 const SIGNATURE_TYPE signatureType );
-int checkSignature( const void *signature, const int signatureLength,
-					const CRYPT_CONTEXT iSigCheckContext,
-					const CRYPT_CONTEXT iHashContext,
-					const CRYPT_CONTEXT iHashContext2,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkSignature( IN_BUFFER( signatureLength ) \
+					const void *signature, 
+					IN_LENGTH_SHORT const int signatureLength,
+					IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
+					IN_HANDLE const CRYPT_CONTEXT iHashContext,
+					IN_HANDLE_OPT const CRYPT_CONTEXT iHashContext2,
+					IN_ENUM( SIGNATURE ) \
 					const SIGNATURE_TYPE signatureType );
 
 /* Prototypes for functions in sign_rw.c */
 
-int readOnepassSigPacket( STREAM *stream, QUERY_INFO *queryInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readPgpOnepassSigPacket( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo );
 
 /* Prototypes for functions in obj_qry.c */
 
-int getPacketInfo( STREAM *stream, QUERY_INFO *queryInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo );
 
 #endif /* _MECHANISM_DEFINED */

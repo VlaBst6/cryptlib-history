@@ -27,16 +27,16 @@
 
 #ifdef USE_PKCS12
 
-/* A PKCS #12 file can in theory contain multiple key and cert objects,
-   however nothing seems to use this capability, both because there are half
-   a dozen different interpretations as to how it's supposed to work, both in
-   terms of how to interpret the format and what to do with things like 
-   MACing, which can only use a single key even if there are multiple
-   different encryption keys used for the data, and because the complete
-   abscence of key indexing information means that there's no easy way to 
-   sort out which key is used for what.  The code is written to handle 
-   multiple personalities like PKCS #15 and PGP, but is restricted to using 
-   only a single personality */
+/* A PKCS #12 file can in theory contain multiple key and certificate 
+   objects, however nothing seems to use this capability, both because there 
+   are half a dozen different interpretations as to how it's supposed to 
+   work, both in terms of how to interpret the format and what to do with 
+   things like MACing, which can only use a single key even if there are 
+   multiple different encryption keys used for the data, and because the 
+   complete abscence of key indexing information means that there's no easy 
+   way to sort out which key is used for what.  The code is written to 
+   handle multiple personalities like PKCS #15 and PGP, but is restricted to 
+   using only a single personality */
 
 #define MAX_PKCS12_OBJECTS		1
 
@@ -55,10 +55,10 @@
 #define KEYWRAP_SALTSIZE		8
 
 /* The following structure contains the information for one personality, 
-   which covers one or more of a private key, public key, and cert.  We also
-   need to store a MAC context for use when we write the data to disk, this 
-   is supposedly optional but most apps will reject the keyset (or even 
-   crash) if it's not present */
+   which covers one or more of a private key, public key, and certificate.  
+   We also need to store a MAC context for use when we write the data to 
+   disk, this is supposedly optional but most apps will reject the keyset 
+   (or even crash) if it's not present */
 
 typedef struct {
 	/* General information */
@@ -75,7 +75,7 @@ typedef struct {
 	int macSaltSize;				/* Salt for MAC key */
 	int macIterations;				/* Number of iters.to derive MAC key */
 
-	/* Key/cert object data */
+	/* Key/certificate object data */
 	void *privKeyData, *certData;	/* Encoded object data */
 	int privKeyDataSize, certDataSize;
 	} PKCS12_INFO;
@@ -84,13 +84,13 @@ typedef struct {
 
 static const FAR_BSS OID_SELECTION dataOIDselection[] = {
     { OID_CMS_DATA, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_OK },
-    { NULL, 0, 0, 0 }
+    { NULL, 0, 0, 0 }, { NULL, 0, 0, 0 }
     };
 
 static const FAR_BSS OID_SELECTION keyDataOIDselection[] = {
 	{ OID_CMS_ENCRYPTEDDATA, 0, 2, TRUE },				/* Encr.priv.key */
 	{ OID_CMS_DATA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE },/* Non-encr priv.key */
-	{ NULL, 0, 0, 0 }
+	{ NULL, 0, 0, 0 }, { NULL, 0, 0, 0 }
 	};
 
 /****************************************************************************
@@ -103,6 +103,8 @@ static const FAR_BSS OID_SELECTION keyDataOIDselection[] = {
 
 static void pkcs12freeEntry( PKCS12_INFO *pkcs12info )
 	{
+	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
+
 	if( pkcs12info->iMacContext != CRYPT_ERROR )
 		krnlSendNotifier( pkcs12info->iMacContext, IMESSAGE_DECREFCOUNT );
 	if( pkcs12info->privKeyData != NULL )
@@ -122,6 +124,8 @@ static void pkcs12Free( PKCS12_INFO *pkcs12info )
 	{
 	int i;
 
+	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
+
 	for( i = 0; i < MAX_PKCS12_OBJECTS; i++ )
 		pkcs12freeEntry( &pkcs12info[ i ] );
 	}
@@ -140,8 +144,15 @@ static int createKeyWrapContext( CRYPT_CONTEXT *iCryptContext,
 	BYTE saltData[ 1 + KEYWRAP_SALTSIZE + 8 ];
 	int status;
 
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isHandleRangeValid( cryptOwner ) );
+	assert( isReadPtr( password, passwordLength ) );
+	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
+
 	/* Derive the encryption key and IV from the password */
-	getNonce( pkcs12info->wrapSalt, KEYWRAP_SALTSIZE );
+	status = getNonce( pkcs12info->wrapSalt, KEYWRAP_SALTSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
 	pkcs12info->wrapSaltSize = KEYWRAP_SALTSIZE;
 	saltData[ 0 ] = KEYWRAP_ID_WRAPKEY;
 	memcpy( saltData + 1, pkcs12info->wrapSalt, KEYWRAP_SALTSIZE );
@@ -218,8 +229,14 @@ static int createMacContext( PKCS12_INFO *pkcs12info,
 	BYTE key[ CRYPT_MAX_KEYSIZE + 8 ], saltData[ 1 + KEYWRAP_SALTSIZE + 8 ];
 	int status;
 
+	assert( isWritePtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
+	assert( isHandleRangeValid( cryptOwner ) );
+	assert( isReadPtr( password, passwordLength ) );
+
 	/* Derive the MAC key from the password */
-	getNonce( pkcs12info->macSalt, KEYWRAP_SALTSIZE );
+	status = getNonce( pkcs12info->macSalt, KEYWRAP_SALTSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
 	pkcs12info->macSaltSize = KEYWRAP_SALTSIZE;
 	saltData[ 0 ] = KEYWRAP_ID_MACKEY;
 	memcpy( saltData + 1, pkcs12info->macSalt, KEYWRAP_SALTSIZE );
@@ -275,15 +292,31 @@ static int createMacContext( PKCS12_INFO *pkcs12info,
    simply fetch the appropriate key from the preprocessed data when 
    getItemFunction() is called */
 
-static int getItemFunction( KEYSET_INFO *keysetInfo,
+static int getItemFunction( KEYSET_INFO *keysetInfoPtr,
 							CRYPT_HANDLE *iCryptHandle,
 							const KEYMGMT_ITEM_TYPE itemType,
 							const CRYPT_KEYID_TYPE keyIDtype,
-							const void *keyID,  const int keyIDlength,
+							const void *keyID, const int keyIDlength,
 							void *auxInfo, int *auxInfoLength,
 							const int flags )
 	{
-	return( CRYPT_ERROR_NOTAVAIL );	/* Make sure that we always fail */
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCryptHandle, sizeof( CRYPT_HANDLE ) ) );
+	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			itemType == KEYMGMT_ITEM_PRIVATEKEY );
+	assert( keyIDtype == CRYPT_KEYID_NAME || \
+			keyIDtype == CRYPT_KEYID_URI || \
+			keyIDtype == CRYPT_IKEYID_KEYID || \
+			keyIDtype == CRYPT_IKEYID_PGPKEYID || \
+			keyIDtype == CRYPT_IKEYID_ISSUERID );
+	assert( isReadPtr( keyID, keyIDlength ) );
+	assert( ( auxInfo == NULL && auxInfoMaxLength == 0 ) || \
+			isReadPtr( auxInfo, auxInfoMaxLength ) );
+
+	/* Make sure that we always fail */
+	retExt( CRYPT_ERROR_NOTAVAIL, 
+			( CRYPT_ERROR_NOTAVAIL, KEYSET_ERRINFO, 
+			  "Arrgghhh!! The horror! The horror!" ) );
 	}
 
 /****************************************************************************
@@ -297,25 +330,30 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 static void writeNonCMSheader( STREAM *stream, const BYTE *oid,
 							   const int length, const int attrDataLength )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( oid != NULL );
+	assert( length > 0 );
+	assert( attrDataLength > 0 );
+
 	writeSequence( stream, ( int ) \
 				   ( sizeofOID( oid ) + \
 				     sizeofObject( sizeofObject( length ) ) + \
 					 sizeofObject( attrDataLength ) ) );
 	writeOID( stream, oid );
 	writeConstructed( stream, ( int ) sizeofObject( length ), 0 );
-	writeSequence( stream, length );
+	writeSequence( stream, length ) );
 	}
 
 /* Write a PKCS #12 item ("safeBag").  We can't write this directly to the
    output stream but have to buffer it via an intermediate stream so we can
    MAC it */
 
-static void writeItem( STREAM *stream, const PKCS12_INFO *pkcs12info,
-					   const BOOLEAN isPrivateKey, const BOOLEAN macData )
+static int writeItem( STREAM *stream, const PKCS12_INFO *pkcs12info,
+					  const BOOLEAN isPrivateKey, const BOOLEAN macData )
 	{
 	STREAM memStream;
 	BYTE buffer[ 256 + 8 ];
-	void *dataPtr;
+	void *dataPtr, *macDataPtr;
 	const int idDataSize = ( int ) \
 						( sizeofOID( OID_PKCS9_LOCALKEYID ) + \
 						  sizeofObject( \
@@ -329,9 +367,11 @@ static void writeItem( STREAM *stream, const PKCS12_INFO *pkcs12info,
 						  sizeofObject( labelDataSize ) );
 	int dataSize, i, j;
 
-	sMemOpen( &memStream, buffer, 256 );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
 
 	/* Write the item wrapper and item data */
+	sMemOpen( &memStream, buffer, 256 );
 	if( isPrivateKey )
 		{
 		writeNonCMSheader( &memStream, OID_PKCS12_SHROUDEDKEYBAG,
@@ -357,22 +397,34 @@ static void writeItem( STREAM *stream, const PKCS12_INFO *pkcs12info,
 		}
 	assert( stell( &memStream ) < 256 );
 	swrite( stream, buffer, stell( &memStream ) );
-	swrite( stream, dataPtr, dataSize );
+	status = swrite( stream, dataPtr, dataSize );
+	if( cryptStatusError( status ) )
+		{
+		sMemClose( &memStream );
+		return( status );
+		}
 
 	/* Mac the payload data if necessary */
 	if( macData )
 		{
-		krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH,
-						 buffer, stell( &memStream ) );
-		krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH,
-						 dataPtr, dataSize );
+		status = krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH,
+								  buffer, stell( &memStream ) );
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( pkcs12info->iMacContext, 
+									  IMESSAGE_CTX_HASH, dataPtr, dataSize );
+		if( cryptStatusError( status ) )
+			{
+			sMemClose( &memStream );
+			return( status );
+			}
 		}
+	sMemClose( &memStream );
 
 	/* Write the item's ID and label.  These are supposedly optional, but
 	   some apps will break if they're not present.  We have to keep the ID
-	   short (rather than using, say, a keyID) because some apps assume it's
-	   a 32-bit int or a similar type of value */
-	sseek( &memStream, 0 );
+	   short (rather than using, say, a keyID) because some apps assume that 
+	   it's a 32-bit int or a similar type of value */
+	sMemOpen( &memStream, buffer, 256 );
 	writeSet( &memStream, attrDataSize );
 	writeSequence( &memStream, idDataSize );
 	writeOID( &memStream, OID_PKCS9_LOCALKEYID );
@@ -387,20 +439,35 @@ static void writeItem( STREAM *stream, const PKCS12_INFO *pkcs12info,
 	for( i = 0, j = 0; i < pkcs12info->labelLength && \
 					   i < CRYPT_MAX_TEXTSIZE; i++ )
 		{
-		/* Convert the ASCII string to a BMP string */
+		/* Convert the ASCII string into a BMP string */
 		sputc( &memStream, 0 );
 		sputc( &memStream, pkcs12info->label[ i ] );
 		}
 	if( i >= CRYPT_MAX_TEXTSIZE )
 		retIntError();
 	assert( stell( &memStream ) < 256 );
-	swrite( stream, buffer, stell( &memStream ) );
+	status = swrite( stream, buffer, stell( &memStream ) );
+	if( cryptStatusError( status ) )
+		{
+		sMemClose( &memStream );
+		return( status );
+		}
 
 	/* Mac the attribute data if necessary */
 	if( macData )
-		krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH, 
-						 buffer, stell( &memStream ) );
+		{
+		status = krnlSendMessage( pkcs12info->iMacContext, 
+								  IMESSAGE_CTX_HASH, buffer, 
+								  stell( &memStream ) );
+		if( cryptStatusError( status ) )
+			{
+			sMemClose( &memStream );
+			return( status );
+			}
+		}
 	sMemClose( &memStream );
+
+	return( CRYPT_OK );
 	}
 
 /* Flush a PKCS #12 collection to a stream */
@@ -411,26 +478,33 @@ static int pkcs12Flush( STREAM *stream, const PKCS12_INFO *pkcs12info )
 	MESSAGE_DATA msgData;
 	BYTE buffer[ 32 + 8 ];
 	BOOLEAN privateKeyPresent = FALSE;
-	int safeDataSize, authSafeDataSize, macDataSize, i, status;
+	int safeDataSize, authSafeDataSize, macDataSize, i, status = CRYPT_OK;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( pkcs12info, sizeof( PKCS12_INFO ) ) );
 
 	/* Determine the overall size of the objects */
-	sMemOpen( &memStream, NULL, 0 );
-	for( i = 0; i < MAX_PKCS12_OBJECTS; i++ )
+	sMemNullOpen( &memStream );
+	for( i = 0; cryptStatusOK( status ) && i < MAX_PKCS12_OBJECTS; i++ )
 		{
 		if( pkcs12info[ i ].privKeyDataSize > 0 )
 			{
 			privateKeyPresent = TRUE;
-			writeItem( &memStream, pkcs12info, TRUE, FALSE );
+			status = writeItem( &memStream, pkcs12info, TRUE, FALSE );
 			}
 		if( pkcs12info[ i ].certDataSize > 0 )
-			writeItem( &memStream, pkcs12info, FALSE, FALSE );
+			status = writeItem( &memStream, pkcs12info, FALSE, FALSE );
 		}
 	safeDataSize = stell( &memStream );
 	sMemClose( &memStream );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( !privateKeyPresent )
+		{
 		/* If there's no data present, let the caller know that the keyset
 		   is empty */
 		return( OK_SPECIAL );
+		}
 	authSafeDataSize = ( int ) \
 					sizeofObject( \
 						sizeofObject( \
@@ -471,18 +545,22 @@ static int pkcs12Flush( STREAM *stream, const PKCS12_INFO *pkcs12info )
 	writeSequence( &memStream, safeDataSize );
 	assert( stell( &memStream ) < 32 );
 	swrite( stream, buffer, stell( &memStream ) );
-	krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH, 
-					 buffer, stell( &memStream ) );
+	status = krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_CTX_HASH, 
+							  buffer, stell( &memStream ) );
 	sMemClose( &memStream );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Write the individual objects */
-	for( i = 0; i < MAX_PKCS12_OBJECTS; i++ )
+	for( i = 0; cryptStatusOK( status ) && i < MAX_PKCS12_OBJECTS; i++ )
 		{
 		if( pkcs12info[ i ].privKeyDataSize > 0 )
 			writeItem( stream, pkcs12info, TRUE, TRUE );
 		if( pkcs12info[ i ].certDataSize > 0 )
 			writeItem( stream, pkcs12info, FALSE, TRUE );
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Wrap up the MACing and write the MAC data.  Despite the fact that the
 	   algorithm being used is HMAC, the OID we have to write is the one for 
@@ -492,8 +570,9 @@ static int pkcs12Flush( STREAM *stream, const PKCS12_INFO *pkcs12info )
 	if( cryptStatusOK( status ) )
 		{
 		setResourceData( &msgData, buffer, CRYPT_MAX_HASHSIZE );
-		krnlSendMessage( pkcs12info->iMacContext, IMESSAGE_GETATTRIBUTE_S, 
-						 &msgData, CRYPT_CTXINFO_HASHVALUE );
+		status = krnlSendMessage( pkcs12info->iMacContext, 
+								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+								  CRYPT_CTXINFO_HASHVALUE );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -504,14 +583,16 @@ static int pkcs12Flush( STREAM *stream, const PKCS12_INFO *pkcs12info )
 	writeOctetString( stream, buffer, msgData.length, DEFAULT_TAG );
 	writeOctetString( stream, pkcs12info->macSalt, pkcs12info->macSaltSize,
 					  DEFAULT_TAG );
-	writeShortInteger( stream, pkcs12info->macIterations, DEFAULT_TAG );
+	status = writeShortInteger( stream, pkcs12info->macIterations, DEFAULT_TAG );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	return( sflush( stream ) );
 	}
 
 /* Add an item to the PKCS #12 keyset */
 
-static int setItemFunction( KEYSET_INFO *keysetInfo,
+static int setItemFunction( KEYSET_INFO *keysetInfoPtr,
 							const CRYPT_HANDLE cryptHandle,
 							const KEYMGMT_ITEM_TYPE itemType,
 							const char *password, const int passwordLength,
@@ -520,21 +601,29 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	CRYPT_CONTEXT iKeyWrapContext;
 	CRYPT_ALGO_TYPE cryptAlgo;
 	MECHANISM_WRAP_INFO mechanismInfo;
-	PKCS12_INFO *pkcs12infoPtr = keysetInfo->keyData;
+	PKCS12_INFO *pkcs12infoPtr = keysetInfoPtr->keyData;
 	STREAM stream;
 	BOOLEAN certPresent = FALSE, contextPresent;
 	BOOLEAN pkcs12keyPresent = pkcs12infoPtr->privKeyDataSize ? TRUE : FALSE;
 	int privKeyInfoSize, pbeInfoDataSize;
 	int value, status;
 
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) && \
+			keysetInfoPtr->type == KEYSET_FILE && \
+			keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 );
+	assert( isHandleRangeValid( cryptHandle ) );
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			itemType == KEYMGMT_ITEM_PRIVATEKEY );
 
-	/* If there's already a key and cert present, we can't add anything
-	   else.  This check also catches the (invalid) case of a cert being
-	   present without a corresponding private key */
+	/* If there's already a key and certificate present, we can't add 
+	   anything else.  This check also catches the (invalid) case of a 
+	   certificate being present without a corresponding private key */
 	if( pkcs12infoPtr->certDataSize > 0 )
-		return( CRYPT_ERROR_INITED );
+		{
+		retExt( CRYPT_ERROR_OVERFLOW, 
+				( CRYPT_ERROR_OVERFLOW, KEYSET_ERRINFO, 
+				  "No more room in keyset to add this item" ) );
+		}
 
 	/* Check the object and extract ID information from it */
 	status = krnlSendMessage( cryptHandle, IMESSAGE_CHECK, NULL,
@@ -544,8 +633,11 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE,
 								  &cryptAlgo, CRYPT_CTXINFO_ALGO );
 		if( cryptStatusOK( status ) && cryptAlgo != CRYPT_ALGO_RSA )
-			/* PKCS #12 can only store RSA keys */
-			status = CRYPT_ARGERROR_NUM1;
+			{
+			retExtArg( CRYPT_ARGERROR_NUM1, 
+					   ( CRYPT_ARGERROR_NUM1, KEYSET_ERRINFO, 
+						 "Standard PKCS #12 can only store RSA keys" ) );
+			}
 		}
 	if( cryptStatusError( status ) )
 		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
@@ -554,48 +646,66 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 								IMESSAGE_CHECK, NULL,
 								MESSAGE_CHECK_PKC_PRIVATE ) ) ? TRUE : FALSE;
 
-	/* If there's a cert present, make sure that it's something that can be
-	   stored.  We don't treat the wrong type as an error since we can still
-	   store the public/private key components even if we don't store the
-	   cert */
+	/* If there's a certificate present, make sure that it's something that 
+	   can be stored.  We don't treat the wrong type as an error since we 
+	   can still store the public/private key components even if we don't 
+	   store the certificate */
 	status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE,
 							  &value, CRYPT_CERTINFO_CERTTYPE );
 	if( cryptStatusOK( status ) && \
 		( value == CRYPT_CERTTYPE_CERTIFICATE || \
 		  value == CRYPT_CERTTYPE_CERTCHAIN ) )
 		{
-		/* If the cert isn't signed, we can't store it in this state */
+		/* If the certificate isn't signed, we can't store it in this 
+		   state */
 		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE,
 								  &value, CRYPT_CERTINFO_IMMUTABLE );
 		if( cryptStatusError( status ) || !value )
-			return( CRYPT_ERROR_NOTINITED );
+			{
+			retExt( CRYPT_ERROR_NOTINITED, 
+					( CRYPT_ERROR_NOTINITED, KEYSET_ERRINFO, 
+					  "Certificate being added is incomplete (unsigned)" ) );
+			}
 		certPresent = TRUE;
 		if( !pkcs12keyPresent )
-			/* We can't add a cert unless there's already a key present.
-			   Since PKCS #12 doesn't store any index information, we have
-			   no idea whether the two actually belong together, so we just
-			   have to hope for the best */
-			return( CRYPT_ERROR_NOTINITED );
+			{
+			/* We can't add a certificate unless there's already a key 
+			   present.  Since PKCS #12 doesn't store any index information, 
+			   we have no idea whether the two actually belong together, so 
+			   we just have to hope for the best */
+			retExt( CRYPT_ERROR_NOTINITED, 
+					( CRYPT_ERROR_NOTINITED, KEYSET_ERRINFO, 
+					  "No key present that corresponds to certificate being "
+					  "added" ) );
+			}
 		}
 	else
+		{
 		/* If we're trying to add a standalone key and there's already one
 		   present, we can't add another one */
 		if( pkcs12keyPresent )
-			return( CRYPT_ERROR_INITED );
+			{
+			retExt( CRYPT_ERROR_INITED, 
+					( CRYPT_ERROR_INITED, KEYSET_ERRINFO, 
+					  "No more room in keyset to add this item" ) );
+			}
+		}
 
 	/* If we're adding a private key, make sure that there's a password 
 	   present.  Conversely, if there's a password present make sure that 
 	   we're adding a private key */
 	if( pkcs12keyPresent )
 		{
-		/* We're adding a cert, there can't be a password present */
+		/* We're adding a certificate, there can't be a password present */
 		if( password != NULL )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		/* We're adding a private key, there must be a password present */
 		if( password == NULL )
 			return( CRYPT_ARGERROR_STR1 );
+		}
 
 	/* Get what little index information PKCS #12 stores with a key */
 	if( !pkcs12keyPresent )
@@ -616,18 +726,18 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Write the cert if necessary.  We do this one first because it's the
-	   easiest to back out of */
+	/* Write the certificate if necessary.  We do this one first because 
+	   it's the easiest to back out of */
 	if( certPresent )
 		{
 		MESSAGE_DATA msgData;
 
-		/* Select the leaf cert in case it's a cert chain */
+		/* Select the leaf certificate in case it's a certificate chain */
 		krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE,
 						 MESSAGE_VALUE_CURSORFIRST,
 						 CRYPT_CERTINFO_CURRENT_CERTIFICATE );
 
-		/* Get the encoded cert */
+		/* Get the encoded certificate */
 		setResourceData( &msgData, NULL, 0 );
 		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_ENC_CERT );
@@ -653,23 +763,30 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 		if( cryptStatusError( status ) || pkcs12keyPresent )
 			{
 			krnlSendNotifier( cryptHandle, IMESSAGE_UNLOCK );
-			return( status );
+			retExt( status, 
+					( status, KEYSET_ERRINFO, 
+					  "Couldn't extract certificate data from "
+					  "certificate" ) );
 			}
 		}
 
 	/* Create the key wrap context and the MAC context (if necessary) from 
 	   the password.  See the comment at the start of the file for the 
 	   ambiguity involved with the MAC context */
-	status = createKeyWrapContext( &iKeyWrapContext, keysetInfo->ownerHandle, 
+	status = createKeyWrapContext( &iKeyWrapContext, 
+								   keysetInfoPtr->ownerHandle, 
 								   password, passwordLength, pkcs12infoPtr );
 	if( cryptStatusOK( status ) && pkcs12infoPtr->iMacContext == CRYPT_ERROR )
-		status = createMacContext( pkcs12infoPtr, keysetInfo->ownerHandle, 
+		status = createMacContext( pkcs12infoPtr, keysetInfoPtr->ownerHandle, 
 								   password, passwordLength );
 	if( cryptStatusError( status ) )
 		{
 		pkcs12freeEntry( pkcs12infoPtr );
 		krnlSendNotifier( cryptHandle, IMESSAGE_UNLOCK );
-		return( status );
+		retExt( status, 
+				( status, KEYSET_ERRINFO, 
+				  "Couldn't create session/MAC key to secure private "
+				  "key" ) );
 		}
 
 	/* Calculate the eventual encrypted key size and allocate storage for it */
@@ -705,9 +822,18 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	writeOctetString( &stream, pkcs12infoPtr->wrapSalt, 
 					  pkcs12infoPtr->wrapSaltSize, DEFAULT_TAG );
 	writeShortInteger( &stream, pkcs12infoPtr->wrapIterations, DEFAULT_TAG );
-	writeOctetStringHole( &stream, privKeyInfoSize, DEFAULT_TAG );
+	status = writeOctetStringHole( &stream, privKeyInfoSize, DEFAULT_TAG );
 	assert( stell( &stream ) < 64 );
-	assert( sStatusOK( &stream ) );
+	if( cryptStatusError( status ) )
+		{
+		sMemClose( &stream );
+		pkcs12freeEntry( pkcs12infoPtr );
+		krnlSendNotifier( iKeyWrapContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( cryptHandle, IMESSAGE_UNLOCK );
+		retExt( status, 
+				( status, KEYSET_ERRINFO, 
+				  "Couldn't write wrapped private key header" ) );
+		}
 	setMechanismWrapInfo( &mechanismInfo,
 						  ( BYTE * ) pkcs12infoPtr->privKeyData + \
 									 ( int ) stell( &stream ),
@@ -722,8 +848,14 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 		pkcs12freeEntry( pkcs12infoPtr );
 	sMemDisconnect( &stream );
 	krnlSendNotifier( cryptHandle, IMESSAGE_UNLOCK );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, KEYSET_ERRINFO, 
+				  "Couldn't wrap/MAC private key data" ) );
+		}
 
-	return( status );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -740,6 +872,10 @@ static int unwrapOctetString( STREAM *stream, BYTE *buffer,
 							  const int totalLength )
 	{
 	int bufPos = 0, iterationCount = 0, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( buffer != NULL );
+	assert( totalLength > 0 );
 
 	status = checkEOC( stream );
 	while( !cryptStatusError( status ) && status != TRUE && \
@@ -777,18 +913,25 @@ static int unwrapOctetString( STREAM *stream, BYTE *buffer,
    open it we scan it and record various pieces of information about it which
    we can use later when we need to access it */
 
-static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
-						 const int nameLength,
-						 const CRYPT_KEYOPT_TYPE options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
+						 STDC_UNUSED const char *name,
+						 STDC_UNUSED const int nameLength,
+						 IN_ENUM( CRYPT_KEYOPT ) const CRYPT_KEYOPT_TYPE options )
 	{
 	PKCS12_INFO *pkcs12info;
-	STREAM *stream = &keysetInfo->keysetFile->stream, memStream;
+	STREAM *stream = &keysetInfoPtr->keysetFile->stream, memStream;
 	BYTE *buffer;
 	BOOLEAN isIndefinite = FALSE;
 	long length;
 	int totalLength, status;
 
-	assert( name == NULL && nameLength == 0 );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) && \
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+			  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 );
+	REQUIRES( name == NULL && nameLength == 0 );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* Read the outer wrapper, version number field, and CMS data wrapper.  
 	   We do this before we perform any setup operations to weed out
@@ -801,19 +944,23 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 		readShortInteger( stream, &version );
 		status = readCMSheader( stream, dataOIDselection, &length, FALSE );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status, 
+					( status, KEYSET_ERRINFO, 
+					  "Invalid PKCS #12 keyset header" ) );
+			}
 		if( version != 3 )
 			return( CRYPT_ERROR_BADDATA );
 		}
 
-	/* Allocate the PKCS #12 object info */
+	/* Allocate the PKCS #12 object information */
 	if( ( pkcs12info = clAlloc( "initFunction", \
 								sizeof( PKCS12_INFO ) * \
 								MAX_PKCS12_OBJECTS ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
 	memset( pkcs12info, 0, sizeof( PKCS12_INFO ) * MAX_PKCS12_OBJECTS );
-	keysetInfo->keyData = pkcs12info;
-	keysetInfo->keyDataSize = sizeof( PKCS12_INFO ) * MAX_PKCS12_OBJECTS;
+	keysetInfoPtr->keyData = pkcs12info;
+	keysetInfoPtr->keyDataSize = sizeof( PKCS12_INFO ) * MAX_PKCS12_OBJECTS;
 	pkcs12info->iMacContext = CRYPT_ERROR;
 
 	/* If this is a newly-created keyset, there's nothing left to do */
@@ -842,7 +989,9 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	if( cryptStatusError( status ) )
 		{
 		clFree( "initFunction", buffer );
-		return( status );
+		retExt( status, 
+				( status, KEYSET_ERRINFO, 
+				  "Invalid PKCS #12 keyset content" ) );
 		}
 
 	/* Extract the next level of unnecessarily nested data from the mess */
@@ -874,6 +1023,14 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 			   continue */
 
 			clFree( "initFunction", innerBuffer );
+			if( cryptStatusError( status ) )
+				{
+				sMemDisconnect( &memStream );
+				clFree( "initFunction", buffer );
+				retExt( status, 
+						( status, KEYSET_ERRINFO, 
+						  "Invalid PKCS #12 inner content" ) );
+				}
 			}
 		}
 	sMemDisconnect( &memStream );
@@ -884,27 +1041,38 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 
 /* Shut down the PKCS #12 state, flushing information to disk if necessary */
 
-static void shutdownFunction( KEYSET_INFO *keysetInfo )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static int shutdownFunction( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+			  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 );
+
 	/* If the contents have been changed, commit the changes to disk */
-	if( keysetInfo->flags & KEYSET_DIRTY )
+	if( keysetInfoPtr->flags & KEYSET_DIRTY )
 		{
 		int status;
 
-		sseek( &keysetInfo->keysetFile->stream, 0 );
-		status = pkcs12Flush( &keysetInfo->keysetFile->stream,
-							  keysetInfo->keyData );
+		sseek( &keysetInfoPtr->keysetFile->stream, 0 );
+		status = pkcs12Flush( &keysetInfoPtr->keysetFile->stream,
+							  keysetInfoPtr->keyData );
 		if( status == OK_SPECIAL )
-			keysetInfo->flags |= KEYSET_EMPTY;
+			{
+			keysetInfoPtr->flags |= KEYSET_EMPTY;
+			status = CRYPT_OK;
+			}
 		}
 
-	/* Free the PKCS #12 object info */
-	if( keysetInfo->keyData != NULL )
+	/* Free the PKCS #12 object information */
+	if( keysetInfoPtr->keyData != NULL )
 		{
-		pkcs12Free( keysetInfo->keyData );
-		zeroise( keysetInfo->keyData, keysetInfo->keyDataSize );
-		clFree( "shutdownFunction", keysetInfo->keyData );
+		pkcs12Free( keysetInfoPtr->keyData );
+		zeroise( keysetInfoPtr->keyData, keysetInfoPtr->keyDataSize );
+		clFree( "shutdownFunction", keysetInfoPtr->keyData );
 		}
+
+	return( status );
 	}
 
 /****************************************************************************
@@ -913,13 +1081,19 @@ static void shutdownFunction( KEYSET_INFO *keysetInfo )
 *																			*
 ****************************************************************************/
 
-int setAccessMethodPKCS12( KEYSET_INFO *keysetInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodPKCS12( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+			  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 );
+
 	/* Set the access method pointers */
-	keysetInfo->initFunction = initFunction;
-	keysetInfo->shutdownFunction = shutdownFunction;
-	keysetInfo->getItemFunction = getItemFunction;
-	keysetInfo->setItemFunction = setItemFunction;
+	keysetInfoPtr->initFunction = initFunction;
+	keysetInfoPtr->shutdownFunction = shutdownFunction;
+	keysetInfoPtr->getItemFunction = getItemFunction;
+	keysetInfoPtr->setItemFunction = setItemFunction;
 
 	return( CRYPT_OK );
 	}

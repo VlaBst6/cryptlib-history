@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib TCP/IP Interface Header					*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2007					*
 *																			*
 ****************************************************************************/
 
@@ -292,10 +292,11 @@
   /* #include <tpipv6.h> */	/* From IPv6 Tech.Preview */
 #endif /* VC++ 7 and newer */
 
-/* VC++ 7 and newer have DNS headers, for older versions we have to define
-   the necessary types and constants ourselves */
+/* VC++ 7 and newer have DNS headers, for older versions (or for builds 
+   using the DDK) we have to define the necessary types and constants 
+   ourselves */
 
-#if defined( _MSC_VER ) && ( _MSC_VER > 1300 )
+#if defined( _MSC_VER ) && ( _MSC_VER > 1300 ) && !defined( WIN_DDK )
   #include <windns.h>
 #elif defined( _MSC_VER ) && ( _MSC_VER > 800 )
   /* windns.h is quite new and many people don't have it yet, not helped by
@@ -696,6 +697,7 @@
 	int ai_protocol;			/* IPPROTO_TCP */
 	size_t ai_addrlen;			/* Length of ai_addr */
 	char *ai_canonname;			/* CNAME for nodename */
+	ARRAY_FIXED( ai_addrlen ) \
 	struct sockaddr *ai_addr;	/* IPv4 or IPv6 sockaddr */
 	struct addrinfo *ai_next;	/* Next addrinfo structure list */
 	};
@@ -952,24 +954,68 @@
 /* DNS dynamic-binding init/shutdown functions */
 
 #ifdef __WINDOWS__
-  int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr );
-  void endDNS( INSTANCE_HANDLE hTCP );
+  CHECK_RETVAL \
+  int initDNS( const INSTANCE_HANDLE hTCP, const INSTANCE_HANDLE hAddr );
+  void endDNS( const INSTANCE_HANDLE hTCP );
+  #ifdef USE_DNSSRV
+	CHECK_RETVAL \
+	int initDNSSRV( const INSTANCE_HANDLE hTCP );
+	void endDNSSRV( const INSTANCE_HANDLE hTCP );
+  #else
+	#define initDNSSRV( hTCP )		CRYPT_ERROR
+	#define endDNSSRV( hTCP )
+  #endif /* USE_DNSSRV */
 #endif /* __WINDOWS__ */
 
-/* Prototypes for functions in net_dns.c */
+/* Prototypes for functions in dns.c */
 
-int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
-					const char *name, const int port,
-					const BOOLEAN isServer );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int getAddressInfo( INOUT NET_STREAM_INFO *netStream, 
+					OUT_PTR struct addrinfo **addrInfoPtrPtr,
+					IN_BUFFER( nameLen ) const char *name, 
+					IN_LENGTH_DNS const int nameLen, 
+					IN_PORT const int port, const BOOLEAN isServer );
+STDC_NONNULL_ARG( ( 1 ) ) \
 void freeAddressInfo( struct addrinfo *addrInfoPtr );
-void getNameInfo( const struct sockaddr *sockAddr, char *address,
-				  const int addressMaxLen, int *port );
+STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+void getNameInfo( const struct sockaddr *sockAddr, 
+				  OUT_BUFFER( addressMaxLen, *addressLen ) \
+				  char *address, IN_LENGTH_DNS const int addressMaxLen, 
+				  OUT_LENGTH_DNS_Z int *addressLen, 
+				  OUT_PORT_Z int *port );
 
-/* Prototypes for functions in net_tcp.c */
+/* Prototypes for functions in dns_srv.c */
 
-int getSocketError( STREAM *stream, const int status );
-int setSocketError( STREAM *stream, const char *errorMessage,
-					const int status, const BOOLEAN isFatal );
-int getHostError( STREAM *stream, const int status );
+#ifdef USE_DNSSRV
+  CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+  int findHostInfo( INOUT NET_STREAM_INFO *netStream, 
+					OUT_BUFFER_FIXED( hostNameMaxLen ) char *hostName, 
+					IN_LENGTH_DNS const int hostNameMaxLen, 
+					OUT_PORT_Z int *hostPort, 
+					IN_BUFFER( nameLen ) const char *name, 
+					IN_LENGTH_DNS const int nameLen );
+#else
+  /* If there's no DNS support available in the OS there's not much that we
+	 can do to handle automatic host detection.  Setting hostPort as a side-
+	 effect is necessary because the #define otherwise no-ops it out, 
+	 leading to declared-but-not-used warnings from some compilers */
+  #define findHostInfo( netStream, hostName, hostNameLen, hostPort, name, nameLen )	\
+		  setSocketError( netStream, "DNS SRV services not available", 30, \
+						  CRYPT_ERROR_NOTAVAIL, FALSE ); \
+		  memset( hostName, 0, min( 16, hostNameLen ) ); \
+		  *( hostPort ) = 0
+#endif /* USE_DNSSRV */
+
+/* Prototypes for functions in tcp.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getSocketError( NET_STREAM_INFO *netStream, IN_ERROR const int status );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getHostError( NET_STREAM_INFO *netStream, IN_ERROR const int status );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setSocketError( INOUT NET_STREAM_INFO *netStream, 
+					IN_BUFFER( errorMessageLength ) const char *errorMessage, 
+					IN_LENGTH_ERRORMESSAGE const int errorMessageLength,
+					IN_ERROR const int status, const BOOLEAN isFatal );
 
 #endif /* USE_TCP */

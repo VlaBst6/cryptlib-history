@@ -4,7 +4,7 @@
 
 # TARGTYPE "Win32 (x86) Dynamic-Link Library" 0x0102
 
-CFG=CRYPT32 - WIN32 RELEASE
+CFG=Crypt32 - Win32 Purify
 !MESSAGE This is not a valid makefile. To build this project using NMAKE,
 !MESSAGE use the Export Makefile command and run
 !MESSAGE 
@@ -13,12 +13,13 @@ CFG=CRYPT32 - WIN32 RELEASE
 !MESSAGE You can specify a configuration when running NMAKE
 !MESSAGE by defining the macro CFG on the command line. For example:
 !MESSAGE 
-!MESSAGE NMAKE /f "crypt32.mak" CFG="CRYPT32 - WIN32 RELEASE"
+!MESSAGE NMAKE /f "crypt32.mak" CFG="Crypt32 - Win32 Purify"
 !MESSAGE 
 !MESSAGE Possible choices for configuration are:
 !MESSAGE 
 !MESSAGE "Crypt32 - Win32 Release" (based on "Win32 (x86) Dynamic-Link Library")
 !MESSAGE "Crypt32 - Win32 Debug" (based on "Win32 (x86) Dynamic-Link Library")
+!MESSAGE "Crypt32 - Win32 Purify" (based on "Win32 (x86) Dynamic-Link Library")
 !MESSAGE 
 
 # Begin Project
@@ -90,12 +91,47 @@ LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /debug /machine:I386
 # ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
 
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Use_MFC 0
+# PROP BASE Use_Debug_Libraries 1
+# PROP BASE Output_Dir "Crypt32___Win32_Purify"
+# PROP BASE Intermediate_Dir "Crypt32___Win32_Purify"
+# PROP BASE Ignore_Export_Lib 0
+# PROP BASE Target_Dir ""
+# PROP Use_MFC 0
+# PROP Use_Debug_Libraries 1
+# PROP Output_Dir ".\binaries"
+# PROP Intermediate_Dir ".\debug_purify"
+# PROP Ignore_Export_Lib 0
+# PROP Target_Dir ""
+F90=fl32.exe
+# ADD BASE F90 /I "Debug/"
+# ADD F90 /I "Debug/"
+# ADD BASE CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /D "NO_ASM" /FD /c
+# SUBTRACT BASE CPP /Fr /YX
+# ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /D "NO_ASM" /FD /c
+# SUBTRACT CPP /Fr /YX
+# ADD BASE MTL /nologo /D "_DEBUG" /win32
+# SUBTRACT BASE MTL /mktyplib203
+# ADD MTL /nologo /D "_DEBUG" /win32
+# SUBTRACT MTL /mktyplib203
+# ADD BASE RSC /l 0x409 /d "_DEBUG"
+# ADD RSC /l 0x409 /d "_DEBUG"
+BSC32=bscmake.exe
+# ADD BASE BSC32 /nologo
+# ADD BSC32 /nologo
+LINK32=link.exe
+# ADD BASE LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
+
 !ENDIF 
 
 # Begin Target
 
 # Name "Crypt32 - Win32 Release"
 # Name "Crypt32 - Win32 Debug"
+# Name "Crypt32 - Win32 Purify"
 # Begin Group "Source Files"
 
 # PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;hpj;bat;for;f90"
@@ -105,6 +141,10 @@ LINK32=link.exe
 # Begin Source File
 
 SOURCE=.\bn\bn_add.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\bn_asm.c
 # End Source File
 # Begin Source File
 
@@ -161,6 +201,18 @@ SOURCE=.\bn\bn_word.c
 # Begin Source File
 
 SOURCE=".\bn\bn-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # End Group
 # Begin Group "Certificates"
@@ -272,6 +324,10 @@ SOURCE=.\context\ctx_aes.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\context\ctx_attr.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\ctx_bf.c
 # End Source File
 # Begin Source File
@@ -309,6 +365,10 @@ SOURCE=.\context\ctx_hrmd.c
 # Begin Source File
 
 SOURCE=.\context\ctx_hsha.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\ctx_hsha2.c
 # End Source File
 # Begin Source File
 
@@ -400,6 +460,10 @@ SOURCE=.\crypt\aes_modes.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\crypt\aescrypt.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\crypt\aeskey.c
 # End Source File
 # Begin Source File
@@ -412,6 +476,10 @@ SOURCE=.\crypt\bfecb.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\crypt\bfenc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\crypt\bfskey.c
 # End Source File
 # Begin Source File
@@ -420,7 +488,15 @@ SOURCE=.\crypt\castecb.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\crypt\castenc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\crypt\castskey.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\descbc.c
 # End Source File
 # Begin Source File
 
@@ -429,6 +505,10 @@ SOURCE=.\crypt\desecb.c
 # Begin Source File
 
 SOURCE=.\crypt\desecb3.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\desenc.c
 # End Source File
 # Begin Source File
 
@@ -480,6 +560,10 @@ SOURCE=.\crypt\rc5ecb.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\crypt\rc5enc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\crypt\rc5skey.c
 # End Source File
 # Begin Source File
@@ -501,43 +585,155 @@ SOURCE=.\crypt\skipjack.c
 # Begin Source File
 
 SOURCE=".\crypt\s1-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\c-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\d-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\m5-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\r4-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\r5-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\rm-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=".\crypt\b-win32.obj"
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # Begin Source File
 
 SOURCE=.\crypt\aescrypt2.obj
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # End Group
 # Begin Group "Devices"
 
 # PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\device\dev_attr.c
+# End Source File
 # Begin Source File
 
 SOURCE=.\device\fortezza.c
@@ -580,11 +776,19 @@ SOURCE=.\envelope\cms_env.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\envelope\cms_envpre.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\envelope\decode.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\envelope\encode.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\envelope\env_attr.c
 # End Source File
 # Begin Source File
 
@@ -620,7 +824,15 @@ SOURCE=.\io\dns.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\io\dns_srv.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\io\file.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\http_parse.c
 # End Source File
 # Begin Source File
 
@@ -637,6 +849,18 @@ SOURCE=.\io\memory.c
 # Begin Source File
 
 SOURCE=.\io\net.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\net_proxy.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\net_trans.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\net_url.c
 # End Source File
 # Begin Source File
 
@@ -708,6 +932,10 @@ SOURCE=.\keyset\ca_add.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\keyset\ca_clean.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\keyset\ca_issue.c
 # End Source File
 # Begin Source File
@@ -740,6 +968,10 @@ SOURCE=.\keyset\http.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\keyset\key_attr.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\keyset\ldap.c
 # End Source File
 # Begin Source File
@@ -749,6 +981,10 @@ SOURCE=.\keyset\odbc.c
 # Begin Source File
 
 SOURCE=.\keyset\pgp.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pgp_rd.c
 # End Source File
 # Begin Source File
 
@@ -764,11 +1000,31 @@ SOURCE=.\keyset\pkcs15_add.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\keyset\pkcs15_att.c
+SOURCE=.\keyset\pkcs15_adpb.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_adpr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_atrd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_atwr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_get.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\keyset\pkcs15_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_set.c
 # End Source File
 # Begin Source File
 
@@ -792,11 +1048,11 @@ SOURCE=.\mechs\keyex_rw.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\mechs\mech_drv.c
+SOURCE=.\mechs\mech_cwrap.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\mechs\mech_enc.c
+SOURCE=.\mechs\mech_drv.c
 # End Source File
 # Begin Source File
 
@@ -804,11 +1060,15 @@ SOURCE=.\mechs\mech_int.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\mechs\mech_sig.c
+SOURCE=.\mechs\mech_pkwrap.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\mechs\mech_wrp.c
+SOURCE=.\mechs\mech_privk.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\mechs\mech_sig.c
 # End Source File
 # Begin Source File
 
@@ -844,6 +1104,10 @@ SOURCE=.\mechs\sign_x509.c
 # PROP Default_Filter ""
 # Begin Source File
 
+SOURCE=.\misc\asn1_algid.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\misc\asn1_chk.c
 # End Source File
 # Begin Source File
@@ -861,6 +1125,10 @@ SOURCE=.\misc\asn1_wr.c
 # Begin Source File
 
 SOURCE=.\misc\base64.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\base64_id.c
 # End Source File
 # Begin Source File
 
@@ -884,6 +1152,22 @@ SOURCE=.\misc\int_env.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\int_err.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\int_mem.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\int_string.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\int_time.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\bindings\java_jni.c
 # End Source File
 # Begin Source File
@@ -900,6 +1184,14 @@ SOURCE=.\misc\pgp_misc.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\pgp_rw.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\random\rand_x917.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\random\random.c
 # End Source File
 # Begin Source File
@@ -908,7 +1200,15 @@ SOURCE=.\misc\user.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\user_attr.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\misc\user_cfg.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\user_rw.c
 # End Source File
 # Begin Source File
 
@@ -952,11 +1252,23 @@ SOURCE=.\session\scep.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\scep_cli.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\scep_svr.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\scorebrd.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\session\sess_attr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\sess_iattr.c
 # End Source File
 # Begin Source File
 
@@ -1016,6 +1328,10 @@ SOURCE=.\session\ssl_cry.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\ssl_kmgmt.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\ssl_rw.c
 # End Source File
 # Begin Source File
@@ -1065,6 +1381,34 @@ SOURCE=.\zlib\zutil.c
 # Begin Source File
 
 SOURCE=.\zlib\gvmat32.obj
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=.\zlib\inffas32y.obj
+
+!IF  "$(CFG)" == "Crypt32 - Win32 Release"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
+
+!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
+
+# PROP BASE Exclude_From_Build 1
+# PROP Exclude_From_Build 1
+
+!ENDIF 
+
 # End Source File
 # End Group
 # Begin Source File
@@ -1110,6 +1454,10 @@ SOURCE=.\cryptusr.c
 # Begin Source File
 
 SOURCE=.\kernel\acl.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\misc\analyse.h
 # End Source File
 # Begin Source File
 
@@ -1189,6 +1537,10 @@ SOURCE=.\misc\pgp.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\pgp_rw.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\keyset\pkcs15.h
 # End Source File
 # Begin Source File
@@ -1206,6 +1558,14 @@ SOURCE=.\session\ssl.h
 # Begin Source File
 
 SOURCE=.\io\stream.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\stream_int.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\kernel\thread.h
 # End Source File
 # Begin Source File
 

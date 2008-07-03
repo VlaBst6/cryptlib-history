@@ -63,6 +63,8 @@
  * sections 3.8 and 4.2 in http://security.ece.orst.edu/koc/papers/r01rsasw.pdf
  */
 
+/* Added proper initialisation of data in all BN_X_init() functions - pcg */
+
 #include <stdio.h>
 #if defined( INC_ALL )
   #include "bn_lcl.h"
@@ -253,6 +255,7 @@ BN_MONT_CTX *BN_MONT_CTX_new(void)
 
 void BN_MONT_CTX_init(BN_MONT_CTX *ctx)
 	{
+	memset( ctx, 0, sizeof( BN_MONT_CTX ) );
 	ctx->ri=0;
 	BN_init(&(ctx->RR));
 	BN_init(&(ctx->N));

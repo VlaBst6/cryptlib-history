@@ -68,6 +68,13 @@ static const USER_FILE_INFO FAR_BSS primarySOInfo = {
 #define PRIMARYSO_ALTPASSWORD	"zeroized"
 #define PRIMARYSO_PASSWORD_LENGTH 8
 
+/* The structure that stores the user index in the default user object */
+
+typedef struct {
+	USER_FILE_INFO userIndex[ MAX_USER_OBJECTS ];	/* User index */
+	int lastEntry;					/* Last entry in user index */
+	} USER_INDEX_INFO;
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -76,15 +83,21 @@ static const USER_FILE_INFO FAR_BSS primarySOInfo = {
 
 /* Open a user or index keyset */
 
-static int openKeyset( CRYPT_KEYSET *iKeyset, const char *fileName,
-					   const int fileNameLen, const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iKeyset, 
+					   IN_BUFFER( fileNameLen ) const char *fileName, 
+					   IN_LENGTH_SHORT const int fileNameLen, 
+					   IN_ENUM_OPT( CRYPT_KEYOPT ) const int options )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	char userFilePath[ MAX_PATH_LENGTH + 8 ];
 	int userFilePathLen, status;
 
 	assert( isWritePtr( iKeyset, sizeof( CRYPT_KEYSET ) ) );
-	assert( fileName != NULL );
+	assert( isReadPtr( fileName, fileNameLen ) );
+
+	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* Clear return value */
 	*iKeyset = CRYPT_ERROR;
@@ -95,9 +108,11 @@ static int openKeyset( CRYPT_KEYSET *iKeyset, const char *fileName,
 									( options == CRYPT_KEYOPT_READONLY ) ? \
 									BUILDPATH_GETPATH : BUILDPATH_CREATEPATH );
 	if( cryptStatusError( status ) )
+		{
 		/* Map the lower-level filesystem-specific error into a more 
 		   meaningful generic error */
 		return( CRYPT_ERROR_OPEN );
+		}
 	setMessageCreateObjectInfo( &createInfo, CRYPT_KEYSET_FILE );
 	createInfo.arg2 = options;
 	createInfo.strArg1 = userFilePath;
@@ -110,43 +125,57 @@ static int openKeyset( CRYPT_KEYSET *iKeyset, const char *fileName,
 	return( status );
 	}
 
-static int openUserKeyset( CRYPT_KEYSET *iUserKeyset, const int fileRef, 
-						   const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int openUserKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iUserKeyset, 
+						   IN_INT_SHORT_Z const int fileRef, 
+						   IN_ENUM_OPT( CRYPT_KEYOPT ) const int options )
 	{
 	char userFileName[ 16 + 8 ];
 	int userFileNameLen;
 
 	assert( isWritePtr( iUserKeyset, sizeof( CRYPT_KEYSET ) ) );
-	assert( fileRef >= 0 );
+
+	REQUIRES( fileRef >= 0 && fileRef < MAX_INTLENGTH_SHORT );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	userFileNameLen = sprintf_s( userFileName, 16, "u%06x", fileRef );
 	return( openKeyset( iUserKeyset, userFileName, userFileNameLen, 
 						options ) );
 	}
 
-static int openIndexKeyset( CRYPT_KEYSET *iIndexKeyset, const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int openIndexKeyset( OUT CRYPT_KEYSET *iIndexKeyset, 
+							IN_ENUM_OPT( CRYPT_KEYOPT ) const int options )
 	{
 	assert( isWritePtr( iIndexKeyset, sizeof( CRYPT_KEYSET ) ) );
+
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	return( openKeyset( iIndexKeyset, "index", 5, options ) );
 	}
 
 /* Add a user key to the keyset */
 
-static int addKey( const CRYPT_KEYSET iUserKeyset, 
-				   const CRYPT_CONTEXT iCryptContext,
-				   const void *userID, const int userIdLength,
-				   const char *password, const int passwordLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
+static int addKey( IN_HANDLE const CRYPT_KEYSET iUserKeyset, 
+				   IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+				   IN_BUFFER( userIdLength ) const void *userID, 
+				   IN_LENGTH_SHORT const int userIdLength,
+				   IN_BUFFER( passwordLength ) const char *password, 
+				   IN_LENGTH_SHORT const int passwordLength,
 				   const BOOLEAN isPrivateKey )
 	{
 	MESSAGE_KEYMGMT_INFO setkeyInfo;
 	MESSAGE_DATA msgData;
 	int status;
 
-	assert( isHandleRangeValid( iUserKeyset ) );
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isReadPtr( userID, userIdLength ) );
 	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( isHandleRangeValid( iUserKeyset ) );
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( userIdLength > 0 && userIdLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
 
 	setMessageData( &msgData, ( void * ) userID, userIdLength );
 	status = krnlSendMessage( iUserKeyset, IMESSAGE_SETATTRIBUTE_S,
@@ -176,19 +205,30 @@ static int addKey( const CRYPT_KEYSET iUserKeyset,
    because when we're looking up a user we don't know which SO they belong
    to until after we've looked them up */
 
-static const USER_FILE_INFO *findUser( const USER_FILE_INFO *userIndex,
-									   const int noUserIndexEntries, 
-									   const USERID_TYPE idType, 
-									   const BYTE *id, const int idLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+static const USER_FILE_INFO *findUser( IN_ARRAY( noUserIndexEntries ) \
+										const USER_FILE_INFO *userIndex,
+									   IN_RANGE( 1, MAX_USER_OBJECTS ) \
+										const int noUserIndexEntries, 
+									   IN_ENUM( USERID ) const USERID_TYPE idType, 
+									   IN_BUFFER( idLength ) const BYTE *id, 
+									   IN_LENGTH_SHORT const int idLength )
 	{
-	int i;
+	int i, iterationCount;
 
 	assert( isReadPtr( userIndex, \
 					   sizeof( USER_FILE_INFO ) * noUserIndexEntries ) );
-	assert( idType > USERID_NONE && idType < USERID_LAST );
 	assert( isReadPtr( id, idLength ) );
 
-	for( i = 0; i < noUserIndexEntries; i++ )
+	REQUIRES_N( noUserIndexEntries > 0 && \
+				noUserIndexEntries <= MAX_USER_OBJECTS );
+	REQUIRES_N( idType > USERID_NONE && idType < USERID_LAST );
+	REQUIRES_N( idLength > 0 && idLength < MAX_INTLENGTH_SHORT );
+
+	for( i = 0, iterationCount = 0; 
+		 i < noUserIndexEntries && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 i++, iterationCount++ )
 		{
 		const USER_FILE_INFO *userIndexPtr = &userIndex[ i ];
 
@@ -216,29 +256,40 @@ static const USER_FILE_INFO *findUser( const USER_FILE_INFO *userIndex,
 				retIntError_Null();
 			}
 		}
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( NULL );
 	}
 
 /* Find a free user entry */
 
-static USER_FILE_INFO *findFreeEntry( USER_FILE_INFO *userIndex,
-									  const int noUserIndexEntries,
-									  int *fileRef )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static USER_FILE_INFO *findFreeEntry( IN_ARRAY( noUserIndexEntries ) \
+										USER_FILE_INFO *userIndex,
+									  IN_RANGE( 1, MAX_USER_OBJECTS ) \
+										const int noUserIndexEntries,
+									  OUT_INT_SHORT_Z int *fileRef )
 	{
 	USER_FILE_INFO *userIndexPtr;
-	int newFileRef, i;
+	int newFileRef, i, iterationCount;
 
 	assert( isWritePtr( userIndex, \
 						sizeof( USER_FILE_INFO ) * noUserIndexEntries ) );
 	assert( isWritePtr( fileRef, sizeof( int ) ) );
 
+	REQUIRES_N( noUserIndexEntries > 0 && \
+				noUserIndexEntries <= MAX_USER_OBJECTS );
+
 	/* Look for an available free entry */
-	for( i = 0; i < noUserIndexEntries; i++ )
+	for( i = 0, iterationCount  = 0; 
+		 i < noUserIndexEntries && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 i++, iterationCount++ )
 		{
 		if( userIndex[ i ].state == USER_STATE_NONE )
 			break;
 		}
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	if( i >= noUserIndexEntries )
 		{
 		/* No more available entries */
@@ -282,11 +333,68 @@ static USER_FILE_INFO *findFreeEntry( USER_FILE_INFO *userIndex,
 		if( i >= MAX_USER_OBJECTS )
 			break;
 		}
-	if( newFileRef >= MAX_USER_OBJECTS )
-		retIntError_Null();
+	ENSURES_N( newFileRef < MAX_USER_OBJECTS );
 	*fileRef = newFileRef;
 
 	return( userIndexPtr );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int createUserEntry( OUT_PTR USER_FILE_INFO **userIndexPtrPtr,
+							IN_ARRAY( noUserIndexEntries ) \
+								USER_FILE_INFO *userIndex, 
+							IN_RANGE( 1, MAX_USER_OBJECTS ) \
+								const int noUserIndexEntries,
+							INOUT USER_FILE_INFO *userFileInfo )
+	{
+	USER_FILE_INFO *userIndexPtr;
+	int fileRef, iterationCount, status = CRYPT_OK;
+
+	assert( isWritePtr( userIndexPtrPtr, sizeof( USER_FILE_INFO * ) ) );
+	assert( isWritePtr( userIndex, \
+						sizeof( USER_FILE_INFO ) * noUserIndexEntries ) );
+	assert( isWritePtr( userFileInfo, sizeof( USER_FILE_INFO ) ) );
+
+	REQUIRES( noUserIndexEntries > 0 && \
+			  noUserIndexEntries <= MAX_USER_OBJECTS );
+
+	/* Clear return value */
+	*userIndexPtrPtr = NULL;
+
+	/* Check whether this user is already present in the index */
+	if( findUser( userIndex, noUserIndexEntries, USERID_NAME, 
+				  userFileInfo->userName, userFileInfo->userNameLength ) != NULL )
+		return( CRYPT_ERROR_DUPLICATE );
+
+	/* Make sure that the userID that we're using is unique.  This is a 
+	   pretty straightforward operation, we just keep generating new random 
+	   IDs until we get one that's not already present */
+	for( iterationCount = 0; 
+		 !cryptStatusError( status ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
+		{
+		if( findUser( userIndex, noUserIndexEntries, USERID_USERID, 
+					  userFileInfo->userID, KEYID_SIZE ) != NULL )
+			{
+			MESSAGE_DATA msgData;
+
+			setMessageData( &msgData, ( void * ) userFileInfo->userID, 
+							KEYID_SIZE );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_GETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+			}
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	/* Locate a new unused entry that we can use */
+	userIndexPtr = findFreeEntry( userIndex, MAX_USER_OBJECTS, &fileRef );
+	if( userIndexPtr == NULL )
+		return( CRYPT_ERROR_OVERFLOW );
+	userFileInfo->fileRef = fileRef;
+
+	return( CRYPT_OK );
 	}
 
 /* Read the user index file:
@@ -298,7 +406,9 @@ static USER_FILE_INFO *findFreeEntry( USER_FILE_INFO *userIndex,
 		fileReference		INTEGER					-- Reference to user file
 		} */
 
-static int readUserIndexEntry( STREAM *stream, USER_FILE_INFO *userIndexPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readIndexEntry( INOUT STREAM *stream, 
+						   INOUT USER_FILE_INFO *userIndexPtr )
 	{
 	USER_FILE_INFO userIndexEntry;
 	long value;
@@ -318,7 +428,7 @@ static int readUserIndexEntry( STREAM *stream, USER_FILE_INFO *userIndexPtr )
 	readOctetString( stream, userIndexEntry.creatorID, &length, KEYID_SIZE, 
 					 KEYID_SIZE );
 	readCharacterString( stream, userIndexEntry.userName, 
-						 &userIndexEntry.userNameLength, CRYPT_MAX_TEXTSIZE, 
+						 CRYPT_MAX_TEXTSIZE, &userIndexEntry.userNameLength, 
 						 BER_STRING_UTF8 );
 	status = readShortInteger( stream, &value );
 	if( cryptStatusError( status ) )
@@ -330,17 +440,20 @@ static int readUserIndexEntry( STREAM *stream, USER_FILE_INFO *userIndexPtr )
 	return( CRYPT_OK );
 	}
 
-static int readUserIndex( const CRYPT_KEYSET iIndexKeyset,
-						  USER_FILE_INFO *userIndex, 
-						  const int maxUserObjects )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int readIndex( IN_HANDLE const CRYPT_KEYSET iIndexKeyset, 
+					  IN_ARRAY( maxUserObjects ) USER_FILE_INFO *userIndex, 
+					  IN_RANGE( 1, MAX_USER_OBJECTS ) const int maxUserObjects )
 	{
 	STREAM stream;
 	DYNBUF userIndexDB;
-	int i, status;
+	int i, iterationCount, status;
 
-	assert( isHandleRangeValid( iIndexKeyset ) );
 	assert( isWritePtr( userIndex, \
 						maxUserObjects * sizeof( USER_FILE_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iIndexKeyset ) );
+	REQUIRES( maxUserObjects > 0 && maxUserObjects <= MAX_USER_OBJECTS );
 
 	/* Read the user index file into memory */
 	status = dynCreate( &userIndexDB, iIndexKeyset, 
@@ -348,10 +461,15 @@ static int readUserIndex( const CRYPT_KEYSET iIndexKeyset,
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( &stream, dynData( userIndexDB ), dynLength( userIndexDB ) );
-	for( i = 0; cryptStatusOK( status ) && \
-				stell( &stream ) < dynLength( userIndexDB ) && \
-				i < maxUserObjects; i++ )
-		status = readUserIndexEntry( &stream, &userIndex[ i ] );
+	for( i = 0, iterationCount = 0; 
+		 cryptStatusOK( status ) && \
+			stell( &stream ) < dynLength( userIndexDB ) && \
+			i < maxUserObjects && iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 i++, iterationCount++ )
+		{
+		status = readIndexEntry( &stream, &userIndex[ i ] );
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	sMemDisconnect( &stream );
 	dynDestroy( &userIndexDB );
 	if( cryptStatusError( status ) )
@@ -364,7 +482,8 @@ static int readUserIndex( const CRYPT_KEYSET iIndexKeyset,
 
 /* Write the user index file */
 
-static int writeUserIndexEntry( STREAM *stream, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeUserIndexEntry( INOUT STREAM *stream, 
 								const USER_FILE_INFO *userIndexPtr )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -380,24 +499,37 @@ static int writeUserIndexEntry( STREAM *stream,
 	return( writeShortInteger( stream, userIndexPtr->fileRef, DEFAULT_TAG ) );
 	}
 
-static int writeUserIndex( const CRYPT_KEYSET iIndexKeyset,
-						   USER_FILE_INFO *userIndex, 
-						   const int noUserObjects )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int writeUserIndex( IN_HANDLE const CRYPT_KEYSET iIndexKeyset,
+						   IN_ARRAY( noUserIndexEntries ) \
+							USER_FILE_INFO *userIndex, 
+						   IN_RANGE( 1, MAX_USER_OBJECTS ) \
+							const int noUserIndexEntries )
 	{
 	STREAM stream;
 	MESSAGE_DATA msgData;
 	BYTE userIndexData[ MAX_USERINDEX_SIZE + 8 ];
-	int userIndexDataLength, i, status = CRYPT_OK;
+	int userIndexDataLength, i, iterationCount, status = CRYPT_OK;
 
-	assert( isHandleRangeValid( iIndexKeyset ) );
 	assert( isWritePtr( userIndex, \
-						noUserObjects * sizeof( USER_FILE_INFO ) ) );
+						noUserIndexEntries * sizeof( USER_FILE_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iIndexKeyset ) );
+	REQUIRES( noUserIndexEntries > 0 && \
+			  noUserIndexEntries <= MAX_USER_OBJECTS );
 
 	/* Write the user index data to a buffer so that we can send it to the 
 	   index keyset */
 	sMemOpen( &stream, userIndexData, MAX_USERINDEX_SIZE );
-	for( i = 0; i < noUserObjects && cryptStatusOK( status ); i++ )
-		status = writeUserIndexEntry( &stream, &userIndex[ i ] );
+	for( i = 0, iterationCount = 0; 
+		 i < noUserIndexEntries && cryptStatusOK( status ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 i++, iterationCount++ )
+		{
+		if( userIndex[ i ].state != USER_STATE_NONE )
+			status = writeUserIndexEntry( &stream, &userIndex[ i ] );
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	userIndexDataLength = stell( &stream );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
@@ -424,14 +556,18 @@ static int writeUserIndex( const CRYPT_KEYSET iIndexKeyset,
 		name				UTF8String,				-- User name
 		} */
 
-static int readUserData( USER_FILE_INFO *userFileInfoPtr, 
-						 const void *userData, const int userDataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readUserData( INOUT USER_FILE_INFO *userFileInfoPtr, 
+						 IN_BUFFER( userDataLength ) const void *userData, 
+						 IN_LENGTH_SHORT const int userDataLength )
 	{
 	STREAM stream;
 	int enumValue, length, status;
 
 	assert( isWritePtr( userFileInfoPtr, sizeof( USER_FILE_INFO ) ) );
 	assert( isReadPtr( userData, userDataLength ) );
+
+	REQUIRES( userDataLength > 0 && userDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
 	memset( userFileInfoPtr, 0, sizeof( userFileInfoPtr ) );
@@ -446,15 +582,19 @@ static int readUserData( USER_FILE_INFO *userFileInfoPtr,
 	readOctetString( &stream, userFileInfoPtr->creatorID, &length, 
 					 KEYID_SIZE, KEYID_SIZE );
 	status = readCharacterString( &stream, userFileInfoPtr->userName,
+								  CRYPT_MAX_TEXTSIZE, 
 								  &userFileInfoPtr->userNameLength,
-								  CRYPT_MAX_TEXTSIZE, BER_STRING_UTF8 );
+								  BER_STRING_UTF8 );
 	sMemDisconnect( &stream );
 
 	return( status );
 	}
 
-static int writeUserData( void *userData, int *userDataLength, 
-						  const int userDataMaxLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int writeUserData( OUT_BUFFER( userDataMaxLength, \
+									  *userDataLength ) void *userData, 
+						  IN_LENGTH_SHORT const int userDataMaxLength,
+						  OUT_LENGTH_SHORT_Z int *userDataLength, 
 						  const USER_INFO *userInfoPtr )
 	{
 	const USER_FILE_INFO *userFileInfo = &userInfoPtr->userFileInfo;
@@ -464,6 +604,9 @@ static int writeUserData( void *userData, int *userDataLength,
 	assert( isWritePtr( userData, userDataMaxLength ) );
 	assert( isWritePtr( userDataLength, sizeof( int ) ) );
 	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+
+	REQUIRES( userDataMaxLength > 0 && \
+			  userDataMaxLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return values */
 	memset( userData, 0, min( 16, userDataMaxLength ) );
@@ -491,12 +634,20 @@ static int writeUserData( void *userData, int *userDataLength,
 
 /* Send user data to a user keyset */
 
-static int putUserData( const CRYPT_KEYSET iUserKeyset, 
-						const USER_INFO *userInfoPtr, const void *userData, 
-						const int userDataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+static int commitUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset, 
+						   const USER_INFO *userInfoPtr, 
+						   IN_BUFFER( userDataLength ) const void *userData, 
+						   IN_LENGTH_SHORT const int userDataLength )
 	{
 	MESSAGE_DATA msgData;
 	int status;
+
+	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isReadPtr( userData, userDataLength ) );
+
+	REQUIRES( isHandleRangeValid( iUserKeyset ) );
+	REQUIRES( userDataLength > 0 && userDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Add the user ID and SO-signed user info to the keyset */
 	setMessageData( &msgData, ( void * ) userData, userDataLength );
@@ -518,7 +669,9 @@ static int putUserData( const CRYPT_KEYSET iUserKeyset,
 #if 0	/*!!!!!!!!!!!!!!! Needs a serious overhaul !!!!!!!!!!!!!!!!!!!!!*/
 		/*!!!!!!!!!!!!! Should also do recursive walk !!!!!!!!!!!!!!!!!!*/
 
-static int getCheckUserInfo( USER_FILE_INFO *userFileInfoPtr, const int fileRef )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int getCheckUserInfo( INOUT USER_FILE_INFO *userFileInfoPtr, 
+							 IN_INT_SHORT_Z const int fileRef )
 	{
 	CRYPT_ALGO_TYPE hashAlgo;
 	CRYPT_CONTEXT iHashContext;
@@ -529,6 +682,10 @@ static int getCheckUserInfo( USER_FILE_INFO *userFileInfoPtr, const int fileRef 
 	DYNBUF userDataDB;
 	void *hashDataPtr, *signaturePtr;
 	int soFileRef, hashDataLength, signatureLength, status;
+
+	assert( isWritePtr( userFileInfoPtr, sizeof( USER_FILE_INFO ) ) );
+
+	REQUIRES( fileRef >= 0 && fileRef < MAX_INTLENGTH_SHORT );
 
 	/* Clear return values */
 	memset( userFileInfoPtr, 0, sizeof( USER_FILE_INFO ) );
@@ -649,7 +806,7 @@ static int getCheckUserInfo( USER_FILE_INFO *userFileInfoPtr, const int fileRef 
 
 	return( status );
 	}
-#endif /*!!!!!!!!!!!!!!! Needs a serious overhaul !!!!!!!!!!!!!!!!!!!!!/*
+#endif /*!!!!!!!!!!!!!!! Needs a serious overhaul !!!!!!!!!!!!!!!!!!!!!*/
 
 /****************************************************************************
 *																			*
@@ -667,26 +824,33 @@ const USER_FILE_INFO *getPrimarySoUserInfo( void )
 
 /* Sign the user info and write it to the user keyset */
 
-static int signUserData( const CRYPT_KEYSET iUserKeyset,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int signUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 						 const USER_INFO *userInfoPtr,
-						 const CRYPT_CONTEXT iSignContext )
+						 IN_HANDLE const CRYPT_CONTEXT iSignContext )
 	{
 	BYTE userInfoBuffer[ USERDATA_BUFFERSIZE + 8 ];
 	int userInfoLength, status;
+
+	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iUserKeyset ) );
+	REQUIRES( isHandleRangeValid( iSignContext ) );
 
 	/* Sign the data via an envelope.  This is kind of heavyweight, but it's 
 	   OK because we rarely create new users and it saves having to hand-
 	   assemble the data like the PKCS #15 code does */
 	status = envelopeSign( userInfoBuffer, userInfoLength, 
-						   userInfoBuffer, &userInfoLength, USERDATA_BUFFERSIZE,
-						   CRYPT_CONTENT_DATA, iSignContext,
-						   CRYPT_UNUSED );
+						   userInfoBuffer, USERDATA_BUFFERSIZE, 
+						   &userInfoLength, CRYPT_CONTENT_DATA, 
+						   iSignContext, CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	return( CRYPT_ERROR_SIGNATURE );
 	}
 
+CHECK_RETVAL \
 static int sigCheckUserData( void )
 	{
 	return( CRYPT_ERROR_SIGNATURE );
@@ -694,9 +858,11 @@ static int sigCheckUserData( void )
 
 /* Create an SO private key and write it to the user keyset */
 
-static int createSOKey( const CRYPT_KEYSET iUserKeyset,
-						USER_INFO *userInfoPtr, const char *password,
-						const int passwordLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+static int createSOKey( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
+						INOUT USER_INFO *userInfoPtr, 
+						IN_BUFFER( passwordLength ) const char *password, 
+						IN_LENGTH_SHORT const int passwordLength )
 	{
 	const USER_FILE_INFO *userFileInfo = &userInfoPtr->userFileInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -706,6 +872,12 @@ static int createSOKey( const CRYPT_KEYSET iUserKeyset,
 							MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK,
 											ACTION_PERM_NONE_EXTERNAL );
 	int status;
+
+	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( isHandleRangeValid( iUserKeyset ) );
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
 
 	/* Create the SO private key, making it internal and signature-only */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_RSA );
@@ -717,8 +889,7 @@ static int createSOKey( const CRYPT_KEYSET iUserKeyset,
 					min( userFileInfo->userNameLength, CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
-	status = krnlSendMessage( createInfo.cryptHandle,
-							  IMESSAGE_CTX_GENKEY, NULL, FALSE );
+	status = krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_CTX_GENKEY );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE,
@@ -748,9 +919,11 @@ static int createSOKey( const CRYPT_KEYSET iUserKeyset,
 
 /* Create a CA secret key and write it to the user keyset */
 
-static int createCAKey( const CRYPT_KEYSET iUserKeyset,
-						USER_INFO *userInfoPtr, const char *password,
-						const int passwordLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+static int createCAKey( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
+						INOUT USER_INFO *userInfoPtr, 
+						IN_BUFFER( passwordLength ) const char *password, 
+						IN_LENGTH_SHORT const int passwordLength )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
@@ -759,6 +932,12 @@ static int createCAKey( const CRYPT_KEYSET iUserKeyset,
 							MK_ACTION_PERM( MESSAGE_CTX_DECRYPT,
 											ACTION_PERM_NONE_EXTERNAL );
 	int status;
+
+	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( isHandleRangeValid( iUserKeyset ) );
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
 
 	/* Create the CA secret key, making it internal-only */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_3DES );
@@ -769,8 +948,7 @@ static int createCAKey( const CRYPT_KEYSET iUserKeyset,
 	setMessageData( &msgData, userInfoPtr->userID, KEYID_SIZE );
 	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_GENKEY,
-							  NULL, FALSE );
+	status = krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_CTX_GENKEY );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE,
@@ -799,17 +977,20 @@ static int createCAKey( const CRYPT_KEYSET iUserKeyset,
 /* Create a primary SO user.  This can only occur when we're in the zeroised 
    state */
 
-static int createPrimarySoUser( USER_INFO *userInfoPtr, 
-								const char *password, 
-								const int passwordLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int createPrimarySoUser( INOUT USER_INFO *userInfoPtr, 
+								IN_BUFFER( passwordLength ) const char *password, 
+								IN_LENGTH_SHORT const int passwordLength )
 	{
 	CRYPT_KEYSET iIndexKeyset, iUserKeyset;
 	USER_FILE_INFO userIndex;
 	BYTE userData[ USERDATA_BUFFERSIZE + 8 ];
-	int userDataLength, status;
+	int userDataLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( userInfoPtr, sizeof( USER_INFO ) ) );
 	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
 
 	/* Create the user index file and user file for the primary SO user */
 	status = openIndexKeyset( &iIndexKeyset, CRYPT_KEYOPT_CREATE );
@@ -826,7 +1007,7 @@ static int createPrimarySoUser( USER_INFO *userInfoPtr,
 	memcpy( &userIndex, &userInfoPtr->userFileInfo, 
 			sizeof( USER_FILE_INFO ) );
 	userIndex.fileRef = 0;
-	status = writeUserIndex( iIndexKeyset, &userIndex, 1 );
+	status = writeUserIndex( iIndexKeyset, &userIndex, MAX_USER_OBJECTS );
 	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
@@ -838,26 +1019,24 @@ static int createPrimarySoUser( USER_INFO *userInfoPtr,
 		}
 	userInfoPtr->iKeyset = iUserKeyset;
 
-/*!!!!!!!!!!! Problem, this will overwrite the fixed primary SO ID with a new random value !!!!!!!!!*/
-#if 0
-	/* Since this user is created implicitly, there's no userID set by an 
-	   explicit create so we set it now.  Since this is effectively a self-
-	   created user we also set the creatorID to the userID */
-	setMessageData( &msgData, userInfoPtr->userID, KEYID_SIZE );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
-							  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+	/* Create the SO key and the user keyset file */
+	status = createSOKey( iUserKeyset, userInfoPtr, password, 
+						  passwordLength );
 	if( cryptStatusOK( status ) )
+		status = writeUserData( userData, USERDATA_BUFFERSIZE, 
+								&userDataLength, userInfoPtr );
+	if( cryptStatusOK( status ) )
+		status = commitUserData( iUserKeyset, userInfoPtr, userData, 
+								 userDataLength );
+	if( cryptStatusError( status ) )
 		{
-		memcpy( userInfoPtr->creatorID, userInfoPtr->userID, KEYID_SIZE );
-		status = createSOKey( *iUserKeyset, userInfoPtr, 
-							  password, passwordLength );
+		/* The primary SO create failed, return to the zeroised state.  
+		   Since we're already in an exception state here there's not
+		   much that we can do if the zeroise fails */
+		krnlSendNotifier( iUserKeyset, IMESSAGE_DECREFCOUNT );
+		( void ) zeroiseUsers( userInfoPtr );
+		return( status );
 		}
-#endif
-	if( cryptStatusOK( status ) )
-		status = writeUserData( userData, &userDataLength, 
-								USERDATA_BUFFERSIZE, userInfoPtr );
-	if( cryptStatusOK( status ) )
-		status = putUserData( iUserKeyset, userInfoPtr, userData, userDataLength );
 
 /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 /*status = createCAKey( iUserKeyset, userInfoPtr, password, passwordLength );*/
@@ -874,9 +1053,12 @@ static int createPrimarySoUser( USER_INFO *userInfoPtr,
 
 /* Check whether a supplied password is the zeroise password */
 
-BOOLEAN isZeroisePassword( const char *password, const int passwordLen )
+BOOLEAN isZeroisePassword( IN_BUFFER( passwordLength ) const char *password, 
+						   IN_LENGTH_SHORT const int passwordLen )
 	{
 	assert( isReadPtr( password, passwordLen ) );
+
+	REQUIRES( passwordLen > 0 && passwordLen < MAX_INTLENGTH_SHORT );
 
 	if( passwordLen != PRIMARYSO_PASSWORD_LENGTH )
 		return( FALSE );
@@ -889,18 +1071,194 @@ BOOLEAN isZeroisePassword( const char *password, const int passwordLen )
 
 /* Perform a zeroise */
 
-int zeroiseUsers( void )
+int zeroiseUsers( INOUT USER_INFO *userInfoPtr )
+	{
+	USER_INDEX_INFO *userIndexInfo = userInfoPtr->userIndexPtr;
+	USER_FILE_INFO *userIndex = userIndexInfo->userIndex;
+	char userFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
+	int userFilePathLen, i, iterationCount, status;
+
+	assert( isWritePtr( userInfoPtr, sizeof( USER_INFO ) ) );
+
+	/* Read the user index and step through each entry clearing the user 
+	   info for it */
+	for( i = 0, iterationCount = 0; 
+		 i < userIndexInfo->lastEntry && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 i++, iterationCount++ )
+		{
+		char userFileName[ 16 + 8 ];
+
+		/* Erase the given user keyset */
+		sprintf_s( userFileName, 16, "u%06x",  userIndex[ i ].fileRef );
+		status = fileBuildCryptlibPath( userFilePath, MAX_PATH_LENGTH, 
+										&userFilePathLen, userFileName, 
+										strlen( userFileName ), 
+										BUILDPATH_GETPATH );
+		if( cryptStatusOK( status ) )
+			{
+			userFilePath[ userFilePathLen ] = '\0';
+			fileErase( userFilePath );
+			}
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	/* Erase the index file */
+	status = fileBuildCryptlibPath( userFilePath, MAX_PATH_LENGTH, 
+									&userFilePathLen, "index", 5, 
+									BUILDPATH_GETPATH );
+	if( cryptStatusOK( status ) )
+		{
+		userFilePath[ userFilePathLen ] = '\0';
+		fileErase( userFilePath );
+		}
+	return( status );
+	}
+
+/* Create a user keyset */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int createUserKeyset( INOUT USER_INFO *defaultUserInfoPtr,
+							 INOUT USER_INFO *newUserInfoPtr )
+	{
+	CRYPT_KEYSET iIndexKeyset, iUserKeyset;
+	USER_FILE_INFO *userFileInfo = &newUserInfoPtr->userFileInfo;
+	USER_FILE_INFO *userIndexPtr;
+	int status;
+
+	assert( isReadPtr( defaultUserInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isReadPtr( newUserInfoPtr, sizeof( USER_INFO ) ) );
+
+	/* Try and open the index file */
+	status = openIndexKeyset( &iIndexKeyset, CRYPT_IKEYOPT_EXCLUSIVEACCESS );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Create the index entry for the new user */
+	status = createUserEntry( &userIndexPtr, 
+							  defaultUserInfoPtr->userIndexPtr, 
+							  MAX_USER_OBJECTS, userFileInfo );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* Create the user keyset */
+	status = openUserKeyset( &iUserKeyset, userFileInfo->fileRef, 
+							 CRYPT_KEYOPT_CREATE );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* We've got the user keyset and info created, update the in-memory 
+	   index and index file */
+	memcpy( userIndexPtr, userFileInfo, sizeof( USER_FILE_INFO ) );
+	status = writeUserIndex( iIndexKeyset, defaultUserInfoPtr->userIndexPtr, 
+							 MAX_USER_OBJECTS );
+	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
+	if( cryptStatusError( status ) )
+		{
+		/* We couldn't update the index file, delete the newly-created user
+		   keyset (since we haven't written anything to it, it's zero-length
+		   so it's deleted automatically on close) */
+		krnlSendNotifier( iUserKeyset, IMESSAGE_DECREFCOUNT );
+		}
+	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
+
+	/* Clean up */
+	return( status );
+	}
+
+/* Set/change the password for a user object */
+
+int setUserPassword( USER_INFO *userInfoPtr, 
+					 IN_BUFFER( passwordLength ) const char *password, 
+					 IN_LENGTH_SHORT const int passwordLength )
+	{
+	CRYPT_KEYSET iUserKeyset;
+	USER_FILE_INFO *userFileInfo = &userInfoPtr->userFileInfo;
+	int status;
+
+	assert( isReadPtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
+
+/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+/*!!!!!! Dummy references to keep the compiler happy !!!!!*/
+/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+{
+USER_FILE_INFO *userFileInfoPtr = NULL;
+USER_INFO userInfo;
+
+( void ) readUserData( userFileInfoPtr, "", 0 );
+( void ) signUserData( 0, &userInfo, 0 );
+( void ) sigCheckUserData();
+( void ) createSOKey( 0, &userInfo, "", 0 );
+( void ) createUserKeyset( &userInfo, &userInfo );
+}
+/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+
+	/* No-one can ever directly set the default SO password */
+	if( passwordLength == PRIMARYSO_PASSWORD_LENGTH && \
+		( !memcmp( password, PRIMARYSO_PASSWORD,
+				   PRIMARYSO_PASSWORD_LENGTH ) || \
+		  !memcmp( password, PRIMARYSO_ALTPASSWORD,
+				   PRIMARYSO_PASSWORD_LENGTH ) ) )
+		return( CRYPT_ERROR_WRONGKEY );
+
+	/* If we're setting the password for the primary SO in the zeroised
+	   state, create a new user keyset and SO authentication key and write
+	   the details to the keyset */
+	if( userFileInfo->fileRef == -1 )
+		{
+		status = createPrimarySoUser( userInfoPtr, password, 
+									  passwordLength );
+		
+		return( status );
+		}
+
+	/* Open an existing user keyset */
+	status = openUserKeyset( &iUserKeyset, userFileInfo->fileRef, 
+							 CRYPT_KEYOPT_NONE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+	/* set state = USER_INITED */
+	/* write MAC( ??? ) to user file - needs PKCS #15 changes */
+	/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+
+	/* Close the keyset and commit the changes */
+	krnlSendNotifier( iUserKeyset, IMESSAGE_DECREFCOUNT );
+
+	/* The password has been set, we're now in the user inited state */
+	userFileInfo->state = USER_STATE_USERINITED;
+	return( CRYPT_OK );
+	}
+
+/* Initialise the user index in the default user object from the index file,
+   and clean up after we're done with it */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initUserIndex( OUT_PTR void **userIndexPtrPtr )
 	{
 	CRYPT_KEYSET iIndexKeyset;
-	MESSAGE_DATA msgData;
-	USER_FILE_INFO userIndex[ MAX_USER_OBJECTS ];
-	static const BYTE zeroUserData[] = { 0x30, 0x00 };
+	USER_INDEX_INFO *userIndexInfo;
 	char userFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
-	int userFilePathLen, noEntries, i, status;
+	int userFilePathLen, noEntries, status;
 
-	/* Open the index file and read the index entries from it.  We open it in
-	   exclusive mode and keep it open to ensure that no-one else can access
-	   it while the zeroise is occurring */
+	assert( isWritePtr( userIndexPtrPtr, sizeof( void * ) ) );
+
+	/* Clear return value */
+	*userIndexPtrPtr = NULL;
+
+	/* Open the index file and read the index entries from it.  We open it
+	   in exclusive mode since nothing else should be accessing it at this
+	   point */
 	status = openIndexKeyset( &iIndexKeyset, CRYPT_IKEYOPT_EXCLUSIVEACCESS );
 	if( cryptStatusError( status ) )
 		{
@@ -928,205 +1286,33 @@ int zeroiseUsers( void )
 		return( status );
 		}
 
-	/* Read the user index and step through each entry clearing the user 
-	   info for it */
-	status = noEntries = readUserIndex( iIndexKeyset, userIndex, 
-										MAX_USER_OBJECTS );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-		return( status );
-		}
-	for( i = 0; i < noEntries; i++ )
-		{
-		char userFileName[ 16 + 8 ];
-
-		/* Erase the given user keyset */
-		sprintf_s( userFileName, 16, "u%06x",  userIndex[ i ].fileRef );
-		status = fileBuildCryptlibPath( userFilePath, MAX_PATH_LENGTH, 
-										&userFilePathLen, userFileName, 
-										strlen( userFileName ), 
-										BUILDPATH_GETPATH );
-		if( cryptStatusOK( status ) )
-			{
-			userFilePath[ userFilePathLen ] = '\0';
-			fileErase( userFilePath );
-			}
-		}
-
-	/* Erase the index file by setting zero-length user index info, which
-	   results in an empty keyset which is erased on close */
-	setMessageData( &msgData, ( void * ) zeroUserData, 2 );
-	status = krnlSendMessage( iIndexKeyset, IMESSAGE_SETATTRIBUTE_S,
-							  &msgData, CRYPT_IATTRIBUTE_USERINDEX );
-	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-
-	return( status );
-	}
-
-/* Create a user keyset */
-
-static int createUserKeyset( CRYPT_KEYSET *iCreatedKeyset,
-							 USER_INFO *userInfoPtr )
-	{
-	CRYPT_KEYSET iIndexKeyset, iUserKeyset;
-	const USER_FILE_INFO *userFileInfo = &userInfoPtr->userFileInfo;
-	USER_FILE_INFO userIndex[ MAX_USER_OBJECTS ], *userIndexPtr;
-	int iterationCount = 0, noEntries, fileRef, status;
-
-	/* Clear return value */
-	*iCreatedKeyset = CRYPT_ERROR;
-
-	/* Try and open the index file */
-	status = openIndexKeyset( &iIndexKeyset, CRYPT_IKEYOPT_EXCLUSIVEACCESS );
-	if( cryptStatusError( status ) )
-		return( status );
-
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-	/* Open the index file and read the index entries from it */
-	status = openIndexKeyset( &iUserKeyset, CRYPT_KEYOPT_READONLY );
-	if( cryptStatusError( status ) )
-		{
-#if 0	/* Need to handle this in the caller */
-		/* If there's no index file present, we're in the zeroised state,
-		   the only valid user is the (implicitly present) primary SO */
-		if( status == CRYPT_ERROR_NOTFOUND && idType == USERID_NAME && \
-			idLength == primarySOInfo.userNameLength && \
-			!memcmp( id, primarySOInfo.userName,
-					 primarySOInfo.userNameLength ) )
-			status = OK_SPECIAL;
-#endif
-
-		return( status );
-		}
-	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-
-	/* Read the user index */
-	status = noEntries = readUserIndex( iIndexKeyset, userIndex, 
-										MAX_USER_OBJECTS );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-		return( status );
-		}
-
-	/* Check whether this user is already present in the index */
-	if( findUser( userIndex, noEntries, USERID_NAME, userFileInfo->userName,
-				  userFileInfo->userNameLength ) != NULL )
-		{
-		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-		return( CRYPT_ERROR_DUPLICATE );
-		}
-
-	/* Make sure that the userID that we're using is unique.  This is a 
-	   pretty straightforward operation, we just keep generating new random 
-	   IDs until we get one that's not already present */
-	for( iterationCount = 0; !cryptStatusError( status ) && \
-							 iterationCount < FAILSAFE_ITERATIONS_LARGE;
-		 iterationCount++ )
-		{
-		if( findUser( userIndex, noEntries, USERID_USERID, 
-					  userFileInfo->userID, KEYID_SIZE ) != NULL )
-			{
-			MESSAGE_DATA msgData;
-
-			setMessageData( &msgData, ( void * ) userFileInfo->userID, 
-							KEYID_SIZE );
-			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-									  IMESSAGE_GETATTRIBUTE_S, &msgData,
-									  CRYPT_IATTRIBUTE_RANDOM_NONCE );
-			}
-		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
-
-	/* Locate a new unused entry that we can use */
-	userIndexPtr = findFreeEntry( userIndex, MAX_USER_OBJECTS, &fileRef );
-	if( userIndexPtr == NULL )
-		return( CRYPT_ERROR_OVERFLOW );
-	memcpy( userIndexPtr, &userInfoPtr->userFileInfo, 
-			sizeof( USER_FILE_INFO ) );
-	userIndexPtr->fileRef = fileRef;
-
-	/* Create the user keyset */
-	status = openUserKeyset( &iUserKeyset, fileRef, CRYPT_KEYOPT_CREATE );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-		return( status );
-		}
-
-	/* Update the index file */
-	status = writeUserIndex( iIndexKeyset, userIndex, noEntries );
+	/* Allocate room for the user index and read it into the default user 
+	   object */
+	if( ( userIndexInfo = clAlloc( "initUserIndex", \
+								   sizeof( USER_INDEX_INFO ) ) ) == NULL )
+		return( CRYPT_ERROR_MEMORY );
+	memset( userIndexInfo, 0, sizeof( USER_INDEX_INFO ) );
+	status = noEntries = readIndex( iIndexKeyset, userIndexInfo->userIndex,
+									MAX_USER_OBJECTS );
 	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
-		/* We couldn't update the index file, delete the newly-created user
-		   keyset (since we haven't written anything to it, it's zero-length
-		   so it's deleted automatically on close) */
-		krnlSendNotifier( iUserKeyset, IMESSAGE_DECREFCOUNT );
-		}
-	else
-		{
-		userInfoPtr->userFileInfo.fileRef = userIndexPtr->fileRef;
-		*iCreatedKeyset = iUserKeyset;
-		}
-	krnlSendNotifier( iIndexKeyset, IMESSAGE_DECREFCOUNT );
-
-	/* Clean up */
-	return( status );
-	}
-
-/* Set/change the password for a user object */
-
-int setUserPassword( USER_INFO *userInfoPtr, const char *password,
-					 const int passwordLength )
-	{
-	CRYPT_KEYSET iUserKeyset;
-	USER_FILE_INFO *userFileInfo = &userInfoPtr->userFileInfo;
-	int status;
-
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-/*!!!!!! Dummy references to keep the compiler happy !!!!!*/
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-readUserData( NULL, NULL, 0 );
-signUserData( 0, NULL, 0 );
-sigCheckUserData();
-createSOKey( 0, NULL, NULL, 0 );
-createUserKeyset( NULL, NULL );
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-
-	/* No-one can ever directly set the default SO password */
-	if( passwordLength == PRIMARYSO_PASSWORD_LENGTH && \
-		( !memcmp( password, PRIMARYSO_PASSWORD,
-				   PRIMARYSO_PASSWORD_LENGTH ) || \
-		  !memcmp( password, PRIMARYSO_ALTPASSWORD,
-				   PRIMARYSO_PASSWORD_LENGTH ) ) )
-		return( CRYPT_ERROR_WRONGKEY );
-
-	/* If we're setting the password for the primary SO in the zeroised
-	   state, create a new user keyset and SO authentication key and write
-	   the details to the keyset */
-	if( userFileInfo->fileRef == -1 )
-		status = createPrimarySoUser( userInfoPtr, password, 
-									  passwordLength );
-	else
-		/* Open an existing user keyset */
-		status = openUserKeyset( &iUserKeyset, userFileInfo->fileRef, 
-								 CRYPT_KEYOPT_NONE );
-	if( cryptStatusError( status ) )
+		clFree( "initUserIndex", userIndexInfo );
 		return( status );
+		}
+	userIndexInfo->lastEntry = noEntries;
+	*userIndexPtrPtr = userIndexInfo;
 
-	/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-	/* set state = USER_INITED */
-	/* write MAC( ??? ) to user file - needs PKCS #15 changes */
-	/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-
-	/* Close the keyset and commit the changes */
-	krnlSendNotifier( iUserKeyset, IMESSAGE_DECREFCOUNT );
-
-	/* The password has been set, we're now in the user inited state */
-	userFileInfo->state = USER_STATE_USERINITED;
 	return( CRYPT_OK );
+	}
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+void endUserIndex( INOUT void *userIndexPtr )
+	{
+	USER_INDEX_INFO *userIndexInfo = userIndexPtr;
+
+	assert( isWritePtr( userIndexInfo, sizeof( USER_INDEX_INFO ) ) );
+
+	zeroise( userIndexInfo, sizeof( USER_INDEX_INFO ) );
+	clFree( "endUserIndex", userIndexInfo );
 	}

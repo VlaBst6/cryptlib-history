@@ -66,6 +66,8 @@
   #include "crypt/castlcl.h"
 #endif /* Compiler-specific includes */
 
+#ifndef USE_ASM
+
 void CAST_encrypt(CAST_LONG *data, CAST_KEY *key)
 	{
 	register CAST_LONG l,r,*k,t;
@@ -212,3 +214,4 @@ void CAST_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
 	tin[0]=tin[1]=0;
 	}
 
+#endif /* USE_ASM */

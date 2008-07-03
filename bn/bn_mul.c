@@ -57,6 +57,7 @@
  */
 
 /* Removed redefinition of NDEBUG - pcg */
+/* NB: See also SunPro compiler bug fix at line 438 - pcg */
 
 #include <stdio.h>
 #include <assert.h>
@@ -66,7 +67,7 @@
   #include "bn/bn_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ASM	/* Implies use of x86 asm code - pcg */
+#ifdef BN_ASM	/* Implies use of x86 asm code - pcg */
   #define OPENSSL_BN_ASM_PART_WORDS
 #endif /* x86 asm code */
 
@@ -433,6 +434,9 @@ void bn_mul_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n2,
 	/* r=(a[0]-a[1])*(b[1]-b[0]) */
 	c1=bn_cmp_part_words(a,&(a[n]),tna,n-tna);
 	c2=bn_cmp_part_words(&(b[n]),b,tnb,tnb-n);
+#if defined __SUNPRO_C
+	asm("");
+#endif /* Sun compiler bug - pcg */
 	zero=neg=0;
 	switch (c1*3+c2)
 		{
@@ -659,14 +663,17 @@ void bn_mul_part_recursive(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b, int n,
 				for (;;)
 					{
 					i/=2;
-					if (i < tna && i < tnb)
+					/* these simplified conditions work
+					 * exclusively because difference
+					 * between tna and tnb is 1 or 0 */
+					if (i < tna || i < tnb)
 						{
 						bn_mul_part_recursive(&(r[n2]),
 							&(a[n]),&(b[n]),
 							i,tna-i,tnb-i,p);
 						break;
 						}
-					else if (i <= tna && i <= tnb)
+					else if (i == tna || i == tnb)
 						{
 						bn_mul_recursive(&(r[n2]),
 							&(a[n]),&(b[n]),

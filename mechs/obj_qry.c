@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Encoded Object Query Routines						*
-*					  Copyright Peter Gutmann 1992-2006						*
+*					  Copyright Peter Gutmann 1992-2008						*
 *																			*
 ****************************************************************************/
 
@@ -10,13 +10,13 @@
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
-  #include "pgp.h"
+  #include "pgp_rw.h"
 #else
   #include "mechs/mech.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
   #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -27,11 +27,13 @@
 
 /* Get information on an ASN.1 object */
 
-static int getObjectInfo( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getObjectInfo( INOUT STREAM *stream, 
+						  INOUT QUERY_INFO *queryInfo )
 	{
 	const long startPos = stell( stream );
 	long value;
-	int tag, status;
+	int tag, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -42,12 +44,14 @@ static int getObjectInfo( STREAM *stream, QUERY_INFO *queryInfo )
 		return( CRYPT_ERROR_UNDERFLOW );
 
 	/* Get the type, length, and version information */
-	value = getStreamObjectLength( stream );
-	if( cryptStatusError( value ) )
-		return( value );
+	status = getStreamObjectLength( stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
 	queryInfo->formatType = CRYPT_FORMAT_CRYPTLIB;
-	queryInfo->size = value;
+	queryInfo->size = length;
 	tag = peekTag( stream );
+	if( cryptStatusError( tag ) )
+		return( tag );
 	readGenericHole( stream, NULL, 16, tag );
 	status = readShortInteger( stream, &value );
 	if( cryptStatusError( status ) )
@@ -78,7 +82,13 @@ static int getObjectInfo( STREAM *stream, QUERY_INFO *queryInfo )
 			break;
 
 		case MAKE_CTAG( CTAG_RI_KEYAGREE ):
-			queryInfo->type = CRYPT_OBJECT_KEYAGREEMENT;
+			/* It's CMS' wierd X9.42-inspired key agreement mechanism, we
+			   can't do much with this (mind you neither can anyone else)
+			   so we should probably really treat it as a 
+			   CRYPT_ERROR_BADDATA if we encounter it rather than just 
+			   ignoring it */
+			queryInfo->type = CRYPT_OBJECT_NONE;
+			assert( DEBUG_WARN );
 			break;
 
 		case MAKE_CTAG( CTAG_RI_PWRI ):
@@ -89,8 +99,11 @@ static int getObjectInfo( STREAM *stream, QUERY_INFO *queryInfo )
 			queryInfo->type = CRYPT_OBJECT_NONE;
 			if( tag > MAKE_CTAG( CTAG_RI_PWRI ) && \
 				tag <= MAKE_CTAG( CTAG_RI_MAX ) )
+				{
 				/* This is probably a new RecipientInfo type, skip it */
+				assert( DEBUG_WARN );
 				break;
+				}
 			return( CRYPT_ERROR_BADDATA );
 		}
 
@@ -106,17 +119,18 @@ static int getObjectInfo( STREAM *stream, QUERY_INFO *queryInfo )
    the ASN.1 equivalent because the PGP header is complex enough that it
    can't be read inline like the ASN.1 header */
 
-int getPacketInfo( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
 	{
 	const long startPos = stell( stream );
-	long length;
+	long offset, length;
 	int ctb, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	/* Read the packet header and extract information from the CTB.  Note
-	   that the assignment of version numbers is speculative only, since
+	   that the assignment of version numbers is speculative only because
 	   it's possible to use PGP 2.x packet headers to wrap up OpenPGP
 	   packets */
 	status = pgpReadPacketHeader( stream, &ctb, &length, 8 );
@@ -124,7 +138,10 @@ int getPacketInfo( STREAM *stream, QUERY_INFO *queryInfo )
 		return( status );
 	queryInfo->formatType = CRYPT_FORMAT_PGP;
 	queryInfo->version = pgpGetPacketVersion( ctb );
-	queryInfo->size = length + ( stell( stream ) - startPos );
+	offset = stell( stream );
+	if( cryptStatusError( offset ) )
+		return( offset );
+	queryInfo->size = ( offset - startPos ) + length;
 	switch( pgpGetPacketType( ctb ) )
 		{
 		case PGP_PACKET_SKE:
@@ -146,13 +163,13 @@ int getPacketInfo( STREAM *stream, QUERY_INFO *queryInfo )
 			break;
 
 		default:
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			return( CRYPT_ERROR_BADDATA );
 		}
 
 	/* Make sure that all of the data is present without resetting the 
 	   stream */
-	return( sMemDataLeft( stream ) < ( queryInfo->size - stell( stream ) ) ? \
+	return( ( sMemDataLeft( stream ) < length ) ? \
 			CRYPT_ERROR_UNDERFLOW : CRYPT_OK );
 	}
 #endif /* USE_PGP */
@@ -165,7 +182,8 @@ int getPacketInfo( STREAM *stream, QUERY_INFO *queryInfo )
 
 /* Low-level object query functions */
 
-int queryAsn1Object( void *streamPtr, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	{
 	STREAM *stream = streamPtr;
 	const long startPos = stell( stream );
@@ -207,12 +225,6 @@ int queryAsn1Object( void *streamPtr, QUERY_INFO *queryInfo )
 			break;
 			}
 
-#if 0	/* 24/11/02 Removed since it was only used for Fortezza */
-		case CRYPT_OBJECT_KEYAGREEMENT:
-			status = readKeyAgreeInfo( stream, queryInfo, NULL );
-			break;
-#endif /* 0 */
-
 		case CRYPT_OBJECT_SIGNATURE:
 			{
 			const READSIG_FUNCTION readSigFunction = \
@@ -231,8 +243,7 @@ int queryAsn1Object( void *streamPtr, QUERY_INFO *queryInfo )
 			break;
 
 		default:
-			assert( NOTREACHED );
-			status = CRYPT_ERROR_BADDATA;
+			retIntError();
 		}
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
@@ -242,7 +253,8 @@ int queryAsn1Object( void *streamPtr, QUERY_INFO *queryInfo )
 
 #ifdef USE_PGP
 
-int queryPgpObject( void *streamPtr, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int queryPgpObject( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	{
 	STREAM *stream = streamPtr;
 	const long startPos = stell( stream );
@@ -254,7 +266,7 @@ int queryPgpObject( void *streamPtr, QUERY_INFO *queryInfo )
 	/* Clear the return value and determine basic object information.  This 
 	   also verifies that all of the object data is present in the stream */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
-	status = getPacketInfo( stream, queryInfo );
+	status = getPgpPacketInfo( stream, queryInfo );
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -275,7 +287,8 @@ int queryPgpObject( void *streamPtr, QUERY_INFO *queryInfo )
 
 		case CRYPT_OBJECT_PKCENCRYPTED_KEY:
 			{
-			const READKEYTRANS_FUNCTION readKeytransFunction = getReadKeytransFunction( KEYEX_PGP );
+			const READKEYTRANS_FUNCTION readKeytransFunction = \
+									getReadKeytransFunction( KEYEX_PGP );
 
 			if( readKeytransFunction == NULL )
 				return( CRYPT_ERROR_NOTAVAIL );
@@ -285,7 +298,8 @@ int queryPgpObject( void *streamPtr, QUERY_INFO *queryInfo )
 
 		case CRYPT_OBJECT_SIGNATURE:
 			{
-			const READSIG_FUNCTION readSigFunction = getReadSigFunction( SIGNATURE_PGP );
+			const READSIG_FUNCTION readSigFunction = \
+									getReadSigFunction( SIGNATURE_PGP );
 
 			if( readSigFunction == NULL )
 				return( CRYPT_ERROR_NOTAVAIL );
@@ -295,12 +309,11 @@ int queryPgpObject( void *streamPtr, QUERY_INFO *queryInfo )
 
 		case CRYPT_OBJECT_NONE:
 			/* First half of a one-pass signature */
-			status = readOnepassSigPacket( stream, queryInfo );
+			status = readPgpOnepassSigPacket( stream, queryInfo );
 			break;
 
 		default:
-			assert( NOTREACHED );
-			status = CRYPT_ERROR_BADDATA;
+			retIntError();
 		}
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
@@ -326,12 +339,9 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 	STREAM stream;
 	int value, length = objectDataLength, status;
 
-	/* Perform basic error checking and clear the return value.  Although
-	   it would be nice to use checkObjectEncoding() to make sure that the
-	   input is valid, we can't use it yet at this point because we don't 
-	   know whether we've been given ASN.1 data or not */
-	if( objectDataLength < MIN_CRYPT_OBJECTSIZE || \
-		objectDataLength > MAX_INTLENGTH )
+	/* Perform basic error checking and clear the return value */
+	if( objectDataLength <= MIN_CRYPT_OBJECTSIZE || \
+		objectDataLength >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( objectData, objectDataLength ) )
 		return( CRYPT_ERROR_PARAM1 );
@@ -340,10 +350,12 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 	memset( cryptObjectInfo, 0, sizeof( CRYPT_OBJECT_INFO ) );
 
 	/* Query the object.  This is just a wrapper for the lower-level object-
-	   query functions */
+	   query functions.  Note that we use sPeek() rather than peekTag() 
+	   because we want to continue processing (or at least checking for) PGP 
+	   data if it's no ASN.1 */
 	sMemConnect( &stream, ( void * ) objectData, length );
 	value = sPeek( &stream );
-	if( value == BER_SEQUENCE || value == MAKE_CTAG( 3 ) )
+	if( value == BER_SEQUENCE || value == MAKE_CTAG( CTAG_RI_PWRI ) )
 		status = queryAsn1Object( &stream, &queryInfo );
 	else
 		{

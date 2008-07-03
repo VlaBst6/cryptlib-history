@@ -27,11 +27,19 @@
  ibuf respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue 16/04/2007
 */
 
-#ifndef VIA_ACE_H
-#define VIA_ACE_H
+#ifndef AES_VIA_ACE_H
+#define AES_VIA_ACE_H
+
+#if defined( _MSC_VER )
+#  define INLINE  __inline
+#elif defined( __GNUC__ )
+#  define INLINE  static inline
+#else
+#  error VIA ACE requires Microsoft or GNU C
+#endif
 
 #define NEH_GENERATE    1
 #define NEH_LOAD        2
@@ -39,7 +47,7 @@
 
 #define MAX_READ_ATTEMPTS   1000
 
-/* VIA Nehemiah RNG and ACE Feature Mask Values	*/
+/* VIA Nehemiah RNG and ACE Feature Mask Values */
 
 #define NEH_CPU_IS_VIA      0x00000001
 #define NEH_CPU_READ        0x00000010
@@ -49,24 +57,24 @@
 #define NEH_RNG_ENABLED     0x00000008
 #define NEH_ACE_PRESENT     0x00000040
 #define NEH_ACE_ENABLED     0x00000080
-#define NEH_RNG_FLAGS		(NEH_RNG_PRESENT | NEH_RNG_ENABLED)
-#define NEH_ACE_FLAGS		(NEH_ACE_PRESENT | NEH_ACE_ENABLED)
+#define NEH_RNG_FLAGS       (NEH_RNG_PRESENT | NEH_RNG_ENABLED)
+#define NEH_ACE_FLAGS       (NEH_ACE_PRESENT | NEH_ACE_ENABLED)
 #define NEH_FLAGS_MASK      (NEH_RNG_FLAGS | NEH_ACE_FLAGS)
 
 /* VIA Nehemiah Advanced Cryptography Engine (ACE) Control Word Values  */
 
-#define NEH_GEN_KEY     0x00000000		/* generate key schedule        */
-#define NEH_LOAD_KEY    0x00000080		/* load schedule from memory    */
+#define NEH_GEN_KEY     0x00000000      /* generate key schedule        */
+#define NEH_LOAD_KEY    0x00000080      /* load schedule from memory    */
 #define NEH_ENCRYPT     0x00000000      /* encryption                   */
 #define NEH_DECRYPT     0x00000200      /* decryption                   */
 #define NEH_KEY128      0x00000000+0x0a /* 128 bit key                  */
 #define NEH_KEY192      0x00000400+0x0c /* 192 bit key                  */
 #define NEH_KEY256      0x00000800+0x0e /* 256 bit key                  */
 
-#define NEH_ENC_GEN		(NEH_ENCRYPT | NEH_GEN_KEY)
-#define NEH_DEC_GEN		(NEH_DECRYPT | NEH_GEN_KEY)
-#define NEH_ENC_LOAD	(NEH_ENCRYPT | NEH_LOAD_KEY)
-#define NEH_DEC_LOAD	(NEH_DECRYPT | NEH_LOAD_KEY)
+#define NEH_ENC_GEN     (NEH_ENCRYPT | NEH_GEN_KEY)
+#define NEH_DEC_GEN     (NEH_DECRYPT | NEH_GEN_KEY)
+#define NEH_ENC_LOAD    (NEH_ENCRYPT | NEH_LOAD_KEY)
+#define NEH_DEC_LOAD    (NEH_DECRYPT | NEH_LOAD_KEY)
 
 #define NEH_ENC_GEN_DATA {\
     NEH_ENC_GEN | NEH_KEY128, 0, 0, 0,\
@@ -98,41 +106,41 @@
     NEH_DEC_LOAD | NEH_KEY192, 0, 0, 0,\
     NEH_DEC_LOAD | NEH_KEY256, 0, 0, 0 }
 
-#define neh_enc_gen_key(x)	((x) == 128 ? (NEH_ENC_GEN | NEH_KEY128) :		\
-     (x) == 192 ? (NEH_ENC_GEN | NEH_KEY192) : (NEH_ENC_GEN | NEH_KEY256)) 
+#define neh_enc_gen_key(x)  ((x) == 128 ? (NEH_ENC_GEN | NEH_KEY128) :      \
+     (x) == 192 ? (NEH_ENC_GEN | NEH_KEY192) : (NEH_ENC_GEN | NEH_KEY256))
 
-#define neh_enc_load_key(x)	((x) == 128 ? (NEH_ENC_LOAD | NEH_KEY128) :		\
-     (x) == 192 ? (NEH_ENC_LOAD | NEH_KEY192) : (NEH_ENC_LOAD | NEH_KEY256)) 
-
-#define neh_enc_hybrid_key(x)	((x) == 128 ? (NEH_ENC_GEN | NEH_KEY128) :	\
+#define neh_enc_load_key(x) ((x) == 128 ? (NEH_ENC_LOAD | NEH_KEY128) :     \
      (x) == 192 ? (NEH_ENC_LOAD | NEH_KEY192) : (NEH_ENC_LOAD | NEH_KEY256))
 
-#define neh_dec_gen_key(x)	((x) == 128 ? (NEH_DEC_GEN | NEH_KEY128) :		\
-     (x) == 192 ? (NEH_DEC_GEN | NEH_KEY192) : (NEH_DEC_GEN | NEH_KEY256)) 
+#define neh_enc_hybrid_key(x)   ((x) == 128 ? (NEH_ENC_GEN | NEH_KEY128) :  \
+     (x) == 192 ? (NEH_ENC_LOAD | NEH_KEY192) : (NEH_ENC_LOAD | NEH_KEY256))
 
-#define neh_dec_load_key(x)	((x) == 128 ? (NEH_DEC_LOAD | NEH_KEY128) :		\
-     (x) == 192 ? (NEH_DEC_LOAD | NEH_KEY192) : (NEH_DEC_LOAD | NEH_KEY256)) 
+#define neh_dec_gen_key(x)  ((x) == 128 ? (NEH_DEC_GEN | NEH_KEY128) :      \
+     (x) == 192 ? (NEH_DEC_GEN | NEH_KEY192) : (NEH_DEC_GEN | NEH_KEY256))
 
-#define neh_dec_hybrid_key(x)	((x) == 128 ? (NEH_DEC_GEN | NEH_KEY128) :	\
+#define neh_dec_load_key(x) ((x) == 128 ? (NEH_DEC_LOAD | NEH_KEY128) :     \
      (x) == 192 ? (NEH_DEC_LOAD | NEH_KEY192) : (NEH_DEC_LOAD | NEH_KEY256))
 
-#if defined( _MSC_VER ) && _MSC_VER > 1200
+#define neh_dec_hybrid_key(x)   ((x) == 128 ? (NEH_DEC_GEN | NEH_KEY128) :  \
+     (x) == 192 ? (NEH_DEC_LOAD | NEH_KEY192) : (NEH_DEC_LOAD | NEH_KEY256))
+
+#if defined( _MSC_VER ) && ( _MSC_VER > 1200 )
 #define aligned_auto(type, name, no, stride)  __declspec(align(stride)) type name[no]
 #else
-#define aligned_auto(type, name, no, stride)				\
-    unsigned char _##name[no * sizeof(type) + stride];		\
+#define aligned_auto(type, name, no, stride)                \
+    unsigned char _##name[no * sizeof(type) + stride];      \
     type *name = (type*)(16 * ((((unsigned long)(_##name)) + stride - 1) / stride))
 #endif
 
-#if defined( _MSC_VER) && MSC_VER > 1200
+#if defined( _MSC_VER ) && ( _MSC_VER > 1200 )
 #define aligned_array(type, name, no, stride) __declspec(align(stride)) type name[no]
 #elif defined( __GNUC__ )
-#define aligned_array(type, name, no, stride) type name[no] __attribute ((aligned(stride)))
+#define aligned_array(type, name, no, stride) type name[no] __attribute__ ((aligned(stride)))
 #else
 #define aligned_array(type, name, no, stride) type name[no]
 #endif
 
-/* VIA ACE codeword		*/
+/* VIA ACE codeword     */
 
 static unsigned char via_flags = 0;
 
@@ -146,27 +154,27 @@ static unsigned char via_flags = 0;
 #define NEH_OFB     NEH_AES __asm _emit 0xe8
 #define NEH_RNG     __asm _emit 0x0f __asm _emit 0xa7 __asm _emit 0xc0
 
-__inline int has_cpuid(void)
+INLINE int has_cpuid(void)
 {   char ret_value;
     __asm
     {   pushfd                  /* save EFLAGS register     */
         mov     eax,[esp]       /* copy it to eax           */
-        mov     edx,0x00200000  /* CPUID bit position       */ 
+        mov     edx,0x00200000  /* CPUID bit position       */
         xor     eax,edx         /* toggle the CPUID bit     */
         push    eax             /* attempt to set EFLAGS to */
         popfd                   /*     the new value        */
-        pushfd                  /* get the new EFLAGS value */ 
+        pushfd                  /* get the new EFLAGS value */
         pop     eax             /*     into eax             */
         xor     eax,[esp]       /* xor with original value  */
         and     eax,edx         /* has CPUID bit changed?   */
         setne   al              /* set to 1 if we have been */
-        mov		ret_value,al	/*     able to change it    */
+        mov     ret_value,al    /*     able to change it    */
         popfd                   /* restore original EFLAGS  */
     }
     return (int)ret_value;
 }
 
-__inline int is_via_cpu(void)
+INLINE int is_via_cpu(void)
 {   char ret_value;
     __asm
     {   xor     eax,eax         /* use CPUID to get vendor  */
@@ -182,12 +190,12 @@ __inline int is_via_cpu(void)
         mov     dl,NEH_CPU_READ /* mark CPU type as read    */
         or      dl,al           /* & store result in flags  */
         mov     [via_flags],dl  /* set VIA detected flag    */
-        mov		ret_value,al	/*     able to change it    */
+        mov     ret_value,al    /*     able to change it    */
     }
     return (int)ret_value;
 }
 
-__inline int read_via_flags(void)
+INLINE int read_via_flags(void)
 {   char ret_value = 0;
     __asm
     {
@@ -201,27 +209,27 @@ __inline int read_via_flags(void)
         mov     eax,NEH_FLAGS_MASK  /* mask out and save    */
         and     eax,edx         /*  the RNG and ACE flags   */
         or      [via_flags],al  /* present & enabled flags  */
-        mov		ret_value,al	/*     able to change it    */
+        mov     ret_value,al    /*     able to change it    */
 no_rng:
     }
     return (int)ret_value;
 }
 
-__inline unsigned int via_rng_in(void *buf)
+INLINE unsigned int via_rng_in(void *buf)
 {   char ret_value = 0x1f;
-    __asm 
+    __asm
     {
         push    edi
         mov     edi,buf         /* input buffer address     */
         xor     edx,edx         /* try to fetch 8 bytes     */
         NEH_RNG                 /* do RNG read operation    */
-        and		ret_value,al	/* count of bytes returned  */
+        and     ret_value,al    /* count of bytes returned  */
         pop     edi
     }
     return (int)ret_value;
 }
 
-__inline volatile void via_ecb_op5(
+INLINE volatile void via_ecb_op5(
             const void *k, const void *c, const void *s, void *d, int l)
 {   __asm
     {
@@ -235,7 +243,7 @@ __inline volatile void via_ecb_op5(
     }
 }
 
-__inline volatile  void via_cbc_op6(
+INLINE volatile  void via_cbc_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {   __asm
     {
@@ -250,7 +258,7 @@ __inline volatile  void via_cbc_op6(
     }
 }
 
-__inline volatile  void via_cbc_op7(
+INLINE volatile  void via_cbc_op7(
         const void *k, const void *c, const void *s, void *d, int l, void *v, void *w)
 {   __asm
     {
@@ -271,7 +279,7 @@ __inline volatile  void via_cbc_op7(
     }
 }
 
-__inline volatile  void via_cfb_op6(
+INLINE volatile  void via_cfb_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {   __asm
     {
@@ -286,7 +294,7 @@ __inline volatile  void via_cfb_op6(
     }
 }
 
-__inline volatile  void via_cfb_op7(
+INLINE volatile  void via_cfb_op7(
         const void *k, const void *c, const void *s, void *d, int l, void *v, void *w)
 {   __asm
     {
@@ -307,7 +315,7 @@ __inline volatile  void via_cfb_op7(
     }
 }
 
-__inline volatile  void via_ofb_op6(
+INLINE volatile  void via_ofb_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {   __asm
     {
@@ -331,7 +339,7 @@ __inline volatile  void via_ofb_op6(
 #define NEH_OFB     asm(".byte 0xf3, 0x0f, 0xa7, 0xe8\n\t")
 #define NEH_RNG     asm(".byte 0x0f, 0xa7, 0xc0\n\t");
 
-__inline int has_cpuid(void)
+INLINE int has_cpuid(void)
 {   int val;
     asm("pushfl\n\t");
     asm("movl  0(%esp),%eax\n\t");
@@ -347,7 +355,7 @@ __inline int has_cpuid(void)
     return val ? 1 : 0;
 }
 
-__inline int is_via_cpu(void)
+INLINE int is_via_cpu(void)
 {   int val;
     asm("xorl %eax,%eax\n\t");
     asm("cpuid\n\t");
@@ -364,7 +372,7 @@ __inline int is_via_cpu(void)
     return val;
 }
 
-__inline int read_via_flags(void)
+INLINE int read_via_flags(void)
 {   unsigned char   val;
     asm("movl $0xc0000000,%eax\n\t");
     asm("cpuid\n\t");
@@ -381,7 +389,7 @@ __inline int read_via_flags(void)
     return (int) val;
 }
 
-__inline int via_rng_in(void *buf)
+INLINE int via_rng_in(void *buf)
 {   int val;
     asm("pushl %edi\n\t");
     asm("movl %0,%%edi\n\t" : : "m" (buf));
@@ -393,7 +401,7 @@ __inline int via_rng_in(void *buf)
     return val;
 }
 
-__inline volatile  void via_ecb_op5(
+INLINE volatile  void via_ecb_op5(
             const void *k, const void *c, const void *s, void *d, int l)
 {
     NEH_REKEY;
@@ -405,7 +413,7 @@ __inline volatile  void via_ecb_op5(
     NEH_ECB;
 }
 
-__inline volatile  void via_cbc_op6(
+INLINE volatile  void via_cbc_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {
     NEH_REKEY;
@@ -418,7 +426,7 @@ __inline volatile  void via_cbc_op6(
     NEH_CBC;
 }
 
-__inline volatile  void via_cbc_op7(
+INLINE volatile  void via_cbc_op7(
         const void *k, const void *c, const void *s, void *d, int l, void *v, void *w)
 {
     NEH_REKEY;
@@ -434,7 +442,7 @@ __inline volatile  void via_cbc_op7(
     asm("movsl; movsl; movsl; movsl\n\t");
 }
 
-__inline volatile  void via_cfb_op6(
+INLINE volatile  void via_cfb_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {
     NEH_REKEY;
@@ -447,7 +455,7 @@ __inline volatile  void via_cfb_op6(
     NEH_CFB;
 }
 
-__inline volatile  void via_cfb_op7(
+INLINE volatile  void via_cfb_op7(
         const void *k, const void *c, const void *s, void *d, int l, void *v, void *w)
 {
     NEH_REKEY;
@@ -463,7 +471,7 @@ __inline volatile  void via_cfb_op7(
     asm("movsl; movsl; movsl; movsl\n\t");
 }
 
-__inline volatile  void via_ofb_op6(
+INLINE volatile  void via_ofb_op6(
             const void *k, const void *c, const void *s, void *d, int l, void *v)
 {
     NEH_REKEY;
@@ -480,28 +488,28 @@ __inline volatile  void via_ofb_op6(
 #error VIA ACE is not available with this compiler
 #endif
 
-__inline int via_ace_test(void)
+INLINE int via_ace_test(void)
 {
-    return has_cpuid() && is_via_cpu() && ((read_via_flags() & NEH_ACE_FLAGS) == NEH_ACE_FLAGS); 
+    return has_cpuid() && is_via_cpu() && ((read_via_flags() & NEH_ACE_FLAGS) == NEH_ACE_FLAGS);
 }
 
-#define VIA_ACE_AVAILABLE	(((via_flags & NEH_ACE_FLAGS) == NEH_ACE_FLAGS)			\
+#define VIA_ACE_AVAILABLE   (((via_flags & NEH_ACE_FLAGS) == NEH_ACE_FLAGS)         \
     || (via_flags & NEH_CPU_READ) && (via_flags & NEH_CPU_IS_VIA) || via_ace_test())
 
-__inline int via_rng_test(void)
+INLINE int via_rng_test(void)
 {
-    return has_cpuid() && is_via_cpu() && ((read_via_flags() & NEH_RNG_FLAGS) == NEH_RNG_FLAGS); 
+    return has_cpuid() && is_via_cpu() && ((read_via_flags() & NEH_RNG_FLAGS) == NEH_RNG_FLAGS);
 }
 
-#define VIA_RNG_AVAILABLE	(((via_flags & NEH_RNG_FLAGS) == NEH_RNG_FLAGS)			\
+#define VIA_RNG_AVAILABLE   (((via_flags & NEH_RNG_FLAGS) == NEH_RNG_FLAGS)         \
     || (via_flags & NEH_CPU_READ) && (via_flags & NEH_CPU_IS_VIA) || via_rng_test())
 
-__inline int read_via_rng(void *buf, int count)
+INLINE int read_via_rng(void *buf, int count)
 {   int nbr, max_reads, lcnt = count;
     unsigned char *p, *q;
     aligned_auto(unsigned char, bp, 64, 16);
-    
-    if(!VIA_RNG_AVAILABLE) 
+
+    if(!VIA_RNG_AVAILABLE)
         return 0;
 
     do
@@ -513,7 +521,7 @@ __inline int read_via_rng(void *buf, int count)
             (nbr == 0 && --max_reads);
 
         lcnt -= nbr;
-        p = (unsigned char*)buf; q = bp; 
+        p = (unsigned char*)buf; q = bp;
         while(nbr--)
             *p++ = *q++;
     }

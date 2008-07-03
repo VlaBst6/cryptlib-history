@@ -304,7 +304,7 @@ int checkECCkey( const CONTEXT_INFO *contextInfoPtr )
 
 	/* Make sure that the key paramters are valid:
 
-		pLen >= MIN_PKCSIZE, pLen <= CRYPT_MAX_PKCSIZE 
+		pLen >= MIN_PKCSIZE_ECC, pLen <= CRYPT_MAX_PKCSIZE_ECC
 
 		[...] */
 	length = BN_num_bytes( p );

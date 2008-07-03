@@ -27,9 +27,9 @@
 ; in respect of its properties, including, but not limited to, correctness
 ; and/or fitness for purpose.
 ; ---------------------------------------------------------------------------
-; Issue 31/01/2006
+; Issue 09/09/2006
 
-; This code requires ASM_X86_V1C to be set in aesopt.h. It requires the C files 
+; This code requires ASM_X86_V1C to be set in aesopt.h. It requires the C files
 ; aeskey.c and aestab.c for support.
 
 ; An AES implementation for x86 processors using the YASM (or NASM) assembler.
@@ -42,10 +42,10 @@
 ; three standard AES key sizes (128, 192 and 256 bits). It has the same call
 ; interface as my C implementation. The ebx, esi, edi and ebp registers are
 ; preserved across calls but eax, ecx and edx and the artihmetic status flags
-; are not.  It is also important that the defines below match those used in the 
-; C code.  This code uses the VC++ register saving conentions; if it is used 
-; with another compiler, conventions for using and saving registers may need to 
-; be checked (and calling conventions).  The YASM command line for the VC++ 
+; are not.  It is also important that the defines below match those used in the
+; C code.  This code uses the VC++ register saving conentions; if it is used
+; with another compiler, conventions for using and saving registers may need to
+; be checked (and calling conventions).  The YASM command line for the VC++
 ; custom build step is:
 ;
 ;    yasm -Xvc -f win32 -o "$(TargetDir)\$(InputName).obj" "$(InputPath)"
@@ -189,10 +189,10 @@ stk_spc equ    20   ; stack space
 
 %macro  do_call 1-2 parms
 %ifndef DLL_EXPORT
-    call	%1
-    add		esp,%2
+    call    %1
+    add     esp,%2
 %else
-    call	%1@%2
+    call    %1@%2
 %endif
 %endmacro
 
@@ -207,14 +207,14 @@ stk_spc equ    20   ; stack space
 %ifdef  ENCRYPTION
 
     extern  _t_fn
-    
+
 %define etab_0(x)   [_t_fn+4*x]
 %define etab_1(x)   [_t_fn+1024+4*x]
 %define etab_2(x)   [_t_fn+2048+4*x]
 %define etab_3(x)   [_t_fn+3072+4*x]
 
 %ifdef LAST_ROUND_TABLES
-    
+
     extern  _t_fl
 
 %define eltab_0(x)  [_t_fl+4*x]
@@ -570,7 +570,7 @@ stk_spc equ    20   ; stack space
 
 %endmacro
 
-    section .text align=32
+    section .text
 
 ; AES Decryption Subroutine
 
@@ -594,9 +594,9 @@ stk_spc equ    20   ; stack space
     mov     ebp,[esp+ctx+stk_spc]    ; key pointer
     movzx   edi,byte[ebp+4*KS_LENGTH]
 %ifndef  AES_REV_DKS        ; if decryption key schedule is not reversed
-    lea     ebp,[ebp+edi]	; we have to access it from the top down
+    lea     ebp,[ebp+edi]   ; we have to access it from the top down
 %endif
-    xor     eax,[ebp   ]	; key schedule
+    xor     eax,[ebp   ]    ; key schedule
     xor     ebx,[ebp+ 4]
     xor     ecx,[ebp+ 8]
     xor     edx,[ebp+12]

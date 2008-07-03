@@ -20,6 +20,13 @@
 
 #ifdef USE_OCSP
 
+/* OCSP HTTP content types */
+
+#define OCSP_CONTENT_TYPE_REQ		"application/ocsp-request"
+#define OCSP_CONTENT_TYPE_REQ_LEN	24
+#define OCSP_CONTENT_TYPE_RESP		"application/ocsp-response"
+#define OCSP_CONTENT_TYPE_RESP_LEN	25
+
 /* OCSP query/response types */
 
 typedef enum {
@@ -56,10 +63,15 @@ static void sendErrorResponse( SESSION_INFO *sessionInfoPtr,
 							   const void *responseData,
 							   const int responseDataLength )
 	{
+	/* Since we're already in an error state there's not much that we can do
+	   in terms of alerting the user if a further error occurs when writing 
+	   the error response, so we ignore any potential write errors that occur
+	   at this point */
 	memcpy( sessionInfoPtr->receiveBuffer, responseData,
 			responseDataLength );
 	sessionInfoPtr->receiveBufEnd = responseDataLength;
-	writePkiDatagram( sessionInfoPtr );
+	( void ) writePkiDatagram( sessionInfoPtr, OCSP_CONTENT_TYPE_RESP,
+							   OCSP_CONTENT_TYPE_RESP_LEN );
 	}
 
 /* Compare the nonce in a request with the returned nonce in the response */
@@ -133,14 +145,17 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't get OCSP request data from OCSP request object" );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't get OCSP request data from OCSP request "
+				  "object" ) );
 	sessionInfoPtr->receiveBufEnd = msgData.length;
 	DEBUG_DUMP( "ocsp_req", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );
 
 	/* Send the request to the responder */
-	return( writePkiDatagram( sessionInfoPtr ) );
+	return( writePkiDatagram( sessionInfoPtr, OCSP_CONTENT_TYPE_REQ,
+							  OCSP_CONTENT_TYPE_REQ_LEN ) );
 	}
 
 /* Read the response from the OCSP server */
@@ -151,6 +166,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	MESSAGE_DATA msgData;
 	STREAM stream;
 	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
+	const char *errorString = NULL;
 	int value, responseType, length, status;
 
 	/* Read the response from the responder */
@@ -165,51 +181,50 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 				 sessionInfoPtr->receiveBufEnd );
 	readSequence( &stream, NULL );
 	status = readEnumerated( &stream, &value );
-	if( cryptStatusOK( status ) )
-		{
-		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-		const char *errorString = NULL;
-
-		errorInfo->errorCode = value;
-
-		/* If it's an error status, try and translate it into something a
-		   bit more meaningful (some of the translations are a bit
-		   questionable, but it's better than the generic no vas response) */
-		switch( value )
-			{
-			case OCSP_RESP_SUCCESSFUL:
-				status = CRYPT_OK;
-				break;
-
-			case OCSP_RESP_TRYLATER:
-				errorString = "Try again later";
-				status = CRYPT_ERROR_NOTAVAIL;
-				break;
-
-			case OCSP_RESP_SIGREQUIRED:
-				errorString = "Signed OCSP request required";
-				status = CRYPT_ERROR_SIGNATURE;
-				break;
-
-			case OCSP_RESP_UNAUTHORISED:
-				errorString = "Client isn't authorised to perform query";
-				status = CRYPT_ERROR_PERMISSION;
-				break;
-
-			default:
-				errorString = "Unknown error";
-				status = CRYPT_ERROR_INVALID;
-				break;
-			}
-		if( errorString != NULL )
-			sprintf_s( errorInfo->errorString, MAX_ERRMSG_SIZE,
-					   "OCSP server returned status %d: %s",
-					   value, errorString );
-		}
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
 		return( status );
+		}
+
+	/* If it's an error status, try and translate it into something a bit 
+	   more meaningful (some of the translations are a bit questionable, but 
+	   it's better than the generic no va response (which should actually be 
+	   "no marcha" in any case)) */
+	sessionInfoPtr->errorInfo.errorCode = value;
+	switch( value )
+		{
+		case OCSP_RESP_SUCCESSFUL:
+			status = CRYPT_OK;
+			break;
+
+		case OCSP_RESP_TRYLATER:
+			errorString = "Try again later";
+			status = CRYPT_ERROR_NOTAVAIL;
+			break;
+
+		case OCSP_RESP_SIGREQUIRED:
+			errorString = "Signed OCSP request required";
+			status = CRYPT_ERROR_SIGNATURE;
+			break;
+
+		case OCSP_RESP_UNAUTHORISED:
+			errorString = "Client isn't authorised to perform query";
+			status = CRYPT_ERROR_PERMISSION;
+			break;
+
+		default:
+			errorString = "Unknown error";
+			status = CRYPT_ERROR_INVALID;
+			break;
+		}
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				   "OCSP server returned status %d: %s",
+				   value, errorString ) );
 		}
 
 	/* We've got a valid response, read the [0] EXPLICIT SEQUENCE { OID,
@@ -218,18 +233,21 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	readConstructed( &stream, NULL, 0 );		/* responseBytes */
 	readSequence( &stream, NULL );
 	readOID( &stream, ocspOIDinfo,				/* responseType */
-			 &responseType );
+			 FAILSAFE_ARRAYSIZE( ocspOIDinfo, OID_INFO ), &responseType );
 	status = readGenericHole( &stream, &length, 16, DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, status, "Invalid OCSP response header" );
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
+				  "Invalid OCSP response header" ) );
 		}
 	status = importCertFromStream( &stream, &iCertResponse,
 								   CRYPT_CERTTYPE_OCSP_RESPONSE, length );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status, "Invalid OCSP response data" );
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid OCSP response data" ) );
 
 	/* If the request went out with a nonce included (which it does by
 	   default), make sure that it matches the nonce in the response */
@@ -245,10 +263,12 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 		   is a signature error to indicate that the integrity check 
 		   failed */
 		krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_SIGNATURE,
-				cryptStatusError( status ) ? \
-				"OCSP response doesn't contain a nonce" : \
-				"OCSP response nonce doesn't match the one in the request" );
+		retExt( CRYPT_ERROR_SIGNATURE,
+				( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
+				  cryptStatusError( status ) ? \
+				  "OCSP response doesn't contain a nonce" : \
+				  "OCSP response nonce doesn't match the one in the "
+				  "request" ) );
 		}
 	krnlSendNotifier( sessionInfoPtr->iCertRequest, IMESSAGE_DECREFCOUNT );
 	sessionInfoPtr->iCertRequest = CRYPT_ERROR;
@@ -307,7 +327,8 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 	status = readSequence( &stream, NULL );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status, "Invalid OCSP request header" );
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid OCSP request header" ) );
 
 	/* Import the request as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo,
@@ -320,7 +341,8 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, respBadRequest, RESPONSE_SIZE );
-		retExt( SESSION_ERRINFO, status, "Invalid OCSP request data" );
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid OCSP request data" ) );
 		}
 	iOcspRequest = createInfo.cryptHandle;
 
@@ -342,8 +364,9 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 		{
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't create OCSP response from request" );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't create OCSP response from request" ) );
 		}
 	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
 	return( CRYPT_OK );
@@ -367,8 +390,10 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_INVALID )
 		{
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't check OCSP request against certificate store" );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't check OCSP request against certificate "
+				  "store" ) );
 		}
 	setMessageData( &msgData, NULL, 0 );
 	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
@@ -382,8 +407,9 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't create signed OCSP response" );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't create signed OCSP response" ) );
 		}
 
 	/* Write the wrapper for the response */
@@ -413,7 +439,8 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 				sessionInfoPtr->receiveBufEnd );
 
 	/* Send the response to the client */
-	return( writePkiDatagram( sessionInfoPtr ) );
+	return( writePkiDatagram( sessionInfoPtr, OCSP_CONTENT_TYPE_RESP,
+							  OCSP_CONTENT_TYPE_RESP_LEN ) );
 	}
 
 /****************************************************************************
@@ -475,8 +502,8 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 
 	/* If we haven't already got a server name explicitly set, try and get
 	   it from the request */
-	if( findSessionAttribute( sessionInfoPtr->attributeList,
-							  CRYPT_SESSINFO_SERVER_NAME ) == NULL )
+	if( findSessionInfo( sessionInfoPtr->attributeList,
+						 CRYPT_SESSINFO_SERVER_NAME ) == NULL )
 		{
 		char buffer[ MAX_URL_SIZE + 8 ];
 
@@ -514,9 +541,7 @@ int setAccessMethodOCSP( SESSION_INFO *sessionInfoPtr )
 			SESSION_NEEDS_PRIVKEYSIGN | \
 			SESSION_NEEDS_PRIVKEYCERT | \
 			SESSION_NEEDS_KEYSET,
-		1, 1, 2,					/* Version 1 */
-		"application/ocsp-request",	/* Client content-type */
-		"application/ocsp-response"	/* Server content-type */
+		1, 1, 2						/* Version 1 */
 
 		/* Protocol-specific information */
 		};

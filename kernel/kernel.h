@@ -55,11 +55,9 @@
 						  have to handle the situation where the first object
 						  is a user object, in which case it has to be the
 						  owner of the second object.
-	isAliasedObject(): Whether an object is an alias for another object and
-					   subject to copy-on-write.
-	isClonedObject(): Whether an aliased object is the original or the clone.
 	isObjectAccessValid(): Internal/external object access check.
 	isValidMessage(): Whether a message type is valid.
+	isInternalMessage(): Whether a message is an internal message.
 	isValidType(): Whether an object type is valid
 	isValidSubtype(): Whether an object subtype is allowed based on access
 					  bitflags */
@@ -91,12 +89,10 @@
 		  ( krnlData->objectTable[ ( handle1 ) ].owner == \
 							krnlData->objectTable[ ( handle2 ) ].owner ) || \
 		  ( ( handle1 ) == krnlData->objectTable[ ( handle2 ) ].owner ) )
-#define isAliasedObject( handle ) \
-		( krnlData->objectTable[ handle ].flags & OBJECT_FLAG_ALIASED )
-#define isClonedObject( handle ) \
-		( krnlData->objectTable[ handle ].flags & OBJECT_FLAG_CLONE )
 #define isValidMessage( message ) \
 		( ( message ) > MESSAGE_NONE && ( message ) < MESSAGE_LAST )
+#define isInternalMessage( message ) \
+		( ( message ) & MESSAGE_FLAG_INTERNAL )
 #define isValidType( type ) \
 		( ( type ) > OBJECT_TYPE_NONE && ( type ) < OBJECT_TYPE_LAST )
 #define isValidSubtype( subtypeMask, subtype ) \
@@ -131,8 +127,7 @@
 
 #define getObjectStatusValue( flags ) \
 		( ( flags & OBJECT_FLAG_NOTINITED ) ? CRYPT_ERROR_NOTINITED : \
-		  ( flags & OBJECT_FLAG_SIGNALLED ) ? CRYPT_ERROR_SIGNALLED : \
-		  ( flags & OBJECT_FLAG_BUSY ) ? CRYPT_ERROR_TIMEOUT : CRYPT_OK )
+		  ( flags & OBJECT_FLAG_SIGNALLED ) ? CRYPT_ERROR_SIGNALLED : CRYPT_OK )
 
 /****************************************************************************
 *																			*
@@ -174,9 +169,6 @@ typedef struct {
 	CRYPT_USER owner;			/* Owner object handle */
 	CRYPT_HANDLE dependentObject;	/* Dependent object (context or cert) */
 	CRYPT_HANDLE dependentDevice;	/* Dependent crypto device */
-#if 0	/* 18/2/04 No need for copy-on-write any more */
-	CRYPT_HANDLE clonedObject;	/* Cloned object if aliased */
-#endif /* 0 */
 	} OBJECT_INFO;
 
 /* The flags that apply to each object in the table */
@@ -186,17 +178,14 @@ typedef struct {
 #define OBJECT_FLAG_NOTINITED	0x0002	/* Still being initialised */
 #define OBJECT_FLAG_HIGH		0x0004	/* In 'high' security state */
 #define OBJECT_FLAG_SIGNALLED	0x0008	/* In signalled state */
-#define OBJECT_FLAG_BUSY		0x0010	/* Busy with async.op */
-#define OBJECT_FLAG_SECUREMALLOC 0x0020	/* Uses secure memory */
-#define OBJECT_FLAG_ALIASED		0x0040	/* Object is alias for another object */
-#define OBJECT_FLAG_CLONE		0x0080	/* Aliased object is the clone */
-#define OBJECT_FLAG_OWNED		0x0100	/* Object is bound to a thread */
-#define OBJECT_FLAG_ATTRLOCKED	0x0200	/* Security properties can't be modified */
+#define OBJECT_FLAG_SECUREMALLOC 0x0010	/* Uses secure memory */
+#define OBJECT_FLAG_OWNED		0x0020	/* Object is bound to a thread */
+#define OBJECT_FLAG_ATTRLOCKED	0x0040	/* Security properties can't be modified */
 
 /* The flags that convey information about an object's status */
 
 #define OBJECT_FLAGMASK_STATUS \
-		( OBJECT_FLAG_NOTINITED | OBJECT_FLAG_BUSY | OBJECT_FLAG_SIGNALLED )
+		( OBJECT_FLAG_NOTINITED | OBJECT_FLAG_SIGNALLED )
 
 /****************************************************************************
 *																			*
@@ -269,18 +258,30 @@ typedef struct {
 	MUTEX_HANDLE syncHandle;		/* Handle to use for thread sync */
 	} THREAD_INFO;
 
-/* When the kernel closes down, it does so in a multi-stage process that's
-   equivalent to Unix runlevels.  At the first level, all internal worker
-   threads/tasks must exist.  At the next level, all messages to objects
-   except destroy messages fail.  At the final level, all kernel-managed
-   primitives such as mutexes and semaphores are no longer available */
+/* When the kernel starts up and closes down it does so in a multi-stage 
+   process that's equivalent to Unix runlevels.  For the startup at the
+   first level the kernel data block and all kernel-level primitive
+   objects like mutexes have been initialised.
+   
+   For the shutdown, at the first level all internal worker threads/tasks 
+   must exist.  At the next level all messages to objects except destroy 
+   messages fail.  At the final level all kernel-managed primitives such as 
+   mutexes and semaphores are no longer available */
+
+typedef enum {
+	INIT_LEVEL_NONE,			/* Uninitialised */
+	INIT_LEVEL_KRNLDATA,		/* Kernel data block initialised */
+	INIT_LEVEL_FULL,			/* Full initialisation */
+	INIT_LEVEL_LAST				/* Last possible init level */
+	} INIT_LEVEL;
 
 typedef enum {
 	SHUTDOWN_LEVEL_NONE,		/* Normal operation */
 	SHUTDOWN_LEVEL_THREADS,		/* Internal threads must exit */
 	SHUTDOWN_LEVEL_MESSAGES,	/* Only destroy messages are valid */
 	SHUTDOWN_LEVEL_MUTEXES,		/* Kernel objects become invalid */
-	SHUTDOWN_LEVEL_ALL			/* Complete shutdown */
+	SHUTDOWN_LEVEL_ALL,			/* Complete shutdown */
+	SHUTDOWN_LEVEL_LAST			/* Last possible shutdown level */
 	} SHUTDOWN_LEVEL;
 
 /* The information needed for each block of secure memory */
@@ -309,13 +310,16 @@ typedef struct {
 typedef struct {
 	/* The kernel initialisation state and a lock to protect it.  The
 	   lock and shutdown level value are handled externally and aren't
-	   cleared when the kernel data block as a whole is cleared */
+	   cleared when the kernel data block as a whole is cleared.  Note
+	   that the shutdown level has to be before the lock so that we can
+	   statically initialise the data with '{ 0 }', which won't work if
+	   the lock data is non-scalar */
+	SHUTDOWN_LEVEL shutdownLevel;		/* Kernel shutdown level */
 #ifdef USE_THREADS
 	MUTEX_DECLARE_STORAGE( initialisation );
 #endif /* USE_THREADS */
-	SHUTDOWN_LEVEL shutdownLevel;		/* Kernel shutting level */
 	/* Everything from this point on is cleared at init and shutdown */
-	BOOLEAN isInitialised;				/* Whether kernel initialised */
+	int initLevel;						/* Kernel initialisation level */
 
 	/* The kernel object table and object table management info */
 	OBJECT_INFO *objectTable;			/* Pointer to object table */
@@ -327,10 +331,12 @@ typedef struct {
 #endif /* USE_THREADS */
 
 	/* The kernel message dispatcher queue */
+	BUFFER( MESSAGE_QUEUE_SIZE, queueEnd ) \
 	MESSAGE_QUEUE_DATA messageQueue[ MESSAGE_QUEUE_SIZE + 8 ];
 	int queueEnd;						/* Points past last queue element */
 
 	/* The kernel semaphores */
+	BUFFER_FIXED( SEMAPHORE_LAST ) \
 	SEMAPHORE_INFO semaphoreInfo[ SEMAPHORE_LAST + 8 ];
 #ifdef USE_THREADS
 	MUTEX_DECLARE_STORAGE( semaphore );
@@ -370,8 +376,11 @@ typedef struct {
    the following macro to clear only the appropriate area of the kernel data
    block */
 
-#define CLEAR_KERNEL_DATA()	zeroise( ( void * ) ( &krnlDataBlock.isInitialised ), \
-									 &krnlDataBlock.endMarker - &krnlDataBlock.isInitialised )
+#define CLEAR_KERNEL_DATA()     \
+		assert( &krnlDataBlock.endMarker - \
+				&krnlDataBlock.initLevel < sizeof( krnlDataBlock ) ); \
+		zeroise( ( void * ) ( &krnlDataBlock.initLevel ), \
+				 &krnlDataBlock.endMarker - &krnlDataBlock.initLevel )
 
 /****************************************************************************
 *																			*
@@ -381,119 +390,172 @@ typedef struct {
 
 /* Prototypes for functions in certm_acl.c */
 
+CHECK_RETVAL \
 int preDispatchCheckCertMgmtAccess( const int objectHandle,
 									const MESSAGE_TYPE message,
+									IN_BUFFER( MESSAGE_CERTMGMT_INFO ) \
 									const void *messageDataPtr,
 									const int messageValue,
-									const void *dummy );
+									const void *dummy ) \
+									STDC_NONNULL_ARG( ( 3 ) );
 
 /* Prototypes for functions in key_acl.c */
 
+CHECK_RETVAL \
 int preDispatchCheckKeysetAccess( const int objectHandle,
 								  const MESSAGE_TYPE message,
+								  IN_BUFFER( MESSAGE_KEYMGMT_INFO ) \
 								  const void *messageDataPtr,
 								  const int messageValue,
-								  const void *dummy );
+								  const void *dummy ) \
+								  STDC_NONNULL_ARG( ( 3 ) );
 
 /* Prototypes for functions in mech_acl.c */
 
+CHECK_RETVAL \
 int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 										 const MESSAGE_TYPE message,
+										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
 										 const void *messageDataPtr,
 										 const int messageValue,
-										 const void *dummy );
+										 const void *dummy ) \
+										 STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int preDispatchCheckMechanismSignAccess( const int objectHandle,
 										 const MESSAGE_TYPE message,
+										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
 										 const void *messageDataPtr,
 										 const int messageValue,
-										 const void *dummy );
+										 const void *dummy ) \
+										 STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 										   const MESSAGE_TYPE message,
+										   IN_BUFFER( MECHANISM_WRAP_INFO ) \
 										   const void *messageDataPtr,
 										   const int messageValue,
-										   const void *dummy );
+										   const void *dummy ) \
+										   STDC_NONNULL_ARG( ( 3 ) );
 
 /* Prototypes for functions in msg_acl.c */
 
+CHECK_RETVAL \
 int preDispatchSignalDependentObjects( const int objectHandle,
 									   const MESSAGE_TYPE message,
 									   const void *messageDataPtr,
 									   const int messageValue,
 									   const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckAttributeAccess( const int objectHandle,
 									 const MESSAGE_TYPE message,
 									 const void *messageDataPtr,
 									 const int messageValue,
 									 const void *auxInfo );
+CHECK_RETVAL \
 int preDispatchCheckCompareParam( const int objectHandle,
 								  const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
 								  const int messageValue,
 								  const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckCheckParam( const int objectHandle,
 								const MESSAGE_TYPE message,
 								const void *messageDataPtr,
 								const int messageValue,
 								const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckActionAccess( const int objectHandle,
 								  const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
 								  const int messageValue,
 								  const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckState( const int objectHandle,
 						   const MESSAGE_TYPE message,
 						   const void *messageDataPtr,
 						   const int messageValue, const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckParamHandleOpt( const int objectHandle,
 									const MESSAGE_TYPE message,
 									const void *messageDataPtr,
 									const int messageValue,
 									const void *auxInfo );
+CHECK_RETVAL \
 int preDispatchCheckStateParamHandle( const int objectHandle,
 									  const MESSAGE_TYPE message,
 									  const void *messageDataPtr,
 									  const int messageValue,
 									  const void *auxInfo );
+CHECK_RETVAL \
 int preDispatchCheckExportAccess( const int objectHandle,
 								  const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
 								  const int messageValue,
 								  const void *dummy );
+CHECK_RETVAL \
 int preDispatchCheckData( const int objectHandle,
 						  const MESSAGE_TYPE message,
+						  IN_BUFFER( MESSAGE_DATA ) \
 						  const void *messageDataPtr,
 						  const int messageValue,
-						  const void *dummy );
+						  const void *dummy ) \
+						  STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int preDispatchCheckCreate( const int objectHandle,
 							const MESSAGE_TYPE message,
+							IN_BUFFER( MESSAGE_CREATEOBJECT_INFO ) \
 							const void *messageDataPtr,
 							const int messageValue,
-							const void *dummy );
+							const void *dummy ) \
+							STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
+int preDispatchCheckUserMgmtAccess( const int objectHandle, 
+									const MESSAGE_TYPE message,
+									const void *messageDataPtr,
+									const int messageValue, 
+									const void *dummy );
+CHECK_RETVAL \
+int preDispatchCheckTrustMgmtAccess( const int objectHandle, 
+									 const MESSAGE_TYPE message,
+									 const void *messageDataPtr,
+									 const int messageValue, 
+									 const void *dummy );
+CHECK_RETVAL \
 int postDispatchMakeObjectExternal( const int dummy,
 									const MESSAGE_TYPE message,
 									const void *messageDataPtr,
 									const int messageValue,
 									const void *auxInfo );
+CHECK_RETVAL \
 int postDispatchForwardToDependentObject( const int objectHandle,
 										  const MESSAGE_TYPE message,
 										  const void *dummy1,
 										  const int messageValue,
 										  const void *dummy2 );
+CHECK_RETVAL \
 int postDispatchUpdateUsageCount( const int objectHandle,
 								  const MESSAGE_TYPE message,
 								  const void *dummy1,
 								  const int messageValue,
 								  const void *dummy2 );
+CHECK_RETVAL \
 int postDispatchChangeState( const int objectHandle,
 							 const MESSAGE_TYPE message,
 							 const void *dummy1,
 							 const int messageValue,
 							 const void *dummy2 );
+CHECK_RETVAL \
 int postDispatchChangeStateOpt( const int objectHandle,
 								const MESSAGE_TYPE message,
 								const void *dummy1,
 								const int messageValue,
 								const void *auxInfo );
+CHECK_RETVAL \
+int postDispatchHandleZeroise( const int objectHandle, 
+							   const MESSAGE_TYPE message,
+							   const void *dummy1,
+							   const int messageValue,
+							   const void *dummy2 );
 
 /****************************************************************************
 *																			*
@@ -503,35 +565,56 @@ int postDispatchChangeStateOpt( const int objectHandle,
 
 /* Prototypes for functions in attr_acl.c */
 
+CHECK_RETVAL \
 const void *findAttributeACL( const CRYPT_ATTRIBUTE_TYPE attribute,
 							  const BOOLEAN isInternalMessage );
 
 /* Prototypes for functions in int_msg.c */
 
+CHECK_RETVAL \
 int getPropertyAttribute( const int objectHandle,
 						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  void *messageDataPtr );
+						  OUT_BUFFER_FIXED( sizeof( int ) ) \
+						  void *messageDataPtr ) \
+						  STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int setPropertyAttribute( const int objectHandle,
 						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  void *messageDataPtr );
+						  IN_BUFFER( sizeof( int ) ) \
+						  void *messageDataPtr ) \
+						  STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int incRefCount( const int objectHandle, const int dummy1,
 				 const void *dummy2, const BOOLEAN dummy3 );
+CHECK_RETVAL \
 int decRefCount( const int objectHandle, const int dummy1,
 				 const void *dummy2, const BOOLEAN isInternal );
+CHECK_RETVAL \
 int getDependentObject( const int objectHandle, const int targetType,
+						OUT_BUFFER_FIXED( sizeof( int ) ) \
 						const void *messageDataPtr,
-						const BOOLEAN dummy );
+						const BOOLEAN dummy ) \
+						STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int setDependentObject( const int objectHandle, const int incReferenceCount,
+						IN_BUFFER( sizeof( int ) ) \
 						const void *messageDataPtr,
-						const BOOLEAN dummy );
+						const BOOLEAN dummy ) \
+						STDC_NONNULL_ARG( ( 3 ) );
+CHECK_RETVAL \
 int cloneObject( const int objectHandle, const int clonedObject,
 				 const void *dummy1, const BOOLEAN dummy2 );
 
 /* Prototypes for functions in sendmsg.c */
 
+CHECK_RETVAL \
 int checkTargetType( const int objectHandle, const long targets );
+CHECK_RETVAL \
 int findTargetType( const int originalObjectHandle, const long targets );
-int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr );
+CHECK_RETVAL \
+int waitForObject( const int objectHandle, 
+				   OUT_PTR OBJECT_INFO **objectInfoPtrPtr ) \
+				   STDC_NONNULL_ARG( ( 2 ) );
 
 /* Prototypes for functions in objects.c */
 
@@ -546,27 +629,49 @@ void clearSemaphore( const SEMAPHORE_TYPE semaphore );
 
 /* Init/shutdown functions for each kernel module */
 
-int initAllocation( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initAllocation( INOUT KERNEL_DATA *krnlDataPtr ) \
+					STDC_NONNULL_ARG( ( 1 ) );
 void endAllocation( void );
-int initAttributeACL( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initAttributeACL( INOUT KERNEL_DATA *krnlDataPtr ) \
+					  STDC_NONNULL_ARG( ( 1 ) );
 void endAttributeACL( void );
-int initCertMgmtACL( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr ) \
+					 STDC_NONNULL_ARG( ( 1 ) );
 void endCertMgmtACL( void );
-int initInternalMsgs( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initInternalMsgs( INOUT KERNEL_DATA *krnlDataPtr ) \
+					  STDC_NONNULL_ARG( ( 1 ) );
 void endInternalMsgs( void );
-int initKeymgmtACL( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr ) \
+					STDC_NONNULL_ARG( ( 1 ) );
 void endKeymgmtACL( void );
-int initMechanismACL( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initMechanismACL( INOUT KERNEL_DATA *krnlDataPtr ) \
+					  STDC_NONNULL_ARG( ( 1 ) );
 void endMechanismACL( void );
-int initMessageACL( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr ) \
+					STDC_NONNULL_ARG( ( 1 ) );
 void endMessageACL( void );
-int initObjects( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initObjects( INOUT KERNEL_DATA *krnlDataPtr ) \
+				 STDC_NONNULL_ARG( ( 1 ) );
 void endObjects( void );
-int initObjectAltAccess( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initObjectAltAccess( INOUT KERNEL_DATA *krnlDataPtr ) \
+						 STDC_NONNULL_ARG( ( 1 ) );
 void endObjectAltAccess( void );
-int initSemaphores( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr ) \
+					STDC_NONNULL_ARG( ( 1 ) );
 void endSemaphores( void );
-int initSendMessage( KERNEL_DATA *krnlDataPtr );
+CHECK_RETVAL \
+int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr ) \
+					 STDC_NONNULL_ARG( ( 1 ) );
 void endSendMessage( void );
 
 #endif /* _KERNEL_DEFINED */

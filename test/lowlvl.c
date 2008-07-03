@@ -536,6 +536,12 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			return( status );
 			}
 
+		/* If we're just testing for the ability to use a context, the same 
+		   hash context may be used for both operations, in which case we 
+		   have to reset the context between the two */
+		if( cryptContext == decryptContext )
+			cryptDeleteAttribute( cryptContext, CRYPT_CTXINFO_HASHVALUE );
+
 		/* Hash the buffer in different odd-size chunks */
 		status = cryptEncrypt( decryptContext, buffer, 128 );
 		if( cryptStatusOK( status ) )
@@ -639,6 +645,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			case CRYPT_ALGO_HMAC_MD5:
 			case CRYPT_ALGO_HMAC_SHA1:
 			case CRYPT_ALGO_HMAC_RIPEMD160:
+			case CRYPT_ALGO_HMAC_SHA2:
 				status = loadContexts( &cryptContext, &decryptContext,
 									   cryptDevice, cryptAlgo, cryptMode,
 									   ( BYTE * ) "1234567890098765432112345678900987654321", 40 );
@@ -891,7 +898,7 @@ int testRSAMinimalKey( void )
    rather OS-dependent, we only enable this under Windows where we've got
    guaranteed high-res timer access */
 
-#if defined( __WINDOWS__ ) && !defined( __WIN16__ )
+#if defined( __WINDOWS__ ) && defined( _MSC_VER ) && ( _MSC_VER >= 1100 )
 
 #include <math.h>	/* For sqrt() for standard deviation */
 
@@ -1143,6 +1150,6 @@ void performanceTests( const CRYPT_DEVICE cryptDevice )
 	encTests( CRYPT_UNUSED, CRYPT_ALGO_SHA, CRYPT_MODE_NONE, buffer );
 	free( buffer );
 	}
-#endif /* __WINDOWS__ && _MSC_VER */
+#endif /* Win32 with VC++ */
 
 #endif /* TEST_LOWLEVEL || TEST_KEYSET */

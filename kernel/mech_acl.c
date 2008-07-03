@@ -30,7 +30,8 @@ static KERNEL_DATA *krnlData = NULL;
 static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 	/* PKCS #1 encrypt */
 	{ MECHANISM_ENC_PKCS1,
-	  { MKACP_S_OPT( 64, MAX_PKCENCRYPTED_SIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx containing key */
 				 ACL_FLAG_HIGH_STATE ),
@@ -41,7 +42,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 
 	/* PKCS #1 encrypt using PGP formatting */
 	{ MECHANISM_ENC_PKCS1_PGP,
-	  { MKACP_S_OPT( 64, MAX_PKCENCRYPTED_SIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV,				/* Ctx containing key */
 				 ACL_FLAG_HIGH_STATE ),
@@ -52,8 +54,10 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 
 	/* PKCS #1 encrypt of raw data */
 	{ MECHANISM_ENC_PKCS1_RAW,
-	  { MKACP_S_OPT( 64, CRYPT_MAX_PKCSIZE ),/* Wrapped raw data */
-		MKACP_S( 8, CRYPT_MAX_KEYSIZE ),	/* Raw data */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped raw data */
+					 CRYPT_MAX_PKCSIZE ),
+		MKACP_S( MIN_KEYSIZE,				/* Raw data */
+				 CRYPT_MAX_KEYSIZE ),
 		MKACP_UNUSED(),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
@@ -62,14 +66,15 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 
 	/* OAEP encrypt */
 	{ MECHANISM_ENC_OAEP,
-	  { MKACP_S_OPT( 64, MAX_PKCENCRYPTED_SIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 MAX_PKCENCRYPTED_SIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx containing key */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_UNUSED(), 
-		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA2 + 1 ) } },
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA2 + 1 ) } },
 			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
 			   for SHA2-512 until its fate/potential future usage becomes a
 			   bit clearer */
@@ -99,7 +104,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 
 	/* Private key wrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
-	  { MKACP_S_OPT( 16, MAX_PRIVATE_KEYSIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PRIVATE_KEYSIZE, \
+					 MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx containing private key */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
@@ -110,7 +116,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 
 	/* Private key wrap */
 	{ MECHANISM_PRIVATEKEYWRAP_PKCS8,
-	  { MKACP_S_OPT( 16, MAX_PRIVATE_KEYSIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PRIVATE_KEYSIZE, \
+					 MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx containing private key */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
@@ -128,7 +135,8 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 	/* PKCS #1 decrypt */
 	{ MECHANISM_ENC_PKCS1,
-	  { MKACP_S_OPT( 60, CRYPT_MAX_PKCSIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 CRYPT_MAX_PKCSIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx to contain key */
 				 ACL_FLAG_LOW_STATE ),
@@ -139,7 +147,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* PKCS #1 decrypt using PGP formatting */
 	{ MECHANISM_ENC_PKCS1_PGP,
-	  { MKACP_S_OPT( 60, 4 + ( 2 * CRYPT_MAX_PKCSIZE ) ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 4 + ( 2 * CRYPT_MAX_PKCSIZE ) ),
 		MKACP_S_NONE(),
 		MKACP_UNUSED(),						/* Placeholder for ctx to contain key */
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
@@ -149,8 +158,10 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* PKCS #1 decrypt of raw data */
 	{ MECHANISM_ENC_PKCS1_RAW,
-	  { MKACP_S_OPT( 60, CRYPT_MAX_PKCSIZE ),/* Wrapped raw data */
-		MKACP_S( 8, CRYPT_MAX_PKCSIZE ),	/* Raw data */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped raw data */
+					 CRYPT_MAX_PKCSIZE ),
+		MKACP_S( MIN_KEYSIZE,				/* Raw data */
+				 CRYPT_MAX_PKCSIZE ),
 		MKACP_UNUSED(),
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
@@ -159,14 +170,15 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* OAEP decrypt */
 	{ MECHANISM_ENC_OAEP,
-	  { MKACP_S_OPT( 60, CRYPT_MAX_PKCSIZE ),/* Wrapped key */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Wrapped key */
+					 CRYPT_MAX_PKCSIZE ),
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_CONV | ST_CTX_MAC,	/* Ctx to contain key */
 				 ACL_FLAG_LOW_STATE ),
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_UNUSED(), 
-		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA2 + 1 ) } },
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA2 + 1 ) } },
 			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
 			   for SHA2-512 until its fate/potential future usage becomes a
 			   bit clearer */
@@ -196,7 +208,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* Private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP,
-	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
+	  { MKACP_S( MIN_PRIVATE_KEYSIZE, \
+				 MAX_PRIVATE_KEYSIZE ),		/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
 				 ACL_FLAG_LOW_STATE ),
@@ -207,7 +220,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* Private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP_PGP2,
-	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
+	  { MKACP_S( MIN_PRIVATE_KEYSIZE, \
+				 MAX_PRIVATE_KEYSIZE ),		/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
 				 ACL_FLAG_LOW_STATE ),
@@ -218,7 +232,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* Private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP_OPENPGP_OLD,
-	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
+	  { MKACP_S( MIN_PRIVATE_KEYSIZE, \
+				 MAX_PRIVATE_KEYSIZE ),		/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
 				 ACL_FLAG_LOW_STATE ),
@@ -229,7 +244,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 
 	/* Private key unwrap */
 	{ MECHANISM_PRIVATEKEYWRAP_OPENPGP,
-	  { MKACP_S( 16, MAX_PRIVATE_KEYSIZE ),	/* Wrapped key */
+	  { MKACP_S( MIN_PRIVATE_KEYSIZE, \
+				 MAX_PRIVATE_KEYSIZE ),		/* Wrapped key */
 		MKACP_S_NONE(),
 		MKACP_O( ST_CTX_PKC,				/* Ctx to contain private key */
 				 ACL_FLAG_LOW_STATE ),
@@ -247,7 +263,8 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 	/* PKCS #1 sign */
 	{ MECHANISM_SIG_PKCS1,
-	  { MKACP_S_OPT( 64, CRYPT_MAX_PKCSIZE ),/* Signature */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Signature */
+					 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_UNUSED(),						/* Secondary hash context */
@@ -256,7 +273,8 @@ static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 
 	/* SSL sign with dual hashes */
 	{ MECHANISM_SIG_SSL,
-	  { MKACP_S_OPT( 64, CRYPT_MAX_PKCSIZE ),/* Signature */
+	  { MKACP_S_OPT( MIN_PKCSIZE,			/* Signature */
+					 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_HASH,				/* Secondary hash context */
@@ -273,7 +291,8 @@ static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 static const MECHANISM_ACL FAR_BSS mechanismSigCheckACL[] = {
 	/* PKCS #1 sig check */
 	{ MECHANISM_SIG_PKCS1,
-	  { MKACP_S( 60, CRYPT_MAX_PKCSIZE ),	/* Signature */
+	  { MKACP_S( MIN_PKCSIZE,				/* Signature */
+				 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_UNUSED(),						/* Secondary hash context */
@@ -282,7 +301,8 @@ static const MECHANISM_ACL FAR_BSS mechanismSigCheckACL[] = {
 
 	/* SSL sign with dual hashes */
 	{ MECHANISM_SIG_SSL,
-	  { MKACP_S( 60, CRYPT_MAX_PKCSIZE ),	/* Signature */
+	  { MKACP_S( MIN_PKCSIZE,				/* Signature */
+				 CRYPT_MAX_PKCSIZE ),
 		MKACP_O( ST_CTX_HASH,				/* Hash context */
 				 ACL_FLAG_HIGH_STATE ),
 		MKACP_O( ST_CTX_HASH,				/* Secondary hash context */
@@ -328,7 +348,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_CMP,
 	  { MKACP_S( 20, 20 ),					/* HMAC-SHA key */
 		MKACP_S( 1, 512 ),					/* Key data */
-		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA1 ),/* Hash algo */
 		MKACP_S( 1, 512 ),					/* Salt */
 		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
 
@@ -344,7 +364,7 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_PKCS12,
 	  { MKACP_S( 20, 20 ),					/* Key data */
 		MKACP_S( 2, CRYPT_MAX_TEXTSIZE ),	/* Keying material */
-		MKACP_N( CRYPT_ALGO_SHA, CRYPT_ALGO_SHA ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA1 ),/* Hash algo */
 		MKACP_S( 9, 9 ),					/* Salt (+ ID byte) */
 		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
 
@@ -362,6 +382,8 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 
 int initMechanismACL( KERNEL_DATA *krnlDataPtr )
 	{
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
 
@@ -404,7 +426,7 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 	PRE( isValidObject( objectHandle ) );
 	PRE( message == MESSAGE_DEV_EXPORT || message == IMESSAGE_DEV_EXPORT || \
 		 message == MESSAGE_DEV_IMPORT || message == IMESSAGE_DEV_IMPORT );
-	PRE( messageDataPtr != NULL );
+	PRE( isReadPtr( messageDataPtr, sizeof( MECHANISM_WRAP_INFO ) ) );
 	PRE( messageValue == MECHANISM_ENC_PKCS1 || \
 		 messageValue == MECHANISM_ENC_PKCS1_PGP || \
 		 messageValue == MECHANISM_ENC_PKCS1_RAW || \
@@ -421,13 +443,8 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 	for( i = 0; mechanismACL[ i ].type != messageValue && \
 				mechanismACL[ i ].type != MECHANISM_NONE && \
 				i < mechanismAclSize; i++ );
-	if( i >= mechanismAclSize )
-		retIntError();
-	if( mechanismACL[ i ].type == MECHANISM_NONE )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+	ENSURES( i < mechanismAclSize );
+	ENSURES( mechanismACL[ i ].type != MECHANISM_NONE );
 	mechanismACL = &mechanismACL[ i ];
 	isRawMechanism = \
 		( paramInfo( mechanismACL, 2 ).valueType == PARAM_VALUE_UNUSED ) ? \
@@ -447,15 +464,14 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 						   mechanismInfo->auxContext ) );
 
 	/* Make the above checks explicit even in the release build */
-	if( !checkParamString( paramInfo( mechanismACL, 0 ),
-						   mechanismInfo->wrappedData,
-						   mechanismInfo->wrappedDataLength ) || \
-		!checkParamString( paramInfo( mechanismACL, 1 ),
-						   mechanismInfo->keyData,
-						   mechanismInfo->keyDataLength ) || \
-		!checkParamObject( paramInfo( mechanismACL, 4 ),
-						   mechanismInfo->auxContext ) )
-		retIntError();
+	ENSURES( checkParamString( paramInfo( mechanismACL, 0 ),
+							   mechanismInfo->wrappedData,
+							   mechanismInfo->wrappedDataLength ) && \
+			 checkParamString( paramInfo( mechanismACL, 1 ),
+							   mechanismInfo->keyData,
+							   mechanismInfo->keyDataLength ) && \
+			 checkParamObject( paramInfo( mechanismACL, 4 ),
+							   mechanismInfo->auxContext ) );
 
 	/* Make sure that the user-supplied parameters are in order, part 1: The
 	   session key is a valid object of the correct type, and there's a key
@@ -481,6 +497,7 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		/* For raw wrap/unwrap mechanisms the data is supplied as string
 		   data.  In theory this would be somewhat risky since it allows
 		   bypassing of object ownership checks, however these mechanisms
@@ -492,6 +509,7 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 		   object */
 		PRE( checkParamObject( paramInfo( mechanismACL, 2 ),
 							   mechanismInfo->keyContext ) );
+		}
 
 	/* Make sure that the user-supplied parameters are in order, part 2: The
 	   wrapping key is a valid object of the correct type with a key loaded */
@@ -520,8 +538,8 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 	   functions that will never been seen by the user, so it doesn't really
 	   make sense to report a parameter error for a parameter that the user
 	   doesn't know exists.  The best that we can do is return a bad-data 
-	   error, since the auxInfo value has been read from externally-supplied 
-	   encoded data */
+	   error (sol lucet omnibus), since the auxInfo value has been read from 
+	   externally-supplied encoded data */
 	if( !checkParamNumeric( paramInfo( mechanismACL, 5 ),
 							mechanismInfo->auxInfo ) )
 		return( CRYPT_ERROR_BADDATA );
@@ -581,7 +599,7 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 	PRE( isValidObject( objectHandle ) );
 	PRE( message == MESSAGE_DEV_SIGN || message == IMESSAGE_DEV_SIGN || \
 		 message == MESSAGE_DEV_SIGCHECK || message == IMESSAGE_DEV_SIGCHECK );
-	PRE( messageDataPtr != NULL );
+	PRE( isReadPtr( messageDataPtr, sizeof( MECHANISM_WRAP_INFO ) ) );
 	PRE( messageValue == MECHANISM_SIG_PKCS1 || \
 		 messageValue == MECHANISM_SIG_SSL );
 
@@ -589,13 +607,8 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 	for( i = 0; mechanismACL[ i ].type != messageValue && \
 				mechanismACL[ i ].type != MECHANISM_NONE && \
 				i < mechanismAclSize; i++ );
-	if( i >= mechanismAclSize )
-		retIntError();
-	if( mechanismACL[ i ].type == MECHANISM_NONE )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+	ENSURES( i < mechanismAclSize );
+	ENSURES( mechanismACL[ i ].type != MECHANISM_NONE );
 	mechanismACL = &mechanismACL[ i ];
 
 	/* Inner precondition: We have an ACL for this mechanism, and the non-
@@ -607,10 +620,9 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 						   mechanismInfo->signatureLength ) );
 
 	/* Make the above checks explicit even in the release build */
-	if( !checkParamString( paramInfo( mechanismACL, 0 ),
-						   mechanismInfo->signature,
-						   mechanismInfo->signatureLength ) )
-		retIntError();
+	ENSURES( checkParamString( paramInfo( mechanismACL, 0 ),
+							   mechanismInfo->signature,
+							   mechanismInfo->signatureLength ) );
 
 	/* Make sure that the user-supplied parameters are in order, part 1: The
 	   hash contexts are valid objects of the correct type.  If there's a
@@ -691,7 +703,7 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 	/* Precondition */
 	PRE( isValidObject( objectHandle ) );
 	PRE( message == MESSAGE_DEV_DERIVE || message == IMESSAGE_DEV_DERIVE );
-	PRE( messageDataPtr != NULL );
+	PRE( isReadPtr( messageDataPtr, sizeof( MECHANISM_WRAP_INFO ) ) );
 	PRE( messageValue == MECHANISM_DERIVE_PKCS5 || \
 		 messageValue == MECHANISM_DERIVE_PKCS12 || \
 		 messageValue == MECHANISM_DERIVE_SSL || \
@@ -704,13 +716,8 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 				mechanismACL[ i ].type != MECHANISM_NONE && \
 				i < FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ) )
-		retIntError();
-	if( mechanismACL[ i ].type == MECHANISM_NONE )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+	ENSURES( i < FAILSAFE_ARRAYSIZE( mechanismDeriveACL, MECHANISM_ACL ) );
+	ENSURES( mechanismACL[ i ].type != MECHANISM_NONE );
 	mechanismACL = &mechanismACL[ i ];
 
 	/* Inner precondition: We have an ACL for this mechanism, and the non-
@@ -732,20 +739,19 @@ int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
 							mechanismInfo->iterations ) );
 
 	/* Make the above checks explicit even in the release build */
-	if( !checkParamString( paramInfo( mechanismACL, 0 ),
-						   mechanismInfo->dataOut,
-						   mechanismInfo->dataOutLength ) || \
-		!checkParamString( paramInfo( mechanismACL, 1 ),
-						   mechanismInfo->dataIn,
-						   mechanismInfo->dataInLength ) || \
-		!checkParamNumeric( paramInfo( mechanismACL, 2 ),
-							mechanismInfo->hashAlgo ) || \
-		!checkParamString( paramInfo( mechanismACL, 3 ),
-						   mechanismInfo->salt,
-						   mechanismInfo->saltLength ) || \
-		!checkParamNumeric( paramInfo( mechanismACL, 4 ),
-							mechanismInfo->iterations ) )
-		retIntError();
+	ENSURES( checkParamString( paramInfo( mechanismACL, 0 ),
+							   mechanismInfo->dataOut,
+							   mechanismInfo->dataOutLength ) && \
+			 checkParamString( paramInfo( mechanismACL, 1 ),
+							   mechanismInfo->dataIn,
+							   mechanismInfo->dataInLength ) && \
+			 checkParamNumeric( paramInfo( mechanismACL, 2 ),
+								mechanismInfo->hashAlgo ) && \
+			 checkParamString( paramInfo( mechanismACL, 3 ),
+							   mechanismInfo->salt,
+							   mechanismInfo->saltLength ) && \
+			 checkParamNumeric( paramInfo( mechanismACL, 4 ),
+								mechanismInfo->iterations ) );
 
 	/* This is a pure data-transformation mechanism, there are no objects
 	   used so there are no further checks to perform */

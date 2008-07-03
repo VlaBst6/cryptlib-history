@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Kernel Message Dispatcher						*
-*						Copyright Peter Gutmann 1997-2006					*
+*						Copyright Peter Gutmann 1997-2007					*
 *																			*
 ****************************************************************************/
 
@@ -80,6 +80,7 @@ int checkTargetType( const int objectHandle, const long targets )
 
 /* Find the ACL for a parameter object */
 
+CHECK_RETVAL \
 static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
 	{
 	int i;
@@ -99,10 +100,9 @@ static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
 		}
 
 	/* Postcondition: We found a matching ACL entry */
-	POST( NOTREACHED );
+	POST( FALSE );
 
-	/* Return a no-permission ACL in case of error */
-	return( &messageParamACLTbl[ i ] );
+	retIntError_Null();
 	}
 
 /* Wait for an object to become available so that we can use it, with a
@@ -130,15 +130,24 @@ static void waitWarn( const int objectHandle, const int waitCount )
 	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	char buffer[ 128 + 8 ];
 
+	assert( isValidObject( objectHandle ) );
+	assert( waitCount > WAITCOUNT_WARN_THRESHOLD && \
+			waitCount <= MAX_WAITCOUNT );
+
+	REQUIRES_V( isValidType( objectInfoPtr->type ) );
 	if( objectHandle == SYSTEM_OBJECT_HANDLE )
 		strlcpy_s( buffer, 128, "system object" );
 	else
+		{
 		if( objectHandle == DEFAULTUSER_OBJECT_HANDLE )
 			strlcpy_s( buffer, 128, "default user object" );
 		else
+			{
 			sprintf_s( buffer, 128, "object %d (%s, subtype %lX)",
 					   objectHandle, objectTypeNames[ objectInfoPtr->type ],
 					   objectInfoPtr->subType );
+			}
+		}
 	fprintf( stderr, "\nWarning: Thread %X waited %d iteration%s for %s.\n",
 			 THREAD_SELF(), waitCount, ( waitCount == 1 ) ? "" : "s",
 			 buffer );
@@ -155,28 +164,38 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	PRE( isValidObject( objectHandle ) );
 	PRE( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) );
 
+	/* Sanity-check the state */
+	REQUIRES( objectHandle == SYSTEM_OBJECT_HANDLE || \
+			  objectHandle == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( objectHandle ) );
+
 	/* While the object is busy, put the thread to sleep ("Pauzele lungi si
 	   dese; Cheia marilor succese").  This is the only really portable way
 	   to wait on the resource, which gives up this thread's timeslice to
 	   allow other threads (including the one using the object) to run.
 	   Somewhat better methods methods such as mutexes with timers are
 	   difficult to manage portably across different platforms */
-	while( objectTable[ objectHandle ].uniqueID == uniqueID && \
+	while( isValidObject( objectHandle ) && \
+		   objectTable[ objectHandle ].uniqueID == uniqueID && \
 		   isInUse( objectHandle ) && waitCount < MAX_WAITCOUNT && \
 		   krnlData->shutdownLevel < SHUTDOWN_LEVEL_MESSAGES )
 		{
+		objectTable = NULL;
 		MUTEX_UNLOCK( objectTable );
 		waitCount++;
 		THREAD_YIELD();
 		MUTEX_LOCK( objectTable );
+		objectTable = krnlData->objectTable;
 		}
 #if !defined( NDEBUG ) && !defined( __WIN16__ )
 	if( waitCount > WAITCOUNT_WARN_THRESHOLD )
+		{
 		/* If we waited more than WAITCOUNT_WARN_THRESHOLD iterations for
 		   something this could be a sign of a resource usage bottleneck
 		   (typically caused by users who don't understand threading), warn
 		   the user that there's a potential problem */
 		waitWarn( objectHandle, waitCount );
+		}
 #endif /* NDEBUG on systems with stdio */
 
 	/* If cryptlib is shutting down, exit */
@@ -186,13 +205,14 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	/* If we timed out waiting for the object, return a timeout error */
 	if( waitCount >= MAX_WAITCOUNT )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
 
 	/* Make sure that nothing happened to the object while we were waiting
 	   on it */
-	if( objectTable[ objectHandle ].uniqueID != uniqueID )
+	if( !isValidObject( objectHandle ) || \
+		objectTable[ objectHandle ].uniqueID != uniqueID )
 		return( CRYPT_ERROR_SIGNALLED );
 
 	/* Update the object info pointer in case the object table was updated
@@ -259,10 +279,17 @@ int findTargetType( const int originalObjectHandle, const long targets )
 			objectTable[ objectHandle ].dependentDevice != CRYPT_ERROR )
 			objectHandle = objectTable[ objectHandle ].dependentDevice;
 		else
+			{
 			if( target == OBJECT_TYPE_USER )
-				objectHandle = objectTable[ objectHandle ].owner;
+				{
+				/* If we've reached the system object (the parent of all 
+				   other objects) we can't go any further */
+				objectHandle = ( objectHandle != SYSTEM_OBJECT_HANDLE ) ? \
+							   objectTable[ objectHandle ].owner : CRYPT_ERROR;
+				}
 			else
 				objectHandle = objectTable[ objectHandle ].dependentObject;
+			}
 		if( isValidObject( objectHandle ) )
 			type = objectTable[ objectHandle ].type;
 
@@ -272,8 +299,7 @@ int findTargetType( const int originalObjectHandle, const long targets )
 			  isSameOwningObject( originalObjectHandle, objectHandle ) || \
 			  objectTable[ originalObjectHandle ].owner == objectHandle );
 		}
-	if( iterations >= 3 )
-		retIntError();
+	ENSURES( iterations < 3 );
 
 	/* Postcondition: We ran out of options or we reached the target object */
 	POST( iterations < 3 );
@@ -296,6 +322,7 @@ int findTargetType( const int originalObjectHandle, const long targets )
    at the context would be routed to the context's dependent device, which
    is its final destination */
 
+CHECK_RETVAL \
 static int routeCompareMessageTarget( const int originalObjectHandle,
 									  const long messageValue )
 	{
@@ -333,8 +360,7 @@ static int routeCompareMessageTarget( const int originalObjectHandle,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ARGERROR_OBJECT );
+			retIntError();
 		}
 
 	/* Route the message through to the appropriate object */
@@ -378,6 +404,9 @@ typedef enum {
 	PARAMTYPE_DATA_FORMATTYPE,/* Data, value = cert format type */
 	PARAMTYPE_DATA_COMPARETYPE,/* Data, value = compare type */
 	PARAMTYPE_DATA_SETDEPTYPE,/* Data, value = setdep.option type */
+	PARAMTYPE_DATA_CERTMGMTTYPE,/* Data, value = cert.mgmt.type */
+	PARAMTYPE_ANY_USERMGMTTYPE,/* Data = any, value = user mgmt.type */
+	PARAMTYPE_ANY_TRUSTMGMTTYPE,/* Data = any, value = trust mgmt.type */
 	PARAMTYPE_LAST			/* Last possible parameter check type */
 	} PARAMCHECK_TYPE;
 
@@ -392,7 +421,23 @@ typedef enum {
 #define POST_DISPATCH( function )	NULL, postDispatch##function
 #define PRE_POST_DISPATCH( preFunction, postFunction ) \
 		preDispatch##preFunction, postDispatch##postFunction
-#define HANDLE_INTERNAL( function )	NULL, NULL, function
+#define HANDLE_INTERNAL( function )	NULL, NULL, MESSAGE_HANDLING_FLAG_INTERNAL, function
+
+/* Flags to indicate (potential) special-case handling for a message.  These
+   are:
+
+	FLAG_INTERNAL: The message is handled internally by the kernel rather
+			than being sent to an external handler.
+
+	FLAG_MAYUNLOCK: The message handler may unlock the object (via 
+			krnlReleaseObject()) to allow other threads access.  In this 
+			case the first parameter to the handler function should be a
+			MESSAGE_FUNCTION_EXTINFO structure to contain unlocking
+			information */
+
+#define MESSAGE_HANDLING_FLAG_NONE		0	/* No special handling */
+#define MESSAGE_HANDLING_FLAG_MAYUNLOCK	1	/* Handler may unlock object */
+#define MESSAGE_HANDLING_FLAG_INTERNAL	2	/* Message handle by kernel */
 
 /* The handling information, declared in the order in which it's applied */
 
@@ -428,8 +473,10 @@ typedef struct {
 								   const void *messageDataPtr,
 								   const int messageValue, const void *auxInfo );
 
-	/* Message processing information.  If the internal handler function is
-	   non-null, it's handled by the  kernel */
+	/* Flags to indicate (potential) special-case handling for this message, 
+	   and the (optional) internal handler function that's used if the 
+	   message is handled directly by the kernel */
+	int flags;							/* Special-case handling flags */
 	int ( *internalHandlerFunction )( const int objectHandle, const int arg1,
 									  const void *arg2,
 									  const BOOLEAN isInternal );
@@ -498,6 +545,11 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	  ROUTE_NONE, ST_ANY_A, ST_ANY_B,
 	  PARAMTYPE_NONE_CHECKTYPE,
 	  PRE_POST_DISPATCH( CheckCheckParam, ForwardToDependentObject ) },
+	{ MESSAGE_SELFTEST,				/* Perform a self-test */
+	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_SYSTEM, ST_NONE, 
+	  PARAMTYPE_NONE_NONE,
+	  NULL, NULL,
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 
 	/* Messages sent from the kernel to object message handlers.  These
 	   messages are sent directly to the object from inside the kernel in
@@ -529,7 +581,7 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	  PRE_POST_DISPATCH( CheckActionAccess, UpdateUsageCount ) },
 	{ MESSAGE_CTX_GENKEY,			/* Context: Generate a key */
 	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC, ST_NONE,
-	  PARAMTYPE_NONE_BOOLEAN,
+	  PARAMTYPE_NONE_NONE,
 	  PRE_POST_DISPATCH( CheckState, ChangeState ) },
 	{ MESSAGE_CTX_GENIV,			/* Context: Generate an IV */
 	  ROUTE( OBJECT_TYPE_CONTEXT ), ST_CTX_CONV, ST_NONE,
@@ -560,31 +612,38 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_DEV_EXPORT,			/* Device: Action = export key */
 	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_MECHTYPE,
-	  PRE_DISPATCH( CheckMechanismWrapAccess ) },
+	  PRE_DISPATCH( CheckMechanismWrapAccess ), 
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_IMPORT,			/* Device: Action = import key */
 	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_MECHTYPE,
-	  PRE_DISPATCH( CheckMechanismWrapAccess ) },
+	  PRE_DISPATCH( CheckMechanismWrapAccess ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_SIGN,				/* Device: Action = sign */
 	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_MECHTYPE,
-	  PRE_DISPATCH( CheckMechanismSignAccess ) },
+	  PRE_DISPATCH( CheckMechanismSignAccess ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_SIGCHECK,			/* Device: Action = sig.check */
 	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_MECHTYPE,
-	  PRE_DISPATCH( CheckMechanismSignAccess ) },
+	  PRE_DISPATCH( CheckMechanismSignAccess ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_DERIVE,			/* Device: Action = derive key */
 	  ROUTE( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_MECHTYPE,
-	  PRE_DISPATCH( CheckMechanismDeriveAccess ) },
+	  PRE_DISPATCH( CheckMechanismDeriveAccess ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_CREATEOBJECT,		/* Device: Create object */
 	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_OBJTYPE,
-	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ) },
+	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 	{ MESSAGE_DEV_CREATEOBJECT_INDIRECT,/* Device: Create obj.from data */
 	  ROUTE_FIXED( OBJECT_TYPE_DEVICE ), ST_DEV_ANY, ST_NONE,
 	  PARAMTYPE_DATA_OBJTYPE,
-	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ) },
+	  PRE_POST_DISPATCH( CheckCreate, MakeObjectExternal ),
+	  MESSAGE_HANDLING_FLAG_MAYUNLOCK },
 
 	/* Object-type-specific messages: Envelopes */
 	{ MESSAGE_ENV_PUSHDATA,			/* Envelope: Push data */
@@ -627,8 +686,18 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_KEY_CERTMGMT,			/* Keyset: Cert management */
 	  ROUTE_FIXED( OBJECT_TYPE_KEYSET ),
 		ST_KEYSET_DBMS_STORE, ST_NONE,
-	  PARAMTYPE_DATA_ANY,
-	  PRE_POST_DISPATCH( CheckCertMgmtAccess, MakeObjectExternal ) }
+	  PARAMTYPE_DATA_CERTMGMTTYPE,
+	  PRE_POST_DISPATCH( CheckCertMgmtAccess, MakeObjectExternal ) },
+
+	/* Object-type-specific messages: Users */
+	{ MESSAGE_USER_USERMGMT,		/* User: User management */
+	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_USER_SO, 
+	  PARAMTYPE_ANY_USERMGMTTYPE,
+	  PRE_POST_DISPATCH( CheckUserMgmtAccess, HandleZeroise ) },
+	{ MESSAGE_USER_TRUSTMGMT,		/* User: Trust management */
+	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_USER_SO, 
+	  PARAMTYPE_ANY_TRUSTMGMTTYPE,
+	  PRE_DISPATCH( CheckTrustMgmtAccess ) }
 	};
 
 /****************************************************************************
@@ -640,6 +709,8 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 int initSendMessage( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
+
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Perform a consistency check on various things that need to be set
 	   up in a certain way for things to work properly */
@@ -663,25 +734,49 @@ int initSendMessage( KERNEL_DATA *krnlDataPtr )
 		{
 		const MESSAGE_ACL *messageParamACL = &messageParamACLTbl[ i ];
 
-		if( !isParamMessage( messageParamACL->type ) || \
-			( messageParamACL->objectACL.subTypeA & SUBTYPE_CLASS_B ) || \
-			( messageParamACL->objectACL.subTypeB & SUBTYPE_CLASS_A ) )
-			retIntError();
+		ENSURES( isParamMessage( messageParamACL->type ) && \
+				 !( messageParamACL->objectACL.subTypeA & SUBTYPE_CLASS_B ) && \
+				 !( messageParamACL->objectACL.subTypeB & SUBTYPE_CLASS_A ) );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( messageParamACLTbl, MESSAGE_ACL ) );
 
 	/* Perform a consistency check on the message handling information */
-	for( i = 0; i < MESSAGE_LAST; i++ )
+	for( i = MESSAGE_NONE + 1; i < MESSAGE_LAST; i++ )
 		{
 		const MESSAGE_HANDLING_INFO *messageInfo = &messageHandlingInfo[ i ];
 
-		if( messageInfo->messageType != i || \
-			messageInfo->paramCheck < PARAMTYPE_NONE_NONE || \
-			messageInfo->paramCheck >= PARAMTYPE_LAST || \
-			( messageInfo->subTypeA & SUBTYPE_CLASS_B ) || \
-			( messageInfo->subTypeB & SUBTYPE_CLASS_A ) )
-			retIntError();
+		ENSURES( messageInfo->messageType == i && \
+				 messageInfo->paramCheck >= PARAMTYPE_NONE_NONE && \
+				 messageInfo->paramCheck < PARAMTYPE_LAST );
+		ENSURES( ( messageInfo->messageType >= MESSAGE_ENV_PUSHDATA && \
+				   messageInfo->messageType <= MESSAGE_KEY_GETNEXTCERT ) || \
+				 ( messageInfo->routingTarget >= OBJECT_TYPE_NONE && \
+				   messageInfo->routingTarget <= OBJECT_TYPE_LAST ) );
+		ENSURES( messageInfo->messageType == MESSAGE_CLONE || \
+				 messageInfo->messageType == MESSAGE_COMPARE || \
+				 ( messageInfo->routingTarget == OBJECT_TYPE_NONE && \
+				   messageInfo->routingFunction == NULL ) || \
+				 ( messageInfo->routingTarget != OBJECT_TYPE_NONE && \
+				   messageInfo->routingFunction != NULL ) );
+		ENSURES( !( messageInfo->subTypeA & SUBTYPE_CLASS_B ) && \
+				 !( messageInfo->subTypeB & SUBTYPE_CLASS_A ) );
+		ENSURES( ( messageInfo->flags & MESSAGE_HANDLING_FLAG_INTERNAL ) || \
+				 messageInfo->messageType == MESSAGE_SELFTEST || \
+				 messageInfo->messageType == MESSAGE_CHANGENOTIFY || \
+				 messageInfo->messageType == MESSAGE_CTX_GENIV || \
+				 messageInfo->messageType == MESSAGE_DEV_QUERYCAPABILITY || \
+				 messageInfo->preDispatchFunction != NULL );
+		ENSURES( messageInfo->messageType == MESSAGE_SELFTEST || \
+				 messageInfo->messageType == MESSAGE_CHANGENOTIFY || \
+				 messageInfo->messageType == MESSAGE_CTX_GENIV || \
+				 messageInfo->messageType == MESSAGE_DEV_QUERYCAPABILITY || \
+				 ( messageInfo->preDispatchFunction != NULL || \
+				   messageInfo->postDispatchFunction != NULL || \
+				   messageInfo->internalHandlerFunction != NULL ) );
+		ENSURES( ( ( messageInfo->flags & MESSAGE_HANDLING_FLAG_INTERNAL ) && \
+					 messageInfo->internalHandlerFunction != NULL ) || \
+				 ( !( messageInfo->flags & MESSAGE_HANDLING_FLAG_INTERNAL ) && \
+					  messageInfo->internalHandlerFunction == NULL ) );
 		}
 
 	/* Set up the reference to the kernel data block */
@@ -703,34 +798,37 @@ void endSendMessage( void )
 
 /* Enqueue a message */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 static int enqueueMessage( const int objectHandle,
 						   const MESSAGE_HANDLING_INFO *handlingInfoPtr,
 						   const MESSAGE_TYPE message,
-						   const void *messageDataPtr,
+						   IN_OPT const void *messageDataPtr,
 						   const int messageValue )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
 	int queuePos, i, iterationCount;
+	ORIGINAL_INT_VAR( queueEnd, krnlData->queueEnd );
 
 	/* Precondition: It's a valid message being sent to a valid object */
 	PRE( isValidObject( objectHandle ) );
 	PRE( isReadPtr( handlingInfoPtr, sizeof( MESSAGE_HANDLING_INFO ) ) );
 	PRE( isValidMessage( message & MESSAGE_MASK ) );
 
-	/* Make sure that we don't overflow the queue (this object is not
-	   responding to messages... now all we need is GPF's).  We return a
-	   timeout error to indicate that there are too many messages queued
-	   for this (or other) objects */
+	/* Sanity-check the state/make sure that we don't overflow the queue 
+	   (this object is not responding to messages... now all we need is 
+	   GPF's).  We return a timeout error on overflow to indicate that there 
+	   are too many messages queued for this (or other) objects */
 	if( krnlData->queueEnd < 0 || \
 		krnlData->queueEnd >= MESSAGE_QUEUE_SIZE - 1 )
 		{
-		assert( NOTREACHED );
+		ENSURES( krnlData->queueEnd >= 0 );
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
 
 	/* Precondition: There's room to enqueue the message */
 	PRE( krnlData->queueEnd >= 0 && \
-		 krnlData->queueEnd < MESSAGE_QUEUE_SIZE );
+		 krnlData->queueEnd < MESSAGE_QUEUE_SIZE - 1 );
 
 	/* Check whether a message to this object is already present in the
 	   queue */
@@ -740,30 +838,46 @@ static int enqueueMessage( const int objectHandle,
 		if( messageQueue[ queuePos ].objectHandle == objectHandle )
 			break;
 		}
-	if( iterationCount >= MESSAGE_QUEUE_SIZE )
-		retIntError();
+	ENSURES( iterationCount < MESSAGE_QUEUE_SIZE );
 
 	/* Postcondition: queuePos = -1 if not present, position in queue if
 	   present */
 	POST( queuePos == -1 || \
 		  ( queuePos >= 0 && queuePos < krnlData->queueEnd ) );
 
-	/* Enqueue the message */
+	/* Sanity-check the queue positioning */
+	ENSURES( queuePos >= -1 && queuePos < krnlData->queueEnd );
+
+	/* Enqueue the message:
+
+		+---------------+		+---------------+
+		|.|.|x|x|y|z|   |	->	|.|.|x|x|#|y|z| |
+		+---------------+		+---------------+
+			   ^	 ^					 ^	   ^
+			  qPos	qEnd				qPos  qEnd */
 	queuePos++;		/* Insert after current position */
 	for( i = krnlData->queueEnd - 1, iterationCount = 0; 
-		 i >= queuePos && iterationCount++ < MESSAGE_QUEUE_SIZE; i-- )
+		 i >= queuePos && iterationCount < MESSAGE_QUEUE_SIZE; 
+		 i--, iterationCount++ )
 		messageQueue[ i + 1 ] = messageQueue[ i ];
-	if( iterationCount >= MESSAGE_QUEUE_SIZE )
-		retIntError();
+	ENSURES( iterationCount < MESSAGE_QUEUE_SIZE );
+	memset( &messageQueue[ queuePos ], 0, sizeof( MESSAGE_QUEUE_DATA ) );
 	messageQueue[ queuePos ].objectHandle = objectHandle;
 	messageQueue[ queuePos ].handlingInfoPtr = handlingInfoPtr;
 	messageQueue[ queuePos ].message = message;
 	messageQueue[ queuePos ].messageDataPtr = messageDataPtr;
 	messageQueue[ queuePos ].messageValue = messageValue;
 	krnlData->queueEnd++;
+
+	/* Postcondition: The queue is within bounds and has grown by one 
+	   element */
+	POST( krnlData->queueEnd > 0 && \
+		  krnlData->queueEnd <= MESSAGE_QUEUE_SIZE - 1 );
+	POST( krnlData->queueEnd == ORIGINAL_VALUE( queueEnd ) + 1 );
+
+	/* If a message for this object is already present tell the caller to 
+	   defer processing */
 	if( queuePos > 0 )
-		/* A message for this object is already present, tell the caller to
-		   defer processing */
 		return( OK_SPECIAL );
 
 	return( CRYPT_OK );
@@ -771,43 +885,70 @@ static int enqueueMessage( const int objectHandle,
 
 /* Dequeue a message */
 
-static void dequeueMessage( const int messagePosition )
+CHECK_RETVAL \
+static int dequeueMessage( const int messagePosition )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
 	int i, iterationCount;
+	ORIGINAL_INT_VAR( queueEnd, krnlData->queueEnd );
 
 	/* Precondition: We're deleting a valid queue position */
 	PRE( messagePosition >= 0 && messagePosition < krnlData->queueEnd );
+
+	/* Sanity-check the state */
+	ENSURES( messagePosition >= 0 && \
+			 messagePosition < krnlData->queueEnd && \
+			 krnlData->queueEnd > 0 && \
+			 krnlData->queueEnd < MESSAGE_QUEUE_SIZE );
 
 	/* Move the remaining messages down and clear the last entry */
 	for( i = messagePosition, iterationCount = 0; 
 		 i < krnlData->queueEnd - 1 && \
 			iterationCount++ < MESSAGE_QUEUE_SIZE; i++ )
 		messageQueue[ i ] = messageQueue[ i + 1 ];
-	if( iterationCount >= MESSAGE_QUEUE_SIZE )
-		retIntError_Void();
+	ENSURES( iterationCount < MESSAGE_QUEUE_SIZE );
 	zeroise( &messageQueue[ krnlData->queueEnd - 1 ],
 			 sizeof( MESSAGE_QUEUE_DATA ) );
 	krnlData->queueEnd--;
 
-	/* Postcondition: all queue entries are valid, all non-queue entries are
-	   empty */
+	/* Postcondition: the queue is one element shorter, all queue entries 
+	   are valid, and all non-queue entries are empty */
+	POST( krnlData->queueEnd == ORIGINAL_VALUE( queueEnd ) - 1 );
+	POST( krnlData->queueEnd >= 0 && \
+		  krnlData->queueEnd < MESSAGE_QUEUE_SIZE - 1 );
 	FORALL( i, 0, krnlData->queueEnd,
 			messageQueue[ i ].handlingInfoPtr != NULL );
 	FORALL( i, krnlData->queueEnd, MESSAGE_QUEUE_SIZE,
 			messageQueue[ i ].handlingInfoPtr == NULL );
+
+	return( CRYPT_OK );
 	}
 
 /* Get the next message in the queue */
 
+CHECK_RETVAL \
 static BOOLEAN getNextMessage( const int objectHandle,
-							   MESSAGE_QUEUE_DATA *messageQueueInfo )
+							   OUT_OPT MESSAGE_QUEUE_DATA *messageQueueInfo )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
 	int i;
 
+	/* Preconditions: It's a valid object table entry.  It's not necessarily
+	   a valid object since we may be de-queueing messages for it because 
+	   it's just been destroyed */
+	PRE( objectHandle == SYSTEM_OBJECT_HANDLE || \
+		 objectHandle == DEFAULTUSER_OBJECT_HANDLE || \
+		 isHandleRangeValid( objectHandle ) );
 	PRE( messageQueueInfo == NULL || \
 		 isWritePtr( messageQueueInfo, sizeof( MESSAGE_QUEUE_DATA ) ) );
+
+	/* Clear return value */
+	if( messageQueueInfo != NULL )
+		memset( messageQueueInfo, 0, sizeof( MESSAGE_QUEUE_DATA ) );
+
+	/* Sanity-check the state */
+	ENSURES( krnlData->queueEnd >= 0 && \
+			 krnlData->queueEnd < MESSAGE_QUEUE_SIZE );
 
 	/* Find the next message for this object.  Since other messages can have
 	   come and gone in the meantime, we have to scan from the start each
@@ -816,14 +957,18 @@ static BOOLEAN getNextMessage( const int objectHandle,
 		{
 		if( messageQueue[ i ].objectHandle == objectHandle )
 			{
+			int status;
+
 			if( messageQueueInfo != NULL )
 				*messageQueueInfo = messageQueue[ i ];
-			dequeueMessage( i );
+			status = dequeueMessage( i );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+
 			return( TRUE );
 			}
 		}
-	if( i >= MESSAGE_QUEUE_SIZE )
-		retIntError_Boolean();
+	ENSURES( i < MESSAGE_QUEUE_SIZE );
 
 	/* Postcondition: There are no more messages for this object present in
 	   the queue */
@@ -838,12 +983,18 @@ static BOOLEAN getNextMessage( const int objectHandle,
 static void dequeueAllMessages( const int objectHandle )
 	{
 	int iterationCount = 0;
+
+	/* Preconditions: It's a valid object table entry.  It's not necessarily
+	   a valid object since we may be de-queueing messages for it because 
+	   it's just been destroyed */
+	PRE( objectHandle == SYSTEM_OBJECT_HANDLE || \
+		 objectHandle == DEFAULTUSER_OBJECT_HANDLE || \
+		 isHandleRangeValid( objectHandle ) );
 	
 	/* Dequeue all messages for a given object */
 	while( getNextMessage( objectHandle, NULL ) && \
 		   iterationCount++ < MESSAGE_QUEUE_SIZE );
-	if( iterationCount >= MESSAGE_QUEUE_SIZE )
-		retIntError_Void();
+	ENSURES_V( iterationCount < MESSAGE_QUEUE_SIZE );
 
 	/* Postcondition: There are no more messages for this object present in
 	   the queue */
@@ -857,26 +1008,109 @@ static void dequeueAllMessages( const int objectHandle )
 *																			*
 ****************************************************************************/
 
+/* Process a message that's handled internally by the kernel, for example 
+   one that accesses an object's kernel attributes */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int processInternalMessage( const int localObjectHandle,
+								   const MESSAGE_HANDLING_INFO *handlingInfoPtr,
+								   const MESSAGE_TYPE message,
+								   IN_OPT void *messageDataPtr,
+								   const int messageValue,
+								   const void *aclPtr )
+	{
+	int status;
+
+	/* Precondition: It's a valid message being sent to a valid object */
+	PRE( isValidObject( localObjectHandle ) );
+	PRE( isReadPtr( handlingInfoPtr, sizeof( MESSAGE_HANDLING_INFO ) ) );
+	PRE( isValidMessage( message & MESSAGE_MASK ) );
+
+	/* If there's a pre-dispatch handler, invoke it */
+	if( handlingInfoPtr->preDispatchFunction != NULL )
+		{
+		status = handlingInfoPtr->preDispatchFunction( localObjectHandle,
+									message, messageDataPtr, messageValue,
+									aclPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* Inner precondition: Either the message as a whole is internally 
+	   handled or it's a property attribute */
+	PRE( handlingInfoPtr->internalHandlerFunction != NULL || \
+		 isAttributeMessage( message & MESSAGE_MASK ) );
+
+	/* If it's an object property attribute (which is handled by the kernel), 
+	   get or set its value */
+	if( handlingInfoPtr->internalHandlerFunction == NULL )
+		{
+		/* Precondition: Object properties are always numeric attributes */
+		PRE( handlingInfoPtr->messageType == MESSAGE_GETATTRIBUTE || \
+			 handlingInfoPtr->messageType == MESSAGE_SETATTRIBUTE );
+
+		if( handlingInfoPtr->messageType == MESSAGE_GETATTRIBUTE )
+			status = getPropertyAttribute( localObjectHandle, messageValue, 
+										   messageDataPtr );
+		else
+			status = setPropertyAttribute( localObjectHandle, messageValue, 
+										   messageDataPtr );
+		}
+	else
+		{
+		/* It's a kernel-handled message, process it */
+		status = handlingInfoPtr->internalHandlerFunction( localObjectHandle, 
+												messageValue, messageDataPtr, 
+												isInternalMessage( message ) );
+		}
+	if( cryptStatusError( status ) )
+		{
+		/* Postcondition: It's a genuine error, or a special-case condition
+		   such as the object creation being aborted, which produces an 
+		   OK_SPECIAL status to tell the caller to convert the message that
+		   triggered this into a MESSAGE_DESTROY */
+		POST( cryptStatusError( status ) || status == OK_SPECIAL );
+
+		return( status );
+		}
+
+	/* If there's a post-dispatch handler, invoke it */
+	if( handlingInfoPtr->postDispatchFunction != NULL )
+		{
+		status = handlingInfoPtr->postDispatchFunction( localObjectHandle, 
+									message, messageDataPtr, messageValue, 
+									aclPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	
+	return( CRYPT_OK );
+	}
+
 /* Dispatch a message to an object */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 static int dispatchMessage( const int localObjectHandle,
 							const MESSAGE_QUEUE_DATA *messageQueueData,
-							OBJECT_INFO *objectInfoPtr,
+							INOUT OBJECT_INFO *objectInfoPtr,
 							const void *aclPtr )
 	{
 	const MESSAGE_HANDLING_INFO *handlingInfoPtr = \
 									messageQueueData->handlingInfoPtr;
 	const MESSAGE_FUNCTION messageFunction = objectInfoPtr->messageFunction;
 	const MESSAGE_TYPE localMessage = messageQueueData->message & MESSAGE_MASK;
+	MESSAGE_FUNCTION_EXTINFO messageExtInfo;
 	void *objectPtr = objectInfoPtr->objectPtr;
-	const int lockCount = objectInfoPtr->lockCount + 1;
+	BOOLEAN mayUnlock = FALSE;
 	int status;
+	ORIGINAL_INT_VAR( lockCount, objectInfoPtr->lockCount );
 
-	PRE( isValidHandle( localObjectHandle ) );
+	PRE( isValidObject( localObjectHandle ) );
 	PRE( !isInUse( localObjectHandle ) || \
 		 isObjectOwner( localObjectHandle ) );
 	PRE( isReadPtr( messageQueueData, sizeof( MESSAGE_QUEUE_DATA ) ) );
 	PRE( isWritePtr( objectInfoPtr, sizeof( OBJECT_INFO ) ) );
+	PRE( messageFunction != NULL );
 
 	/* If there's a pre-dispatch handler present, apply it */
 	if( handlingInfoPtr->preDispatchFunction != NULL )
@@ -888,6 +1122,19 @@ static int dispatchMessage( const int localObjectHandle,
 										aclPtr );
 		if( cryptStatusError( status ) )
 			return( status );
+		}
+
+	/* Some objects (generally the system object and to a lesser extent other
+	   devices and the default user object) may unlock themselves while 
+	   processing a message when they forward the message elsewhere or perform 
+	   non-object-specific processing.  If this may be the case then we pass 
+	   in an extended message structure to record this information */
+	initMessageExtInfo( &messageExtInfo, objectPtr );
+	if( ( objectInfoPtr->type == OBJECT_TYPE_DEVICE ) || \
+		( handlingInfoPtr->flags & MESSAGE_HANDLING_FLAG_MAYUNLOCK ) )
+		{
+		mayUnlock = TRUE;
+		objectPtr = &messageExtInfo;
 		}
 
 	/* Mark the object as busy so that we have it available for our
@@ -904,26 +1151,16 @@ static int dispatchMessage( const int localObjectHandle,
 							  messageQueueData->messageValue );
 	MUTEX_LOCK( objectTable );
 	objectInfoPtr = &krnlData->objectTable[ localObjectHandle ];
-
-	assert( localObjectHandle == SYSTEM_OBJECT_HANDLE || \
-			objectInfoPtr->lockCount == lockCount );
-
-	/* The system object may unlock itself while processing a message
-	   when it forwards the message elsewhere or performs non-object-
-	   specific processing, so we only decrement the lock count if it's
-	   unchanged and we still own the object.  We have to perform the
-	   ownership check to avoid the situation where we unlock the object
-	   and another thread locks it, leading to an (apparently) unchanged
-	   lock count */
-	if( objectInfoPtr->lockCount == lockCount && \
-		isObjectOwner( localObjectHandle ) )
+	if( !isValidType( objectInfoPtr->type ) )
+		retIntError();	/* Something catastrophic happened while unlocked */
+	if( !( mayUnlock && isMessageObjectUnlocked( &messageExtInfo ) ) )
 		objectInfoPtr->lockCount--;
 
 	/* Postcondition: The lock count is non-negative and, if it's not the
 	   system object, has been reset to its previous value */
 	POST( objectInfoPtr->lockCount >= 0 && \
 		  ( localObjectHandle == SYSTEM_OBJECT_HANDLE ||
-			objectInfoPtr->lockCount == lockCount - 1 ) );
+			objectInfoPtr->lockCount == ORIGINAL_VALUE( lockCount ) ) );
 
 	/* If there's a post-dispatch handler present, apply it.  Since a
 	   destroy object message always succeeds but can return an error code
@@ -931,11 +1168,13 @@ static int dispatchMessage( const int localObjectHandle,
 	   a real error status for the purposes of further processing */
 	if( ( cryptStatusOK( status ) || localMessage == MESSAGE_DESTROY ) && \
 		handlingInfoPtr->postDispatchFunction != NULL )
+		{
 		status = handlingInfoPtr->postDispatchFunction( localObjectHandle,
 												messageQueueData->message,
 												messageQueueData->messageDataPtr,
 												messageQueueData->messageValue,
 												aclPtr );
+		}
 	return( status );
 	}
 
@@ -946,11 +1185,10 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	{
 	const ATTRIBUTE_ACL *attributeACL = NULL;
 	const MESSAGE_HANDLING_INFO *handlingInfoPtr;
-	OBJECT_INFO *objectTable = krnlData->objectTable;
-	OBJECT_INFO *objectInfoPtr;
+	OBJECT_INFO *objectTable, *objectInfoPtr;
 	MESSAGE_QUEUE_DATA enqueuedMessageData;
-	const BOOLEAN isInternalMessage = \
-						( message & MESSAGE_FLAG_INTERNAL ) ? TRUE : FALSE;
+	const BOOLEAN isInternalMessage = isInternalMessage( message ) ? \
+									  TRUE : FALSE;
 	const void *aclPtr = NULL;
 	MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	int localObjectHandle = objectHandle, iterationCount = 0;
@@ -967,11 +1205,7 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	PRE( !isInternalMessage || isValidHandle( objectHandle ) );
 
 	/* Enforce the precondition at runtime as well */
-	if( !isValidMessage( localMessage ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+	ENSURES( isValidMessage( localMessage ) );
 
 	/* Get the information that we need to handle this message */
 	handlingInfoPtr = &messageHandlingInfo[ localMessage ];
@@ -981,19 +1215,6 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	   programming errors only).  This is done as a large number of
 	   individual assertions rather than a single huge check so that a failed
 	   assertion can provide more detailed information than just "it broke" */
-	PRE( handlingInfoPtr->paramCheck == PARAMTYPE_NONE_NONE ||
-		 handlingInfoPtr->paramCheck == PARAMTYPE_NONE_ANY || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_NONE_BOOLEAN || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_NONE_CHECKTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_NONE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_ANY || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_LENGTH || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_OBJTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_MECHTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_ITEMTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_FORMATTYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_COMPARETYPE || \
-		 handlingInfoPtr->paramCheck == PARAMTYPE_DATA_SETDEPTYPE );
 	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_NONE_NONE || \
 		 ( handlingInfoPtr->paramCheck == PARAMTYPE_NONE_NONE && \
 		   messageDataPtr == NULL && messageValue == 0 ) );
@@ -1044,6 +1265,19 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		   messageDataPtr != NULL && \
 		   messageValue > SETDEP_OPTION_NONE && \
 		   messageValue < SETDEP_OPTION_LAST ) );
+	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_DATA_CERTMGMTTYPE || \
+		 ( handlingInfoPtr->paramCheck == PARAMTYPE_DATA_CERTMGMTTYPE && \
+		   messageDataPtr != NULL && \
+		   messageValue > CRYPT_CERTACTION_NONE && \
+		   messageValue < CRYPT_CERTACTION_LAST ) );
+	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_ANY_USERMGMTTYPE || \
+		 ( handlingInfoPtr->paramCheck == PARAMTYPE_ANY_USERMGMTTYPE && \
+		   messageValue > MESSAGE_USERMGMT_NONE && \
+		   messageValue < MESSAGE_USERMGMT_LAST ) );
+	PRE( handlingInfoPtr->paramCheck != PARAMTYPE_ANY_TRUSTMGMTTYPE || \
+		 ( handlingInfoPtr->paramCheck == PARAMTYPE_ANY_TRUSTMGMTTYPE && \
+		   messageValue > MESSAGE_TRUSTMGMT_NONE && \
+		   messageValue < MESSAGE_TRUSTMGMT_LAST ) );
 
 	/* If it's an object-manipulation message get the attribute's mandatory
 	   ACL; if it's an object-parameter message get the parameter's mandatory
@@ -1057,7 +1291,10 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		aclPtr = attributeACL;
 		}
 	if( isParamMessage( localMessage ) )
+		{
 		aclPtr = findParamACL( localMessage );
+		ENSURES( aclPtr != NULL );
+		}
 
 	/* Inner precondition: If it's an attribute-manipulation message, we have
 	   a valid ACL for the attribute present */
@@ -1078,11 +1315,15 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		   localMessage == MESSAGE_DECREFCOUNT || \
 		   ( localMessage == MESSAGE_GETATTRIBUTE && \
 			 messageValue == CRYPT_IATTRIBUTE_STATUS ) ) )
+		{
+		/* Exit without even trying to acquire the object table lock */
 		return( CRYPT_ERROR_PERMISSION );
+		}
 
 	/* Lock the object table to ensure that other threads don't try to
 	   access it */
 	MUTEX_LOCK( objectTable );
+	objectTable = krnlData->objectTable;
 
 	/* The first line of defence: Make sure that the message is being sent
 	   to a valid object and that the object is externally visible and
@@ -1105,10 +1346,12 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	if( !isValidObject( objectHandle ) )
 		status = CRYPT_ARGERROR_OBJECT;
 	else
+		{
 		if( !isInternalMessage && \
 			( isInternalObject( objectHandle ) || \
 			  !checkObjectOwnership( objectTable[ objectHandle ] ) ) )
 			status = CRYPT_ARGERROR_OBJECT;
+		}
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( objectTable );
@@ -1138,11 +1381,13 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 											attributeACL->routingTarget );
 			}
 		else
+			{
 			/* It's explicitly or directly routed, route it based on the
 			   message type or fixed-target type */
 			localObjectHandle = handlingInfoPtr->routingFunction( objectHandle,
 						isExplicitRouting( handlingInfoPtr->routingTarget ) ? \
 						messageValue : handlingInfoPtr->routingTarget );
+			}
 		if( cryptStatusError( localObjectHandle ) )
 			{
 			MUTEX_UNLOCK( objectTable );
@@ -1152,6 +1397,13 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 
 	/* Inner precodition: It's a valid destination object */
 	PRE( isValidObject( localObjectHandle ) );
+
+	/* Sanity-check the message routing */
+	if( !isValidObject( localObjectHandle ) )
+		{
+		MUTEX_UNLOCK( objectTable );
+		retIntError();
+		}
 
 	/* It's a valid object, get its info */
 	objectInfoPtr = &objectTable[ localObjectHandle ];
@@ -1176,43 +1428,9 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		( attributeACL != NULL && \
 		  attributeACL->flags & ATTRIBUTE_FLAG_PROPERTY ) )
 		{
-		if( handlingInfoPtr->preDispatchFunction != NULL )
-			status = handlingInfoPtr->preDispatchFunction( localObjectHandle,
-									message, messageDataPtr, messageValue,
-									aclPtr );
-		if( cryptStatusOK( status ) )
-			{
-			/* Precondition: Either the message as a whole is internally
-			   handled or it's a property attribute */
-			PRE( handlingInfoPtr->internalHandlerFunction == NULL || \
-				 attributeACL == NULL );
-
-			/* If it's an object property attribute (which is handled by the
-			   kernel), get or set its value */
-			if( handlingInfoPtr->internalHandlerFunction == NULL )
-				{
-				/* Precondition: Object properties are always numeric
-				   attributes */
-				PRE( handlingInfoPtr->messageType == MESSAGE_GETATTRIBUTE || \
-					 handlingInfoPtr->messageType == MESSAGE_SETATTRIBUTE );
-
-				if( handlingInfoPtr->messageType == MESSAGE_GETATTRIBUTE )
-					status = getPropertyAttribute( localObjectHandle,
-											messageValue, messageDataPtr );
-				else
-					status = setPropertyAttribute( localObjectHandle,
-											messageValue, messageDataPtr );
-				}
-			else
-				/* It's a kernel-handled message, process it */
-				status = handlingInfoPtr->internalHandlerFunction( \
-										localObjectHandle, messageValue,
-										messageDataPtr, isInternalMessage );
-			if( cryptStatusOK( status ) && \
-				handlingInfoPtr->postDispatchFunction != NULL )
-				status = handlingInfoPtr->postDispatchFunction( localObjectHandle,
-										message, messageDataPtr, messageValue, aclPtr );
-			}
+		status = processInternalMessage( localObjectHandle, handlingInfoPtr, 
+										 message, messageDataPtr, 
+										 messageValue, aclPtr );
 		if( status != OK_SPECIAL )
 			{
 			/* The message was processed normally, exit */
@@ -1227,10 +1445,6 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		localMessage = MESSAGE_DESTROY;
 		status = CRYPT_OK;
 		}
-
-	/* We shouldn't have aliased objects since we don't use copy-on-write
-	   any more */
-	assert( !isAliasedObject( localObjectHandle ) );
 
 	/* If the object isn't already processing a message and the message isn't
 	   a special type such as MESSAGE_DESTROY, dispatch it immediately rather
@@ -1277,9 +1491,20 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 								  objectInfoPtr, aclPtr );
 		MUTEX_UNLOCK( objectTable );
 
+		/* If it's a zeroise, perform a kernel shutdown.  In theory we could 
+		   do this from the post-dispatch handler, but we need to make sure 
+		   that there are no further kernel actions to be taken before we 
+		   perform the shutdown, so we do it at this level instead */
+		if( cryptStatusOK( status ) && \
+			( messageQueueData.message & MESSAGE_MASK ) == MESSAGE_USER_USERMGMT && \
+			messageQueueData.messageValue == MESSAGE_USERMGMT_ZEROISE )
+			{
+			endCryptlib();
+			}
+
 		/* Postcondition: The return status is valid */
-		POST( ( status >= CRYPT_ENVELOPE_RESOURCE && status <= CRYPT_OK ) || \
-			  cryptArgError( status ) || status == OK_SPECIAL );
+		POST( cryptStandardError( status ) || cryptArgError( status ) || \
+			  status == OK_SPECIAL );
 
 		return( status );
 		}
@@ -1295,7 +1520,7 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	if( objectInfoPtr->lockCount > MESSAGE_QUEUE_SIZE / 2 )
 		{
 		MUTEX_UNLOCK( objectTable );
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
 
@@ -1306,9 +1531,11 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		status = waitForObject( localObjectHandle, &objectInfoPtr );
 #if !defined( NDEBUG ) && defined( USE_THREADS )
 		if( cryptStatusOK( status ) && isInUse( localObjectHandle ) )
+			{
 			/* dispatchMessage() expects us to be the lock owner if the
 			   object is in use, however if the object has been */
 			objectInfoPtr->lockOwner = THREAD_SELF();
+			}
 #endif /* !NDEBUG && USE_THREADS */
 		}
 	if( cryptStatusError( status ) )
@@ -1316,9 +1543,8 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		MUTEX_UNLOCK( objectTable );
 		return( status );
 		}
-/******/
-assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
-/******/
+	assert( !isInUse( localObjectHandle ) || \
+			isObjectOwner( localObjectHandle ) );
 
 	/* Enqueue the message */
 	if( ( message & MESSAGE_MASK ) != localMessage )
@@ -1335,8 +1561,10 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 								 MESSAGE_DESTROY, messageDataPtr, TRUE );
 		}
 	else
+		{
 		status = enqueueMessage( localObjectHandle, handlingInfoPtr, message,
 								 messageDataPtr, messageValue );
+		}
 	if( cryptStatusError( status ) )
 		{
 		/* A message for this object is already present in the queue, defer
@@ -1344,9 +1572,8 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 		MUTEX_UNLOCK( objectTable );
 		return( ( status == OK_SPECIAL ) ? CRYPT_OK : status );
 		}
-/******/
-assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
-/******/
+	assert( !isInUse( localObjectHandle ) || \
+			isObjectOwner( localObjectHandle ) );
 
 	/* While there are more messages for this object present, dequeue them
 	   and dispatch them.  Since messages will only be enqueued if
@@ -1363,20 +1590,20 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
 		const BOOLEAN isDestroy = \
-			( ( enqueuedMessageData.message & MESSAGE_MASK ) == MESSAGE_DESTROY );
+			( enqueuedMessageData.message & MESSAGE_MASK ) == MESSAGE_DESTROY;
+		const BOOLEAN isZeroise = \
+			( enqueuedMessageData.message & MESSAGE_MASK ) == MESSAGE_USER_USERMGMT && \
+			enqueuedMessageData.messageValue == MESSAGE_USERMGMT_ZEROISE;
 
 		/* If there's a problem with the object, initiate special processing.
-		   There are two exceptions to this, one is a destroy message sent to
-		   a busy object, the other is a destroy message that started out as
-		   a different type of message (that is, it was converted into a
-		   destroy object message due to the object being in an invalid
+		   The exception to this is a destroy message that started out as a 
+		   different type of message (that is, it was converted into a 
+		   destroy object message due to the object being in an invalid 
 		   state, indicated by the messageValue parameter being set to TRUE
-		   when it's normally zero for a destroy message).  Both of these
-		   types are let through */
+		   when it's normally zero for a destroy message), which is let 
+		   through */
 		if( isInvalidObjectState( localObjectHandle ) && \
-			!( isDestroy && \
-			   ( objectInfoPtr->flags & OBJECT_FLAG_BUSY ) || \
-			   ( enqueuedMessageData.messageValue == TRUE ) ) )
+			!( isDestroy && ( enqueuedMessageData.messageValue == TRUE ) ) )
 			{
 			/* If it's a destroy object message being sent to an object in
 			   the process of being created, set the state to signalled and
@@ -1396,17 +1623,14 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 				}
 			continue;
 			}
-/******/
-assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
-/******/
+		assert( !isInUse( localObjectHandle ) || \
+				isObjectOwner( localObjectHandle ) );
 
 		/* Inner precondition: The object is in a valid state or it's a
-		   destroy message to a busy object or a destroy message that was
-		   converted from a different message type */
+		   destroy message that was converted from a different message 
+		   type */
 		PRE( !isInvalidObjectState( localObjectHandle ) || \
-			 ( isDestroy && \
-				( objectInfoPtr->flags & OBJECT_FLAG_BUSY ) || \
-				( enqueuedMessageData.messageValue == TRUE ) ) );
+			 ( isDestroy && ( enqueuedMessageData.messageValue == TRUE ) ) );
 
 		/* Dispatch the message to the object */
 		status = dispatchMessage( localObjectHandle, &enqueuedMessageData,
@@ -1425,21 +1649,36 @@ assert( !isInUse( localObjectHandle ) || isObjectOwner( localObjectHandle ) );
 			dequeueAllMessages( localObjectHandle );
 			}
 		else
-			/* If we ran into a problem, dequeue all further messages for
-			   this object.  This causes getNextMessage() to fail and we
-			   drop out of the loop */
-			if( cryptStatusError( status ) )
+			{
+			/* If we ran into a problem or this is a zeroise (i.e. a 
+			   localised shutdown), dequeue all further messages for this 
+			   object.  This causes getNextMessage() to fail and we drop out 
+			   of the loop */
+			if( cryptStatusError( status ) || \
+				( cryptStatusOK( status ) && isZeroise ) )
+				{
 				dequeueAllMessages( localObjectHandle );
+				}
+			}
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Unlock the object table to allow access by other threads */
 	MUTEX_UNLOCK( objectTable );
 
+	/* If it's a zeroise, perform a kernel shutdown.  In theory we could do 
+	   this from the post-dispatch handler, but we need to make sure that 
+	   there are no further kernel actions to be taken before we perform the 
+	   shutdown, so we do it at this level instead */
+	if( cryptStatusOK( status ) && localMessage == MESSAGE_USER_USERMGMT && \
+		messageValue == MESSAGE_USERMGMT_ZEROISE )
+		{
+		endCryptlib();
+		}
+
 	/* Postcondition: The return status is valid */
-	POST( ( status >= CRYPT_ENVELOPE_RESOURCE && status <= CRYPT_OK ) || \
-		  cryptArgError( status ) || status == OK_SPECIAL );
+	POST( cryptStandardError( status ) || cryptArgError( status ) || \
+		  status == OK_SPECIAL );
 
 	return( status );
 	}

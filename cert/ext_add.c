@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					Certificate Attribute Add/Delete Routines				*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -14,10 +14,6 @@
   #include "cert/certattr.h"
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
-
-/* Prototypes for functions in ext.c */
-
-ATTRIBUTE_LIST *findAttributeStart( ATTRIBUTE_LIST *attributeListPtr );
 
 /****************************************************************************
 *																			*
@@ -34,33 +30,48 @@ typedef enum {
 	CHECKATTR_INFO_LAST			/* Last possible return info type */
 	} CHECKATTR_INFO_TYPE;
 
-static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2, 8, 9, 10 ) ) \
+static int checkAttributeField( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
 								const ATTRIBUTE_INFO *attributeInfoPtr,
-								const CRYPT_ATTRIBUTE_TYPE fieldID,
-								const CRYPT_ATTRIBUTE_TYPE subFieldID,
-								const void *data, const int dataLength,
-								const int flags, 
-								CHECKATTR_INFO_TYPE *infoType, 
-								int *newDataLength, 
-								CRYPT_ERRTYPE_TYPE *errorType )
+								IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
+								IN_ATTRIBUTE_OPT \
+									const CRYPT_ATTRIBUTE_TYPE subFieldID,
+								/*?*/ const void *data, 
+								/*?*/ const int dataLength,
+								IN_FLAGS( ATTR ) const int flags, 
+								OUT_ENUM_OPT( CHECKATTR_INFO ) \
+									CHECKATTR_INFO_TYPE *infoType, 
+								OUT_LENGTH_SHORT_Z int *newDataLength, 
+								OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
+	int status;
+
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			fieldID <= CRYPT_CERTINFO_LAST );
-	assert( dataLength == CRYPT_UNUSED || \
-			( dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE ) );
 	assert( dataLength == CRYPT_UNUSED || isReadPtr( data, dataLength ) );
 	assert( isWritePtr( infoType, sizeof( CHECKATTR_INFO_TYPE ) ) );
 	assert( isWritePtr( newDataLength, sizeof( int ) ) );
-	assert( !( flags & ATTR_FLAG_INVALID ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+			  fieldID <= CRYPT_CERTINFO_LAST );
+	REQUIRES( subFieldID == CRYPT_ATTRIBUTE_NONE || \
+			  ( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
+				subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
+	REQUIRES( dataLength == CRYPT_UNUSED || \
+			  ( data != NULL && \
+				dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE ) );
+assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_INVALID ) );
 
 	/* Clear return values */
 	*infoType = CHECKATTR_INFO_NONE;
 	*newDataLength = 0;
 
-	/* Make sure that a valid field has been specified, and that this field
+	/* Make sure that a valid field has been specified and that this field
 	   isn't already present as a non-default entry unless it's a field for
 	   which multiple values are allowed */
 	if( attributeInfoPtr == NULL )
@@ -89,7 +100,7 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 		{
 		case FIELDTYPE_IDENTIFIER:
 			/* It's an identifier, make sure that all parameters are correct */
-			assert( dataLength == CRYPT_UNUSED );
+			ENSURES( dataLength == CRYPT_UNUSED );
 			if( *( ( int * ) data ) != CRYPT_UNUSED )
 				return( CRYPT_ARGERROR_NUM1 );
 
@@ -99,11 +110,11 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 			return( CRYPT_OK );
 
 		case FIELDTYPE_DN:
-			/* When creating a new cert, this is a special-case field that's 
-			   used as a placeholder to indicate that a DN structure is being 
-			   instantiated.  When reading an encoded cert, this is the 
-			   decoded DN structure */
-			assert( dataLength == CRYPT_UNUSED );
+			/* When creating a new certificate this is a special-case field 
+			   that's used as a placeholder to indicate that a DN structure 
+			   is being instantiated.  When reading an encoded certificate 
+			   this is the decoded DN structure */
+			ENSURES( dataLength == CRYPT_UNUSED );
 
 			/* Tell the caller that this is a special-case entry with 
 			   zero-length data */
@@ -124,19 +135,19 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 				}
 			else
 				{
-				int status;
+				int length;
 
 				/* It's a text OID, check the syntax and make sure that the 
 				   length is valid */
 				status = textToOID( data, dataLength, binaryOID, 
-									MAX_OID_SIZE );
-				if( !cryptStatusError( status ) )
+									MAX_OID_SIZE, &length );
+				if( cryptStatusOK( status ) )
 					{
 					/* The binary form of the OID differs in length from the 
 					   string form, tell the caller that the data length has
 					   changed */
 					*infoType = CHECKATTR_INFO_NEWLENGTH;
-					*newDataLength = status;
+					*newDataLength = length;
 					return( CRYPT_OK );
 					}
 				}
@@ -147,7 +158,7 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 			}
 
 		case BER_BOOLEAN:
-			assert( dataLength == CRYPT_UNUSED );
+			ENSURES( dataLength == CRYPT_UNUSED );
 
 			/* BOOLEAN data is accepted as zero/nonzero so it's always 
 			   valid, however we let the caller know that this is non-string 
@@ -190,7 +201,7 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 		}
 
 	/* If we're not checking the payload in order to handle CAs who stuff 
-	   any old rubbish into the fields, exit now unless it's a blob field, 
+	   any old rubbish into the fields exit now unless it's a blob field, 
 	   for which we need to find at least valid ASN.1 data */
 	if( ( flags & ATTR_FLAG_BLOB_PAYLOAD ) && \
 		( attributeInfoPtr->fieldType != FIELDTYPE_BLOB ) )
@@ -200,7 +211,8 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 		{
 		case FIELDTYPE_BLOB:
 			/* It's a blob field, make sure that it's a valid ASN.1 object */
-			if( cryptStatusError( checkObjectEncoding( data, dataLength ) ) )
+			status = checkObjectEncoding( data, dataLength );
+			if( cryptStatusError( status ) )
 				{
 				if( errorType != NULL )
 					*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
@@ -252,23 +264,33 @@ static int checkAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
 
 /* Add a blob-type attribute to a list of attributes */
 
-int addAttribute( const ATTRIBUTE_TYPE attributeType,
-				  ATTRIBUTE_LIST **listHeadPtr, const BYTE *oid,
-				  const BOOLEAN criticalFlag, const void *data,
-				  const int dataLength, const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 6 ) ) \
+int addAttribute( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
+				  /*?*/ ATTRIBUTE_LIST **listHeadPtr, 
+				  IN_BUFFER( oidLength ) const BYTE *oid, 
+				  IN_RANGE( MIN_OID_SIZE, MAX_OID_SIZE ) const int oidLength,
+				  const BOOLEAN critical, 
+				  IN_BUFFER( dataLength ) const void *data, 
+				  IN_LENGTH_SHORT const int dataLength, 
+				  IN_FLAGS_Z( ATTR ) const int flags )
 	{
 	ATTRIBUTE_LIST *newElement, *insertPoint = NULL;
-	const int oidLength = sizeofOID( oid );
 
 	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( oid, oidLength ) );
-	assert( criticalFlag == TRUE || criticalFlag == FALSE );
 	assert( isReadPtr( data, dataLength ) );
 	assert( ( flags & ( ATTR_FLAG_IGNORED | ATTR_FLAG_BLOB ) ) || \
 			!cryptStatusError( checkObjectEncoding( data, dataLength ) ) );
-	assert( dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE );
-	assert( flags == ATTR_FLAG_NONE || flags == ATTR_FLAG_BLOB || \
-			flags == ( ATTR_FLAG_BLOB | ATTR_FLAG_IGNORED ) );
+
+	REQUIRES( attributeType == ATTRIBUTE_CERTIFICATE || \
+			  attributeType == ATTRIBUTE_CMS );
+	REQUIRES( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE && \
+			  oidLength == sizeofOID( oid ) );
+	REQUIRES( data != NULL && \
+			  dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE );
+assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_IGNORED | ATTR_FLAG_BLOB | ATTR_FLAG_MULTIVALUED ) ) == 0 );
+	REQUIRES( flags == ATTR_FLAG_NONE || flags == ATTR_FLAG_BLOB || \
+			  flags == ( ATTR_FLAG_BLOB | ATTR_FLAG_IGNORED ) );
 
 	/* If this attribute type is already handled as a non-blob attribute,
 	   don't allow it to be added as a blob as well.  This avoids problems
@@ -277,7 +299,7 @@ int addAttribute( const ATTRIBUTE_TYPE attributeType,
 	   normal attribute handling mechanism, which allows for proper type
 	   checking */
 	if( !( flags & ATTR_FLAG_BLOB ) && \
-		oidToAttribute( attributeType, oid ) != NULL )
+		oidToAttribute( attributeType, oid, oidLength ) != NULL )
 		return( CRYPT_ERROR_PERMISSION );
 
 	/* Find the correct place in the list to insert the new element */
@@ -310,7 +332,7 @@ int addAttribute( const ATTRIBUTE_TYPE attributeType,
 	newElement->oid = newElement->storage + dataLength;
 	memcpy( newElement->oid, oid, oidLength );
 	newElement->flags = ( flags & ATTR_FLAG_IGNORED ) | \
-						( criticalFlag ? ATTR_FLAG_CRITICAL : ATTR_FLAG_NONE );
+						( critical ? ATTR_FLAG_CRITICAL : ATTR_FLAG_NONE );
 	memcpy( newElement->value, data, dataLength );
 	newElement->valueLength = dataLength;
 	insertDoubleListElements( listHeadPtr, insertPoint, newElement, newElement );
@@ -321,12 +343,17 @@ int addAttribute( const ATTRIBUTE_TYPE attributeType,
 /* Add an attribute field to a list of attributes at the appropriate 
    location */
 
-int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
-					   const CRYPT_ATTRIBUTE_TYPE fieldID,
-					   const CRYPT_ATTRIBUTE_TYPE subFieldID,
-					   const void *data, const int dataLength,
-					   const int flags, CRYPT_ATTRIBUTE_TYPE *errorLocus, 
-					   CRYPT_ERRTYPE_TYPE *errorType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 7, 8 ) ) \
+int addAttributeField( /*?*/ ATTRIBUTE_LIST **attributeListPtr,
+					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
+					   IN_ATTRIBUTE_OPT const CRYPT_ATTRIBUTE_TYPE subFieldID,
+					   /*?*/ const void *data, 
+					   /*?*/ const int dataLength,
+					   IN_FLAGS_Z( ATTR ) const int flags, 
+					   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							CRYPT_ATTRIBUTE_TYPE *errorLocus,
+					   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+							CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	const ATTRIBUTE_TYPE attributeType = \
 							( fieldID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
@@ -336,16 +363,28 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 										fieldID, subFieldID, &attributeID );
 	ATTRIBUTE_LIST *newElement, *insertPoint, *prevElement = NULL;
 	CHECKATTR_INFO_TYPE infoType;
-	int storageSize, newDataLength, status;
+	int storageSize, newDataLength, iterationCount, status;
 
 	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST * ) ) );
-	assert( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			fieldID <= CRYPT_CERTINFO_LAST );
-	assert( dataLength == CRYPT_UNUSED || \
-			( dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE ) );
 	assert( dataLength == CRYPT_UNUSED || isReadPtr( data, dataLength ) );
-	assert( !( flags & ATTR_FLAG_INVALID ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+
+	REQUIRES( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+			  fieldID <= CRYPT_CERTINFO_LAST );
+	REQUIRES( subFieldID == CRYPT_ATTRIBUTE_NONE || \
+			  ( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
+				subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
+	REQUIRES( dataLength == CRYPT_UNUSED || \
+			  ( data != NULL && \
+			    dataLength > 0 && dataLength <= MAX_ATTRIBUTE_SIZE ) );
+assert( ( flags & ~( ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED | ATTR_FLAG_BLOB_PAYLOAD ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_INVALID ) );
+
+	/* Sanity-check the state */
+	ENSURES( attributeInfoPtr != NULL );
 
 	/* Check the field's validity */
 	status = checkAttributeField( *attributeListPtr, attributeInfoPtr, 
@@ -355,22 +394,28 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 	if( cryptStatusError( status ) )
 		{
 		if( errorType != NULL && *errorType != CRYPT_ERRTYPE_NONE )
+			{
 			/* If we encountered an error that sets the error type, record 
 			   the locus */
 			*errorLocus = fieldID;
+			}
 		return( status );
 		}
-	assert( infoType == CHECKATTR_INFO_ZEROLENGTH || dataLength > 0 );
+	ENSURES( infoType == CHECKATTR_INFO_ZEROLENGTH || \
+			 ( dataLength > 0 && dataLength < MAX_ATTRIBUTE_SIZE ) );
 
 	/* Find the location at which to insert this attribute field (this 
 	   assumes that the fieldIDs are defined in sorted order) */
-	insertPoint = *attributeListPtr;
-	while( insertPoint != NULL && \
-		   insertPoint->fieldID != CRYPT_ATTRIBUTE_NONE && \
-		   insertPoint->fieldID <= fieldID )
+	for( insertPoint = *attributeListPtr, iterationCount = 0;
+		 insertPoint != NULL && \
+			insertPoint->fieldID != CRYPT_ATTRIBUTE_NONE && \
+			insertPoint->fieldID <= fieldID && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 iterationCount++ )
 		{
-		assert( !isValidAttributeField( insertPoint->next ) || \
-				insertPoint->attributeID <= insertPoint->next->attributeID );
+		ENSURES( insertPoint->next == NULL || \
+				 !isValidAttributeField( insertPoint->next ) || \
+				 insertPoint->attributeID <= insertPoint->next->attributeID );
 
 		/* If it's a composite field that can have multiple fields with the 
 		   same field ID (e.g. a GeneralName), exit if the overall field ID 
@@ -385,12 +430,13 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 		prevElement = insertPoint;
 		insertPoint = insertPoint->next;
 		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	insertPoint = prevElement;
 
 	/* Allocate memory for the new element and copy the information across.
 	   If it's a simple type we can assign it to the simple value in the
 	   element itself, otherwise we copy it into the storage in the element.  
-	   Something that encodes to NULL isn't really a numeric type, but we 
+	   Something that encodes to NULL isn't really a numeric type but we 
 	   class it as such so that any attempt to read it returns CRYPT_UNUSED 
 	   as the value */
 	switch( infoType )
@@ -434,19 +480,23 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 		case FIELDTYPE_CHOICE:
 			newElement->intValue = *( ( int * ) data );
 			if( attributeInfoPtr->fieldType == BER_BOOLEAN )
+				{
 				/* Force it to the correct type if it's a boolean */
 				newElement->intValue = ( newElement->intValue ) ? TRUE : FALSE;
+				}
 			if( attributeInfoPtr->fieldType == FIELDTYPE_CHOICE )
+				{
 				/* For encoding purposes the subfield ID is set to the ID of 
 				   the CHOICE selection */
 				newElement->subFieldID = newElement->intValue;
+				}
 			break;
 
 		case BER_OBJECT_IDENTIFIER:
 			/* If it's a BER/DER-encoded OID copy it in as is, otherwise 
 			   convert it from the text form.  In the latter case the 
 			   amount of storage allocated is the space required by the
-			   text form which is more than the BER/DER-encoded form, but
+			   text form which is more than the BER/DER-encoded form but
 			   we can't tell in advance how much we actually need to 
 			   allocate until we've performed the decoding */
 			if( ( ( BYTE * ) data )[ 0 ] == BER_OBJECT_IDENTIFIER )
@@ -456,17 +506,17 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 				}
 			else
 				{
-				newElement->valueLength = textToOID( data, dataLength,
-													 newElement->value,
-													 storageSize );
-				assert( !cryptStatusError( newElement->valueLength ) );
+				status = textToOID( data, dataLength, newElement->value, 
+									storageSize, &newElement->valueLength );
+				ENSURES( cryptStatusOK( status ) );
 				}
 			break;
 
 		case FIELDTYPE_DN:
-			/* When creating a new cert, this is a placeholder to indicate 
-			   that a DN structure is being instantiated.  When reading an 
-			   encoded cert, this is the decoded DN structure */
+			/* When creating a new certificate this is a placeholder to 
+			   indicate that a DN structure is being instantiated.  When 
+			   reading an encoded certificate this is the decoded DN 
+			   structure */
 			newElement->value = ( *( ( int * ) data ) == CRYPT_UNUSED ) ? \
 								NULL : ( void * ) data;
 			break;
@@ -477,7 +527,7 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 			break;
 
 		default:
-			assert( dataLength > 0 );
+			ENSURES( dataLength > 0 && dataLength < MAX_ATTRIBUTE_SIZE );
 			memcpy( newElement->value, data, dataLength );
 			newElement->valueLength = dataLength;
 			break;
@@ -498,10 +548,11 @@ int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
    not really possible to do this cleanly since deleting attributes affects
    the attribute cursor */
 
-int deleteAttributeField( ATTRIBUTE_LIST **attributeListPtr,
-						  ATTRIBUTE_LIST **listCursorPtr,
-						  ATTRIBUTE_LIST *listItem,
-						  const void *dnCursor )
+RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int deleteAttributeField( INOUT ATTRIBUTE_LIST **attributeListPtr,
+						  INOUT_OPT ATTRIBUTE_LIST **listCursorPtr,
+						  INOUT ATTRIBUTE_LIST *listItem,
+						  IN_OPT const void *dnCursor )
 	{
 	ATTRIBUTE_LIST *listPrevPtr = listItem->prev;
 	ATTRIBUTE_LIST *listNextPtr = listItem->next;
@@ -536,32 +587,37 @@ int deleteAttributeField( ATTRIBUTE_LIST **attributeListPtr,
 	endVarStruct( listItem, ATTRIBUTE_LIST );
 	clFree( "deleteAttributeField", listItem );
 
-	/* If we deleted the DN at the current cursor position, return a 
+	/* If we deleted the DN at the current cursor position return a 
 	   special-case code to let the caller know */
 	return( deletedDN ? OK_SPECIAL : CRYPT_OK );
 	}
 
-int deleteAttribute( ATTRIBUTE_LIST **attributeListPtr,
-					 ATTRIBUTE_LIST **listCursorPtr,
-					 ATTRIBUTE_LIST *listItem,
-					 const void *dnCursor )
+RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int deleteAttribute( INOUT ATTRIBUTE_LIST **attributeListPtr,
+					 INOUT_OPT ATTRIBUTE_LIST **listCursorPtr,
+					 INOUT ATTRIBUTE_LIST *listItem,
+					 IN_OPT const void *dnCursor )
 	{
 	CRYPT_ATTRIBUTE_TYPE attributeID;
 	ATTRIBUTE_LIST *attributeListCursor;
-	int status = CRYPT_OK;
+	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isWritePtr( *attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( listCursorPtr == NULL || \
+			isWritePtr( listCursorPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isWritePtr( listItem, sizeof( ATTRIBUTE_LIST ) ) );
 
 	/* If it's a blob-type attribute, everything is contained in this one
 	   list item so we only need to destroy that */
 	if( isBlobAttribute( listItem ) )
+		{
 		return( deleteAttributeField( attributeListPtr, listCursorPtr, 
 									  listItem, NULL ) );
+		}
 
-	/* If it's a field that denotes an entire (constructed) attribute, it
-	   won't have an entry in the list, so we find the first field of the
+	/* If it's a field that denotes an entire (constructed) attribute it
+	   won't have an entry in the list so we find the first field of the
 	   constructed attribute that's present in the list and start deleting
 	   from that point */
 	if( isCompleteAttribute( listItem ) )
@@ -572,15 +628,21 @@ int deleteAttribute( ATTRIBUTE_LIST **attributeListPtr,
 			 attributeListCursor = attributeListCursor->next );
 		}
 	else
+		{
 		/* The list item is a field in the attribute, find the start of the
 		   fields in this attribute */
 		attributeListCursor = findAttributeStart( listItem );
+		}
 	assert( isWritePtr( attributeListCursor, sizeof( ATTRIBUTE_LIST ) ) );
+	ENSURES( attributeListCursor != NULL );
 	attributeID = attributeListCursor->attributeID;
 
 	/* It's an item with multiple fields, destroy each field separately */
-	while( attributeListCursor != NULL && \
-		   attributeListCursor->attributeID == attributeID )
+	for( iterationCount = 0;
+		 attributeListCursor != NULL && \
+			attributeListCursor->attributeID == attributeID && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		ATTRIBUTE_LIST *itemToFree = attributeListCursor;
 		int localStatus;
@@ -589,19 +651,24 @@ int deleteAttribute( ATTRIBUTE_LIST **attributeListPtr,
 		localStatus = deleteAttributeField( attributeListPtr, listCursorPtr, 
 											itemToFree, dnCursor );
 		if( cryptStatusError( localStatus ) && status != OK_SPECIAL )
+			{
 			/* Remember the error code, giving priority to DN cursor-
 			   modification notifications */
 			status = localStatus;
+			}
 		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( status );
 	}
 
 /* Delete a complete set of attributes */
 
-void deleteAttributes( ATTRIBUTE_LIST **attributeListPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void deleteAttributes( INOUT ATTRIBUTE_LIST **attributeListPtr )
 	{
 	ATTRIBUTE_LIST *attributeListCursor = *attributeListPtr;
+	int iterationCount;
 
 	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 
@@ -610,13 +677,16 @@ void deleteAttributes( ATTRIBUTE_LIST **attributeListPtr )
 		return;
 
 	/* Destroy any remaining list items */
-	while( attributeListCursor != NULL )
+	for( iterationCount = 0;
+		 attributeListCursor != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 iterationCount++ )
 		{
 		ATTRIBUTE_LIST *itemToFree = attributeListCursor;
 
 		attributeListCursor = attributeListCursor->next;
 		deleteAttributeField( attributeListPtr, NULL, itemToFree, NULL );
 		}
-
-	assert( *attributeListPtr == NULL );
+	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	ENSURES_V( *attributeListPtr == NULL );
 	}

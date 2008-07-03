@@ -3453,15 +3453,15 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 5004);
     PyDict_SetItemString(moduleDict, "CRYPT_ENVINFO_DETACHEDSIGNATURE", v);
-    Py_DECREF(v); /* Generate CMS detached signature */
+    Py_DECREF(v); /* Detached signature */
 
     v = Py_BuildValue("i", 5005);
     PyDict_SetItemString(moduleDict, "CRYPT_ENVINFO_SIGNATURE_RESULT", v);
     Py_DECREF(v); /* Signature check result */
 
     v = Py_BuildValue("i", 5006);
-    PyDict_SetItemString(moduleDict, "CRYPT_ENVINFO_MAC", v);
-    Py_DECREF(v); /* Use MAC instead of encrypting */
+    PyDict_SetItemString(moduleDict, "CRYPT_ENVINFO_INTEGRITY", v);
+    Py_DECREF(v); /* Integrity-protection level */
 
     v = Py_BuildValue("i", 5007);
     PyDict_SetItemString(moduleDict, "CRYPT_ENVINFO_PASSWORD", v);
@@ -3708,26 +3708,34 @@ class CryptHandle:\n\
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 8);
-    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_TSTINFO", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_AUTHDATA", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 9);
-    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_SPCINDIRECTDATACONTEXT", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_AUTHENVDATA", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 10);
-    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSREQUEST", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_TSTINFO", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 11);
-    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSRESPONSE", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_SPCINDIRECTDATACONTEXT", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 12);
-    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSRESPONSE_EXT", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSREQUEST", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 13);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSRESPONSE", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 14);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_RTCSRESPONSE_EXT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 15);
     PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_LAST", v);
     Py_DECREF(v);
 
@@ -3746,6 +3754,18 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 3);
     PyDict_SetItemString(moduleDict, "CRYPT_SIGNATURELEVEL_LAST", v);
     Py_DECREF(v); /* Last possible sig.level type */
+
+    v = Py_BuildValue("i", 0);
+    PyDict_SetItemString(moduleDict, "CRYPT_INTEGRITY_NONE", v);
+    Py_DECREF(v); /* No integrity protection */
+
+    v = Py_BuildValue("i", 1);
+    PyDict_SetItemString(moduleDict, "CRYPT_INTEGRITY_MACONLY", v);
+    Py_DECREF(v); /* MAC only, no encryption */
+
+    v = Py_BuildValue("i", 2);
+    PyDict_SetItemString(moduleDict, "CRYPT_INTEGRITY_FULL", v);
+    Py_DECREF(v); /* Encryption + ingerity protection */
 
     v = Py_BuildValue("i", 0);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTFORMAT_NONE", v);

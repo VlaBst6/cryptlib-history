@@ -11,6 +11,7 @@
 /* General includes */
 
 #include "crypt.h"
+#include "random/random.h"
 
 /* OS-specific includes */
 
@@ -309,7 +310,7 @@ static void slowPollWinCE( void )
 	hSnapshot = pCreateToolhelp32Snapshot( TH32CS_SNAPHEAPLIST, 0 );
 	if( hSnapshot == INVALID_HANDLE_VALUE )
 		{
-		assert( NOTREACHED );	/* Make sure that we get some feedback */
+		assert( DEBUG_WARN );	/* Make sure that we get some feedback */
 		return;
 		}
 	hl32.dwSize = sizeof( HEAPLIST32 );
@@ -432,7 +433,7 @@ static void slowPollWinCE( void )
 
 DWORD WINAPI threadSafeSlowPoll( void *dummy )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	slowPollWinCE();
 	ExitThread( 0 );
@@ -461,9 +462,11 @@ void slowPoll( void )
    waitforRandomCompletion(), which will block until the background process
    completes */
 
-void waitforRandomCompletion( const BOOLEAN force )
+int waitforRandomCompletion( const BOOLEAN force )
 	{
-	const int timeout = force ? 2000 : INFINITE;
+	DWORD dwResult;
+	const DWORD timeout = force ? 2000 : 300000L;
+	int status;
 
 	/* If there's no polling thread running, there's nothing to do.  Note
 	   that this isn't entirely thread-safe because someone may start
@@ -473,23 +476,34 @@ void waitforRandomCompletion( const BOOLEAN force )
 	   that'll happen is that the caller won't get all of the currently-
 	   polling entropy */
 	if( hThread == NULL )
-		return;
+		return( CRYPT_OK );
 
-	/* Wait for the polling thread to terminate.  If it's a forced shutdown,
-	   we only wait a fixed amount of time (2s) before we bail out.  In
-	   addition we don't check for an error return (WAIT_ABANDONED) because
-	   this just means that the thread has exited as well */
-	WaitForSingleObject( hThread, timeout );
+	/* Wait for the polling thread to terminate.  If it's a forced shutdown
+	   we only wait a short amount of time (2s) before we bail out, 
+	   otherwise we hang around for as long as it takes (with a sanity-check
+	   upper limit of 5 minutes) */
+	dwResult = WaitForSingleObject( hThread, timeout );
+	if( dwResult == WAIT_FAILED )
+		{
+		/* Since this is a cleanup function there's not much that we can do 
+		   at this point, although we warn in debug mode */
+		assert( DEBUG_WARN );
+		return( CRYPT_OK );
+		}
+	assert( dwResult != WAIT_FAILED );	/* Warn in debug mode */
 
 	/* Clean up */
-	if( cryptStatusError( krnlEnterMutex( MUTEX_RANDOM ) ) )
-		return;
+	status = krnlEnterMutex( MUTEX_RANDOM );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( hThread != NULL )
 		{
 		CloseHandle( hThread );
 		hThread = NULL;
 		}
 	krnlExitMutex( MUTEX_RANDOM );
+
+	return( CRYPT_OK );
 	}
 
 /* Initialise and clean up any auxiliary randomness-related objects */

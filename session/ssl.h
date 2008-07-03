@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						SSL v3/TLS Definitions Header File					*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -65,11 +65,11 @@
 #define SSL_MSG_HANDSHAKE			22
 #define SSL_MSG_APPLICATION_DATA	23
 
-#define SSL_MSG_FIRST				20
-#define SSL_MSG_LAST				23
+#define SSL_MSG_FIRST				SSL_MSG_CHANGE_CIPHER_SPEC
+#define SSL_MSG_LAST				SSL_MSG_APPLICATION_DATA
 
 /* Special-case expected packet-type values that are passed to 
-   readPacketSSL() to handle situations where more than one packet type is 
+   readHSPacketSSL() to handle situations where more than one packet type is 
    valid.  The first handshake packet from the client or server is treated 
    specially in that both the version number info is taken from this packet,
    and the packet itself may have to be treated specially because although
@@ -92,6 +92,9 @@
 #define SSL_HAND_CLIENT_KEYEXCHANGE	0x10
 #define SSL_HAND_FINISHED			0x14
 #define SSL_HAND_SUPPLEMENTAL_DATA	0x17
+
+#define SSL_HAND_FIRST				SSL_HAND_CLIENT_HELLO
+#define SSL_HAND_LAST				SSL_HAND_SUPPLEMENTAL_DATA
 
 /* SSL alert levels and types */
 
@@ -128,6 +131,9 @@
 #define TLS_ALERT_BAD_CERTIFICATE_STATUS_RESPONSE 113
 #define TLS_ALERT_BAD_CERTIFICATE_HASH_VALUE 114
 #define TLS_ALERT_UNKNOWN_PSK_IDENTITY		115
+
+#define SSL_ALERT_FIRST						SSL_ALERT_CLOSE_NOTIFY
+#define SSL_ALERT_LAST						TLS_ALERT_UNKNOWN_PSK_IDENTITY
 
 /* SSL supplemental data subtypes */
 
@@ -233,12 +239,6 @@ typedef enum {
 #define SSL_SENDER_SERVERLABEL	"SRVR"
 #define SSL_SENDERLABEL_SIZE	4
 
-/* Fixed-format message templates for SSL, TLS 1.0, and TLS 1.1.  The second
-   subscript is a worst-case, unfortunately this is the only way we can
-   statically initialise a two-dimensional array of chars */
-
-typedef BYTE SSL_MESSAGE_TEMPLATE[ 3 ][ 8 ];
-
 /* SSL handshake state information.  This is passed around various
    subfunctions that handle individual parts of the handshake */
 
@@ -248,12 +248,16 @@ typedef struct SL {
 	CRYPT_CONTEXT serverMD5context, serverSHA1context;
 
 	/* Client and server nonces and session ID */
+	BUFFER_FIXED( SSL_NONCE_SIZE ) \
 	BYTE clientNonce[ SSL_NONCE_SIZE + 8 ];
+	BUFFER_FIXED( SSL_NONCE_SIZE ) \
 	BYTE serverNonce[ SSL_NONCE_SIZE + 8 ];
+	BUFFER( MAX_SESSIONID_SIZE, sessionIDlength ) \
 	BYTE sessionID[ MAX_SESSIONID_SIZE + 8 ];
 	int sessionIDlength;
 
 	/* Premaster/master secret */
+	BUFFER( CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE, premasterSecretSize ) \
 	BYTE premasterSecret[ CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE + 8 ];
 	int premasterSecretSize;
 
@@ -266,7 +270,10 @@ typedef struct SL {
 
 	/* Other info */
 	int clientOfferedVersion;	/* Prot.vers.originally offered by client */
+#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
+		   Firefox */
 	BOOLEAN isSSLv2;			/* Client hello is SSLv2 */
+#endif /* 0 */
 	BOOLEAN hasExtensions;		/* Hello has TLS extensions */
 
 	/* The packet data stream.  Since SSL can encapsulate multiple handshake
@@ -277,124 +284,284 @@ typedef struct SL {
 
 	/* Function pointers to handshaking functions.  These are set up as 
 	   required depending on whether the session is client or server */
-	int ( *beginHandshake )( SESSION_INFO *sessionInfoPtr,
-							 struct SL *handshakeInfo );
-	int ( *exchangeKeys )( SESSION_INFO *sessionInfoPtr,
-						   struct SL *handshakeInfo );
+	CHECK_RETVAL \
+	int ( *beginHandshake )( INOUT SESSION_INFO *sessionInfoPtr,
+							 struct SL *handshakeInfo ) \
+							 STDC_NONNULL_ARG( ( 1, 2 ) );
+	CHECK_RETVAL \
+	int ( *exchangeKeys )( INOUT SESSION_INFO *sessionInfoPtr,
+						   struct SL *handshakeInfo ) \
+						   STDC_NONNULL_ARG( ( 1, 2 ) );
 	} SSL_HANDSHAKE_INFO;
 
 /* Prototypes for functions in ssl.c */
 
-int readUint24( STREAM *stream );
-int writeUint24( STREAM *stream, const int length );
-int processHelloSSL( SESSION_INFO *sessionInfoPtr, 
-					 SSL_HANDSHAKE_INFO *handshakeInfo, 
-					 STREAM *stream, const BOOLEAN isServer );
-int readSSLCertChain( SESSION_INFO *sessionInfoPtr, 
-					  SSL_HANDSHAKE_INFO *handshakeInfo, STREAM *stream,
-					  CRYPT_CERTIFICATE *iCertChain, 
-					  const BOOLEAN isServer );
-int writeSSLCertChain( SESSION_INFO *sessionInfoPtr, STREAM *stream );
-int checkPacketHeaderSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream );
-int checkHSPacketHeader( SESSION_INFO *sessionInfoPtr, STREAM *stream,
-						 const int packetType, const int minSize );
-int processVersionInfo( SESSION_INFO *sessionInfoPtr, STREAM *stream,
-						int *clientVersion );
-	/* Only needed for legacy SSLv2 support */
-int processCipherSuite( SESSION_INFO *sessionInfoPtr, 
-						SSL_HANDSHAKE_INFO *handshakeInfo, 
-						STREAM *stream, const int noSuites );
+CHECK_RETVAL \
+int readUint24( INOUT STREAM *stream ) \
+				STDC_NONNULL_ARG( ( 1 ) );
+int writeUint24( INOUT STREAM *stream, const int length ) \
+				 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int processHelloSSL( INOUT SESSION_INFO *sessionInfoPtr, 
+					 INOUT SSL_HANDSHAKE_INFO *handshakeInfo, 
+					 INOUT STREAM *stream, const BOOLEAN isServer ) \
+					 STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr, 
+					  INOUT SSL_HANDSHAKE_INFO *handshakeInfo, 
+					  INOUT STREAM *stream,
+					  OUT CRYPT_CERTIFICATE *iCertChain, 
+					  const BOOLEAN isServer ) \
+					  STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) );
+CHECK_RETVAL \
+int writeSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr, 
+					   INOUT STREAM *stream ) \
+					   STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int checkPacketHeaderSSL( INOUT SESSION_INFO *sessionInfoPtr, 
+						  INOUT STREAM *stream, OUT int *packetLength ) \
+						  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int checkHSPacketHeader( INOUT SESSION_INFO *sessionInfoPtr, 
+						 INOUT STREAM *stream, OUT int *packetLength, 
+						 const int packetType, const int minSize ) \
+						 STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int processVersionInfo( INOUT SESSION_INFO *sessionInfoPtr, 
+						INOUT STREAM *stream, OUT_OPT int *clientVersion ) \
+						STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int processCipherSuite( INOUT SESSION_INFO *sessionInfoPtr, 
+						INOUT SSL_HANDSHAKE_INFO *handshakeInfo, 
+						INOUT STREAM *stream, const int noSuites ) \
+						STDC_NONNULL_ARG( ( 1, 2, 3 ) );
 
 /* Prototypes for functions in ssl_rw.c */
 
-int unwrapPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream, 
-					 const int packetType );
-int readPacketSSL( SESSION_INFO *sessionInfoPtr,
-				   SSL_HANDSHAKE_INFO *handshakeInfo, const int packetType );
-int refreshHSStream( SESSION_INFO *sessionInfoPtr, 
-					 SSL_HANDSHAKE_INFO *handshakeInfo );
-int wrapPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream, 
-				   const int offset );
-int sendPacketSSL( SESSION_INFO *sessionInfoPtr, STREAM *stream, 
-				   const BOOLEAN sendOnly );
-void openPacketStreamSSL( STREAM *stream, const SESSION_INFO *sessionInfoPtr, 
-						  const int bufferSize, const int packetType );
-int continuePacketStreamSSL( STREAM *stream, 
+CHECK_RETVAL \
+int unwrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr, 
+					 INOUT_BUFFER( dataMaxLength, *dataLength ) \
+					 void *data, const int dataMaxLength, int *dataLength,
+					 const int packetType ) \
+					 STDC_NONNULL_ARG( ( 1, 2, 4 ) );
+CHECK_RETVAL \
+int readHSPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
+					 INOUT_OPT SSL_HANDSHAKE_INFO *handshakeInfo, 
+					 OUT int *packetLength, const int packetType ) \
+					 STDC_NONNULL_ARG( ( 1, 3 ) );
+CHECK_RETVAL \
+int refreshHSStream( INOUT SESSION_INFO *sessionInfoPtr, 
+					 INOUT SSL_HANDSHAKE_INFO *handshakeInfo ) \
+					 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int wrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr, INOUT STREAM *stream, 
+				   const int offset ) \
+				   STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int sendPacketSSL( INOUT SESSION_INFO *sessionInfoPtr, INOUT STREAM *stream, 
+				   const BOOLEAN sendOnly ) \
+				   STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int openPacketStreamSSL( INOUT STREAM *stream, 
+						 const SESSION_INFO *sessionInfoPtr, 
+						 const int bufferSize, const int packetType ) \
+						 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int continuePacketStreamSSL( INOUT STREAM *stream, 
 							 const SESSION_INFO *sessionInfoPtr, 
-							 const int packetType );
-int completePacketStreamSSL( STREAM *stream, const int offset );
-int continueHSPacketStream( STREAM *stream, const int packetType );
-int completeHSPacketStream( STREAM *stream, const int offset );
-int processAlert( SESSION_INFO *sessionInfoPtr, const void *header, 
-				  const int headerLength );
-void sendCloseAlert( SESSION_INFO *sessionInfoPtr, 
-					 const BOOLEAN alertReceived );
-void sendHandshakeFailAlert( SESSION_INFO *sessionInfoPtr );
+							 const int packetType ) \
+							 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int completePacketStreamSSL( INOUT STREAM *stream, const int offset ) \
+							 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int continueHSPacketStream( INOUT STREAM *stream, const int packetType ) \
+							STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int completeHSPacketStream( INOUT STREAM *stream, const int offset ) \
+							STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int processAlert( INOUT SESSION_INFO *sessionInfoPtr, 
+				  IN_BUFFER( headerLength ) \
+				  const void *header, const int headerLength ) \
+				  STDC_NONNULL_ARG( ( 1, 2 ) );
+void sendCloseAlert( INOUT SESSION_INFO *sessionInfoPtr, 
+					 const BOOLEAN alertReceived ) \
+					 STDC_NONNULL_ARG( ( 1 ) );
+void sendHandshakeFailAlert( INOUT SESSION_INFO *sessionInfoPtr ) \
+							 STDC_NONNULL_ARG( ( 1 ) );
+
+/* Prototypes for functions in ssl_keymgmt.c */
+
+CHECK_RETVAL \
+int initSecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr ) \
+							 STDC_NONNULL_ARG( ( 1 ) );
+void destroySecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr ) \
+								 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo ) \
+							STDC_NONNULL_ARG( ( 1 ) );
+void destroyHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo ) \
+							    STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int initDHcontextSSL( OUT CRYPT_CONTEXT *iCryptContext, 
+					  IN_BUFFER_OPT( keyDataLength ) \
+					  const void *keyData, const int keyDataLength,
+					  const CRYPT_CONTEXT iServerKeyTemplate ) \
+					  STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL \
+int createSharedPremasterSecret( OUT_BUFFER( premasterSecretMaxLength, *premasterSecretLength ) \
+								 void *premasterSecret, 
+								 const int premasterSecretMaxLength, 
+								 int *premasterSecretLength,
+								 const ATTRIBUTE_LIST *attributeListPtr ) \
+								 STDC_NONNULL_ARG( ( 1, 3, 4 ) );
+CHECK_RETVAL \
+int wrapPremasterSecret( INOUT SESSION_INFO *sessionInfoPtr,
+						 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+						 OUT_BUFFER( dataMaxLength, *dataLength ) \
+						 void *data, const int dataMaxLength, 
+						 int *dataLength ) \
+						 STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) );
+CHECK_RETVAL \
+int unwrapPremasterSecret( INOUT SESSION_INFO *sessionInfoPtr, 
+						   INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+						   IN_BUFFER( dataLength ) \
+						   const void *data, const int dataLength ) \
+						   STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int premasterToMaster( const SESSION_INFO *sessionInfoPtr, 
+					   const SSL_HANDSHAKE_INFO *handshakeInfo, 
+					   OUT_BUFFER_FIXED( masterSecretLength ) \
+					   void *masterSecret, const int masterSecretLength ) \
+					   STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int masterToKeys( const SESSION_INFO *sessionInfoPtr, 
+				  const SSL_HANDSHAKE_INFO *handshakeInfo, 
+				  IN_BUFFER( masterSecretLength ) \
+				  const void *masterSecret, const int masterSecretLength,
+				  OUT_BUFFER_FIXED( keyBlockLength ) \
+				  void *keyBlock, const int keyBlockLength ) \
+				  STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) );
+CHECK_RETVAL \
+int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
+			  const SSL_HANDSHAKE_INFO *handshakeInfo,
+			  IN_BUFFER( keyBlockLength ) \
+			  const void *keyBlock, const int keyBlockLength,
+			  const BOOLEAN isClient ) \
+			  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int loadExplicitIV( INOUT SESSION_INFO *sessionInfoPtr, 
+					INOUT STREAM *stream, OUT int *ivLength ) \
+					STDC_NONNULL_ARG( ( 1, 2, 3 ) );
 
 /* Prototypes for functions in ssl_cry.c */
 
-int initSecurityContextsSSL( SESSION_INFO *sessionInfoPtr );
-void destroySecurityContextsSSL( SESSION_INFO *sessionInfoPtr );
-int initHandshakeCryptInfo( SSL_HANDSHAKE_INFO *handshakeInfo );
-int destroyHandshakeCryptInfo( SSL_HANDSHAKE_INFO *handshakeInfo );
-int initDHcontextSSL( CRYPT_CONTEXT *iCryptContext, const void *keyData, 
-					  const int keyDataLength );
-int createSharedPremasterSecret( void *premasterSecret, 
-								 int *premasterSecretLength,
-								 const ATTRIBUTE_LIST *attributeListPtr );
-int wrapPremasterSecret( SESSION_INFO *sessionInfoPtr, 
-						 SSL_HANDSHAKE_INFO *handshakeInfo,
-						 void *data, int *dataLength );
-int unwrapPremasterSecret( SESSION_INFO *sessionInfoPtr, 
-						   SSL_HANDSHAKE_INFO *handshakeInfo,
-						   const void *data, const int dataLength );
-int premasterToMaster( const SESSION_INFO *sessionInfoPtr, 
-					   const SSL_HANDSHAKE_INFO *handshakeInfo, 
-					   void *masterSecret, const int masterSecretLength );
-int masterToKeys( const SESSION_INFO *sessionInfoPtr, 
-				  const SSL_HANDSHAKE_INFO *handshakeInfo, 
-				  const void *masterSecret, const int masterSecretLength,
-				  void *keyBlock, const int keyBlockLength );
-int loadKeys( SESSION_INFO *sessionInfoPtr, 
-			  const SSL_HANDSHAKE_INFO *handshakeInfo, 
-			  const BOOLEAN isClient, const void *keyBlock );
-int loadExplicitIV( SESSION_INFO *sessionInfoPtr, STREAM *stream );
-int encryptData( const SESSION_INFO *sessionInfoPtr, BYTE *data,
-				 const int dataLength );
-int decryptData( SESSION_INFO *sessionInfoPtr, BYTE *data,
-				 const int dataLength );
-int dualMacData( const SSL_HANDSHAKE_INFO *handshakeInfo, 
-				 const STREAM *stream, const BOOLEAN isRawData );
+CHECK_RETVAL \
+int encryptData( const SESSION_INFO *sessionInfoPtr, 
+				 INOUT_BUFFER( dataMaxLength, *dataLength ) \
+				 BYTE *data, const int dataMaxLength,
+				 int *dataLength,
+				 const int payloadLength ) \
+				 STDC_NONNULL_ARG( ( 1, 2, 4 ) );
+				 /* This one's a bit tricky, the input is 
+				    { data, payloadLength } which is padded (if necessary) 
+					and the padded length returned in 'dataLength' */
+CHECK_RETVAL \
+int decryptData( SESSION_INFO *sessionInfoPtr, 
+				 INOUT_BUFFER_FIXED( dataLength ) \
+				 BYTE *data, const int dataLength, 
+				 OUT int *processedDataLength ) \
+				 STDC_NONNULL_ARG( ( 1, 2, 4 ) );
+				/* This one's also tricky, the entire data block will be 
+				   processed but only 'processedDataLength' bytes of result 
+				   are valid output */
+CHECK_RETVAL \
+int dualMacDataRead( const SSL_HANDSHAKE_INFO *handshakeInfo, 
+					 INOUT STREAM *stream ) \
+					 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int dualMacDataWrite( const SSL_HANDSHAKE_INFO *handshakeInfo, 
+					  INOUT STREAM *stream ) \
+					  STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
 int completeSSLDualMAC( const CRYPT_CONTEXT md5context,
-						const CRYPT_CONTEXT sha1context, BYTE *hashValues, 
-						const char *label, const BYTE *masterSecret );
+						const CRYPT_CONTEXT sha1context, 
+						OUT_BUFFER( hashValuesMaxLen, *hashValuesLen )
+						BYTE *hashValues, const int hashValuesMaxLen,
+						int *hashValuesLen,
+						IN_BUFFER( labelLength ) \
+						const char *label, const int labelLength, 
+						IN_BUFFER( masterSecretLen ) \
+						const BYTE *masterSecret, const int masterSecretLen ) \
+						STDC_NONNULL_ARG( ( 3, 5, 6, 8 ) );
+CHECK_RETVAL \
 int completeTLSHashedMAC( const CRYPT_CONTEXT md5context,
-						  const CRYPT_CONTEXT sha1context, BYTE *hashValues, 
-						  const char *label, const BYTE *masterSecret );
-int macDataSSL( SESSION_INFO *sessionInfoPtr, const void *data,
-				const int dataLength, const int type, const BOOLEAN isRead, 
-				const BOOLEAN noReportError );
-int macDataTLS( SESSION_INFO *sessionInfoPtr, const void *data,
-				const int dataLength, const int type, const BOOLEAN isRead, 
-				const BOOLEAN noReportError );
+						  const CRYPT_CONTEXT sha1context, 
+						  OUT_BUFFER( hashValuesMaxLen, *hashValuesLen )
+						  BYTE *hashValues, const int hashValuesMaxLen,
+						  int *hashValuesLen,
+						  IN_BUFFER( labelLength ) \
+						  const char *label, const int labelLength, 
+						  IN_BUFFER( masterSecretLen ) \
+						  const BYTE *masterSecret, const int masterSecretLen ) \
+						  STDC_NONNULL_ARG( ( 3, 5, 6, 8 ) );
+CHECK_RETVAL \
+int createMacSSL( INOUT SESSION_INFO *sessionInfoPtr, 
+				  OUT_BUFFER( dataMaxLength, *dataLength ) \
+				  void *data, const int dataMaxLength, int *dataLength,
+				  const int payloadLength, const int type ) \
+				  STDC_NONNULL_ARG( ( 1, 2, 4 ) );
+CHECK_RETVAL \
+int createMacTLS( INOUT SESSION_INFO *sessionInfoPtr, 
+				  OUT_BUFFER( dataMaxLength, *dataLength ) \
+				  void *data, const int dataMaxLength, int *dataLength,
+				  const int payloadLength, const int type ) \
+				  STDC_NONNULL_ARG( ( 1, 2, 4 ) );
+CHECK_RETVAL \
+int checkMacSSL( INOUT SESSION_INFO *sessionInfoPtr, 
+				 IN_BUFFER( dataLength ) \
+				 const void *data, const int dataLength, 
+				 const int payloadLength, const int type, 
+				 const BOOLEAN noReportError ) \
+				 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int checkMacTLS( INOUT SESSION_INFO *sessionInfoPtr, 
+				 IN_BUFFER( dataLength ) \
+				 const void *data, const int dataLength, 
+				 const int payloadLength, const int type, 
+				 const BOOLEAN noReportError ) \
+				 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
 int createCertVerify( const SESSION_INFO *sessionInfoPtr,
 					  const SSL_HANDSHAKE_INFO *handshakeInfo,
-					  STREAM *stream );
+					  INOUT STREAM *stream ) \
+					  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
 int checkCertVerify( const SESSION_INFO *sessionInfoPtr,
 					 const SSL_HANDSHAKE_INFO *handshakeInfo,
-					 STREAM *stream, const int sigLength );
-int createKeyexSignature( SESSION_INFO *sessionInfoPtr, 
-						  SSL_HANDSHAKE_INFO *handshakeInfo,
-						  STREAM *stream, const void *keyData, 
-						  const int keyDataLength );
-int checkKeyexSignature( SESSION_INFO *sessionInfoPtr, 
-						 SSL_HANDSHAKE_INFO *handshakeInfo,
-						 STREAM *stream, const void *keyData, 
-						 const int keyDataLength );
+					 INOUT STREAM *stream, const int sigLength ) \
+					 STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL \
+int createKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr, 
+						  INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+						  INOUT STREAM *stream, 
+						  IN_BUFFER( keyDataLength ) \
+						  const void *keyData, const int keyDataLength ) \
+						  STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) );
+CHECK_RETVAL \
+int checkKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr, 
+						 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+						 INOUT STREAM *stream, 
+						 IN_BUFFER( keyDataLength ) \
+						 const void *keyData, const int keyDataLength ) \
+						 STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) );
 
 /* Prototypes for session mapping functions */
 
-void initSSLclientProcessing( SSL_HANDSHAKE_INFO *handshakeInfo );
-void initSSLserverProcessing( SSL_HANDSHAKE_INFO *handshakeInfo );
+void initSSLclientProcessing( SSL_HANDSHAKE_INFO *handshakeInfo ) \
+							  STDC_NONNULL_ARG( ( 1 ) );
+void initSSLserverProcessing( SSL_HANDSHAKE_INFO *handshakeInfo ) \
+							  STDC_NONNULL_ARG( ( 1 ) );
 
 #endif /* _SSL_DEFINED */

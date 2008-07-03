@@ -20,9 +20,13 @@
 
 /* General includes */
 
+#if defined( __GNUC__ )
+  #define _GNU_SOURCE
+#endif /* Needed for newer functions like setresuid() */
 #include <stdio.h>
 #include <time.h>
 #include "crypt.h"
+#include "random/random.h"
 
 /* Unix and Unix-like systems share the same makefile, make sure that the
    user isn't trying to use the Unix randomness code under a non-Unix (but
@@ -103,7 +107,7 @@
   #include <sys/shm.h>
 #endif /* QNX || Cygwin */
 #if defined( __linux__ ) && ( defined(__i386__) || defined(__x86_64__) )
-  #include <linux/timex.h>	/* For rdtsc() */
+  #include <sys/timex.h>	/* For rdtsc() */
 #endif /* Linux on x86 */
 #include <signal.h>
 #include <sys/socket.h>
@@ -149,6 +153,15 @@
 /* The size of the intermediate buffer used to accumulate polled data */
 
 #define RANDOM_BUFSIZE	4096
+#if RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT
+  #error RANDOM_BUFSIZE exceeds randomness accumulator size
+#endif /* RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT */
+
+/* A special form of the ENSURES() predicate used in the forked child 
+   process, which calls exit() rather than returning */
+
+#define ENSURES_EXIT( x ) \
+		if( !( x ) ) { assert( INTERNAL_ERROR ); exit( -1 ); }
 
 /* The structure containing information on random-data sources.  Each record 
    contains the source and a relative estimate of its usefulness (weighting) 
@@ -219,7 +232,7 @@
 #define SC( weight )	( 1024 / weight )	/* Scale factor */
 #define SC_0			16384				/* SC( SC_0 ) evalutes to 0 */
 
-static struct RI {
+typedef struct {
 	const char *path;		/* Path to check for existence of source */
 	const char *arg;		/* Args for source */
 	const int usefulness;	/* Usefulness of source */
@@ -228,12 +241,17 @@ static struct RI {
 	pid_t pid;				/* pid of child for waitpid() */
 	int length;				/* Quantity of output produced */
 	const BOOLEAN hasAlternative;	/* Whether source has alt.location */
-	} dataSources[] = {
+	} DATA_SOURCE_INFO;
+
+static DATA_SOURCE_INFO dataSources[] = {
 	/* Sources that are always polled */
 	{ "/bin/vmstat", "-s", SC( -3 ), NULL, 0, 0, 0, TRUE },
 	{ "/usr/bin/vmstat", "-s", SC( -3 ), NULL, 0, 0, 0, FALSE },
 	{ "/bin/vmstat", "-c", SC( -3 ), NULL, 0, 0, 0, TRUE },
 	{ "/usr/bin/vmstat", "-c", SC( -3 ), NULL, 0, 0, 0, FALSE },
+#if defined( __APPLE__ )
+	{ "/usr/bin/vm_stat", NULL, SC( -3 ), NULL, 0, 0, 0, FALSE },
+#endif /* Mach version of vmstat */
 	{ "/usr/bin/pfstat", NULL, SC( -2 ), NULL, 0, 0, 0, FALSE },
 	{ "/bin/vmstat", "-i", SC( -2 ), NULL, 0, 0, 0, TRUE },
 	{ "/usr/bin/vmstat", "-i", SC( -2 ), NULL, 0, 0, 0, FALSE },
@@ -268,6 +286,8 @@ static struct RI {
 	{ "/usr/sbin/snmpstat", "-in localhost public", SC( SC_0 ), NULL, 0, 0, 0, FALSE }, /* Subset of netstat info */
 	{ "/usr/sbin/snmpstat", "-Sn localhost public", SC( SC_0 ), NULL, 0, 0, 0, FALSE },
 #endif /* SCO/UnixWare vs.everything else */
+	{ "/usr/bin/smartctl", "-A /dev/hda" , SC( 1 ), NULL, 0, 0, 0, FALSE },
+	{ "/usr/bin/smartctl", "-A /dev/hdb" , SC( 1 ), NULL, 0, 0, 0, FALSE },
 	{ "/usr/bin/mpstat", NULL, SC( 1 ), NULL, 0, 0, 0, FALSE },
 	{ "/usr/bin/w", NULL, SC( 1 ), NULL, 0, 0, 0, TRUE },
 	{ "/usr/bsd/w", NULL, SC( 1 ), NULL, 0, 0, 0, FALSE },
@@ -334,8 +354,10 @@ static struct RI {
 	{ "/usr/sbin/prtconf", "-v", SC( SC_0 ), NULL, 0, 0, 0, FALSE },
 #endif /* SunOS/Slowaris */
 	{ "/usr/sbin/psrinfo", NULL, SC( SC_0 ), NULL, 0, 0, 0, FALSE },
-	{ "/usr/local/bin/lsof", "-lnwP", SC( 0.3 ), NULL, 0, 0, 0, FALSE },
-							/* Output is very system and version-dependent */
+	{ "/usr/bin/lsof", "-blnwP", SC( 0.3 ), NULL, 0, 0, 0, TRUE },
+	{ "/usr/local/bin/lsof", "-blnwP", SC( 0.3 ), NULL, 0, 0, 0, FALSE },
+							/* Output is very system and version-dependent
+							   and can also be extremely voluminous */
 	{ "/usr/sbin/snmp_request", "localhost public get 1.3.6.1.2.1.5.1.0", SC( 0.1 ), NULL, 0, 0, 0, FALSE }, /* ICMP ? */
 	{ "/usr/sbin/snmp_request", "localhost public get 1.3.6.1.2.1.5.3.0", SC( 0.1 ), NULL, 0, 0, 0, FALSE }, /* ICMP ? */
 	{ "/etc/arp", "-a", SC( 0.1 ), NULL, 0, 0, 0, TRUE },
@@ -370,7 +392,8 @@ static struct RI {
 #endif /* 0 */
 
 	/* End-of-sources marker */
-	{ NULL, NULL, 0, NULL, 0, 0, 0, FALSE }
+	{ NULL, NULL, 0, NULL, 0, 0, 0, FALSE }, 
+		{ NULL, NULL, 0, NULL, 0, 0, 0, FALSE }
 	};
 
 /* Variables to manage the child process that fills the buffer */
@@ -404,7 +427,8 @@ typedef struct {
 
 #include <syscall.h>
 
-static int getrusage( int who, struct rusage *rusage )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int getrusage( int who, OUT struct rusage *rusage )
 	{
 	return( syscall( SYS_getrusage, who, rusage ) );
 	}
@@ -415,7 +439,9 @@ static int getrusage( int who, struct rusage *rusage )
 /* MVS USS and PHUX don't have wait4() so we emulate it with waitpid() and
    getrusage() */
 
-pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) \
+pid_t wait4( pid_t pid, OUT int *status, int options, 
+			 OUT struct rusage *rusage )
 	{
 	const pid_t waitPid = waitpid( pid, status, options );
 
@@ -429,7 +455,9 @@ pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
 
 #if defined( _CRAY ) || ( defined( __QNX__ ) && OSVERSION <= 4 )
 
-pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) \
+pid_t wait4( pid_t pid, OUT int *status, int options, 
+			 OUT struct rusage *rusage )
 	{
 	return( waitpid( pid, status, options ) );
 	}
@@ -456,17 +484,14 @@ pid_t wait4( pid_t pid, int *status, int options, struct rusage *rusage )
 
    Aut viam inveniam aut faciam */
 
-static FILE *my_popen( struct RI *entry )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static FILE *my_popen( INOUT DATA_SOURCE_INFO *entry )
 	{
 	int pipedes[ 2 + 8 ];
 	FILE *stream;
 
 	/* Sanity check for stdin and stdout */
-	if( STDIN_FILENO > 1 || STDOUT_FILENO > 1 )
-		{
-		assert( NOTREACHED );
-		return NULL;
-		}
+	REQUIRES_N( STDIN_FILENO <= 1 && STDOUT_FILENO <= 1 );
 
 	/* Create the pipe.  Note that under QNX the pipe resource manager
 	   'pipe' must be running in order to use pipes */
@@ -514,14 +539,13 @@ static FILE *my_popen( struct RI *entry )
 
 	if( entry->pid == ( pid_t ) 0 )
 		{
-		struct passwd *passwd;
 		int fd;
 
 		/* We are the child, connect the read side of the pipe to stdout and
 		   unplug stdin and stderr */
 		if( dup2( pipedes[ STDOUT_FILENO ], STDOUT_FILENO ) < 0 )
 			exit( 127 );
-		if( ( fd = open ( "/dev/null", O_RDWR ) ) > 0 )
+		if( ( fd = open( "/dev/null", O_RDWR ) ) > 0 )
 			{
 			dup2( fd, STDIN_FILENO );
 			dup2( fd, STDERR_FILENO );
@@ -531,28 +555,51 @@ static FILE *my_popen( struct RI *entry )
 		/* If we're root, give up our permissions to make sure that we don't
 		   inadvertently read anything sensitive.  If the getpwnam() fails
 		   (this can happen if we're chrooted with no "nobody" entry in the
-		   local passwd file) we default to -1, which is usually nobody.  We
-		   don't check whether this succeeds since it's not a major security
-		   problem but just a precaution */
+		   local passwd file) we default to -1, which is usually nobody.  
+		   The newer setreXid() and setresXid() calls use a parameter value 
+		   of -1 to indicate "don't change this value" so this isn't 
+		   possible any longer, but then there's not really much else that 
+		   we can do at this point.
+		   
+		   We don't check whether the change succeeds since it's not a major 
+		   security problem but just a precaution */
 		if( geteuid() == 0 )
 			{
 			static uid_t gathererUID = ( uid_t ) -1, gathererGID = ( uid_t ) -1;
 
-			if( gathererProcess == ( uid_t ) -1 && \
-				( passwd = getpwnam( "nobody" ) ) != NULL )
+			if( gathererUID == ( uid_t ) -1 )
 				{
-				gathererUID = passwd->pw_uid;
-				gathererGID = passwd->pw_gid;
+				struct passwd *passwd;
+
+				passwd = getpwnam( "nobody" );
+				if( passwd != NULL )
+					{
+					gathererUID = passwd->pw_uid;
+					gathererGID = passwd->pw_gid;
+					}
+				else
+					{
+					assert( DEBUG_WARN );
+					}
 				}
-#if 0		/* Not available on some OSes */
-			setgid( gathererGID );
-			setegid( gathererGID );
-			setuid( gathererUID );
-			seteuid( gathererUID );
+			if( gathererUID != ( uid_t ) -1 )
+				{
+#if 0			/* Not available on some OSes */
+				setuid( gathererUID );
+				seteuid( gathererUID );
+				setgid( gathererGID );
+				setegid( gathererGID );
 #else
-			setregid( gathererGID, gathererGID );
-			setreuid( gathererUID, gathererUID );
+  #if( defined( __linux__ ) || ( defined( __FreeBSD__ ) && OSVERSION >= 5 ) || \
+	   ( defined( __hpux ) && OSVERSION >= 11 ) )
+				setresuid( gathererUID, gathererUID, gathererUID );
+				setresgid( gathererGID, gathererGID, gathererGID );
+  #else
+				setreuid( gathererUID, gathererUID );
+				setregid( gathererGID, gathererGID );
+  #endif /* OSses with setresXid() */
 #endif /* 0 */
+				}
 			}
 
 		/* Close the pipe descriptors */
@@ -596,7 +643,9 @@ static FILE *my_popen( struct RI *entry )
 	return( stream );
 	}
 
-static int my_pclose( struct RI *entry, struct rusage *rusage )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int my_pclose( INOUT DATA_SOURCE_INFO *entry, 
+					  INOUT struct rusage *rusage )
 	{
 	pid_t pid;
 	int iterationCount = 0, status = 0;
@@ -663,8 +712,10 @@ void fastPoll( void )
 #if defined( _POSIX_TIMERS ) && ( _POSIX_TIMERS > 0 ) && 0	/* See below */
 	struct timespec timeSpec;
 #endif /* _POSIX_TIMERS > 0 */
+	int status;
 
-	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	status = initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	ENSURES_V( cryptStatusOK( status ) );
 
 	/* Mix in the process ID.  This doesn't change per process but will
 	   change if the process forks, ensuring that the parent and child data
@@ -748,7 +799,11 @@ void fastPoll( void )
 
 /* Slowaris-specific slow poll using kstat, which provides kernel statistics.
    Since there can be a hundred or more of these, we use a larger-than-usual
-   intermediate buffer to cut down on kernel traffic */
+   intermediate buffer to cut down on kernel traffic.
+   
+   Unfortunately Slowaris is the only OS that provides this interface, some
+   of the *BSDs have kenv, but this just returns fixed information like PCI
+   bus device addresses and so on, and isn't useful for providing entropy */
 
 #if ( defined( sun ) && ( OSVERSION >= 5 ) )
 
@@ -757,6 +812,7 @@ void fastPoll( void )
 
 #define BIG_RANDOM_BUFSIZE	( RANDOM_BUFSIZE * 2 )
 
+CHECK_RETVAL \
 static int getKstatData( void )
 	{
 	kstat_ctl_t *kc;
@@ -814,6 +870,7 @@ static int getKstatData( void )
 #define USE_PROC
 #include <sys/procfs.h>
 
+CHECK_RETVAL \
 static int getProcData( void )
 	{
 #ifdef PIOCSTATUS
@@ -828,14 +885,21 @@ static int getProcData( void )
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	char fileName[ 128 + 8 ];
-	int fd, noEntries = 0, quality;
+	int fd, noEntries = 0, quality, status;
 
 	/* Try and open the process info for this process */
 	sprintf_s( fileName, 128, "/proc/%d", getpid() );
 	if( ( fd = open( fileName, O_RDONLY ) ) == -1 )
 		return( 0 );
+	if( fd <= 2 )
+		{
+		/* We've been given a standard I/O handle, something's wrong */
+		close( fd );
+		return( 0 );
+		}
 
-	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	status = initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	ENSURES_EXT( cryptStatusOK( status ), 0 );
 
 	/* Get the process status information, misc information, and resource
 	   usage */
@@ -891,11 +955,12 @@ static int getProcData( void )
 
 #define DEVRANDOM_BYTES		128
 
+CHECK_RETVAL \
 static int getDevRandomData( void )
 	{
 	MESSAGE_DATA msgData;
 	BYTE buffer[ DEVRANDOM_BYTES + 8 ];
-#if defined( __APPLE__ ) || ( defined( __FreeBSD__ ) && OSVERSION == 5 )
+#if defined( __APPLE__ ) || ( defined( __FreeBSD__ ) && OSVERSION >= 5 )
 	static const int quality = 50;	/* See comment below */
 #else
 	static const int quality = 75;
@@ -905,24 +970,34 @@ static int getDevRandomData( void )
 	/* Check whether there's a /dev/random present */
 	if( ( randFD = open( "/dev/urandom", O_RDONLY ) ) < 0 )
 		return( 0 );
+	if( randFD <= 2 )
+		{
+		/* We've been given a standard I/O handle, something's wrong */
+		close( randFD );
+		return( 0 );
+		}
 
 	/* Read data from /dev/urandom, which won't block (although the quality
 	   of the noise is less).  We only assign this a 75% quality factor to
 	   ensure that we still get randomness from other sources as well.  Under
 	   FreeBSD 5.x and OS X, the /dev/random implementation is broken, using
 	   a pretend dev-random implemented with Yarrow and a 160-bit pool, so
-	   we only assign a 50% quality factor. These generators also lie about
+	   we only assign a 50% quality factor.  These generators also lie about
 	   entropy, with both /random and /urandom being the same PRNG-based
 	   implementation */
 	noBytes = read( randFD, buffer, DEVRANDOM_BYTES );
 	close( randFD );
 	if( noBytes < 1 )
-		return( 0 );
+		{
 #ifdef DEBUG_RANDOM
-	printf( __FILE__ ": /dev/random contributed %d bytes.\n",
-			DEVRANDOM_BYTES );
+		printf( __FILE__ ": /dev/random read failed.\n" );
 #endif /* DEBUG_RANDOM */
-	setMessageData( &msgData, buffer, DEVRANDOM_BYTES );
+		return( 0 );
+		}
+#ifdef DEBUG_RANDOM
+	printf( __FILE__ ": /dev/random contributed %d bytes.\n", noBytes );
+#endif /* DEBUG_RANDOM */
+	setMessageData( &msgData, buffer, noBytes );
 	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S, &msgData,
 					 CRYPT_IATTRIBUTE_ENTROPY );
 	zeroise( buffer, DEVRANDOM_BYTES );
@@ -935,6 +1010,7 @@ static int getDevRandomData( void )
 
 /* egd/prngd interface */
 
+CHECK_RETVAL \
 static int getEGDdata( void )
 	{
 	static const char *egdSources[] = {
@@ -952,7 +1028,7 @@ static int getEGDdata( void )
 	if( sockFD < 0 )
 		return( 0 );
 	for( egdIndex = 0; egdSources[ egdIndex ] != NULL && \
-					   egdIndex < FAILSAFE_ITERATIONS_SMALL; 
+					   egdIndex < FAILSAFE_ARRAYSIZE( egdSources, char * ); 
 		 egdIndex++ )
 		{
 		struct sockaddr_un sockAddr;
@@ -965,8 +1041,7 @@ static int getEGDdata( void )
 					 sizeof( struct sockaddr_un ) ) >= 0 )
 			break;
 		}
-	if( egdIndex >= FAILSAFE_ITERATIONS_SMALL )
-		retIntError();
+	ENSURES( egdIndex < FAILSAFE_ARRAYSIZE( egdSources, char * ) );
 	if( egdSources[ egdIndex ] == NULL )
 		{
 		close( sockFD );
@@ -994,12 +1069,17 @@ static int getEGDdata( void )
 		}
 	close( sockFD );
 	if( ( status < 0 ) || ( status != noBytes ) )
+		{
+#ifdef DEBUG_RANDOM
+	printf( __FILE__ ": EGD (%s) read failed.\n", egdSources[ egdIndex ] );
+#endif /* DEBUG_RANDOM */
 		return( 0 );
+		}
 
 	/* Send the data to the pool */
 #ifdef DEBUG_RANDOM
 	printf( __FILE__ ": EGD (%s) contributed %d bytes.\n",
-			egdSources[ egdIndex ], DEVRANDOM_BYTES );
+			egdSources[ egdIndex ], noBytes );
 #endif /* DEBUG_RANDOM */
 	setMessageData( &msgData, buffer, noBytes );
 	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S, &msgData,
@@ -1012,58 +1092,86 @@ static int getEGDdata( void )
 	return( quality );
 	}
 
-/* Named process information /procfs interface */
+/* Named process information /procfs interface.  Each source is given a 
+   weighting of 1-3, with 1 being a static (although unpredictable) source,
+   2 being a slowly-changing source, and 3 being a rapidly-changing
+   source */
 
+CHECK_RETVAL \
 static int getProcFSdata( void )
 	{
-	static const char *procSources[] = {
-		"/proc/interrupts", "/proc/loadavg", "/proc/locks", "/proc/meminfo",
-		"/proc/net/dev", "/proc/net/ipx", "/proc/net/netstat",
-		"/proc/net/rt_cache_stat", "/proc/net/snmp",
-		"/proc/net/softnet_stat", "/proc/net/tcp", "/proc/net/udp",
-		"/proc/slabinfo", "/proc/stat", "/proc/sys/fs/inode-state",
-		"/proc/sys/fs/file-nr", "/proc/sys/fs/dentry-state",
-		"/proc/sysvipc/msg", "/proc/sysvipc/sem", "/proc/sysvipc/shm",
-		NULL, NULL };
+	typedef struct {
+		const char *source;
+		const int value;
+		} PROCSOURCE_INFO;
+	static const PROCSOURCE_INFO procSources[] = {
+		{ "/proc/diskstats", 2 }, { "/proc/interrupts", 3 },
+		{ "/proc/loadavg", 2 }, { "/proc/locks", 1 },
+		{ "/proc/meminfo", 3 }, { "/proc/net/dev", 2 },
+		{ "/proc/net/ipx", 2 }, { "/proc/modules", 1 },
+		{ "/proc/mounts", 1 }, { "/proc/net/netstat", 2 },
+		{ "/proc/net/rt_cache", 1 }, { "/proc/net/rt_cache_stat", 3 },
+		{ "/proc/net/snmp", 2 }, { "/proc/net/softnet_stat", 2 },
+		{ "/proc/net/stat/arp_cache", 3 }, { "/proc/net/stat/ndisc_cache", 2 },
+		{ "/proc/net/stat/rt_cache", 3 }, { "/proc/net/tcp", 3 },
+		{ "/proc/net/udp", 2 }, { "/proc/net/wireless", 2 },
+		{ "/proc/slabinfo", 3 }, { "/proc/stat", 3 },
+		{ "/proc/sys/fs/inode-state", 1 }, { "/proc/sys/fs/file-nr", 1 },
+		{ "/proc/sys/fs/dentry-state", 1 }, { "/proc/sysvipc/msg", 1 },
+		{ "/proc/sysvipc/sem", 1 }, { "/proc/sysvipc/shm", 1 },
+		{ "/proc/zoneinfo", 3 },
+		{ NULL, 0 }, { NULL, 0 }
+		};
 	MESSAGE_DATA msgData;
 	BYTE buffer[ 1024 + 8 ];
-	int procIndex, procFD, procCount = 0, quality;
+	int procIndex, procFD, procValue = 0, quality;
 
 	/* Read the first 1K of data from some of the more useful sources (most
 	   of these produce far less than 1K output) */
-	for( procIndex = 0; procSources[ procIndex ] != NULL && \
-						procIndex < FAILSAFE_ITERATIONS_MED; 
+	for( procIndex = 0; 
+		 procSources[ procIndex ].source != NULL && \
+			procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO );
 		 procIndex++ )
 		{
-		if( ( procFD = open( procSources[ procIndex ], O_RDONLY ) ) >= 0 )
-			{
-			const int count = read( procFD, buffer, 1024 );
+		int count, status;
 
-			if( count > 16 )
-				{
-#ifdef DEBUG_RANDOM
-				printf( __FILE__ ": %s contributed %d bytes.\n",
-						procSources[ procIndex ], count );
-#endif /* DEBUG_RANDOM */
-				setMessageData( &msgData, buffer, count );
-				krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								 IMESSAGE_SETATTRIBUTE_S, &msgData,
-								 CRYPT_IATTRIBUTE_ENTROPY );
-				procCount++;
-				}
+		/* Try and open the data source */
+		procFD = open( procSources[ procIndex ].source, O_RDONLY );
+		if( procFD < 0 )
+			continue;
+		if( procFD <= 2 )
+			{
+			/* We've been given a standard I/O handle, something's wrong */
 			close( procFD );
+			return( 0 );
 			}
+
+		/* Read data from the source */
+		count = read( procFD, buffer, 1024 );
+		if( count > 16 )
+			{
+#ifdef DEBUG_RANDOM
+			printf( __FILE__ ": %s contributed %d bytes.\n",
+					procSources[ procIndex ].source, count );
+#endif /* DEBUG_RANDOM */
+			setMessageData( &msgData, buffer, count );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_ENTROPY );
+			if( cryptStatusOK( status ) )
+				procValue += procSources[ procIndex ].value;
+			}
+		close( procFD );
 		}
-	if( procIndex >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO ) );
 	zeroise( buffer, 1024 );
-	if( procCount < 5 )
+	if( procValue < 5 )
 		return( 0 );
 
-	/* Produce an estimate of the data's value.  We require that we get at
-	   least 5 entries and give them a maximum value of 50 to ensure that
-	   some data is still coming from other sources */
-	quality = min( procCount * 3, 50 );
+	/* Produce an estimate of the data's value.  We require that we get a
+	   quality value of at least 5 and limit it to a maximum value of 50 to 
+	   ensure that some data is still coming from other sources */
+	quality = min( procValue, 50 );
 	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
 					 ( void * ) &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 	return( quality );
@@ -1071,8 +1179,11 @@ static int getProcFSdata( void )
 
 /* Get data from an entropy source */
 
-static int getEntropySourceData( struct RI *dataSource, BYTE *bufPtr,
-								 const int bufSize, int *bufPos )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int getEntropySourceData( INOUT DATA_SOURCE_INFO *dataSource, 
+								 OUT_BUFFER( bufSize, *bufPos ) BYTE *bufPtr, 
+								 IN_LENGTH const int bufSize, 
+								 OUT_LENGTH int *bufPos )
 	{
 	int bufReadPos = 0, bufWritePos = 0;
 	size_t noBytes;
@@ -1168,8 +1279,7 @@ static void childPollingProcess( const int existingEntropy )
 #else
 	int maxFD = 0;
 #endif /* OS-specific brokenness */
-	int usefulness = 0;
-	int fd, bufPos, i, iterationCount;
+	int usefulness = 0, fdIndex, bufPos, i, iterationCount, status;
 
 	/* General housekeeping: Make sure that we can never dump core, and close
 	   all inherited file descriptors.  We need to do this because if we
@@ -1200,14 +1310,14 @@ static void childPollingProcess( const int existingEntropy )
 	   bomb type shutdown that only zeroises senstive information while
 	   leaving structures intact */
 	setrlimit( RLIMIT_CORE, &rl );
-	for( fd = getdtablesize() - 1; fd > STDOUT_FILENO; fd-- )
-		close( fd );
+	for( fdIndex = getdtablesize() - 1; fdIndex > STDOUT_FILENO; fdIndex-- )
+		close( fdIndex );
 	fclose( stderr );	/* Arrghh!!  It's Stuart code!! */
 
 	/* Fire up each randomness source */
 	FD_ZERO( &fds );
 	for( i = 0; dataSources[ i ].path != NULL && \
-				i < FAILSAFE_ITERATIONS_LARGE; i++ )
+				i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ); i++ )
 		{
 		/* Check for the end-of-lightweight-sources marker */
 		if( dataSources[ i ].path[ 0 ] == '\0' )
@@ -1268,6 +1378,7 @@ static void childPollingProcess( const int existingEntropy )
 		   them */
 		iterationCount = 0;
 		while( dataSources[ i ].hasAlternative && \
+			   i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) && \
 			   iterationCount++ < FAILSAFE_ITERATIONS_MED ) 
 			{
 #ifdef DEBUG_RANDOM
@@ -1275,20 +1386,20 @@ static void childPollingProcess( const int existingEntropy )
 #endif /* DEBUG_RANDOM */
 			i++;
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError_Void();
+		ENSURES_EXIT( iterationCount < FAILSAFE_ITERATIONS_MED );
+					  /* i is checked as part of the loop control */
 		}
-	if( i >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError_Void();
+	ENSURES_EXIT( i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) );
 	gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
 	bufPos = sizeof( GATHERER_INFO );	/* Start of buf.has status info */
 
 	/* Suck up all of the data that we can get from each of the sources */
-	moreSources = TRUE;
-	setMonoTimer( &timerInfo, SLOWPOLL_TIMEOUT );
-	iterationCount = 0;
-	while( moreSources && bufPos < gathererBufSize && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+	status = setMonoTimer( &timerInfo, SLOWPOLL_TIMEOUT );
+	ENSURES_EXIT( cryptStatusOK( status ) );
+	for( moreSources = TRUE, iterationCount = 0;
+		 moreSources && bufPos < gathererBufSize && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX; 
+		 iterationCount++ )
 		{
 		/* Wait for data to become available from any of the sources, with a
 		   timeout of 10 seconds.  This adds even more randomness since data
@@ -1306,7 +1417,8 @@ static void childPollingProcess( const int existingEntropy )
 
 		/* One of the sources has data available, read it into the buffer */
 		for( i = 0; dataSources[ i ].path != NULL && \
-					i < FAILSAFE_ITERATIONS_LARGE; i++ )
+					i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ); 
+			 i++ )
 			{
 			if( dataSources[ i ].pipe != NULL && \
 				FD_ISSET( dataSources[ i ].pipeFD, &fds ) )
@@ -1315,14 +1427,14 @@ static void childPollingProcess( const int existingEntropy )
 													gathererBufSize - bufPos,
 													&bufPos );
 			}
-		if( i >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError_Void();
+		ENSURES_EXIT( i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) );
 
 		/* Check if there's more input available on any of the sources */
 		moreSources = FALSE;
 		FD_ZERO( &fds );
 		for( i = 0; dataSources[ i ].path != NULL && \
-					i < FAILSAFE_ITERATIONS_LARGE; i++ )
+					i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ); 
+			 i++ )
 			{
 			if( dataSources[ i ].pipe != NULL )
 				{
@@ -1330,8 +1442,7 @@ static void childPollingProcess( const int existingEntropy )
 				moreSources = TRUE;
 				}
 			}
-		if( i >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError_Void();
+		ENSURES_EXIT( i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) );
 
 		/* If we've gone over our time limit, kill anything still hanging
 		   around and exit.  This prevents problems with input from blocked
@@ -1339,7 +1450,8 @@ static void childPollingProcess( const int existingEntropy )
 		if( checkMonoTimerExpired( &timerInfo ) )
 			{
 			for( i = 0; dataSources[ i ].path != NULL && \
-						i < FAILSAFE_ITERATIONS_LARGE; i++ )
+						i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ); 
+				 i++ )
 				{
 				if( dataSources[ i ].pipe != NULL )
 					{
@@ -1353,8 +1465,7 @@ static void childPollingProcess( const int existingEntropy )
 					dataSources[ i ].pid = 0;
 					}
 				}
-			if( i >= FAILSAFE_ITERATIONS_LARGE )
-				retIntError_Void();
+			ENSURES_EXIT( i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) );
 			moreSources = FALSE;
 #ifdef DEBUG_RANDOM
 			puts( __FILE__ ": Poll timed out, probably due to blocked data "
@@ -1362,8 +1473,7 @@ static void childPollingProcess( const int existingEntropy )
 #endif /* DEBUG_RANDOM */
 			}
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Void();
+	ENSURES_EXIT( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	gathererInfo->usefulness = usefulness;
 	gathererInfo->noBytes = bufPos;
 #ifdef DEBUG_RANDOM
@@ -1410,18 +1520,7 @@ static void childPollingProcess( const int existingEntropy )
 void slowPoll( void )
 	{
 	struct sigaction act;
-#if defined( _CRAY ) || defined( __hpux ) || defined( _M_XENIX ) || \
-	defined( __aux )
-  #if defined( _SC_PAGESIZE )
-	const int pageSize = sysconf( _SC_PAGESIZE );
-  #elif defined( _SC_PAGE_SIZE )
-	const int pageSize = sysconf( _SC_PAGE_SIZE );
-  #else
-	const int pageSize = 4096;	/* Close enough for most systems */
-  #endif /* Systems without getpagesize() */
-#else
-	const int pageSize = getpagesize();
-#endif /* Unix variant-specific brokenness */
+	const int pageSize = getSysVar( SYSVAR_PAGESIZE );
 	int extraEntropy = 0;
 
 	/* Make sure that we don't start more than one slow poll at a time.  The
@@ -1550,7 +1649,19 @@ void slowPoll( void )
 	gathererProcess = -1;
 	unlockPollingMutex();
 
-	/* Fork off the gatherer, the parent process returns to the caller */
+	/* Fork off the gatherer, the parent process returns to the caller.  
+	
+	   Programs using the OS X Core Foundation framework will complain if a 
+	   program calls fork() and doesn't follow it up with an exec() (which 
+	   really screws up daemonization ), printing an error message:
+
+		The process has forked and you cannot use this CoreFoundation \
+		functionality safely. You MUST exec().
+
+	   There are workarounds possible but they're daemon-specific and 
+	   involve running under launchd, which isn't really an option here.
+	   For now this is left as an OS X framework problem, there doesn't
+	   seem to be anything that we can do to fix it here */
 	if( ( gathererProcess = fork() ) != 0 )
 		{
 		/* If we're the parent, we're done */
@@ -1593,52 +1704,54 @@ static void my_sched_yield( void )
 
 #endif /* Systems without sched_yield() */
 
-void waitforRandomCompletion( const BOOLEAN force )
+CHECK_RETVAL \
+int waitforRandomCompletion( const BOOLEAN force )
 	{
+	MESSAGE_DATA msgData;
+	GATHERER_INFO *gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
+	int quality, status;
+
 	lockPollingMutex();
-	if( gathererProcess	> 0 )
+	if( gathererProcess	<= 0 )
 		{
-		MESSAGE_DATA msgData;
-		GATHERER_INFO *gathererInfo = ( GATHERER_INFO * ) gathererBuffer;
-		int quality, status;
+		/* There's no gatherer running, exit */
+		unlockPollingMutex();
 
-		/* If this is a forced shutdown, be fairly assertive with the
-		   gathering process */
-		if( force )
-			{
-			/* Politely ask the the gatherer to shut down and (try and)
-			   yield our timeslice a few times so that the shutdown can
-			   take effect. This is unfortunately somewhat implementation-
-			   dependant in that in some cases it'll only yield the current
-			   thread's timeslice rather than the overall process'
-			   timeslice, or if it's a high-priority thread it'll be
-			   scheduled again before any lower-priority threads get to
-			   run */
-			kill( gathererProcess, SIGTERM );
-			sched_yield();
-			sched_yield();
-			sched_yield();	/* Well, sync is done three times too... */
+		return( CRYPT_OK );
+		}
 
-			/* If the gatherer is still running, ask again, less
-			   politely this time */
-#if 1
-			if( kill( gathererProcess, 0 ) != -1 || errno != ESRCH )
-#else
-			if( getpgid( pid ) > 0 || errno == EPERM )
-#endif /* 1 */
-				kill( gathererProcess, SIGKILL );
-			}
+	/* If this is a forced shutdown, be fairly assertive with the gathering 
+	   process */
+	if( force )
+		{
+		/* Politely ask the the gatherer to shut down and (try and) yield 
+		   our timeslice a few times so that the shutdown can take effect. 
+		   This is unfortunately somewhat implementation-dependant in that 
+		   in some cases it'll only yield the current thread's timeslice 
+		   rather than the overall process' timeslice, or if it's a high-
+		   priority thread it'll be scheduled again before any lower-
+		   priority threads get to run */
+		kill( gathererProcess, SIGTERM );
+		sched_yield();
+		sched_yield();
+		sched_yield();	/* Well, sync is done three times too... */
 
-		/* Wait for the gathering process to finish, add the randomness it's
-		   gathered, detach and delete the shared memory (the latter is
-		   necessary because otherwise the unused ID hangs around until the
-		   process terminates), and restore the original signal handler if we
-		   replaced someone else's one.  We don't check for errors at this
-		   point (except in the debug version) since this is an invisible
-		   internal routine for which we can't easily recover from problems.
-		   Any problems are caught at a higher level by the randomness-
-		   quality checking */
-		waitpid( gathererProcess, &status, 0 );
+		/* If the gatherer is still running, ask again, less politely this 
+		   time */
+		if( kill( gathererProcess, 0 ) != -1 || errno != ESRCH )
+			kill( gathererProcess, SIGKILL );
+		}
+
+	/* Wait for the gathering process to finish and, if it was sucessful, 
+	   add the randomness that it's gathered */
+	if( waitpid( gathererProcess, &status, 0 ) >= 0 && WIFEXITED( status ) )
+		{
+		/* The child terminated normally, forward its output to the system 
+		   device.  We don't check for errors at this point (apart from 
+		   warning in the debug version) since this is an invisible internal 
+		   routine for which we can't easily recover from problems.  Any 
+		   problems are caught at a higher level by the randomness-quality 
+		   checking */
 		if( gathererInfo->noBytes > 0 && !force )
 			{
 			quality = min( gathererInfo->usefulness * 5, 100 );	/* 0-20 -> 0-100 */
@@ -1649,49 +1762,56 @@ void waitforRandomCompletion( const BOOLEAN force )
 			assert( cryptStatusOK( status ) );
 			if( quality > 0 )
 				{
-				/* On some very cut-down embedded systems the entropy
-				   quality can be zero, so we only send a quality estimate
-				   if there's actually something there */
+				/* On some very cut-down embedded systems the entropy 
+				   quality can be zero so we only send a quality estimate if 
+				   there's actually something there */
 				status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-										  IMESSAGE_SETATTRIBUTE,
-										  &quality,
+										  IMESSAGE_SETATTRIBUTE, &quality,
 										  CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 				assert( cryptStatusOK( status ) );
 				}
 			}
-		zeroise( gathererBuffer, gathererBufSize );
-#if !( defined( __QNX__ ) && OSVERSION <= 4 )
-		shmdt( gathererBuffer );
-		shmctl( gathererMemID, IPC_RMID, NULL );
-		if( gathererOldHandler.sa_handler != SIG_DFL )
-			{
-			struct sigaction oact;
-
-			/* We replaced someone else's handler for the slow poll,
-			   reinstate the original one.  Since someone else could have in
-			   turn replaced our handler, we check for this and warn the
-			   user if necessary */
-			sigaction( SIGCHLD, NULL, &oact );
-			if( oact.sa_handler != SIG_DFL )
-				{
-#ifdef DEBUG_CONFLICTS
-				/* The current handler isn't the one that we installed, warn
-				   the user */
-				fprintf( stderr, "cryptlib: SIGCHLD handler was replaced "
-						 "while slow poll was in progress,\nfile " __FILE__
-						 ", line %d.  See the source code for more\n"
-						 "information.\n", __LINE__ );
-#endif /* DEBUG_CONFLICTS */
-				}
-			else
-				/* Our handler is still in place, replace it with the
-				   original one */
-				sigaction( SIGCHLD, &gathererOldHandler, NULL );
-			}
-#endif /* !QNX 4.x */
-		gathererProcess = 0;
 		}
+	zeroise( gathererBuffer, gathererBufSize );
+
+	/* Detach and delete the shared memory (the latter is necessary because 
+	   otherwise the unused ID hangs around until the process terminates) 
+	   and restore the original signal handler if we replaced someone else's 
+	   one */
+#if !( defined( __QNX__ ) && OSVERSION <= 4 )
+	shmdt( gathererBuffer );
+	shmctl( gathererMemID, IPC_RMID, NULL );
+	if( gathererOldHandler.sa_handler != SIG_DFL )
+		{
+		struct sigaction oact;
+
+		/* We replaced someone else's handler for the slow poll, reinstate 
+		   the original one.  Since someone else could have in turn replaced 
+		   our handler, we check for this and warn the user if necessary */
+		sigaction( SIGCHLD, NULL, &oact );
+		if( oact.sa_handler != SIG_DFL )
+			{
+#ifdef DEBUG_CONFLICTS
+			/* The current handler isn't the one that we installed, warn the 
+			   user */
+			fprintf( stderr, "cryptlib: SIGCHLD handler was replaced "
+					 "while slow poll was in progress,\nfile " __FILE__
+					 ", line %d.  See the source code for more\n"
+					 "information.\n", __LINE__ );
+#endif /* DEBUG_CONFLICTS */
+			}
+		else
+			{
+			/* Our handler is still in place, replace it with the original 
+			   one */
+			sigaction( SIGCHLD, &gathererOldHandler, NULL );
+			}
+		}
+#endif /* !QNX 4.x */
+	gathererProcess = 0;
 	unlockPollingMutex();
+
+	return( CRYPT_OK );
 	}
 
 /* Check whether we've forked and we're the child.  The mechanism used varies

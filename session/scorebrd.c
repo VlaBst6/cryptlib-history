@@ -417,7 +417,9 @@ int initScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
 	assert( scoreboardSize > 16 && scoreboardSize <= 8192 );
 
-	krnlEnterMutex( MUTEX_SCOREBOARD );
+	status = krnlEnterMutex( MUTEX_SCOREBOARD );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Initialise the scoreboard */
 	memset( scoreboardInfo, 0, sizeof( SCOREBOARD_INFO ) );
@@ -449,9 +451,21 @@ int initScoreboard( SCOREBOARD_INFO *scoreboardInfo,
 
 void endScoreboard( SCOREBOARD_INFO *scoreboardInfo )
 	{
+	int status;
+
 	assert( isWritePtr( scoreboardInfo, sizeof( SCOREBOARD_INFO ) ) );
 
-	krnlEnterMutex( MUTEX_SCOREBOARD );
+	/* Shut down the scoreboard.  We acquire the mutex while we're doing 
+	   this to ensure that any threads still using it have exited before we 
+	   destroy it.  Exactly what to do if we can't acquire the mutex is a 
+	   bit complicated.  Since failing to acquire the mutex is a special-
+	   case exception condition it's not even possible to plan for this 
+	   since it's uncertain under which conditions (if ever) this situation 
+	   would occur.  For now we play it by the book and don't do anything if 
+	   we can't acquire the mutex, which is at least consistent */
+	status = krnlEnterMutex( MUTEX_SCOREBOARD );
+	if( cryptStatusError( status ) )
+		retIntError_Void();
 
 	/* Clear and free the scoreboard */
 	krnlMemfree( ( void ** ) &scoreboardInfo->data );

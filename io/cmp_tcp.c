@@ -128,7 +128,7 @@ static int readHeader( STREAM *stream, BYTE *buffer, int *length,
 														TRANSPORT_FLAG_NONE );
 		if( cryptStatusError( status ) )
 			return( status );
-		stream->errorCode = mgetWord( bufPtr );
+		stream->errorInfo->errorCode = mgetWord( bufPtr );
 		unknownDataLength = mgetWord( bufPtr );
 		if( unknownDataLength < 0 )
 			return( CRYPT_ERROR_BADDATA );
@@ -140,12 +140,13 @@ static int readHeader( STREAM *stream, BYTE *buffer, int *length,
 							min( headerLength, MAX_ERRMSG_SIZE - 1 );
 
 			bufPtr += unknownDataLength;	/* Skip unknown data block */
-			memcpy( stream->errorMessage, bufPtr, errorMessageLength );
-			stream->errorMessage[ errorMessageLength ] = '\0';
+			memcpy( stream->errorInfo->errorMessage, bufPtr, 
+					errorMessageLength );
+			stream->errorInfo->errorMessage[ errorMessageLength ] = '\0';
 			}
 		else
 #endif /* 0 */
-			strlcpy_s( stream->errorMessage, MAX_ERRMSG_SIZE,
+			strlcpy_s( stream->errorInfo->errorString, MAX_ERRMSG_SIZE,
 					   "CMP transport-level protocol error encountered" );
 
 		/* The appropriate status values to return for a problem at this
@@ -153,7 +154,7 @@ static int readHeader( STREAM *stream, BYTE *buffer, int *length,
 		   a read error if there's a problem with the server (exactly what
 		   the problem is is never specified in the error code) and a generic
 		   bad data for anything else */
-		return( ( ( stream->errorCode & 0x0F00 ) == 0x0300 ) ? \
+		return( ( ( stream->errorInfo->errorCode & 0x0F00 ) == 0x0300 ) ? \
 				CRYPT_ERROR_READ : CRYPT_ERROR_BADDATA );
 		}
 
@@ -217,7 +218,6 @@ int setStreamLayerCMP( STREAM *stream )
 	   indicators so we don't want the higher-level code to try and do this 
 	   for us */
 	stream->flags |= STREAM_NFLAG_ENCAPS;
-
 
 	return( CRYPT_OK );
 	}

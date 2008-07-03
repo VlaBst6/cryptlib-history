@@ -82,9 +82,14 @@ static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
    so that once a permission is set to a given level it can't be set back to
    a less restrictive one (i.e. it's a write-up policy) */
 
+CHECK_RETVAL \
 static int updateActionPerms( int currentPerm, const int newPerm )
 	{
 	int permMask = ACTION_PERM_MASK, i;
+
+	/* Preconditions: The permissions are valid */
+	PRE( currentPerm > 0 && currentPerm <= ACTION_PERM_ALL_MAX );
+	PRE( newPerm > 0 && newPerm <= ACTION_PERM_ALL_MAX );
 
 	/* For each permission, update its value if the new setting is more
 	   restrictive than the current one.  Since smaller values are more
@@ -121,6 +126,7 @@ static int updateActionPerms( int currentPerm, const int newPerm )
    different object.  To protect against this, we check the unique ID after
    we re-lock the object table to make sure that it's the same object */
 
+CHECK_RETVAL \
 static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 									   const CRYPT_HANDLE dependentObject )
 	{
@@ -150,7 +156,10 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 		 objectTable[ dependentObject ].dependentObject != objectHandle );
 
 	/* Since we're about to send messages to the dependent object, we have to
-	   unlock the object table */
+	   unlock the object table.  Since we're about to hand off control to
+	   other threads, we clear any object-table references since we can't 
+	   rely on them to be consistent when we re-lock the table */
+	objectTable = NULL;
 	MUTEX_UNLOCK( objectTable );
 
 	/* Make sure that we're not making a private key dependent on a cert,
@@ -162,9 +171,8 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 			krnlSendMessage( dependentObject, IMESSAGE_CHECK, NULL,
 							 MESSAGE_CHECK_PKC_PRIVATE ) ) )
 		{
-		assert( NOTREACHED );
 		MUTEX_LOCK( objectTable );
-		return( CRYPT_ARGERROR_OBJECT );
+		retIntError();
 		}
 
 	/* For each action type, enable its continued use only if the cert
@@ -214,9 +222,11 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 	   happen, so we make it a warning that's only produced in debug mode */
 	PRE( actionFlags != 0 );
 
-	/* We're done querying the dependent object, re-lock the object table and
-	   make sure that the original object hasn't been touched */
+	/* We're done querying the dependent object, re-lock the object table, 
+	   reinitialise any references to it, and make sure that the original 
+	   object hasn't been touched */
 	MUTEX_LOCK( objectTable );
+	objectTable = krnlData->objectTable;
 	if( objectTable[ objectHandle ].uniqueID != uniqueID )
 		return( CRYPT_ERROR_SIGNALLED );
 	status = setPropertyAttribute( contextHandle, CRYPT_IATTRIBUTE_ACTIONPERMS,
@@ -241,6 +251,8 @@ int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
 	/* Perform a consistency check on the object dependency ACL */
 	for( i = 0; dependencyACLTbl[ i ].type != OBJECT_TYPE_NONE && \
 				i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ); 
@@ -248,19 +260,16 @@ int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
 		{
 		const DEPENDENCY_ACL *dependencyACL = &dependencyACLTbl[ i ];
 
-		if( dependencyACL->type <= OBJECT_TYPE_NONE || \
-			dependencyACL->type >= OBJECT_TYPE_LAST || \
-			dependencyACL->dType <= OBJECT_TYPE_NONE || \
-			dependencyACL->dType >= OBJECT_TYPE_LAST )
-			retIntError();
-		if( ( dependencyACL->subTypeA & SUBTYPE_CLASS_B ) || \
-			( dependencyACL->subTypeB & SUBTYPE_CLASS_A ) || \
-			( dependencyACL->dSubTypeA & SUBTYPE_CLASS_B ) || \
-			( dependencyACL->dSubTypeB & SUBTYPE_CLASS_A ) )
-			retIntError();
+		ENSURES( dependencyACL->type > OBJECT_TYPE_NONE && \
+				 dependencyACL->type < OBJECT_TYPE_LAST && \
+				 dependencyACL->dType > OBJECT_TYPE_NONE && \
+				 dependencyACL->dType < OBJECT_TYPE_LAST );
+		ENSURES( !( dependencyACL->subTypeA & SUBTYPE_CLASS_B ) && \
+				 !( dependencyACL->subTypeB & SUBTYPE_CLASS_A ) && \
+				 !( dependencyACL->dSubTypeA & SUBTYPE_CLASS_B ) && \
+				 !( dependencyACL->dSubTypeB & SUBTYPE_CLASS_A ) );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -318,11 +327,11 @@ int getPropertyAttribute( const int objectHandle,
 #ifdef USE_THREADS
   #ifdef NONSCALAR_THREADS
 			/* A very small number of pthreads implementations use non-
-			   scalar thread IDs, which we can't easily handle when all we
-			   have is an integer handle.  However, the need to bind threads
-			   to objects only exists because of Win32 security holes
-			   arising from the ability to perform thread injection, so this
-			   isn't a big issue */
+			   scalar thread IDs, which we can't easily handle when all that 
+			   we have is an integer handle.  However, the need to bind 
+			   threads to objects only exists because of Win32 security 
+			   holes arising from the ability to perform thread injection, 
+			   so this isn't a big issue */
 			return( CRYPT_ERROR_FAILED );
   #else
 			*valuePtr = ( int ) objectInfoPtr->objectOwner;
@@ -374,8 +383,7 @@ int getPropertyAttribute( const int objectHandle,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ARGERROR_VALUE );
+			retIntError();
 		}
 
 	return( CRYPT_OK );
@@ -444,9 +452,11 @@ int setPropertyAttribute( const int objectHandle,
 				return( CRYPT_ERROR_PERMISSION );
 			if( objectInfoPtr->forwardCount != CRYPT_UNUSED && \
 				objectInfoPtr->forwardCount < value )
+				{
 				/* Once set the forward count can only be decreased, never
 				   increased */
 				return( CRYPT_ERROR_PERMISSION );
+				}
 			objectInfoPtr->forwardCount = value;
 			break;
 
@@ -461,17 +471,18 @@ int setPropertyAttribute( const int objectHandle,
 			if( objectInfoPtr->flags & OBJECT_FLAG_ATTRLOCKED || \
 				( objectInfoPtr->usageCount != CRYPT_UNUSED && \
 				  objectInfoPtr->usageCount < value ) )
+				{
 				/* Once set the usage count can only be decreased, never
 				   increased */
 				return( CRYPT_ERROR_PERMISSION );
+				}
 			objectInfoPtr->usageCount = value;
 			break;
 
 		/* Internal properties */
 		case CRYPT_IATTRIBUTE_STATUS:
-			/* We're clearing an error/abnormal state or setting the object
-			   to the busy state */
-			PRE( value == CRYPT_OK || value == CRYPT_ERROR_TIMEOUT );
+			/* We're clearing an error/abnormal state */
+			PRE( value == CRYPT_OK );
 
 			if( isInvalidObjectState( objectHandle ) )
 				{
@@ -479,25 +490,6 @@ int setPropertyAttribute( const int objectHandle,
 				   return it back to the normal state after the problem is
 				   resolved */
 				PRE( value == CRYPT_OK );
-
-				/* If we're resetting the object status from busy to OK,
-				   notify the object in case there's any extra processing to
-				   be done */
-				if( objectInfoPtr->flags & OBJECT_FLAG_BUSY )
-					{
-					/* Precondition: Only contexts can be busy */
-					PRE( objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
-
-					/* If the notification returns an error, the object is
-					   still performing some sort of processing (e.g. cleanup/
-					   shutdown), don't reset the status (it'll be done later
-					   when the object is ready) */
-					if( objectInfoPtr->messageFunction( objectInfoPtr->objectPtr,
-									MESSAGE_CHANGENOTIFY, messageDataPtr,
-									MESSAGE_CHANGENOTIFY_STATUS ) == CRYPT_OK )
-						objectInfoPtr->flags &= ~OBJECT_FLAG_BUSY;
-					break;
-					}
 
 				/* If we're processing a notification from the caller that
 				   the object init is complete and the object was destroyed
@@ -507,8 +499,10 @@ int setPropertyAttribute( const int objectHandle,
 				   object, which can't be explicitly destroyed.  In this case
 				   we just return an error so the cryptlib init fails */
 				if( objectInfoPtr->flags & OBJECT_FLAG_SIGNALLED )
+					{
 					return( ( objectHandle < NO_SYSTEM_OBJECTS ) ?
 							CRYPT_ERROR_SIGNALLED : OK_SPECIAL );
+					}
 
 				/* We're transitioning the object to the initialised state */
 				PRE( objectInfoPtr->flags & OBJECT_FLAG_NOTINITED );
@@ -517,13 +511,9 @@ int setPropertyAttribute( const int objectHandle,
 				break;
 				}
 
-			/* Inner precondition: The object is in a valid state */
-			PRE( !isInvalidObjectState( objectHandle ) );
+			/* Postcondition: The object is in a valid state */
+			POST( !isInvalidObjectState( objectHandle ) );
 
-			/* We're setting the object's busy flag because it's about to
-			   perform an async op */
-			if( value == CRYPT_ERROR_TIMEOUT )
-				objectInfoPtr->flags |= OBJECT_FLAG_BUSY;
 			break;
 
 		case CRYPT_IATTRIBUTE_INTERNAL:
@@ -561,25 +551,23 @@ int setPropertyAttribute( const int objectHandle,
 				/* Precondition: The lock count is positive */
 				PRE( objectInfoPtr->lockCount > 0 );
 
-				if( objectInfoPtr->lockCount <= 0 )
-					{
-					assert( NOTREACHED );
-					return( CRYPT_ERROR_PERMISSION );
-					}
+				ENSURES( objectInfoPtr->lockCount > 0 );
+
 				objectInfoPtr->lockCount--;
 				}
 
 			/* If it's a certificate, notify it that it should save/restore
 			   its internal state */
 			if( objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE )
+				{
 				objectInfoPtr->messageFunction( objectInfoPtr->objectPtr,
 									MESSAGE_CHANGENOTIFY, messageDataPtr,
 									MESSAGE_CHANGENOTIFY_STATE );
+				}
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ARGERROR_VALUE );
+			retIntError();
 		}
 
 	return( CRYPT_OK );
@@ -675,7 +663,7 @@ int getDependentObject( const int objectHandle, const int targetType,
 	/* Preconditions */
 	PRE( isValidObject( objectHandle ) );
 	PRE( isValidType( targetType ) );
-	PRE( messageDataPtr != NULL );
+	PRE( isReadPtr( messageDataPtr, sizeof( int ) ) );
 
 	/* Clear return value */
 	*valuePtr = CRYPT_ERROR;
@@ -710,6 +698,7 @@ int setDependentObject( const int objectHandle, const int option,
 	/* Preconditions: Parameters are valid */
 	PRE( isValidObject( objectHandle ) );
 	PRE( option == SETDEP_OPTION_NOINCREF || option == SETDEP_OPTION_INCREF );
+	PRE( isReadPtr( messageDataPtr, sizeof( int ) ) );
 	PRE( isValidHandle( dependentObject ) );
 
 	/* Make sure that the object is valid, it may have been signalled after
@@ -725,8 +714,7 @@ int setDependentObject( const int objectHandle, const int option,
 		{
 		/* There's already a dependent object present and we're trying to
 		   overwrite it with a new one, something is seriously wrong */
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
+		retIntError();
 		}
 
 	/* More complex validity checks to ensure that the object table is
@@ -739,10 +727,7 @@ int setDependentObject( const int objectHandle, const int option,
 			  dependentObjectInfoPtr->dependentObject ) == objectHandle ) || \
 		( objectInfoPtr->type == dependentObjectInfoPtr->type && \
 		  dependentObject != SYSTEM_OBJECT_HANDLE ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
-		}
+		retIntError();
 
 	/* Find the dependency ACL entry for this object/dependent object
 	   combination.  Since there can be more than one dependent object
@@ -762,13 +747,8 @@ int setDependentObject( const int objectHandle, const int option,
 			break;
 			}
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) )
-		retIntError();
-	if( dependencyACL == NULL )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
-		}
+	ENSURES( i < FAILSAFE_ARRAYSIZE( dependencyACLTbl, DEPENDENCY_ACL ) );
+	ENSURES( dependencyACL != NULL );
 
 	/* Inner precondition: We have the appropriate ACL for this combination
 	   of object and dependent object */
@@ -787,22 +767,14 @@ int setDependentObject( const int objectHandle, const int option,
 	   context a check message.  Since this requires additional precautions,
 	   we leave it for updateDependentObjectPerms(), which has to unlock the
 	   table for its own update operations */
-	if( !isValidSubtype( dependencyACL->subTypeA, \
-						 objectInfoPtr->subType ) && \
-		!isValidSubtype( dependencyACL->subTypeB, \
-						 objectInfoPtr->subType ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
-		}
-	if( !isValidSubtype( dependencyACL->dSubTypeA, \
-						 dependentObjectInfoPtr->subType ) && \
-		!isValidSubtype( dependencyACL->dSubTypeB, \
-						 dependentObjectInfoPtr->subType ) )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
-		}
+	ENSURES( isValidSubtype( dependencyACL->subTypeA, \
+							 objectInfoPtr->subType ) || \
+			 isValidSubtype( dependencyACL->subTypeB, \
+							 objectInfoPtr->subType ) );
+	ENSURES( isValidSubtype( dependencyACL->dSubTypeA, \
+							 dependentObjectInfoPtr->subType ) || \
+			 isValidSubtype( dependencyACL->dSubTypeB, \
+							 dependentObjectInfoPtr->subType ) );
 
 	/* Inner precondition */
 	PRE( *objectHandlePtr == CRYPT_ERROR );
@@ -865,13 +837,9 @@ int cloneObject( const int objectHandle, const int clonedObject,
 	/* Preconditions */
 	PRE( isValidObject( objectHandle ) && \
 		 objectHandle >= NO_SYSTEM_OBJECTS );
-	PRE( !isClonedObject( objectHandle ) && \
-		 !isAliasedObject( objectHandle ) );
 	PRE( objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
 	PRE( isValidObject( clonedObject ) && \
 		 clonedObject >= NO_SYSTEM_OBJECTS );
-	PRE( !isClonedObject( clonedObject ) && \
-		 !isAliasedObject( clonedObject ) );
 	PRE( clonedObjectInfoPtr->type == OBJECT_TYPE_CONTEXT );
 	PRE( objectHandle != clonedObject );
 
@@ -922,23 +890,6 @@ int cloneObject( const int objectHandle, const int clonedObject,
 					 clonedObjectInfoPtr->objectSize ) );
 	PRE( objectInfoPtr->objectSize == clonedObjectInfoPtr->objectSize );
 
-#if 0	/* 18/2/04 No need for copy-on-write any more since we can just copy
-				   across the instance data referenced in the object table */
-	/* Mark the two objects as being aliases, and the (incomplete) clone as
-	   a cloned object */
-	objectInfoPtr->flags |= OBJECT_FLAG_ALIASED;
-	objectInfoPtr->clonedObject = clonedObject;
-	clonedObjectInfoPtr->flags |= OBJECT_FLAG_ALIASED | OBJECT_FLAG_CLONE;
-	clonedObjectInfoPtr->clonedObject = objectHandle;
-
-	/* Postconditions: The objects are marked as aliased objects and the
-	   cloned object as a clone */
-	POST( isAliasedObject( objectHandle ) && !isClonedObject( objectHandle ) );
-	POST( isAliasedObject( clonedObject ) && isClonedObject( clonedObject ) );
-	POST( !isClonedObject( clonedObjectInfoPtr->clonedObject ) );
-	POST( isClonedObject( objectInfoPtr->clonedObject ) );
-	POST( objectHandle != clonedObject );
-#else
 	/* Copy across the object contents and reset any instance-specific
 	   information.  We only update the owning object if required, in
 	   almost all cases this will be the system device so there's no need
@@ -958,7 +909,6 @@ int cloneObject( const int objectHandle, const int clonedObject,
 	/* We've copied across the object's state, the cloned object is now
 	   initialised ready for use */
 	clonedObjectInfoPtr->flags |= OBJECT_FLAG_HIGH;
-#endif /* 0 */
 
 	return( CRYPT_OK );
 	}

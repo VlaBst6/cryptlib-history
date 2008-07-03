@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib AES Encryption Routines					*
-*						Copyright Peter Gutmann 2000-2006					*
+*						Copyright Peter Gutmann 2000-2007					*
 *																			*
 ****************************************************************************/
 
@@ -17,7 +17,13 @@
   #include "crypt/aesopt.h"
 #endif /* Compiler-specific includes */
 
-/* When building with VC++, the asm code used is aescrypt2.asm, built with
+/* The AES code separates encryption and decryption to make it easier to
+   do encrypt-only or decrypt-only apps, however since we don't know
+   what the user will choose to do we have to do both key schedules (this
+   is a relatively minor overhead compared to en/decryption, so it's not a 
+   big problem).
+
+   When building with VC++, the asm code used is aescrypt2.asm, built with
    'yasm -Xvc -D ASMV2 -f win32 aescrypt2.asm', which provides the best
    performance by using asm for the en/decrypt functions and C for the
    key schedule */
@@ -26,45 +32,54 @@
 
 /* The size of an AES key and block and a keyscheduled AES key */
 
-#define AES_KEYSIZE			32
-#define AES_BLOCKSIZE		16
+#define AES_KEYSIZE		32
+#define AES_BLOCKSIZE	16
 #define AES_EXPANDED_KEYSIZE sizeof( AES_CTX )
 
 /* The scheduled AES key and key schedule control and function return 
    codes */
 
-#define AES_EKEY			aes_encrypt_ctx
-#define AES_DKEY			aes_decrypt_ctx
-#define AES_2KEY			AES_CTX
+#define AES_EKEY	aes_encrypt_ctx
+#define AES_DKEY	aes_decrypt_ctx
+#define AES_2KEY	AES_CTX
 
-/* The AES code separates encryption and decryption to make it easier to
-   do encrypt-only or decrypt-only apps, however since we don't know
-   what the user will choose to do we have to do both key schedules (this
-   is a relatively minor overhead compared to en/decryption, so it's not a 
-   big problem) */
+/* The following macros are from the AES implementation, and aren't cryptlib
+   code.
 
-#define L_SIZE( x )			( sizeof( x ) / sizeof( unsigned long ) )	
-#if defined( USE_VIA_ACE_IF_PRESENT )
-  /* Data is DWORD-aligned anyway but we need to have 16-byte alignment for
-     key data in case we're using the VIA ACE.  The value -16 expands to
-     0xFFFFFFF0 in 32-bit mode and 0xFFFFFFFFFFFFFFFF0 in 64-bit mode */
-  #if defined( _MSC_VER ) && VC_LT_2005( _MSC_VER )
-	#define ULONG_PTR		unsigned long
-  #endif /* VC++ 6 or below */
-  #define KS_SIZE			( sizeof( AES_EKEY ) + sizeof( AES_DKEY ) + 24 )
-  #define ALGN( x )			( ( ULONG_PTR )( x ) & -16 )
-  #define EKEY( x )			( ( AES_EKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + 3 ) )
-  #define DKEY( x )			( ( AES_DKEY * ) ALGN( ( ( AES_CTX * ) x )->ksch + \
-												   L_SIZE( AES_EKEY ) + 6 ) )
-#else
-  #define KS_SIZE			( sizeof( AES_EKEY ) + sizeof( AES_DKEY ) )
-  #define EKEY( x )			( ( AES_EKEY * )( ( ( AES_CTX * ) x )->ksch ) )
-  #define DKEY( x )			( ( AES_DKEY * )( ( ( AES_CTX * ) x )->ksch + \
-											  L_SIZE( AES_EKEY ) ) )
-#endif /* USE_VIA_ACE_IF_PRESENT */
+   Assign memory for AES contexts in 'UNIT_SIZE' blocks of bytes with two 
+   such blocks in cryptlib's AES context (one encryption and one decryption). 
+   The cryptlib key schedule is then two AES contexts plus an extra UNIT_SIZE 
+   block to allow for alignment adjustment by up to 'UNIT_SIZE' - 1 bytes to 
+   align each of the internal AES contexts on UNIT_SIZE boundaries */
 
+#define UNIT_SIZE	16
+
+/* The size of the AES context rounded up (if necessary) to a multiple 16 bytes	*/
+
+#define BYTE_SIZE( x )	( UNIT_SIZE * ( ( sizeof( x ) + UNIT_SIZE - 1 ) / UNIT_SIZE ) )
+
+/* The size of the cryptlib AES context plus UNIT_SIZE bytes for possible upward 
+   alignment to a UNIT_SIZE byte boundary */
+
+#define KS_SIZE		( BYTE_SIZE( AES_EKEY ) + BYTE_SIZE( AES_DKEY ) + UNIT_SIZE )
+
+/* The base address for the cryptlib AES context */
+
+#define KS_BASE(x)	( ( unsigned char * )( ( ( AES_CTX * ) x )->ksch ) )
+
+/* The AES encrypt context address rounded up (if necessary) to a 16 byte boundary */
+
+#define EKEY( x )	( ( AES_EKEY * ) ALIGN_CEIL( KS_BASE( x ), UNIT_SIZE ) )
+
+/* The AES decrypt context address rounded up (if necessary) to a 16 byte boundary */
+
+#define DKEY( x )	( ( AES_DKEY * ) ALIGN_CEIL( KS_BASE( x ) + BYTE_SIZE( AES_EKEY ), UNIT_SIZE ) )
+
+/* A type to hold the cryptlib AES context */
+
+typedef unsigned long _unit;
 typedef struct {	
-	unsigned long ksch[ KS_SIZE >> 2 ];
+	_unit ksch[ ( KS_SIZE + sizeof( _unit ) - 1 ) / sizeof( _unit ) ];
 	} AES_CTX;
 
 #define	ENC_KEY( x )		EKEY( ( x )->key )
@@ -226,6 +241,7 @@ static int mct( CONTEXT_INFO *contextInfo,
 
 static int selfTest( void )
 	{
+#if 0
 	/* ECB */
 	static const BYTE FAR_BSS mctECBKey[] = \
 		{ 0x8D, 0x2E, 0x60, 0x36, 0x5F, 0x17, 0xC7, 0xDF, 0x10, 0x40, 0xD7, 0x50, 0x1B, 0x4A, 0x7B, 0x5A };
@@ -252,11 +268,17 @@ static int selfTest( void )
 		{ 0x9D, 0xCE, 0x23, 0xFD, 0x2D, 0xF5, 0x36, 0x0F, 0x79, 0x9C, 0xF1, 0x79, 0x84, 0xE4, 0x7C, 0x8D };
 	static const BYTE FAR_BSS mctCFBPT[] = \
 		{ 0xF0, 0x66, 0xBE, 0x4B, 0xD6, 0x71, 0xEB, 0xC1, 0xC4, 0xCF, 0x3C, 0x00, 0x8E, 0xF2, 0xCF, 0x18 };
+#endif /* 0 */
 	const CAPABILITY_INFO *capabilityInfo = getAESCapability();
 	BYTE keyData[ AES_EXPANDED_KEYSIZE + 8 ];
 	int i, status;
 
-#if 1
+	/* The AES code requires 16-byte alignment for data structures, before 
+	   we try anything else we make sure that the compiler voodoo required
+	   to handle this has worked */
+	if( aes_test_alignment_detection( 16 ) != EXIT_SUCCESS  )
+		return( CRYPT_ERROR_FAILED );
+
 	for( i = 0; i < sizeof( testAES ) / sizeof( AES_TEST ); i++ )
 		{
 		status = testCipher( capabilityInfo, keyData, testAES[ i ].key, 
@@ -265,7 +287,6 @@ static int selfTest( void )
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-#endif
 
 #if 0	/* OK */
 	staticInitContext( &contextInfo, CONTEXT_CONV, capabilityInfo,
@@ -297,13 +318,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam, 
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( AES_EXPANDED_KEYSIZE );
+		{
+		*result = AES_EXPANDED_KEYSIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -430,7 +455,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES",
+	CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 	bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,

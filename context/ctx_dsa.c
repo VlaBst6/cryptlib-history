@@ -193,7 +193,7 @@ static const BYTE FAR_BSS kVal[] = {
 
 static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 	{
-	const CAPABILITY_INFO *capabilityInfoPtr = getDSACapability();
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	DLP_PARAMS dlpParams;
 	BYTE buffer[ 128 + 8 ];
 	int sigSize, status;
@@ -218,58 +218,50 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 
 static int selfTest( void )
 	{
-	const CAPABILITY_INFO *capabilityInfoPtr = getDSACapability();
-	CONTEXT_INFO contextInfoPtr;
-	PKC_INFO pkcInfoStorage, *pkcInfo;
+	CONTEXT_INFO contextInfo;
+	PKC_INFO contextData, *pkcInfo = &contextData;
 	int status;
 
 	/* Initialise the key components */
-	memset( &contextInfoPtr, 0, sizeof( CONTEXT_INFO ) );
-	memset( &pkcInfoStorage, 0, sizeof( PKC_INFO ) );
-	contextInfoPtr.ctxPKC = pkcInfo = &pkcInfoStorage;
-	BN_init( &pkcInfo->dlpParam_p );
-	BN_init( &pkcInfo->dlpParam_q );
-	BN_init( &pkcInfo->dlpParam_g );
-	BN_init( &pkcInfo->dlpParam_y );
-	BN_init( &pkcInfo->dlpParam_x );
-	BN_init( &pkcInfo->tmp1 );
-	BN_init( &pkcInfo->tmp2 );
-	BN_init( &pkcInfo->tmp3 );
-	BN_init( &pkcInfo->dlpTmp1 );
-	BN_init( &pkcInfo->dlpTmp2 );
-	pkcInfo->bnCTX = BN_CTX_new();
-	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
-	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
-	contextInfoPtr.type = CONTEXT_PKC;
-	initKeyRead( &contextInfoPtr );
-	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
-	BN_bin2bn( dlpTestKey.p, dlpTestKey.pLen, &pkcInfo->dlpParam_p );
-	BN_bin2bn( dlpTestKey.q, dlpTestKey.qLen, &pkcInfo->dlpParam_q );
-	BN_bin2bn( dlpTestKey.g, dlpTestKey.gLen, &pkcInfo->dlpParam_g );
-	BN_bin2bn( dlpTestKey.y, dlpTestKey.yLen, &pkcInfo->dlpParam_y );
-	BN_bin2bn( dlpTestKey.x, dlpTestKey.xLen, &pkcInfo->dlpParam_x );
+	status = staticInitContext( &contextInfo, CONTEXT_PKC, 
+								getDSACapability(), &contextData, 
+								sizeof( PKC_INFO ), NULL );
+	if( cryptStatusError( status ) )
+		return( CRYPT_ERROR_FAILED );
+	status = extractBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
+							dlpTestKey.pLen, DLPPARAM_MIN_P, 
+							DLPPARAM_MAX_P, NULL, TRUE );
+	if( cryptStatusOK( status ) ) 
+		status = extractBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
+								dlpTestKey.qLen, DLPPARAM_MIN_Q, 
+								DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p, 
+								FALSE );
+	if( cryptStatusOK( status ) ) 
+		status = extractBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
+								dlpTestKey.gLen, DLPPARAM_MIN_G, 
+								DLPPARAM_MAX_G, &pkcInfo->dlpParam_p,
+								FALSE );
+	if( cryptStatusOK( status ) ) 
+		status = extractBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
+								dlpTestKey.yLen, DLPPARAM_MIN_Y, 
+								DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
+								TRUE );
+	if( cryptStatusOK( status ) ) 
+		status = extractBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
+								dlpTestKey.xLen, DLPPARAM_MIN_X, 
+								DLPPARAM_MAX_X, &pkcInfo->dlpParam_p, 
+								FALSE );
+	if( cryptStatusError( status ) ) 
+		retIntError();
 
 	/* Perform the test sign/sig.check of the FIPS 186 test values */
-	status = capabilityInfoPtr->initKeyFunction( &contextInfoPtr, NULL, 0 );
+	status = contextInfo.capabilityInfo->initKeyFunction( &contextInfo, NULL, 0 );
 	if( cryptStatusOK( status ) && \
-		!pairwiseConsistencyTest( &contextInfoPtr ) )
+		!pairwiseConsistencyTest( &contextInfo ) )
 		status = CRYPT_ERROR_FAILED;
 
 	/* Clean up */
-	BN_clear_free( &pkcInfo->dlpParam_p );
-	BN_clear_free( &pkcInfo->dlpParam_q );
-	BN_clear_free( &pkcInfo->dlpParam_g );
-	BN_clear_free( &pkcInfo->dlpParam_y );
-	BN_clear_free( &pkcInfo->dlpParam_x );
-	BN_clear_free( &pkcInfo->tmp1 );
-	BN_clear_free( &pkcInfo->tmp2 );
-	BN_clear_free( &pkcInfo->tmp3 );
-	BN_clear_free( &pkcInfo->dlpTmp1 );
-	BN_clear_free( &pkcInfo->dlpTmp2 );
-	BN_CTX_free( pkcInfo->bnCTX );
-	BN_MONT_CTX_free( &pkcInfo->dlpParam_mont_p );
-	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
-	zeroise( &contextInfoPtr, sizeof( CONTEXT_INFO ) );
+	staticDestroyContext( &contextInfo );
 
 	return( status );
 	}
@@ -329,9 +321,9 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   function can only be called internally, so all we need to trap is
 	   accidental use of the parameter which is normally unused */
 	if( dlpParams->inLen2 == -999 )
-		{
-		CKPTR( BN_bin2bn( ( BYTE * ) kVal, DSA_SIGPART_SIZE, k ) );
-		}
+		status = extractBignum( k, ( BYTE * ) kVal, DSA_SIGPART_SIZE,
+								DSA_SIGPART_SIZE, DSA_SIGPART_SIZE, NULL, 
+								FALSE );
 	else
 		{
 		/* Generate the random value k.  FIPS 186 requires (Appendix 3)
@@ -345,14 +337,17 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		   32 bits larger than q and then do the reduction, eliminating the
 		   bias */
 		status = generateBignum( k, bytesToBits( DSA_SIGPART_SIZE ) + 32,
-								 0, 0 );
-		if( cryptStatusError( status ) )
-			return( status );
+								 0x80, 0 );
 		}
-	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
+	if( cryptStatusError( status ) )
+		return( status );
+	if( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION )
 		{
 		/* Use constant-time modexp() to protect the secret random value 
-		   from timing channels */
+		   from timing channels.  We could also use blinding, but neither of
+		   these measures are actually terribly useful because we're using a 
+		   random exponent each time so the timing information isn't of much
+		   use to an attacker */
 		BN_set_flags( k, BN_FLG_EXP_CONSTTIME );
 		}
 	CK( BN_mod( k, k, q, 				/* Reduce k to the correct range */
@@ -360,11 +355,17 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
-	/* Get the hash as a bignum */
-	CKPTR( BN_bin2bn( ( BYTE * ) dlpParams->inParam1, DSA_SIGPART_SIZE, 
-					  hash ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
+	/* Get the hash as a bignum.  The range checking for the resulting value 
+	   is a bit odd, we need to take "the leftmost sizeof( q ) bits of the 
+	   hash" as the input, to handle this we require that the bit size of q 
+	   be at least as large as the (nominal) bit size of the hash */
+	if( dlpParams->inLen1 > BN_num_bytes( q ) )
+		return( CRYPT_ERROR_BADDATA );
+	status = extractBignum( hash, ( BYTE * ) dlpParams->inParam1, 
+							DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
+							DSA_SIGPART_SIZE, NULL, FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* r = ( g ^ k mod p ) mod q */
 	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
@@ -374,7 +375,6 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* s = k^-1 * ( hash + x * r ) mod q */
 	CKPTR( BN_mod_inverse( kInv, k, q,	/* temp = k^-1 mod q */
 						   pkcInfo->bnCTX ) );
-/*	BN_mul( s, x, r );					// s = x * r */
 	CK( BN_mod_mul( s, x, r, q,			/* s = ( x * r ) mod q */
 					pkcInfo->bnCTX ) );
 	CK( BN_add( s, s, hash ) );			/* s = s + hash */
@@ -386,15 +386,9 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		return( getBnStatus( bnStatus ) );
 
 	/* Encode the result as a DL data block */
-	status = pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
-											  dlpParams->outLen, r, s,
-											  dlpParams->formatType );
-	if( !cryptStatusError( status ) )
-		{
-		dlpParams->outLen = status;
-		status = CRYPT_OK;	/* encodeDLValues() returns a byte count */
-		}
-	return( status );
+	return( pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
+								dlpParams->outLen, &dlpParams->outLen, 
+								r, s, dlpParams->formatType ) );
 	}
 
 /* Signature check a single block of data */
@@ -413,7 +407,7 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	assert( dlpParams->inParam1 != NULL && dlpParams->inLen1 == 20 );
 	assert( dlpParams->inParam2 != NULL && \
 			( ( dlpParams->formatType == CRYPT_FORMAT_CRYPTLIB && \
-				( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 48 ) ) || \
+				( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 128 ) ) || \
 			  ( dlpParams->formatType == CRYPT_FORMAT_PGP && \
 				( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 44 ) ) || \
 			  ( dlpParams->formatType == CRYPT_IFORMAT_SSH && \
@@ -421,19 +415,24 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	assert( dlpParams->outParam == NULL && dlpParams->outLen == 0 );
 
 	/* Decode the values from a DL data block and make sure that r and s are
-	   valid */
+	   valid, i.e. r, s = [1...q-1] */
 	status = pkcInfo->decodeDLValuesFunction( dlpParams->inParam2, 
-											  dlpParams->inLen2, &r, &s,
+											  dlpParams->inLen2, r, s, q,
 											  dlpParams->formatType );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( BN_cmp( r, q ) >= 0 || BN_cmp( s, q ) >= 0 )
-		return( CRYPT_ERROR_BADDATA );
 
-	/* Get the hash as a bignum */
-	CKPTR( BN_bin2bn( ( BYTE * ) dlpParams->inParam1, DSA_SIGPART_SIZE, u1 ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
+	/* Get the hash as a bignum.  The range checking for the resulting value 
+	   is a bit odd, we need to take "the leftmost sizeof( q ) bits of the 
+	   hash" as the input, to handle this we require that the bit size of q 
+	   be at least as large as the (nominal) bit size of the hash */
+	if( dlpParams->inLen1 > BN_num_bytes( q ) )
+		return( CRYPT_ERROR_BADDATA );
+	status = extractBignum( u1, ( BYTE * ) dlpParams->inParam1, 
+							DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
+							DSA_SIGPART_SIZE, NULL, FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* w = s^-1 mod q */
 	CKPTR( BN_mod_inverse( u2, s, q,	/* w = s^-1 mod q */
@@ -478,24 +477,35 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{
 		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 		const CRYPT_PKCINFO_DLP *dsaKey = ( CRYPT_PKCINFO_DLP * ) key;
-		int bnStatus = BN_STATUS;
 
 		contextInfoPtr->flags |= ( dsaKey->isPublicKey ) ? \
-							CONTEXT_ISPUBLICKEY : CONTEXT_ISPRIVATEKEY;
-		CKPTR( BN_bin2bn( dsaKey->p, bitsToBytes( dsaKey->pLen ),
-						  &pkcInfo->dlpParam_p ) );
-		CKPTR( BN_bin2bn( dsaKey->q, bitsToBytes( dsaKey->qLen ),
-						  &pkcInfo->dlpParam_q ) );
-		CKPTR( BN_bin2bn( dsaKey->g, bitsToBytes( dsaKey->gLen ),
-						  &pkcInfo->dlpParam_g ) );
-		CKPTR( BN_bin2bn( dsaKey->y, bitsToBytes( dsaKey->yLen ),
-						  &pkcInfo->dlpParam_y ) );
-		if( !dsaKey->isPublicKey )
-			CKPTR( BN_bin2bn( dsaKey->x, bitsToBytes( dsaKey->xLen ),
-							  &pkcInfo->dlpParam_x ) );
-		contextInfoPtr->flags |= CONTEXT_PBO;
-		if( bnStatusError( bnStatus ) )
-			return( getBnStatus( bnStatus ) );
+							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
+		status = extractBignum( &pkcInfo->dlpParam_p, dsaKey->p, 
+								bitsToBytes( dsaKey->pLen ),
+								DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, TRUE );
+		if( cryptStatusOK( status ) )
+			status = extractBignum( &pkcInfo->dlpParam_q, dsaKey->q, 
+									bitsToBytes( dsaKey->qLen ),
+									DLPPARAM_MIN_Q, DLPPARAM_MAX_Q, 
+									&pkcInfo->dlpParam_p, FALSE );
+		if( cryptStatusOK( status ) )
+			status = extractBignum( &pkcInfo->dlpParam_g, dsaKey->g, 
+									bitsToBytes( dsaKey->gLen ),
+									DLPPARAM_MIN_G, DLPPARAM_MAX_G,
+									&pkcInfo->dlpParam_p, FALSE );
+		if( cryptStatusOK( status ) )
+			status = extractBignum( &pkcInfo->dlpParam_y, dsaKey->y, 
+									bitsToBytes( dsaKey->yLen ),
+									DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
+									&pkcInfo->dlpParam_p, TRUE );
+		if( cryptStatusOK( status ) && !dsaKey->isPublicKey )
+			status = extractBignum( &pkcInfo->dlpParam_x, dsaKey->x, 
+									bitsToBytes( dsaKey->xLen ),
+									DLPPARAM_MIN_X, DLPPARAM_MAX_X,
+									&pkcInfo->dlpParam_p, FALSE );
+		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 #endif /* USE_FIPS140 */
 
@@ -514,15 +524,14 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 	{
 	int status;
 
-	status = generateDLPkey( contextInfoPtr, ( keySizeBits / 64 ) * 64, 160,
-							 TRUE );
+	status = generateDLPkey( contextInfoPtr, ( keySizeBits / 64 ) * 64 );
 	if( cryptStatusOK( status ) &&
 #ifndef USE_FIPS140
-		( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) &&
+		( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) &&
 #endif /* USE_FIPS140 */
 		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
@@ -537,7 +546,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA",
+	CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 	MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE,
 	selfTest, getDefaultInfo, NULL, NULL, initKey, generateKey,
 	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, sign, sigCheck

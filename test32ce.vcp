@@ -389,6 +389,162 @@ LINK32=link.exe
 # PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 # Begin Source File
 
+SOURCE=.\test\certimp.c
+
+!IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
+
+NODEP_CPP_CERTI=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
+
+DEP_CPP_CERTI=\
+	".\cryptlib.h"\
+	".\test\filename.h"\
+	".\test\test.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=.\test\certproc.c
+
+!IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
+
+NODEP_CPP_CERTP=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
+
+DEP_CPP_CERTP=\
+	".\cryptlib.h"\
+	".\test\filename.h"\
+	".\test\test.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
 SOURCE=.\test\certs.c
 
 !IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
@@ -1493,128 +1649,152 @@ NODEP_CPP_LOWLV=\
 # End Source File
 # Begin Source File
 
-SOURCE=.\test\scert.c
+SOURCE=.\test\s_cmp.c
 
 !IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
 
-DEP_CPP_SCERT=\
-	".\cryptlib.h"\
-	".\test\filename.h"\
-	".\test\test.h"\
-	
-NODEP_CPP_SCERT=\
+NODEP_CPP_S_CMP=\
 	".\test\cryptlib.h"\
-	".\test\test\filename.h"\
 	".\test\test\test.h"\
 	
 
 !ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
 
-DEP_CPP_SCERT=\
+DEP_CPP_S_CMP=\
+	".\cryptlib.h"\
+	".\test\filename.h"\
+	".\test\test.h"\
+	
+
+!ENDIF 
+
+# End Source File
+# Begin Source File
+
+SOURCE=.\test\s_scep.c
+
+!IF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Release"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE SH3) Debug"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Release"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE MIPSIV) Debug"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Release"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE emulator) Debug"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Release"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE ARMV4) Debug"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Release"
+
+NODEP_CPP_S_SCE=\
+	".\test\cryptlib.h"\
+	".\test\test\test.h"\
+	
+
+!ELSEIF  "$(CFG)" == "Test32 - Win32 (WCE x86) Debug"
+
+DEP_CPP_S_SCE=\
 	".\cryptlib.h"\
 	".\test\filename.h"\
 	".\test\test.h"\

@@ -66,6 +66,8 @@
   #include "crypt/rc5locl.h"
 #endif /* Compiler-specific includes */
 
+#ifndef USE_ASM
+
 void RC5_32_cbc_encrypt(const unsigned char *in, unsigned char *out,
 			long length, RC5_32_KEY *ks, unsigned char *iv,
 			int encrypt)
@@ -219,3 +221,4 @@ void RC5_32_decrypt(unsigned long *d, RC5_32_KEY *key)
 	d[1]=b-s[1];
 	}
 
+#endif /* USE_ASM */

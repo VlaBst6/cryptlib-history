@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Plug-and-play PKI Routines					*
-*						 Copyright Peter Gutmann 1999-2005					*
+*						 Copyright Peter Gutmann 1999-2007					*
 *																			*
 ****************************************************************************/
 
@@ -15,7 +15,7 @@
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_CMP
+#if defined( USE_CMP ) || defined( USE_SCEP )
 
 /* When we generate a new key, there are a variety of different key types
    (meaning key usages) that we can generate it for, constrained to some
@@ -23,11 +23,11 @@
    following values identify the key type that we need to generate */
 
 typedef enum {
-	KEYTYPE_NONE,			/* No key type */
-	KEYTYPE_ENCRYPTION,		/* Encryption key */
-	KEYTYPE_SIGNATURE,		/* Signature key */
-	KEYTYPE_BOTH,			/* Dual encryption/signature key */
-	KEYTYPE_LAST			/* Last possible key type */
+	KEY_TYPE_NONE,			/* No key type */
+	KEY_TYPE_ENCRYPTION,	/* Encryption key */
+	KEY_TYPE_SIGNATURE,		/* Signature key */
+	KEY_TYPE_BOTH,			/* Dual encryption/signature key */
+	KEY_TYPE_LAST			/* Last possible key type */
 	} KEY_TYPE;
 
 /* A structure to store key type-related information, indexed by the KEY_TYPE 
@@ -66,12 +66,15 @@ static const struct {
    working with devices since we need to explicitly delete anything that
    was created in the device as well as just deleting the cryptlib object */
 
-static void cleanupObject( const CRYPT_CONTEXT iPrivateKey, 
-						   const KEY_TYPE keyType )
+static void cleanupObject( IN_HANDLE const CRYPT_CONTEXT iPrivateKey, 
+						   IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
 	CRYPT_DEVICE iCryptDevice;
 	MESSAGE_KEYMGMT_INFO deletekeyInfo;
 	int status;
+
+	REQUIRES_V( isHandleRangeValid( iPrivateKey ) );
+	REQUIRES_V( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	/* Delete the cryptlib object.  If it's a native object, we're done */
 	krnlSendNotifier( iPrivateKey, IMESSAGE_DECREFCOUNT );
@@ -94,9 +97,12 @@ static void cleanupObject( const CRYPT_CONTEXT iPrivateKey,
 /* Check whether a network connection is still open, used when performing
    multiple transactions in a single session */
 
-static BOOLEAN isConnectionOpen( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN isConnectionOpen( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	int streamState;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE, 
 			&streamState, 0 );
@@ -105,12 +111,16 @@ static BOOLEAN isConnectionOpen( SESSION_INFO *sessionInfoPtr )
 
 /* Check for the presence of a named object in a keyset/device */
 
-static BOOLEAN isNamedObjectPresent( const CRYPT_HANDLE iCryptHandle,
-									 const KEY_TYPE keyType )
+CHECK_RETVAL_BOOL \
+static BOOLEAN isNamedObjectPresent( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
+									 IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
 	const char *keyLabel = keyInfo[ keyType ].label;
 	int status;
+
+	REQUIRES( isHandleRangeValid( iCryptHandle ) );
+	REQUIRES( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, keyLabel, 
 						   strlen( keyLabel ), NULL, 0,
@@ -130,14 +140,23 @@ static BOOLEAN isNamedObjectPresent( const CRYPT_HANDLE iCryptHandle,
 
 /* Get the identified CA/RA cert from a CTL */
 
-static int getCACert( CRYPT_CERTIFICATE *iNewCert, 
-					  const CRYPT_CERTIFICATE iCTL, const void *certID, 
-					  const int certIDlength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int getCACert( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iNewCert, 
+					  IN_HANDLE const CRYPT_CERTIFICATE iCTL, 
+					  IN_BUFFER_OPT( certIDlength ) const void *certID, 
+					  IN_LENGTH_KEYID_Z const int certIDlength )
 	{
 	int status;
 
-	assert( certIDlength == 0 || certIDlength == KEYID_SIZE );
+	assert( isWritePtr( iNewCert, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( ( certID == NULL && certIDlength == 0 ) || \
+			( isReadPtr( certID,  certIDlength ) ) );
 
+	REQUIRES( isHandleRangeValid( iCTL ) );
+	REQUIRES( ( certID == NULL && certIDlength == 0 ) || \
+			  ( certID != NULL && certIDlength == KEYID_SIZE ) );
+
+	/* Clear return value */
 	*iNewCert = CRYPT_ERROR;
 
 	/* Step through the cert trust list checking each cert in turn to see
@@ -187,15 +206,24 @@ static int getCACert( CRYPT_CERTIFICATE *iNewCert,
 
 /* Generate a new key of the appropriate type */
 
-static int generateKey( CRYPT_CONTEXT *iPrivateKey,
-						const CRYPT_USER iCryptUser,
-						const CRYPT_DEVICE iCryptDevice,
-						const KEY_TYPE keyType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
+						IN_HANDLE const CRYPT_USER iCryptUser,
+						IN_HANDLE const CRYPT_DEVICE iCryptDevice,
+						IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
 	CRYPT_QUERY_INFO queryInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	int value, status;
+
+	assert( isWritePtr( iPrivateKey, sizeof( CRYPT_CONTEXT ) ) );
+
+	REQUIRES( iCryptUser == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( iCryptUser ) );
+	REQUIRES( iCryptDevice == SYSTEM_OBJECT_HANDLE || \
+			  isHandleRangeValid( iCryptDevice ) );
+	REQUIRES( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	/* Clear return value */
 	*iPrivateKey = CRYPT_ERROR;
@@ -230,13 +258,15 @@ static int generateKey( CRYPT_CONTEXT *iPrivateKey,
 								 &queryInfo, value ) ) )
 			return( CRYPT_ERROR_NOTAVAIL );
 		}
-	if( keyType == KEYTYPE_ENCRYPTION && value == CRYPT_ALGO_DSA )
+	if( keyType == KEY_TYPE_ENCRYPTION && value == CRYPT_ALGO_DSA )
+		{
 		/* If we're being asked for an encryption key (which implies that 
 		   we've already successfully completed the process of acquiring a 
 		   signature key) and only a non-encryption algorithm is available, 
 		   we return OK_SPECIAL to tell the caller that the failure is non-
 		   fatal */
 		return( OK_SPECIAL );
+		}
 
 	/* Create a new key using the given PKC algorithm and of the default 
 	   size */
@@ -265,13 +295,14 @@ static int generateKey( CRYPT_CONTEXT *iPrivateKey,
 		}
 
 	/* Generate the key */
-	status = krnlSendMessage( createInfo.cryptHandle,
-							  IMESSAGE_CTX_GENKEY, NULL, FALSE );
+	status = krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_CTX_GENKEY );
 	if( cryptStatusOK( status ) )
+		{
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE,
 								  ( int * ) &keyInfo[ keyType ].actionPerms,
 								  CRYPT_IATTRIBUTE_ACTIONPERMS );
+		}
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
@@ -286,14 +317,22 @@ static int generateKey( CRYPT_CONTEXT *iPrivateKey,
    provided, we copy this into the request, otherwise we create a minimal 
    key-only request */
 
-static int createCertRequest( CRYPT_CERTIFICATE *iCertReq, 
-							  const CRYPT_CONTEXT iPrivateKey,
-							  const CRYPT_CERTIFICATE iSubjDNCert,
-							  const KEY_TYPE keyType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq, 
+							  IN_HANDLE const CRYPT_CONTEXT iPrivateKey,
+							  IN_HANDLE_OPT const CRYPT_CERTIFICATE iSubjDNCert,
+							  IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	const BOOLEAN isPKCS10 = ( keyType == KEYTYPE_BOTH );
+	const BOOLEAN isPKCS10 = ( keyType == KEY_TYPE_BOTH );
 	int status;
+
+	assert( isWritePtr( iCertReq, sizeof( CRYPT_CONTEXT ) ) );
+
+	REQUIRES( isHandleRangeValid( iPrivateKey ) );
+	REQUIRES( iSubjDNCert == CRYPT_UNUSED || \
+			  isHandleRangeValid( iSubjDNCert ) );
+	REQUIRES( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	/* Clear return value */
 	*iCertReq = CRYPT_ERROR;
@@ -338,13 +377,23 @@ static int createCertRequest( CRYPT_CERTIFICATE *iCertReq,
 
 /* Update a keyset/device with a newly-created key and cert */
 
-static int updateKeys( const CRYPT_HANDLE iCryptHandle,
-					   const CRYPT_CONTEXT iPrivateKey,
-					   const CRYPT_CERTIFICATE iCryptCert,
-					   const char *password, const int passwordLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4 ) ) \
+static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
+					   IN_HANDLE const CRYPT_CONTEXT iPrivateKey,
+					   IN_HANDLE const CRYPT_CERTIFICATE iCryptCert,
+					   IN_BUFFER( passwordLength ) const char *password, 
+					   IN_LENGTH_NAME const int passwordLength )
 	{
 	MESSAGE_KEYMGMT_INFO setkeyInfo;
 	int value, status;
+
+	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( isHandleRangeValid( iCryptHandle ) );
+	REQUIRES( isHandleRangeValid( iPrivateKey ) );
+	REQUIRES( isHandleRangeValid( iCryptCert ) );
+	REQUIRES( passwordLength >= MIN_NAME_LENGTH && \
+			  passwordLength < MAX_ATTRIBUTE_SIZE );
 
 	/* Find out whether the storage object is a keyset or a device.  If it's
 	   a device there's no need to add the private key since it'll have been
@@ -377,19 +426,22 @@ static int updateKeys( const CRYPT_HANDLE iCryptHandle,
    This ensures that we can still build a full cert chain even if the 
    PKIBoot trusted certs aren't preserved */
 
-static int updateTrustedCerts( const CRYPT_HANDLE iCryptHandle,
-							   const CRYPT_HANDLE iLeafCert )
+CHECK_RETVAL \
+static int updateTrustedCerts( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
+							   IN_HANDLE const CRYPT_HANDLE iLeafCert )
 	{
 	CRYPT_CERTIFICATE iCertCursor = iLeafCert;
 	int iterationCount = 0, status;
+
+	REQUIRES( isHandleRangeValid( iCryptHandle ) );
+	REQUIRES( isHandleRangeValid( iLeafCert ) );
 
 	do
 		{
 		/* Get the trusted issuer cert for the current cert and send it to
 		   the keyset/device */
-		status = krnlSendMessage( iCertCursor, 
-								  IMESSAGE_SETATTRIBUTE, &iCertCursor, 
-								  CRYPT_IATTRIBUTE_CERT_TRUSTEDISSUER );
+		status = krnlSendMessage( iCertCursor, IMESSAGE_USER_TRUSTMGMT, 
+								  &iCertCursor, MESSAGE_TRUSTMGMT_GETISSUER );
 		if( cryptStatusOK( status ) )
 			{
 			MESSAGE_KEYMGMT_INFO setkeyInfo;
@@ -421,13 +473,14 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice = SYSTEM_OBJECT_HANDLE;
 	CRYPT_CONTEXT iPrivateKey1, iPrivateKey2 ;
-	CRYPT_CERTIFICATE iCertReq, iCACert;
+	CRYPT_CERTIFICATE iCertReq, iCACert = DUMMY_INIT;
 	const ATTRIBUTE_LIST *attributeListPtr;
 	const ATTRIBUTE_LIST *passwordPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_PASSWORD );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_PASSWORD );
 	const KEY_TYPE keyType = ( sessionInfoPtr->type == CRYPT_SESSION_CMP ) ? \
-							 KEYTYPE_SIGNATURE : KEYTYPE_BOTH;
+							 KEY_TYPE_SIGNATURE : KEY_TYPE_BOTH;
+	const char *storageObjectName = "keyset";
 	BOOLEAN isCAcert;
 	int value, status;
 
@@ -439,20 +492,31 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		return( status );
 	if( value == OBJECT_TYPE_DEVICE )
+		{
 		iCryptDevice = sessionInfoPtr->privKeyset;
+		storageObjectName = "device";
+		}
 
 	/* Make sure that the named objects that are about to be created aren't 
 	   already present in the keyset/device */
 	if( isNamedObjectPresent( sessionInfoPtr->privKeyset, keyType ) )
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_DUPLICATE,
-				"%s is already present in keyset/device",
-				( keyType == KEYTYPE_SIGNATURE ) ? "Signature key" : "Key" );
+		{
+		retExt( CRYPT_ERROR_DUPLICATE,
+				( CRYPT_ERROR_DUPLICATE, SESSION_ERRINFO, 
+				  "%s is already present in %s",
+				  ( keyType == KEY_TYPE_SIGNATURE ) ? \
+					"Signature key" : "Key", storageObjectName ) );
+		}
 	if( sessionInfoPtr->type == CRYPT_SESSION_CMP )
 		{
 		if( isNamedObjectPresent( sessionInfoPtr->privKeyset, 
-								  KEYTYPE_ENCRYPTION ) )
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_DUPLICATE,
-					"Encryption key is already present in keyset/device" );
+								  KEY_TYPE_ENCRYPTION ) )
+			{
+			retExt( CRYPT_ERROR_DUPLICATE,
+					( CRYPT_ERROR_DUPLICATE, SESSION_ERRINFO, 
+					  "Encryption key is already present in %s",
+					  storageObjectName ) );
+			}
 		}
 
 	/* Perform the PKIBoot exchange to get the initial trusted cert set.  We 
@@ -473,51 +537,65 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		   remain open simplifies the implementation */
 		krnlSendNotifier( sessionInfoPtr->iCertResponse, 
 						  IMESSAGE_DECREFCOUNT );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_READ,
-				"Server closed connection after PKIBoot phase before any "
-				"certificates could be issued" );
+		retExt( CRYPT_ERROR_READ,
+				( CRYPT_ERROR_READ, SESSION_ERRINFO, 
+				  "Server closed connection after PKIBoot phase before any "
+				  "certificates could be issued" ) );
 		}
 
 	/* Get the CA/RA cert from the returned CTL and set it as the cert to 
 	   use for authenticating server responses */
-	attributeListPtr = \
-			findSessionAttribute( sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_FINGERPRINT );
-	if( attributeListPtr == NULL )
-		status = CRYPT_ERROR_NOTFOUND;
-	else
+	attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
+										CRYPT_SESSINFO_SERVER_FINGERPRINT );
+	if( attributeListPtr != NULL )
+		{
 		status = getCACert( &iCACert, sessionInfoPtr->iCertResponse, 
 							attributeListPtr->value, 
 							attributeListPtr->valueLength );
+		}
+	else
+		status = CRYPT_ERROR_NOTFOUND;
 	krnlSendNotifier( sessionInfoPtr->iCertResponse, IMESSAGE_DECREFCOUNT );
 	sessionInfoPtr->iCertResponse = CRYPT_ERROR;
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status, 
-				"Couldn't read CA/RA certificate from returned certificate "
-				"trust list" );
+		{
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
+				  "Couldn't read CA/RA certificate from returned "
+				  "certificate trust list" ) );
+		}
 	sessionInfoPtr->iAuthInContext = iCACert;
 
 	/* Create a private key and a cert request for it */
 	status = generateKey( &iPrivateKey1, sessionInfoPtr->ownerHandle,
 						  iCryptDevice, keyType );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status, "Couldn't create %s key",
-				( keyType == KEYTYPE_SIGNATURE ) ? "signature" : "private" );
+		{
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Couldn't create %s key",
+				  ( keyType == KEY_TYPE_SIGNATURE ) ? \
+					"signature" : "private" ) );
+		}
 	status = createCertRequest( &iCertReq, iPrivateKey1, CRYPT_UNUSED, 
 								keyType );
 	if( cryptStatusError( status ) )
 		{
 		cleanupObject( iPrivateKey1, keyType );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't create %skey cert request",
-				( keyType == KEYTYPE_SIGNATURE ) ? "signature " : "" );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't create %skey cert request",
+				  ( keyType == KEY_TYPE_SIGNATURE ) ? \
+					"signature " : "" ) );
 		}
 
 	/* Set up the request info and activate the session */
 	if( sessionInfoPtr->type == CRYPT_SESSION_CMP )
+		{
 		/* If it's CMP, start with an ir.  The second cert will be fetched 
 		   with a cr */
-		sessionInfoPtr->sessionCMP->requestType = CRYPT_REQUESTTYPE_INITIALISATION;
+		sessionInfoPtr->sessionCMP->requestType = \
+										CRYPT_REQUESTTYPE_INITIALISATION;
+		}
 	sessionInfoPtr->iCertRequest = iCertReq;
 	status = sessionInfoPtr->transactFunction( sessionInfoPtr );
 	krnlSendNotifier( sessionInfoPtr->iCertRequest, IMESSAGE_DECREFCOUNT );
@@ -549,9 +627,10 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		krnlSendNotifier( sessionInfoPtr->iCertResponse, 
 						  IMESSAGE_DECREFCOUNT );
 		sessionInfoPtr->iCertResponse = CRYPT_ERROR;
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_READ,
-				"Server closed connection before second (encryption) "
-				"certificate could be issued" );
+		retExt( CRYPT_ERROR_READ,
+				( CRYPT_ERROR_READ, SESSION_ERRINFO, 
+				  "Server closed connection before second (encryption) "
+				  "certificate could be issued" ) );
 		}
 
 	/* We've got the first cert, update the keyset/device */
@@ -583,17 +662,19 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		cleanupObject( iPrivateKey1, keyType );
-		retExt( SESSION_ERRINFO, ( status == CRYPT_ARGERROR_NUM1 ) ? \
+		retExt( ( status == CRYPT_ARGERROR_NUM1 ) ? \
 				CRYPT_ERROR_INVALID : status,
-				"Couldn't update keyset/device with %skey/certificate",
-				isCAcert ? "CA " : \
-				( keyType == KEYTYPE_SIGNATURE ) ? "signature " : "" );
+				( ( status == CRYPT_ARGERROR_NUM1 ) ? \
+				  CRYPT_ERROR_INVALID : status, SESSION_ERRINFO, 
+				  "Couldn't update %s with %skey/certificate", 
+				  storageObjectName, isCAcert ? "CA " : \
+				  ( keyType == KEY_TYPE_SIGNATURE ) ? "signature " : "" ) );
 		}
 
 	/* If it's a combined encryption/signature key or a standalone CA key, 
 	   we're done.  See the comment at the end for the trusted-certs update
 	   process */
-	if( keyType == KEYTYPE_BOTH || isCAcert )
+	if( keyType == KEY_TYPE_BOTH || isCAcert )
 		{
 		updateTrustedCerts( sessionInfoPtr->privKeyset, iPrivateKey1 );
 		krnlSendNotifier( iPrivateKey1, IMESSAGE_DECREFCOUNT );
@@ -603,7 +684,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	/* We're running a CMP session from this point on.  Create the second, 
 	   encryption private key and a cert request for it */
 	status = generateKey( &iPrivateKey2, sessionInfoPtr->ownerHandle,
-						  iCryptDevice, KEYTYPE_ENCRYPTION );
+						  iCryptDevice, KEY_TYPE_ENCRYPTION );
 	if( status == OK_SPECIAL )
 		{
 		/* Encryption isn't available via this device, exit without going
@@ -615,17 +696,20 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		}
 	if( cryptStatusError( status ) )
 		{
-		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
-		retExt( SESSION_ERRINFO, status, "Couldn't create encryption key" );
+		cleanupObject( iPrivateKey1, KEY_TYPE_SIGNATURE );
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
+				  "Couldn't create encryption key" ) );
 		}
 	status = createCertRequest( &iCertReq, iPrivateKey2, iPrivateKey1,
-								KEYTYPE_ENCRYPTION );
+								KEY_TYPE_ENCRYPTION );
 	if( cryptStatusError( status ) )
 		{
-		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
-		cleanupObject( iPrivateKey2, KEYTYPE_ENCRYPTION );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't create encryption key cert request" );
+		cleanupObject( iPrivateKey1, KEY_TYPE_SIGNATURE );
+		cleanupObject( iPrivateKey2, KEY_TYPE_ENCRYPTION );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't create encryption key cert request" ) );
 		}
 
 	/* Set up the request info and activate the session.  This request is 
@@ -646,8 +730,8 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	sessionInfoPtr->iCertRequest = CRYPT_ERROR;
 	if( cryptStatusError( status ) )
 		{
-		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
-		cleanupObject( iPrivateKey2, KEYTYPE_ENCRYPTION );
+		cleanupObject( iPrivateKey1, KEY_TYPE_SIGNATURE );
+		cleanupObject( iPrivateKey2, KEY_TYPE_ENCRYPTION );
 		return( status );
 		}
 
@@ -659,11 +743,12 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	sessionInfoPtr->iCertResponse = CRYPT_ERROR;
 	if( cryptStatusError( status ) )
 		{
-		cleanupObject( iPrivateKey1, KEYTYPE_SIGNATURE );
-		cleanupObject( iPrivateKey2, KEYTYPE_ENCRYPTION );
-		retExt( SESSION_ERRINFO, status,
-				"Couldn't update keyset/device with encryption "
-				"key/certificate" );
+		cleanupObject( iPrivateKey1, KEY_TYPE_SIGNATURE );
+		cleanupObject( iPrivateKey2, KEY_TYPE_ENCRYPTION );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Couldn't update %s with encryption key/certificate",
+				  storageObjectName ) );
 		}
 
 	/* Finally, update the keyset/device with any required trusted certs up 
@@ -680,4 +765,4 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	krnlSendNotifier( iPrivateKey2, IMESSAGE_DECREFCOUNT );
 	return( CRYPT_OK );
 	}
-#endif /* USE_CMP */
+#endif /* USE_CMP || USE_SCEP */

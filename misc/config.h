@@ -98,13 +98,13 @@
 
 /* Algorithms not supported by most standards or implementations.  At the
    moment we only enable these for the Windows debug build for testing
-   puropses */
+   purposes */
 
 #if defined( __WIN32__ ) && !defined( NDEBUG ) && 0
   #define USE_ECC
 #endif /* Win32 debug */
 
-/* Other algorithms.  Note that DES/3DES and SHA1 are always enabled, as
+/* Other algorithms.  Note that DES/3DES and SHA1 are always enabled as
    they're used internally by cryptlib */
 
 #define USE_AES
@@ -114,11 +114,13 @@
 #define USE_MD5
 #define USE_RSA
 #define USE_SHA2
+#define USE_HMAC_SHA2
 #if defined( __UNIX__ ) && defined( _CRAY )
   /* The AES and SHA-2 reference code require a 32-bit data type, but Crays
 	 only have 8-bit and 64-bit types */
   #undef USE_AES
   #undef USE_SHA2
+  #undef USE_HMAC_SHA2
 #endif /* Crays */
 #if defined( __MSDOS__ )
   /* Remove some of the more memory-intensive or unlikely-to-be-used-under-DOS
@@ -127,10 +129,10 @@
   #undef USE_DH
   #undef USE_MD5
   #undef USE_SHA2
+  #undef USE_HMAC_SHA2
 
   /* Remove further algorithms to save space */
   #undef USE_DSA
-  #undef USE_RSA
 #endif /* DOS */
 #if defined( __WIN32__ )
   /* The slew of SHA-2 variants are still in a rather indeterminate state, 
@@ -257,7 +259,7 @@
    auto-config mechanism */
 
 #if defined( __WIN32__ ) && \
-	!( defined( NT_DRIVER ) || defined( __BORLANDC__ ) )
+	!( defined( NT_DRIVER ) || defined( WIN_DDK ) || defined( __BORLANDC__ ) )
   #define USE_LDAP
 #endif /* Windows */
 #ifdef USE_TCP
@@ -266,7 +268,7 @@
 
 /* File keysets */
 
-/* By uncommenting the following PKCS #12 #define or enabling equivalent
+/* By uncommenting the following PKCS #12 define or enabling equivalent
    functionality in any other manner you acknowledge that you are disabling
    safety features in the code and take full responbility for any
    consequences arising from this action.  You also indemnify the cryptlib
@@ -274,10 +276,7 @@
    may be suffered or incurred and that may have arisen directly or
    indirectly as a result of any use of cryptlib with this change made.  If
    you receive the code with the safety features already disabled, you must
-   obtain an original, unmodified version.
-
-   Actually since the code isn't currently implemented (see the comment in
-   dbx_pk12.c) it's best not to uncomment it at all */
+   obtain an original, unmodified version */
 /* #define USE_PKCS12 */
 
 #define USE_PGPKEYS
@@ -381,6 +380,15 @@
 	#define USE_WIDECHARS
   #endif
 #endif /* Unix systems with widechars */
+
+/* Networking.  DNS SRV is very rarely used and somewhat risky to leave 
+   enabled by default because the high level of complexity of DNS packet 
+   parsing combined with the primitiveness of some of the APIs (specifically
+   the Unix ones) make it a bit risky to leave enabled by default */
+
+#if defined( __WINDOWS__ ) && !defined( NDEBUG )
+  #define USE_DNSSRV
+#endif /* Windows debug */
 
 /****************************************************************************
 *																			*

@@ -12,13 +12,18 @@
 #if defined( _WIN32 ) && !defined( WIN32 )		/* Win32 and WinCE */
   #define WIN32					/* Old format */
   #define OPENSSL_SYS_WIN32		/* New format */
-  #if !defined( _WIN32_WCE ) && !defined( __BORLANDC__ )
+  /* Note that the following asm defines are duplicated in misc/os_spec.h,
+	 because the OpenSSL headers are non-orthogonal to the cryptlib ones.
+	 Any changes made here need to be reflected in os_spec.h */
+  #if !( defined( _WIN32_WCE ) || defined( _M_X64 ) || \
+		 defined( __BORLANDC__ ) || defined( NO_ASM ) )
 	#define USE_ASM				/* Always enabled for x86 Win32 */
-  #endif /* WinCE */
+  #endif /* WinCE || x86-64 || Borland compilers */
 #endif /* OpenSSL Win32 not defined */
 #include <stdlib.h>			/* For malloc() */
 #include <string.h>			/* For memset() */
 #ifdef USE_ASM				/* Defined via makefile for Unix systems */
+  #define BN_ASM
   #define MD5_ASM
   #define RMD160_ASM
   #define SHA1_ASM
@@ -65,9 +70,7 @@
 
 /* BeOS */
 #ifdef __BEOS__
-  #if defined( __i386__ ) || defined( __i486__ ) || \
-	  defined( __pentium__ ) || defined( __pentiumpro__ ) || \
-	  defined( __k6__ ) || defined( __athlon__ )
+  #if defined( __i386__ )
 	#define L_ENDIAN
 	#define BN_LLONG
 	#define DES_PTR
@@ -86,16 +89,51 @@
   #endif /* BeoS variants */
 #endif /* BeOS */
 
-/* The BSDs */
+/* The BSDs and Linux.  For low-level code-generation purposes these are 
+   identical, even if they differ at a higher level */
 #if defined( __FreeBSD__ ) || defined( __bsdi__ ) || \
-	defined( __OpenBSD__ ) || defined( __NetBSD__ )
+	defined( __OpenBSD__ ) || defined( __NetBSD__ ) || \
+	defined( __linux__ )
+  #if defined( __x86_64__ ) || defined( __amd64__ )
+	/* 64-bit x86 has both 'long' and 'long long' as 64 bits.  In addition
+	   we use DES_INT since int's are 64-bit.  We have to check for the
+	   64-bit x86 variants before the generic ones because they're a
+	   variation on the generics (e.g. AMD64 defines both __athlon__ and
+	   __x86_64__, so if we checked for __athlon__ first we'd identify it
+	   as a generic rather than 64-bit build) */
+	#define L_ENDIAN
+	#undef SIXTY_FOUR_BIT
+	#define SIXTY_FOUR_BIT_LONG
+	#define DES_INT
+	#define DES_RISC1
+	#define DES_UNROLL
+	#define RC4_INDEX
+  #elif defined( __i386__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define DES_PTR
+	#define DES_RISC1
+	#define DES_UNROLL
+	#define RC4_INDEX
+  #elif defined( __ppc__ ) || defined( __powerpc__ )
+	#define B_ENDIAN
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_UNROLL
+	#define RC4_CHAR
+	#define RC4_CHUNK
+  #elif defined( __arm ) || defined( __arm__ )
+	#define L_ENDIAN
+	/* Not sure what other options the ARM build should enable... */
+  #else
+	#error Need to define CPU type for non-x86/non-PPC Linux
+  #endif /* *BSD/Linux variants */
+#endif /* *BSD/Linux */
+#if defined( __LINUX__ ) && defined( __WATCOMC__ )
   #define L_ENDIAN
   #define BN_LLONG
-  #define DES_PTR
-  #define DES_RISC1
-  #define DES_UNROLL
   #define RC4_INDEX
-#endif /* The BSDs */
+#endif /* Linux */
 
 /* Cray Unicos */
 #ifdef _CRAY
@@ -166,51 +204,6 @@
 	/* Pure 64-bit should also define SIXTY_FOUR_BIT_LONG */
   #endif /* Irix versions */
 #endif /* Irix */
-
-/* Linux */
-#ifdef __linux__
-  #if defined( __x86_64__ ) || defined( __amd64__ )
-	/* 64-bit x86 has both 'long' and 'long long' as 64 bits.  In addition
-	   we use DES_INT since int's are 64-bit.  We have to check for the
-	   64-bit x86 variants before the generic ones because they're a
-	   variation on the generics (e.g. AMD64 defines both __athlon__ and
-	   __x86_64__, so it we checked for __athlon__ first we'd identify it
-	   as a generic rather than 64-bit build) */
-	#define L_ENDIAN
-	#undef SIXTY_FOUR_BIT
-	#define SIXTY_FOUR_BIT_LONG
-	#define DES_INT
-	#define DES_RISC1
-	#define DES_UNROLL
-	#define RC4_INDEX
-  #elif defined( __i386__ ) || defined( __i486__ ) || \
-		defined( __pentium__ ) || defined( __pentiumpro__ ) || \
-		defined( __k6__ ) || defined( __athlon__ )
-	#define L_ENDIAN
-	#define BN_LLONG
-	#define DES_PTR
-	#define DES_RISC1
-	#define DES_UNROLL
-	#define RC4_INDEX
-  #elif defined( __ppc__ ) || defined( __powerpc__ )
-	#define B_ENDIAN
-	#define BN_LLONG
-	#define BF_PTR
-	#define DES_UNROLL
-	#define RC4_CHAR
-	#define RC4_CHUNK
-  #elif defined( __arm ) || defined( __arm__ )
-	#define L_ENDIAN
-	/* Not sure what other options the ARM build should enable... */
-  #else
-	#error Need to define CPU type for non-x86/non-PPC Linux
-  #endif /* Linux variants */
-#endif /* Linux */
-#if defined( __LINUX__ ) && defined(__WATCOMC__)
-  #define L_ENDIAN
-  #define BN_LLONG
-  #define RC4_INDEX
-#endif /* Linux */
 
 /* Mac */
 #if defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
@@ -519,7 +512,7 @@
   #include "crypt.h"
   #if ( defined( L_ENDIAN ) && !defined( DATA_LITTLEENDIAN ) ) || \
 	  ( defined( B_ENDIAN ) && !defined( DATA_BIGENDIAN ) )
-	#error You need to update the system-specific configuration settings in osconfig.h
+	#error You need to synchronise the endianness configuration settings in osconfig.h and crypt.h
   #endif /* Endianness conflict */
 #endif /* One-off check */
 

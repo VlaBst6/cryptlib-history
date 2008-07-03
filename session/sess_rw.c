@@ -142,7 +142,7 @@ static int tryRead( SESSION_INFO *sessionInfoPtr, READSTATE_INFO *readInfo )
 		}
 	bytesLeft = sessionInfoPtr->receiveBufSize - sessionInfoPtr->receiveBufEnd;
 
-	assert( sessionInfoPtr->partialHeaderLength == 0 );
+	assert( sessionInfoPtr->partialHeaderRemaining == 0 );
 
 	/* Sanity-check the read state */
 	if( sessionInfoPtr->receiveBufEnd < 0 || \
@@ -153,10 +153,10 @@ static int tryRead( SESSION_INFO *sessionInfoPtr, READSTATE_INFO *readInfo )
 		sessionInfoPtr->pendingPacketRemaining <= 0 || \
 		sessionInfoPtr->pendingPacketPartialLength < 0 )
 		{
-		assert( NOTREACHED );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
-				"Internal error: Inconsistent state detected in session "
-				"read stream" );
+		retExt_IntError( CRYPT_ERROR_FAILED,
+						 ( CRYPT_ERROR_FAILED, SESSION_ERRINFO, 
+						   "Internal error: Inconsistent state detected in "
+						   "session read stream" ) );
 		}
 
 	/* If there's not enough room in the receive buffer to read at least 1K
@@ -214,10 +214,10 @@ static int getData( SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->receiveBufEnd < 0 || \
 		sessionInfoPtr->receiveBufEnd > sessionInfoPtr->receiveBufSize )
 		{
-		assert( NOTREACHED );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
-				"Internal error: Inconsistent state detected in session "
-				"read stream" );
+		retExt_IntError( CRYPT_ERROR_FAILED,
+						 ( CRYPT_ERROR_FAILED, SESSION_ERRINFO, 
+						   "Internal error: Inconsistent state detected in "
+						   "session read stream" ) );
 		}
 
 	/* Copy as much data as we can across and move any remaining data down
@@ -328,10 +328,10 @@ static int getData( SESSION_INFO *sessionInfoPtr,
 	}
 
 int getSessionData( SESSION_INFO *sessionInfoPtr, void *data, 
-					const int length, int *bytesCopied )
+					const int dataMaxLength, int *bytesCopied )
 	{
 	BYTE *dataPtr = data;
-	int dataLength = length, iterationCount = 0, status = CRYPT_OK;
+	int dataLength = dataMaxLength, iterationCount = 0, status = CRYPT_OK;
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -395,26 +395,28 @@ int getSessionData( SESSION_INFO *sessionInfoPtr, void *data,
 	}
 
 /* Read a fixed-size packet header, called by the secure data session
-   routines to read the fixed header on a data packet.  This is an atomic
-   read of out-of-band data that isn't part of the packet payload, so we
-   have to make sure that we've got the entire header before we can
-   continue:
+   routines to read the fixed header on a data packet.  There are two
+   variations of this, an atomic read readFixedHeaderAtomic() used during 
+   the handshake phase that requires all data to be read and treats timeouts 
+   as hard errors, and a partial read readFixedHeader() used during the 
+   data-transfer phase that treats timeouts as soft errors.
+
+   Buffer handling for the soft-timeout version is as follows:
 
 		| <- hdrSize ->	|
-	----+---------------+--------
-	////|				|
-	----+---------------+--------
-		^		^
-		|		|
-	  bEnd	partialHdr
+		+---------------+
+		|///////|		|
+		+---------------+
+				|<--+-->|
+					|
+			  partialHdrRem
 
-   The data is read into the read buffer starting at the end of the last
-   payload packet bEnd, this is safe because this function causes a
-   pipeline stall so no more data can be read until the header has been
-   read.  The function then returns CRYPT_ERROR_TIMEOUT until partialHdr 
-   reaches the full header size */
+   The data is read into the header buffer until partialHeaderRemaining
+   drops to zero.  The function returns OK_SPECIAL until this happens */
 
-int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
+#if 0
+
+int readFixedHeaderOld( SESSION_INFO *sessionInfoPtr, const int headerSize )
 	{
 	BYTE *bufPtr = sessionInfoPtr->receiveBuffer + \
 				   sessionInfoPtr->receiveBufEnd;
@@ -422,23 +424,23 @@ int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
 
 	/* If it's the first attempt at reading the header, set the total byte
 	   count */
-	if( sessionInfoPtr->partialHeaderLength <= 0 )
-		sessionInfoPtr->partialHeaderLength = headerSize;
+	if( sessionInfoPtr->partialHeaderRemaining <= 0 )
+		sessionInfoPtr->partialHeaderRemaining = headerSize;
 	else
-		bufPtr += headerSize - sessionInfoPtr->partialHeaderLength;
+		bufPtr += headerSize - sessionInfoPtr->partialHeaderRemaining;
 
-	assert( sessionInfoPtr->partialHeaderLength > 0 && \
-			sessionInfoPtr->partialHeaderLength <= headerSize );
+	assert( sessionInfoPtr->partialHeaderRemaining > 0 && \
+			sessionInfoPtr->partialHeaderRemaining <= headerSize );
 
 	/* Clear the first few bytes of returned data to make sure that the
 	   higher-level code always bails out if the read fails for some reason
 	   without returning an error status */
 	memset( bufPtr, 0, min( headerSize, \
-							sessionInfoPtr->partialHeaderLength ) );
+							sessionInfoPtr->partialHeaderRemaining ) );
 
 	/* Try and read the remaining header bytes */
 	status = sread( &sessionInfoPtr->stream, bufPtr,
-					sessionInfoPtr->partialHeaderLength );
+					sessionInfoPtr->partialHeaderRemaining );
 	if( cryptStatusError( status ) )
 		{
 		/* We could be trying to read an ack for a close packet sent in 
@@ -455,7 +457,7 @@ int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
 		}
 
 	/* If we didn't get the whole header, treat it as a timeout error */
-	if( status < sessionInfoPtr->partialHeaderLength )
+	if( status < sessionInfoPtr->partialHeaderRemaining )
 		{
 		/* If we timed out during the handshake phase, treat it as a hard
 		   timeout error */
@@ -463,20 +465,131 @@ int readFixedHeader( SESSION_INFO *sessionInfoPtr, const int headerSize )
 			{
 			if( sessionInfoPtr->flags & SESSION_NOREPORTERROR )
 				return( status );
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
-					"Timeout during packet header read, only got %d of %d "
-					"bytes", status, headerSize );
+			retExt( CRYPT_ERROR_TIMEOUT,
+					( CRYPT_ERROR_TIMEOUT, SESSION_ERRINFO, 
+					  "Timeout during packet header read, only got %d of %d "
+					  "bytes", status, headerSize ) );
 			}
 
 		/* We're in the data-processing stage, it's a soft timeout error */
-		sessionInfoPtr->partialHeaderLength -= status;
+		sessionInfoPtr->partialHeaderRemaining -= status;
 		return( 0 );
 		}
 
 	/* We've got the whole header ready to process */
-	assert( sessionInfoPtr->partialHeaderLength == status );
-	sessionInfoPtr->partialHeaderLength = 0;
+	assert( sessionInfoPtr->partialHeaderRemaining == status );
+	sessionInfoPtr->partialHeaderRemaining = 0;
 	return( headerSize );
+	}
+#endif /* 0 */
+
+int readFixedHeaderAtomic( SESSION_INFO *sessionInfoPtr, void *headerBuffer, 
+						   const int headerLength )
+	{
+	int length, status;
+
+	/* Clear the returned data to make sure that the higher-level code 
+	   always bails out if the read fails for some reason without returning 
+	   an error status */
+	memset( headerBuffer, 0, headerLength );
+
+	/* Try and read the remaining header bytes */
+	status = length = \
+		sread( &sessionInfoPtr->stream, headerBuffer, headerLength );
+	if( cryptStatusError( status ) )
+		{
+		/* We could be trying to read an ack for a close packet sent in 
+		   response to an earlier error, in which case we don't want the
+		   already-present error information overwritten by network
+		   error info, so if the no-report-error flag is set we don't
+		   update the extended error info */
+		if( sessionInfoPtr->flags & SESSION_NOREPORTERROR )
+			return( status );
+
+		sNetGetErrorInfo( &sessionInfoPtr->stream,
+						  &sessionInfoPtr->errorInfo );
+		return( status );
+		}
+
+	/* We've timed out during the handshake phase, it's a hard timeout 
+	   error */
+	if( length < headerLength )
+		{
+		if( sessionInfoPtr->flags & SESSION_NOREPORTERROR )
+			return( status );
+		retExt( CRYPT_ERROR_TIMEOUT,
+				( CRYPT_ERROR_TIMEOUT, SESSION_ERRINFO, 
+				  "Timeout during packet header read, only got %d of %d "
+				  "bytes", length, headerLength ) );
+		}
+
+	return( CRYPT_OK );
+	}
+
+int readFixedHeader( SESSION_INFO *sessionInfoPtr, void *headerBuffer, 
+					 const int headerLength )
+	{
+	BYTE *bufPtr = headerBuffer;
+	int bytesToRead, length, status;
+
+	/* If it's the first attempt at reading the header, set the total byte
+	   count */
+	if( sessionInfoPtr->partialHeaderRemaining <= 0 )
+		{
+		sessionInfoPtr->partialHeaderRemaining = headerLength;
+		bytesToRead = headerLength;
+		}
+	else
+		{
+		/* We've already got a partial header present in the buffer, read 
+		   the remaining header data.  
+		   
+		   Note that the existing partial header size may be zero (i.e. 
+		   partialHeaderRemaining == headerLength ) if we got a soft-timeout 
+		   on a previous call to readFixedHeader().  This happens on any
+		   read in which the peer has sent only a single packet and the 
+		   packet fits entirely in the read buffer because we follow up 
+		   every full packet read with a zero-timeout second read to check 
+		   if further packets are pending */
+		bufPtr += headerLength - sessionInfoPtr->partialHeaderRemaining;
+		bytesToRead = sessionInfoPtr->partialHeaderRemaining;
+		}
+	assert( bytesToRead > 0 && bytesToRead <= headerLength );
+	assert( sessionInfoPtr->partialHeaderRemaining > 0 && \
+			sessionInfoPtr->partialHeaderRemaining <= headerLength );
+
+	/* Clear the first few bytes of returned data to make sure that the
+	   higher-level code always bails out if the read fails for some reason
+	   without returning an error status */
+	memset( bufPtr, 0, bytesToRead );
+
+	/* Try and read the remaining header bytes */
+	status = length = \
+		sread( &sessionInfoPtr->stream, bufPtr, bytesToRead );
+	if( cryptStatusError( status ) )
+		{
+		/* We could be trying to read an ack for a close packet sent in 
+		   response to an earlier error, in which case we don't want the
+		   already-present error information overwritten by network
+		   error info, so if the no-report-error flag is set we don't
+		   update the extended error info */
+		if( sessionInfoPtr->flags & SESSION_NOREPORTERROR )
+			return( status );
+
+		sNetGetErrorInfo( &sessionInfoPtr->stream,
+						  &sessionInfoPtr->errorInfo );
+		return( status );
+		}
+	sessionInfoPtr->partialHeaderRemaining -= length;
+
+	/* If we didn't get the whole header, treat it as a soft timeout error */
+	if( sessionInfoPtr->partialHeaderRemaining > 0 )
+		return( OK_SPECIAL );
+
+	/* We've got the whole header ready to process */
+	assert( sessionInfoPtr->partialHeaderRemaining == 0 );
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -620,10 +733,10 @@ static int flushData( SESSION_INFO *sessionInfoPtr )
 	}
 
 int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
-					const int length, int *bytesCopied )
+					const int dataLength, int *bytesCopied )
 	{
 	BYTE *dataPtr = ( BYTE * ) data;
-	int dataLength = length, iterationCount = 0, status;
+	int length = dataLength, iterationCount = 0, status;
 
 	/* Clear return value */
 	*bytesCopied = 0;
@@ -637,10 +750,10 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 		sessionInfoPtr->sendBufPartialBufPos < 0 || \
 		sessionInfoPtr->sendBufPartialBufPos >= sessionInfoPtr->sendBufPos )
 		{
-		assert( NOTREACHED );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_FAILED,
-				"Internal error: Inconsistent state detected in session "
-				"write stream" );
+		retExt_IntError( CRYPT_ERROR_FAILED,
+						 ( CRYPT_ERROR_FAILED, SESSION_ERRINFO, 
+						   "Internal error: Inconsistent state detected in "
+						   "session write stream" ) );
 		}
 
 	/* If there's an error pending (which will always be fatal, see the
@@ -665,7 +778,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 	   timeout error during an explicit flush (that is, some but not all of
 	   the data is written, so it's a soft timeout), it's converted into an 
 	   explicit hard timeout failure */
-	if( dataLength <= 0 )
+	if( length <= 0 )
 		{
 		const int oldBufPos = sessionInfoPtr->sendBufPartialBufPos;
 		int bytesWritten;
@@ -681,15 +794,17 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 		   write into a timeout error */
 		bytesWritten = sessionInfoPtr->sendBufPartialBufPos - oldBufPos;
 		if( bytesWritten > 0 )
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
-					"Timeout during flush, only %d bytes were written "
-					"before the timeout of %d seconds expired",
-					sessionInfoPtr->sendBufPartialBufPos, 
-					sessionInfoPtr->writeTimeout );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_TIMEOUT,
-				"Timeout during flush, no data could be written before the "
-				"timeout of %d seconds expired", 
-				sessionInfoPtr->writeTimeout );
+			retExt( CRYPT_ERROR_TIMEOUT,
+					( CRYPT_ERROR_TIMEOUT, SESSION_ERRINFO, 
+					  "Timeout during flush, only %d bytes were written "
+					  "before the timeout of %d seconds expired",
+					  sessionInfoPtr->sendBufPartialBufPos, 
+					  sessionInfoPtr->writeTimeout ) );
+		retExt( CRYPT_ERROR_TIMEOUT,
+				( CRYPT_ERROR_TIMEOUT, SESSION_ERRINFO, 
+				  "Timeout during flush, no data could be written before "
+				  "the timeout of %d seconds expired", 
+				  sessionInfoPtr->writeTimeout ) );
 		}
 
 	/* If there's unwritten data from a previous write still in the buffer, 
@@ -705,7 +820,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 	/* If there's too much data to fit in the buffer, send it through to the
 	   host */
 	while( ( sessionInfoPtr->sendBufPos - \
-			 sessionInfoPtr->sendBufStartOfs ) + dataLength >= \
+			 sessionInfoPtr->sendBufStartOfs ) + length >= \
 		   sessionInfoPtr->maxPacketSize && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		{
@@ -713,7 +828,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 								( sessionInfoPtr->sendBufPos + \
 								  sessionInfoPtr->sendBufStartOfs );
 
-		assert( bytesToCopy >= 0 && bytesToCopy <= dataLength );
+		assert( bytesToCopy >= 0 && bytesToCopy <= length );
 
 		/* Copy in as much data as we have room for and send it through.  The
 		   flush can return one of three classes of values:
@@ -730,7 +845,7 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 					dataPtr, bytesToCopy );
 			sessionInfoPtr->sendBufPos += bytesToCopy;
 			dataPtr += bytesToCopy;
-			dataLength -= bytesToCopy;
+			length -= bytesToCopy;
 			*bytesCopied += bytesToCopy;
 			}
 		status = flushData( sessionInfoPtr );
@@ -760,16 +875,16 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 
 	/* If there's anything left, it'll fit completely into the send buffer, 
 	   just copy it in */
-	if( dataLength > 0 )
+	if( length > 0 )
 		{
 		assert( ( sessionInfoPtr->sendBufPos - \
-				  sessionInfoPtr->sendBufStartOfs ) + dataLength < \
+				  sessionInfoPtr->sendBufStartOfs ) + length < \
 				sessionInfoPtr->maxPacketSize );
 
 		memcpy( sessionInfoPtr->sendBuffer + sessionInfoPtr->sendBufPos,
-				dataPtr, dataLength );
-		sessionInfoPtr->sendBufPos += dataLength;
-		*bytesCopied += dataLength;
+				dataPtr, length );
+		sessionInfoPtr->sendBufPos += length;
+		*bytesCopied += length;
 		}
 
 	return( CRYPT_OK );
@@ -785,40 +900,65 @@ int putSessionData( SESSION_INFO *sessionInfoPtr, const void *data,
 
 int readPkiDatagram( SESSION_INFO *sessionInfoPtr )
 	{
-	int length, status;
+	int length = DUMMY_INIT, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Read the datagram */
 	sessionInfoPtr->receiveBufEnd = 0;
-	status = sread( &sessionInfoPtr->stream, sessionInfoPtr->receiveBuffer,
-					sessionInfoPtr->receiveBufSize );
+	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
+		{
+		HTTP_DATA_INFO httpDataInfo;
+
+		initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
+						  sessionInfoPtr->receiveBufSize );
+		status = sread( &sessionInfoPtr->stream, &httpDataInfo,
+						 sizeof( HTTP_DATA_INFO ) );
+		if( !cryptStatusError( status ) )
+			length = httpDataInfo.bytesAvail;
+		}
+	else
+		{
+		status = length = \
+				sread( &sessionInfoPtr->stream, 
+					   sessionInfoPtr->receiveBuffer,
+					   sessionInfoPtr->receiveBufSize );
+		}
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
 						  &sessionInfoPtr->errorInfo );
 		return( status );
 		}
-	if( status < 4 )
+	if( length < 4 || length >= MAX_INTLENGTH )
+		{
 		/* Perform a sanity check on the length.  This avoids some
 		   assertions in the debug build, and provides somewhat more
 		   specific information for the caller than the invalid-encoding
 		   error that we'd get later */
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_UNDERFLOW,
-				"Invalid PKI message length %d", status );
+		retExt( CRYPT_ERROR_UNDERFLOW,
+				( CRYPT_ERROR_UNDERFLOW, SESSION_ERRINFO, 
+				  "Invalid PKI message length %d", status ) );
+		}
 
 	/* Find out how much data we got and perform a firewall check that
 	   everything is OK.  We rely on this rather than the read byte count
 	   since checking the ASN.1, which is the data that will actually be
 	   processed, avoids any vagaries of server implementation oddities */
-	length = checkObjectEncoding( sessionInfoPtr->receiveBuffer, status );
-	if( cryptStatusError( length ) )
-		retExt( SESSION_ERRINFO, length, "Invalid PKI message encoding" );
+	status = length = checkObjectEncoding( sessionInfoPtr->receiveBuffer, 
+										   length );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
+				  "Invalid PKI message encoding" ) );
+		}
 	sessionInfoPtr->receiveBufEnd = length;
 	return( CRYPT_OK );
 	}
 
-int writePkiDatagram( SESSION_INFO *sessionInfoPtr )
+int writePkiDatagram( SESSION_INFO *sessionInfoPtr, const char *contentType, 
+					  const int contentTypeLength )
 	{
 	int status;
 
@@ -826,8 +966,23 @@ int writePkiDatagram( SESSION_INFO *sessionInfoPtr )
 	assert( sessionInfoPtr->receiveBufEnd > 4 );
 
 	/* Write the datagram */
-	status = swrite( &sessionInfoPtr->stream, sessionInfoPtr->receiveBuffer,
-					 sessionInfoPtr->receiveBufEnd );
+	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
+		{
+		HTTP_DATA_INFO httpDataInfo;
+
+		initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
+						  sessionInfoPtr->receiveBufEnd );
+		httpDataInfo.contentType = contentType;
+		httpDataInfo.contentTypeLen = contentTypeLength;
+		status = swrite( &sessionInfoPtr->stream, &httpDataInfo,
+						 sizeof( HTTP_DATA_INFO ) );
+		}
+	else
+		{
+		status = swrite( &sessionInfoPtr->stream, 
+						 sessionInfoPtr->receiveBuffer,
+						 sessionInfoPtr->receiveBufEnd );
+		}
 	if( cryptStatusError( status ) )
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
 						  &sessionInfoPtr->errorInfo );

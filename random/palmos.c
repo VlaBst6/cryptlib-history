@@ -11,11 +11,8 @@
 /* General includes */
 
 #include <sys/time.h>
-#ifdef _MSC_VER
-  #include "../crypt.h"
-#else
-  #include "crypt.h"
-#endif /* VC++ braindamage */
+#include "crypt.h"
+#include "random/random.h"
 
 /* OS-specific includes */
 

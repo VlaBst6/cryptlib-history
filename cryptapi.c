@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib External API Interface					*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2007					*
 *																			*
 ****************************************************************************/
 
@@ -16,54 +16,6 @@
 
 /* Handlers for the various commands */
 
-static int cmdAsyncOp( void *stateInfo, COMMAND_INFO *cmd )
-	{
-	int dummy, status;
-
-	assert( cmd->type == COMMAND_ASYNCOP );
-	assert( cmd->flags == COMMAND_FLAG_NONE );
-	assert( cmd->noArgs == 2);
-	assert( cmd->noStrArgs == 0 );
-
-	UNUSED( stateInfo );
-
-	/* Perform basic server-side error checking */
-	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
-		return( CRYPT_ERROR_PARAM1 );
-
-	/* This command is a kitchen-sink operation used to manage async ops.on
-	   contexts.  If the arg is zero, it gets the objects status, otherwise
-	   it cancels an async operation.
-
-	   First, since we're about to access an internal attribute (which can
-	   only be done through an internal message), we have to explicitly make
-	   sure the object is externally visible.  We do this by reading its
-	   algorithm type, which is a context-only attribute which ensures that
-	   what'll be reported is the status of whatever it is that could be
-	   busy rather than the status of an associated object (e.g.an envelope,
-	   which is never busy, in any case we can't use a universal object
-	   attribute like a property because these are handled by the kernel and
-	   aren't affected by the object state).
-
-	   Since the context attribute read returns an error value if the object
-	   is in a non-normal state, we allow some error types through */
-	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE, &dummy,
-							  CRYPT_CTXINFO_ALGO );
-	if( status != CRYPT_OK && status != CRYPT_ERROR_TIMEOUT )
-		return( status );
-
-	/* If we're after the object status or it's in the normal status (ie
-	   there's nothing to do), return now */
-	if( !cmd->arg[ 1 ] || status == CRYPT_OK )
-		return( status );
-
-	/* If the object is busy, reset its status to non-busy.  If the object is
-	   still busy when the message is received, the abort flag will be set,
-	   otherwise the message won't have any effect */
-	return( krnlSendMessage( cmd->arg[ 0 ], IMESSAGE_SETATTRIBUTE,
-							 MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS ) );
-	}
-
 static int cmdCertCheck( void *stateInfo, COMMAND_INFO *cmd )
 	{
 	assert( cmd->type == COMMAND_CERTCHECK );
@@ -71,7 +23,7 @@ static int cmdCertCheck( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 2 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -95,7 +47,7 @@ static int cmdCertMgmt( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 4 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -135,7 +87,7 @@ static int cmdCertSign( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 2 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -151,14 +103,14 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	BOOLEAN bindToOwner = FALSE, hasStrArg = FALSE;
-	int owner, status;
+	int owner = DUMMY_INIT, status;
 
 	assert( cmd->type == COMMAND_CREATEOBJECT );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
 	assert( cmd->noArgs >= 2 && cmd->noArgs <= 4 );
 	assert( cmd->noStrArgs >= 0 && cmd->noStrArgs <= 2 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
@@ -213,8 +165,10 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 				return( CRYPT_ARGERROR_STR1 );
 			if( cmd->arg[ 3 ] < CRYPT_KEYOPT_NONE || \
 				cmd->arg[ 3 ] >= CRYPT_KEYOPT_LAST_EXTERNAL )
+				{
 				/* CRYPT_KEYOPT_NONE is a valid setting for this parameter */
 				return( CRYPT_ARGERROR_NUM2 );
+				}
 			hasStrArg = TRUE;
 			break;
 
@@ -247,7 +201,7 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 			break;
 
 		default:
-			assert( NOTREACHED );
+			retIntError();
 		}
 
 	/* If we're creating the object via a device, we should set the new
@@ -275,12 +229,16 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 			}
 		}
 	if( cmd->arg[ 0 ] == SYSTEM_OBJECT_HANDLE )
+		{
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  cmd->arg[ 1 ] );
+		}
 	else
+		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_DEV_CREATEOBJECT,
 								  &createInfo, cmd->arg[ 1 ] );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -310,8 +268,10 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 	   handle, which requires an internal message that leaves the object
 	   internal */
 	if( cmd->arg[ 0 ] == SYSTEM_OBJECT_HANDLE )
+		{
 		krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 						 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_INTERNAL );
+		}
 	cmd->arg[ 0 ] = createInfo.cryptHandle;
 	return( CRYPT_OK );
 	}
@@ -326,14 +286,15 @@ static int cmdCreateObjectIndirect( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 2 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( cmd->arg[ 0 ] != SYSTEM_OBJECT_HANDLE )
 		return( CRYPT_ERROR_FAILED );	/* Internal error */
 	if( cmd->arg[ 1 ] != OBJECT_TYPE_CERTIFICATE )
 		return( CRYPT_ERROR_FAILED );	/* Internal error */
-	if( cmd->strArgLen[ 0 ] < MIN_CERTSIZE )
+	if( cmd->strArgLen[ 0 ] < MIN_CERTSIZE || \
+		cmd->strArgLen[ 0 ] >= MAX_INTLENGTH )
 		return( CRYPT_ARGERROR_STR1 );
 
 	/* Create the object via the device.  Since we're usually doing this via
@@ -343,13 +304,17 @@ static int cmdCreateObjectIndirect( void *stateInfo, COMMAND_INFO *cmd )
 										cmd->strArgLen[ 0 ],
 										CRYPT_CERTTYPE_NONE );
 	if( cmd->arg[ 0 ] == SYSTEM_OBJECT_HANDLE )
+		{
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
+		}
 	else
+		{
 		status = krnlSendMessage( cmd->arg[ 0 ],
 								  MESSAGE_DEV_CREATEOBJECT_INDIRECT,
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -371,7 +336,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
@@ -386,6 +351,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 				return( status );
 		}
 	else
+		{
 		if( cryptAlgo <= CRYPT_ALGO_LAST_PKC )
 			{
 			int blockSize;
@@ -397,6 +363,7 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 			if( cryptStatusError( status ) )
 				return( status );
 			}
+		}
 	if( cmd->strArgLen[ 0 ] < 0 )
 		return( CRYPT_ARGERROR_NUM1 );
 	if( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC )
@@ -429,8 +396,10 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
 	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
+		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
+		}
 	return( status );
 	}
 
@@ -441,7 +410,7 @@ static int cmdDeleteAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 2 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
@@ -454,17 +423,21 @@ static int cmdDeleteAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		if( cmd->arg[ 1 ] <= CRYPT_ATTRIBUTE_NONE || \
 			cmd->arg[ 1 ] >= CRYPT_ATTRIBUTE_LAST )
 			return( CRYPT_ARGERROR_NUM1 );
+		}
 
 	/* Delete the attribute.  Since we're usually doing this via the default
 	   user object which is invisible to the user, we have to use an internal
 	   message for this one case */
 	if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+		{
 		return( krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 								 IMESSAGE_DELETEATTRIBUTE, NULL,
 								 cmd->arg[ 1 ] ) );
+		}
 	return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_DELETEATTRIBUTE, NULL,
 							 cmd->arg[ 1 ] ) );
 	}
@@ -479,7 +452,7 @@ static int cmdDeleteKey( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs >= 2 && cmd->noArgs <= 3 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -493,10 +466,12 @@ static int cmdDeleteKey( void *stateInfo, COMMAND_INFO *cmd )
 		if( cmd->arg[ 2 ] == CRYPT_CERTTYPE_REQUEST_CERT )
 			itemType = KEYMGMT_ITEM_REQUEST;
 		else
+			{
 			if( cmd->arg[ 2 ] == CRYPT_CERTTYPE_PKIUSER )
 				itemType = KEYMGMT_ITEM_PKIUSER;
 			else
 				return( CRYPT_ARGERROR_NUM2 );
+			}
 		}
 	if( cmd->strArgLen[ 0 ] < MIN_NAME_LENGTH || \
 		cmd->strArgLen[ 0 ] >= MAX_ATTRIBUTE_SIZE )
@@ -519,7 +494,7 @@ static int cmdDestroyObject( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -542,7 +517,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
@@ -557,6 +532,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 				return( status );
 		}
 	else
+		{
 		if( cryptAlgo <= CRYPT_ALGO_LAST_PKC )
 			{
 			int blockSize;
@@ -568,6 +544,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 			if( cryptStatusError( status ) )
 				return( status );
 			}
+		}
 	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
 		{
 		/* For hash and MAC operations a length of zero is valid since this
@@ -576,8 +553,10 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		if( cmd->strArgLen[ 0 ] <= 0 )
 			return( CRYPT_ARGERROR_NUM1 );
+		}
 	if( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC )
 		{
 		int blockSize;
@@ -613,8 +592,10 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
 	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
+		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
+		}
 	return( status );
 	}
 
@@ -632,16 +613,18 @@ static int cmdExportObject( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->flags == COMMAND_FLAG_RET_LENGTH || \
 			cmd->strArg[ 0 ] != NULL );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
 		return( CRYPT_ARGERROR_OBJECT );
 	if( cmd->arg[ 1 ] <= CRYPT_CERTFORMAT_NONE || \
 		cmd->arg[ 1 ] >= CRYPT_CERTFORMAT_LAST_EXTERNAL )
+		{
 		/* At the moment the only object that we can export is a cert, so we
 		   make sure that the format type is valid for this */
 		return( CRYPT_ARGERROR_NUM1 );
+		}
 
 	/* Export the cert */
 	if( cmd->flags == COMMAND_FLAG_RET_LENGTH )
@@ -701,7 +684,7 @@ static int cmdFlushData( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -718,18 +701,16 @@ static int cmdGenKey( void *stateInfo, COMMAND_INFO *cmd )
 	{
 	assert( cmd->type == COMMAND_GENKEY );
 	assert( cmd->flags == COMMAND_FLAG_NONE );
-	assert( cmd->noArgs >= 1 && cmd->noArgs <= 2 );
+	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
 		return( CRYPT_ARGERROR_OBJECT );
 
-	return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_CTX_GENKEY, NULL,
-							 ( cmd->noArgs > 1 ) ? \
-								( cmd->arg[ 1 ] ? TRUE : FALSE ) : FALSE ) );
+	return( krnlSendNotifier( cmd->arg[ 0 ], MESSAGE_CTX_GENKEY ) );
 	}
 
 static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
@@ -745,7 +726,7 @@ static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			( ( cmd->noArgs == 2 || cmd->flags == COMMAND_FLAG_RET_LENGTH ) && \
 				cmd->noStrArgs == 0 ) );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
@@ -758,9 +739,11 @@ static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		if( cmd->arg[ 1 ] <= CRYPT_ATTRIBUTE_NONE || \
 			cmd->arg[ 1 ] >= CRYPT_ATTRIBUTE_LAST )
 			return( CRYPT_ARGERROR_NUM1 );
+		}
 
 	/* Get the attribute data from the object.  If it's a config option,
 	   we're usually doing this via the default user object which is
@@ -779,20 +762,26 @@ static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	if( cmd->noArgs == 2 )
 		{
 		if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+			{
 			return( krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 									 IMESSAGE_GETATTRIBUTE, &cmd->arg[ 0 ],
 									 cmd->arg[ 1 ] ) );
+			}
 		return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE,
 								 &cmd->arg[ 0 ], cmd->arg[ 1 ] ) );
 		}
 	setMessageData( &msgData, NULL, 0 );
 	if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+		{
 		status = krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  cmd->arg[ 1 ] );
+		}
 	else
+		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE_S,
 								  &msgData, cmd->arg[ 1 ] );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 	if( cmd->flags == COMMAND_FLAG_RET_LENGTH )
@@ -802,12 +791,16 @@ static int cmdGetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 		}
 	msgData.data = cmd->strArg[ 0 ];
 	if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+		{
 		status = krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  cmd->arg[ 1 ] );
+		}
 	else
+		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE_S,
 								  &msgData, cmd->arg[ 1 ] );
+		}
 	if( cryptStatusOK( status ) )
 		cmd->strArgLen[ 0 ] = msgData.length;
 	return( status );
@@ -825,7 +818,7 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 3 );
 	assert( cmd->noStrArgs >= 1 && cmd->noStrArgs <= 2 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking.  Because of keyset queries
 	   we have to accept CRYPT_KEYID_NONE as well as obviously valid key
@@ -837,25 +830,31 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 		return( CRYPT_ARGERROR_OBJECT );
 	if( cmd->arg[ 1 ] <= KEYMGMT_ITEM_NONE || \
 		cmd->arg[ 1 ] >= KEYMGMT_ITEM_REVOCATIONINFO )
+		{
 		/* Item can only be a public key, private key, secret key, CA 
 		   request, or CA PKI user info */
 		return( CRYPT_ARGERROR_NUM1 );
+		}
 	if( cmd->arg[ 2 ] < CRYPT_KEYID_NONE || \
 		cmd->arg[ 2 ] >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ARGERROR_NUM2 );
 	if( cmd->arg[ 2 ] == CRYPT_KEYID_NONE )
 		{
 		if( cmd->arg[ 1 ] != KEYMGMT_ITEM_PUBLICKEY )
+			{
 			/* If we're doing a keyset query, it has to be for a 
 			   certificate */
 			return( CRYPT_ARGERROR_NUM1 );
+			}
 		if( cmd->strArgLen[ 0 ] )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		if( cmd->strArgLen[ 0 ] < MIN_NAME_LENGTH || \
 			cmd->strArgLen[ 0 ] >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ARGERROR_STR1 );
+		}
 
 	/* Read the key from the keyset */
 	setMessageKeymgmtInfo( &getkeyInfo, cmd->arg[ 2 ],
@@ -874,9 +873,11 @@ static int cmdGetKey( void *stateInfo, COMMAND_INFO *cmd )
 	status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_GETATTRIBUTE, &owner,
 							  CRYPT_PROPERTY_OWNER );
 	if( cryptStatusOK( status ) )
+		{
 		status = krnlSendMessage( getkeyInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE, &owner,
 								  CRYPT_PROPERTY_OWNER );
+		}
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_NOTINITED )
 		{
 		krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
@@ -897,7 +898,7 @@ static int cmdPopData( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 2 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -924,7 +925,7 @@ static int cmdPushData( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 1 );
 	assert( cmd->noStrArgs == 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -956,7 +957,7 @@ static int cmdQueryCapability( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->flags == COMMAND_FLAG_RET_LENGTH || \
 			cmd->strArg[ 0 ] != NULL );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
@@ -970,12 +971,16 @@ static int cmdQueryCapability( void *stateInfo, COMMAND_INFO *cmd )
 	   invisible to the user, we have to use an internal message for this
 	   one case */
 	if( cmd->arg[ 0 ] == SYSTEM_OBJECT_HANDLE )
+		{
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_QUERYCAPABILITY, &queryInfo,
 								  cmd->arg[ 1 ] );
+		}
 	else
+		{
 		status = krnlSendMessage( cmd->arg[ 0 ], MESSAGE_DEV_QUERYCAPABILITY,
 								  &queryInfo, cmd->arg[ 1 ] );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		/* Return either the length or the full capability into on what the
@@ -1004,7 +1009,7 @@ static int cmdServerQuery( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs == 0 );
 	assert( cmd->noStrArgs == 0 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Return information about the server */
 	krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE,
@@ -1025,7 +1030,7 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	assert( ( cmd->noArgs == 3 && cmd->noStrArgs == 0 ) ||
 			( cmd->noArgs == 2 && cmd->noStrArgs == 1 ) );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
@@ -1038,9 +1043,11 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 	else
+		{
 		if( cmd->arg[ 1 ] <= CRYPT_ATTRIBUTE_NONE || \
 			cmd->arg[ 1 ] >= CRYPT_ATTRIBUTE_LAST )
 			return( CRYPT_ARGERROR_NUM1 );
+		}
 	if( cmd->noStrArgs == 1 )
 		{
 		if( cmd->arg[ 1 ] == CRYPT_CTXINFO_KEY_COMPONENTS )
@@ -1053,9 +1060,11 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 				return( CRYPT_ARGERROR_NUM2 );
 			}
 		else
+			{
 			if( cmd->strArgLen[ 0 ] < 1 || \
 				cmd->strArgLen[ 0 ] >= MAX_ATTRIBUTE_SIZE )
 				return( CRYPT_ARGERROR_NUM2 );
+			}
 		}
 
 	/* Send the attribute data to the object, mapping the return code to the
@@ -1065,18 +1074,22 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 	if( cmd->noStrArgs == 0 )
 		{
 		if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+			{
 			return( krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 									 IMESSAGE_SETATTRIBUTE,
 									 ( void * ) &cmd->arg[ 2 ],
 									 cmd->arg[ 1 ] ) );
+			}
 		return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_SETATTRIBUTE,
 								 ( void * ) &cmd->arg[ 2 ], cmd->arg[ 1 ] ) );
 		}
 	setMessageData( &msgData, cmd->strArg[ 0 ], cmd->strArgLen[ 0 ] );
 	if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
+		{
 		return( krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 								 IMESSAGE_SETATTRIBUTE_S, &msgData,
 								 cmd->arg[ 1 ] ) );
+		}
 	return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_SETATTRIBUTE_S,
 							 &msgData, cmd->arg[ 1 ] ) );
 	}
@@ -1092,7 +1105,7 @@ static int cmdSetKey( void *stateInfo, COMMAND_INFO *cmd )
 	assert( cmd->noArgs >= 2 && cmd->noArgs <= 3 );
 	assert( cmd->noStrArgs >= 0 && cmd->noStrArgs <= 1 );
 
-	UNUSED( stateInfo );
+	UNUSED_ARG( stateInfo );
 
 	/* Perform basic server-side error checking */
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) )
@@ -1148,8 +1161,7 @@ static const COMMAND_HANDLER commandHandlers[] = {
 	cmdExportObject, cmdDestroyObject, cmdQueryCapability, cmdGenKey,
 	cmdEncrypt, cmdDecrypt, cmdGetAttribute, cmdSetAttribute,
 	cmdDeleteAttribute, cmdGetKey, cmdSetKey, cmdDeleteKey, cmdPushData,
-	cmdPopData, cmdFlushData, cmdCertSign, cmdCertCheck, cmdCertMgmt,
-	cmdAsyncOp };
+	cmdPopData, cmdFlushData, cmdCertSign, cmdCertCheck, cmdCertMgmt };
 
 static void processCommand( BYTE *buffer )
 	{
@@ -1167,7 +1179,7 @@ static void processCommand( BYTE *buffer )
 	if( !checkCommandInfo( &cmd, totalLength ) || \
 		cmd.type == COMMAND_RESULT )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 
 		/* Return an invalid result message */
 		putMessageType( buffer, COMMAND_RESULT, 0, 0, 0 );
@@ -1190,7 +1202,7 @@ static void processCommand( BYTE *buffer )
 		}
 	if( !checkCommandConsistency( &cmd, totalLength ) )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 
 		/* Return an invalid result message */
 		putMessageType( buffer, COMMAND_RESULT, 0, 0, 0 );
@@ -1404,14 +1416,14 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 		serverTransact( buffer );
 		memcpy( header, buffer, COMMAND_FIXED_DATA_SIZE );
 
-		/* Process the fixed message header and make sure it's valid */
+		/* Process the fixed message header and make sure that it's valid */
 		getMessageType( header, cmd->type, cmd->flags,
 						cmd->noArgs, cmd->noStrArgs );
 		resultLength = getMessageLength( header + COMMAND_WORDSIZE );
 		if( !checkCommandInfo( cmd, resultLength ) || \
 			cmd->type != COMMAND_RESULT )
 			{
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			return( CRYPT_ERROR );
 			}
 
@@ -1459,10 +1471,12 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 					cmd->strArgLen[ 0 ] );
 			cmd->strArg[ 0 ] = sentCmd.strArg[ 0 ];
 			if( cmd->type == COMMAND_PUSHDATA )
+				{
 				/* A data push returns the actual number of copied bytes
 				   (which may be less than the requested number of bytes) as
 				   arg 0 */
 				cmd->arg[ 0 ] = cmd->strArgLen[ 0 ];
+				}
 			}
 
 		return( CRYPT_OK );
@@ -1497,8 +1511,10 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 						sentCmd.arg[ 0 ] );
 		putMessageWord( payloadStartPtr, fragmentLength );
 		if( sentCmd.type != COMMAND_POPDATA )
+			{
 			memcpy( payloadStartPtr + COMMAND_WORDSIZE, payloadPtr,
 					fragmentLength );
+			}
 
 		/* Process as much data as we can and read the server's message
 		   header */
@@ -1513,7 +1529,7 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 			cmdResult.type != COMMAND_RESULT || \
 			cmdResult.flags != COMMAND_FLAG_NONE )
 			{
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			return( CRYPT_ERROR );
 			}
 		if( cmdResult.noArgs != 1 || cmdResult.noStrArgs )
@@ -1523,14 +1539,14 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 				{
 				if( cmdResult.noArgs != 2 || cmdResult.noStrArgs )
 					{
-					assert( NOTREACHED );
+					assert( DEBUG_WARN );
 					return( CRYPT_ERROR );
 					}
 				}
 			else
 				if( cmdResult.noArgs != 1 || cmdResult.noStrArgs != 1 )
 					{
-					assert( NOTREACHED );
+					assert( DEBUG_WARN );
 					return( CRYPT_ERROR );
 					}
 			}
@@ -1549,7 +1565,7 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 
 				if( bytesCopied < 0 )
 					{
-					assert( NOTREACHED );
+					assert( DEBUG_WARN );
 					return( CRYPT_ERROR );
 					}
 				cmdResult.arg[ 0 ] = cmd->arg[ 0 ] + bytesCopied;
@@ -1569,9 +1585,11 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 			if( resultLength <= 0 )
 				{
 				if( resultLength == 0 )
+					{
 					/* We've run out of data, return to the caller */
 					break;
-				assert( NOTREACHED );
+					}
+				assert( DEBUG_WARN );
 				return( CRYPT_ERROR );
 				}
 			if( cmd->type == COMMAND_PUSHDATA )
@@ -1598,17 +1616,19 @@ static int dispatchCommand( COMMAND_INFO *cmd )
 				{
 				if( resultLength != fragmentLength )
 					{
-					assert( NOTREACHED );
+					assert( DEBUG_WARN );
 					return( CRYPT_ERROR );
 					}
 				memcpy( payloadPtr, payloadStartPtr + COMMAND_WORDSIZE,
 						resultLength );
 				}
 			else
+				{
 				/* If no data was returned, it was a hash, set a pseudo-
 				   result length which is the same size as the amount of
 				   data fed in */
 				resultLength = fragmentLength;
+				}
 			}
 
 		/* Move on to the next fragment */
@@ -1760,16 +1780,16 @@ static BOOLEAN needsTranslation( const CRYPT_ATTRIBUTE_TYPE attribute )
 
 #ifdef EBCDIC_CHARS
   #define nativeStrlen( string )	strlen( string )
-  #define nativeToCryptlibString( dest, src, length ) \
-		  ebcdicToAscii( dest, src, length )
-  #define cryptlibToNativeString( dest, src, length ) \
-		  asciiToEbcdic( dest, src, length )
+  #define nativeToCryptlibString( dest, destMaxLen, src, length ) \
+		  ebcdicToAscii( dest, destMaxLen, src, length )
+  #define cryptlibToNativeString( dest, destMaxLen, src, length ) \
+		  asciiToEbcdic( dest, destMaxLen, src, length )
 #else
   #define nativeStrlen( string )	wcslen( string )
-  #define nativeToCryptlibString( dest, src, length ) \
-		  unicodeToAscii( dest, src, length )
-  #define cryptlibToNativeString( dest, src, length ) \
-		  asciiToUnicode( dest, src, length )
+  #define nativeToCryptlibString( dest, destMaxLen, src, length ) \
+		  unicodeToAscii( dest, destMaxLen, src, length )
+  #define cryptlibToNativeString( dest, destMaxLen, src, length ) \
+		  asciiToUnicode( dest, destMaxLen, src, length )
 #endif /* EBCDIC vs. Unicode translation */
 
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
@@ -1815,7 +1835,7 @@ static int mapError( const ERRORMAP *errorMap, const int status )
 	/* If it's not an internal parameter error, let it out */
 	if( !cryptArgError( status ) )
 		{
-		assert( status <= 0 && status >= CRYPT_ENVELOPE_RESOURCE );
+		assert( cryptStandardError( status ) );
 		return( status );
 		}
 
@@ -1839,7 +1859,7 @@ static int mapError( const ERRORMAP *errorMap, const int status )
 			count = CRYPT_ARGERROR_STR1 - status;
 			break;
 		default:
-			assert( NOTREACHED );
+			retIntError();
 		}
 	for( i = 0; errorMap[ i ] != ARG_LAST && \
 				i < FAILSAFE_ITERATIONS_SMALL; i++ )
@@ -1849,8 +1869,7 @@ static int mapError( const ERRORMAP *errorMap, const int status )
 		}
 	if( i >= FAILSAFE_ITERATIONS_SMALL )
 		retIntError();
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /****************************************************************************
@@ -2019,7 +2038,7 @@ C_RET cryptCreateCert( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 					   C_IN CRYPT_USER cryptUser,
 					   C_IN CRYPT_DEVICE_TYPE deviceType,
-					   C_IN C_STR name )
+					   C_IN_OPT C_STR name )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 1,
@@ -2044,14 +2063,15 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		return( CRYPT_ERROR_PARAM3 );
 	if( ( deviceType == CRYPT_DEVICE_PKCS11 || \
 		  deviceType == CRYPT_DEVICE_CRYPTOAPI ) && \
-		( !isReadPtr( name, 2 ) || strParamLen( name ) < 2 || \
+		( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+		  strParamLen( name ) < MIN_NAME_LENGTH || \
 		  strParamLen( name ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM4 );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	if( name != NULL )
 		{
-		status = nativeToCryptlibString( nameBuffer, name,
-										 nativeStrlen( name ) + 1 );
+		status = nativeToCryptlibString( nameBuffer, MAX_ATTRIBUTE_SIZE,
+										 name, nativeStrlen( name ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM4 );
 		namePtr = nameBuffer;
@@ -2149,16 +2169,19 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 		return( CRYPT_ERROR_PARAM2 );
 	if( keysetType <= CRYPT_KEYSET_NONE || keysetType >= CRYPT_KEYSET_LAST )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( name, 2 ) || strParamLen( name ) < 2 || \
+	if( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+		strParamLen( name ) < MIN_NAME_LENGTH || \
 		strParamLen( name ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 	if( options < CRYPT_KEYOPT_NONE || \
 		options >= CRYPT_KEYOPT_LAST_EXTERNAL )
+		{
 		/* CRYPT_KEYOPT_NONE is a valid setting for this parameter */
 		return( CRYPT_ERROR_PARAM4 );
+		}
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( nameBuffer, name,
-									 nativeStrlen( name ) + 1 );
+	status = nativeToCryptlibString( nameBuffer, MAX_ATTRIBUTE_SIZE,
+									 name, nativeStrlen( name ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM4 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
@@ -2251,19 +2274,19 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 	*user = CRYPT_ERROR;
 	if( !isReadPtr( name, MIN_NAME_LENGTH ) || \
 		strParamLen( name ) < MIN_NAME_LENGTH || \
-		strParamLen( name ) >= CRYPT_MAX_TEXTSIZE )
+		strParamLen( name ) > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( password, MIN_NAME_LENGTH ) || \
 		strParamLen( password ) < MIN_NAME_LENGTH || \
-		strParamLen( password ) >= CRYPT_MAX_TEXTSIZE )
+		strParamLen( password ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM3 );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( nameBuffer, name,
-									 nativeStrlen( name ) + 1 );
+	status = nativeToCryptlibString( nameBuffer, MAX_ATTRIBUTE_SIZE,
+									 name, nativeStrlen( name ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM2 );
-	status = nativeToCryptlibString( passwordBuffer, password,
-									 nativeStrlen( password ) + 1 );
+	status = nativeToCryptlibString( passwordBuffer, MAX_ATTRIBUTE_SIZE,
+									 password, nativeStrlen( password ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM3 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
@@ -2403,7 +2426,8 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptHandle ) && cryptHandle != CRYPT_UNUSED )
 		return( CRYPT_ERROR_PARAM1 );
-	if( attributeType <= CRYPT_ATTRIBUTE_NONE || attributeType >= CRYPT_ATTRIBUTE_LAST )
+	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
+		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isWritePtr( valueLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM4 );
@@ -2436,7 +2460,8 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 			if( *valueLength >= MAX_ATTRIBUTE_SIZE )
 				return( CRYPT_ERROR_OVERFLOW );
 			memcpy( buffer, value, *valueLength );
-			cryptlibToNativeString( value, buffer, *valueLength );
+			cryptlibToNativeString( value, MAX_ATTRIBUTE_SIZE,
+									buffer, *valueLength );
   #ifdef UNICODE_CHARS
 			*valueLength *= sizeof( wchar_t );
   #endif /* UNICODE_CHARS */
@@ -2464,7 +2489,8 @@ C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptHandle ) && cryptHandle != CRYPT_UNUSED )
 		return( CRYPT_ERROR_PARAM1 );
-	if( attributeType <= CRYPT_ATTRIBUTE_NONE || attributeType >= CRYPT_ATTRIBUTE_LAST )
+	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
+		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
 
 	/* Dispatch the command */
@@ -2497,7 +2523,8 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptHandle ) && cryptHandle != CRYPT_UNUSED )
 		return( CRYPT_ERROR_PARAM1 );
-	if( attributeType <= CRYPT_ATTRIBUTE_NONE || attributeType >= CRYPT_ATTRIBUTE_LAST )
+	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
+		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( value, 1 ) )
 		return( CRYPT_ERROR_PARAM3 );
@@ -2511,15 +2538,18 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 			return( CRYPT_ERROR_PARAM4 );
 		}
 	else
-		if( valueLength < 1 || valueLength > MAX_ATTRIBUTE_SIZE )
+		{
+		if( valueLength < 1 || valueLength >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM4 );
+		}
 	if( !isReadPtr( value, valueLength ) )
 		return( CRYPT_ERROR_PARAM3 );
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	if( needsTranslation( attributeType ) )
 		{
-		status = nativeToCryptlibString( valueBuffer, value, valueLength );
+		status = nativeToCryptlibString( valueBuffer, MAX_ATTRIBUTE_SIZE,
+										 value, valueLength );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM3 );
 		value = valueBuffer;
@@ -2558,7 +2588,8 @@ C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptHandle ) && cryptHandle != CRYPT_UNUSED )
 		return( CRYPT_ERROR_PARAM1 );
-	if( attributeType <= CRYPT_ATTRIBUTE_NONE || attributeType >= CRYPT_ATTRIBUTE_LAST )
+	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
+		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
 
 	/* Dispatch the command */
@@ -2602,82 +2633,43 @@ C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext )
 	return( mapError( errorMap, status ) );
 	}
 
-/* Asynchronous key generate operations */
+/* Asynchronous key generate operations (deprecated September 2007) */
 
 C_RET cryptGenerateKeyAsync( C_IN CRYPT_CONTEXT cryptContext )
 	{
-	static const COMMAND_INFO FAR_BSS cmdTemplate = \
-		{ COMMAND_GENKEY, COMMAND_FLAG_NONE, 2, 0,
-		  { 0, TRUE } };
-	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
-	COMMAND_INFO cmd;
-	int status;
-
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptContext ) )
 		return( CRYPT_ERROR_PARAM1 );
 
 	/* Dispatch the command */
-	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
-	cmd.arg[ 0 ] = cryptContext;
-	status = DISPATCH_COMMAND( cmdGenKey, cmd );
-	if( cryptStatusOK( status ) )
-		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( cryptGenerateKey( cryptContext ) );
 	}
 
 /* Query the status of an asynchronous operation.  This has more or less the
    same effect as calling any other operation (both will return
    CRYPT_ERROR_TIMEOUT if the context is busy), but this is a pure query
-   function with no other side effects */
+   function with no other side effects (deprecated September 2007) */
 
 C_RET cryptAsyncQuery( C_IN CRYPT_CONTEXT cryptContext )
 	{
-	static const COMMAND_INFO FAR_BSS cmdTemplate = \
-		{ COMMAND_ASYNCOP, COMMAND_FLAG_NONE, 2, 0,
-		  { 0, FALSE } };
-	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
-	COMMAND_INFO cmd;
-	int status;
-
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptContext ) )
 		return( CRYPT_ERROR_PARAM1 );
 
 	/* Dispatch the command */
-	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
-	cmd.arg[ 0 ] = cryptContext;
-	status = DISPATCH_COMMAND( cmdAsyncOp, cmd );
-	if( cryptStatusOK( status ) )
-		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( CRYPT_OK );
 	}
 
 /* Cancel an asynchronous operation on a context */
 
 C_RET cryptAsyncCancel( C_IN CRYPT_CONTEXT cryptContext )
 	{
-	static const COMMAND_INFO FAR_BSS cmdTemplate = \
-		{ COMMAND_ASYNCOP, COMMAND_FLAG_NONE, 2, 0,
-		  { 0, TRUE } };
-	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
-	COMMAND_INFO cmd;
-	int status;
-
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptContext ) )
 		return( CRYPT_ERROR_PARAM1 );
 
 	/* Dispatch the command */
-	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
-	cmd.arg[ 0 ] = cryptContext;
-	status = DISPATCH_COMMAND( cmdAsyncOp, cmd );
-	if( cryptStatusOK( status ) )
-		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( CRYPT_OK );
 	}
 
 /* Encrypt/decrypt data */
@@ -2701,7 +2693,7 @@ C_RET cryptEncrypt( C_IN CRYPT_CONTEXT cryptContext,
 	   check the buffer if the length is nonzero */
 	if( !isHandleRangeValid( cryptContext ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( length < 0 )
+	if( length < 0 || length >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM3 );
 	if( length > 0 && !isReadPtr( buffer, length ) )
 		return( CRYPT_ERROR_PARAM2 );
@@ -2731,7 +2723,7 @@ C_RET cryptDecrypt( C_IN CRYPT_CONTEXT cryptContext,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( cryptContext ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( length < 0 )
+	if( length < 0 || length >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM3 );
 	if( !isWritePtr( buffer, length ) )
 		return( CRYPT_ERROR_PARAM2 );
@@ -2806,7 +2798,8 @@ C_RET cryptCheckCert( C_IN CRYPT_HANDLE certificate,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( certificate ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isHandleRangeValid( sigCheckKey ) && ( sigCheckKey != CRYPT_UNUSED ) )
+	if( !isHandleRangeValid( sigCheckKey ) && \
+		( sigCheckKey != CRYPT_UNUSED ) )
 		return( CRYPT_ERROR_PARAM2 );
 
 	/* Dispatch the command */
@@ -2846,7 +2839,8 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 	int status;
 
 	/* Perform basic client-side error checking */
-	if( certObjectLength < MIN_CERTSIZE )
+	if( certObjectLength < MIN_CERTSIZE || \
+		certObjectLength >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( certObject, certObjectLength ) )
 		return( CRYPT_ERROR_PARAM1 );
@@ -2855,6 +2849,10 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 	if( !isWritePtr( certificate, sizeof( CRYPT_CERTIFICATE ) ) )
 		return( CRYPT_ERROR_PARAM4 );
 	*certificate = CRYPT_ERROR;
+
+	/* Make sure that the user has remembered to initialise cryptlib */
+	if( !initCalled )
+		return( CRYPT_ERROR_NOTINITED );
 
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
@@ -2871,7 +2869,7 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 	return( mapError( errorMap, status ) );
 	}
 
-C_RET cryptExportCert( C_OUT void C_PTR certObject,
+C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
 					   C_IN int certObjectMaxLength,
 					   C_OUT int C_PTR certObjectLength,
 					   C_IN CRYPT_CERTFORMAT_TYPE certFormatType,
@@ -2887,7 +2885,8 @@ C_RET cryptExportCert( C_OUT void C_PTR certObject,
 	/* Perform basic client-side error checking */
 	if( certObject != NULL )
 		{
-		if( certObjectMaxLength < MIN_CERTSIZE )
+		if( certObjectMaxLength < MIN_CERTSIZE || \
+			certObjectMaxLength >= MAX_INTLENGTH )
 			return( CRYPT_ERROR_PARAM2 );
 		if( !isWritePtr( certObject, certObjectMaxLength ) )
 			return( CRYPT_ERROR_PARAM1 );
@@ -2927,8 +2926,8 @@ C_RET cryptExportCert( C_OUT void C_PTR certObject,
 			{
 			/* It's text-encoded cert data, convert it to the native text
 			   format before we return */
-			cryptlibToNativeString( certObject, certObject, 
-									*certObjectLength );
+			cryptlibToNativeString( certObject, certObjectMaxLength,
+									certObject, *certObjectLength );
 			}
 #endif /* EBCDIC_CHARS */
 		return( CRYPT_OK );
@@ -2969,7 +2968,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 					  C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 					  C_IN CRYPT_CERTTYPE_TYPE certType,
 					  C_IN CRYPT_KEYID_TYPE keyIDtype,
-					  C_IN C_STR keyID )
+					  C_IN_OPT C_STR keyID )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 1 };
@@ -2997,11 +2996,13 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		certType == CRYPT_CERTTYPE_CERTCHAIN )
 		isCert = TRUE;
 	else
+		{
 		if( certType != CRYPT_CERTTYPE_CERTREQUEST && \
 			certType != CRYPT_CERTTYPE_REQUEST_CERT && \
 			certType != CRYPT_CERTTYPE_REQUEST_REVOCATION && \
 			certType != CRYPT_CERTTYPE_PKIUSER )
 			return( CRYPT_ERROR_PARAM3 );
+		}
 	if( keyIDtype < CRYPT_KEYID_NONE || \
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM4 );
@@ -3011,16 +3012,18 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 			return( CRYPT_ERROR_PARAM5 );
 		}
 	else
+		{
 		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
 			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM5 );
+		}
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	if( keyID != NULL )
 		{
-		status = nativeToCryptlibString( keyIDBuffer, keyID,
-										 nativeStrlen( keyID ) + 1 );
+		status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+										 keyID, nativeStrlen( keyID ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM4 );
 		keyIDPtr = keyIDBuffer;
@@ -3031,6 +3034,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	if( isCert )
+		{
 		/* If we're being asked for a standard cert, the caller should really
 		   be using cryptGetPublicKey(), however for orthogonality we convert
 		   the request into a standard public-key read.  Note that this leads
@@ -3040,9 +3044,12 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		   depending on what's there), but it's less confusing than refusing
 		   any request to read a cert */
 		cmd.arg[ 1 ] = KEYMGMT_ITEM_PUBLICKEY;
+		}
 	else
+		{
 		cmd.arg[ 1 ] = ( certType == CRYPT_CERTTYPE_PKIUSER ) ? \
 					   KEYMGMT_ITEM_PKIUSER : KEYMGMT_ITEM_REQUEST;
+		}
 	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
 	if( keyIDPtr != NULL )
@@ -3087,12 +3094,12 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 		return( CRYPT_ERROR_PARAM3 );
 	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
-		strParamLen( keyID ) > MAX_ATTRIBUTE_SIZE )
+		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( keyIDBuffer, keyID,
-									 nativeStrlen( keyID ) + 1 );
+	status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+									 keyID, nativeStrlen( keyID ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM4 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
@@ -3102,12 +3109,16 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = keyIDtype;
 	if( certType == CRYPT_CERTTYPE_CERTIFICATE )
+		{
 		/* Allow a delete of a cert for the same reason as given above for
 		   cryptCAGetItem() */
 		cmd.noArgs = 2;
+		}
 	else
+		{
 		cmd.arg[ 2 ] = ( certType == CRYPT_CERTTYPE_PKIUSER ) ? \
 					   CRYPT_CERTTYPE_PKIUSER : CRYPT_CERTTYPE_REQUEST_CERT;
+		}
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
 	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
 	status = DISPATCH_COMMAND( cmdDeleteKey, cmd );
@@ -3116,7 +3127,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 	return( mapError( errorMap, status ) );
 	}
 
-C_RET cryptCACertManagement( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
+C_RET cryptCACertManagement( C_OUT_OPT CRYPT_CERTIFICATE C_PTR certificate,
 							 C_IN CRYPT_CERTACTION_TYPE action,
 							 C_IN CRYPT_KEYSET keyset,
 							 C_IN CRYPT_CONTEXT caKey,
@@ -3192,12 +3203,14 @@ C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
 		return( CRYPT_ERROR_PARAM1 );
 	if( !isReadPtr( buffer, length ) )
 		return( CRYPT_ERROR_PARAM2 );
-	if( length <= 0 )
+	if( length <= 0 || length >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM3 );
 	if( bytesCopied == NULL )
+		{
 		/* If the user isn't interested in the bytes copied count, point at a
 		   dummy location */
 		bytesCopied = &dummy;
+		}
 	*bytesCopied = 0;
 
 	/* Dispatch the command */
@@ -3229,7 +3242,7 @@ C_RET cryptPopData( C_IN CRYPT_ENVELOPE envelope, C_OUT void C_PTR buffer,
 		return( CRYPT_ERROR_PARAM1 );
 	if( !isWritePtr( buffer, length ) )
 		return( CRYPT_ERROR_PARAM2 );
-	if( length <= 0 )
+	if( length <= 0 || length >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM3 );
 	memset( buffer, 0, min( length, 16 ) );
 	if( !isWritePtr( bytesCopied, sizeof( int ) ) )
@@ -3284,7 +3297,7 @@ C_RET cryptFlushData( C_IN CRYPT_HANDLE envelope )
 C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 						 C_OUT CRYPT_HANDLE C_PTR cryptKey,
 						 C_IN CRYPT_KEYID_TYPE keyIDtype,
-						 C_IN C_STR keyID )
+						 C_IN_OPT C_STR keyID )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 1 };
@@ -3315,16 +3328,18 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 			return( CRYPT_ERROR_PARAM4 );
 		}
 	else
+		{
 		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
 			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM4 );
+		}
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	if( keyID != NULL )
 		{
-		status = nativeToCryptlibString( keyIDBuffer, keyID,
-										 nativeStrlen( keyID ) + 1 );
+		status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+										 keyID, nativeStrlen( keyID ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM4 );
 		keyIDPtr = keyIDBuffer;
@@ -3386,14 +3401,14 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 		return( CRYPT_ERROR_PARAM5 );
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( keyIDBuffer, keyID,
-									 nativeStrlen( keyID ) + 1 );
+	status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+									 keyID, nativeStrlen( keyID ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM4 );
 	if( password != NULL )
 		{
-		status = nativeToCryptlibString( passwordBuffer, password,
-										 nativeStrlen( password ) + 1 );
+		status = nativeToCryptlibString( passwordBuffer, MAX_ATTRIBUTE_SIZE,
+										 password, nativeStrlen( password ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM5 );
 		passwordPtr = passwordBuffer;
@@ -3460,14 +3475,14 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 		return( CRYPT_ERROR_PARAM5 );
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( keyIDBuffer, keyID,
-									 nativeStrlen( keyID ) + 1 );
+	status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+									 keyID, nativeStrlen( keyID ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM4 );
 	if( password != NULL )
 		{
-		status = nativeToCryptlibString( passwordBuffer, password,
-										 nativeStrlen( password ) + 1 );
+		status = nativeToCryptlibString( passwordBuffer, MAX_ATTRIBUTE_SIZE,
+										 password, nativeStrlen( password ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM5 );
 		passwordPtr = passwordBuffer;
@@ -3555,8 +3570,8 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	if( password != NULL )
 		{
-		status = nativeToCryptlibString( passwordBuffer, password,
-										 nativeStrlen( password ) + 1 );
+		status = nativeToCryptlibString( passwordBuffer, MAX_ATTRIBUTE_SIZE,
+										 password, nativeStrlen( password ) + 1 );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_PARAM3 );
 		passwordPtr = passwordBuffer;
@@ -3605,12 +3620,12 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
-		strParamLen( keyID ) > MAX_ATTRIBUTE_SIZE )
+		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM3 );
 
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
-	status = nativeToCryptlibString( keyIDBuffer, keyID,
-									 nativeStrlen( keyID ) + 1 );
+	status = nativeToCryptlibString( keyIDBuffer, MAX_ATTRIBUTE_SIZE,
+									 keyID, nativeStrlen( keyID ) + 1 );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM3 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
@@ -3642,7 +3657,7 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 /* cryptlib/object query functions */
 
 C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
-							C_OUT CRYPT_QUERY_INFO C_PTR cryptQueryInfo )
+							C_OUT_OPT CRYPT_QUERY_INFO C_PTR cryptQueryInfo )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_QUERYCAPABILITY, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ),
@@ -3661,6 +3676,10 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 			return( CRYPT_ERROR_PARAM3 );
 		memset( cryptQueryInfo, 0, sizeof( CRYPT_QUERY_INFO ) );
 		}
+
+	/* Make sure that the user has remembered to initialise cryptlib */
+	if( !initCalled )
+		return( CRYPT_ERROR_NOTINITED );
 
 	/* Dispatch the command.  We need to map parameter errors down one
 	   because the system object is invisible to the caller */
@@ -3685,7 +3704,8 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 
 			memcpy( buffer, cryptQueryInfo->algoName, algoNameLength );
 			cryptlibToNativeString( cryptQueryInfo->algoName,
-									buffer, algoNameLength );
+									CRYPT_MAX_TEXTSIZE, buffer, 
+									algoNameLength );
 			}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 		return( CRYPT_OK );
@@ -3695,7 +3715,7 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 
 C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 								  C_IN CRYPT_ALGO_TYPE cryptAlgo,
-								  C_OUT CRYPT_QUERY_INFO C_PTR cryptQueryInfo )
+								  C_OUT_OPT CRYPT_QUERY_INFO C_PTR cryptQueryInfo )
 	{
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_QUERYCAPABILITY, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ) };
@@ -3739,12 +3759,69 @@ C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 
 			memcpy( buffer, cryptQueryInfo->algoName, algoNameLength );
 			cryptlibToNativeString( cryptQueryInfo->algoName,
-									buffer, algoNameLength );
+									CRYPT_MAX_TEXTSIZE, buffer, 
+									algoNameLength );
 			}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 		return( CRYPT_OK );
 		}
 	return( mapError( errorMap, status ) );
+	}
+
+/* Add random data to the random pool.  This should eventually be replaced
+   by some sort of device control mechanism, the problem with doing this is
+   that it's handled by the system device which isn't visible to the user */
+
+C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength )
+	{
+	/* Perform basic error checking */
+	if( randomData == NULL )
+		{
+		if( randomDataLength != CRYPT_RANDOM_FASTPOLL && \
+			randomDataLength != CRYPT_RANDOM_SLOWPOLL )
+			return( CRYPT_ERROR_PARAM1 );
+		}
+	else
+		{
+		if( randomDataLength <= 0 || randomDataLength >= MAX_INTLENGTH )
+			return( CRYPT_ERROR_PARAM2 );
+		if( !isReadPtr( randomData, randomDataLength ) )
+			return( CRYPT_ERROR_PARAM1 );
+		}
+
+	/* If we're adding data to the pool, add it now and exit.  Since the data
+	   is of unknown provenance (and empirical evidence indicates that it
+	   won't be very random) we give it a weight of zero for estimation
+	   purposes */
+	if( randomData != NULL )
+		{
+		MESSAGE_DATA msgData;
+
+#if defined( __WINDOWS__ ) && !defined( NDEBUG )	/* For debugging tests only */
+if( randomDataLength == 5 && !memcmp( randomData, "xyzzy", 5 ) )
+{
+BYTE buffer[ 256 + 8 ];
+int kludge = 100;
+memset( buffer, '*', 256 );
+setMessageData( &msgData, buffer, 256 );
+krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+				 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+				 &kludge, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+}
+#endif /* Windows debug */
+
+		setMessageData( &msgData, ( void * ) randomData, randomDataLength );
+		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								 IMESSAGE_SETATTRIBUTE_S, &msgData,
+								 CRYPT_IATTRIBUTE_ENTROPY ) );
+		}
+
+	/* Perform either a fast or slow poll for random system data */
+	return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( randomDataLength == CRYPT_RANDOM_SLOWPOLL ) ? \
+								MESSAGE_VALUE_TRUE : MESSAGE_VALUE_FALSE,
+							 CRYPT_IATTRIBUTE_RANDOM_POLL ) );
 	}
 
 /* If the use of certificates is disabled, we have to provide stub

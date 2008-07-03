@@ -37,7 +37,9 @@ static const SEMAPHORE_INFO SEMAPHORE_INFO_TEMPLATE = \
 
 int initSemaphores( KERNEL_DATA *krnlDataPtr )
 	{
-	int i;
+	int i, status;
+
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	assert( MUTEX_LAST == 4 );
 
@@ -50,19 +52,28 @@ int initSemaphores( KERNEL_DATA *krnlDataPtr )
 
 	/* Initialize any data structures required to make the semaphore table
 	   thread-safe */
-	MUTEX_CREATE( semaphore );
+	MUTEX_CREATE( semaphore, status );
+	ENSURES( cryptStatusOK( status ) );
 
 	/* Initialize the mutexes */
-	MUTEX_CREATE( mutex1 );
-	MUTEX_CREATE( mutex2 );
-	MUTEX_CREATE( mutex3 );
+	MUTEX_CREATE( mutex1, status );
+	ENSURES( cryptStatusOK( status ) );
+	MUTEX_CREATE( mutex2, status );
+	ENSURES( cryptStatusOK( status ) );
+	MUTEX_CREATE( mutex3, status );
+	ENSURES( cryptStatusOK( status ) );
 
 	return( CRYPT_OK );
 	}
 
 void endSemaphores( void )
 	{
-	PRE( krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES );
+	PRE( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
+		 ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
+		 ( krnlData->initLevel == INIT_LEVEL_FULL && \
+		   krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
 
 	/* Signal that kernel mechanisms are no longer available */
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_MUTEXES;
@@ -122,12 +133,10 @@ void setSemaphore( const SEMAPHORE_TYPE semaphore,
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
 
+	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+
 	/* Make sure that the selected semaphore is valid */
-	if( semaphore <= SEMAPHORE_NONE || semaphore >= SEMAPHORE_LAST )
-		{
-		assert( NOTREACHED );
-		return;
-		}
+	REQUIRES_V( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 	semaphoreInfo = &krnlData->semaphoreInfo[ semaphore ];
 
 	/* Lock the semaphore table, set the semaphore, and unlock it again */
@@ -147,12 +156,10 @@ void clearSemaphore( const SEMAPHORE_TYPE semaphore )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
 
+	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+
 	/* Make sure that the selected semaphore is valid */
-	if( semaphore <= SEMAPHORE_NONE || semaphore >= SEMAPHORE_LAST )
-		{
-		assert( NOTREACHED );
-		return;
-		}
+	REQUIRES_V( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 	semaphoreInfo = &krnlData->semaphoreInfo[ semaphore ];
 
 	/* Lock the semaphore table, clear the semaphore, and unlock it again */
@@ -192,16 +199,14 @@ void clearSemaphore( const SEMAPHORE_TYPE semaphore )
 BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
-	MUTEX_HANDLE object;
+	MUTEX_HANDLE object = ( MUTEX_HANDLE ) DUMMY_INIT;	/* Maybe be int or ptr */
 	BOOLEAN semaphoreSet = FALSE;
 	int status = CRYPT_OK;
 
+	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+
 	/* Make sure that the selected semaphore is valid */
-	if( semaphore <= SEMAPHORE_NONE || semaphore >= SEMAPHORE_LAST )
-		{
-		assert( NOTREACHED );
-		return( FALSE );
-		}
+	REQUIRES( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 
 	/* If we're in a shutdown and the semaphores have been destroyed, don't
 	   try and acquire the semaphore mutex.  In this case anything that 
@@ -235,11 +240,7 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 	assert( memcmp( &object, &SEMAPHORE_INFO_TEMPLATE.object,
 					sizeof( MUTEX_HANDLE ) ) );
 	THREAD_WAIT( object, status );
-	if( cryptStatusError( status ) )
-		{
-		assert( NOTREACHED );
-		return( FALSE );
-		}
+	ENSURES( cryptStatusOK( status ) );
 
 	/* Lock the semaphore table, update the information, and unlock it
 	   again */
@@ -278,12 +279,10 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 
 int krnlEnterMutex( const MUTEX_TYPE mutex )
 	{
+	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
+
 	/* Make sure that the selected mutex is valid */
-	if( mutex <= MUTEX_NONE || mutex >= MUTEX_LAST )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_PERMISSION );
-		}
+	REQUIRES( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 
 	/* If we're in a shutdown and the mutexes have been destroyed, don't
 	   try and acquire them.  In this case anything that they're protecting
@@ -307,7 +306,7 @@ int krnlEnterMutex( const MUTEX_TYPE mutex )
 			break;
 
 		default:
-			assert( NOTREACHED );
+			retIntError();
 		}
 
 	return( CRYPT_OK );
@@ -315,12 +314,10 @@ int krnlEnterMutex( const MUTEX_TYPE mutex )
 
 void krnlExitMutex( const MUTEX_TYPE mutex )
 	{
+	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
+
 	/* Make sure that the selected mutex is valid */
-	if( mutex <= MUTEX_NONE || mutex >= MUTEX_LAST )
-		{
-		assert( NOTREACHED );
-		return;
-		}
+	REQUIRES_V( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 
 	/* If we're in a shutdown and the mutexes have been destroyed, don't
 	   try and acquire them.  In this case anything that they're protecting
@@ -344,6 +341,6 @@ void krnlExitMutex( const MUTEX_TYPE mutex )
 			break;
 
 		default:
-			assert( NOTREACHED );
+			retIntError_Void();
 		}
 	}

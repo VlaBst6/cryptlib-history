@@ -5,7 +5,7 @@
 *																			*
 ****************************************************************************/
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -24,8 +24,11 @@
 
 /* Enable various side-channel protection mechanisms */
 
-static int enableSidechannelProtection( PKC_INFO *pkcInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int enableSidechannelProtection( INOUT PKC_INFO *pkcInfo )
 	{
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+
 	/* Use constant-time modexp() to protect the private key from timing 
 	   channels */
 	BN_set_flags( &pkcInfo->dlpParam_x, BN_FLG_EXP_CONSTTIME );
@@ -41,7 +44,7 @@ static int enableSidechannelProtection( PKC_INFO *pkcInfo )
 
 /* The following function (provided by Colin Plumb) is used to calculate the
    appropriate size exponent for a given prime size which is required to
-   provide equivalent security from small-exponent attacks
+   provide equivalent security from small-exponent attacks.
 
    This is based on a paper by Michael Wiener on	| The function defined
    the difficulty of the two attacks, which has		| below (not part of the
@@ -85,8 +88,8 @@ static int enableSidechannelProtection( PKC_INFO *pkcInfo )
 #define TX		3840L	/* X value at the slope point, where linear starts */
 #define TY		297L	/* Y value at the slope point, where linear starts */
 
-/* For a slope of M at the point (TX,TY), we only have one degree of freedom
-   left in a quadratic curve, so use the coefficient of x^2, namely a, as
+/* For a slope of M at the point (TX,TY) we only have one degree of freedom
+   left in a quadratic curve so use the coefficient of x^2, namely a, as 
    that free parameter.
 
    y = -AN/AD*((x-TX)/256)^2 + M*(x-TX)/256 + TY
@@ -109,32 +112,51 @@ static int enableSidechannelProtection( PKC_INFO *pkcInfo )
    compiler can easily take the constant-folding from there...
 
 	 =  TY + (((256*M*AD+2*AN*TX-AN*x)/256)*x - (M*AD + AN*TX/256)*TX)/256/AD
-	 =  TY - ((M*AD + AN*TX/256)*TX - ((256*M*AD+2*AN*TX-AN*x)/256)*x)/256/AD
-*/
+	 =  TY - ((M*AD + AN*TX/256)*TX - ((256*M*AD+2*AN*TX-AN*x)/256)*x)/256/AD */
 
-static int getDLPexpSize( const int primeBits )
+CHECK_RETVAL \
+static int getDLPexpSize( IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) \
+							const int primeBits )
 	{
-	long value;	/* Necessary to avoid braindamage on 16-bit compilers */
+	long value;	/* Necessary to avoid problems with 16-bit compilers */
+
+	REQUIRES( primeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  primeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* If it's over TX bits, it's linear */
 	if( primeBits > TX )
 		value = M * primeBits / 256 - M * TX / 256 + TY;
 	else
+		{
 		/* It's quadratic */
 		value = TY - ( ( M * AD + AN * TX / 256 ) * TX - \
 					   ( ( 256 * M * AD + AN * 2 * TX - AN * primeBits ) / 256 ) * \
 					   primeBits ) / ( AD * 256 );
+		}
+	ENSURES( value >= 160 && value < 1000 );
 
-	/* Various standards require a minimum of 160 bits so we always return at
-	   least that size even if it's not necessary */
-	return( value > 160 ? ( int ) value : 160 );
+	/* At this point we run into a problem with SSH, it hardcodes the 
+	   exponent size at 160 bits no matter what the prime size is so that
+	   there's no increase in security when the key size is increased.  
+	   Because this function generates an exponent whose size matches the 
+	   security level of the key, it can't be used to generate DSA keys for 
+	   use with SSH.  In order to provide at least basic keys usable with
+	   SSH and also for backwards compatiblity with older implementations
+	   that hardcode DSA key parameters at { 1024, 160 } we always return a
+	   fixed exponent size of 160 bits if the key size is around 1024 bits */
+	if( primeBits <= 1028 )
+		return( 160 );
+
+	return( ( int ) value );
 	}
 
 /****************************************************************************
 *																			*
 *			  					Generate DL Primes							*
-*							Copyright Kevin J Bluck 1998					*
-*						 Copyright Peter Gutmann 1998-2002					*
+*																			*
+*	Original findGeneratorForPQ() and generateDLPPublicValues() are 		*
+*	copyright Kevin J. Bluck 1998.  Remainder copyright Peter Gutmann		*
+*	1998-2007.																*
 *																			*
 ****************************************************************************/
 
@@ -145,10 +167,9 @@ static int getDLPexpSize( const int primeBits )
 		possible to get this by iterating the multiplication step until the
 		result is exactly n * 64 bits but this doesn't seem worth the
 		effort), x = 1...q-1.
-	PKCS #3 DH: No g (it's fixed at 2) or q.  This is "real" DH (rather than
-		the DSA-hack version) but doesn't seem to be used by anything.  Keys
-		of this type can be generated if required, but the current code is
-		configured to always generate X9.42 DH keys.
+	PKCS #3 DH: No g (it's fixed at 2) or q.  Keys of this type can be 
+		generated if required, but the current code is configured to always 
+		generate X9.42 DH keys.
 	X9.42 DH: p, q, and g as for DSA but without the 160-bit SHA-enforced
 		upper limit on q so that p can go above 1024 bits, x = 2...q-2.
 	Elgamal: As X9.42 DH */
@@ -166,23 +187,26 @@ static int getDLPexpSize( const int primeBits )
    handling of values, we allow for 128 primes, which has a vanishingly small 
    probability of failing and also provides a safe upper bound for the
    number of retries (there's something wrong with the algorithm if it 
-   requires anything near this many retries) */
+   requires anywhere near this many retries) */
 
 #define MAX_NO_PRIMES	128
 
 /* Select a generator g for the prime moduli p and q.  g will be chosen so
    that it is of prime order q, where q divides (p - 1), i.e. g generates 
    the subgroup of order q in the multiplicative group of GF(p) 
-   (traditionally for PKCS #3 DH g is fixed at 2, which is safe even when 
+   (traditionally for PKCS #3 DH g is fixed at 2 which is safe even when 
    it's not a primitive root since it still covers half of the space of 
    possible residues, however we always generate a FIPS 186-style g value) */
 
-static int findGeneratorForPQ( PKC_INFO *pkcInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int findGeneratorForPQ( INOUT PKC_INFO *pkcInfo )
 	{
 	BIGNUM *p = &pkcInfo->dlpParam_p, *q = &pkcInfo->dlpParam_q;
 	BIGNUM *g = &pkcInfo->dlpParam_g;
 	BIGNUM *j = &pkcInfo->tmp1, *gCounter = &pkcInfo->tmp2;
-	int bnStatus = BN_STATUS, iterationCount = 0;
+	int bnStatus = BN_STATUS, iterationCount;
+
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
 
 	/* j = (p - 1) / q */
 	CK( BN_sub_word( p, 1 ) );
@@ -191,21 +215,22 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
-	/* Starting gCount at 3, set g = (gCount ^ j) mod p until g != 1.
+	/* Starting gCounter at 3, set g = (gCounter ^ j) mod p until g != 1.
 	   Although FIPS 196/X9.30/X9.42 merely require that 1 < g < p-1, if we
 	   use small integers it makes this operation much faster.  Note that 
 	   we can't use a Montgomery modexp at this point since we haven't
 	   evaluated the Montgomery form of p yet */
 	CK( BN_set_word( gCounter, 2 ) );
-	do
+	for( iterationCount = 0; 
+		 bnStatusOK( bnStatus ) && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
 		{
 		CK( BN_add_word( gCounter, 1 ) );
 		CK( BN_mod_exp( g, gCounter, j, p, pkcInfo->bnCTX ) );
+		if( bnStatusOK( bnStatus ) && !BN_is_one( g ) )
+			break;
 		}
-	while( bnStatusOK( bnStatus ) && BN_is_one( g ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	return( getBnStatus( bnStatus ) );
 	}
@@ -214,77 +239,97 @@ static int findGeneratorForPQ( PKC_INFO *pkcInfo )
 
 	p = 2 * q * ( prime[1] * ... prime[n] ) + 1 */
 
-static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits, 
-								   int qBits, void *callBackArg )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateDLPPublicValues( INOUT PKC_INFO *pkcInfo, 
+									IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) \
+										const int pBits )
 	{
 	const int safeExpSizeBits = getDLPexpSize( pBits );
 	const int noChecks = getNoPrimeChecks( pBits );
+	const int qBits = safeExpSizeBits;
 	BIGNUM llPrimes[ MAX_NO_PRIMES + 8 ], llProducts[ MAX_NO_FACTORS + 8 ];
 	BIGNUM *p = &pkcInfo->dlpParam_p, *q = &pkcInfo->dlpParam_q;
-	BOOLEAN primeFound = FALSE;
+	BOOLEAN primeFound;
 	int indices[ MAX_NO_FACTORS + 8 ];
-	int nPrimes, nFactors, factorBits, i, iterationCount = 0;
+	int nPrimes, nFactors, factorBits, i, iterationCount;
 	int bnStatus = BN_STATUS, status;
 
-	assert( p != NULL );
-	assert( pBits >= bytesToBits( MIN_PKCSIZE ) && \
-			pBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
-	assert( q != NULL );
-	assert( ( qBits >= 160 && \
-			  qBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) ) || \
-			qBits == CRYPT_USE_DEFAULT );
-	assert( callBackArg != NULL );
-	assert( getDLPexpSize( 512 ) == 160 );
-	assert( getDLPexpSize( 1024 ) == 169 );
-	assert( getDLPexpSize( 1536 ) == 198 );
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+	assert( bytesToBits( MIN_PKCSIZE ) > 512 || \
+			getDLPexpSize( 512 ) == 160 );
+	assert( bytesToBits( MIN_PKCSIZE ) > 1024 || \
+			getDLPexpSize( 1024 ) == 160 );
+			/* 1024-bit keys have special handling for pre-FIPS 186-3
+			   compatibility */
+	assert( bytesToBits( MIN_PKCSIZE ) > 1030 || \
+			getDLPexpSize( 1030 ) == 168 );
+	assert( bytesToBits( MIN_PKCSIZE ) > 1536 || \
+			getDLPexpSize( 1536 ) == 198 );
 	assert( getDLPexpSize( 2048 ) == 225 );
 	assert( getDLPexpSize( 3072 ) == 270 );
 	assert( getDLPexpSize( 4096 ) == 305 );
 
-	/* If the caller doesn't require a fixed-size q, use the minimum safe
-	   exponent size */
-	if( qBits == CRYPT_USE_DEFAULT )
-		qBits = safeExpSizeBits;
+	REQUIRES( pBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  pBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	REQUIRES( qBits >= 160 && qBits <= pBits && \
+			  qBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	REQUIRES( !cryptStatusError( safeExpSizeBits ) );
 
 	/* Determine how many factors we need and the size in bits of the 
 	   factors */
 	factorBits = ( pBits - qBits ) - 1;
 	nFactors = nPrimes = ( factorBits / safeExpSizeBits ) + 1;
 	factorBits /= nFactors;
+	ENSURES( factorBits > 0 && \
+			 factorBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) && \
+			 nFactors > 0 && nFactors <= MAX_NO_FACTORS && \
+			 nPrimes > 0 && nPrimes <= MAX_NO_PRIMES );
 
 	/* Generate a random prime q and multiply by 2 to form the base for the
 	   other factors */
-	status = generatePrime( pkcInfo, q, qBits, CRYPT_UNUSED, callBackArg );
+	status = generatePrime( pkcInfo, q, qBits, CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
 		return( status );
-	BN_lshift1( q, q );
+	CK( BN_lshift1( q, q ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* Set up the permutation control arrays and generate the first nFactors 
 	   factors */
+	memset( llProducts, 0, MAX_NO_FACTORS * sizeof( BIGNUM ) );
 	for( i = 0; i < MAX_NO_FACTORS; i++ )
 		BN_init( &llProducts[ i ] );
+	memset( llPrimes, 0, MAX_NO_PRIMES * sizeof( BIGNUM ) );
 	for( i = 0; i < MAX_NO_PRIMES; i++ )
 		BN_init( &llPrimes[ i ] );
 	for( i = 0; i < nFactors; i++ )
 		{
 		status = generatePrime( pkcInfo, &llPrimes[ i ], factorBits, 
-								CRYPT_UNUSED, callBackArg );
+								CRYPT_UNUSED );
 		if( cryptStatusError( status ) )
 			goto cleanup;
 		}
 
-	do
+	for( primeFound = FALSE, iterationCount = 0;
+		 !primeFound && iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		int indexMoved, innerIterationCount = 0;
 
 		/* Initialize the indices for the permutation.  We try the first 
-		   nFactors factors first, since any new primes are added at the end */
+		   nFactors factors first since any new primes will be added at the 
+		   end */
 		indices[ nFactors - 1 ] = nPrimes - 1;
 		for( i = nFactors - 2; i >= 0; i-- )
 			indices[ i ] = indices[ i + 1 ] - 1;
-		BN_mul( &llProducts[ nFactors - 1 ], q, &llPrimes[ nPrimes - 1 ], 
-				pkcInfo->bnCTX );
+		CK( BN_mul( &llProducts[ nFactors - 1 ], q, &llPrimes[ nPrimes - 1 ], 
+					pkcInfo->bnCTX ) );
 		indexMoved = nFactors - 2;
+		if( bnStatusError( bnStatus ) )
+			{
+			status = getBnStatus( bnStatus );
+			goto cleanup;
+			}
 
 		/* Test all possible new prime permutations until a prime is found or 
 		   we run out of permutations */
@@ -292,9 +337,11 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 			{
 			/* Assemble a new candidate prime 2 * q * primes + 1 from the 
 			   currently indexed random primes */
-			for( i = indexMoved; i >= 0; i-- )
+			for( i = indexMoved; bnStatusOK( bnStatus ) && i >= 0; i-- )
+				{
 				CK( BN_mul( &llProducts[ i ], &llProducts[ i + 1 ],
 							&llPrimes[ indices[ i ] ], pkcInfo->bnCTX ) );
+				}
 			CKPTR( BN_copy( p, &llProducts[ 0 ] ) );
 			CK( BN_add_word( p, 1 ) );
 			if( bnStatusError( bnStatus ) )
@@ -307,10 +354,10 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 			   probabilistic test and exit if it succeeds */
 			if( primeSieve( p ) )
 				{
-				status = primeProbable( pkcInfo, p, noChecks, callBackArg );
+				status = primeProbable( pkcInfo, p, noChecks );
 				if( cryptStatusError( status ) )
 					goto cleanup;
-				if( status )
+				if( status == TRUE )
 					{
 					primeFound = TRUE;
 					break;
@@ -329,21 +376,20 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 					}
 				}
 
-			/* If we moved down the highest index, we've exhausted all the 
+			/* If we moved down the highest index we've exhausted all of the 
 			   permutations so we have to start over with another prime */
-			if( ( indexMoved == nFactors - 1 ) || ( i >= nFactors ) )
+			if( ( indexMoved >= nFactors - 1 ) || ( i >= nFactors ) )
 				break;
 
-			/* We haven't changed the highest index, take all the indices 
-			   below the one we moved down and move them up so they're packed 
-			   up as high as they'll go */
+			/* We haven't changed the highest index, take all of the indices 
+			   below the one that we moved down and move them up so that 
+			   they're packed up as high as they'll go */
 			for( i = indexMoved - 1; i >= 0; i-- )
 				indices[ i ] = indices[ i + 1 ] - 1;
 			} 
 		while( indices[ nFactors - 1 ] > 0 && \
-			   innerIterationCount++ < FAILSAFE_ITERATIONS_LARGE );
-		if( innerIterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError();
+			   innerIterationCount++ < ( FAILSAFE_ITERATIONS_LARGE * 10 ) );
+		ENSURES( innerIterationCount < ( FAILSAFE_ITERATIONS_LARGE * 10 ) );
 
 		/* If we haven't found a prime yet, add a new prime to the pool and
 		   try again */
@@ -353,23 +399,27 @@ static int generateDLPublicValues( PKC_INFO *pkcInfo, const int pBits,
 				{
 				/* We've run through an extraordinary number of primes, 
 				   something is wrong */
-				assert( NOTREACHED );
+				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_FAILED;
 				goto cleanup;
 				}
 			status = generatePrime( pkcInfo, &llPrimes[ nPrimes++ ], factorBits, 
-									CRYPT_UNUSED, callBackArg );
+									CRYPT_UNUSED );
 			if( cryptStatusError( status ) )
 				goto cleanup;
 			}
 		}
 	while( !primeFound && iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Recover the original value of q by dividing by 2 and find a generator 
 	   suitable for p and q */
-	BN_rshift1( q, q );
+	CK( BN_rshift1( q, q ) );
+	if( bnStatusError( bnStatus ) )
+		{
+		status = getBnStatus( bnStatus );
+		goto cleanup;
+		}
 	status = findGeneratorForPQ( pkcInfo );
 
 cleanup:
@@ -379,44 +429,49 @@ cleanup:
 		BN_clear_free( &llPrimes[ i ] );
 	for( i = 0; i < nFactors; i++ )
 		BN_clear_free( &llProducts[ i ] );
-	zeroise( llPrimes, sizeof( BIGNUM ) * MAX_NO_PRIMES );
-	zeroise( llProducts, sizeof( BIGNUM ) * MAX_NO_FACTORS );
+	zeroise( llPrimes, MAX_NO_PRIMES * sizeof( BIGNUM ) );
+	zeroise( llProducts, MAX_NO_FACTORS * sizeof( BIGNUM ) );
 
 	return( status );
 	}
 
 /* Generate the DLP private value x */
 
-static int generateDLPrivateValue( PKC_INFO *pkcInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateDLPPrivateValue( INOUT PKC_INFO *pkcInfo )
 	{
 	BIGNUM *x = &pkcInfo->dlpParam_x, *q = &pkcInfo->dlpParam_q; 
 	const int qBits = BN_num_bits( q );
 	int bnStatus = BN_STATUS, status;
 
-	/* If it's a PKCS #3 DH key, there won't be a q value present, so we have
-	   to estimate the appropriate x size in the same way that we estimated
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+
+	/* If it's a PKCS #3 DH key there won't be a q value present so we have 
+	   to estimate the appropriate x size in the same way that we estimated 
 	   the q size when we generated the public key components */
 	if( BN_is_zero( q ) )
+		{
 		return( generateBignum( x, 
 					getDLPexpSize( BN_num_bits( &pkcInfo->dlpParam_p ) ),
 					0xC0, 0 ) );
+		}
 
-	/* Generate the DLP private value x s.t. 2 <= x <= q-2 (this is the
-	   lowest common denominator of FIPS 186's 1...q-1 and X9.42's 2...q-2).
-	   Because the mod q-2 is expensive we do a quick check to make sure it's
-	   really necessary before calling it */
+	/* Generate the DLP private value x s.t. 2 <= x <= q-2 (this is the 
+	   lowest common denominator of FIPS 186's 1...q-1 and X9.42's 2...q-2). 
+	   Because the mod q-2 is expensive we do a quick check to make sure 
+	   that it's really necessary before calling it */
 	status = generateBignum( x, qBits, 0xC0, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 	CK( BN_sub_word( q, 2 ) );
 	if( BN_cmp( x, q ) > 0 )
 		{
-		/* Trim x down to size.  Actually we get the upper bound as q-3,
+		/* Trim x down to size.  Actually we get the upper bound as q-3, 
 		   but over a 160-bit (minimum) number range this doesn't matter */
 		CK( BN_mod( x, x, q, pkcInfo->bnCTX ) );
 
-		/* If the value we ended up with is too small, just generate a new
-		   value one bit shorter, which guarantees that it'll fit the 
+		/* If the value that we ended up with is too small, just generate a 
+		   new value one bit shorter, which guarantees that it'll fit the 
 		   criteria (the target is a suitably large random value value, not 
 		   the closest possible fit within the range) */
 		if( bnStatusOK( bnStatus ) && BN_num_bits( x ) < qBits - 5 )
@@ -427,45 +482,60 @@ static int generateDLPrivateValue( PKC_INFO *pkcInfo )
 	return( cryptStatusError( status ) ? status : getBnStatus( bnStatus ) );
 	}
 
-/* Generate a generic DLP key */
+/* Finish setting up a DLP key */
 
-int generateDLPkey( CONTEXT_INFO *contextInfoPtr, const int keyBits,
-					const int qBits, const BOOLEAN generateDomainParameters )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int completeInitDLPkey( INOUT CONTEXT_INFO *contextInfoPtr,
+							   const BOOLEAN calculateY )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-	int bnStatus = BN_STATUS, status;
+	int bnStatus = BN_STATUS;
 
-	/* Generate the domain parameters if necessary */
-	if( generateDomainParameters )
-		{
-		pkcInfo->keySizeBits = keyBits;
-		status = generateDLPublicValues( pkcInfo, keyBits, qBits, contextInfoPtr );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-
-	/* Generate the private key */
-	assert( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_DH || \
-			!BN_is_zero( &pkcInfo->dlpParam_q ) );
-	status = generateDLPrivateValue( pkcInfo );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Evaluate the Montgomery forms and calculate y */
-	BN_MONT_CTX_init( &pkcInfo->dlpParam_mont_p );
+	/* Evaluate the Montgomery form of p and calculate y if required */
 	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, &pkcInfo->dlpParam_p, 
 						 pkcInfo->bnCTX ) );
-	if( bnStatusOK( bnStatus ) )
+	if( bnStatusOK( bnStatus ) && calculateY )
+		{
 		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, &pkcInfo->dlpParam_g,
 							 &pkcInfo->dlpParam_x, &pkcInfo->dlpParam_p, 
 							 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
+		}
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
 	/* Enable side-channel protection if required */
-	if( !( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) )
 		return( CRYPT_OK );
 	return( enableSidechannelProtection( pkcInfo ) );
+	}
+
+/* Generate a generic DLP key */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int generateDLPkey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits )
+	{
+	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
+	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( keyBits >= bytesToBits( MIN_PKCSIZE ) && \
+			  keyBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
+	/* Generate the domain parameters */
+	pkcInfo->keySizeBits = keyBits;
+	status = generateDLPPublicValues( pkcInfo, keyBits );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Generate the private key */
+	status = generateDLPPrivateValue( pkcInfo );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Finish setting up the key */
+	return( completeInitDLPkey( contextInfoPtr, TRUE ) );
 	}
 
 /****************************************************************************
@@ -478,6 +548,7 @@ int generateDLPkey( CONTEXT_INFO *contextInfoPtr, const int keyBits,
    data non-const because the bignum code wants to modify some of the values 
    as it's working with them */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
@@ -485,12 +556,14 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	BIGNUM *tmp = &pkcInfo->tmp1;
 	int length, bnStatus = BN_STATUS;
 
+	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
 	/* Make sure that the necessary key parameters have been initialised.  
-	   Since PKCS #3 doesn't use the q parameter, we only require it for 
+	   Since PKCS #3 doesn't use the q parameter we only require it for 
 	   algorithms that specifically use FIPS 186 values */
 	if( BN_is_zero( p ) || BN_is_zero( g ) || \
 		BN_is_zero( &pkcInfo->dlpParam_y ) || \
-		( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) && \
+		( !( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) && \
 		  BN_is_zero( &pkcInfo->dlpParam_x ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 	if( !isPKCS3 && BN_is_zero( &pkcInfo->dlpParam_q ) )
@@ -498,16 +571,24 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 
 	/* Make sure that the key paramters are valid:
 
-		pLen >= MIN_PKCSIZE, pLen <= CRYPT_MAX_PKCSIZE 
+		pLen >= MIN_PKCSIZE, pLen <= CRYPT_MAX_PKCSIZE.
 
-		2 <= g <= p - 2, g a generator of order q if the q parameter is 
-			present (i.e. it's a non-PKCS #3 key)
+		2 <= g <= p - 2.
+		PKCS #3 keys: g < 256.  This isn't strictly necessary but use of g 
+			in DH typically sets g = 2, the only reason for setting it to a 
+			larger value is either stupidity or a deliberate DoS, neither of 
+			which we want to encourage.
+		Non-PKCS #3 keys: g a generator of order q when the q parameter is 
+			present.  FIPS 186/X9.42 use a g the same size as p so we can't
+			limit the size.
 
 		y < p */
 	length = BN_num_bytes( p );
 	if( isShortPKCKey( length ) )
+		{
 		/* Special-case handling for insecure-sized public keys */
 		return( CRYPT_ERROR_NOSECURE );
+		}
 	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
 		return( CRYPT_ARGERROR_STR1 );
 	if( BN_num_bits( g ) < 2 )
@@ -516,7 +597,12 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 	CK( BN_sub_word( tmp, 1 ) );
 	if( bnStatusError( bnStatus ) || BN_cmp( g, tmp ) >= 0 )
 		return( CRYPT_ARGERROR_STR1 );
-	if( !isPKCS3 )
+	if( isPKCS3 )
+		{
+		if( BN_num_bits( g ) > 8 )
+			return( CRYPT_ARGERROR_STR1 );
+		}
+	else
 		{
 		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_q, p, pkcInfo->bnCTX,
 							 &pkcInfo->dlpParam_mont_p ) );
@@ -527,7 +613,7 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 		return( CRYPT_ARGERROR_STR1 );
 
 	/* Make sure that the private key value is valid */
-	if( !( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) )
 		{
 		CK( BN_mod_exp_mont( tmp, g, &pkcInfo->dlpParam_x, p, pkcInfo->bnCTX,
 							 &pkcInfo->dlpParam_mont_p ) );
@@ -540,12 +626,15 @@ int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 )
 
 /* Initialise a DLP key */
 
-int initDLPkey( CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initDLPkey( INOUT CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	BIGNUM *p = &pkcInfo->dlpParam_p, *g = &pkcInfo->dlpParam_g;
 	BIGNUM *x = &pkcInfo->dlpParam_x;
-	int bnStatus = BN_STATUS;
+	BOOLEAN calculateY = FALSE;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* If it's a DH key and there's no x value present, generate one 
 	   implicitly.  This is needed because all DH keys are effectively 
@@ -555,35 +644,32 @@ int initDLPkey( CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH )
 		{
 		int status;
 
-		status = generateDLPkey( contextInfoPtr, CRYPT_UNUSED, CRYPT_UNUSED,
-								 FALSE );
+		status = generateDLPPrivateValue( pkcInfo );
 		if( cryptStatusError( status ) )
 			return( status );
-		contextInfoPtr->flags &= ~CONTEXT_ISPUBLICKEY;
+		contextInfoPtr->flags &= ~CONTEXT_FLAG_ISPUBLICKEY;
+		calculateY = TRUE;
 		}
 
 	/* Some sources (specifically PKCS #11) don't make y available for
-	   private keys, so if the caller is trying to load a private key with a
-	   zero y value, we calculate it for them.  First, we check to make sure
-	   that we have the values available to calculate y.  We calculate y 
-	   itself once we have the Montogomery form of p set up */
+	   private keys so if the caller is trying to load a private key with a
+	   zero y value we calculate it for them.  First, we check to make sure
+	   that we have the values available to calculate y */
 	if( BN_is_zero( &pkcInfo->dlpParam_y ) && \
 		( BN_is_zero( p ) || BN_is_zero( g ) || BN_is_zero( x ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 
-	/* Evaluate the Montgomery form and calculate y if necessary */
-	BN_MONT_CTX_init( &pkcInfo->dlpParam_mont_p );
-	CK( BN_MONT_CTX_set( &pkcInfo->dlpParam_mont_p, p, pkcInfo->bnCTX ) );
-	if( bnStatusOK( bnStatus ) && BN_is_zero( &pkcInfo->dlpParam_y ) )
-		CK( BN_mod_exp_mont( &pkcInfo->dlpParam_y, g, x, p, pkcInfo->bnCTX, 
-							 &pkcInfo->dlpParam_mont_p ) );
-
 	pkcInfo->keySizeBits = BN_num_bits( p );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
 
-	/* Enable side-channel protection if required */
-	if( !( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) )
-		return( CRYPT_OK );
-	return( enableSidechannelProtection( pkcInfo ) );
+	/* Finish setting up the key.  The use of the calculateY value here is
+	   a bit odd because it'll cause any existing y value to be overwritten
+	   by a new one based on the newly-generated x value.  This means that 
+	   if we load a DH key from a certificate constaining an existing y 
+	   value then this process will overwrite the value with a new one, so
+	   that the context associated with the certificate will contain a y 
+	   value that differs from the one in the certificate.  This is 
+	   unfortunate, but again because of the DH key duality we need to have
+	   both an x and a y value present otherwise the key is useless, and in
+	   order to get an x value we have to recreate the y value */
+	return( completeInitDLPkey( contextInfoPtr, calculateY ) );
 	}

@@ -63,6 +63,26 @@
   #include "bn/bn_lcl.h"
 #endif /* Compiler-specific includes */
 
+/* Apple ship their own private fork of gcc rather than any standard version,
+   and going by its behaviour across several releases they must be basing it 
+   on alpha versions that they dig up somewhere.  One of the things that 
+   version 4.0.1 on Intel 32-bit shows up is an optimiser bug with -O3 where 
+   the output generated for the code just before the bn_div loop bears no 
+   relation whatsoever to the source code.  Dropping in a printf() at -03 
+   resolves this, with the output being identical to what it would be with 
+   -O2.  There's at least one silver lining with Apple's buggy custom version 
+   of gcc, it gives you the ability to selectively turn off optimisation on 
+   a per-function level (which standard gcc doesn't), see 
+   http://developer.apple.com/documentation/DeveloperTools/gcc-4.0.1/gcc/Darwin-Pragmas.html
+   So we use the following pragma to reduce the optimisation level from -O3 
+   (produces garbled output) to -O2 (produces output identical to -O3 but 
+   without the garbling) for Apple's buggy gcc on 32-bit x86 */
+
+#if defined( __APPLE__ ) && defined( __GNUC__ ) && \
+		( __GNUC__ == 4 ) && ( __GNUC_MINOR__ == 0 ) && defined( __i386__ )
+  #pragma optimization_level 2
+#endif /* Apple gcc 4.0.x with buggy optimisation - pcg */
+
 /* The old slow way */
 #if 0
 int BN_div(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m, const BIGNUM *d,

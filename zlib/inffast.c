@@ -4,11 +4,13 @@
  */
 
 #if defined( INC_ALL )
+  #include "crypt.h"	/* For ASM override of longest-match */
   #include "zutil.h"
   #include "inftrees.h"
   #include "inflate.h"
   #include "inffast.h"
 #else
+  #include "crypt.h"	/* For ASM override of longest-match */
   #include "zlib/zutil.h"
   #include "zlib/inftrees.h"
   #include "zlib/inflate.h"

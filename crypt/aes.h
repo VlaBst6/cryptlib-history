@@ -1,6 +1,6 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 2003, Dr Brian Gladman, Worcester, UK.   All rights reserved.
+ Copyright (c) 1998-2006, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
@@ -27,7 +27,7 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue 09/09/2006
 
  This file contains the definitions required to use AES in C. See aesopt.h
  for optimisation details.
@@ -107,7 +107,7 @@ typedef struct
 /* This routine must be called before first use if non-static       */
 /* tables are being used                                            */
 
-AES_RETURN gen_tabs(void);
+AES_RETURN aes_init(void);
 
 /* Key lengths in the range 16 <= key_len <= 32 are given in bytes, */
 /* those in the range 128 <= key_len <= 256 are given in bits       */
@@ -157,6 +157,24 @@ AES_RETURN aes_decrypt(const unsigned char *in, unsigned char *out, const aes_de
 #endif
 
 #if defined(AES_MODES)
+
+/* Multiple calls to the following subroutines for multiple block   */
+/* ECB, CBC, CFB, OFB and CTR mode encryption can be used to handle */
+/* long messages incremantally provided that the context AND the iv */
+/* are preserved between all such calls.  For the ECB and CBC modes */
+/* each individual call within a series of incremental calls must   */
+/* process only full blocks (i.e. len must be a multiple of 16) but */
+/* the CFB, OFB and CTR mode calls can handle multiple incremental  */
+/* calls of any length. Each mode is reset when a new AES key is    */
+/* set but ECB and CBC operations can be reset without setting a    */
+/* new key by setting a new IV value.  To reset CFB, OFB and CTR    */
+/* without setting the key, aes_mode_reset() must be called and the */
+/* IV must be set.  NOTE: All these calls update the IV on exit so  */
+/* this has to be reset if a new operation with the same IV as the  */
+/* previous one is required (or decryption follows encryption with  */
+/* the same IV array).                                              */
+
+AES_RETURN aes_test_alignment_detection(unsigned int n);
 
 AES_RETURN aes_ecb_encrypt(const unsigned char *ibuf, unsigned char *obuf,
                     int len, const aes_encrypt_ctx cx[1]);

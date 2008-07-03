@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Key Exchange Routines							*
-*						Copyright Peter Gutmann 1993-2006					*
+*						Copyright Peter Gutmann 1993-2007					*
 *																			*
 ****************************************************************************/
 
@@ -11,37 +11,38 @@
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
-  #include "pgp.h"
+  #include "pgp_rw.h"
 #else
   #include "crypt.h"
   #include "mechs/mech.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
   #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
 *																			*
-*								Import a Session Key						*
+*								Utility Functions							*
 *																			*
 ****************************************************************************/
 
 /* Try and determine the format of the encrypted data */
 
-static CRYPT_FORMAT_TYPE getFormatType( const void *data, 
-										const int dataLength )
+CHECK_RETVAL_ENUM( CRYPT_FORMAT ) STDC_NONNULL_ARG( ( 1 ) ) \
+static CRYPT_FORMAT_TYPE getFormatType( IN_BUFFER( dataLength ) const void *data, 
+										IN_LENGTH const int dataLength )
 	{
-	CRYPT_FORMAT_TYPE formatType = CRYPT_FORMAT_NONE;
 	STREAM stream;
-	const int dataReadLength = min( dataLength, 16 );
 	long value;
 	int status;
 
-	assert( isReadPtr( data, MIN_CRYPT_OBJECTSIZE ) );
-	assert( dataLength >= MIN_CRYPT_OBJECTSIZE );
+	assert( isReadPtr( data, dataLength ) );
 
-	sMemConnect( &stream, data, dataReadLength );
+	REQUIRES( dataLength > MIN_CRYPT_OBJECTSIZE && \
+			  dataLength < MAX_INTLENGTH );
+
+	sMemConnect( &stream, data, min( 16, dataLength ) );
 
 	/* Figure out what we've got.  PKCS #7/CMS/SMIME keyTrans begins:
 
@@ -53,41 +54,50 @@ static CRYPT_FORMAT_TYPE getFormatType( const void *data,
 		kekRecipientInfo ::= [3] IMPLICIT SEQUENCE {
 			version		INTEGER (0),
 
-	   which allows us to determine which type of object we have */
+	   which allows us to determine which type of object we have.  Note that 
+	   we use sPeek() rather than peekTag() because we want to continue
+	   processing (or at least checking for) PGP data if it's no ASN.1 */
 	if( sPeek( &stream ) == BER_SEQUENCE )
 		{
+		CRYPT_FORMAT_TYPE formatType;
+
 		readSequence( &stream, NULL );
 		status = readShortInteger( &stream, &value );
-		if( cryptStatusOK( status ) )
+		if( cryptStatusError( status ) )
 			{
-			switch( value )
-				{
-				case KEYTRANS_VERSION:
-					formatType = CRYPT_FORMAT_CMS;
-					break;
+			sMemDisconnect( &stream );
+			return( CRYPT_FORMAT_NONE );
+			}
+		switch( value )
+			{
+			case KEYTRANS_VERSION:
+				formatType = CRYPT_FORMAT_CMS;
+				break;
 
-				case KEYTRANS_EX_VERSION:
-					formatType = CRYPT_FORMAT_CRYPTLIB;
-					break;
+			case KEYTRANS_EX_VERSION:
+				formatType = CRYPT_FORMAT_CRYPTLIB;
+				break;
 
-				default:
-					formatType = CRYPT_FORMAT_NONE;
-				}
+			default:
+				formatType = CRYPT_FORMAT_NONE;
 			}
 		sMemDisconnect( &stream );
 
 		return( formatType );
 		}
-	if( sPeek( &stream ) == MAKE_CTAG( 3 ) )
+	if( sPeek( &stream ) == MAKE_CTAG( CTAG_RI_PWRI ) )
 		{
-		readConstructed( &stream, NULL, 3 );
+		readConstructed( &stream, NULL, CTAG_RI_PWRI );
 		status = readShortInteger( &stream, &value );
-		if( cryptStatusOK( status ) )
-			formatType = ( value == PWRI_VERSION ) ? \
-						 CRYPT_FORMAT_CRYPTLIB : CRYPT_FORMAT_NONE;
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( CRYPT_FORMAT_NONE );
+			}
 		sMemDisconnect( &stream );
 
-		return( formatType );
+		return( ( value == PWRI_VERSION ) ? \
+				CRYPT_FORMAT_CRYPTLIB : CRYPT_FORMAT_NONE );
 		}
 
 #ifdef USE_PGP
@@ -105,26 +115,81 @@ static CRYPT_FORMAT_TYPE getFormatType( const void *data,
 	return( CRYPT_FORMAT_NONE );
 	}
 
+/* Check the key wrap key being used to import/export a session key */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int checkWrapKey( IN_HANDLE int importKey, 
+						 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+						 const BOOLEAN isImport )
+	{
+	CRYPT_ALGO_TYPE localCryptAlgo;
+	int status;
+
+	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+
+	REQUIRES( isHandleRangeValid( importKey ) );
+
+	/* Clear return value */
+	*cryptAlgo = CRYPT_ALGO_NONE;
+
+	/* Make sure that the context is valid and get the algorithm being 
+	   used */
+	status = krnlSendMessage( importKey, MESSAGE_GETATTRIBUTE,
+							  &localCryptAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( localCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+		localCryptAlgo <= CRYPT_ALGO_LAST_PKC )
+		{
+		/* The DLP algorithms have specialised data-formatting requirements
+		   and can't normally be directly accessed via external messages,
+		   and PKC operations in general may be restricted to internal access
+		   only if they have certificates that restrict their use associated
+		   with them.  However if we're performing a high-level key import 
+		   (rather than a low-level raw context operation) this is OK since 
+		   the low-level operation is being performed via these higher-level
+		   routines which handle the formatting requirements.  Doing the 
+		   check via an internal message is safe at this point since we've 
+		   already checked the context's external accessibility when we got 
+		   the algorithm info */
+		status = krnlSendMessage( importKey, IMESSAGE_CHECK, NULL,
+								  isImport ? MESSAGE_CHECK_PKC_DECRYPT : \
+											 MESSAGE_CHECK_PKC_ENCRYPT );
+		}
+	else
+		{
+		status = krnlSendMessage( importKey, MESSAGE_CHECK, NULL,
+								  MESSAGE_CHECK_CRYPT );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+
+	*cryptAlgo = localCryptAlgo;
+	return( CRYPT_OK );
+	}
+
 /* Check that the context data is encodable using the chosen format */
 
-static int checkContextsEncodable( const CRYPT_HANDLE exportKey,
-								   const CRYPT_ALGO_TYPE exportAlgo,
-								   const CRYPT_CONTEXT sessionKeyContext,
-								   const CRYPT_FORMAT_TYPE formatType )
+CHECK_RETVAL \
+static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
+								   IN_ALGO const CRYPT_ALGO_TYPE exportAlgo,
+								   IN_HANDLE const CRYPT_CONTEXT sessionKeyContext,
+								   IN_ENUM( CRYPT_FORMAT ) \
+									const CRYPT_FORMAT_TYPE formatType )
 	{
 	CRYPT_ALGO_TYPE sessionKeyAlgo;
-	CRYPT_MODE_TYPE sessionKeyMode, exportMode;
+	CRYPT_MODE_TYPE sessionKeyMode = DUMMY_INIT, exportMode;
 	const BOOLEAN exportIsPKC = ( exportAlgo >= CRYPT_ALGO_FIRST_PKC && \
 								  exportAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
 								TRUE : FALSE;
 	BOOLEAN sessionIsMAC = FALSE;
 	int status;
 
-	assert( isHandleRangeValid( exportKey ) );
-	assert( exportAlgo > CRYPT_ALGO_NONE && exportAlgo < CRYPT_ALGO_LAST );
-	assert( isHandleRangeValid( sessionKeyContext ) );
-	assert( formatType > CRYPT_FORMAT_NONE && \
-			formatType < CRYPT_FORMAT_LAST_EXTERNAL );
+	REQUIRES( isHandleRangeValid( exportKey ) );
+	REQUIRES( exportAlgo > CRYPT_ALGO_NONE && exportAlgo < CRYPT_ALGO_LAST );
+	REQUIRES( isHandleRangeValid( sessionKeyContext ) );
+	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
+			  formatType < CRYPT_FORMAT_LAST_EXTERNAL );
 
 	/* Get any required context information */
 	status = krnlSendMessage( sessionKeyContext, MESSAGE_GETATTRIBUTE,
@@ -162,8 +227,8 @@ static int checkContextsEncodable( const CRYPT_HANDLE exportKey,
 				if( cryptStatusError( status ) )
 					return( CRYPT_ERROR_PARAM1 );
 				if( exportMode != CRYPT_MODE_CBC || \
-					cryptStatusError( sizeofAlgoIDex( exportAlgo, \
-													  exportMode, 0 ) ) )
+					cryptStatusError( \
+						sizeofAlgoIDex( exportAlgo, exportMode, 0 ) ) )
 					return( CRYPT_ERROR_PARAM1 );
 				}
 
@@ -179,32 +244,37 @@ static int checkContextsEncodable( const CRYPT_HANDLE exportKey,
 
 #ifdef USE_PGP
 		case CRYPT_FORMAT_PGP:
+			{
+			int dummy;
+
 			/* Check that the export algorithm is encodable */
-			if( cryptlibToPgpAlgo( exportAlgo ) == PGP_ALGO_NONE )
+			if( cryptStatusError( \
+					cryptlibToPgpAlgo( exportAlgo, &dummy ) ) )
 				return( CRYPT_ERROR_PARAM1 );
 
 			/* Check that the session-key algorithm is encodable */
 			if( exportIsPKC )
 				{
-				if( cryptlibToPgpAlgo( sessionKeyAlgo ) == PGP_ALGO_NONE )
+				if( cryptStatusError( \
+						cryptlibToPgpAlgo( sessionKeyAlgo, &dummy ) ) )
 					return( CRYPT_ERROR_PARAM3 );
 				if( sessionKeyMode != CRYPT_MODE_CFB )
 					return( CRYPT_ERROR_PARAM3 );
 				}
 			else
 				{
-				/* If it's a conventional key export, there's no key wrap as 
+				/* If it's a conventional key export there's no key wrap as 
 				   in CMS (the session-key context isn't used), so the 
 				   "export context" mode must be CFB */
 				status = krnlSendMessage( exportKey, MESSAGE_GETATTRIBUTE, 
 										  &exportMode, CRYPT_CTXINFO_MODE );
-				if( cryptStatusError( status ) )
-					return( CRYPT_ERROR_PARAM1 );
-				if( exportMode != CRYPT_MODE_CFB )
+				if( cryptStatusError( status ) || \
+					exportMode != CRYPT_MODE_CFB )
 					return( CRYPT_ERROR_PARAM1 );
 				}
 
 			return( CRYPT_OK );
+			}
 #endif /* USE_PGP */
 		}
 	
@@ -212,6 +282,12 @@ static int checkContextsEncodable( const CRYPT_HANDLE exportKey,
 	   the context data */
 	return( CRYPT_ERROR_PARAM4 );
 	}
+
+/****************************************************************************
+*																			*
+*								Import a Session Key						*
+*																			*
+****************************************************************************/
 
 /* Import an extended encrypted key, either a cryptlib key or a CMS key */
 
@@ -221,54 +297,30 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 						C_IN CRYPT_CONTEXT sessionKeyContext,
 						C_OUT CRYPT_CONTEXT C_PTR returnedContext )
 	{
+	CRYPT_CONTEXT iReturnedContext;
 	CRYPT_FORMAT_TYPE formatType;
 	CRYPT_ALGO_TYPE importAlgo;
-	CRYPT_CONTEXT iReturnedContext;
 	int owner, originalOwner, status;
 
 	/* Perform basic error checking */
-	if( encryptedKeyLength < MIN_CRYPT_OBJECTSIZE )
+	if( encryptedKeyLength <= MIN_CRYPT_OBJECTSIZE || \
+		encryptedKeyLength >= MAX_INTLENGTH_SHORT )
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( encryptedKey, encryptedKeyLength ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( ( formatType = getFormatType( encryptedKey, \
-									  encryptedKeyLength ) ) == CRYPT_FORMAT_NONE )
+	if( ( formatType = \
+			getFormatType( encryptedKey, encryptedKeyLength ) ) == CRYPT_FORMAT_NONE )
 		return( CRYPT_ERROR_BADDATA );
+	if( !isHandleRangeValid( importKey ) )
+		return( CRYPT_ERROR_PARAM3 );
+	if( sessionKeyContext != CRYPT_UNUSED && \
+		!isHandleRangeValid( sessionKeyContext ) )
+		return( CRYPT_ERROR_PARAM4 );
 
 	/* Check the importing key */
-	status = krnlSendMessage( importKey, MESSAGE_GETATTRIBUTE,
-							  &importAlgo, CRYPT_CTXINFO_ALGO );
+	status = checkWrapKey( importKey, &importAlgo, TRUE );
 	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ERROR_PARAM3 : status );
-	if( importAlgo >= CRYPT_ALGO_FIRST_PKC && importAlgo <= CRYPT_ALGO_LAST_PKC )
-		{
-		/* The DLP algorithms have specialised data-formatting requirements
-		   and can't normally be directly accessed via external messages,
-		   and PKC operations in general may be restricted to internal access
-		   only if they have certificates that restrict their use associated
-		   with them.  However if we're performing a high-level key import 
-		   (rather than a low-level raw context operation) this is OK since 
-		   they're being used from cryptlib-internal routines.  Doing the 
-		   check via an internal message is safe at this point since we've 
-		   already checked the context's external accessibility when we got 
-		   the algorithm info */
-		status = krnlSendMessage( importKey, IMESSAGE_CHECK, NULL,
-								  ( importAlgo == CRYPT_ALGO_DH ) ? \
-									MESSAGE_CHECK_PKC_KA_IMPORT : \
-									MESSAGE_CHECK_PKC_DECRYPT );
-
-		/* If we get a non-inited error with a key agreement key this is OK 
-		   since the key parameters are read from the exchanged object */
-		if( status == CRYPT_ERROR_NOTINITED && importAlgo == CRYPT_ALGO_DH )
-			status = CRYPT_OK;
-		}
-	else
-		status = krnlSendMessage( importKey, MESSAGE_CHECK, NULL,
-								  MESSAGE_CHECK_CRYPT );
-	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ERROR_PARAM3 : status );
+		return( cryptArgError( status ) ? CRYPT_ERROR_PARAM3 : status );
 
 	/* Check the session key */
 	if( formatType == CRYPT_FORMAT_PGP )
@@ -288,13 +340,14 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 		status = krnlSendMessage( sessionKeyContext, MESSAGE_GETATTRIBUTE,
 								  &sessionKeyAlgo, CRYPT_CTXINFO_ALGO );
 		if( cryptStatusOK( status ) )
+			{
 			status = krnlSendMessage( sessionKeyContext, MESSAGE_CHECK, NULL,
 							( sessionKeyAlgo >= CRYPT_ALGO_FIRST_MAC ) ? \
 								MESSAGE_CHECK_MAC_READY : \
 								MESSAGE_CHECK_CRYPT_READY );
+			}
 		if( cryptStatusError( status ) )
-			return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-					CRYPT_ERROR_PARAM4 : status );
+			return( cryptArgError( status ) ? CRYPT_ERROR_PARAM4 : status );
 		if( returnedContext != NULL )
 			return( CRYPT_ERROR_PARAM5 );
 		}
@@ -309,59 +362,83 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 	status = krnlSendMessage( importKey, MESSAGE_GETATTRIBUTE, &owner,
 							  CRYPT_PROPERTY_OWNER );
 	if( cryptStatusOK( status ) )
-		/* Importing key is owned, set the imported key's owner */
-		krnlSendMessage( sessionKeyContext, MESSAGE_SETATTRIBUTE, &owner,
-						 CRYPT_PROPERTY_OWNER );
+		{
+		/* The importing key is owned, set the imported key's owner if it's
+		   present */
+		if( sessionKeyContext != CRYPT_UNUSED )
+			{
+			status = krnlSendMessage( sessionKeyContext, MESSAGE_SETATTRIBUTE, 
+									  &owner, CRYPT_PROPERTY_OWNER );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
+		}
 	else
+		{
 		/* Don't try and change the session key ownership */
 		originalOwner = CRYPT_ERROR;
+		}
 
 	/* Import it as appropriate */
-	if( importAlgo >= CRYPT_ALGO_FIRST_PKC && importAlgo <= CRYPT_ALGO_LAST_PKC )
-		{
-		if( formatType == CRYPT_FORMAT_PGP )
-			{
-			status = importPublicKey( encryptedKey, encryptedKeyLength,
-									  CRYPT_UNUSED, importKey,
-									  &iReturnedContext, KEYEX_PGP );
-			if( cryptStatusOK( status ) )
-				/* Make the newly-created context externally visible */
-				krnlSendMessage( iReturnedContext, IMESSAGE_SETATTRIBUTE,
-								 MESSAGE_VALUE_FALSE,
-								 CRYPT_IATTRIBUTE_INTERNAL );
-			}
-		else
-			status = importPublicKey( encryptedKey, encryptedKeyLength,
-									  sessionKeyContext, importKey, NULL,
-									  ( formatType == CRYPT_FORMAT_CMS ) ? \
-										KEYEX_CMS : KEYEX_CRYPTLIB );
-		}
-	else
-		status = importConventionalKey( encryptedKey, encryptedKeyLength,
-							sessionKeyContext, importKey,
-							( formatType == CRYPT_FORMAT_CRYPTLIB ) ? \
-								KEYEX_CRYPTLIB : KEYEX_PGP );
-
-	/* If the import failed, return the session key context to its
-	   original owner */
+	status = iCryptImportKey( encryptedKey, encryptedKeyLength, formatType,
+							  importKey, sessionKeyContext, 
+							  ( formatType == CRYPT_FORMAT_PGP ) ? \
+								&iReturnedContext : NULL );
 	if( cryptStatusError( status ) )
 		{
+		/* The import failed, return the session key context to its
+		   original owner.  If this fails there's not much that we can do
+		   to recover so we don't do anything with the return value */
 		if( originalOwner != CRYPT_ERROR )
-			krnlSendMessage( sessionKeyContext, MESSAGE_SETATTRIBUTE,
-							 &originalOwner, CRYPT_PROPERTY_OWNER );
+			{
+			( void ) krnlSendMessage( sessionKeyContext, 
+									  MESSAGE_SETATTRIBUTE,
+									  &originalOwner, CRYPT_PROPERTY_OWNER );
+			}
+		if( cryptArgError( status ) )
+			{
+			/* If we get an argument error from the lower-level code, map the
+			   parameter number to the function argument number */
+			status = ( status == CRYPT_ARGERROR_NUM1 ) ? \
+					 CRYPT_ERROR_PARAM4 : CRYPT_ERROR_PARAM3;
+			}
+		return( status );
 		}
-	else
-		/* If we created the session key as part of the import operation,
-		   return it to the caller */
-		if( formatType == CRYPT_FORMAT_PGP )
-			*returnedContext = iReturnedContext;
 
-	if( cryptArgError( status ) )
-		/* If we get an argument error from the lower-level code, map the
-		   parameter number to the function argument number */
-		status = ( status == CRYPT_ARGERROR_NUM1 ) ? \
-				 CRYPT_ERROR_PARAM4 : CRYPT_ERROR_PARAM3;
-	return( status );
+#ifdef USE_PGP
+	/* If it's a PGP key import then the session key was recreated from 
+	   information stored with the wrapped key so we have to make it 
+	   externally visible before it can be used by the caller */
+	if( formatType == CRYPT_FORMAT_PGP && \
+		importAlgo >= CRYPT_ALGO_FIRST_PKC && importAlgo <= CRYPT_ALGO_LAST_PKC )
+		{
+		/* If the importing key is owned, set the imported key's owner */
+		if( originalOwner != CRYPT_ERROR )
+			{
+			status = krnlSendMessage( iReturnedContext, 
+									  IMESSAGE_SETATTRIBUTE, 
+									  &owner, CRYPT_PROPERTY_OWNER );
+			if( cryptStatusError( status ) )
+				{
+				krnlSendNotifier( iReturnedContext, IMESSAGE_DECREFCOUNT );
+				return( status );
+				}
+			}
+
+		/* Make the newly-created context externally visible */
+		status = krnlSendMessage( iReturnedContext, IMESSAGE_SETATTRIBUTE, 
+								  MESSAGE_VALUE_FALSE, 
+								  CRYPT_IATTRIBUTE_INTERNAL );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iReturnedContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		*returnedContext = iReturnedContext;
+		}
+#endif /* USE_PGP */
+	
+	return( CRYPT_OK );
 	}
 
 C_RET cryptImportKey( C_IN void C_PTR encryptedKey,
@@ -381,7 +458,7 @@ C_RET cryptImportKey( C_IN void C_PTR encryptedKey,
 
 /* Export an extended encrypted key, either a cryptlib key or a CMS key */
 
-C_RET cryptExportKeyEx( C_OUT void C_PTR encryptedKey,
+C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 						C_IN int encryptedKeyMaxLength,
 						C_OUT int C_PTR encryptedKeyLength,
 						C_IN CRYPT_FORMAT_TYPE formatType,
@@ -394,15 +471,18 @@ C_RET cryptExportKeyEx( C_OUT void C_PTR encryptedKey,
 	/* Perform basic error checking */
 	if( encryptedKey != NULL )
 		{
-		if( encryptedKeyMaxLength < MIN_CRYPT_OBJECTSIZE )
+		if( encryptedKeyMaxLength <= MIN_CRYPT_OBJECTSIZE || \
+			encryptedKeyMaxLength >= MAX_INTLENGTH )
 			return( CRYPT_ERROR_PARAM2 );
 		if( !isWritePtr( encryptedKey, encryptedKeyMaxLength ) )
 			return( CRYPT_ERROR_PARAM1 );
 		memset( encryptedKey, 0, MIN_CRYPT_OBJECTSIZE );
 		}
 	else
+		{
 		if( encryptedKeyMaxLength != 0 )
 			return( CRYPT_ERROR_PARAM2 );
+		}
 	if( !isWritePtr( encryptedKeyLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	*encryptedKeyLength = 0;
@@ -411,42 +491,23 @@ C_RET cryptExportKeyEx( C_OUT void C_PTR encryptedKey,
 		formatType != CRYPT_FORMAT_SMIME && \
 		formatType != CRYPT_FORMAT_PGP )
 		return( CRYPT_ERROR_PARAM4 );
+	if( !isHandleRangeValid( exportKey ) )
+		return( CRYPT_ERROR_PARAM5 );
+	if( !isHandleRangeValid( sessionKeyContext ) )
+		return( CRYPT_ERROR_PARAM6 );
 
 	/* Check the exporting key */
-	status = krnlSendMessage( exportKey, MESSAGE_GETATTRIBUTE, &exportAlgo,
-							  CRYPT_CTXINFO_ALGO );
+	status = checkWrapKey( exportKey, &exportAlgo, FALSE );
 	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ERROR_PARAM5 : status );
-	if( exportAlgo >= CRYPT_ALGO_FIRST_PKC && exportAlgo <= CRYPT_ALGO_LAST_PKC )
-		{
-		/* The DLP algorithms have specialised data-formatting requirements
-		   and can't normally be directly accessed via external messages,
-		   and PKC operations in general may be restricted to internal access
-		   only if they have certificates that restrict their use associated
-		   with them.  However if we're performing a high-level key export 
-		   (rather than a low-level raw context operation) this is OK since 
-		   they're being used from cryptlib-internal routines.  Doing the 
-		   check via an internal message is safe at this point since we've 
-		   already checked the context's external accessibility when we got 
-		   the algorithm info */
-		status = krnlSendMessage( exportKey, IMESSAGE_CHECK, NULL,
-								  ( exportAlgo == CRYPT_ALGO_DH ) ? \
-									MESSAGE_CHECK_PKC_KA_EXPORT : \
-									MESSAGE_CHECK_PKC_ENCRYPT );
-		}
-	else
-		status = krnlSendMessage( exportKey, MESSAGE_CHECK, NULL,
-								  MESSAGE_CHECK_CRYPT );
-	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ERROR_PARAM5 : status );
+		return( cryptArgError( status ) ? CRYPT_ERROR_PARAM5 : status );
 	status = checkContextsEncodable( exportKey, exportAlgo, 
 									 sessionKeyContext, formatType );
 	if( cryptStatusError( status ) )
+		{
 		return( ( status == CRYPT_ERROR_PARAM1 ) ? CRYPT_ERROR_PARAM5 : \
 				( status == CRYPT_ERROR_PARAM3 ) ? CRYPT_ERROR_PARAM6 : \
 				CRYPT_ERROR_PARAM4 );
+		}
 
 	/* Check the exported key */
 	status = krnlSendMessage( sessionKeyContext, MESSAGE_GETATTRIBUTE,
@@ -457,34 +518,24 @@ C_RET cryptExportKeyEx( C_OUT void C_PTR encryptedKey,
 							  ( sessionKeyAlgo >= CRYPT_ALGO_FIRST_MAC && \
 								sessionKeyAlgo <= CRYPT_ALGO_LAST_MAC ) ? \
 							  MESSAGE_CHECK_MAC : MESSAGE_CHECK_CRYPT );
-	if( exportAlgo == CRYPT_ALGO_DH )
-		{
-		/* If we're using a key agreement algorithm it doesn't matter if the
-		   session key context has a key attribute present or not, but the
-		   format has to be cryptlib */
-		if( status == CRYPT_ERROR_NOTINITED )
-			status = CRYPT_OK;
-		if( formatType == CRYPT_FORMAT_CMS || \
-			formatType == CRYPT_FORMAT_SMIME )
-			status = CRYPT_ERROR_PARAM4;
-		}
 	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ERROR_PARAM6 : status );
+		return( cryptArgError( status ) ? CRYPT_ERROR_PARAM6 : status );
 
 	/* Export the key via the shared export function */
-	status = iCryptExportKeyEx( encryptedKey, encryptedKeyLength,
-								encryptedKeyMaxLength, formatType,
-								sessionKeyContext, exportKey );
+	status = iCryptExportKey( encryptedKey, encryptedKeyMaxLength, 
+							  encryptedKeyLength, formatType,
+							  sessionKeyContext, exportKey );
 	if( cryptArgError( status ) )
+		{
 		/* If we get an argument error from the lower-level code, map the
 		   parameter number to the function argument number */
 		status = ( status == CRYPT_ARGERROR_NUM1 ) ? \
 				 CRYPT_ERROR_PARAM6 : CRYPT_ERROR_PARAM5;
+		}
 	return( status );
 	}
 
-C_RET cryptExportKey( C_OUT void C_PTR encryptedKey,
+C_RET cryptExportKey( C_OUT_OPT void C_PTR encryptedKey,
 					  C_IN int encryptedKeyMaxLength,
 					  C_OUT int C_PTR encryptedKeyLength,
 					  C_IN CRYPT_HANDLE exportKey,
@@ -505,15 +556,18 @@ C_RET cryptExportKey( C_OUT void C_PTR encryptedKey,
 *																			*
 ****************************************************************************/
 
-/* Internal versions of the above.  These skip a lot of the checking done by
-   the external versions since they're only called by cryptlib internal
-   functions that have already checked the parameters for validity */
+/* Internal versions of the above.  These skip a lot of the explicit 
+   checking done by the external versions (e.g. "Is this value really a 
+   handle to a valid PKC context?") since they're only called by cryptlib 
+   internal functions rather than being passed untrusted user data */
 
-int iCryptImportKeyEx( const void *encryptedKey, const int encryptedKeyLength,
-					   const CRYPT_FORMAT_TYPE formatType,
-					   const CRYPT_CONTEXT iImportKey,
-					   const CRYPT_CONTEXT iSessionKeyContext,
-					   CRYPT_CONTEXT *iReturnedContext )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey, 
+					 IN_LENGTH_SHORT const int encryptedKeyLength,
+					 IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
+					 IN_HANDLE const CRYPT_CONTEXT iImportKey,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+					 OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iReturnedContext )
 	{
 	CRYPT_ALGO_TYPE importAlgo;
 	const KEYEX_TYPE keyexType = \
@@ -523,39 +577,52 @@ int iCryptImportKeyEx( const void *encryptedKey, const int encryptedKeyLength,
 	int status;
 
 	assert( isReadPtr( encryptedKey, encryptedKeyLength ) );
-	assert( formatType > CRYPT_FORMAT_NONE && \
-			formatType < CRYPT_FORMAT_LAST );
-	assert( isHandleRangeValid( iImportKey ) );
-	assert( ( formatType == CRYPT_FORMAT_PGP && \
-			  iSessionKeyContext == CRYPT_UNUSED ) || \
-			( formatType != CRYPT_FORMAT_PGP && \
-			  isHandleRangeValid( iSessionKeyContext ) ) );
 	assert( ( formatType == CRYPT_FORMAT_PGP && \
 			  isWritePtr( iReturnedContext, sizeof( CRYPT_CONTEXT ) ) ) || \
 			( formatType != CRYPT_FORMAT_PGP && \
 			  iReturnedContext == NULL ) );
 
+	REQUIRES( encryptedKeyLength > MIN_CRYPT_OBJECTSIZE && \
+			  encryptedKeyLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
+			  formatType < CRYPT_FORMAT_LAST );
+	REQUIRES( isHandleRangeValid( iImportKey ) );
+	REQUIRES( ( formatType == CRYPT_FORMAT_PGP && \
+				iSessionKeyContext == CRYPT_UNUSED ) || \
+			  ( formatType != CRYPT_FORMAT_PGP && \
+				isHandleRangeValid( iSessionKeyContext ) ) );
+	REQUIRES( ( formatType == CRYPT_FORMAT_PGP && \
+				iReturnedContext != NULL ) || \
+			  ( formatType != CRYPT_FORMAT_PGP && \
+				iReturnedContext == NULL ) );
+
 	/* Import it as appropriate.  We don't handle key agreement at this
-	   level */
+	   level since it's a protocol-specific mechanism used by SSH and SSL,
+	   which are internal-only formats */
 	status = krnlSendMessage( iImportKey, IMESSAGE_GETATTRIBUTE, &importAlgo,
 							  CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( importAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
 		importAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+		{
 		return( importConventionalKey( encryptedKey, encryptedKeyLength,
 									   iSessionKeyContext, iImportKey,
 									   keyexType ) );
+		}
 	return( importPublicKey( encryptedKey, encryptedKeyLength,
 							 iSessionKeyContext, iImportKey,
 							 iReturnedContext, keyexType ) );
 	}
 
-int iCryptExportKeyEx( void *encryptedKey, int *encryptedKeyLength,
-					   const int encryptedKeyMaxLength,
-					   const CRYPT_FORMAT_TYPE formatType,
-					   const CRYPT_CONTEXT iSessionKeyContext,
-					   const CRYPT_CONTEXT iExportKey )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
+						void *encryptedKey, 
+					 IN_LENGTH_Z const int encryptedKeyMaxLength,
+					 OUT_LENGTH_Z int *encryptedKeyLength,
+					 IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+					 IN_HANDLE const CRYPT_CONTEXT iExportKey )
 	{
 	CRYPT_ALGO_TYPE exportAlgo;
 	const KEYEX_TYPE keyexType = \
@@ -570,11 +637,16 @@ int iCryptExportKeyEx( void *encryptedKey, int *encryptedKeyLength,
 			( encryptedKeyMaxLength >= MIN_CRYPT_OBJECTSIZE && \
 			  isWritePtr( encryptedKey, encryptedKeyMaxLength ) ) );
 	assert( isWritePtr( encryptedKeyLength, sizeof( int ) ) );
-	assert( formatType > CRYPT_FORMAT_NONE && \
-			formatType < CRYPT_FORMAT_LAST );
-	assert( ( formatType == CRYPT_FORMAT_PGP ) || \
-			isHandleRangeValid( iSessionKeyContext ) );
-	assert( isHandleRangeValid( iExportKey ) );
+
+	REQUIRES( ( encryptedKey == NULL && encryptedKeyMaxLength == 0 ) || \
+			  ( encryptedKeyMaxLength > MIN_CRYPT_OBJECTSIZE && \
+				encryptedKeyMaxLength < MAX_INTLENGTH ) );
+	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
+			  formatType < CRYPT_FORMAT_LAST );
+	REQUIRES( ( formatType == CRYPT_FORMAT_PGP && \
+				iSessionKeyContext == CRYPT_UNUSED ) || \
+			  isHandleRangeValid( iSessionKeyContext ) );
+	REQUIRES( isHandleRangeValid( iExportKey ) );
 
 	/* Clear return value */
 	*encryptedKeyLength = 0;
@@ -583,60 +655,74 @@ int iCryptExportKeyEx( void *encryptedKey, int *encryptedKeyLength,
 	status = krnlSendMessage( iExportKey, IMESSAGE_GETATTRIBUTE, &exportAlgo,
 							  CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
-		return( ( status == CRYPT_ARGERROR_OBJECT ) ? \
-				CRYPT_ARGERROR_NUM2 : status );
+		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
 	/* If it's a non-PKC export, pass the call down to the low-level export
 	   function */
 	if( exportAlgo < CRYPT_ALGO_FIRST_PKC || exportAlgo > CRYPT_ALGO_LAST_PKC )
-		return( exportConventionalKey( encryptedKey, encryptedKeyLength,
-									   encKeyMaxLength, iSessionKeyContext, 
+		{
+		return( exportConventionalKey( encryptedKey, encKeyMaxLength, 
+									   encryptedKeyLength, iSessionKeyContext, 
 									   iExportKey, keyexType ) );
+		}
+
+	REQUIRES( isHandleRangeValid( iSessionKeyContext ) );
 
 	/* If it's a non-CMS/SMIME PKC export, pass the call down to the low-
 	   level export function */
-	assert( isHandleRangeValid( iSessionKeyContext ) );
 	if( formatType != CRYPT_FORMAT_CMS && formatType != CRYPT_FORMAT_SMIME )
-		return( exportPublicKey( encryptedKey, encryptedKeyLength,
-								 encKeyMaxLength, iSessionKeyContext, 
+		{
+		return( exportPublicKey( encryptedKey, encKeyMaxLength, 
+								 encryptedKeyLength, iSessionKeyContext, 
 								 iExportKey, NULL, 0, keyexType ) );
+		}
 
-	/* We're exporting a key in CMS format, we need to obtain recipient 
-	   information as auxiliary data for the signature.  First, we lock the 
-	   cert for our exclusive use, and in case it's a cert chain, select the 
-	   first cert in the chain */
+	/* We're exporting a key in CMS format we need to obtain recipient 
+	   information from the certificate associated with the export context.
+	   First we lock the cert for our exclusive use and in case it's a cert 
+	   chain select the first cert in the chain */
 	status = krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_TRUE, CRYPT_IATTRIBUTE_LOCKED );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM5 );
-	krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
-					 MESSAGE_VALUE_CURSORFIRST, 
-					 CRYPT_CERTINFO_CURRENT_CERTIFICATE );
+	status = krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_CURSORFIRST, 
+							  CRYPT_CERTINFO_CURRENT_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		{
+		/* Unlock the chain before we exit.  If this fails there's not much 
+		   that we can do to recover so we don't do anything with the return 
+		   value */
+		( void ) krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_FALSE, 
+								  CRYPT_IATTRIBUTE_LOCKED );
+		return( CRYPT_ERROR_PARAM5 );
+		}
 
-	/* Next, we get the recipient information from the cert into the 
-	   dynbuf */
+	/* Next we get the recipient information from the cert into a dynbuf */
 	status = dynCreate( &auxDB, iExportKey,
-						( exportAlgo == CRYPT_ALGO_DH || \
-						  exportAlgo == CRYPT_ALGO_KEA ) ? \
+						( exportAlgo == CRYPT_ALGO_KEA ) ? \
 							CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER : \
 							CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
 	if( cryptStatusError( status ) )
 		{
-		krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
-						 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
+		( void ) krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_FALSE, 
+								  CRYPT_IATTRIBUTE_LOCKED );
 		return( CRYPT_ERROR_PARAM5 );
 		}
 
-	/* Finally, we're ready to export the key, alongside the key ID as 
-	   auxiliary data */
-	status = exportPublicKey( encryptedKey, encryptedKeyLength,
-							  encKeyMaxLength, iSessionKeyContext, 
+	/* We're ready to export the key alongside the key ID as auxiliary 
+	   data */
+	status = exportPublicKey( encryptedKey, encKeyMaxLength, 
+							  encryptedKeyLength, iSessionKeyContext, 
 							  iExportKey, dynData( auxDB ), 
 							  dynLength( auxDB ), keyexType );
 
-	/* Clean up */
-	krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE, MESSAGE_VALUE_FALSE, 
-					 CRYPT_IATTRIBUTE_LOCKED );
+	/* Clean up.  If the unlock fails there's not much that we can do to 
+	   recover so we don't do anything with the return value */
+	( void ) krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE, 
+							  MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
 	dynDestroy( &auxDB );
 
 	return( status );

@@ -8,6 +8,11 @@ perl tools/GenPas.pl
 perl tools/GenVB.pl
 mv -f cryptlib.?as bindings
 
+# Create the Perl headers
+
+perl tools/GenPerl.pl
+mv -f PerlCryptLib.ph bindings
+
 # Create the Java, Python, and .NET interface.
 
 python tools/cryptlibConverter.py cryptlib.h bindings java
@@ -20,7 +25,7 @@ python tools/cryptlibConverter.py cryptlib.h bindings net
 
 rm -f bindings.zip
 pushd bindings > /dev/null
-zip -qo9 ../bindings cryptlib.bas cryptlib.cs cryptlib.jar cryptlib.pas java_jni.c python.c setup.py
+zip -qo9 ../bindings cryptlib.bas cryptlib.cs cryptlib.jar cryptlib.pas java_jni.c PerlCryptLib.* Makefile.PL python.c setup.py
 popd > /dev/null
 
 # Tell the user what we've done

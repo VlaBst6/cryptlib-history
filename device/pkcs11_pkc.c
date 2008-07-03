@@ -42,6 +42,10 @@ static int readAttributeValue( PKCS11_INFO *pkcs11Info,
 	CK_RV status;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( buffer, bufMaxLen ) );
+	assert( isWritePtr( length, sizeof( int ) ) );
+
 	/* Clear return value */
 	memset( buffer, 0, min( 16, bufMaxLen ) );
 	*length = CRYPT_ERROR;
@@ -79,6 +83,11 @@ static int genericSign( PKCS11_INFO *pkcs11Info,
 	CK_ULONG resultLen = outLength;
 	CK_RV status;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( inBuffer, inLength ) );
+	assert( isWritePtr( outBuffer, outLength ) );
+
 	/* If we're currently in the middle of a multi-stage sign operation we
 	   can't start a new one.  We have to perform this tracking explicitly 
 	   since PKCS #11 only allows one multi-stage operation per session */
@@ -104,6 +113,12 @@ static int genericVerify( PKCS11_INFO *pkcs11Info,
 						  void *outBuffer, const int outLength )
 	{
 	CK_RV status;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
+	assert( isReadPtr( inBuffer, inLength ) );
+	assert( isWritePtr( outBuffer, outLength ) );
 
 	/* If we're currently in the middle of a multi-stage sign operation we
 	   can't start a new one.  We have to perform this tracking explicitly 
@@ -132,6 +147,12 @@ static int genericEncrypt( PKCS11_INFO *pkcs11Info,
 	{
 	CK_ULONG resultLen = outLength;
 	CK_RV status;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
+	assert( isWritePtr( buffer, length ) );
+	assert( isWritePtr( buffer, outLength ) );
 
 	status = C_EncryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
@@ -164,6 +185,12 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 	{
 	CK_ULONG resultLen = length;
 	CK_RV status;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
+	assert( isWritePtr( buffer, length ) );
+	assert( isWritePtr( resultLength, sizeof( int ) ) );
 
 	status = C_DecryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
@@ -263,7 +290,11 @@ int dhSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	BYTE y[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ];
 	MESSAGE_DATA msgData;
-	int pLen, gLen, yLen, keyDataSize, cryptStatus;
+	int pLen, gLen = DUMMY_INIT, yLen = DUMMY_INIT, keyDataSize, cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( isReadPtr( q, qLen ) );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hDhKey, CKA_PRIME, 
@@ -284,17 +315,17 @@ int dhSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	   a message that does this on completion, all we're doing here is 
 	   sending in encoded public key data for use by objects such as 
 	   certificates */
-	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, 
-							CRYPT_ALGO_DH, p, pLen, g, gLen, q, qLen, y, yLen );
-	if( !cryptStatusError( cryptStatus ) )
-		cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
-							CRYPT_ALGO_DH, p, pLen, g, gLen, q, qLen, y, yLen );
+	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
+									  &keyDataSize, CRYPT_ALGO_DH, 
+									  p, pLen, g, gLen, q, qLen, y, yLen );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		setMessageData( &msgData, keyDataBuffer, keyDataSize );
 		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 									   &msgData, 
 										CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
+		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
+						 ( void * ) &pLen, CRYPT_IATTRIBUTE_KEYSIZE );
 		}
 	return( cryptStatus );
 	}
@@ -319,22 +350,18 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	CK_RV status;
 	const CRYPT_PKCINFO_DLP *dhKey = ( CRYPT_PKCINFO_DLP * ) key;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) );
+	assert( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
+
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Generate the keys.  We can't set CKA_SENSITIVE for the private key 
 	   because although this is appropriate for the key (we don't want people
@@ -352,7 +379,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -363,7 +390,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 										 bitsToBytes( dhKey->qLen ) );
 	if( cryptStatusError( cryptStatus ) )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -371,7 +398,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
 					 ( void * ) &hPrivateKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	contextInfoPtr->altDeviceObject = hPublicKey;
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -383,7 +410,11 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 	STREAM stream;
 	long length;
-	int keyLength = bitsToBytes( keysizeBits ), cryptStatus;
+	int cryptStatus;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* CKM_DH_KEY_PAIR_GEN is really a Clayton's key generation mechanism 
 	   since it doesn't actually generate the p, g values.  Because of this 
@@ -404,10 +435,8 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 					 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-					 ( int * ) &keyLength, CRYPT_CTXINFO_KEYSIZE );
-	cryptStatus = krnlSendMessage( createInfo.cryptHandle, 
-								   IMESSAGE_CTX_GENKEY, NULL, FALSE );
+	cryptStatus = krnlSendNotifier( createInfo.cryptHandle, 
+									IMESSAGE_CTX_GENKEY );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		setMessageData( &msgData, pubkeyBuffer, CRYPT_MAX_PKCSIZE * 3 );
@@ -452,24 +481,19 @@ static int dhEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	CK_ATTRIBUTE yValueTemplate = { CKA_VALUE, NULL, CRYPT_MAX_PKCSIZE };
 	CK_RV status;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == sizeof( KEYAGREE_PARAMS ) );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
 
 	/* Get the y value from phase 1 of the DH key agreement (generated when 
 	   the key was loaded/generated) from the device.  The odd two-phase y 
@@ -488,7 +512,7 @@ static int dhEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	if( status == CKR_OK )
 		keyAgreeParams->publicValueLen = yValueTemplate.ulValueLen;
 	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -508,26 +532,21 @@ static int dhDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	CK_OBJECT_HANDLE hSymKey;
 	CK_RV status;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	KEYAGREE_PARAMS *keyAgreeParams = ( KEYAGREE_PARAMS * ) buffer;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == sizeof( KEYAGREE_PARAMS ) );
 	assert( keyAgreeParams->publicValue != NULL && \
 			keyAgreeParams->publicValueLen >= MIN_PKCSIZE );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
 
 	/* Use the supplied y value to perform phase 2 of the DH key agreement.  
 	   Since PKCS #11 mechanisms don't allow the resulting data to be 
@@ -551,7 +570,7 @@ static int dhDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		C_DestroyObject( pkcs11Info->hSession, hSymKey );
 		}
 	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -577,7 +596,10 @@ int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	BYTE n[ CRYPT_MAX_PKCSIZE + 8 ], e[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE keyDataBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 	MESSAGE_DATA msgData;
-	int nLen, eLen, keyDataSize, cryptStatus;
+	int nLen, eLen = DUMMY_INIT, keyDataSize, cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hRsaKey, CKA_MODULUS, 
@@ -595,22 +617,21 @@ int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	   a message that does this on completion, all we're doing here is 
 	   sending in encoded public key data for use by objects such as 
 	   certificates */
-	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, 
-							CRYPT_ALGO_RSA, n, nLen, e, eLen, NULL, 0, NULL, 0 );
-	if( !cryptStatusError( cryptStatus ) )
-		cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
-							CRYPT_ALGO_RSA, n, nLen, e, eLen, NULL, 0, NULL, 0 );
-	if( cryptStatusOK( cryptStatus ) && !nativeContext )
-		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-						 ( void * ) &nLen, CRYPT_IATTRIBUTE_KEYSIZE );
+	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
+									  &keyDataSize, CRYPT_ALGO_RSA, 
+									  n, nLen, e, eLen, NULL, 0, NULL, 0 );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+	setMessageData( &msgData, keyDataBuffer, keyDataSize );
+	if( nativeContext )
+		return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+								 &msgData, CRYPT_IATTRIBUTE_KEY_SPKI ) );
+	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+								   &msgData, CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
 	if( cryptStatusOK( cryptStatus ) )
-		{
-		setMessageData( &msgData, keyDataBuffer, keyDataSize );
-		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
-									   &msgData, nativeContext ? \
-										CRYPT_IATTRIBUTE_KEY_SPKI :
-										CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
-		}
+		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
+									   ( void * ) &nLen, 
+									   CRYPT_IATTRIBUTE_KEYSIZE );
 	return( cryptStatus );
 	}
 
@@ -622,6 +643,9 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	MESSAGE_DATA msgData;
 	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* Remember what we've set up */
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
@@ -638,7 +662,7 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 		{
 		CK_ATTRIBUTE idTemplate = { CKA_ID, msgData.data, msgData.length };
 
-		if( hPublicKey != CRYPT_UNUSED )
+		if( hPublicKey != CK_OBJECT_NONE )
 			C_SetAttributeValue( pkcs11Info->hSession, hPublicKey, 
 								 &idTemplate, 1 );
 		C_SetAttributeValue( pkcs11Info->hSession, hPrivateKey, 
@@ -676,25 +700,21 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		};
 	const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) key;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_OBJECT_HANDLE hRsaKey;
 	CK_RV status;
 	const int templateCount = rsaKey->isPublicKey ? 8 : 15;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) );
+	assert( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
+
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Set up the key values */
 	rsaKeyTemplate[ 6 ].pValue = ( CK_VOID_PTR ) rsaKey->n;
@@ -719,7 +739,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	else
 		{
 		/* If it's a public key, we need to change the type and indication of 
-		   the operations it's allowed to perform */
+		   the operations that it's allowed to perform */
 		rsaKeyTemplate[ 0 ].pValue = ( CK_VOID_PTR ) &pubKeyClass;
 		rsaKeyTemplate[ 3 ].type = CKA_VERIFY;
 		rsaKeyTemplate[ 4 ].type = CKA_ENCRYPT;
@@ -740,7 +760,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			contextInfoPtr->capabilityInfo->sigCheckFunction == NULL )
 			cryptStatus = CRYPT_ERROR_NOTAVAIL;
 
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -750,14 +770,14 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 										  FALSE );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = rsaSetKeyInfo( pkcs11Info, contextInfoPtr, 
-									 hRsaKey, CRYPT_UNUSED );
+									 hRsaKey, CK_OBJECT_NONE );
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hRsaKey );
 	else
 		/* Remember that this object is backed by a crypto device */
-		contextInfoPtr->flags |= CONTEXT_PERSISTENT;
+		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -785,23 +805,19 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		};
 	CK_OBJECT_HANDLE hPublicKey, hPrivateKey;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_RV status;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
+
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Patch in the key size and generate the keys */
 	status = C_GenerateKeyPair( pkcs11Info->hSession,
@@ -811,7 +827,7 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -829,9 +845,9 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		}
 	else
 		/* Remember that this object is backed by a crypto device */
-		contextInfoPtr->flags |= CONTEXT_PERSISTENT;
+		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -839,11 +855,13 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
+	PKCS11_INFO *pkcs11Info;
 	BYTE *bufPtr = buffer;
 	const int keySize = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
 	int cryptStatus, i;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
 	/* Undo the PKCS #1 padding to make CKM_RSA_PKCS look like 
@@ -855,19 +873,13 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	i++;	/* Skip final 0 byte */
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericSign( deviceInfo->devicePKCS11, contextInfoPtr, 
-							   &mechanism, bufPtr + i, keySize - i, 
-							   buffer, keySize );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericSign( pkcs11Info, contextInfoPtr, &mechanism, 
+							   bufPtr + i, keySize - i, buffer, keySize );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -875,7 +887,7 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_RSA_X_509, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
+	PKCS11_INFO *pkcs11Info;
 	BYTE data[ CRYPT_MAX_PKCSIZE + 8 ];
 	const int keySize = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
 	int cryptStatus;
@@ -885,21 +897,18 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   software and because some tokens don't support public-key 
 	   operations */
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericVerify( deviceInfo->devicePKCS11, contextInfoPtr, 
-								 &mechanism, data, keySize, buffer, keySize );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericVerify( pkcs11Info, contextInfoPtr, &mechanism, 
+								 data, keySize, buffer, keySize );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -907,7 +916,7 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
+	PKCS11_INFO *pkcs11Info;
 	BYTE *bufPtr = buffer;
 	const int keySize = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
 	int cryptStatus, i;
@@ -918,6 +927,8 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   operations.  The only way that it can be invoked is by calling
 	   cryptEncrypt() directly on a device context */
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
 	/* Undo the PKCS #1 padding to make CKM_RSA_PKCS look like 
@@ -930,18 +941,13 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	memmove( bufPtr, bufPtr + i, keySize - i );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericEncrypt( deviceInfo->devicePKCS11, contextInfoPtr, 
-								  &mechanism, bufPtr, keySize - i, keySize );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericEncrypt( pkcs11Info, contextInfoPtr, &mechanism, 
+								  bufPtr, keySize - i, keySize );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -949,27 +955,24 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_RSA_PKCS, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
+	PKCS11_INFO *pkcs11Info;
 	MESSAGE_DATA msgData;
 	BYTE *bufPtr = buffer;
 	const int keySize = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
 	int cryptStatus, i, resultLen;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericDecrypt( deviceInfo->devicePKCS11, contextInfoPtr, 
-								  &mechanism, buffer, keySize, &resultLen );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericDecrypt( pkcs11Info, contextInfoPtr, &mechanism, 
+								  buffer, keySize, &resultLen );
+	krnlReleaseObject( iCryptDevice );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
@@ -1038,6 +1041,13 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int keyDataSize, cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( isReadPtr( p, pLen ) );
+	assert( isReadPtr( q, qLen ) );
+	assert( isReadPtr( g, gLen ) );
+	assert( isReadPtr( y, yLen ) );
+
 	/* Send the public key data to the context.  We send the keying info as
 	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
 	   since the latter transitions the context into the high state.  We 
@@ -1045,31 +1055,27 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	   a message that does this on completion, all we're doing here is 
 	   sending in encoded public key data for use by objects such as 
 	   certificates */
-	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, CRYPT_ALGO_DSA, 
-													p, pLen, q, qLen, g, gLen, 
-													y, yLen );
-	if( !cryptStatusError( cryptStatus ) )
-		cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
-										  CRYPT_ALGO_DSA, p, pLen, q, qLen, 
-										  g, gLen, y, yLen );
-	if( !cryptStatusError( cryptStatus ) && !nativeContext )
-		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-									   ( void * ) &pLen, CRYPT_IATTRIBUTE_KEYSIZE );
-	if( cryptStatusOK( cryptStatus ) )
-		{
-		setMessageData( &msgData, keyDataBuffer, keyDataSize );
-		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
-									   &msgData, nativeContext ? \
-										CRYPT_IATTRIBUTE_KEY_SPKI : \
-										CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
-		}
+	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
+									  &keyDataSize, CRYPT_ALGO_DSA, 
+									  p, pLen, q, qLen, g, gLen, y, yLen );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-
-	/* If we're just setting public key components for a native context, 
-	   we're done */
+	setMessageData( &msgData, keyDataBuffer, keyDataSize );
 	if( nativeContext )
-		return( CRYPT_OK );
+		{
+		/* If we're just setting public key components for a native context, 
+		   we're done */
+		return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+								 &msgData, CRYPT_IATTRIBUTE_KEY_SPKI ) );
+		}
+	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+								   &msgData, CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
+	if( !cryptStatusError( cryptStatus ) )
+		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
+									   ( void * ) &pLen, 
+									   CRYPT_IATTRIBUTE_KEYSIZE );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
 
 	/* Remember what we've set up */
 	krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
@@ -1101,7 +1107,11 @@ int dsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	{
 	BYTE p[ CRYPT_MAX_PKCSIZE + 8 ], q[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE g[ CRYPT_MAX_PKCSIZE + 8 ], y[ CRYPT_MAX_PKCSIZE + 8 ];
-	int pLen, qLen, gLen, yLen, cryptStatus;
+	int pLen, qLen = DUMMY_INIT, gLen = DUMMY_INIT, yLen = DUMMY_INIT;
+	int cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptContext ) );
 
 	/* Get the public key components from the device */
 	cryptStatus = readAttributeValue( pkcs11Info, hDsaKey, CKA_PRIME, 
@@ -1145,13 +1155,17 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		};
 	const CRYPT_PKCINFO_DLP *dsaKey = ( CRYPT_PKCINFO_DLP * ) key;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_OBJECT_HANDLE hDsaKey;
 	CK_RV status;
 	BYTE yValue[ CRYPT_MAX_PKCSIZE + 8 ];
+	const void *yValuePtr = yValue;
 	const int templateCount = dsaKey->isPublicKey ? 9 : 10;
 	int yValueLength, cryptStatus;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) );
+	assert( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
 
 	/* Creating a private-key object is somewhat problematic since the 
 	   PKCS #11 interpretation of DSA reuses CKA_VALUE for x in the private
@@ -1168,6 +1182,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		MESSAGE_DATA msgData;
 		STREAM stream;
 		BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
+		void *yValuePtr = DUMMY_INIT_PTR;
 
 		/* Create a native private-key DSA context, which generates the y 
 		   value internally */
@@ -1209,24 +1224,27 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		readSequence( &stream, NULL );		/* SEQUENCE { */
 		readUniversal( &stream );				/* AlgoID */
 		readBitStringHole( &stream, NULL, 16, DEFAULT_TAG );/* BIT STRING */
-		readGenericHole( &stream, &yValueLength, 16, BER_INTEGER  );/* INTEGER */
-		memcpy( yValue, sMemBufPtr( &stream ), yValueLength );
-		assert( sStatusOK( &stream ) );
+		status = readGenericHole( &stream, &yValueLength, 16, 
+								  BER_INTEGER  );/* INTEGER */
+		if( cryptStatusOK( status ) )
+			status = sMemGetDataBlock( &stream, &yValuePtr, yValueLength );
+		if( cryptStatusError( status ) )
+			retIntError();
+		memcpy( yValue, yValuePtr, yValueLength );
 		sMemDisconnect( &stream );
+		}
+	else
+		{
+		/* It's a public key, use the pre-generated y value */
+		yValuePtr = dsaKey->y,
+		yValueLength = bitsToBytes( dsaKey->yLen );
 		}
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Set up the key values */
 	dsaKeyTemplate[ 5 ].pValue = ( CK_VOID_PTR ) dsaKey->p;
@@ -1265,7 +1283,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			contextInfoPtr->capabilityInfo->sigCheckFunction == NULL )
 			cryptStatus = CRYPT_ERROR_NOTAVAIL;
 
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -1275,17 +1293,14 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 								 dsaKey->p, bitsToBytes( dsaKey->pLen ), 
 								 dsaKey->q, bitsToBytes( dsaKey->qLen ),
 								 dsaKey->g, bitsToBytes( dsaKey->gLen ),
-								 ( dsaKey->isPublicKey ) ? dsaKey->y : yValue,
-								 ( dsaKey->isPublicKey ) ? \
-									bitsToBytes( dsaKey->yLen ) : yValueLength,
-								 FALSE );
+								 yValue, yValueLength, FALSE );
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hDsaKey );
 	else
 		/* Remember that this object is backed by a crypto device */
-		contextInfoPtr->flags |= CONTEXT_PERSISTENT;
+		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -1313,13 +1328,17 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 	CK_RV status;
 	STREAM stream;
+	void *dataPtr = DUMMY_INIT_PTR;
 	long length;
-	int keyLength = bitsToBytes( keysizeBits ), cryptStatus;
+	int cryptStatus;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
+			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
 	/* CKM_DSA_KEY_PAIR_GEN is really a Clayton's key generation mechanism 
 	   since it doesn't actually generate the p, q, or g values (presumably 
@@ -1344,10 +1363,8 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 					 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-					 ( int * ) &keyLength, CRYPT_CTXINFO_KEYSIZE );
-	cryptStatus = krnlSendMessage( createInfo.cryptHandle, 
-								   IMESSAGE_CTX_GENKEY, NULL, FALSE );
+	cryptStatus = krnlSendNotifier( createInfo.cryptHandle, 
+									IMESSAGE_CTX_GENKEY );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		setMessageData( &msgData, pubkeyBuffer, CRYPT_MAX_PKCSIZE * 3 );
@@ -1370,32 +1387,36 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	readSequence( &stream, NULL );					/* SEQUENCE */
 	readUniversal( &stream );							/* OID */
 	readSequence( &stream, NULL );						/* SEQUENCE */
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
-	publicKeyTemplate[ 3 ].pValue = sMemBufPtr( &stream );
+	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
+	if( cryptStatusOK( status ) )
+		status = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( status ) )
+		retIntError();
+	publicKeyTemplate[ 3 ].pValue = dataPtr;
 	publicKeyTemplate[ 3 ].ulValueLen = length;
 	sSkip( &stream, length );
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
-	publicKeyTemplate[ 4 ].pValue = sMemBufPtr( &stream );
+	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
+	if( cryptStatusOK( status ) )
+		status = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( status ) )
+		retIntError();
+	publicKeyTemplate[ 4 ].pValue = dataPtr;
 	publicKeyTemplate[ 4 ].ulValueLen = length;
 	sSkip( &stream, length );
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
-	publicKeyTemplate[ 5 ].pValue = sMemBufPtr( &stream );
+	status = readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
+	if( cryptStatusOK( status ) )
+		status = sMemGetDataBlock( &stream, &dataPtr, length );
+	if( cryptStatusError( status ) )
+		retIntError();
+	publicKeyTemplate[ 5 ].pValue = dataPtr;
 	publicKeyTemplate[ 5 ].ulValueLen = length;
-	assert( sStatusOK( &stream ) );
 	sMemDisconnect( &stream );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Generate the keys */
 	status = C_GenerateKeyPair( pkcs11Info->hSession,
@@ -1406,7 +1427,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -1437,9 +1458,9 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		}
 	else
 		/* Remember that this object is backed by a crypto device */
-		contextInfoPtr->flags |= CONTEXT_PERSISTENT;
+		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -1447,13 +1468,15 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
+	PKCS11_INFO *pkcs11Info;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
-	DEVICE_INFO *deviceInfo;
 	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
 	BIGNUM *r, *s;
 	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == sizeof( DLP_PARAMS ) );
 	assert( dlpParams->inParam1 != NULL && \
 			dlpParams->inLen1 == 20 );
@@ -1462,19 +1485,14 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 			dlpParams->outLen >= ( 2 + 20 ) * 2 );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericSign( deviceInfo->devicePKCS11, contextInfoPtr, 
-							   &mechanism, dlpParams->inParam1, 
-							   dlpParams->inLen1, signature, 40 );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericSign( pkcs11Info, contextInfoPtr, &mechanism, 
+							   dlpParams->inParam1, dlpParams->inLen1, 
+							   signature, 40 );
+	krnlReleaseObject( iCryptDevice );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
@@ -1490,15 +1508,17 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		BN_free( r );
 		return( CRYPT_ERROR_MEMORY );
 		}
-	BN_bin2bn( signature, 20, r );
-	BN_bin2bn( signature + 20, 20, s );
-	cryptStatus = \
-		dsaKey->encodeDLValuesFunction( dlpParams->outParam, dlpParams->outLen, 
-										r, s, dlpParams->formatType );
-	if( !cryptStatusError( cryptStatus ) )
+	cryptStatus = extractBignum( r, signature, 20, 
+								 bitsToBytes( 160 - 32 ), 20, NULL, FALSE );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = extractBignum( r, signature + 20, 20,
+									 bitsToBytes( 160 - 32 ), 20, NULL, FALSE );
+	if( cryptStatusOK( cryptStatus ) )
 		{
-		dlpParams->outLen = cryptStatus;
-		cryptStatus = CRYPT_OK;	/* encodeDLValues() returns a byte count */
+		cryptStatus = \
+			dsaKey->encodeDLValuesFunction( dlpParams->outParam, 
+											dlpParams->outLen, &dlpParams->outLen,
+											r, s, dlpParams->formatType );
 		}
 	BN_clear_free( s );
 	BN_clear_free( r );
@@ -1508,12 +1528,11 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	{
 	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 };
-	CRYPT_DEVICE iCryptDevice;
+/*	CRYPT_DEVICE iCryptDevice; */
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
-	DEVICE_INFO *deviceInfo;
 	PKC_INFO *dsaKey = contextInfoPtr->ctxPKC;
-	BIGNUM *r, *s;
-	BYTE signature[ 40 + 8 ];
+	BIGNUM r, s;
+/*	BYTE signature[ 40 + 8 ]; */
 	int cryptStatus;
 
 	/* This function is present but isn't used as part of any normal 
@@ -1521,6 +1540,8 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   software and because some tokens don't support public-key 
 	   operations */
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
 	assert( length == sizeof( DLP_PARAMS ) );
 	assert( dlpParams->inParam1 != NULL && dlpParams->inLen1 == 20 );
 	assert( dlpParams->inParam2 != NULL && \
@@ -1534,30 +1555,29 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 
 	/* Decode the values from a DL data block and make sure r and s are
 	   valid */
+	BN_init( &r );
+	BN_init( &s );
 	cryptStatus = \
 		dsaKey->decodeDLValuesFunction( dlpParams->inParam2, dlpParams->inLen2, 
-										&r, &s, dlpParams->formatType );
+										&r, &s, NULL, dlpParams->formatType );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* This code can never be called, since DSA public-key contexts are 
+	/* This code can never be called since DSA public-key contexts are 
 	   always native contexts */
-	assert( NOTREACHED );
+	retIntError();
 
+#if 0
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	cryptStatus = genericVerify( deviceInfo->devicePKCS11, contextInfoPtr, 
-								 &mechanism, buffer, 20, signature, 40 );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	cryptStatus = genericVerify( pkcs11Info, contextInfoPtr, &mechanism, 
+								 buffer, 20, signature, 40 );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
+#endif /* 0 */
 	}
 
 /****************************************************************************
@@ -1586,21 +1606,27 @@ static const PKCS11_MECHANISM_INFO mechanismInfoPKC[] = {
 	   PKCS without support in the device.  The only implementation where 
 	   even this causes problems is some versions of GemSAFE, which don't do 
 	   raw RSA and also get the PKCS mechanism wrong */
+#ifdef USE_DH
 	{ CKM_DH_PKCS_DERIVE, CKM_DH_PKCS_KEY_PAIR_GEN, CKM_NONE, CRYPT_ALGO_DH, CRYPT_MODE_NONE, CKK_DH,
 	  NULL, dhInitKey, dhGenerateKey, 
 	  dhEncrypt, dhDecrypt, NULL, NULL },
+#endif /* USE_DH */
 	{ CKM_RSA_PKCS, CKM_RSA_PKCS_KEY_PAIR_GEN, CKM_NONE, CRYPT_ALGO_RSA, CRYPT_MODE_NONE, CKK_RSA,
 	  NULL, rsaInitKey, rsaGenerateKey, 
 	  rsaEncrypt, rsaDecrypt, rsaSign, rsaVerify },
+#ifdef USE_DSA
 	{ CKM_DSA, CKM_DSA_KEY_PAIR_GEN, CKM_NONE, CRYPT_ALGO_DSA, CRYPT_MODE_NONE, CKK_DSA,
 	  NULL, dsaInitKey, dsaGenerateKey, 
 	  NULL, NULL, dsaSign, dsaVerify },
+#endif /* USE_DSA */
 	{ CKM_NONE, CKM_NONE, CKM_NONE, CRYPT_ERROR, CRYPT_ERROR, },
 		{ CKM_NONE, CKM_NONE, CKM_NONE, CRYPT_ERROR, CRYPT_ERROR, }
 	};
 
 const PKCS11_MECHANISM_INFO *getMechanismInfoPKC( int *mechanismInfoSize )
 	{
+	assert( isWritePtr( mechanismInfoSize, sizeof( int ) ) );
+
 	*mechanismInfoSize = FAILSAFE_ARRAYSIZE( mechanismInfoPKC, \
 											 PKCS11_MECHANISM_INFO );
 	return( mechanismInfoPKC );

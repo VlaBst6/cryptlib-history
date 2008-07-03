@@ -1,34 +1,17 @@
 /****************************************************************************
 *																			*
 *						  Win32 Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2006	*
+*	Copyright Peter Gutmann, Matt Thomlinson and Blake Coverett 1996-2007	*
 *																			*
 ****************************************************************************/
 
 /* This module is part of the cryptlib continuously seeded pseudorandom number
-   generator.  For usage conditions, see random.c.
-
-   From the "Peter giveth and Microsoft taketh away" department: The default
-   NT setup has Everyone:Read permissions for the
-   \\HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\PerfLib
-   key, which is the key for the performance counters.  This means that
-   everyone on the network can read your machine's performance counters,
-   significantly reducing their usefulness (although since they only contain
-   a snapshot, network users should never see exactly what you're seeing).
-   If you're worried about the native API call that's normally used failing
-   (which falls back to using the registry performance counters), delete the
-   Everyone:Read ACL and replace it with Interactive:Read, which only allows
-   access to locally logged on users.  This means that an attacker will have
-   to go to the effort of planting a trojan to get your crypto keys rather
-   than getting them over the net.
-
-   "Windows NT is a thing of genuine beauty, if you're seriously into genuine
-	ugliness.  It's like a woman with a history of insanity in the family,
-	only worse" -- Hans Chloride, "Why I Love Windows NT" */
+   generator.  For usage conditions, see random.c */
 
 /* General includes */
 
 #include "crypt.h"
+#include "random/random.h"
 
 /* OS-specific includes */
 
@@ -74,6 +57,9 @@
 /* The size of the intermediate buffer used to accumulate polled data */
 
 #define RANDOM_BUFSIZE	4096
+#if RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT
+  #error RANDOM_BUFSIZE exceeds randomness accumulator size
+#endif /* RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT */
 
 /* Handles to various randomness objects */
 
@@ -85,7 +71,7 @@ static DWORD threadID;		/* Background polling thread ID */
 
 /****************************************************************************
 *																			*
-*							Misc Randomness Sources							*
+*							System RNG Interface							*
 *																			*
 ****************************************************************************/
 
@@ -116,10 +102,10 @@ typedef BOOL ( WINAPI *CRYPTRELEASECONTEXT )( HCRYPTPROV hProv, DWORD dwFlags );
    Windows XP and newer.  This is the CryptoAPI RNG, which isn't anywhere
    near as good as the HW RNG, but we use it if it's present on the basis
    that at least it can't make things any worse.  This direct access version 
-   is only available under Windows XP, we don't go out of our way to access
-   the more general CryptoAPI one since the main purpose of using it is to 
-   take advantage of any possible future hardware RNGs that may be added, 
-   for example via TCPA devices */
+   is only available under Windows XP and newer, we don't go out of our way 
+   to access the more general CryptoAPI one since the main purpose of using 
+   it is to take advantage of any possible future hardware RNGs that may be 
+   added, for example via TCPA devices */
 
 typedef BOOL ( WINAPI *RTLGENRANDOM )( PVOID RandomBuffer, 
 									   ULONG RandomBufferLength );
@@ -180,12 +166,14 @@ static void initSystemRNG( void )
 		hProv = NULL;
 		}
 	else
+		{
 		/* Remember that we have a system RNG available for use */
 		systemRngAvailable = TRUE;
+		}
 	}
 
-/* Read data from the system RNG, hopefully the PIII hardware RNG but the
-   CryptoAPI software RNG as a fallback */
+/* Read data from the system RNG, in theory the PIII hardware RNG but in
+   practice more likely the CryptoAPI software RNG */
 
 static void readSystemRNG( void )
 	{
@@ -195,35 +183,90 @@ static void readSystemRNG( void )
 	if( !systemRngAvailable )
 		return;
 
-	/* Read SYSTEMRNG_BYTES bytes from the system RNG.  We don't rely on 
-	   this for all our randomness requirements (particularly the software 
-	   RNG) in case it's broken in some way */
+	/* Read SYSTEMRNG_BYTES bytes from the system RNG.  Rather presciently, 
+	   the code up until late 2007 stated that "We don't rely on this for 
+	   all our randomness requirements (particularly the software RNG) in 
+	   case it's broken in some way", and in November 2007 an analysis paper
+	   by Leo Dorrendorf, Zvi Gutterman, and Benny Pinkas showed that the
+	   CryptoAPI RNG is indeed broken, being neither forwards- nor 
+	   backwards-secure, being reseeded far too infrequently, and (as far as
+	   their reverse-engineering was able to tell) using far less entropy
+	   sources than cryptlib's built-in mechanisms even though the CryptoAPI
+	   one is deeply embedded in the OS.
+
+	   The way the CryptoAPI RNG works is that a system RNG is used to key 
+	   a set of eight RC4 ciphers, each of which is used in turn in a round-
+	   robin fashion to output 20 bytes of randomness which are then hashed 
+	   with SHA1, with the operation being approximately:
+
+		output[  0...19 ] = SHA1( RC4[ i++ % 8 ] );
+		output[ 20...39 ] = SHA1( RC4[ i++ % 8 ] );
+		[...]
+
+	   Each RC4 cipher is re-keyed every 16KB of output, so for 8 ciphers
+	   the rekey interval is every 128KB of output.  Furthermore, although
+	   the kernel RNG used to key the RC4 ciphers stores its state in-
+	   kernel, the RC4 cipher state is stored in user-space and per-process.
+	   This means that in most cases the RNG is never re-keyed.  Finally,
+	   the way the RNG works means that it's possible to recover earlier
+	   state in O( 2^23 ).  See "Cryptanalysis of the Random Number 
+	   Generator of the Windows Operating System" for details */
 	if( hProv != NULL )
 		{
 		if( pCryptGenRandom( hProv, SYSTEMRNG_BYTES, buffer ) )
-			quality = 80;
+			quality = 70;
 		}
 	else
 		{
 		if( pRtlGenRandom( buffer, SYSTEMRNG_BYTES ) )
-			quality = 50;
+			quality = 30;
 		}
 	if( quality > 0 )
 		{
 		MESSAGE_DATA msgData;
+		int status;
 
 		setMessageData( &msgData, buffer, SYSTEMRNG_BYTES );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
-						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
+								  CRYPT_IATTRIBUTE_ENTROPY );
+		if( cryptStatusOK( status ) )
+			{
+			( void ) krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+									  IMESSAGE_SETATTRIBUTE,
+									  ( void * ) &quality,
+									  CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
 		zeroise( buffer, SYSTEMRNG_BYTES );
 		}
 	}
 
+/* Clean up the system RNG access */
+
+static void endSystemRNG( void )
+	{
+	if( hProv != NULL )
+		{
+		pCryptReleaseContext( hProv, 0 );
+		hProv = NULL;
+		}
+	}
+
+/****************************************************************************
+*																			*
+*							Hardware Monitoring Interface					*
+*																			*
+****************************************************************************/
+
+/* These interfaces currently support data supplied by MBM, Everest, 
+   SysTool, RivaTuner, HMonitor, and ATI Tray Tools.  Two notable omissions
+   are SVPro and HWMonitor, unfortunately the authors haven't responded to 
+   any requests for interfacing information */
+
 /* MBM data structures, originally by Alexander van Kaam, converted to C by
-   Anders@Majland.org, finally updated by Chris Zahrt <techn0@iastate.edu> */
+   Anders@Majland.org, finally updated by Chris Zahrt <techn0@iastate.edu>.
+   The __int64 values below are actually (64-bit) doubles, but we overlay 
+   them with __int64s since we don't care about the values */
 
 #define BusType		char
 #define SMBType		char
@@ -238,15 +281,15 @@ typedef struct {
 	SensorType ssType;			/* Type of sensor */
 	unsigned char ssName[ 12 ];	/* Name of sensor */
 	char sspadding1[ 3 ];		/* Padding of 3 bytes */
-	double ssCurrent;			/* Current value */
-	double ssLow;				/* Lowest readout */
-	double ssHigh;				/* Highest readout */
+	__int64 /*double*/ ssCurrent;/* Current value */
+	__int64 /*double*/ ssLow;	/* Lowest readout */
+	__int64 /*double*/ ssHigh;	/* Highest readout */
 	long ssCount;				/* Total number of readout */
 	char sspadding2[ 4 ];		/* Padding of 4 bytes */
-	long double ssTotal;		/* Total amout of all readouts */
+	BYTE /*long double*/ ssTotal[ 8 ];	/* Total amout of all readouts */
 	char sspadding3[ 6 ];		/* Padding of 6 bytes */
-	double ssAlarm1;			/* Temp & fan: high alarm; voltage: % off */
-	double ssAlarm2;			/* Temp: low alarm */
+	__int64 /*double*/ ssAlarm1;/* Temp & fan: high alarm; voltage: % off */
+	__int64 /*double*/ ssAlarm2;/* Temp: low alarm */
 	} SharedSensor;
 
 typedef struct {
@@ -261,7 +304,7 @@ typedef struct {
 	} SharedInfo;
 
 typedef struct {
-	double sdVersion;			/* Version number (example: 51090) */
+	__int64 /*double*/ sdVersion;/* Version number (example: 51090) */
 	SharedIndex sdIndex[ 10 ];	/* Sensor index */
 	SharedSensor sdSensor[ 100 ];	/* Sensor info */
 	SharedInfo sdInfo;			/* Misc.info */
@@ -273,34 +316,290 @@ typedef struct {
 /*	unsigned char sdPath[ 256 ];	/* MBM path */
 	} SharedData;
 
-/* Read data from MBM.  This communicates via shared memory, so all we need
-   to do is map a file and read the data out */
+/* Read data from MBM via the shared-memory interface */
 
 static void readMBMData( void )
 	{
 	HANDLE hMBMData;
-	SharedData *mbmDataPtr;
+	const SharedData *mbmDataPtr;
 
 	if( ( hMBMData = OpenFileMapping( FILE_MAP_READ, FALSE,
-									  "$M$B$M$5$S$D$" ) ) != NULL )
+									  "$M$B$M$5$S$D$" ) ) == NULL )
+		return;
+	if( ( mbmDataPtr = ( SharedData * ) \
+			MapViewOfFile( hMBMData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		if( ( mbmDataPtr = ( SharedData * ) \
-				MapViewOfFile( hMBMData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
-			{
-			MESSAGE_DATA msgData;
-			static const int quality = 20;
+		MESSAGE_DATA msgData;
+		static const int quality = 20;
 
-			setMessageData( &msgData, mbmDataPtr, sizeof( SharedData ) );
-			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-							 ( void * ) &quality,
-							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
-			UnmapViewOfFile( mbmDataPtr );
-			}
-		CloseHandle( hMBMData );
+		setMessageData( &msgData, ( void * ) mbmDataPtr, 
+						sizeof( SharedData ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( mbmDataPtr );
 		}
+	CloseHandle( hMBMData );
 	}
+
+/* Read data from Everest via the shared-memory interface.  Everest returns 
+   information as an enormous XML text string so we have to be careful about 
+   handling of lengths.  In general the returned length is 1-3K, so we 
+   hard-limit it at 2K to ensure there are no problems if the trailing null 
+   gets lost */
+
+static void readEverestData( void )
+	{
+	HANDLE hEverestData;
+	const void *everestDataPtr;
+	int length;
+
+	if( ( hEverestData = OpenFileMapping( FILE_MAP_READ, FALSE,
+										  "EVEREST_SensorValues" ) ) == NULL )
+		return;
+	if( ( everestDataPtr = MapViewOfFile( hEverestData, 
+										  FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
+		( length = strlen( everestDataPtr ) ) > 128 )
+		{
+		MESSAGE_DATA msgData;
+		static const int quality = 40;
+
+		setMessageData( &msgData, ( void * ) everestDataPtr, 
+						min( length, 2048 ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( everestDataPtr );
+		}
+	CloseHandle( hEverestData );
+	}
+
+/* SysTool data structures, from forums.techpowerup.com.  This uses the
+   standard shared memory interface, but it gets a bit tricky because it 
+   uses the OLE 'VARIANT' data type which we can't access because it's 
+   included via a complex nested inclusion framework in windows.h, and the 
+   use of '#pragma once' when we included it for use in crypt.h means that 
+   we can't re-include any of the necessary files.  Since we don't actually 
+   care what's inside a VARIANT, and it has a fixed size of 16 bytes, we 
+   just use it as an opaque blob */
+
+typedef BYTE VARIANT[ 16 ];	/* Kludge for OLE data type */
+typedef BYTE UINT8;
+typedef WORD UINT16;
+
+#define SH_MEM_MAX_SENSORS 128
+
+typedef enum { sUnknown, sNumber, sTemperature, sVoltage, sRPM, sBytes, 
+			   sBytesPerSecond, sMhz, sPercentage, sString, sPWM 
+			 } SYSTOOL_SENSOR_TYPE;
+ 
+typedef struct {
+	WCHAR m_name[ 255 ];	/* Sensor name */
+	WCHAR m_section[ 64 ];	/* Section in which this sensor appears */
+	SYSTOOL_SENSOR_TYPE m_sensorType;
+	LONG m_updateInProgress;/* Nonzero when sensor is being updated */
+	UINT32 m_timestamp;		/* GetTickCount() of last update */
+	VARIANT m_value;		/* Sensor data */
+	WCHAR m_unit[ 8 ];		/* Unit for text output */
+	UINT8 m_nDecimals;		/* Default number of decimals for formatted output */
+	} SYSTOOL_SHMEM_SENSOR;
+ 
+typedef struct {
+	UINT32 m_version;		/* Version of shared memory structure */
+	UINT16 m_nSensors;		/* Number of records with data in m_sensors */
+	SYSTOOL_SHMEM_SENSOR m_sensors[ SH_MEM_MAX_SENSORS ];
+	} SYSTOOL_SHMEM;
+
+static void readSysToolData( void )
+	{
+	HANDLE hSysToolData;
+	const SYSTOOL_SHMEM *sysToolDataPtr;
+
+	if( ( hSysToolData = OpenFileMapping( FILE_MAP_READ, FALSE,
+										  "SysToolSensors" ) ) == NULL )
+		return;
+	if( ( sysToolDataPtr = ( SYSTOOL_SHMEM * ) \
+			MapViewOfFile( hSysToolData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
+		{
+		MESSAGE_DATA msgData;
+		static const int quality = 40;
+
+		setMessageData( &msgData, ( void * ) sysToolDataPtr, 
+						sizeof( SYSTOOL_SHMEM ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( sysToolDataPtr );
+		}
+	CloseHandle( hSysToolData );
+	}
+
+/* RivaTuner data structures via the shared-memory interface, from the 
+   RivaTuner sample source.  The DWORD values below are actually (32-bit) 
+   floats, but we overlay them with DWORDs since we don't care about the 
+   values.  The information is only accessible when the RivaTuner hardware 
+   monitoring window is open.  This one is the easiest of the shared-mem 
+   interfaces to monitor because for fowards-compatibility reasons it 
+   stores a Windows-style indicator of the size of each struct entry in the 
+   data header, so we can get the total size simply by multiplying out the 
+   number of entries by the indicated size.  As a safety measure we limit 
+   the maximum data size to 2K in case a value gets corrupted */
+
+typedef struct {
+	DWORD dwSignature;	/* 'RTHM' if active */
+	DWORD dwVersion;	/* Must be 0x10001 or above */
+	DWORD dwNumEntries;	/* No.of RTHM_SHARED_MEMORY_ENTRY entries */
+	time_t time;		/* Last polling time */
+	DWORD dwEntrySize;	/* Size of entries in RTHM_SHARED_MEMORY_ENTRY array */
+	} RTHM_SHARED_MEMORY_HEADER;
+
+typedef struct {
+	char czSrc[ 32 ];	/* Source description */
+	char czDim[ 16 ];	/* Source measurement units */
+	DWORD /*float*/ data;	/* Source data */
+	DWORD /*float*/ offset;	/* Source offset, e.g. temp.compensation */
+	DWORD /*float*/ dataTransformed;/* Source data in transformed(?) form */
+	DWORD flags;		/* Misc.flags */
+	} RTHM_SHARED_MEMORY_ENTRY;
+
+static void readRivaTunerData( void )
+	{
+	HANDLE hRivaTunerData;
+	RTHM_SHARED_MEMORY_HEADER *rivaTunerHeaderPtr;
+
+	if( ( hRivaTunerData = OpenFileMapping( FILE_MAP_READ, FALSE,
+											"RTHMSharedMemory" ) ) == NULL )
+		return;
+	if( ( rivaTunerHeaderPtr = ( RTHM_SHARED_MEMORY_HEADER * ) \
+			MapViewOfFile( hRivaTunerData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
+		( rivaTunerHeaderPtr->dwSignature == 'RTHM' ) && \
+		( rivaTunerHeaderPtr->dwVersion >= 0x10001 ) )
+		{
+		MESSAGE_DATA msgData;
+		const BYTE *entryPtr = ( ( BYTE * ) rivaTunerHeaderPtr ) + \
+							  sizeof( RTHM_SHARED_MEMORY_HEADER );
+		const int entryTotalSize = rivaTunerHeaderPtr->dwNumEntries * \
+								   rivaTunerHeaderPtr->dwEntrySize;
+		static const int quality = 5;
+
+		setMessageData( &msgData, ( void * ) entryPtr, 
+						min( entryTotalSize, 2048 ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( rivaTunerHeaderPtr );
+		}
+	CloseHandle( hRivaTunerData );
+	}
+
+/* Read data from HMonitor via the shared-memory interface.  The DWORD 
+   values below are actually (32-bit) floats, but we overlay them with 
+   DWORDs since we don't care about the values.  Like RivaTuner's data the 
+   info structure contains a length value at the start, so it's fairly easy 
+   to work with */
+
+typedef struct {
+	WORD length;
+	WORD version;	/* Single 'DWORD length' before version 4.1 */
+	DWORD /*float*/ temp[ 3 ];
+	DWORD /*float*/ voltage[ 7 ];
+	int fan[ 3 ];
+	} HMONITOR_DATA;
+
+static void readHMonitorData( void )
+	{
+	HANDLE hHMonitorData;
+	HMONITOR_DATA *hMonitorDataPtr;
+
+	if( ( hHMonitorData = OpenFileMapping( FILE_MAP_READ, FALSE,
+										   "Hmonitor_Counters_Block" ) ) == NULL )
+		return;
+	if( ( hMonitorDataPtr = ( HMONITOR_DATA * ) \
+			MapViewOfFile( hHMonitorData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
+		( hMonitorDataPtr->version >= 0x4100 ) && \
+		( hMonitorDataPtr->length >= 48 && hMonitorDataPtr->length <= 1024 ) )
+		{
+		MESSAGE_DATA msgData;
+		static const int quality = 40;
+
+		setMessageData( &msgData, hMonitorDataPtr, hMonitorDataPtr->length );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality, 
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( hMonitorDataPtr );
+		}
+	CloseHandle( hHMonitorData );
+	}
+
+/* Read data from ATI Tray Tools via the shared-memory interface.  This has
+   an added twist in that just because it's available to be read doesn't 
+   mean that it contains any data, so we check that at least the GPU speed 
+   and temp-monitoring-supported flag have nonzero values */
+
+typedef struct {
+	DWORD CurGPU;		/* GPU speed */
+	DWORD CurMEM;		/* Video memory speed */
+	DWORD isGameActive;
+	DWORD is3DActive;	/* Boolean: 3D mode active */
+	DWORD isTempMonSupported;	/* Boolean: Temp monitoring available */
+	DWORD GPUTemp;		/* GPU temp */
+	DWORD ENVTemp;		/* Video card temp */
+	DWORD FanDuty;		/* Fan duty cycle */
+	DWORD MAXGpuTemp, MINGpuTemp;	/* Min/max GPU temp */
+	DWORD MAXEnvTemp, MINEnvTemp;	/* Min/max video card temp */
+	DWORD CurD3DAA, CurD3DAF;	/* Direct3D info */
+	DWORD CurOGLAA, CurOGLAF;	/* OpenGL info */
+	DWORD IsActive;		/* Another 3D boolean */
+	DWORD CurFPS;		/* FPS rate */
+	DWORD FreeVideo;	/* Available video memory */
+	DWORD FreeTexture;	/* Available texture memory */
+	DWORD Cur3DApi;		/* API used (D3D, OpenGL, etc) */
+	DWORD MemUsed;		/* ? */
+	} TRAY_TOOLS_DATA;
+
+static void readATITrayToolsData( void )
+	{
+	HANDLE hTrayToolsData;
+	TRAY_TOOLS_DATA *trayToolsDataPtr;
+
+	if( ( hTrayToolsData = OpenFileMapping( FILE_MAP_READ, FALSE,
+											"ATITRAY_SMEM" ) ) == NULL )
+		return;
+	if( ( trayToolsDataPtr = ( TRAY_TOOLS_DATA * ) \
+			MapViewOfFile( hTrayToolsData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
+		( trayToolsDataPtr->CurGPU >= 100 ) && \
+		( trayToolsDataPtr->isTempMonSupported != 0 ) )
+		{
+		MESSAGE_DATA msgData;
+		static const int quality = 8;
+
+		setMessageData( &msgData, trayToolsDataPtr,
+						sizeof( TRAY_TOOLS_DATA ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( void * ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( trayToolsDataPtr );
+		}
+	CloseHandle( hTrayToolsData );
+	}
+
+/****************************************************************************
+*																			*
+*							Hardware Configuration Data						*
+*																			*
+****************************************************************************/
 
 /* Read PnP configuration data.  This is mostly static per machine, but
    differs somewhat across machines.  We have to define the values ourselves
@@ -349,8 +648,8 @@ static void readPnPData( void )
 	/* Get pointers to the PnP functions.  Although the get class-devs
 	   and get device registry functions look like standard functions,
 	   they're actually macros that are mapped to (depending on the build
-	   type) xxxA or xxxW, so we access it under the straight-ASCII-function
-	   name */
+	   type) xxxA or xxxW, so we access them under the straight-ASCII-
+	   function name */
 	pSetupDiDestroyDeviceInfoList = ( SETUPDIDESTROYDEVICEINFOLIST ) \
 				GetProcAddress( hSetupAPI, "SetupDiDestroyDeviceInfoList" );
 	pSetupDiEnumDeviceInfo = ( SETUPDIENUMDEVICEINFO ) \
@@ -377,25 +676,26 @@ static void readPnPData( void )
 		BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 		BYTE pnpBuffer[ 512 + 8 ];
 		DWORD cbPnPBuffer;
-		int deviceCount, iterationCount = 0;
+		int deviceCount, iterationCount, status;
 
 		/* Enumerate all PnP devices */
-		initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+		status = initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+		if( cryptStatusError( status ) )
+			retIntError_Void();
 		memset( &devInfoData, 0, sizeof( devInfoData ) );
 		devInfoData.cbSize = sizeof( SP_DEVINFO_DATA );
-		for( deviceCount = 0;
+		for( deviceCount = 0, iterationCount = 0;
 			 pSetupDiEnumDeviceInfo( hDevInfo, deviceCount, 
 									 &devInfoData ) && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
-			 deviceCount++ )
+				iterationCount < FAILSAFE_ITERATIONS_MAX; 
+			 deviceCount++, iterationCount++ )
 			{
 			if( pSetupDiGetDeviceRegistryProperty( hDevInfo, &devInfoData,
 												   SPDRP_HARDWAREID, NULL,
 												   pnpBuffer, 512, &cbPnPBuffer ) )
 				addRandomData( randomState, pnpBuffer, cbPnPBuffer );
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-			retIntError_Void();
+		ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MAX );
 		pSetupDiDestroyDeviceInfoList( hDevInfo );
 		endRandomData( randomState, 5 );
 		}
@@ -414,7 +714,6 @@ static void readPnPData( void )
 void fastPoll( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
-	static int sysCaps;
 	FILETIME  creationTime, exitTime, kernelTime, userTime;
 	DWORD minimumWorkingSetSize, maximumWorkingSetSize;
 	LARGE_INTEGER performanceCount;
@@ -423,11 +722,14 @@ void fastPoll( void )
 	POINT point;
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
+	int status;
 
 	if( krnlIsExiting() )
 		return;
 
-	initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	status = initRandomData( randomState, buffer, RANDOM_BUFSIZE );
+	if( cryptStatusError( status ) )
+		retIntError_Void();
 
 	/* Get various basic pieces of system information: Handle of active
 	   window, handle of window with mouse capture, handle of clipboard owner
@@ -513,9 +815,6 @@ void fastPoll( void )
 		GetStartupInfo( &startupInfo );
 		addRandomData( randomState, &startupInfo, sizeof( STARTUPINFO ) );
 
-		/* Remember any hardware-specific special functionality */
-		sysCaps = getSysCaps();
-
 		/* Remember that we've got the fixed info */
 		addedFixedItems = TRUE;
 		}
@@ -528,30 +827,88 @@ void fastPoll( void )
 	   generally on machines with a uniprocessor HAL
 	   KeQueryPerformanceCounter() uses a 3.579545MHz timer and on machines
 	   with a multiprocessor or APIC HAL it uses the TSC (the exact time
-	   source is controlled by the HalpUse8254 flag in the kernel).  That
-	   choice of time sources is somewhat peculiar because on a
+	   source is controlled by the HalpUse8254 flag in the kernel).  Since
+	   Vista-era machines are generally running on multiprocessor HALs we
+	   usually get the TSC under Vista.
+
+	   This choice of time sources is somewhat peculiar because on a
 	   multiprocessor machine it's theoretically possible to get completely
 	   different TSC readings depending on which CPU you're currently
 	   running on, while for uniprocessor machines it's not a problem.
-	   However, the kernel appears to synchronise the TSCs across CPUs at
-	   boot time (it resets the TSC as part of its system init), so this
-	   shouldn't really be a problem.  Under WinCE it's completely platform-
-	   dependant, if there's no hardware performance counter available, it
-	   uses the 1ms system timer.
+	   However the kernel synchronises the TSCs across CPUs at boot time if 
+	   a multiprocessor HAL is used (it resets the TSC as part of its system 
+	   init) so this shouldn't really be a problem.  Under WinCE it's 
+	   completely platform-dependant, if there's no hardware performance 
+	   counter available it uses the 1ms system timer.
 
-	   Another feature of the TSC (although it doesn't really affect us here)
-	   is that mobile CPUs will turn off the TSC when they idle, Pentiums
-	   will change the rate of the counter when they clock-throttle (to
-	   match the current CPU speed), and hyperthreading Pentiums will turn
-	   it off when both threads are idle (this more or less makes sense,
-	   since the CPU will be in the halted state and not executing any
-	   instructions to count).
+	   Another feature of the TSC (although it doesn't really affect us 
+	   here) is that mobile CPUs will turn off the TSC when they idle, 
+	   newer Pentiums and Athlons with advanced power management/clock
+	   throttling will change the rate of the counter when they clock-
+	   throttle (to match the current CPU speed), and hyperthreading 
+	   Pentiums will turn it off when both threads are idle (this more or 
+	   less makes sense since the CPU will be in the halted state and not 
+	   executing any instructions to count).  What makes this even more
+	   exciting is that the resulting handling of the TSC is almost entirely
+	   nondeterministic, the only thing that's guaranteed is that the
+	   counter is monotonically incrementing.  For example when a newer
+	   processor with power-saving features enabled ramps down its core
+	   clock the TSC rate is lowered to correspond to the clock rate
+	   (assuming that the BIOS sets this up correctly, which isn't always
+	   the case).  However various events like cache probes can cause the
+	   core to temporarily return to the original rate to process the
+	   event before dropping back to the throttled rate, which can cause
+	   TSC drift across multiple cores.  Hardware-specific events like
+	   AMDs STPCLK signalling ("shut 'er down ma, she's glowing red") can
+	   reach different cores at different times and lead to ramping up
+	   and down and different times and for different durations, leading
+	   to further drift.  Newer AMD CPUs fix this by providing drift-
+	   invariant TSCs if the TscInvariant CPUID feature flag is set.
 
-	   To make things unambiguous, we detect a CPU new enough to call RDTSC
-	   directly by checking for CPUID capabilities, and fall back to QPC if
-	   this isn't present */
+	   As a result, if we're on a system with multiple cores and it doesn't
+	   have the AMD TscInvariant fix then the TSC skew can also be a source
+	   of entropy.  To some extent this is just timing the context switch 
+	   time across CPUs (which in itself is a source of some entropy), but 
+	   what's left is the TSC skew across cores.  If this is if interest we
+	   can do it with code something like the following.  Note that this is 
+	   only sample code, there are various complications such as the fact 
+	   that another thread may change the process affinity mask between the
+	   call to the initial GetProcessAffinityMask() and the final
+	   SetThreadAffinityMask() to restore the original mask, even if we 
+	   insert another GetProcessAffinityMask() just before the 
+	   SetThreadAffinityMask() there's still a small race condition present 
+	   but no real way to avoid it without OS API-level support:
+
+		DWORD processAfinityMask, systemAffinityMask, mask = 0x10000;
+
+		// Get the available processors that the thread can be scheduled on
+		if( !GetProcessAffinityMask( GetCurrentProcess(), processAfinityMask, 
+									 systemAffinityMask ) )
+			return;
+
+		// Move the thread to each processor and read the TSC
+		while( mask != 0 )
+			{
+			mask >>= 1;
+			if( !( mask & processAfinityMask ) )
+				continue;
+
+			SetThreadAffinityMask( GetCurrentThread(), mask );
+			// RDTSC
+			}
+
+		// Restore the original thread affinity
+		SetThreadAffinityMask( GetCurrentThread(), processAfinityMask );
+
+	   Finally, there's the HPET, but this is only supported in Vista and
+	   it's not clear how to access it from user-level APIs rather than as
+	   part of the multimedia subsystem.
+
+	   To make things unambiguous, we call RDTSC directly if possible and 
+	   fall back to QPC in the highly unlikely situation where this isn't 
+	   present */
 #ifndef NO_ASM
-	if( sysCaps & SYSCAP_FLAG_RDTSC )
+	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_RDTSC )
 		{
 		unsigned long value;
 
@@ -565,23 +922,27 @@ void fastPoll( void )
 		}
 #endif /* NO_ASM */
 	else
+		{
 		if( QueryPerformanceCounter( &performanceCount ) )
 			addRandomData( randomState, &performanceCount,
 						   sizeof( LARGE_INTEGER ) );
 		else
+			{
 			/* Millisecond accuracy at best... */
 			addRandomValue( randomState, GetTickCount() );
+			}
+		}
 
 	/* If there's a hardware RNG present, read data from it.  We check that
-	   the RNG is still present on each fetch since it could (at least in
-	   theory) be disabled by the OS between fetches.  We also read the data
-	   into an explicitly dword-aligned buffer (which the standard buffer
-	   should be anyway, but we make it explicit here just to be safe).  Note
-	   that we have to force alignment using a LONGLONG rather than a #pragma
-	   pack, since chars don't need alignment it would have no effect on the
-	   BYTE [] member */
+	   the RNG is still present/enabled on each fetch since it could (at 
+	   least in theory) be disabled by the OS between fetches.  We also read 
+	   the data into an explicitly dword-aligned buffer (which the standard 
+	   buffer should be anyway, but we make it explicit here just to be 
+	   safe).  Note that we have to force alignment using a LONGLONG rather 
+	   than a #pragma pack, since chars don't need alignment it would have 
+	   no effect on the BYTE [] member */
 #ifndef NO_ASM
-	if( sysCaps & SYSCAP_FLAG_XSTORE )
+	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_XSTORE )
 		{
 		struct alignStruct {
 			LONGLONG dummy1;		/* Force alignment of following member */
@@ -612,6 +973,23 @@ void fastPoll( void )
 			}
 		if( byteCount > 0 )
 			addRandomData( randomState, bufPtr, byteCount );
+		}
+	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_TRNG )
+		{
+		unsigned long value = 0;
+
+		__asm {
+			xor eax, eax
+			xor edx, edx		/* Tell VC++ that EDX:EAX will be trashed */
+			mov ecx, 0x58002006	/* GLD_MSR_CTRL */
+			rdmsr
+			and eax, 0110000000000b	
+			cmp eax, 0010000000000b	/* Check whether TRNG is enabled */
+			jne trngDisabled	/* TRNG isn't enabled */
+		trngDisabled:
+			}
+		if( value )
+			addRandomValue( randomState, value );
 		}
 #endif /* NO_ASM */
 
@@ -655,6 +1033,9 @@ static HEAPNEXT pHeap32Next = NULL;
    larger-than-usual intermediate buffer to cut down on kernel traffic */
 
 #define BIG_RANDOM_BUFSIZE	( RANDOM_BUFSIZE * 4 )
+#if BIG_RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT
+  #error BIG_RANDOM_BUFSIZE exceeds randomness accumulator size
+#endif /* RANDOM_BUFSIZE > MAX_INTLENGTH_SHORT */
 
 static void slowPollWin95( void )
 	{
@@ -666,7 +1047,7 @@ static void slowPollWin95( void )
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
 	BYTE buffer[ BIG_RANDOM_BUFSIZE + 8 ];
-	int listCount = 0, iterationCount;
+	int listCount = 0, iterationCount, status;
 
 	/* The following are fixed for the lifetime of the process so we only
 	   add them once */
@@ -727,7 +1108,9 @@ static void slowPollWin95( void )
 	if( krnlIsExiting() )
 		return;
 
-	initRandomData( randomState, buffer, BIG_RANDOM_BUFSIZE );
+	status = initRandomData( randomState, buffer, BIG_RANDOM_BUFSIZE );
+	if( cryptStatusError( status ) )
+		retIntError_Void();
 
 	/* Take a snapshot of everything we can get to that's currently in the
 	   system */
@@ -740,10 +1123,10 @@ static void slowPollWin95( void )
 	   application with a great many heaps and/or heap blocks, since the
 	   heap-traversal functions are rather slow.  Fortunately this is
 	   quite rare under Win95/98, since it implies a large/long-running
-	   server app that would be run under NT/Win2K/XP rather than Win95
-	   (the performance of the mapped ToolHelp32 helper functions under
-	   these OSes is even worse than under Win95, fortunately we don't
-	   have to use them there).
+	   server app that would be run under NT/Win2K/et al rather than 
+	   Win95 (the performance of the mapped ToolHelp32 helper functions 
+	   under these OSes is even worse than under Win95, fortunately we 
+	   don't have to use them there).
 
 	   Ideally in order to prevent excessive delays we'd count the number
 	   of heaps and ensure that no_heaps * no_heap_blocks doesn't exceed
@@ -762,6 +1145,7 @@ static void slowPollWin95( void )
 	   heap, we can reduce our exposure somewhat */
 	hl32.dwSize = sizeof( HEAPLIST32 );
 	if( pHeap32ListFirst( hSnapshot, &hl32 ) )
+		{
 		do
 			{
 			HEAPENTRY32 he32;
@@ -780,6 +1164,7 @@ static void slowPollWin95( void )
 			   on each of them */
 			he32.dwSize = sizeof( HEAPENTRY32 );
 			if( pHeap32First( &he32, hl32.th32ProcessID, hl32.th32HeapID ) )
+				{
 				do
 					{
 					if( krnlIsExiting() )
@@ -791,13 +1176,16 @@ static void slowPollWin95( void )
 								   sizeof( HEAPENTRY32 ) );
 					}
 				while( entryCount++ < 20 && pHeap32Next( &he32 ) );
+				}
 			}
 		while( listCount++ < 20 && pHeap32ListNext( hSnapshot, &hl32 ) );
+		}
 
 	/* Walk through all processes */
 	pe32.dwSize = sizeof( PROCESSENTRY32 );
 	iterationCount = 0;
 	if( pProcess32First( hSnapshot, &pe32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -809,11 +1197,13 @@ static void slowPollWin95( void )
 			}
 		while( pProcess32Next( hSnapshot, &pe32 ) && \
 			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		}
 
 	/* Walk through all threads */
 	te32.dwSize = sizeof( THREADENTRY32 );
 	iterationCount = 0;
 	if( pThread32First( hSnapshot, &te32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -823,13 +1213,15 @@ static void slowPollWin95( void )
 				}
 			addRandomData( randomState, &te32, sizeof( THREADENTRY32 ) );
 			}
-	while( pThread32Next( hSnapshot, &te32 ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		while( pThread32Next( hSnapshot, &te32 ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		}
 
 	/* Walk through all modules associated with the process */
 	me32.dwSize = sizeof( MODULEENTRY32 );
 	iterationCount = 0;
 	if( pModule32First( hSnapshot, &me32 ) )
+		{
 		do
 			{
 			if( krnlIsExiting() )
@@ -839,8 +1231,9 @@ static void slowPollWin95( void )
 				}
 			addRandomData( randomState, &me32, sizeof( MODULEENTRY32 ) );
 			}
-	while( pModule32Next( hSnapshot, &me32 ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		while( pModule32Next( hSnapshot, &me32 ) && \
+			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
+		}
 
 	/* Clean up the snapshot */
 	CloseHandle( hSnapshot );
@@ -855,7 +1248,7 @@ static void slowPollWin95( void )
 
 unsigned __stdcall threadSafeSlowPollWin95( void *dummy )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	slowPollWin95();
 	_endthreadex( 0 );
@@ -931,8 +1324,10 @@ static void registryPoll( void )
 	   we have to wait until any async driver bind has completed before we can
 	   call RegQueryValueEx() */
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		{
 		/* The kernel is shutting down, bail out */
 		return;
+		}
 
 	/* Get information from the system performance counters.  This can take a
 	   few seconds to do.  In some environments the call to RegQueryValueEx()
@@ -988,7 +1383,11 @@ static void registryPoll( void )
 	   look like the old Win16 API (which is also used by Win95).  Under NT
 	   this can consume tens of MB of memory and huge amounts of CPU time
 	   while it gathers its data, and even running once can still consume
-	   about 1/2MB of memory */
+	   about 1/2MB of memory.
+
+	   "Windows NT is a thing of genuine beauty, if you're seriously into 
+	    genuine ugliness.  It's like a woman with a history of insanity in 
+		the family, only worse" -- Hans Chloride, "Why I Love Windows NT" */
 	pPerfData = ( PPERF_DATA_BLOCK ) clAlloc( "slowPollNT", cbPerfData );
 	while( pPerfData != NULL && iterations++ < 10 )
 		{
@@ -1015,11 +1414,24 @@ static void registryPoll( void )
 			pPerfData = NULL;
 			}
 		else
+			{
 			if( dwStatus == ERROR_MORE_DATA )
 				{
+				PPERF_DATA_BLOCK pTempPerfData;
+				
 				cbPerfData += PERFORMANCE_BUFFER_STEP;
-				pPerfData = ( PPERF_DATA_BLOCK ) realloc( pPerfData, cbPerfData );
+				pTempPerfData = ( PPERF_DATA_BLOCK ) realloc( pPerfData, cbPerfData );
+				if( pTempPerfData == NULL )
+					{
+					/* The realloc failed, free the original block and force 
+					   a loop exit */
+					clFree( "slowPollWinNT", pPerfData );
+					pPerfData = NULL;
+					}
+				else
+					pPerfData = pTempPerfData;
 				}
+			}
 		}
 
 	/* Although this isn't documented in the Win32 API docs, it's necessary to
@@ -1058,10 +1470,12 @@ static void slowPollWinNT( void )
 			if( RegQueryValueEx( hKey, "ProductType", 0, NULL, szValue,
 								 &dwSize ) == ERROR_SUCCESS && \
 				stricmp( szValue, "WinNT" ) )
+				{
 				/* Note: There are (at least) three cases for ProductType:
 				   WinNT = NT Workstation, ServerNT = NT Server, LanmanNT =
 				   NT Server acting as a Domain Controller */
 				isWorkstation = FALSE;
+				}
 
 			RegCloseKey( hKey );
 			}
@@ -1150,18 +1564,23 @@ static void slowPollWinNT( void )
 			break;
 
 		/* Note: This only works if the user has turned on the disk
-		   performance counters with 'diskperf -y'.  These counters are
-		   usually disabled, although they appear to be enabled in newer
-		   installs of Win2K and XP.  In addition using the documented
-		   DISK_PERFORMANCE data structure to contain the returned data
-		   returns ERROR_INSUFFICIENT_BUFFER (which is wrong) and doesn't
-		   change dwSize (which is also wrong), so we pass in a larger
-		   buffer and pre-set dwSize to a safe value.  Finally, there is a
-		   bug in pre-SP4 Win2K in which enabling diskperf, installing a
-		   file system filter driver, and then disabling diskperf, causes
-		   diskperf to corrupt the registry key HKEY_LOCAL_MACHINE\SYSTEM\
-		   CurrentControlSet\Control\Class\{71A27CDD-812A-11D0-BEC7-
-		   08002BE2092F}\Upper Filters, resulting in a Stop 0x7B bugcheck */
+		   performance counters with 'diskperf -y'.  These counters were
+		   traditionally disabled under NT, although in newer installs of 
+		   Win2K and newer the physical disk object is enabled by default 
+		   while the logical disk object is disabled by default 
+		   ('diskperf -yv' turns on the counters for logical drives in this 
+		   case, since they're already on for physical drives).
+		   
+		   In addition using the documented DISK_PERFORMANCE data structure 
+		   to contain the returned data returns ERROR_INSUFFICIENT_BUFFER 
+		   (which is wrong) and doesn't change dwSize (which is also wrong) 
+		   so we pass in a larger buffer and pre-set dwSize to a safe 
+		   value.  Finally, there's a bug in pre-SP4 Win2K in which enabling 
+		   diskperf, installing a file system filter driver, and then 
+		   disabling diskperf, causes diskperf to corrupt the registry key 
+		   HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Class\
+		   {71A27CDD-812A-11D0-BEC7-08002BE2092F}\Upper Filters, resulting 
+		   in a Stop 0x7B bugcheck */
 		dwSize = sizeof( diskPerformance );
 		if( DeviceIoControl( hDevice, IOCTL_DISK_PERFORMANCE, NULL, 0,
 							 &diskPerformance, 256, &dwSize, NULL ) )
@@ -1199,6 +1618,12 @@ static void slowPollWinNT( void )
 		registryPoll();
 		return;
 		}
+
+	/* Clear the buffer before use.  We have to do this because even though 
+	   NtQuerySystemInformation() tells us that it's filled in ulSize bytes, 
+	   it doesn't necessarily mean that it actually has provided that much 
+	   data */
+	memset( buffer, 0, PERFORMANCE_BUFFER_SIZE );
 
 	/* Scan the first 64 possible information types (we don't bother with
 	   increasing the buffer size as we do with the Win32 version of the
@@ -1247,7 +1672,10 @@ static void slowPollWinNT( void )
 				ulSize = 5 * sizeof( ULONG );
 			}
 
-		/* If we got some data back, add it to the entropy pool */
+		/* If we got some data back, add it to the entropy pool.  Note that 
+		   just because NtQuerySystemInformation() tells us that it's 
+		   provided ulSize bytes doesn't necessarily mean that it has, see 
+		   the comment after the malloc() for details */
 		if( ulSize > 0 && ulSize <= PERFORMANCE_BUFFER_SIZE - 2048 )
 			{
 			if( krnlIsExiting() )
@@ -1268,9 +1696,9 @@ static void slowPollWinNT( void )
 	   in that it requires an exact length match for the data returned,
 	   failing with a STATUS_INFO_LENGTH_MISMATCH error code (0xC0000004) if
 	   the length isn't an exact match */
-#if 0	/* This requires a compiler to handle complex nested structs,
-		   alignment issues, and so on, and without the headers in which
-		   the entries are declared it's almost impossible to do */
+#if 0	/* This requires compiler-level assistance to handle complex nested 
+		   structs, alignment issues, and so on.  Without the headers in 
+		   which the entries are declared it's almost impossible to do */
 	for( dwType = 0; dwType < 32; dwType++ )
 		{
 		static const struct { int type; int size; } processInfo[] = {
@@ -1304,15 +1732,14 @@ static void slowPollWinNT( void )
 					noResults++;
 				}
 			}
-		if( i >= FAILSAFE_ITERATIONS_SMALL )
-			retIntError_Void();
+		ENSURES( i < FAILSAFE_ITERATIONS_SMALL );
 		}
 #endif /* 0 */
 
-	/* Finally, do the same for the system power status information.  There
+	/* Finally do the same for the system power status information.  There 
 	   are only a limited number of useful information types available so we
 	   restrict ourselves to the useful types.  In addition since this
-	   function doesn't return length information, we have to hardcode in
+	   function doesn't return length information we have to hardcode in
 	   length data */
 	if( pNtPowerInformation != NULL )
 		{
@@ -1347,8 +1774,7 @@ static void slowPollWinNT( void )
 			if( cryptStatusOK( status ) )
 				noResults++;
 			}
-		if( i >= FAILSAFE_ITERATIONS_MED )
-			retIntError_Void();
+		ENSURES_V( i < FAILSAFE_ITERATIONS_MED );
 		}
 	clFree( "slowPollWinNT", buffer );
 
@@ -1390,21 +1816,20 @@ unsigned __stdcall threadSafeSlowPollWinNT( void *dummy )
 	static BOOLEAN isInited = FALSE;
 #endif /* 0 */
 
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	/* If the poll performed any kind of active operation like the Unix one
-	   rather than just basic data reads it'd probably be a good idea to drop
+	   rather than just basic data reads it'd be a good idea to drop 
 	   privileges before we begin, something that can be performed by the
-	   following code */
+	   following code.  Note though that this creates all sorts of 
+	   complications when cryptlib is running as a service and/or performing
+	   impersonation, which is why it's disabled by default */
 #if 0
 	if( !isInited )
 		{
-		OSVERSIONINFO osvi = { sizeof( osvi ) };
-
 		/* Since CreateRestrictedToken() is a Win2K function we can only use
 		   it on a post-NT4 system, and have to bind it at runtime */
-		GetVersionEx( &osvi );
-		if( osvi.dwMajorVersion > 4 )
+		if( getSysVar( SYSVAR_OSVERSION ) > 4 )
 			{
 			const HINSTANCE hAdvAPI32 = GetModuleHandle( "AdvAPI32.dll" );
 
@@ -1445,16 +1870,26 @@ void slowPoll( void )
 	if( krnlIsExiting() )
 		return;
 
-	/* Read data from the various hardware sources */
+	/* Read data from various hardware sources */
 	readSystemRNG();
 	readMBMData();
+	readEverestData();
+	readSysToolData();
+	readRivaTunerData();
+	readHMonitorData();
+	readATITrayToolsData();
 
 	/* Start a threaded slow poll.  If a slow poll is already running, we
 	   just return since there isn't much point in running two of them at the
 	   same time */
-	if( hThread )
+	if( cryptStatusError( krnlEnterMutex( MUTEX_RANDOM ) ) )
 		return;
-	if( isWin95 )
+	if( hThread != NULL )
+		{
+		krnlExitMutex( MUTEX_RANDOM );
+		return;
+		}
+	if( getSysVar( SYSVAR_ISWIN95 ) == TRUE )
 		hThread = ( HANDLE ) _beginthreadex( NULL, 0, threadSafeSlowPollWin95,
 											 NULL, 0, &threadID );
 	else
@@ -1481,6 +1916,7 @@ void slowPoll( void )
 											 threadSafeSlowPollWinNT,
 											 NULL, 0, &threadID );
 		}
+	krnlExitMutex( MUTEX_RANDOM );
 	assert( hThread );
 	}
 
@@ -1489,9 +1925,12 @@ void slowPoll( void )
    waitforRandomCompletion(), which will block until the background process
    completes */
 
-void waitforRandomCompletion( const BOOLEAN force )
+CHECK_RETVAL \
+int waitforRandomCompletion( const BOOLEAN force )
 	{
-	const int timeout = force ? 2000 : INFINITE;
+	DWORD dwResult;
+	const DWORD timeout = force ? 2000 : 300000L;
+	int status;
 
 	/* If there's no polling thread running, there's nothing to do.  Note
 	   that this isn't entirely thread-safe because someone may start
@@ -1501,23 +1940,34 @@ void waitforRandomCompletion( const BOOLEAN force )
 	   that'll happen is that the caller won't get all of the currently-
 	   polling entropy */
 	if( hThread == NULL )
-		return;
+		return( CRYPT_OK );
 
-	/* Wait for the polling thread to terminate.  If it's a forced shutdown,
-	   we only wait a fixed amount of time (2s) before we bail out.  In
-	   addition we don't check for an error return (WAIT_ABANDONED) because
-	   this just means that the thread has exited as well */
-	WaitForSingleObject( hThread, timeout );
+	/* Wait for the polling thread to terminate.  If it's a forced shutdown
+	   we only wait a short amount of time (2s) before we bail out, 
+	   otherwise we hang around for as long as it takes (with a sanity-check
+	   upper limit of 5 minutes) */
+	dwResult = WaitForSingleObject( hThread, timeout );
+	if( dwResult == WAIT_FAILED )
+		{
+		/* Since this is a cleanup function there's not much that we can do 
+		   at this point, although we warn in debug mode */
+		assert( DEBUG_WARN );
+		return( CRYPT_OK );
+		}
+	assert( dwResult != WAIT_FAILED );	/* Warn in debug mode */
 
 	/* Clean up */
-	if( cryptStatusError( krnlEnterMutex( MUTEX_RANDOM ) ) )
-		return;
+	status = krnlEnterMutex( MUTEX_RANDOM );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( hThread != NULL )
 		{
 		CloseHandle( hThread );
 		hThread = NULL;
 		}
 	krnlExitMutex( MUTEX_RANDOM );
+
+	return( CRYPT_OK );
 	}
 
 /* Initialise and clean up any auxiliary randomness-related objects */
@@ -1538,9 +1988,5 @@ void endRandomPolling( void )
 		FreeLibrary( hNetAPI32 );
 		hNetAPI32 = NULL;
 		}
-	if( hProv != NULL )
-		{
-		pCryptReleaseContext( hProv, 0 );
-		hProv = NULL;
-		}
+	endSystemRNG();
 	}

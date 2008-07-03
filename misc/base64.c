@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Base64 Routines						*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -18,156 +18,157 @@
 /* Base64 encode/decode tables from RFC 1113 */
 
 #define BPAD		'='		/* Padding for odd-sized output */
-#define BERR		0xFF	/* Illegal char marker */
-#define BEOF		0x7F	/* EOF marker (padding char or EOL) */
+#define BERR		0xFF	/* Illegal character marker */
+#define BEOF		0x7F	/* EOF marker (padding character or EOL) */
 
-static const char FAR_BSS binToAscii[] = \
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static const BYTE FAR_BSS asciiToBin[ 256 ] =
-	{ BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 00 */
-	  BERR, BERR, BEOF, BERR, BERR, BEOF, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 10 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 20 */
-	  BERR, BERR, BERR, 0x3E, BERR, BERR, BERR, 0x3F,
-	  0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,	/* 30 */
-	  0x3C, 0x3D, BERR, BERR, BERR, BEOF, BERR, BERR,
-	  BERR, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,	/* 40 */
-	  0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-	  0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,	/* 50 */
-	  0x17, 0x18, 0x19, BERR, BERR, BERR, BERR, BERR,
-	  BERR, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,	/* 60 */
-	  0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-	  0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,	/* 70 */
-	  0x31, 0x32, 0x33, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 80 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 90 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* A0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* B0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* C0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* D0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* E0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* F0 */
-	  BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR
+static const char FAR_BSS binToAscii[ 64 ] = { 
+	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 
+	'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 
+	'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 
+	'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 
+	'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 
+	'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 
+	'w', 'x', 'y', 'z', '0', '1', '2', '3', 
+	'4', '5', '6', '7', '8', '9', '+', '/' 
 	};
 
-/* The size of lines for PEM-type formatting.  This is only used for encoding,
-   for decoding we adjust to whatever size the sender has used */
+static const BYTE FAR_BSS asciiToBin[ 256 ] = { 
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 00 */
+	BERR, BERR, BEOF, BERR, BERR, BEOF, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 10 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 20 */
+	BERR, BERR, BERR, 0x3E, BERR, BERR, BERR, 0x3F,
+	0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,	/* 30 */
+	0x3C, 0x3D, BERR, BERR, BERR, BEOF, BERR, BERR,
+	BERR, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,	/* 40 */
+	0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+	0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,	/* 50 */
+	0x17, 0x18, 0x19, BERR, BERR, BERR, BERR, BERR,
+	BERR, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,	/* 60 */
+	0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+	0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,	/* 70 */
+	0x31, 0x32, 0x33, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 80 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* 90 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* A0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* B0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* C0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* D0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* E0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR,	/* F0 */
+	BERR, BERR, BERR, BERR, BERR, BERR, BERR, BERR
+	};
 
-#define TEXT_LINESIZE	64
-#define BINARY_LINESIZE	48
+/* The size of lines for base64-encoded data.  This is only used for 
+   encoding, for decoding we adjust to whatever size the sender has used */
 
-/* Basic single-char en/decode functions.  We mask the value to 8 bits to
-   avoid generating negative array offsets if the sign bit is set, since the
-   strings are passed as char *'s */
+#define BASE64_LINESIZE	64
 
-#define encode(data)	binToAscii[ ( data ) & 0xFF ]
-#define decode(data)	asciiToBin[ ( data ) & 0xFF ]
+/* Basic single-character en/decode functions.  We mask the value to 6 or 8 
+   bits both as a range check and to avoid generating negative array offsets 
+   if the sign bit is set, since the strings are passed as 'char *'s */
+
+#define encode( data )	binToAscii[ ( data ) & 0x3F ]
+#define decode( data )	asciiToBin[ ( data ) & 0xFF ]
 
 /* The headers and trailers used for base64-encoded certificate objects */
 
 typedef struct {
 	const CRYPT_CERTTYPE_TYPE type;
-	const char FAR_BSS *header, FAR_BSS *trailer;
+	BUFFER_FIXED( headerLen ) \
+	const char FAR_BSS *header;
+	const int headerLen;
+	BUFFER_FIXED( trailerLen ) \
+	const char FAR_BSS *trailer;
+	const int trailerLen;
 	} HEADER_INFO;
 static const HEADER_INFO FAR_BSS headerInfo[] = {
 	{ CRYPT_CERTTYPE_CERTIFICATE,
-	  "-----BEGIN CERTIFICATE-----" EOL,
-	  "-----END CERTIFICATE-----" EOL },
+	  "-----BEGIN CERTIFICATE-----" EOL, 27 + EOL_LEN,
+	  "-----END CERTIFICATE-----" EOL, 25 + EOL_LEN },
 	{ CRYPT_CERTTYPE_ATTRIBUTE_CERT,
-	  "-----BEGIN ATTRIBUTE CERTIFICATE-----" EOL,
-	  "-----END ATTRIBUTE CERTIFICATE-----" EOL },
+	  "-----BEGIN ATTRIBUTE CERTIFICATE-----" EOL, 37 + EOL_LEN,
+	  "-----END ATTRIBUTE CERTIFICATE-----" EOL, 35 + EOL_LEN },
 	{ CRYPT_CERTTYPE_CERTCHAIN,
-	  "-----BEGIN CERTIFICATE CHAIN-----" EOL,
-	  "-----END CERTIFICATE CHAIN-----" EOL },
+	  "-----BEGIN CERTIFICATE CHAIN-----" EOL, 33 + EOL_LEN,
+	  "-----END CERTIFICATE CHAIN-----" EOL, 31 + EOL_LEN },
 	{ CRYPT_CERTTYPE_CERTREQUEST,
-	  "-----BEGIN NEW CERTIFICATE REQUEST-----" EOL,
-	  "-----END NEW CERTIFICATE REQUEST-----" EOL },
+	  "-----BEGIN NEW CERTIFICATE REQUEST-----" EOL, 39 + EOL_LEN,
+	  "-----END NEW CERTIFICATE REQUEST-----" EOL, 37 + EOL_LEN },
 	{ CRYPT_CERTTYPE_REQUEST_CERT,
-	  "-----BEGIN NEW CERTIFICATE REQUEST-----" EOL,
-	  "-----END NEW CERTIFICATE REQUEST-----" EOL },
+	  "-----BEGIN NEW CERTIFICATE REQUEST-----" EOL, 39 + EOL_LEN,
+	  "-----END NEW CERTIFICATE REQUEST-----" EOL, 37 + EOL_LEN },
 	{ CRYPT_CERTTYPE_CRL,
-	  "-----BEGIN CERTIFICATE REVOCATION LIST-----"  EOL,
-	  "-----END CERTIFICATE REVOCATION LIST-----" EOL },
+	  "-----BEGIN CERTIFICATE REVOCATION LIST-----"  EOL, 43 + EOL_LEN,
+	  "-----END CERTIFICATE REVOCATION LIST-----" EOL, 41 + EOL_LEN },
 	{ CRYPT_CERTTYPE_NONE,			/* Universal catch-all */
-	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL,
-	  "-----END CERTIFICATE OBJECT-----" EOL },
+	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL, 34 + EOL_LEN,
+	  "-----END CERTIFICATE OBJECT-----" EOL, 32 + EOL_LEN },
 	{ CRYPT_CERTTYPE_NONE,			/* Universal catch-all */
-	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL,
-	  "-----END CERTIFICATE OBJECT-----" EOL }
+	  "-----BEGIN CERTIFICATE OBJECT-----"  EOL, 34 + EOL_LEN,
+	  "-----END CERTIFICATE OBJECT-----" EOL, 32 + EOL_LEN }
 	};
 
 /****************************************************************************
 *																			*
-*								Utility Functions							*
+*						Decode Format-checking Functions					*
 *																			*
 ****************************************************************************/
 
-/* Callback function used by readTextLine() to read characters from a
-   stream */
+/* Check for raw base64 data.  There isn't a 100% reliable check that we can 
+   apply for this but if the first 60 characters (the minimum base64 line 
+   length) are all valid base64 data and the first characters match the 
+   encoded form of data handled by cryptlib then it's reasonably certain 
+   that it's base64 data */
 
-static int readCharFunction( void *streamPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int fixedBase64decode( STREAM *stream,
+							  IN_BUFFER( srcLen ) const char *src, 
+							  IN_LENGTH_MIN( 10 ) const int srcLen );
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN checkBase64( INOUT STREAM *stream )
 	{
-	return( sgetc( streamPtr ) );
-	}
-
-/* Check for raw base64 data.  There isn't a 100% reliable check for this,
-   but if the first 60 chars (the minimum base64 line length) are all valid
-   base64 chars and the first chars match the required values then it's
-   reasonably certain that it's base64 data */
-
-static BOOLEAN checkBase64( STREAM *stream )
-	{
-	BYTE buffer[ 4 + 8 ], headerBuffer[ 2 + 8 ];
-	BOOLEAN gotHeader = FALSE;
-	int i, status;
+	STREAM nullStream;
+	BYTE buffer[ 60 + 8 ];
+	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Make sure that there's enough data present to perform a reliable
 	   check */
-	if( sMemDataLeft( stream ) < 15 * 4 )
+	status = sread( stream, buffer, 60 );
+	if( cryptStatusError( status ) )
 		return( FALSE );
 
-	/* Check that we have at least 15 lots (60 chars) of base64-encoded
+	/* Make sure that the content is some form of encoded key or certificate 
+	   data. For certificate data that begins with 30 8x the corresponding 
+	   base64 values are MI...; for an SSH public key that begins 00 00 it's 
+	   AA...; for a PGP public key that begins 99 0x it's mQ... 
+
+	   Unfortunately in the case of MIME-encoded data with a MIME header, 
+	   the header is likely to begin with "MIME-Version", which happens to
+	   match the base64-encoded form of 30 8x = "MI", so this quick-reject
+	   filter won't catch this one particular case */
+	if( strCompare( buffer, "MI", 2 ) && \
+		strCompare( buffer, "AA", 2 ) && \
+		strCompare( buffer, "mQ", 2 ) )
+		return( FALSE );
+
+	/* Check that we have at least one minimal-length line of base64-encoded
 	   data */
-	for( i = 0; i < 15; i++ )
-		{
-		BYTE c0, c1, c2, c3, cx;
-
-		status = sread( stream, buffer, 4 );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		if( !gotHeader )
-			{
-			memcpy( headerBuffer, buffer, 2 );
-			gotHeader = TRUE;
-			}
-		c0 = decode( buffer[ 0 ] );
-		c1 = decode( buffer[ 1 ] );
-		c2 = decode( buffer[ 2 ] );
-		c3 = decode( buffer[ 3 ] );
-		cx = c0 | c1 | c2 | c3;
-
-		if( cx == BEOF || cx == BERR )
-			return( FALSE );
-		}
-
-	/* Make sure that the content is some form of encoded key or cert data.
-	   For cert data that begins with 30 8x, the corresponding base64 values
-	   are MI...; for an SSH public key that begins 00 00 it's AA...; for a
-	   PGP public key that begins 99 0x it's mQ... */
-	if( strCompare( headerBuffer, "MI", 2 ) && \
-		strCompare( headerBuffer, "AA", 2 ) && \
-		strCompare( headerBuffer, "mQ", 2 ) )
+	sMemNullOpen( &nullStream );
+	status = fixedBase64decode( &nullStream, buffer, 60 );
+	sMemDisconnect( &nullStream );
+	if( cryptStatusError( status ) )
 		return( FALSE );
 
 	return( TRUE );
@@ -177,22 +178,34 @@ static BOOLEAN checkBase64( STREAM *stream )
    '-----..' header, which is fairly simple although we also need to handle
    the SSH '---- ...' variant (4 dashes and a space) */
 
-static int checkPEMHeader( STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int checkPEMHeader( INOUT STREAM *stream, 
+						   OUT_LENGTH_Z int *headerLength )
 	{
 	BOOLEAN isSSH = FALSE, isPGP = FALSE;
 	char buffer[ 1024 + 8 ], *bufPtr = buffer;
-	int length, iterationCount = 0;
+	int length, position = DUMMY_INIT, lineCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( headerLength, sizeof( int ) ) );
+
+	/* Clear return value */
+	*headerLength = 0;
 
 	/* Check for the initial 5 dashes and 'BEGIN ' (unless we're SSH, in
 	   which case we use 4 dashes, a space, and 'BEGIN ') */
-	length = readTextLine( readCharFunction, stream, buffer, 1024, NULL );
-	if( cryptStatusError( length ) )
-		return( length );
-	if( length < 11 + 5 || \
-		strCompare( bufPtr, "-----BEGIN ", 11 ) && \
-		strCompare( bufPtr, "---- BEGIN ", 11 ) )
+	status = readTextLine( ( READCHARFUNCTION ) sgetc, stream, 
+						   buffer, 1024, &length, NULL );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length < 5 + 6 + 7 + 5 )
+		{
+		/* We need room for at least '-----' (5) + 'BEGIN ' (6) + 
+		   'ABC XYZ' (7) + '-----' (5) */
+		return( CRYPT_ERROR_BADDATA );
+		}
+	if( strCompare( bufPtr, "-----BEGIN ", 11 ) &&	/* PEM/PGP form */
+		strCompare( bufPtr, "---- BEGIN ", 11 ) )	/* SSH form */
 		return( CRYPT_ERROR_BADDATA );
 	bufPtr += 11;
 	length -= 11;
@@ -201,8 +214,10 @@ static int checkPEMHeader( STREAM *stream )
 	if( !strCompare( bufPtr, "SSH2 ", 5 ) )
 		isSSH = TRUE;
 	else
+		{
 		if( !strCompare( bufPtr, "PGP ", 4 ) )
 			isPGP = TRUE;
+		}
 	while( length >= 4 )
 		{
 		if( *bufPtr == '-' )
@@ -217,74 +232,81 @@ static int checkPEMHeader( STREAM *stream )
 	if( strCompare( bufPtr, "-----", length ) )
 		return( CRYPT_ERROR_BADDATA );
 
+	/* If it's not SSH or PGP data, we're done */
+	if( !isSSH && !isPGP )
+		{
+		*headerLength = stell( stream );
+
+		return( CRYPT_OK );
+		}
+
 	/* At this point SSH and PGP can continue with an arbitrary number of
 	   type : value pairs that we have to strip before we get to the
-	   payload */
+	   payload.  SSH runs the header straight into the body so the only way 
+	   to tell whether we've hit the body is to check for the absence of the 
+	   ':' separator, while PGP uses a conventional header format with a 
+	   blank line as the delimiter so all that we have to do is look for a 
+	   zero-length line */
+	for( lineCount = 0; lineCount < FAILSAFE_ITERATIONS_MED; lineCount++ )
+		{
+		position = stell( stream );
+		status = readTextLine( ( READCHARFUNCTION ) sgetc, stream, 
+							   buffer, 1024, &length, NULL );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( isSSH && strFindCh( buffer, length, ':' ) < 0 )
+			break;
+		if( isPGP && length <= 0 )
+			break;
+		}
+	if( lineCount >= FAILSAFE_ITERATIONS_MED )
+		return( CRYPT_ERROR_BADDATA );
 	if( isSSH )
 		{
-		int position, i;
-
-		/* SSH runs the header straight into the body so the only way to
-		   tell whether we've hit the body is to check for the absence of
-		   the ':' separator */
-		do
-			{
-			position = stell( stream );
-			length = readTextLine( readCharFunction, stream, buffer,
-								   1024, NULL );
-			if( cryptStatusError( length ) )
-				return( length );
-			for( i = 0; i < length && buffer[ i ] != ':'; i++ );
-			}
-		while( i < length && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
-		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			return( CRYPT_ERROR_BADDATA );
+		/* Return to the point before the line without the ':' */
 		sseek( stream, position );
 		}
-	if( isPGP )
-		{
-		/* PGP uses a conventional header format with a blank line as the
-		   delimiter so all that we have to do is look for a zero-length
-		   line */
-		do
-			{
-			length = readTextLine( readCharFunction, stream, buffer,
-								   1024, NULL );
-			if( cryptStatusError( length ) )
-				return( length );
-			}
-		while( length > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
-		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			return( CRYPT_ERROR_BADDATA );
-		}
+	*headerLength = stell( stream );
 
-	return( stell( stream ) );
+	return( CRYPT_OK );
 	}
 
 /* Look for the EOL marker at the end of a line of text.  There's one
-   problematic special case here where, if the encoding has produced
+   problematic special case here in which, if the encoding has produced
    bricktext, the end of the data will coincide with the EOL.  For
    CRYPT_CERTFORMAT_TEXT_CERTIFICATE this will give us '-----END...' on
    the next line which is easy to check for, but for
    CRYPT_ICERTFORMAT_SMIME_CERTIFICATE what we end up with depends on the
-   calling code, it could truncate immediately at the end of the data
-   (which it isn't supposed to) so we get '\0', it could truncate after the
-   EOL (so we get EOL + '\0'), it could continue with a futher content type
-   after a blank line (so we get EOL + EOL), or it could truncate without
-   the '\0' so we get garbage, which is the caller's problem.  Because of
-   this we look for all of these situations and, if any are found, return
-   a 0-count EOL indicator */
+   calling code.  It could either truncate immediately at the end of the 
+   data (which it isn't supposed to) so we get '\0', it could truncate after 
+   the EOL (so we get EOL + '\0'), it could continue with a futher content 
+   type after a blank line (so we get EOL + EOL), or it could truncate 
+   without the '\0' so we get garbage, which is the caller's problem.  
+   Because of this we look for all of these situations and, if any are 
+   found, return a 0-count EOL indicator */
 
-static int checkEOL( const char *src, const int srcLen,
-					 const CRYPT_CERTFORMAT_TYPE format )
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int checkEOL( IN_BUFFER( srcLen ) const char *src, 
+					 IN_LENGTH const int srcLen,
+					 OUT_LENGTH_Z int *eolSize,
+					 IN_ENUM( CRYPT_CERTFORMAT ) \
+						const CRYPT_CERTFORMAT_TYPE format )
 	{
 	int srcIndex = 0;
 
 	assert( isReadPtr( src, srcLen ) );
+	assert( isWritePtr( eolSize, sizeof( int ) ) );
+
+	REQUIRES( srcLen > 0 && srcLen < MAX_INTLENGTH );
+	REQUIRES( format > CRYPT_CERTFORMAT_NONE && \
+			  format < CRYPT_CERTFORMAT_LAST );
+
+	/* Clear return value */
+	*eolSize = 0;
 
 	/* Check for a '\0' at the end of the data */
-	if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE && !*src )
-		return( 0 );
+	if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE && src[ 0 ] == '\0' )
+		return( OK_SPECIAL );	/* We're at EOF, not just EOL */
 
 	/* Check for EOL */
 	if( *src == '\n' )
@@ -309,35 +331,251 @@ static int checkEOL( const char *src, const int srcLen,
 			}
 		}
 	if( srcIndex >= srcLen )
-		return( 0 );
-	assert( srcIndex < srcLen );
+		return( OK_SPECIAL );	/* We're at EOF, not just EOL */
 
 	/* Check for '\0' or EOL (S/MIME) or '----END...' (PEM) after EOL */
-	if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE && \
-		( !src[ srcIndex ] || src[ srcIndex ] == '\n' || \
-		  src[ srcIndex ] == '\r' ) )
-		return( 0 );
-	if( format == CRYPT_CERTFORMAT_TEXT_CERTIFICATE && \
-		srcLen - srcIndex >= 9 && \
-		!strCompare( src + srcIndex, "-----END ", 9 ) )
-		return( 0 );
+	if( format == CRYPT_ICERTFORMAT_SMIME_CERTIFICATE )
+		{
+		if( src[ srcIndex ] == '\0' || src[ srcIndex ] == '\n' || \
+			src[ srcIndex ] == '\r' )
+			return( OK_SPECIAL );	/* We're at EOF, not just EOL */
+		}
+	if( format == CRYPT_CERTFORMAT_TEXT_CERTIFICATE )
+		{
+		if( srcIndex + 9 <= srcLen && \
+			!strCompare( src + srcIndex, "-----END ", 9 ) )
+			return( OK_SPECIAL );	/* We're at EOF, not just EOL */
+		}
 
-	/* Make sure that we haven't run off into the weeds */
-	if( srcIndex >= srcLen )
-		return( 0 );
+	/* If we were expecting an EOL but didn't find one there's a problem 
+	   with the data */
+	if( srcIndex <= 0 )
+		return( CRYPT_ERROR_BADDATA );
 
-	return( srcIndex );
+	ENSURES( srcIndex > 0 && srcIndex < srcLen );
+	*eolSize = srcIndex;
+
+	return( CRYPT_OK );
 	}
+
+/* Check whether a data item has a header that identifies it as some form of
+   encoded object and return the start position of the encoded data.  For
+   S/MIME certificate data this can in theory get quite complex because
+   there are many possible variations in the headers.  Some early S/MIME
+   agents used a content type of "application/x-pkcs7-mime",
+   "application/x-pkcs7-signature", and "application/x-pkcs10", while newer
+   ones use the same without the "x-" at the start.  In addition Netscape
+   have their own MIME data types for certificates, "application/x-x509-"
+   "{user-cert|ca-cert|email-cert}, and this tradition is perpetuated by the
+   mass of further types in the neverending stream of RFCs that PKIX churns 
+   out.  There are a whole pile of other possible headers as well, none of 
+   them terribly relevant for our purposes, so all that we check for is the 
+   base64 indicator */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int base64checkHeader( IN_BUFFER( dataLength ) const char *data, 
+					   IN_LENGTH const int dataLength,
+					   OUT_ENUM_OPT( CRYPT_CERTFORMAT ) \
+						CRYPT_CERTFORMAT_TYPE *format,
+					   OUT_LENGTH_Z int *startPos )
+	{
+	STREAM stream;
+	BOOLEAN seenTransferEncoding = FALSE, isBinaryEncoding = FALSE;
+	BOOLEAN seenDash = FALSE, isBase64;
+	int position = DUMMY_INIT, lineCount, length, status;
+
+	assert( isReadPtr( data, dataLength ) );
+	assert( isWritePtr( format, sizeof( CRYPT_CERTFORMAT_TYPE ) ) );
+	assert( isWritePtr( startPos, sizeof( int ) ) );
+
+	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
+
+	/* Clear return values */
+	*format = CRYPT_CERTFORMAT_NONE;
+	*startPos = 0;
+
+	/* If the item is too small to contain any useful data we don't even try 
+	   and examine it.  We don't treat this as a data or underflow error 
+	   since it may be a short but valid data object like an empty CRL */
+	if( dataLength < 64 )
+		return( CRYPT_OK );
+
+	sMemConnect( &stream, data, dataLength );
+
+	/* Perform a quick check to weed out unencoded certificate data, which 
+	   is usually the case.  Certificates and related objects are always an 
+	   ASN.1 SEQUENCE so if we find data that begins with this value then we
+	   perform the check for a certificate object.  For very large objects 
+	   (which can only be CRLs) we can get an overflow error trying to read 
+	   a short length so if the length is suspiciously long we allow a long 
+	   length.  We don't do this unconditionally in order to reduce 
+	   potential false positives */
+	if( sPeek( &stream ) == BER_SEQUENCE )
+		{
+		if( dataLength < 32000L )
+			status = readSequenceI( &stream, NULL );
+		else
+			status = readLongSequence( &stream, NULL );
+		if( cryptStatusOK( status ) )
+			{
+			sMemDisconnect( &stream );
+
+			return( CRYPT_OK );
+			}
+		sClearError( &stream );
+		sseek( &stream, 0 );
+		}
+
+	/* Sometimes the object can be preceded by a few blank lines, which we
+	   ignore */
+	for( length = 0, lineCount = 0; 
+		 length <= 0 && lineCount < FAILSAFE_ITERATIONS_MED; 
+		 lineCount++ )
+		{
+		char buffer[ 1024 + 8 ];
+
+		position = stell( &stream );
+		status = readTextLine( ( READCHARFUNCTION ) sgetc, &stream, 
+							   buffer, 1024, &length, NULL );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		if( buffer[ 0 ] == '-' )
+			seenDash = TRUE;
+		}
+	if( lineCount >= FAILSAFE_ITERATIONS_MED )
+		{
+		sMemDisconnect( &stream );
+		return( CRYPT_ERROR_BADDATA );
+		}
+	sseek( &stream, position );
+
+	/* If the data starts with a dash check for PEM header encapsulation 
+	   followed by a base64-encoded body */
+	if( seenDash )
+		{
+		status = checkPEMHeader( &stream, &position );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		if( !checkBase64( &stream ) )
+			{
+			sMemDisconnect( &stream );
+			return( CRYPT_ERROR_BADDATA );
+			}
+		sMemDisconnect( &stream );
+		*format = CRYPT_CERTFORMAT_TEXT_CERTIFICATE;
+		*startPos = position;
+
+		return( CRYPT_OK );
+		}
+
+	/* Check for non-encapsulated base64 data */
+	if( checkBase64( &stream ) )
+		{
+		sMemDisconnect( &stream );
+		*format = CRYPT_CERTFORMAT_TEXT_CERTIFICATE;
+		*startPos = position;
+
+		return( CRYPT_OK );
+		}
+	sseek( &stream, position );
+
+	/* It doesn't look like base64 encoded data, check for an S/MIME header */
+	for( length = 1, lineCount = 0;
+		 length > 0 && lineCount < FAILSAFE_ITERATIONS_MED;
+		 lineCount++ )
+		{
+		char buffer[ 1024 + 8 ];
+
+		status = readTextLine( ( READCHARFUNCTION ) sgetc, &stream, 
+							   buffer, 1024, &length, NULL );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		if( !seenTransferEncoding && length >= 33 && \
+			!strCompare( buffer, "Content-Transfer-Encoding:", 26 ) )
+			{
+			int index = strSkipWhitespace( buffer + 26, length - 26 );
+
+			/* Check for a valid content encoding type */
+			if( index < 0 || index > 1024 - 26 )
+				continue;
+			index += 26;	/* Skip "Content-Transfer-Encoding:" */
+			if( length - index < 6 )
+				{
+				/* It's too short to be a valid encoding type, skip it */
+				continue;
+				}
+			if( !strCompare( buffer + index, "base64", 6 ) )
+				seenTransferEncoding = TRUE;
+			else
+				{
+				if( !strCompare( buffer + index, "binary", 6 ) )
+					seenTransferEncoding = isBinaryEncoding = TRUE;
+				}
+			}
+		}
+	if( lineCount >= FAILSAFE_ITERATIONS_MED || !seenTransferEncoding )
+		{
+		sMemDisconnect( &stream );
+		return( CRYPT_ERROR_BADDATA );
+		}
+	position = stell( &stream );
+
+	/* Make sure that the content is some form of encoded certificate using
+	   the same check as the one that we used earlier */
+	if( isBinaryEncoding )
+		{
+		if( dataLength < 32000L )
+			status = readSequenceI( &stream, NULL );
+		else
+			status = readLongSequence( &stream, NULL );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( status ) )
+			return( CRYPT_ERROR_BADDATA );
+		*startPos = position;
+		*format = CRYPT_CERTFORMAT_CERTIFICATE;
+
+		return( CRYPT_OK );
+		}
+	isBase64 = checkBase64( &stream );
+	sMemDisconnect( &stream );
+	if( !isBase64 )
+		return( CRYPT_ERROR_BADDATA );
+	*startPos = position;
+	*format = CRYPT_ICERTFORMAT_SMIME_CERTIFICATE;
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Base64 Decoding Functions						*
+*																			*
+****************************************************************************/
 
 /* Decode a chunk of four base64 characters into three binary characters */
 
-static int decodeBase64chunk( BYTE *dest, const int destLeft,
-							  const char *src, const int srcLeft,
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int decodeBase64chunk( INOUT STREAM *stream,
+							  IN_BUFFER( srcLeft ) const char *src, 
+							  IN_LENGTH const int srcLeft,
 							  const BOOLEAN fixedLenData )
 	{
-	static const int outByteTbl[] = { 0, 0, 1, 2, 3 };
 	BYTE c0, c1, c2 = 0, c3 = 0, cx;
-	int srcIndex = 0, destIndex = 0, outByteCount;
+	int srcIndex = 0, outByteCount, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( src, srcLeft ) );
+
+	REQUIRES( srcLeft > 0 && srcLeft < MAX_INTLENGTH );
 
 	/* Make sure that there's sufficient input left to decode.  We need at
 	   least two more characters to produce one byte of output */
@@ -362,370 +600,156 @@ static int decodeBase64chunk( BYTE *dest, const int destLeft,
 		if( fixedLenData )
 			return( CRYPT_ERROR_BADDATA );
 
-		/* We're decoding indefinite-length data for which EOF's are valid
+		/* We're decoding indefinite-length data for which EOFs are valid
 		   characters.  We have to be a bit careful with the order of
 		   checking since hitting an EOF at an earlier character may cause
-		   later chars to be decoded as BERR */
+		   later input data to be decoded as BERR */
 		if( c0 == BEOF )
+			{
 			/* No more input, we're done */
 			return( 0 );
+			}
 		if( c0 == BERR || c1 == BEOF || c1 == BERR )
-			/* We can't produce output with only one char of input, there's
-			   a problem with the input */
+			{
+			/* We can't produce output with only one character of input 
+			   data, there's a problem with the input */
 			return( CRYPT_ERROR_BADDATA );
+			}
 		if( c2 == BEOF )
-			/* Two chars of input, then EOF, resulting in one char of
-			   output */
+			{
+			/* Two characters of input, then EOF, resulting in one character 
+			   of output */
 			outByteCount = 1;
+			}
 		else
 			{
 			if( c2 == BERR || c3 == BERR )
 				return( CRYPT_ERROR_BADDATA );
-			assert( c3 == BEOF );
+			ENSURES( c3 == BEOF );
 			outByteCount = 2;
 			}
 		}
 	else
+		{
 		/* All decoded characters are valid */
-		outByteCount = outByteTbl[ min( srcLeft, 4 ) ];
+		outByteCount = ( srcLeft > 4 ) ? 3 : srcLeft - 1;
+		}
+	ENSURES( outByteCount > 0 && outByteCount < 4 );
 
-	/* Make sure that there's sufficient space to copy out the decoded
-	   bytes */
-	if( outByteCount > destLeft )
-		return( CRYPT_ERROR_OVERFLOW );
-
-	/* Copy the decoded data to the output buffer */
-	dest[ destIndex++ ] = ( c0 << 2 ) | ( c1 >> 4 );
+	/* Write the decoded data to the output buffer */
+	status = sputc( stream, ( ( c0 << 2 ) | ( c1 >> 4 ) ) & 0xFF );
 	if( outByteCount > 1 )
 		{
-		dest[ destIndex++ ] = ( c1 << 4 ) | ( c2 >> 2);
+		status = sputc( stream, ( ( c1 << 4 ) | ( c2 >> 2 ) ) & 0xFF );
 		if( outByteCount > 2 )
-			dest[ destIndex++ ] = ( c2 << 6 ) | ( c3 );
+			status = sputc( stream, ( ( c2 << 6 ) | c3 ) & 0xFF );
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 
-	return( outByteCount );
-	}
-
-/****************************************************************************
-*																			*
-*							Base64 En/Decoding Functions					*
-*																			*
-****************************************************************************/
-
-/* Check whether a data item has a header that identifies it as some form of
-   encoded object and return the start position of the encoded data.  For
-   S/MIME certificate data this can in theory get quite complex because
-   there are many possible variations in the headers.  Some early S/MIME
-   agents used a content type of "application/x-pkcs7-mime",
-   "application/x-pkcs7-signature", and "application/x-pkcs10", while newer
-   ones use the same without the "x-" at the start.  In addition Netscape
-   have their own MIME data types for certificates, "application/x-x509-"
-   "{user-cert|ca-cert|email-cert}, and there are further types in the
-   endless stream of RFCs that PKIX churns out.  There are a whole pile of
-   other possible headers as well, none of them terribly relevant for our
-   purposes, so all we check for is the base64 indicator */
-
-int base64checkHeader( const char *data, const int dataLength,
-					   int *startPos )
-	{
-	STREAM stream;
-	BOOLEAN seenTransferEncoding = FALSE, isBinaryEncoding = FALSE;
-	int position, ch, iterationCount, status;
-
-	assert( isReadPtr( data, dataLength ) );
-	assert( isWritePtr( startPos, sizeof( int ) ) );
-
-	/* Clear return value */
-	*startPos = 0;
-
-	/* If the item is too small to contain any useful data, we don't even
-	   try and examine it.  We don't treat this as a data or underflow error
-	   since it may be a short but valid data object like an empty CRL */
-	if( dataLength < 64 )
-		return( CRYPT_CERTFORMAT_NONE );
-
-	sMemConnect( &stream, data, dataLength );
-
-	/* Sometimes the object can be preceded by a few blank lines.  We're
-	   fairly lenient with this.  Note that we can't use readTextLine() at
-	   this point because we don't know yet whether we're getting binary or
-	   ASCII data */
-	iterationCount = 0;
-	do
-		ch = sgetc( &stream );
-	while( ch == '\r' || ch == '\n' && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		return( CRYPT_ERROR_BADDATA );
-	if( cryptStatusError( ch ) )
-		{
-		sMemDisconnect( &stream );
-		return( ch );
-		}
-	position = stell( &stream ) - 1;
-	sseek( &stream, position );
-
-	/* Perform a quick check to weed out unencoded cert data, which is 
-	   usually the case */
-	status = readSequenceI( &stream, NULL );
-	if( cryptStatusOK( status ) )
-		{
-		sMemDisconnect( &stream );
-		return( CRYPT_CERTFORMAT_NONE );
-		}
-	sClearError( &stream );
-	sseek( &stream, position );
-
-	/* If it starts with a dash, check for PEM header encapsulation */
-	if( ch == '-' )
-		{
-		position = checkPEMHeader( &stream );
-		if( cryptStatusError( position ) )
-			{
-			sMemDisconnect( &stream );
-			return( position );
-			}
-		if( checkBase64( &stream ) )
-			{
-			sMemDisconnect( &stream );
-			*startPos = position;
-			return( CRYPT_CERTFORMAT_TEXT_CERTIFICATE );
-			}
-		sMemDisconnect( &stream );
-		return( CRYPT_ERROR_BADDATA );
-		}
-
-	/* Check for raw base64 data */
-	if( checkBase64( &stream ) )
-		{
-		sMemDisconnect( &stream );
-		*startPos = position;
-		return( CRYPT_CERTFORMAT_TEXT_CERTIFICATE );
-		}
-	sseek( &stream, position );
-
-	/* It doesn't look like raw base64, check for an S/MIME header */
-	iterationCount = 0;
-	do
-		{
-		char buffer[ 1024 + 8 ];
-
-		status = readTextLine( readCharFunction, &stream, buffer,
-							   1024, NULL );
-		if( !cryptStatusError( status ) && status >= 33 && \
-			!strCompare( buffer, "Content-Transfer-Encoding:", 26 ) )
-			{
-			const int length = status;
-			int index;
-
-			/* Check for a valid content encoding type */
-			for( index = 26; index < length && buffer[ index ] == ' ';
-				 index++ );
-			if( length - index < 6 )
-				/* It's too short to be a valid encoding type, skip it */
-				continue;
-			if( !strCompare( buffer + index, "base64", 6 ) )
-				seenTransferEncoding = TRUE;
-			else
-				if( !strCompare( buffer + index, "binary", 6 ) )
-					seenTransferEncoding = isBinaryEncoding = TRUE;
-			}
-		}
-	while( status > 0 && iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		return( CRYPT_ERROR_BADDATA );
-	if( cryptStatusError( status ) || !seenTransferEncoding )
-		{
-		sMemDisconnect( &stream );
-		return( cryptStatusError( status ) ? status : CRYPT_ERROR_BADDATA );
-		}
-
-	/* Skip trailing blank lines */
-	iterationCount = 0;
-	do
-		ch = sgetc( &stream );
-	while( ch == '\r' || ch == '\n' && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		return( CRYPT_ERROR_BADDATA );
-	if( cryptStatusError( ch ) )
-		{
-		sMemDisconnect( &stream );
-		return( ch );
-		}
-	position = stell( &stream ) - 1;
-
-	/* Make sure that the content is some form of encoded cert */
-	*startPos = position;
-	if( isBinaryEncoding )
-		status = CRYPT_CERTFORMAT_CERTIFICATE;
-	else
-		{
-		sseek( &stream, position );
-		status = checkBase64( &stream ) ? CRYPT_ICERTFORMAT_SMIME_CERTIFICATE : \
-										  CRYPT_ERROR_BADDATA;
-		}
-	sMemDisconnect( &stream );
-	return( status );
-	}
-
-/* Encode a block of binary data into the base64 format, returning the total
-   number of output bytes */
-
-int base64encode( char *dest, const int destMaxLen, const void *src,
-				  const int srcLen, const CRYPT_CERTTYPE_TYPE certType )
-	{
-	const BYTE *srcPtr = src;
-	int srcIndex = 0, destIndex = 0, lineByteCount = 0;
-	int remainder = srcLen % 3, headerInfoIndex;
-
-	assert( destMaxLen > 10 && isWritePtr( dest, destMaxLen ) );
-	assert( srcLen > 10 && isReadPtr( src, srcLen ) );
-
-	/* If it's a certificate object, add the header */
-	if( certType != CRYPT_CERTTYPE_NONE )
-		{
-		for( headerInfoIndex = 0;
-			 headerInfo[ headerInfoIndex ].type != certType && \
-				headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE && \
-				headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO );
-			 headerInfoIndex++ );
-		if( headerInfoIndex >= FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) )
-			retIntError();
-		assert( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
-		destIndex = strlen( headerInfo[ headerInfoIndex ].header );
-		if( destIndex >= destMaxLen )
-			return( CRYPT_ERROR_OVERFLOW );
-		memcpy( dest, headerInfo[ headerInfoIndex ].header, destIndex );
-		}
-
-	/* Encode the data */
-	while( srcIndex < srcLen )
-		{
-		const int srcLeft = srcLen - srcIndex;
-
-		/* If we've reached the end of a line of binary data and it's a
-		   certificate, add the EOL marker */
-		if( certType != CRYPT_CERTTYPE_NONE && \
-			lineByteCount >= BINARY_LINESIZE )
-			{
-			if( destIndex + EOL_LEN >= destMaxLen )
-				return( CRYPT_ERROR_OVERFLOW );
-			memcpy( dest + destIndex, EOL, EOL_LEN );
-			destIndex += EOL_LEN;
-			lineByteCount = 0;
-			}
-
-		/* Encode a block of data from the input buffer */
-		if( destIndex + 4 >= destMaxLen )
-			return( CRYPT_ERROR_OVERFLOW );
-		dest[ destIndex++ ] = encode( srcPtr[ srcIndex ] >> 2 );
-		if( srcLeft < 2 )
-			{
-			assert( remainder == 1 );
-			dest[ destIndex++ ] = encode( ( srcPtr[ srcIndex ] << 4 ) & 0x30 );
-			break;
-			}
-		dest[ destIndex++ ] = encode( ( ( srcPtr[ srcIndex ] << 4 ) & 0x30 ) | \
-									  ( ( srcPtr[ srcIndex + 1 ] >> 4 ) & 0x0F ) );
-		srcIndex++;
-		if( srcLeft < 3 )
-			{
-			assert( remainder == 2 );
-			dest[ destIndex++ ] = encode( ( srcPtr[ srcIndex ] << 2 ) & 0x3C );
-			break;
-			}
-		dest[ destIndex++ ] = encode( ( ( srcPtr[ srcIndex ] << 2 ) & 0x3C ) | \
-									  ( ( srcPtr[ srcIndex + 1 ] >> 6 ) & 0x03 ) );
-		srcIndex++;
-		dest[ destIndex++ ] = encode( srcPtr[ srcIndex++ ] & 0x3F );
-		lineByteCount += 3;
-		}
-
-	/* Add padding if it's not raw base64 data.  For 0 bytes remainder 
-	   there's no padding (the data fits exactly), for 1 byte remainder
-	   there's 2 bytes padding ("X=="), and for 2 bytes remainder there's 1 
-	   byte padding ("XX=") */
-	if( certType != CRYPT_CERTTYPE_NONE && remainder > 0 )
-		{
-		dest[ destIndex++ ] = BPAD;
-		if( remainder == 1 )
-			dest[ destIndex++ ] = BPAD;
-		}
-
-	/* If it's a certificate object, add the trailer */
-	if( certType != CRYPT_CERTTYPE_NONE )
-		{
-		const int length = strlen( headerInfo[ headerInfoIndex ].trailer );
-
-		if( destIndex + EOL_LEN + length > destMaxLen )
-			return( CRYPT_ERROR_OVERFLOW );
-		memcpy( dest + destIndex, EOL, EOL_LEN );
-		memcpy( dest + destIndex + EOL_LEN,
-				headerInfo[ headerInfoIndex ].trailer, length );
-		destIndex += EOL_LEN + length;
-		}
-
-	/* Return a count of encoded bytes */
-	return( destIndex );
+	/* If we've reached the end of the input, let the caller know */
+	return( ( outByteCount < 3 ) ? OK_SPECIAL : CRYPT_OK );
 	}
 
 /* Decode a block of binary data from the base64 format, returning the total
    number of decoded bytes */
 
-static int fixedBase64decode( BYTE *dest, const int destMaxLen,
-							  const char *src, const int srcLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int fixedBase64decode( STREAM *stream,
+							  IN_BUFFER( srcLen ) const char *src, 
+							  IN_LENGTH_MIN( 10 ) const int srcLen )
 	{
-	int srcIndex = 0, destIndex = 0;
+	int srcIndex;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( src, srcLen ) );
+
+	REQUIRES( srcLen >= 10 && srcLen < MAX_INTLENGTH );
 
 	/* Decode the base64 string as a fixed-length continuous string without
-	   padding or newlines */
-	while( srcIndex < srcLen )
+	   padding or newlines.  Since we're processing arbitrary-sized input we 
+	   can't use the usual FAILSAFE_ITERATIONS_MAX to bound the loop because 
+	   the input could be larger than this so we use MAX_INTLENGTH instead */
+	for( srcIndex = 0; srcIndex < srcLen && \
+					   srcIndex < MAX_INTLENGTH; srcIndex += 4 )
 		{
 		int status;
 
-		status = decodeBase64chunk( dest + destIndex, destMaxLen - destIndex,
-									src + srcIndex, srcLen - srcIndex,
-									TRUE );
+		status = decodeBase64chunk( stream, src + srcIndex, 
+									srcLen - srcIndex, TRUE );
 		if( cryptStatusError( status ) )
-			return( status );
-		srcIndex += 4;
-		destIndex += status;
-		}
+			{
+			/* If we've reached the end of the input, we're done */
+			if( status == OK_SPECIAL )
+				break;
 
-	/* Return a count of decoded bytes */
-	return( destIndex );
+			return( status );
+			}
+		}
+	ENSURES( srcIndex < MAX_INTLENGTH );
+
+	return( CRYPT_OK );
 	}
 
-int base64decode( void *dest, const int destMaxLen, const char *src,
-				  const int srcLen, const CRYPT_CERTFORMAT_TYPE format )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int base64decode( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
+				  IN_LENGTH_MIN( 10 ) const int destMaxLen, 
+				  OUT_LENGTH_Z int *destLen,
+				  IN_BUFFER( srcLen ) const char *src, 
+				  IN_LENGTH_MIN( 10 ) const int srcLen, 
+				  IN_ENUM_OPT( CRYPT_CERTFORMAT ) \
+					const CRYPT_CERTFORMAT_TYPE format )
 	{
-	int srcIndex = 0, destIndex = 0, lineByteCount = 0, lineSize = 0;
-	BYTE *destPtr = dest;
+	STREAM stream;
+	int srcIndex, lineByteCount, lineSize = 0, status = DUMMY_INIT;
 
 	assert( destMaxLen > 10 && isWritePtr( dest, destMaxLen ) );
+	assert( isWritePtr( destLen, sizeof( int ) ) );
 	assert( srcLen > 10 && isReadPtr( src, srcLen ) );
+
+	REQUIRES( destMaxLen > 10 && destMaxLen < MAX_INTLENGTH );
+	REQUIRES( srcLen > 10 && srcLen < MAX_INTLENGTH );
+	REQUIRES( format >= CRYPT_CERTFORMAT_NONE && \
+			  format < CRYPT_CERTFORMAT_LAST );
+
+	/* Clear return values */
+	memset( dest, 0, min( 16, destMaxLen ) );
+	*destLen = 0;
+
+	sMemOpen( &stream, dest, destMaxLen );
 
 	/* If it's not a certificate, it's a straight base64 string and we can
 	   use the simplified decoding routines */
 	if( format == CRYPT_CERTFORMAT_NONE )
-		return( fixedBase64decode( dest, destMaxLen, src, srcLen ) );
-
-	/* Decode the encoded object */
-	while( srcIndex < srcLen )
 		{
-		int status;
+		status = fixedBase64decode( &stream, src, srcLen );
+		if( cryptStatusOK( status ) )
+			*destLen = stell( &stream );
+		sMemDisconnect( &stream );
+		return( status );
+		}
 
+	/* Decode the encoded object.  Since we're processing arbitrary-sized 
+	   input we can't use the usual FAILSAFE_ITERATIONS_MAX to bound the 
+	   loop because the input could be larger than this so we use 
+	   MAX_INTLENGTH instead */
+	for( srcIndex = 0, lineByteCount = 0;
+		 srcIndex < srcLen && srcIndex < MAX_INTLENGTH;
+		 srcIndex += 4, lineByteCount += 4 )
+		{
 		/* Depending on implementations, the length of the base64-encoded
-		   line can vary from 60 to 72 chars.  We adjust for this by
+		   line can vary from 60 to 72 characters.  We adjust for this by
 		   checking for the first EOL and setting the line length to the
 		   size of the first line of base64 text */
 		if( lineSize <= 0 && \
-			src[ srcIndex ] == '\r' || src[ srcIndex ] == '\n' )
+			( src[ srcIndex ] == '\r' || src[ srcIndex ] == '\n' ) )
 			{
-			if( lineByteCount < 56 )
-				/* Suspiciously short text line */
+			if( lineByteCount < 56 || lineByteCount > 128 )
+				{
+				/* Suspiciously short or long text line */
+				sMemDisconnect( &stream );
 				return( CRYPT_ERROR_BADDATA );
+				}
 			lineSize = lineByteCount;
 			}
 
@@ -733,312 +757,300 @@ int base64decode( void *dest, const int destMaxLen, const char *src,
 		   marker */
 		if( lineSize > 0 && lineByteCount >= lineSize )
 			{
-			status = checkEOL( src + srcIndex, srcLen - srcIndex, format );
-			if( status <= 0 )
-				break;	/* End of input reached, exit */
-			srcIndex += status;
+			int eolDataSize;
+
+			status = checkEOL( src + srcIndex, srcLen - srcIndex, 
+							   &eolDataSize, format );
+			if( cryptStatusError( status ) )
+				{
+				/* If we get an OK_SPECIAL status it means that we've 
+				   reached the EOF rather than just an EOL */
+				if( status == OK_SPECIAL )
+					{
+					status = CRYPT_OK;
+					break;
+					}
+
+				sMemDisconnect( &stream );
+				return( status );
+				}
+			srcIndex += eolDataSize;
 			lineByteCount = 0;
 			}
 
 		/* Decode a chunk of data from the input buffer */
-		status = decodeBase64chunk( destPtr + destIndex,
-									destMaxLen - destIndex,
-									src + srcIndex, srcLen - srcIndex,
-									FALSE );
+		status = decodeBase64chunk( &stream, src + srcIndex, 
+									srcLen - srcIndex, FALSE );
 		if( cryptStatusError( status ) )
-			return( status );
-		destIndex += status;
-		if( status < 3 )
-			/* We've reached the end marker on the input data, exit.  Note
-			   that we can't just wait for srcIndex to pass srcLen as for
-			   the fixed-length decode because there could be extra trailer
-			   data following the base64 data.
+			{
+			/* If we've reached the end of the input, we're done.  Note that 
+			   we can't just wait for srcIndex to pass srcLen as for the 
+			   fixed-length decode because there could be extra trailer data 
+			   following the base64 data.
 
 			   In theory we could call checkEOL() here to make sure that the
-			   trailer is well-formed, but if the data is truncated right on
-			   the bas64 end marker then this would produce an error, so we
+			   trailer is well-formed but if the data is truncated right on
+			   the base64 end marker then this would produce an error so we
 			   just stop decoding as soon as we find the end marker */
-			break;
-		srcIndex += 4;
-		lineByteCount += 4;
-		}
+			if( status == OK_SPECIAL )
+				{
+				status = CRYPT_OK;
+				break;
+				}
 
-	/* Return a count of decoded bytes */
-	return( destIndex );
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		}
+	ENSURES( srcIndex < MAX_INTLENGTH );
+	if( cryptStatusOK( status ) )
+		*destLen = stell( &stream );
+	sMemDisconnect( &stream );
+
+	return( CRYPT_OK );
 	}
 
 /* Calculate the size of a quantity of data once it's en/decoded */
 
-int base64decodeLen( const char *data, const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int base64decodeLen( IN_BUFFER( dataLength ) const char *data, 
+					 IN_LENGTH_MIN( 10 ) const int dataLength,
+					 OUT_LENGTH_Z int *decodedLength )
 	{
 	STREAM stream;
-	int ch, length, iterationCount = 0;
+	int ch, length = DUMMY_INIT, iterationCount;
 
 	assert( isReadPtr( data, dataLength ) );
+	assert( isWritePtr( decodedLength, sizeof( int ) ) );
 
-	/* Skip ahead until we find the end of the decodable data.  Note that
-	   this ignores errors on the input stream since at this point all that
-	   we're interested in is how much we can decode from it, not whether
-	   it's valid or not */
+	REQUIRES( dataLength >= 10 && dataLength < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*decodedLength = 0;
+
+	/* Skip ahead until we find the end of the decodable data.  This ignores 
+	   errors on the input stream since at this point all that we're 
+	   interested in is how much we can decode from it and not whether it's 
+	   valid or not.  Handling this gets a bit complicated since once the 
+	   stream enters an error state stell() doesn't try and return a stream 
+	   position any more because the stream is in the error state, so we have 
+	   to check the position before every read.
+	   
+	   Since we're processing arbitrary-sized input we can't use the usual
+	   FAILSAFE_ITERATIONS_MAX to bound the loop because the input could be
+	   larger than this so we use MAX_INTLENGTH instead */
 	sMemConnect( &stream, data, dataLength );
-	do
+	for( iterationCount = 0; iterationCount < MAX_INTLENGTH; iterationCount++ )
 		{
+		length = stell( &stream );
 		ch = sgetc( &stream );
 		if( cryptStatusError( ch ) || ch == BPAD )
 			break;
+		if( ch == '\r' || ch == '\n' )
+			{
+			/* Don't try and decode out-of-band data */
+			continue;
+			}
 		ch = decode( ch );
+		if( ch == BERR || ch == BEOF )
+			break;
 		}
-	while( ch != BERR && iterationCount++ < FAILSAFE_ITERATIONS_MAX );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError();
-	length = stell( &stream );
+	ENSURES( iterationCount < MAX_INTLENGTH );
 	sMemDisconnect( &stream );
 
 	/* Return a rough estimate of how much room the decoded data will occupy.
 	   This ignores the EOL size so it always overestimates, but a strict
 	   value isn't necessary since it's only used for memory buffer
 	   allocation */
-	return( ( length * 3 ) / 4 );
+	*decodedLength = ( length * 3 ) / 4;
+
+	return( CRYPT_OK );
 	}
 
-int base64encodeLen( const int dataLength,
-					 const CRYPT_CERTTYPE_TYPE certType )
+/****************************************************************************
+*																			*
+*							Base64 Encoding Functions						*
+*																			*
+****************************************************************************/
+
+/* Calculate the size of a quantity of data once it's encoded */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int base64encodeLen( IN_LENGTH_MIN( 10 ) const int dataLength,
+					 OUT_LENGTH_Z int *encodedLength,
+					 IN_ENUM_OPT( CRYPT_CERTTYPE ) \
+						const CRYPT_CERTTYPE_TYPE certType )
 	{
 	int length = roundUp( ( dataLength * 4 ) / 3, 4 ), headerInfoIndex;
 
+	assert( isWritePtr( encodedLength, sizeof( int ) ) );
+
+	REQUIRES( dataLength >= 10 && dataLength < MAX_INTLENGTH );
+	REQUIRES( certType >= CRYPT_CERTTYPE_NONE && \
+			  certType < CRYPT_CERTTYPE_LAST );
+	
+	ENSURES( length >= 10 && length < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*encodedLength = 0;
+
+	/* Find the header/trailer info for this format */
 	for( headerInfoIndex = 0;
 		 headerInfo[ headerInfoIndex ].type != certType && \
 			headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE && \
 			headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ); 
 		 headerInfoIndex++ );
-	if( headerInfoIndex >= FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) )
-		retIntError();
-	assert( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
+	ENSURES( headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) );
+	ENSURES( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
 
-	/* Calculate the extra length due to EOL's */
-	length += ( ( roundUp( length, TEXT_LINESIZE ) / TEXT_LINESIZE ) * EOL_LEN );
+	/* Calculate the extra length due to EOLs and delimiters */
+	length += ( ( roundUp( length, BASE64_LINESIZE ) / BASE64_LINESIZE ) * EOL_LEN );
+	length = headerInfo[ headerInfoIndex ].headerLen + length + \
+			 headerInfo[ headerInfoIndex ].trailerLen;
 
-	/* Return the total length due to delimiters */
-	return( strlen( headerInfo[ headerInfoIndex ].header ) + length + \
-			strlen( headerInfo[ headerInfoIndex ].trailer ) );
+	ENSURES( length > 10 && length < MAX_INTLENGTH );
+
+	*encodedLength = length;
+
+	return( CRYPT_OK );
 	}
 
-/****************************************************************************
-*																			*
-*						PKI User ID En/Decoding Functions					*
-*																			*
-****************************************************************************/
+/* Encode a block of binary data into the base64 format */
 
-/* En/decode text representations of binary keys */
-
-static const char codeTable[] = \
-					"ABCDEFGHJKLMNPQRSTUVWXYZ23456789____";	/* No O/0, I/1 */
-static const int hiMask[] = { 0x00, 0x00, 0x00, 0x00, 0x0F, 0x07, 0x03, 0x01 };
-static const int loMask[] = { 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0 };
-
-BOOLEAN isPKIUserValue( const char *encVal, const int encValLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int base64encode( OUT_BUFFER( destMaxLen, *destLen ) char *dest, 
+				  IN_LENGTH_MIN( 10 ) const int destMaxLen, 
+				  OUT_LENGTH_Z int *destLen,
+				  IN_BUFFER( srcLen ) const void *src, 
+				  IN_LENGTH_MIN( 10 ) const int srcLen, 
+				  IN_ENUM_OPT( CRYPT_CERTTYPE ) \
+					const CRYPT_CERTTYPE_TYPE certType )
 	{
-	int i = 0;
+	STREAM stream;
+	const BYTE *srcPtr = src;
+	int srcIndex, lineByteCount, remainder = srcLen % 3;
+	int headerInfoIndex = DUMMY_INIT, status = DUMMY_INIT;
 
-	assert( isReadPtr( encVal, encValLength ) );
+	assert( destMaxLen > 10 && isWritePtr( dest, destMaxLen ) );
+	assert( isWritePtr( destLen, sizeof( int ) ) );
+	assert( srcLen >= 10 && isReadPtr( src, srcLen ) );
 
-	/* Check whether a user value is of the form XXXXX-XXXXX-XXXXX{-XXXXX} */
-	if( ( encValLength != ( 3 * 5 ) + 2 ) && \
-		( encValLength != ( 4 * 5 ) + 3 ) )
-		return( FALSE );
-	while( i < encValLength )
+	REQUIRES( destMaxLen >= 10 && destMaxLen > srcLen && \
+			  destMaxLen < MAX_INTLENGTH );
+	REQUIRES( srcLen >= 10 && srcLen < MAX_INTLENGTH );
+	REQUIRES( certType >= CRYPT_CERTTYPE_NONE && \
+			  certType < CRYPT_CERTTYPE_LAST );
+
+	/* Clear return values */
+	memset( dest, 0, min( 16, destMaxLen ) );
+	*destLen = 0;
+
+	sMemOpen( &stream, dest, destMaxLen );
+
+	/* If it's an encoded certificate object rather than raw base64 data, 
+	   add the header */
+	if( certType != CRYPT_CERTTYPE_NONE )
 		{
-		int j;
-
-		/* Decode each character group.  We know from the length check above
-		   that this won't run off the end of the data, so we don't have to
-		   check the index value */
-		for( j = 0; j < 5; j++ )
+		for( headerInfoIndex = 0;
+			 headerInfo[ headerInfoIndex ].type != certType && \
+				headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE && \
+				headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO );
+			 headerInfoIndex++ );
+		ENSURES( headerInfoIndex < FAILSAFE_ARRAYSIZE( headerInfo, HEADER_INFO ) );
+		ENSURES( headerInfo[ headerInfoIndex ].type != CRYPT_CERTTYPE_NONE );
+		status = swrite( &stream, headerInfo[ headerInfoIndex ].header, 
+						 headerInfo[ headerInfoIndex ].headerLen );
+		if( cryptStatusError( status ) )
 			{
-			const int ch = encVal[ i++ ];
-
-			if( !isAlnum( ch ) )
-				return( FALSE );
-			}
-		if( i < encValLength && encVal[ i++ ] != '-' )
-			return( FALSE );
-		}
-	return( TRUE );
-	}
-
-int adjustPKIUserValue( BYTE *value, const int noCodeGroups )
-	{
-	const int noBits = noCodeGroups * 25;
-	const int length = ( roundUp( noBits, 8 ) / 8 ) - 1;
-
-	assert( isWritePtr( value, roundUp( noCodeGroups * 25, 8 ) / 8 ) );
-
-	/* Mask off any bits at the end of the data that can't be encoded using
-	   the given number of code groups */
-	value[ length - 1 ] &= 0xFF << ( 8 - ( noBits % 8 ) );
-	return( length );
-	}
-
-int encodePKIUserValue( char *encVal, const int encValMaxLen,
-						const BYTE *value, const int noCodeGroups )
-	{
-	BYTE valBuf[ 128 + 8 ];
-	const int dataBytes = ( roundUp( noCodeGroups * 25, 8 ) / 8 );
-	int i, byteCount = 0, bitCount = 0, length;
-
-	assert( isReadPtr( value, dataBytes ) );
-	assert( dataBytes < 128 );
-
-	/* Copy across the data bytes, leaving a gap at the start for the
-	   checksum */
-	memcpy( valBuf + 1, value, dataBytes );
-	length = adjustPKIUserValue( valBuf + 1, noCodeGroups ) + 1;
-
-	/* Calculate the Fletcher checksum and prepend it to the data bytes
-	   This is easier than handling the addition of a non-byte-aligned
-	   quantity to the end of the data */
-	valBuf[ 0 ] = checksumData( valBuf + 1, length - 1 ) & 0xFF;
-
-	/* Encode the binary data as text */
-	for( length = 0, i = 1; i <= noCodeGroups * 5; i++ )
-		{
-		int chunkValue;
-
-		/* Extract the next 5-bit chunk and convert it to text form */
-		if( bitCount < 3 )
-			/* Everything's present in one byte, shift it down to the LSB */
-			chunkValue = ( valBuf[ byteCount ] >> ( 3 - bitCount ) ) & 0x1F;
-		else
-			if( bitCount == 3 )
-				/* It's the 5 LSB's */
-				chunkValue = valBuf[ byteCount ] & 0x1F;
-			else
-				/* The data spans two bytes, shift the bits from the high
-				   byte up and the bits from the low byte down */
-				chunkValue = ( ( valBuf[ byteCount ] & \
-								hiMask[ bitCount ] ) << ( bitCount - 3 ) ) | \
-							( ( valBuf[ byteCount + 1 ] & \
-								loMask[ bitCount ] ) >> ( 11 - bitCount ) );
-		encVal[ length++ ] = codeTable[ chunkValue ];
-		if( length < encValMaxLen && !( i % 5 ) && i < noCodeGroups * 5 )
-			encVal[ length++ ] = '-';
-		if( length >= encValMaxLen )
-			{
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_OVERFLOW );
-			}
-
-		/* Advance by 5 bits */
-		bitCount += 5;
-		if( bitCount >= 8 )
-			{
-			bitCount -= 8;
-			byteCount++;
+			sMemDisconnect( &stream );
+			return( status );
 			}
 		}
 
-	return( length );
-	}
-
-int decodePKIUserValue( BYTE *value, const int valueMaxLen,
-						const char *encVal, const int encValLength )
-	{
-	BYTE valBuf[ 128 + 8 ];
-	char encBuf[ CRYPT_MAX_TEXTSIZE + 8 ];
-	int i = 0, byteCount = 0, bitCount = 0, length = 0;
-
-	assert( isReadPtr( encVal, encValLength ) );
-
-	/* Make sure that the input has a reasonable length (this should have 
-	   been checked by the caller using isPKIUserValue(), so we throw an
-	   exception if the check fails).  We return CRYPT_ERROR_BADDATA rather 
-	   than the more obvious CRYPT_ERROR_OVERFLOW since something returned 
-	   from this low a level should be a consistent error code indicating 
-	   that there's a problem with the PKI user value as a whole */
-	if( encValLength < ( 3 * 5 ) || encValLength > CRYPT_MAX_TEXTSIZE )
+	/* Encode the data */
+	for( srcIndex = 0, lineByteCount = 0; 
+		 srcIndex < srcLen; 
+		 lineByteCount += 4 )
 		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_BADDATA );
-		}
+		const int srcLeft = srcLen - srcIndex;
 
-	/* Undo the formatting of the encoded value from XXXXX-XXXXX-XXXXX... 
-	   to XXXXXXXXXXXXXXX... */
-	while( i < encValLength )
-		{
-		int j;
-
-		for( j = 0; j < 5; j++ )
+		/* If we've reached the end of a line of binary data and it's a
+		   certificate object rather than a raw binary blob, add the EOL 
+		   marker */
+		if( certType != CRYPT_CERTTYPE_NONE && \
+			lineByteCount >= BASE64_LINESIZE )
 			{
-			const int ch = encVal[ i++ ];
-
-			/* Note that we've just incremented 'i', so the range check is
-			   '>' rather than '>=' */
-			if( !isAlnum( ch ) || i > encValLength )
-				return( CRYPT_ERROR_BADDATA );
-			encBuf[ length++ ] = toUpper( ch );
-			}
-		if( i < encValLength && encVal[ i++ ] != '-' )
-			return( CRYPT_ERROR_BADDATA );
-		}
-	if( length % 5 || length > CRYPT_MAX_TEXTSIZE )
-		return( CRYPT_ERROR_BADDATA );
-
-	/* Decode the text data into binary */
-	memset( valBuf, 0, 128 );
-	for( i = 0; i < length; i ++ )
-		{
-		const int ch = encBuf[ i ];
-		int chunkValue;
-
-		for( chunkValue = 0; chunkValue < 0x20; chunkValue++ )
-			if( codeTable[ chunkValue ] == ch )
-				break;
-		if( chunkValue >= 0x20 )
-			return( CRYPT_ERROR_BADDATA );
-
-		/* Extract the next 5-bit chunk and convert it to text form */
-		if( bitCount < 3 )
-			/* Everything's present in one byte, shift it up into position */
-			valBuf[ byteCount ] |= chunkValue << ( 3 - bitCount );
-		else
-			if( bitCount == 3 )
-				/* It's the 5 LSB's */
-				valBuf[ byteCount ] |= chunkValue;
-			else
+			status = swrite( &stream, EOL, EOL_LEN );
+			if( cryptStatusError( status ) )
 				{
-				/* The data spans two bytes, shift the bits from the high
-				   byte down and the bits from the low byte up */
-				valBuf[ byteCount ] |= \
-							( chunkValue >> ( bitCount - 3 ) ) & hiMask[ bitCount ];
-				valBuf[ byteCount + 1 ] = \
-							( chunkValue << ( 11 - bitCount ) ) & loMask[ bitCount ];
+				sMemDisconnect( &stream );
+				return( status );
 				}
-
-		/* Advance by 5 bits */
-		bitCount += 5;
-		if( bitCount >= 8 )
-			{
-			bitCount -= 8;
-			byteCount++;
+			lineByteCount = 0;
 			}
+
+		/* Encode a block of data from the input buffer */
+		sputc( &stream, encode( ( srcPtr[ srcIndex ] >> 2 ) & 0x3F ) );
+		if( srcLeft < 2 )
+			{
+			REQUIRES( remainder == 1 );
+			status = sputc( &stream, encode( ( srcPtr[ srcIndex ] << 4 ) & 0x30 ) );
+			break;
+			}
+		sputc( &stream, encode( ( ( srcPtr[ srcIndex ] << 4 ) & 0x30 ) | \
+								( ( srcPtr[ srcIndex + 1 ] >> 4 ) & 0x0F ) ) );
+		srcIndex++;
+		if( srcLeft < 3 )
+			{
+			REQUIRES( remainder == 2 );
+			status = sputc( &stream, encode( ( srcPtr[ srcIndex ] << 2 ) & 0x3C ) );
+			break;
+			}
+		sputc( &stream, encode( ( ( srcPtr[ srcIndex ] << 2 ) & 0x3C ) | \
+								( ( srcPtr[ srcIndex + 1 ] >> 6 ) & 0x03 ) ) );
+		srcIndex++;
+		status = sputc( &stream, encode( srcPtr[ srcIndex++ ] & 0x3F ) );
+		if( cryptStatusError( status ) )
+			break;
 		}
-
-	/* Calculate the Fletcher checksum and make sure that it matches the
-	   value at the start of the data bytes */
-	if( bitCount > 0 )
-		byteCount++;	/* More bits in the last partial byte */
-	if( valBuf[ 0 ] != ( checksumData( valBuf + 1, byteCount - 1 ) & 0xFF ) )
-		return( CRYPT_ERROR_BADDATA );
-
-	/* Return the decoded value to the caller */
-	if( value != NULL )
+	if( cryptStatusError( status ) )
 		{
-		if( byteCount - 1 > valueMaxLen )
-			{
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_BADDATA );
-			}
-		memcpy( value, valBuf + 1, byteCount - 1 );
+		sMemDisconnect( &stream );
+		return( status );
 		}
-	return( byteCount - 1 );
+
+	/* If it's a certificate object, add any required padding and the 
+	   trailer */
+	if( certType != CRYPT_CERTTYPE_NONE )
+		{
+		/* Add any necessary padding.  For 0 bytes of remainder there's no 
+		   padding (the data fits exactly), for 1 byte of remainder there's 
+		   2 bytes of padding ("X=="), and for 2 bytes of remainder there's 
+		   1 byte of padding ("XX=") */
+		if( remainder > 0 )
+			{
+			status = sputc( &stream, BPAD );
+			if( remainder == 1 )
+				status = sputc( &stream, BPAD );
+			if( cryptStatusError( status ) )
+				{
+				sMemDisconnect( &stream );
+				return( status );
+				}
+			}
+
+		/* Add the trailer */
+		swrite( &stream, EOL, EOL_LEN );
+		status = swrite( &stream, headerInfo[ headerInfoIndex ].trailer, 
+						 headerInfo[ headerInfoIndex ].trailerLen );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		}
+	*destLen = stell( &stream );
+	sMemDisconnect( &stream );
+
+	return( CRYPT_OK );
 	}

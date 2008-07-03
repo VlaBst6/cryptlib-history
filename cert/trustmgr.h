@@ -11,17 +11,29 @@
 
 /* Prototypes for certificate trust managemer functions */
 
-int initTrustInfo( void **trustInfoPtrPtr );
-void endTrustInfo( void *trustInfoPtr );
-int addTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCert,
-				   const void *certObject, const int certObjectLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initTrustInfo( OUT_PTR void **trustInfoPtrPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void endTrustInfo( INOUT void *trustInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int addTrustEntry( INOUT void *trustInfoPtr, 
+				   IN_HANDLE_OPT const CRYPT_CERTIFICATE iCryptCert,
+				   IN_BUFFER_OPT( certObjectLength ) const void *certObject, 
+				   IN_LENGTH_SHORT_Z const int certObjectLength,
 				   const BOOLEAN addSingleCert );
-void deleteTrustEntry( void *trustInfoPtr, void *entryToDelete );
-void *findTrustEntry( void *trustInfoPtr, const CRYPT_CERTIFICATE cryptCert,
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void deleteTrustEntry( INOUT void *trustInfoPtr, 
+					   INOUT void *entryToDeletePtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+void *findTrustEntry( INOUT void *trustInfoPtr, 
+					  IN_HANDLE const CRYPT_CERTIFICATE iCryptCert,
 					  const BOOLEAN getIssuerEntry );
-CRYPT_CERTIFICATE getTrustedCert( void *trustInfoPtr );
-int enumTrustedCerts( void *trustInfoPtr, const CRYPT_CERTIFICATE iCryptCtl,
-					  const CRYPT_KEYSET iCryptKeyset );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CRYPT_CERTIFICATE getTrustedCert( INOUT void *trustInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int enumTrustedCerts( INOUT void *trustInfoPtr, 
+					  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCryptCtl,
+					  IN_HANDLE_OPT const CRYPT_KEYSET iCryptKeyset );
 
 /* If certificates aren't available, we have to no-op out the cert trust
    manager functions */

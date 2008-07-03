@@ -166,48 +166,64 @@ static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
 
 static int selfTest( void )
 	{
-	const CAPABILITY_INFO *capabilityInfoPtr = getRSACapability();
-	CONTEXT_INFO contextInfoPtr;
-	PKC_INFO pkcInfoStorage, *pkcInfo;
+	CONTEXT_INFO contextInfo;
+	PKC_INFO contextData, *pkcInfo = &contextData;
 	BYTE buffer[ 128 + 8 ];
+	const CAPABILITY_INFO *capabilityInfoPtr;
 	int status;
 
 	/* Initialise the key components */
-	memset( &contextInfoPtr, 0, sizeof( CONTEXT_INFO ) );
-	memset( &pkcInfoStorage, 0, sizeof( PKC_INFO ) );
-	contextInfoPtr.ctxPKC = pkcInfo = &pkcInfoStorage;
-	BN_init( &pkcInfo->rsaParam_n );
-	BN_init( &pkcInfo->rsaParam_e );
-	BN_init( &pkcInfo->rsaParam_d );
-	BN_init( &pkcInfo->rsaParam_p );
-	BN_init( &pkcInfo->rsaParam_q );
-	BN_init( &pkcInfo->rsaParam_u );
-	BN_init( &pkcInfo->rsaParam_exponent1 );
-	BN_init( &pkcInfo->rsaParam_exponent2 );
-	BN_init( &pkcInfo->tmp1 );
-	BN_init( &pkcInfo->tmp2 );
-	BN_init( &pkcInfo->tmp3 );
-	pkcInfo->bnCTX = BN_CTX_new();
-	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_n );
-	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_p );
-	BN_MONT_CTX_init( &pkcInfo->rsaParam_mont_q );
-	contextInfoPtr.capabilityInfo = capabilityInfoPtr;
-	contextInfoPtr.type = CONTEXT_PKC;
-	initKeyRead( &contextInfoPtr );
-	initKeyWrite( &contextInfoPtr );	/* For calcKeyID() */
-	BN_bin2bn( rsaTestKey.n, rsaTestKey.nLen, &pkcInfo->rsaParam_n );
-	BN_bin2bn( rsaTestKey.e, rsaTestKey.eLen, &pkcInfo->rsaParam_e );
-	BN_bin2bn( rsaTestKey.d, rsaTestKey.dLen, &pkcInfo->rsaParam_d );
-	BN_bin2bn( rsaTestKey.p, rsaTestKey.pLen, &pkcInfo->rsaParam_p );
-	BN_bin2bn( rsaTestKey.q, rsaTestKey.qLen, &pkcInfo->rsaParam_q );
-	BN_bin2bn( rsaTestKey.u, rsaTestKey.uLen, &pkcInfo->rsaParam_u );
-	BN_bin2bn( rsaTestKey.e1, rsaTestKey.e1Len, &pkcInfo->rsaParam_exponent1 );
-	BN_bin2bn( rsaTestKey.e2, rsaTestKey.e2Len, &pkcInfo->rsaParam_exponent2 );
+	status = staticInitContext( &contextInfo, CONTEXT_PKC, 
+								getRSACapability(), &contextData, 
+								sizeof( PKC_INFO ), NULL );
+	if( cryptStatusError( status ) )
+		return( CRYPT_ERROR_FAILED );
+	status = extractBignum( &pkcInfo->rsaParam_n, rsaTestKey.n, 
+							rsaTestKey.nLen, RSAPARAM_MIN_N, 
+							RSAPARAM_MAX_N, NULL, TRUE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_e, rsaTestKey.e, 
+								rsaTestKey.eLen, RSAPARAM_MIN_E, 
+								RSAPARAM_MAX_E, &pkcInfo->rsaParam_n, 
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_d, rsaTestKey.d, 
+								rsaTestKey.dLen, RSAPARAM_MIN_D, 
+								RSAPARAM_MAX_D, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_p, rsaTestKey.p, 
+								rsaTestKey.pLen, RSAPARAM_MIN_P, 
+								RSAPARAM_MAX_P, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_q, rsaTestKey.q, 
+								rsaTestKey.qLen, RSAPARAM_MIN_Q, 
+								RSAPARAM_MAX_Q, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_u, rsaTestKey.u, 
+								rsaTestKey.uLen, RSAPARAM_MIN_U, 
+								RSAPARAM_MAX_U, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_exponent1, rsaTestKey.e1, 
+								rsaTestKey.e1Len, RSAPARAM_MIN_EXP1, 
+								RSAPARAM_MAX_EXP1, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusOK( status ) )
+		status = extractBignum( &pkcInfo->rsaParam_exponent2, rsaTestKey.e2, 
+								rsaTestKey.e2Len, RSAPARAM_MIN_EXP2, 
+								RSAPARAM_MAX_EXP2, &pkcInfo->rsaParam_n,
+								FALSE );
+	if( cryptStatusError( status ) )
+		retIntError();
 
 	/* Perform the test en/decryption of a block of data */
-	status = capabilityInfoPtr->initKeyFunction( &contextInfoPtr, NULL, 0 );
+	capabilityInfoPtr = contextInfo.capabilityInfo;
+	status = capabilityInfoPtr->initKeyFunction( &contextInfo, NULL, 0 );
 	if( cryptStatusOK( status ) && \
-		!pairwiseConsistencyTest( &contextInfoPtr ) )
+		!pairwiseConsistencyTest( &contextInfo ) )
 		status = CRYPT_ERROR_FAILED;
 	else
 		{
@@ -216,13 +232,13 @@ static int selfTest( void )
 		   test if it's being performed before the polling has completed */
 		memset( buffer, 0, rsaTestKey.nLen );
 		memcpy( buffer, "abcde", 5 );
-		contextInfoPtr.flags |= CONTEXT_SIDECHANNELPROTECTION;
-		status = capabilityInfoPtr->initKeyFunction( &contextInfoPtr, NULL, 0 );
+		contextInfo.flags |= CONTEXT_FLAG_SIDECHANNELPROTECTION;
+		status = capabilityInfoPtr->initKeyFunction( &contextInfo, NULL, 0 );
 		if( cryptStatusOK( status ) )
-			status = capabilityInfoPtr->encryptFunction( &contextInfoPtr,
+			status = capabilityInfoPtr->encryptFunction( &contextInfo,
 														 buffer, rsaTestKey.nLen );
 		if( cryptStatusOK( status ) )
-			status = capabilityInfoPtr->decryptFunction( &contextInfoPtr,
+			status = capabilityInfoPtr->decryptFunction( &contextInfo,
 														 buffer, rsaTestKey.nLen );
 		if( cryptStatusError( status ) || memcmp( buffer, "abcde", 5 ) )
 			status = CRYPT_ERROR_FAILED;
@@ -232,12 +248,12 @@ static int selfTest( void )
 			   works */
 			memset( buffer, 0, rsaTestKey.nLen );
 			memcpy( buffer, "abcde", 5 );
-			status = capabilityInfoPtr->initKeyFunction( &contextInfoPtr, NULL, 0 );
+			status = capabilityInfoPtr->initKeyFunction( &contextInfo, NULL, 0 );
 			if( cryptStatusOK( status ) )
-				status = capabilityInfoPtr->encryptFunction( &contextInfoPtr,
+				status = capabilityInfoPtr->encryptFunction( &contextInfo,
 															 buffer, rsaTestKey.nLen );
 			if( cryptStatusOK( status ) )
-				status = capabilityInfoPtr->decryptFunction( &contextInfoPtr,
+				status = capabilityInfoPtr->decryptFunction( &contextInfo,
 															 buffer, rsaTestKey.nLen );
 			if( cryptStatusError( status ) || memcmp( buffer, "abcde", 5 ) )
 				status = CRYPT_ERROR_FAILED;
@@ -245,23 +261,7 @@ static int selfTest( void )
 		}
 
 	/* Clean up */
-	BN_clear_free( &pkcInfo->rsaParam_n );
-	BN_clear_free( &pkcInfo->rsaParam_e );
-	BN_clear_free( &pkcInfo->rsaParam_d );
-	BN_clear_free( &pkcInfo->rsaParam_p );
-	BN_clear_free( &pkcInfo->rsaParam_q );
-	BN_clear_free( &pkcInfo->rsaParam_u );
-	BN_clear_free( &pkcInfo->rsaParam_exponent1 );
-	BN_clear_free( &pkcInfo->rsaParam_exponent2 );
-	BN_clear_free( &pkcInfo->tmp1 );
-	BN_clear_free( &pkcInfo->tmp2 );
-	BN_clear_free( &pkcInfo->tmp3 );
-	BN_CTX_free( pkcInfo->bnCTX );
-	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_n );
-	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_p );
-	BN_MONT_CTX_free( &pkcInfo->rsaParam_mont_q );
-	zeroise( &pkcInfoStorage, sizeof( PKC_INFO ) );
-	zeroise( &contextInfoPtr, sizeof( CONTEXT_INFO ) );
+	staticDestroyContext( &contextInfo );
 
 	return( status );
 	}
@@ -282,35 +282,30 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BIGNUM *n = &pkcInfo->rsaParam_n, *e = &pkcInfo->rsaParam_e;
 	BIGNUM *data = &pkcInfo->tmp1;
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
-	int i, offset, bnStatus = BN_STATUS;
+	int offset, dummy, bnStatus = BN_STATUS, status;
 
 	assert( noBytes == length );
 
-	/* Make sure that we're not being fed suspiciously short data
-	   quantities */
-	for( i = 0; i < length; i++ )
-		if( buffer[ i ] != 0 )
-			break;
-	if( length - i < MIN_PKCSIZE - 8 )
-		return( CRYPT_ERROR_BADDATA );
-
 	/* Move the data from the buffer into a bignum */
-	CKPTR( BN_bin2bn( buffer, length, data ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
+	status = extractBignum( data, buffer, length, 
+							MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, n, FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Perform the modexp and move the result back into the buffer.  Since 
 	   the bignum code performs leading-zero truncation, we have to adjust 
 	   where we copy the result to in the buffer to take into account extra 
-	   zero bytes that aren't extracted from the bignum */
+	   zero bytes that aren't extracted from the bignum.  In addition we 
+	   can't use the length returned from getBignumData() because this is 
+	   the length of the zero-truncated result, not the full length */
 	CK( BN_mod_exp_mont( data, data, e, n, pkcInfo->bnCTX,
 						 &pkcInfo->rsaParam_mont_n ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 	offset = length - BN_num_bytes( data );
 	if( offset > 0 )
 		memset( buffer, 0, offset );
-	BN_bn2bin( data, buffer + offset );
-
-	return( getBnStatus( bnStatus ) );
+	return( getBignumData( data, buffer + offset, noBytes - offset, &dummy ) );
 	}
 
 /* Use the Chinese Remainder Theorem shortcut for RSA decryption/signature
@@ -369,30 +364,35 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	BIGNUM *e2 = &pkcInfo->rsaParam_exponent2;
 	BIGNUM *data = &pkcInfo->tmp1, *p2 = &pkcInfo->tmp2, *q2 = &pkcInfo->tmp3;
 	const int length = bitsToBytes( pkcInfo->keySizeBits );
-	int i, iterationCount = 0, offset, bnStatus = BN_STATUS;
+	int iterationCount, offset, dummy, bnStatus = BN_STATUS, status;
 
 	assert( noBytes == length );
 
-	/* Make sure that we're not being fed suspiciously short data quantities.
-	   We need to make one unfortunate exception for this to handle SSL's
-	   weird signatures, which sign a raw concatenated MD5 and SHA-1 hash
-	   with a total length of 36 bytes */
-	for( i = 0; i < length; i++ )
-		if( buffer[ i ] != 0 )
-			break;
-	if( ( length - i < MIN_PKCSIZE - 8 ) && \
-		( length - i ) != 36 )
+	/* Move the data from the buffer into a bignum.  We need to make an 
+	   unfortunate exception to the valid-length check for SSL's weird 
+	   signatures, which sign a raw concatenated MD5 and SHA-1 hash with a 
+	   total length of 36 bytes */
+	status = extractBignum( data, buffer, length, 36, CRYPT_MAX_PKCSIZE, 
+							&pkcInfo->rsaParam_n, FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( BN_num_bytes( data ) != 36 && \
+		BN_num_bytes( data ) < MIN_PKCSIZE - 8 )
+		{
+		/* If it's not the weird SSL signature and it's outside the valid 
+		   length range, reject it */
 		return( CRYPT_ERROR_BADDATA );
-
-	CKPTR( BN_bin2bn( buffer, length, data ) );
-	if( bnStatusError( bnStatus ) )
-		return( getBnStatus( bnStatus ) );
+		}
 
 	/* If we're blinding the RSA operation, set
 	   data = ( ( rand^e ) * data ) mod n */
-	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION )
+		{
 		CK( BN_mod_mul( data, data, &pkcInfo->rsaParam_blind_k,
 						&pkcInfo->rsaParam_n, pkcInfo->bnCTX ) );
+		if( bnStatusError( bnStatus ) )
+			return( getBnStatus( bnStatus ) );
+		}
 
 	/* Rather than decrypting by computing a modexp with full mod n
 	   precision, compute a shorter modexp with mod p and mod q precision:
@@ -413,7 +413,9 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   cases (q2 large, p2 small) we have to add p twice to get p2
 	   positive */
 	CK( BN_sub( p2, p2, q2 ) );
-	while( p2->neg && iterationCount++ < FAILSAFE_ITERATIONS_SMALL )
+	for( iterationCount = 0;
+		 p2->neg && iterationCount < FAILSAFE_ITERATIONS_SMALL;
+		 iterationCount++ )
 		{
 		CK( BN_add( p2, p2, p ) );
 		if( bnStatusError( bnStatus ) )
@@ -434,36 +436,45 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* If we're blinding the RSA operation, set
 	   data = ( ( data^e ) / rand ) mod n
 			= ( rand^-1 * data ) mod n */
-	if( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION )
 		{
 		BIGNUM *n = &pkcInfo->rsaParam_n;
 		BIGNUM *k = &pkcInfo->rsaParam_blind_k;
 		BIGNUM *kInv = &pkcInfo->rsaParam_blind_kInv;
 
 		CK( BN_mod_mul( data, data, kInv, n, pkcInfo->bnCTX ) );
+		if( bnStatusError( bnStatus ) )
+			return( getBnStatus( bnStatus ) );
 
 		/* Update the blinding values in such a way that we get new random
 		   (that is, unpredictable to an outsider) numbers of the correct
 		   form without having to do a full modexp as we would if starting
 		   with new random data:
 
-			k = ( k^2 ) mod n */
+			k = ( k^2 ) mod n 
+		
+		   In theory we could replace the random blinding value periodically
+		   in order to avoid an attacker being able to build up stats on it 
+		   and the values derived from it, but it seems unlikely that they 
+		   can do much with this and leads to problems of its own since the
+		   process of calculating the new blinding value is itself 
+		   susceptible to side-channel attacks */
 		CK( BN_mod_mul( k, k, k, n, pkcInfo->bnCTX ) );
 		CK( BN_mod_mul( kInv, kInv, kInv, n, pkcInfo->bnCTX ) );
 		if( bnStatusError( bnStatus ) )
 			return( getBnStatus( bnStatus ) );
 		}
 
-	/* Copy the result to the output buffer.  Since the bignum code performs
-	   leading-zero truncation, we have to adjust where we copy the result
-	   to in the buffer to take into account extra zero bytes that aren't
-	   extracted from the bignum */
+	/* Copy the result to the output.  Since the bignum code performs
+	   leading-zero truncation, we have to adjust where we copy the
+	   result to in the buffer to take into account extra zero bytes
+	   that aren't extracted from the bignum.  In addition we can't use
+	   the length returned from getBignumData() because this is the 
+	   length of the zero-truncated result, not the full length */
 	offset = length - BN_num_bytes( data );
 	if( offset > 0 )
 		memset( buffer, 0, offset );
-	BN_bn2bin( data, buffer + offset );
-
-	return( getBnStatus( bnStatus ) );
+	return( getBignumData( data, buffer + offset, noBytes - offset, &dummy ) );
 	}
 
 /****************************************************************************
@@ -486,32 +497,54 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{
 		PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 		const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) key;
-		int bnStatus = BN_STATUS;
 
 		contextInfoPtr->flags |= ( rsaKey->isPublicKey ) ? \
-							CONTEXT_ISPUBLICKEY : CONTEXT_ISPRIVATEKEY;
-		CKPTR( BN_bin2bn( rsaKey->n, bitsToBytes( rsaKey->nLen ),
-						  &pkcInfo->rsaParam_n ) );
-		CKPTR( BN_bin2bn( rsaKey->e, bitsToBytes( rsaKey->eLen ),
-						  &pkcInfo->rsaParam_e ) );
+							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
+		status = extractBignum( &pkcInfo->rsaParam_n, rsaKey->n, 
+								bitsToBytes( rsaKey->nLen ), 
+								RSAPARAM_MIN_N, RSAPARAM_MAX_N, NULL, TRUE );
+		if( cryptStatusOK( status ) )
+			status = extractBignum( &pkcInfo->rsaParam_e, rsaKey->e, 
+									bitsToBytes( rsaKey->eLen ),
+									RSAPARAM_MIN_E, RSAPARAM_MAX_E,
+									&pkcInfo->rsaParam_n, FALSE );
+		if( cryptStatusOK( status ) )
 		if( !rsaKey->isPublicKey )
 			{
-			CKPTR( BN_bin2bn( rsaKey->d, bitsToBytes( rsaKey->dLen ),
-							  &pkcInfo->rsaParam_d ) );
-			CKPTR( BN_bin2bn( rsaKey->p, bitsToBytes( rsaKey->pLen ),
-							  &pkcInfo->rsaParam_p ) );
-			CKPTR( BN_bin2bn( rsaKey->q, bitsToBytes( rsaKey->qLen ),
-							  &pkcInfo->rsaParam_q ) );
-			CKPTR( BN_bin2bn( rsaKey->u, bitsToBytes( rsaKey->uLen ),
-							  &pkcInfo->rsaParam_u ) );
-			CKPTR( BN_bin2bn( rsaKey->e1, bitsToBytes( rsaKey->e1Len ),
-							  &pkcInfo->rsaParam_exponent1 ) );
-			CKPTR( BN_bin2bn( rsaKey->e2, bitsToBytes( rsaKey->e2Len ),
-							  &pkcInfo->rsaParam_exponent2 ) );
+			if( cryptStatusOK( status ) && rsaKey->dLen > 0 )
+				status = extractBignum( &pkcInfo->rsaParam_d, rsaKey->d, 
+										bitsToBytes( rsaKey->dLen ),
+										RSAPARAM_MIN_D, RSAPARAM_MAX_D,
+										&pkcInfo->rsaParam_n, FALSE );
+			if( cryptStatusOK( status ) )
+				status = extractBignum( &pkcInfo->rsaParam_p, rsaKey->p, 
+										bitsToBytes( rsaKey->pLen ),
+										RSAPARAM_MIN_P, RSAPARAM_MAX_P,
+										&pkcInfo->rsaParam_n, FALSE );
+			if( cryptStatusOK( status ) )
+				status = extractBignum( &pkcInfo->rsaParam_q, rsaKey->q, 
+										bitsToBytes( rsaKey->qLen ),
+										RSAPARAM_MIN_Q, RSAPARAM_MAX_Q,
+										&pkcInfo->rsaParam_n, FALSE );
+			if( cryptStatusOK( status ) && rsaKey->uLen > 0 )
+				status = extractBignum( &pkcInfo->rsaParam_u, rsaKey->u, 
+										bitsToBytes( rsaKey->uLen ),
+										RSAPARAM_MIN_U, RSAPARAM_MAX_U,
+										&pkcInfo->rsaParam_n, FALSE );
+			if( cryptStatusOK( status ) && rsaKey->e1Len > 0 )
+				status = extractBignum( &pkcInfo->rsaParam_exponent1, rsaKey->e1, 
+										bitsToBytes( rsaKey->e1Len ),
+										RSAPARAM_MIN_EXP1, RSAPARAM_MAX_EXP1,
+										&pkcInfo->rsaParam_n, FALSE );
+			if( cryptStatusOK( status ) && rsaKey->e2Len > 0 )
+				status = extractBignum( &pkcInfo->rsaParam_exponent2, rsaKey->e2, 
+										bitsToBytes( rsaKey->e2Len ),
+										RSAPARAM_MIN_EXP2, RSAPARAM_MAX_EXP2,
+										&pkcInfo->rsaParam_n, FALSE );
 			}
-		contextInfoPtr->flags |= CONTEXT_PBO;
-		if( bnStatusError( bnStatus ) )
-			return( getBnStatus( bnStatus ) );
+		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 #endif /* USE_FIPS140 */
 
@@ -531,11 +564,11 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 	status = generateRSAkey( contextInfoPtr, keySizeBits );
 	if( cryptStatusOK( status ) &&
 #ifndef USE_FIPS140
-		( contextInfoPtr->flags & CONTEXT_SIDECHANNELPROTECTION ) &&
+		( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) &&
 #endif /* USE_FIPS140 */
 		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )
@@ -550,7 +583,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA",
+	CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA", 3,
 	MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE,
 	selfTest, getDefaultInfo, NULL, NULL, initKey, generateKey, encryptFn, decryptFn,
 	NULL, NULL, NULL, NULL, NULL, NULL, decryptFn, encryptFn

@@ -20,6 +20,10 @@
 
 #ifdef TEST_KEYSET
 
+/* A certificate containing an email address */
+
+#define EMAIL_ADDR_CERT		14
+
 /* Some LDAP keyset names and names of probably-present certs and CRLs.
    These keysets (and their contents) come and go, so we have a variety of
    them and try them in turn until something works.  There's a list of more
@@ -78,8 +82,10 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, keysetType,
 							  keysetName, CRYPT_KEYOPT_READONLY );
 	if( status == CRYPT_ERROR_PARAM3 )
+		{
 		/* This type of keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
@@ -195,15 +201,22 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	/* Import the certificate from a file - this is easier than creating one
 	   from scratch.  We use one of the later certs in the text set, since
 	   this contains an email address, which the earlier ones don't */
-	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 15 );
-	if( cryptStatusOK( status ) )
-		/* Make sure that the cert contains an email address */
-		status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
-										  name, &length );
+	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 
+									 EMAIL_ADDR_CERT );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Couldn't read certificate from file, status %d, line %d.\n",
 				status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Make sure that the cert does actually contain an email address */
+	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
+									  name, &length );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Certificate doesn't contain an email address and can't be "
+				"used for testing,\n  line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 
@@ -482,7 +495,8 @@ int testReadCert( void )
 
 	/* Get the DN from one of the test certs (the one that we wrote to the
 	   keyset earlier with testKeysetWrite() */
-	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 15 );
+	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 
+									 EMAIL_ADDR_CERT );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Couldn't read certificate from file, status %d, line %d.\n",
@@ -935,11 +949,11 @@ int testReadCertURL( void )
 
 	/* Test fetching a huge CRL from a URL, to check the ability to read
 	   arbitrary-length HTTP data */
-#if 0	/* This is usually disabled because of the CRL size */
+#if 1	/* We allow this to be disabled because of the CRL size */
 	puts( "Testing HTTP mega-CRL read from URL..." );
 	status = testKeysetRead( CRYPT_KEYSET_HTTP, HTTP_KEYSET_HUGECRL_NAME,
-							 CRYPT_KEYID_NAME, "[none]", CRYPT_CERTTYPE_CRL,
-							 READ_OPTION_NORMAL );
+							 CRYPT_KEYID_NAME, TEXT( "[none]" ), 
+							 CRYPT_CERTTYPE_CRL, READ_OPTION_NORMAL );
 	if( status == CRYPT_ERROR_NOTAVAIL )	/* HTTP keyset access not avail.*/
 		return( CRYPT_ERROR_NOTAVAIL );
 	if( !status )

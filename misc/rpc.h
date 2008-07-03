@@ -52,7 +52,6 @@ typedef enum {
 	COMMAND_CERTSIGN,			/* Sign certificate */
 	COMMAND_CERTCHECK,			/* Check signature on certificate */
 	COMMAND_CERTMGMT,			/* CA cert management operation */
-	COMMAND_ASYNCOP,			/* Async keygen op */
 	COMMAND_LAST				/* Last command type */
 	} COMMAND_TYPE;
 
@@ -150,9 +149,6 @@ typedef enum {
 		word: handle				word: status
 		word: caKey					word: new cert (optional)
 		word: certRequest
-	COMMAND_ASYNCOP
-		word: handle				word: status
-		word: get status/cancel op
 
 	DBX_COMMAND_OPEN:
 		word: options				word: status

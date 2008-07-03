@@ -69,8 +69,8 @@ static int getPGPPublicKey( const KEYFILE_TYPE keyFileType,
 								getKeyfileUserID( keyFileType, FALSE ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPublicKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -143,8 +143,8 @@ static int getPGPPrivateKey( const KEYFILE_TYPE keyFileType,
 		}
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 
@@ -236,8 +236,8 @@ int testGetBorkenKey( void )
  								 TEXT( "test" ), NULL );
 /*	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext ); */
@@ -288,8 +288,8 @@ static int readFileKey( const BOOLEAN useRSA )
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 
@@ -386,8 +386,8 @@ static int writeFileKey( const BOOLEAN useRSA, const BOOLEAN useAltKeyfile,
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 
@@ -437,6 +437,15 @@ int testReadBigFileKey( void )
 	/* Open the file keyset */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  BIG_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
+	if( status == CRYPT_ERROR_OVERFLOW )
+		{
+		/* Depending on the setting of MAX_PKCS15_OBJECTS this keyset may 
+		   contain too many keys to be read, if we get an overflow error we
+		   continue normally */
+		printf( "Keyset contains too many items to read, line %d.\n  (This "
+				"is an expected condition, continuing...).\n", __LINE__ );
+		return( TRUE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
@@ -450,8 +459,8 @@ int testReadBigFileKey( void )
 								 TEXT( "password" ) );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -495,8 +504,8 @@ int testReadFilePublicKey( void )
 								RSA_PRIVKEY_LABEL );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptGetPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPublicKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetAttribute( cryptContext, CRYPT_CTXINFO_ALGO, &cryptAlgo );
@@ -552,8 +561,8 @@ static int readCert( const char *certTypeName,
 									 TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusError( status ) )
 			{
-			printf( "cryptGetPrivateKey() failed with error code %d, line "
-					"%d.\n", status, __LINE__ );
+			printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+						   __LINE__ );
 			return( FALSE );
 			}
 		status = cryptGetAttribute( cryptContext, CRYPT_CERTINFO_CERTTYPE,
@@ -585,8 +594,8 @@ static int readCert( const char *certTypeName,
 									RSA_PRIVKEY_LABEL : USER_PRIVKEY_LABEL );
 		if( cryptStatusError( status ) )
 			{
-			printf( "cryptGetPublicKey() failed with error code %d, line %d.\n",
-					status, __LINE__ );
+			printExtError( cryptKeyset, "cryptGetPublicKey()", status, 
+						   __LINE__ );
 			return( FALSE );
 			}
 		status = cryptGetAttribute( cryptCert, CRYPT_CERTINFO_CERTTYPE, &value );
@@ -678,8 +687,8 @@ int testAddTrustedCert( void )
 	status = cryptAddPublicKey( cryptKeyset, trustedCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPublicKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptSetAttribute( trustedCert, CRYPT_CERTINFO_TRUSTED_IMPLICIT, value );
@@ -806,8 +815,8 @@ int testUpdateFileCert( void )
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPublicKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyCert( cryptCert );
@@ -837,8 +846,10 @@ static int writeFileCertChain( const CERT_DATA *certRequestData,
 	int status;
 
 	if( isTestRun )
+		{
 		printf( "Testing %scert chain write to key file ...\n",
 				writeLongChain ? "long " : "" );
+		}
 
 	/* Generate a key to certify.  We can't just reuse the built-in test key
 	   because this has already been used as the CA key and the keyset code
@@ -887,8 +898,8 @@ static int writeFileCertChain( const CERT_DATA *certRequestData,
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 
@@ -928,8 +939,8 @@ static int writeFileCertChain( const CERT_DATA *certRequestData,
 	status = cryptAddPublicKey( cryptKeyset, cryptCertChain );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	if( certFileName != NULL )
@@ -1019,8 +1030,8 @@ int testDeleteFileKey( void )
 							 DSA_PRIVKEY_LABEL );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptDeleteKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptDeletePrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetPublicKey( cryptKeyset, &cryptContext, CRYPT_KEYID_NAME,
@@ -1082,8 +1093,8 @@ int testChangeFileKeyPassword( void )
 									 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Password change failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "password change", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -1152,15 +1163,15 @@ static int writeSingleStepFileCert( const BOOLEAN useAltKeyfile )
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -1178,9 +1189,9 @@ static int writeSingleStepFileCert( const BOOLEAN useAltKeyfile )
 		cryptDestroyContext( cryptContext );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Private key read from in-memory cached keyset data "
-					"failed with error code %d,\n line %d.\n", status,
-					__LINE__ );
+			printExtError( cryptKeyset, 
+						   "private key read from in-memory cached keyset data", 
+						   status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -1206,8 +1217,9 @@ static int writeSingleStepFileCert( const BOOLEAN useAltKeyfile )
 		cryptDestroyContext( cryptContext );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Private key read from on-disk keyset data failed with "
-					"error code %d, line %d.\n", status, __LINE__ );
+			printExtError( cryptKeyset, 
+						   "private key read from on-disk keyset data", 
+						   status, __LINE__ );
 			return( FALSE );
 			}
 		}
@@ -1365,8 +1377,8 @@ int testDoubleCertFile( void )
 									 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptSigCert );
@@ -1374,8 +1386,8 @@ int testDoubleCertFile( void )
 		status = cryptAddPublicKey( cryptKeyset, cryptEncryptCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPublicKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptKeysetClose( cryptKeyset );
@@ -1465,8 +1477,8 @@ int testDoubleCertFile( void )
 		}
 	if( cryptStatusError( status ) )
 		{
-		printf( "Private key read failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 
@@ -1484,7 +1496,7 @@ int testRenewedCertFile( void )
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cryptOldCert, cryptNewCert;
 	CRYPT_CONTEXT cryptCAKey, cryptContext;
-	time_t writtenValidTo, readValidTo;
+	time_t writtenValidTo = 0 /* Dummy */, readValidTo;
 	int dummy, status;
 
 	puts( "Testing renewed certificate write to key file..." );
@@ -1581,8 +1593,8 @@ int testRenewedCertFile( void )
 								 TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPrivateKey() failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPrivateKey()", status, 
+					   __LINE__ );
 		return( FALSE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptOldCert );
@@ -1590,8 +1602,9 @@ int testRenewedCertFile( void )
 		status = cryptAddPublicKey( cryptKeyset, cryptNewCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() (in-memory update) failed with error "
-				"code %d, line %d.\n", status, __LINE__ );
+		printExtError( cryptKeyset, 
+					   "cryptAddPublicKey() (in-memory update)", 
+					   status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptKeysetClose( cryptKeyset );
@@ -1627,8 +1640,8 @@ int testRenewedCertFile( void )
 		status = cryptAddPublicKey( cryptKeyset, cryptNewCert );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptAddPublicKey() (on-disk update) failed with error "
-				"code %d, line %d.\n", status, __LINE__ );
+		printExtError( cryptKeyset, "cryptAddPublicKey() (on-disk update)", 
+					   status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptKeysetClose( cryptKeyset );
@@ -1666,10 +1679,12 @@ int testRenewedCertFile( void )
 		printf( "Returned cert != latest valid cert, diff.= %d %s, line "
 				"%d.\n", ( diff % 60 ) ? diff : diff / 60, units, __LINE__ );
 		if( diff == 3600 || diff ==  -3600 )
+			{
 			/* See the comment on DST issues in testcert.c */
 			puts( "  (This is probably due to a difference between DST at "
 				  "cert creation and DST\n   now, and isn't a serious "
 				  "problem)." );
+			}
 		else
 			return( FALSE );
 		}
@@ -1688,6 +1703,52 @@ int testRenewedCertFile( void )
 	return( TRUE );
 	}
 #endif /* WinCE */
+
+/* Test reading various non-cryptlib PKCS #15 files */
+
+int testReadMiscFile( void )
+	{
+	CRYPT_KEYSET cryptKeyset;
+/*	CRYPT_CONTEXT cryptContext; */
+	BYTE filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+	void *fileNamePtr = filenameBuffer;
+	int status;
+
+	puts( "Testing miscellaneous key file read..." );
+
+	filenameFromTemplate( filenameBuffer, MISC_PRIVKEY_FILE_TEMPLATE, 1 );
+#ifdef UNICODE_STRINGS
+	mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+	fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
+							  fileNamePtr, CRYPT_KEYOPT_READONLY );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Couldn't open/scan keyset, status %d, line %d.\n", 
+				status, __LINE__ );
+		return( FALSE );
+		}
+#if 0
+	status = cryptGetPrivateKey( cryptKeyset, &cryptContext, 
+								 CRYPT_KEYID_NAME, 
+								 TEXT( "56303156793b318327b25a84808f2cb311c55b0b" ), 
+								 TEXT( "PASSWORD" ) );
+	if( cryptStatusError( status ) )
+		{
+		printExtError( cryptKeyset, "cryptGetPrivateKey()", status, 
+					   __LINE__ );
+		return( FALSE );
+		}
+#endif /* 0 */
+	cryptKeysetClose( cryptKeyset );
+
+	puts( "Renewed certificate write to key file succeeded.\n" );
+	return( TRUE );
+	}
 
 /****************************************************************************
 *																			*
@@ -1732,7 +1793,9 @@ static int createCAKeyFile( void )
 	FILE *filePtr;
 	BYTE certBuffer[ BUFFER_SIZE ];
 	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifndef _WIN32_WCE	/* Windows CE doesn't support ANSI C time functions */
 	const time_t validity = time( NULL ) + ( 86400L * 365 * 3 );
+#endif /* _WIN32_WCE */
 	int length, status;
 
 	/* Create a self-signed CA certificate */
@@ -1755,6 +1818,7 @@ static int createCAKeyFile( void )
 	if( !addCertFields( cryptCert, cACertData, __LINE__ ) )
 		return( CRYPT_ERROR_FAILED );
 
+#ifndef _WIN32_WCE	/* Windows CE doesn't support ANSI C time functions */
 	/* Make it valid for 5 years instead of 1 to avoid problems when users
 	   run the self-test with very old copies of the code */
 	cryptSetAttributeString( cryptCert,
@@ -1763,6 +1827,7 @@ static int createCAKeyFile( void )
 		status = cryptSignCert( cryptCert, cryptContext );
 	if( cryptStatusError( status ) )
 		return( status );
+#endif /* _WIN32_WCE */
 
 	/* Open the keyset, update it with the certificate, and close it */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
@@ -1900,6 +1965,10 @@ static const CERT_DATA FAR_BSS userCertRequestData[] = {
 int createTestKeys( void )
 	{
 	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+	void *fileNamePtr = filenameBuffer;
 	int status;
 
 	puts( "Creating custom key files..." );
@@ -1929,8 +1998,12 @@ int createTestKeys( void )
 		{
 		printf( "done.\nSCEP CA key..." );
 		filenameFromTemplate( filenameBuffer, SCEP_CA_FILE_TEMPLATE, 1 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
 		if( !writeFileCertChain( scepCACertRequestData, SCEPCA_PRIVKEY_FILE,
-								 filenameBuffer, FALSE, FALSE ) )
+								 fileNamePtr, FALSE, FALSE ) )
 			status = CRYPT_ERROR_FAILED;
 		}
 	if( cryptStatusOK( status ) )

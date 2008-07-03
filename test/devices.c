@@ -289,9 +289,12 @@ static const CERT_DATA userKeyAgreeCertData[] = {
 static void deleteTestKey( const CRYPT_DEVICE cryptDevice,
 						   const C_STR keyName, const char *keyDescription )
 	{
-	if( cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME, keyName ) == CRYPT_OK )
+	if( cryptDeleteKey( cryptDevice, CRYPT_KEYID_NAME, \
+						keyName ) == CRYPT_OK && keyDescription != NULL )
+		{
 		printf( "(Deleted a %s key object, presumably a leftover from a "
 				"previous run).\n", keyDescription );
+		}
 	}
 
 /* Create a key and certificate in a device */
@@ -337,8 +340,11 @@ static BOOLEAN createKey( const CRYPT_DEVICE cryptDevice,
 
 	/* Create a certificate for the key */
 	printf( "Generating a certificate for the key..." );
-	cryptCreateCert( &cryptCert, CRYPT_UNUSED, ( isCA ) ? \
-					 CRYPT_CERTTYPE_CERTIFICATE : CRYPT_CERTTYPE_CERTCHAIN );
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED, ( isCA ) ? \
+								CRYPT_CERTTYPE_CERTIFICATE : \
+								CRYPT_CERTTYPE_CERTCHAIN );
+	if( cryptStatusError( status ) )
+		return( FALSE );
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
@@ -569,8 +575,10 @@ static BOOLEAN initialiseDevice( const CRYPT_DEVICE cryptDevice,
 		printf( "Loading PAA certificate..." );
 		if( !loadDSAContexts( CRYPT_UNUSED, &signContext, NULL ) )
 			return( FALSE );
-		cryptCreateCert( &cryptCert, CRYPT_UNUSED,
-						 CRYPT_CERTTYPE_CERTIFICATE );
+		status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+								  CRYPT_CERTTYPE_CERTIFICATE );
+		if( cryptStatusError( status ) )
+			return( FALSE );
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
 		if( cryptStatusOK( status ) && \
@@ -702,11 +710,12 @@ static BOOLEAN testPersistentObject( const CRYPT_DEVICE cryptDevice )
 		}
 
 	/* Make it a persistent object and load a key */
-	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL, 
-							 SYMMETRIC_KEY_LABEL, 
-							 strlen( SYMMETRIC_KEY_LABEL ) );
-	status = cryptSetAttribute( cryptContext, CRYPT_CTXINFO_PERSISTENT, 
-								TRUE );
+	status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL, 
+									  SYMMETRIC_KEY_LABEL, 
+									  strlen( SYMMETRIC_KEY_LABEL ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptContext, CRYPT_CTXINFO_PERSISTENT, 
+									TRUE );
 	if( cryptStatusError( status ) )
 		{
 		printf( "\nCouldn't make device context persistent, status = %d, "
@@ -759,8 +768,11 @@ static BOOLEAN testPersistentObject( const CRYPT_DEVICE cryptDevice )
 		return( FALSE );
 	puts( " succeeded." );
 
-	/* Clean up */		
+	/* Clean up.  Unlike the public/private keys which are reused for 
+	   various tests, this object isn't really useful for anything else so 
+	   we always clean it up once we're done */
 	cryptDestroyContext( cryptContext );
+	deleteTestKey( cryptDevice, SYMMETRIC_KEY_LABEL, NULL );
 	return( TRUE );
 	}
 
@@ -793,12 +805,14 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 										 TEXT( "Test CA key" ), NULL );
 			}
 		else
+			{
 			/* CryptoAPI can only store one private key per provider so we
 			   can't have both a CA key and user key in the same "device".
 			   Because of this we have to use the fixed CA key to issue the
 			   cert */
 			status = getPrivateKey( &sigKeyContext, CA_PRIVKEY_FILE,
 									CA_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+			}
 		if( cryptStatusError( status ) )
 			{
 			printf( "\nRead of CA key failed with error code %d, line %d.\n",
@@ -921,6 +935,8 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 		char emailAddress[ CRYPT_MAX_TEXTSIZE + 1 ];
 		int length;
 
+		if( !testEnvelopePKCCryptEx( pubKeyContext, cryptDevice ) )
+			return( FALSE );
 		if( !testCMSEnvelopePKCCryptEx( pubKeyContext, cryptDevice, 
 										password, NULL ) )
 			return( FALSE );
@@ -1260,79 +1276,6 @@ static BOOLEAN setConnectInfo( const CRYPT_SESSION cryptSession,
 	return( TRUE );
 	}
 
-/* Run a persistent server session, recycling the connection if the client
-   kept the link open */
-
-static int activatePersistentServerSession( const CRYPT_SESSION cryptSession )
-	{
-	BOOLEAN connectionActive = FALSE;
-	int status;
-
-	puts( "Running (persistent) CMP server session." );
-	do
-		{
-		/* Activate the connection */
-		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE,
-									TRUE );
-		if( status == CRYPT_ERROR_READ && connectionActive )
-			/* The other side closed the connection after a previous
-			   successful transaction, this isn't an error */
-			return( CRYPT_OK );
-
-		/* Print connection info */
-		if( !connectionActive )
-			{
-			time_t theTime;
-			char serverName[ 128 ];
-			int serverNameLength, serverPort, nameStatus;
-
-			time( &theTime );
-			nameStatus = cryptGetAttributeString( cryptSession,
-											CRYPT_SESSINFO_CLIENT_NAME,
-											serverName, &serverNameLength );
-			if( cryptStatusOK( nameStatus ) )
-				{
-				serverName[ serverNameLength ] = '\0';
-				cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CLIENT_PORT,
-								   &serverPort );
-				printf( "Connect attempt from %s, port %d, on %s",
-						serverName, serverPort, ctime( &theTime ) );
-				}
-			}
-		if( cryptStatusOK( status ) )
-			{
-			char userID[ CRYPT_MAX_TEXTSIZE ];
-			int userIDsize, requestType;
-
-			status = cryptGetAttribute( cryptSession,
-										CRYPT_SESSINFO_CMP_REQUESTTYPE,
-										&requestType );
-			if( cryptStatusOK( status ) )
-				status = cryptGetAttributeString( cryptSession,
-											CRYPT_SESSINFO_USERNAME,
-											userID, &userIDsize );
-			if( cryptStatusError( status ) )
-				printf( "cryptGetAttribute/AttributeString() failed with "
-						"error code %d, line %d.\n", status, __LINE__ );
-			else
-				{
-				userID[ userIDsize ] = '\0';
-				printf( "CA operation type was %d, user '%s'.\n",
-						requestType, userID );
-				}
-			}
-
-		/* Check whether the connection is still active.  If it is, we
-		   recycle the session so that we can process another request */
-		cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
-						   &connectionActive );
-		}
-	while( cryptStatusOK( status ) && connectionActive );
-	puts( "CMP server session completed." );
-
-	return( status );
-	}
-
 /* Create a CA cert in a device */
 
 static const CERT_DATA rootCACertData[] = {
@@ -1387,7 +1330,10 @@ static int createCACert( const CRYPT_DEVICE cryptDevice )
 
 	/* Create a certificate for the key */
 	printf( "Generating a CA certificate for the key..." );
-	cryptCreateCert( &cryptCert, CRYPT_UNUSED, CRYPT_CERTTYPE_CERTIFICATE );
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED, 
+							  CRYPT_CERTTYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		return( FALSE );
 	status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
 	if( cryptStatusOK( status ) && \
@@ -1582,8 +1528,10 @@ static int initDevice( const CRYPT_DEVICE cryptDevice,
 		printf( "Loading PAA certificate..." );
 		if( !loadDSAContexts( CRYPT_UNUSED, &signContext, NULL ) )
 			return( FALSE );
-		cryptCreateCert( &cryptCert, CRYPT_UNUSED,
-						 CRYPT_CERTTYPE_CERTIFICATE );
+		status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+								  CRYPT_CERTTYPE_CERTIFICATE );
+		if( cryptStatusError( status ) )
+			return( FALSE );
 		status = cryptSetAttribute( cryptCert,
 						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, signContext );
 		if( cryptStatusOK( status ) && \
@@ -1846,7 +1794,7 @@ static int pnpServer( const CRYPT_DEVICE cryptDevice,
 	puts( " done." );
 
 	/* Activate the session */
-	status = activatePersistentServerSession( cryptSession );
+	status = activatePersistentServerSession( cryptSession, TRUE );
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptSession, "Attempt to activate CMP "
 							  "server session", status, __LINE__ ) );

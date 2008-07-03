@@ -28,7 +28,8 @@
 #endif /* 0 */
 #if 1
 #define TEST_SESSION		/* Test session functions */
-/*#define TEST_USER			/* Test user management functions */
+#define TEST_SESSION_LOOPBACK/* Test session functions via local loopback */
+/*#define TEST_USER			// Test user management functions */
 #endif /* 0 */
 
 /* The crypto device tests are disabled by default since relatively few users
@@ -199,6 +200,13 @@
   #define FAR_BSS
 #endif /* Win16 */
 
+/* VC++ 2005 and newer warn if we use non-TR 24731 stdlib functions, since 
+   this is only for the test code we disable the warnings */
+
+#if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+  #pragma warning( disable: 4996 )
+#endif /* VC++ 2005 or newer */
+
 /* Generic buffer size and dynamically-allocated file I/O buffer size.  The
    generic buffer has to be of a reasonable size so that we can handle 
    S/MIME signature chains, the file buffer should be less than the 16-bit 
@@ -212,7 +220,7 @@
   #define BUFFER_SIZE			8192
   #define FILEBUFFER_SIZE		20000
 #else
-  #define BUFFER_SIZE			8192
+  #define BUFFER_SIZE			16384
   #define FILEBUFFER_SIZE		32768
 #endif /* __MSDOS__ && __TURBOC__ */
 #define FILENAME_BUFFER_SIZE	512
@@ -247,7 +255,8 @@
 /* Try and detect OSes that have threading support, this is needed for some
    operations like async keygen and sleep calls */
 
-#if( ( defined( _AIX ) || defined( __APPLE__ ) || defined( __linux__ ) || \
+#if( ( defined( _AIX ) || defined( __APPLE__ ) || defined( __FreeBSD__ ) || \
+	   defined( __NetBSD__ ) || defined( __linux__ ) || \
 	   ( defined( sun ) && ( OSVERSION > 4 ) ) ) && !defined( NO_THREADS ) )
   #define UNIX_THREADS
 
@@ -269,6 +278,38 @@
 #if defined( __IBMC__ ) && defined( __OS2__ )
   #define OS2_THREADS
 #endif /* OS/2 */
+
+/* The loopback sessions require threading support so we only enable their
+   use if this is present */
+
+#if defined( TEST_SESSION_LOOPBACK ) && !defined( WINDOWS_THREADS )
+  #undef TEST_SESSION_LOOPBACK
+#endif /* OSes with threading support */
+
+/* Define various portable data types and functions needed for the threaded
+   loopback tests */
+
+#if defined( WINDOWS_THREADS )
+  #define THREAD_HANDLE		HANDLE
+  #define THREAD_EXIT()		_endthreadex( 0 ); return( 0 )
+  #define THREAD_SELF()		GetCurrentThreadId()
+  typedef unsigned ( __stdcall *THREAD_FUNC )( void *arg );
+#elif defined( UNIX_THREADS )
+  #define THREAD_HANDLE		pthread_t
+  #define THREAD_EXIT()		pthread_exit( ( void * ) 0 ); return( 0 )
+  #define THREAD_SELF()		pthread_self()
+  typedef void * ( *THREAD_FUNC )( void *arg );
+#else
+  #define THREAD_HANDLE		int
+  #define THREAD_EXIT()
+  #define THREAD_SELF()		0
+  typedef void ( *THREAD_FUNC )( void *arg );
+#endif /* OS-specific threading functions */
+
+/* The maximum number of threads that we can fire up in the multithreaded 
+   tests */
+
+#define MAX_NO_THREADS		10
 
 /* Try and detect OSes that have widechar support */
 
@@ -356,7 +397,7 @@ typedef struct {
    different key files to use.  The following types are handled in the test
    code */
 
-typedef enum { KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
+typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
 			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES,
 			   KEYFILE_OPENPGP_RSA, KEYFILE_NAIPGP,
 			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
@@ -461,6 +502,7 @@ int importCertFromTemplate( CRYPT_CERTIFICATE *cryptCert,
 int addCertFields( const CRYPT_CERTIFICATE certificate,
 				   const CERT_DATA *certData, const int lineNo );
 int checkFileAccess( void );
+int checkNetworkAccess( void );
 int getPublicKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 				  const C_STR keyName );
 int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
@@ -471,11 +513,16 @@ int printConnectInfo( const CRYPT_SESSION cryptSession );
 int printSecurityInfo( const CRYPT_SESSION cryptSession,
 					   const BOOLEAN isServer,
 					   const BOOLEAN showFingerprint );
+int printFingerprint( const CRYPT_SESSION cryptSession,
+					  const BOOLEAN isServer );
 BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port );
+int activatePersistentServerSession( const CRYPT_SESSION cryptSession,
+									 const BOOLEAN showOperationType );
 
 /* Threading support functions, in utils.c */
 
 void createMutex( void );
+void acquireMutex( void );
 void releaseMutex( void );
 int waitMutex( void );
 void destroyMutex( void );
@@ -486,6 +533,8 @@ void destroyMutex( void );
 #else
   void waitForThread( const int hThread );
 #endif /* Systems with threading support */
+int multiThreadDispatch( THREAD_FUNC clientFunction,
+						 THREAD_FUNC serverFunction, const int noThreads );
 
 /* Exit with an error message, in utils.c.  attrErrorExit() prints the
    locus and type, extErrorExit() prints the extended error code and
@@ -503,6 +552,8 @@ BOOLEAN extErrorExit( const CRYPT_HANDLE cryptHandle,
 BOOLEAN certErrorExit( const CRYPT_HANDLE cryptHandle,
 					   const char *functionName, const int errorCode,
 					   const int lineNumber );
+int setRootTrust( const CRYPT_CERTIFICATE cryptCertChain,
+				  BOOLEAN *oldTrustValue, const BOOLEAN newTrustValue );
 
 /* Prototypes for functions in testlib.c */
 
@@ -557,6 +608,8 @@ int testRSAMinimalKey( void );
 
 /* Prototypes for functions in envelope.c */
 
+int testEnvelopePKCCryptEx( const CRYPT_CONTEXT cryptContext, 
+							const CRYPT_HANDLE decryptKeyset );
 int testCMSEnvelopeSignEx( const CRYPT_CONTEXT signContext );
 int testCMSEnvelopePKCCryptEx( const CRYPT_HANDLE encryptContext,
 							   const CRYPT_HANDLE decryptKeyset,
@@ -565,6 +618,14 @@ int testCMSEnvelopePKCCryptEx( const CRYPT_HANDLE encryptContext,
 /* Prototypes for functions in sreqresp.c */
 
 int testSessionTSPServerEx( const CRYPT_CONTEXT privKeyContext );
+
+/* Prototypes for functions in s_scep.c */
+
+int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, C_STR userName );
+int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey, 
+				   CRYPT_KEYSET *cryptCertStore, const C_STR keyFileName,
+				   const C_STR keyLabel, const CERT_DATA *pkiUserData,
+				   const CERT_DATA *pkiUserCAData, const char *protocolName );
 
 /****************************************************************************
 *																			*
@@ -614,6 +675,7 @@ int testSingleStepFileCert( void );
 int testSingleStepAltFileCert( void );
 int testDoubleCertFile( void );
 int testRenewedCertFile( void );
+int testReadMiscFile( void );
 
 /* Prototypes for functions in keydbx.c */
 
@@ -643,6 +705,7 @@ int testEnvelopeSign( void );
 int testEnvelopeSignOverflow( void );
 int testPGPEnvelopeSignedDataImport( void );
 int testEnvelopeAuthenticate( void );
+int testEnvelopeAuthEnc( void );
 int testCMSEnvelopePKCCrypt( void );
 int testCMSEnvelopePKCCryptDoubleCert( void );
 int testCMSEnvelopePKCCryptImport( void );
@@ -694,6 +757,7 @@ int testCertManagement( void );
    functionality is by using it to timestamp an S/MIME signature) */
 
 int testSessionSCEP( void );
+int testSessionSCEPCACert( void );
 int testSessionSCEPServer( void );
 int testSessionCMP( void );
 int testSessionCMPServer( void );
@@ -714,7 +778,6 @@ int testSessionTSPServer( void );
 
 int testSessionUrlParse( void );
 int testSessionAttributes( void );
-int testSessionSSHMultiServer( void );
 int testSessionSSHv1( void );
 int testSessionSSH( void );
 int testSessionSSHClientCert( void );
@@ -744,7 +807,7 @@ int testSessionTLS12( void );
 /* Functions to test local client/server sessions.  These require threading
    support since they run the client and server in different threads */
 
-#ifdef WINDOWS_THREADS
+#ifdef TEST_SESSION_LOOPBACK
   int testSessionSSHv1ClientServer( void );
   int testSessionSSHClientServer( void );
   int testSessionSSHClientServerFingerprint( void );
@@ -752,6 +815,8 @@ int testSessionTLS12( void );
   int testSessionSSHClientServerPortForward( void );
   int testSessionSSHClientServerExec( void );
   int testSessionSSHClientServerMultichannel( void );
+  int testSessionSSHClientServerDualThread( void );
+  int testSessionSSHClientServerMultiThread( void );
   int testSessionSSLClientServer( void );
   int testSessionSSLClientCertClientServer( void );
   int testSessionTLSClientServer( void );
@@ -759,47 +824,22 @@ int testSessionTLS12( void );
   int testSessionTLSNoSharedKeyClientServer( void );
   int testSessionTLSBulkTransferClientServer( void );
   int testSessionTLS11ClientServer( void );
+  int testSessionTLSClientServerDualThread( void );
+  int testSessionTLSClientServerMultiThread( void );
   int testSessionHTTPCertstoreClientServer( void );
   int testSessionRTCSClientServer( void );
   int testSessionOCSPClientServer( void );
   int testSessionTSPClientServer( void );
   int testSessionTSPClientServerPersistent( void );
   int testSessionSCEPClientServer( void );
+  int testSessionSCEPCACertClientServer( void );
   int testSessionCMPClientServer( void );
   int testSessionCMPPKIBootClientServer( void );
   int testSessionPNPPKIClientServer( void );
   int testSessionPNPPKIDeviceClientServer( void );
   int testSessionPNPPKICAClientServer( void );
   int testSessionPNPPKIIntermedCAClientServer( void );
-#else
-  #define testSessionSSHv1ClientServer()			TRUE
-  #define testSessionSSHClientServer()				TRUE
-  #define testSessionSSHClientServerFingerprint()	TRUE
-  #define testSessionSSHClientServerSFTP()			TRUE
-  #define testSessionSSHClientServerPortForward()	TRUE
-  #define testSessionSSHClientServerExec()			TRUE
-  #define testSessionSSHClientServerMultichannel()	TRUE
-  #define testSessionSSLClientServer()				TRUE
-  #define testSessionSSLClientCertClientServer()	TRUE
-  #define testSessionTLSClientServer()				TRUE
-  #define testSessionTLSSharedKeyClientServer()		TRUE
-  #define testSessionTLSNoSharedKeyClientServer()	TRUE
-  #define testSessionTLSBulkTransferClientServer()	TRUE
-  #define testSessionTLS11ClientServer()			TRUE
-  #define testSessionHTTPCertstoreClientServer()	TRUE
-  #define testSessionRTCSClientServer()				TRUE
-  #define testSessionOCSPClientServer()				TRUE
-  #define testSessionTSPClientServer()				TRUE
-  #define testSessionTSPClientServerPersistent()	TRUE
-  #define testSessionSCEPClientServer()				TRUE
-  #define testSessionCMPClientServer()				TRUE
-  #define testSessionCMPCAClientServer()			TRUE
-  #define testSessionCMPPKIBootClientServer()		TRUE
-  #define testSessionPNPPKIClientServer()			TRUE
-  #define testSessionPNPPKIDeviceClientServer()		TRUE
-  #define testSessionPNPPKICAClientServer()			TRUE
-  #define testSessionPNPPKIIntermedCAClientServer()	TRUE
-#endif /* WINDOWS_THREADS */
+#endif /* TEST_SESSION_LOOPBACK */
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   #pragma convlit( resume )

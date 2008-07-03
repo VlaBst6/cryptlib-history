@@ -71,6 +71,8 @@
   #include "bn/bn_lcl.h"
 #endif /* Compiler-specific includes */
 
+#ifndef BN_ASM 
+
 #if defined(BN_LLONG) || defined(BN_UMULT_HIGH)
 
 BN_ULONG bn_mul_add_words(BN_ULONG *rp, const BN_ULONG *ap, int num, BN_ULONG w)
@@ -835,3 +837,5 @@ void bn_mul_comba8(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 	}
 
 #endif /* !BN_MUL_COMBA */
+
+#endif /* !BN_ASM */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib PKCS #15 Read Routines						*
-*						Copyright Peter Gutmann 1996-2006					*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -25,7 +25,7 @@
 
 static const OID_INFO FAR_BSS dataOIDinfo[] = {
 	{ OID_CMS_DATA, CRYPT_OK },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 /****************************************************************************
@@ -38,19 +38,25 @@ static const OID_INFO FAR_BSS dataOIDinfo[] = {
    PKCS #11 use of the 'derive' flag to mean 'allow key agreement' is a bit
    of a kludge, we map it to allowing keyagreement export and import if it's
    a key-agreement algorithm, if there are further constraints they'll be
-   handled by the attached cert.  The PKCS #15 nonRepudiation flag doesn't
-   have any definition so we can't do anything with it, although we may need
-   to translate it to allowing signing and/or verification if implementations
-   appear that expect it to be used this way */
+   handled by the attached certificate.  The PKCS #15 nonRepudiation flag 
+   doesn't have any definition so we can't do anything with it, although we 
+   may need to translate it to allowing signing and/or verification if 
+   implementations appear that expect it to be used this way */
 
-static int getPermittedActions( const int usageFlags,
-								const CRYPT_ALGO_TYPE cryptAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getPermittedActions( IN_FLAGS( PKCS15_USAGE ) const int usageFlags,
+								IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+								OUT_FLAGS_Z( ACTION ) int *usage )
 	{
-	int actionFlags = 0;
+	int actionFlags = ACTION_PERM_NONE_ALL;
 
-	assert( usageFlags >= 0 );
-	assert( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( usageFlags >= PKSC15_USAGE_FLAG_NONE && \
+			  usageFlags < PKCS15_USAGE_FLAG_MAX );
+	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+
+	/* Clear return value */
+	*usage = ACTION_PERM_NONE;
 
 	if( usageFlags & ( PKCS15_USAGE_ENCRYPT | PKCS15_USAGE_WRAP ) )
 		actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_ALL );
@@ -65,7 +71,7 @@ static int getPermittedActions( const int usageFlags,
 					   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_ALL );
 	if( cryptAlgo == CRYPT_ALGO_RSA )
 		{
-		/* If there are any restrictions on the key usage, we have to make it
+		/* If there are any restrictions on the key usage we have to make it
 		   internal-only because of RSA's signature/encryption duality */
 		if( !( ( usageFlags & ( PKCS15_USAGE_ENCRYPT | PKCS15_USAGE_WRAP | \
 								PKCS15_USAGE_DECRYPT | PKCS15_USAGE_UNWRAP ) ) && \
@@ -73,29 +79,35 @@ static int getPermittedActions( const int usageFlags,
 			actionFlags = MK_ACTION_PERM_NONE_EXTERNAL( actionFlags );
 		}
 	else
+		{
 		/* Because of the special-case data formatting requirements for DLP
-		   algorithms, we make the usage internal-only */
+		   algorithms we make the usage internal-only */
 		actionFlags = MK_ACTION_PERM_NONE_EXTERNAL( actionFlags );
+		}
+	if( actionFlags <= ACTION_PERM_NONE_ALL )
+		return( CRYPT_ERROR_PERMISSION );
+	*usage = actionFlags;
 
-	return( ( actionFlags <= 0 ) ? CRYPT_ERROR_PERMISSION : actionFlags );
+	return( CRYPT_OK );
 	}
 
 /* Copy any new object ID information that we've just read across to the 
-   object info */
+   object information */
 
-static void copyObjectIdInfo( PKCS15_INFO *pkcs15infoPtr, 
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static void copyObjectIdInfo( INOUT PKCS15_INFO *pkcs15infoPtr, 
 							  const PKCS15_INFO *pkcs15objectInfo )
 	{
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( isReadPtr( pkcs15objectInfo, sizeof( PKCS15_INFO ) ) );
 
 	/* If any new ID information has become available, copy it over.  The 
-	   keyID defaults to the iD, so we only copy the newly-read keyID over 
-	   if it's something other than the existing iD */
+	   keyID defaults to the iD so we only copy the newly-read keyID over if 
+	   it's something other than the existing iD */
 	if( pkcs15objectInfo->keyIDlength > 0 && \
-		pkcs15infoPtr->iDlength != pkcs15objectInfo->keyIDlength || \
-		memcmp( pkcs15infoPtr->iD, pkcs15objectInfo->keyID,
-				pkcs15objectInfo->keyIDlength ) )
+		( pkcs15infoPtr->iDlength != pkcs15objectInfo->keyIDlength || \
+		  memcmp( pkcs15infoPtr->iD, pkcs15objectInfo->keyID,
+				  pkcs15objectInfo->keyIDlength ) ) )
 		{
 		memcpy( pkcs15infoPtr->keyID, pkcs15objectInfo->keyID,
 				pkcs15objectInfo->keyIDlength );
@@ -134,17 +146,22 @@ static void copyObjectIdInfo( PKCS15_INFO *pkcs15infoPtr,
 	}
 
 /* Copy any new object payload information that we've just read across to 
-   the object info */
+   the object information */
 
-static void copyObjectPayloadInfo( PKCS15_INFO *pkcs15infoPtr, 
-								   const PKCS15_INFO *pkcs15objectInfo,
-								   const void *object, const int objectLength,
-								   const PKCS15_OBJECT_TYPE type )
+STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int copyObjectPayloadInfo( INOUT PKCS15_INFO *pkcs15infoPtr, 
+								  const PKCS15_INFO *pkcs15objectInfo,
+								  IN_BUFFER( objectLength ) const void *object, 
+								  IN_LENGTH_SHORT const int objectLength,
+								  IN_ENUM( PKCS15_OBJECT ) \
+									const PKCS15_OBJECT_TYPE type )
 	{
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( isReadPtr( pkcs15objectInfo, sizeof( PKCS15_INFO ) ) );
 	assert( isReadPtr( object, objectLength ) );
-	assert( type > PKCS15_OBJECT_NONE && type < PKCS15_OBJECT_LAST );
+
+	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( type > PKCS15_OBJECT_NONE && type < PKCS15_OBJECT_LAST );
 
 	switch( type )
 		{
@@ -175,7 +192,10 @@ static void copyObjectPayloadInfo( PKCS15_INFO *pkcs15infoPtr,
 			break;
 
 		case PKCS15_OBJECT_SECRETKEY:
-			assert( NOTREACHED );
+			/* We don't try and return an error for this, it's not something
+			   that we can make use of but if it's ever reached it just ends 
+			   up as an empty (non-useful) object entry */
+			assert( DEBUG_WARN );
 			break;
 
 		case PKCS15_OBJECT_DATA:
@@ -187,11 +207,14 @@ static void copyObjectPayloadInfo( PKCS15_INFO *pkcs15infoPtr,
 			break;
 
 		default:
-			/* We don't try and return an error for this, it's a fault 
-			   condition but if it's ever reached it just ends up as an 
-			   empty (non-useful) object entry */
-			assert( NOTREACHED );
+			/* We don't try and return an error for this, it's not something
+			   that we can make use of but if it's ever reached it just ends 
+			   up as an empty (non-useful) object entry */
+			assert( DEBUG_WARN );
+			break;
 		}
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -202,15 +225,18 @@ static void copyObjectPayloadInfo( PKCS15_INFO *pkcs15infoPtr,
 
 /* Read public-key components from a PKCS #15 object entry */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 7, 8, 9, 10, 11 ) ) \
 int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
-							 const CRYPT_KEYSET iCryptKeysetCallback,
-							 const CRYPT_KEYID_TYPE keyIDtype,
-							 const void *keyID, const int keyIDlength,
+							 IN_HANDLE const CRYPT_KEYSET iCryptKeysetCallback,
+							 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							 IN_BUFFER( keyIDlength ) const void *keyID, 
+							 IN_LENGTH_KEYID const int keyIDlength,
 							 const BOOLEAN publicComponentsOnly,
-							 CRYPT_CONTEXT *iCryptContextPtr,
-							 CRYPT_CERTIFICATE *iDataCertPtr,
-							 int *pubkeyActionFlags, 
-							 int *privkeyActionFlags )
+							 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContextPtr,
+							 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iDataCertPtr,
+							 OUT_FLAGS_Z( ACTION ) int *pubkeyActionFlags, 
+							 OUT_FLAGS_Z( ACTION ) int *privkeyActionFlags, 
+							 INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	CRYPT_CONTEXT iCryptContext;
@@ -219,46 +245,58 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	int status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
-	assert( isHandleRangeValid( iCryptKeysetCallback ) );
-	assert( keyIDtype == CRYPT_KEYID_NAME || \
-			keyIDtype == CRYPT_KEYID_URI || \
-			keyIDtype == CRYPT_IKEYID_KEYID || \
-			keyIDtype == CRYPT_IKEYID_PGPKEYID || \
-			keyIDtype == CRYPT_IKEYID_ISSUERID );
 	assert( isReadPtr( keyID, keyIDlength ) );
 	assert( isWritePtr( iCryptContextPtr, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isWritePtr( iDataCertPtr, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isWritePtr( pubkeyActionFlags, sizeof( int ) ) );
 	assert( isWritePtr( privkeyActionFlags, sizeof( int ) ) );
 
+	REQUIRES( isHandleRangeValid( iCryptKeysetCallback ) );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || \
+			  keyIDtype == CRYPT_KEYID_URI || \
+			  keyIDtype == CRYPT_IKEYID_KEYID || \
+			  keyIDtype == CRYPT_IKEYID_PGPKEYID || \
+			  keyIDtype == CRYPT_IKEYID_ISSUERID );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( errorInfo != NULL );
+
 	/* Clear return values */
 	*iCryptContextPtr = CRYPT_ERROR;
 	*iDataCertPtr = CRYPT_ERROR;
-	*pubkeyActionFlags = *privkeyActionFlags = 0;
+	*pubkeyActionFlags = *privkeyActionFlags = ACTION_PERM_NONE;
 
-	/* If we're creating a public-key context we create the cert or PKC 
-	   context normally, if we're creating a private-key context we create 
-	   a data-only cert (if there's cert information present) and a partial 
-	   PKC context ready to accept the private key components.  If there's a 
-	   cert present we take all of the info we need from the cert, otherwise 
-	   we use the public-key data */
+	/* If we're creating a public-key context we create the certificate or 
+	   PKC context normally, if we're creating a private-key context we 
+	   create a data-only certificate (if there's certificate information 
+	   present) and a partial PKC context ready to accept the private key 
+	   components.  If there's a certificate present then we take all of the 
+	   information that we need from the certificate, otherwise we use the 
+	   public-key data */
 	if( pkcs15infoPtr->certData != NULL )
 		{
 		/* There's a certificate present, import it and reconstruct the
-		   public-key info from it if we're creating a partial PKC context */
+		   public-key information from it if we're creating a partial PKC 
+		   context */
 		status = iCryptImportCertIndirect( &iCryptContext,
 								iCryptKeysetCallback, keyIDtype, keyID,
 								keyIDlength, publicComponentsOnly ? \
 									KEYMGMT_FLAG_NONE : \
 									KEYMGMT_FLAG_DATAONLY_CERT );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status, 
+					( status, errorInfo, 
+					  "Couldn't recreate certificate from stored "
+					  "certificate data" ) );
+			}
 		if( !publicComponentsOnly )
 			{
 			DYNBUF pubKeyDB;
 
-			/* We got the cert, now create the public part of the context 
-			   from the cert's encoded public-key components */
+			/* We got the certificate, now create the public part of the 
+			   context from the certificate's encoded public-key 
+			   components */
 			iDataCert = iCryptContext;
 			status = dynCreate( &pubKeyDB, iDataCert, 
 								CRYPT_IATTRIBUTE_SPKI );
@@ -273,51 +311,65 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 			if( cryptStatusError( status ) )
 				{
 				krnlSendNotifier( iDataCert, IMESSAGE_DECREFCOUNT );
-				return( status );
+				retExt( status, 
+						( status, errorInfo, 
+						  "Couldn't recreate public key from "
+						  "certificate" ) );
 				}
 			}
 		}
 	else
 		{
+		const int pubKeyStartOffset = pkcs15infoPtr->pubKeyOffset;
+		const int pubKeyTotalSize = pkcs15infoPtr->pubKeyDataSize;
+
 		/* There's no certificate present, create the public-key context
 		   directly */
-		sMemConnect( &stream, ( BYTE * ) pkcs15infoPtr->pubKeyData + \
-						pkcs15infoPtr->pubKeyOffset,
-					 pkcs15infoPtr->pubKeyDataSize - \
-						pkcs15infoPtr->pubKeyOffset );
+		REQUIRES( rangeCheck( pubKeyStartOffset, 
+							  pubKeyTotalSize - pubKeyStartOffset,
+							  pubKeyTotalSize ) );
+		sMemConnect( &stream, 
+					 ( BYTE * ) pkcs15infoPtr->pubKeyData + pubKeyStartOffset,
+					 pubKeyTotalSize - pubKeyStartOffset );
 		status = iCryptReadSubjectPublicKey( &stream, &iCryptContext,
 											 !publicComponentsOnly );
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status, 
+					( status, errorInfo, 
+					  "Couldn't recreate public key from stored public key "
+					  "data" ) );
+			}
 		}
 
 	/* Get the permitted usage flags for each object type that we'll be
 	   instantiating.  If there's a public key present we apply its usage
 	   flags to whichever PKC context we create, even if it's done indirectly
-	   via the cert import.  Since the private key can also perform the
-	   actions of the public key, we set its action flags to the union of the
-	   two */
+	   via the certificate import.  Since the private key can also perform 
+	   the actions of the public key we set its action flags to the union of 
+	   the two */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
 							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusOK( status ) && pkcs15infoPtr->pubKeyData != NULL )
 		{
-		status = getPermittedActions( pkcs15infoPtr->pubKeyUsage, cryptAlgo );
-		if( !cryptStatusError( status ) )
-			*pubkeyActionFlags = status;
+		status = getPermittedActions( pkcs15infoPtr->pubKeyUsage, cryptAlgo,
+									  pubkeyActionFlags );
 		}
-	if( !cryptStatusError( status ) && !publicComponentsOnly )
+	if( cryptStatusOK( status ) && !publicComponentsOnly )
 		{
-		status = getPermittedActions( pkcs15infoPtr->privKeyUsage, cryptAlgo );
-		if( !cryptStatusError( status ) )
-			*privkeyActionFlags = status | *pubkeyActionFlags;
+		status = getPermittedActions( pkcs15infoPtr->privKeyUsage, cryptAlgo,
+									  privkeyActionFlags );
 		}
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
 		if( iDataCert != CRYPT_ERROR )
 			krnlSendNotifier( iDataCert, IMESSAGE_DECREFCOUNT );
-		return( status );
+		retExt( status, 
+				( status, errorInfo, 
+				  "Public/private key usage flags don't allow any type of "
+				  "key usage" ) );
 		}
 
 	/* Return the newly-created objects to the caller */
@@ -334,10 +386,12 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 
 /* Read private-key components from a PKCS #15 object entry */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
-							  const CRYPT_CONTEXT iCryptContext,
-							  const void *password, 
-							  const int passwordLength )
+							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							  IN_BUFFER( passwordLength ) const void *password, 
+							  IN_LENGTH_NAME const int passwordLength, 
+							  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CONTEXT iSessionKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -345,22 +399,43 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	MESSAGE_DATA msgData;
 	QUERY_INFO queryInfo, contentQueryInfo;
 	STREAM stream;
-	const void *encryptedKey, *encryptedContent;
-	int encryptedContentLength;
-	int status;
+	const int privKeyStartOffset = pkcs15infoPtr->privKeyOffset;
+	const int privKeyTotalSize = pkcs15infoPtr->privKeyDataSize;
+	void *encryptedKey, *encryptedContent = DUMMY_INIT_PTR;
+	int encryptedContentLength = DUMMY_INIT;
+	int tag, status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
 	assert( isReadPtr( password, passwordLength ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( passwordLength >= MIN_NAME_LENGTH && \
+			  passwordLength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( errorInfo != NULL );
 
 	/* Skip the outer wrapper, version number, and header for the SET OF 
 	   EncryptionInfo, and query the exported key information to determine 
 	   the parameters required to reconstruct the decryption key */
+	REQUIRES( rangeCheck( privKeyStartOffset, 
+						  privKeyTotalSize - privKeyStartOffset,
+						  privKeyTotalSize ) );
 	sMemConnect( &stream,
-				 ( BYTE * ) pkcs15infoPtr->privKeyData + \
-							pkcs15infoPtr->privKeyOffset,
-				 pkcs15infoPtr->privKeyDataSize - \
-				 pkcs15infoPtr->privKeyOffset );
+				 ( BYTE * ) pkcs15infoPtr->privKeyData + privKeyStartOffset,
+				 privKeyTotalSize - privKeyStartOffset );
+	tag = status = peekTag( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( tag == CTAG_OV_FUTUREUSE )
+		{
+		/* Future versions of cryptlib will use AuthEnvelopedData to protect
+		   keys which will presumably be identified with a new tag because
+		   CTAG_OV_DIRECTPROTECTED implies EnvelopedData.  For forwards-
+		   compatibility we check for this tag and warn the user about it */
+		retExt( CRYPT_ERROR_NOTAVAIL, 
+				( CRYPT_ERROR_NOTAVAIL, errorInfo, 
+				  "Key is protected using AuthEnvelopedData, this requires "
+				  "a newer version of cryptlib to process" ) );
+		}
 	readConstructed( &stream, NULL, CTAG_OV_DIRECTPROTECTED );
 	readShortInteger( &stream, NULL );
 	readSet( &stream, NULL );
@@ -371,47 +446,54 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		return( status );
+		zeroise( &queryInfo, sizeof( QUERY_INFO ) );
+		retExt( status, 
+				( status, errorInfo, 
+				  "Invalid encrypted key data header" ) );
 		}
-	encryptedKey = sMemBufPtr( &stream );
-	status = readUniversal( &stream );	/* Skip the exported key */
+	status = sMemGetDataBlock( &stream, &encryptedKey, queryInfo.size );
+	if( cryptStatusOK( status ) )
+		status = readUniversal( &stream );	/* Skip the exported key */
 	if( cryptStatusError( status ) )
 		{
-		zeroise( &queryInfo, sizeof( QUERY_INFO ) );
 		sMemDisconnect( &stream );
+		zeroise( &queryInfo, sizeof( QUERY_INFO ) );
 		return( status );
 		}
 
 	/* Read the header for the encrypted key and make sure that all of the
 	   data is present in the stream */
-	status = readCMSencrHeader( &stream, dataOIDinfo, &iSessionKey,
-								&contentQueryInfo );
+	status = readCMSencrHeader( &stream, dataOIDinfo, 
+								FAILSAFE_ARRAYSIZE( dataOIDinfo, OID_INFO ), 
+								&iSessionKey, &contentQueryInfo );
 	if( cryptStatusOK( status ) )
 		{
-		encryptedContent = sMemBufPtr( &stream );
 		encryptedContentLength = contentQueryInfo.size;
-		if( encryptedContentLength == CRYPT_UNUSED || \
-			encryptedContentLength < MIN_OBJECT_SIZE )
+		status = sMemGetDataBlock( &stream, &encryptedContent, 
+								   encryptedContentLength );
+		if( cryptStatusOK( status ) && \
+			( encryptedContentLength == CRYPT_UNUSED || \
+			  encryptedContentLength < MIN_OBJECT_SIZE || \
+			  encryptedContentLength > MAX_INTLENGTH_SHORT ) )
+			{
 			/* Indefinite length or too-small object */
 			status = CRYPT_ERROR_BADDATA;
-		else
-			if( encryptedContentLength > sMemDataLeft( &stream ) )
-				status = CRYPT_ERROR_UNDERFLOW;
+			}
 		}
 	zeroise( &contentQueryInfo, sizeof( QUERY_INFO ) );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
 		zeroise( &queryInfo, sizeof( QUERY_INFO ) );
-		return( status );
+		retExt( status, 
+				( status, errorInfo, "Invalid encrypted key data header" ) );
 		}
 
-	/* Create an encryption context and derive the user password into it
-	   using the given parameters, and import the session key.  If there's
-	   an error in the parameters stored with the exported key we'll get an
-	   arg or attribute error when we try to set the attribute so we
-	   translate it into an error code which is appropriate for the
-	   situation */
+	/* Create an encryption context, derive the user password into it using 
+	   the given parameters, and import the session key.  If there's an 
+	   error in the parameters stored with the exported key we'll get an arg 
+	   or attribute error when we try to set the attribute so we translate 
+	   it into an error code which is appropriate for the situation */
 	setMessageCreateObjectInfo( &createInfo, queryInfo.cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
@@ -443,16 +525,22 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 								  &msgData, CRYPT_CTXINFO_KEYING_VALUE );
 		}
 	if( cryptStatusOK( status ) )
-		status = iCryptImportKeyEx( encryptedKey, queryInfo.size,
-									CRYPT_FORMAT_CRYPTLIB, 
-									createInfo.cryptHandle, iSessionKey,
-									NULL );
+		{
+		status = iCryptImportKey( encryptedKey, queryInfo.size,
+								  CRYPT_FORMAT_CRYPTLIB, 
+								  createInfo.cryptHandle, iSessionKey, NULL );
+		}
 	krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	zeroise( &queryInfo, sizeof( QUERY_INFO ) );
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
-		return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
+		if( cryptArgError( status ) )
+			status = CRYPT_ERROR_BADDATA;
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't create decryption context for private key from "
+				  "user password" ) );
 		}
 
 	/* Import the encrypted key into the PKC context */
@@ -463,8 +551,12 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							  &mechanismInfo, MECHANISM_PRIVATEKEYWRAP );
 	clearMechanismInfo( &mechanismInfo );
 	krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
-
-	return( status );
+	if( cryptStatusError( status ) )
+		{
+		retExt( status, 
+				( status, errorInfo, "Couldn't unwrap private key" ) );
+		}
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -475,21 +567,26 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 
 /* Read a single object in a keyset */
 
-static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo, 
-					   void **objectPtrPtr, int *objectLengthPtr,
-					   const PKCS15_OBJECT_TYPE type, const int endPos )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 6 ) ) \
+static int readObject( INOUT STREAM *stream, 
+					   INOUT PKCS15_INFO *pkcs15objectInfo, 
+					   OUT_BUFFER_ALLOC( *objectLengthPtr ) void **objectPtrPtr, 
+					   OUT_LENGTH_SHORT_Z int *objectLengthPtr,
+					   IN_ENUM( PKCS15_OBJECT ) const PKCS15_OBJECT_TYPE type, 
+					   INOUT ERROR_INFO *errorInfo )
 	{
 	STREAM objectStream;
 	BYTE buffer[ MIN_OBJECT_SIZE + 8 ];
 	void *objectData;
-	int headerSize, objectLength, status;
+	int headerSize = DUMMY_INIT, objectLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15objectInfo, sizeof( PKCS15_INFO ) ) );
 	assert( isWritePtr( objectPtrPtr, sizeof( void * ) ) );
 	assert( isWritePtr( objectLengthPtr, sizeof( int ) ) );
-	assert( type > PKCS15_OBJECT_NONE && type < PKCS15_OBJECT_LAST );
-	assert( endPos > stell( stream ) );
+	
+	REQUIRES( type > PKCS15_OBJECT_NONE && type < PKCS15_OBJECT_LAST );
+	REQUIRES( errorInfo != NULL );
 
 	/* Clear return values */
 	memset( pkcs15objectInfo, 0, sizeof( PKCS15_INFO ) );
@@ -497,7 +594,7 @@ static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo,
 	*objectLengthPtr = 0;
 
 	/* Read the current object.  We can't use getObjectLength() here because 
-	   we're reading from a file rather than a memory stream, so we have to
+	   we're reading from a file rather than a memory stream so we have to
 	   grab the first MIN_OBJECT_SIZE bytes from the file stream and decode
 	   them to see what's next */
 	status = sread( stream, buffer, MIN_OBJECT_SIZE );
@@ -508,14 +605,23 @@ static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo,
 		sMemConnect( &headerStream, buffer, MIN_OBJECT_SIZE );
 		status = readGenericHole( &headerStream, &objectLength, 
 								  MIN_OBJECT_SIZE, DEFAULT_TAG );
-		headerSize = stell( &headerStream );
+		if( cryptStatusOK( status ) )
+			headerSize = stell( &headerStream );
 		sMemDisconnect( &headerStream );
 		}
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't read PKCS #15 object data" ) );
+		}
 	if( objectLength < MIN_OBJECT_SIZE || \
-		objectLength > MAX_PRIVATE_KEYSIZE + 1024 )
-		return( CRYPT_ERROR_BADDATA );
+		objectLength > MAX_INTLENGTH_SHORT )
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Invalid PKCS #15 object length %d", objectLength ) );
+		}
 
 	/* Allocate storage for the object and copy the already-read portion to 
 	   the start of the storage */
@@ -533,12 +639,14 @@ static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo,
 	if( cryptStatusError( status ) )
 		{
 		clFree( "readObject", objectData );
-		return( status );
+		retExt( status, 
+				( status, errorInfo, "Invalid PKCS #15 object data" ) );
 		}
 
 	/* Read the object attributes from the in-memory object data */
 	sMemConnect( &objectStream, objectData, objectLength );
-	status = readObjectAttributes( &objectStream, pkcs15objectInfo, type );
+	status = readObjectAttributes( &objectStream, pkcs15objectInfo, type, 
+								   errorInfo );
 	sMemDisconnect( &objectStream );
 	if( cryptStatusError( status ) )
 		{
@@ -555,19 +663,31 @@ static int readObject( STREAM *stream, PKCS15_INFO *pkcs15objectInfo,
 
 /* Read an entire keyset */
 
-int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info, 
-				const int maxNoPkcs15objects, const long endPos )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+int readKeyset( INOUT STREAM *stream, 
+				OUT_ARRAY( maxNoPkcs15objects ) PKCS15_INFO *pkcs15info, 
+				IN_LENGTH_SHORT const int maxNoPkcs15objects, 
+				IN_LENGTH const long endPos,
+				INOUT ERROR_INFO *errorInfo )
 	{
-	int iterationCount = 0, status = CRYPT_OK;
+	int iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15info, sizeof( PKCS15_INFO ) ) );
-	assert( maxNoPkcs15objects >= 1 );
-	assert( endPos > stell( stream ) );
+
+	REQUIRES( maxNoPkcs15objects >= 1 && \
+			  maxNoPkcs15objects < MAX_INTLENGTH_SHORT );
+	REQUIRES( endPos > 0 && endPos > stell( stream ) && \
+			  endPos < MAX_INTLENGTH );
+	REQUIRES( errorInfo != NULL );
+
+	/* Clear return value */
+	memset( pkcs15info, 0, sizeof( PKCS15_INFO ) * maxNoPkcs15objects );
 
 	/* Scan all of the objects in the file */
-	while( cryptStatusOK( status ) && stell( stream ) < endPos && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	for( status = CRYPT_OK, iterationCount = 0;
+		 cryptStatusOK( status ) && stell( stream ) < endPos && \
+			iterationCount < FAILSAFE_ITERATIONS_MED; iterationCount++ )
 		{
 		typedef struct {
 			int tag;
@@ -584,10 +704,10 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			{ CTAG_PO_DATA, PKCS15_OBJECT_DATA },
 			{ CTAG_PO_AUTH, PKCS15_OBJECT_NONE },
 			{ CRYPT_ERROR, PKCS15_OBJECT_NONE }, 
-			{ CRYPT_ERROR, PKCS15_OBJECT_NONE }
+				{ CRYPT_ERROR, PKCS15_OBJECT_NONE }
 			};
 		PKCS15_OBJECT_TYPE type = PKCS15_OBJECT_NONE;
-		int tag, innerEndPos, i, innerIterationCount = 0;
+		int tag, innerEndPos, i, innerIterationCount;
 
 		/* Map the object tag to a PKCS #15 object type */
 		tag = peekTag( stream );
@@ -604,23 +724,37 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 				break;
 				}
 			}
-		if( i >= FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ) )
-			retIntError();
+		ENSURES( i < FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ) );
 		if( type == PKCS15_OBJECT_NONE )
-			return( CRYPT_ERROR_BADDATA );
+			{
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Invalid PKCS #15 object type %02X", tag ) );
+			}
 
-		/* Read the [n] [0] wrapper to find out what we're dealing with */
+		/* Read the [n] [0] wrapper to find out what we're dealing with.  
+		   Note that we set the upper limit at MAX_INTLENGTH rather than
+		   MAX_INTLENGTH_SHORT because some keysets with many large objects 
+		   may have a combined group-of-objects length larger than 
+		   MAX_INTLENGTH_SHORT */
 		readConstructed( stream, NULL, tag );
 		status = readConstructed( stream, &innerEndPos, CTAG_OV_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
+		if( innerEndPos < MIN_OBJECT_SIZE || innerEndPos >= MAX_INTLENGTH )
+			{
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Invalid PKCS #15 object data size %d", 
+					  innerEndPos ) );
+			}
 		innerEndPos += stell( stream );
-		if( innerEndPos < MIN_OBJECT_SIZE || innerEndPos > MAX_INTLENGTH )
-			return( CRYPT_ERROR_BADDATA );
 
 		/* Scan all objects of this type */
-		while( cryptStatusOK( status ) && stell( stream ) < innerEndPos && \
-			   innerIterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+		for( innerIterationCount = 0;
+			 stell( stream ) < innerEndPos && \
+				innerIterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 innerIterationCount++ )
 			{
 			PKCS15_INFO pkcs15objectInfo, *pkcs15infoPtr = NULL;
 			void *object;
@@ -628,18 +762,20 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 
 			/* Read the object */
 			status = readObject( stream, &pkcs15objectInfo, &object,
-								 &objectLength, type, endPos );
+								 &objectLength, type, errorInfo );
 			if( cryptStatusError( status ) )
 				return( status );
 
 			/* If we read an object with associated ID information, find out 
 			   where to add the object data */
 			if( pkcs15objectInfo.iDlength > 0 )
+				{
 				pkcs15infoPtr = findEntry( pkcs15info, maxNoPkcs15objects, 
 										   CRYPT_KEYIDEX_ID, 
 										   pkcs15objectInfo.iD,
 										   pkcs15objectInfo.iDlength,
 										   KEYMGMT_FLAG_NONE );
+				}
 			if( pkcs15infoPtr == NULL )
 				{
 				int index;
@@ -652,7 +788,9 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 				if( pkcs15infoPtr == NULL )
 					{
 					clFree( "readKeyset", object );
-					return( CRYPT_ERROR_OVERFLOW );
+					retExt( CRYPT_ERROR_OVERFLOW, 
+							( CRYPT_ERROR_OVERFLOW, errorInfo, 
+							  "No more room in keyset to add further items" ) );
 					}
 				pkcs15infoPtr->index = index;
 				memcpy( pkcs15infoPtr, &pkcs15objectInfo, 
@@ -663,10 +801,10 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			copyObjectIdInfo( pkcs15infoPtr, &pkcs15objectInfo );
 
 			/* Copy over any other new information that may have become
-			   available.  The semantics when multiple date ranges are
-			   present (for example one for a key, one for a cert) are a
-			   bit uncertain, we use the most recent date available on the
-			   assumption that this reflects the newest information */
+			   available.  The semantics when multiple date ranges are 
+			   present (for example one for a key and one for a certificate) 
+			   are a bit uncertain, we use the most recent date available on 
+			   the assumption that this reflects the newest information */
 			if( pkcs15objectInfo.validFrom > pkcs15infoPtr->validFrom )
 				pkcs15infoPtr->validFrom = pkcs15objectInfo.validFrom;
 			if( pkcs15objectInfo.validTo > pkcs15infoPtr->validTo )
@@ -676,12 +814,10 @@ int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
 			copyObjectPayloadInfo( pkcs15infoPtr, &pkcs15objectInfo,
 								   object, objectLength, type );
 			}
-		if( innerIterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError();
+		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_LARGE );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
-	return( status );
+	return( CRYPT_OK );
 	}
 #endif /* USE_PKCS15 */

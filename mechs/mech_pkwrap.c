@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*					cryptlib Encryption Mechanism Routines					*
-*					  Copyright Peter Gutmann 1992-2006						*
+*				cryptlib PKC Key Wrap Mechanism Routines					*
+*					Copyright Peter Gutmann 1992-2008						*
 *																			*
 ****************************************************************************/
 
@@ -9,18 +9,15 @@
   #include "crypt.h"
   #include "mech_int.h"
   #include "asn1.h"
+  #include "misc_rw.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
   #include "mechs/mech_int.h"
   #include "misc/asn1.h"
+  #include "misc/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
-
-/* Prototypes for kernel-internal access functions */
-
-int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData, 
-					const int keyDataMaxLen );
 
 /****************************************************************************
 *																			*
@@ -30,31 +27,69 @@ int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData,
 
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
 
-/* PGP checksums the PKCS #1 wrapped data (even though this doesn't really
+/* PGP checksums the PKCS #1 wrapped data even though this doesn't really
    serve any purpose since any decryption error will corrupt the PKCS #1
-   padding), the following routine calculates this checksum and either 
+   padding, the following routine calculates this checksum and either 
    appends it to the data or checks it against the stored value */
 
-static void pgpGenerateChecksum( BYTE *dataPtr, const int length )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int pgpGenerateChecksum( INOUT_BUFFER_FIXED( dataLength ) void *data, 
+								IN_RANGE( 1, CRYPT_MAX_PKCSIZE + UINT16_SIZE ) \
+									const int dataLength,
+								IN_LENGTH_PKC const int keyDataLength )
 	{
-	int checksum = 0, i;
+	STREAM stream;
+	BYTE *dataPtr = data;
+	int checksum = 0, i, status;
 
-	assert( isWritePtr( dataPtr, length ) );
+	assert( isWritePtr( data, dataLength ) );
 
-	for( i = 0; i < length; i++ )
-		checksum += *dataPtr++;
-	mputWord( dataPtr, checksum );
+	REQUIRES( dataLength > 0 && \
+			  dataLength <= CRYPT_MAX_PKCSIZE + UINT16_SIZE );
+	REQUIRES( keyDataLength == dataLength - UINT16_SIZE );
+
+	/* Calculate the checksum for the MPI */
+	for( i = 0; i < keyDataLength; i++ )
+		checksum += dataPtr[ i ];
+
+	/* Append the checksum to the MPI data */
+	sMemOpen( &stream, dataPtr + keyDataLength, dataLength - keyDataLength );
+	status = writeUint16( &stream, checksum );
+	sMemDisconnect( &stream );
+
+	return( status );
 	}
 
-static BOOLEAN pgpVerifyChecksum( const BYTE *dataPtr, const int length )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN pgpVerifyChecksum( IN_BUFFER( dataLength ) const void *data, 
+								  IN_RANGE( 1, CRYPT_MAX_PKCSIZE + UINT16_SIZE ) \
+									const int dataLength )
 	{
+	STREAM stream;
 	int checksum = 0, storedChecksum, i;
 
-	assert( isReadPtr( dataPtr, length ) );
+	assert( isReadPtr( data, dataLength ) );
 
-	for( i = 0; i < length; i++ )
-		checksum += *dataPtr++;
-	storedChecksum = mgetWord( dataPtr );
+	REQUIRES_B( dataLength > UINT16_SIZE && \
+				dataLength <= CRYPT_MAX_PKCSIZE + UINT16_SIZE );
+
+	/* Calculate the checksum for the MPI and compare it to the appended 
+	   checksum.  We don't have to check the return status of sgetc() 
+	   because an error status returned will cause the checksum comparison
+	   to fail */
+	sMemConnect( &stream, data, dataLength );
+	for( i = 0; i < dataLength - UINT16_SIZE; i++ )
+		{
+		const int ch = sgetc( &stream );
+		if( cryptStatusError( ch ) )
+			{
+			sMemDisconnect( &stream );
+			return( FALSE );
+			}
+		checksum += ch;
+		}
+	storedChecksum = readUint16( &stream );
+	sMemDisconnect( &stream );
 
 	return( storedChecksum == checksum );
 	}
@@ -66,8 +101,10 @@ static BOOLEAN pgpVerifyChecksum( const BYTE *dataPtr, const int length )
    but less ugly than doing a raw import and handling the key directly in
    the calling code */
 
-static int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, const BYTE *data,
-				   const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext, 
+						  IN_BUFFER( dataLength ) const BYTE *data, 
+						  IN_LENGTH_SHORT const int dataLength )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo = CRYPT_ALGO_NONE;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -76,19 +113,23 @@ static int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, const BYTE *data,
 
 	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isReadPtr( data, dataLength ) );
-	assert( dataLength >= MIN_KEYSIZE );
+
+	REQUIRES( dataLength >= MIN_KEYSIZE && dataLength <= CRYPT_MAX_PKCSIZE );
+
+	/* Clear return value */
+	*iCryptContext = CRYPT_ERROR;
 
 	/* Get the session key algorithm.  We delay checking the algorithm ID
 	   until after the checksum calculation to reduce the chance of being
 	   used as an oracle */
-	cryptAlgo = pgpToCryptlibAlgo( data[ 0 ], PGP_ALGOCLASS_CRYPT );
+	status = pgpToCryptlibAlgo( data[ 0 ], PGP_ALGOCLASS_CRYPT, &cryptAlgo );
 
 	/* Checksum the session key, skipping the algorithm ID at the start and
 	   the checksum at the end.  This is actually superfluous since any
 	   decryption error will be caught by corrupted PKCS #1 padding with
-	   vastly higher probability than this simple checksum, but we do it
-	   anyway because PGP does it too */
-	if( !pgpVerifyChecksum( data + 1, dataLength - 3 ) )
+	   vastly higher probability than this simple checksum but we do it
+	   anyway because other PGP implementations do it too */
+	if( !pgpVerifyChecksum( data + 1, dataLength - 1 ) )
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Make sure that the algorithm ID is valid.  We only perform the check 
@@ -96,7 +137,7 @@ static int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, const BYTE *data,
 	   usual bad-data, we want to be absolutely sure that the problem really 
 	   is an unknown algorithm and not the result of scrambled decrypted 
 	   data */
-	if( cryptAlgo == CRYPT_ALGO_NONE )
+	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Create the context ready to have the key loaded into it */
@@ -105,18 +146,29 @@ static int pgpExtractKey( CRYPT_CONTEXT *iCryptContext, const BYTE *data,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &mode, CRYPT_CTXINFO_MODE );
-	*iCryptContext = createInfo.cryptHandle;
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+							  ( void * ) &mode, CRYPT_CTXINFO_MODE );
+	if( cryptStatusError( status ) )
+		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+	else
+		*iCryptContext = createInfo.cryptHandle;
 
 	return( CRYPT_OK );
 	}
 #endif /* USE_PGP || USE_PGPKEYS */
 
+/****************************************************************************
+*																			*
+*						Low-level Data Wrap/Unwrap Routines					*
+*																			*
+****************************************************************************/
+
 /* Wrap/unwrap data using a public/private-key context */
 
-static int pkcWrapData( MECHANISM_WRAP_INFO *mechanismInfo,
-						BYTE *wrappedData, const int wrappedDataLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int pkcWrapData( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
+						INOUT_BUFFER_FIXED( wrappedDataLength ) BYTE *wrappedData, 
+						IN_LENGTH_PKC const int wrappedDataLength,
 						const BOOLEAN usePgpWrap, const BOOLEAN isDlpAlgo )
 	{
 	BYTE dataSample[ 16 + 8 ];
@@ -125,6 +177,11 @@ static int pkcWrapData( MECHANISM_WRAP_INFO *mechanismInfo,
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 	assert( isWritePtr( wrappedData, wrappedDataLength ) );
+
+	REQUIRES( wrappedDataLength >= MIN_PKCSIZE && \
+			  wrappedDataLength <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( wrappedData[ 0 ] == 0x00 && \
+			  ( wrappedData[ 1 ] == 0x01 || wrappedData[ 1 ] == 0x02 ) );
 
 	/* Take a sample of the input for comparison with the output */
 	memcpy( dataSample, samplePtr, 16 );
@@ -156,29 +213,49 @@ static int pkcWrapData( MECHANISM_WRAP_INFO *mechanismInfo,
 	if( cryptStatusOK( status ) && !memcmp( dataSample, samplePtr, 16 ) )
 		{
 		/* The data to wrap is unchanged, there's been a catastrophic 
-		   failure of the encryption */
-		assert( NOTREACHED );
+		   failure of the encryption.  We don't do a retIntError() at this
+		   point because we want to at least continue and zeroise the data
+		   first */
+		assert( FALSE );
 		status = CRYPT_ERROR_FAILED;
 		}
 	zeroise( dataSample, 16 );
 	if( cryptStatusError( status ) )
+		{
 		/* There was a problem with the wrapping, clear the output value */
 		zeroise( wrappedData, wrappedDataLength );
+		}
 
 	return( status );
 	}
 
-static int pkcUnwrapData( MECHANISM_WRAP_INFO *mechanismInfo, BYTE *data, 
-						  const int dataMaxLength, const int dataInLength, 
-						  int *dataOutLength, const BOOLEAN usePgpWrap, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int pkcUnwrapData( MECHANISM_WRAP_INFO *mechanismInfo, 
+						  INOUT_BUFFER( dataMaxLength, *dataOutLength ) \
+							BYTE *data, 
+						  IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+							const int dataMaxLength, 
+						  OUT_LENGTH_PKC_Z int *dataOutLength, 
+						  IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+							const int dataInLength, 
+						  const BOOLEAN usePgpWrap, 
 						  const BOOLEAN isDlpAlgo )
 	{
 	int status;
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 	assert( isWritePtr( data, dataMaxLength ) );
-	assert( dataInLength <= dataMaxLength );
 	assert( isWritePtr( dataOutLength, sizeof( int ) ) );
+
+	REQUIRES( dataMaxLength >= MIN_PKCSIZE && \
+			  dataMaxLength <= MAX_INTLENGTH_SHORT );
+	REQUIRES( dataInLength >= MIN_PKCSIZE && \
+			  dataInLength <= dataMaxLength && \
+			  dataInLength <= MAX_INTLENGTH_SHORT );
+
+	/* Clear return values */
+	memset( data, 0, min( 16, dataMaxLength ) );
+	*dataOutLength = 0;
 
 	if( isDlpAlgo )
 		{
@@ -216,7 +293,7 @@ static int pkcUnwrapData( MECHANISM_WRAP_INFO *mechanismInfo, BYTE *data,
 		}
 
 	/* There was a problem with the wrapping, clear the output value */
-	zeroise( data, CRYPT_MAX_PKCSIZE );
+	zeroise( data, dataMaxLength );
 	return( status );
 	}
 
@@ -228,30 +305,46 @@ static int pkcUnwrapData( MECHANISM_WRAP_INFO *mechanismInfo, BYTE *data,
 
 /* Generate/recover a PKCS #1 data block */
 
-static int generatePkcs1DataBlock( BYTE *data, const int dataMaxLen, 
-								   const int messageLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int generatePkcs1DataBlock( INOUT_BUFFER( dataMaxLen, *dataLength ) \
+									BYTE *data, 
+								   IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+									const int dataMaxLen, 
+								   OUT_LENGTH_SHORT_Z int *dataLength, 
+								   IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+									const int messageLen )
 	{
 	MESSAGE_DATA msgData;
 	const int padSize = dataMaxLen - ( messageLen + 3 );
 	int status;
 
 	assert( isWritePtr( data, dataMaxLen ) );
-	assert( messageLen > MIN_KEYSIZE && messageLen < dataMaxLen );
+	assert( isWritePtr( dataLength, sizeof( int ) ) );
+
+	REQUIRES( dataMaxLen >= MIN_PKCSIZE && dataMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( messageLen >= MIN_KEYSIZE && messageLen < dataMaxLen && \
+			  messageLen < MAX_INTLENGTH_SHORT );
 	
+	/* Clear return values */
+	memset( data, 0, min( 16, dataMaxLen ) );
+	*dataLength = 0;
+
 	/* Determine PKCS #1 padding parameters and make sure that the key is 
 	   long enough to encrypt the payload.  PKCS #1 requires that the 
-	   maximum payload size be 11 bytes less than the length (to give a 
-	   minimum of 8 bytes of random padding) */
+	   maximum payload size be 11 bytes less than the length to give a 
+	   minimum of 8 bytes of random padding */
 	if( messageLen > dataMaxLen - 11 )
 		return( CRYPT_ERROR_OVERFLOW );
+
+	ENSURES( padSize >= 8 && messageLen + padSize + 3 <= dataMaxLen );
 
 	/* Encode the payload using the PKCS #1 format:
 	   
 		[ 0 ][ 2 ][ nonzero random padding ][ 0 ][ payload ]
 
 	   Note that the random padding is a nice place for a subliminal channel,
-	   especially with large public key sizes where you can communicate more
-	   information in the padding than in the payload */
+	   especially with the larger public key sizes where you can communicate 
+	   more information in the padding than you can in the payload */
 	data[ 0 ] = 0;
 	data[ 1 ] = 2;
 	setMessageData( &msgData, data + 2, padSize );
@@ -264,32 +357,44 @@ static int generatePkcs1DataBlock( BYTE *data, const int dataMaxLen,
 		return( status );
 		}
 	data[ 2 + padSize ] = 0;
+	*dataLength = 2 + padSize + 1;
 
-	return( 2 + padSize + 1 );
+	return( CRYPT_OK );
 	}
 
-static int recoverPkcs1DataBlock( BYTE *data, const int dataLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int recoverPkcs1DataBlock( INOUT_BUFFER_FIXED( dataLength ) \
+									BYTE *data, 
+								  IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) \
+									const int dataLength, 
+								  OUT_LENGTH_SHORT_Z int *padSize )
 	{
-	int ch = 1, i;
+	int ch, length;
 
-	assert( isWritePtr( data, dataLen ) );
+	assert( isWritePtr( data, dataLength ) );
+	assert( isWritePtr( padSize, sizeof( int ) ) );
+
+	REQUIRES( dataLength >= MIN_PKCSIZE && dataLength < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*padSize = 0;
 
 	/* Undo the PKCS #1 padding:
 
 		[ 0 ][ 2 ][ random nonzero padding ][ 0 ][ payload ]
 	
 	   with a minimum of 8 bytes padding.  Note that some implementations 
-	   may have bignum code that zero-truncates the result, producing a 
-	   CRYPT_ERROR_BADDATA error, it's the responsibility of the lower-level 
-	   crypto layer to reformat the data to return a correctly-formatted 
-	   result if necessary.
+	   may have bignum code that zero-truncates the result which will 
+	   produce a CRYPT_ERROR_BADDATA error when we undo the padding, it's 
+	   the responsibility of the lower-level crypto layer to reformat the 
+	   data to return a correctly-formatted result if necessary.
 
-	   In order to avoid being used as a decription timing oracle, we bundle
-	   all of the formatting checks into a single location, and make the 
-	   code as simple and quick as possible.  At best, an attacker will get
-	   only a few clock cycles of timing information, which should be lost 
-	   in the general noise */
-	if( dataLen < 11 + MIN_KEYSIZE )
+	   In order to avoid being used as a decription timing oracle we bundle
+	   all of the formatting checks into a single location and make the code 
+	   as simple and quick as possible.  At best an attacker will get only a 
+	   few clock cycles of timing information, which should be lost in the 
+	   general noise */
+	if( dataLength < 11 + MIN_KEYSIZE )
 		{
 		/* PKCS #1 padding requires at least 11 (2 + 8 + 1) bytes of 
 		   padding data, if there isn't this much present then what we've 
@@ -298,47 +403,56 @@ static int recoverPkcs1DataBlock( BYTE *data, const int dataLen )
 		}
 	if( data[ 0 ] != 0x00 || data[ 1 ] != 0x02 )
 		return( CRYPT_ERROR_BADDATA );
-	for( i = 2; i < dataLen - MIN_KEYSIZE && \
-				( ch = data[ i ] ) != 0x00; i++ );
-	if( ch != 0x00 || i < 11 )
+	for( length = 2, ch = 0xFF; 
+		 length < dataLength - MIN_KEYSIZE && \
+			( ch = data[ length ] ) != 0x00; 
+		 length++ );
+	if( ch != 0x00 || length < 11 )
 		return( CRYPT_ERROR_BADDATA );
+	length++;	/* Skip the final 0x00 */
 
 	/* Sanity check to make sure that the padding data looks OK.  We only do 
 	   this in debug mode since it's a probabalistic test and we don't want 
 	   to bail out due to a false positive in production code */
-	assert( checkEntropy( data + 2, i ) );
+	assert( checkEntropy( data + 2, length - 1 ) );
 
-	/* Make sure that there's enough room left after the PKCS #1 padding to
-	   hold at least a minimum-length key */
-	if( dataLen - ( i + 1 ) < MIN_KEYSIZE )
+	/* Make sure that there's enough room left after the remaining PKCS #1 
+	   padding to hold at least a minimum-length key */
+	if( dataLength - length < MIN_KEYSIZE )
 		return( CRYPT_ERROR_BADDATA );
 
-	return( i + 1 );
+	*padSize = length;
+
+	return( CRYPT_OK );
 	}
 
 /* Perform PKCS #1 wrapping/unwrapping.  There are several variations of
    this that are handled through common PKCS #1 mechanism functions */
 
-typedef enum { PKCS1_WRAP_NORMAL, PKCS1_WRAP_RAW, PKCS1_WRAP_PGP } PKCS1_WRAP_TYPE;
+typedef enum { PKCS1_WRAP_NONE, PKCS1_WRAP_NORMAL, PKCS1_WRAP_RAW, 
+			   PKCS1_WRAP_PGP, PKCS1_WRAP_LAST } PKCS1_WRAP_TYPE;
 
-static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
-					  const PKCS1_WRAP_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int pkcs1Wrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
+					  IN_ENUM( PKCS1_WRAP ) const PKCS1_WRAP_TYPE type )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	BYTE *wrappedData = mechanismInfo->wrappedData, *dataPtr;
 	int payloadSize, length, dataBlockSize, status;
 #ifdef USE_PGP
-	int pgpAlgoID;
+	int pgpAlgoID = DUMMY_INIT;
 #endif /* USE_PGP */
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
-	assert( type == PKCS1_WRAP_NORMAL || type == PKCS1_WRAP_RAW || \
-			type == PKCS1_WRAP_PGP );
 
-	/* Clear the return value */
+	REQUIRES( type > PKCS1_WRAP_NONE && type < PKCS1_WRAP_LAST );
+
+	/* Clear return value */
 	if( mechanismInfo->wrappedData != NULL )
+		{
 		memset( mechanismInfo->wrappedData, 0,
 				mechanismInfo->wrappedDataLength );
+		}
 
 	/* Get various algorithm parameters */
 	status = getPkcAlgoParams( mechanismInfo->wrapContext, &cryptAlgo, 
@@ -363,6 +477,10 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 		return( CRYPT_OK );
 		}
 
+	/* Make sure that there's enough room for the wrapped key data */
+	if( length > mechanismInfo->wrappedDataLength )
+		return( CRYPT_ERROR_OVERFLOW );
+
 	/* Get the payload details, either as data passed in by the caller or
 	   from the key context */
 	if( type == PKCS1_WRAP_RAW )
@@ -386,24 +504,29 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 		status = krnlSendMessage( mechanismInfo->keyContext,
 								  IMESSAGE_GETATTRIBUTE, &sessionKeyAlgo,
 								  CRYPT_CTXINFO_ALGO );
+		if( cryptStatusOK( status ) )
+			status = cryptlibToPgpAlgo( sessionKeyAlgo, &pgpAlgoID );
 		if( cryptStatusError( status ) )
 			return( status );
-		pgpAlgoID = cryptlibToPgpAlgo( sessionKeyAlgo );
-		if( pgpAlgoID == PGP_ALGO_NONE )
-			return( CRYPT_ERROR_NOTAVAIL );
 		payloadSize += 3;	/* 1-byte algo ID + 2-byte checksum */
 		}
 #endif /* USE_PGP */
 
-	/* Generate the PKCS #1 data block, with room for the payload at the 
-	   end */
-	status = dataBlockSize = generatePkcs1DataBlock( wrappedData, length, 
-													 payloadSize );
+	/* Perform a preliminary check for an excessively long payload to make
+	   it explicit, however generatePkcs1DataBlock() will also perform a 
+	   more precise check when it performs the data formatting */
+	if( payloadSize >= length )
+		return( CRYPT_ERROR_OVERFLOW );
+
+	/* Generate the PKCS #1 data block with room for the payload at the end */
+	status = generatePkcs1DataBlock( wrappedData, length, &dataBlockSize, 
+									 payloadSize );
 	if( cryptStatusError( status ) )
 		{
 		zeroise( wrappedData, length );
 		return( status );
 		}
+	ENSURES( dataBlockSize + payloadSize == length );
 
 	/* Copy the payload in at the last possible moment, then encrypt it */
 	dataPtr = wrappedData + dataBlockSize;
@@ -411,8 +534,7 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 		{
 		case PKCS1_WRAP_NORMAL:
 			status = extractKeyData( mechanismInfo->keyContext, dataPtr,
-									 mechanismInfo->wrappedDataLength - \
-										dataBlockSize );
+									 payloadSize, "keydata", 7 );
 			break;
 
 		case PKCS1_WRAP_RAW:
@@ -423,9 +545,12 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 		case PKCS1_WRAP_PGP:
 			*dataPtr++ = pgpAlgoID;
 			status = extractKeyData( mechanismInfo->keyContext, dataPtr,
-									 mechanismInfo->wrappedDataLength - \
-										( dataBlockSize + 1 ) );
-			pgpGenerateChecksum( dataPtr, payloadSize - 3 );
+									 payloadSize - 3, "keydata", 7 );
+			if( cryptStatusOK( status ) )
+				{
+				status = pgpGenerateChecksum( dataPtr, payloadSize - 1,
+									payloadSize - ( 1 + UINT16_SIZE ) );
+				}
 			break;
 #endif /* USE_PGP */
 
@@ -433,7 +558,10 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 			retIntError();
 		}
 	if( cryptStatusError( status ) )
+		{
+		zeroise( wrappedData, length );
 		return( status );
+		}
 
 	/* Wrap the encoded data using the public key */
 	return( pkcWrapData( mechanismInfo, wrappedData, length,
@@ -441,8 +569,9 @@ static int pkcs1Wrap( MECHANISM_WRAP_INFO *mechanismInfo,
 						 ( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? TRUE : FALSE ) );
 	}
 
-static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
-						const PKCS1_WRAP_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int pkcs1Unwrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
+						IN_ENUM( PKCS1_WRAP ) const PKCS1_WRAP_TYPE type )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	MESSAGE_DATA msgData;
@@ -451,8 +580,8 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 	int length, dataBlockSize, status;
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
-	assert( type == PKCS1_WRAP_NORMAL || type == PKCS1_WRAP_RAW || \
-			type == PKCS1_WRAP_PGP );
+
+	REQUIRES( type > PKCS1_WRAP_NONE && type < PKCS1_WRAP_LAST );
 
 	/* Clear the return value if we're returning raw data */
 	if( type == PKCS1_WRAP_RAW )
@@ -466,18 +595,18 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 
 	/* Decrypt the data */
 	status = pkcUnwrapData( mechanismInfo, decryptedData, CRYPT_MAX_PKCSIZE,
-							length, &length, 
+							&length, length, 
 							( type == PKCS1_WRAP_PGP ) ? TRUE : FALSE,
 							( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? TRUE : FALSE );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Recover the PKCS #1 data block, with the payload at the end */
-	dataBlockSize = recoverPkcs1DataBlock( decryptedData, length );
-	if( cryptStatusError( dataBlockSize ) )
+	status = recoverPkcs1DataBlock( decryptedData, length, &dataBlockSize );
+	if( cryptStatusError( status ) )
 		{
 		zeroise( decryptedData, CRYPT_MAX_PKCSIZE );
-		return( dataBlockSize );
+		return( status );
 		}
 	payloadPtr = decryptedData + dataBlockSize;
 	length -= dataBlockSize;
@@ -487,7 +616,7 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 		{
 #ifdef USE_PGP
 		case PKCS1_WRAP_PGP:
-			/* PGP includes extra wrapping around the key, so we have to
+			/* PGP includes extra wrapping around the key so we have to
 			   process that before we can load it */
 			status = pgpExtractKey( &mechanismInfo->keyContext, payloadPtr, 
 									length );
@@ -507,11 +636,12 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 			status = krnlSendMessage( mechanismInfo->keyContext,
 									  IMESSAGE_SETATTRIBUTE_S, &msgData,
 									  CRYPT_CTXINFO_KEY );
-			if( status == CRYPT_ARGERROR_STR1 || \
-				status == CRYPT_ARGERROR_NUM1 )
-				/* If there was an error with the key value or size, convert
+			if( cryptArgError( status ) )
+				{
+				/* If there was an error with the key value or size convert 
 				   the return value into something more appropriate */
 				status = CRYPT_ERROR_BADDATA;
+				}
 			break;
 
 		case PKCS1_WRAP_RAW:
@@ -533,9 +663,11 @@ static int pkcs1Unwrap( MECHANISM_WRAP_INFO *mechanismInfo,
 	return( status );
 	}
 
-int exportPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int exportPKCS1( STDC_UNUSED void *dummy, 
+				 INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
@@ -544,9 +676,11 @@ int exportPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 					   PKCS1_WRAP_RAW : PKCS1_WRAP_NORMAL ) );
 	}
 
-int importPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int importPKCS1( STDC_UNUSED void *dummy, 
+				 INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
@@ -557,18 +691,22 @@ int importPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 
 #ifdef USE_PGP
 
-int exportPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int exportPKCS1PGP( STDC_UNUSED void *dummy, 
+					INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
 	return( pkcs1Wrap( mechanismInfo, PKCS1_WRAP_PGP ) );
 	}
 
-int importPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int importPKCS1PGP( STDC_UNUSED void *dummy, 
+					INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
@@ -582,25 +720,27 @@ int importPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 *																			*
 ****************************************************************************/
 
-/* If OAEP is used with SHA2-512 in the PRF, the standard CRYPT_MAX_HASHSIZE
-   value isn't sufficient to contain the hash data any more, so we have to
-   define a special larger-than-normal maximum hash size to contain it */
+/* If OAEP is used with SHA2-512 in the PRF then the standard 
+   CRYPT_MAX_HASHSIZE value isn't sufficient to contain the hash data any 
+   more so we have to define a special larger-than-normal maximum hash size 
+   to contain it */
 
 #define OAEP_MAX_HASHSIZE	64
 
 /* Get the lHash value used for OAEP.  In theory this should be a hash of a 
-   label applied to the OAEP operation, but this is never used so what ends
+   label applied to the OAEP operation but this is never used so what ends
    up being used is a fixed hash of an empty string.  Since this is 
-   constant, we can use a pre-calculated value for each hash algorithm */
+   constant we can use a pre-calculated value for each hash algorithm */
 
 typedef struct {
 	const CRYPT_ALGO_TYPE hashAlgo;
+	BUFFER_FIXED( lHashSize ) \
 	const BYTE FAR_BSS *lHash;
 	const int lHashSize;
 	} LHASH_INFO;
 
 static const LHASH_INFO FAR_BSS lHashInfo[] = {
-	{ CRYPT_ALGO_SHA, ( const BYTE * )		/* For pedantic compilers */
+	{ CRYPT_ALGO_SHA1, ( const BYTE * )		/* For pedantic compilers */
 	  "\xDA\x39\xA3\xEE\x5E\x6B\x4B\x0D\x32\x55\xBF\xEF\x95\x60\x18\x90"
 	  "\xAF\xD8\x07\x09", 20 },
 	{ CRYPT_ALGO_SHA2, ( const BYTE * )		/* For pedantic compilers */
@@ -619,15 +759,27 @@ static const LHASH_INFO FAR_BSS lHashInfo[] = {
 	{ CRYPT_ALGO_NONE, NULL, 0 }, { CRYPT_ALGO_NONE, NULL, 0 }
 	};
 
-static int getOaepHash( void *lHash, const int lHashMaxLen,
-						const CRYPT_ALGO_TYPE hashAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getOaepHash( OUT_BUFFER_OPT( lHashMaxLen, *lHashLen ) void *lHash, 
+						IN_LENGTH_SHORT_Z const int lHashMaxLen, 
+						OUT_LENGTH_SHORT_Z int *lHashLen,
+						IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
 	{
 	int i;
 
 	assert( ( lHash == NULL && lHashMaxLen == 0 ) || \
 			isWritePtr( lHash, lHashMaxLen ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	
+	REQUIRES( ( lHash == NULL && lHashMaxLen == 0 ) || \
+			  ( lHashMaxLen >= OAEP_MAX_HASHSIZE && \
+				lHashMaxLen < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+
+	/* Clear return value */
+	if( lHash != NULL )
+		zeroise( lHash, lHashMaxLen );
+	*lHashLen = 0;
 
 	for( i = 0; lHashInfo[ i ].hashAlgo != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( lHashInfo, LHASH_INFO ); i++ )
@@ -635,36 +787,47 @@ static int getOaepHash( void *lHash, const int lHashMaxLen,
 		if( lHashInfo[ i ].hashAlgo == hashAlgo )
 			{
 			if( lHash != NULL )
+				{
 				memcpy( lHash, lHashInfo[ i ].lHash, 
 						lHashInfo[ i ].lHashSize );
-			return( lHashInfo[ i ].lHashSize );
+				}
+			*lHashLen = lHashInfo[ i ].lHashSize;
+
+			return( CRYPT_OK );
 			}
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( lHashInfo, LHASH_INFO ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( lHashInfo, LHASH_INFO ) );
+	if( lHash != NULL )
+		zeroise( lHash, lHashMaxLen );
 
-	zeroise( lHash, lHashMaxLen );
 	return( CRYPT_ERROR_NOTAVAIL );
 	}
 
-#define getOaepHashSize( hashAlgo )	getOaepHash( NULL, 0, hashAlgo )
+#define getOaepHashSize( hashLen, hashAlgo ) \
+		getOaepHash( NULL, 0, hashLen, hashAlgo )
 
-/* OAEP mask generation function (MGF1) */
+/* OAEP mask generation function MGF1 */
 
-static int mgf1( void *mask, const int maskLen, 
-				 const void *seed, const int seedLen,
-				 const CRYPT_ALGO_TYPE hashAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int mgf1( OUT_BUFFER_FIXED( maskLen ) void *mask, 
+				 IN_LENGTH_PKC const int maskLen, 
+				 IN_BUFFER( seedLen ) const void *seed, 
+				 IN_LENGTH_PKC const int seedLen,
+				 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
 	{
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
 	BYTE countBuffer[ 4 + 8 ], maskBuffer[ OAEP_MAX_HASHSIZE + 8 ];
 	BYTE *maskOutPtr = mask;
-	int hashSize, maskIndex, blockCount = 0, iterationCount = 0;
+	int hashSize, maskIndex, blockCount = 0, iterationCount;
 
 	assert( isWritePtr( mask, maskLen ) );
 	assert( isReadPtr( seed, seedLen ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
+
+	REQUIRES( maskLen >= 16 && maskLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( seedLen >= 16 && seedLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
 
 	getHashParameters( hashAlgo, &hashFunction, &hashSize );
 
@@ -674,22 +837,21 @@ static int mgf1( void *mask, const int maskLen,
 	memset( countBuffer, 0, 4 );
 
 	/* Produce enough blocks of output to fill the mask */
-	for( maskIndex = 0; maskIndex < maskLen && \
-					    iterationCount++ < FAILSAFE_ITERATIONS_MED; 	
-		 maskIndex += hashSize, maskOutPtr += hashSize )
+	for( maskIndex = 0, iterationCount = 0; 
+		 maskIndex < maskLen && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 maskIndex += hashSize, maskOutPtr += hashSize, iterationCount++ )
 		{
 		const int noMaskBytes = ( maskLen - maskIndex > hashSize ) ? \
 								hashSize : maskLen - maskIndex;
 
 		/* Calculate hash( seed || counter ) */
 		countBuffer[ 3 ] = ( BYTE ) blockCount++;
-		hashFunction( hashInfo, NULL, 0, seed, seedLen, HASH_START );
+		hashFunction( hashInfo, NULL, 0, seed, seedLen, HASH_STATE_START );
 		hashFunction( hashInfo, maskBuffer, hashSize, countBuffer, 4, 
-					  HASH_END );
+					  HASH_STATE_END );
 		memcpy( maskOutPtr, maskBuffer, noMaskBytes );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 	zeroise( maskBuffer, OAEP_MAX_HASHSIZE );
 
@@ -727,21 +889,33 @@ static int mgf1( void *mask, const int maskLen,
 						DB = |  lHash   |    PS   |   M   |
 							 +----------+---------+-------+ */
 
-static int generateOaepDataBlock( BYTE *data, const int dataMaxLen, 
-								  const void *message, const int messageLen,
-								  const void *seed, const int seedLen,
-								  const CRYPT_ALGO_TYPE hashAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data, 
+								  IN_LENGTH_PKC const int dataMaxLen, 
+								  IN_BUFFER( messageLen ) const void *message, 
+								  IN_RANGE( MIN_KEYSIZE, CRYPT_MAX_KEYSIZE ) \
+									const int messageLen,
+								  IN_BUFFER( seedLen ) const void *seed, 
+								  IN_LENGTH_PKC const int seedLen,
+								  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
 	{
 	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ OAEP_MAX_HASHSIZE + 8 ];
-	BYTE *maskedSeed = data + 1, *db = maskedSeed + seedLen;
-	int dbLen, i, status;
+	BYTE *maskedSeed, *db;
+	int dbLen, i, length, status;
 
 	assert( isWritePtr( data, dataMaxLen ) );
 	assert( isReadPtr( message, messageLen ) );
 	assert( isReadPtr( seed, seedLen ) );
-	assert( seedLen == getOaepHashSize( hashAlgo ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
+
+	REQUIRES( dataMaxLen >= MIN_PKCSIZE && dataMaxLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( messageLen >= MIN_KEYSIZE && messageLen <= dataMaxLen && \
+			  messageLen <= CRYPT_MAX_KEYSIZE );
+	REQUIRES( seedLen >= 16 && seedLen <= dataMaxLen && \
+			  seedLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( cryptStatusOK( \
+				getOaepHashSize( &i, hashAlgo ) ) && seedLen == i );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
 
 	/* Make sure that the payload fits:
 
@@ -751,22 +925,29 @@ static int generateOaepDataBlock( BYTE *data, const int dataMaxLen,
 		+--+------+-------+----+--+---------+
 		  1	 hLen	 hLen	 1	 1	 msgLen
 
-	   Although PS may have a length of zero bytes, we require at least one
+	   Although PS may have a length of zero bytes we require at least one
 	   padding byte.  In general the only case where we can ever run into 
 	   problems is if we try and use SHA2-512 with a 1024-bit key */
-	if( messageLen > dataMaxLen - ( 1 + seedLen + seedLen + 1 + 1 ) )
+	if( 1 + seedLen + seedLen + 1 + 1 + messageLen > dataMaxLen )
 		return( CRYPT_ERROR_OVERFLOW );
 
-	/* Calculate the sizes of the various data quantities */
+	/* Calculate the size and position of the various data quantities */
+	maskedSeed = data + 1;
+	db = maskedSeed + seedLen;
 	dbLen = dataMaxLen - ( 1 + seedLen );
+
+	ENSURES( dbLen >= 16 && dbLen >= messageLen + 1 && \
+			 1 + seedLen + dbLen <= dataMaxLen );
 
 	/* db = lHash || zeroes || 0x01 || message */
 	memset( db, 0, dbLen );
-	status = getOaepHash( db, CRYPT_MAX_PKCSIZE, hashAlgo );
+	status = getOaepHash( db, CRYPT_MAX_PKCSIZE, &length, hashAlgo );
 	if( cryptStatusError( status ) )
 		return( status );
 	db[ dbLen - messageLen - 1 ] = 0x01;
 	memcpy( db + dbLen - messageLen, message, messageLen );
+
+	ENSURES( length == seedLen );
 	
 	/* dbMask = MGF1( seed, dbLen ) */
 	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
@@ -795,38 +976,57 @@ static int generateOaepDataBlock( BYTE *data, const int dataMaxLen,
 	return( CRYPT_OK );
 	}
 
-static int recoverOaepDataBlock( BYTE *message, const int messageMaxLen, 
-								 int *messageLen, void *data, 
-								 const int dataLen, 
-								 const CRYPT_ALGO_TYPE hashAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
+									BYTE *message, 
+								 IN_LENGTH_PKC const int messageMaxLen, 
+								 OUT_LENGTH_PKC_Z int *messageLen, 
+								 IN_BUFFER( dataLen ) const void *data, 
+								 IN_LENGTH_PKC const int dataLen, 
+								 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
 	{
 	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ OAEP_MAX_HASHSIZE + 8 ];
-	const int seedLen = getOaepHashSize( hashAlgo );
-	BYTE *dataPtr = data, *seed = dataPtr + 1, *db = seed + seedLen;
-	int dbLen, length, i, m1status, m2status, status;
+	BYTE dataBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	BYTE *seed, *db;
+	int seedLen, dbLen, length, i, m1status, m2status, dummy, status;
 
 	assert( isWritePtr( message, messageMaxLen ) );
 	assert( isWritePtr( messageLen, sizeof( int ) ) );
 	assert( isReadPtr( data, dataLen ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
+
+	REQUIRES( messageMaxLen >= MIN_PKCSIZE && \
+			  messageMaxLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( dataLen >= MIN_PKCSIZE && dataLen <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
 
 	/* Clear return value */
-	memset( message, 0, messageMaxLen );
+	memset( message, 0, min( 16, messageMaxLen ) );
 	*messageLen = 0;
 
 	/* Make sure that the MGF requirements are met.  Note that this check 
 	   has already been performed by the caller to avoid this being used as 
 	   a timing oracle, this is merely here to make the fact that the check 
 	   has been done explicit */
-	if( cryptStatusError( seedLen ) )
-		return( seedLen );
+	status = getOaepHashSize( &seedLen, hashAlgo );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* Calculate the sizes of the various data quantities */
+	/* Take a local copy of the input data, since we're about to operate on 
+	   it */
+	memcpy( dataBuffer, data, dataLen );
+
+	/* Calculate the size and position of the various data quantities */
+	seed = dataBuffer + 1;
+	db = seed + seedLen;
 	dbLen = dataLen - ( 1 + seedLen );
+
+	ENSURES( dbLen >= 16 && 1 + seedLen + dbLen <= dataLen );
 
 	/* seedMask = MGF1( maskedDB, seedLen ) */
 	m1status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
+	if( m1status == CRYPT_ERROR_INTERNAL )
+		return( m1status );	/* Standard status values checked below */
 
 	/* seed = maskedSeed ^ seedMask */
 	for( i = 0; i < seedLen; i++ )
@@ -834,6 +1034,8 @@ static int recoverOaepDataBlock( BYTE *message, const int messageMaxLen,
 
 	/* dbMask = MGF1( seed, dbLen ) */
 	m2status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
+	if( m2status == CRYPT_ERROR_INTERNAL )
+		return( m2status );	/* Standard status values checked below */
 
 	/* db = maskedDB ^ dbMask */
 	for( i = 0; i < dbLen; i++ )
@@ -844,15 +1046,15 @@ static int recoverOaepDataBlock( BYTE *message, const int messageMaxLen,
 		data = 0x00 || [seed] || db 
 			 = 0x00 || [seed] || lHash || zeroes || 0x01 || message
 
-	   We have to be careful with the order of the checks, for example we 
+	   As before to be careful with the order of the checks, for example we 
 	   could check for the leading 0x00 before performing the OAEP 
 	   processing but this might allow an attacker to mount a timing attack,
 	   see "A chosen ciphertext attack on RSA optimal asymmetric encryption 
 	   padding (OAEP)" by James Manger, Proceedings of Crypto'01, LNCS 
-	   No.2139, p.230.  To make this as hard as possible, we cluster all of 
+	   No.2139, p.230.  To make this as hard as possible we cluster all of 
 	   the format checks as close together as we can to try and produce a 
 	   near-constant-time accept/reject decision */
-	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, hashAlgo );
+	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, &dummy, hashAlgo );
 	if( cryptStatusError( status ) )
 		return( status );	/* See earlier comment about oracle attacks */
 	if( cryptStatusError( m1status ) || cryptStatusError( m2status ) )
@@ -871,7 +1073,7 @@ static int recoverOaepDataBlock( BYTE *message, const int messageMaxLen,
 		   completed to try and avoid a timing attack */
 		return( CRYPT_ERROR_BADDATA );
 		}
-	if( dataPtr[ 0 ] != 0x00 || memcmp( db, dbMask, seedLen ) )
+	if( dataBuffer[ 0 ] != 0x00 || memcmp( db, dbMask, seedLen ) )
 		return( CRYPT_ERROR_BADDATA );
 	for( i = seedLen; i < dbLen && db[ i ] == 0x00; i++ );
 	if( i <= seedLen || i >= dbLen || db[ i++ ] != 0x01 )
@@ -888,31 +1090,35 @@ static int recoverOaepDataBlock( BYTE *message, const int messageMaxLen,
 
 	zeroise( dbMask, CRYPT_MAX_PKCSIZE );
 	zeroise( seedMask, OAEP_MAX_HASHSIZE );
+	zeroise( dataBuffer, CRYPT_MAX_PKCSIZE );
 
 	return( CRYPT_OK );
 	}
 
 /* Perform OAEP wrapping/unwrapping */
 
-int exportOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int exportOAEP( STDC_UNUSED void *dummy, 
+				INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
-	MESSAGE_DATA msgData;
 	BYTE payload[ CRYPT_MAX_KEYSIZE + 8 ], seed[ OAEP_MAX_HASHSIZE + 8 ];
-	const int seedLen = getOaepHashSize( mechanismInfo->auxInfo );
-	int payloadSize, length, status;
+	int seedLen, payloadSize, length, status;
 
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
-	/* Clear the return value */
+	/* Clear return value */
 	if( mechanismInfo->wrappedData != NULL )
+		{
 		memset( mechanismInfo->wrappedData, 0,
 				mechanismInfo->wrappedDataLength );
+		}
 
 	/* Make sure that the OAEP auxiliary algorithm requirements are met */
-	if( cryptStatusError( seedLen ) )
-		return( seedLen );
+	status = getOaepHashSize( &seedLen, mechanismInfo->auxInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Get various algorithm parameters */
 	status = getPkcAlgoParams( mechanismInfo->wrapContext, &cryptAlgo, 
@@ -934,29 +1140,36 @@ int exportOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 		mechanismInfo->wrappedDataLength = \
 							( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? \
 							10 + ( 2 * ( length + 1 ) ) : length;
+		
+		return( CRYPT_OK );
 		}
 
-	/* Get the payload details from the key context */
+	/* Get the payload details from the key context and generate the OAEP 
+	   random seed value */
 	status = krnlSendMessage( mechanismInfo->keyContext, 
 							  IMESSAGE_GETATTRIBUTE, &payloadSize,
 							  CRYPT_CTXINFO_KEYSIZE );
-	if( cryptStatusError( status ) )
-		return( status );
+	if( cryptStatusOK( status ) )
+		{
+		MESSAGE_DATA msgData;
 
-	/* Generate the OAEP random seed value */
-	setMessageData( &msgData, seed, seedLen );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_GETATTRIBUTE_S, &msgData,
-							  CRYPT_IATTRIBUTE_RANDOM );
+		setMessageData( &msgData, seed, seedLen );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_GETATTRIBUTE_S, &msgData,
+								  CRYPT_IATTRIBUTE_RANDOM );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Extract the key data and process it into an OAEP data block */
-	status = extractKeyData( mechanismInfo->keyContext, payload, payloadSize );
+	status = extractKeyData( mechanismInfo->keyContext, payload, payloadSize,
+							 "keydata", 7 );
 	if( cryptStatusOK( status ) )
+		{
 		status = generateOaepDataBlock( mechanismInfo->wrappedData, length, 
 										payload, payloadSize, seed, seedLen,
 										mechanismInfo->auxInfo );
+		}
 	zeroise( payload, bitsToBytes( CRYPT_MAX_KEYSIZE ) );
 	zeroise( seed, OAEP_MAX_HASHSIZE );
 	if( cryptStatusError( status ) )
@@ -968,7 +1181,9 @@ int exportOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 								TRUE : FALSE ) );
 	}
 
-int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int importOAEP( STDC_UNUSED void *dummy, 
+				INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
 	MESSAGE_DATA msgData;
@@ -976,7 +1191,7 @@ int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 	BYTE message[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, messageLen, status;
 
-	UNUSED( dummy );
+	UNUSED_ARG( dummy );
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
 
 	/* Get various algorithm parameters */
@@ -986,18 +1201,18 @@ int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 		return( status );
 
 	/* Make sure that the MGF requirements are met.  This check isn't 
-	   actually needed until the recoverOaepDataBlock() call, but we perform
-	   it here before the decrypt to avoid being used as a timing oracle
-	   (feeding in a non-usable hash function that causes the processing to 
-	   bail out right after the decrypt provides a reasonably precise timer 
-	   for the decryption) */
-	status = getOaepHashSize( mechanismInfo->auxInfo );
+	   actually needed until the recoverOaepDataBlock() call but we perform 
+	   it here before the decrypt to avoid being used as a timing oracle 
+	   since feeding in a non-usable hash function that causes the 
+	   processing to bail out right after the decrypt provides a reasonably 
+	   precise timer for the decryption */
+	status = getOaepHashSize( &length, mechanismInfo->auxInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Decrypt the data */
 	status = pkcUnwrapData( mechanismInfo, decryptedData, CRYPT_MAX_PKCSIZE,
-							length, &length, FALSE,
+							&length, length, FALSE,
 							( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? TRUE : FALSE );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1018,10 +1233,12 @@ int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
 	status = krnlSendMessage( mechanismInfo->keyContext, 
 							  IMESSAGE_SETATTRIBUTE_S, &msgData,
 							  CRYPT_CTXINFO_KEY );
-	if( status == CRYPT_ARGERROR_STR1 || status == CRYPT_ARGERROR_NUM1 )
+	if( cryptArgError( status ) )
+		{
 		/* If there was an error with the key value or size, convert the 
 		   return value into something more appropriate */
 		status = CRYPT_ERROR_BADDATA;
+		}
 	zeroise( message, CRYPT_MAX_PKCSIZE );
 
 	return( status );
@@ -1037,250 +1254,18 @@ void testOAEP( void )
 	const BYTE message[] = { 0xd4, 0x36, 0xe9, 0x95, 0x69, 0xfd, 0x32, 0xa7,
 							 0xc8, 0xa0, 0x5b, 0xbc, 0x90, 0xd3, 0x2c, 0x49 };
 	BYTE buffer[ 1024 ], outMessage[ 128 ];
-	const int seedLen = getOaepHashSize( CRYPT_ALGO_SHA );
-	int outLen, status;
+	int seedLen, outLen, status;
+
+	status = getOaepHashSize( &seedLen, CRYPT_ALGO_SHA1 );
 
 	memset( buffer, '*', 1024 );
 
 	status = generateOaepDataBlock( buffer, 128, message, 16, seed, seedLen, 
-									CRYPT_ALGO_SHA );
+									CRYPT_ALGO_SHA1 );
 	status = recoverOaepDataBlock( outMessage, 128, &outLen, buffer, 128, 
-								   CRYPT_ALGO_SHA );
+								   CRYPT_ALGO_SHA1 );
 	if( outLen != 16 || memcmp( message, outMessage, outLen ) )
 		puts( "Bang." );
 	puts( "Done." );
 	}
 #endif /* 0 */
-
-/****************************************************************************
-*																			*
-*							CMS Wrap/Unwrap Mechanisms						*
-*																			*
-****************************************************************************/
-
-/* Perform CMS data wrapping.  Returns an error code or the number of output
-   bytes */
-
-#define CMS_KEYBLOCK_HEADERSIZE		4
-
-static int cmsGetPadSize( const CRYPT_CONTEXT iExportContext,
-						  const int payloadSize )
-	{
-	int blockSize, totalSize, status;
-
-	assert( isHandleRangeValid( iExportContext ) );
-	assert( payloadSize > MIN_KEYSIZE );
-
-	status = krnlSendMessage( iExportContext, IMESSAGE_GETATTRIBUTE,
-							  &blockSize, CRYPT_CTXINFO_IVSIZE );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Determine the padding size, which is the amount of padding required to
-	   bring the total data size up to a multiple of the block size with a
-	   minimum size of two blocks */
-	totalSize = roundUp( payloadSize, blockSize );
-	if( totalSize < blockSize * 2 )
-		totalSize = blockSize * 2;
-	assert( !( totalSize & ( blockSize - 1 ) ) );
-
-	return( totalSize - payloadSize );
-	}
-
-int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
-	{
-	BYTE *keyBlockPtr = ( BYTE * ) mechanismInfo->wrappedData;
-	BYTE dataSample[ 16 + 8 ];
-	int payloadSize, padSize, status = CRYPT_OK;
-
-	UNUSED( dummy );
-	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
-
-	/* Clear the return value */
-	if( mechanismInfo->wrappedData != NULL )
-		memset( mechanismInfo->wrappedData, 0,
-				mechanismInfo->wrappedDataLength );
-
-	/* Get the payload details, either as data passed in by the caller or
-	   from the key context */
-	if( mechanismInfo->keyContext == CRYPT_UNUSED )
-		payloadSize = mechanismInfo->keyDataLength;
-	else
-		{
-		status = krnlSendMessage( mechanismInfo->keyContext,
-								  IMESSAGE_GETATTRIBUTE, &payloadSize,
-								  CRYPT_CTXINFO_KEYSIZE );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-	payloadSize += CMS_KEYBLOCK_HEADERSIZE;
-	padSize = cmsGetPadSize( mechanismInfo->wrapContext, payloadSize );
-	if( cryptStatusError( padSize ) )
-		return( padSize );
-
-	/* If this is just a length check, we're done */
-	if( mechanismInfo->wrappedData == NULL )
-		{
-		mechanismInfo->wrappedDataLength = payloadSize + padSize;
-		return( CRYPT_OK );
-		}
-
-	/* Make sure that the wrapped key data fits in the output */
-	if( payloadSize + padSize > mechanismInfo->wrappedDataLength )
-		return( CRYPT_ERROR_OVERFLOW );
-
-	/* Pad the payload out with a random nonce if required */
-	if( padSize > 0 )
-		{
-		MESSAGE_DATA msgData;
-
-		setMessageData( &msgData, keyBlockPtr + payloadSize, padSize );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
-								  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-
-	/* Format the key block:
-
-		[ length ][ check value ][ key ][ padding ]
-		
-	   then copy the payload in at the last possible moment and perform two 
-	   passes of encryption, retaining the IV from the first pass for the 
-	   second pass */
-	keyBlockPtr[ 0 ] = payloadSize - CMS_KEYBLOCK_HEADERSIZE;
-	if( mechanismInfo->keyContext != CRYPT_UNUSED )
-		status = extractKeyData( mechanismInfo->keyContext,
-								 keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE,
-								 mechanismInfo->wrappedDataLength - \
-									( CMS_KEYBLOCK_HEADERSIZE + padSize ) );
-	else
-		memcpy( keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE,
-				mechanismInfo->keyData, payloadSize );
-	keyBlockPtr[ 1 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF;
-	keyBlockPtr[ 2 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF;
-	keyBlockPtr[ 3 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF;
-	memcpy( dataSample, keyBlockPtr, 16 );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( mechanismInfo->wrapContext,
-								  IMESSAGE_CTX_ENCRYPT,
-								  mechanismInfo->wrappedData,
-								  payloadSize + padSize );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( mechanismInfo->wrapContext,
-								  IMESSAGE_CTX_ENCRYPT,
-								  mechanismInfo->wrappedData,
-								  payloadSize + padSize );
-	if( cryptStatusOK( status ) && !memcmp( dataSample, keyBlockPtr, 16 ) )
-		{
-		/* The data to wrap is unchanged, there's been a catastrophic 
-		   failure of the encryption */
-		assert( NOTREACHED );
-		status = CRYPT_ERROR_FAILED;
-		}
-	zeroise( dataSample, 16 );
-	if( cryptStatusError( status ) )
-		{
-		zeroise( mechanismInfo->wrappedData,
-				 mechanismInfo->wrappedDataLength );
-		return( status );
-		}
-	mechanismInfo->wrappedDataLength = payloadSize + padSize;
-
-	return( CRYPT_OK );
-	}
-
-/* Perform CMS data unwrapping */
-
-int importCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo )
-	{
-	MESSAGE_DATA msgData;
-	BYTE buffer[ CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE + 8 ];
-	BYTE ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
-	BYTE *dataEndPtr = buffer + mechanismInfo->wrappedDataLength;
-	int blockSize, status;
-
-	UNUSED( dummy );
-	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
-
-	/* Make sure that the data is a multiple of the cipher block size and 
-	   contains at least two encrypted blocks */
-	status = krnlSendMessage( mechanismInfo->wrapContext,
-							  IMESSAGE_GETATTRIBUTE, &blockSize,
-							  CRYPT_CTXINFO_IVSIZE );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( mechanismInfo->wrappedDataLength & ( blockSize - 1 ) )
-		return( CRYPT_ERROR_BADDATA );
-	if( mechanismInfo->wrappedDataLength < 2 * blockSize )
-		return( CRYPT_ERROR_UNDERFLOW );
-	if( mechanismInfo->wrappedDataLength > CRYPT_MAX_KEYSIZE )
-		return( CRYPT_ERROR_OVERFLOW );
-
-	/* Save the current IV for the inner decryption */
-	setMessageData( &msgData, ivBuffer, CRYPT_MAX_IVSIZE );
-	krnlSendMessage( mechanismInfo->wrapContext, IMESSAGE_GETATTRIBUTE_S,
-					 &msgData, CRYPT_CTXINFO_IV );
-
-	/* Using the n-1'th ciphertext block as the new IV, decrypt the n'th block.
-	   Then, using the decrypted n'th ciphertext block as the IV, decrypt the
-	   remainder of the ciphertext blocks */
-	memcpy( buffer, mechanismInfo->wrappedData,
-			mechanismInfo->wrappedDataLength );
-	setMessageData( &msgData, dataEndPtr - ( 2 * blockSize ), blockSize );
-	krnlSendMessage( mechanismInfo->wrapContext, IMESSAGE_SETATTRIBUTE_S, 
-					 &msgData, CRYPT_CTXINFO_IV );
-	status = krnlSendMessage( mechanismInfo->wrapContext,
-							  IMESSAGE_CTX_DECRYPT, dataEndPtr - blockSize,
-							  blockSize );
-	if( cryptStatusOK( status ) )
-		{
-		setMessageData( &msgData, dataEndPtr - blockSize, blockSize );
-		krnlSendMessage( mechanismInfo->wrapContext,
-						 IMESSAGE_SETATTRIBUTE_S, &msgData, CRYPT_CTXINFO_IV );
-		status = krnlSendMessage( mechanismInfo->wrapContext,
-								  IMESSAGE_CTX_DECRYPT, buffer,
-								  mechanismInfo->wrappedDataLength - blockSize );
-		}
-	if( cryptStatusError( status ) )
-		{
-		zeroise( buffer, CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE );
-		return( status );
-		}
-
-	/* Using the original IV, decrypt the inner data */
-	setMessageData( &msgData, ivBuffer, blockSize );
-	krnlSendMessage( mechanismInfo->wrapContext, IMESSAGE_SETATTRIBUTE_S,
-					 &msgData, CRYPT_CTXINFO_IV );
-	status = krnlSendMessage( mechanismInfo->wrapContext,
-							  IMESSAGE_CTX_DECRYPT, buffer,
-							  mechanismInfo->wrappedDataLength );
-	if( cryptStatusOK( status ) )
-		{
-		/* Make sure that everything is in order and load the decrypted 
-		   keying information into the session key context */
-		if( buffer[ 0 ] < MIN_KEYSIZE || \
-			buffer[ 0 ] > MAX_WORKING_KEYSIZE || \
-			buffer[ 0 ] > mechanismInfo->wrappedDataLength - blockSize )
-			status = CRYPT_ERROR_BADDATA;
-		if( buffer[ 1 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF ) || \
-			buffer[ 2 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF ) || \
-			buffer[ 3 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF ) )
-			status = CRYPT_ERROR_BADDATA;
-		}
-	if( cryptStatusOK( status ) )
-		{
-		setMessageData( &msgData, buffer + CMS_KEYBLOCK_HEADERSIZE,
-						buffer[ 0 ] );
-		status = krnlSendMessage( mechanismInfo->keyContext,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData,
-								  CRYPT_CTXINFO_KEY );
-		if( status == CRYPT_ARGERROR_STR1 || status == CRYPT_ARGERROR_NUM1 )
-			/* If there was an error with the key value or size, convert the
-			   return value into something more appropriate */
-			status = CRYPT_ERROR_BADDATA;
-		}
-	zeroise( buffer, CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE );
-
-	return( status );
-	}

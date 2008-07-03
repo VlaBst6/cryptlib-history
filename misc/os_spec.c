@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib OS-specific Support Routines					*
-*					  Copyright Peter Gutmann 1992-2006						*
+*					  Copyright Peter Gutmann 1992-2007						*
 *																			*
 ****************************************************************************/
 
@@ -365,7 +365,7 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 	const int formatLen = strlen( format ) - 1;
 #ifndef NDEBUG
 	int i;
-#endif /* NDEBUG */
+#endif /* Debug version */
 	int status;
 
 #ifndef NDEBUG
@@ -375,13 +375,13 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 		{
 		if( format[ i ] == '%' && format[ i + 1 ] == 's' )
 			{
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			strlcpy_s( buffer, bufSize, 
 					   "<<<Unable to format output string>>>" );
 			return( -1 );
 			}
 		}
-#endif /* NDEBUG */
+#endif /* Debug version */
 	format = bufferToEbcdic( formatBuffer, format );
 	va_start( argPtr, format );
 	status = vsprintf( buffer, format, argPtr );
@@ -420,8 +420,8 @@ int aToI( const char *str )
 
 uint32_t cryptlibMain( uint16_t cmd, void *cmdPBP, uint16_t launchFlags )
 	{
-	UNUSED( cmdPBP );
-	UNUSED( launchFlags );
+	UNUSED_ARG( cmdPBP );
+	UNUSED_ARG( launchFlags );
 
 	switch( cmd )
 		{
@@ -567,11 +567,6 @@ int fixedSprintf( char *buffer, const int bufSize, const char *format, ... )
 
 #elif defined( __WIN32__ )
 
-/* A flag to record whether we're running under the Win95 or WinNT code
-   base */
-
-BOOLEAN isWin95;
-
 /* Yielding a thread on an SMP or HT system is a tricky process,
    particularly on an HT system.  On an HT CPU the OS (or at least apps
    running under the OS) think that there are two independent CPUs present,
@@ -641,6 +636,8 @@ void threadYield( void )
 	Sleep( sleepTime );
 	}
 
+#ifndef NDEBUG
+
 /* For performance evaluation purposes we provide the following function,
    which returns ticks of the 3.579545 MHz hardware timer (see the long
    comment in rndwin32.c for more details on Win32 timing issues) */
@@ -672,8 +669,10 @@ long getTickCount( long startTime )
 	if( startTime < timeLSB )
 		timeDifference = timeLSB - startTime;
 	else
+		{
 		/* Windows rolls over at INT_MAX */
 		timeDifference = ( 0xFFFFFFFFUL - startTime ) + 1 + timeLSB;
+		}
 	if( timeDifference <= 0 )
 		{
 		printf( "Error: Time difference = %X, startTime = %X, endTime = %X.\n",
@@ -682,9 +681,12 @@ long getTickCount( long startTime )
 		}
 	return( timeDifference );
 	}
+#endif /* Debug version */
 
 /* Borland C++ before 5.50 doesn't have snprintf() so we fake it using
-   sprintf() */
+   sprintf().  Unfortunately these are all va_args functions so we can't 
+   just map them using macros but have to provide an explicit wrapper to get 
+   rid of the size argument */
 
 #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x0550 )
 
@@ -699,15 +701,118 @@ int bcSnprintf( char *buffer, const int bufSize, const char *format, ... )
 
 	return( length );
 	}
+
+int bcVsnprintf( char *buffer, const int bufSize, const char *format, va_list argPtr )
+	{
+	return( vsprintf( buffer, format, argPtr ) );
+	}
 #endif /* BC++ before 5.50 */
 
-/* Windows NT/2000/XP support ACL-based access control mechanisms for system
-   objects, so when we create objects such as files and threads we give them
-   an ACL that allows only the creator access.  The following functions
-   return the security info needed when creating objects.  The interface for
-   this has changed in every major OS release, although it never got any
-   better, just differently ugly.  The following code uses the original NT
-   3.1 interface, which works for all OS versions */
+/* Safely load a DLL.  This gets quite complicated because different 
+   versions of Windows have changed how they search for DLLs to load, and 
+   the behaviour of a specific version of Windows can be changed based on
+   registry keys and SetDllDirectory().  Traditionally Windows searched
+   the app directory, the current directory, the system directory, the
+   Windows directory, and the directories in $PATH.  Windows XP SP2 added
+   the SafeDllSearchMode registry key, which changes the search order so
+   the current directory is searched towards the end rather than towards
+   the start, however it's (apparently) only set on new installs, on a
+   pre-SP2 install that's been upgraded it's not set.  In addition 
+   SetDllDirectory() can be used to add a new directory to the start of
+   the search order, or to revert to the default search order if it's
+   been changed previously.
+
+   None of these options are terribly useful if we want a DLL to either
+   be loaded from the system directory or not at all.  To handle this we
+   build an absolute load path and prepend it to the name of the DLL
+   being loaded */
+
+#ifndef CSIDL_SYSTEM
+  #define CSIDL_SYSTEM		0x25	/* 'Windows/System32' */
+#endif /* !CSIDL_SYSTEM */
+#ifndef SHGFP_TYPE_CURRENT
+  #define SHGFP_TYPE_CURRENT	0
+#endif /* !SHGFP_TYPE_CURRENT */
+
+HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
+	{
+	typedef HRESULT ( WINAPI *SHGETFOLDERPATH )( HWND hwndOwner,
+										int nFolder, HANDLE hToken,
+										DWORD dwFlags, LPTSTR lpszPath );
+	SHGETFOLDERPATH pSHGetFolderPath;
+	HINSTANCE hShell32;
+	char path[ MAX_PATH + 8 ];
+	const int fileNameLength = strlen( lpFileName ) + 1;
+	int pathLength;
+	BOOLEAN gotPath = FALSE;
+
+	/* If it's Win98 or NT4, just call LoadLibrary directly.  In theory
+	   we could try a few further workarounds (see io/file.c) but in 
+	   practice bending over backwards to fix search path issues under
+	   Win98, which doesn't have ACLs to protect the files in the system
+	   directory anyway, isn't going to achieve much */
+	if( getSysVar( SYSVAR_OSVERSION ) <= 4 )
+		return( LoadLibrary( lpFileName ) );
+
+	/* If it's already an absolute path, don't try and override it */
+	if( lpFileName[ 0 ] == '/' || \
+		( fileNameLength > 3 && 
+		  lpFileName[ 1 ] == ':' && lpFileName[ 2 ] == '/' ) )
+		return( LoadLibrary( lpFileName ) );
+
+	/* It's a system new enough to support SHGetFolderPath(), get the path
+	   to the system directory.  Unfortunately at this point we're in a 
+	   catch-22, in order to resolve SHGetFolderPath() we need to call
+	   Shell32.dll and if an attacker uses that as the injection point then
+	   they can give us a SHGetFolderPath() that'll do whatever they want.  
+	   There's no real way to fix this because we have to load Shell32 at
+	   some point, either explicitly here or on program load, and since we
+	   can't control the load path at either point we can't control what's
+	   actually being loaded.  In addition DLLs typically recursively load
+	   more DLLs so even if we can control the path of the DLL that we load 
+	   directly we can't influence the paths over which further DLLs get 
+	   loaded.  So unfortunately the best that we can do is make the 
+	   attacker work a little harder rather than providing a full fix */
+	hShell32 = LoadLibrary( "Shell32.dll" );
+	pSHGetFolderPath = ( SHGETFOLDERPATH ) \
+					   GetProcAddress( hShell32, "SHGetFolderPathA" );
+	if( pSHGetFolderPath != NULL && \
+		pSHGetFolderPath( NULL, CSIDL_SYSTEM, NULL, SHGFP_TYPE_CURRENT, 
+						  path ) == S_OK )
+		gotPath = TRUE;
+	FreeLibrary( hShell32 );
+	if( !gotPath )
+		{
+		/* If for some reason we couldn't get the path to the Windows system
+		   directory (which would indicate there's something drastically 
+		   wrong), fall back to the default load */
+		return( LoadLibrary( lpFileName ) );
+		}
+	pathLength = strlen( path );
+	if( pathLength < 3 || pathLength + 1 + fileNameLength > MAX_PATH )
+		{
+		/* Under WinNT and Win2K the LocalSystem account doesn't have its 
+		   own profile so SHGetFolderPath() will report success but return a 
+		   zero-length path if we're running as a service so we have to 
+		   check for a valid-looking path as well as performing a general 
+		   check on the return status.  In effect prepending a zero-length
+		   path to the DLL name just turns the call into a standard 
+		   LoadLibrary() call, but we make the action explicit */
+		return( LoadLibrary( lpFileName ) );
+		}
+	path[ pathLength++ ] = '\\';
+	memcpy( path + pathLength, lpFileName, fileNameLength );
+
+	return( LoadLibrary( lpFileName ) );
+	}
+
+/* Windows NT/2000/XP/Vista support ACL-based access control mechanisms for 
+   system objects so when we create objects such as files and threads we 
+   give them an ACL that allows only the creator access.  The following 
+   functions return the security info needed when creating objects.  The 
+   interface for this has changed in every major OS release, although it 
+   never got any better, just differently ugly.  The following code uses the 
+   original NT 3.1 interface, which works for all OS versions */
 
 /* The size of the buffer for ACLs and the user token */
 
@@ -742,14 +847,15 @@ typedef struct {
 /* Initialise an ACL allowing only the creator access and return it to the
    caller as an opaque value */
 
+CHECK_RETVAL_PTR \
 void *initACLInfo( const int access )
 	{
 	SECURITY_INFO *securityInfo;
 	HANDLE hToken = INVALID_HANDLE_VALUE;	/* See comment below */
 	BOOLEAN tokenOK = FALSE;
 
-	/* Win95/98/ME doesn't have any security, return null security info */
-	if( isWin95 )
+	/* Win95/98/ME don't have any security, return null security info */
+	if( getSysVar( SYSVAR_ISWIN95 ) )
 		return( NULL );
 
 	/* Allocate and initialise the composite security info structure */
@@ -822,9 +928,13 @@ void *initACLInfo( const int access )
 	return( securityInfo );
 	}
 
-void freeACLInfo( void *securityInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void freeACLInfo( INOUT TYPECAST( SECURITY_INFO * ) void *securityInfoPtr )
 	{
 	SECURITY_INFO *securityInfo = ( SECURITY_INFO * ) securityInfoPtr;
+
+	assert( securityInfoPtr == NULL || \
+			isWritePtr( securityInfoPtr, sizeof( SECURITY_INFO ) ) );
 
 	if( securityInfo == NULL )
 		return;
@@ -834,9 +944,13 @@ void freeACLInfo( void *securityInfoPtr )
 /* Extract the security info needed in Win32 API calls from the collection of
    security data that we set up earlier */
 
-void *getACLInfo( void *securityInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void *getACLInfo( INOUT TYPECAST( SECURITY_INFO * ) void *securityInfoPtr )
 	{
 	SECURITY_INFO *securityInfo = ( SECURITY_INFO * ) securityInfoPtr;
+
+	assert( securityInfo == NULL || \
+			isWritePtr( securityInfo, sizeof( SECURITY_INFO ) ) );
 
 	return( ( securityInfo == NULL ) ? NULL : &securityInfo->sa );
 	}
@@ -847,28 +961,12 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 	{
 	static DWORD dwPlatform = ( DWORD ) CRYPT_ERROR;
 
-	UNUSED( hinstDLL );
-	UNUSED( lpvReserved );
+	UNUSED_ARG( hinstDLL );
+	UNUSED_ARG( lpvReserved );
 
 	switch( fdwReason )
 		{
 		case DLL_PROCESS_ATTACH:
-			/* Figure out which version of Windows we're running under */
-			if( dwPlatform == ( DWORD ) CRYPT_ERROR )
-				{
-				OSVERSIONINFO osvi = { sizeof( osvi ) };
-
-				GetVersionEx( &osvi );
-				dwPlatform = osvi.dwPlatformId;
-				isWin95 = ( dwPlatform == VER_PLATFORM_WIN32_WINDOWS ) ? \
-						  TRUE : FALSE;
-
-				/* Check for Win32s just in case someone ever tries to load
-				   cryptlib under it */
-				if( dwPlatform == VER_PLATFORM_WIN32s )
-					return( FALSE );
-				}
-
 			/* Disable thread-attach notifications, which we don't do
 			   anything with and therefore don't need */
 			DisableThreadLibraryCalls( hinstDLL );
@@ -889,9 +987,6 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 
 	return( TRUE );
 	}
-#endif /* !( NT_DRIVER || STATIC_LIB ) */
-
-#ifdef _MSC_VER
 
 /* Idiot-proofing.  Yes, there really are people who'll try and register a
    straight DLL */
@@ -902,7 +997,9 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
 int WINAPI MessageBoxA( HWND hWnd, LPCSTR lpText, LPCSTR lpCaption,
 						UINT uType );
 
-#pragma comment( linker, "/export:DllRegisterServer=_DllRegisterServer@0,PRIVATE" )
+#ifndef _WIN64
+  #pragma comment( linker, "/export:DllRegisterServer=_DllRegisterServer@0,PRIVATE" )
+#endif /* Win64 */
 
 STDAPI DllRegisterServer( void )
 	{
@@ -912,7 +1009,7 @@ STDAPI DllRegisterServer( void )
 				 MB_ICONQUESTION | MB_OK );
 	return( E_NOINTERFACE );
 	}
-#endif /* VC++ */
+#endif /* !( NT_DRIVER || STATIC_LIB ) */
 
 /* Borland's archaic compilers don't recognise DllMain() but still use the
    OS/2-era DllEntryPoint(), so we have to alias it to DllMain() in order
@@ -920,7 +1017,8 @@ STDAPI DllRegisterServer( void )
 
 #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
 
-BOOL WINAPI DllEntryPoint( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
+BOOL WINAPI DllEntryPoint( HINSTANCE hinstDLL, DWORD fdwReason, \
+						   LPVOID lpvReserved )
 	{
 	return( DllMain( hinstDLL, fdwReason, lpvReserved ) );
 	}
@@ -974,7 +1072,7 @@ int CALLBACK WEP( int nSystemExit )
 
 /* Check whether we're running inside a VM, which is a potential risk for
    cryptovariables.  It gets quite tricky to detect the various VMs so for
-   now the only one we detect is the most widespread one, VMware */
+   now the only one that we detect is the most widespread one, VMware */
 
 #if defined( __WIN32__ )  && !defined( NO_ASM )
 
@@ -1028,6 +1126,7 @@ BOOLEAN isRunningInVM( void )
    relatively easy to do so, and they are in fact provided in MFC), so we
    have to provide our own */
 
+CHECK_RETVAL \
 static LARGE_INTEGER *getTimeOffset( void )
 	{
 	static LARGE_INTEGER timeOffset = { 0 };
@@ -1052,6 +1151,7 @@ static LARGE_INTEGER *getTimeOffset( void )
 	return( &timeOffset );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static time_t fileTimeToTimeT( const FILETIME *fileTime )
 	{
 	const LARGE_INTEGER *timeOffset = getTimeOffset();
@@ -1065,6 +1165,7 @@ static time_t fileTimeToTimeT( const FILETIME *fileTime )
 							  timeOffset->QuadPart ) / 10000000L;
 	if( sizeof( time_t ) == 4 && \
 		largeInteger.QuadPart > 0x80000000UL )
+		{
 		/* time_t is 32 bits but the converted time is larger than a 32-bit
 		   signed value, indicate that we couldn't convert it.  In theory
 		   we could check for largeInteger.HighPart == 0 and perform a
@@ -1072,9 +1173,11 @@ static time_t fileTimeToTimeT( const FILETIME *fileTime )
 		   this change would be made to the VC++ runtime time_t since it'd
 		   break too many existing apps */
 		return( -1 );
+		}
 	return( ( time_t ) largeInteger.QuadPart );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static void timeTToFileTime( FILETIME *fileTime, const time_t timeT )
 	{
 	const LARGE_INTEGER *timeOffset = getTimeOffset();
@@ -1169,43 +1272,51 @@ struct tm *gmtime( const time_t *timePtr )
 #undef NONLS
 #include <winnls.h>
 
-int asciiToUnicode( wchar_t *dest, const char *src, const int length )
+int asciiToUnicode( wchar_t *dest, const int destMaxLen, 
+					const char *src, const int length )
 	{
 	int status;
 
 	assert( isReadPtr( src, length ) );
+	assert( isWritePtr( dest, destMaxLen ) );
 
-	status = MultiByteToWideChar( GetACP(), 0, src, length, dest, length );
+	status = MultiByteToWideChar( GetACP(), 0, src, destMaxLen, dest, 
+								  length );
 	return( status <= 0 ? CRYPT_ERROR_BADDATA : status * sizeof( wchar_t ) );
 	}
 
-int unicodeToAscii( char *dest, const wchar_t *src, const int length )
+int unicodeToAscii( char *dest, const int destMaxLen, 
+					const wchar_t *src, const int length )
 	{
+	size_t destLen;
 	int status;
 
 	assert( isReadPtr( src, length ) );
+	assert( isWritePtr( dest, destMaxLen ) );
 
 	/* Convert the string, overriding the system default char '?', which
 	   causes problems if the output is used as a filename.  This function
 	   has stupid semantics in that instead of returning the number of bytes
-	   written to the output, it returns the number of bytes specified as
+	   written to the output it returns the number of bytes specified as
 	   available in the output buffer, zero-filling the rest.  Because
-	   there's no way to tell how long the resulting string actually is, we
-	   use wcstombs() instead */
+	   there's no way to tell how long the resulting string actually is we
+	   have to use wcstombs() instead, which is unfortunate because there's
+	   nothing that we can do with the maxLength parameter */
 #if 0
 	status = WideCharToMultiByte( GetACP(), 0, src, length, dest,
 								  length * sizeof( wchar_t ), "_", NULL );
 	return( ( status <= 0 ) ? CRYPT_ERROR_BADDATA : wcslen( dest ) );
 #else
-	status = wcstombs( dest, src, length * sizeof( wchar_t ) );
+	status = wcstombs_s( &destLen, dest, destMaxLen, src, 
+						 length * sizeof( wchar_t ) );
 	return( ( status <= 0 ) ? CRYPT_ERROR_BADDATA : status );
 #endif
 	}
 
 BOOL WINAPI DllMain( HANDLE hinstDLL, DWORD dwReason, LPVOID lpvReserved )
 	{
-	UNUSED( hinstDLL );
-	UNUSED( lpvReserved );
+	UNUSED_ARG( hinstDLL );
+	UNUSED_ARG( lpvReserved );
 
 	switch( dwReason )
 		{
@@ -1279,7 +1390,7 @@ int strlcat_s( char *dest, const int destLen, const char *src )
 	for( i = 0; i < destLen && dest[ i ] != '\0'; i++ );
 	if( i >= destLen )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		dest[ destLen - 1 ] = '\0';
 
 		return( 1 );
@@ -1297,29 +1408,19 @@ int strlcat_s( char *dest, const int destLen, const char *src )
 
 /****************************************************************************
 *																			*
-*								SysCaps Support								*
+*								SysVars Support								*
 *																			*
 ****************************************************************************/
 
 #if defined( __WIN32__ )  && !defined( NO_ASM )
 
-int getSysCaps( void )
+CHECK_RETVAL \
+static int getHWInfo( void )
 	{
-	static BOOLEAN sysCapsSet = FALSE;
-	static int sysCaps = 0;
 	BOOLEAN hasAdvFeatures = 0;
 	char vendorID[ 12 + 8 ];
-#if 0	/* Not needed for now */
-	unsigned long processorID, featureFlags;
-#endif /* 0 */
-
-	/* If we've already established the system hardware capabilities,
-	   return the cached result of the lookup */
-	if( sysCapsSet )
-		return( sysCaps );
-
-	/* Remember that the sysCaps will have been set on the next call */
-	sysCapsSet = TRUE;
+	unsigned long processorID;
+	int sysCaps = 0;
 
 	/* Check whether the CPU supports extended features like CPUID and
 	   RDTSC, and get any info we need related to this.  There is an
@@ -1342,7 +1443,7 @@ int getSysCaps( void )
 		xor eax, ebx		/* Check if we could toggle CPUID bit */
 		jz noCPUID			/* Nope, we can't do anything further */
 		mov [hasAdvFeatures], 1	/* Remember that we have CPUID */
-		mov [sysCaps], SYSCAP_FLAG_RDTSC	/* Remember that we have RDTSC */
+		mov [sysCaps], HWCAP_FLAG_RDTSC	/* Remember that we have RDTSC */
 
 		/* We have CPUID, see what we've got */
 		xor ecx, ecx
@@ -1352,10 +1453,10 @@ int getSysCaps( void )
 		mov dword ptr [vendorID], ebx
 		mov dword ptr [vendorID+4], edx
 		mov dword ptr [vendorID+8], ecx	/* Save vendor ID string */
-#if 0
 		mov eax, 1			/* CPUID function 1: Get processor info */
 		cpuid
 		mov [processorID], eax	/* Save processor ID */
+#if 0	/* No crypto-related features are reported in these flags */
 		mov [featureFlags], edx	/* Save processor feature info */
 #endif /* 0 */
 	noCPUID:
@@ -1364,7 +1465,7 @@ int getSysCaps( void )
 	/* If there's no CPUID support, there are no special HW capabilities
 	   available */
 	if( !hasAdvFeatures )
-		return( SYSCAP_FLAG_NONE );
+		return( HWCAP_FLAG_NONE );
 
 	/* If there's a vendor ID present, check for vendor-specific special
 	   features */
@@ -1383,52 +1484,50 @@ int getSysCaps( void )
 		and edx, 01100b
 		cmp edx, 01100b		/* Check for RNG present + enabled flags */
 		jz noRNG			/* No, RNG not present or enabled */
-		or [sysCaps], SYSCAP_FLAG_XSTORE	/* Remember that we have a HW RNG */
+		or [sysCaps], HWCAP_FLAG_XSTORE	/* Remember that we have a HW RNG */
 	noRNG:
 		mov eax, edx
 		and eax, 011000000b
 		cmp eax, 011000000b	/* Check for ACE present + enabled flags */
 		jz noACE			/* No, ACE not present or enabled */
-		or [sysCaps], SYSCAP_FLAG_XCRYPT	/* Remember that we have HW AES */
+		or [sysCaps], HWCAP_FLAG_XCRYPT	/* Remember that we have HW AES */
 	noACE:
 		mov eax, edx
 		and eax, 0110000000000b
 		cmp eax, 0110000000000b	/* Check for PHE present + enabled flags */
 		jz noPHE			/* No, PHE not present or enabled */
-		or [sysCaps], SYSCAP_FLAG_XSHA	/* Remember that we have HW SHA-1/SHA-2 */
+		or [sysCaps], HWCAP_FLAG_XSHA	/* Remember that we have HW SHA-1/SHA-2 */
 	noPHE:
 		mov eax, edx
 		and eax, 011000000000000b
 		cmp eax, 011000000000000b /* Check for PMM present + enabled flags */
 		jz endCheck			/* No, PMM not present or enabled */
-		or [sysCaps], SYSCAP_FLAG_MONTMUL	/* Remember that we have HW bignum */
+		or [sysCaps], HWCAP_FLAG_MONTMUL	/* Remember that we have HW bignum */
 	endCheck:
 		}
+		}
+	if( hasAdvFeatures && !memcmp( vendorID, "AuthenticAMD", 12 ) )
+		{
+		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
+		if( ( processorID & 0x05A0 ) == 0x05A0 )
+			sysCaps |= HWCAP_FLAG_TRNG;
 		}
 
 	return( sysCaps );
 	}
 
-#elif defined( __GNUC__ ) && defined( __i386__ )
+#elif defined( __GNUC__ ) && defined( __i386__ ) && !defined( NO_ASM )
 
-#if SYSCAP_FLAG_RDTSC != 0x01
-  #error Need to sync SYSCAP_FLAG_RDTSC with equivalent asm definition
-#endif /* SYSCAP_FLAG_RDTSC */
+#if HWCAP_FLAG_RDTSC != 0x01
+  #error Need to sync HWCAP_FLAG_RDTSC with equivalent asm definition
+#endif /* HWCAP_FLAG_RDTSC */
 
-int getSysCaps( void )
+CHECK_RETVAL \
+static int getHWInfo( void )
 	{
-	static BOOLEAN sysCapsSet = FALSE;
-	static int sysCaps = 0;
-	int hasAdvFeatures = 0;
 	char vendorID[ 12 + 8 ];
-
-	/* If we've already established the system hardware capabilities,
-	   return the cached result of the lookup */
-	if( sysCapsSet )
-		return( sysCaps );
-
-	/* Remember that the sysCaps will have been set on the next call */
-	sysCapsSet = TRUE;
+	unsigned long processorID;
+	int hasAdvFeatures = 0, sysCaps = 0;
 
 	/* Check whether the CPU supports extended features like CPUID and
 	   RDTSC, and get any info we need related to this.  The use of ebx is a
@@ -1452,19 +1551,31 @@ int getSysCaps( void )
 		"popf\n\t"
 		"xorl %%ecx, %%eax\n\t"
 		"jz noCPUID\n\t"
-		"movl $1, %0\n\t"
-		"movl $1, %1\n\t"	/* SYSCAP_FLAG_RDTSC */
+		"movl $1, %0\n\t"	/* hasAdvFeatures = TRUE */
+		"movl $1, %1\n\t"	/* sysCaps = HWCAP_FLAG_RDTSC */
 		"pushl %%ebx\n\t"	/* Save PIC register */
-		"xorl %%eax, %%eax\n\t"
+		"xorl %%eax, %%eax\n\t"	/* CPUID function 0: Get vendor ID */
 		"cpuid\n\t"
 		"leal %2, %%eax\n\t"
 		"movl %%ebx, (%%eax)\n\t"
 		"movl %%edx, 4(%%eax)\n\t"
 		"movl %%ecx, 8(%%eax)\n\t"
+		"movl $1, %%eax\n\t"	/* CPUID function 1: Get processor info */
+		"cpuid\n\t"
+		"leal %3, %%ecx\n\t"
+		"movl %%eax, (%%ecx)\n\t"	/* processorID */
 		"popl %%ebx\n"		/* Restore PIC register */
-	"noCPUID:\n"
+	"noCPUID:\n\n"
+#if 0	/* See comment in tools/ccopts.sh for why this is disabled */
+		".section .note.GNU-stack, \"\", @progbits; .previous\n"
+							/* Mark the stack as non-executable.  This is
+							   undocumented outside of mailing-list postings
+							   and a bit hit-and-miss, but having at least
+							   one of these in included asm code doesn't
+							   hurt */
+#endif /* 0 */
 		: "=m"(hasAdvFeatures), "=m"(sysCaps),
-			"=m"(vendorID)						/* Output */
+			"=m"(vendorID), "=m"(processorID)	/* Output */
 		: 										/* Input */
 		: "%eax", "%ecx", "%edx"				/* Registers clobbered */
 		);
@@ -1472,7 +1583,7 @@ int getSysCaps( void )
 	/* If there's no CPUID support, there are no special HW capabilities
 	   available */
 	if( !hasAdvFeatures )
-		return( SYSCAP_FLAG_NONE );
+		return( HWCAP_FLAG_NONE );
 
 	/* If there's a vendor ID present, check for vendor-specific special
 	   features.  Again, we have to be extremely careful with ebx */
@@ -1492,39 +1603,156 @@ int getSysCaps( void )
 		"andl $0xC, %%edx\n\t"
 		"cmpl $0xC, %%edx\n\t"
 		"jz noRNG\n\t"
-		"orl $2, %0\n"		/* SYSCAP_FLAG_XSTORE */
+		"orl $2, %0\n"		/* HWCAP_FLAG_XSTORE */
 	"noRNG:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0xC0, %%eax\n\t"
 		"cmpl $0xC0, %%eax\n\t"
 		"jz noACE\n\t"
-		"orl $4, %0\n"		/* SYSCAP_FLAG_XCRYPT */
+		"orl $4, %0\n"		/* HWCAP_FLAG_XCRYPT */
 	"noACE:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0xC00, %%eax\n\t"
 		"cmpl $0xC00, %%eax\n\t"
 		"jz noPHE\n\t"
-		"orl $8, %0\n"		/* SYSCAP_FLAG_XSHA */
+		"orl $8, %0\n"		/* HWCAP_FLAG_XSHA */
 	"noPHE:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0x3000, %%eax\n\t"
 		"cmpl $0x3000, %%eax\n\t"
 		"jz endCheck\n\t"
-		"orl $10, %0\n"		/* SYSCAP_FLAG_MONTMUL */
-	"endCheck:\n"
+		"orl $10, %0\n"		/* HWCAP_FLAG_MONTMUL */
+	"endCheck:\n\n"
 		 : "=m"(sysCaps)					/* Output */
 		 :
 		 : "%eax", "%ecx", "%edx"	/* Registers clobbered */
 		);
 		}
+	if( hasAdvFeatures && !memcmp( vendorID, "AuthenticAMD", 12 ) )
+		{
+		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
+		if( ( processorID & 0x05A0 ) == 0x05A0 )
+			sysCaps |= HWCAP_FLAG_TRNG;
+		}
 
 	return( sysCaps );
+	}
+#endif /* OS-specific support */
+
+/* Initialise OS-specific constants.  This is a bit ugly because the values 
+   are often specific to one cryptlib module but there's no (clean) way to
+   perform any complex per-module initialisation so we have to know about 
+   all of the module-specific sysVar requirements here */
+
+#define MAX_SYSVARS		8
+
+static int sysVars[ MAX_SYSVARS ];
+
+#if ( defined( __WIN32__ ) || defined( __WINCE__ ) )
+
+int initSysVars( void )
+	{
+	OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
+	SYSTEM_INFO systemInfo;
+
+	assert( SYSVAR_LAST < MAX_SYSVARS );
+
+	/* Reset the system variable information */
+	memset( sysVars, 0, MAX_SYSVARS );
+
+	/* Figure out which version of Windows we're running under */
+	if( !GetVersionEx( &osvi ) )
+		{
+		/* If for any reason the call fails, just use the most likely 
+		   values */
+		osvi.dwMajorVersion = 5;	/* Win2K and higher */
+		osvi.dwPlatformId = VER_PLATFORM_WIN32_NT;
+		}
+	sysVars[ SYSVAR_OSVERSION ] = osvi.dwMajorVersion;
+	sysVars[ SYSVAR_ISWIN95 ] = \
+					( osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS ) ? \
+					TRUE : FALSE;
+
+	/* Check for Win32s just in case someone ever tries to load cryptlib under 
+	   it */
+	if( osvi.dwPlatformId == VER_PLATFORM_WIN32s )
+		{
+		assert( DEBUG_WARN );
+		return( CRYPT_ERROR_NOTAVAIL );
+		}
+
+	/* Get the system page size */
+	GetSystemInfo( &systemInfo );
+	sysVars[ SYSVAR_PAGESIZE ] = systemInfo.dwPageSize;
+
+#if defined( __WIN32__ )  && !defined( NO_ASM )
+	/* Get system hardware capabilities */
+	sysVars[ SYSVAR_HWCAP ] = getHWInfo();
+#endif /* __WIN32__ && !NO_ASM */
+
+	return( CRYPT_OK );
+	}
+
+#elif defined( __UNIX__ )
+
+#include <unistd.h>
+
+int initSysVars( void )
+	{
+	assert( SYSVAR_LAST < MAX_SYSVARS );
+
+	/* Reset the system variable information */
+	memset( sysVars, 0, MAX_SYSVARS );
+
+	/* Get the system page size */
+#if defined( _CRAY ) || defined( __hpux ) || defined( _M_XENIX ) || \
+	defined( __aux )
+  #if defined( _SC_PAGESIZE )
+	sysVars[ SYSVAR_PAGESIZE ] = sysconf( _SC_PAGESIZE );
+  #elif defined( _SC_PAGE_SIZE )
+	sysVars[ SYSVAR_PAGESIZE ] = sysconf( _SC_PAGE_SIZE );
+  #else
+	sysVars[ SYSVAR_PAGESIZE ] = 4096;	/* Close enough for most systems */
+  #endif /* Systems without getpagesize() */
+#else
+	sysVars[ SYSVAR_PAGESIZE ] = getpagesize();
+#endif /* Unix variant-specific brokenness */
+	if( sysVars[ SYSVAR_PAGESIZE ] < 1024 )
+		{
+		assert( DEBUG_WARN );
+
+		/* Suspiciously small reported page size, just assume a sensible 
+		   value */
+		sysVars[ SYSVAR_PAGESIZE ] = 4096;
+		}
+
+#if defined( __GNUC__ ) && defined( __i386__ ) && !defined( NO_ASM )
+	/* Get system hardware capabilities */
+	sysVars[ SYSVAR_HWCAP ] = getHWInfo();
+#endif /* __GNUC__ && __i386__ */
+
+#if defined( __IBMC__ ) || defined( __IBMCPP__ )
+	/* VisualAge C++ doesn't set the TZ correctly */
+	tzset();
+#endif /* VisualAge C++ */
+
+	return( CRYPT_OK );
 	}
 
 #else
 
-int getSysCaps( void )
+int initSysVars( void )
 	{
-	return( SYSCAP_FLAG_NONE );
+	/* Reset the system variable information */
+	memset( sysVars, 0, MAX_SYSVARS );
+
+	return( CRYPT_OK );
 	}
 #endif /* OS-specific support */
+
+int getSysVar( const SYSVAR_TYPE type )
+	{
+	REQUIRES( type > SYSVAR_NONE && type < SYSVAR_LAST );
+
+	return( sysVars[ type ] );
+	}

@@ -172,6 +172,8 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
 	/* Perform a consistency check on the cert management ACLs */
 	for( i = 0; certMgmtACLTbl[ i ].action != MECHANISM_NONE && \
 				i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ); i++ )
@@ -179,19 +181,16 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 		const CERTMGMT_ACL *certMgmtACL = &certMgmtACLTbl[ i ];
 
 		/* Actions and permissions are consistent */
-		if( certMgmtACL->action <= CRYPT_CERTACTION_NONE || \
-			certMgmtACL->action >= CRYPT_CERTACTION_LAST )
-			retIntError();
-		if( certMgmtACL->access != ACTION_PERM_NONE && \
-			certMgmtACL->access != ACTION_PERM_NONE_EXTERNAL && \
-			certMgmtACL->access != ACTION_PERM_ALL )
-			retIntError();
+		ENSURES( certMgmtACL->action > CRYPT_CERTACTION_NONE && \
+				 certMgmtACL->action < CRYPT_CERTACTION_LAST );
+		ENSURES( certMgmtACL->access == ACTION_PERM_NONE || \
+				 certMgmtACL->access == ACTION_PERM_NONE_EXTERNAL || \
+				 certMgmtACL->access == ACTION_PERM_ALL );
 
 		/* If it's a no-access ACL, all mechanisms should be blocked */
 		if( certMgmtACL->access == ACTION_PERM_NONE )
 			{
-			if( paramInfo( certMgmtACL, 0 ).valueType != PARAM_VALUE_NONE )
-				retIntError();
+			ENSURES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_NONE );
 			continue;
 			}
 
@@ -211,10 +210,9 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 		   context with the key loaded and an attached CA certificate */
 		if( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_OBJECT )
 			{
-			if( paramInfo( certMgmtACL, 0 ).subTypeA != ST_CTX_PKC || \
-				paramInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
-				paramInfo( certMgmtACL, 0 ).flags != ACL_FLAG_HIGH_STATE )
-				retIntError();
+			ENSURES( paramInfo( certMgmtACL, 0 ).subTypeA == ST_CTX_PKC && \
+					 paramInfo( certMgmtACL, 0 ).subTypeB == ST_NONE && \
+					 paramInfo( certMgmtACL, 0 ).flags == ACL_FLAG_HIGH_STATE );
 			if( ( secParamInfo( certMgmtACL, 0 ).subTypeA & \
 					~( ST_CERT_CERT | ST_CERT_CERTCHAIN ) ) || \
 				secParamInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
@@ -222,11 +220,9 @@ int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
 				retIntError();
 			continue;
 			}
-		if( paramInfo( certMgmtACL, 0 ).valueType != PARAM_VALUE_UNUSED )
-			retIntError();
+		ENSURES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -271,13 +267,8 @@ int preDispatchCheckCertMgmtAccess( const int objectHandle,
 				certMgmtACL[ i ].action != MECHANISM_NONE && \
 				i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) )
-		retIntError();
-	if( certMgmtACL[ i ].action == MECHANISM_NONE )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ARGERROR_VALUE );
-		}
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certMgmtACLTbl, CERTMGMT_ACL ) );
+	ENSURES( certMgmtACL[ i ].action != MECHANISM_NONE );
 	certMgmtACL = &certMgmtACL[ i ];
 
 	/* Make sure that the access is valid.  Most cert management actions can
@@ -294,7 +285,7 @@ int preDispatchCheckCertMgmtAccess( const int objectHandle,
 		case ACTION_PERM_NONE_EXTERNAL:
 			/* Only internal access (e.g. from a cert management protocol)
 			   is permitted */
-			if( !( message & MESSAGE_FLAG_INTERNAL ) )
+			if( !isInternalMessage( message ) )
 				return( CRYPT_ARGERROR_VALUE );
 			break;
 
@@ -304,8 +295,7 @@ int preDispatchCheckCertMgmtAccess( const int objectHandle,
 			return( CRYPT_ARGERROR_VALUE );
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ARGERROR_VALUE );
+			retIntError();
 		}
 
 	/* Check the mechanism parameters */

@@ -14,12 +14,14 @@
   #include "crypt.h"
   #include "context.h"
   #include "device.h"
+  #include "dev_mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
   #include "device/device.h"
+  #include "mechs/dev_mech.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
@@ -35,11 +37,6 @@
    dynamically allocate the buffer (this almost never occurs) */
 
 #define MAX_BUFFER_SIZE			1024
-
-/* Prototypes for functions in cryptcap.c */
-
-const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
-										const CRYPT_ALGO_TYPE cryptAlgo );
 
 #ifdef USE_CRYPTOAPI
 
@@ -69,6 +66,11 @@ const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
 #undef CRYPT_MODE_CFB
 #undef CRYPT_MODE_OFB
 
+/* Symbolic defines to represent non-initialised values */
+
+#define CALG_NONE			0
+#define HCRYPTPROV_NONE		0
+
 /* Some parts of CryptoAPI (inconsistently) require the use of Unicode,
    winnls.h was already included via the global include of windows.h however
    it isn't needed for any other part of cryptlib so it was disabled via
@@ -95,7 +97,7 @@ const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
   #define CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY	0x80000000
   #define CRYPT_ACQUIRE_CACHE_FLAG					0x00000001
 
-  /* Cert chain match info */
+  /* Certificate chain match info */
   typedef struct {
 	DWORD dwType;
 	CERT_ENHKEY_USAGE Usage;
@@ -109,7 +111,7 @@ const void FAR_BSS *findCapabilityInfo( const void FAR_BSS *capabilityInfoPtr,
 	DWORD dwRevocationFreshnessTime;
 	} CERT_CHAIN_PARA, *PCERT_CHAIN_PARA;
 
-  /* Cert chain info */
+  /* Certificate chain info */
   typedef struct {
 	DWORD dwErrorStatus;
 	DWORD dwInfoStatus;
@@ -307,7 +309,7 @@ int deviceInitCryptoAPI( void )
 	pCryptSetKeyParam = ( CRYPTSETKEYPARAM ) GetProcAddress( hAdvAPI32, "CryptSetKeyParam" );
 	pCryptSignHash = ( CRYPTSIGNHASH ) GetProcAddress( hAdvAPI32, "CryptSignHashA" );
 
-	/* Get pointers to the cert functions */
+	/* Get pointers to the certificate functions */
 	pCertAddCertificateContextToStore = ( CERTADDCERTIFICATETOSTORE ) GetProcAddress( hCryptoAPI, "CertAddCertificateContextToStore" );
 	pCertAddEncodedCertificateToStore = ( CERTADDENCODEDCERTIFICATETOSTORE ) GetProcAddress( hCryptoAPI, "CertAddEncodedCertificateToStore" );
 	pCertCreateCertificateContext = ( CERTCREATECERTIFICATECONTEXT ) GetProcAddress( hCryptoAPI, "CertCreateCertificateContext" );
@@ -369,10 +371,43 @@ void deviceEndCryptoAPI( void )
 *																			*
 ****************************************************************************/
 
+/* Get access to the PKCS #11 device associated with a context */
+
+static int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
+								 CRYPT_DEVICE *iCryptDevice, 
+								 CRYPTOAPI_INFO **cryptoapiInfoPtrPtr )
+	{
+	CRYPT_DEVICE iLocalDevice;
+	DEVICE_INFO *deviceInfo;
+	int cryptStatus;
+
+	/* Clear return values */
+	*iCryptDevice = CRYPT_ERROR;
+	*cryptoapiInfoPtrPtr = NULL;
+
+	/* Get the the device associated with this context */
+	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_GETDEPENDENT, 
+								   &iLocalDevice, OBJECT_TYPE_DEVICE );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+
+	/* Get the PKCS #11 info from the device info */
+	cryptStatus = krnlAcquireObject( iLocalDevice, OBJECT_TYPE_DEVICE, 
+									 ( void ** ) &deviceInfo, 
+									 CRYPT_ERROR_SIGNALLED );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+	*iCryptDevice = iLocalDevice;
+	*cryptoapiInfoPtrPtr = deviceInfo->deviceCryptoAPI;
+
+	return( CRYPT_OK );
+	}
+
 /* Map a CryptoAPI-specific error to a cryptlib error */
 
 static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	{
+	ERROR_INFO *errorInfo = &cryptoapiInfo->errorInfo;
 	const DWORD errorCode = GetLastError();
 	int messageLength;
 
@@ -385,15 +420,15 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	   such as filenames from the argument list when required (there's no
 	   way to tell in advance which arguments are required), so this is
 	   more trouble than it's worth */
-	cryptoapiInfo->errorCode = ( int ) errorCode;
+	errorInfo->errorCode = ( int ) errorCode;
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM, NULL, errorCode, 0,
-				   cryptoapiInfo->errorMessage, MAX_ERRMSG_SIZE - 1, NULL );
-	for( messageLength = strlen( cryptoapiInfo->errorMessage );
+				   errorInfo->errorString, MAX_ERRMSG_SIZE - 1, NULL );
+	for( messageLength = strlen( errorInfo->errorString );
 		 messageLength > 0 && \
-			( cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\n' || \
-			  cryptoapiInfo->errorMessage[ messageLength - 1 ] == '\r' );
-		 messageLength-- )
-		cryptoapiInfo->errorMessage[ messageLength ] = '\0';
+			( errorInfo->errorString[ messageLength - 1 ] == '\n' || \
+			  errorInfo->errorString[ messageLength - 1 ] == '\r' );
+		 messageLength-- );
+	errorInfo->errorStringLength = messageLength;
 
 	/* Translate the CAPI error code into the cryptlib equivalent */
 	switch( errorCode )
@@ -444,21 +479,17 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 static int mapDeviceError( CONTEXT_INFO *contextInfoPtr, const int defaultError )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
+	CRYPTOAPI_INFO *cryptoapiInfo;
 	int status;
 
 	/* Get the device associated with this context, set the error information
 	   in it, and exit */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	status = mapError( deviceInfo->deviceCryptoAPI, defaultError );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	status = mapError( cryptoapiInfo, defaultError );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
@@ -485,7 +516,7 @@ static const ALGO_MAP_INFO algoMap[] = {
 	/* Hash algorithms */
 	{ CRYPT_ALGO_MD2, CALG_MD2 },
 	{ CRYPT_ALGO_MD5, CALG_MD5 },
-	{ CRYPT_ALGO_SHA, CALG_SHA },
+	{ CRYPT_ALGO_SHA1, CALG_SHA },
 
 	{ CRYPT_ALGO_NONE, 0 }, { CRYPT_ALGO_NONE, 0 }
 	};
@@ -781,7 +812,7 @@ static int capiToCryptlibContext( CRYPTOAPI_INFO *cryptoapiInfo,
 	cryptDestroyComponents( &rsaKey );
 	if( cryptStatusError( status ) )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
@@ -791,7 +822,7 @@ static int capiToCryptlibContext( CRYPTOAPI_INFO *cryptoapiInfo,
 	}
 
 /* Compare a CryptoAPI private key with a certificate to check whether the
-   cert corresponds to the key */
+   certificate corresponds to the key */
 
 static BOOLEAN isCertKey( const CRYPTOAPI_INFO *cryptoapiInfo,
 						  const HCRYPTKEY hKey, 
@@ -816,7 +847,7 @@ static int getCertificate( const CRYPTOAPI_INFO *cryptoapiInfo,
 			CERT_RDN certRDN;
 			CERT_RDN_ATTR certRDNAttr;
 
-			/* Find a cert by CN */
+			/* Find a certificate by CN */
 			memset( &certRDNAttr, 0, sizeof( CERT_RDN_ATTR ) );
 			certRDNAttr.pszObjId = szOID_COMMON_NAME;
 			certRDNAttr.dwValueType = CERT_RDN_ANY_TYPE;
@@ -837,9 +868,10 @@ static int getCertificate( const CRYPTOAPI_INFO *cryptoapiInfo,
 			CERT_RDN certRDN;
 			CERT_RDN_ATTR certRDNAttr;
 
-			/* There doesn't appear to be any way to locate a cert using the 
-			   email address in an altName, so we have to restrict ourselves 
-			   to the most commonly-used OID for certs in DNs */
+			/* There doesn't appear to be any way to locate a certificate 
+			   using the email address in an altName, so we have to restrict 
+			   ourselves to the most commonly-used OID for certificates in 
+			   DNs */
 			memset( &certRDNAttr, 0, sizeof( CERT_RDN_ATTR ) );
 			certRDNAttr.pszObjId = szOID_RSA_emailAddr ;
 			certRDNAttr.dwValueType = CERT_RDN_ANY_TYPE;
@@ -898,27 +930,42 @@ static int getCertificate( const CRYPTOAPI_INFO *cryptoapiInfo,
 			{
 			CERT_INFO certInfo;
 			STREAM stream;
-			int length;
+			void *dataPtr = DUMMY_INIT_PTR;
+			int length, status;
 
 			memset( &certInfo, 0, sizeof( CERT_INFO ) );
 			sMemConnect( &stream, keyID, keyIDlength );
 			readSequence( &stream, NULL );
-			certInfo.Issuer.pbData = sMemBufPtr( &stream );
-			readSequence( &stream, &length );		/* Issuer DN */
-			certInfo.Issuer.cbData = ( int ) sizeofObject( length );
+			status = getStreamObjectLength( &stream, &length );
+			if( cryptStatusOK( status ) )
+				status = sMemGetDataBlock( &stream, &dataPtr, length );
+			if( cryptStatusError( status ) )
+				{
+				sMemDisconnect( &stream );
+				return( status );
+				}
+			certInfo.Issuer.pbData = dataPtr;		/* Issuer DN */
+			certInfo.Issuer.cbData = length;
 			sSkip( &stream, length );
-			certInfo.SerialNumber.pbData = sMemBufPtr( &stream );
-			readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
-			certInfo.SerialNumber.cbData = ( int ) sizeofObject( length );
+			status = getStreamObjectLength( &stream, &length );
+			if( cryptStatusOK( status ) )
+				status = sMemGetDataBlock( &stream, &dataPtr, length );
+			if( cryptStatusError( status ) )
+				return( status );
+			certInfo.SerialNumber.pbData = dataPtr;	/* Serial number */
+			certInfo.SerialNumber.cbData = length;
+			status = sSkip( &stream, length );
 			assert( sStatusOK( &stream ) );
 			sMemDisconnect( &stream );
+			if( cryptStatusError( status ) )
+				return( status );
 			pCertContext = \
 				pCertGetSubjectCertificateFromStore( cryptoapiInfo->hCertStore,
 							X509_ASN_ENCODING, &certInfo );
 			}
 
 		default:
-			assert( NOTREACHED );
+			retIntError();
 		}
 
 	if( pCertContext == NULL )
@@ -941,7 +988,8 @@ static int getCertificateChain( CRYPTOAPI_INFO *cryptoapiInfo,
 	/* Clear return value */
 	*pChainContextPtr = NULL;
 
-	/* Get the chain from the supplied cert up to a root cert */
+	/* Get the chain from the supplied certificate up to a root 
+	   certificate */
 	memset( &enhkeyUsage, 0, sizeof( CERT_ENHKEY_USAGE ) );
 	enhkeyUsage.cUsageIdentifier = 0;
 	enhkeyUsage.rgpszUsageIdentifier = NULL;
@@ -982,7 +1030,7 @@ static int getCertificateFromKey( CRYPTOAPI_INFO *cryptoapiInfo,
 		return( CRYPT_ERROR_NOTFOUND );
 		}
 
-	/* Get the cert for the context's public key */
+	/* Get the certificate for the context's public key */
 	memset( &pubKeyInfo, 0, sizeof( CERT_PUBLIC_KEY_INFO ) );
 	pubKeyInfo.Algorithm.pszObjId = isSigningKey ? \
 									CERT_DEFAULT_OID_PUBLIC_KEY_SIGN : \
@@ -1013,8 +1061,8 @@ static int getPrivKeyFromCertificate( CRYPTOAPI_INFO *cryptoapiInfo,
 	/* Clear return value */
 	*hKeyPtr = 0;
 
-	/* Get the provider and key-type from the cert and use that to get the
-	   key */
+	/* Get the provider and key-type from the certificate and use that to 
+	   get the key */
 	if( !pCryptAcquireCertificatePrivateKey( pCertContext, 
 									CRYPT_ACQUIRE_CACHE_FLAG, NULL,
 									&hProv, &dwKeySpec, &fCallerFreeProv ) )
@@ -1076,8 +1124,8 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 		/* Send the keying info to the context.  This is only possible for
 		   RSA keys since it's not possible to read y from a DSA private
 		   key object (see the comments in the DSA code for more on this), 
-		   however the only time this is necessary is when a cert is being 
-		   generated for a key that was pre-generated in the device by 
+		   however the only time this is necessary is when a certificate is 
+		   being generated for a key that was pre-generated in the device by 
 		   someone else, which is typically done in Europe where DSA isn't 
 		   used so this shouldn't be a problem */
 		// Use getPubkeyComponents()
@@ -1111,11 +1159,6 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 static int getCapabilities( DEVICE_INFO *deviceInfo );
 static void freeCapabilities( DEVICE_INFO *deviceInfo );
 
-/* Prototypes for device-specific functions */
-
-static int getRandomFunction( DEVICE_INFO *deviceInfo, void *buffer,
-							  const int length );
-
 /* Close a previously-opened session with the device.  We have to have this
    before the init function since it may be called by it if the init process
    fails */
@@ -1136,7 +1179,7 @@ static void shutdownFunction( DEVICE_INFO *deviceInfo )
 		pCertCloseStore( cryptoapiInfo->hCertStore, 0 );
 		cryptoapiInfo->hCertStore = 0;
 		}
-	cryptoapiInfo->hProv = CRYPT_ERROR;
+	cryptoapiInfo->hProv = HCRYPTPROV_NONE;
 	deviceInfo->flags &= ~( DEVICE_ACTIVE | DEVICE_LOGGEDIN );
 
 	/* Free the device capability information */
@@ -1189,11 +1232,13 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 								  PROV_RSA_FULL, 0 ) )
 			cryptoapiInfo->hProv = hProv;
 		else
+			{
 			if( CryptAcquireContextA( &hProv, keysetName, MS_DEF_PROV, 
 									  PROV_RSA_FULL, 0 ) )
 				cryptoapiInfo->hProv = hProv;
 			else
 				return( mapError( cryptoapiInfo, CRYPT_ERROR_NOTFOUND ) );
+			}
 		}
 	else
 		{
@@ -1230,7 +1275,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		return( status );
 		}
 
-	/* Open the cert store used to store/retrieve certs */
+	/* Open the certificate store used to store/retrieve certificates */
 	hCertStore = pCertOpenSystemStore( cryptoapiInfo->hProv, 
 									   keysetNameBuffer );
 	if( hCertStore == NULL )
@@ -1247,10 +1292,10 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 
 static int controlFunction( DEVICE_INFO *deviceInfo,
 							const CRYPT_ATTRIBUTE_TYPE type,
-							const void *data, const int dataLength )
+							const void *data, const int dataLength,
+							MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_NOTAVAIL );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /****************************************************************************
@@ -1262,7 +1307,8 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 /* Get random data from the device */
 
 static int getRandomFunction( DEVICE_INFO *deviceInfo, void *buffer,
-							  const int length )
+							  const int length,
+							  MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
 	CRYPTOAPI_INFO *cryptoapiInfo = deviceInfo->deviceCryptoAPI;
 
@@ -1374,8 +1420,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( status ) && \
 			itemType == KEYMGMT_ITEM_PUBLICKEY ) 
 			{
-			/* We couldn't get a cert for the key, if we're after a public 
-			   key return it as a native context */
+			/* We couldn't get a certificate for the key, if we're after a 
+			   public key return it as a native context */
 			status = capiToCryptlibContext( cryptoapiInfo, hKey, 
 											iCryptContext );
 			pCryptDestroyKey( hKey ); 
@@ -1402,7 +1448,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 			}
 
 		/* If we're after a private key, try and find the one corresponding
-		   to the cert */
+		   to the certificate */
 		if( itemType == KEYMGMT_ITEM_PRIVATEKEY )
 			{
 #if 1
@@ -1445,8 +1491,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	if( pCertContext == NULL )
 		return( CRYPT_OK );
 
-	/* We've got a key and cert, try and get the rest of the chain for the 
-	   cert */
+	/* We've got a key and certificate, try and get the rest of the chain 
+	   for the certificate */
 {
 BOOLEAN publicComponentsOnly = FALSE;
 
@@ -1459,16 +1505,16 @@ BOOLEAN publicComponentsOnly = FALSE;
 
 	if( cryptStatusOK( status ) )
 		{
-		/* If we're getting a public key, the returned info is the cert 
-		   chain */
+		/* If we're getting a public key, the returned info is the 
+		   certificate chain */
 		if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 			*iCryptContext = iCryptCert;
 		else
 			{
-			/* If we're getting a private key, attach the cert chain to the 
-			   context.  The cert is an internal object used only by the 
-			   context so we tell the kernel to mark it as owned by the 
-			   context only */
+			/* If we're getting a private key, attach the certificate chain 
+			   to the context.  The certificate is an internal object used 
+			   only by the context so we tell the kernel to mark it as owned 
+			   by the context only */
 			status = krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT, 
 									   &iCryptCert, SETDEP_OPTION_NOINCREF );
 			}
@@ -1505,7 +1551,7 @@ BOOLEAN publicComponentsOnly = FALSE;
 			   cruft that's present without going via the private key, so if 
 			   we're looking for a public key and don't find one, we try 
 			   again for a private key whose sole function is to point to an 
-			   associated cert */
+			   associated certificate */
 			keyTemplate[ 0 ].pValue = ( CK_VOID_PTR ) &privkeyClass;
 			cryptStatus = findObject( deviceInfo, &hObject, keyTemplate, 
 									  keyTemplateCount );
@@ -1513,19 +1559,19 @@ BOOLEAN publicComponentsOnly = FALSE;
 				return( cryptStatus );
 		
 			/* Remember that although we've got a private key object, we only 
-			   need it to find the associated cert and not finding an 
-			   associated cert is an error */
+			   need it to find the associated certificate and not finding an 
+			   associated certificate is an error */
 			certViaPrivateKey = TRUE;
 			}
 		}
 
 	/* If we're looking for any kind of private key and we either have an
-	   explicit cert.ID but couldn't find a cert for it or we don't have a 
-	   proper ID to search on and a generic search found more than one 
-	   matching object, chances are we're after a generic decrypt key.  The 
-	   former only occurs in misconfigured or limited-memory tokens, the 
-	   latter only in rare tokens that store more than one private key, 
-	   typically one for signing and one for verification.  
+	   explicit certificate ID but couldn't find a certificate for it or we 
+	   don't have a proper ID to search on and a generic search found more 
+	   than one matching object, chances are we're after a generic decrypt 
+	   key.  The former only occurs in misconfigured or limited-memory 
+	   tokens, the latter only in rare tokens that store more than one 
+	   private key, typically one for signing and one for verification.  
 	   
 	   If either of these cases occur we try again looking specifically for 
 	   a decryption key.  Even this doesn't always work, there's are some
@@ -1601,27 +1647,27 @@ BOOLEAN publicComponentsOnly = FALSE;
 	/* Try and find a certificate which matches the key.  The process is as
 	   follows:
 
-		if cert object found in issuerAndSerialNumber search
-			create native data-only cert object
-			attach cert object to key
+		if certificate object found in issuerAndSerialNumber search
+			create native data-only certificate object
+			attach certificate object to key
 		else
 			if public key
-				if cert
-					create native cert (+context) object
+				if certificate
+					create native certificate (+context) object
 				else
 					create device pubkey object, mark as "key loaded"
 			else
 				create device privkey object, mark as "key loaded"
-				if cert
-					create native data-only cert object
-					attach cert object to key
+				if certificate
+					create native data-only certificate object
+					attach certificate object to key
 
 	   The reason for doing things this way is given in the comments earlier
 	   on in this function */
 	if( privateKeyViaCert )
 		{
-		/* We've already got the cert object handle, instantiate a native
-		   data-only cert from it */
+		/* We've already got the certificate object handle, instantiate a 
+		   native data-only certificate from it */
 		cryptStatus = instantiateCert( deviceInfo, hCertificate, 
 									   &iCryptCert, FALSE );
 		if( cryptStatusError( cryptStatus ) )
@@ -1636,17 +1682,18 @@ BOOLEAN publicComponentsOnly = FALSE;
 		if( cryptStatusError( cryptStatus ) )
 			{
 			/* If we get a CRYPT_ERROR_NOTFOUND this is OK since it means 
-			   there's no cert present, however anything else is an error. In 
-			   addition if we've got a private key whose only function is to 
-			   point to an associated cert then not finding anything is also 
-			   an error */
+			   there's no certificate present, however anything else is an 
+			   error.  In addition if we've got a private key whose only 
+			   function is to point to an associated certificate then not 
+			   finding anything is also an error */
 			if( cryptStatus != CRYPT_ERROR_NOTFOUND || certViaPrivateKey )
 				return( cryptStatus );
 			}
 		else
 			{
-			/* We got the cert, if we're being asked for a public key then
-			   we've created a native object to contain it so we return that */
+			/* We got the certificate, if we're being asked for a public key 
+			   then we've created a native object to contain it so we return 
+			   that */
 			certPresent = TRUE;
 			if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 				{
@@ -1670,9 +1717,10 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	BOOLEAN seenNonDuplicate = FALSE;
 	int iterationCount = 0, status;
 
-	/* Lock the cert for our exclusive use (in case it's a cert chain, we 
-	   also select the first cert in the chain), update the device with the 
-	   cert, and unlock it to allow others access */
+	/* Lock the certificate for our exclusive use (in case it's a 
+	   certificate chain, we also select the first certificate in the 
+	   chain), update the device with the certificate, and unlock it to 
+	   allow others access */
 	krnlSendMessage( iCryptHandle, IMESSAGE_GETDEPENDENT, &iCryptCert, 
 					 OBJECT_TYPE_CERTIFICATE );
 	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
@@ -1683,7 +1731,8 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Check whether the leaf cert matches any of the user's private keys */
+	/* Check whether the leaf certificate matches any of the user's private 
+	   keys */
 	if( pCryptGetUserKey( cryptoapiInfo->hProv, AT_KEYEXCHANGE, &hKey ) )
 		{
 		if( isCertKey( cryptoapiInfo, hKey, iCryptCert ) )
@@ -1691,14 +1740,16 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 		pCryptDestroyKey( hKey ); 
 		}
 	else
+		{
 		if( pCryptGetUserKey( cryptoapiInfo->hProv, AT_SIGNATURE, &hKey ) )
 			{
 			if( isCertKey( cryptoapiInfo, hKey, iCryptCert ) )
 				dwKeySpec = AT_SIGNATURE;
 			pCryptDestroyKey( hKey ); 
 			}
+		}
 
-	/* Add each cert in the chain to the store */
+	/* Add each certificate in the chain to the store */
 	do
 		{
 		DYNBUF certDB;
@@ -1710,17 +1761,17 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* If the cert corresponds to one of the user's private keys and
-		   a binding between the key and a cert isn't already established,
-		   establish one now */
+		/* If the certificate corresponds to one of the user's private keys 
+		   and a binding between the key and a certificate isn't already 
+		   established, establish one now */
 		if( dwKeySpec != 0 )
 			{
 			PCCERT_CONTEXT pCertContext;
 			CERT_KEY_CONTEXT certKeyContext;
 			DWORD certKeyContextSize = sizeof( CERT_KEY_CONTEXT );
 
-			/* Check whether the cert is already bound to a key and if not,
-			   bind it to the appropriate private key */
+			/* Check whether the certificate is already bound to a key and 
+			   if not, bind it to the appropriate private key */
 			pCertContext = pCertCreateCertificateContext( X509_ASN_ENCODING, 
 									dynData( certDB ), dynLength( certDB ) );
 			if( pCertContext != NULL && \
@@ -1729,9 +1780,9 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 									&certKeyContext, &certKeyContextSize ) )
 				{
 #if 1
-				/* Cert the cert stores synchronising the cert's 
-				   CERT_KEY_PROV_INFO_PROP_ID with any present private keys
-				   if required */
+				/* Check the certificate stores synchronising the 
+				   certificate's CERT_KEY_PROV_INFO_PROP_ID with any present 
+				   private keys if required */
 				pCryptFindCertificateKeyProvInfo( pCertContext, 0, NULL );
 #elif 0
 				CRYPT_KEY_PROV_INFO keyProvInfo;
@@ -1767,7 +1818,7 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 #endif
 				}
 
-			/* Add the cert to the store */
+			/* Add the certificate to the store */
 			if( pCertContext != NULL )
 				{
 				result = pCertAddCertificateContextToStore( cryptoapiInfo->hCertStore,
@@ -1775,15 +1826,17 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 				pCertFreeCertificateContext( pCertContext );
 				}
 
-			/* We've now added a bound cert, don't bind the key to any more 
-			   certs */
+			/* We've now added a bound certificate, don't bind the key to 
+			   any more certificates */
 			dwKeySpec = 0;
 			}
 		else
-			/* Add the cert to the store */
+			{
+			/* Add the certificate to the store */
 			result = pCertAddEncodedCertificateToStore( cryptoapiInfo->hCertStore,
 							X509_ASN_ENCODING, dynData( certDB ), 
 							dynLength( certDB ), CERT_STORE_ADD_NEW, NULL );
+			}
 		dynDestroy( &certDB );
 		if( result )
 			seenNonDuplicate = TRUE;
@@ -1832,22 +1885,23 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 	assert( keyIDtype == CRYPT_KEYID_NAME );
 
 	/* Find the object to delete based on the label.  Since we can have 
-	   multiple related objects (e.g. a key and a cert) with the same label, 
-	   a straight search for all objects with a given label could return
-	   CRYPT_ERROR_DUPLICATE so we search for the objects by type as well as 
-	   label.  In addition even a search for specific objects can return
-	   CRYPT_ERROR_DUPLICATE so we use the Ex version of findObject() to make
-	   sure we don't get an error if multiple objects exist.  Although
-	   cryptlib won't allow more than one object with a given label to be
-	   created, other applications might create duplicate labels.  The correct
-	   behaviour in these circumstances is uncertain, what we do for now is
-	   delete the first object we find that matches the label.
+	   multiple related objects (e.g. a key and a certificate) with the same 
+	   label, a straight search for all objects with a given label could 
+	   return CRYPT_ERROR_DUPLICATE so we search for the objects by type as 
+	   well as label.  In addition even a search for specific objects can 
+	   return CRYPT_ERROR_DUPLICATE so we use the Ex version of findObject() 
+	   to make sure we don't get an error if multiple objects exist.  
+	   Although cryptlib won't allow more than one object with a given label 
+	   to be created, other applications might create duplicate labels.  The 
+	   correct behaviour in these circumstances is uncertain, what we do for 
+	   now is delete the first object we find that matches the label.
 	   
-	   First we try for a cert and use that to find associated keys */
+	   First we try for a certificate and use that to find associated keys */
 	cryptStatus = findObjectEx( deviceInfo, &hCertificate, certTemplate, 3 );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* We got a cert, if there are associated keys delete them as well */
+		/* We got a certificate, if there are associated keys delete them as 
+		   well */
 		cryptStatus = findObjectFromObject( deviceInfo, hCertificate, 
 											CKO_PUBLIC_KEY, &hPubkey );
 		if( cryptStatusError( cryptStatus ) )
@@ -1859,8 +1913,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 		}
 	else
 		{
-		/* We didn't find a cert with the given label, try for public and
-		   private keys */
+		/* We didn't find a certificate with the given label, try for public 
+		   and private keys */
 		cryptStatus = findObjectEx( deviceInfo, &hPubkey, keyTemplate, 2 );
 		if( cryptStatusError( cryptStatus ) )
 			hPubkey = CRYPT_ERROR;
@@ -1869,8 +1923,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( cryptStatus ) )
 			hPrivkey = CRYPT_ERROR;
 
-		/* There may be an unlabelled cert present, try and find it by 
-		   looking for a cert matching the key ID */
+		/* There may be an unlabelled certificate present, try and find it by 
+		   looking for a certificate matching the key ID */
 		if( hPubkey != CRYPT_ERROR || hPrivkey != CRYPT_ERROR )
 			{
 			cryptStatus = findObjectFromObject( deviceInfo, 
@@ -1932,11 +1986,11 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 	return( CRYPT_ERROR );
 	}
 
-/* Get the sequence of certs in a chain from a device.  Unfortunately we 
-   can't really make the cert chain fetch stateless without re-doing the 
-   read of the entire chain from the CryptoAPI cert store for each fetch.
-   To avoid this performance hit we cache the chain in the device info and
-   pick out each cert in turn during the findNext */
+/* Get the sequence of certificates in a chain from a device.  Unfortunately 
+   we can't really make the certificate chain fetch stateless without re-
+   doing the read of the entire chain from the CryptoAPI certificate store 
+   for each fetch.  To avoid this performance hit we cache the chain in the 
+   device info and pick out each certificate in turn during the findNext */
 
 static int getFirstItemFunction( DEVICE_INFO *deviceInfo, 
 								 CRYPT_CERTIFICATE *iCertificate,
@@ -1963,25 +2017,25 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 	*stateInfo = CRYPT_ERROR;
 	cryptoapiInfo->hCertChain = NULL;
 
-	/* Try and find the cert with the given ID.  This should work because 
-	   we've just read the ID for the indirect-import that lead to the getFirst
-	   call */
+	/* Try and find the certificate with the given ID.  This should work 
+	   because we've just read the ID for the indirect-import that lead to 
+	   the getFirst call */
 	status = getCertificate( cryptoapiInfo, keyIDtype, keyID, keyIDlength,
 							 &pCertContext );
 	if( cryptStatusError( status ) )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		return( status );
 		}
 
-	/* Now try and get the chain from the cert.  If this fails, we just use 
-	   the standalone cert */
+	/* Now try and get the chain from the certificate.  If this fails, we 
+	   just use the standalone certificate */
 	status = getCertificateChain( cryptoapiInfo, pCertContext, 
 								  &pChainContext );
 	if( cryptStatusOK( status ) )
 		cryptoapiInfo->hCertChain = pChainContext;
 
-	/* Import the leaf cert as a cryptlib object */
+	/* Import the leaf certificate as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo, 
 										pCertContext->pbCertEncoded, 
 										pCertContext->cbCertEncoded,
@@ -1998,7 +2052,7 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 		return( status );
 		}
 
-	/* Remember that we've got the leaf cert in the chain */
+	/* Remember that we've got the leaf certificate in the chain */
 	assert( pChainContext->cChain == 1 );
 	*stateInfo = 1;
 	return( CRYPT_OK );
@@ -2022,7 +2076,8 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 	/* Clear return value */
 	*iCertificate = CRYPT_ERROR;
 
-	/* If the previous cert was the last one, there's nothing left to fetch */
+	/* If the previous certificate was the last one, there's nothing left to 
+	   fetch */
 	if( cryptoapiInfo->hCertChain == NULL )
 		{
 		*stateInfo = CRYPT_ERROR;
@@ -2037,7 +2092,7 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 		return( CRYPT_ERROR_NOTFOUND );
 		}
 
-	/* Get the next cert in the chain */
+	/* Get the next certificate in the chain */
 	pCertChainElement = pCertSimpleChain->rgpElement[ *stateInfo ];
 	setMessageCreateObjectIndirectInfo( &createInfo, 
 							pCertChainElement->pCertContext->pbCertEncoded, 
@@ -2109,13 +2164,9 @@ static int rsaSetKeyInfo( CRYPTOAPI_INFO *cryptoapiInfo,
 	   a message that does this on completion, all we're doing here is 
 	   sending in encoded public key data for use by objects such as 
 	   certificates */
-	status = keyDataSize = writeFlatPublicKey( NULL, 0, CRYPT_ALGO_RSA, 
-											   n, nLen, e, eLen, 
-											   NULL, 0, NULL, 0 );
-	if( !cryptStatusError( status ) )
-		status = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
-									 CRYPT_ALGO_RSA, n, nLen, e, eLen, 
-									 NULL, 0, NULL, 0 );
+	status = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
+								 &keyDataSize, CRYPT_ALGO_RSA, 
+								 n, nLen, e, eLen, NULL, 0, NULL, 0 );
 	if( cryptStatusOK( status ) )
 		krnlSendMessage( contextInfoPtr->objectHandle, 
 						 IMESSAGE_SETATTRIBUTE, ( void * ) &nLen, 
@@ -2134,7 +2185,6 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 					   const int keyLength )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	CRYPTOAPI_INFO *cryptoapiInfo;
 	CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) key;
 	HCRYPTKEY hKey;
@@ -2167,16 +2217,10 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		exponent = ( exponent << 8 ) | rsaKey->e[ i ];
 
 	/* Get the info for the device associated with this context */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	cryptoapiInfo = deviceInfo->deviceCryptoAPI;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Set up the blob header:
 
@@ -2244,30 +2288,23 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( cryptStatusOK( status ) )
 		status = rsaSetKeyInfo( cryptoapiInfo, contextInfoPtr );
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
 static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	CRYPTOAPI_INFO *cryptoapiInfo;
 	HCRYPTKEY hPrivateKey;
 	BOOL result;
 	int status;
 
 	/* Get the info for the device associated with this context */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	cryptoapiInfo = deviceInfo->deviceCryptoAPI;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Generate the key.  CryptoAPI kludges the key size information by 
 	   masking it into the high bits of the flags parameter.  We make the
@@ -2285,14 +2322,13 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusOK( status ) )
 		status = rsaSetKeyInfo( cryptoapiInfo, contextInfoPtr );
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
 static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	CRYPTOAPI_INFO *cryptoapiInfo;
 	CRYPT_ALGO_TYPE cryptAlgo;
 	STREAM stream;
@@ -2321,16 +2357,10 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Get the info for the device associated with this context */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	cryptoapiInfo = deviceInfo->deviceCryptoAPI;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* CryptoAPI can only sign hash values inside hash objects, luckily 
 	   there's a function whose sole purpose is to allow hash values to be 
@@ -2347,7 +2377,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	if( !result )
 		{
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( status );
 		}
 	result = pCryptSetHashParam( hHash, HP_HASHVAL, hashBuffer, 0 );
@@ -2372,7 +2402,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	if( !result )
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
@@ -2383,9 +2413,7 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	   software and more importanyly because there's no way to get at the
 	   hash information that's needed to create the hash object, so that
 	   the trick used in rsaSign() won't work */
-	assert( NOTREACHED );
-
-	return( CRYPT_ERROR_FAILED );
+	retIntError();
 	}
 
 static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
@@ -2515,8 +2543,10 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 		CK_ATTRIBUTE idTemplate = { CKA_ID, msgData.data, msgData.length };
 
 		if( hPublicKey != CRYPT_UNUSED )
+			{
 			C_SetAttributeValue( cryptoapiInfo->hProv, hPublicKey, 
 								 &idTemplate, 1 );
+			}
 		C_SetAttributeValue( cryptoapiInfo->hProv, hPrivateKey, 
 							 &idTemplate, 1 );
 		}
@@ -2530,7 +2560,6 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 					   const int keyLength )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	CRYPTOAPI_INFO *cryptoapiInfo;
 	CRYPT_PKCINFO_DLP *dlpKey = ( CRYPT_PKCINFO_DLP * ) key;
 	HCRYPTKEY hKey;
@@ -2548,16 +2577,10 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Get the info for the device associated with this context */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	cryptoapiInfo = deviceInfo->deviceCryptoAPI;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Set up the blob header:
 
@@ -2610,7 +2633,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
 	zeroise( keyBlob, CRYPT_MAX_PKCSIZE * 4 );
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
@@ -2640,7 +2663,6 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ], label[ 8 + 8 ];
 	CK_RV status;
 	STREAM stream;
@@ -2711,16 +2733,10 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	sMemDisconnect( &stream );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
-	if( cryptStatusError( cryptStatus ) )
-		return( cryptStatus );
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Generate the keys */
 	status = C_GenerateKeyPair( cryptoapiInfo->hProv,
@@ -2731,7 +2747,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	cryptStatus = mapError( deviceInfo, status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( cryptStatus );
 		}
 
@@ -2761,7 +2777,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		C_DestroyObject( cryptoapiInfo->hProv, hPrivateKey );
 		}
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 #endif /* 0 */
 	return( CRYPT_ERROR );
@@ -2773,7 +2789,6 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
-	DEVICE_INFO *deviceInfo;
 	BIGNUM *r, *s;
 	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
@@ -2786,19 +2801,14 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 			dlpParams->outLen >= ( 2 + 20 ) * 2 );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
-	if( cryptStatusError( cryptStatus ) )
-		return( cryptStatus );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 	cryptStatus = genericSign( deviceInfo, contextInfoPtr, &mechanism, 
 							   dlpParams->inParam1, dlpParams->inLen1,
 							   signature, 40 );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
@@ -2832,7 +2842,6 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	static const CK_MECHANISM mechanism = { CKM_DSA, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
 	DLP_PARAMS *dlpParams = ( DLP_PARAMS * ) buffer;
-	DEVICE_INFO *deviceInfo;
 	BIGNUM *r, *s;
 	BYTE signature[ 40 + 8 ];
 	int cryptStatus;
@@ -2862,21 +2871,16 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 
 	/* This code can never be called, since DSA public-key contexts are 
 	   always native contexts */
-	assert( NOTREACHED );
+	retIntError();
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
-	if( cryptStatusError( cryptStatus ) )
-		return( cryptStatus );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 	cryptStatus = genericVerify( deviceInfo, contextInfoPtr, &mechanism, buffer,
 								 20, signature, 40 );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 #endif /* 0 */
 	return( CRYPT_ERROR );
@@ -2888,22 +2892,15 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 						  const int keyLength )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	CRYPTOAPI_INFO *cryptoapiInfo;
 	HCRYPTKEY hSessionKey;
 	int keySize = keyLength, status;
 
 	/* Get the info for the device associated with this context */
-	status = krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_GETDEPENDENT, 
-							  &iCryptDevice, OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( status ) )
-		status = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-									( void ** ) &deviceInfo, 
-									CRYPT_ERROR_SIGNALLED );
+	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
 		return( status );
-	cryptoapiInfo = deviceInfo->deviceCryptoAPI;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Copy the key to internal storage */
 	if( contextInfoPtr->ctxConv->userKey != key )
@@ -2933,7 +2930,7 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( cryptStatusOK( status ) )
 		contextInfoPtr->deviceObject = hSessionKey;
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( status );
 	}
 
@@ -2977,7 +2974,7 @@ static int initCryptParams( CONTEXT_INFO *contextInfoPtr )
 			dwMode = CAPI_CRYPT_MODE_OFB;
 			break;
 		default:
-			assert( NOTREACHED );
+			retIntError();
 		}
 		
 	/* Set the mode parameter for the CryptoAPI object */
@@ -3016,14 +3013,14 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length
 	/* Finalise the encryption parameters if necessary.  We couldn't do this
 	   earlier because the device-level object isn't instantiated until the 
 	   key is loaded */
-	if( !( contextInfoPtr->flags & CONTEXT_DUMMY_INITED ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY_INITED ) )
 		{
 		int status;
 
 		status = initCryptParams( contextInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
-		contextInfoPtr->flags |= CONTEXT_DUMMY_INITED;
+		contextInfoPtr->flags |= CONTEXT_FLAG_DUMMY_INITED;
 		}
 
 	/* Encrypt the data.  We always set the bFinal flag to FALSE since 
@@ -3042,14 +3039,14 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length
 	/* Finalise the encryption parameters if necessary.  We couldn't do this
 	   earlier because the device-level object isn't instantiated until the 
 	   key is loaded */
-	if( !( contextInfoPtr->flags & CONTEXT_DUMMY_INITED ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY_INITED ) )
 		{
 		int status;
 
 		status = initCryptParams( contextInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
-		contextInfoPtr->flags |= CONTEXT_DUMMY_INITED;
+		contextInfoPtr->flags |= CONTEXT_FLAG_DUMMY_INITED;
 		}
 
 	/* Decrypt the data.  We always set the bFinal flag to FALSE since 
@@ -3083,41 +3080,41 @@ static int hashFunction( CONTEXT_INFO *contextInfoPtr, void *buffer, int length 
 
 static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	/* Encryption capabilities */
-	{ CRYPT_ALGO_DES, bitsToBytes( 64 ), "DES",
+	{ CRYPT_ALGO_DES, bitsToBytes( 64 ), "DES", 3,
 		bitsToBytes( 40 ), bitsToBytes( 64 ), bitsToBytes( 64 ) },
-	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES",
+	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES", 4,
 		bitsToBytes( 64 + 8 ), bitsToBytes( 128 ), bitsToBytes( 192 ) },
-	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA",
+	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA", 4,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 128 ) },
-	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128",
+	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128", 8,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 128 ) },
-	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2",
+	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2", 3,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 1024 ) },
-	{ CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4",
+	{ CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4", 3,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), 256 },
-	{ CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5",
+	{ CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5", 3,
 		bitsToBytes( 40 ), bitsToBytes( 128 ), bitsToBytes( 832 ) },
-	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES",
+	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 		bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ) },
-	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack",
+	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack", 8,
 		bitsToBytes( 80 ), bitsToBytes( 80 ), bitsToBytes( 80 ) },
 
 	/* Hash capabilities */
-	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2",
+	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_MD4, bitsToBytes( 128 ), "MD4",
+	{ CRYPT_ALGO_MD4, bitsToBytes( 128 ), "MD4", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5",
+	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_SHA, bitsToBytes( 160 ), "SHA",
+	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_RIPEMD160, bitsToBytes( 160 ), "RIPEMD-160",
+	{ CRYPT_ALGO_RIPEMD160, bitsToBytes( 160 ), "RIPEMD-160", 10,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 
 	/* Public-key capabilities */
-	{ CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA",
+	{ CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA", 3,
 		bitsToBytes( 512 ), bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
-	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA",
+	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 		bitsToBytes( 512 ), bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
 
 	/* Hier ist der Mast zu ende */
@@ -3153,53 +3150,53 @@ static const MECHANISM_INFO mechanismInfo[] = {
 	{ CALG_RSA_KEYX, CALG_RSA_SIGN, CRYPT_ALGO_RSA, CRYPT_MODE_NONE, 
 	  NULL, rsaInitKey, rsaGenerateKey, 
 	  rsaEncrypt, rsaDecrypt, rsaSign, rsaVerify },
-	{ CRYPT_ERROR, CALG_DSS_SIGN, CRYPT_ALGO_DSA, CRYPT_MODE_NONE, 
+	{ CALG_NONE, CALG_DSS_SIGN, CRYPT_ALGO_DSA, CRYPT_MODE_NONE, 
 	  NULL, dsaInitKey, dsaGenerateKey, 
 	  NULL, NULL, dsaSign, dsaVerify },
-	{ CALG_DES, CRYPT_ERROR, CRYPT_ALGO_DES, CRYPT_MODE_ECB, 
+	{ CALG_DES, CALG_NONE, CRYPT_ALGO_DES, CRYPT_MODE_ECB, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_DES, CRYPT_ERROR, CRYPT_ALGO_DES, CRYPT_MODE_CBC, 
+	{ CALG_DES, CALG_NONE, CRYPT_ALGO_DES, CRYPT_MODE_CBC, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_3DES, CRYPT_ERROR, CRYPT_ALGO_3DES, CRYPT_MODE_ECB, 
+	{ CALG_3DES, CALG_NONE, CRYPT_ALGO_3DES, CRYPT_MODE_ECB, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_3DES, CRYPT_ERROR, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, 
+	{ CALG_3DES, CALG_NONE, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_RC2, CRYPT_ERROR, CRYPT_ALGO_RC2, CRYPT_MODE_ECB, 
+	{ CALG_RC2, CALG_NONE, CRYPT_ALGO_RC2, CRYPT_MODE_ECB, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_RC2, CRYPT_ERROR, CRYPT_ALGO_RC2, CRYPT_MODE_CBC, 
+	{ CALG_RC2, CALG_NONE, CRYPT_ALGO_RC2, CRYPT_MODE_CBC, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_RC4, CRYPT_ERROR, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, 
+	{ CALG_RC4, CALG_NONE, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, 
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_SKIPJACK, CRYPT_ERROR, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_ECB,
+	{ CALG_SKIPJACK, CALG_NONE, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_ECB,
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
-	{ CALG_SKIPJACK, CRYPT_ERROR, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_CBC,
+	{ CALG_SKIPJACK, CALG_NONE, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_CBC,
 	  genericEndFunction, cipherInitKey, NULL, 
 	  cipherEncrypt, cipherDecrypt, NULL, NULL },
 #if 0	/* Although CAPI supports the hash mechanisms, as with PKCS #11
 		   we always use cryptlib native contexts for this */
-	{ CALG_MD2, CRYPT_ERROR, CRYPT_ALGO_MD2, CRYPT_MODE_NONE,
+	{ CALG_MD2, CALG_NONE, CRYPT_ALGO_MD2, CRYPT_MODE_NONE,
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
-	{ CALG_MD4, CRYPT_ERROR, CRYPT_ALGO_MD4, CRYPT_MODE_NONE,
+	{ CALG_MD4, CALG_NONE, CRYPT_ALGO_MD4, CRYPT_MODE_NONE,
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
-	{ CALG_MD5, CRYPT_ERROR, CRYPT_ALGO_MD5, CRYPT_MODE_NONE,
+	{ CALG_MD5, CALG_NONE, CRYPT_ALGO_MD5, CRYPT_MODE_NONE,
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
-	{ CALG_SHA1, CRYPT_ERROR, CRYPT_ALGO_SHA, CRYPT_MODE_NONE,
+	{ CALG_SHA1, CALG_NONE, CRYPT_ALGO_SHA1, CRYPT_MODE_NONE,
 	  genericEndFunction, NULL, NULL, 
 	  hashFunction, hashFunction, NULL, NULL },
 #endif /* 0 */
-	{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE },
-		{ CRYPT_ERROR, CRYPT_ERROR, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
+	{ CALG_NONE, CALG_NONE, CRYPT_ALGO_NONE, CRYPT_MODE_NONE },
+		{ CALG_NONE, CALG_NONE, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
 	};
 
 /* Fill out a capability info based on CryptoAPI algorithm info */
@@ -3222,13 +3219,13 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 			return( NULL );
 		for( i = 0; 
 			 capabilityTemplates[ i ].cryptAlgo != mechanismInfoPtr->cryptAlgo && \
-				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR && \
+				capabilityTemplates[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ); \
 			 i++ );
 		if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) )
 			retIntError_Null();
 		assert( i < sizeof( capabilityTemplates ) / sizeof( CAPABILITY_INFO ) && \
-				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR );
+				capabilityTemplates[ i ].cryptAlgo != CRYPT_ALGO_NONE );
 		memcpy( capabilityInfo, &capabilityTemplates[ i ],
 				sizeof( CAPABILITY_INFO ) );
 		}
@@ -3275,13 +3272,17 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 	if( mechanismInfoPtr->algoID == capiAlgoInfo->aiAlgid )
 		{
 		if( mechanismInfoPtr->cryptMode == CRYPT_MODE_OFB )
+			{
 			/* Stream ciphers have an implicit mode of OFB */
 			capabilityInfo->encryptOFBFunction = mechanismInfoPtr->encryptFunction;
+			}
 		else
 			capabilityInfo->encryptFunction = mechanismInfoPtr->encryptFunction;
 		if( mechanismInfoPtr->cryptMode == CRYPT_MODE_OFB )
+			{
 			/* Stream ciphers have an implicit mode of OFB */
 			capabilityInfo->decryptOFBFunction = mechanismInfoPtr->decryptFunction;
+			}
 		else
 			capabilityInfo->decryptFunction = mechanismInfoPtr->decryptFunction;
 		if( mechanismInfoPtr->cryptMode != CRYPT_MODE_NONE && \
@@ -3372,7 +3373,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 			 i++ )
 			{
 			if( mechanismInfo[ i ].algoID == capiAlgoInfo.aiAlgid || \
-				( mechanismInfo[ i ].altAlgoID != CRYPT_ERROR && \
+				( mechanismInfo[ i ].altAlgoID != CALG_NONE && \
 				  mechanismInfo[ i ].altAlgoID == capiAlgoInfo.aiAlgid ) )
 				break;
 			}
@@ -3412,7 +3413,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 									   &mechanismInfo[ i ], NULL );
 		if( newCapability == NULL )
 			break;
-		assert( capabilityInfoOK( newCapability, 
+		REQUIRES( sanityCheckCapability( newCapability, 
 					( newCapability->cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 					  newCapability->cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
 					  TRUE : FALSE ) );
@@ -3487,8 +3488,8 @@ static const FAR_BSS MECHANISM_FUNCTION_INFO mechanismFunctions[] = {
 
 /* Set up the function pointers to the device methods */
 
-int setDeviceCryptoAPI( DEVICE_INFO *deviceInfo, const char *name, 
-						const int nameLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setDeviceCryptoAPI( INOUT DEVICE_INFO *deviceInfo )
 	{
 	/* Make sure that the CryptoAPI driver DLL is loaded */
 	if( hCryptoAPI == NULL_HINSTANCE )

@@ -104,13 +104,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam, 
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( DES3_KEYSIZE );
+		{
+		*result = DES3_KEYSIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -441,6 +445,8 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	DES3_KEY *des3Key = ( DES3_KEY * ) convInfo->key;
 	BOOLEAN useEDE = FALSE;
 
+	REQUIRES( keyLength >= MIN_KEYSIZE && keyLength <= DES_BLOCKSIZE * 3 );
+
 	/* Copy the key to internal storage */
 	if( convInfo->userKey != key )
 		memcpy( convInfo->userKey, key, keyLength );
@@ -498,15 +504,11 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	/* Unlike the other algorithms, the minimum key size for 3DES is 64 + 8 
-	   bits (nominally 56 + 1 bits) because using a key any shorter is (a) 
-	   no better than single DES, and (b) will result in a key load error 
-	   since the second key will be an all-zero weak key.  We also give the 
-	   default key size as 192 bits instead of 128 to make sure that anyone 
-	   using a key of the default size ends up with three-key 3DES rather 
-	   than two-key 3DES */
-	CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES",
-	bitsToBytes( 64 + 8 ), bitsToBytes( 192 ), bitsToBytes( 192 ),
+	/* We give the default key size as 192 bits instead of 128 to make sure 
+	   that anyone using a key of the default size ends up with three-key 
+	   3DES rather than two-key 3DES */
+	CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES", 4,
+	bitsToBytes( 128 ), bitsToBytes( 192 ), bitsToBytes( 192 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB 

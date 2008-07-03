@@ -78,13 +78,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam,
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( SKIPJACK_EXPANDED_KEYSIZE );
+		{
+		*result = SKIPJACK_EXPANDED_KEYSIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -452,7 +456,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack",
+	CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack", 8,
 	bitsToBytes( 80 ), bitsToBytes( 80 ), bitsToBytes( 80 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,

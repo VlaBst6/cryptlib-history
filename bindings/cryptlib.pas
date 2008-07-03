@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2007                      *
+*                    Copyright Peter Gutmann 1997-2008                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,7 +16,7 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Thu Feb  1 01:54:58 2007, filesize = 85398.
+ "cryptlib.h" dated Fri Nov 23 02:07:02 2007, filesize = 85740.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
@@ -42,7 +42,7 @@ const
 
 
 const
-  CRYPTLIB_VERSION = 3310;
+  CRYPTLIB_VERSION = 3320;
 
 
 {****************************************************************************
@@ -878,9 +878,9 @@ const
   CRYPT_ENVINFO_DATASIZE = 5001;  { Data size information }
   CRYPT_ENVINFO_COMPRESSION = 5002;  { Compression information }
   CRYPT_ENVINFO_CONTENTTYPE = 5003;  { Inner CMS content type }
-  CRYPT_ENVINFO_DETACHEDSIGNATURE = 5004;  { Generate CMS detached signature }
+  CRYPT_ENVINFO_DETACHEDSIGNATURE = 5004;  { Detached signature }
   CRYPT_ENVINFO_SIGNATURE_RESULT = 5005;  { Signature check result }
-  CRYPT_ENVINFO_MAC = 5006;  { Use MAC instead of encrypting }
+  CRYPT_ENVINFO_INTEGRITY = 5006;  { Integrity-protection level }
   
   { Resources required for enveloping/deenveloping }
   CRYPT_ENVINFO_PASSWORD = 5007;  { User password }
@@ -1079,7 +1079,8 @@ type
                CRYPT_CONTENT_SIGNEDDATA, CRYPT_CONTENT_ENVELOPEDDATA,
                CRYPT_CONTENT_SIGNEDANDENVELOPEDDATA,
                CRYPT_CONTENT_DIGESTEDDATA, CRYPT_CONTENT_ENCRYPTEDDATA,
-               CRYPT_CONTENT_COMPRESSEDDATA, CRYPT_CONTENT_TSTINFO,
+               CRYPT_CONTENT_COMPRESSEDDATA, CRYPT_CONTENT_AUTHDATA, 
+               CRYPT_CONTENT_AUTHENVDATA, CRYPT_CONTENT_TSTINFO,
                CRYPT_CONTENT_SPCINDIRECTDATACONTEXT,
                CRYPT_CONTENT_RTCSREQUEST, CRYPT_CONTENT_RTCSRESPONSE,
                CRYPT_CONTENT_RTCSRESPONSE_EXT, CRYPT_CONTENT_LAST
@@ -1130,6 +1131,18 @@ type
     CRYPT_SIGNATURELEVEL_SIGNERCERT,{  Include signer cert  }
     CRYPT_SIGNATURELEVEL_ALL,       {  Include all relevant info  }
     CRYPT_SIGNATURELEVEL_LAST       {  Last possible sig.level type  }
+    
+  );
+
+{  The level of integrity protection to apply to enveloped data.  The 
+   default envelope protection for an envelope with keying information 
+   applied is encryption, this can be modified to use MAC-only protection
+   (with no encryption) or hybrid encryption + authentication  }
+
+  CRYPT_INTEGRITY_TYPE = (  
+    CRYPT_INTEGRITY_NONE,           {  No integrity protection  }
+    CRYPT_INTEGRITY_MACONLY,        {  MAC only, no encryption  }
+    CRYPT_INTEGRITY_FULL            {  Encryption + ingerity protection  }
     
   );
 
@@ -1418,31 +1431,31 @@ type
     isPublicKey: Integer;            { Whether this is a public or private key }
 
     { Curve }
-    p: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Prime defining Fq }
+    p: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Prime defining Fq }
     pLen: Integer;                   { Length of prime in bits }
-    a: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Element in Fq defining curve }
+    a: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining curve }
     aLen: Integer;                   { Length of element a in bits }
-    b: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Element in Fq defining curve }
+    b: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining curve }
     bLen: Integer;                   { Length of element b in bits }
 
     { Generator }
-    gx: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Element in Fq defining point }
+    gx: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining point }
     gxLen: Integer;                  { Length of element gx in bits }
-    gy: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Element in Fq defining point }
+    gy: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining point }
     gyLen: Integer;                  { Length of element gy in bits }
-    r: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Order of point }
+    r: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Order of point }
     rLen: Integer;                   { Length of order in bits }
-    h: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Optional cofactor }
+    h: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Optional cofactor }
     hLen: Integer;                   { Length of cofactor in bits }
 
     { Public components }
-    qx: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Point Q on the curve }
+    qx: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Point Q on the curve }
     qxLen: Integer;                  { Length of point xq in bits }
-    qy: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;  { Point Q on the curve }
+    qy: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Point Q on the curve }
     qyLen: Integer;                  { Length of point xy in bits }
 
     { Private components }
-    d: array[0 .. CRYPT_MAX_PKCSIZE-1] of byte;   { Random integer }
+    d: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Private random integer }
     dLen: Integer;                   { Length of integer in bits }
     
 

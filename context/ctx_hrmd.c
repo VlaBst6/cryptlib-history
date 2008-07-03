@@ -47,13 +47,13 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getHmacRipemd160Capability();
-	BYTE macData[ MAC_STATE_SIZE + 8 ];
+	BYTE macState[ MAC_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test HMAC-RIPEMD-160 against the test vectors given in ???? */
 	for( i = 0; hmacValues[ i ].data != NULL; i++ )
 		{
-		status = testMAC( capabilityInfo, macData, hmacValues[ i ].key, 
+		status = testMAC( capabilityInfo, macState, hmacValues[ i ].key, 
 						  hmacValues[ i ].keyLength, hmacValues[ i ].data, 
 						  hmacValues[ i ].length, hmacValues[ i ].digest );
 		if( cryptStatusError( status ) )
@@ -71,13 +71,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam, 
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( MAC_STATE_SIZE );
+		{
+		*result = MAC_STATE_SIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -95,7 +99,7 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* If the hash state was reset to allow another round of MAC'ing, copy 
 	   the initial MAC state over into the current MAC state */
-	if( !( contextInfoPtr->flags & CONTEXT_HASH_INITED ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_HASH_INITED ) )
 		{
 		MAC_STATE *macState = macInfo->macInfo;
 
@@ -180,7 +184,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		hashBuffer[ i ] ^= HMAC_IPAD;
 	RIPEMD160_Update( ripemdInfo, hashBuffer, RIPEMD160_CBLOCK );
 	memset( hashBuffer, 0, RIPEMD160_CBLOCK );
-	contextInfoPtr->flags |= CONTEXT_HASH_INITED;
+	contextInfoPtr->flags |= CONTEXT_FLAG_HASH_INITED;
 
 	/* Save a copy of the initial state in case it's needed later */
 	memcpy( &( ( MAC_STATE * ) macInfo->macInfo )->initialMacState, ripemdInfo, 
@@ -196,7 +200,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160",
+	CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160", 14,
 	bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
 	selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
 	};

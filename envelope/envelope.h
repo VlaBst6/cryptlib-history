@@ -165,9 +165,11 @@ typedef struct {
 
 	/* Authenticated/unauthenticated attribute information */
 	CRYPT_CERTIFICATE iExtraData;	/* Authent.attrib.in CMS signatures */
+	BUFFER_OPT_FIXED( extraDataLength ) \
 	void *extraData;				/* Authent.attrib.in PGP signatures */
 	int extraDataLength;
 	CRYPT_ENVELOPE iTimestamp;		/* Unauth.attrib.in CMS signatures */
+	BUFFER_OPT_FIXED( extraData2Length ) \
 	void *extraData2;				/* Unauthenticated attributes */
 	int extraData2Length;
 
@@ -191,7 +193,8 @@ typedef struct {
 	CRYPT_MODE_TYPE cryptMode;		/* Encrytion mode for this object */
 
 	/* Encryption key setup information */
-	BYTE saltOrIV[ CRYPT_MAX_HASHSIZE ];/* Salt for password-derived key or */
+	BUFFER( CRYPT_MAX_HASHSIZE, saltOrIVsize ) \
+	BYTE saltOrIV[ CRYPT_MAX_HASHSIZE + 8 ];/* Salt for password-derived key or */
 	int saltOrIVsize;				/*	   IV for session encr.context */
 	CRYPT_ALGO_TYPE keySetupAlgo;	/* Hash algo.for pw-derived key */
 	int keySetupIterations;			/* Iterations for pw-derived key */
@@ -206,15 +209,19 @@ typedef struct CL {
 
 	/* The object contained in this list element.  All object type-specific
 	   pointers in the xxxInfo data point into fields inside this data */
+	BUFFER_FIXED( objectSize ) \
 	const void *object;				/* The object data */
 	int objectSize;					/* Size of the object */
 
 	/* Details on the object.  Here we store whatever is required to process
 	   the object without having to call queryXXXObject() for the details */
-	BYTE keyID[ CRYPT_MAX_HASHSIZE ];/* cryptlib key ID */
+	BUFFER( CRYPT_MAX_HASHSIZE, keyIDsize ) \
+	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];/* cryptlib key ID */
 	int keyIDsize;
+	BUFFER_OPT_FIXED( issuerAndSerialNumberSize ) \
 	const void *issuerAndSerialNumber;/* CMS key ID */
 	int issuerAndSerialNumberSize;
+	BUFFER_OPT_FIXED( payloadSize ) \
 	const void *payload;			/* Payload data (e.g. encr.key) */
 	int payloadSize;
 	union {
@@ -372,13 +379,17 @@ typedef enum {
 			attributes, but not actual data.  This is required by SCEP.
 
 	ENVELOPE_ZSTREAMINITED: Whether the zlib compression/decompression stream
-			has been initialised */
+			has been initialised.
+	
+	ENVELOPE_AUTHENC: Use authenticated encryption, which adds a MAC tag to
+			the encrypted data */
 
-#define ENVELOPE_ISDEENVELOPE	0x01	/* De-enveloping envelope */
-#define ENVELOPE_DETACHED_SIG	0x02	/* Generate detached signature */
-#define ENVELOPE_NOSIGNINGCERTS	0x04	/* Don't include signing certs */
-#define ENVELOPE_ATTRONLY		0x08	/* Env.contains only auth'd attrs.*/
-#define ENVELOPE_ZSTREAMINITED	0x10	/* Whether zlib stream has been inited */
+#define ENVELOPE_ISDEENVELOPE	0x0001	/* De-enveloping envelope */
+#define ENVELOPE_DETACHED_SIG	0x0002	/* Generate detached signature */
+#define ENVELOPE_NOSIGNINGCERTS	0x0004	/* Don't include signing certs */
+#define ENVELOPE_ATTRONLY		0x0008	/* Env.contains only auth'd attrs.*/
+#define ENVELOPE_ZSTREAMINITED	0x0010	/* Whether zlib stream has been inited */
+#define ENVELOPE_AUTHENC		0x0020	/* Use authenticated encryption */
 
 /* Envelope data processing flags.  These are:
 
@@ -388,6 +399,12 @@ typedef enum {
 
 	ENVDATA_HASHACTIONSACTIVE: The (signed) envelope is currently hashing
 			payload data.
+
+	ENVDATA_NOLENGTHINFO: The payload uses neither a definite- nor 
+			indefinite-length encoding but continues until the caller tells
+			us it's finished.  This is used to handle PGP 2.x compressed
+			data, which just continues until EOF with no length information
+			provided.
 
 	ENVDATA_NOSEGMENT: The payload data shouldn't be segmented because a
 			definite-length encoding is being used.
@@ -411,11 +428,22 @@ typedef enum {
 
 #define ENVDATA_HASINDEFTRAILER	0x01	/* Whether trailer size is indefinite */
 #define ENVDATA_HASHACTIONSACTIVE 0x02	/* Payload hashing is active */
-#define ENVDATA_NOSEGMENT		0x04	/* Don't segment payload data */
-#define ENVDATA_SEGMENTCOMPLETE	0x08	/* Current segment has been completed */
-#define ENVDATA_ENDOFCONTENTS	0x10	/* EOC reached */
-#define ENVDATA_NEEDSPADDING	0x20	/* Whether to add PKCS #5 padding */
-#define ENVDATA_HASATTACHEDOOB	0x40	/* Whether data has attached OOB extra */
+#define ENVDATA_NOLENGTHINFO	0x04	/* No length info for payload avail.*/
+#define ENVDATA_NOSEGMENT		0x08	/* Don't segment payload data */
+#define ENVDATA_SEGMENTCOMPLETE	0x10	/* Current segment has been completed */
+#define ENVDATA_ENDOFCONTENTS	0x20	/* EOC reached */
+#define ENVDATA_NEEDSPADDING	0x40	/* Whether to add PKCS #5 padding */
+#define ENVDATA_HASATTACHEDOOB	0x80	/* Whether data has attached OOB extra */
+
+/* Envelope data-copy flags.  These are:
+
+	ENVCOPY_FLAG_NONE: Perform no special processing.
+
+	ENVCOPY_FLAG_OOBDATA: Data is out-of-band data that isn't part of the 
+			normal data payload */
+
+#define ENVCOPY_FLAG_NONE		0x00	/* No special action */
+#define ENVCOPY_FLAG_OOBDATA	0x01	/* Data is OOB rather than payload data */
 
 /* The size of the buffer used to handle read-ahead into out-of-band data at 
    the start of the payload */
@@ -504,13 +532,10 @@ typedef struct EI {
 	CRYPT_CERTIFICATE iExtraCertChain;
 
 	/* The encryption/hashing/signature defaults for this envelope.  These
-	   are recorded here for two reasons.  Firstly, we need to freeze the
-	   defaults when the envelope is created so that a later change of the
-	   default value won't affect the enveloping process.  Secondly,
-	   different envelope types have different defaults, and setting them
-	   once at envelope creation is easier than checking the envelope type
-	   and choosing the appropriate algorithm every time we need to use a
-	   default parameter */
+	   are recorded here when the envelope is created (so that a later 
+	   change of the default value won't affect the enveloping process) but 
+	   can be changed explicitly on a per-envelope basis by setting the 
+	   options just for the envelope rather than for all of cryptlib */
 	CRYPT_ALGO_TYPE defaultHash;		/* Default hash algorithm */
 	CRYPT_ALGO_TYPE defaultAlgo;		/* Default encryption algorithm */
 	CRYPT_ALGO_TYPE defaultMAC;			/* Default MAC algorithm */
@@ -522,6 +547,7 @@ typedef struct EI {
 #endif /* USE_COMPRESSION */
 
 	/* Buffer information */
+	BUFFER( bufSize, bufPos ) \
 	BYTE *buffer;					/* Data buffer */
 	int bufSize;					/* Total buffer size */
 	int bufPos;						/* Last data position in buffer */
@@ -530,8 +556,9 @@ typedef struct EI {
 	   that may not currently fit into the main buffer.  These are generated 
 	   into the auxiliary buffer and then copied into the main buffer as 
 	   required */
+	BUFFER_OPT( auxBufSize, auxBufPos ) \
 	BYTE *auxBuffer;				/* Buffer for sig.data */
-	int auxBufPos, auxBufSize;		/* Current pos and total aux.buf.size */
+	int auxBufSize, auxBufPos;		/* Current pos and total aux.buf.size */
 
 	/* When the caller knows in advance how large the payload will be, they 
 	   can advise the enveloping code of this, which allows a more efficient 
@@ -567,6 +594,7 @@ typedef struct EI {
 	   into the output stream on the next read call */
 	int oobDataLeft;				/* Remaining out-of-band data in payload */
 	int oobEventCount;				/* No.events left to process */
+	BUFFER( OOB_BUFFER_SIZE, oobBufPos ) \
 	BYTE oobBuffer[ OOB_BUFFER_SIZE + 8 ];	/* Buffered OOB data */
 	int oobBufPos;
 
@@ -607,7 +635,8 @@ typedef struct EI {
 	/* Block cipher buffer for leftover bytes.  This contains any bytes
 	   remaining to be en/decrypted when the input data size isn't a
 	   multiple of the cipher block size */
-	BYTE blockBuffer[ CRYPT_MAX_IVSIZE ];	/* Buffer of bytes */
+	BUFFER( CRYPT_MAX_IVSIZE, blockBufferPos ) \
+	BYTE blockBuffer[ CRYPT_MAX_IVSIZE + 8 ];/* Leftover byte buffer */
 	int blockBufferPos;				/* Position in buffer */
 	int blockSize;					/* Cipher block size */
 	int blockSizeMask;				/* Mask for blockSize-sized blocks */
@@ -624,23 +653,50 @@ typedef struct EI {
 	CRYPT_ATTRIBUTE_TYPE errorLocus;/* Error locus */
 	CRYPT_ERRTYPE_TYPE errorType;	/* Error type */
 
+#ifdef USE_ERRMSGS
+	/* Low-level error information */
+	ERROR_INFO errorInfo;
+#endif /* USE_ERRMSGS */
+
 	/* Pointers to the enveloping/de-enveloping functions */
-	int ( *addInfo )( struct EI *envelopeInfoPtr,
-					  const CRYPT_ATTRIBUTE_TYPE envInfo,
-					  const void *value, const int valueLength );
-	CRYPT_ATTRIBUTE_TYPE ( *checkMissingInfo )( struct EI *envelopeInfoPtr );
-	BOOLEAN ( *checkAlgo )( const CRYPT_ALGO_TYPE cryptAlgo, 
-							const CRYPT_MODE_TYPE cryptMode );
-	int ( *processPreambleFunction )( struct EI *envelopeInfoPtr );
-	int ( *processPostambleFunction )( struct EI *envelopeInfoPtr );
-	int ( *copyToEnvelopeFunction )( struct EI *envelopeInfoPtr, 
-									 const BYTE *buffer, const int length );
-	int ( *copyFromEnvelopeFunction )( struct EI *envelopeInfoPtr, 
-									   BYTE *buffer, const int length );
-	int ( *processExtraData )( struct EI *envelopeInfoPtr, const void *buffer,
-							   const int length );
-	int ( *syncDeenvelopeData )( struct EI *envelopeInfoPtr, 
-								 STREAM *stream );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *addInfo )( INOUT struct EI *envelopeInfoPtr,
+					  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE envInfo,
+					  IN_INT_Z const int value );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+	int ( *addInfoString )( INOUT struct EI *envelopeInfoPtr,
+							IN_RANGE( CRYPT_ENVINFO_PASSWORD, \
+									  CRYPT_ENVINFO_PASSWORD ) \
+							const CRYPT_ATTRIBUTE_TYPE envInfo,
+							IN_BUFFER( valueLength ) const void *value, 
+							IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) \
+							const int valueLength );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *checkMissingInfo )( INOUT struct EI *envelopeInfoPtr );
+	CHECK_RETVAL \
+	BOOLEAN ( *checkAlgo )( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
+							IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *processPreambleFunction )( INOUT struct EI *envelopeInfoPtr );
+	CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *processPostambleFunction )( INOUT struct EI *envelopeInfoPtr );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *copyToEnvelopeFunction )( INOUT struct EI *envelopeInfoPtr, 
+									 IN_BUFFER_OPT( length ) const BYTE *buffer, 
+									 IN_LENGTH_Z const int length );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	int ( *copyFromEnvelopeFunction )( INOUT struct EI *envelopeInfoPtr, 
+									   OUT_BUFFER( maxLength, length ) BYTE *buffer, 
+									   IN_LENGTH const int maxLength, 
+									   OUT_LENGTH_Z int *length, 
+									   IN_FLAGS( ENVCOPY ) const int flags );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	int ( *processExtraData )( INOUT struct EI *envelopeInfoPtr, 
+							   IN_BUFFER( length ) const void *buffer, 
+							   IN_LENGTH const int length );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	int ( *syncDeenvelopeData )( INOUT struct EI *envelopeInfoPtr, 
+								 INOUT STREAM *stream );
 
 	/* The object's handle and the handle of the user who owns this object.
 	   The former is used when sending messages to the object when only the 
@@ -663,71 +719,160 @@ typedef struct EI {
 *																			*
 ****************************************************************************/
 
+/* Envelope attribute handling functions */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						  OUT_INT_Z int *valuePtr, 
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						   INOUT MESSAGE_DATA *msgData, 
+						   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						  IN_INT_Z const int value, 
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						   IN_BUFFER( dataLength ) const void *data,
+						   IN_LENGTH const int dataLength,
+						   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
+
+
 /* Prototypes for envelope action management functions */
 
-ACTION_LIST *addAction( ACTION_LIST **actionListHeadPtrPtr,
-						MEMPOOL_STATE memPoolState,
-						const ACTION_TYPE actionType,
-						const CRYPT_HANDLE cryptHandle );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+typedef int ( *CHECKACTIONFUNCTION )( const ACTION_LIST *actionListPtr,
+									  IN_INT_Z const int intParam );
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN moreActionsPossible( const ACTION_LIST *actionListPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int addAction( OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
+			   INOUT MEMPOOL_STATE memPoolState,
+			   IN_ENUM( ACTION ) const ACTION_TYPE actionType,
+			   IN_HANDLE const CRYPT_HANDLE cryptHandle );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int addActionEx( OUT_PTR ACTION_LIST **newActionPtrPtr,
+				 OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
+				 INOUT MEMPOOL_STATE memPoolState,
+				 IN_ENUM( ACTION ) const ACTION_TYPE actionType,
+				 IN_HANDLE const CRYPT_HANDLE cryptHandle );
+CHECK_RETVAL_ENUM( ACTION ) STDC_NONNULL_ARG( ( 1 ) ) \
 ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
-						   const ACTION_TYPE actionType, 
-						   const CRYPT_HANDLE cryptHandle );
-ACTION_LIST *findAction( ACTION_LIST *actionListPtr,
-						 const ACTION_TYPE actionType );
-ACTION_LIST *findLastAction( ACTION_LIST *actionListPtr,
+						   IN_ENUM( ACTION ) const ACTION_TYPE actionType, 
+						   IN_HANDLE const CRYPT_HANDLE cryptHandle );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int checkActionIndirect( const ACTION_LIST *actionListStart,
+						 IN CHECKACTIONFUNCTION checkActionFunction,
+						 IN_INT_Z const int intParam );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+ACTION_LIST *findAction( const ACTION_LIST *actionListPtr,
+						 IN_ENUM( ACTION ) const ACTION_TYPE actionType );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+ACTION_LIST *findLastAction( const ACTION_LIST *actionListPtr,
+							 IN_ENUM( ACTION ) \
 							 const ACTION_TYPE actionType );
-void deleteAction( ACTION_LIST **actionListHead, 
-				   MEMPOOL_STATE memPoolState,	
-				   ACTION_LIST *actionListItem );
-void deleteActionList( MEMPOOL_STATE memPoolState,
-					   ACTION_LIST *actionListPtr );
-void deleteUnusedActions( ENVELOPE_INFO *envelopeInfoPtr );
-BOOLEAN checkActions( ENVELOPE_INFO *envelopeInfoPtr );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
+ACTION_LIST *findActionIndirect( const ACTION_LIST *actionListStart,
+								 IN CHECKACTIONFUNCTION checkActionFunction,
+								 IN_INT_Z const int intParam );
+STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+void deleteAction( INOUT_PTR ACTION_LIST **actionListHeadPtrPtr, 
+				   INOUT MEMPOOL_STATE memPoolState,	
+				   INOUT ACTION_LIST *actionListItem );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void deleteActionList( INOUT MEMPOOL_STATE memPoolState,
+					   INOUT ACTION_LIST *actionListPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void deleteUnusedActions( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr );
 
 /* Prototypes for content list management functions */
 
-CONTENT_LIST *createContentListItem( MEMPOOL_STATE memPoolState, 
-									 const CRYPT_FORMAT_TYPE formatType,
-									 const void *object, const int objectSize,
-									 const BOOLEAN isSigObject );
-void appendContentListItem( ENVELOPE_INFO *envelopeInfoPtr,
-							CONTENT_LIST *contentListItem );
-void deleteContentList( MEMPOOL_STATE memPoolState,
-						CONTENT_LIST **contentListHeadPtr );
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN moreContentItemsPossible( const CONTENT_LIST *contentListPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
+						   INOUT MEMPOOL_STATE memPoolState, 
+						   IN_ENUM( CRYPT_FORMAT ) \
+						   const CRYPT_FORMAT_TYPE formatType,
+						   IN_BUFFER_OPT( objectSize ) const void *object, 
+						   IN_LENGTH_Z const int objectSize,
+						   const BOOLEAN isSigObject );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							INOUT CONTENT_LIST *contentListItem );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void deleteContentList( INOUT MEMPOOL_STATE memPoolState,
+						INOUT_PTR CONTENT_LIST **contentListHeadPtrPtr );
 
 /* Prototypes for misc.management functions */
 
-int addKeysetInfo( ENVELOPE_INFO *envelopeInfoPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int addKeysetInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+				   IN_RANGE( CRYPT_ENVINFO_KEYSET_ENCRYPT, \
+							 CRYPT_ENVINFO_KEYSET_SIGCHECK ) \
 				   const CRYPT_ATTRIBUTE_TYPE keysetFunction,
-				   const CRYPT_KEYSET keyset );
+				   IN_HANDLE const CRYPT_KEYSET keyset );
+CHECK_RETVAL_BOOL \
+BOOLEAN cmsCheckAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
+					  IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode );
+CHECK_RETVAL_BOOL \
+BOOLEAN pgpCheckAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
+					  IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode );
 
 /* Prepare the envelope for data en/decryption */
 
-int initEnvelopeEncryption( ENVELOPE_INFO *envelopeInfoPtr,
-							const CRYPT_CONTEXT cryptContext,
-							const CRYPT_ALGO_TYPE algorithm, 
-							const CRYPT_MODE_TYPE mode,
-							const BYTE *iv, const int ivLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							IN_HANDLE const CRYPT_CONTEXT cryptContext,
+							IN_ALGO_OPT const CRYPT_ALGO_TYPE algorithm, 
+							IN_MODE_OPT const CRYPT_MODE_TYPE mode,
+							IN_BUFFER_OPT( ivLength ) const BYTE *iv, 
+							IN_LENGTH_IV_Z const int ivLength,
 							const BOOLEAN copyContext );
+
+/* Prototypes for enveloping internal functions */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int cmsPreEnvelopeEncrypt( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int cmsPreEnvelopeSign( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int hashEnvelopeData( const ACTION_LIST *hashActionPtr,
+					  IN_BUFFER( dataLength ) const void *data, 
+					  IN_LENGTH const int dataLength );
 
 /* Prototypes for envelope mapping functions */
 
 #ifdef USE_CMS
-  void initCMSEnveloping( ENVELOPE_INFO *envelopeInfoPtr );
-  void initCMSDeenveloping( ENVELOPE_INFO *envelopeInfoPtr );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void initCMSEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void initCMSDeenveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr );
 #else
   #define initCMSEnveloping( envelopeInfoPtr )
   #define initCMSDeenveloping( envelopeInfoPtr )
 #endif /* USE_CMS */
 #ifdef USE_PGP
-  void initPGPEnveloping( ENVELOPE_INFO *envelopeInfoPtr );
-  void initPGPDeenveloping( ENVELOPE_INFO *envelopeInfoPtr );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void initPGPEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void initPGPDeenveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr );
 #else
   #define initPGPEnveloping( envelopeInfoPtr )
   #define initPGPDeenveloping( envelopeInfoPtr )
 #endif /* USE_PGP */
-void initEnvelopeStreaming( ENVELOPE_INFO *envelopeInfoPtr );
-void initEnvResourceHandling( ENVELOPE_INFO *envelopeInfoPtr );
-void initDeenvelopeStreaming( ENVELOPE_INFO *envelopeInfoPtr );
-void initDenvResourceHandling( ENVELOPE_INFO *envelopeInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initEnvelopeStreaming( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initEnvResourceHandling( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initDeenvelopeStreaming( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initDenvResourceHandling( INOUT ENVELOPE_INFO *envelopeInfoPtr );
+
 #endif /* _ENV_DEFINED */

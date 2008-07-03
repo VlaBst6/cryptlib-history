@@ -12,15 +12,18 @@
 /* The format used to protect the private key components is a standard
    cryptlib envelope, however for various reasons the required enveloping
    functionality (which in practice is just minimal code to process a
-   PasswordRecipientInfo at the start of the data) is duplicated here:
+   PasswordRecipientInfo at the start of the data) is duplicated here
+   because:
 
 	1. It's somewhat inelegant to use the heavyweight enveloping routines to
 	   wrap up 100 bytes of data.
+
 	2. The enveloping code is enormous and complex, especially when extra
 	   sections like zlib and PGP and S/MIME support are factored in.  This
 	   makes it difficult to compile a stripped-down version of cryptlib,
 	   since private key storage will require all of the enveloping code to 
 	   be included.
+
 	3. Since the enveloping code is general-purpose, it doesn't allow very
 	   precise control over the data being processed.  Specifically, it's
 	   necessary to write the private key components to a buffer in plaintext
@@ -36,16 +39,16 @@
 ****************************************************************************/
 
 /* Usually a PKCS #15 personality consists of a collection of related PKCS
-   #15 objects (typically a public and private key and a cert), but sometimes
-   we have personalities that consist only of a cert and little other 
-   information (for example a trusted CA root cert, which contains no user-
-   supplied information such as a label).  The following types of personality
-   are handled for PKCS #15 files */
+   #15 objects (typically a public and private key and a certificate), but 
+   sometimes we have personalities that consist only of a certificate and 
+   little other information (for example a trusted CA root certificate, 
+   which contains no user-supplied information such as a label).  The 
+   following types of personality are handled for PKCS #15 files */
 
 typedef enum {
 	PKCS15_SUBTYPE_NONE,			/* Non-personality */
 	PKCS15_SUBTYPE_NORMAL,			/* Standard personality, keys+optional cert */
-	PKCS15_SUBTYPE_CERT,			/* Standalone cert */
+	PKCS15_SUBTYPE_CERT,			/* Standalone certificate */
 	PKCS15_SUBTYPE_SECRETKEY,		/* Secret key */
 	PKCS15_SUBTYPE_DATA,			/* Pre-encoded cryptlib-specific data */
 	PKCS15_SUBTYPE_LAST
@@ -80,6 +83,11 @@ enum { PKCS15_KEYID_NONE, PKCS15_KEYID_ISSUERANDSERIALNUMBER,
 #define PKCS15_USAGE_DERIVE			0x0100
 #define PKCS15_USAGE_NONREPUDIATION	0x0200
 
+/* Symbolic values for range checking of the usage flags */
+
+#define PKSC15_USAGE_FLAG_NONE		0x0000
+#define PKCS15_USAGE_FLAG_MAX		0x03FF
+
 /* PKCS #15 flags that can't be set for public keys.  We use this as a mask
    to derive public-key flags from private key ones */
 
@@ -102,6 +110,42 @@ enum { PKCS15_KEYID_NONE, PKCS15_KEYID_ISSUERANDSERIALNUMBER,
 #define KEYATTR_ACCESS_PUBLIC	0x02	/* 00010b */
 #define KEYATTR_ACCESS_PRIVATE	0x0D	/* 01101b */
 
+/* When adding a public key and/or certificate to a PKCS #15 collection we 
+   have to be able to cleanly handle the addition of arbitrary collections of 
+   potentially overlapping objects.  Since a public key is a subset of the 
+   data in a certificate, if we're adding a certificate + public key pair 
+   the certificate data overrides the public key, which isn't added at all.  
+   This leads to some rather convoluted logic for deciding what needs 
+   updating and under which conditions.  The actions taken are:
+
+	key only:	if present
+					return( CRYPT_ERROR_DUPLICATE )
+				else
+					add key;
+	cert only:	if present
+					return( CRYPT_ERROR_DUPLICATE );
+				elif( matching key present )
+					add, delete key data;
+				elif( trusted certificate )
+					add as trusted certificate;
+				else
+					error;
+	key+cert:	if key present and certificate present
+					return( CRYPT_ERROR_DUPLICATE );
+				delete key;
+				if certificate present -> don't add certificate;
+
+   The following values specify the action to be taken when adding a 
+   certificate */
+
+typedef enum {
+	CERTADD_NONE,			/* No certificate add action */
+	CERTADD_UPDATE_EXISTING,/* Update existing key info with a certificate */
+	CERTADD_NORMAL,			/* Add a certificate for which no key info present */
+	CERTADD_STANDALONE_CERT,/* Add a standalone certificate not assoc'd with a key */
+	CERTADD_LAST			/* Last valid certificate add action */
+	} CERTADD_TYPE;
+
 /* Since PKCS #15 uses more key ID types than are used by the rest of
    cryptlib, we extend the standard range with PKCS15-only types */
 
@@ -113,6 +157,16 @@ enum { PKCS15_KEYID_NONE, PKCS15_KEYID_ISSUERANDSERIALNUMBER,
 
 #define MIN_OBJECT_SIZE		16
 
+/* When writing attributes it's useful to have a fixed-size buffer rather
+   than having to mess around with all sorts of variable-length structures,
+   the following value defines the maximum size of the attribute data that
+   we can write (that is, the I/O stream is opened with this size and
+   generates a CRYPT_ERROR_OVERFLOW if we go beyond this).  The maximum-
+   length buffer contents are two CRYPT_MAX_TEXTSIZE strings and a few odd
+   bits and pieces so this is plenty */
+
+#define KEYATTR_BUFFER_SIZE	256
+
 /****************************************************************************
 *																			*
 *							PKCS #15 Types and Structures					*
@@ -120,7 +174,7 @@ enum { PKCS15_KEYID_NONE, PKCS15_KEYID_ISSUERANDSERIALNUMBER,
 ****************************************************************************/
 
 /* The following structure contains the the information for one personality,
-   which covers one or more of a private key, public key, and cert */
+   which covers one or more of a private key, public key, and certificate */
 
 typedef struct {
 	/* General information on the personality: The subtype, a local unique
@@ -130,31 +184,48 @@ typedef struct {
 	   object ID and key ID (which is usually the same as the object ID) */
 	PKCS15_SUBTYPE type;			/* Personality subtype */
 	int index;						/* Unique value for this personality */
-	char label[ CRYPT_MAX_TEXTSIZE ];/* PKCS #15 object label */
+	BUFFER( CRYPT_MAX_TEXTSIZE, labelLength ) \
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];/* PKCS #15 object label */
 	int labelLength;
-	BYTE iD[ CRYPT_MAX_HASHSIZE ], keyID[ CRYPT_MAX_HASHSIZE ];
+	BUFFER( CRYPT_MAX_HASHSIZE, iDlength ) \
+	BYTE iD[ CRYPT_MAX_HASHSIZE + 8 ];
+	BUFFER( CRYPT_MAX_HASHSIZE, keyIDlength ) \
+	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
 	int iDlength, keyIDlength;		/* PKCS #15 object ID and key ID */
 
 	/* Certificate-related ID information: Hash of the issuer name, subject
 	   name, and issuerAndSerialNumber, and PGP key IDs */
-	BYTE iAndSID[ KEYID_SIZE ], subjectNameID[ KEYID_SIZE ];
-	BYTE issuerNameID[ KEYID_SIZE ];
-	BYTE pgp2KeyID[ PGP_KEYID_SIZE ], openPGPKeyID[ PGP_KEYID_SIZE ];
+	BUFFER( KEYID_SIZE, iAndSIDlength ) \
+	BYTE iAndSID[ KEYID_SIZE + 8 ];
+	BUFFER( KEYID_SIZE, subjectNameIDlength ) \
+	BYTE subjectNameID[ KEYID_SIZE + 8 ];
+	BUFFER( KEYID_SIZE, issuerNameIDlength ) \
+	BYTE issuerNameID[ KEYID_SIZE + 8 ];
+	BUFFER( KEYID_SIZE, pgp2KeyIDlength ) \
+	BYTE pgp2KeyID[ PGP_KEYID_SIZE + 8 ];
+	BUFFER( KEYID_SIZE, openPGPKeyIDlength ) \
+	BYTE openPGPKeyID[ PGP_KEYID_SIZE + 8 ];
 	int iAndSIDlength, subjectNameIDlength, issuerNameIDlength;
 	int pgp2KeyIDlength, openPGPKeyIDlength;
 
-	/* Key/cert object data */
-	void *pubKeyData, *privKeyData, *certData;	/* Encoded object data */
+	/* Key/certificate object data */
+	BUFFER_OPT_FIXED( pubKeyDataSize ) \
+	void *pubKeyData;
+	BUFFER_OPT_FIXED( privKeyDataSize ) \
+	void *privKeyData;
+	BUFFER_OPT_FIXED( certDataSize ) \
+	void *certData;					/* Encoded object data */
 	int pubKeyDataSize, privKeyDataSize, certDataSize;
 	int pubKeyOffset, privKeyOffset, certOffset;
 									/* Offset of payload in data */
 	int pubKeyUsage, privKeyUsage;	/* Permitted usage for the key */
 	int trustedUsage;				/* Usage which key is trusted for */
-	BOOLEAN implicitTrust;			/* Whether cert is implicitly trusted */
-	time_t validFrom, validTo;		/* Key/cert validity information */
+	BOOLEAN implicitTrust;			/* Whether certificate is implicitly trusted */
+	time_t validFrom, validTo;		/* Key/certificate validity information */
 
 	/* Data object data */
 	CRYPT_ATTRIBUTE_TYPE dataType;	/* Type of the encoded object data */
+	BUFFER_OPT_FIXED( dataDataSize ) \
 	void *dataData;					/* Encoded object data */
 	int dataDataSize, dataOffset;
 	} PKCS15_INFO;
@@ -165,7 +236,7 @@ typedef struct {
 *																			*
 ****************************************************************************/
 
-/* Context-specific tags for PKCS #15 object types */
+/* Context-specific tags for object types */
 
 enum { CTAG_PO_PRIVKEY, CTAG_PO_PUBKEY, CTAG_PO_TRUSTEDPUBKEY,
 	   CTAG_PO_SECRETKEY, CTAG_PO_CERT, CTAG_PO_TRUSTEDCERT,
@@ -175,21 +246,26 @@ enum { CTAG_PO_PRIVKEY, CTAG_PO_PUBKEY, CTAG_PO_TRUSTEDPUBKEY,
 
 enum { CTAG_PK_CERTIFICATE, CTAG_PK_CERTCHAIN };
 
-/* Context-specific tags for the PKCS #15 object record */
+/* Context-specific tags for the object record */
 
 enum { CTAG_OB_SUBCLASSATTR, CTAG_OB_TYPEATTR };
 
-/* Context-specific tags for the PKCS #15 object value record */
+/* Context-specific tags for the object value record */
 
-enum { CTAG_OV_DIRECT, CTAG_OV_DUMMY, CTAG_OV_DIRECTPROTECTED };
+enum { CTAG_OV_DIRECT, CTAG_OV_DUMMY, CTAG_OV_DIRECTPROTECTED, 
+	   CTAG_OV_FUTUREUSE };
 
-/* Context-specific tags for the PKCS #15 class attributes record */
+/* Context-specific tags for the class attributes record */
 
 enum { CTAG_KA_VALIDTO };
 enum { CTAG_CA_DUMMY, CTAG_CA_TRUSTED_USAGE, CTAG_CA_IDENTIFIERS,
 	   CTAG_CA_TRUSTED_IMPLICIT, CTAG_CA_VALIDTO };
 
-/* Context-specific tags for the PKCS #15 data objects record */
+/* Context-specific tags for the public/private key objects record */
+
+enum { CTAG_PK_ECC, CTAG_PK_DH, CTAG_PK_DSA, CTAG_PK_KEA };
+
+/* Context-specific tags for the data objects record */
 
 enum { CTAG_DO_EXTERNALDO, CTAG_DO_OIDDO };
 
@@ -201,66 +277,190 @@ enum { CTAG_DO_EXTERNALDO, CTAG_DO_OIDDO };
 
 /* Utility functions in pkcs15.c */
 
-int getCertID( const CRYPT_HANDLE iCryptHandle, 
-			   CRYPT_ATTRIBUTE_TYPE nameType, 
-			   BYTE *nameID, const int nameIdMaxLen );
-PKCS15_INFO *findEntry( const PKCS15_INFO *pkcs15info,
-						const int noPkcs15objects,
-						const CRYPT_KEYID_TYPE keyIDtype,
-						const void *keyID, const int keyIDlength,
-						const int requestedUsage );
-PKCS15_INFO *findFreeEntry( const PKCS15_INFO *pkcs15info,
-							const int noPkcs15objects, int *index );
-void pkcs15freeEntry( PKCS15_INFO *pkcs15info );
-int getValidityInfo( PKCS15_INFO *pkcs15info,
-					 const CRYPT_HANDLE cryptHandle );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
+int getCertID( IN_HANDLE const CRYPT_HANDLE iCryptHandle, 
+			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE nameType, 
+			   OUT_BUFFER( nameIdMaxLen, *nameIdLen ) BYTE *nameID, 
+			   IN_LENGTH_SHORT_MIN( KEYID_SIZE ) const int nameIdMaxLen,
+			   OUT_LENGTH_SHORT_Z int *nameIdLen );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS15_INFO *findEntry( IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15info,
+						IN_LENGTH_SHORT const int noPkcs15objects,
+						IN_ENUM( CRYPT_KEYID ) const CRYPT_KEYID_TYPE keyIDtype,
+						IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
+						IN_LENGTH_KEYID_Z const int keyIDlength,
+						IN_FLAGS_Z( KEYMGMT ) const int requestedUsage );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+PKCS15_INFO *findFreeEntry( IN_ARRAY( noPkcs15objects ) \
+								const PKCS15_INFO *pkcs15info,
+							IN_LENGTH_SHORT const int noPkcs15objects, 
+							OUT_OPT_LENGTH_SHORT_Z int *index );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void pkcs15freeEntry( INOUT PKCS15_INFO *pkcs15info );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getValidityInfo( INOUT PKCS15_INFO *pkcs15info,
+					 IN_HANDLE const CRYPT_HANDLE cryptHandle );
 
-/* Prototypes for functions in pkcs15_attr.c */
+/* Prototypes for functions in pkcs15_add.c */
 
-int writeKeyAttributes( void *privKeyAttributes, 
-						const int privKeyAttributeMaxLen,
-						int *privKeyAttributeSize, void *pubKeyAttributes,
-						const int pubKeyAttributeMaxLen,
-						int *pubKeyAttributeSize, PKCS15_INFO *pkcs15info,
-						const CRYPT_HANDLE cryptHandle );
-int writeCertAttributes( void *certAttributes, const int certAttributeMaxLen,
-						 int *certAttributeSize, PKCS15_INFO *pkcs15info,
-						 const CRYPT_HANDLE cryptHandle );
-int readObjectAttributes( STREAM *stream, PKCS15_INFO *pkcs15info,
-						  const PKCS15_OBJECT_TYPE type );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getKeyTypeTag( IN_HANDLE_OPT const CRYPT_CONTEXT cryptContext,
+				   IN_ALGO_OPT const CRYPT_ALGO_TYPE cryptAlgo,
+				   OUT int *tag );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int addConfigData( IN_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info, 
+				   IN_LENGTH_SHORT const int noPkcs15objects, 
+				   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE dataType,
+				   IN_BUFFER( dataLength ) const char *data, 
+				   IN_LENGTH_SHORT const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int addSecretKey( IN_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info, 
+				  IN_LENGTH_SHORT const int noPkcs15objects,
+				  IN_HANDLE const CRYPT_HANDLE iCryptContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 10 ) ) \
+int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
+				  IN_HANDLE const CRYPT_HANDLE iCryptHandle,
+				  IN_BUFFER_OPT( passwordLength ) const void *password, 
+				  IN_LENGTH_SHORT_Z const int passwordLength,
+				  IN_HANDLE const CRYPT_USER iOwnerHandle, 
+				  const BOOLEAN privkeyPresent, const BOOLEAN certPresent, 
+				  const BOOLEAN doAddCert, const BOOLEAN pkcs15keyPresent,
+				  INOUT ERROR_INFO *errorInfo );
+
+/* Prototypes for functions in pkcs15_adpb.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
+int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr, 
+				   IN_HANDLE const CRYPT_CERTIFICATE iCryptCert,
+				   IN_BUFFER_OPT( privKeyAttributeSize ) \
+					const void *privKeyAttributes, 
+				   IN_LENGTH_SHORT_Z const int privKeyAttributeSize,
+				   IN_ENUM( CERTADD ) const CERTADD_TYPE certAddType, 
+				   INOUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int pkcs15AddCertChain( INOUT PKCS15_INFO *pkcs15info, 
+						IN_LENGTH_SHORT const int noPkcs15objects,
+						IN_HANDLE const CRYPT_CERTIFICATE iCryptCert, 
+						INOUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 7 ) ) \
+int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
+						IN_HANDLE const CRYPT_HANDLE iCryptContext, 
+						IN_BUFFER( pubKeyAttributeSize ) \
+							const void *pubKeyAttributes, 
+						IN_LENGTH_SHORT const int pubKeyAttributeSize,
+						IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
+						IN_LENGTH_PKC const int modulusSize, 
+						INOUT ERROR_INFO *errorInfo );
+
+/* Prototypes for functions in pkcs15_adpr.c.  The private-key attribute 
+   functions have to be accessible externally because adding or changing a 
+   certificate for a private key can update the private-key attributes */
+
+STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+void updatePrivKeyAttributes( INOUT PKCS15_INFO *pkcs15infoPtr,
+							  OUT_BUFFER_FIXED( newPrivKeyDataSize ) \
+								void *newPrivKeyData, 
+							  IN_LENGTH_SHORT_MIN( 16 ) \
+								const int newPrivKeyDataSize,
+							  IN_BUFFER( privKeyAttributeSize ) \
+								const void *privKeyAttributes, 
+							  IN_LENGTH_SHORT const int privKeyAttributeSize, 
+							  IN_LENGTH_SHORT const int privKeyInfoSize, 
+							  IN_TAG const int keyTypeTag );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int calculatePrivkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
+							 OUT_PTR void **newPrivKeyDataPtr, 
+							 OUT_LENGTH_SHORT_Z int *newPrivKeyDataSize, 
+							 IN_LENGTH_SHORT const int privKeySize,
+							 IN_LENGTH_SHORT const int privKeyAttributeSize,
+							 IN_LENGTH_SHORT const int extraDataSize );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 10 ) ) \
+int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
+						 IN_HANDLE const CRYPT_HANDLE iCryptContext,
+						 IN_HANDLE const CRYPT_HANDLE iCryptOwner,
+						 IN_BUFFER( passwordLength ) const char *password, 
+						 IN_RANGE( MIN_NAME_LENGTH, \
+											 MAX_ATTRIBUTE_SIZE - 1 ) \
+							const int passwordLength,
+						 IN_BUFFER( privKeyAttributeSize ) \
+							const void *privKeyAttributes, 
+						 IN_LENGTH_SHORT const int privKeyAttributeSize,
+						 IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
+						 IN_LENGTH_PKC const int modulusSize, 
+						 INOUT ERROR_INFO *errorInfo );
+
+/* Prototypes for functions in pkcs15_atrd.c/pkcs15_atwr.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 6, 7 ) ) \
+int writeKeyAttributes( OUT_BUFFER( privKeyAttributeMaxLen, \
+									*privKeyAttributeSize ) 
+							void *privKeyAttributes, 
+						IN_LENGTH_SHORT_MIN( 16 ) \
+							const int privKeyAttributeMaxLen,
+						OUT_LENGTH_SHORT_Z int *privKeyAttributeSize, 
+						OUT_BUFFER( pubKeyAttributeMaxLen, \
+									*pubKeyAttributeSize ) \
+							void *pubKeyAttributes, 
+						IN_LENGTH_SHORT_MIN( 16 ) \
+							const int pubKeyAttributeMaxLen,
+						OUT_LENGTH_SHORT_Z int *pubKeyAttributeSize, 
+						INOUT PKCS15_INFO *pkcs15infoPtr, 
+						IN_HANDLE const CRYPT_HANDLE iCryptContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int writeCertAttributes( OUT_BUFFER( certAttributeMaxLen, *certAttributeSize ) \
+							void *certAttributes, 
+						 IN_LENGTH_SHORT_MIN( 16 ) const int certAttributeMaxLen,
+						 OUT_LENGTH_SHORT_Z int *certAttributeSize, 
+						 INOUT PKCS15_INFO *pkcs15infoPtr, 
+						 IN_HANDLE const CRYPT_HANDLE iCryptCert );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int readObjectAttributes( INOUT STREAM *stream, 
+						  INOUT PKCS15_INFO *pkcs15infoPtr,
+						  IN_ENUM( PKCS15_OBJECT ) const PKCS15_OBJECT_TYPE type, 
+						  INOUT ERROR_INFO *errorInfo );
+
+/* Prototypes for functions in pkcs15_get/set.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initPKCS15get( INOUT KEYSET_INFO *keysetInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initPKCS15set( INOUT KEYSET_INFO *keysetInfoPtr );
 
 /* Prototypes for functions in pkcs15_wr.c */
 
-int addConfigData( PKCS15_INFO *pkcs15info, const int noPkcs15objects, 
-				   const char *data, const int dataLength, const int flags );
-int addSecretKey( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
-				  const CRYPT_HANDLE cryptHandle );
-int addCertChain( PKCS15_INFO *pkcs15info, const int noPkcs15objects,
-				  const CRYPT_CERTIFICATE iCryptCert );
-int addKey( PKCS15_INFO *pkcs15infoPtr, const CRYPT_HANDLE iCryptHandle,
-			const void *password, const int passwordLength,
-			const CRYPT_USER iOwnerHandle, const BOOLEAN privkeyPresent, 
-			const BOOLEAN certPresent, const BOOLEAN doAddCert, 
-			const BOOLEAN pkcs15keyPresent );
-int pkcs15Flush( STREAM *stream, const PKCS15_INFO *pkcs15info,
-				 const int noPkcs15objects );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int pkcs15Flush( INOUT STREAM *stream, 
+				 IN_ARRAY( noPkcs15objects ) const PKCS15_INFO *pkcs15info, 
+				 IN_LENGTH_SHORT const int noPkcs15objects );
 
 /* Prototypes for functions in pkcs15_rd.c */
 
-int readPublicKeyComponents( const PKCS15_INFO *pkcs15info,
-							 const CRYPT_KEYSET iCryptKeysetCallback,
-							 const CRYPT_KEYID_TYPE keyIDtype,
-							 const void *keyID, const int keyIDlength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 7, 8, 9, 10, 11 ) ) \
+int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
+							 IN_HANDLE const CRYPT_KEYSET iCryptKeysetCallback,
+							 IN_ENUM( CRYPT_KEYID ) \
+								const CRYPT_KEYID_TYPE keyIDtype,
+							 IN_BUFFER( keyIDlength ) const void *keyID, 
+							 IN_LENGTH_KEYID const int keyIDlength,
 							 const BOOLEAN publicComponentsOnly,
-							 CRYPT_CONTEXT *iCryptContext,
-							 CRYPT_CERTIFICATE *iDataCert,
-							 int *pubkeyActionFlags, 
-							 int *privkeyActionFlags );
-int readPrivateKeyComponents( const PKCS15_INFO *pkcs15info,
-							  const CRYPT_CONTEXT iCryptContext,
-							  const void *password, 
-							  const int passwordLength );
-int readKeyset( STREAM *stream, PKCS15_INFO *pkcs15info,
-				const int maxNoPkcs15objects, const long endPos );
+							 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContextPtr,
+							 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iDataCertPtr,
+							 OUT_FLAGS_Z( ACTION ) int *pubkeyActionFlags, 
+							 OUT_FLAGS_Z( ACTION ) int *privkeyActionFlags, 
+							 INOUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
+							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							  IN_BUFFER( passwordLength ) const void *password, 
+							  IN_RANGE( MIN_NAME_LENGTH, \
+											 MAX_ATTRIBUTE_SIZE - 1 ) \
+								const int passwordLength, 
+							  INOUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+int readKeyset( INOUT STREAM *stream, 
+				OUT_ARRAY( maxNoPkcs15objects ) PKCS15_INFO *pkcs15info, 
+				IN_LENGTH_SHORT const int maxNoPkcs15objects, 
+				IN_LENGTH const long endPos,
+				INOUT ERROR_INFO *errorInfo );
 
 #endif /* _PKCS15_DEFINED */

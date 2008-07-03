@@ -90,13 +90,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam,
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( RC5_EXPANDED_KEYSIZE );
+		{
+		*result = RC5_EXPANDED_KEYSIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -425,7 +429,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5",
+	CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5", 3,
 	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 832 ),
 	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,

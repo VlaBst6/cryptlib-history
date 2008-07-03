@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Data Size and Crypto-related Constants 			*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -11,7 +11,11 @@
 
 /* The maximum length that can be safely handled using an integer.  We don't
    quite allow the maximum possible length since most data/message formats
-   impose some extra overhead themselves */
+   impose some extra overhead themselves.
+   
+   In addition to the maximum-possible length we also define a shorter
+   length defined as a generally sensible upper bound for values that 
+   shouldn't require arbitrary-length data quantities */
 
 #ifdef SYSTEM_16BIT
   #define MAX_INTLENGTH_DELTA	8192
@@ -19,6 +23,7 @@
   #define MAX_INTLENGTH_DELTA	1048576
 #endif /* 16- vs. 32/64-bit systems */
 #define MAX_INTLENGTH			( INT_MAX - MAX_INTLENGTH_DELTA )
+#define MAX_INTLENGTH_SHORT		16384
 
 /* The size of a cryptlib key ID, an SHA-1 hash of the SubjectPublicKeyInfo,
    and the PGP key ID */
@@ -26,11 +31,13 @@
 #define KEYID_SIZE				20
 #define	PGP_KEYID_SIZE			8
 
-/* The maximum private key data size.  This is used when buffering the
-   encrypted private key from a keyset during decryption, and is equal to
-   the overall size of the total number of possible PKC parameters in an
-   encryption context, plus a little extra for encoding and encryption */
+/* The minimum and maximum private key data size.  This is used when 
+   buffering the encrypted private key from a keyset during decryption and 
+   is equal to the overall size of the total number of possible PKC 
+   parameters in an encryption context, plus a little extra for encoding and 
+   encryption */
 
+#define MIN_PRIVATE_KEYSIZE		18	/* For DLP keys */
 #define MAX_PRIVATE_KEYSIZE		( ( CRYPT_MAX_PKCSIZE * 8 ) + 256 )
 
 /* The minimum and maximum working conventional key size in bits.  In order 
@@ -111,6 +118,29 @@
 #else
   #define MIN_NAME_LENGTH		2
 #endif /* Unicode vs. ASCII environments */
+
+/* The minimum time value that's regarded as being a valid time (we have to 
+   allow dates slightly before the current time because of things like 
+   backdated cert revocations, as a rule of thumb we allow a date up to five 
+   years in the past), an approximation of the current time (with the 
+   constraint that it's not after the current date), and a somewhat more
+   relaxed minimum time value used when reading stored data, which can
+   contain keys that have been hanging around for years */
+
+#define MIN_TIME_VALUE			( ( 2003 - 1970 ) * 365 * 86400L )
+#define MIN_STORED_TIME_VALUE	( ( 1995 - 1970 ) * 365 * 86400L )
+#define CURRENT_TIME_VALUE		( MIN_TIME_VALUE + ( 86400L * 365 * 5 ) )
+
+/* The minimum and maximum network port numbers.  Note that we allow ports 
+   down to 21 (= FTP) rather than the more obvious 22 (= SSH) provided by 
+   cryptlib sessions because the URL-handling code is also used for general-
+   purpose URI parsing for which the lowest-numbered one that we'd normally 
+   run into is FTP.  We set the upper bound at the end of the non-ephemeral 
+   port range, 49152-65535 is for ephemeral ports that are only valid for 
+   the duration of a TCP session */
+
+#define MIN_PORT_NUMBER		21
+#define MAX_PORT_NUMBER		49151L
 
 /* Some object types interact with exteral services that can return detailed
    error messages when problems occur, the following is the maximum length
@@ -198,10 +228,16 @@
 
 #define CRYPT_ERROR				-1
 
-/* A special return code to inform asynchronous routines to abort the
-   operation currently in progress */
+/* Sometimes compilers get confused about whether a variable has been 
+   initialised or not and report a used-before-initialised error when there
+   isn't one.  This happens most frequently when the variable is initialised
+   as part of a conditional expression where the developer knows the control
+   flow will result in an initialisation but the compiler doesn't.  To get
+   around this we perform a dummy initialisation of the variable with a 
+   symbolic value to get rid of the false positive */
 
-#define ASYNC_ABORT				-1234
+#define DUMMY_INIT				0
+#define DUMMY_INIT_PTR			NULL
 
 /* A special return code to indicate that everything went OK but there's
    some special action to perform.  This is generally used when a lower-level
@@ -230,6 +266,8 @@
 
 #define cryptArgError( status )	\
 		( ( status ) >= CRYPT_ARGERROR_NUM2 && ( status ) <= CRYPT_ARGERROR_OBJECT )
+#define cryptStandardError( status ) \
+		( ( status ) >= CRYPT_ENVELOPE_RESOURCE && ( status ) <= CRYPT_OK )
 
 /* The data formats for reading/writing public keys */
 

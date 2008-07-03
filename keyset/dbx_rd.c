@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib DBMS Interface							*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -10,13 +10,11 @@
   #include "keyset.h"
   #include "dbms.h"
   #include "asn1.h"
-  #include "rpc.h"
 #else
   #include "crypt.h"
   #include "keyset/keyset.h"
   #include "keyset/dbms.h"
   #include "misc/asn1.h"
-  #include "misc/rpc.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_DBMS
@@ -29,22 +27,39 @@
 
 /* The most common query types can be performed using cached access plans 
    and query data.  The following function determines whether a particular
-   query can be performed using one of these cached queries, returning the
-   cache entry for the query if so */
+   query can be performed using cached information, returning the cache 
+   entry for the query if so */
 
-DBMS_CACHEDQUERY_TYPE getCachedQueryType( const KEYMGMT_ITEM_TYPE itemType,
-										  const CRYPT_KEYID_TYPE keyIDtype )
+CHECK_RETVAL_ENUM( DBMS_CACHEDQUERY ) \
+static DBMS_CACHEDQUERY_TYPE getCachedQueryType( IN_ENUM_OPT( KEYMGMT_ITEM ) \
+													const KEYMGMT_ITEM_TYPE itemType,
+												 IN_KEYID_OPT \
+													const CRYPT_KEYID_TYPE keyIDtype )
 	{
-	/* If we're not reading from the standard certs table, the query won't
-	   be cached */
+	REQUIRES_EXT( ( itemType == KEYMGMT_ITEM_NONE || \
+					itemType == KEYMGMT_ITEM_REQUEST || \
+					itemType == KEYMGMT_ITEM_PKIUSER || \
+					itemType == KEYMGMT_ITEM_PUBLICKEY || \
+					itemType == KEYMGMT_ITEM_REVOCATIONINFO ), 
+				  DBMS_CACHEDQUERY_NONE );
+				  /* KEYMGMT_ITEM_NONE is for ongoing queries */
+	REQUIRES_EXT( ( itemType == KEYMGMT_ITEM_NONE && \
+					keyIDtype == CRYPT_KEYID_NONE ) || \
+				  ( keyIDtype > CRYPT_KEYID_NONE && \
+					keyIDtype <= CRYPT_KEYID_LAST ), DBMS_CACHEDQUERY_NONE );
+				  /* { KEYMGMT_ITEM_NONE, CRYPT_KEYID_NONE } is for ongoing 
+				     queries */
+
+	/* If we're not reading from the standard certificates table the query 
+	   won't be cached */
 	if( itemType != KEYMGMT_ITEM_PUBLICKEY )
 		return( DBMS_CACHEDQUERY_NONE );
 
 	/* Check whether we're querying on a cacheable key value type.  An ID 
 	   type of CRYPT_KEYID_LAST is a special case which denotes that we're
-	   doing a query on name ID, this is used for getNext() and is very 
-	   common (it follows most cert reads and is used to see if we can build 
-	   a chain), so we make it cacheable */
+	   doing a query on a name ID, this is used for getNext() and is very 
+	   common (it follows most certificate reads and is used to see if we 
+	   can build a chain) so we make it cacheable */
 	switch( keyIDtype )
 		{
 		case CRYPT_KEYID_URI:
@@ -63,74 +78,120 @@ DBMS_CACHEDQUERY_TYPE getCachedQueryType( const KEYMGMT_ITEM_TYPE itemType,
 	return( DBMS_CACHEDQUERY_NONE );
 	}
 
-/* Check an encoded cert for a matching key usage.  The semantics of key
-   usage flags are vague in the sense that the query "Is this key valid for
-   X" is easily resolved, but the query "Which key is appropriate for X" is
-   NP-hard due to the potential existence of unbounded numbers of
+/* Get the SQL string to fetch data from a given table */
+
+CHECK_RETVAL_PTR \
+static char *getSelectString( IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType )
+	{
+	REQUIRES_N( itemType == KEYMGMT_ITEM_REQUEST || \
+				itemType == KEYMGMT_ITEM_PKIUSER || \
+				itemType == KEYMGMT_ITEM_PUBLICKEY || \
+				itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+
+	switch( itemType )
+		{
+		case KEYMGMT_ITEM_REQUEST:
+			return( "SELECT certData FROM certRequests WHERE " );
+
+		case KEYMGMT_ITEM_PKIUSER:
+			return( "SELECT certData FROM pkiUsers WHERE " );
+
+		case KEYMGMT_ITEM_PUBLICKEY:
+			return( "SELECT certData FROM certificates WHERE " );
+
+		case KEYMGMT_ITEM_REVOCATIONINFO:
+			return( "SELECT certData FROM CRLs WHERE " );
+		}
+
+	retIntError_Null();
+	}
+
+/* Check an encoded certificate for a matching key usage.  The semantics of 
+   key usage flags are vague in the sense that the query "Is this key valid 
+   for X" is easily resolved but the query "Which key is appropriate for X" 
+   is NP-hard due to the potential existence of unbounded numbers of
    certificates with usage semantics expressed in an arbitrary number of
    ways.  For now we distinguish between signing and encryption keys (this,
    at least, is feasible) by doing a quick check for keyUsage if we get
-   multiple certs with the same DN and choosing the one with the appropriate
-   key usage.
+   multiple certificates with the same DN and choosing the one with the 
+   appropriate key usage.
 
-   Rather than performing a relatively expensive cert import for each cert,
-   we find the keyUsage by doing an optimised search through the cert data
-   for its encoded form.  The pattern that we look for is:
+   Rather than performing a relatively expensive certificate import for each 
+   certificate we find the keyUsage by doing an optimised search through the 
+   certificate data for its encoded form.  The pattern that we look for is:
 
-	OID				06 03 55 1D 0F
+	OID				06 03 55 1D 0F + SEQUENCE at n-2
 	BOOLEAN			(optional)
-	OCTET STRING {	04 (4 or 5)
-		BIT STRING	03 (2 or 3) nn (value) */
+	OCTET STRING {
+		BIT STRING	(value)
 
-static BOOLEAN checkCertUsage( const BYTE *certificate, const int length,
-							   const int requestedUsage )
+   Note that this function isn't security-critical because it doesn't perform
+   an actual usage check, all it needs to do is find the key that's most 
+   likely to be usable for purpose X.  If it gets it wrong the certificate-
+   level checking will catch the problem */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN checkCertUsage( IN_BUFFER( certLength ) const BYTE *certificate, 
+							   IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
+								const int certLength,
+							   IN_FLAGS( KEYMGMT ) const int requestedUsage )
 	{
+	const int keyUsageMask = ( requestedUsage & KEYMGMT_FLAG_USAGE_CRYPT ) ? \
+								CRYPT_KEYUSAGE_KEYENCIPHERMENT : \
+								CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
+								CRYPT_KEYUSAGE_NONREPUDIATION;
 	int i;
 
-	assert( requestedUsage & KEYMGMT_MASK_USAGEOPTIONS );
+	assert( isReadPtr( certificate, certLength ) );
+	
+	REQUIRES( certLength >= MIN_CRYPT_OBJECTSIZE && \
+			  certLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( requestedUsage > KEYMGMT_FLAG_NONE && \
+			  requestedUsage < KEYMGMT_FLAG_MAX );
+	REQUIRES( requestedUsage & KEYMGMT_MASK_USAGEOPTIONS );
 
-	/* Scan the payload portion of the cert for the keyUsage extension */
-	for( i = 256; i < length - 64; i++ )
+	/* Scan the payload portion of the certificate for the keyUsage 
+	   extension.  The certificate is laid out approximately as:
+
+		[ junk ][ DN ][ times ][ DN ][ pubKey ][ attrs ][ sig ]
+
+	   so we know there's at least 128 + MIN_PKCSIZE bytes at the start and
+	   MIN_PKCSIZE bytes at the end that we don't have to bother poking 
+	   around in */
+	for( i = 128 + MIN_PKCSIZE; i < certLength - MIN_PKCSIZE; i++ )
 		{
-		int keyUsage;
+		STREAM stream;
+		int keyUsage, status;
 
-		/* Look for the OID.  This potentially skips two bytes at a
-		   time, but this is safe since the preceding bytes can never
-		   contain either of these two values (they're 0x30 + 11...15) */
+		/* Look for the OID.  This potentially skips two bytes at a time but 
+		   this is safe because the preceding bytes can never contain either 
+		   of these two values (they're 0x30 + 11...15) */
 		if( certificate[ i++ ] != BER_OBJECT_IDENTIFIER || \
 			certificate[ i++ ] != 3 )
+			continue;
+		if( certificate[ i - 4 ] != BER_SEQUENCE )
 			continue;
 		if( memcmp( certificate + i, "\x55\x1D\x0F", 3 ) )
 			continue;
 		i += 3;
 
-		/* We've found the OID (with 1.1e-12 error probability), skip
+		/* We've found the OID (with 2.8e-14 error probability), skip
 		   the critical flag if necessary */
 		if( certificate[ i ] == BER_BOOLEAN )
 			i += 3;
 
-		/* Check for the OCTET STRING wrapper and BIT STRING */
-		if( certificate[ i++ ] != BER_OCTETSTRING || \
-			( certificate[ i ] != 4 && certificate[ i ] != 5 ) || \
-			certificate[ ++i ] != BER_BITSTRING )
+		/* Read the OCTET STRING wrapper and BIT STRING */
+		sMemConnect( &stream, certificate + i, 
+					 certLength - ( i + MIN_PKCSIZE ) );
+		readOctetStringHole( &stream, NULL, 4, DEFAULT_TAG );
+		status = readBitString( &stream, &keyUsage );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( status ) )
 			continue;
-		keyUsage = certificate[ i + 3 ];
 
-		/* We've got to the BIT STRING payload, check whether the requested
-		   usage is allowed.  This is somewhat ugly since it hardcodes in
-		   the bit values, but it's difficult to handle otherwise without
-		   resorting to interpresting the encoded ASN.1 */
-		if( requestedUsage & KEYMGMT_FLAG_USAGE_CRYPT )
-			{
-			if( keyUsage & 0x20 )
-				return( TRUE );
-			}
-		else
-			if( keyUsage & 0x80 )
-				return( TRUE );
-
-		/* The requested usage isn't permitted by this cert */
-		return( FALSE );
+		/* Check whether the requested usage is allowed */
+		return( ( keyUsage & keyUsageMask ) ? TRUE : FALSE );
 		}
 
 	/* No key usage found, assume that any usage is OK */
@@ -139,138 +200,185 @@ static BOOLEAN checkCertUsage( const BYTE *certificate, const int length,
 
 /****************************************************************************
 *																			*
-*							Database Access Functions						*
+*							Database Fetch Routines							*
 *																			*
 ****************************************************************************/
 
-/* Fetch a sequence of certs from a data source.  This is called in one of
-   two ways, either indirectly by the certificate code to fetch the first and
-   subsequent certs in a chain or directly by the user after submitting a
-   query to the keyset (which doesn't return any data) to read the results of
-   the query.  The schema for calls is:
+/* Fetch a sequence of certificates from a data source.  This is called in 
+   one of two ways, either indirectly by the certificate code to fetch the 
+   first and subsequent certificates in a chain or directly by the user 
+   after submitting a query to the keyset (which doesn't return any data) 
+   to read the results of the query.  The schema for calls is:
 
 	state = NULL:		query( NULL, &data, CONTINUE );
 	state, point query:	query( SQL, &data, NORMAL );
 	state, multi-cert:	query( SQL, &data, START );
-						query( NULL, &data, CONTINUE ); */
+						( followed by 'query( NULL, &data, CONTINUE )') */
 
-int getItemData( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
-				 int *stateInfo, const CRYPT_KEYID_TYPE keyIDtype, 
-				 const char *keyValue, const int keyValueLength,
-				 const KEYMGMT_ITEM_TYPE itemType, const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 9 ) ) \
+int getItemData( INOUT DBMS_INFO *dbmsInfo, 
+				 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+				 OUT_OPT int *stateInfo, 
+				 IN_ENUM_OPT( KEYMGMT_ITEM ) const KEYMGMT_ITEM_TYPE itemType, 
+				 IN_KEYID_OPT const CRYPT_KEYID_TYPE keyIDtype, 
+				 IN_BUFFER_OPT( keyValueLength ) const char *keyValue, 
+				 IN_LENGTH_KEYID_Z const int keyValueLength,
+				 IN_FLAGS_Z( KEYMGMT ) const int options,
+				 INOUT ERROR_INFO *errorInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	const DBMS_CACHEDQUERY_TYPE cachedQueryType = \
 								getCachedQueryType( itemType, keyIDtype );
-	BYTE certificate[ MAX_CERT_SIZE + BASE64_OVFL_SIZE + 8 ];
+	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+	BYTE certificate[ MAX_CERT_SIZE + 8 ];
+	char sqlBuffer[ MAX_SQL_QUERY_SIZE + 8 ];
+	const char *queryString;
 	char certDataBuffer[ MAX_QUERY_RESULT_SIZE + 8 ];
-	void *certDataPtr = certDataBuffer;
-	char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ], *sqlBufPtr;
+	void *certDataPtr = hasBinaryBlobs( dbmsInfo ) ? \
+						certificate : ( void * ) certDataBuffer;
+						/* Cast needed for gcc */
 	DBMS_QUERY_TYPE queryType;
 	BOOLEAN multiCertQuery = ( options & KEYMGMT_MASK_USAGEOPTIONS ) ? \
 							 TRUE : FALSE;
-	BOOLEAN continueFetch = TRUE;
-	int certDataLength, iterationCount = 0, status;
+	int certDataLength = DUMMY_INIT, iterationCount, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
-	assert( ( keyValueLength > 2 && \
+	assert( ( stateInfo == NULL ) || \
+			isWritePtr( stateInfo, sizeof( int ) ) );
+	assert( ( keyValueLength > MIN_NAME_LENGTH && \
 			  isReadPtr( keyValue, keyValueLength ) && \
 			  ( keyIDtype > CRYPT_KEYID_NONE && \
 				keyIDtype <= CRYPT_KEYID_LAST ) ) || \
 			( keyValueLength == 0 && keyValue == NULL && \
 			  keyIDtype == CRYPT_KEYID_NONE ) );
-	assert( itemType == KEYMGMT_ITEM_NONE || \
-			itemType == KEYMGMT_ITEM_PUBLICKEY || \
-			itemType == KEYMGMT_ITEM_REQUEST || \
-			itemType == KEYMGMT_ITEM_PKIUSER || \
-			itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+
+	REQUIRES( ( itemType == KEYMGMT_ITEM_NONE && \
+				keyIDtype == CRYPT_KEYID_NONE && keyValue == NULL && \
+				keyValueLength == 0 && stateInfo == NULL ) ||
+			  /* This variant is for ongoing queries, for which information 
+			     will have been submitted when the query was started */
+			  ( itemType > KEYMGMT_ITEM_NONE && \
+			    itemType < KEYMGMT_ITEM_LAST && \
+				keyIDtype > CRYPT_KEYID_NONE && \
+				keyIDtype <= CRYPT_KEYID_LAST && \
+				keyValue != NULL && \
+				keyValueLength >= MIN_NAME_LENGTH && 
+				keyValueLength < MAX_ATTRIBUTE_SIZE && \
+				stateInfo != NULL ) );
+			  /* As well as the standard values we can also have the 
+			     special-case value CRYPT_KEYID_LAST (see the comment in 
+				 getItemFunction() for details) which is mapped to the
+				 database-use-only lookup value "nameID", the hashed DN */
+	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
+			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_PKIUSER || \
+			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX );
+	REQUIRES( errorInfo != NULL );
+
+	/* Clear return values */
+	*iCertificate = CRYPT_ERROR;
+	if( stateInfo != NULL )
+		*stateInfo = CRYPT_ERROR;
 
 	/* Make sure that we can never explicitly fetch anything with an ID that
 	   indicates that it's physically but not logically present, for example
-	   certificates that have been created but not fully issued yet, cert
-	   items that are on hold, and similar items */
-	if( keyValue != NULL && \
+	   certificates that have been created but not fully issued yet, 
+	   certificate items that are on hold, and similar items */
+	if( keyValue != NULL && keyValueLength >= KEYID_ESC_SIZE && \
 		( !memcmp( keyValue, KEYID_ESC1, KEYID_ESC_SIZE ) || \
 		  !memcmp( keyValue, KEYID_ESC2, KEYID_ESC_SIZE ) ) )
+		{
 		/* Eheu, litteras istas reperire non possum */
 		return( CRYPT_ERROR_NOTFOUND );
+		}
 
-	/* Perform a slight optimisation to eliminate unnecessary multi-cert 
-	   queries: If we're querying by certID or issuerID only one cert can 
-	   ever match, so there's no need to perform a multi-cert query even if
-	   key usage options are specified */
+	/* Perform a slight optimisation to eliminate unnecessary multi-
+	   certificate queries: If we're querying by certID or issuerID only one 
+	   certificate can ever match so there's no need to perform a multi-
+	   certificate query even if key usage options are specified */
 	if( keyIDtype == CRYPT_IKEYID_ISSUERID || \
 		keyIDtype == CRYPT_IKEYID_CERTID )
 		multiCertQuery = FALSE;
 
-	/* If we have binary blob support, fetch the data directly into the
-	   certificate buffer */
-	if( hasBinaryBlobs( dbmsInfo ) )
-		certDataPtr = certificate;
-
 	/* Set the query to begin the fetch */
 	if( stateInfo != NULL )
 		{
-		dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
-			"SELECT certData FROM $ WHERE $ = ?",
-					   getTableName( itemType ), 
-					   ( keyIDtype == CRYPT_KEYID_LAST ) ? \
-							"nameID" : getKeyName( keyIDtype ) );
-		sqlBufPtr = sqlBuffer;
+		const char *keyName = getKeyName( keyIDtype );
+		const char *selectString = getSelectString( itemType );
+
+		ENSURES( keyName != NULL && selectString != NULL );
+		strlcpy_s( sqlBuffer, MAX_SQL_QUERY_SIZE, selectString );
+		strlcat_s( sqlBuffer, MAX_SQL_QUERY_SIZE, keyName );
+		strlcat_s( sqlBuffer, MAX_SQL_QUERY_SIZE, " = ?" );
+		queryString = sqlBuffer;
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, keyValue, keyValueLength );
 		queryType = multiCertQuery ? DBMS_QUERY_START : DBMS_QUERY_NORMAL;
 		}
 	else
 		{
 		/* It's an ongoing query, just fetch the next set of results */
-		sqlBufPtr = NULL;
+		queryString = NULL;
+		boundDataPtr = NULL;
 		queryType = DBMS_QUERY_CONTINUE;
 		}
 
 	/* Retrieve the results from the query */
-	while( continueFetch && iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_MED; 
+		 iterationCount++ )
 		{
-		/* Retrieve the record and base64-decode the binary cert data if
-		   necessary */
-		status = dbmsQuery( sqlBufPtr, certDataPtr, &certDataLength, 
-							keyValue, keyValueLength, 0, cachedQueryType, 
+		/* Retrieve the certificate data and base64-decode it if necessary */
+		status = dbmsQuery( queryString, certDataPtr, 
+							hasBinaryBlobs( dbmsInfo ) ? \
+								MAX_CERT_SIZE : MAX_SQL_QUERY_SIZE,
+							&certDataLength, boundDataPtr, cachedQueryType, 
 							queryType );
-		if( cryptStatusOK( status ) && !hasBinaryBlobs( dbmsInfo ) )
-			{
-			certDataLength = base64decode( certificate, MAX_CERT_SIZE,
-										   certDataBuffer, certDataLength,
-										   CRYPT_CERTFORMAT_NONE );
-			if( cryptStatusError( certDataLength ) )
-				status = certDataLength;
-			}
 		if( cryptStatusError( status ) )
+			{
 			/* Convert the error code to a more appropriate value if
-			   appropriate */
+			   necessary */
 			return( ( multiCertQuery && ( status == CRYPT_ERROR_COMPLETE ) ) ? \
 					CRYPT_ERROR_NOTFOUND : status );
+			}
+		if( !hasBinaryBlobs( dbmsInfo ) )
+			{
+			status = base64decode( certificate, MAX_CERT_SIZE, 
+								   &certDataLength, certDataBuffer, 
+								   certDataLength, CRYPT_CERTFORMAT_NONE );
+			if( cryptStatusError( status ) )
+				{
+				retExt( status, 
+						( status, errorInfo, 
+						  "Couldn't decode certificate from stored encoded "
+						  "certificate data" ) );
+				}
+			}
 
 		/* We've started the fetch, from now on we're only fetching further
 		   results */
-		sqlBufPtr = NULL;
+		queryString = NULL;
+		boundDataPtr = NULL;
 		if( queryType == DBMS_QUERY_START )
 			queryType = DBMS_QUERY_CONTINUE;
 
-		assert( certDataLength > 16 );
-		assert( ( ( stateInfo != NULL ) && \
-				  ( queryType == DBMS_QUERY_NORMAL || \
-					queryType == DBMS_QUERY_CONTINUE ) ) || \
-				( ( stateInfo == NULL ) && \
-				  ( queryType == DBMS_QUERY_CONTINUE ) ) );
+		ENSURES( certDataLength >= 16 && certDataLength <= MAX_CERT_SIZE );
+		ENSURES( ( stateInfo != NULL && \
+				   ( queryType == DBMS_QUERY_NORMAL || \
+					 queryType == DBMS_QUERY_CONTINUE ) ) || \
+				 ( stateInfo == NULL && queryType == DBMS_QUERY_CONTINUE ) );
 
-		/* If the first byte of the cert data is 0xFF, this is an item which
-		   is physically but not logically present (see the comment above in
-		   the check for the keyValue), which means that we can't explicitly 
-		   fetch it (te audire non possum, musa sapientum fixa est in aure).  
-		   If it's a point query this means we didn't find anything, 
-		   otherwise we try again with the next result */
+		/* If the first byte of the certificate data is 0xFF then this is an 
+		   item that's physically but not logically present (see the comment 
+		   above in the check for the keyValue), which means that we can't 
+		   explicitly fetch it (te audire non possum, musa sapientum fixa 
+		   est in aure) */
 		if( certificate[ 0 ] == 0xFF )
 			{
-			/* If it's a multi-cert query, try again with the next result */
+			/* If it's a multi-certificate query try again with the next 
+			   result */
 			if( multiCertQuery )
 				continue;
 			
@@ -280,28 +388,35 @@ int getItemData( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 			return( CRYPT_ERROR_NOTFOUND );
 			}
 
-		/* If more than one cert is present and the requested key usage
-		   doesn't match the one indicated in the cert, try again */
+		/* If more than one certificate is present and the requested key 
+		   usage doesn't match the one indicated in the certificate, try 
+		   again */
 		if( multiCertQuery && \
 			!checkCertUsage( certificate, certDataLength, options ) )
 			continue;
 
 		/* We got what we wanted, exit */
-		continueFetch = FALSE;
+		break;
 		}
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		return( CRYPT_ERROR_NOTFOUND );
+		{
+		retExt_IntError( CRYPT_ERROR_NOTFOUND, 
+						 ( CRYPT_ERROR_NOTFOUND, errorInfo, 
+						   "Couldn't find matching certificate after "
+						   "processing %d items", FAILSAFE_ITERATIONS_MED ) );
+		}
 
-	/* If we've been looking through multiple certs, cancel the outstanding
-	   query, which will still be in progress */
+	/* If we've been looking through multiple certificates, cancel the 
+	   outstanding query, which will still be in progress */
 	if( multiCertQuery )
 		dbmsStaticQuery( NULL, cachedQueryType, DBMS_QUERY_CANCEL );
 
-	/* Create a certificate object from the encoded cert.  If we're reading 
-	   revocation information the data is a single CRL entry so we have to 
-	   tell the cert import code to treat it as a special case of a CRL.  If
-	   we're reading a request, it could be one of several types so we have
-	   to use auto-detection rather than specifying an exact format */
+	/* Create a certificate object from the encoded certificate data.  If 
+	   we're reading revocation information the data is a single CRL entry 
+	   so we have to tell the certificate import code to treat it as a 
+	   special case of a CRL.  If we're reading a request it could be one 
+	   of several types so we have to use auto-detection rather than 
+	   specifying an exact format */
 	setMessageCreateObjectIndirectInfo( &createInfo, certificate, 
 										certDataLength,
 		( itemType == KEYMGMT_ITEM_PUBLICKEY || \
@@ -314,138 +429,171 @@ int getItemData( DBMS_INFO *dbmsInfo, CRYPT_CERTIFICATE *iCertificate,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't recreate certificate from stored certificate "
+				  "data" ) );
+		}
 	*iCertificate = createInfo.cryptHandle;
 
-	/* If this was a read with state held externally, remember where we got
-	   to so that we can fetch the next cert in the sequence */
+	/* If this was a read with state held externally remember where we got
+	   to so that we can fetch the next certificate in the sequence */
 	if( stateInfo != NULL )
 		*stateInfo = *iCertificate;
 	return( CRYPT_OK );
 	}
 
-static int getFirstItemFunction( KEYSET_INFO *keysetInfo,
-								 CRYPT_CERTIFICATE *iCertificate,
-								 int *stateInfo,
-								 const CRYPT_KEYID_TYPE keyIDtype,
-								 const void *keyID, const int keyIDlength,
-								 const KEYMGMT_ITEM_TYPE itemType,
-								 const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
+static int getFirstItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+								 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+								 OUT int *stateInfo,
+								 IN_ENUM( KEYMGMT_ITEM ) \
+									const KEYMGMT_ITEM_TYPE itemType,
+								 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+								 IN_BUFFER( keyIDlength ) const void *keyID, 
+								 IN_LENGTH_KEYID const int keyIDlength,
+								 IN_FLAGS_Z( KEYMGMT ) const int options )
 	{
-	DBMS_INFO *dbmsInfo = keysetInfo->keysetDBMS;
-	char keyIDbuffer[ ( CRYPT_MAX_TEXTSIZE * 2 ) + 8 ];
-	int length, status;
+	DBMS_INFO *dbmsInfo = keysetInfoPtr->keysetDBMS;
+	char encodedKeyID[ ( CRYPT_MAX_TEXTSIZE * 2 ) + 8 ];
+	int encodedKeyIDlength, status;
 
-	/* If it's a general query, submit the query to the database */
-	if( stateInfo == NULL )
-		{
-		char sqlBuffer[ MAX_SQL_QUERY_SIZE + 8 ];
-		int sqlLength;
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( iCertificate == NULL || \
+			isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isWritePtr( stateInfo, sizeof( int ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
 
-		assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
-				itemType == KEYMGMT_ITEM_REQUEST );
-		assert( options == KEYMGMT_FLAG_NONE );
-
-		if( keyIDlength > MAX_SQL_QUERY_SIZE - 64 )
-			return( CRYPT_ARGERROR_STR1 );
-
-		/* If we're cancelling an existing query, pass it on down */
-		if( keyIDlength == 6 && !strCompare( keyID, "cancel", keyIDlength ) )
-			{
-			status = dbmsStaticQuery( NULL, DBMS_CACHEDQUERY_NONE,
-									  DBMS_QUERY_CANCEL );
-			return( status );
-			}
-
-		assert( !keysetInfo->isBusyFunction( keysetInfo ) );
-
-		/* Rewrite the user-supplied portion of the query using the actual
-		   column names and append it to the SELECT statement.  This is a 
-		   special case free-format query where we can't use bound 
-		   parameters because the query data must be interpreted as SQL, 
-		   unlike standard queries where we definitely don't want it (mis-)
-		   interpreted as SQL */
-		dbmsFormatSQL( sqlBuffer, MAX_SQL_QUERY_SIZE,
-			"SELECT certData FROM $ WHERE ",
-					   getTableName( itemType ) );
-		sqlLength = strlen( sqlBuffer );
-		dbmsFormatQuery( sqlBuffer + sqlLength, 
-						 ( MAX_SQL_QUERY_SIZE - 1 ) - sqlLength, 
-						 keyID, keyIDlength );
-		return( dbmsStaticQuery( sqlBuffer, DBMS_CACHEDQUERY_NONE, 
-								 DBMS_QUERY_START ) );
-		}
+	REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
+	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
+			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_PKIUSER || \
+			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && \
+			  keyIDtype < CRYPT_KEYID_LAST );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && \
+			  options < KEYMGMT_FLAG_MAX );
+	REQUIRES( ( options & KEYMGMT_MASK_USAGEOPTIONS ) != \
+			  KEYMGMT_MASK_USAGEOPTIONS );
 
 	/* Fetch the first data item */
-	status = length = makeKeyID( keyIDbuffer, CRYPT_MAX_TEXTSIZE * 2, 
-								 keyIDtype, keyID, keyIDlength );
+	status = makeKeyID( encodedKeyID, CRYPT_MAX_TEXTSIZE * 2, 
+						&encodedKeyIDlength, keyIDtype, keyID, keyIDlength );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ARGERROR_STR1 );
-	return( getItemData( dbmsInfo, iCertificate, stateInfo, keyIDtype, 
-						 keyIDbuffer, length, itemType, options ) );
+	return( getItemData( dbmsInfo, iCertificate, stateInfo, itemType, 
+						 keyIDtype, encodedKeyID, encodedKeyIDlength, 
+						 options, KEYSET_ERRINFO ) );
 	}
 
-static int getNextItemFunction( KEYSET_INFO *keysetInfo,
-								CRYPT_CERTIFICATE *iCertificate,
-								int *stateInfo, const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int getNextItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+								OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+								INOUT int *stateInfo, 
+								IN_FLAGS_Z( KEYMGMT ) const int options )
 	{
-	DBMS_INFO *dbmsInfo = keysetInfo->keysetDBMS;
+	DBMS_INFO *dbmsInfo = keysetInfoPtr->keysetDBMS;
 
-	/* If we're fetching the next cert in a sequence based on externally-held
-	   state information, set the key ID to the nameID of the previous cert's
-	   issuer.  This is a special-case ID that isn't used outside the database
-	   keysets, so we use the non-ID type CRYPT_KEYID_LAST to signify its use */
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( ( stateInfo == NULL ) || \
+			isWritePtr( stateInfo, sizeof( int ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
+	REQUIRES( options >= KEYMGMT_FLAG_NONE && \
+			  options < KEYMGMT_FLAG_MAX );
+	REQUIRES( ( options & KEYMGMT_MASK_USAGEOPTIONS ) != \
+			  KEYMGMT_MASK_USAGEOPTIONS );
+
+	/* If we're fetching the next certificate in a sequence based on 
+	   externally-held state information, set the key ID to the nameID of 
+	   the previous certificate's issuer.  This is a special-case ID that 
+	   isn't used outside the database keysets so we use the non-ID type 
+	   CRYPT_KEYID_LAST to signify its use */
 	if( stateInfo != NULL )
 		{
-		char keyIDbuffer[ ( CRYPT_MAX_TEXTSIZE * 2 ) + 8 ];
-		int length, status;
+		char encodedKeyID[ ENCODED_DBXKEYID_SIZE + 8 ];
+		int encodedKeyIDlength, status;
 
-		status = length = getKeyID( keyIDbuffer, *stateInfo,
-									CRYPT_IATTRIBUTE_ISSUER );
+		status = getKeyID( encodedKeyID, ENCODED_DBXKEYID_SIZE, 
+						   &encodedKeyIDlength, *stateInfo, 
+						   CRYPT_IATTRIBUTE_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		return( getItemData( dbmsInfo, iCertificate, stateInfo, 
-							 CRYPT_KEYID_LAST, keyIDbuffer, length, 
-							 KEYMGMT_ITEM_PUBLICKEY, options ) );
+							 KEYMGMT_ITEM_PUBLICKEY, CRYPT_KEYID_LAST, 
+							 encodedKeyID, encodedKeyIDlength, options, 
+							 KEYSET_ERRINFO ) );
 		}
 
 	/* Fetch the next data item in an ongoing query */
-	return( getItemData( dbmsInfo, iCertificate, NULL, CRYPT_KEYID_NONE,
-						 NULL, 0, KEYMGMT_ITEM_NONE, options ) );
+	return( getItemData( dbmsInfo, iCertificate, NULL, KEYMGMT_ITEM_NONE, 
+						 CRYPT_KEYID_NONE, NULL, 0, options, 
+						 KEYSET_ERRINFO ) );
 	}
 
-/* Retrieve a key record from the database */
+/* Retrieve a certificate object from the database */
 
-static int getItemFunction( KEYSET_INFO *keysetInfo,
-							CRYPT_HANDLE *iCryptHandle,
-							const KEYMGMT_ITEM_TYPE itemType,
-							const CRYPT_KEYID_TYPE keyIDtype,
-							const void *keyID,  const int keyIDlength,
-							void *auxInfo, int *auxInfoLength,
-							const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+							OUT_HANDLE_OPT CRYPT_HANDLE *iCryptHandle,
+							IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType,
+							IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							IN_BUFFER( keyIDlength ) const void *keyID, 
+							IN_LENGTH_KEYID const int keyIDlength,
+							STDC_UNUSED void *auxInfo, 
+							STDC_UNUSED int *auxInfoLength,
+							IN_FLAGS_Z( KEYMGMT ) const int flags )
 	{
-	DBMS_INFO *dbmsInfo = keysetInfo->keysetDBMS;
+	DBMS_INFO *dbmsInfo = keysetInfoPtr->keysetDBMS;
 	int status;
 
-	assert( auxInfo == NULL ); assert( *auxInfoLength == 0 );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCryptHandle, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
+	
+	REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
+	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
+			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_PKIUSER || \
+			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && \
+			  keyIDtype < CRYPT_KEYID_LAST );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( auxInfo == NULL && *auxInfoLength == 0 );
+	REQUIRES( flags >= KEYMGMT_FLAG_NONE && \
+			  flags < KEYMGMT_FLAG_MAX );
+	REQUIRES( ( flags & KEYMGMT_MASK_USAGEOPTIONS ) != \
+			  KEYMGMT_MASK_USAGEOPTIONS );
 
-	/* There are some query types that can only be satisfied by a cert store
-	   since a standard database doesn't contain the necessary fields.
-	   Before we do anything else we make sure that we can resolve the query 
-	   using the current database type */
+	/* There are some query types that can only be satisfied by a 
+	   certificate store since a standard database doesn't contain the 
+	   necessary fields.  Before we do anything else we make sure that we 
+	   can resolve the query using the current database type */
 	if( !( dbmsInfo->flags & DBMS_FLAG_CERTSTORE_FIELDS ) )
 		{
-		/* A standard database doesn't contain a cert ID in the revocation
-		   information since the CRL it's populated from only contains an
-		   issuerAndSerialNumber, so we can't resolve queries for revocation
-		   info using a cert ID */
+		/* A standard database doesn't contain a certificate ID in the 
+		   revocation information since the CRL that it's populated from 
+		   only contains an issuerAndSerialNumber, so we can't resolve 
+		   queries for revocation information using a certificate ID */
 		if( itemType == KEYMGMT_ITEM_REVOCATIONINFO && \
 			keyIDtype == CRYPT_IKEYID_CERTID )
-			return( CRYPT_ERROR_NOTFOUND );
+			{
+			retExt( CRYPT_ERROR_NOTFOUND, 
+					( CRYPT_ERROR_NOTFOUND, KEYSET_ERRINFO, 
+					  "Operation is only valid for certificate stores" ) );
+			}
 		}
 
-	/* If this is a CA management item fetch, fetch the data from the CA cert
-	   store */
+	/* If this is a CA management item fetch, fetch the data from the CA 
+	   certificate store */
 	if( itemType == KEYMGMT_ITEM_REQUEST || \
 		itemType == KEYMGMT_ITEM_PKIUSER || \
 		( itemType == KEYMGMT_ITEM_REVOCATIONINFO && \
@@ -453,80 +601,160 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 		{
 		int dummy;
 
-		/* If we're getting the issuing PKI user, which means that the key ID
-		   that's being queried on is that of an issued cert that the user 
-		   owns rather than that of the user themselves, fetch the user info 
-		   via a special function */
+		/* If we're getting the issuing PKI user (which means that the key ID
+		   that's being queried on is that of an issued certificate that the 
+		   PKI user owns rather than that of the PKI user themselves) fetch 
+		   the user information via a special function */
 		if( itemType == KEYMGMT_ITEM_PKIUSER && \
 			( flags & KEYMGMT_FLAG_GETISSUER ) )
 			{
-			char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
+			char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
 			int certIDlength;
 
-			assert( keyIDtype == CRYPT_IKEYID_CERTID );
-			assert( isCertStore( dbmsInfo ) );
+			REQUIRES( keyIDtype == CRYPT_IKEYID_CERTID );
 
 			/* The information required to locate the PKI user from one of 
-			   their certs is only present in a cert store */
+			   their certificates is only present in a certificate store */
 			if( !isCertStore( dbmsInfo ) )
-				return( CRYPT_ERROR_NOTFOUND );
+				{
+				retExt( CRYPT_ERROR_NOTFOUND, 
+						( CRYPT_ERROR_NOTFOUND, KEYSET_ERRINFO, 
+						  "Operation is only valid for certificate stores" ) );
+				}
 
-			/* Get the PKI user based on the cert */
-			status = certIDlength = \
-				makeKeyID( certID, DBXKEYID_BUFFER_SIZE, 
-						   CRYPT_IKEYID_CERTID, keyID, keyIDlength );
+			/* Get the PKI user based on the certificate */
+			status = makeKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength,
+								CRYPT_IKEYID_CERTID, keyID, keyIDlength );
 			if( cryptStatusError( status ) )
 				return( CRYPT_ARGERROR_STR1 );
 			return( caGetIssuingUser( dbmsInfo, iCryptHandle, 
-									  certID, certIDlength ) );
+									  certID, certIDlength, 
+									  KEYSET_ERRINFO ) );
 			}
 
 		/* This is just a standard read from a non-certificate table rather
-		   than the cert table so we call the get first cert function directly
-		   (rather than going via the indirect-cert-import code).  Since it's
-		   a direct call, we need to provide a dummy return variable for the
-		   state information which is normally handled by the indirect-cert-
-		   import code */
-		return( getFirstItemFunction( keysetInfo, iCryptHandle, &dummy,
-									  keyIDtype, keyID, keyIDlength,
-									  itemType, KEYMGMT_FLAG_NONE ) );
+		   than the certificate table so we call the get-first certificate 
+		   function directly rather than going via the indirect certificate-
+		   import code.  Since it's a direct call we need to provide a dummy 
+		   return variable for the state information that's normally handled 
+		   by the indirect-import code */
+		return( getFirstItemFunction( keysetInfoPtr, iCryptHandle, &dummy,
+									  itemType, keyIDtype, keyID, 
+									  keyIDlength, KEYMGMT_FLAG_NONE ) );
 		}
 
 	/* If we're doing a check only, just check whether the item is present
 	   without fetching any data */
 	if( flags & KEYMGMT_FLAG_CHECK_ONLY )
 		{
-		char keyIDbuffer[ DBXKEYID_BUFFER_SIZE + 8 ];
-		char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
-		int length;
+		BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+		char sqlBuffer[ MAX_SQL_QUERY_SIZE + 8 ];
+		char encodedKeyID[ ENCODED_DBXKEYID_SIZE + 8 ];
+		const char *keyName = getKeyName( keyIDtype );
+		const char *selectString = getSelectString( itemType );
+		int encodedKeyIDlength;
 
-		assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
-				itemType == KEYMGMT_ITEM_REVOCATIONINFO );
-		assert( keyIDlength == KEYID_SIZE );
-		assert( keyIDtype == CRYPT_IKEYID_ISSUERID || \
-				keyIDtype == CRYPT_IKEYID_CERTID );
+		REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+				  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
+		REQUIRES( keyIDlength == KEYID_SIZE );
+		REQUIRES( keyIDtype == CRYPT_IKEYID_ISSUERID || \
+				  keyIDtype == CRYPT_IKEYID_CERTID );
+		ENSURES( keyName != NULL && selectString != NULL );
 
-		/* Check whether this item is present.  We don't care about the
-		   result, all we want to know is whether it's there or not, so we
-		   just do a check rather than a fetch of any data */
-		status = length = makeKeyID( keyIDbuffer, DBXKEYID_BUFFER_SIZE, 
-									 keyIDtype, keyID, KEYID_SIZE );
+		/* Check whether this item is present.  We don't care about the 
+		   result data, all we want to know is whether it's there or not so 
+		   we just do a check rather than a fetch of any data */
+		status = makeKeyID( encodedKeyID, ENCODED_DBXKEYID_SIZE, 
+							&encodedKeyIDlength, keyIDtype, 
+							keyID, KEYID_SIZE );
 		if( cryptStatusError( status ) )
 			return( CRYPT_ARGERROR_STR1 );
-		dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
-			"SELECT certData FROM $ WHERE $ = ?",
-					   getTableName( itemType ), getKeyName( keyIDtype ) );
-		return( dbmsQuery( sqlBuffer, NULL, 0, keyIDbuffer, length, 0,
+		strlcpy_s( sqlBuffer, MAX_SQL_QUERY_SIZE, selectString );
+		strlcat_s( sqlBuffer, MAX_SQL_QUERY_SIZE, keyName );
+		strlcat_s( sqlBuffer, MAX_SQL_QUERY_SIZE, " = ?" );
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, encodedKeyID, encodedKeyIDlength );
+		return( dbmsQuery( sqlBuffer, NULL, 0, NULL, boundDataPtr,
 						   getCachedQueryType( itemType, keyIDtype ),
 						   DBMS_QUERY_CHECK ) );
 		}
 
-	/* Import the cert by doing an indirect read, which fetches either a
-	   single cert or an entire chain if it's present */
-	status = iCryptImportCertIndirect( iCryptHandle, keysetInfo->objectHandle,
-									   keyIDtype, keyID, keyIDlength,
-									   flags & KEYMGMT_MASK_CERTOPTIONS );
-	return( status );
+	/* Import the certificate by doing an indirect read, which fetches 
+	   either a single certificate or an entire chain if it's present */
+	return( iCryptImportCertIndirect( iCryptHandle, keysetInfoPtr->objectHandle,
+									  keyIDtype, keyID, keyIDlength,
+									  flags & KEYMGMT_MASK_CERTOPTIONS ) );
+	}
+
+/* Add special data to the database.  Technically this is a set-function but 
+   because it initiates a query-fetch it's included with the get-functions */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int setSpecialItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+								   IN_ATTRIBUTE \
+									const CRYPT_ATTRIBUTE_TYPE dataType,
+								   IN_BUFFER( dataLength ) const void *data, 
+								   IN_LENGTH_SHORT const int dataLength )
+	{
+	DBMS_INFO *dbmsInfo = keysetInfoPtr->keysetDBMS;
+	char sqlBuffer[ MAX_SQL_QUERY_SIZE + 8 ];
+	const KEYMGMT_ITEM_TYPE itemType = \
+						( dataType == CRYPT_KEYINFO_QUERY_REQUESTS ) ? \
+						KEYMGMT_ITEM_REQUEST : KEYMGMT_ITEM_PUBLICKEY;
+	const char *selectString = getSelectString( itemType );
+	int sqlLength, sqlQueryLength, status;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isReadPtr( data, dataLength ) );
+
+	ENSURES( dataType == CRYPT_KEYINFO_QUERY || \
+			 dataType == CRYPT_KEYINFO_QUERY_REQUESTS );
+	ENSURES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			 itemType == KEYMGMT_ITEM_REQUEST );
+	ENSURES( selectString != NULL );
+
+	/* The kernel enforces a size range from 6...CRYPT_MAX_TEXTSIZE but we 
+	   perform an explicit check here against possible database-specific 
+	   values that may be more specific than the kernel's one-size-fits-all 
+	   values */
+	if( dataLength < 6 || dataLength > MAX_SQL_QUERY_SIZE - 64 )
+		{
+		retExtArg( CRYPT_ARGERROR_STR1, 
+				   ( CRYPT_ARGERROR_STR1, KEYSET_ERRINFO, 
+					 "Invalid query length, should be from 6...%d "
+					 "characters", MAX_SQL_QUERY_SIZE - 64 ) );
+		}
+
+	/* If we're cancelling an existing query, pass it on down */
+	if( dataLength == 6 && !strCompare( data, "cancel", dataLength ) )
+		{
+		return( dbmsStaticQuery( NULL, DBMS_CACHEDQUERY_NONE,
+								 DBMS_QUERY_CANCEL ) );
+		}
+
+	ENSURES( !keysetInfoPtr->isBusyFunction( keysetInfoPtr ) );
+
+	/* Rewrite the user-supplied portion of the query using the actual 
+	   column names and append it to the SELECT statement.  This is a 
+	   special case free-format query where we can't use bound parameters 
+	   because the query data must be interpreted as SQL, unlike standard 
+	   queries where we definitely don't want it (mis-)interpreted as SQL.  
+	   dbmsFormatQuery() tries to sanitise the query as much as it can but 
+	   in general we rely on developers reading the warnings in the 
+	   documentation about the appropriate use of this capability */
+	strlcpy_s( sqlBuffer, MAX_SQL_QUERY_SIZE, selectString );
+	sqlLength = strlen( sqlBuffer );
+	status = dbmsFormatQuery( sqlBuffer + sqlLength, 
+							 ( MAX_SQL_QUERY_SIZE - 1 ) - sqlLength, 
+							 &sqlQueryLength, data, dataLength );
+	if( cryptStatusError( status ) )
+		{
+		retExtArg( CRYPT_ARGERROR_STR1, 
+				   ( CRYPT_ARGERROR_STR1, KEYSET_ERRINFO, 
+					 "Invalid query format" ) );
+		}
+	return( dbmsStaticQuery( sqlBuffer, DBMS_CACHEDQUERY_NONE, 
+							 DBMS_QUERY_START ) );
 	}
 
 /****************************************************************************
@@ -535,10 +763,18 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 *																			*
 ****************************************************************************/
 
-void initDBMSread( KEYSET_INFO *keysetInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initDBMSread( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
-	keysetInfo->getItemFunction = getItemFunction;
-	keysetInfo->getFirstItemFunction = getFirstItemFunction;
-	keysetInfo->getNextItemFunction = getNextItemFunction;
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_DBMS );
+
+	keysetInfoPtr->getItemFunction = getItemFunction;
+	keysetInfoPtr->getFirstItemFunction = getFirstItemFunction;
+	keysetInfoPtr->getNextItemFunction = getNextItemFunction;
+	keysetInfoPtr->setSpecialItemFunction = setSpecialItemFunction;
+
+	return( CRYPT_OK );
 	}
 #endif /* USE_DBMS */

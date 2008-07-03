@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib PKCS #11 Item Read/Write Routines				*
-*						Copyright Peter Gutmann 1998-2006					*
+*						Copyright Peter Gutmann 1998-2007					*
 *																			*
 ****************************************************************************/
 
@@ -133,6 +133,13 @@ static int getActionFlags( PKCS11_INFO *pkcs11Info,
 	BOOLEAN cryptAllowed = FALSE, sigAllowed = FALSE;
 	int actionFlags = 0;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			itemType == KEYMGMT_ITEM_PRIVATEKEY || \
+			itemType == KEYMGMT_ITEM_SECRETKEY );
+	assert( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
+			cryptAlgo <= CRYPT_ALGO_LAST_MAC ); 
+
 	/* Get the permitted actions for the object.  Some devices report bogus 
 	   capabilities (for example encrypt for a MAC object) so we restrict 
 	   the actions that we check for to try and weed out false positives.  
@@ -227,7 +234,7 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 								  &keyTypeTemplate, 1 );
 	if( status != CKR_OK )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_FAILED );
 		}
 
@@ -255,10 +262,7 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 	for( i = 0; mechanismInfoPtr[ i ].keyType != keyType && \
 				i < mechanismInfoSize; i++ );
 	if( i >= mechanismInfoSize )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+		retIntError();
 	mechanismInfoPtr = &mechanismInfoPtr[ i ];
 	*cryptAlgo = mechanismInfoPtr->cryptAlgo;
 	capabilityInfoPtr = findCapabilityInfo( capabilityInfoList, *cryptAlgo );
@@ -266,6 +270,78 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 		return( CRYPT_ERROR_NOTAVAIL );
 	*capabilityInfoPtrPtr = capabilityInfoPtr;
 	
+	return( CRYPT_OK );
+	}
+
+/* Add the components of an issuerAndSerialnumber to a certificate 
+   template */
+
+static int addIAndSToTemplate( CK_ATTRIBUTE *certTemplate, 
+							   const void *iAndSPtr, const int iAndSLength, 
+							   DYNBUF *iAndSDB, 
+							   const CRYPT_HANDLE iCryptHandle )
+	{
+	STREAM stream;
+	void *dataPtr = DUMMY_INIT_PTR;
+	int length, cryptStatus;
+
+	assert( isWritePtr( certTemplate, sizeof( CK_ATTRIBUTE ) * 2 ) );
+	assert( ( iAndSPtr == NULL && iAndSLength == 0 && \
+			  isWritePtr( iAndSDB, sizeof( DYNBUF ) ) && \
+			  isHandleRangeValid( iCryptHandle ) ) || \
+			( isReadPtr( iAndSPtr, iAndSLength ) && \
+			  iAndSDB == NULL && iCryptHandle == CRYPT_UNUSED ) );
+
+	/* Get the issuerAndSerialNumber from the certificate if necessary */
+	if( iAndSDB != NULL )
+		{
+		cryptStatus = dynCreate( iAndSDB, iCryptHandle, 
+								 CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+		if( cryptStatusError( cryptStatus ) )
+			return( cryptStatus );
+		}
+
+	/* Parse the data and add it to the template */
+	if( iAndSDB != NULL )
+		sMemConnect( &stream, dynData( *iAndSDB ), dynLength( *iAndSDB ) );
+	else
+		sMemConnect( &stream, iAndSPtr, iAndSLength );
+	readSequence( &stream, NULL );
+	cryptStatus = getStreamObjectLength( &stream, &length );
+	if( cryptStatusOK( cryptStatus ) )		/* Issuer DN */
+		{
+		certTemplate->ulValueLen = length;
+		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplate->pValue = dataPtr;
+		cryptStatus = sSkip( &stream, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplate;	/* Move on to next entry */
+		cryptStatus = getStreamObjectLength( &stream, &length );
+		}
+	if( cryptStatusOK( cryptStatus ) )		/* Serial number */
+		{
+		certTemplate->ulValueLen = length;
+		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplate->pValue = dataPtr;
+		cryptStatus = sSkip( &stream, length );
+		}
+	sMemDisconnect( &stream );
+	if( cryptStatusError( cryptStatus ) )
+		{
+		assert( DEBUG_WARN );
+		if( iAndSDB != NULL )
+			dynDestroy( iAndSDB );
+		return( cryptStatus );
+		}
+
 	return( CRYPT_OK );
 	}
 
@@ -300,16 +376,21 @@ static int findDeviceObjects( PKCS11_INFO *pkcs11Info,
 	CK_ULONG ulObjectCount;
 	CK_RV status;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( hObject, sizeof( CK_OBJECT_HANDLE  ) ) );
+	assert( isReadPtr( objectTemplate, \
+					   sizeof( CK_ATTRIBUTE ) * templateCount ) );
+	assert( templateCount > 0 );
+
 	status = C_FindObjectsInit( pkcs11Info->hSession,
 								( CK_ATTRIBUTE_PTR ) objectTemplate,
 								templateCount );
-	if( status == CKR_OK )
-		{
-		status = C_FindObjects( pkcs11Info->hSession, hObjectArray, 
-								2, &ulObjectCount );
-		if( C_FindObjectsFinal != NULL )
-			C_FindObjectsFinal( pkcs11Info->hSession );
-		}
+	if( status != CKR_OK )
+		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_NOTFOUND ) );
+	status = C_FindObjects( pkcs11Info->hSession, hObjectArray, 2, 
+							&ulObjectCount );
+	if( C_FindObjectsFinal != NULL )
+		C_FindObjectsFinal( pkcs11Info->hSession );
 	if( status != CKR_OK )
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_NOTFOUND ) );
 	if( ulObjectCount <= 0 )
@@ -344,18 +425,18 @@ static int findObjectEx( PKCS11_INFO *pkcs11Info, CK_OBJECT_HANDLE *hObject,
 
 /* Find a certificate object based on various search criteria:
    
-	- Find cert matching a given label - certFromLabel()
-	- Find cert matching a given ID - certFromID()
-	- Find cert matching the ID of an object hObject - certFromObject()
-	- Find cert matching a supplied template - certFromTemplate()
-	- Find any X.509 cert - certFromLabel(), no label supplied.
+	- Find a certificate matching a given label - certFromLabel()
+	- Find a certificate matching a given ID - certFromID()
+	- Find a certificate matching the ID of an object hObject - certFromObject()
+	- Find a certificate matching a supplied template - certFromTemplate()
+	- Find any X.509 certificate - certFromLabel(), no label supplied.
 
   These are general-purpose functions whose behaviour can be modified through
   the following action codes */
 
 typedef enum {
-	FINDCERT_NORMAL,		/* Instantiate standard cert+context */
-	FINDCERT_DATAONLY,		/* Instantiate data-only cert */
+	FINDCERT_NORMAL,		/* Instantiate standard a certificate+context */
+	FINDCERT_DATAONLY,		/* Instantiate data-only certificate */
 	FINDCERT_P11OBJECT		/* Return handle to PKCS #11 object */
 	} FINDCERT_ACTION;
 
@@ -382,10 +463,16 @@ static int findCertFromLabel( PKCS11_INFO *pkcs11Info,
 	CK_OBJECT_HANDLE hCertificate;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCertSource ) );
+	assert( ( label == NULL && labelLength == 0 ) || \
+			isReadPtr( label, labelLength ) );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
 	*iCryptCert = CRYPT_ERROR;
 
-	/* Try and find the cert with the given label.  Usually this is the 
-	   CKA_LABEL but it can also be something like a CKA_URL */
+	/* Try and find the certificate with the given label.  Usually this is 
+	   the CKA_LABEL but it can also be something like a CKA_URL */
 	if( label != NULL )
 		{
 		certTemplate[ 2 ].type = labelType;
@@ -423,9 +510,14 @@ static int findCertFromID( PKCS11_INFO *pkcs11Info,
 	CK_OBJECT_HANDLE hCertificate;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCertSource ) );
+	assert( isReadPtr( certID, certIDlength ) );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
 	*iCryptCert = CRYPT_ERROR;
 
-	/* Try and find the cert with the given ID */
+	/* Try and find the certificate with the given ID */
 	cryptStatus = findObject( pkcs11Info, &hCertificate, certTemplate, 3 );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
@@ -453,11 +545,15 @@ static int findCertFromObject( PKCS11_INFO *pkcs11Info,
 	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCertSource ) );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
 	*iCryptCert = CRYPT_ERROR;
 
-	/* We're looking for a cert whose ID matches the object, read the key ID 
-	   from the device.  We can't use a dynBuf for this because it's a PKCS 
-	   #11 attribute rather than a cryptlib attribute */
+	/* We're looking for a certificate whose ID matches the object, read the 
+	   key ID from the device.  We can't use a dynBuf for this because it's a 
+	   PKCS #11 attribute rather than a cryptlib attribute */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hObject, 
 								  &idTemplate, 1 );
 	if( status == CKR_OK )
@@ -496,9 +592,16 @@ static int findCertFromTemplate( PKCS11_INFO *pkcs11Info,
 	CK_OBJECT_HANDLE hCertificate;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCertSource ) );
+	assert( isReadPtr( findTemplate, \
+					   sizeof( CK_ATTRIBUTE ) * templateCount ) );
+	assert( templateCount > 0 );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
 	*iCryptCert = CRYPT_ERROR;
 
-	/* Try and find the cert from the given template */
+	/* Try and find the certificate from the given template */
 	cryptStatus = findObject( pkcs11Info, &hCertificate, findTemplate, 
 							  templateCount );
 	if( cryptStatusError( cryptStatus ) )
@@ -514,8 +617,8 @@ static int findCertFromTemplate( PKCS11_INFO *pkcs11Info,
 	}
 
 /* Find an object from a source object by matching ID's.  This is used to
-   find a key matching a cert, a public key matching a private key, or
-   other objects with similar relationships */
+   find a key matching a certificate, a public key matching a private key, 
+   or other objects with similar relationships */
 
 static int findObjectFromObject( PKCS11_INFO *pkcs11Info,
 								 const CK_OBJECT_HANDLE hSourceObject, 
@@ -532,11 +635,14 @@ static int findObjectFromObject( PKCS11_INFO *pkcs11Info,
 	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( hObject, sizeof( CK_OBJECT_HANDLE ) ) );
+
 	*hObject = CK_OBJECT_NONE;
 
 	/* We're looking for a key whose ID matches that of the source object, 
-	   read its cert ID.  We can't use a dynBuf for this because it's a 
-	   PKCS #11 attribute rather than a cryptlib attribute */
+	   read its certificate ID.  We can't use a dynBuf for this because it's 
+	   a PKCS #11 attribute rather than a cryptlib attribute */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hSourceObject, 
 								  &idTemplate, 1 );
 	if( status == CKR_OK )
@@ -571,7 +677,7 @@ static int findObjectFromObject( PKCS11_INFO *pkcs11Info,
 *																			*
 ****************************************************************************/
 
-/* Instantiate a cert object from a handle */
+/* Instantiate a certificate object from a handle */
 
 static int instantiateCert( PKCS11_INFO *pkcs11Info, 
 							const CK_OBJECT_HANDLE hCertificate, 
@@ -585,10 +691,13 @@ static int instantiateCert( PKCS11_INFO *pkcs11Info,
 	BYTE buffer[ MAX_BUFFER_SIZE + 8 ], *bufPtr = buffer;
 	int cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
 	*iCryptCert = CRYPT_ERROR;
 
-	/* Fetch the cert data into local memory.  We can't use a dynBuf for 
-	   this because it's a PKCS #11 attribute rather than a cryptlib 
+	/* Fetch the certificate data into local memory.  We can't use a dynBuf 
+	   for this because it's a PKCS #11 attribute rather than a cryptlib 
 	   attribute */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hCertificate,
 								  &dataTemplate, 1 );
@@ -609,7 +718,7 @@ static int instantiateCert( PKCS11_INFO *pkcs11Info,
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_NOTFOUND ) );
 		}
 
-	/* Import the cert as a cryptlib object */
+	/* Import the certificate as a cryptlib object */
 	setMessageCreateObjectIndirectInfo( &createInfo, bufPtr, 
 										dataTemplate.ulValueLen,
 										CRYPT_CERTTYPE_CERTIFICATE );
@@ -625,7 +734,7 @@ static int instantiateCert( PKCS11_INFO *pkcs11Info,
 	return( cryptStatus );
 	}
 
-/* Get a cert chain from a device.  This */
+/* Get a certificate chain from a device */
 
 static int getCertChain( PKCS11_INFO *pkcs11Info, 
 						 const CRYPT_DEVICE iCertSource, 
@@ -638,7 +747,11 @@ static int getCertChain( PKCS11_INFO *pkcs11Info,
 	CK_RV status;
 	BYTE keyID[ MAX_BUFFER_SIZE + 8 ];
 
-	/* Find the ID for this cert */
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCertSource ) );
+	assert( isWritePtr( iCryptCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
+	/* Find the ID for this certificate */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hCertificate, 
 								  &idTemplate, 1 );
 	if( status == CKR_OK && idTemplate.ulValueLen <= MAX_BUFFER_SIZE )
@@ -649,17 +762,24 @@ static int getCertChain( PKCS11_INFO *pkcs11Info,
 		}
 	if( status != CKR_OK || idTemplate.ulValueLen > MAX_BUFFER_SIZE )
 		/* We couldn't get the ID to build the chain or it's too large to be
-		   usable, we can at least still return the individual cert */
+		   usable, we can at least still return the individual certificate */
 		return( instantiateCert( pkcs11Info, hCertificate, iCryptCert, 
 								 createContext ) );
 
-	/* Create the cert chain via an indirect import */
+	/* Create the certificate chain via an indirect import */
 	return( iCryptImportCertIndirect( iCryptCert, iCertSource, 
 							CRYPT_IKEYID_KEYID, keyID, idTemplate.ulValueLen, 
 							createContext ? KEYMGMT_FLAG_DATAONLY_CERT : 0 ) );
 	}
 
 /* Set up certificate information and load it into the device */
+
+#define addTemplateValue( certTemplatePtr, valueType, valuePtr, valueLen ) \
+		{ \
+		( certTemplatePtr ).type = valueType; \
+		( certTemplatePtr ).pValue = valuePtr; \
+		( certTemplatePtr ).ulValueLen = valueLen; \
+		}
 
 static int updateCertificate( PKCS11_INFO *pkcs11Info, 
 							  const CRYPT_HANDLE iCryptHandle,
@@ -679,11 +799,12 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 		{ CKA_SUBJECT, NULL_PTR, 0 },
 		{ CKA_ISSUER, NULL_PTR, 0 },
 		{ CKA_SERIAL_NUMBER, NULL_PTR, 0 },
-		{ CKA_START_DATE, ( CK_VOID_PTR ) &startDate, sizeof( CK_DATE ) },
-		{ CKA_END_DATE, ( CK_VOID_PTR ) &endDate, sizeof( CK_DATE ) },
 		{ CKA_VALUE, NULL_PTR, 0 },
-		{ CKA_LABEL, NULL_PTR, 0 },
-		{ CKA_URL, NULL_PTR, 0 }
+		/* Optional fields, filled in if required */
+		{ CKA_NONE, NULL_PTR, 0 },	/*  8 */
+		{ CKA_NONE, NULL_PTR, 0 },	/*  9 */
+		{ CKA_NONE, NULL_PTR, 0 },	/* 10 */
+		{ CKA_NONE, NULL_PTR, 0 },	/* 11 */
 		};
 	CK_ATTRIBUTE keyTemplate[] = {
 		{ CKA_CLASS, ( CK_VOID_PTR ) &privkeyClass, sizeof( CK_OBJECT_CLASS ) },
@@ -692,14 +813,17 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 	CK_OBJECT_HANDLE hObject;
 	CK_RV status;
 	MESSAGE_DATA msgData;
-	STREAM stream;
 	DYNBUF subjectDB, iAndSDB, certDB;
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
+	BOOLEAN hasURL = FALSE;
 	time_t theTime;
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ], uri[ MAX_URL_SIZE + 8 ];
-	int length, templateCount = 10, cryptStatus;
+	int templateCount = 8, cryptStatus;
 
-	/* Get the keyID from the cert */
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptHandle ) );
+
+	/* Get the keyID from the certificate */
 	setMessageData( &msgData, keyID, CRYPT_MAX_HASHSIZE );
 	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								   &msgData, CRYPT_IATTRIBUTE_KEYID );
@@ -708,13 +832,13 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 	certTemplate[ 3 ].pValue = msgData.data;
 	certTemplate[ 3 ].ulValueLen = msgData.length;
 
-	/* If it's a leaf cert, use the keyID to locate the corresponding public 
-	   or private key object.  This is used as a check to ensure that the 
-	   certificate corresponds to a key in the device.  In theory this would 
-	   allow us to read the label from the key so that we can reuse it for 
-	   the cert, but there doesn't seem to be any good reason for this and 
-	   it could lead to problems with multiple certs with the same labels so 
-	   we don't do it */
+	/* If it's a leaf certificate, use the keyID to locate the corresponding 
+	   public or private key object.  This is used as a check to ensure that 
+	   the certificate corresponds to a key in the device.  In theory this 
+	   would allow us to read the label from the key so that we can reuse it 
+	   for the certificate, but there doesn't seem to be any good reason for 
+	   this and it could lead to problems with multiple certificates with the 
+	   same labels so we don't do it */
 	if( isLeafCert )
 		{
 		keyTemplate[ 1 ].pValue = certTemplate[ 3 ].pValue;
@@ -730,37 +854,24 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 			return( CRYPT_ARGERROR_NUM1 );
 		}
 
-	/* Get the subjectName from the cert */
+	/* Get the subjectName and issuerAndSerialNumber from the certificate */
 	cryptStatus = dynCreate( &subjectDB, iCryptHandle, 
 							 CRYPT_IATTRIBUTE_SUBJECT );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 	certTemplate[ 4 ].pValue = dynData( subjectDB );
 	certTemplate[ 4 ].ulValueLen = dynLength( subjectDB );
-
-	/* Get the issuerAndSerialNumber from the cert */
-	cryptStatus = dynCreate( &iAndSDB, iCryptHandle, 
-							 CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+	cryptStatus = addIAndSToTemplate( &certTemplate[ 5 ], NULL, 0, 
+									  &iAndSDB, iCryptHandle );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		dynDestroy( &subjectDB );
 		return( cryptStatus );
 		}
-	sMemConnect( &stream, dynData( iAndSDB ), dynLength( iAndSDB ) );
-	readSequence( &stream, NULL );
-	certTemplate[ 5 ].pValue = sMemBufPtr( &stream );
-	readSequence( &stream, &length );		/* Issuer DN */
-	certTemplate[ 5 ].ulValueLen = ( int ) sizeofObject( length );
-	sSkip( &stream, length );
-	certTemplate[ 6 ].pValue = sMemBufPtr( &stream );
-	readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
-	certTemplate[ 6 ].ulValueLen = ( int ) sizeofObject( length );
-	assert( sStatusOK( &stream ) );
-	sMemDisconnect( &stream );
 
 	/* Get the validFrom and validTo dates.  These aren't currently used for
-	   anything, but can be used in the future to handle superceded certs in
-	   the same way that it's done for PKCS #15 keysets */
+	   anything, but can be used in the future to handle superceded 
+	   certificates in the same way that it's done for PKCS #15 keysets */
 	setMessageData( &msgData, &theTime, sizeof( time_t ) );
 	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								   &msgData, CRYPT_CERTINFO_VALIDFROM );
@@ -789,33 +900,49 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 		dynDestroy( &iAndSDB );
 		return( cryptStatus );
 		}
-	certTemplate[ 9 ].pValue = dynData( certDB );
-	certTemplate[ 9 ].ulValueLen = dynLength( certDB );
+	certTemplate[ 7 ].pValue = dynData( certDB );
+	certTemplate[ 7 ].ulValueLen = dynLength( certDB );
 
-	/* Get the cert holder name (label) and URI from the cert if available */
+	/* Get the certificate holder name (label) from the certificate if 
+	  available */
 	setMessageData( &msgData, label, CRYPT_MAX_TEXTSIZE  );
 	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								   &msgData, CRYPT_IATTRIBUTE_HOLDERNAME );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* We've found a holder name, use it as the cert object label */
-		certTemplate[ 10 ].pValue = msgData.data;
-		certTemplate[ 10 ].ulValueLen = msgData.length;
+		/* We've found a holder name, use it as the certificate object 
+		   label */
+		addTemplateValue( certTemplate[ templateCount ], 
+						  CKA_LABEL, msgData.data, msgData.length );
 		templateCount++;
 		}
+
+	/* Add the certificate dates.  These have to be located between the 
+	   label and URI so that we can selectively back out the attributes that 
+	   don't work for this driver, see the comments further down for more 
+	   details */
+	addTemplateValue( certTemplate[ templateCount ], 
+					  CKA_START_DATE, ( CK_VOID_PTR ) &startDate, sizeof( CK_DATE ) );
+	templateCount++;
+	addTemplateValue( certTemplate[ templateCount ], 
+					  CKA_END_DATE, ( CK_VOID_PTR ) &endDate, sizeof( CK_DATE ) );
+	templateCount++;
+
+	/* Get the URI from the certificate if available */
 	setMessageData( &msgData, uri, MAX_URL_SIZE );
 	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 								   &msgData, CRYPT_IATTRIBUTE_HOLDERURI );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* We've found a holder URI, use it as the cert object URL */
-		certTemplate[ 11 ].pValue = msgData.data;
-		certTemplate[ 11 ].ulValueLen = msgData.length;
+		/* We've found a holder URI, use it as the certificate object URL */
+		addTemplateValue( certTemplate[ templateCount ], 
+						  CKA_URL, msgData.data, msgData.length );
 		templateCount++;
+		hasURL = TRUE;
 		}
 
 	/* Reset the status value, which may contain error values due to not 
-	   finding various objects attributes above */
+	   finding various object attributes above */
 	cryptStatus = CRYPT_OK;
 
 	/* We've finally got everything available, try and update the device with
@@ -825,6 +952,28 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 	status = C_CreateObject( pkcs11Info->hSession,
 							 ( CK_ATTRIBUTE_PTR ) certTemplate, templateCount, 
 							 &hObject );
+	if( hasURL && ( status == CKR_TEMPLATE_INCONSISTENT || \
+					status == CKR_ATTRIBUTE_TYPE_INVALID ) )
+		{
+		/* Support for the PKCS #11 v2.20 attribute CKA_URL is pretty hit-
+		   and-miss, some drivers from ca.2000 support it but others from 
+		   ca.2007 still don't, so if we get a CKR_ATTRIBUTE_TYPE_INVALID 
+		   return code we try again without the CKA_URL */
+		templateCount--;
+		status = C_CreateObject( pkcs11Info->hSession,
+								 ( CK_ATTRIBUTE_PTR ) certTemplate, 
+								 templateCount, &hObject );
+		}
+	if( status == CKR_TEMPLATE_INCONSISTENT )
+		{
+		/* Even support for dates is hit-and-miss so if we're still getting
+		   CKR_ATTRIBUTE_TYPE_INVALID we try again without the 
+		   CKA_START_DATE/CKA_END_DATE */
+		templateCount -= 2;
+		status = C_CreateObject( pkcs11Info->hSession,
+								 ( CK_ATTRIBUTE_PTR ) certTemplate, 
+								 templateCount, &hObject );
+		}
 	if( status != CKR_OK )
 		cryptStatus = pkcs11MapError( pkcs11Info, status, 
 									  CRYPT_ERROR_FAILED );
@@ -837,7 +986,7 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 	return( cryptStatus );
 	}
 
-/* Update a device using the certs in a cert chain */
+/* Update a device using the certificates in a certificate chain */
 
 static int updateCertChain( PKCS11_INFO *pkcs11Info, 
 							const CRYPT_CERTIFICATE iCryptCert )
@@ -853,14 +1002,19 @@ static int updateCertChain( PKCS11_INFO *pkcs11Info,
 	BOOLEAN isLeafCert = TRUE, seenNonDuplicate = FALSE;
 	int value, iterationCount = 0, cryptStatus;
 
-	/* If we've been passed a standalone cert, check whether it's implicitly
-	   trusted, which allows to be added without the presence of a 
-	   corresponding public/private key in the device */
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isHandleRangeValid( iCryptCert ) );
+
+	/* If we've been passed a standalone certificate, check whether it's 
+	   implicitly trusted, which allows to be added without the presence of 
+	   a corresponding public/private key in the device */
 	cryptStatus = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE, &value, 
 								   CRYPT_CERTINFO_CERTTYPE );
 	if( cryptStatusError( cryptStatus ) )
+		{
 		return( ( cryptStatus == CRYPT_ARGERROR_OBJECT ) ? \
 				CRYPT_ARGERROR_NUM1 : cryptStatus );
+		}
 	if( value == CRYPT_CERTTYPE_CERTIFICATE )
 		{
 		cryptStatus = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE,
@@ -869,44 +1023,40 @@ static int updateCertChain( PKCS11_INFO *pkcs11Info,
 		if( cryptStatusError( cryptStatus ) )
 			return( CRYPT_ARGERROR_NUM1 );
 
-		/* If the cert is implicitly trusted we indicate that it's 
-		   (effectively) a non-leaf cert so that it can be added even if 
-		   there's no corresponding key already in the device */
+		/* If the certificate is implicitly trusted we indicate that it's 
+		   (effectively) a non-leaf certificate so that it can be added even 
+		   if there's no corresponding key already in the device */
 		if( value )
 			isLeafCert = FALSE;
 		}
 
-	/* Add each cert in the chain to the device */
+	/* Add each certificate in the chain to the device */
 	do
 		{
 		CK_OBJECT_HANDLE hObject;
-		STREAM stream;
 		DYNBUF iAndSDB;
-		int length;
 
-		/* If the cert is already present, don't do anything */
-		cryptStatus = dynCreate( &iAndSDB, iCryptCert, 
-								 CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+		/* If the certificate is already present, don't do anything */
+		cryptStatus = addIAndSToTemplate( &certTemplate[ 2 ], NULL, 0, 
+										  &iAndSDB, iCryptCert );
 		if( cryptStatusError( cryptStatus ) )
+			{
+			/* In theory we could also simply skip any certificates for 
+			   which we can't decode the iAndS, but in practice it's 
+			   probably better to fail and warn the user than to continue 
+			   with only some certificates added */
 			return( cryptStatus );
-		sMemConnect( &stream, dynData( iAndSDB ), dynLength( iAndSDB ) );
-		readSequence( &stream, NULL );
-		certTemplate[ 2 ].pValue = sMemBufPtr( &stream );
-		readSequence( &stream, &length );		/* Issuer DN */
-		certTemplate[ 2 ].ulValueLen = ( int ) sizeofObject( length );
-		sSkip( &stream, length );
-		certTemplate[ 3 ].pValue = sMemBufPtr( &stream );
-		readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
-		certTemplate[ 3 ].ulValueLen = ( int ) sizeofObject( length );
-		assert( sStatusOK( &stream ) );
-		sMemDisconnect( &stream );
+			}
 		cryptStatus = findObject( pkcs11Info, &hObject, certTemplate, 4 );
 		dynDestroy( &iAndSDB );
 		if( cryptStatusOK( cryptStatus ) )
-			/* The cert is already present, we don't need to add it again */
+			{
+			/* The certificate is already present, we don't need to add it 
+			   again */
 			continue;
+			}
 
-		/* Write the new cert */
+		/* Write the new certificate */
 		cryptStatus = updateCertificate( pkcs11Info, iCryptCert, isLeafCert );
 		if( cryptStatusError( cryptStatus ) )
 			return( cryptStatus );
@@ -949,6 +1099,14 @@ static int createNativeObject( PKCS11_INFO *pkcs11Info,
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	int actionFlags, cryptStatus;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+			itemType == KEYMGMT_ITEM_PRIVATEKEY || \
+			itemType == KEYMGMT_ITEM_SECRETKEY );
+	assert( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
+			cryptAlgo <= CRYPT_ALGO_LAST_MAC ); 
 
 	/* Get the permitted-action flags for the object.  If no usage is 
 	   allowed we can't do anything with the object so we don't even try and 
@@ -1011,8 +1169,19 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 	int createFlags = CREATEOBJECT_FLAG_DUMMY;
 	int actionFlags, labelLength, cryptStatus;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( ( iCryptCert == CRYPT_UNUSED ) || \
+			isHandleRangeValid( iCryptCert ) );
+	assert( iOwnerHandle == DEFAULTUSER_OBJECT_HANDLE || \
+			isHandleRangeValid( iOwnerHandle ) );
+	assert( isHandleRangeValid( iDeviceHandle ) );
+	assert( isReadPtr( capabilityInfoPtr, sizeof( CAPABILITY_INFO ) ) );
 	assert( itemType == KEYMGMT_ITEM_PRIVATEKEY || \
 			itemType == KEYMGMT_ITEM_SECRETKEY );
+	assert( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
+			cryptAlgo <= CRYPT_ALGO_LAST_MAC );
+	assert( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_PKCSIZE );
 
 	/* Check whether this is a persistent object */
 	if( readFlag( pkcs11Info, hObject, CKA_TOKEN ) )
@@ -1078,17 +1247,18 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 	setMessageData( &msgData, label, min( labelLength, CRYPT_MAX_TEXTSIZE ) );
 	cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 								   &msgData, CRYPT_IATTRIBUTE_EXISTINGLABEL );
-	if( cryptStatusOK( cryptStatus ) && \
-		( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-		  cryptAlgo <= CRYPT_ALGO_LAST_PKC ) )
+	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* Send the keying info to the context.  Unfortunately we can't do
-		   this for DSA private keys since we can't read y from a DSA 
+		/* Send the keying info to the context.  For non-PKC contexts we 
+		   only need to set the key length to let the user query the key 
+		   size, for PKC contexts we also have to set the key components so
+		   they can be written into certificates.  Unfortunately we can't do 
+		   this for DLP private keys since we can't read y from a DLP 
 		   private key object (see the comments in the DSA code for more on 
-		   this), however the only time this is necessary is when a cert is 
-		   being generated for a key that was pre-generated in the device by 
-		   someone else, which is typically done in Europe where DSA isn't 
-		   used so this shouldn't be a problem */
+		   this), however the only time this is necessary is when a 
+		   certificate is being generated for a key that was pre-generated 
+		   in the device by someone else, which is typically done in Europe 
+		   where DSA isn't used so this shouldn't be a problem */
 		if( cryptAlgo == CRYPT_ALGO_RSA )
 			cryptStatus = rsaSetPublicComponents( pkcs11Info, *iCryptContext, 
 												  hObject, FALSE );
@@ -1104,9 +1274,10 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 									   CRYPT_IATTRIBUTE_INITIALISED );
 	if( cryptStatusOK( cryptStatus ) && ( iCryptCert != CRYPT_UNUSED ) )
 		{
-		/* If it's a public key and there's a cert present, attach it to the 
-		   context.  The cert is an internal object used only by the context 
-		   so we tell the kernel to mark it as owned by the context only */
+		/* If it's a public key and there's a certificate present, attach it 
+		   to the context.  The certificate is an internal object used only 
+		   by the context so we tell the kernel to mark it as owned by the 
+		   context only */
 		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT, 
 									   ( void * ) &iCryptCert, 
 									   SETDEP_OPTION_NOINCREF );
@@ -1147,9 +1318,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		{ CKA_CLASS, NULL_PTR, sizeof( CK_OBJECT_CLASS ) },
 		{ CKA_LABEL, NULL_PTR, 0 }
 		};
-	CK_ATTRIBUTE keySizeTemplate = \
-		{ 0, NULL_PTR, 0 };
-	CK_OBJECT_HANDLE hObject, hCertificate;
+	CK_ATTRIBUTE keySizeTemplate = { 0, NULL, 0 };
+	CK_OBJECT_HANDLE hObject = CK_OBJECT_NONE, hCertificate = CK_OBJECT_NONE;
 	CRYPT_CERTIFICATE iCryptCert;
 	CRYPT_ALGO_TYPE cryptAlgo;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
@@ -1157,6 +1327,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	BOOLEAN certPresent = FALSE;
 	int keySize, cryptStatus;
 
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			itemType == KEYMGMT_ITEM_PRIVATEKEY || \
 			itemType == KEYMGMT_ITEM_SECRETKEY );
@@ -1164,11 +1336,19 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 			keyIDtype == CRYPT_KEYID_URI || \
 			keyIDtype == CRYPT_IKEYID_KEYID || \
 			keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER );
+	assert( isReadPtr( keyID, keyIDlength ) );
+	assert( ( auxInfo == NULL && *auxInfoLength == 0 ) || \
+			isReadPtr( auxInfo, *auxInfoLength ) );
 
 	/* If we're looking for a secret key it's fairly straightforward, we
 	   can only have a label as an ID */
 	if( itemType == KEYMGMT_ITEM_SECRETKEY )
 		{
+		CK_ULONG keySize;
+		CK_ATTRIBUTE keySizeTemplate = \
+			{ CKA_VALUE_LEN, &keySize, sizeof( CK_ULONG ) };
+		int status;
+
 		assert( keyIDtype == CRYPT_KEYID_NAME || \
 				keyIDtype == CRYPT_IKEYID_KEYID );
 
@@ -1202,13 +1382,18 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 										&cryptAlgo );
 		if( cryptStatusError( cryptStatus ) )
 			return( cryptStatus );
+		status = C_GetAttributeValue( pkcs11Info->hSession, hObject, 
+									  &keySizeTemplate, 1 );
+		if( status != CKR_OK )
+			return( pkcs11MapError( pkcs11Info, status, 
+									CRYPT_ERROR_NOTINITED ) );
 
 		/* Create the object as a device object */
 		return( createDeviceObject( pkcs11Info, iCryptContext, hObject, 
 								    CRYPT_UNUSED, deviceInfo->ownerHandle, 
 								    deviceInfo->objectHandle, capabilityInfoPtr,
 								    KEYMGMT_ITEM_SECRETKEY, cryptAlgo, 
-									CRYPT_UNUSED ) );
+									keySize ) );
 		}
 
 	/* If we're looking for something based on an issuerAndSerialNumber, set 
@@ -1219,32 +1404,37 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	if( keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER )
 		{
 		STREAM stream;
-		int length;
+		int offset = DUMMY_INIT, length;
 
-		sMemConnect( &stream, keyID, keyIDlength );
-		readSequence( &stream, NULL );
-		iAndSTemplate[ 2 ].pValue = sMemBufPtr( &stream );
-		readSequence( &stream, &length );		/* Issuer DN */
-		iAndSTemplate[ 2 ].ulValueLen = ( int ) sizeofObject( length );
-		sSkip( &stream, length );
-		iAndSTemplate[ 3 ].pValue = sMemBufPtr( &stream );
-		readGenericHole( &stream, &length, 1, BER_INTEGER );/* Serial number */
-		iAndSTemplate[ 3 ].ulValueLen = ( int ) sizeofObject( length );
+		cryptStatus = addIAndSToTemplate( &iAndSTemplate[ 2 ], keyID, 
+										  keyIDlength, NULL, CRYPT_UNUSED );
+		if( cryptStatusError( cryptStatus ) )
+			return( cryptStatus );
+
+		/* Set up the alternate template to the same as the main template, 
+		   but with the tag and length stripped from the serial number */
 		memcpy( iAndSTemplateAlt, iAndSTemplate, sizeof( iAndSTemplate ) );
-		iAndSTemplateAlt[ 3 ].pValue = sMemBufPtr( &stream );
-		iAndSTemplateAlt[ 3 ].ulValueLen = length;
-		assert( sStatusOK( &stream ) );
+		sMemConnect( &stream, iAndSTemplateAlt[ 3 ].pValue, 
+					 iAndSTemplateAlt[ 3 ].ulValueLen );
+		cryptStatus = readGenericHole( &stream, &length, 1, BER_INTEGER );
+		if( cryptStatusOK( cryptStatus ) )
+			offset = stell( &stream );
 		sMemDisconnect( &stream );
+		if( cryptStatusError( cryptStatus ) )
+			return( cryptStatus );
+		iAndSTemplateAlt[ 3 ].pValue = \
+					( BYTE * ) iAndSTemplateAlt[ 3 ].pValue + offset;
+		iAndSTemplateAlt[ 3 ].ulValueLen = length;
 		}
 
-	/* If we're looking for a public key, try for a cert first.  Some non-
-	   crypto-capable devices don't have an explicit CKO_PUBLIC_KEY but only 
-	   a CKO_CERTIFICATE and some apps delete the public key since it's
-	   redundant, so we try to create a cert object before we try anything 
-	   else.  If the keyID type is an ID or label, this won't necessarily 
-	   locate the cert since it could be unlabelled or have a different 
-	   label/ID, so if this fails we try again by going via the private key 
-	   with the given label/ID */
+	/* If we're looking for a public key, try for a certificate first.  Some 
+	   non-crypto-capable devices don't have an explicit CKO_PUBLIC_KEY but 
+	   only a CKO_CERTIFICATE and some apps delete the public key since it's
+	   redundant, so we try to create a certificate object before we try 
+	   anything else.  If the keyID type is an ID or label, this won't 
+	   necessarily locate the certificate since it could be unlabelled or 
+	   have a different label/ID, so if this fails we try again by going via 
+	   the private key with the given label/ID */
 	if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 		{
 		const FINDCERT_ACTION findAction = \
@@ -1262,6 +1452,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 													findAction );
 			}
 		else
+			{
 			if( keyIDtype == CRYPT_IKEYID_KEYID )
 				cryptStatus = findCertFromID( pkcs11Info, deviceInfo->objectHandle, 
 											  keyID, keyIDlength, &iCryptCert, 
@@ -1286,6 +1477,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 												  findAction );
 					}
 				}
+			}
 		if( cryptStatusOK( cryptStatus ) )
 			{
 			/* If we're just checking whether an object exists, return now.  
@@ -1294,30 +1486,35 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 			if( flags & KEYMGMT_FLAG_CHECK_ONLY )
 				return( CRYPT_OK );
 			if( flags & KEYMGMT_FLAG_LABEL_ONLY )
+				{
 				return( getObjectLabel( pkcs11Info, 
 										( CK_OBJECT_HANDLE ) iCryptCert, 
 										auxInfo, *auxInfoLength, 
 										auxInfoLength ) );
+				}
 
 			*iCryptContext = iCryptCert;
 			return( CRYPT_OK );
 			}
 		else
+			{
 			/* If we're looking for a specific match on a certificate (rather 
 			   than just a general public key) and we don't find anything, 
 			   exit now */
 			if( keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER )
 				return( cryptStatus );
+			}
 		}
 
-	/* Either there were no certs found or we're looking for a private key 
-	   (or, somewhat unusually, a raw public key).  At this point we can 
-	   approach the problem from one of two sides, if we've got an 
-	   issuerAndSerialNumber we have to find the matching cert and get the 
-	   key from that, otherwise we find the key and get the cert from that */
+	/* Either there were no certificates found or we're looking for a 
+	   private key (or, somewhat unusually, a raw public key).  At this 
+	   point we can approach the problem from one of two sides, if we've 
+	   got an issuerAndSerialNumber we have to find the matching certificate 
+	   and get the key from that, otherwise we find the key and get the 
+	   certificate from that */
 	if( keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER )
 		{
-		/* Try and find the cert from the given template */
+		/* Try and find the certificate from the given template */
 		cryptStatus = findObject( pkcs11Info, &hCertificate, 
 								  iAndSTemplate, 4 );
 		if( cryptStatus == CRYPT_ERROR_NOTFOUND )
@@ -1325,24 +1522,26 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 									  iAndSTemplateAlt, 4 );
 		if( cryptStatusOK( cryptStatus ) )
 			{
-			/* We found the cert, use it to find the corresponding private 
-			   key */
+			/* We found the certificate, use it to find the corresponding 
+			   private key */
 			cryptStatus = findObjectFromObject( pkcs11Info, hCertificate, 
 												CKO_PRIVATE_KEY, &hObject );
 			if( cryptStatusError( cryptStatus ) )
 				return( cryptStatus );
 	
-			/* Remember that we've already got a cert to attach to the private
-			   key */
+			/* Remember that we've already got a certificate to attach to 
+			   the private key */
 			privateKeyViaCert = TRUE;
 			}
 		else
+			{
 			/* If we didn't find anything, it may be because whoever set up
 			   the token didn't set the iAndS rather than because there's no
 			   key there, so we only bail out if we got some unexpected type 
 			   of error */
 			if( cryptStatus != CRYPT_ERROR_NOTFOUND )
 				return( cryptStatus );
+			}
 		}
 	else
 		{
@@ -1379,7 +1578,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 			   cruft that's present without going via the private key, so if 
 			   we're looking for a public key and don't find one, we try 
 			   again for a private key whose sole function is to point to an 
-			   associated cert */
+			   associated certificate */
 			keyTemplate[ 0 ].pValue = ( CK_VOID_PTR ) &privkeyClass;
 			cryptStatus = findObject( pkcs11Info, &hObject, keyTemplate, 
 									  keyTemplateCount );
@@ -1387,19 +1586,19 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 				return( cryptStatus );
 		
 			/* Remember that although we've got a private key object, we only 
-			   need it to find the associated cert and not finding an 
-			   associated cert is an error */
+			   need it to find the associated certificate and not finding an 
+			   associated certificate is an error */
 			certViaPrivateKey = TRUE;
 			}
 		}
 
 	/* If we're looking for any kind of private key and we either have an
-	   explicit cert.ID but couldn't find a cert for it or we don't have a 
-	   proper ID to search on and a generic search found more than one 
-	   matching object, chances are we're after a generic decrypt key.  The 
-	   former only occurs in misconfigured or limited-memory tokens, the 
-	   latter only in rare tokens that store more than one private key, 
-	   typically one for signing and one for verification.  
+	   explicit certificate ID but couldn't find a certificate for it or we 
+	   don't have a proper ID to search on and a generic search found more 
+	   than one matching object, chances are we're after a generic decrypt 
+	   key.  The former only occurs in misconfigured or limited-memory 
+	   tokens, the latter only in rare tokens that store more than one 
+	   private key, typically one for signing and one for verification.  
 	   
 	   If either of these cases occur we try again looking specifically for 
 	   a decryption key.  Even this doesn't always work, there's are some
@@ -1434,6 +1633,10 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
+	/* Sanity check that we actually found something */
+	if( hObject == CK_OBJECT_NONE )
+		retIntError();
+
 	/* If we're just checking whether an object exists, return now.  If all 
 	   we want is the key label, copy it back to the caller and exit */
 	if( flags & KEYMGMT_FLAG_CHECK_ONLY )
@@ -1461,8 +1664,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 			keySizeTemplate.type = CKA_PRIME;
 			break;
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_NOTAVAIL );
+			retIntError();
 		}
 	C_GetAttributeValue( pkcs11Info->hSession, hObject, 
 						 &keySizeTemplate, 1 );
@@ -1471,28 +1673,32 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	/* Try and find a certificate which matches the key.  The process is as
 	   follows:
 
-		if cert object found in issuerAndSerialNumber search
+		if certificate object found in issuerAndSerialNumber search
 			-- Implies key == private key
-			create native data-only cert object
-			attach cert object to key
+			create native data-only certificate object
+			attach certificate object to key
 		else
 			if public key read
-				if cert
-					create native cert (+context) object
+				if certificate
+					create native certificate (+context) object
 				else
 					create context object
 			else
 				create device privkey object, mark as "key loaded"
-				if cert
-					create native data-only cert object
-					attach cert object to key
+				if certificate
+					create native data-only certificate object
+					attach certificate object to key
 
 	   The reason for doing things this way is given in the comments earlier
 	   on in this function */
 	if( privateKeyViaCert )
 		{
-		/* We've already got the cert object handle, instantiate a native
-		   data-only cert from it */
+		/* Sanity check that we actually found a certificate */
+		if( hCertificate == CK_OBJECT_NONE )
+			retIntError();
+
+		/* We've already got the certificate object handle, instantiate a 
+		   native data-only certificate from it */
 		cryptStatus = getCertChain( pkcs11Info, deviceInfo->objectHandle, 
 									hCertificate, &iCryptCert, FALSE );
 		if( cryptStatusError( cryptStatus ) )
@@ -1508,17 +1714,18 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( cryptStatus ) )
 			{
 			/* If we get a CRYPT_ERROR_NOTFOUND this is OK since it means 
-			   there's no cert present, however anything else is an error. In 
-			   addition if we've got a private key whose only function is to 
-			   point to an associated cert then not finding anything is also 
-			   an error */
+			   there's no certificate present, however anything else is an 
+			   error.  In addition if we've got a private key whose only 
+			   function is to point to an associated certificate then not 
+			   finding anything is also an error */
 			if( cryptStatus != CRYPT_ERROR_NOTFOUND || certViaPrivateKey )
 				return( cryptStatus );
 			}
 		else
 			{
-			/* We got the cert, if we're being asked for a public key then
-			   we've created a native object to contain it so we return that */
+			/* We got the certificate, if we're being asked for a public key 
+			   then we've created a native object to contain it so we return 
+			   that */
 			certPresent = TRUE;
 			if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 				{
@@ -1533,7 +1740,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	   create a device object */
 	if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 		return( createNativeObject( pkcs11Info, iCryptContext, hObject,
-									itemType, cryptAlgo ) );
+									KEYMGMT_ITEM_PUBLICKEY, cryptAlgo ) );
 	return( createDeviceObject( pkcs11Info, iCryptContext, hObject, 
 							    certPresent ? iCryptCert : CRYPT_UNUSED, 
 							    deviceInfo->ownerHandle, 
@@ -1542,7 +1749,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 								keySize ) );
 	}
 
-/* Get the sequence of certs in a chain from a device */
+/* Get the sequence of certificates in a chain from a device */
 
 static int getFirstItemFunction( DEVICE_INFO *deviceInfo, 
 								 CRYPT_CERTIFICATE *iCertificate,
@@ -1563,6 +1770,7 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
 	int cryptStatus;
 
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( keyIDtype == CRYPT_IKEYID_KEYID );
 	assert( keyIDlength > 4 && isReadPtr( keyID, keyIDlength ) );
@@ -1573,17 +1781,14 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 	*iCertificate = CRYPT_ERROR;
 	*stateInfo = CRYPT_ERROR;
 
-	/* Try and find the cert with the given ID.  This should work because 
-	   we've just read the ID for the indirect-import that lead to the getFirst
-	   call */
+	/* Try and find the certificate with the given ID.  This should work 
+	   because we've just read the ID for the indirect-import that lead to 
+	   the getFirst call */
 	cryptStatus = findObject( pkcs11Info, &hCertificate, certTemplate, 3 );
 	if( cryptStatusError( cryptStatus ) )
-		{
-		assert( NOTREACHED );
-		return( cryptStatus );
-		}
+		retIntError();
 
-	/* Instantiate the cert from the device */
+	/* Instantiate the certificate from the device */
 	cryptStatus = instantiateCert( pkcs11Info, hCertificate, iCertificate, 
 								   ( options & KEYMGMT_FLAG_DATAONLY_CERT ) ? \
 									TRUE : FALSE );
@@ -1609,6 +1814,7 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 	DYNBUF subjectDB;
 	int cryptStatus;
 
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isWritePtr( stateInfo, sizeof( int ) ) );
 	assert( isHandleRangeValid( *stateInfo ) || *stateInfo == CRYPT_ERROR );
@@ -1616,12 +1822,13 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 	/* Clear return value */
 	*iCertificate = CRYPT_ERROR;
 
-	/* If the previous cert was the last one, there's nothing left to fetch */
+	/* If the previous certificate was the last one, there's nothing left to 
+	   fetch */
 	if( *stateInfo == CRYPT_ERROR )
 		return( CRYPT_ERROR_NOTFOUND );
 
-	/* Get the issuerName of the previous cert, which is the subjectName of
-	   the cert we want */
+	/* Get the issuerName of the previous certificate, which is the 
+	   subjectName of the certificate that we want */
 	cryptStatus = dynCreate( &subjectDB, *stateInfo, 
 							 CRYPT_IATTRIBUTE_ISSUER );
 	if( cryptStatusError( cryptStatus ) )
@@ -1629,7 +1836,7 @@ static int getNextItemFunction( DEVICE_INFO *deviceInfo,
 	certTemplate[ 2 ].pValue = dynData( subjectDB );
 	certTemplate[ 2 ].ulValueLen = dynLength( subjectDB );
 
-	/* Get the cert with the subject's issuer DN */
+	/* Get the certificate with the subject's issuer DN */
 	cryptStatus = findObject( pkcs11Info, &hCertificate, certTemplate, 3 );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = instantiateCert( pkcs11Info, hCertificate, iCertificate, 
@@ -1660,28 +1867,34 @@ static int setItemFunction( DEVICE_INFO *deviceInfo,
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
 	int value, cryptStatus;
 
-	/* If the cert isn't signed, we can't store it in this state */
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
+	assert( isHandleRangeValid( iCryptHandle ) );
+
+	/* If the certificate isn't signed, we can't store it in this state */
 	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE,
 								   &value, CRYPT_CERTINFO_IMMUTABLE );
 	if( cryptStatusError( cryptStatus ) || !value )
 		return( CRYPT_ERROR_NOTINITED );
 
-	/* Lock the cert for our exclusive use (in case it's a cert chain, we 
-	   also select the first cert in the chain), update the device with the 
-	   cert, and unlock it to allow others access */
-	krnlSendMessage( iCryptHandle, IMESSAGE_GETDEPENDENT, &iCryptCert, 
-					 OBJECT_TYPE_CERTIFICATE );
-	cryptStatus = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE,
-								   MESSAGE_VALUE_TRUE, 
-								   CRYPT_IATTRIBUTE_LOCKED );
+	/* Lock the certificate for our exclusive use (in case it's a 
+	   certificate chain, we also select the first certificate in the 
+	   chain), update the device with the certificate, and unlock it to 
+	   allow others access */
+	cryptStatus = krnlSendMessage( iCryptHandle, IMESSAGE_GETDEPENDENT, 
+								   &iCryptCert, OBJECT_TYPE_CERTIFICATE );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE,
+									   MESSAGE_VALUE_TRUE, 
+									   CRYPT_IATTRIBUTE_LOCKED );
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+									   MESSAGE_VALUE_CURSORFIRST, 
+									   CRYPT_CERTINFO_CURRENT_CERTIFICATE );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
-					 MESSAGE_VALUE_CURSORFIRST, 
-					 CRYPT_CERTINFO_CURRENT_CERTIFICATE );
 	cryptStatus = updateCertChain( pkcs11Info, iCryptCert );
-	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, MESSAGE_VALUE_FALSE, 
-					 CRYPT_IATTRIBUTE_LOCKED );
+	( void ) krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, 
+							  MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
 
 	return( cryptStatus );
 	}
@@ -1719,28 +1932,31 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
 	int cryptStatus;
 
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			itemType == KEYMGMT_ITEM_PRIVATEKEY || \
 			itemType == KEYMGMT_ITEM_SECRETKEY );
 	assert( keyIDtype == CRYPT_KEYID_NAME );
+	assert( isReadPtr( keyID, keyIDlength ) );
 
 	/* Find the object to delete based on the label.  Since we can have 
-	   multiple related objects (e.g. a key and a cert) with the same label, 
-	   a straight search for all objects with a given label could return
-	   CRYPT_ERROR_DUPLICATE so we search for the objects by type as well as 
-	   label.  In addition even a search for specific objects can return
-	   CRYPT_ERROR_DUPLICATE so we use the Ex version of findObject() to make
-	   sure we don't get an error if multiple objects exist.  Although
-	   cryptlib won't allow more than one object with a given label to be
-	   created, other applications might create duplicate labels.  The correct
-	   behaviour in these circumstances is uncertain, what we do for now is
-	   delete the first object we find that matches the label.
+	   multiple related objects (e.g. a key and a certificate) with the same 
+	   label, a straight search for all objects with a given label could 
+	   return CRYPT_ERROR_DUPLICATE so we search for the objects by type as 
+	   well as label.  In addition even a search for specific objects can 
+	   return CRYPT_ERROR_DUPLICATE so we use the Ex version of findObject() 
+	   to make sure we don't get an error if multiple objects exist.  
+	   Although cryptlib won't allow more than one object with a given label 
+	   to be created, other applications might create duplicate labels.  The 
+	   correct behaviour in these circumstances is uncertain, what we do for 
+	   now is delete the first object we find that matches the label.
 	   
-	   First we try for a cert and use that to find associated keys */
+	   First we try for a certificate and use that to find associated keys */
 	cryptStatus = findObjectEx( pkcs11Info, &hCertificate, certTemplate, 3 );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* We got a cert, if there are associated keys delete them as well */
+		/* We got a certificate, if there are associated keys delete them as 
+		   well */
 		cryptStatus = findObjectFromObject( pkcs11Info, hCertificate, 
 											CKO_PUBLIC_KEY, &hPubkey );
 		if( cryptStatusError( cryptStatus ) )
@@ -1752,8 +1968,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 		}
 	else
 		{
-		/* We didn't find a cert with the given label, try for public, 
-		   private, and secret keys */
+		/* We didn't find a certificate with the given label, try for 
+		   public, private, and secret keys */
 		cryptStatus = findObjectEx( pkcs11Info, &hPubkey, keyTemplate, 2 );
 		if( cryptStatusError( cryptStatus ) )
 			hPubkey = CK_OBJECT_NONE;
@@ -1766,8 +1982,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( cryptStatus ) )
 			hSecretKey = CK_OBJECT_NONE;
 
-		/* There may be an unlabelled cert present, try and find it by 
-		   looking for a cert matching the key ID */
+		/* There may be an unlabelled certificate present, try and find it 
+		   by looking for a certificate matching the key ID */
 		if( hPubkey != CK_OBJECT_NONE || hPrivkey != CK_OBJECT_NONE )
 			{
 			cryptStatus = findObjectFromObject( pkcs11Info, 
@@ -1840,6 +2056,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 
 void initPKCS11RW( DEVICE_INFO *deviceInfo )
 	{
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
+
 	deviceInfo->getItemFunction = getItemFunction;
 	deviceInfo->setItemFunction = setItemFunction;
 	deviceInfo->deleteItemFunction = deleteItemFunction;

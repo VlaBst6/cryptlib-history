@@ -1,18 +1,18 @@
 /****************************************************************************
 *																			*
 *						cryptlib DNS Interface Routines						*
-*						Copyright Peter Gutmann 1998-2006					*
+*						Copyright Peter Gutmann 1998-2007					*
 *																			*
 ****************************************************************************/
 
 #include <ctype.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "stream.h"
+  #include "stream_int.h"
   #include "tcp.h"
 #else
   #include "crypt.h"
-  #include "io/stream.h"
+  #include "io/stream_int.h"
   #include "io/tcp.h"
 #endif /* Compiler-specific includes */
 
@@ -37,54 +37,47 @@
 #undef ntohs
 #endif /* Slowaris */
 
-#ifdef DnsQuery
-  #undef DnsQuery	/* Newer versions of the platform SDK have conflicting defines */
-#endif /* DnsQuery defined as a macro in windns.h */
-
 #ifndef TEXT
   #define TEXT		/* Win32 windows.h defines this, but not the Win16 one */
 #endif /* TEXT */
 
-static INSTANCE_HANDLE hDNS;
+#if defined( _MSC_VER ) && defined( _PREFAST_ ) 
+  #define OUT_STRING_OPT	__out_bcount_z
+#else
+  #define OUT_STRING_OPT( size )
+#endif /* Additional markups for Win32 API functions */
 
-typedef void ( SOCKET_API *FREEADDRINFO )( struct addrinfo *ai );
-typedef int ( SOCKET_API *GETADDRINFO )( const char *nodename,
-										 const char *servname,
-										 const struct addrinfo *hints,
-										 struct addrinfo **res );
-typedef struct hostent FAR * ( SOCKET_API *GETHOSTBYNAME )( const char FAR *name );
-typedef struct hostent FAR * ( SOCKET_API *GETHOSTNAME )( char FAR * name,
-														  int namelen );
-typedef int ( SOCKET_API *GETNAMEINFO )( const struct sockaddr *sa, SIZE_TYPE salen,
-										 char *node, SIZE_TYPE nodelen,
-										 char *service, SIZE_TYPE servicelen,
-										 int flags );
-typedef u_long ( SOCKET_API *HTONL )( u_long hostlong );
-typedef u_short ( SOCKET_API *HTONS )( u_short hostshort );
-typedef unsigned long ( SOCKET_API *INET_ADDR )( const char FAR *cp );
-typedef char FAR * ( SOCKET_API *INET_NTOA )( struct in_addr in );
-typedef u_long ( SOCKET_API *NTOHL )( u_long netlong );
-typedef u_short ( SOCKET_API *NTOHS )( u_short netshort );
-#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
-typedef DNS_STATUS ( WINAPI *DNSQUERY )( const LPSTR lpstrName,
-										 const WORD wType, const DWORD fOptions,
-										 const PIP4_ARRAY aipServers,
-										 PDNS_RECORD *ppQueryResultsSet,
-										 PVOID *pReserved );
-typedef DNS_STATUS ( WINAPI *DNSQUERYCONFIG )( const DNS_CONFIG_TYPE Config,
-											   const DWORD Flag,
-											   const PWSTR pwsAdapterName,
-											   PVOID pReserved, PVOID pBuffer,
-											   PDWORD pBufferLength );
-typedef VOID ( WINAPI *DNSRECORDLISTFREE )( PDNS_RECORD pRecordList,
-											DNS_FREE_TYPE FreeType );
-#endif /* 32-bit VC++ */
+typedef void ( SOCKET_API *FREEADDRINFO )( INOUT struct addrinfo *ai ) \
+						STDC_NONNULL_ARG( ( 1 ) );
+typedef CHECK_RETVAL int ( SOCKET_API *GETADDRINFO )\
+						( IN_STRING const char *nodename, 
+						  IN_STRING const char *servname, 
+						  const struct addrinfo *hints,
+						  OUT_PTR struct addrinfo **res );
+typedef CHECK_RETVAL struct hostent FAR * ( SOCKET_API *GETHOSTBYNAME )\
+						( IN_STRING const char FAR *name ) \
+						STDC_NONNULL_ARG( ( 1 ) );
+typedef CHECK_RETVAL int ( SOCKET_API *GETNAMEINFO )\
+						( IN_BUFFER( salen ) const struct sockaddr *sa, 
+						  IN SIZE_TYPE salen,
+						  OUT_BUFFER_FIXED( nodelen ) char *node, 
+						  IN SIZE_TYPE nodelen,
+						  OUT_STRING_OPT( servicelen ) char *service, 
+						  IN SIZE_TYPE servicelen, int flags ) \
+						STDC_NONNULL_ARG( ( 1, 3, 5 ) );
+typedef CHECK_RETVAL u_long ( SOCKET_API *HTONL )( u_long hostlong );
+typedef CHECK_RETVAL u_short ( SOCKET_API *HTONS )( u_short hostshort );
+typedef CHECK_RETVAL unsigned long ( SOCKET_API *INET_ADDR )\
+						( IN_STRING const char FAR *cp ) \
+						STDC_NONNULL_ARG( ( 1 ) );
+typedef CHECK_RETVAL char FAR * ( SOCKET_API *INET_NTOA )( struct in_addr in );
+typedef CHECK_RETVAL u_long ( SOCKET_API *NTOHL )( u_long netlong );
+typedef CHECK_RETVAL u_short ( SOCKET_API *NTOHS )( u_short netshort );
 typedef int ( SOCKET_API *WSAGETLASTERROR )( void );
 
 static FREEADDRINFO pfreeaddrinfo = NULL;
 static GETADDRINFO pgetaddrinfo = NULL;
 static GETHOSTBYNAME pgethostbyname = NULL;
-static GETHOSTNAME pgethostname = NULL;
 static GETNAMEINFO pgetnameinfo = NULL;
 static HTONL phtonl = NULL;
 static HTONS phtons = NULL;
@@ -92,17 +85,11 @@ static INET_ADDR pinet_addr = NULL;
 static INET_NTOA pinet_ntoa = NULL;
 static NTOHL pntohl = NULL;
 static NTOHS pntohs = NULL;
-#if defined( _MSC_VER ) && ( _MSC_VER > 800 )
-static DNSQUERY pDnsQuery = NULL;
-static DNSQUERYCONFIG pDnsQueryConfig = NULL;
-static DNSRECORDLISTFREE pDnsRecordListFree = NULL;
-#endif /* 32-bit VC++ */
 static WSAGETLASTERROR pWSAGetLastError = NULL;
 
 #define freeaddrinfo		pfreeaddrinfo
 #define getaddrinfo			pgetaddrinfo
 #define gethostbyname		pgethostbyname
-#define gethostname			pgethostname
 #define getnameinfo			pgetnameinfo
 #define htonl				phtonl
 #define htons				phtons
@@ -110,9 +97,6 @@ static WSAGETLASTERROR pWSAGetLastError = NULL;
 #define inet_ntoa			pinet_ntoa
 #define ntohl				pntohl
 #define ntohs				pntohs
-#define DnsQuery			pDnsQuery
-#define DnsQueryConfig		pDnsQueryConfig
-#define DnsRecordListFree	pDnsRecordListFree
 #ifndef WSAGetLastError
   /* In some environments WSAGetLastError() is a macro that maps to
      GetLastError() */
@@ -120,21 +104,28 @@ static WSAGETLASTERROR pWSAGetLastError = NULL;
   #define DYNLOAD_WSAGETLASTERROR
 #endif /* WSAGetLastError */
 
-static int SOCKET_API my_getaddrinfo( const char *nodename,
-									  const char *servname,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
+									  IN_STRING const char *servname,
 									  const struct addrinfo *hints,
-									  struct addrinfo **res );
-static void SOCKET_API my_freeaddrinfo( struct addrinfo *ai );
-static int SOCKET_API my_getnameinfo( const struct sockaddr *sa,
-									  SIZE_TYPE salen, char *node,
-									  SIZE_TYPE nodelen, char *service,
-									  SIZE_TYPE servicelen, int flags );
+									  OUT_PTR struct addrinfo **res );
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void SOCKET_API my_freeaddrinfo( IN struct addrinfo *ai );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) \
+									  const struct sockaddr *sa,
+									  IN SIZE_TYPE salen, 
+									  OUT_BUFFER_FIXED( nodelen ) char *node, 
+									  IN SIZE_TYPE nodelen, 
+									  OUT_BUFFER_FIXED( servicelen ) \
+									  char *service, 
+									  IN SIZE_TYPE servicelen, IN int flags );
 
-int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr )
+CHECK_RETVAL \
+int initDNS( const INSTANCE_HANDLE hTCP, const INSTANCE_HANDLE hAddr )
 	{
 	/* Get the required TCP/IP functions */
 	gethostbyname = ( GETHOSTBYNAME ) DynamicBind( hTCP, TEXT( "gethostbyname" ) );
-	gethostname = ( GETHOSTNAME ) DynamicBind( hTCP, TEXT( "gethostname" ) );
 	htonl = ( HTONL ) DynamicBind( hTCP, TEXT( "htonl" ) );
 	htons = ( HTONS ) DynamicBind( hTCP, TEXT( "htons" ) );
 	inet_addr = ( INET_ADDR ) DynamicBind( hTCP, TEXT( "inet_addr" ) );
@@ -144,9 +135,9 @@ int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr )
   #ifdef DYNLOAD_WSAGETLASTERROR
 	WSAGetLastError = ( WSAGETLASTERROR ) DynamicBind( hTCP, TEXT( "WSAGetLastError" ) );
   #endif /* DYNLOAD_WSAGETLASTERROR */
-	if( gethostbyname == NULL || gethostname == NULL || htonl == NULL || \
-		htons == NULL || inet_addr == NULL || inet_ntoa == NULL || \
-		ntohl == NULL || ntohs == NULL )
+	if( gethostbyname == NULL || htonl == NULL || htons == NULL || \
+		inet_addr == NULL || inet_ntoa == NULL || ntohl == NULL || \
+		ntohs == NULL )
 		return( CRYPT_ERROR );
 
 	/* Set up the IPv6-style name/address functions */
@@ -168,38 +159,16 @@ int initDNS( INSTANCE_HANDLE hTCP, INSTANCE_HANDLE hAddr )
 		getnameinfo = my_getnameinfo;
 		}
 
-	/* Get the required DNS functions if they're available */
-#if defined( __WIN16__ )
-	hDNS = NULL_INSTANCE;
-#else
-  #if defined( __WIN32__ )
-	hDNS = DynamicLoad( "dnsapi.dll" );
-  #elif defined( __WINCE__ )
-	hDNS = hTCP;
-  #endif /* Win32 vs.WinCE */
-	if( hDNS != NULL_INSTANCE )
-		{
-		DnsQuery = ( DNSQUERY ) DynamicBind( hDNS, TEXT( "DnsQuery_A" ) );
-		DnsQueryConfig = ( DNSQUERYCONFIG ) DynamicBind( hDNS, TEXT( "DnsQueryConfig" ) );
-		DnsRecordListFree = ( DNSRECORDLISTFREE ) DynamicBind( hDNS, TEXT( "DnsRecordListFree" ) );
-		if( ( DnsQuery == NULL || DnsQueryConfig == NULL || \
-			  DnsRecordListFree == NULL ) && hDNS != hTCP )
-			{
-			DynamicUnload( hDNS );
-			hDNS = NULL_INSTANCE;
-			return( CRYPT_ERROR );
-			}
-		}
-#endif /* Win16 vs.Win32/WinCE */
+	/* If the DNS SRV init fails it's not a serious problem, we can continue 
+	   without it */
+	( void ) initDNSSRV( hTCP );
 
 	return( CRYPT_OK );
 	}
 
-void endDNS( INSTANCE_HANDLE hTCP )
+void endDNS( const INSTANCE_HANDLE hTCP )
 	{
-	if( hDNS != NULL_INSTANCE && hDNS != hTCP )
-		DynamicUnload( hDNS );
-	hDNS = NULL_INSTANCE;
+	endDNSSRV( hTCP );
 	}
 #endif /* __WINDOWS__ */
 
@@ -210,17 +179,31 @@ void endDNS( INSTANCE_HANDLE hTCP )
 ****************************************************************************/
 
 /* Emulation of IPv6 networking functions.  We include these unconditionally
-   under Windows because with dynamic binding we can't be sure that they're
-   needed or not */
+   under Windows because with dynamic binding we can't be sure whether 
+   they're needed or not */
 
 #if !defined( IPv6 ) || defined( __WINDOWS__ )
 
-static int addAddrInfo( struct addrinfo *prevAddrInfoPtr,
-						struct addrinfo **addrInfoPtrPtr,
-						const void *address, const int port )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+static int addAddrInfo( INOUT_OPT struct addrinfo *prevAddrInfoPtr,
+						OUT_PTR struct addrinfo **addrInfoPtrPtr,
+						IN_BUFFER( addrLen ) const void *address, 
+						IN_RANGE( IP_ADDR_SIZE, IP_ADDR_SIZE ) \
+						const int addrLen,  IN_PORT const int port )
 	{
 	struct addrinfo *addrInfoPtr;
 	struct sockaddr_in *sockAddrPtr;
+
+	assert( prevAddrInfoPtr == NULL || \
+			isWritePtr( prevAddrInfoPtr, sizeof( struct addrinfo ) ) );
+	assert( isWritePtr( addrInfoPtrPtr, sizeof( struct addrinfo * ) ) );
+	assert( isReadPtr( address, addrLen ) );
+	
+	REQUIRES( addrLen == IP_ADDR_SIZE );
+	REQUIRES( port >= 22 && port < 65536L );
+
+	/* Clear return value */
+	*addrInfoPtrPtr = NULL;
 
 	/* Allocate the new element, clear it, and set fixed fields for IPv4 */
 	if( ( addrInfoPtr = clAlloc( "addAddrInfo", \
@@ -248,15 +231,16 @@ static int addAddrInfo( struct addrinfo *prevAddrInfoPtr,
 	   bitfield, so we have to use the encapsulating struct */
 	sockAddrPtr->sin_family = AF_INET;
 	sockAddrPtr->sin_port = htons( ( in_port_t ) port );
-	memcpy( &sockAddrPtr->sin_addr, address, IP_ADDR_SIZE );
+	memcpy( &sockAddrPtr->sin_addr, address, addrLen );
 	*addrInfoPtrPtr = addrInfoPtr;
 	return( 0 );
 	}
 
-static int SOCKET_API my_getaddrinfo( const char *nodename,
-									  const char *servname,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
+									  IN_STRING const char *servname,
 									  const struct addrinfo *hints,
-									  struct addrinfo **res )
+									  OUT_PTR struct addrinfo **res )
 	{
 	struct hostent *pHostent;
 	struct addrinfo *currentAddrInfoPtr = NULL;
@@ -267,24 +251,30 @@ static int SOCKET_API my_getaddrinfo( const char *nodename,
 	assert( nodename != NULL || ( hints->ai_flags & AI_PASSIVE ) );
 	assert( servname != NULL );
 	assert( isReadPtr( hints, sizeof( struct addrinfo ) ) );
+	assert( isWritePtr( res, sizeof( struct addrinfo * ) ) );
+	assert( sizeof( in_addr_t ) == IP_ADDR_SIZE );
 
 	/* Clear return value */
 	*res = NULL;
 
-	/* Perform basic error checking */
+	/* Perform basic error checking.  Since this is supposed to be an 
+	   emulation of a (normally) built-in function we don't perform any 
+	   REQUIRES()-style checking but only apply the basic checks that the 
+	   normal built-in form does */
 	if( ( nodename == NULL && !( hints->ai_flags & AI_PASSIVE ) ) || \
-		servname == NULL )
+		servname == NULL || hints == NULL || res == NULL )
 		return( -1 );
 
 	/* If there's no interface specified and we're creating a server-side
 	   socket, prepare to listen on any interface.  Note that BeOS can only
 	   bind to one interface at a time, so INADDR_ANY actually binds to the
-	   first interface it finds */
+	   first interface that it finds */
 	if( nodename == NULL && ( hints->ai_flags & AI_PASSIVE ) )
 		{
 		const in_addr_t address = INADDR_ANY;
 
-		return( addAddrInfo( NULL, res, &address, port ) );
+		return( addAddrInfo( NULL, res, &address, sizeof( in_addr_t  ), 
+							 port ) );
 		}
 
 	/* If it's a dotted address, there's a single address, convert it to
@@ -297,25 +287,29 @@ static int SOCKET_API my_getaddrinfo( const char *nodename,
 
 		if( isBadAddress( address ) )
 			return( -1 );
-		return( addAddrInfo( NULL, res, &address, port ) );
+		return( addAddrInfo( NULL, res, &address, sizeof( in_addr_t  ), 
+							 port ) );
 		}
 
 	/* It's a host name, convert it to the in_addr form */
 	gethostbyname_threadsafe( nodename, pHostent, hostErrno );
-	if( pHostent == NULL || pHostent->h_length != IP_ADDR_SIZE )
+	if( pHostent == NULL ) 
 		return( -1 );
+	ENSURES( pHostent->h_length == IP_ADDR_SIZE );
 	for( i = 0; pHostent->h_addr_list[ i ] != NULL && i < IP_ADDR_COUNT; i++ )
 		{
 		int status;
 
 		if( currentAddrInfoPtr == NULL )
 			{
-			status = addAddrInfo( NULL, res, pHostent->h_addr_list[ i ], port );
+			status = addAddrInfo( NULL, res, pHostent->h_addr_list[ i ], 
+								  pHostent->h_length, port );
 			currentAddrInfoPtr = *res;
 			}
 		else
 			status = addAddrInfo( currentAddrInfoPtr, &currentAddrInfoPtr,
-								  pHostent->h_addr_list[ i ], port );
+								  pHostent->h_addr_list[ i ], 
+								  pHostent->h_length, port );
 		if( status != 0 )
 			{
 			freeaddrinfo( *res );
@@ -325,9 +319,21 @@ static int SOCKET_API my_getaddrinfo( const char *nodename,
 	return( 0 );
 	}
 
-static void SOCKET_API my_freeaddrinfo( struct addrinfo *ai )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void SOCKET_API my_freeaddrinfo( INOUT struct addrinfo *ai )
 	{
-	while( ai != NULL )
+	int i;
+
+	assert( isWritePtr( ai, sizeof( struct addrinfo ) ) );
+
+	/* Perform basic error checking.  Since this is supposed to be an 
+	   emulation of a (normally) built-in function we don't perform any 
+	   REQUIRES()-style checking but only apply the basic checks that the 
+	   normal built-in form does */
+	if( ai == NULL )
+		return;
+
+	for( i = 0; ai != NULL && i < IP_ADDR_COUNT; i++ )
 		{
 		struct addrinfo *addrInfoCursor = ai;
 
@@ -337,14 +343,34 @@ static void SOCKET_API my_freeaddrinfo( struct addrinfo *ai )
 		clFree( "my_freeaddrinfo", addrInfoCursor );
 		}
 	}
-
-static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, SIZE_TYPE salen,
-									  char *node, SIZE_TYPE nodelen,
-									  char *service, SIZE_TYPE servicelen,
-									  int flags )
+									  
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) const struct sockaddr *sa, 
+									  IN SIZE_TYPE salen,
+									  OUT_BUFFER_FIXED( nodelen ) char *node, 
+									  IN_LENGTH_SHORT SIZE_TYPE nodelen,
+									  OUT_BUFFER_FIXED( servicelen ) char *service, 
+									  IN_LENGTH_SHORT SIZE_TYPE servicelen,
+									  IN int flags )
 	{
 	const struct sockaddr_in *sockAddr = ( struct sockaddr_in * ) sa;
 	const char *ipAddress;
+
+	assert( isReadPtr( sa, salen ) && salen >= sizeof( struct sockaddr ) );
+	assert( isReadPtr( node, nodelen ) && nodelen >= 10 );
+	assert( isReadPtr( service, servicelen ) && servicelen >= 8 );
+
+	/* Perform basic error checking.  Since this is supposed to be an 
+	   emulation of a (normally) built-in function we don't perform any 
+	   REQUIRES()-style checking but only apply the basic checks that the 
+	   normal built-in form does */
+	if( sa == NULL || \
+		salen < sizeof( struct sockaddr ) || salen > MAX_INTLENGTH_SHORT || \
+		node == NULL || \
+		nodelen < 10 || nodelen > MAX_INTLENGTH_SHORT || \
+		service == NULL || \
+		servicelen < 8 || servicelen > MAX_INTLENGTH_SHORT )
+		return( -1 );
 
 	/* Clear return values */
 	strlcpy_s( node, nodelen, "<Unknown>" );
@@ -365,416 +391,69 @@ static int SOCKET_API my_getnameinfo( const struct sockaddr *sa, SIZE_TYPE salen
 
 /****************************************************************************
 *																			*
-*						 		DNS SRV Interface							*
-*																			*
-****************************************************************************/
-
-/* Use DNS SRV to auto-detect host information */
-
-#if defined( __WINDOWS__ ) && !defined( __WIN16__ )
-
-static void convertToSrv( char *srvName, const int srvNameMaxLen, 
-						  const char *hostName )
-	{
-	const int nameLength = strlen( hostName );
-	int i;
-
-	/* Prepend the service info to the start of the host name.  This
-	   converts foo.bar.com into _pkiboot._tcp.bar.com in preparation for
-	   the DNS SRV lookup */
-	for( i = 0; i < nameLength; i++ )
-		if( hostName[ i ] == '.' )
-			break;
-	strlcpy_s( srvName, srvNameMaxLen, "_pkiboot._tcp." );
-	if( i < nameLength && ( nameLength - i ) < srvNameMaxLen - 16 )
-		strlcat_s( srvName, srvNameMaxLen, hostName + i );
-	else
-		strlcat_s( srvName, srvNameMaxLen, "localhost" );
-	}
-
-static int getSrvFQDN( STREAM *stream, char *fqdn, const int fqdnMaxLen )
-	{
-	PDNS_RECORD pDns = NULL;
-	struct hostent *hostInfo;
-	static char cachedFQDN[ MAX_URL_SIZE + 8 ];
-	static time_t lastFetchTime = 0;
-#ifdef __WINCE__
-	char fqdnBuffer[ MAX_URL_SIZE + 8 ], *fqdnPtr = fqdnBuffer;
-#else
-	char *fqdnPtr;
-#endif /* Win32 vs. WinCE */
-
-	/* The uncached FQDN check is quite slow and resource-intensive (it
-	   seems to do a full reload of the DNS subsystem), to lighten the load
-	   we only try a new one once a minute */
-	if( lastFetchTime >= getTime() - 60 )
-		{
-		strlcpy_s( fqdn, fqdnMaxLen, cachedFQDN );
-		return( CRYPT_OK );
-		}
-
-	/* If we're doing a full autodetect, we first have to determine the
-	   local host's FQDN.  This gets quite tricky because the behavior of
-	   gethostbyaddr() changed with Win2K so we have to use the DNS API, but
-	   this isn't available in older versions of Windows.  If we're using
-	   the DNS API, we have to use the barely-documented
-	   DNS_QUERY_BYPASS_CACHE option to get what we want */
-	if( gethostname( cachedFQDN, MAX_DNS_SIZE ) == 0 && \
-		( hostInfo = gethostbyname( cachedFQDN ) ) != NULL )
-		{
-		int i, iterationCount = 0;
-
-		for( i = 0; hostInfo->h_addr_list[ i ] != NULL && \
-					iterationCount++ < FAILSAFE_ITERATIONS_MED; \
-			 i++ )
-			{
-			struct in_addr address;
-
-			/* Reverse the byte order for the in-addr.arpa lookup and
-			   convert the address to dotted-decimal notation */
-			address.S_un.S_addr = *( ( DWORD * ) hostInfo->h_addr_list[ i ] );
-			sprintf_s( cachedFQDN, MAX_URL_SIZE, "%s.in-addr.arpa",
-					   inet_ntoa( address ) );
-
-			/* Check for a name */
-			if( DnsQuery( cachedFQDN, DNS_TYPE_PTR, DNS_QUERY_BYPASS_CACHE,
-						  NULL, &pDns, NULL ) == 0 )
-				break;
-			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError();
-		}
-	if( pDns == NULL )
-		return( setSocketError( stream, "Couldn't determine FQDN of local "
-								"machine", CRYPT_ERROR_NOTFOUND, TRUE ) );
-#ifdef __WINCE__
-	unicodeToAscii( fqdnBuffer, pDns->Data.PTR.pNameHost,
-					wcslen( pDns->Data.PTR.pNameHost ) );
-#else
-	fqdnPtr = pDns->Data.PTR.pNameHost;
-#endif /* Win32 vs. WinCE */
-	convertToSrv( cachedFQDN, MAX_URL_SIZE, fqdnPtr );
-	DnsRecordListFree( pDns, DnsFreeRecordList );
-
-	/* Remember the value that we just found to lighten the load on the
-	   resolver when we perform repeat queries */
-	strlcpy_s( fqdn, fqdnMaxLen, cachedFQDN );
-	lastFetchTime = getTime();
-
-	return( CRYPT_OK );
-	}
-
-static int findHostInfo( STREAM *stream, char *hostName, 
-						 const int hostNameMaxLen, int *hostPort, 
-						 const char *name )
-	{
-	PDNS_RECORD pDns = NULL, pDnsInfo = NULL, pDnsCursor;
-	DWORD dwRet;
-	int priority = 32767;
-
-	/* If we're running on anything other than a heavily-SP'd Win2K or WinXP,
-	   there's not much that we can do */
-	if( hDNS == NULL_INSTANCE )
-		return( setSocketError( stream, "DNS services not available",
-								CRYPT_ERROR_NOTFOUND, TRUE ) );
-
-	/* If we're doing a full autodetect, we construct the SRV query using
-	   the local machine's FQDN.  This fails more often than not because of
-	   NATing and the use of private networks, but at least we can try */
-	if( !strCompareZ( name, "[Autodetect]" ) )
-		{
-		const int status = getSrvFQDN( stream, hostName, hostNameMaxLen );
-		if( cryptStatusError( status ) )
-			return( status );
-		name = hostName;
-		}
-
-	/* Perform a DNS SRV lookup to find the host info.  SRV has basic load-
-	   balancing facilities, but for now we just use the highest-priority
-	   host that we find (it's rarely-enough used that we'll be lucky to
-	   find SRV info, let alone any load-balancing setup) */
-	dwRet = DnsQuery( ( const LPSTR ) name, DNS_TYPE_SRV, DNS_QUERY_STANDARD,
-					  NULL, &pDns, NULL );
-	if( dwRet != 0 || pDns == NULL )
-		return( getSocketError( stream, CRYPT_ERROR_NOTFOUND ) );
-	for( pDnsCursor = pDns; pDnsCursor != NULL;
-		 pDnsCursor = pDnsCursor->pNext )
-		{
-		if( pDnsCursor->Data.SRV.wPriority < priority )
-			{
-			priority = pDnsCursor->Data.SRV.wPriority;
-			pDnsInfo = pDnsCursor;
-			}
-		}
-#ifdef __WINCE__
-	if( pDnsInfo == NULL || \
-		wcslen( pDnsInfo->Data.SRV.pNameTarget ) > MAX_URL_SIZE - 1 )
-#else
-	if( pDnsInfo == NULL || \
-		strlen( pDnsInfo->Data.SRV.pNameTarget ) > MAX_URL_SIZE - 1 )
-#endif /* Win32 vs. WinCE */
-		{
-		DnsRecordListFree( pDns, DnsFreeRecordList );
-		return( setSocketError( stream, "Invalid DNS SRV entry for host",
-								CRYPT_ERROR_NOTFOUND, TRUE ) );
-		}
-
-	/* Copy over the host info for this SRV record */
-#ifdef __WINCE__
-	unicodeToAscii( hostName, pDnsInfo->Data.SRV.pNameTarget, 
-					wcslen( pDnsInfo->Data.SRV.pNameTarget ) + 1 );
-#else
-	strlcpy_s( hostName, hostNameMaxLen, pDnsInfo->Data.SRV.pNameTarget );
-#endif /* Win32 vs. WinCE */
-	*hostPort = pDnsInfo->Data.SRV.wPort;
-
-	/* Clean up */
-	DnsRecordListFree( pDns, DnsFreeRecordList );
-	return( CRYPT_OK );
-	}
-
-#elif defined( __UNIX__ ) && \
-	  !( defined( __CYGWIN__) || ( defined( sun ) && OSVERSION <= 5 ) || \
-		 defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) )
-
-#define SRV_PRIORITY_OFFSET	( NS_RRFIXEDSZ + 0 )
-#define SRV_WEIGHT_OFFSET	( NS_RRFIXEDSZ + 2 )
-#define SRV_PORT_OFFSET		( NS_RRFIXEDSZ + 4 )
-#define SRV_NAME_OFFSET		( NS_RRFIXEDSZ + 6 )
-
-static int getFQDN( STREAM *stream, char *fqdn, const int fqdnMaxLen )
-	{
-	struct hostent *hostInfo;
-	char *hostNamePtr = NULL;
-	int i, iterationCount = 0;
-
-	/* First, get the host name, and if it's the FQDN, exit.  gethostname()
-	   has the idiotic property that if the name doesn't fit into the given
-	   buffer the function will return a (possibly non-null-terminated) 
-	   truncated value instead of reporting an error (or at least that's 
-	   what the spec says, hopefully no implementation is stupid enough to
-	   actually do this), so to be safe we force null-termination after 
-	   we've called the function */
-	if( gethostname( fqdn, MAX_DNS_SIZE ) == -1 )
-		return( CRYPT_ERROR_NOTFOUND );
-	fqdn[ MAX_DNS_SIZE - 1 ] = '\0';
-	if( strchr( fqdn, '.' ) != NULL )
-		/* If the hostname has a dot in it, it's the FQDN */
-		return( CRYPT_OK );
-
-	/* Now get the hostent info and walk through it looking for the FQDN */
-	if( ( hostInfo = gethostbyname( fqdn ) ) == NULL )
-		return( CRYPT_ERROR_NOTFOUND );
-	for( i = 0; hostInfo->h_addr_list[ i ] != NULL && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MED; i++ )
-		{
-		char **aliasPtrPtr;	
-		int innerIterationCount = 0;
-	
-		/* If the hostname has a dot in it, it's the FQDN.  This should be
-		   the same as the gethostname() output, but we check again just in
-		   case */
-		if( strchr( hostInfo->h_name, '.' ) != NULL )
-			{
-			hostNamePtr = hostInfo->h_name;
-			break;
-			}
-
-		/* Try for the FQDN in the aliases */
-		if( hostInfo->h_aliases == NULL )
-			continue;
-		for( aliasPtrPtr = hostInfo->h_aliases;
-			 *aliasPtrPtr != NULL && !strchr( *aliasPtrPtr, '.' ) && \
-				innerIterationCount++ < FAILSAFE_ITERATIONS_MED; 
-			 aliasPtrPtr++ );
-		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError();
-		if( *aliasPtrPtr != NULL )
-			{
-			hostNamePtr = *aliasPtrPtr;
-			break;
-			}
-		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
-	if( hostNamePtr == NULL )
-		return( CRYPT_ERROR_NOTFOUND );
-
-	/* We found the FQDN, return it to the caller */
-	strlcpy_s( fqdn, fqdnMaxLen, hostNamePtr );
-	return( CRYPT_OK );
-	}
-
-static int findHostInfo( STREAM *stream, char *hostName, 
-						 const int hostNameMaxLen, int *hostPort, 
-						 const char *name )
-	{
-	union {
-		HEADER header;
-		BYTE buffer[ NS_PACKETSZ + 8 ];
-		} dnsQueryInfo;
-	char *namePtr, *endPtr;
-	int resultLen, nameLen, qCount, aCount, minPriority = 32767;
-	int i, iterationCount;
-
-	/* If we're doing a full autodetect, we construct the SRV query using
-	   the local machine's FQDN.  This fails more often than not because of
-	   NATing and the use of private networks, but at least we can try */
-	if( !strCompareZ( name, "[Autodetect]" ) )
-		{
-		const int status = getFQDN( stream, hostName, hostNameMaxLen );
-		if( cryptStatusError( status ) )
-			return( status );
-		name = hostName;
-		}
-#ifdef EBCDIC_CHARS
-	else
-		/* We're about to use OS functions, convert the input to EBCDIC.  If
-		   we've used autodetection, the output from getFQDN will already be
-		   in EBCDIC form */
-		name = bufferToEbcdic( hostName, name );
-#endif /* EBCDIC_CHARS */
-
-	/* Try and fetch a DNS SRV record (RFC 2782) matching the host info */
-	resultLen = res_query( name, C_IN, T_SRV, dnsQueryInfo.buffer,
-						   NS_PACKETSZ );
-	if( resultLen < NS_HFIXEDSZ || resultLen > NS_PACKETSZ )
-		return( getSocketError( stream, CRYPT_ERROR_NOTFOUND ) );
-	if( dnsQueryInfo.header.rcode || dnsQueryInfo.header.tc )
-		/* If we get a non-zero response code (rcode) or the results were
-		   truncated (tc), we can't go any further.  In theory a truncated
-		   response is probably OK since many servers return the address
-		   records for the host in the Additional Data section to save the
-		   client having to perform a second lookup and we don't need these
-		   at this point so we can ignore the fact that they've been
-		   truncated, but for now we treat truncation as an error */
-		return( setSocketError( stream, "RR contains non-zero response "
-								"code or response was truncated",
-								CRYPT_ERROR_NOTFOUND, FALSE ) );
-	qCount = ntohs( dnsQueryInfo.header.qdcount );
-	aCount = ntohs( dnsQueryInfo.header.ancount );
-	if( qCount < 0 || aCount <= 0 )
-		/* No answer entries, we're done */
-        return( setSocketError( stream, "RR contains no answer entries",
-								CRYPT_ERROR_NOTFOUND, FALSE ) );
-
-	/* Skip the queries */
-	namePtr = dnsQueryInfo.buffer + NS_HFIXEDSZ;
-	endPtr = dnsQueryInfo.buffer + resultLen;
-	for( i = 0; i < qCount && i++ < FAILSAFE_ITERATIONS_MED; i++ )
-		{
-		nameLen = dn_skipname( namePtr, endPtr );
-		if( nameLen <= 0 )
-	        return( setSocketError( stream, "RR contains invalid question",
-		                            CRYPT_ERROR_BADDATA, FALSE ) );
-		namePtr += nameLen + NS_QFIXEDSZ;
-		}
-	if( i >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
-
-	/* Process the answers.  SRV has basic load-balancing facilities, but
-	   for now we just use the highest-priority host that we find (it's
-	   rarely-enough used that we'll be lucky to find SRV info, let alone
-	   any load-balancing setup) */
-	iterationCount = 0;
-	for( i = 0; i < aCount && i++ < FAILSAFE_ITERATIONS_MED; i++ )
-		{
-		int priority, port;
-
-		nameLen = dn_skipname( namePtr, endPtr );
-		if( nameLen <= 0 )
-	        return( setSocketError( stream, "RR contains invalid answer",
-	                                CRYPT_ERROR_BADDATA, FALSE ) );
-		namePtr += nameLen;
-		priority = ntohs( *( ( u_short * ) ( namePtr + SRV_PRIORITY_OFFSET ) ) );
-		port = ntohs( *( ( u_short * ) ( namePtr + SRV_PORT_OFFSET ) ) );
-		namePtr += NS_SRVFIXEDSZ;
-		if( priority < minPriority )
-			{
-			/* We've got a new higher-priority host, use that */
-			nameLen = dn_expand( dnsQueryInfo.buffer, endPtr,
-								 namePtr, hostName, hostNameMaxLen );
-			*hostPort = port;
-			minPriority = priority;
-			}
-		else
-			/* It's a lower-priority host, skip it */
-			nameLen = dn_skipname( namePtr, endPtr );
-		if( nameLen <= 0 )
-	        return( setSocketError( stream, "RR contains invalid answer",
-	                                CRYPT_ERROR_NOTFOUND, FALSE ) );
-		hostName[ nameLen ] = '\0';
-		namePtr += nameLen;
-		}
-	if( i >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
-#ifdef EBCDIC_CHARS
-	ebcdicToAscii( hostName, strlen( hostName ) );
-#endif /* EBCDIC_CHARS */
-
-	return( CRYPT_OK );
-	}
-
-#else
-
-/* If there's no DNS support available in the OS, there's not much that we
-   can do to handle automatic host detection.  Setting localPort as a side-
-   effect is necessary because the #define otherwise no-ops it out, leading
-   to declared-but-not-used warnings from some compilers */
-
-#define findHostInfo( stream, hostName, hostNameLen, hostPort, name )	\
-		CRYPT_ERROR_NOTFOUND; *( hostPort ) = -1
-
-#endif /* OS-specific host detection */
-
-/****************************************************************************
-*																			*
-*						 		General DNS Interface						*
+*						 			DNS Interface							*
 *																			*
 ****************************************************************************/
 
 /* Get a host's IP address */
 
-int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
-					const char *name, const int port,
-					const BOOLEAN isServer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int getAddressInfo( INOUT NET_STREAM_INFO *netStream, 
+					OUT_PTR struct addrinfo **addrInfoPtrPtr,
+					IN_BUFFER( nameLen ) const char *name, 
+					IN_LENGTH_DNS const int nameLen, 
+					IN_PORT const int port, const BOOLEAN isServer )
 	{
 	struct addrinfo hints;
-	char nameBuffer[ MAX_URL_SIZE + 8 ], portBuffer[ 16 + 8 ];
-	int localPort = port;
+	char nameBuffer[ MAX_DNS_SIZE + 8 ], portBuffer[ 16 + 8 ];
 
+	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
+	assert( isWritePtr( addrInfoPtrPtr, sizeof( struct addrinfo * ) ) );
 	assert( isServer || name != NULL );
+
+	REQUIRES( port >= 22 && port < 65536L );
+	REQUIRES( isServer || \
+			  ( !isServer && name != NULL ) );
+	REQUIRES( ( name == NULL && nameLen == 0 ) || \
+			  ( nameLen > 0 && nameLen < MAX_DNS_SIZE ) );
+
+	/* Convert the name and port into the null-terminated text-string format 
+	   required by getaddrinfo().  The reason why the port is given as a 
+	   string rather than a port number is that we can also optionally 
+	   specify the port to connect to via a service name.  Of course it's 
+	   more or less pot luck whether the service you want is a recognised 
+	   one so everyone specifies the port anyway, however the reason why 
+	   this unnecessary flexibility is there is because getaddrinfo() was 
+	   seen as a universal replacement for a pile of other functions, 
+	   including (for this case) getservbyname() */
+	if( name != NULL )
+		{
+		memcpy( nameBuffer, name, nameLen );
+		nameBuffer[ nameLen ] = '\0';
+		name = nameBuffer;
+		}
+	sprintf_s( portBuffer, 8, "%d", port );
 
 	/* If we're a client and using auto-detection of a PKI service, try and
 	   locate it via DNS SRV */
-	if( !isServer && \
-		( !strCompareZ( name, "[Autodetect]" ) || *name == '_' ) )
+	if( !isServer && name != NULL && nameLen == 12 && \
+		( !memcmp( name, "[Autodetect]", 12 ) || *name == '_' ) )
 		{
-		int status;
+		int localPort, status;
 
-		status = findHostInfo( stream, nameBuffer, MAX_URL_SIZE, &localPort, 
-							   name );
+		status = findHostInfo( netStream, nameBuffer, MAX_DNS_SIZE, 
+							   &localPort, name, nameLen );
 		if( cryptStatusError( status ) )
 			return( status );
 		name = nameBuffer;
+		sprintf_s( portBuffer, 8, "%d", localPort );
 		}
 
-	/* Convert the port into the text-string format required by 
-	   getaddrinfo().  The reason why this is given as a string rather than
-	   a port number is that we can also optionally specify the port to
-	   connect to via a service name.  Of course it's more or less pot luck
-	   whether the service you want is a recognised one so everyone 
-	   specifies the port anyway, however the reason why this unnecessary
-	   flexibility is there is because getaddrinfo() was seen as a universal
-	   replacement for a pile of other functions, including (for this case)
-	   getservbyname() */
-	sprintf_s( portBuffer, 8, "%d", port );
-
-	/* Conver the address information to the system character set if 
+	/* Convert the address information to the system character set if 
 	   required */
 #ifdef EBCDIC_CHARS
 	if( name != NULL )
-		name = bufferToEbcdic( nameBuffer, name );
+		bufferToEbcdic( nameBuffer, nameBuffer );
 	bufferToEbcdic( portBuffer, portBuffer );
 #endif /* EBCDIC_CHARS */
 
@@ -808,35 +487,54 @@ int getAddressInfo( STREAM *stream, struct addrinfo **addrInfoPtrPtr,
 	   Unfortunately this flag isn't very widely supported yet, so it usually
 	   ends up being no-op'd out by the auto-config.
 
-	   Bounds Checker may crash in the getaddrinfo() call if maximum checking
-	   is enabled.  To fix this, set the checking level to normal rather than
-	   maximum */
+	   Bounds Checker 6.x may crash in the getaddrinfo() call if maximum 
+	   checking is enabled.  To fix this, set the checking level to normal 
+	   rather than maximum */
 	memset( &hints, 0, sizeof( struct addrinfo ) );
 	hints.ai_flags = AI_NUMERICSERV | AI_ADDRCONFIG;
 	if( isServer )
+		{
 		/* If it's a server, set the AI_PASSIVE flag so that if the
 		   interface that we're binding to isn't explicitly specified we get
 		   any interface */
 		hints.ai_flags |= AI_PASSIVE;
+		}
 	hints.ai_family = PF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	if( getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr ) )
-		return( getHostError( stream, CRYPT_ERROR_OPEN ) );
+		return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
 	return( CRYPT_OK );
 	}
 
+STDC_NONNULL_ARG( ( 1 ) ) \
 void freeAddressInfo( struct addrinfo *addrInfoPtr )
 	{
+	assert( addrInfoPtr != NULL );
+
 	freeaddrinfo( addrInfoPtr );
 	}
 
-void getNameInfo( const struct sockaddr *sockAddr, char *address,
-				  const int addressMaxLen, int *port )
+STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+void getNameInfo( const struct sockaddr *sockAddr, 
+				  OUT_BUFFER( addressMaxLen, *addressLen ) char *address, 
+				  IN_LENGTH_DNS const int addressMaxLen, 
+				  OUT_LENGTH_DNS_Z int *addressLen, 
+				  OUT_PORT_Z int *port )
 	{
-	char portBuf[ 32 + 8 ];
+	char nameBuffer[ MAX_DNS_SIZE + 8 ];
+	char portBuffer[ 32 + 8 ];
+	int nameLength, portLength, localPort, status;
+
+	assert( isReadPtr( sockAddr, sizeof( struct sockaddr ) ) );
+	assert( isWritePtr( address, addressMaxLen ) );
+	assert( isWritePtr( port, sizeof( int ) ) );
+
+	REQUIRES_V( addressMaxLen >= CRYPT_MAX_TEXTSIZE / 2 && \
+				addressMaxLen <= MAX_DNS_SIZE );
 
 	/* Clear return values */
-	strlcpy_s( address, addressMaxLen, "<Unknown>" );
+	memcpy( address, "<Unknown>", 9 );
+	*addressLen = 9;
 	*port = 0;
 
 	/* Some Windows implementations of getnameinfo() call down to
@@ -846,15 +544,33 @@ void getNameInfo( const struct sockaddr *sockAddr, char *address,
 	   would be anyway, cryptlib always treats the port as a numeric arg).
 	   Oddly enough the macro version of this function in wspiapi.h used for
 	   IPv4-only situations does get it correct */
-	if( getnameinfo( sockAddr, sizeof( struct sockaddr ), address,
-					 addressMaxLen, portBuf, 32,
-					 NI_NUMERICHOST | NI_NUMERICSERV ) == 0 )
+	if( getnameinfo( sockAddr, sizeof( struct sockaddr ), nameBuffer,
+					 MAX_DNS_SIZE, portBuffer, 32,
+					 NI_NUMERICHOST | NI_NUMERICSERV ) != 0 )
 		{
-#ifdef EBCDIC_CHARS
-		ebcdicToAscii( address, address, strlen( address ) );
-		ebcdicToAscii( portBuf, portBuf, strlen( portBuf ) );
-#endif /* EBCDIC_CHARS */
-		*port = atoi( portBuf );
+		assert( DEBUG_WARN );
+		return;
 		}
+	nameLength = strlen( nameBuffer );
+	portLength = strlen( portBuffer );
+	if( nameLength <= 0 || nameLength > addressMaxLen || \
+		portLength <= 0 || portLength > 8 )
+		{
+		assert( DEBUG_WARN );
+		return;
+		}
+#ifdef EBCDIC_CHARS
+	ebcdicToAscii( nameBuffer, nameBuffer, nameLength );
+	ebcdicToAscii( portBuffer, portBuffer, portLength );
+#endif /* EBCDIC_CHARS */
+	memcpy( address, nameBuffer, nameLength );
+	*addressLen = nameLength;
+	status = strGetNumeric( portBuffer, portLength, &localPort, 1, 65536 );
+	if( cryptStatusError( status ) )
+		{
+		assert( DEBUG_WARN );
+		return;
+		}
+	*port = localPort;
 	}
 #endif /* USE_TCP */

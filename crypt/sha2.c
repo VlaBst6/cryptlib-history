@@ -367,7 +367,7 @@ static void sha_end1(unsigned char hval[], sha256_ctx ctx[1], const unsigned int
     /* extract the hash value as bytes in case the hash buffer is   */
     /* mislaigned for 32-bit words                                  */
     for(i = 0; i < hlen; ++i)
-        hval[i] = (unsigned char)(ctx->hash[i >> 2] >> (8 * (~i & 3)));
+		hval[i] = ((ctx->hash[i >> 2] >> (8 * (~i & 3))) & 0xff);
 }
 
 #endif

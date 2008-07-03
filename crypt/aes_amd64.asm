@@ -27,33 +27,36 @@
 ; in respect of its properties, including, but not limited to, correctness
 ; and/or fitness for purpose.
 ; ---------------------------------------------------------------------------
-; Issue 23/03/2006
+; Issue 02/03/2007
 
 ; I am grateful to Dag Arne Osvik for many discussions of the techniques that
-; can be used to optimise AES assembler code on AMD64/EM64T architectures. 
-; Some of the techniques used in this implementation are the result of 
+; can be used to optimise AES assembler code on AMD64/EM64T architectures.
+; Some of the techniques used in this implementation are the result of
 ; suggestions made by him for which I am most grateful.
 
 ; An AES implementation for AMD64 processors using the YASM assembler.  This
 ; implemetation provides only encryption, decryption and hence requires key
-; scheduling support in C. It uses 8k bytes of tables but its encryption and 
-; decryption performance is very close to that obtained using large tables. 
-; It can use either Windows or Gnu/Linux calling conventions, which are as 
+; scheduling support in C. It uses 8k bytes of tables but its encryption and
+; decryption performance is very close to that obtained using large tables.
+; It can use either Windows or Gnu/Linux calling conventions, which are as
 ; follows:
-;				windows  gnu/linux
+;               windows  gnu/linux
 ;
-;	in_blk			rcx		rdi
-;	out_blk			rdx		rsi
-;   context (cx)	 r8		rdx
+;   in_blk          rcx     rdi
+;   out_blk         rdx     rsi
+;   context (cx)     r8     rdx
 ;
-;   preserved		rsi      -    + rbx, rbp, rsp, r12, r13, r14 & r15
-;   registers		rdi      -		on both
+;   preserved       rsi      -    + rbx, rbp, rsp, r12, r13, r14 & r15
+;   registers       rdi      -      on both
 ;
-;   destroyed		 -      rsi   + rax, rcx, rdx, r8, r9, r10 & r11
-;   registers		 -      rdi		on both
+;   destroyed        -      rsi   + rax, rcx, rdx, r8, r9, r10 & r11
+;   registers        -      rdi     on both
 ;
 ; The default convention is that for windows, the gnu/linux convention being
 ; used if __GNUC__ is defined.
+;
+; Define _SEH_ to include support for Win64 structured exception handling
+; (this requires YASM version 0.6 or later).
 ;
 ; This code provides the standard AES block size (128 bits, 16 bytes) and the
 ; three standard AES key sizes (128, 192 and 256 bits). It has the same call
@@ -92,7 +95,7 @@
 %define ENCRYPTION              ; define if encryption is needed
 %define DECRYPTION              ; define if decryption is needed
 %define AES_REV_DKS             ; define if key decryption schedule is reversed
-%define LAST_ROUND_TABLES		; define for the faster version using extra tables
+%define LAST_ROUND_TABLES       ; define for the faster version using extra tables
 
 ; The encryption key schedule has the following in memory layout where N is the
 ; number of rounds (10, 12 or 14):
@@ -161,42 +164,42 @@
 %define KS_LENGTH       44
 %endif
 
-%define 	r0	rax
-%define 	r1	rdx
-%define 	r2	rcx
-%define 	r3	rbx
-%define 	r4	rsi
-%define 	r5	rdi
-%define 	r6	rbp
+%define     r0  rax
+%define     r1  rdx
+%define     r2  rcx
+%define     r3  rbx
+%define     r4  rsi
+%define     r5  rdi
+%define     r6  rbp
 %define     r7  rsp
 
-%define 	raxd	eax
-%define 	rdxd	edx
-%define 	rcxd	ecx
-%define 	rbxd	ebx
-%define 	rsid	esi
-%define 	rdid	edi
-%define 	rbpd	ebp
-%define 	rspd	esp
+%define     raxd    eax
+%define     rdxd    edx
+%define     rcxd    ecx
+%define     rbxd    ebx
+%define     rsid    esi
+%define     rdid    edi
+%define     rbpd    ebp
+%define     rspd    esp
 
-%define 	raxb	al
-%define 	rdxb	dl
-%define 	rcxb	cl
-%define 	rbxb	bl
-%define 	rsib	sil
-%define 	rdib	dil
-%define 	rbpb	bpl
-%define 	rspb	spl
+%define     raxb    al
+%define     rdxb    dl
+%define     rcxb    cl
+%define     rbxb    bl
+%define     rsib    sil
+%define     rdib    dil
+%define     rbpb    bpl
+%define     rspb    spl
 
-%define 	r0h	ah
-%define 	r1h	dh
-%define 	r2h	ch
-%define 	r3h	bh
+%define     r0h ah
+%define     r1h dh
+%define     r2h ch
+%define     r3h bh
 
-%define		r0d	eax
-%define		r1d	edx
-%define		r2d	ecx
-%define		r3d	ebx
+%define     r0d eax
+%define     r1d edx
+%define     r2d ecx
+%define     r3d ebx
 
 ; finite field multiplies by {02}, {04} and {08}
 
@@ -284,389 +287,389 @@
     db  %1(0xe1),%1(0x69),%1(0x14),%1(0x63),%1(0x55),%1(0x21),%1(0x0c),%1(0x7d)
 %endmacro
 
-%define u8(x)	f2(x), x, x, f3(x), f2(x), x, x, f3(x)
-%define v8(x)	fe(x), f9(x), fd(x), fb(x), fe(x), f9(x), fd(x), x
-%define w8(x)	x, 0, 0, 0, x, 0, 0, 0
+%define u8(x)   f2(x), x, x, f3(x), f2(x), x, x, f3(x)
+%define v8(x)   fe(x), f9(x), fd(x), fb(x), fe(x), f9(x), fd(x), x
+%define w8(x)   x, 0, 0, 0, x, 0, 0, 0
 
-%define tptr	rbp		; table pointer
-%define kptr	r8		; key schedule pointer
-%define fofs	128		; adjust offset in key schedule to keep |disp| < 128
-%define fk_ref(x,y)	[kptr-16*x+fofs+4*y]
+%define tptr    rbp     ; table pointer
+%define kptr    r8      ; key schedule pointer
+%define fofs    128     ; adjust offset in key schedule to keep |disp| < 128
+%define fk_ref(x,y) [kptr-16*x+fofs+4*y]
 %ifdef  AES_REV_DKS
-%define rofs	128
-%define ik_ref(x,y)	[kptr-16*x+rofs+4*y]
+%define rofs    128
+%define ik_ref(x,y) [kptr-16*x+rofs+4*y]
 %else
-%define rofs	-128
-%define ik_ref(x,y)	[kptr+16*x+rofs+4*y]
+%define rofs    -128
+%define ik_ref(x,y) [kptr+16*x+rofs+4*y]
 %endif
-            
+
 %define tab_0(x)   [tptr+8*x]
 %define tab_1(x)   [tptr+8*x+3]
 %define tab_2(x)   [tptr+8*x+2]
 %define tab_3(x)   [tptr+8*x+1]
 %define tab_f(x)   byte [tptr+8*x+1]
 %define tab_i(x)   byte [tptr+8*x+7]
-%define t_ref(x,r) tab_ %+ x(r)	
+%define t_ref(x,r) tab_ %+ x(r)
 
-%macro ff_rnd 5					; normal forward round
-    mov		%1d, fk_ref(%5,0)
-    mov		%2d, fk_ref(%5,1)
-    mov		%3d, fk_ref(%5,2)
-    mov		%4d, fk_ref(%5,3)
+%macro ff_rnd 5                 ; normal forward round
+    mov     %1d, fk_ref(%5,0)
+    mov     %2d, fk_ref(%5,1)
+    mov     %3d, fk_ref(%5,2)
+    mov     %4d, fk_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    shr		eax, 16
-    xor		%1d, t_ref(0,rsi)
-    xor		%4d, t_ref(1,rdi)
-    movzx	esi, al
-    movzx	edi, ah
-    xor		%3d, t_ref(2,rsi)
-    xor		%2d, t_ref(3,rdi)
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    shr		ebx, 16
-    xor		%2d, t_ref(0,rsi)
-    xor		%1d, t_ref(1,rdi)
-    movzx	esi, bl
-    movzx	edi, bh
-    xor		%4d, t_ref(2,rsi)
-    xor		%3d, t_ref(3,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    shr     eax, 16
+    xor     %1d, t_ref(0,rsi)
+    xor     %4d, t_ref(1,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    xor     %3d, t_ref(2,rsi)
+    xor     %2d, t_ref(3,rdi)
 
-    movzx	esi, cl
-    movzx	edi, ch
-    shr		ecx, 16
-    xor		%3d, t_ref(0,rsi)
-    xor		%2d, t_ref(1,rdi)
-    movzx	esi, cl
-    movzx	edi, ch
-    xor		%1d, t_ref(2,rsi)
-    xor		%4d, t_ref(3,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    shr     ebx, 16
+    xor     %2d, t_ref(0,rsi)
+    xor     %1d, t_ref(1,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    xor     %4d, t_ref(2,rsi)
+    xor     %3d, t_ref(3,rdi)
 
-    movzx	esi, dl
-    movzx	edi, dh
-    shr		edx, 16
-    xor		%4d, t_ref(0,rsi)
-    xor		%3d, t_ref(1,rdi)
-    movzx	esi, dl
-    movzx	edi, dh
-    xor		%2d, t_ref(2,rsi)
-    xor		%1d, t_ref(3,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    shr     ecx, 16
+    xor     %3d, t_ref(0,rsi)
+    xor     %2d, t_ref(1,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    xor     %1d, t_ref(2,rsi)
+    xor     %4d, t_ref(3,rdi)
 
-    mov		eax,%1d
-    mov		ebx,%2d
-    mov		ecx,%3d
-    mov		edx,%4d
-%endmacro	
+    movzx   esi, dl
+    movzx   edi, dh
+    shr     edx, 16
+    xor     %4d, t_ref(0,rsi)
+    xor     %3d, t_ref(1,rdi)
+    movzx   esi, dl
+    movzx   edi, dh
+    xor     %2d, t_ref(2,rsi)
+    xor     %1d, t_ref(3,rdi)
+
+    mov     eax,%1d
+    mov     ebx,%2d
+    mov     ecx,%3d
+    mov     edx,%4d
+%endmacro
 
 %ifdef LAST_ROUND_TABLES
 
-%macro fl_rnd 5					; last forward round
-    add		tptr, 2048
-    mov		%1d, fk_ref(%5,0)
-    mov		%2d, fk_ref(%5,1)
-    mov		%3d, fk_ref(%5,2)
-    mov		%4d, fk_ref(%5,3)
+%macro fl_rnd 5                 ; last forward round
+    add     tptr, 2048
+    mov     %1d, fk_ref(%5,0)
+    mov     %2d, fk_ref(%5,1)
+    mov     %3d, fk_ref(%5,2)
+    mov     %4d, fk_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    shr		eax, 16
-    xor		%1d, t_ref(0,rsi)
-    xor		%4d, t_ref(1,rdi)
-    movzx	esi, al
-    movzx	edi, ah
-    xor		%3d, t_ref(2,rsi)
-    xor		%2d, t_ref(3,rdi)
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    shr		ebx, 16
-    xor		%2d, t_ref(0,rsi)
-    xor		%1d, t_ref(1,rdi)
-    movzx	esi, bl
-    movzx	edi, bh
-    xor		%4d, t_ref(2,rsi)
-    xor		%3d, t_ref(3,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    shr     eax, 16
+    xor     %1d, t_ref(0,rsi)
+    xor     %4d, t_ref(1,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    xor     %3d, t_ref(2,rsi)
+    xor     %2d, t_ref(3,rdi)
 
-    movzx	esi, cl
-    movzx	edi, ch
-    shr		ecx, 16
-    xor		%3d, t_ref(0,rsi)
-    xor		%2d, t_ref(1,rdi)
-    movzx	esi, cl
-    movzx	edi, ch
-    xor		%1d, t_ref(2,rsi)
-    xor		%4d, t_ref(3,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    shr     ebx, 16
+    xor     %2d, t_ref(0,rsi)
+    xor     %1d, t_ref(1,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    xor     %4d, t_ref(2,rsi)
+    xor     %3d, t_ref(3,rdi)
 
-    movzx	esi, dl
-    movzx	edi, dh
-    shr		edx, 16
-    xor		%4d, t_ref(0,rsi)
-    xor		%3d, t_ref(1,rdi)
-    movzx	esi, dl
-    movzx	edi, dh
-    xor		%2d, t_ref(2,rsi)
-    xor		%1d, t_ref(3,rdi)
-%endmacro	
+    movzx   esi, cl
+    movzx   edi, ch
+    shr     ecx, 16
+    xor     %3d, t_ref(0,rsi)
+    xor     %2d, t_ref(1,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    xor     %1d, t_ref(2,rsi)
+    xor     %4d, t_ref(3,rdi)
+
+    movzx   esi, dl
+    movzx   edi, dh
+    shr     edx, 16
+    xor     %4d, t_ref(0,rsi)
+    xor     %3d, t_ref(1,rdi)
+    movzx   esi, dl
+    movzx   edi, dh
+    xor     %2d, t_ref(2,rsi)
+    xor     %1d, t_ref(3,rdi)
+%endmacro
 
 %else
 
-%macro fl_rnd 5					; last forward round
-    mov		%1d, fk_ref(%5,0)
-    mov		%2d, fk_ref(%5,1)
-    mov		%3d, fk_ref(%5,2)
-    mov		%4d, fk_ref(%5,3)
+%macro fl_rnd 5                 ; last forward round
+    mov     %1d, fk_ref(%5,0)
+    mov     %2d, fk_ref(%5,1)
+    mov     %3d, fk_ref(%5,2)
+    mov     %4d, fk_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    shr		eax, 16
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    xor		%1d, esi
-    rol		edi, 8
-    xor		%4d, edi
-    movzx	esi, al
-    movzx	edi, ah
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%3d, esi
-    xor		%2d, edi
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    shr		ebx, 16
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    xor		%2d, esi
-    rol		edi, 8
-    xor		%1d, edi
-    movzx	esi, bl
-    movzx	edi, bh
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%4d, esi
-    xor		%3d, edi
+    movzx   esi, al
+    movzx   edi, ah
+    shr     eax, 16
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    xor     %1d, esi
+    rol     edi, 8
+    xor     %4d, edi
+    movzx   esi, al
+    movzx   edi, ah
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %3d, esi
+    xor     %2d, edi
 
-    movzx	esi, cl
-    movzx	edi, ch
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    shr		ecx, 16
-    xor		%3d, esi
-    rol		edi, 8
-    xor		%2d, edi
-    movzx	esi, cl
-    movzx	edi, ch
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%1d, esi
-    xor		%4d, edi
+    movzx   esi, bl
+    movzx   edi, bh
+    shr     ebx, 16
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    xor     %2d, esi
+    rol     edi, 8
+    xor     %1d, edi
+    movzx   esi, bl
+    movzx   edi, bh
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %4d, esi
+    xor     %3d, edi
 
-    movzx	esi, dl
-    movzx	edi, dh
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    shr		edx, 16
-    xor		%4d, esi
-    rol		edi, 8
-    xor		%3d, edi
-    movzx	esi, dl
-    movzx	edi, dh
-    movzx	esi, t_ref(f,rsi)
-    movzx	edi, t_ref(f,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%2d, esi
-    xor		%1d, edi
-%endmacro	
+    movzx   esi, cl
+    movzx   edi, ch
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    shr     ecx, 16
+    xor     %3d, esi
+    rol     edi, 8
+    xor     %2d, edi
+    movzx   esi, cl
+    movzx   edi, ch
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %1d, esi
+    xor     %4d, edi
+
+    movzx   esi, dl
+    movzx   edi, dh
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    shr     edx, 16
+    xor     %4d, esi
+    rol     edi, 8
+    xor     %3d, edi
+    movzx   esi, dl
+    movzx   edi, dh
+    movzx   esi, t_ref(f,rsi)
+    movzx   edi, t_ref(f,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %2d, esi
+    xor     %1d, edi
+%endmacro
 
 %endif
 
-%macro ii_rnd 5					; normal inverse round
-    mov		%1d, ik_ref(%5,0)
-    mov		%2d, ik_ref(%5,1)
-    mov		%3d, ik_ref(%5,2)
-    mov		%4d, ik_ref(%5,3)
+%macro ii_rnd 5                 ; normal inverse round
+    mov     %1d, ik_ref(%5,0)
+    mov     %2d, ik_ref(%5,1)
+    mov     %3d, ik_ref(%5,2)
+    mov     %4d, ik_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    shr		eax, 16
-    xor		%1d, t_ref(0,rsi)
-    xor		%2d, t_ref(1,rdi)
-    movzx	esi, al
-    movzx	edi, ah
-    xor		%3d, t_ref(2,rsi)
-    xor		%4d, t_ref(3,rdi)
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    shr		ebx, 16
-    xor		%2d, t_ref(0,rsi)
-    xor		%3d, t_ref(1,rdi)
-    movzx	esi, bl
-    movzx	edi, bh
-    xor		%4d, t_ref(2,rsi)
-    xor		%1d, t_ref(3,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    shr     eax, 16
+    xor     %1d, t_ref(0,rsi)
+    xor     %2d, t_ref(1,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    xor     %3d, t_ref(2,rsi)
+    xor     %4d, t_ref(3,rdi)
 
-    movzx	esi, cl
-    movzx	edi, ch
-    shr		ecx, 16
-    xor		%3d, t_ref(0,rsi)
-    xor		%4d, t_ref(1,rdi)
-    movzx	esi, cl
-    movzx	edi, ch
-    xor		%1d, t_ref(2,rsi)
-    xor		%2d, t_ref(3,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    shr     ebx, 16
+    xor     %2d, t_ref(0,rsi)
+    xor     %3d, t_ref(1,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    xor     %4d, t_ref(2,rsi)
+    xor     %1d, t_ref(3,rdi)
 
-    movzx	esi, dl
-    movzx	edi, dh
-    shr		edx, 16
-    xor		%4d, t_ref(0,rsi)
-    xor		%1d, t_ref(1,rdi)
-    movzx	esi, dl
-    movzx	edi, dh
-    xor		%2d, t_ref(2,rsi)
-    xor		%3d, t_ref(3,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    shr     ecx, 16
+    xor     %3d, t_ref(0,rsi)
+    xor     %4d, t_ref(1,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    xor     %1d, t_ref(2,rsi)
+    xor     %2d, t_ref(3,rdi)
 
-    mov		eax,%1d
-    mov		ebx,%2d
-    mov		ecx,%3d
-    mov		edx,%4d
-%endmacro	
+    movzx   esi, dl
+    movzx   edi, dh
+    shr     edx, 16
+    xor     %4d, t_ref(0,rsi)
+    xor     %1d, t_ref(1,rdi)
+    movzx   esi, dl
+    movzx   edi, dh
+    xor     %2d, t_ref(2,rsi)
+    xor     %3d, t_ref(3,rdi)
+
+    mov     eax,%1d
+    mov     ebx,%2d
+    mov     ecx,%3d
+    mov     edx,%4d
+%endmacro
 
 %ifdef LAST_ROUND_TABLES
 
-%macro il_rnd 5					; last inverse round
-    add		tptr, 2048
-    mov		%1d, ik_ref(%5,0)
-    mov		%2d, ik_ref(%5,1)
-    mov		%3d, ik_ref(%5,2)
-    mov		%4d, ik_ref(%5,3)
+%macro il_rnd 5                 ; last inverse round
+    add     tptr, 2048
+    mov     %1d, ik_ref(%5,0)
+    mov     %2d, ik_ref(%5,1)
+    mov     %3d, ik_ref(%5,2)
+    mov     %4d, ik_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    shr		eax, 16
-    xor		%1d, t_ref(0,rsi)
-    xor		%2d, t_ref(1,rdi)
-    movzx	esi, al
-    movzx	edi, ah
-    xor		%3d, t_ref(2,rsi)
-    xor		%4d, t_ref(3,rdi)
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    shr		ebx, 16
-    xor		%2d, t_ref(0,rsi)
-    xor		%3d, t_ref(1,rdi)
-    movzx	esi, bl
-    movzx	edi, bh
-    xor		%4d, t_ref(2,rsi)
-    xor		%1d, t_ref(3,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    shr     eax, 16
+    xor     %1d, t_ref(0,rsi)
+    xor     %2d, t_ref(1,rdi)
+    movzx   esi, al
+    movzx   edi, ah
+    xor     %3d, t_ref(2,rsi)
+    xor     %4d, t_ref(3,rdi)
 
-    movzx	esi, cl
-    movzx	edi, ch
-    shr		ecx, 16
-    xor		%3d, t_ref(0,rsi)
-    xor		%4d, t_ref(1,rdi)
-    movzx	esi, cl
-    movzx	edi, ch
-    xor		%1d, t_ref(2,rsi)
-    xor		%2d, t_ref(3,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    shr     ebx, 16
+    xor     %2d, t_ref(0,rsi)
+    xor     %3d, t_ref(1,rdi)
+    movzx   esi, bl
+    movzx   edi, bh
+    xor     %4d, t_ref(2,rsi)
+    xor     %1d, t_ref(3,rdi)
 
-    movzx	esi, dl
-    movzx	edi, dh
-    shr		edx, 16
-    xor		%4d, t_ref(0,rsi)
-    xor		%1d, t_ref(1,rdi)
-    movzx	esi, dl
-    movzx	edi, dh
-    xor		%2d, t_ref(2,rsi)
-    xor		%3d, t_ref(3,rdi)
-%endmacro	
+    movzx   esi, cl
+    movzx   edi, ch
+    shr     ecx, 16
+    xor     %3d, t_ref(0,rsi)
+    xor     %4d, t_ref(1,rdi)
+    movzx   esi, cl
+    movzx   edi, ch
+    xor     %1d, t_ref(2,rsi)
+    xor     %2d, t_ref(3,rdi)
+
+    movzx   esi, dl
+    movzx   edi, dh
+    shr     edx, 16
+    xor     %4d, t_ref(0,rsi)
+    xor     %1d, t_ref(1,rdi)
+    movzx   esi, dl
+    movzx   edi, dh
+    xor     %2d, t_ref(2,rsi)
+    xor     %3d, t_ref(3,rdi)
+%endmacro
 
 %else
 
-%macro il_rnd 5					; last inverse round
-    mov		%1d, ik_ref(%5,0)
-    mov		%2d, ik_ref(%5,1)
-    mov		%3d, ik_ref(%5,2)
-    mov		%4d, ik_ref(%5,3)
+%macro il_rnd 5                 ; last inverse round
+    mov     %1d, ik_ref(%5,0)
+    mov     %2d, ik_ref(%5,1)
+    mov     %3d, ik_ref(%5,2)
+    mov     %4d, ik_ref(%5,3)
 
-    movzx	esi, al
-    movzx	edi, ah
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    shr		eax, 16
-    xor		%1d, esi
-    rol		edi, 8
-    xor		%2d, edi
-    movzx	esi, al
-    movzx	edi, ah
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%3d, esi
-    xor		%4d, edi
-    
-    movzx	esi, bl
-    movzx	edi, bh
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    shr		ebx, 16
-    xor		%2d, esi
-    rol		edi, 8
-    xor		%3d, edi
-    movzx	esi, bl
-    movzx	edi, bh
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%4d, esi
-    xor		%1d, edi
+    movzx   esi, al
+    movzx   edi, ah
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    shr     eax, 16
+    xor     %1d, esi
+    rol     edi, 8
+    xor     %2d, edi
+    movzx   esi, al
+    movzx   edi, ah
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %3d, esi
+    xor     %4d, edi
 
-    movzx	esi, cl
-    movzx	edi, ch
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    shr		ecx, 16
-    xor		%3d, esi
-    rol		edi, 8
-    xor		%4d, edi
-    movzx	esi, cl
-    movzx	edi, ch
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%1d, esi
-    xor		%2d, edi
+    movzx   esi, bl
+    movzx   edi, bh
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    shr     ebx, 16
+    xor     %2d, esi
+    rol     edi, 8
+    xor     %3d, edi
+    movzx   esi, bl
+    movzx   edi, bh
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %4d, esi
+    xor     %1d, edi
 
-    movzx	esi, dl
-    movzx	edi, dh
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    shr		edx, 16
-    xor		%4d, esi
-    rol		edi, 8
-    xor		%1d, edi
-    movzx	esi, dl
-    movzx	edi, dh
-    movzx	esi, t_ref(i,rsi)
-    movzx	edi, t_ref(i,rdi)
-    rol		esi, 16
-    rol		edi, 24
-    xor		%2d, esi
-    xor		%3d, edi
-%endmacro	
+    movzx   esi, cl
+    movzx   edi, ch
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    shr     ecx, 16
+    xor     %3d, esi
+    rol     edi, 8
+    xor     %4d, edi
+    movzx   esi, cl
+    movzx   edi, ch
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %1d, esi
+    xor     %2d, edi
+
+    movzx   esi, dl
+    movzx   edi, dh
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    shr     edx, 16
+    xor     %4d, esi
+    rol     edi, 8
+    xor     %1d, edi
+    movzx   esi, dl
+    movzx   edi, dh
+    movzx   esi, t_ref(i,rsi)
+    movzx   edi, t_ref(i,rdi)
+    rol     esi, 16
+    rol     edi, 24
+    xor     %2d, esi
+    xor     %3d, edi
+%endmacro
 
 %endif
 
@@ -678,7 +681,7 @@
 %endif
 
     section .data align=64
-    align	64
+    align   64
 enc_tab:
     enc_vals u8
 %ifdef LAST_ROUND_TABLES
@@ -686,39 +689,52 @@ enc_tab:
 %endif
 
     section .text align=16
-    align	16
-aes_encrypt:
+    align   16
 
-%ifdef __GNUC__
-    sub		rsp, 4*8		; gnu/linux binary interface
-    mov		[rsp+0*8], rsi	; output pointer
-    mov		r8, rdx			; context
+%ifdef _SEH_
+proc_frame aes_encrypt
+	alloc_stack	7*8			; 7 to align stack to 16 bytes
+	save_reg	rsi,4*8
+	save_reg	rdi,5*8
+	save_reg	rbx,1*8
+	save_reg	rbp,2*8
+	save_reg	r12,3*8
+end_prologue
+    mov     rdi, rcx        ; input pointer
+    mov     [rsp+0*8], rdx  ; output pointer
 %else
-    sub		rsp, 6*8		; windows binary interface
-    mov		[rsp+4*8], rsi
-    mov		[rsp+5*8], rdi
-    mov		[rsp+0*8], rdx	; output pointer
-    mov		rdi, rcx		; input pointer
-%endif						
-    mov		[rsp+1*8], rbx	; input pointer in rdi
-    mov		[rsp+2*8], rbp	; output pointer in [rsp]
-    mov		[rsp+3*8], r12	; context in r8
+	aes_encrypt:
+	%ifdef __GNUC__
+		sub     rsp, 4*8        ; gnu/linux binary interface
+		mov     [rsp+0*8], rsi  ; output pointer
+		mov     r8, rdx         ; context
+	%else
+		sub     rsp, 6*8        ; windows binary interface
+		mov     [rsp+4*8], rsi
+		mov     [rsp+5*8], rdi
+		mov     rdi, rcx        ; input pointer
+		mov     [rsp+0*8], rdx  ; output pointer
+	%endif
+		mov     [rsp+1*8], rbx  ; input pointer in rdi
+		mov     [rsp+2*8], rbp  ; output pointer in [rsp]
+		mov     [rsp+3*8], r12  ; context in r8
+%endif
 
     movzx   esi, byte [kptr+4*KS_LENGTH]
-    lea		tptr,[enc_tab wrt rip]
-    sub		kptr, fofs
+    lea     tptr,[enc_tab wrt rip]
+    sub     kptr, fofs
 
-    mov		eax, [rdi+0*4]
-    mov		ebx, [rdi+1*4]
-    mov		ecx, [rdi+2*4] 
-    mov		edx, [rdi+3*4]
-       
-    xor		eax, [kptr+fofs]
-    xor		ebx, [kptr+fofs+4]
-    xor		ecx, [kptr+fofs+8]
-    xor		edx, [kptr+fofs+12]
-    
-    lea		kptr,[kptr+rsi]
+    mov     eax, [rdi+0*4]
+    mov     ebx, [rdi+1*4]
+    mov     ecx, [rdi+2*4]
+    mov     edx, [rdi+3*4]
+
+    xor     eax, [kptr+fofs]
+    xor     ebx, [kptr+fofs+4]
+    xor     ecx, [kptr+fofs+8]
+    xor     edx, [kptr+fofs+12]
+
+    lea     kptr,[kptr+rsi]
     cmp     esi, 10*16
     je      .3
     cmp     esi, 12*16
@@ -728,39 +744,46 @@ aes_encrypt:
     mov     rax, -1
     jmp     .4
 
-.1:	ff_rnd	r9, r10, r11, r12, 13
-    ff_rnd	r9, r10, r11, r12, 12
-.2:	ff_rnd	r9, r10, r11, r12, 11
-    ff_rnd	r9, r10, r11, r12, 10
-.3:	ff_rnd	r9, r10, r11, r12, 9
-    ff_rnd	r9, r10, r11, r12, 8
-    ff_rnd	r9, r10, r11, r12, 7
-    ff_rnd	r9, r10, r11, r12, 6
-    ff_rnd	r9, r10, r11, r12, 5
-    ff_rnd	r9, r10, r11, r12, 4
-    ff_rnd	r9, r10, r11, r12, 3
-    ff_rnd	r9, r10, r11, r12, 2
-    ff_rnd	r9, r10, r11, r12, 1
-    fl_rnd	r9, r10, r11, r12, 0
-    
-    mov		rbx, [rsp]
-    mov		[rbx], r9d
-    mov		[rbx+4], r10d
-    mov		[rbx+8], r11d
-    mov		[rbx+12], r12d
-    xor		rax, rax
-.4: 
-    mov		rbx, [rsp+1*8]
-    mov		rbp, [rsp+2*8]
-    mov		r12, [rsp+3*8]
+.1: ff_rnd  r9, r10, r11, r12, 13
+    ff_rnd  r9, r10, r11, r12, 12
+.2: ff_rnd  r9, r10, r11, r12, 11
+    ff_rnd  r9, r10, r11, r12, 10
+.3: ff_rnd  r9, r10, r11, r12, 9
+    ff_rnd  r9, r10, r11, r12, 8
+    ff_rnd  r9, r10, r11, r12, 7
+    ff_rnd  r9, r10, r11, r12, 6
+    ff_rnd  r9, r10, r11, r12, 5
+    ff_rnd  r9, r10, r11, r12, 4
+    ff_rnd  r9, r10, r11, r12, 3
+    ff_rnd  r9, r10, r11, r12, 2
+    ff_rnd  r9, r10, r11, r12, 1
+    fl_rnd  r9, r10, r11, r12, 0
+
+    mov     rbx, [rsp]
+    mov     [rbx], r9d
+    mov     [rbx+4], r10d
+    mov     [rbx+8], r11d
+    mov     [rbx+12], r12d
+    xor     rax, rax
+.4:
+    mov     rbx, [rsp+1*8]
+    mov     rbp, [rsp+2*8]
+    mov     r12, [rsp+3*8]
 %ifdef __GNUC__
-    add		rsp, 4*8
-%else
-    mov		rsi, [rsp+4*8]
-    mov		rdi, [rsp+5*8]
-    add		rsp, 6*8
-%endif
+    add     rsp, 4*8
     ret
+%else
+		mov     rsi, [rsp+4*8]
+		mov     rdi, [rsp+5*8]
+	%ifdef _SEH_
+		add     rsp, 7*8
+		ret
+	endproc_frame
+	%else
+		add     rsp, 6*8
+		ret
+	%endif
+%endif
 
 %endif
 
@@ -771,53 +794,66 @@ aes_encrypt:
     export  aes_decrypt
 %endif
 
-    section .data align=64
-    align	64
-dec_tab:	
+    section .data
+    align   64
+dec_tab:
     dec_vals v8
 %ifdef LAST_ROUND_TABLES
     dec_vals w8
 %endif
 
-    section .text align=16
-    align	16
-aes_decrypt:
+    section .text
+    align   16
 
-%ifdef __GNUC__
-    sub		rsp, 4*8		; gnu/linux binary interface
-    mov		[rsp+0*8], rsi	; output pointer
-    mov		r8, rdx			; context
+%ifdef _SEH_
+proc_frame aes_decrypt
+	alloc_stack	7*8			; 7 to align stack to 16 bytes
+	save_reg	rsi,4*8
+	save_reg	rdi,5*8
+	save_reg	rbx,1*8
+	save_reg	rbp,2*8
+	save_reg	r12,3*8
+end_prologue
+    mov     rdi, rcx        ; input pointer
+    mov     [rsp+0*8], rdx  ; output pointer
 %else
-    sub		rsp, 6*8		; windows binary interface
-    mov		[rsp+4*8], rsi
-    mov		[rsp+5*8], rdi
-    mov		[rsp+0*8], rdx	; output pointer
-    mov		rdi, rcx		; input pointer
+	aes_decrypt:
+	%ifdef __GNUC__
+		sub     rsp, 4*8        ; gnu/linux binary interface
+		mov     [rsp+0*8], rsi  ; output pointer
+		mov     r8, rdx         ; context
+	%else
+		sub     rsp, 6*8        ; windows binary interface
+		mov     [rsp+4*8], rsi
+		mov     [rsp+5*8], rdi
+		mov     rdi, rcx        ; input pointer
+		mov     [rsp+0*8], rdx  ; output pointer
+	%endif
+		mov     [rsp+1*8], rbx  ; input pointer in rdi
+		mov     [rsp+2*8], rbp  ; output pointer in [rsp]
+		mov     [rsp+3*8], r12  ; context in r8
 %endif
-    mov		[rsp+1*8], rbx	; input pointer in rdi
-    mov		[rsp+2*8], rbp	; output pointer in [rsp]
-    mov		[rsp+3*8], r12	; context in r8
 
     movzx   esi,byte[kptr+4*KS_LENGTH]
-    lea		tptr,[dec_tab wrt rip]
-    sub		kptr, rofs	
-    
-    mov		eax, [rdi+0*4]
-    mov		ebx, [rdi+1*4]
-    mov		ecx, [rdi+2*4]
-    mov		edx, [rdi+3*4]
-      
-%ifdef		AES_REV_DKS
-    mov		rdi, kptr
-    lea		kptr,[kptr+rsi]
+    lea     tptr,[dec_tab wrt rip]
+    sub     kptr, rofs
+
+    mov     eax, [rdi+0*4]
+    mov     ebx, [rdi+1*4]
+    mov     ecx, [rdi+2*4]
+    mov     edx, [rdi+3*4]
+
+%ifdef      AES_REV_DKS
+    mov     rdi, kptr
+    lea     kptr,[kptr+rsi]
 %else
-    lea		rdi,[kptr+rsi]
+    lea     rdi,[kptr+rsi]
 %endif
 
-    xor		eax, [rdi+rofs]
-    xor		ebx, [rdi+rofs+4]
-    xor		ecx, [rdi+rofs+8]
-    xor		edx, [rdi+rofs+12]
+    xor     eax, [rdi+rofs]
+    xor     ebx, [rdi+rofs+4]
+    xor     ecx, [rdi+rofs+8]
+    xor     edx, [rdi+rofs+12]
 
     cmp     esi, 10*16
     je      .3
@@ -828,40 +864,46 @@ aes_decrypt:
     mov     rax, -1
     jmp     .4
 
-.1:	ii_rnd	r9, r10, r11, r12, 13
-    ii_rnd	r9, r10, r11, r12, 12
-.2:	ii_rnd	r9, r10, r11, r12, 11
-    ii_rnd	r9, r10, r11, r12, 10
-.3:	ii_rnd	r9, r10, r11, r12, 9
-    ii_rnd	r9, r10, r11, r12, 8
-    ii_rnd	r9, r10, r11, r12, 7
-    ii_rnd	r9, r10, r11, r12, 6
-    ii_rnd	r9, r10, r11, r12, 5
-    ii_rnd	r9, r10, r11, r12, 4
-    ii_rnd	r9, r10, r11, r12, 3
-    ii_rnd	r9, r10, r11, r12, 2
-    ii_rnd	r9, r10, r11, r12, 1
-    il_rnd	r9, r10, r11, r12, 0
-    
-    mov		rbx, [rsp]
-    mov		[rbx], r9d
-    mov		[rbx+4], r10d
-    mov		[rbx+8], r11d
-    mov		[rbx+12], r12d
-    xor		rax, rax
-.4: mov		rbx, [rsp+1*8]
-    mov		rbp, [rsp+2*8]
-    mov		r12, [rsp+3*8]
+.1: ii_rnd  r9, r10, r11, r12, 13
+    ii_rnd  r9, r10, r11, r12, 12
+.2: ii_rnd  r9, r10, r11, r12, 11
+    ii_rnd  r9, r10, r11, r12, 10
+.3: ii_rnd  r9, r10, r11, r12, 9
+    ii_rnd  r9, r10, r11, r12, 8
+    ii_rnd  r9, r10, r11, r12, 7
+    ii_rnd  r9, r10, r11, r12, 6
+    ii_rnd  r9, r10, r11, r12, 5
+    ii_rnd  r9, r10, r11, r12, 4
+    ii_rnd  r9, r10, r11, r12, 3
+    ii_rnd  r9, r10, r11, r12, 2
+    ii_rnd  r9, r10, r11, r12, 1
+    il_rnd  r9, r10, r11, r12, 0
+
+    mov     rbx, [rsp]
+    mov     [rbx], r9d
+    mov     [rbx+4], r10d
+    mov     [rbx+8], r11d
+    mov     [rbx+12], r12d
+    xor     rax, rax
+.4: mov     rbx, [rsp+1*8]
+    mov     rbp, [rsp+2*8]
+    mov     r12, [rsp+3*8]
 %ifdef __GNUC__
-    add		rsp, 4*8
-%else    
-    mov		rsi, [rsp+4*8]
-    mov		rdi, [rsp+5*8]
-    add		rsp, 6*8
-%endif
+    add     rsp, 4*8
     ret
+%else
+		mov     rsi, [rsp+4*8]
+		mov     rdi, [rsp+5*8]
+	%ifdef _SEH_
+		add     rsp, 7*8
+		ret
+	endproc_frame
+	%else
+		add     rsp, 6*8
+		ret
+	%endif
+%endif
 
 %endif
 
     end
-    

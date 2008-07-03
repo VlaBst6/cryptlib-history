@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							PGP Definitions Header File						*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -19,23 +19,28 @@
 
 /* PGP packet types, encoded into the CTB */
 
-#define PGP_PACKET_PKE			1	/* PKC-encrypted session key */
-#define PGP_PACKET_SIGNATURE	2	/* Signature */
-#define PGP_PACKET_SKE			3	/* Secret-key-encrypted session key */
-#define PGP_PACKET_SIGNATURE_ONEPASS 4	/* One-pass signature */
-#define PGP_PACKET_SECKEY	5		/* Secret key */
-#define PGP_PACKET_PUBKEY	6		/* Public key */
-#define PGP_PACKET_SECKEY_SUB 7		/* Secret key subkey */
-#define PGP_PACKET_COPR		8		/* Compressed data */
-#define PGP_PACKET_ENCR		9		/* Encrypted data */
-#define PGP_PACKET_MARKER	10		/* Obsolete marker packet */
-#define PGP_PACKET_DATA		11		/* Raw data */
-#define PGP_PACKET_TRUST	12		/* Trust information */
-#define PGP_PACKET_USERID	13		/* Userid */
-#define PGP_PACKET_PUBKEY_SUB 14	/* Public key subkey */
-#define PGP_PACKET_USERATTR	17		/* User attributes */
-#define PGP_PACKET_ENCR_MDC	18		/* Encrypted data with MDC */
-#define PGP_PACKET_MDC		19		/* MDC */
+typedef enum {
+	PGP_PACKET_NONE,			/* No packet type */
+	PGP_PACKET_PKE,				/* PKC-encrypted session key */
+	PGP_PACKET_SIGNATURE,		/* Signature */
+	PGP_PACKET_SKE,				/* Secret-key-encrypted session key */
+	PGP_PACKET_SIGNATURE_ONEPASS,/* One-pass signature */
+	PGP_PACKET_SECKEY,			/* Secret key */
+	PGP_PACKET_PUBKEY,			/* Public key */
+	PGP_PACKET_SECKEY_SUB,		/* Secret key subkey */
+	PGP_PACKET_COPR,			/* Compressed data */
+	PGP_PACKET_ENCR,			/* Encrypted data */
+	PGP_PACKET_MARKER,			/* Obsolete marker packet */
+	PGP_PACKET_DATA,			/* Raw data */
+	PGP_PACKET_TRUST,			/* Trust information */
+	PGP_PACKET_USERID,			/* Userid */
+	PGP_PACKET_PUBKEY_SUB,		/* Public key subkey */
+	PGP_PACKET_DUMMY1, PGP_PACKET_DUMMY2,	/* 15, 16 unused */
+	PGP_PACKET_USERATTR,		/* User attributes */
+	PGP_PACKET_ENCR_MDC,		/* Encrypted data with MDC */
+	PGP_PACKET_MDC,				/* MDC */
+	PGP_PACKET_LAST				/* Last possible PGP packet type */
+	} PGP_PACKET_TYPE;
 
 /* PGP signature subpacket types */
 
@@ -131,6 +136,10 @@
 #define PGP_ALGO_ZIP		1		/* ZIP compression */
 #define PGP_ALGO_ZLIB		2		/* zlib compression */
 
+/* Highest possible algorithm value, for range checking */
+
+#define PGP_ALGO_LAST		PGP_ALGO_DSA
+
 /* S2K specifier */
 
 #define PGP_S2K				0xFF	/* Standard S2K */
@@ -157,10 +166,6 @@
    cryptlib-wide maximum user ID size */
 
 #define PGP_MAX_USERIDSIZE	256
-
-/* The size of the IV used for PGP's weird CFB mode */
-
-#define PGP_IVSIZE			8
 
 /* The size of the salt used for password hashing and the number of 
    setup "iterations".  This isn't a true iteration count but the number of 
@@ -196,18 +201,44 @@ typedef enum {
 	PGP_ALGOCLASS_LAST		/* Last possible algorithm class */
 	} PGP_ALGOCLASS_TYPE;
 
-CRYPT_ALGO_TYPE pgpToCryptlibAlgo( const int pgpAlgo, 
-								   const PGP_ALGOCLASS_TYPE pgpAlgoClass );
-int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) \
+					   const int pgpAlgo, 
+					   IN_ENUM( PGP_ALGOCLASS ) \
+					   const PGP_ALGOCLASS_TYPE pgpAlgoClass,
+					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo,
+					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) \
+					   int *pgpAlgo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readPgpAlgo( INOUT STREAM *stream, 
+				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
+				 IN_ENUM( PGP_ALGOCLASS ) \
+				 const PGP_ALGOCLASS_TYPE pgpAlgoClass );
 
 /* Prototypes for functions in pgp_misc.c */
 
-int pgpPasswordToKey( CRYPT_CONTEXT cryptContext, const int optKeyLength,
-					  const char *password, const int passwordLength, 
-					  const CRYPT_ALGO_TYPE hashAlgo, const BYTE *salt, 
-					  const int iterations );
-int pgpProcessIV( const CRYPT_CONTEXT iCryptContext, BYTE *ivInfo,
-				  const int ivSize, const BOOLEAN isEncrypt, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+					  IN_LENGTH_SHORT_OPT const int optKeyLength,
+					  IN_BUFFER( passwordLength ) \
+					  const char *password, 
+					  IN_LENGTH_SHORT const int passwordLength, 
+					  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
+					  IN_BUFFER_OPT( saltSize ) 
+					  const BYTE *salt, 
+					  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) \
+					  const int saltSize,
+					  IN_INT const int iterations );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int pgpProcessIV( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+				  INOUT_BUFFER_FIXED( ivInfoSize ) \
+				  BYTE *ivInfo, 
+				  IN_RANGE( 8 + 2, CRYPT_MAX_IVSIZE + 2 ) \
+				  const int ivInfoSize, 
+				  IN_LENGTH_IV const int ivDataSize, 
+				  const BOOLEAN isEncrypt, 
 				  const BOOLEAN resyncIV );
 
 #endif /* _PGP_DEFINED */

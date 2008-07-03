@@ -27,10 +27,6 @@
    the third test since this takes several seconds to execute, which leads to
    an unacceptable delay */
 
-void shaHashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
-					const int outBufMaxLength, const BYTE *inBuffer, 
-					const int inLength, const HASH_STATE hashState );
-
 static const struct {
 	const char FAR_BSS *data;				/* Data to hash */
 	const int length;						/* Length of data */
@@ -54,13 +50,13 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getSHA1Capability();
-	BYTE hashData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashState[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test SHA-1 against values given in FIPS 180-1 */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+		status = testHash( capabilityInfo, hashState, digestValues[ i ].data, 
 						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -77,13 +73,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam,
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( HASH_STATE_SIZE );
+		{
+		*result = HASH_STATE_SIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -100,7 +100,7 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 	/* If the hash state was reset to allow another round of hashing,
 	   reinitialise things */
-	if( !( contextInfoPtr->flags & CONTEXT_HASH_INITED ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_HASH_INITED ) )
 		SHA1_Init( shaInfo );
 
 	if( noBytes > 0 )
@@ -115,51 +115,60 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
    creating an encryption context.  This always uses SHA1 */
 
 void shaHashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
-					const int outBufMaxLength, const BYTE *inBuffer, 
+					const int outBufMaxLength, const void *inBuffer, 
 					const int inLength, const HASH_STATE hashState )
 	{
 	SHA_CTX *shaInfo = ( SHA_CTX * ) hashInfo;
 
-	assert( ( hashState == HASH_ALL && hashInfo == NULL ) || \
-			( hashState != HASH_ALL && \
-			  isWritePtr( hashInfo, sizeof( HASHINFO ) ) ) );
-	assert( ( ( hashState != HASH_END && hashState != HASH_ALL ) && \
+	assert( isWritePtr( hashInfo, sizeof( HASHINFO ) ) );
+	assert( ( hashState != HASH_STATE_END && \
 			  outBuffer == NULL && outBufMaxLength == 0 ) || \
-			( ( hashState == HASH_END || hashState == HASH_ALL ) && \
+			( hashState == HASH_STATE_END && \
 			  isWritePtr( outBuffer, outBufMaxLength ) && \
 			  outBufMaxLength >= 20 ) );
 	assert( inBuffer == NULL || isReadPtr( inBuffer, inLength ) );
 
+	if( ( hashState == HASH_STATE_END && outBufMaxLength < 20 ) || \
+		( hashState != HASH_STATE_END && inLength <= 0 ) )
+		retIntError_Void();
+
 	switch( hashState )
 		{
-		case HASH_START:
+		case HASH_STATE_START:
 			SHA1_Init( shaInfo );
 			/* Drop through */
 
-		case HASH_CONTINUE:
+		case HASH_STATE_CONTINUE:
 			SHA1_Update( shaInfo, ( BYTE * ) inBuffer, inLength );
 			break;
 
-		case HASH_END:
+		case HASH_STATE_END:
 			if( inBuffer != NULL )
 				SHA1_Update( shaInfo, ( BYTE * ) inBuffer, inLength );
 			SHA1_Final( outBuffer, shaInfo );
 			break;
 
-		case HASH_ALL:
-			{
-			SHA_CTX shaInfoBuffer;
-
-			SHA1_Init( &shaInfoBuffer );
-			SHA1_Update( &shaInfoBuffer, ( BYTE * ) inBuffer, inLength );
-			SHA1_Final( outBuffer, &shaInfoBuffer );
-			zeroise( &shaInfoBuffer, sizeof( SHA_CTX ) );
-			break;
-			}
-
 		default:
-			assert( NOTREACHED );
+			retIntError_Void();
 		}
+	}
+
+void shaHashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength, 
+						  const void *inBuffer, const int inLength )
+	{
+	SHA_CTX shaInfo;
+
+	assert( isWritePtr( outBuffer, outBufMaxLength ) && \
+			outBufMaxLength >= 20 );
+	assert( isReadPtr( inBuffer, inLength ) );
+
+	if( outBufMaxLength < 20 || inLength <= 0 )
+		retIntError_Void();
+
+	SHA1_Init( &shaInfo );
+	SHA1_Update( &shaInfo, ( BYTE * ) inBuffer, inLength );
+	SHA1_Final( outBuffer, &shaInfo );
+	zeroise( &shaInfo, sizeof( SHA_CTX ) );
 	}
 
 /****************************************************************************
@@ -169,7 +178,7 @@ void shaHashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_SHA, bitsToBytes( 160 ), "SHA-1",
+	CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 5,
 	bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 	selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 	};

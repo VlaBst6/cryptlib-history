@@ -21,11 +21,17 @@
 
 /* Prototypes for functions in kg_prime.c */
 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN primeSieve( const BIGNUM *candidate );
-int primeProbable( PKC_INFO *pkcInfo, BIGNUM *n, const int noChecks,
-				   const void *callbackArg );
-int generatePrime( PKC_INFO *pkcInfo, BIGNUM *candidate, const int noBits,
-				   const long exponent, const void *callbackArg );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int primeProbable( INOUT PKC_INFO *pkcInfo, 
+				   INOUT BIGNUM *n, 
+				   IN_RANGE( 1, 100 ) const int noChecks );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int generatePrime( INOUT PKC_INFO *pkcInfo, 
+				   INOUT BIGNUM *candidate, 
+				   IN_LENGTH_SHORT_MIN( 120 ) const int noBits, 
+				   IN_INT_OPT const long exponent );
 
 #endif /* _KEYGEN_DEFINED */
 

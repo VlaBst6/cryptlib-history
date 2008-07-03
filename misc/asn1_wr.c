@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								ASN.1 Write Routines						*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2008					*
 *																			*
 ****************************************************************************/
 
@@ -23,9 +23,10 @@
 
 /* Calculate the size of the encoded length octets */
 
-static int calculateLengthSize( const long length )
+CHECK_RETVAL_RANGE( MAX_ERROR, 5 ) \
+static int calculateLengthSize( IN_LENGTH_Z const long length )
 	{
-	assert( length >= 0 );
+	REQUIRES( length >= 0 && length < MAX_INTLENGTH );
 
 	/* Use the short form of the length octets if possible */
 	if( length <= 0x7F )
@@ -44,7 +45,8 @@ static int calculateLengthSize( const long length )
 
 /* Write the length octets for an ASN.1 item */
 
-static int writeLength( STREAM *stream, const long length )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeLength( INOUT STREAM *stream, IN_LENGTH_Z const long length )
 	{
 	BYTE buffer[ 8 + 8 ];
 	const int noLengthOctets = ( length <= 0xFF ) ? 1 : \
@@ -53,28 +55,22 @@ static int writeLength( STREAM *stream, const long length )
 	int bufPos = 1;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
 
-	/* Sanity-check to catch bad length calculations */
-	if( length < 0 )
-		{
-		assert( NOTREACHED );
-		return( sSetError( stream, CRYPT_ERROR_INTERNAL ) );
-		}
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
 
 	/* Use the short form of the length octets if possible */
 	if( length <= 0x7F )
-		return( sputc( stream, ( BYTE ) length ) );
+		return( sputc( stream, length & 0xFF ) );
 
 	/* Encode the number of length octets followed by the octets themselves */
 	buffer[ 0 ] = 0x80 | noLengthOctets;
 	if( noLengthOctets > 3 )
-		buffer[ bufPos++ ] = ( BYTE ) ( length >> 24 );
+		buffer[ bufPos++ ] = ( length >> 24 ) & 0xFF;
 	if( noLengthOctets > 2 )
-		buffer[ bufPos++ ] = ( BYTE ) ( length >> 16 );
+		buffer[ bufPos++ ] = ( length >> 16 ) & 0xFF;
 	if( noLengthOctets > 1 )
-		buffer[ bufPos++ ] = ( BYTE ) ( length >> 8 );
-	buffer[ bufPos++ ] = ( BYTE ) length;
+		buffer[ bufPos++ ] = ( length >> 8 ) & 0xFF;
+	buffer[ bufPos++ ] = length & 0xFF;
 	return( swrite( stream, buffer, bufPos ) );
 	}
 
@@ -82,14 +78,16 @@ static int writeLength( STREAM *stream, const long length )
    easiest way to do this is to encode the bytes starting from the LSB
    and then output them in reverse order to get a big-endian encoding */
 
-static int writeNumeric( STREAM *stream, const long integer )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeNumeric( INOUT STREAM *stream, IN_INT const long integer )
 	{
 	BYTE buffer[ 16 + 8 ];
 	long intValue = integer;
-	int length = 0, i, iterationCount = 0;
+	int length = 0, i, iterationCount;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( integer >= 0 );
+
+	REQUIRES_S( integer >= 0 && integer < MAX_INTLENGTH );
 
 	/* The value 0 is handled specially */
 	if( intValue == 0 )
@@ -98,14 +96,14 @@ static int writeNumeric( STREAM *stream, const long integer )
 	/* Assemble the encoded value in little-endian order */
 	if( intValue > 0 )
 		{
-		while( intValue > 0 && \
-			   iterationCount++ < FAILSAFE_ITERATIONS_SMALL )
+		for( iterationCount = 0;
+			 intValue > 0 && iterationCount < FAILSAFE_ITERATIONS_SMALL;
+			 iterationCount++ )
 			{
 			buffer[ length++ ] = intValue & 0xFF;
 			intValue >>= 8;
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
-			retIntError();
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_SMALL );
 
 		/* Make sure that we don't inadvertently set the sign bit if the 
 		   high bit of the value is set */
@@ -114,8 +112,11 @@ static int writeNumeric( STREAM *stream, const long integer )
 		}
 	else
 		{
-		/* Write a negative integer values.  This code is never executed, 
-		   it's present only in case it's ever needed in the future */
+		/* Write a negative integer values.  This code is never executed 
+		   (and is actually checked for by the precondition at the start of
+		   theis function), it's present only in case it's ever needed in 
+		   the future */
+		iterationCount = 0;
 		do
 			{
 			buffer[ length++ ] = intValue & 0xFF;
@@ -123,14 +124,14 @@ static int writeNumeric( STREAM *stream, const long integer )
 			}
 		while( intValue != -1 && length < sizeof( int ) && \
 			   iterationCount++ < FAILSAFE_ITERATIONS_SMALL );
-		if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
-			retIntError();
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_SMALL );
 
 		/* Make sure that we don't inadvertently clear the sign bit if the 
 		   high bit of the value is clear */
 		if( !( buffer[ length - 1 ] & 0x80 ) )
 			buffer[ length++ ] = 0xFF;
 		}
+	ENSURES( length > 0 && length <= 8 );
 
 	/* Output the value in reverse (big-endian) order */
 	sputc( stream, length );
@@ -149,13 +150,34 @@ static int writeNumeric( STREAM *stream, const long integer )
    implemented as a function rather than a macro since the macro form would
    evaluate the length argument a great many times.
 
-   The function checks for a length < 0 since this is frequently called with
-   the output of another function that may return an error code */
+   The function checks for a length < 0 since this is frequently called as
+   part of a complex expression using the output of another function that 
+   may return an error code.  Because of this we don't use a REQUIRES()
+   predicate on it as we usually would but merely throw an exception in
+   debug mode */
 
-long sizeofObject( const long length )
+RETVAL_RANGE( MAX_ERROR, MAX_INTLENGTH ) \
+long sizeofObject( IN_LENGTH const long length )
 	{
-	return( ( length < 0 ) ? length : \
-			sizeof( BYTE ) + calculateLengthSize( length ) + length );
+	REQUIRES( length < MAX_INTLENGTH );
+
+	/* If we've been passed an error code as input, pass it back 
+	   unmodified */
+	if( length < 0 ) 
+		{
+		assert( DEBUG_WARN );
+		return( length );
+		}
+
+	/* If we're about to exceed the maximum safe length range, don't try and 
+	   go any further */
+	if( length > MAX_INTLENGTH - 10 )
+		{
+		assert( DEBUG_WARN );
+		return( CRYPT_ERROR_OVERFLOW );
+		}
+
+	return( sizeof( BYTE ) + calculateLengthSize( length ) + length );
 	}
 
 #ifdef USE_PKC
@@ -164,11 +186,13 @@ long sizeofObject( const long length )
    sizeofObject() directly because the internal representation is unsigned 
    whereas the encoded form is signed */
 
-int signedBignumSize( const void *bignum )
+RETVAL_RANGE( MAX_ERROR, MAX_INTLENGTH_SHORT ) STDC_NONNULL_ARG( ( 1 ) ) \
+int signedBignumSize( IN TYPECAST( BIGNUM * ) const void *bignum )
 	{
 	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
 
-	return( BN_num_bytes( bignum ) + BN_high_bit( ( BIGNUM * ) bignum ) );
+	return( BN_num_bytes( bignum ) + \
+			( ( BN_high_bit( ( BIGNUM * ) bignum ) ) ? 1 : 0 ) );
 	}
 #endif /* USE_PKC */
 
@@ -180,27 +204,37 @@ int signedBignumSize( const void *bignum )
 
 /* Write a short/large/bignum integer value */
 
-int writeShortInteger( STREAM *stream, const long integer, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeShortInteger( INOUT STREAM *stream, IN_INT const long integer, 
+					   IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( integer >= 0 );
+
+	REQUIRES_S( integer >= 0 && integer < MAX_INTLENGTH );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
-			  BER_INTEGER : BER_CONTEXT_SPECIFIC | tag );
+			  BER_INTEGER : MAKE_CTAG_PRIMITIVE( tag ) );
 	return( writeNumeric( stream, integer ) );
 	}
 
-int writeInteger( STREAM *stream, const BYTE *integer,
-				  const int integerLength, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeInteger( INOUT STREAM *stream, 
+				  IN_BUFFER( integerLength ) const BYTE *integer, 
+				  IN_LENGTH_SHORT const int integerLength, 
+				  IN_TAG const int tag )
 	{
-	const BOOLEAN leadingZero = integerLength && ( *integer & 0x80 ) ? 1 : 0;
+	const BOOLEAN leadingZero = ( integerLength > 0 && \
+								  ( *integer & 0x80 ) ) ? 1 : 0;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( integer, integerLength ) );
-	assert( integerLength > 0 );
+
+	REQUIRES_S( integerLength >= 0 && integerLength < MAX_INTLENGTH_SHORT );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
-			  BER_INTEGER : BER_CONTEXT_SPECIFIC | tag );
+			  BER_INTEGER : MAKE_CTAG_PRIMITIVE( tag ) );
 	writeLength( stream, integerLength + leadingZero );
 	if( leadingZero )
 		sputc( stream, 0 );
@@ -209,7 +243,10 @@ int writeInteger( STREAM *stream, const BYTE *integer,
 
 #ifdef USE_PKC
 
-int writeBignumTag( STREAM *stream, const void *bignum, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeBignumTag( INOUT STREAM *stream, 
+					IN TYPECAST( BIGNUM * ) const void *bignum, 
+					IN_TAG const int tag )
 	{
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, status;
@@ -218,13 +255,17 @@ int writeBignumTag( STREAM *stream, const void *bignum, const int tag )
 	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
 	assert( !BN_is_zero( ( BIGNUM * ) bignum ) );
 
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+
 	/* If it's a dummy write, don't go through the full encoding process.
 	   This optimisation both speeds things up and reduces unnecessary
 	   writing of key data to memory */
 	if( sIsNullStream( stream ) )
 		return( sSkip( stream, sizeofBignum( bignum ) ) );
 
-	length = BN_bn2bin( ( BIGNUM * ) bignum, buffer );
+	status = getBignumData( bignum, buffer, CRYPT_MAX_PKCSIZE, &length );
+	if( cryptStatusError( status ) )
+		retIntError_Stream( stream );
 	status = writeInteger( stream, buffer, length, tag );
 	zeroise( buffer, CRYPT_MAX_PKCSIZE );
 	return( status );
@@ -233,40 +274,52 @@ int writeBignumTag( STREAM *stream, const void *bignum, const int tag )
 
 /* Write an enumerated value */
 
-int writeEnumerated( STREAM *stream, const int enumerated, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeEnumerated( INOUT STREAM *stream, 
+					 IN_RANGE( 0, 999 ) const int enumerated, 
+					 IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( enumerated >= 0 );
+
+	REQUIRES_S( enumerated >= 0 && enumerated < 1000 );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
-			  BER_ENUMERATED : BER_CONTEXT_SPECIFIC | tag );
+			  BER_ENUMERATED : MAKE_CTAG_PRIMITIVE( tag ) );
 	return( writeNumeric( stream, ( long ) enumerated ) );
 	}
 
 /* Write a null value */
 
-int writeNull( STREAM *stream, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeNull( INOUT STREAM *stream, IN_TAG const int tag )
 	{
 	BYTE buffer[ 8 + 8 ];
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+
 	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
-				  BER_NULL : BER_CONTEXT_SPECIFIC | tag;
+				  BER_NULL : MAKE_CTAG_PRIMITIVE( tag );
 	buffer[ 1 ] = 0;
 	return( swrite( stream, buffer, 2 ) );
 	}
 
 /* Write a boolean value */
 
-int writeBoolean( STREAM *stream, const BOOLEAN boolean, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeBoolean( INOUT STREAM *stream, const BOOLEAN boolean, 
+				  IN_TAG const int tag )
 	{
 	BYTE buffer[ 8 + 8 ];
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+
 	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
-				  BER_BOOLEAN : BER_CONTEXT_SPECIFIC | tag;
+				  BER_BOOLEAN : MAKE_CTAG_PRIMITIVE( tag );
 	buffer[ 1 ] = 1;
 	buffer[ 2 ] = boolean ? 0xFF : 0;
 	return( swrite( stream, buffer, 3 ) );
@@ -274,14 +327,20 @@ int writeBoolean( STREAM *stream, const BOOLEAN boolean, const int tag )
 
 /* Write an octet string */
 
-int writeOctetString( STREAM *stream, const BYTE *string, const int length,
-					  const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeOctetString( INOUT STREAM *stream, 
+					  IN_BUFFER( length ) const BYTE *string, 
+					  IN_LENGTH_SHORT const int length, 
+					  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( string, length ) );
 
+	REQUIRES_S( length > 0 && length < MAX_INTLENGTH_SHORT );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
-			  BER_OCTETSTRING : BER_CONTEXT_SPECIFIC | tag );
+			  BER_OCTETSTRING : MAKE_CTAG_PRIMITIVE( tag ) );
 	writeLength( stream, length );
 	return( swrite( stream, string, length ) );
 	}
@@ -292,12 +351,19 @@ int writeOctetString( STREAM *stream, const BYTE *string, const int length,
    defines the character string type and is always used (there's no
    DEFAULT_TAG like the other functions use) */
 
-int writeCharacterString( STREAM *stream, const BYTE *string,
-						  const int length, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeCharacterString( INOUT STREAM *stream, 
+						  IN_BUFFER( bufSize ) const BYTE *string, 
+						  IN_LENGTH_SHORT const int length, 
+						  IN_TAG_ENCODED const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( string, length ) );
-	assert( tag > 0 );
+
+	REQUIRES_S( length > 0 && length < MAX_INTLENGTH_SHORT );
+	REQUIRES_S( ( tag >= BER_STRING_UTF8 && tag <= BER_STRING_BMP ) || \
+				( tag >= MAKE_CTAG_PRIMITIVE( 0 ) && \
+				  tag <= MAKE_CTAG_PRIMITIVE( MAX_CTAG_VALUE ) ) );
 
 	writeTag( stream, tag );
 	writeLength( stream, length );
@@ -306,21 +372,25 @@ int writeCharacterString( STREAM *stream, const BYTE *string,
 
 /* Write a bit string */
 
-int writeBitString( STREAM *stream, const int bitString, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeBitString( INOUT STREAM *stream, IN_INT const int bitString, 
+					IN_TAG const int tag )
 	{
 	BYTE buffer[ 16 + 8 ];
 	unsigned int value = 0;
 	int data = bitString, noBits = 0, i;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( bitString >= 0 );
+
+	REQUIRES_S( bitString >= 0 && bitString < INT_MAX );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	/* ASN.1 bitstrings start at bit 0, so we need to reverse the order of
 	  the bits before we write them out */
 	for( i = 0; i < ( sizeof( int ) > 2 ? 32 : 16 ); i++ )
 		{
 		/* Update the number of significant bits */
-		if( data )
+		if( data > 0 )
 			noBits++;
 
 		/* Reverse the bits */
@@ -331,70 +401,84 @@ int writeBitString( STREAM *stream, const int bitString, const int tag )
 		}
 
 	/* Write the data as an ASN.1 BITSTRING.  This has the potential to lose
-	   some bits on 16-bit systems, but this only applies to the more obscure
-	   CMP error codes and it's unlikely too many people will be running a
-	   CMP server on a DOS box */
-	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? BER_BITSTRING : \
-				  BER_CONTEXT_SPECIFIC | tag;
+	   some bits on 16-bit systems, but the only place where bit strings 
+	   longer than one or two bytes are used is with CMP's bizarre encoding 
+	   of error subcodes that just provide further information above and 
+	   beyond the main error code and text message, and it's unlikely that 
+	   too many people will be running a CMP server on a DOS box */
+	buffer[ 0 ] = ( tag == DEFAULT_TAG ) ? \
+				  BER_BITSTRING : MAKE_CTAG_PRIMITIVE( tag );
 	buffer[ 1 ] = 1 + ( ( noBits + 7 ) >> 3 );
 	buffer[ 2 ] = ~( ( noBits - 1 ) & 7 ) & 7;
 #if UINT_MAX > 0xFFFF
-	buffer[ 3 ] = value >> 24;
-	buffer[ 4 ] = value >> 16;
-	buffer[ 5 ] = value >> 8;
-	buffer[ 6 ] = value;
+	buffer[ 3 ] = ( value >> 24 ) & 0xFF;
+	buffer[ 4 ] = ( value >> 16 ) & 0xFF;
+	buffer[ 5 ] = ( value >> 8 ) & 0xFF;
+	buffer[ 6 ] = value & 0xFF;
 #else
-	buffer[ 3 ] = value >> 8;
-	buffer[ 4 ] = value;
+	buffer[ 3 ] = ( value >> 8 ) & 0xFF;
+	buffer[ 4 ] = value & 0xFF;
 #endif /* 16 vs.32-bit systems */
 	return( swrite( stream, buffer, 3 + ( ( noBits + 7 ) >> 3 ) ) );
 	}
 
 /* Write a canonical UTCTime and GeneralizedTime value */
 
-static int writeTime( STREAM *stream, const time_t timeVal, const int tag,
-					  const BOOLEAN isUTCTime )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeTime( INOUT STREAM *stream, const time_t timeVal, 
+					  IN_TAG const int tag, const BOOLEAN isUTCTime )
 	{
 	struct tm timeInfo, *timeInfoPtr = &timeInfo;
 	char buffer[ 20 + 8 ];
 	const int length = isUTCTime ? 13 : 15;
 
-	/* Sanity check the input data */
-	timeInfoPtr = gmTime_s( &timeVal, timeInfoPtr );
-	if( timeInfoPtr == NULL || timeInfoPtr->tm_year <= 90 )
-		{
-		assert( NOTREACHED );
-		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
-		}
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	buffer[ 0 ] = ( tag != DEFAULT_TAG ) ? BER_CONTEXT_SPECIFIC | tag : \
+	REQUIRES_S( timeVal >= MIN_STORED_TIME_VALUE );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+
+	timeInfoPtr = gmTime_s( &timeVal, timeInfoPtr );
+	ENSURES_S( timeInfoPtr != NULL && timeInfoPtr->tm_year > 90 );
+	buffer[ 0 ] = ( tag != DEFAULT_TAG ) ? MAKE_CTAG_PRIMITIVE( tag ) : \
 				  isUTCTime ? BER_TIME_UTC : BER_TIME_GENERALIZED;
 	buffer[ 1 ] = length;
 	if( isUTCTime )
+		{
 		sprintf_s( buffer + 2, 16, "%02d%02d%02d%02d%02d%02dZ", 
 				   timeInfoPtr->tm_year % 100, timeInfoPtr->tm_mon + 1, 
 				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
 				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );
+		}
 	else
+		{
 		sprintf_s( buffer + 2, 16, "%04d%02d%02d%02d%02d%02dZ", 
 				   timeInfoPtr->tm_year + 1900, timeInfoPtr->tm_mon + 1, 
 				   timeInfoPtr->tm_mday, timeInfoPtr->tm_hour, 
 				   timeInfoPtr->tm_min, timeInfoPtr->tm_sec );
+		}
 	return( swrite( stream, buffer, length + 2 ) );
 	}
 
-int writeUTCTime( STREAM *stream, const time_t timeVal, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeUTCTime( INOUT STREAM *stream, const time_t timeVal, 
+				  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( timeVal > 0 );
+
+	REQUIRES_S( timeVal >= MIN_STORED_TIME_VALUE );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	return( writeTime( stream, timeVal, tag, TRUE ) );
 	}
 
-int writeGeneralizedTime( STREAM *stream, const time_t timeVal, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeGeneralizedTime( INOUT STREAM *stream, const time_t timeVal, 
+						  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( timeVal > 0 );
+
+	REQUIRES_S( timeVal >= MIN_STORED_TIME_VALUE );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	return( writeTime( stream, timeVal, tag, FALSE) );
 	}
@@ -411,48 +495,65 @@ int writeGeneralizedTime( STREAM *stream, const time_t timeVal, const int tag )
    or context-specific-tagged primitive string while the generic version 
    creates a pure hole with no processing of tags */
 
-int writeSequence( STREAM *stream, const int length )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeSequence( INOUT STREAM *stream, IN_LENGTH_Z const int length )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+	
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
 
 	writeTag( stream, BER_SEQUENCE );
 	return( writeLength( stream, length ) );
 	}
 
-int writeSet( STREAM *stream, const int length )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeSet( INOUT STREAM *stream, IN_LENGTH_Z const int length )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
 
 	writeTag( stream, BER_SET );
 	return( writeLength( stream, length ) );
 	}
 
-int writeConstructed( STREAM *stream, const int length, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeConstructed( INOUT STREAM *stream, IN_LENGTH_Z const int length, 
+					  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
 			  BER_SEQUENCE : MAKE_CTAG( tag ) );
 	return( writeLength( stream, length ) );
 	}
 
-int writeOctetStringHole( STREAM *stream, const int length, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeOctetStringHole( INOUT STREAM *stream, 
+						  IN_LENGTH_Z const int length, 
+						  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
 			  BER_OCTETSTRING : MAKE_CTAG_PRIMITIVE( tag ) );
 	return( writeLength( stream, length ) );
 	}
 
-int writeBitStringHole( STREAM *stream, const int length, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeBitStringHole( INOUT STREAM *stream, IN_LENGTH_Z const int length, 
+						IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, ( tag == DEFAULT_TAG ) ? \
 			  BER_BITSTRING : MAKE_CTAG_PRIMITIVE( tag ) );
@@ -460,10 +561,14 @@ int writeBitStringHole( STREAM *stream, const int length, const int tag )
 	return( sputc( stream, 0 ) );
 	}
 
-int writeGenericHole( STREAM *stream, const int length, const int tag )
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeGenericHole( INOUT STREAM *stream, IN_LENGTH_Z const int length, 
+					  IN_TAG const int tag )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( length >= 0 );
+
+	REQUIRES_S( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
 
 	writeTag( stream, tag );
 	return( writeLength( stream, length ) );

@@ -20,6 +20,11 @@
 #define CMP_PASSWORD_ITERATIONS	500		/* No.of PW hashing iterations */
 #define CMP_MAX_PASSWORD_ITERATIONS	10000	/* Max allowable iterations */
 
+/* The CMP HTTP content type */
+
+#define CMP_CONTENT_TYPE		"application/pkixcmp"
+#define CMP_CONTENT_TYPE_LEN	19
+
 /* The CMP spec never defines any keysize for the CMP/Entrust MAC, but
    everyone seems to use 160 bits for this */
 
@@ -162,14 +167,27 @@ typedef struct {
 	   successive transactions.  If a new transaction arrives whose user ID
 	   matches the previous one, we set the user/certInfo changed flag to 
 	   tell the higher-level code to update the user info that it has 
-	   stored */
+	   stored.
+	   
+	   If we encounter an error when reading the peer's PKI header, we can't
+	   easily send a CMP error response because the information that we need
+	   to create the CMP message may not have been read properly.  To handle
+	   this we set the headerRead flag if the header has been successfully
+	   read and if not, bail out rather than trying to create a response
+	   based on incomplete information */
+	BUFFER( CRYPT_MAX_TEXTSIZE, userIDsize ) \
 	BYTE userID[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];	/* User ID */
+	BUFFER( CRYPT_MAX_TEXTSIZE, transIDsize ) \
 	BYTE transID[ CRYPT_MAX_HASHSIZE + 8 ];	/* Transaction nonce */
+	BUFFER( CRYPT_MAX_TEXTSIZE, certIDsize ) \
 	BYTE certID[ CRYPT_MAX_HASHSIZE + 8 ];	/* Sender cert ID */
+	BUFFER( CRYPT_MAX_TEXTSIZE, senderNonceSize ) \
 	BYTE senderNonce[ CRYPT_MAX_HASHSIZE + 8 ];	/* Sender nonce */
+	BUFFER( CRYPT_MAX_TEXTSIZE, recipNonceSize ) \
 	BYTE recipNonce[ CRYPT_MAX_HASHSIZE + 8 ];	/* Recipient nonce */
 	int userIDsize, transIDsize, certIDsize, senderNonceSize, recipNonceSize;
 	BOOLEAN userIDchanged, certIDchanged;	/* Whether ID info same as prev.*/
+	BOOLEAN headerRead;						/* Whether header read successfully */
 
 	/* Usually the key we're getting a cert for is signature-capable, but 
 	   sometimes we need to certify an encryption-only key.  In this case we
@@ -200,6 +218,7 @@ typedef struct {
 	   value */
 	CRYPT_ALGO_TYPE hashAlgo;				/* Hash algo for signature */
 	CRYPT_CONTEXT iMacContext;				/* MAC context */
+	BUFFER( CRYPT_MAX_HASHSIZE, saltSize ) \
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];	/* MAC password salt  */
 	int saltSize;
 	int iterations;							/* MAC password iterations */
@@ -212,6 +231,7 @@ typedef struct {
 	   an alternative MAC context with the returned parameters and use that
 	   instead.  This process is repeated for each message received */
 	CRYPT_CONTEXT iAltMacContext;			/* Alternative MAC context */
+	BUFFER( CRYPT_MAX_HASHSIZE, altSaltSize ) \
 	BYTE altSalt[ CRYPT_MAX_HASHSIZE + 8 ];	/* Alternative MAC password salt */
 	int altSaltSize;
 	int altIterations;						/* Alt.MAC password iterations */
@@ -238,34 +258,57 @@ typedef struct {
 	   cryptlib peer (the DN is ambiguous and can't properly identify the
 	   sender, so we only use it if there's no alternative) */
 	int macInfoPos;							/* Position of MAC info in stream */
+	BUFFER_OPT_FIXED( senderDNlength ) \
 	void *senderDNPtr;
 	int senderDNlength;						/* Position of auth.key ID in stream */
 	} CMP_PROTOCOL_INFO;
 
 /* Prototypes for functions in cmp.c */
 
+CHECK_RETVAL \
 int reqToResp( const int reqType );
-int initMacInfo( const CRYPT_CONTEXT iMacContext, const void *userPassword, 
-				 const int userPasswordLength, const void *salt, 
-				 const int saltLength, const int iterations );
-int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr, 
-						  CMP_PROTOCOL_INFO *protocolInfo );
-int initServerAuthentSign( SESSION_INFO *sessionInfoPtr, 
-						   CMP_PROTOCOL_INFO *protocolInfo );
+CHECK_RETVAL \
+int initMacInfo( const CRYPT_CONTEXT iMacContext, 
+				 IN_BUFFER( userPasswordLength ) \
+				 const void *userPassword, const int userPasswordLength, 
+				 IN_BUFFER( saltLength ) \
+				 const void *salt, const int saltLength, 
+				 const int iterations ) \
+				 STDC_NONNULL_ARG( ( 2, 4 ) );
+CHECK_RETVAL \
+int initServerAuthentMAC( INOUT SESSION_INFO *sessionInfoPtr, 
+						  INOUT CMP_PROTOCOL_INFO *protocolInfo ) \
+						  STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
+int initServerAuthentSign( INOUT SESSION_INFO *sessionInfoPtr, 
+						   INOUT CMP_PROTOCOL_INFO *protocolInfo ) \
+						   STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL \
 int hashMessageContents( const CRYPT_CONTEXT iHashContext,
-						 const void *data, const int length );
+						 IN_BUFFER( length ) \
+						 const void *data, const int length ) \
+						 STDC_NONNULL_ARG( ( 2 ) );
 
-/* Prototypes for functions in cmp_msg.c */
+/* Prototypes for functions in cmp_rd.c */
 
-int readPkiMessage( SESSION_INFO *sessionInfoPtr,
-					CMP_PROTOCOL_INFO *protocolInfo,
-					int messageType );
-int writePkiMessage( SESSION_INFO *sessionInfoPtr,
-					 CMP_PROTOCOL_INFO *protocolInfo,
-					 const CMPBODY_TYPE bodyType );
+CHECK_RETVAL \
+int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
+					INOUT CMP_PROTOCOL_INFO *protocolInfo,
+					int messageType ) \
+					STDC_NONNULL_ARG( ( 1, 2 ) );
+
+/* Prototypes for functions in cmp_wr.c */
+
+CHECK_RETVAL \
+int writePkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
+					 INOUT CMP_PROTOCOL_INFO *protocolInfo,
+					 const CMPBODY_TYPE bodyType ) \
+					 STDC_NONNULL_ARG( ( 1, 2 ) );
 
 /* Prototypes for functions in pnppki.c */
 
-int pnpPkiSession( SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL \
+int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr ) \
+				   STDC_NONNULL_ARG( ( 1 ) );
 
 #endif /* _CMP_DEFINED */

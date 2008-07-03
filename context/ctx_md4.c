@@ -59,13 +59,13 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getMD4Capability();
-	BYTE hashData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashState[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test MD4 against the test vectors given in RFC 1320 */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+		status = testHash( capabilityInfo, hashState, digestValues[ i ].data, 
 						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -82,13 +82,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam,
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( HASH_STATE_SIZE );
+		{
+		*result = HASH_STATE_SIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -123,7 +127,7 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_MD4, bitsToBytes( 128 ), "MD4",
+	CRYPT_ALGO_MD4, bitsToBytes( 128 ), "MD4", 3,
 	bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 	selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 	};

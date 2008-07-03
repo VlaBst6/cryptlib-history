@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Usage Checking Routines					*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2007					*
 *																			*
 ****************************************************************************/
 
@@ -83,9 +83,12 @@
 
 /* Flags to denote the algorithm type */
 
+#define ALGO_TYPE_NONE			0
 #define ALGO_TYPE_SIGN			1
 #define ALGO_TYPE_CRYPT			2
 #define ALGO_TYPE_KEYAGREEMENT	4
+#define ALGO_TYPE_FLAG_NONE		0		/* Defines for range checking */
+#define ALGO_TYPE_FLAG_MAX		0x07
 
 /* Table mapping extended key usage values to key usage flags */
 
@@ -132,7 +135,8 @@ static const EXT_USAGE_INFO FAR_BSS extendedUsageInfo[] = {
 	{ CRYPT_ATTRIBUTE_NONE, 0 }
 	};
 
-/* Table mapping Netscape cert-type flags to extended key usage flags */
+/* Table mapping Netscape certificate-type flags to extended key usage 
+   flags */
 
 typedef struct {
 	const int certType;
@@ -164,12 +168,29 @@ static const CERT_TYPE_INFO FAR_BSS certTypeInfo[] = {
    no-op extension whose presence is the equivalent of adding "|| TRUE" to 
    an expression */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int getExtendedKeyUsageFlags( const ATTRIBUTE_LIST *attributes,
-									 const int algorithmType,
-									 CRYPT_ATTRIBUTE_TYPE *errorLocus )
+									 IN_FLAGS( ALGO_TYPE ) const int algorithmType,
+									 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+										CRYPT_ATTRIBUTE_TYPE *errorLocus )
 	{
 	int keyUsage = 0, i;
 
+	assert( isReadPtr( attributes, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+
+	REQUIRES( algorithmType > ALGO_TYPE_FLAG_NONE && \
+			  algorithmType < ALGO_TYPE_FLAG_MAX );
+
+	/* Most certificates don't contain an extendedKeyUsage extension so 
+	   rather than iterating through a long list of non-present attribute 
+	   fields we perform an early-out check to see whether there's actually
+	   anything to do */
+	if( !checkAttributePresent( attributes, CRYPT_CERTINFO_EXTKEYUSAGE ) )
+		return( 0 );
+
+	/* There's an extendedKeyUsage extension present, build up the key usage
+	   flags for it */
 	for( i = 0; extendedUsageInfo[ i ].usageType != CRYPT_ATTRIBUTE_NONE && \
 				i < FAILSAFE_ARRAYSIZE( extendedUsageInfo, EXT_USAGE_INFO ); 
 		 i++ )
@@ -201,37 +222,45 @@ static int getExtendedKeyUsageFlags( const ATTRIBUTE_LIST *attributes,
 
 		keyUsage |= extendedUsage;
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( extendedUsageInfo, EXT_USAGE_INFO ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( extendedUsageInfo, EXT_USAGE_INFO ) );
 
 	return( keyUsage );
 	}
 
-/* Build up key usage flags consistent with the Netscape cert-type purpose */
+/* Build up key usage flags consistent with the Netscape certificate-type 
+   purpose */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
-									 const int algorithmType,
-									 CRYPT_ATTRIBUTE_TYPE *errorLocus )
+									 IN_FLAGS( ALGO_TYPE ) const int algorithmType,
+									 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+										CRYPT_ATTRIBUTE_TYPE *errorLocus )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr = \
 				findAttributeField( attributes, CRYPT_CERTINFO_NS_CERTTYPE, 
 									CRYPT_ATTRIBUTE_NONE );
 	int nsCertType, keyUsage = 0, i;
 
-	/* If there isn't a Netscape cert-type extension present, exit */
+	assert( isReadPtr( attributes, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+
+	REQUIRES( algorithmType > ALGO_TYPE_FLAG_NONE && \
+			  algorithmType < ALGO_TYPE_FLAG_MAX );
+
+	/* If there isn't a Netscape certificate-type extension present, exit */
 	if( attributeListPtr == NULL )
 		return( 0 );
 	nsCertType = ( int ) attributeListPtr->intValue;
 
-	/* The Netscape cert-type value is a bitfield containing the different
-	   cert types.  For each cert-type flag which is set, we set the
-	   corresponding keyUsage flags */
+	/* The Netscape certificate-type value is a bitfield containing the 
+	   different certificate types.  For each certificate-type flag that's 
+	   set we set the corresponding keyUsage flags */
 	for( i = 0; certTypeInfo[ i ].certType && \
 				i < FAILSAFE_ARRAYSIZE( certTypeInfo, CERT_TYPE_INFO ); i++ )
 		{
 		int nsUsage = 0;
 
-		/* If this isn't the currently-selected cert-type, continue */
+		/* If this isn't the currently-selected certificate-type, continue */
 		if( !( nsCertType & certTypeInfo[ i ].certType ) )
 			continue;
 
@@ -243,8 +272,8 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
 		if( algorithmType & ALGO_TYPE_KEYAGREEMENT )
 			nsUsage |= certTypeInfo[ i ].keyUsageFlags & USAGE_KEYAGREEMENT_MASK;
 
-		/* If there's no key usage consistent with the Netscape cert-type,
-		   return an error */
+		/* If there's no key usage consistent with the Netscape 
+		   certificate-type, return an error */
 		if( nsUsage == 0 )
 			{
 			*errorLocus = CRYPT_CERTINFO_NS_CERTTYPE;
@@ -253,24 +282,35 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_LIST *attributes,
 
 		keyUsage |= nsUsage;
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certTypeInfo, CERT_TYPE_INFO ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certTypeInfo, CERT_TYPE_INFO ) );
 
 	return( keyUsage );
 	}
 
-/* Get key usage flags for a cert based on its extended key usage/Netscape 
-   cert-type.  Returns 0 if no extKeyUsage/cert-type values present */
+/* Get key usage flags for a certificate based on its extended key 
+   usage/Netscape cert-type.  Returns 0 if no extKeyUsage/cert-type values 
+   present */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
 int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
-								CRYPT_ATTRIBUTE_TYPE *errorLocus, 
-								CRYPT_ERRTYPE_TYPE *errorType )
+								OUT_FLAGS_Z( CRYPT_KEYUSAGE ) int *keyUsage,
+								OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus, 
+								OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
-	int algorithmType = 0, keyUsage;
+	int algorithmType = ALGO_TYPE_NONE, localKeyUsage;
 
 	assert( isReadPtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	/* Clear return value */
+	*keyUsage = CRYPT_KEYUSAGE_NONE;
+
+	/* If there are not attributes present, there's nothing to do */
+	if( certInfoPtr->attributes == NULL )
+		return( CRYPT_OK );
 
 	/* Determine the possible algorithm usage type(s) */
 	if( isCryptAlgo( certInfoPtr->publicKeyAlgo ) )
@@ -279,27 +319,29 @@ int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
 		algorithmType |= ALGO_TYPE_SIGN;
 	if( isKeyxAlgo( certInfoPtr->publicKeyAlgo ) )
 		algorithmType |= ALGO_TYPE_KEYAGREEMENT;
+	ENSURES( algorithmType != ALGO_TYPE_NONE );
 
 	/* Get the key usage flags for the given extended/Netscape usage type(s)
 	   and algorithm type */
-	keyUsage = getExtendedKeyUsageFlags( certInfoPtr->attributes,
-										 algorithmType, errorLocus );
-	keyUsage |= getNetscapeCertTypeFlags( certInfoPtr->attributes, 
-										  algorithmType, errorLocus );
-	if( cryptStatusError( keyUsage ) )
+	localKeyUsage = getExtendedKeyUsageFlags( certInfoPtr->attributes,
+											  algorithmType, errorLocus );
+	localKeyUsage |= getNetscapeCertTypeFlags( certInfoPtr->attributes, 
+											   algorithmType, errorLocus );
+	if( cryptStatusError( localKeyUsage ) )
 		{
 		/* We only have to set the error type at this point since the error
 		   locus was set when we got the key usage flags */
 		*errorType = CRYPT_ERRTYPE_CONSTRAINT;
 		return( CRYPT_ERROR_INVALID );
 		}
+	*keyUsage = localKeyUsage;
 
-	return( keyUsage );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
 *																			*
-*								Check Key/Cert Usage						*
+*							Check Key/Certificate Usage						*
 *																			*
 ****************************************************************************/
 
@@ -307,9 +349,9 @@ int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
    function is used in one of two ways:
 
 	1. Check that a key can be used for a particular purpose, regardless of
-	   whether the cert extensions that define the usage make any sense or 
-	   not.  This is used when performing an object usage check such as 
-	   whether a key can be used for signing or encryption.
+	   whether the certificate extensions that define the usage make any 
+	   sense or not.  This is used when performing an object usage check 
+	   such as whether a key can be used for signing or encryption.
 
 	2. Check that the key usage is consistent.  This is used when performing
 	   a certificate validity check, indicated by setting the 
@@ -321,41 +363,56 @@ int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
 	2. Check for strict usability even if the flags don't make sense.
 	3. Check consistency as per the PKIX and X.509 specs */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5, 6 ) ) \
 int checkKeyUsage( const CERT_INFO *certInfoPtr,
-				   const int flags, const int specificUsage, 
-				   const int complianceLevel, 
-				   CRYPT_ATTRIBUTE_TYPE *errorLocus, 
-				   CRYPT_ERRTYPE_TYPE *errorType )
+				   IN_FLAGS_Z( CHECKKEY ) const int flags, 
+				   IN_FLAGS_Z( CRYPT_KEYUSAGE ) const int specificUsage,
+				   IN_RANGE( CRYPT_COMPLIANCELEVEL_OBLIVIOUS, \
+							 CRYPT_COMPLIANCELEVEL_LAST - 1 ) \
+						const int complianceLevel,
+				   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+						CRYPT_ATTRIBUTE_TYPE *errorLocus,
+				   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+						CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	const BOOLEAN isGeneralCheck = ( flags & CHECKKEY_FLAG_GENCHECK );
+	const BOOLEAN isGeneralCheck = ( flags & CHECKKEY_FLAG_GENCHECK ) ? \
+								   TRUE : FALSE;
 	BOOLEAN keyUsageCritical = 0, isCA = FALSE;
 	const int trustedUsage = \
 				( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
 				  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN ) ? \
 				certInfoPtr->cCertCert->trustedUsage : CRYPT_UNUSED;
 	int keyUsage, rawKeyUsage, extKeyUsage, rawExtKeyUsage, caKeyUsage;
+	int status;
 
 	assert( isReadPtr( certInfoPtr, sizeof( CERT_INFO ) ) );
-	assert( ( ( flags & CHECKKEY_FLAG_CA ) && \
-			  ( specificUsage & ( CRYPT_KEYUSAGE_KEYCERTSIGN | \
-								  CRYPT_KEYUSAGE_CRLSIGN ) ) ) || \
-			( !( flags & CHECKKEY_FLAG_CA ) && \
-			  ( ( specificUsage & ( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-									CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
-									CRYPT_KEYUSAGE_KEYAGREEMENT ) ) || \
-				( specificUsage == CRYPT_UNUSED ) ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( flags >= CHECKKEY_FLAG_NONE && \
+			  flags < CHECKKEY_FLAG_MAX );
+	REQUIRES( specificUsage >= CRYPT_KEYUSAGE_FLAG_NONE && \
+			  specificUsage < CRYPT_KEYUSAGE_FLAG_MAX );
+	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
+			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
+	REQUIRES( ( ( flags & CHECKKEY_FLAG_CA ) && \
+				( specificUsage & ( CRYPT_KEYUSAGE_KEYCERTSIGN | \
+									CRYPT_KEYUSAGE_CRLSIGN ) ) ) || \
+			  ( !( flags & CHECKKEY_FLAG_CA ) && \
+				( ( specificUsage & ( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
+									  CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
+									  CRYPT_KEYUSAGE_KEYAGREEMENT ) ) || \
+				  ( specificUsage == CRYPT_KEYUSAGE_NONE ) ) ) );
 
 	/* There is one universal case in which a key is regarded as invalid for
 	   the requested use and that's when it's explicitly not trusted for the 
 	   purpose.  Note that this check (in oblivious mode) differs slightly
 	   from the later check (in reduced mode or higher) in that in oblivious
-	   mode we ignore the cert's actual key usage and check only the 
+	   mode we ignore the certificate's actual key usage and check only the 
 	   requested against trusted usage */
-	if( specificUsage != CRYPT_UNUSED && trustedUsage != CRYPT_UNUSED && \
-		!( trustedUsage & specificUsage ) )
+	if( specificUsage != CRYPT_KEYUSAGE_NONE && \
+		trustedUsage != CRYPT_UNUSED && !( trustedUsage & specificUsage ) )
 		{
 		/* The issuer is explicitly not trusted to perform the requested 
 		   operation */
@@ -364,56 +421,56 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		return( CRYPT_ERROR_INVALID );
 		}
 
-	/* If we're running in oblivious mode, there's nothing else to check */
+	/* If we're running in oblivious mode there's nothing else to check */
 	if( complianceLevel < CRYPT_COMPLIANCELEVEL_REDUCED )
 		return( CRYPT_OK );
 
 	/* Phase 1: Fix up values if required */
 
-	/* Obtain assorted cert information */
+	/* Obtain assorted certificate information */
 	attributeListPtr = findAttributeField( certInfoPtr->attributes, 
 										   CRYPT_CERTINFO_CA, 
 										   CRYPT_ATTRIBUTE_NONE );
 	if( attributeListPtr != NULL )
 		isCA = attributeListPtr->intValue;
-	extKeyUsage = getKeyUsageFromExtKeyUsage( certInfoPtr, errorLocus, 
-											  errorType );
-	if( cryptStatusError( extKeyUsage ) )
-		return( extKeyUsage );
+	status = getKeyUsageFromExtKeyUsage( certInfoPtr, &extKeyUsage, 
+										 errorLocus, errorType );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* If it's a v1 self-signed cert the CA status and key usage is 
+	/* If it's a v1 self-signed certificate the CA status and key usage are 
 	   implicit/undefined */
 	if( certInfoPtr->version == 1 && \
 		( certInfoPtr->flags & CERT_FLAG_SELFSIGNED ) )
 		{
-		/* If it's claiming to be a CA cert by virtue of being a v1 self-
-		   signed cert, there can't be any v3 CA attributes (or any v3
-		   attributes for that matter) present.  Unfortunately we can't just 
-		   check for the complete non-presence of attributes because the 
-		   cert-import code will have converted an email address in the DN
-		   into the appropriate altName component, creating at least one
-		   valid (in this case) attribute */
+		/* If it's claiming to be a CA certificate by virtue of being a v1 
+		   self-signed certificate there can't be any v3 CA attributes (or 
+		   any v3 attributes for that matter) present.  Unfortunately we 
+		   can't just check for the complete non-presence of attributes 
+		   because the certificate-import code will have converted an email 
+		   address in the DN into the appropriate altName component, 
+		   creating at least one valid (in this case) attribute */
 		if( isGeneralCheck && \
-			checkAttributePresent( certInfoPtr->attributes, 
-								   CRYPT_CERTINFO_BASICCONSTRAINTS ) || \
-			checkAttributePresent( certInfoPtr->attributes, 
-								   CRYPT_CERTINFO_KEYUSAGE ) || \
-			extKeyUsage != 0 )
+			( checkAttributePresent( certInfoPtr->attributes, 
+									 CRYPT_CERTINFO_BASICCONSTRAINTS ) || \
+			  checkAttributePresent( certInfoPtr->attributes, 
+									 CRYPT_CERTINFO_KEYUSAGE ) || \
+			  extKeyUsage != 0 ) )
 			{
 			setErrorValues( CRYPT_CERTINFO_VERSION, 
 							CRYPT_ERRTYPE_ATTR_VALUE );
 			return( CRYPT_ERROR_INVALID );
 			}
 
-		/* It's a v1 self-signed cert with no keyUsage present, don't
+		/* It's a v1 self-signed certificate with no keyUsage present, don't
 		   perform any usage-specific checks */
 		return( CRYPT_OK );
 		}
 
-	/* Get the cert's keyUsage.  If we're running at a reduced compliance
-	   level and the CA flag is set and keyUsage isn't or vice versa, we
-	   synthesise the required value from the other value in order to pass
-	   the checks that follow */
+	/* Get the certificate's keyUsage.  If we're running at a reduced 
+	   compliance level and the CA flag is set and keyUsage isn't or vice 
+	   versa we synthesise the required value from the other value in order 
+	   to pass the checks that follow */
 	attributeListPtr = findAttributeField( certInfoPtr->attributes,
 										   CRYPT_CERTINFO_KEYUSAGE, 
 										   CRYPT_ATTRIBUTE_NONE );
@@ -423,7 +480,7 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		keyUsageCritical = \
 			( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) ? TRUE : FALSE;
 
-		/* If the CA key usages are set, make sure that the CA flag is set in
+		/* If the CA key usages are set make sure that the CA flag is set in
 		   an appropriate manner */
 		if( complianceLevel < CRYPT_COMPLIANCELEVEL_STANDARD && \
 			( keyUsage & specificUsage & ( CRYPT_KEYUSAGE_CRLSIGN | \
@@ -434,29 +491,30 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	else
 		{
 		/* There's no keyUsage information present, start with no usage
-		   details */
+		   available */
 		keyUsage = 0;
 
-		/* If the CA flag is set, make sure that the keyUsage is set in an
+		/* If the CA flag is set make sure that the keyUsage is set in an
 		   appropriate manner */
 		if( complianceLevel < CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL && isCA )
 			keyUsage = CRYPT_KEYUSAGE_KEYCERTSIGN | CRYPT_KEYUSAGE_CRLSIGN;
 
-		/* Some broken certs don't have any keyUsage present, which is meant
-		   to imply that the cert can be used for any usage that the key is
-		   capable of, modulo the magic usages keyCertSign and crlSign.  To
-		   handle this, we map the algorithm type to the matching usage 
-		   types.  In theory the usage may be further modified by the cert 
-		   policy, extKeyUsage, and who knows what else, but in the presence 
-		   of a cert like that it's up to the user to sort out what they 
-		   want to do with it.
+		/* Some broken certificates don't have any keyUsage present, which 
+		   is meant to imply that the certificate can be used for any usage 
+		   that the key is capable of modulo the magic usages keyCertSign 
+		   and crlSign.  To handle this we map the algorithm type to the 
+		   matching usage types.  In theory the usage may be further 
+		   modified by the certificate policy, extKeyUsage, and who knows 
+		   what else but in the presence of a certificate like that it's up 
+		   to the user to sort out what they want to do with it.
 		
-		   Some even more broken certs indicate their usage via a Netscape 
-		   key usage (even though they use X.509 flags everywhere else), 
-		   which means that we fail them if we're strictly applying the PKIX 
-		   requirements at a higher compliance level.  At this lower level,
-		   fixAttributes() will have mapped the Netscape usage to the
-		   equivalent X.509 usage, so there's always a keyUsage present */
+		   Some even more broken certificates indicate their usage via a 
+		   Netscape key usage (even though they use X.509 flags everywhere 
+		   else) which means that we fail them if we're strictly applying 
+		   the PKIX requirements at a higher compliance level.  At this 
+		   lower level, fixAttributes() will have mapped the Netscape usage 
+		   to the equivalent X.509 usage so there's always a keyUsage 
+		   present */
 		if( isCryptAlgo( certInfoPtr->publicKeyAlgo ) )
 			keyUsage |= CRYPT_KEYUSAGE_KEYENCIPHERMENT;
 		if( isSigAlgo( certInfoPtr->publicKeyAlgo ) )
@@ -479,11 +537,12 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 
 	/* Phase 2: Strict usability check */
 
-	/* If we're looking for a CA cert, make sure that the basicConstraints 
-	   CA flag is set and the keyUsage indicates a CA usage (PKIX sections 
-	   4.2.1.3 and 4.2.1.10).  RFC 2459 left this open, it was made explicit 
-	   in RFC 3280.  If we're running at a reduced compliance level, the 
-	   settings will have been adjusted as required earlier on */
+	/* If we're looking for a CA certificate make sure that the 
+	   basicConstraints CA flag is set and the keyUsage indicates a CA usage 
+	   (PKIX sections 4.2.1.3 and 4.2.1.10).  RFC 2459 left this open, it 
+	   was made explicit in RFC 3280.  If we're running at a reduced 
+	   compliance level then the settings will have been adjusted as 
+	   required earlier on */
 	if( flags & CHECKKEY_FLAG_CA )
 		{
 		if( !isCA )
@@ -502,8 +561,8 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	/* There is one universal case in which a key is regarded as invalid for
 	   the requested use and that's when it's explicitly not trusted for the 
 	   purpose */
-	if( specificUsage != CRYPT_UNUSED && trustedUsage != CRYPT_UNUSED && \
-		!( specificUsage & keyUsage ) )
+	if( specificUsage != CRYPT_KEYUSAGE_NONE && \
+		trustedUsage != CRYPT_UNUSED && !( specificUsage & keyUsage ) )
 		{
 		setErrorValues( CRYPT_CERTINFO_TRUSTED_USAGE,
 						CRYPT_ERRTYPE_CONSTRAINT );
@@ -560,18 +619,18 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 
 	/* Phase 3: Consistency check */
 
-	/* If the CA flag is set, make sure that there's a keyUsage with one of 
-	   the CA usages present.  Conversely, if there are CA key usages 
-	   present, make sure that the CA flag is set.  In other words this
+	/* If the CA flag is set make sure that there's a keyUsage with one of 
+	   the CA usages present.  Conversely if there are CA key usages 
+	   present make sure that the CA flag is set.  In other words this
 	   check tests for an XOR relation, ( CA && kU ) || ( !CA && !kU ).
 	   
-	   The CA flag is actually a leftover from an early v3 cert concept and 
-	   is made entirely redundant by the keyUsage flags, but we have to 
-	   check it regardless (PKIX sections 4.2.1.3 and 4.2.1.10).  RFC 2459 
-	   left this open, it was made explicit in RFC 3280 */
+	   The CA flag is actually a leftover from an early v3 certificate 
+	   concept and is made entirely redundant by the keyUsage flags but we 
+	   have to check it regardless (PKIX sections 4.2.1.3 and 4.2.1.10).  
+	   RFC 2459 left this open, it was made explicit in RFC 3280 */
 	if( isCA )
 		{
-		/* It's a CA cert, make sure that a CA keyUsage is set */
+		/* It's a CA certificate, make sure that a CA keyUsage is set */
 		if( !( caKeyUsage | extKeyUsage ) )
 			{
 			setErrorValues( CRYPT_CERTINFO_KEYUSAGE, 
@@ -580,18 +639,20 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 			}
 		}	
 	else
-		/* It's a non-CA cert, make sure that no CA keyUsage is set */
+		{
+		/* It's a non-CA certificate, make sure that no CA keyUsage is set */
 		if( ( caKeyUsage | extKeyUsage ) & ( CRYPT_KEYUSAGE_CRLSIGN | \
 											 CRYPT_KEYUSAGE_KEYCERTSIGN ) )
 			{
 			setErrorValues( CRYPT_CERTINFO_CA, CRYPT_ERRTYPE_CONSTRAINT );
 			return( CRYPT_ERROR_INVALID );
 			}
+		}
 
 	/* Check and enforce the keyUsage if required (PKIX section 4.2.1.3).  
 	   RFC 2459 included some waffly text about critical vs. non-critical 
 	   usage, RFC 3280 made this explicit regardless of criticality */
-	if( specificUsage != CRYPT_UNUSED )
+	if( specificUsage != CRYPT_KEYUSAGE_NONE )
 		{
 		BOOLEAN usageOK = FALSE;
 
@@ -610,9 +671,11 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 				usageOK = TRUE;
 			}
 		else
+			{
 			/* Conventional usage flag, do a straight check */
 			if( keyUsage & specificUsage )
 				usageOK = TRUE;
+			}
 		if( !usageOK )
 			{
 			setErrorValues( ( rawKeyUsage & specificUsage ) ? \
@@ -629,7 +692,7 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	keyUsage = rawKeyUsage;
 	extKeyUsage = rawExtKeyUsage;
 	   		
-	/* Make sure that mutually exclusive flags aren't set (PKIX-ALGS section 
+	/* Make sure that mutually exclusive flags aren't set (RFC 3279 section 
 	   2.3.3) */
 	if( ( keyUsage & CRYPT_KEYUSAGE_ENCIPHERONLY ) && \
 		( keyUsage & CRYPT_KEYUSAGE_DECIPHERONLY ) )
@@ -654,8 +717,9 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		return( CRYPT_ERROR_INVALID );
 		}
 
-	/* Mask out any non-relevant usages (e.g. cert signing, which doesn't 
-	   occur in extended key usages and has already been checked above) */
+	/* Mask out any non-relevant usages (e.g. certificate signing, which 
+	   doesn't occur in extended key usages and has already been checked 
+	   above) */
 	keyUsage &= ~USAGE_MASK_NONRELEVANT;
 	extKeyUsage &= ~USAGE_MASK_NONRELEVANT;
 
@@ -665,8 +729,8 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	if( !extKeyUsage || complianceLevel < CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL )
 		return( CRYPT_OK );
 
-	/* If the CA key usages are set, an encryption key usage shouldn't be 
-	   set (PKIX-ALGS, section 2.3.1) */
+	/* If the CA key usages are set then an encryption key usage shouldn't 
+	   be set (RFC 3279 section 2.3.1) */
 	if( isCA && \
 		( keyUsage & extKeyUsage & ( CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
 									 CRYPT_KEYUSAGE_DATAENCIPHERMENT ) ) )
@@ -679,23 +743,23 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 	   critical, because PKIX says so) make sure that the given usage is 
 	   consistent with the required usage (PKIX section 4.2.1.13).  To 
 	   perform this check we first check for situations where we *don't* 
-	   have to perform the check, and only if none of these occur do we 
+	   have to perform the check and only if none of these occur do we 
 	   perform the actual check.
 	   
 	   Checking whether the extended usage is critical is a bit nontrivial, 
 	   we have to check each possible extended usage since only one of them 
-	   may be present, so we check the criticality of the basic key usage 
+	   may be present so we check the criticality of the basic key usage 
 	   first to allow quick short-circuit evaluation.
 	   
-	   In addition to the explicit criticality checks, we also perform an
+	   In addition to the explicit criticality checks we also perform an
 	   implicit check based on whether this is a freshly-generated, as-yet-
-	   unsigned cryptlib cert.  This is done for two reasons, firstly because 
-	   an unsigned cert won't have had the criticality flag set by the
-	   signing/encoding process so the extension always appears non-critical, 
-	   and secondly because we don't want cryptlib to generate inconsistent 
-	   certs, whether the extensions are marked critical or not (cryptlib
-	   always makes the keyUsage critical, so at least for key usage it's
-	   no change from the standard behaviour) */
+	   unsigned cryptlib certificate.  This is done for two reasons, firstly 
+	   because an unsigned certificate won't have had the criticality flag 
+	   set by the signing/encoding process so the extension always appears 
+	   non-critical and secondly because we don't want cryptlib to generate 
+	   inconsistent certificates, whether the extensions are marked critical 
+	   or not (cryptlib always makes the keyUsage critical so at least for 
+	   key usage it's no change from the standard behaviour) */
 	if( certInfoPtr->certificate != NULL )
 		{
 		int attributeID;
@@ -727,11 +791,11 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 		return( CRYPT_ERROR_INVALID );
 		}
 
-	/* If the encipherOnly or decipherOnly bits are set, the keyAgreement 
-	   bit most also be set (PKIX section 4.2.1.3).  Actually the spec 
-	   merely says "undefined", but we interpret this to mean that they 
-	   should be consistent.  This situation occurs because the encipher/
-	   decipher-only usages were tacked on as modifiers long after 
+	/* If the encipherOnly or decipherOnly bits are set then the 
+	   keyAgreement bit most also be set (PKIX section 4.2.1.3).  Actually 
+	   the spec merely says "undefined" but we interpret this to mean that 
+	   they should be consistent.  This situation occurs because the 
+	   encipher/decipher-only usages were tacked on as modifiers long after 
 	   keyAgreement was defined and make it entirely redundant, in the same 
 	   way that the CA keyUsages make the basicConstraints CA flag 
 	   redundant */

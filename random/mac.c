@@ -19,6 +19,7 @@
 /* General includes */
 
 #include "crypt.h"
+#include "random/random.h"
 
 /* OS-specific includes */
 /* Filled in by Matthijs van Duin */

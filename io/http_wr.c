@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib HTTP Write Routines						*
-*						Copyright Peter Gutmann 1998-2006					*
+*						Copyright Peter Gutmann 1998-2007					*
 *																			*
 ****************************************************************************/
 
@@ -34,14 +34,18 @@
    characters (alphanumerics), and then to check for any special-case
    chars */
 
-static void encodeRFC1866( STREAM *headerStream, const char *string, 
-						   const int stringLength )
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static void encodeRFC1866( INOUT STREAM *headerStream, 
+						   IN_BUFFER( stringLength) const char *string, 
+						   IN_LENGTH_SHORT const int stringLength )
 	{
-	static const char allowedChars[] = "$-_.!*'(),\"/";	/* RFC 1738 + '/' */
+	static const char allowedChars[] = "$-_.!*'(),\"/\x00\x00";	/* RFC 1738 + '/' */
 	int index = 0;
 
 	assert( isWritePtr( headerStream, sizeof( STREAM ) ) );
 	assert( isReadPtr( string, stringLength ) );
+
+	REQUIRES_V( stringLength > 0 && stringLength < MAX_INTLENGTH_SHORT );
 
 	while( index < stringLength )
 		{
@@ -59,12 +63,13 @@ static void encodeRFC1866( STREAM *headerStream, const char *string,
 			continue;
 			}
 		for( i = 0; allowedChars[ i ] != '\0' && ch != allowedChars[ i ] && \
-					i < FAILSAFE_ARRAYSIZE( allowedChars, char ) + 1; i++ );
-		if( i >= FAILSAFE_ARRAYSIZE( allowedChars, char ) + 1 )
-			retIntError_Void();
+					i < FAILSAFE_ARRAYSIZE( allowedChars, char ); i++ );
+		ENSURES_V( i < FAILSAFE_ARRAYSIZE( allowedChars, char ) );
 		if( allowedChars[ i ] != '\0' )
+			{
 			/* It's in the allowed-chars list, output it verbatim */
 			sputc( headerStream, ch );
+			}
 		else
 			{
 			char escapeString[ 16 ];
@@ -87,25 +92,38 @@ static void encodeRFC1866( STREAM *headerStream, const char *string,
    response) is invisible, we have to perform an explicit check to make 
    sure that we sent everything */
 
-int sendHTTPData( STREAM *stream, void *buffer, const int length,
-				  const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int sendHTTPData( INOUT STREAM *stream, 
+				  IN_BUFFER( length ) void *buffer, 
+				  IN_LENGTH const int length, 
+				  IN_FLAGS( HTTP ) const int flags )
 	{
-	int status;
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+	int bytesWritten, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( buffer, length ) );
 
-	status = stream->bufferedTransportWriteFunction( stream, buffer, length, 
-													 flags );
+	REQUIRES( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES( flags >= HTTP_FLAG_NONE && flags <= HTTP_FLAG_MAX );
+
+	status = netStream->bufferedTransportWriteFunction( stream, buffer, 
+														length, 
+														&bytesWritten, flags );
 	if( cryptStatusError( status ) )
+		{
 		/* Network-level error, the lower-level layers have reported the 
 		   error details */
 		return( status );
-	if( status < length )
+		}
+	if( bytesWritten < length )
+		{
 		/* The write timed out, convert the incomplete HTTP header write to 
 		   the appropriate timeout error */
-		retExt( STREAM_ERRINFO, CRYPT_ERROR_TIMEOUT,
-				"HTTP write timed out before all data could be written" );
+		retExt( CRYPT_ERROR_TIMEOUT, 
+				( CRYPT_ERROR_TIMEOUT, NETSTREAM_ERRINFO, 
+				  "HTTP write timed out before all data could be written" ) );
+		}
 	return( CRYPT_OK );
 	}
 
@@ -117,63 +135,99 @@ int sendHTTPData( STREAM *stream, void *buffer, const int length,
 
 /* Write an HTTP request header */
 
-int writeRequestHeader( STREAM *stream, const int contentLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeRequestHeader( INOUT STREAM *stream, 
+						IN_OPT const HTTP_URI_INFO *httpReqInfo,
+						IN_BUFFER_OPT( contentTypeLen ) const char *contentType, 
+						IN_LENGTH_SHORT_Z const int contentTypeLen, 
+						IN_LENGTH_Z const int contentLength )
 	{
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	STREAM headerStream;
 	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
 	const int transportFlag = ( contentLength > 0 ) ? TRANSPORT_FLAG_NONE : \
 													  TRANSPORT_FLAG_FLUSH;
-	int headerLength;
+	int headerLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( contentLength >= 0 );
+	assert( ( httpReqInfo == NULL ) || \
+			isReadPtr( httpReqInfo, sizeof( HTTP_URI_INFO * ) ) );
+	assert( ( contentLength == 0 && contentType == NULL && \
+			  contentTypeLen == 0 ) || \
+			( contentLength >= 1 && \
+			  isReadPtr( contentType, contentTypeLen ) ) );
+	
+	REQUIRES( ( contentLength == 0 && contentType == NULL && \
+				contentTypeLen == 0 ) || \
+			  ( contentLength > 0 && contentLength < MAX_INTLENGTH && \
+			    contentType != NULL && \
+				contentTypeLen > 0 && contentTypeLen < MAX_INTLENGTH ) );
+	REQUIRES( ( httpReqInfo == NULL ) || \
+			  ( httpReqInfo->attributeLen == 0 && \
+				httpReqInfo->valueLen == 0 ) || \
+			  ( httpReqInfo->attributeLen > 0 && \
+				httpReqInfo->valueLen > 0 ) );
 
 	sMemOpen( &headerStream, headerBuffer, HTTP_LINEBUF_SIZE );
-	if( stream->flags & STREAM_NFLAG_HTTPTUNNEL )
+	if( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL )
 		swrite( &headerStream, "CONNECT ", 8 );
 	else
+		{
 		if( contentLength > 0 )
 			swrite( &headerStream, "POST ", 5 );
 		else
 			swrite( &headerStream, "GET ", 4 );
-	if( ( stream->flags & STREAM_NFLAG_HTTPPROXY ) || \
-		( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) )
+		}
+	if( netStream->nFlags & ( STREAM_NFLAG_HTTPPROXY | STREAM_NFLAG_HTTPTUNNEL ) )
 		{
 		/* If we're going through an HTTP proxy/tunnel, send an absolute URL 
 		   rather than just the relative location */
-		if( stream->flags & STREAM_NFLAG_HTTPPROXY )
+		if( netStream->nFlags & STREAM_NFLAG_HTTPPROXY )
 			swrite( &headerStream, "http://", 7 );
-		swrite( &headerStream, stream->host, stream->hostLen );
-		if( stream->port != 80 )
+		swrite( &headerStream, netStream->host, netStream->hostLen );
+		if( netStream->port != 80 )
 			{
 			char portString[ 16 + 8 ];
 			int portStringLength;
 
 			portStringLength = sprintf_s( portString, 16, ":%d", 
-										  stream->port );
+										  netStream->port );
 			swrite( &headerStream, portString, portStringLength );
 			}
 		}
-	if( !( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) )
+	if( !( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) )
 		{
-		if( stream->path != NULL && stream->pathLen > 0 )
-			swrite( &headerStream, stream->path, stream->pathLen );
+		if( netStream->path != NULL && netStream->pathLen > 0 )
+			swrite( &headerStream, netStream->path, netStream->pathLen );
 		else
 			sputc( &headerStream, '/' );
 		}
-	if( stream->query != NULL && stream->queryLen > 0 )
+	if( httpReqInfo != NULL )
 		{
-		sputc( &headerStream, '?' );
-		encodeRFC1866( &headerStream, stream->query, stream->queryLen );
+		if( httpReqInfo->attributeLen > 0 && httpReqInfo->valueLen > 0 )
+			{
+			sputc( &headerStream, '?' );
+			swrite( &headerStream, httpReqInfo->attribute, 
+					httpReqInfo->attributeLen );
+			sputc( &headerStream, '=' );
+			encodeRFC1866( &headerStream, httpReqInfo->value, 
+						   httpReqInfo->valueLen );
+			}
+		if( httpReqInfo->extraDataLen > 0 )
+			{
+			sputc( &headerStream, '&' );
+			swrite( &headerStream, httpReqInfo->extraData, 
+					httpReqInfo->extraDataLen );
+			}
 		}
 	if( isHTTP10( stream ) )
 		swrite( &headerStream, " HTTP/1.0\r\n", 11 );
 	else
 		{
 		swrite( &headerStream, " HTTP/1.1\r\nHost: ", 17 );
-		swrite( &headerStream, stream->host, stream->hostLen );
+		swrite( &headerStream, netStream->host, netStream->hostLen );
 		swrite( &headerStream, "\r\n", 2 );
-		if( stream->flags & STREAM_NFLAG_LASTMSG )
+		if( netStream->nFlags & STREAM_NFLAG_LASTMSG )
 			swrite( &headerStream, "Connection: close\r\n", 19 );
 		}
 	if( contentLength > 0 )
@@ -182,31 +236,40 @@ int writeRequestHeader( STREAM *stream, const int contentLength )
 		int lengthStringLength;
 
 		swrite( &headerStream, "Content-Type: ", 14 );
-		swrite( &headerStream, stream->contentType, stream->contentTypeLen );
+		swrite( &headerStream, contentType, contentTypeLen );
 		swrite( &headerStream, "\r\nContent-Length: ", 18 );
 		lengthStringLength = sprintf_s( lengthString, 8, "%d", 
 										contentLength );
 		swrite( &headerStream, lengthString, lengthStringLength );
 		swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
 		}
-	swrite( &headerStream, "\r\n", 2 );
-	headerLength = stell( &headerStream );
-	assert( sStatusOK( &headerStream ) );
+	status = swrite( &headerStream, "\r\n", 2 );
+	if( cryptStatusOK( status ) )
+		headerLength = stell( &headerStream );
 	sMemDisconnect( &headerStream );
+	ENSURES( cryptStatusOK( status ) );
 	return( sendHTTPData( stream, headerBuffer, headerLength, 
 						  transportFlag ) );
 	}
 
 /* Write an HTTP response header */
 
-static int writeResponseHeader( STREAM *stream, const int contentLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeResponseHeader( INOUT STREAM *stream, 
+								IN_BUFFER( contentTypeLen ) const char *contentType, 
+								IN_LENGTH_SHORT const int contentTypeLen, 
+								IN_LENGTH const int contentLength )
 	{
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 	STREAM headerStream;
 	char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ], lengthString[ 8 + 8 ];
-	int headerLength, lengthStringLength;
+	int headerLength = DUMMY_INIT, lengthStringLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( contentLength > 0 );
+	assert( isReadPtr( contentType, contentTypeLen ) );
+
+	REQUIRES( contentTypeLen > 0 && contentTypeLen < MAX_INTLENGTH );
+	REQUIRES( contentLength > 0 && contentLength < MAX_INTLENGTH );
 
 	sMemOpen( &headerStream, headerBuffer, HTTP_LINEBUF_SIZE );
 	if( isHTTP10( stream ) )
@@ -214,11 +277,11 @@ static int writeResponseHeader( STREAM *stream, const int contentLength )
 	else
 		{
 		swrite( &headerStream, "HTTP/1.1 200 OK\r\n", 17 );
-		if( stream->flags & STREAM_NFLAG_LASTMSG )
+		if( netStream->nFlags & STREAM_NFLAG_LASTMSG )
 			swrite( &headerStream, "Connection: close\r\n", 19 );
 		}
 	swrite( &headerStream, "Content-Type: ", 14 );
-	swrite( &headerStream, stream->contentType, stream->contentTypeLen );
+	swrite( &headerStream, contentType, contentTypeLen );
 	swrite( &headerStream, "\r\nContent-Length: ", 18 );
 	lengthStringLength = sprintf_s( lengthString, 8, "%d", 
 									contentLength );
@@ -226,10 +289,11 @@ static int writeResponseHeader( STREAM *stream, const int contentLength )
 	swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
 	if( isHTTP10( stream ) )
 		swrite( &headerStream, "Pragma: no-cache\r\n", 18 );
-	swrite( &headerStream, "\r\n", 2 );
-	headerLength = stell( &headerStream );
-	assert( sStatusOK( &headerStream ) );
+	status = swrite( &headerStream, "\r\n", 2 );
+	if( cryptStatusOK( status ) )
+		headerLength = stell( &headerStream );
 	sMemDisconnect( &headerStream );
+	ENSURES( cryptStatusOK( status ) );
 	return( sendHTTPData( stream, headerBuffer, headerLength,
 						  TRANSPORT_FLAG_NONE ) );
 	}
@@ -242,70 +306,83 @@ static int writeResponseHeader( STREAM *stream, const int contentLength )
 
 /* Write data to an HTTP stream */
 
-static int writeFunction( STREAM *stream, const void *buffer,
-						  const int length )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int writeFunction( INOUT STREAM *stream, 
+						  IN_BUFFER( length ) const void *buffer, 
+						  IN_LENGTH_FIXED( sizeof( HTTP_DATA_INFO ) ) \
+							const int maxLength, 
+						  OUT_LENGTH_Z int *length )
 	{
-	int localLength = length, status;
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+	HTTP_DATA_INFO *httpDataInfo = ( HTTP_DATA_INFO * ) buffer;
+	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( buffer, length ) );
+	assert( isReadPtr( buffer, maxLength ) );
+	assert( isWritePtr( length, sizeof( int ) ) );
+	
+	REQUIRES( maxLength == sizeof( HTTP_DATA_INFO ) );
+
+	/* Clear return value */
+	*length = 0;
 
 	/* Send the out-of-band HTTP header data to the client or server */
-	if( stream->flags & STREAM_NFLAG_ISSERVER )
+	if( netStream->nFlags & STREAM_NFLAG_ISSERVER )
 		{
-		/* If it's an idempotent get, decode the returned data */
-		if( stream->flags & STREAM_NFLAG_IDEMPOTENT )
+		/* If it's an error status response, send the translated error 
+		   status and exit */
+		if( cryptStatusError( httpDataInfo->reqStatus ) )
 			{
-			const BYTE *bufPtr = buffer;
+			char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
 
-			status = ( short int ) mgetWord( bufPtr );
+			status = sendHTTPError( stream, headerBuffer, HTTP_LINEBUF_SIZE,
+						( httpDataInfo->reqStatus == CRYPT_ERROR_NOTFOUND ) ? \
+							404 : \
+						( httpDataInfo->reqStatus == CRYPT_ERROR_PERMISSION ) ? \
+							401 : 400 );
 			if( cryptStatusError( status ) )
-				{
-				char headerBuffer[ HTTP_LINEBUF_SIZE + 8 ];
+				return( status );
+			*length = maxLength;
 
-				/* It's an error status response, send the translated
-				   error status and exit.  We have to map the send return
-				   value to a written byte count to avoid triggering the
-				   incomplete-write check at the higher level */
-				status = sendHTTPError( stream, headerBuffer, HTTP_LINEBUF_SIZE,
-							( status == CRYPT_ERROR_NOTFOUND ) ? 404 : \
-							( status == CRYPT_ERROR_PERMISSION ) ? 401 : \
-																400 );
-				return( cryptStatusError( status ) ? status : length );
-				}
-			buffer = bufPtr;
-			localLength -= 2;
+			return( CRYPT_OK );
 			}
 
-		status = writeResponseHeader( stream, localLength );
+		status = writeResponseHeader( stream, httpDataInfo->contentType,
+									  httpDataInfo->contentTypeLen,
+									  httpDataInfo->bufSize );
 		}
 	else
 		{
-		assert( ( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) || \
-				stream->contentTypeLen > 0 );
-		assert( !( ( stream->flags & STREAM_NFLAG_HTTPPROXY ) && 
-				   ( stream->flags & STREAM_NFLAG_HTTPTUNNEL ) ) );
-		assert( stream->host != NULL && stream->hostLen > 0 );
+		REQUIRES( ( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) || \
+				  httpDataInfo->contentTypeLen > 0 );
+		REQUIRES( !( ( netStream->nFlags & STREAM_NFLAG_HTTPPROXY ) && 
+					 ( netStream->nFlags & STREAM_NFLAG_HTTPTUNNEL ) ) );
+		REQUIRES( netStream->host != NULL && netStream->hostLen > 0 );
 
-		status = writeRequestHeader( stream, localLength );
+		status = writeRequestHeader( stream, httpDataInfo->reqInfo, 
+									 httpDataInfo->contentType,
+									 httpDataInfo->contentTypeLen,
+									 httpDataInfo->bufSize );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Send the payload data to the client/server.  Since we may have 
-	   modified the length of the data being written we have to be careful 
-	   to return the correct amount to avoid triggering incomplete-write 
-	   checks */
-	status = stream->bufferedTransportWriteFunction( stream, buffer, localLength,
-													 TRANSPORT_FLAG_FLUSH );
-	return( ( status == localLength ) ? length : status );
+	/* Send the payload data to the client/server */
+	status = netStream->bufferedTransportWriteFunction( stream, 
+							httpDataInfo->buffer, httpDataInfo->bufSize,
+							&httpDataInfo->bytesTransferred, 
+							TRANSPORT_FLAG_FLUSH );
+	if( cryptStatusError( status ) )
+		return( status );
+	*length = maxLength;
+
+	return( CRYPT_OK );
 	}
 
-void setStreamLayerHTTPwrite( STREAM *stream )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void setStreamLayerHTTPwrite( INOUT NET_STREAM_INFO *netStream )
 	{
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-
 	/* Set the remaining access method pointers */
-	stream->writeFunction = writeFunction;
+	netStream->writeFunction = writeFunction;
 	}
 #endif /* USE_HTTP */

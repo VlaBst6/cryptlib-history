@@ -539,9 +539,9 @@ public class crypt
 	public const int ENVINFO_DATASIZE                            = 5001; // Data size information
 	public const int ENVINFO_COMPRESSION                         = 5002; // Compression information
 	public const int ENVINFO_CONTENTTYPE                         = 5003; // Inner CMS content type
-	public const int ENVINFO_DETACHEDSIGNATURE                   = 5004; // Generate CMS detached signature
+	public const int ENVINFO_DETACHEDSIGNATURE                   = 5004; // Detached signature
 	public const int ENVINFO_SIGNATURE_RESULT                    = 5005; // Signature check result
-	public const int ENVINFO_MAC                                 = 5006; // Use MAC instead of encrypting
+	public const int ENVINFO_INTEGRITY                           = 5006; // Integrity-protection level
 	public const int ENVINFO_PASSWORD                            = 5007; // User password
 	public const int ENVINFO_KEY                                 = 5008; // Conventional encryption key
 	public const int ENVINFO_SIGNATURE                           = 5009; // Signature/signature check key
@@ -700,12 +700,14 @@ public class crypt
 	public const int CONTENT_DIGESTEDDATA           = 5 ;
 	public const int CONTENT_ENCRYPTEDDATA          = 6 ;
 	public const int CONTENT_COMPRESSEDDATA         = 7 ;
-	public const int CONTENT_TSTINFO                = 8 ;
-	public const int CONTENT_SPCINDIRECTDATACONTEXT = 9 ;
-	public const int CONTENT_RTCSREQUEST            = 10;
-	public const int CONTENT_RTCSRESPONSE           = 11;
-	public const int CONTENT_RTCSRESPONSE_EXT       = 12;
-	public const int CONTENT_LAST                   = 13;
+	public const int CONTENT_AUTHDATA               = 8 ;
+	public const int CONTENT_AUTHENVDATA            = 9 ;
+	public const int CONTENT_TSTINFO                = 10;
+	public const int CONTENT_SPCINDIRECTDATACONTEXT = 11;
+	public const int CONTENT_RTCSREQUEST            = 12;
+	public const int CONTENT_RTCSRESPONSE           = 13;
+	public const int CONTENT_RTCSRESPONSE_EXT       = 14;
+	public const int CONTENT_LAST                   = 15;
 	
 	/* ESS securityClassification codes */
 	
@@ -738,6 +740,16 @@ public class crypt
 	public const int SIGNATURELEVEL_SIGNERCERT = 1; // Include signer cert
 	public const int SIGNATURELEVEL_ALL        = 2; // Include all relevant info
 	public const int SIGNATURELEVEL_LAST       = 3; // Last possible sig.level type
+	
+	/* The level of integrity protection to apply to enveloped data.  The 
+	   default envelope protection for an envelope with keying information 
+	   applied is encryption, this can be modified to use MAC-only protection
+	   (with no encryption) or hybrid encryption + authentication */
+	
+	// CRYPT_INTEGRITY_TYPE
+	public const int INTEGRITY_NONE    = 0; // No integrity protection
+	public const int INTEGRITY_MACONLY = 1; // MAC only, no encryption
+	public const int INTEGRITY_FULL    = 2; // Encryption + ingerity protection
 	
 	/* The certificate export format type, which defines the format in which a
 	   certificate object is exported */
@@ -995,31 +1007,31 @@ public class crypt
 	//	int isPublicKey;			/* Whether this is a public or private key */
 	//
 	//	/* Curve */
-	//	unsigned char p[ CRYPT_MAX_PKCSIZE ];	/* Prime defining Fq */
+	//	unsigned char p[ CRYPT_MAX_PKCSIZE_ECC ];/* Prime defining Fq */
 	//	int pLen;					/* Length of prime in bits */
-	//	unsigned char a[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining curve */
+	//	unsigned char a[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	//	int aLen;					/* Length of element a in bits */
-	//	unsigned char b[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining curve */
+	//	unsigned char b[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	//	int bLen;					/* Length of element b in bits */
 	//
 	//	/* Generator */
-	//	unsigned char gx[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining point */
+	//	unsigned char gx[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	//	int gxLen;					/* Length of element gx in bits */
-	//	unsigned char gy[ CRYPT_MAX_PKCSIZE ];	/* Element in Fq defining point */
+	//	unsigned char gy[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	//	int gyLen;					/* Length of element gy in bits */
-	//	unsigned char r[ CRYPT_MAX_PKCSIZE ];	/* Order of point */
+	//	unsigned char r[ CRYPT_MAX_PKCSIZE_ECC ];/* Order of point */
 	//	int rLen;					/* Length of order in bits */
-	//	unsigned char h[ CRYPT_MAX_PKCSIZE ];	/* Optional cofactor */
+	//	unsigned char h[ CRYPT_MAX_PKCSIZE_ECC ];/* Optional cofactor */
 	//	int hLen;					/* Length of cofactor in bits */
 	//
 	//	/* Public components */
-	//	unsigned char qx[ CRYPT_MAX_PKCSIZE ];	/* Point Q on the curve */
+	//	unsigned char qx[ CRYPT_MAX_PKCSIZE_ECC ];/* Point Q on the curve */
 	//	int qxLen;					/* Length of point xq in bits */
-	//	unsigned char qy[ CRYPT_MAX_PKCSIZE ];	/* Point Q on the curve */
+	//	unsigned char qy[ CRYPT_MAX_PKCSIZE_ECC ];/* Point Q on the curve */
 	//	int qyLen;					/* Length of point xy in bits */
 	//
 	//	/* Private components */
-	//	unsigned char d[ CRYPT_MAX_PKCSIZE ];	/* Random integer */
+	//	unsigned char d[ CRYPT_MAX_PKCSIZE_ECC ];/* Private random integer */
 	//	int dLen;					/* Length of integer in bits */
 	//	} CRYPT_PKCINFO_ECC;
 	

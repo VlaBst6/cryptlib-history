@@ -11,6 +11,7 @@
 /* General includes */
 
 #include "crypt.h"
+#include "random/random.h"
 
 /* These get defined by the Be headers */
 

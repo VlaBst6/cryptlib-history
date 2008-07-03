@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Kernel Interface Header File 				*
-*						Copyright Peter Gutmann 1992-2005					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -67,8 +67,10 @@
 		int iter; \
 		\
 		for( iter = ( start ); iter < ( end ); iter++ ) \
+			{ \
 			if( condition ) \
 				break; \
+			} \
 		assert( iter < ( end ) ); \
 		}
 #else
@@ -138,7 +140,15 @@ typedef enum {
 
    Note that the device and keyset values must be in the same class, since
    they're interchangeable for many message types and this simplifies some
-   of the MKACL() macros that only need to initialise one class type */
+   of the MKACL() macros that only need to initialise one class type.
+   
+   The different between SUBTYPE_KEYSET_FILE and SUBTYPE_KEYSET_FILE_PARTIAL
+   is that the former stores a full index of key ID types and allows 
+   storage of any data type while the latter only handles one or two key
+   IDs and a restricted set of data types.  The difference between 
+   SUBTYPE_KEYSET_DBMS and SUBTYPE_KEYSET_DBMS_STORE is similar, the former
+   is a simple certificate-and-CRL store while the latter stores assorted
+   CA management data items and supports extended operations */
 
 #define SUBTYPE_CLASS_MASK			0x60000000L
 #define SUBTYPE_CLASS_A				0x20000000L
@@ -238,11 +248,12 @@ typedef enum {
 	MESSAGE_DELETEATTRIBUTE				NULL			attributeType
 	MESSAGE_COMPARE						&value			compareType
 	MESSAGE_CHECK						NULL			requestedUse
+	MESSAGE_SELFTEST					NULL			0
 
 	MESSAGE_CHANGENOTIFY				&value			attributeType
 
 	MESSAGE_CTX_ENC/DEC/SIG/SIGCHK/HASH	&value			valueLength
-	MESSAGE_CTX_GENKEY					NULL			isAsync
+	MESSAGE_CTX_GENKEY					NULL			0
 	MESSAGE_CTX_GENIV					NULL			0
 
 	MESSAGE_CRT_SIGN,					NULL			sigKey
@@ -258,7 +269,10 @@ typedef enum {
 
 	MESSAGE_KEY_GET/SET/DELETEKEY		&keymgmtInfo	itemType
 	MESSAGE_KEY_GETFIRST/NEXTCERT		&keymgmtInfo	itemType
-	MESSAGE_KEY_CERTMGMT				&certMgmtInfo	action */
+	MESSAGE_KEY_CERTMGMT				&certMgmtInfo	action 
+	
+	MESSAGE_USER_USERMGMT				&value			action
+	MESSAGE_USER_TRUSTMGMT				&value			action */
 
 typedef enum {
 	MESSAGE_NONE,				/* No message */
@@ -300,6 +314,7 @@ typedef enum {
 	   level to avoid the confused deputy problem */
 	MESSAGE_COMPARE,			/* Compare objs. or obj.properties */
 	MESSAGE_CHECK,				/* Check object info */
+	MESSAGE_SELFTEST,			/* Perform a self-test */
 
 	/* Messages sent from the kernel to object message handlers.  These never
 	   originate from outside the kernel but are generated in response to
@@ -333,6 +348,8 @@ typedef enum {
 	MESSAGE_KEY_GETFIRSTCERT,	/* Keyset: Get first cert in sequence */
 	MESSAGE_KEY_GETNEXTCERT,	/* Keyset: Get next cert in sequence */
 	MESSAGE_KEY_CERTMGMT,		/* Keyset: Cert management */
+	MESSAGE_USER_USERMGMT,		/* User: User management */
+	MESSAGE_USER_TRUSTMGMT,		/* User: Trust management */
 	MESSAGE_LAST,				/* Last valid message type */
 
 	/* Internal-object versions of the above messages */
@@ -351,6 +368,7 @@ typedef enum {
 
 	IMESSAGE_COMPARE = MKINTERNAL( MESSAGE_COMPARE ),
 	IMESSAGE_CHECK = MKINTERNAL( MESSAGE_CHECK ),
+	IMESSAGE_SELFTEST = MKINTERNAL( MESSAGE_SELFTEST ),
 
 	IMESSAGE_CHANGENOTIFY = MKINTERNAL( MESSAGE_CHANGENOTIFY ),
 
@@ -380,6 +398,8 @@ typedef enum {
 	IMESSAGE_KEY_GETFIRSTCERT = MKINTERNAL( MESSAGE_KEY_GETFIRSTCERT ),
 	IMESSAGE_KEY_GETNEXTCERT = MKINTERNAL( MESSAGE_KEY_GETNEXTCERT ),
 	IMESSAGE_KEY_CERTMGMT = MKINTERNAL( MESSAGE_KEY_CERTMGMT ),
+	IMESSAGE_USER_USERMGMT = MKINTERNAL( MESSAGE_USER_USERMGMT ),
+	IMESSAGE_USER_TRUSTMGMT = MKINTERNAL( MESSAGE_USER_TRUSTMGMT ),
 	IMESSAGE_LAST = MKINTERNAL( MESSAGE_LAST )
 	} MESSAGE_TYPE;
 
@@ -455,12 +475,30 @@ typedef enum {
 
 typedef enum {
 	MESSAGE_CHANGENOTIFY_NONE,		/* No notification */
-	MESSAGE_CHANGENOTIFY_STATUS,	/* Object status change */
 	MESSAGE_CHANGENOTIFY_STATE,		/* Object should save/rest.int.state */
 	MESSAGE_CHANGENOTIFY_OBJHANDLE,	/* Object cloned, handle changed */
 	MESSAGE_CHANGENOTIFY_OWNERHANDLE,	/* Object cloned, owner handle changed */
 	MESSAGE_CHANGENOTIFY_LAST		/* Last possible notification type */
 	} MESSAGE_CHANGENOTIFY_TYPE;
+
+/* The operations that a MESSAGE_USER_USERMGMT can perform */
+
+typedef enum {
+	MESSAGE_USERMGMT_NONE,			/* No operation */
+	MESSAGE_USERMGMT_ZEROISE,		/* Zeroise users */
+	MESSAGE_USERMGMT_LAST			/* Last possible operation type */
+	} MESSAGE_USERMGMT_TYPE;
+
+/* The operations that a MESSAGE_USER_TRUSTMGMT can perform */
+
+typedef enum {
+	MESSAGE_TRUSTMGMT_NONE,			/* No operation */
+	MESSAGE_TRUSTMGMT_ADD,			/* Add trusted cert */
+	MESSAGE_TRUSTMGMT_DELETE,		/* Delete trusted cert */
+	MESSAGE_TRUSTMGMT_CHECK,		/* Check trust status of cert */
+	MESSAGE_TRUSTMGMT_GETISSUER,	/* Get trusted issuer cert */
+	MESSAGE_TRUSTMGMT_LAST			/* Last possible operation type */
+	} MESSAGE_TRUSTMGMT_TYPE;
 
 /* Options for the MESSAGE_SETDEPENDENT message */
 
@@ -476,6 +514,7 @@ typedef enum {
    the data itself */
 
 typedef struct {
+	BUFFER_FIXED( length ) \
 	void *data;							/* Data */
 	int length;							/* Length */
 	} MESSAGE_DATA;
@@ -601,6 +640,7 @@ extern const int messageValueCursorPrevious, messageValueCursorLast;
 
 #define ACTION_PERM_NONE_ALL			0x000
 #define ACTION_PERM_NONE_EXTERNAL_ALL	0xAAA
+#define ACTION_PERM_ALL_MAX				0xFFF
 
 #define ACTION_PERM_BASE	MESSAGE_CTX_ENCRYPT
 #define ACTION_PERM_MASK	0x03
@@ -615,6 +655,12 @@ extern const int messageValueCursorPrevious, messageValueCursorLast;
 		( ( perm ) << ACTION_PERM_SHIFT( action ) )
 #define MK_ACTION_PERM_NONE_EXTERNAL( action ) \
 		( ( action ) & ACTION_PERM_NONE_EXTERNAL_ALL )
+
+/* Symbolic defines to allow the action flags to be range-checked alongside 
+   all of the other flag types */
+
+#define ACTION_PERM_FLAG_NONE		0x000
+#define ACTION_PERM_FLAG_MAX		0xFFF
 
 /* The mechanism types.  The distinction between the PKCS #1 and raw PKCS #1
    mechanisms is somewhat artificial in that they do the same thing, however
@@ -688,8 +734,10 @@ typedef enum {
 				auxInfo = CRYPT_UNUSED */
 
 typedef struct {
+	BUFFER_OPT_FIXED( wrappedDataLength ) \
 	void *wrappedData;			/* Wrapped key */
 	int wrappedDataLength;
+	BUFFER_FIXED( keyDataLength ) \
 	void *keyData;				/* Raw key */
 	int keyDataLength;
 	CRYPT_HANDLE keyContext;	/* Context containing raw key */
@@ -709,6 +757,7 @@ typedef struct {
 				signContext = signing key */
 
 typedef struct {
+	BUFFER_OPT_FIXED( signatureLength ) \
 	void *signature;			/* Signature */
 	int signatureLength;
 	CRYPT_CONTEXT hashContext;	/* Hash context */
@@ -727,14 +776,17 @@ typedef struct {
 				dataIn = master secret/premaster secret
 				hashAlgo = CRYPT_USE_DEFAULT
 				salt = client || server random/server || client random
-				iterations = CRYPT_UNUSED */
+				iterations = 1 */
 
 typedef struct {
+	BUFFER_OPT_FIXED( dataOutLength ) \
 	void *dataOut;				/* Output keying information */
 	int dataOutLength;
+	BUFFER_FIXED( dataInLength ) \
 	const void *dataIn;			/* Input keying information */
 	int dataInLength;
 	CRYPT_ALGO_TYPE hashAlgo;	/* Hash algorithm */
+	BUFFER_OPT_FIXED( saltLength ) \
 	const void *salt;			/* Salt/randomiser */
 	int saltLength;
 	int iterations;				/* Iterations of derivation function */
@@ -815,7 +867,10 @@ typedef struct {
 	CRYPT_HANDLE cryptHandle;	/* Handle to created object */
 	CRYPT_USER cryptOwner;		/* New object's owner */
 	int arg1, arg2;				/* Integer args */
-	const void *strArg1, *strArg2;	/* String args */
+	BUFFER_OPT_FIXED( strArgLen1 ) \
+	const void *strArg1;
+	BUFFER_OPT_FIXED( strArgLen2 ) \
+	const void *strArg2;	/* String args */
 	int strArgLen1, strArgLen2;
 	} MESSAGE_CREATEOBJECT_INFO;
 
@@ -876,6 +931,7 @@ typedef enum {
 #define KEYMGMT_FLAG_USAGE_SIGN		0x0020	/* Prefer signature key */
 #define KEYMGMT_FLAG_GETISSUER		0x0040	/* Get issuing PKI user for cert */
 #define KEYMGMT_FLAG_LAST			0x0080	/* Last valid flag */
+#define KEYMGMT_FLAG_MAX			0x008F	/* Maximum possible flag value */
 
 #define KEYMGMT_MASK_USAGEOPTIONS	( KEYMGMT_FLAG_USAGE_CRYPT | \
 									  KEYMGMT_FLAG_USAGE_SIGN )
@@ -885,8 +941,10 @@ typedef enum {
 typedef struct {
 	CRYPT_HANDLE cryptHandle;	/* Returned key */
 	CRYPT_KEYID_TYPE keyIDtype;	/* Key ID type */
+	BUFFER_OPT_FIXED( keyIDlength ) \
 	const void *keyID;			/* Key ID */
 	int keyIDlength;
+	BUFFER_OPT_FIXED( auxInfoLength ) \
 	void *auxInfo;				/* Aux.info (e.g.password for private key) */
 	int auxInfoLength;
 	int flags;					/* Access options */
@@ -937,10 +995,33 @@ int endCryptlib( void );
 
 /* Prototype for an object's message-handling function */
 
-typedef int ( *MESSAGE_FUNCTION )( void *objectInfoPtr,
+typedef int ( *MESSAGE_FUNCTION )( INOUT void *objectInfoPtr,
 								   const MESSAGE_TYPE message,
 								   void *messageDataPtr,
-								   const int messageValue );
+								   const int messageValue ) \
+								   STDC_NONNULL_ARG( ( 1 ) );
+
+/* If the message-handler can unlock an object to allow other threads 
+   access, it has to be able to inform the kernel of this.  The following
+   structure and macros allow this information to be passed back to the
+   kernel via the message function's objectInfoPtr */
+
+typedef struct {
+	void *objectInfoPtr;					/* Original objectInfoPtr */
+	BOOLEAN isUnlocked;						/* Whether obj.is now unlocked */
+	} MESSAGE_FUNCTION_EXTINFO;
+
+#define initMessageExtInfo( messageExtInfo, objectInfo ) \
+		{ \
+		memset( messageExtInfo, 0, sizeof( MESSAGE_FUNCTION_EXTINFO ) ); \
+		( messageExtInfo )->objectInfoPtr = objectInfo; \
+		}
+#define setMessageObjectLocked( messageExtInfo ) \
+		( messageExtInfo )->isUnlocked = FALSE
+#define setMessageObjectUnlocked( messageExtInfo ) \
+		( messageExtInfo )->isUnlocked = TRUE
+#define isMessageObjectUnlocked( messageExtInfo ) \
+		( ( messageExtInfo )->isUnlocked )
 
 /* Object management functions.  A dummy object is one that exists but
    doesn't have the capabilities of the actual object, for example an
@@ -954,12 +1035,16 @@ typedef int ( *MESSAGE_FUNCTION )( void *objectInfoPtr,
 									0x01	/* Use krnlMemAlloc() to alloc.*/
 #define CREATEOBJECT_FLAG_DUMMY		0x02	/* Dummy obj.used as placeholder */
 #define CREATEOBJECT_FLAG_PERSISTENT 0x04	/* Obj.backed by key in device */
+#define CREATEOBJECT_FLAG_MAX		0x0F	/* Maximum possible flag value */
 
-int krnlCreateObject( void **objectDataPtr, const int objectDataSize,
+CHECK_RETVAL \
+int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
+					  OUT_PTR void **objectDataPtr, const int objectDataSize,
 					  const OBJECT_TYPE type, const OBJECT_SUBTYPE subType,
 					  const int createObjectFlags, const CRYPT_USER owner,
 					  const int actionFlags,
-					  MESSAGE_FUNCTION messageFunction );
+					  CALLBACK_FUNCTION MESSAGE_FUNCTION messageFunction ) \
+					  STDC_NONNULL_ARG( ( 1, 2, 9 ) );
 int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 					 void *messageDataPtr, const int messageValue );
 
@@ -978,8 +1063,10 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
    access is handled by the following function, which also explicitly
    disallows any access types apart from the three described here */
 
+CHECK_RETVAL \
 int krnlAcquireObject( const int objectHandle, const OBJECT_TYPE type,
-					   void **objectPtr, const int errorCode );
+					   OUT_PTR void **objectPtr, const int errorCode ) \
+					   STDC_NONNULL_ARG( ( 3 ) );
 int krnlReleaseObject( const int objectHandle );
 
 /* In even rarer cases, we have to allow a second thread access to an object
@@ -991,7 +1078,9 @@ int krnlReleaseObject( const int objectHandle );
    to allow other threads access, since the act of writing the marshalled
    data to storage doesn't require the user object) */
 
-int krnlSuspendObject( const int objectHandle, int *refCount );
+int krnlSuspendObject( const int objectHandle, OUT int *refCount ) \
+					   STDC_NONNULL_ARG( ( 2 ) );
+CHECK_RETVAL \
 int krnlResumeObject( const int objectHandle, const int refCount );
 
 /* When the kernel is closing down, any cryptlib-internal threads should exit
@@ -1003,6 +1092,7 @@ int krnlResumeObject( const int objectHandle, const int refCount );
    following function is used to indicate whether the kernel is shutting
    down */
 
+CHECK_RETVAL \
 BOOLEAN krnlIsExiting( void );
 
 /* Semaphores and mutexes */
@@ -1034,9 +1124,9 @@ typedef enum {
 	krnlDispatchThread( threadFunction, &threadState, ptrParam, intParam, 
 						SEMAPHORE_ID );
 
-   Note that the parameters must be held in static storage because the
-   caller's stack frame may have long since disappeared before the thread
-   gets to access them */
+   Note that the thread parameters must be held in static storage because 
+   the caller's stack frame may have long since disappeared before the 
+   thread gets to access them */
 
 struct TF;
 
@@ -1049,21 +1139,27 @@ typedef struct TF {
 	int intParam;					/* Integer parameter */
 	} THREAD_PARAMS;
 
+CHECK_RETVAL \
 int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 						THREAD_STATE threadState, void *ptrParam, 
-						const int intParam, const SEMAPHORE_TYPE semaphore );
+						const int intParam, const SEMAPHORE_TYPE semaphore ) \
+						STDC_NONNULL_ARG( ( 1 ) );
 
 /* Wait on a semaphore, enter and exit a mutex */
 
+CHECK_RETVAL \
 BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore );
+CHECK_RETVAL \
 int krnlEnterMutex( const MUTEX_TYPE mutex );
 void krnlExitMutex( const MUTEX_TYPE mutex );
 
 /* Secure memory handling functions */
 
-int krnlMemalloc( void **pointer, int size );
-void krnlMemfree( void **pointer );
-int krnlMemsize( const void *pointer );
+CHECK_RETVAL \
+int krnlMemalloc( OUT_PTR void **pointer, int size ) \
+				  STDC_NONNULL_ARG( ( 1 ) );
+void krnlMemfree( OUT_PTR void **pointer ) \
+				  STDC_NONNULL_ARG( ( 1 ) );
 
 #ifdef NEED_ENUMFIX
   #undef OBJECT_TYPE_LAST

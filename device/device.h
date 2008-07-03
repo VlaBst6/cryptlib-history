@@ -35,8 +35,9 @@
    mechanisms to speed things up, although the overhead is vanishingly small 
    anyway */
 
-typedef int ( *MECHANISM_FUNCTION )( void *deviceInfoPtr,
-									 void *mechanismInfo );
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+		int ( *MECHANISM_FUNCTION )( IN_OPT void *deviceInfoPtr,
+									 INOUT void *mechanismInfo );
 typedef struct {
 	const MESSAGE_TYPE action;
 	const MECHANISM_TYPE mechanism;
@@ -46,13 +47,21 @@ typedef struct {
 /* Devices can also be used to create further objects.  Most can only create
    contexts, but the system object can create any kind of object */
 
-typedef int ( *CREATEOBJECT_FUNCTION )( MESSAGE_CREATEOBJECT_INFO *objectInfo,
+typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+		int ( *CREATEOBJECT_FUNCTION )( INOUT \
+										MESSAGE_CREATEOBJECT_INFO *objectInfo,
 										const void *auxDataPtr,
 										const int auxValue );
 typedef struct {
 	const OBJECT_TYPE type;
 	const CREATEOBJECT_FUNCTION function;
 	} CREATEOBJECT_FUNCTION_INFO;
+
+/****************************************************************************
+*																			*
+*								Data Structures								*
+*																			*
+****************************************************************************/
 
 /* The internal fields in a deviec that hold data for the various keyset
    types.   These are implemented as a union to conserve memory with some of 
@@ -62,8 +71,9 @@ typedef struct {
 
 typedef struct {
 	/* Nonce PRNG information */
-	BYTE nonceData[ CRYPT_MAX_HASHSIZE + 8 ];	/* Nonce RNG state */
-	HASHFUNCTION hashFunction;		/* Nonce hash function */
+	BUFFER_FIXED( CRYPT_MAX_HASHSIZE ) \
+	BYTE nonceData[ ( CRYPT_MAX_HASHSIZE + 8 ) + 8 ];/* Nonce RNG state */
+	HASHFUNCTION_ATOMIC hashFunctionAtomic;		/* Nonce hash function */
 	int hashSize;
 	BOOLEAN nonceDataInitialised;	/* Whether nonce RNG initialised */
 	} SYSTEMDEV_INFO;
@@ -71,6 +81,7 @@ typedef struct {
 typedef struct {
 	/* General device information */
 	int minPinSize, maxPinSize;		/* Minimum, maximum PIN lengths */
+	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
 	int labelLen;
 
@@ -79,6 +90,7 @@ typedef struct {
 	long slotID;					/* Slot ID for multi-slot device */
 	int deviceNo;					/* Index into PKCS #11 token table */
 	void *functionListPtr;			/* PKCS #11 driver function list pointer */
+	BUFFER( CRYPT_MAX_TEXTSIZE, defaultSSOPinLen ) \
 	char defaultSSOPin[ CRYPT_MAX_TEXTSIZE + 8 ];	/* SSO PIN from dev.init */
 	int defaultSSOPinLen;
 
@@ -90,8 +102,7 @@ typedef struct {
 	long hActiveSignObject;			/* Currently active sig.object */
 
 	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
+	ERROR_INFO errorInfo;
 	} PKCS11_INFO;
 
 #ifdef ULONG_PTR
@@ -102,6 +113,7 @@ typedef struct {
 
 typedef struct {
 	/* General device information */
+	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
 	int labelLen;
 
@@ -113,13 +125,13 @@ typedef struct {
 	const void *hCertChain;			/* Cached copy of current cert chain */
 
 	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
+	ERROR_INFO errorInfo;
 	} CRYPTOAPI_INFO;
 
 typedef struct {
 	/* General device information */
 	int minPinSize, maxPinSize;		/* Minimum, maximum PIN lengths */
+	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
 	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
 	int labelLen;
 
@@ -137,13 +149,14 @@ typedef struct {
 	int currentPersonality;			/* Currently selected personality */
 
 	/* Other information */
-	BYTE leafString[ 16 ];			/* LEAF-suppressed string */
+	BUFFER_FIXED( 16 ) \
+	BYTE leafString[ 16 + 8 ];		/* LEAF-suppressed string */
+	BUFFER( CRYPT_MAX_TEXTSIZE, initPinLen ) \
 	char initPin[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Initialisation PIN */
 	int initPinLen;
 
 	/* Last-error information returned from lower-level code */
-	int errorCode;
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
+	ERROR_INFO errorInfo;
 	} FORTEZZA_INFO;
 
 /* Defines to make access to the union fields less messy */
@@ -165,6 +178,7 @@ typedef struct DI {
 	   user */
 	CRYPT_DEVICE_TYPE type;			/* Device type */
 	int flags;						/* Device information flags */
+	BUFFER_FIXED( labelLen ) \
 	char *label;					/* Device label */
 	int labelLen;
 
@@ -183,37 +197,60 @@ typedef struct DI {
 		} deviceInfo;
 
 	/* Pointers to device access methods */
-	int ( *initFunction )( struct DI *deviceInfo, const char *name,
-						   const int nameLength );
-	void ( *shutdownFunction )( struct DI *deviceInfo );
-	int ( *controlFunction )( struct DI *deviceInfo,
-							  const CRYPT_ATTRIBUTE_TYPE type,
-							  const void *data, const int dataLength );
-	int ( *getItemFunction )( struct DI *deviceInfo,
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	int ( *initFunction )( INOUT struct DI *deviceInfo, 
+						   STDC_UNUSED const char *name,
+						   STDC_UNUSED const int nameLength );
+	STDC_NONNULL_ARG( ( 1 ) ) \
+	void ( *shutdownFunction )( INOUT struct DI *deviceInfo );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	int ( *controlFunction )( INOUT struct DI *deviceInfo,
+							  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
+							  IN_BUFFER_OPT( dataLength ) void *data, 
+							  IN_LENGTH_SHORT_Z const int dataLength,
+							  INOUT_OPT MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	int ( *selftestFunction )( INOUT struct DI *deviceInfo,
+							   INOUT \
+							   MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
+	int ( *getItemFunction )( INOUT struct DI *deviceInfo,
 							  CRYPT_CONTEXT *iCryptContext,
 							  const KEYMGMT_ITEM_TYPE itemType,
 							  const CRYPT_KEYID_TYPE keyIDtype,
+							  IN_BUFFER( keyIDlength ) \
 							  const void *keyID, const int keyIDlength,
+							  IN_BUFFER_OPT( *auxInfoLength ) \
 							  void *auxInfo, int *auxInfoLength, 
-							  const int flags );
-	int ( *setItemFunction )( struct DI *deviceInfo,
-							  const CRYPT_HANDLE iCryptHandle );
-	int ( *deleteItemFunction )( struct DI *deviceInfo,
+							  const int flags ) \
+							  STDC_NONNULL_ARG( ( 1, 2, 5 ) );
+	int ( *setItemFunction )( INOUT struct DI *deviceInfo,
+							  const CRYPT_HANDLE iCryptHandle ) \
+							  STDC_NONNULL_ARG( ( 1 ) );
+	int ( *deleteItemFunction )( INOUT struct DI *deviceInfo,
 								 const KEYMGMT_ITEM_TYPE itemType,
 								 const CRYPT_KEYID_TYPE keyIDtype,
-								 const void *keyID, const int keyIDlength );
-	int ( *getFirstItemFunction )( struct DI *deviceInfo, 
-								   CRYPT_CERTIFICATE *iCertificate,
-								   int *stateInfo, 
+								 IN_BUFFER( keyIDlength ) \
+								 const void *keyID, const int keyIDlength ) \
+								 STDC_NONNULL_ARG( ( 1, 4 ) );
+	int ( *getFirstItemFunction )( INOUT struct DI *deviceInfo, 
+								   OUT CRYPT_CERTIFICATE *iCertificate,
+								   INOUT int *stateInfo, 
 								   const CRYPT_KEYID_TYPE keyIDtype,
+								   IN_BUFFER( keyIDlength ) \
 								   const void *keyID, const int keyIDlength,
 								   const KEYMGMT_ITEM_TYPE itemType, 
-								   const int options );
-	int ( *getNextItemFunction )( struct DI *deviceInfo, 
-								  CRYPT_CERTIFICATE *iCertificate,
-								  int *stateInfo, const int options );
-	int ( *getRandomFunction)( struct DI *deviceInfo, void *buffer,
-							   const int length );
+								   const int options ) \
+								   STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) );
+	int ( *getNextItemFunction )( INOUT struct DI *deviceInfo, 
+								  OUT CRYPT_CERTIFICATE *iCertificate,
+								  INOUT int *stateInfo, const int options ) \
+								  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	int ( *getRandomFunction)( INOUT struct DI *deviceInfo, 
+							   OUT_BUFFER_FIXED( length ) \
+							   void *buffer, IN_LENGTH_SHORT const int length,
+							   INOUT_OPT \
+							   MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
 
 	/* Information for the system device */
 	const MECHANISM_FUNCTION_INFO *mechanismFunctions;
@@ -236,87 +273,75 @@ typedef struct DI {
 	DECLARE_VARSTRUCT_VARS;
 	} DEVICE_INFO;
 
-/* Prototypes for the capability info sanity-check function in crypt.c.  This
-   function is only called via an assert() and isn't used in non-debug builds.
-   The asymmetricOK flag indicates that the capabilities can have asymmetric
-   functionality, for example sign is supported but sig.check isn't (this is
-   required for some tinkertoy implementations in crypto tokens which support 
-   bare-minimum functionality such as RSA private-key ops and nothing else) */
+/****************************************************************************
+*																			*
+*								Internal API Functions						*
+*																			*
+****************************************************************************/
 
-BOOLEAN capabilityInfoOK( const void *capabilityInfoPtr, 
-						  const BOOLEAN asymmetricOK );
+/* Device attribute handling functions */
 
-/* Prototypes for functions in asn1keys.c */
-
-int writeFlatPublicKey( void *buffer, const int bufMaxSize, 
-						const CRYPT_ALGO_TYPE cryptAlgo, 
-						const void *component1, const int component1Length,
-						const void *component2, const int component2Length,
-						const void *component3, const int component3Length,
-						const void *component4, const int component4Length );
-
-/* Prototypes for the crypto mechanism functions supported by various 
-   devices.  These are cryptlib-native mechanisms, some devices override
-   these with device-specific implementations */
-
-int derivePKCS5( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int derivePKCS12( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int deriveSSL( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int deriveTLS( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int deriveCMP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int derivePGP( void *dummy, MECHANISM_DERIVE_INFO *mechanismInfo );
-int signPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int sigcheckPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int signSSL( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int sigcheckSSL( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPKCS1( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPKCS1PGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importOAEP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importCMS( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportPrivateKey( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKey( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int exportPrivateKeyPKCS8( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKeyPKCS8( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKeyPGP2( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKeyOpenPGPOld( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
-int importPrivateKeyOpenPGP( void *dummy, MECHANISM_WRAP_INFO *mechanismInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int getDeviceAttribute( INOUT DEVICE_INFO *deviceInfoPtr,
+						OUT_INT_Z int *valuePtr, 
+						IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						INOUT MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
+						 INOUT MESSAGE_DATA *msgData, 
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int setDeviceAttribute( INOUT DEVICE_INFO *deviceInfoPtr,
+						IN_INT_Z const int value, 
+						IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+int setDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
+						 IN_BUFFER( dataLength ) const void *data,
+						 IN_LENGTH const int dataLength,
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
 
 /* Prototypes for device mapping functions */
 
-int setDeviceCEI( DEVICE_INFO *deviceInfo );
 #ifdef USE_FORTEZZA
+  CHECK_RETVAL \
   int deviceInitFortezza( void );
   void deviceEndFortezza( void );
-  int setDeviceFortezza( DEVICE_INFO *deviceInfo );
+  CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+  int setDeviceFortezza( INOUT DEVICE_INFO *deviceInfo );
 #else
   #define deviceInitFortezza()			CRYPT_OK
   #define deviceEndFortezza()
   #define setDeviceFortezza( x )		CRYPT_ARGERROR_NUM1
 #endif /* USE_FORTEZZA */
 #ifdef USE_PKCS11
+  CHECK_RETVAL \
   int deviceInitPKCS11( void );
   void deviceEndPKCS11( void );
-  int setDevicePKCS11( DEVICE_INFO *deviceInfo, const char *name,
-					   const int nameLength );
+  CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+  int setDevicePKCS11( INOUT DEVICE_INFO *deviceInfo, 
+					   IN_BUFFER( nameLength ) \
+					   const char *name, 
+					   IN_LENGTH_ATTRIBUTE const int nameLength );
 #else
   #define deviceInitPKCS11()			CRYPT_OK
   #define deviceEndPKCS11()
   #define setDevicePKCS11( x, y, z )	CRYPT_ARGERROR_NUM1
 #endif /* USE_PKCS11 */
 #ifdef USE_CRYPTOAPI
+  CHECK_RETVAL \
   int deviceInitCryptoAPI( void );
   void deviceEndCryptoAPI( void );
-  int setDeviceCryptoAPI( DEVICE_INFO *deviceInfo, const char *name, 
-						  const int nameLength );
+  CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+  int setDeviceCryptoAPI( INOUT DEVICE_INFO *deviceInfo );
 #else
   #define deviceInitCryptoAPI()			CRYPT_OK
   #define deviceEndCryptoAPI()
-  #define setDeviceCryptoAPI( x, y, z )	CRYPT_ARGERROR_NUM1
+  #define setDeviceCryptoAPI( x )		CRYPT_ARGERROR_NUM1
 #endif /* USE_CRYPTOAPI */
-int setDeviceSystem( DEVICE_INFO *deviceInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setDeviceSystem( INOUT DEVICE_INFO *deviceInfo );
 
 #endif /* _DEVICE_DEFINED */

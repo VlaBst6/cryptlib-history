@@ -102,7 +102,7 @@ static int readVersionLine( STREAM *stream, BYTE *buffer )
 
 static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	{
-	const char *versionStringPtr = sessionInfoPtr->receiveBuffer + SSH_ID_SIZE;
+	const BYTE *versionStringPtr = sessionInfoPtr->receiveBuffer + SSH_ID_SIZE;
 	int linesRead = 0, iterationCount = 0, length, status;
 
 	/* Read the server version info, with the format for the ID string being
@@ -136,33 +136,41 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 		if( cryptStatusError( status ) )
 			{
 			if( status == CRYPT_ERROR_BADDATA )
-				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-						"Invalid SSH version string length" );
+				retExt( CRYPT_ERROR_BADDATA,
+						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+						  "Invalid SSH version string length" ) );
 			if( status == CRYPT_ERROR_UNDERFLOW )
-				retExt( SESSION_ERRINFO, CRYPT_ERROR_UNDERFLOW,
-						"SSH version string read timed out before all data "
-						"could be read" );
+				retExt( CRYPT_ERROR_UNDERFLOW,
+						( CRYPT_ERROR_UNDERFLOW, SESSION_ERRINFO, 
+						  "SSH version string read timed out before all "
+						  "data could be read" ) );
 			if( status == CRYPT_ERROR_TIMEOUT && linesRead > 0 )
+				{
 				/* We timed out waiting for an ID to appear, this is an
 				   invalid ID error rather than a true timeout */
-				retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-						"Invalid SSH version string 0x%02X 0x%02X 0x%02X "
-						"0x%02X",
-						sessionInfoPtr->receiveBuffer[ 0 ],
-						sessionInfoPtr->receiveBuffer[ 1 ],
-						sessionInfoPtr->receiveBuffer[ 2 ],
-						sessionInfoPtr->receiveBuffer[ 3 ] );
+				retExt( CRYPT_ERROR_BADDATA,
+						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+						  "Invalid SSH version string 0x%02X 0x%02X 0x%02X "
+						  "0x%02X",
+						  sessionInfoPtr->receiveBuffer[ 0 ],
+						  sessionInfoPtr->receiveBuffer[ 1 ],
+						  sessionInfoPtr->receiveBuffer[ 2 ],
+						  sessionInfoPtr->receiveBuffer[ 3 ] ) );
+				}
 			sNetGetErrorInfo( &sessionInfoPtr->stream,
 							  &sessionInfoPtr->errorInfo );
 			return( status );
 			}
 		if( linesRead++ >= 100 )
+			{
 			/* The peer shouldn't be throwing infinite amounts of junk at us,
 			   if we don't get an SSH ID after reading 100 lines of input
 			   there's a problem */
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_OVERFLOW,
-					"Peer sent excessive amounts of text without sending "
-					"any SSH version info" );
+			retExt( CRYPT_ERROR_OVERFLOW,
+					( CRYPT_ERROR_OVERFLOW, SESSION_ERRINFO, 
+					  "Peer sent excessive amounts of text without sending "
+					  "any SSH version info" ) );
+			}
 		}
 	while( memcmp( sessionInfoPtr->receiveBuffer, SSH_ID, SSH_ID_SIZE ) && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE ); 
@@ -174,8 +182,10 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 		{
 #ifdef USE_SSH
 		if( !memcmp( versionStringPtr, "1.99", 4 ) )
+			{
 			/* SSHv2 server in backwards-compatibility mode */
 			sessionInfoPtr->version = 2;
+			}
 		else
 #endif /* USE_SSH */
 			{
@@ -183,12 +193,17 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			/* If the caller has specifically asked for SSHv2 but all that
 			   the server offers is SSHv1, we can't continue */
 			if( sessionInfoPtr->version == 2 )
-				retExt( SESSION_ERRINFO, CRYPT_ERROR_NOSECURE,
-						"Server can only do SSHv1 when SSHv2 was requested" );
+				{
+				retExt( CRYPT_ERROR_NOSECURE,
+						( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+						  "Server can only do SSHv1 when SSHv2 was "
+						  "requested" ) );
+				}
 			sessionInfoPtr->version = 1;
 #else
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOSECURE,
-					"Server can only do SSHv1" );
+			retExt( CRYPT_ERROR_NOSECURE,
+					( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+					  "Server can only do SSHv1" ) );
 #endif /* USE_SSH1 */
 			}
 		}
@@ -198,9 +213,12 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			sessionInfoPtr->version = 2;
 		else
 #endif /* USE_SSH */
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-					"Invalid SSH version %c",
-					sessionInfoPtr->receiveBuffer[ 0 ] );
+			{
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+					  "Invalid SSH version %c",
+					  sessionInfoPtr->receiveBuffer[ 0 ] ) );
+			}
 
 	/* Find the end of the protocol version substring.  If there's no
 	   software version info present this isn't really correct, but no major
@@ -239,7 +257,9 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			Can't handle "password" as a PAM sub-method (meaning an
 			authentication method hint), it responds with an authentication-
 			failed response as soon as we send the PAM authentication
-			request, for versions 3.8 - ? (currently 3.9).
+			request, for versions 3.8 onwards (this doesn't look like it'll
+			get fixed any time soon, so we enable it for all newer versions
+			until further notice).
 
 		ssh.com:
 			This implementation puts the version number first, so if we find
@@ -287,21 +307,32 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 	if( length >= 8 + 3 && \
 		!memcmp( versionStringPtr, "OpenSSH_", 8 ) )
 		{
-		const char *subVersionStringPtr = versionStringPtr + 8;
+		const BYTE *subVersionStringPtr = versionStringPtr + 8;
 
 		if( !memcmp( subVersionStringPtr, "2.0", 3 ) )
 			sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
 		if( !memcmp( subVersionStringPtr, "3.8", 3 ) || \
 			!memcmp( subVersionStringPtr, "3.9", 3 ) || \
-			!memcmp( subVersionStringPtr, "3.10", 4 ) )
+			!memcmp( subVersionStringPtr, "3.10", 4 ) || \
+			*subVersionStringPtr >= '4' )
 			sessionInfoPtr->protocolFlags |= SSH_PFLAG_PAMPW;
+
+		return( CRYPT_OK );
+		}
+	if( length >= 14 + 4 && \
+		!memcmp( versionStringPtr, "PuTTY_Release_", 14 ) )
+		{
+		const BYTE *subVersionStringPtr = versionStringPtr + 14;
+
+		if( !memcmp( subVersionStringPtr, "0.59", 4 ) )
+			sessionInfoPtr->protocolFlags |= SSH_PFLAG_ZEROLENIGNORE;
 
 		return( CRYPT_OK );
 		}
 	if( isDigit( *versionStringPtr ) )
 		{
-		const char *vendorIDString = versionStringPtr;
-		const char versionDigit = *versionStringPtr;
+		const BYTE *vendorIDString = versionStringPtr;
+		const BYTE versionDigit = *versionStringPtr;
 
 		/* Find the vendor ID after the version info */
 		while( length > 0 && *vendorIDString != ' ' )
@@ -349,8 +380,10 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 					!memcmp( versionStringPtr, "2.3.0", 5 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_HMACKEYSIZE;
 				if( !memcmp( versionStringPtr, "2.", 2 ) )
+					{
 					/* Not sure of the exact versions where this occurs */
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_TEXTDIAGS;
+					}
 				break;
 
 			case '3':
@@ -362,7 +395,7 @@ static int readVersionString( SESSION_INFO *sessionInfoPtr )
 			case '5':
 				if( length >= 10 && \
 					!memcmp( vendorIDString, "SSH Tectia", 10 ) )
-					sessionInfoPtr->protocolFlags |= SSH_PFLAG_TECTIA;
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_DUMMYUSERAUTH;
 			}
 		}
 
@@ -404,7 +437,7 @@ static int initVersion( SESSION_INFO *sessionInfoPtr,
 	/* SSHv2 hashes parts of the handshake messages for integrity-protection
 	   purposes, so if we're talking to an SSHv2 peer we create a context
 	   for the hash */
-	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA );
+	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusOK( status ) )
@@ -478,6 +511,8 @@ static int serverStartup( SESSION_INFO *sessionInfoPtr )
 	{
 	const char *idString = ( sessionInfoPtr->version == 1 ) ? \
 						   SSH1_ID_STRING "\n" : SSH2_ID_STRING "\r\n";
+	const int idStringLen = SSH_ID_STRING_SIZE + \
+							( ( sessionInfoPtr->version == 1 ) ? 1 : 2 );
 	int status;
 
 	/* If we're completing a handshake that was interrupted while we got
@@ -504,7 +539,7 @@ static int serverStartup( SESSION_INFO *sessionInfoPtr )
 	   close the connection immediately without any response.  Unfortunately
 	   this isn't possible with SSH, which requires that the server send data
 	   before the client does */
-	status = swrite( &sessionInfoPtr->stream, idString, strlen( idString ) );
+	status = swrite( &sessionInfoPtr->stream, idString, idStringLen );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -531,14 +566,16 @@ static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
 
 	if( type == CRYPT_SESSINFO_SSH_CHANNEL || \
 		type == CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE )
-		status = getChannelAttribute( sessionInfoPtr, type,
-									  NULL, data );
+		{
+		status = getChannelAttribute( sessionInfoPtr, type, data );
+		}
 	else
 		{
 		MESSAGE_DATA *msgData = data;
 
-		status = getChannelAttribute( sessionInfoPtr, type,
-									  msgData->data, &msgData->length );
+		status = getChannelAttributeString( sessionInfoPtr, type,
+											msgData->data, msgData->length, 
+											&msgData->length );
 		}
 	return( ( status == CRYPT_ERROR ) ? CRYPT_ARGERROR_NUM1 : status );
 	}
@@ -588,14 +625,15 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		}
 
 	if( type == CRYPT_SESSINFO_SSH_CHANNEL )
-		status = setChannelAttribute( sessionInfoPtr, type,
-									  NULL, *( int * ) data );
+		status = setChannelAttribute( sessionInfoPtr, type, 
+									  *( int * ) data );
 	else
 		{
 		const MESSAGE_DATA *msgData = data;
 
-		status = setChannelAttribute( sessionInfoPtr, type,
-									  msgData->data, msgData->length );
+		status = setChannelAttributeString( sessionInfoPtr, type,
+											msgData->data, 
+											msgData->length );
 		}
 	return( ( status == CRYPT_ERROR ) ? CRYPT_ARGERROR_NUM1 : status );
 	}
@@ -604,11 +642,12 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 								   const CRYPT_HANDLE cryptHandle,
 								   const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	HASHFUNCTION hashFunction;
+	MESSAGE_DATA msgData;
+	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	STREAM stream;
 	BYTE buffer[ 128 + ( CRYPT_MAX_PKCSIZE * 4 ) + 8 ];
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
-	int length, hashSize, status;
+	int length, offset = DUMMY_INIT, hashSize, status;
 
 	if( type != CRYPT_SESSINFO_PRIVATEKEY )
 		return( CRYPT_OK );
@@ -617,37 +656,46 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	if( !isServer( sessionInfoPtr ) )
 		return( CRYPT_OK );
 
-	getHashParameters( CRYPT_ALGO_MD5, &hashFunction, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_MD5, &hashFunctionAtomic, &hashSize );
 
 	/* The fingerprint is computed from the "key blob", which is different
 	   from the server key.  The server key is the full key, while the "key
 	   blob" is only the raw key components (e, n for RSA, p, q, g, y for
-	   DSA), so we have to skip the key header before we hash the key data.
+	   DSA), so we have to skip the key header before we hash the key data:
+
+		uint32		length
+			string	algorithm
+			byte[]	key_blob
+
 	   Note that, as with the old PGP 2.x key hash mechanism, this allows
 	   key spoofing (although it isn't quite as bad as the PGP 2.x key
 	   fingerprint mechanism) since it doesn't hash an indication of the key
 	   type or format */
-	sMemOpen( &stream, buffer, 128 + ( CRYPT_MAX_PKCSIZE * 4 ) );
-	status = exportAttributeToStream( &stream, cryptHandle,
-									  CRYPT_IATTRIBUTE_KEY_SSH );
+	setMessageData( &msgData, buffer, 128 + ( CRYPT_MAX_PKCSIZE * 4 ) );
+	status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_KEY_SSH );
 	if( cryptStatusError( status ) )
 		return( status );
-	length = stell( &stream );
-	sseek( &stream, 0 );
+	length = msgData.length;
+	sMemConnect( &stream, buffer, length );
 	readUint32( &stream );					/* Length */
 	status = readUniversal32( &stream );	/* Algorithm ID */
 	if( cryptStatusOK( status ) )
-		hashFunction( NULL, fingerPrint, CRYPT_MAX_HASHSIZE, 
-					  sMemBufPtr( &stream ), length - stell( &stream ), 
-					  HASH_ALL );
-	sMemClose( &stream );
+		{
+		offset = stell( &stream );
+		if( offset >= length )
+			status = CRYPT_ERROR_UNDERFLOW;
+		}
+	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	hashFunctionAtomic( fingerPrint, CRYPT_MAX_HASHSIZE, buffer + offset, 
+						length - offset );
 
 	/* Add the fingerprint */
-	return( addSessionAttribute( &sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_FINGERPRINT,
-								 fingerPrint, hashSize ) );
+	return( addSessionInfo( &sessionInfoPtr->attributeList,
+							CRYPT_SESSINFO_SERVER_FINGERPRINT,
+							fingerPrint, hashSize ) );
 	}
 
 /****************************************************************************

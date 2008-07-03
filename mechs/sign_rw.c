@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Signature Read/Write Routines						*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -10,13 +10,13 @@
   #include "mech.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
-  #include "pgp.h"
+  #include "pgp_rw.h"
 #else
   #include "mechs/mech.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
   #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /* Context-specific tags for the SignerInfo record */
@@ -31,7 +31,9 @@ enum { CTAG_SI_SKI };
 
 /* Read/write raw signatures */
 
-static int readRawSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readRawSignature( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	int status;
@@ -40,7 +42,7 @@ static int readRawSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	/* Read the start of the signature */
-	status = readBitStringHole( stream, &queryInfo->dataLength, 16 + 16,
+	status = readBitStringHole( stream, &queryInfo->dataLength, 18 + 18,
 								DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -50,15 +52,20 @@ static int readRawSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( sSkip( stream, queryInfo->dataLength ) );
 	}
 
-static int writeRawSignature( STREAM *stream, const CRYPT_CONTEXT iSignContext,
-							  const CRYPT_ALGO_TYPE hashAlgo,
-							  const CRYPT_ALGO_TYPE signAlgo,
-							  const BYTE *signature,
-							  const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeRawSignature( INOUT STREAM *stream, 
+							  STDC_UNUSED const CRYPT_CONTEXT iSignContext,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+							  IN_BUFFER( signatureLength ) const BYTE *signature,
+							  IN_LENGTH_SHORT_MIN( 40 ) const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( signatureLength >= 40 && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	/* Write the BIT STRING wrapper and signature */
 	writeBitStringHole( stream, signatureLength, DEFAULT_TAG );
@@ -67,7 +74,9 @@ static int writeRawSignature( STREAM *stream, const CRYPT_CONTEXT iSignContext,
 
 /* Read/write X.509 signatures */
 
-static int readX509Signature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readX509Signature( INOUT STREAM *stream, 
+							  INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	int status;
@@ -80,8 +89,10 @@ static int readX509Signature( STREAM *stream, QUERY_INFO *queryInfo )
 	status = readAlgoIDext( stream, &queryInfo->cryptAlgo,
 							&queryInfo->hashAlgo );
 	if( cryptStatusOK( status ) )
-		status = readBitStringHole( stream, &queryInfo->dataLength, 16 + 16,
+		{
+		status = readBitStringHole( stream, &queryInfo->dataLength, 18 + 18,
 									DEFAULT_TAG );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -90,24 +101,27 @@ static int readX509Signature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( sSkip( stream, queryInfo->dataLength ) );
 	}
 
-static int writeX509Signature( STREAM *stream,
-							   const CRYPT_CONTEXT iSignContext,
-							   const CRYPT_ALGO_TYPE hashAlgo,
-							   const CRYPT_ALGO_TYPE signAlgo,
-							   const BYTE *signature,
-							   const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeX509Signature( INOUT STREAM *stream,
+							   IN_HANDLE const CRYPT_CONTEXT iSignContext,
+							   IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+							   STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+							   IN_BUFFER( signatureLength ) const BYTE *signature,
+							   IN_LENGTH_SHORT_MIN( 40 ) const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iSignContext ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( signatureLength >= 40 && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	/* Write the hash+signature algorithm identifier followed by the BIT
 	   STRING wrapper and signature */
-	writeContextAlgoID( stream, iSignContext, hashAlgo,
-						ALGOID_FLAG_ALGOID_ONLY );
+	writeContextAlgoID( stream, iSignContext, hashAlgo );
 	writeBitStringHole( stream, signatureLength, DEFAULT_TAG );
 	return( writeRawObject( stream, signature, signatureLength ) );
 	}
@@ -120,19 +134,21 @@ static int writeX509Signature( STREAM *stream,
 
 /* Read/write PKCS #7/CMS (issuerAndSerialNumber) signatures */
 
-static int readCmsSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readCmsSignature( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	long value, endPos;
-	int status;
+	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	value = getStreamObjectLength( stream );
-	if( cryptStatusError( value ) )
-		return( value );
-	endPos = startPos + value;
+	status = getStreamObjectLength( stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	endPos = startPos + length;
 
 	/* Read the header */
 	readSequence( stream, NULL );
@@ -142,13 +158,15 @@ static int readCmsSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	if( value != SIGNATURE_VERSION )
 		return( CRYPT_ERROR_BADDATA );
 
-	/* Read the issuer and serial number and hash algorithm ID */
-	value = getStreamObjectLength( stream );
-	if( cryptStatusError( value ) )
-		return( value );
+	/* Read the issuer and serial number and hash algorithm ID.  Since we're 
+	   recording the position of the issuerAndSerialNumber as a blob we have 
+	   to use getStreamObjectLength() to get the overall blob data size */
+	status = getStreamObjectLength( stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
 	queryInfo->iAndSStart = stell( stream ) - startPos;
-	queryInfo->iAndSLength = value;
-	sSkip( stream, value );
+	queryInfo->iAndSLength = length;
+	sSkip( stream, length );
 	status = readAlgoID( stream, &queryInfo->hashAlgo );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -156,21 +174,24 @@ static int readCmsSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	/* Read the authenticated attributes if there are any present */
 	if( peekTag( stream ) == MAKE_CTAG( 0 ) )
 		{
-		value = getStreamObjectLength( stream );
-		if( cryptStatusError( value ) )
-			return( value );
+		status = getStreamObjectLength( stream, &length );
+		if( cryptStatusError( status ) )
+			return( status );
 		queryInfo->attributeStart = stell( stream ) - startPos;
-		queryInfo->attributeLength = value;
-		status = sSkip( stream, value );
+		queryInfo->attributeLength = length;
+		status = sSkip( stream, length );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
-	/* Read the CMS/cryptlib signature algorithm and start of the signature */
+	/* Read the CMS/cryptlib signature algorithm and the start of the 
+	   signature */
 	status = readAlgoID( stream, &queryInfo->cryptAlgo );
 	if( cryptStatusOK( status ) )
-		status = readOctetStringHole( stream, &queryInfo->dataLength, 16 + 16,
-									  DEFAULT_TAG );
+		{
+		status = readOctetStringHole( stream, &queryInfo->dataLength, 
+									  18 + 18, DEFAULT_TAG );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		queryInfo->dataStart = stell( stream ) - startPos;
@@ -182,12 +203,12 @@ static int readCmsSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	/* Read the unauthenticated attributes if there are any present */
 	if( stell( stream ) < endPos && peekTag( stream ) == MAKE_CTAG( 1 ) )
 		{
-		value = getStreamObjectLength( stream );
-		if( cryptStatusError( value ) )
-			return( value );
+		status = getStreamObjectLength( stream, &length );
+		if( cryptStatusError( status ) )
+			return( status );
 		queryInfo->unauthAttributeStart = stell( stream ) - startPos;
-		queryInfo->unauthAttributeLength = value;
-		status = sSkip( stream, value );
+		queryInfo->unauthAttributeLength = length;
+		status = sSkip( stream, length );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -195,31 +216,36 @@ static int readCmsSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( CRYPT_OK );
 	}
 
-static int writeCmsSignature( STREAM *stream,
-							  const CRYPT_CONTEXT iSignContext,
-							  const CRYPT_ALGO_TYPE hashAlgo,
-							  const CRYPT_ALGO_TYPE signAlgo,
-							  const BYTE *signature,
-							  const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeCmsSignature( INOUT STREAM *stream,
+							  IN_HANDLE const CRYPT_CONTEXT iSignContext,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+							  IN_BUFFER( signatureLength ) const BYTE *signature,
+							  IN_LENGTH_SHORT_MIN( 40 ) const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iSignContext ) );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( signatureLength >= 40 && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	/* Write the signature algorithm identifier and signature data.  The
 	   handling of CMS signatures is non-orthogonal to readCmsSignature()
 	   because creating a CMS signature involves adding assorted additional
 	   data like iAndS and signed attributes that present too much
 	   information to pass into a basic writeSignature() call */
-	writeContextAlgoID( stream, iSignContext, CRYPT_ALGO_NONE,
-						ALGOID_FLAG_ALGOID_ONLY );
+	writeContextAlgoID( stream, iSignContext, CRYPT_ALGO_NONE );
 	return( writeOctetString( stream, signature, signatureLength, DEFAULT_TAG ) );
 	}
 
 /* Read/write cryptlib/CMS (keyID) signatures */
 
-static int readCryptlibSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readCryptlibSignature( INOUT STREAM *stream, 
+								  INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	long value;
@@ -243,11 +269,14 @@ static int readCryptlibSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Read the CMS/cryptlib signature algorithm and start of the signature */
+	/* Read the CMS/cryptlib signature algorithm and the start of the 
+	   signature */
 	status = readAlgoID( stream, &queryInfo->cryptAlgo );
 	if( cryptStatusOK( status ) )
-		status = readOctetStringHole( stream, &queryInfo->dataLength, 16 + 16,
-									  DEFAULT_TAG );
+		{
+		status = readOctetStringHole( stream, &queryInfo->dataLength, 
+									  18 + 18, DEFAULT_TAG );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->dataStart = stell( stream ) - startPos;
@@ -256,27 +285,32 @@ static int readCryptlibSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( sSkip( stream, queryInfo->dataLength ) );
 	}
 
-static int writeCryptlibSignature( STREAM *stream,
-								   const CRYPT_CONTEXT iSignContext,
-								   const CRYPT_ALGO_TYPE hashAlgo,
-								   const CRYPT_ALGO_TYPE signAlgo,
-								   const BYTE *signature,
-								   const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeCryptlibSignature( INOUT STREAM *stream,
+								   IN_HANDLE const CRYPT_CONTEXT iSignContext,
+								   IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+								   STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+								   IN_BUFFER( signatureLength ) \
+									const BYTE *signature,
+								   IN_LENGTH_SHORT_MIN( 40 ) \
+									const int signatureLength )
 	{
 	MESSAGE_DATA msgData;
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];
 	const int signAlgoIdSize = \
-				sizeofContextAlgoID( iSignContext, CRYPT_ALGO_NONE, 
-									 ALGOID_FLAG_ALGOID_ONLY );
+				sizeofContextAlgoID( iSignContext, CRYPT_ALGO_NONE );
 	const int hashAlgoIdSize = sizeofAlgoID( hashAlgo );
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iSignContext ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( signatureLength >= 40 && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	if( cryptStatusError( signAlgoIdSize ) )
 		return( signAlgoIdSize );
@@ -300,23 +334,73 @@ static int writeCryptlibSignature( STREAM *stream,
 	writeShortInteger( stream, SIGNATURE_EX_VERSION, DEFAULT_TAG );
 	writeOctetString( stream, msgData.data, msgData.length, CTAG_SI_SKI );
 	writeAlgoID( stream, hashAlgo );
-	writeContextAlgoID( stream, iSignContext, CRYPT_ALGO_NONE,
-						ALGOID_FLAG_ALGOID_ONLY );
+	writeContextAlgoID( stream, iSignContext, CRYPT_ALGO_NONE );
 	return( writeOctetString( stream, signature, signatureLength, DEFAULT_TAG ) );
 	}
 
 /****************************************************************************
 *																			*
-*							Misc Signature Routines							*
+*							PGP Signature Routines							*
 *																			*
 ****************************************************************************/
 
 #ifdef USE_PGP
 
-/* Read signature subpackets */
+/* Read a PGP type-and-value packet and check whether it's one of ours */
 
-static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
-									const int length, const int startPos,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readTypeAndValue( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo,
+							 IN_LENGTH_Z const int startPos )
+	{
+	BYTE nameBuffer[ 32 + 8 ];
+	static const char FAR_BSS *nameString = "issuerAndSerialNumber";
+	int nameLength, valueLength, status;	/* length = 21 */
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos < stell( stream ) );
+
+	/* Skip the flags */
+	status = sSkip( stream, UINT32_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Read the attribute length information and make sure that it looks 
+	   valid */
+	nameLength = readUint16( stream );
+	valueLength = readUint16( stream );
+	if( cryptStatusError( valueLength ) )
+		return( valueLength );
+	if( nameLength != 21 || valueLength < 16 || valueLength > 2048 )
+		return( sSkip( stream, nameLength + valueLength ) );
+
+	/* Read the name and check whether it's one that we recognise */
+	status = sread( stream, nameBuffer, nameLength );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( !memcmp( nameBuffer, nameString, nameLength ) )
+		{
+		/* It's an issuerAndSerialNumber, remember it for later */
+		queryInfo->iAndSStart = stell( stream ) - startPos;
+		queryInfo->iAndSLength = valueLength;
+		}
+	return( sSkip( stream, valueLength ) );
+	}
+
+/* Read signature subpackets.  In theory we could do something with the 
+   isAuthenticated flag but at the moment we don't rely on any attributes 
+   that require authentication.  The most that an attacker can do by 
+   changing the keyID/iAndS field is cause the signature check to fail, 
+   which they can do just as easily by flipping a bit */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readSignatureSubpackets( INOUT STREAM *stream, 
+									INOUT QUERY_INFO *queryInfo,
+									IN_LENGTH_SHORT const int length, 
+									IN_LENGTH const int startPos,
 									const BOOLEAN isAuthenticated )
 	{
 	const int endPos = stell( stream ) + length;
@@ -324,26 +408,28 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
-	assert( length > 0 && length < 8192 );
-	assert( startPos >= 0 );
+
+	REQUIRES( length > 0 && length < MAX_INTLENGTH_SHORT );
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos < stell( stream ) );
 
 	while( stell( stream ) < endPos && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
 		{
-		const int subpacketLength = pgpReadShortLength( stream,
-														PGP_CTB_OPENPGP );
-		const int type = sgetc( stream );
-		int status;
+		int subpacketLength, type = DUMMY_INIT, status;
 
-		if( cryptStatusError( subpacketLength ) )
-			return( subpacketLength );
-		if( cryptStatusError( type ) )
-			return( type );
+		/* Read the subpacket length and type */
+		status = pgpReadShortLength( stream, &subpacketLength, 
+									 PGP_CTB_OPENPGP );
+		if( cryptStatusOK( status ) )
+			status = type = sgetc( stream );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* If it's an unrecognised subpacket with the critical flag set,
 		   reject the signature.  The range check isn't complete since there
 		   are a few holes in the range, but since the holes presumably exist
-		   because of deprecated subpacket types, any new packets will be
+		   because of deprecated subpacket types any new packets will be 
 		   added at the end so it's safe to use */
 		if( ( type & 0x80 ) && ( ( type & 0x7F ) > PGP_SUBPACKET_LAST ) )
 			return( CRYPT_ERROR_NOTAVAIL );
@@ -351,7 +437,9 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 		switch( type )
 			{
 			case PGP_SUBPACKET_KEYID:
-				assert( subpacketLength == PGP_KEYID_SIZE + 1 );
+				/* Make sure that the length is valid */
+				if( subpacketLength != PGP_KEYID_SIZE + 1 )
+					return( CRYPT_ERROR_BADDATA );
 
 				/* If it's a key ID and we haven't already set this from a 
 				   preceding one-pass signature packet (which can happen 
@@ -362,55 +450,29 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 					queryInfo->keyIDlength = PGP_KEYID_SIZE;
 					}
 				else
-					/* We've already got the ID, skip it and continue (the 
-					   -1 is for the packet type, which we've already read) */
+					{
+					/* We've already got the ID, skip it and continue.  The 
+					   -1 is for the packet type, which we've already read */
 					status = sSkip( stream, subpacketLength - 1 );
+					}
 				break;
 
 			case PGP_SUBPACKET_TYPEANDVALUE:
-				{
-				BYTE nameBuffer[ 32 + 8 ];
-				static const char FAR_BSS *nameString = "issuerAndSerialNumber";
-				int nameLength, valueLength;
-
 				/* It's a type-and-value packet, check whether it's one of 
 				   ours */
-				sSkip( stream, UINT32_SIZE );	/* Flags */
-				nameLength = readUint16( stream );
-				valueLength = readUint16( stream );
-				if( cryptStatusError( valueLength ) )
-					return( valueLength );
-				if( nameLength != strlen( nameString ) || \
-					valueLength < 16 || valueLength > 2048 )
-					{
-					status = sSkip( stream, nameLength + valueLength );
-					break;
-					}
-				status = sread( stream, nameBuffer, nameLength );
-				if( cryptStatusError( status ) )
-					return( status );
-				if( !memcmp( nameBuffer, nameString, nameLength ) )
-					{
-					/* It's an issuerAndSerialNumber, remember it for 
-					   later */
-					queryInfo->iAndSStart = stell( stream ) - startPos;
-					queryInfo->iAndSLength = valueLength;
-					}
-				status = sSkip( stream, valueLength );
+				status = readTypeAndValue( stream, queryInfo, startPos );
 				break;
-				}
 
 			default:
-				/* It's something else, skip it and continue (the -1 is for 
-				   the packet type, which we've already read) */
+				/* It's something else, skip it and continue.  The -1 is for 
+				   the packet type, which we've already read */
 				status = sSkip( stream, subpacketLength - 1 );
 			}
 
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	return( CRYPT_OK );
 	}
@@ -426,7 +488,9 @@ static int readSignatureSubpackets( STREAM *stream, QUERY_INFO *queryInfo,
 	byte[8]	keyID
 	byte	1 */
 
-int readOnepassSigPacket( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readPgpOnepassSigPacket( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	int status;
 
@@ -435,24 +499,24 @@ int readOnepassSigPacket( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Make sure that the packet header is in order and check the packet
 	   version.  This is an OpenPGP-only packet */
-	status = getPacketInfo( stream, queryInfo );
+	status = getPgpPacketInfo( stream, queryInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( sgetc( stream ) != 3 )
 		return( CRYPT_ERROR_BADDATA );
 	queryInfo->version = PGP_VERSION_OPENPGP;
 
-	/* Skip the sig.type, get the hash algorithm and check the signature
-	   algorithm */
-	sgetc( stream );
-	if( ( queryInfo->hashAlgo = \
-			pgpToCryptlibAlgo( sgetc( stream ),
-							   PGP_ALGOCLASS_HASH ) ) == CRYPT_ALGO_NONE )
-		return( CRYPT_ERROR_NOTAVAIL );
-	if( ( queryInfo->cryptAlgo = \
-			pgpToCryptlibAlgo( sgetc( stream ),
-							   PGP_ALGOCLASS_SIGN ) ) == CRYPT_ALGO_NONE )
-		return( CRYPT_ERROR_NOTAVAIL );
+	/* Skip the sig.type and get the hash algorithm and signature 
+	   algorithms */
+	status = sgetc( stream );	/* Skip signature type */
+	if( cryptStatusOK( status ) )
+		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  PGP_ALGOCLASS_HASH );
+	if( cryptStatusOK( status ) )
+		status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
+							  PGP_ALGOCLASS_SIGN );
+	if( cryptStatusError( status ) )
+		return( status );
 	queryInfo->type = CRYPT_OBJECT_SIGNATURE;
 
 	/* Get the PGP key ID and make sure that this isn't a nested signature */
@@ -479,7 +543,108 @@ int readOnepassSigPacket( STREAM *stream, QUERY_INFO *queryInfo )
 										byte[2]	hash check
 										mpi(s)	signature */
 
-static int readPgpSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readPgp2SigInfo( INOUT STREAM *stream, 
+							INOUT QUERY_INFO *queryInfo,
+							IN_LENGTH_Z const int startPos )
+	{
+	int status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos < stell( stream ) );
+
+	/* Read PGP 2.x additional signature information */
+	if( sgetc( stream ) != 5 )
+		return( CRYPT_ERROR_BADDATA );
+	queryInfo->attributeStart = stell( stream ) - startPos;
+	queryInfo->attributeLength = 5;
+	status = sSkip( stream, 5 );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Read the signer keyID and signature and hash algorithms */
+	status = sread( stream, queryInfo->keyID, PGP_KEYID_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	queryInfo->keyIDlength = PGP_KEYID_SIZE;
+	status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
+						  PGP_ALGOCLASS_SIGN );
+	if( cryptStatusOK( status ) )
+		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  PGP_ALGOCLASS_HASH );
+	return( status );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readOpenPgpSigInfo( INOUT STREAM *stream, 
+							   INOUT QUERY_INFO *queryInfo,
+							   IN_LENGTH_Z const int startPos )
+	{
+	int length, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+	REQUIRES( startPos < stell( stream ) );
+
+	/* Remember the extra data to be hashed and read the signature and hash 
+	   algorithms.  Since the extra data starts at the version byte that 
+	   we've already read, we add a -1 offset to the start position, as well
+	   as including it in the overall length calculation */
+	queryInfo->attributeStart = ( stell( stream ) - 1 ) - startPos;
+	queryInfo->attributeLength = PGP_VERSION_SIZE + 1 + \
+								 PGP_ALGOID_SIZE + PGP_ALGOID_SIZE;
+	status = sgetc( stream );	/* Skip signature type */
+	if( cryptStatusOK( status ) )
+		status = readPgpAlgo( stream, &queryInfo->cryptAlgo, 
+							  PGP_ALGOCLASS_SIGN );
+	if( cryptStatusOK( status ) )
+		status = readPgpAlgo( stream, &queryInfo->hashAlgo, 
+							  PGP_ALGOCLASS_HASH );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Process the authenticated attributes */
+	length = readUint16( stream );
+	if( cryptStatusError( length ) )
+		return( length );
+	if( length < 0 || length > 2048 )
+		return( CRYPT_ERROR_BADDATA );
+	queryInfo->attributeLength += UINT16_SIZE + length;
+	if( length > 0 )
+		{
+		status = readSignatureSubpackets( stream, queryInfo, length,
+										  startPos, TRUE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* Process the unauthenticated attributes */
+	queryInfo->unauthAttributeStart = stell( stream ) - startPos;
+	length = readUint16( stream );
+	if( cryptStatusError( length ) )
+		return( length );
+	if( length < 0 || length > 2048 )
+		return( CRYPT_ERROR_BADDATA );
+	queryInfo->unauthAttributeLength = UINT16_SIZE + length;
+	if( length > 0 )
+		{
+		status = readSignatureSubpackets( stream, queryInfo, length, 
+										  startPos, FALSE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readPgpSignature( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	int value, status;
@@ -488,9 +653,9 @@ static int readPgpSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	/* Make sure that the packet header is in order and check the packet
-	   version.  For this packet type, a version number of 3 denotes PGP 2.x,
+	   version.  For this packet type a version number of 3 denotes PGP 2.x
 	   whereas for key transport it denotes OpenPGP */
-	status = getPacketInfo( stream, queryInfo );
+	status = getPgpPacketInfo( stream, queryInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 	value = sgetc( stream );
@@ -501,128 +666,84 @@ static int readPgpSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	queryInfo->version = ( value == PGP_VERSION_OPENPGP ) ? \
 						 PGP_VERSION_OPENPGP : PGP_VERSION_2;
 
-	/* If it's not an OpenPGP packet, read it as a PGP 2.x-format
-	   signature */
+	/* Read the signing attributes and skip the hash check */
 	if( value != PGP_VERSION_OPENPGP )
-		{
-		/* Read the additional signature information */
-		if( sgetc( stream ) != 5 )
-			return( CRYPT_ERROR_BADDATA );
-		queryInfo->attributeStart = stell( stream ) - startPos;
-		queryInfo->attributeLength = 5;
-		sSkip( stream, 5 );
-
-		/* Read the signer keyID, signature and hash algorithm */
-		status = sread( stream, queryInfo->keyID, PGP_KEYID_SIZE );
-		if( cryptStatusError( status ) )
-			return( status );
-		queryInfo->keyIDlength = PGP_KEYID_SIZE;
-		if( ( queryInfo->cryptAlgo = \
-				pgpToCryptlibAlgo( sgetc( stream ),
-								   PGP_ALGOCLASS_SIGN ) ) == CRYPT_ALGO_NONE )
-			return( CRYPT_ERROR_NOTAVAIL );
-		if( ( queryInfo->hashAlgo = \
-				pgpToCryptlibAlgo( sgetc( stream ),
-								   PGP_ALGOCLASS_HASH ) ) == CRYPT_ALGO_NONE )
-			return( CRYPT_ERROR_NOTAVAIL );
-		}
+		status = readPgp2SigInfo( stream, queryInfo, startPos );
 	else
-		{
-		/* It's an OpenPGP packet, remember the extra data to be hashed (this
-		   starts at the version byte, which we've already read, so we add a
-		   -1 offset) and read the signature and hash algorithms */
-		queryInfo->attributeStart = ( stell( stream ) - 1 ) - startPos;
-		queryInfo->attributeLength = PGP_VERSION_SIZE + 1 + PGP_ALGOID_SIZE + \
-									 PGP_ALGOID_SIZE + UINT16_SIZE;
-		sgetc( stream );	/* Skip signature type */
-		if( ( queryInfo->cryptAlgo = \
-				pgpToCryptlibAlgo( sgetc( stream ),
-								   PGP_ALGOCLASS_SIGN ) ) == CRYPT_ALGO_NONE )
-			return( CRYPT_ERROR_NOTAVAIL );
-		if( ( queryInfo->hashAlgo = \
-				pgpToCryptlibAlgo( sgetc( stream ),
-								   PGP_ALGOCLASS_HASH ) ) == CRYPT_ALGO_NONE )
-			return( CRYPT_ERROR_NOTAVAIL );
+		status = readOpenPgpSigInfo( stream, queryInfo, startPos );
+	if( cryptStatusOK( status ) )
+		status = sSkip( stream, 2 );
+	if( cryptStatusError( status ) )
+		return( status );
 
-		/* Process the authenticated attributes */
-		value = readUint16( stream );
-		if( value < 0 || value > 2048 )
-			return( CRYPT_ERROR_BADDATA );
-		if( sMemDataLeft( stream ) < value )
-			return( CRYPT_ERROR_UNDERFLOW );
-		if( value > 0 )
-			{
-			queryInfo->attributeLength += value;
-			status = readSignatureSubpackets( stream, queryInfo, value,
-											  startPos, TRUE );
-			if( cryptStatusError( status ) )
-				return( status );
-			}
+	/* Read the signature, recording the position and length of the raw RSA 
+	   signature data.  We have to be careful how we handle this because 
+	   readInteger16Ubits() returns the canonicalised form of the values 
+	   (with leading zeroes truncated) so an stell() before the read doesn't 
+	   necessarily represent the start of the payload:
 
-		/* Skip the unauthenticated attributes */
-		queryInfo->unauthAttributeStart = stell( stream ) - startPos;
-		value = readUint16( stream );
-		if( value < 0 || value > 2048 )
-			return( CRYPT_ERROR_BADDATA );
-		if( sMemDataLeft( stream ) < value )
-			return( CRYPT_ERROR_UNDERFLOW );
-		queryInfo->unauthAttributeLength = UINT16_SIZE + value;
-		if( value > 0 )
-			{
-			status = readSignatureSubpackets( stream, queryInfo, value, 
-											  startPos, FALSE );
-			if( cryptStatusError( status ) )
-				return( status );
-			}
-		}
-
-	/* Skip the hash check and read the signature, recording the start of the
-	   signature data */
-	sSkip( stream, 2 );
-	if( queryInfo->cryptAlgo == CRYPT_ALGO_DSA )
+		startPos	dataStart		 stell()
+			|			|				|
+			v			v <-- length -->v
+		+---+-----------+---------------+
+		|	|			|///////////////| Stream
+		+---+-----------+---------------+ */
+	if( queryInfo->cryptAlgo == CRYPT_ALGO_RSA )
 		{
-		queryInfo->dataStart = stell( stream ) - startPos;
-		status = readInteger16Ubits( stream, NULL, &value, 16, 20 );
-		if( cryptStatusError( status ) )
-			return( status );
-		queryInfo->dataLength = UINT16_SIZE + value;	/* Incl.size of MPI hdr.*/
-		status = readInteger16Ubits( stream, NULL, &value, 16, 20 );
-		if( cryptStatusError( status ) )
-			return( status );
-		queryInfo->dataLength += UINT16_SIZE + value;	/* Incl.size of MPI hdr.*/
-		}
-	else
-		{
-		queryInfo->dataStart = ( stell( stream ) + UINT16_SIZE )  - startPos;
 		status = readInteger16Ubits( stream, NULL, &queryInfo->dataLength,
 									 MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		if( cryptStatusError( status ) )
 			return( status );
+		queryInfo->dataStart = stell( stream ) - queryInfo->dataLength;
+		}
+	else
+		{
+		const int dataStartPos = stell( stream );
+		int dummy;
+
+		REQUIRES( queryInfo->cryptAlgo == CRYPT_ALGO_DSA );
+
+		/* Read the DSA signature, recording the position and combined 
+		   lengths of the MPI pair.  Again, we can't use the length returned 
+		   by readInteger16Ubits() to determine the overall size but have to 
+		   calculate it from the position in the stream */
+		status = readInteger16Ubits( stream, NULL, &dummy, 16, 20 );
+		if( cryptStatusOK( status ) )
+			status = readInteger16Ubits( stream, NULL, &dummy, 16, 20 );
+		if( cryptStatusError( status ) )
+			return( status );
+		queryInfo->dataStart = dataStartPos - startPos;
+		queryInfo->dataLength = stell( stream ) - dataStartPos;
 		}
 
 	return( CRYPT_OK );
 	}
 
-static int writePgpSignature( STREAM *stream,
-							  const CRYPT_CONTEXT iSignContext,
-							  const CRYPT_ALGO_TYPE hashAlgo,
-							  const CRYPT_ALGO_TYPE signAlgo,
-							  const BYTE *signature,
-							  const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writePgpSignature( INOUT STREAM *stream,
+							  STDC_UNUSED const CRYPT_CONTEXT iSignContext,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+							  IN_ALGO const CRYPT_ALGO_TYPE signAlgo,
+							  IN_BUFFER( signatureLength ) const BYTE *signature,
+							  IN_LENGTH_SHORT_MIN( 18 + 18 + 1 ) \
+								const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( signAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			signAlgo <= CRYPT_ALGO_LAST_PKC );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
 
-	/* If it's a DLP algorithm, we've already specified the DLP output
-	   format as PGP so there's no need for further processing.  The
-	   handling of PGP signatures is non-orthogonal to readPgpSignature()
-	   because creating a PGP signature involves adding assorted additional
-	   data like key IDs and authenticated attributes, which present too 
-	   much information to pass into a basic writeSignature() call */
-	if( isDlpAlgo( signAlgo ) )
+	REQUIRES( signAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  signAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( signatureLength > ( 18 + 18 ) && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
+
+	/* If it's a DLP algorithm we've already specified the DLP output format 
+	   as PGP so there's no need for further processing.  The handling of 
+	   PGP signatures is non-orthogonal to readPgpSignature() because 
+	   creating a PGP signature involves adding assorted additional data 
+	   like key IDs and authenticated attributes, which present too much 
+	   information to pass into a basic writeSignature() call */
+	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		return( swrite( stream, signature, signatureLength ) );
 
 	/* Write the signature as a PGP MPI */
@@ -630,13 +751,21 @@ static int writePgpSignature( STREAM *stream,
 	}
 #endif /* USE_PGP */
 
+/****************************************************************************
+*																			*
+*						Miscellaneous Signature Routines					*
+*																			*
+****************************************************************************/
+
 #ifdef USE_SSH
 
 /* Read/write SSH signatures.  SSH signature data is treated as a blob
-   encoded as an SSH string rather than properly-formatted data, so we don't
+   encoded as an SSH string rather than properly-formatted data so we don't
    encode/decode it as SSH MPIs */
 
-static int readSshSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readSshSignature( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	BYTE buffer[ CRYPT_MAX_TEXTSIZE + 8 ];
@@ -647,7 +776,7 @@ static int readSshSignature( STREAM *stream, QUERY_INFO *queryInfo )
 
 	/* Read the signature record size and algorithm information */
 	readUint32( stream );
-	status = readString32( stream, buffer, &length, CRYPT_MAX_TEXTSIZE );
+	status = readString32( stream, buffer, CRYPT_MAX_TEXTSIZE, &length );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( length != 7 )
@@ -655,10 +784,12 @@ static int readSshSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	if( !memcmp( buffer, "ssh-rsa", 7 ) )
 		queryInfo->cryptAlgo = CRYPT_ALGO_RSA;
 	else
+		{
 		if( !memcmp( buffer, "ssh-dss", 7 ) )
 			queryInfo->cryptAlgo = CRYPT_ALGO_DSA;
 		else
 			return( CRYPT_ERROR_BADDATA );
+		}
 
 	/* Read the start of the signature */
 	length = readUint32( stream );
@@ -681,20 +812,24 @@ static int readSshSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( sSkip( stream, length ) );
 	}
 
-static int writeSshSignature( STREAM *stream,
-							  const CRYPT_CONTEXT iSignContext,
-							  const CRYPT_ALGO_TYPE hashAlgo,
-							  const CRYPT_ALGO_TYPE signAlgo,
-							  const BYTE *signature,
-							  const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeSshSignature( INOUT STREAM *stream,
+							  STDC_UNUSED const CRYPT_CONTEXT iSignContext,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+							  IN_ALGO const CRYPT_ALGO_TYPE signAlgo,
+							  IN_BUFFER( signatureLength ) const BYTE *signature,
+							  IN_LENGTH_SHORT_MIN( 40 ) const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( signAlgo == CRYPT_ALGO_RSA || signAlgo == CRYPT_ALGO_DSA );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( signAlgo == CRYPT_ALGO_RSA || signAlgo == CRYPT_ALGO_DSA );
+	REQUIRES( signatureLength >= ( 20 + 20 ) && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	writeUint32( stream, sizeofString32( "ssh-Xsa", 7 ) + \
-						 sizeofString32( NULL, signatureLength ) );
+						 sizeofString32( "", signatureLength ) );
 	writeString32( stream, ( signAlgo == CRYPT_ALGO_RSA ) ? \
 						   "ssh-rsa" : "ssh-dss", 7 );
 	return( writeString32( stream, signature, signatureLength ) );
@@ -706,7 +841,9 @@ static int writeSshSignature( STREAM *stream,
 /* Read/write SSL signatures.  This is just a raw signature without any
    encapsulation */
 
-static int readSslSignature( STREAM *stream, QUERY_INFO *queryInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readSslSignature( INOUT STREAM *stream, 
+							 INOUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	int length;
@@ -725,16 +862,21 @@ static int readSslSignature( STREAM *stream, QUERY_INFO *queryInfo )
 	return( sSkip( stream, length ) );
 	}
 
-static int writeSslSignature( STREAM *stream,
-							  const CRYPT_CONTEXT iSignContext,
-							  const CRYPT_ALGO_TYPE hashAlgo,
-							  const CRYPT_ALGO_TYPE signAlgo,
-							  const BYTE *signature,
-							  const int signatureLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+static int writeSslSignature( INOUT STREAM *stream,
+							  STDC_UNUSED const CRYPT_CONTEXT iSignContext,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE hashAlgo,
+							  STDC_UNUSED const CRYPT_ALGO_TYPE signAlgo,
+							  IN_BUFFER( signatureLength ) const BYTE *signature,
+							  IN_LENGTH_SHORT_MIN( 18 + 18 + 1 ) \
+								const int signatureLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( signature, signatureLength ) );
-		/* Other parameters aren't used for this format */
+			/* Other parameters aren't used for this format */
+
+	REQUIRES( signatureLength > ( 18 + 18 ) && \
+			  signatureLength < MAX_INTLENGTH_SHORT );
 
 	writeUint16( stream, signatureLength );
 	return( swrite( stream, signature, signatureLength ) );
@@ -789,9 +931,13 @@ static const SIG_WRITE_INFO sigWriteTable[] = {
 	{ SIGNATURE_NONE, NULL }, { SIGNATURE_NONE, NULL }
 	};
 
-READSIG_FUNCTION getReadSigFunction( const SIGNATURE_TYPE sigType )
+CHECK_RETVAL_PTR \
+READSIG_FUNCTION getReadSigFunction( IN_ENUM( SIGNATURE ) \
+										const SIGNATURE_TYPE sigType )
 	{
 	int i;
+
+	REQUIRES_N( sigType > SIGNATURE_NONE && sigType < SIGNATURE_LAST );
 
 	for( i = 0; 
 		 sigReadTable[ i ].type != SIGNATURE_NONE && \
@@ -801,14 +947,17 @@ READSIG_FUNCTION getReadSigFunction( const SIGNATURE_TYPE sigType )
 		if( sigReadTable[ i ].type == sigType )
 			return( sigReadTable[ i ].function );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( sigReadTable, SIG_READ_INFO ) )
-		retIntError_Null();
+	ENSURES_N( i < FAILSAFE_ARRAYSIZE( sigReadTable, SIG_READ_INFO ) );
 
 	return( NULL );
 	}
-WRITESIG_FUNCTION getWriteSigFunction( const SIGNATURE_TYPE sigType )
+CHECK_RETVAL_PTR \
+WRITESIG_FUNCTION getWriteSigFunction( IN_ENUM( SIGNATURE ) \
+										const SIGNATURE_TYPE sigType )
 	{
 	int i;
+
+	REQUIRES_N( sigType > SIGNATURE_NONE && sigType < SIGNATURE_LAST );
 
 	for( i = 0; 
 		 sigWriteTable[ i ].type != SIGNATURE_NONE && \
@@ -818,8 +967,7 @@ WRITESIG_FUNCTION getWriteSigFunction( const SIGNATURE_TYPE sigType )
 		if( sigWriteTable[ i ].type == sigType )
 			return( sigWriteTable[ i ].function );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( sigWriteTable, SIG_WRITE_INFO ) )
-		retIntError_Null();
+	ENSURES_N( i < FAILSAFE_ARRAYSIZE( sigWriteTable, SIG_WRITE_INFO ) );
 
 	return( NULL );
 	}

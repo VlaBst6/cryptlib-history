@@ -57,7 +57,7 @@ static const OBJECT_ACL FAR_BSS objectCMSAttr = {
 static const OBJECT_ACL FAR_BSS objectKeyset = {
 		ST_KEYSET_ANY | ST_DEV_ANY_STD, ST_NONE, ACL_FLAG_NONE };
 static const OBJECT_ACL FAR_BSS objectKeysetCerts = {
-		ST_KEYSET_DBMS, ST_NONE, ACL_FLAG_NONE };
+		ST_KEYSET_DBMS | SUBTYPE_KEYSET_DBMS_STORE, ST_NONE, ACL_FLAG_NONE };
 static const OBJECT_ACL FAR_BSS objectKeysetCertstore = {
 		SUBTYPE_KEYSET_DBMS_STORE, ST_NONE, ACL_FLAG_NONE };
 static const OBJECT_ACL FAR_BSS objectKeysetPrivate = {
@@ -220,10 +220,6 @@ static const RANGE_SUBRANGE_TYPE FAR_BSS allowedEncrAlgoSubranges[] = {
 	{ CRYPT_ALGO_RC5, CRYPT_ALGO_BLOWFISH },	/* No RC2, RC4 */
 	{ CRYPT_ALGO_SKIPJACK + 1, CRYPT_ALGO_LAST_CONVENTIONAL },/* No Skipjack */
 	{ CRYPT_ERROR, CRYPT_ERROR } };
-static const RANGE_SUBRANGE_TYPE FAR_BSS allowedSelftestSubranges[] = {
-	{ CRYPT_ALGO_NONE + 1, CRYPT_ALGO_LAST - 1 },
-	{ CRYPT_USE_DEFAULT, CRYPT_USE_DEFAULT },
-	{ CRYPT_ERROR, CRYPT_ERROR } };
 static const int FAR_BSS allowedLDAPObjectTypes[] = {
 	CRYPT_CERTTYPE_NONE, CRYPT_CERTTYPE_CERTIFICATE, CRYPT_CERTTYPE_CRL,
 	CRYPT_ERROR };
@@ -272,7 +268,7 @@ static const ATTRIBUTE_ACL FAR_BSS optionACL[] = {
 		CRYPT_OPTION_ENCR_HASH,
 		ST_NONE, ST_ENV_ENV | ST_ENV_ENV_PGP | ST_USER_ANY, ACCESS_RWx_RWx,
 		ROUTE_ALT( OBJECT_TYPE_ENVELOPE, OBJECT_TYPE_USER ),
-		RANGE( CRYPT_ALGO_SHA, CRYPT_ALGO_LAST_HASH ) ),
+		RANGE( CRYPT_ALGO_SHA1, CRYPT_ALGO_LAST_HASH ) ),
 	MKACL_N(	/* MAC algorithm */
 		CRYPT_OPTION_ENCR_MAC,
 		ST_NONE, ST_ENV_ENV | ST_USER_ANY, ACCESS_RWx_RWx,
@@ -439,10 +435,11 @@ static const ATTRIBUTE_ACL FAR_BSS optionACL[] = {
 		CRYPT_OPTION_MISC_ASYNCINIT,
 		ST_NONE, ST_USER_SO, ACCESS_RWx_RWx,
 		ROUTE( OBJECT_TYPE_USER ) ),
-	MKACL_B(	/* Protect against side-channel attacks */
+	MKACL_N(	/* Protect against side-channel attacks */
 		CRYPT_OPTION_MISC_SIDECHANNELPROTECTION,
 		ST_CTX_PKC, ST_USER_SO, ACCESS_RWx_RWx,
-		ROUTE_ALT( OBJECT_TYPE_CONTEXT, OBJECT_TYPE_USER ) ),
+		ROUTE_ALT( OBJECT_TYPE_CONTEXT, OBJECT_TYPE_USER ),
+		RANGE( 0, 2 ) ),
 
 	MKACL(		/* Whether in-mem.opts match on-disk ones */
 		/* This is a special-case boolean attribute value that can only be
@@ -453,11 +450,10 @@ static const ATTRIBUTE_ACL FAR_BSS optionACL[] = {
 		ROUTE( OBJECT_TYPE_USER ),
 		RANGE( FALSE, FALSE ) ),
 
-	MKACL_EX(	/* Algorithm self-test status */
-		CRYPT_OPTION_SELFTESTOK, ATTRIBUTE_VALUE_NUMERIC,
-		ST_NONE, ST_USER_ANY, ACCESS_RWx_RWx, 0,
-		ROUTE( OBJECT_TYPE_USER ),
-		RANGE_SUBRANGES, allowedSelftestSubranges ),
+	MKACL_B(	/* Algorithm self-test status */
+		CRYPT_OPTION_SELFTESTOK, 
+		ST_NONE, ST_USER_ANY, ACCESS_RWx_RWx, 
+		ROUTE( OBJECT_TYPE_USER ) ),
 
 	MKACL_END()
 	};
@@ -472,7 +468,7 @@ static const int FAR_BSS allowedPKCKeysizes[] = {
 	sizeof( CRYPT_PKCINFO_DLP ), sizeof( CRYPT_PKCINFO_RSA ), 
 	sizeof( CRYPT_PKCINFO_ECC ), CRYPT_ERROR };
 static const int FAR_BSS allowedKeyingAlgos[] = {
-	CRYPT_ALGO_MD5, CRYPT_ALGO_SHA, CRYPT_ALGO_RIPEMD160,
+	CRYPT_ALGO_MD5, CRYPT_ALGO_SHA1, CRYPT_ALGO_RIPEMD160,
 	CRYPT_ALGO_HMAC_SHA, CRYPT_ERROR };
 
 static const ATTRIBUTE_ACL FAR_BSS subACL_CtxinfoPersistent[] = {
@@ -2163,6 +2159,30 @@ static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoContentType[] = {
 		RANGE( CRYPT_CONTENT_NONE + 1, CRYPT_CONTENT_LAST - 1 ) ),
 	MKACL_END_SUBACL()
 	};
+static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoDetachedSig[] = {
+	MKACL_B(	/* Envelope: Read/write */
+		CRYPT_ENVINFO_DETACHEDSIGNATURE,
+		ST_NONE, ST_ENV_ENV | ST_ENV_ENV_PGP, ACCESS_Rxx_RWx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
+	MKACL_B(	/* Deenvelope: Read-only */
+		CRYPT_ENVINFO_DETACHEDSIGNATURE,
+		ST_NONE, ST_ENV_DEENV, ACCESS_Rxx_xxx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
+	MKACL_END_SUBACL()
+	};
+static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoIntegrity[] = {
+	MKACL_N(	/* Envelope: Write-only */
+		CRYPT_ENVINFO_INTEGRITY,
+		ST_NONE, ST_ENV_ENV, ACCESS_xxx_xWx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ), 
+		RANGE( CRYPT_INTEGRITY_NONE, CRYPT_INTEGRITY_FULL ) ),
+	MKACL_N(	/* De-envelope: Read-only */
+		CRYPT_ENVINFO_INTEGRITY,
+		ST_NONE, ST_ENV_DEENV, ACCESS_Rxx_xxx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ), 
+		RANGE( CRYPT_INTEGRITY_NONE, CRYPT_INTEGRITY_FULL ) ),
+	MKACL_END_SUBACL()
+	};
 static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoSignature[] = {
 	MKACL_O(	/* Envelope: Write-only */
 		CRYPT_ENVINFO_SIGNATURE,
@@ -2187,7 +2207,6 @@ static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoSignatureExtraData[] = {
 		ROUTE( OBJECT_TYPE_ENVELOPE ), &objectCMSAttr ),
 	MKACL_END_SUBACL()
 	};
-
 static const ATTRIBUTE_ACL FAR_BSS subACL_EnvinfoTimestamp[] = {
 	MKACL_O(	/* Envelope: Write-only TSP session */
 		CRYPT_ENVINFO_TIMESTAMP,
@@ -2222,10 +2241,11 @@ static const ATTRIBUTE_ACL FAR_BSS envelopeACL[] = {
 		ST_NONE, ST_ENV_ANY, ACCESS_Rxx_RWx,
 		ROUTE( OBJECT_TYPE_ENVELOPE ),
 		subACL_EnvinfoContentType ),
-	MKACL_B(	/* Generate CMS detached signature */
+	MKACL_X(	/* Detached signature */
 		CRYPT_ENVINFO_DETACHEDSIGNATURE,
-		ST_NONE, ST_ENV_ENV | ST_ENV_ENV_PGP, ACCESS_Rxx_RWx,
-		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
+		ST_NONE, ST_ENV_ANY, ACCESS_Rxx_RWx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ),
+		subACL_EnvinfoDetachedSig ),
 	MKACL_EX(	/* Signature check result */
 		/* This is a special case because an OK status is positive but an
 		   error status is negative, which spans two range types.  To handle
@@ -2235,10 +2255,11 @@ static const ATTRIBUTE_ACL FAR_BSS envelopeACL[] = {
 		ST_NONE, ST_ENV_DEENV, ACCESS_Rxx_xxx, 0,
 		ROUTE( OBJECT_TYPE_ENVELOPE ),
 		RANGE_SUBRANGES, allowedSigResultSubranges ),
-	MKACL_B(	/* Use MAC instead of encrypting */
-		CRYPT_ENVINFO_MAC,
-		ST_NONE, ST_ENV_ENV | ST_ENV_DEENV, ACCESS_xxx_xWx,
-		ROUTE( OBJECT_TYPE_ENVELOPE ) ),
+	MKACL_X(	/* Integrity-protection level */
+		CRYPT_ENVINFO_INTEGRITY,
+		ST_NONE, ST_ENV_ENV | ST_ENV_DEENV, ACCESS_Rxx_xWx,
+		ROUTE( OBJECT_TYPE_ENVELOPE ),
+		subACL_EnvinfoIntegrity ),
 	MKACL_S(	/* User password */
 		CRYPT_ENVINFO_PASSWORD,
 		ST_NONE, ST_ENV_ANY, ACCESS_xxx_xWx,
@@ -2424,7 +2445,7 @@ static const ATTRIBUTE_ACL FAR_BSS subACL_SessinfoKeyset[] = {
 static const ATTRIBUTE_ACL FAR_BSS subACL_SessinfoFingerprint[] = {
 	MKACL_S(	/* Client: Write-only low, read-only high */
 		CRYPT_SESSINFO_SERVER_FINGERPRINT,
-		ST_NONE, ST_SESS_SSL | ST_SESS_SSH, ACCESS_Rxx_xWx,
+		ST_NONE, ST_SESS_SSL | ST_SESS_SSH | ST_SESS_SCEP, ACCESS_Rxx_xWx,
 		ROUTE( OBJECT_TYPE_SESSION ),
 		RANGE( 16, 20 ) ),
 	MKACL_S(	/* Server: Read-only */
@@ -2606,10 +2627,11 @@ static const ATTRIBUTE_ACL FAR_BSS sessionACL[] = {
 		CRYPT_SESSINFO_SERVER_PORT,
 		ST_NONE, ST_SESS_ANY, ACCESS_Rxx_RWD,
 		ROUTE( OBJECT_TYPE_SESSION ),
-		RANGE( 22, 65534L ) ),
+		RANGE( MIN_PORT_NUMBER, MAX_PORT_NUMBER ) ),
 	MKACL_X(	/* Server key fingerprint */
 		CRYPT_SESSINFO_SERVER_FINGERPRINT,
-		ST_NONE, ST_SESS_SSL | ST_SESS_SSH | ST_SESS_SSH_SVR, ACCESS_Rxx_RWx,
+		ST_NONE, ST_SESS_SSL | ST_SESS_SSH | ST_SESS_SCEP | \
+				 ST_SESS_SSH_SVR, ACCESS_Rxx_RWx,
 		ROUTE( OBJECT_TYPE_SESSION ),
 		subACL_SessinfoFingerprint ),
 	MKACL_S(	/* Client name */
@@ -2621,7 +2643,7 @@ static const ATTRIBUTE_ACL FAR_BSS sessionACL[] = {
 		CRYPT_SESSINFO_CLIENT_PORT,
 		ST_NONE, ST_SESS_ANY_SVR, ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_SESSION ),
-		RANGE( 22, 65534L ) ),
+		RANGE( MIN_PORT_NUMBER, MAX_PORT_NUMBER ) ),
 	MKACL_X(	/* Transport mechanism */
 		CRYPT_SESSINFO_SESSION,
 		ST_NONE, ST_SESS_RTCS | ST_SESS_RTCS_SVR | \
@@ -2674,6 +2696,9 @@ static const ATTRIBUTE_ACL FAR_BSS sessionACL[] = {
 		ROUTE( OBJECT_TYPE_SESSION ),
 		subACL_SessinfoRequesttype ),
 	MKACL_B(	/* CMP enable PKIBoot facility */
+		/* This attribute isn't used and will be removed at the next major
+		   cryptlib version increment, which allows the addition/removal of 
+		   attributes */
 		CRYPT_SESSINFO_CMP_PKIBOOT,
 		ST_NONE, ST_SESS_CMP | ST_SESS_CMP_SVR, ACCESS_xxx_xxx,
 		ROUTE( OBJECT_TYPE_SESSION ) ),
@@ -2813,8 +2838,8 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 		CRYPT_IATTRIBUTE_KEYID,
 		ST_CTX_PKC, ST_NONE, ACCESS_INT_Rxx_Rxx,
 		ROUTE( OBJECT_TYPE_CONTEXT ), RANGE( 20, 20 ) ),
-	MKACL_S(	/* Ctx: PGP key ID */
-		CRYPT_IATTRIBUTE_KEYID_PGP,
+	MKACL_S(	/* Ctx: PGP 2 key ID */
+		CRYPT_IATTRIBUTE_KEYID_PGP2,
 		ST_CTX_PKC, ST_NONE, ACCESS_INT_Rxx_Rxx,
 		ROUTE( OBJECT_TYPE_CONTEXT ), RANGE( 8, 8 ) ),
 	MKACL_S(	/* Ctx: OpenPGP key ID */
@@ -3003,12 +3028,16 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 	/* Device internal attributes */
 	MKACL_S(	/* Dev: Polled entropy data */
 		CRYPT_IATTRIBUTE_ENTROPY,
-		ST_DEV_ANY, ST_NONE, ACCESS_INT_xWx_xWx,
-		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 1, MAX_INTLENGTH ) ),
+		ST_DEV_SYSTEM, ST_NONE, ACCESS_INT_xWx_xWx, 
+		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 1, MAX_INTLENGTH - 1 ) ),
 	MKACL_N(	/* Dev: Quality of entropy */
 		CRYPT_IATTRIBUTE_ENTROPY_QUALITY,
-		ST_DEV_ANY, ST_NONE, ACCESS_INT_xWx_xWx,
+		ST_DEV_SYSTEM, ST_NONE, ACCESS_INT_xWx_xWx, 
 		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 1, 100 ) ),
+	MKACL_B(	/* Slow/fast entropy poll */
+		CRYPT_IATTRIBUTE_RANDOM_POLL,
+		ST_DEV_SYSTEM, ST_NONE, ACCESS_INT_xWx_xWx, 
+		ROUTE_FIXED( OBJECT_TYPE_DEVICE ) ),
 	MKACL_N(	/* Dev: Low picket for random data attrs.*/
 		/* This and the high picket are used to protect the critical
 		   randomness attributes from accidental access due to fencepost
@@ -3021,7 +3050,7 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 0, 0 ) ),
 	MKACL_S(	/* Dev: Random data */
 		CRYPT_IATTRIBUTE_RANDOM,
-		ST_DEV_ANY, ST_NONE, ACCESS_INT_Rxx_Rxx,
+		ST_DEV_ANY, ST_NONE, ACCESS_INT_Rxx_Rxx, 
 		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( MIN_KEYSIZE, CRYPT_MAX_PKCSIZE ) ),
 	MKACL_S(	/* Dev: Nonzero random data */
 		CRYPT_IATTRIBUTE_RANDOM_NZ,
@@ -3034,12 +3063,7 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 	MKACL_S(	/* Dev: Basic nonce */
 		CRYPT_IATTRIBUTE_RANDOM_NONCE,
 		ST_DEV_SYSTEM, ST_NONE, ACCESS_INT_Rxx_Rxx,
-		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 1, 16384 ) ),
-	MKACL_EX(	/* Dev: Perform self-test */
-		CRYPT_IATTRIBUTE_SELFTEST, ATTRIBUTE_VALUE_NUMERIC,
-		ST_DEV_SYSTEM, ST_NONE, ACCESS_INT_xWx_xWx, 0,
-		ROUTE_FIXED( OBJECT_TYPE_DEVICE ),
-		RANGE_SUBRANGES, allowedSelftestSubranges ),
+		ROUTE_FIXED( OBJECT_TYPE_DEVICE ), RANGE( 1, MAX_INTLENGTH_SHORT ) ),
 	MKACL_T(	/* Dev: Reliable (hardware-based) time value */
 		CRYPT_IATTRIBUTE_TIME,
 		ST_DEV_ANY, ST_NONE, ACCESS_INT_Rxx_xxx,
@@ -3061,13 +3085,9 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 		ST_KEYSET_FILE, ST_NONE, ACCESS_INT_RWx_RWx,
 		ROUTE_FIXED( OBJECT_TYPE_KEYSET ), RANGE( 8, 16384 ) ),
 	MKACL_S(	/* Keyset: Index of users */
-		/* The odd low length range is used to delete user info by setting
-		   a zero-length SEQUENCE (this should really be done as yet another
-		   keyset item type in order to allow it to be explicitly deleted,
-		   rather than using a zero-length write to indicate a delete) */
 		CRYPT_IATTRIBUTE_USERINDEX,
 		ST_KEYSET_FILE, ST_NONE, ACCESS_INT_RWx_RWx,
-		ROUTE_FIXED( OBJECT_TYPE_KEYSET ), RANGE( 2, 16384 ) ),
+		ROUTE_FIXED( OBJECT_TYPE_KEYSET ), RANGE( 16, 16384 ) ),
 	MKACL_S(	/* Keyset: User ID */
 		CRYPT_IATTRIBUTE_USERID,
 		ST_KEYSET_FILE, ST_NONE, ACCESS_INT_RWx_RWx,
@@ -3100,22 +3120,6 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 		CRYPT_IATTRIBUTE_CTL,
 		ST_NONE, ST_USER_ANY, ACCESS_INT_RWx_xxx,
 		ROUTE( OBJECT_TYPE_USER ), &objectCertificate ),
-	MKACL_O(	/* User: Set trusted cert */
-		CRYPT_IATTRIBUTE_CERT_TRUSTED,
-		ST_NONE, ST_USER_ANY, ACCESS_INT_xWx_xxx,
-		ROUTE( OBJECT_TYPE_USER ), &objectCertificate ),
-	MKACL_O(	/* User: Unset trusted cert */
-		CRYPT_IATTRIBUTE_CERT_UNTRUSTED,
-		ST_NONE, ST_USER_ANY, ACCESS_INT_xWx_xxx,
-		ROUTE( OBJECT_TYPE_USER ), &objectCertificate ),
-	MKACL_O(	/* User: Check trust status of cert */
-		CRYPT_IATTRIBUTE_CERT_CHECKTRUST,
-		ST_NONE, ST_USER_ANY, ACCESS_INT_xWx_xxx,
-		ROUTE( OBJECT_TYPE_USER ), &objectCertificate ),
-	MKACL_O(	/* User: Get trusted issuer of cert */
-		CRYPT_IATTRIBUTE_CERT_TRUSTEDISSUER,
-		ST_NONE, ST_USER_ANY, ACCESS_INT_xWx_xxx,
-		ROUTE( OBJECT_TYPE_USER ), &objectCertificate ),
 
 	MKACL_END()
 	};
@@ -3128,8 +3132,11 @@ static const ATTRIBUTE_ACL FAR_BSS internalACL[] = {
 
 /* Check that a special range entry is consistent */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN specialRangeConsistent( const ATTRIBUTE_ACL *attributeACL )
 	{
+	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+
 	switch( getSpecialRangeType( attributeACL ) )
 		{
 		case RANGEVAL_ANY:
@@ -3146,8 +3153,10 @@ static BOOLEAN specialRangeConsistent( const ATTRIBUTE_ACL *attributeACL )
 			if( rangeVal == NULL )
 				return( FALSE );
 			for( i = 0; i < 5; i++ )
+				{
 				if( *rangeVal++ == CRYPT_ERROR )
 					break;
+				}
 			if( i >= 5 )
 				return( FALSE );
 			break;
@@ -3195,11 +3204,18 @@ static BOOLEAN specialRangeConsistent( const ATTRIBUTE_ACL *attributeACL )
 
 #define ACCESS_RWx_xxx		0x6060	/* Special-case used for consistency check */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN aclConsistent( const ATTRIBUTE_ACL *attributeACL,
 							  const CRYPT_ATTRIBUTE_TYPE attribute,
 							  const OBJECT_SUBTYPE subTypeA, 
 							  const OBJECT_SUBTYPE subTypeB )
 	{
+	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+	PRE( attribute > CRYPT_ATTRIBUTE_NONE && \
+		 attribute < CRYPT_IATTRIBUTE_LAST );
+	PRE( !( subTypeA & SUBTYPE_CLASS_B ) );
+	PRE( !( subTypeB & SUBTYPE_CLASS_A ) );
+
 	/* General consistency checks.  We can only check the attribute type in
 	   the debug build because it's not present in the release to save
 	   space */
@@ -3247,10 +3263,12 @@ static BOOLEAN aclConsistent( const ATTRIBUTE_ACL *attributeACL,
 						return( FALSE );
 					}
 				else
+					{
 					if( !( attributeACL->lowRange >= 0 && \
 						   attributeACL->highRange >= 0 ) || \
 						attributeACL->lowRange > attributeACL->highRange )
 						return( FALSE );
+					}
 				if( attributeACL->extendedInfo != NULL )
 					return( FALSE );
 				}
@@ -3273,7 +3291,7 @@ static BOOLEAN aclConsistent( const ATTRIBUTE_ACL *attributeACL,
 					return( FALSE );
 				if( attributeACL->lowRange < 0 || \
 					( attributeACL->highRange > 16384 && \
-					  attributeACL->highRange != MAX_INTLENGTH ) || \
+					  attributeACL->highRange != MAX_INTLENGTH - 1 ) || \
 					attributeACL->lowRange > attributeACL->highRange )
 					return( FALSE );
 				}
@@ -3322,19 +3340,17 @@ static BOOLEAN aclConsistent( const ATTRIBUTE_ACL *attributeACL,
 					iterationCount++ < FAILSAFE_ITERATIONS_MED;
 				 attributeACLPtr++ )
 				{
+				if( !aclConsistent( attributeACLPtr, 
 #ifndef NDEBUG
-				if( !aclConsistent( attributeACLPtr, attributeACL->attribute,
-									attributeACL->subTypeA,
-									attributeACL->subTypeB ) )
+									attributeACL->attribute,
 #else
-				if( !aclConsistent( attributeACLPtr, CRYPT_ATTRIBUTE_NONE,
+									CRYPT_ATTRIBUTE_NONE,
+#endif /* !NDEBUG */
 									attributeACL->subTypeA,
 									attributeACL->subTypeB ) )
-#endif /* !NDEBUG */
 					return( FALSE );
 				}
-			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-				retIntError_Boolean();
+			ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 			/* Make sure that all subtypes and acess settings in the main
 			   attribute are handled in the sub-attributes */
@@ -3348,8 +3364,7 @@ static BOOLEAN aclConsistent( const ATTRIBUTE_ACL *attributeACL,
 							   attributeACLPtr->subTypeB );
 				access &= ~attributeACLPtr->access;
 				}
-			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-				retIntError_Boolean();
+			ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_MED );
 			if( subTypes != 0 || access != 0 )
 				return( FALSE );
 			break;
@@ -3366,7 +3381,7 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	UNUSED( krnlDataPtr );
+	UNUSED_ARG( krnlDataPtr );
 
 	/* Perform a consistency check on values used to handle ACL subranges.
 	   These are somewhat tricky to check automatically since they represent
@@ -3388,7 +3403,7 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 	assert( CRYPT_CERTINFO_FIRST_CMS == 2500 );
 	assert( CRYPT_SESSINFO_FIRST_SPECIFIC == 6016 );
 	assert( CRYPT_SESSINFO_LAST_SPECIFIC == 6027 );
-	assert( CRYPT_CERTFORMAT_LAST == 11 );
+	assert( CRYPT_CERTFORMAT_LAST == 12 );
 
 	/* Perform a consistency check on the attribute ACLs.  The ACLs are
 	   complex enough that we assert on each one to quickly catch problems
@@ -3400,12 +3415,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_ANY_A, ST_ANY_B ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( propertyACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( propertyACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( propertyACL[ CRYPT_PROPERTY_LAST - \
-					 CRYPT_PROPERTY_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( propertyACL[ CRYPT_PROPERTY_LAST - \
+						  CRYPT_PROPERTY_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_GENERIC_LAST - CRYPT_GENERIC_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( genericACL, ATTRIBUTE_ACL ); i++ )
@@ -3414,12 +3427,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_ANY_A, ST_ANY_B ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( genericACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( genericACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( genericACL[ CRYPT_GENERIC_LAST - \
-					CRYPT_GENERIC_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( genericACL[ CRYPT_GENERIC_LAST - \
+						 CRYPT_GENERIC_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( optionACL, ATTRIBUTE_ACL ); i++ )
@@ -3433,25 +3444,21 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 		if( optionACL[ i ].attribute >= CRYPT_OPTION_KEYING_ALGO && \
 			optionACL[ i ].attribute <= CRYPT_OPTION_KEYING_ITERATIONS )
 			{
-			if( optionACL[ i ].subTypeA != ST_CTX_CONV )
-				retIntError();
+			ENSURES( optionACL[ i ].subTypeA == ST_CTX_CONV );
 			}
 		else
 		if( optionACL[ i ].attribute >= CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS && \
 			optionACL[ i ].attribute <= CRYPT_OPTION_KEYS_LDAP_EMAILNAME )
 			{
-			if( optionACL[ i ].subTypeA != ST_KEYSET_LDAP )
-				retIntError();
+			ENSURES( optionACL[ i ].subTypeA == ST_KEYSET_LDAP );
 			}
 		else
 		if( optionACL[ i ].attribute == CRYPT_OPTION_MISC_SIDECHANNELPROTECTION )
 			{
-			if( optionACL[ i ].subTypeA != ST_CTX_PKC )
-				retIntError();
+			ENSURES( optionACL[ i ].subTypeA == ST_CTX_PKC );
 			}
 		else
-		if( optionACL[ i ].subTypeA != ST_NONE )
-			retIntError();
+		ENSURES( optionACL[ i ].subTypeA == ST_NONE );
 		if( optionACL[ i ].attribute >= CRYPT_OPTION_ENCR_ALGO && \
 			optionACL[ i ].attribute <= CRYPT_OPTION_ENCR_MAC )
 			{
@@ -3463,20 +3470,17 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 		if( optionACL[ i ].attribute >= CRYPT_OPTION_NET_SOCKS_SERVER && \
 			optionACL[ i ].attribute <= CRYPT_OPTION_NET_WRITETIMEOUT )
 			{
-			if( optionACL[ i ].subTypeB != ( ST_SESS_ANY | ST_USER_ANY ) )
-				retIntError();
+			ENSURES( optionACL[ i ].subTypeB == ( ST_SESS_ANY | ST_USER_ANY ) );
 			}
 		else
 		if( optionACL[ i ].subTypeB & ~( SUBTYPE_CLASS_B | ST_USER_ANY ) )
 			retIntError();
 #endif /* !NDEBUG */
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( optionACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( optionACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( optionACL[ CRYPT_OPTION_LAST - \
-				   CRYPT_OPTION_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( optionACL[ CRYPT_OPTION_LAST - \
+						CRYPT_OPTION_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_CTXINFO_LAST - CRYPT_CTXINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( contextACL, ATTRIBUTE_ACL ); i++ )
@@ -3485,12 +3489,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_CTX_ANY, ST_NONE ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( contextACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( contextACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( contextACL[ CRYPT_CTXINFO_LAST - \
-					CRYPT_CTXINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( contextACL[ CRYPT_CTXINFO_LAST - \
+						 CRYPT_CTXINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_CERTINFO_LAST_CERTINFO - CRYPT_CERTINFO_FIRST_CERTINFO && \
 				i < FAILSAFE_ARRAYSIZE( certificateACL, ATTRIBUTE_ACL ); i++ )
@@ -3500,12 +3502,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_CERT_ANY, ST_NONE ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certificateACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certificateACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( certificateACL[ CRYPT_CERTINFO_LAST_CERTINFO - \
-						CRYPT_CERTINFO_FIRST_CERTINFO + 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( certificateACL[ CRYPT_CERTINFO_LAST_CERTINFO - \
+							 CRYPT_CERTINFO_FIRST_CERTINFO + 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_CERTINFO_LAST_NAME - CRYPT_CERTINFO_FIRST_NAME && \
 				i < FAILSAFE_ARRAYSIZE( certNameACL, ATTRIBUTE_ACL ); i++ )
@@ -3514,17 +3514,14 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_CERT_ANY, ST_NONE ) )
 			retIntError();
 #ifndef NDEBUG
-		if( certNameACL[ i ].attribute != CRYPT_CERTINFO_DIRECTORYNAME && \
-			certNameACL[ i ].access != ACCESS_Rxx_RWD )
-			retIntError();
+		ENSURES( certNameACL[ i ].attribute == CRYPT_CERTINFO_DIRECTORYNAME || \
+				 certNameACL[ i ].access == ACCESS_Rxx_RWD );
 #endif /* !NDEBUG */
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certNameACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certNameACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( certNameACL[ CRYPT_CERTINFO_LAST_NAME - \
-					 CRYPT_CERTINFO_FIRST_NAME + 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( certNameACL[ CRYPT_CERTINFO_LAST_NAME - \
+						  CRYPT_CERTINFO_FIRST_NAME + 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_CERTINFO_LAST_EXTENSION - CRYPT_CERTINFO_FIRST_EXTENSION && \
 				i < FAILSAFE_ARRAYSIZE( certExtensionACL, ATTRIBUTE_ACL ); i++ )
@@ -3539,12 +3536,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 			  ACCESS_RWx_xxx : ACCESS_Rxx_xxx ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certExtensionACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certExtensionACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( certExtensionACL[ CRYPT_CERTINFO_LAST_EXTENSION - \
-						  CRYPT_CERTINFO_FIRST_EXTENSION + 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( certExtensionACL[ CRYPT_CERTINFO_LAST_EXTENSION - \
+							   CRYPT_CERTINFO_FIRST_EXTENSION + 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_CERTINFO_LAST_CMS - CRYPT_CERTINFO_FIRST_CMS && \
 				i < FAILSAFE_ARRAYSIZE( certSmimeACL, ATTRIBUTE_ACL ); i++ )
@@ -3560,8 +3555,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 				retIntError();
 			}
 		else
+			{
 			if( certSmimeACL[ i ].subTypeA & ~( SUBTYPE_CLASS_A | ST_CERT_CMSATTR ) )
 				retIntError();
+			}
 #endif /* !NDEBUG */
 		if( ( certSmimeACL[ i ].access & ACCESS_RWD_xxx ) != \
 			( ( certSmimeACL[ i ].lowRange == RANGE_EXT_MARKER && \
@@ -3569,12 +3566,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 			  ACCESS_RWx_xxx : ACCESS_Rxx_xxx ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( certSmimeACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( certSmimeACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( certSmimeACL[ CRYPT_CERTINFO_LAST_CMS - \
-					  CRYPT_CERTINFO_FIRST_CMS + 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( certSmimeACL[ CRYPT_CERTINFO_LAST_CMS - \
+						   CRYPT_CERTINFO_FIRST_CMS + 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_KEYINFO_LAST - CRYPT_KEYINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( keysetACL, ATTRIBUTE_ACL ); i++ )
@@ -3583,12 +3578,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_KEYSET_ANY, ST_NONE ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( keysetACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( keysetACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( keysetACL[ CRYPT_KEYINFO_LAST - \
-				   CRYPT_KEYINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( keysetACL[ CRYPT_KEYINFO_LAST - \
+						CRYPT_KEYINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_DEVINFO_LAST - CRYPT_DEVINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( deviceACL, ATTRIBUTE_ACL ); i++ )
@@ -3597,12 +3590,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_DEV_ANY_STD, ST_NONE ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( deviceACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( deviceACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( deviceACL[ CRYPT_DEVINFO_LAST - \
-				   CRYPT_DEVINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( deviceACL[ CRYPT_DEVINFO_LAST - \
+						CRYPT_DEVINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_ENVINFO_LAST - CRYPT_ENVINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( envelopeACL, ATTRIBUTE_ACL ); i++ )
@@ -3611,12 +3602,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_NONE, ST_ENV_ANY ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( envelopeACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( envelopeACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( envelopeACL[ CRYPT_ENVINFO_LAST - \
-					 CRYPT_ENVINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( envelopeACL[ CRYPT_ENVINFO_LAST - \
+						  CRYPT_ENVINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_SESSINFO_LAST - CRYPT_SESSINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( sessionACL, ATTRIBUTE_ACL ); i++ )
@@ -3625,12 +3614,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_NONE, ST_SESS_ANY ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( sessionACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( sessionACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( sessionACL[ CRYPT_SESSINFO_LAST - \
-					CRYPT_SESSINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( sessionACL[ CRYPT_SESSINFO_LAST - \
+						 CRYPT_SESSINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_USERINFO_LAST - CRYPT_USERINFO_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( userACL, ATTRIBUTE_ACL ); i++ )
@@ -3639,12 +3626,10 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							ST_NONE, ST_USER_ANY ) )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( userACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( userACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( userACL[ CRYPT_USERINFO_LAST - \
-				 CRYPT_USERINFO_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( userACL[ CRYPT_USERINFO_LAST - \
+					  CRYPT_USERINFO_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 	for( i = 0; i < CRYPT_IATTRIBUTE_LAST - CRYPT_IATTRIBUTE_FIRST - 1 && \
 				i < FAILSAFE_ARRAYSIZE( internalACL, ATTRIBUTE_ACL ); i++ )
@@ -3653,15 +3638,12 @@ int initAttributeACL( KERNEL_DATA *krnlDataPtr )
 							i + CRYPT_IATTRIBUTE_FIRST + 1,
 							ST_ANY_A, ST_ANY_B ) )
 			retIntError();
-		if( ( internalACL[ i ].access & ACCESS_MASK_EXTERNAL ) != 0 )
-			retIntError();
+		ENSURES( ( internalACL[ i ].access & ACCESS_MASK_EXTERNAL ) == 0 );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( internalACL, ATTRIBUTE_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( internalACL, ATTRIBUTE_ACL ) );
 #ifndef NDEBUG
-	if( internalACL[ CRYPT_IATTRIBUTE_LAST - \
-					 CRYPT_IATTRIBUTE_FIRST - 1 ].attribute != CRYPT_ERROR )
-		retIntError();
+	ENSURES( internalACL[ CRYPT_IATTRIBUTE_LAST - \
+						  CRYPT_IATTRIBUTE_FIRST - 1 ].attribute == CRYPT_ERROR );
 #endif /* !NDEBUG */
 
 	return( CRYPT_OK );

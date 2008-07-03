@@ -31,6 +31,8 @@
 #define SERVER_PRIVKEY_FILE			"testlib/zkeyserv"
 #define SSH_PRIVKEY_FILE			"testlib/zkeyssh"
 #define TSA_PRIVKEY_FILE			"testlib/zkeytsa"
+#define MISC_PRIVKEY_FILE_TEMPLATE	"testlib/zkeymis%d"
+#define PKCS12_FILE					"testlib/zkey"
 
 #define PGP_PUBKEY_FILE				"testlib/zpubring"
 #define PGP_PRIVKEY_FILE			"testlib/zsecring"
@@ -45,7 +47,6 @@
 #define OPENPGP_PRIVKEY_PART_FILE	"testlib/zsecpart"
 #define NAIPGP_PUBKEY_FILE			"testlib/zpubnai"
 #define NAIPGP_PRIVKEY_FILE			"testlib/zsecnai"
-#define PKCS12_FILE					"testlib/zkey"
 
 #define CERT_FILE_TEMPLATE			"testlib/zcert%d"
 #define BASE64CERT_FILE_TEMPLATE	"testlib/zcerta%d"
@@ -82,6 +83,7 @@
 #define PGP_SIG_FILE_TEMPLATE		"testlib/zsigned%d"
 #define PGP_COPR_FILE_TEMPLATE		"testlib/zcopr%d"
 
+#define TESTDATA_FILE_TEMPLATE		"testlib/ztestd%d"
 #define COMPRESS_FILE				"test/filename"
 
 /****************************************************************************
@@ -107,6 +109,7 @@
 #define SERVER_PRIVKEY_FILE			":test:keys:server.p15"
 #define SSH_PRIVKEY_FILE			":test:keys:ssh.p15"
 #define TSA_PRIVKEY_FILE			":test:keys:tsa.p15"
+#define MISC_PRIVKEY_FILE_TEMPLATE	":test:keys:misc%d.p15"
 #define PKCS12_FILE					":test:keys:key.p12"
 
 #define PGP_PUBKEY_FILE				":test:pgp:pubring.pgp"
@@ -134,16 +137,16 @@
 #define BASE64CERTCHAIN_FILE_TEMPLATE ":test:certs:certchn%d.asc"
 #define PATHTEST_FILE_TEMPLATE		":test:nist:ntest%d.p7s"
 #define PADTEST_FILE_TEMPLATE		":test:certs:badsig%d.der"
-#define SSHKEY_FILE_TEMPLATE		":testdata:sshkey%d.asc"
+#define SSHKEY_FILE_TEMPLATE		":test:misc:sshkey%d.asc"
 #define PGPKEY_FILE_TEMPLATE		":test:pgp:pubkey%d.asc"
-#define NOCHAIN_EE_FILE				":testdata:nochn_ee.der"
-#define NOCHAIN_CA_FILE				":testdata:nochn_ca.der"
-#define RTCS_OK_FILE				":testdata:rtcsrok.der"
+#define NOCHAIN_EE_FILE				":test:misc:nochn_ee.der"
+#define NOCHAIN_CA_FILE				":test:misc:nochn_ca.der"
+#define RTCS_OK_FILE				":test:misc:rtcsrok.der"
 #define OCSP_OK_FILE				":test:session:ocspr_ok.der"
 #define OCSP_REV_FILE				":test:session:ocspr_re.der"
 #define OCSP_CA_FILE				":test:session:ocspca.der"
-#define CRLCERT_FILE_TEMPLATE		":testdata:crl_cert%d.der"
-#define RTCS_FILE_TEMPLATE			":testdata:rtcs_ee%do.der"
+#define CRLCERT_FILE_TEMPLATE		":test:misc:crl_cert%d.der"
+#define RTCS_FILE_TEMPLATE			":test:misc:rtcs_ee%do.der"
 #define OCSP_CA_FILE_TEMPLATE		":test:session:ocsp_ca%d.der"
 #define OCSP_EEOK_FILE_TEMPLATE		":test:session:ocsp_ok%d.der"
 #define OCSP_EEREV_FILE_TEMPLATE	":test:session:ocsp_re%d.der"
@@ -159,6 +162,7 @@
 #define PGP_SIG_FILE_TEMPLATE		":test:pgp:signed%d.pgp"
 #define PGP_COPR_FILE_TEMPLATE		":test:pgp:copr%d.pgp"
 
+#define TESTDATA_FILE_TEMPLATE		":test:misc:testdata%d.dat"
 #define COMPRESS_FILE				":test:filename.h"
 
 /****************************************************************************
@@ -184,6 +188,7 @@
 #define SERVER_PRIVKEY_FILE			"DD:CLBP15(KEYSERV)"
 #define SSH_PRIVKEY_FILE			"DD:CLBP15(KEYSSH)"
 #define TSA_PRIVKEY_FILE			"DD:CLBP15(KEYTSA)"
+#define MISC_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYMIS%d)"
 #define PKCS12_FILE					"DD:CLBP12(KEY)"
 
 #define PGP_PUBKEY_FILE				"DD:CLBPGP(PUBRING)"
@@ -235,6 +240,7 @@
 #define PGP_SIG_FILE_TEMPLATE		"DD:CLBPGP(SIGNED%d)"
 #define PGP_COPR_FILE_TEMPLATE		"DD:CLBPGP(COPR%d)"
 
+#define TESTDATA_FILE_TEMPLATE		"DD:CLBCMP(TESTD%d)"
 #define COMPRESS_FILE				"DD:CLBCMP(FILENAME)"
 
 /****************************************************************************
@@ -260,6 +266,7 @@
 #define SERVER_PRIVKEY_FILE			"zkeyserv.p15"
 #define SSH_PRIVKEY_FILE			"zkeyssh.p15"
 #define TSA_PRIVKEY_FILE			"zkeytsa.p15"
+#define MISC_PRIVKEY_FILE_TEMPLATE	"zkeymis%d.p15"
 #define PKCS12_FILE					"zkey.p12"
 
 #define PGP_PUBKEY_FILE				"zpubring.pgp"
@@ -312,6 +319,7 @@
 #define PGP_SIG_FILE_TEMPLATE		"zsigned%d.pgp"
 #define PGP_COPR_FILE_TEMPLATE		"zcopr%d.pgp"
 
+#define TESTDATA_FILE_TEMPLATE		"ztestd%d.dat"
 #define COMPRESS_FILE				"filename.h"
 
 /****************************************************************************
@@ -337,6 +345,7 @@
 #define SERVER_PRIVKEY_FILE			L"\\Storage Card\\keys\\server.p15"
 #define SSH_PRIVKEY_FILE			L"\\Storage Card\\keys\\ssh.p15"
 #define TSA_PRIVKEY_FILE			L"\\Storage Card\\keys\\tsa.p15"
+#define MISC_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\misc%d.p15"
 #define PKCS12_FILE					L"\\Storage Card\\keys\\key.p12"
 
 #define PGP_PUBKEY_FILE				L"\\Storage Card\\pgp\\pubring.pgp"
@@ -364,21 +373,21 @@
 #define BASE64CERTCHAIN_FILE_TEMPLATE L"\\Storage Card\\certs\\certchn%d.asc"
 #define PATHTEST_FILE_TEMPLATE		L"\\Storage Card\\nist\\test%d.p7s"
 #define PADTEST_FILE_TEMPLATE		L"\\Storage Card\\certs\\badsig%d.der"
-#define SSHKEY_FILE_TEMPLATE		L"\\Storage Card\\sshkey%d.asc"
+#define SSHKEY_FILE_TEMPLATE		L"\\Storage Card\\misc\\sshkey%d.asc"
 #define PGPKEY_FILE_TEMPLATE		L"\\Storage Card\\pgp\\pubkey%d.asc"
-#define NOCHAIN_EE_FILE				L"\\Storage Card\\nochn_ee.der"
-#define NOCHAIN_CA_FILE				L"\\Storage Card\\nochn_ca.der"
-#define RTCS_OK_FILE				L"\\Storage Card\\rtcsrok.der"
-#define OCSP_OK_FILE				L"\\Storage Card\\ocspr_ok.der"
-#define OCSP_REV_FILE				L"\\Storage Card\\ocspr_re.der"
-#define OCSP_CA_FILE				L"\\Storage Card\\ocspca.der"
-#define CRLCERT_FILE_TEMPLATE		L"\\Storage Card\\crl_cert%d.der"
-#define RTCS_FILE_TEMPLATE			L"\\Storage Card\\rtcs_ee%do.der"
-#define OCSP_CA_FILE_TEMPLATE		L"\\Storage Card\\ocsp_ca%d.der"
-#define OCSP_EEOK_FILE_TEMPLATE		L"\\Storage Card\\ocsp_ok%d.der"
-#define OCSP_EEREV_FILE_TEMPLATE	L"\\Storage Card\\ocsp_re%d.der"
-#define CMP_CA_FILE_TEMPLATE		L"\\Storage Card\\cmp_ca%d.der"
-#define SCEP_CA_FILE_TEMPLATE		L"\\Storage Card\\scep_ca%d.der"
+#define NOCHAIN_EE_FILE				L"\\Storage Card\\misc\\nochn_ee.der"
+#define NOCHAIN_CA_FILE				L"\\Storage Card\\misc\\nochn_ca.der"
+#define RTCS_OK_FILE				L"\\Storage Card\\misc\\rtcsrok.der"
+#define OCSP_OK_FILE				L"\\Storage Card\\session\\ocspr_ok.der"
+#define OCSP_REV_FILE				L"\\Storage Card\\session\\ocspr_re.der"
+#define OCSP_CA_FILE				L"\\Storage Card\\session\\ocspca.der"
+#define CRLCERT_FILE_TEMPLATE		L"\\Storage Card\\misc\\crl_cert%d.der"
+#define RTCS_FILE_TEMPLATE			L"\\Storage Card\\misc\\rtcs_ee%do.der"
+#define OCSP_CA_FILE_TEMPLATE		L"\\Storage Card\\session\\ocsp_ca%d.der"
+#define OCSP_EEOK_FILE_TEMPLATE		L"\\Storage Card\\session\\ocsp_ok%d.der"
+#define OCSP_EEREV_FILE_TEMPLATE	L"\\Storage Card\\session\\ocsp_re%d.der"
+#define CMP_CA_FILE_TEMPLATE		L"\\Storage Card\\session\\cmp_ca%d.der"
+#define SCEP_CA_FILE_TEMPLATE		L"\\Storage Card\\session\\scep_ca%d.der"
 
 #define SMIME_SIG_FILE_TEMPLATE		L"\\Storage Card\\smime\\signed%d.p7s"
 #define SMIME_ENV_FILE_TEMPLATE		L"\\Storage Card\\smime\\envel%d.p7m"
@@ -389,6 +398,7 @@
 #define PGP_SIG_FILE_TEMPLATE		L"\\Storage Card\\pgp\\signed%d.pgp"
 #define PGP_COPR_FILE_TEMPLATE		L"\\Storage Card\\pgp\\copr%d.pgp"
 
+#define TESTDATA_FILE_TEMPLATE		L"\\Storage Card\\misc\\testdata%d.dat"
 #define COMPRESS_FILE				L"\\Storage Card\\filename.h"
 
 /****************************************************************************
@@ -414,6 +424,7 @@
 #define SERVER_PRIVKEY_FILE			TEXT( "test/keys/server.p15" )
 #define SSH_PRIVKEY_FILE			TEXT( "test/keys/ssh.p15" )
 #define TSA_PRIVKEY_FILE			TEXT( "test/keys/tsa.p15" )
+#define MISC_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/misc%d.p15" )
 #define PKCS12_FILE					TEXT( "test/keys/key.p12" )
 
 #define PGP_PUBKEY_FILE				TEXT( "test/pgp/pubring.pgp" )
@@ -441,16 +452,16 @@
 #define BASE64CERTCHAIN_FILE_TEMPLATE TEXT( "test/certs/certchn%d.asc" )
 #define PATHTEST_FILE_TEMPLATE		TEXT( "test/nist/test%d.p7s" )
 #define PADTEST_FILE_TEMPLATE		TEXT( "test/certs/bad_sig%d.der" )
-#define SSHKEY_FILE_TEMPLATE		TEXT( "testdata/sshkey%d.asc" )
+#define SSHKEY_FILE_TEMPLATE		TEXT( "test/misc/sshkey%d.asc" )
 #define PGPKEY_FILE_TEMPLATE		TEXT( "test/pgp/pubkey%d.asc" )
-#define NOCHAIN_EE_FILE				TEXT( "testdata/nochn_ee.der" )
-#define NOCHAIN_CA_FILE				TEXT( "testdata/nochn_ca.der" )
-#define RTCS_OK_FILE				TEXT( "testdata/rtcsrok.der" )
+#define NOCHAIN_EE_FILE				TEXT( "test/misc/nochn_ee.der" )
+#define NOCHAIN_CA_FILE				TEXT( "test/misc/nochn_ca.der" )
+#define RTCS_OK_FILE				TEXT( "test/misc/rtcsrok.der" )
 #define OCSP_OK_FILE				TEXT( "test/session/ocspr_ok.der" )
 #define OCSP_REV_FILE				TEXT( "test/session/ocspr_re.der" )
 #define OCSP_CA_FILE				TEXT( "test/session/ocspca.der" )
-#define CRLCERT_FILE_TEMPLATE		TEXT( "testdata/crl_cert%d.der" )
-#define RTCS_FILE_TEMPLATE			TEXT( "testdata/rtcs_ee%do.der" )
+#define CRLCERT_FILE_TEMPLATE		TEXT( "test/misc/crl_cert%d.der" )
+#define RTCS_FILE_TEMPLATE			TEXT( "test/misc/rtcs_ee%do.der" )
 #define OCSP_CA_FILE_TEMPLATE		TEXT( "test/session/ocsp_ca%d.der" )
 #define OCSP_EEOK_FILE_TEMPLATE		TEXT( "test/session/ocsp_ok%d.der" )
 #define OCSP_EEREV_FILE_TEMPLATE	TEXT( "test/session/ocsp_re%d.der" )
@@ -466,6 +477,7 @@
 #define PGP_SIG_FILE_TEMPLATE		TEXT( "test/pgp/signed%d.pgp" )
 #define PGP_COPR_FILE_TEMPLATE		TEXT( "test/pgp/copr%d.pgp" )
 
+#define TESTDATA_FILE_TEMPLATE		TEXT( "test/misc/testdata%d.dat" )
 #define COMPRESS_FILE				TEXT( "test/filename.h" )
 
 #endif /* OS-specific naming */

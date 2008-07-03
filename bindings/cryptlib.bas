@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2007                   *
+'*                       Copyright Peter Gutmann 1997-2008                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Thu Feb  1 01:54:58 2007, filesize = 85398.
+'"cryptlib.h" dated Fri Nov 23 02:07:02 2007, filesize = 85740.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3310
+  Public Const CRYPTLIB_VERSION As Long = 3320
 
 
 '****************************************************************************
@@ -876,9 +876,9 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_ENVINFO_DATASIZE          ' Data size information 
     CRYPT_ENVINFO_COMPRESSION       ' Compression information 
     CRYPT_ENVINFO_CONTENTTYPE       ' Inner CMS content type 
-    CRYPT_ENVINFO_DETACHEDSIGNATURE ' Generate CMS detached signature 
+    CRYPT_ENVINFO_DETACHEDSIGNATURE ' Detached signature 
     CRYPT_ENVINFO_SIGNATURE_RESULT  ' Signature check result 
-    CRYPT_ENVINFO_MAC               ' Use MAC instead of encrypting 
+    CRYPT_ENVINFO_INTEGRITY         ' Integrity-protection level 
 
     ' Resources required for enveloping/deenveloping 
     CRYPT_ENVINFO_PASSWORD          ' User password 
@@ -1076,6 +1076,8 @@ Public Enum CRYPT_CONTENT_TYPE
                CRYPT_CONTENT_DIGESTEDDATA
                CRYPT_CONTENT_ENCRYPTEDDATA
                CRYPT_CONTENT_COMPRESSEDDATA
+               CRYPT_CONTENT_AUTHDATA
+               CRYPT_CONTENT_AUTHENVDATA
                CRYPT_CONTENT_TSTINFO
                CRYPT_CONTENT_SPCINDIRECTDATACONTEXT
                CRYPT_CONTENT_RTCSREQUEST
@@ -1121,6 +1123,20 @@ Public Enum CRYPT_SIGNATURELEVEL_TYPE
     CRYPT_SIGNATURELEVEL_SIGNERCERT ' Include signer cert 
     CRYPT_SIGNATURELEVEL_ALL        ' Include all relevant info 
     CRYPT_SIGNATURELEVEL_LAST       ' Last possible sig.level type 
+    
+
+End Enum
+
+'  The level of integrity protection to apply to enveloped data.  The 
+'  default envelope protection for an envelope with keying information 
+'  applied is encryption, this can be modified to use MAC-only protection
+'  (with no encryption) or hybrid encryption + authentication 
+
+Public Enum CRYPT_INTEGRITY_TYPE
+
+    CRYPT_INTEGRITY_NONE            ' No integrity protection 
+    CRYPT_INTEGRITY_MACONLY         ' MAC only, no encryption 
+    CRYPT_INTEGRITY_FULL            ' Encryption + ingerity protection 
     
 
 End Enum
@@ -1412,31 +1428,31 @@ Public Type CRYPT_PKCINFO_ECC
     isPublicKey As Long            ' Whether this is a public or private key 
 
     ' Curve 
-    p(CRYPT_MAX_PKCSIZE-1) As Byte   ' Prime defining Fq 
+    p(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Prime defining Fq 
     pLen As Long                   ' Length of prime in bits 
-    a(CRYPT_MAX_PKCSIZE-1) As Byte   ' Element in Fq defining curve 
+    a(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining curve 
     aLen As Long                   ' Length of element a in bits 
-    b(CRYPT_MAX_PKCSIZE-1) As Byte   ' Element in Fq defining curve 
+    b(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining curve 
     bLen As Long                   ' Length of element b in bits 
 
     ' Generator 
-    gx(CRYPT_MAX_PKCSIZE-1) As Byte  ' Element in Fq defining point 
+    gx(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining point 
     gxLen As Long                  ' Length of element gx in bits 
-    gy(CRYPT_MAX_PKCSIZE-1) As Byte  ' Element in Fq defining point 
+    gy(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining point 
     gyLen As Long                  ' Length of element gy in bits 
-    r(CRYPT_MAX_PKCSIZE-1) As Byte   ' Order of point 
+    r(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Order of point 
     rLen As Long                   ' Length of order in bits 
-    h(CRYPT_MAX_PKCSIZE-1) As Byte   ' Optional cofactor 
+    h(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Optional cofactor 
     hLen As Long                   ' Length of cofactor in bits 
 
     ' Public components 
-    qx(CRYPT_MAX_PKCSIZE-1) As Byte  ' Point Q on the curve 
+    qx(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Point Q on the curve 
     qxLen As Long                  ' Length of point xq in bits 
-    qy(CRYPT_MAX_PKCSIZE-1) As Byte  ' Point Q on the curve 
+    qy(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Point Q on the curve 
     qyLen As Long                  ' Length of point xy in bits 
 
     ' Private components 
-    d(CRYPT_MAX_PKCSIZE-1) As Byte   ' Random integer 
+    d(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Private random integer 
     dLen As Long                   ' Length of integer in bits 
     
 

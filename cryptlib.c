@@ -50,15 +50,26 @@ const int messageValueCursorLast = CRYPT_CURSOR_LAST;
    networking subsystem to gracefully exit from any currently occurring 
    network I/O.
 
+   The certificate init is somewhat special in that it only performs an
+   internal consistency check rather than performing any actual 
+   initialisation.  As such it's not performed as part of the asynchronous
+   init since it has the potential to abort the cryptlib startup and as
+   such can't be allowed to come back at a later date an retroactively shut 
+   things down after other crypto operations have already occurred.  In fact
+   since it's part of the startup self-test it's done in the pre-init, as a
+   failure to complete the self-test will result in an immediate abort of the
+   init process.
+
    The order of the init/shutdown actions is:
 
 					Object type		Action
 					-----------		------
-	Pre-init:		Device			Create system object
+	Pre-init:		Cert			Self-test only
+					Device			Create system object
 
 	Init:			User			Create default user object
-					Keyset			Drivers - keysets			| Done 
-					Device			Drivers - devices			| async if
+					Keyset			Drivers - keysets			| Done async.
+					Device			Drivers - devices			| if
 					Session			Drivers - networking		| available
 				   [Several]		Kernel self-test
 
@@ -98,19 +109,36 @@ const int messageValueCursorLast = CRYPT_CURSOR_LAST;
    being explicitly destroyed so they're destroyed implicitly by the
    destroyObjects() cleanup call */
 
-int certManagementFunction( const MANAGEMENT_ACTION_TYPE action );
-int deviceManagementFunction( const MANAGEMENT_ACTION_TYPE action );
-int keysetManagementFunction( const MANAGEMENT_ACTION_TYPE action );
-int sessionManagementFunction( const MANAGEMENT_ACTION_TYPE action );
-int userManagementFunction( const MANAGEMENT_ACTION_TYPE action );
+CHECK_RETVAL \
+int certManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action );
+CHECK_RETVAL \
+int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action );
+CHECK_RETVAL \
+int keysetManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action );
+CHECK_RETVAL \
+int sessionManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action );
+CHECK_RETVAL \
+int userManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action );
 
-typedef int ( *MANAGEMENT_FUNCTION )( const MANAGEMENT_ACTION_TYPE action );
+typedef CHECK_RETVAL \
+		int ( *MANAGEMENT_FUNCTION )( IN_ENUM( MANAGEMENT_ACTION ) \
+										const MANAGEMENT_ACTION_TYPE action );
 
 static const MANAGEMENT_FUNCTION preInitFunctions[] = {
-	deviceManagementFunction, NULL 
+  #ifdef USE_CERTIFICATES
+	certManagementFunction,
+  #endif /* USE_CERTIFICATES */
+	deviceManagementFunction, 
+	NULL, NULL 
 	};
 static const MANAGEMENT_FUNCTION initFunctions[] = {
-	userManagementFunction, NULL 
+	userManagementFunction, 
+	NULL, NULL 
 	};
 static const MANAGEMENT_FUNCTION asyncInitFunctions[] = {
   #ifdef USE_KEYSETS
@@ -196,30 +224,6 @@ int initCryptlib( void )
 	{
 	int initLevel = 0, status;
 
-	/* Perform OS-specific additional initialisation */
-#if ( defined( __WIN32__ ) || defined( __WINCE__ ) ) && defined( STATIC_LIB )
-	static DWORD dwPlatform = ( DWORD ) CRYPT_ERROR;
-
-	if( dwPlatform == CRYPT_ERROR )
-		{
-		OSVERSIONINFO osvi = { sizeof( OSVERSIONINFO ) };
-
-		/* Figure out which version of Windows we're running under */
-		GetVersionEx( &osvi );
-		dwPlatform = osvi.dwPlatformId;
-		isWin95 = ( dwPlatform == VER_PLATFORM_WIN32_WINDOWS ) ? TRUE : FALSE;
-
-		/* Check for Win32s just in case someone ever tries to load cryptlib 
-		   under it */
-		if( dwPlatform == VER_PLATFORM_WIN32s )
-			return( CRYPT_ERROR );
-		}
-#endif /* Win32/WinCE && STATIC_LIB */
-#if defined( __IBMC__ ) || defined( __IBMCPP__ )
-	/* VisualAge C++ doesn't set the TZ correctly */
-	tzset();
-#endif /* VisualAge C++ */
-#if defined( CONFIG_DATA_LITTLEENDIAN ) || defined( CONFIG_DATA_BIGENDIAN )
 	/* If we're using a user-defined endianness override (i.e. it's a cross-
 	   compile from a difference architecture), perform a sanity check to 
 	   make sure that the endianness was set right.  Since this will 
@@ -231,6 +235,7 @@ int initCryptlib( void )
 	   but it's better to do an explicit check here that catches the 
 	   endianness problem, rather than just returning a generic self-test 
 	   fail error */
+#if defined( CONFIG_DATA_LITTLEENDIAN ) || defined( CONFIG_DATA_BIGENDIAN )
   #ifdef DATA_LITTLEENDIAN
 		if( *( ( long * ) "\x80\x00\x00\x00\x00\x00\x00\x00" ) < 0 )
   #else
@@ -246,6 +251,16 @@ int initCryptlib( void )
 	status = krnlBeginInit();
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* Perform OS-specific additional initialisation inside the kernel init 
+	   lock */
+	status = initSysVars();
+	if( cryptStatusError( status ) )
+		{
+		assert( DEBUG_WARN );
+		krnlCompleteShutdown();
+		return( CRYPT_ERROR_FAILED );
+		}
 
 	/* Perform the multi-phase bootstrap */
 	status = dispatchManagementAction( preInitFunctions, 
@@ -283,9 +298,11 @@ int initCryptlib( void )
 										 MANAGEMENT_ACTION_INIT,
 										 SEMAPHORE_DRIVERBIND );
 			if( cryptStatusError( status ) )
+				{
 				/* The thread couldn't be started, try again with a 
 				   synchronous init */
 				asyncInit = FALSE;
+				}
 			}
 		if( !asyncInit )
 #endif /* USE_THREADS */

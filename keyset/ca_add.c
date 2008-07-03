@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*					  cryptlib DBMS CA Cert Add Interface					*
-*						Copyright Peter Gutmann 1996-2004					*
+*					cryptlib DBMS CA Certificate Add Interface				*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -9,14 +9,10 @@
   #include "crypt.h"
   #include "keyset.h"
   #include "dbms.h"
-  #include "asn1.h"
-  #include "rpc.h"
 #else
   #include "crypt.h"
   #include "keyset/keyset.h"
   #include "keyset/dbms.h"
-  #include "misc/asn1.h"
-  #include "misc/rpc.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_DBMS
@@ -27,13 +23,21 @@
 *																			*
 ****************************************************************************/
 
-/* Check that the request we've been passed is in order */
+/* Check that the request that we've been passed is in order */
 
-BOOLEAN checkRequest( const CRYPT_CERTIFICATE iCertRequest,
-					  const CRYPT_CERTACTION_TYPE action )
+CHECK_RETVAL_BOOL \
+BOOLEAN checkRequest( IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
+					  IN_ENUM( CRYPT_CERTACTION ) \
+						const CRYPT_CERTACTION_TYPE action )
 	{
 	MESSAGE_DATA msgData;
 	int certType, value, status;
+
+	REQUIRES_B( isHandleRangeValid( iCertRequest ) );
+	REQUIRES_B( action == CRYPT_CERTACTION_CERT_CREATION || \
+				action == CRYPT_CERTACTION_ISSUE_CERT || \
+				action == CRYPT_CERTACTION_REVOKE_CERT || \
+				action == CRYPT_CERTACTION_NONE );
 
 	/* Make sure that the request type is consistent with the operation
 	   being performed */
@@ -61,13 +65,12 @@ BOOLEAN checkRequest( const CRYPT_CERTIFICATE iCertRequest,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( FALSE );
+			retIntError_Boolean();
 		}
 
 	/* Make sure that the request is completed and valid.  We don't check
 	   the signature on revocation requests since they aren't signed, and
-	   have to be careful with CRMF requests, which can be unsigned for
+	   have to be careful with CRMF requests which can be unsigned for
 	   encryption-only keys */
 	status = krnlSendMessage( iCertRequest, IMESSAGE_GETATTRIBUTE,
 							  &value, CRYPT_CERTINFO_IMMUTABLE );
@@ -76,10 +79,9 @@ BOOLEAN checkRequest( const CRYPT_CERTIFICATE iCertRequest,
 	switch( certType )
 		{
 		case CRYPT_CERTTYPE_REQUEST_CERT:
-			if( cryptStatusOK( \
-					krnlSendMessage( iCertRequest, IMESSAGE_GETATTRIBUTE,
-									 &value, CRYPT_CERTINFO_SELFSIGNED ) ) && \
-				!value )
+			status = krnlSendMessage( iCertRequest, IMESSAGE_GETATTRIBUTE,
+									  &value, CRYPT_CERTINFO_SELFSIGNED );
+			if( cryptStatusOK( status ) && !value )
 				{
 				/* It's an unsigned CRMF request, make sure that it really 
 				   is an encryption-only key */
@@ -102,20 +104,19 @@ BOOLEAN checkRequest( const CRYPT_CERTIFICATE iCertRequest,
 			break;
 
 		case CRYPT_CERTTYPE_REQUEST_REVOCATION:
-			/* Revocation requests are unsigned so we can't perform a sig.
-			   check on them */
+			/* Revocation requests are unsigned so we can't perform a 
+			   signature check on them */
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( FALSE );
+			retIntError_Boolean();
 		}
 
 	/* Check that required parameters are present.  This is necessary for
 	   CRMF requests where every single parameter is optional, for our use
-	   we require that a cert request contains at least a subject DN and
-	   public key and a revocation request contains at least an issuer DN and
-	   serial number */
+	   we require that a certificate request contains at least a subject DN 
+	   and public key and a revocation request contains at least an issuer 
+	   DN and serial number */
 	switch( certType )
 		{
 		case CRYPT_CERTTYPE_CERTREQUEST:
@@ -142,225 +143,298 @@ BOOLEAN checkRequest( const CRYPT_CERTIFICATE iCertRequest,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( FALSE );
+			retIntError_Boolean();
 		}
 
 	return( TRUE );
 	}
 
 /* Check that a revocation request is consistent with information held in the
-   cert store */
+   certificate store */
 
-static int checkRevRequest( DBMS_INFO *dbmsInfo,
-							const CRYPT_CERTIFICATE iCertRequest )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkRevRequest( INOUT DBMS_INFO *dbmsInfo,
+							IN_HANDLE const CRYPT_CERTIFICATE iCertRequest )
 	{
-	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
-	char issuerID[ DBXKEYID_BUFFER_SIZE + 8 ];
-	int length, status;
+	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+	char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
+	char issuerID[ ENCODED_DBXKEYID_SIZE + 8 ];
+	int certIDlength, issuerIDlength, status;
 
-	/* Check that the cert being referred to in the request is present and
-	   active */
-	status = length = getKeyID( issuerID, iCertRequest,
-								CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
-	if( !cryptStatusError( status ) )
+	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
+	
+	REQUIRES( isHandleRangeValid( iCertRequest ) );
+
+	/* Check that the certificate being referred to in the request is 
+	   present and active */
+	status = getKeyID( issuerID, ENCODED_DBXKEYID_SIZE, &issuerIDlength, 
+					   iCertRequest, CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
+	if( cryptStatusOK( status ) )
+		{
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, issuerID, issuerIDlength );
 		status = dbmsQuery(
 			"SELECT certData FROM certificates WHERE issuerID = ?",
-							NULL, 0, issuerID, length, 0,
+							NULL, 0, NULL, boundDataPtr,
 							DBMS_CACHEDQUERY_ISSUERID, DBMS_QUERY_CHECK );
+		}
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
 
-	/* The cert isn't an active cert, it's either not present or not active,
-	   return an appropriate error code.  If this request has been entered
-	   into the cert log then it's a duplicate request, otherwise it's a
-	   request to revoke a non-present cert (either that or something really
-	   obscure which is best reported as a non-present cert problem) */
-	status = length = getKeyID( certID, iCertRequest,
-								CRYPT_CERTINFO_FINGERPRINT_SHA );
-	if( !cryptStatusError( status ) )
+	/* The certificate isn't an active certificate, it's either not present 
+	   or not active, return an appropriate error code.  If this request has 
+	   been entered into the certificate store log then it's a duplicate 
+	   request, otherwise it's a request to revoke a non-present certificate 
+	   (either that or something really obscure which is best reported as a 
+	   non-present certificate problem) */
+	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
+					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+	if( cryptStatusOK( status ) )
+		{
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, certID, certIDlength );
 		status = dbmsQuery(
 			"SELECT certData FROM certLog WHERE certID = ?",
-							NULL, 0, certID, length, 0,
+							NULL, 0, NULL, boundDataPtr,
 							DBMS_CACHEDQUERY_NONE, DBMS_QUERY_CHECK );
+		}
 	return( cryptStatusOK( status ) ? \
 			CRYPT_ERROR_DUPLICATE : CRYPT_ERROR_NOTFOUND );
 	}
 
 /****************************************************************************
 *																			*
-*								Cert Add Functions							*
+*							Certificate Add Functions						*
 *																			*
 ****************************************************************************/
 
-/* Add a new PKI user to the cert store */
+/* Add a new PKI user to the certificate store */
 
-int caAddPKIUser( DBMS_INFO *dbmsInfo, const CRYPT_CERTIFICATE iPkiUser )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int caAddPKIUser( INOUT DBMS_INFO *dbmsInfo, 
+				  IN_HANDLE const CRYPT_CERTIFICATE iPkiUser,
+				  INOUT ERROR_INFO *errorInfo )
 	{
-	MESSAGE_DATA msgData;
 	BYTE certData[ MAX_CERT_SIZE + 8 ];
-	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
-	int certDataLength, status;
+	char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
+	int certDataLength, certIDlength = DUMMY_INIT, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
-	assert( isHandleRangeValid( iPkiUser ) );
+	
+	REQUIRES( isHandleRangeValid( iPkiUser ) );
+	REQUIRES( errorInfo != NULL );
 
-	/* Extract the information we need from the PKI user object.  In
+	/* Extract the information that we need from the PKI user object.  In
 	   addition to simply obtaining the information for logging purposes we
-	   also need to perform this action to tell the cert management code to
-	   fill in the remainder of the (implicitly-added) user info before we
-	   start querying fields as we add it to the cert store.  Because of this
-	   we also need to place the certID fetch after the object export, since
-	   it's in an incomplete state before this point */
-	setMessageData( &msgData, certData, MAX_CERT_SIZE );
-	status = krnlSendMessage( iPkiUser, IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_ICERTFORMAT_DATA );
+	   also need to perform this action to tell the certificate management 
+	   code to fill in the remainder of the (implicitly-added) user 
+	   information  before we start querying fields as we add it to the 
+	   certificate store.  Because of this we also need to place the certID 
+	   fetch after the object export since it's in an incomplete state 
+	   before this point */
+	status = extractCertData( iPkiUser, CRYPT_ICERTFORMAT_DATA,
+							  certData, MAX_CERT_SIZE, &certDataLength );
 	if( cryptStatusOK( status ) )
-		status = getKeyID( certID, iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA );
+		status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
+						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA );
 	if( cryptStatusError( status ) )
-		return( status );
-	certDataLength = msgData.length;
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't extract PKI user data to add to certificate "
+				  "store" ) );
+		}
 
-	/* Update the cert store */
+	/* Update the certificate store */
 	status = addCert( dbmsInfo, iPkiUser, CRYPT_CERTTYPE_PKIUSER,
-					  CERTADD_NORMAL, DBMS_UPDATE_BEGIN );
+					  CERTADD_NORMAL, DBMS_UPDATE_BEGIN, errorInfo );
 	if( cryptStatusOK( status ) )
-		status = updateCertLog( dbmsInfo, CRYPT_CERTACTION_ADDUSER, certID,
-								NULL, NULL, certData, certDataLength,
+		{
+		status = updateCertLog( dbmsInfo, CRYPT_CERTACTION_ADDUSER, 
+								certID, certIDlength, NULL, 0, NULL, 0, 
+								certData, certDataLength, 
 								DBMS_UPDATE_COMMIT );
+		}
 	else
+		{
 		/* Something went wrong, abort the transaction */
-		dbmsUpdate( NULL, NULL, 0, 0, DBMS_UPDATE_ABORT );
+		dbmsUpdate( NULL, NULL, DBMS_UPDATE_ABORT );
+		retExtErr( status, 
+				   ( status, errorInfo, getDbmsErrorInfo( dbmsInfo ),
+					 "PKI user add operation failed: " ) );
+		}
 
 	return( status );
 	}
 
-/* Delete a PKI user from the cert store */
+/* Delete a PKI user from the certificate store */
 
-int caDeletePKIUser( DBMS_INFO *dbmsInfo, const CRYPT_KEYID_TYPE keyIDtype,
-					 const void *keyID, const int keyIDlength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+int caDeletePKIUser( INOUT DBMS_INFO *dbmsInfo, 
+					 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+					 IN_BUFFER( keyIDlength ) const void *keyID, 
+					 IN_LENGTH_KEYID const int keyIDlength,
+					 INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CERTIFICATE iPkiUser;
-	char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
-	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
-	int dummy, status;
+	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+	char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
+	int certIDlength = DUMMY_INIT, dummy, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
-	assert( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
 	assert( isReadPtr( keyID, keyIDlength ) );
 
-	/* Get info on the user that we're about to delete */
-	status = getItemData( dbmsInfo, &iPkiUser, &dummy, keyIDtype,
-						  keyID, keyIDlength, KEYMGMT_ITEM_PKIUSER, 
-						  KEYMGMT_FLAG_NONE );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || \
+			  keyIDtype == CRYPT_KEYID_URI );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( errorInfo != NULL );
+
+	/* Get information on the PKI user that we're about to delete */
+	status = getItemData( dbmsInfo, &iPkiUser, &dummy, 
+						  KEYMGMT_ITEM_PKIUSER, keyIDtype, 
+						  keyID, keyIDlength, KEYMGMT_FLAG_NONE, 
+						  errorInfo );
 	if( cryptStatusOK( status ) )
 		{
-		status = getKeyID( certID, iPkiUser, 
-						   CRYPT_CERTINFO_FINGERPRINT_SHA );
+		status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
+						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA );
 		krnlSendNotifier( iPkiUser, IMESSAGE_DECREFCOUNT );
 		}
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExtErr( status, 
+				   ( status, errorInfo, getDbmsErrorInfo( dbmsInfo ),
+					 "Couldn't get information on PKI user to be "
+					 "deleted: " ) );
+		}
 
-	/* Delete the PKI user info and record the deletion */
-	dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
-			"DELETE FROM pkiUsers WHERE certID = '$'",
-				   certID );
-	status = dbmsUpdate( sqlBuffer, NULL, 0, 0, DBMS_UPDATE_BEGIN );
+	/* Delete the PKI user information and record the deletion */
+	initBoundData( boundDataPtr );
+	setBoundData( boundDataPtr, 0, certID, certIDlength );
+	status = dbmsUpdate( 
+			"DELETE FROM pkiUsers WHERE certID = ?", 
+						 boundDataPtr, DBMS_UPDATE_BEGIN );
 	if( cryptStatusOK( status ) )
 		status = updateCertLog( dbmsInfo, CRYPT_CERTACTION_DELETEUSER, 
-								NULL, NULL, certID, NULL, 0, 
-								DBMS_UPDATE_COMMIT );
+								NULL, 0, NULL, 0, certID, certIDlength, 
+								NULL, 0, DBMS_UPDATE_COMMIT );
 	else
+		{
 		/* Something went wrong, abort the transaction */
-		dbmsUpdate( NULL, NULL, 0, 0, DBMS_UPDATE_ABORT );
+		dbmsUpdate( NULL, NULL, DBMS_UPDATE_ABORT );
+		retExtErr( status, 
+				   ( status, errorInfo, getDbmsErrorInfo( dbmsInfo ),
+					 "PKI user delete operation failed: " ) );
+		}
 
 	return( status );
 	}
 
-/* Add a cert issue or revocation request to the cert store */
+/* Add a certificate issue or revocation request to the certificate store */
 
-int caAddCertRequest( DBMS_INFO *dbmsInfo,
-					  const CRYPT_CERTIFICATE iCertRequest,
-					  const CRYPT_CERTTYPE_TYPE requestType,
-					  const BOOLEAN isRenewal )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo, 
+					  IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
+					  IN_ENUM( CRYPT_CERTTYPE ) \
+						const CRYPT_CERTTYPE_TYPE requestType, 
+					  const BOOLEAN isRenewal, 
+					  INOUT ERROR_INFO *errorInfo )
 	{
 	BYTE certData[ MAX_CERT_SIZE + 8 ];
-	char certID[ DBXKEYID_BUFFER_SIZE + 8 ];
-	char reqCertID[ DBXKEYID_BUFFER_SIZE + 8 ], *reqCertIDptr = reqCertID;
-	int reqCertIDlength, certDataLength, status;
+	char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
+	char reqCertID[ ENCODED_DBXKEYID_SIZE + 8 ], *reqCertIDptr = reqCertID;
+	int certIDlength, reqCertIDlength = DUMMY_INIT;
+	int certDataLength = DUMMY_INIT, status;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
-	assert( isHandleRangeValid( iCertRequest ) );
-	assert( requestType == CRYPT_CERTTYPE_CERTREQUEST || \
-			requestType == CRYPT_CERTTYPE_REQUEST_CERT || \
-			requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION );
+	
+	REQUIRES( isHandleRangeValid( iCertRequest ) );
+	REQUIRES( requestType == CRYPT_CERTTYPE_CERTREQUEST || \
+			  requestType == CRYPT_CERTTYPE_REQUEST_CERT || \
+			  requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION );
+	REQUIRES( errorInfo != NULL );
 
-	/* Make sure that the request is OK, and if it's a revocation request
-	   make sure that it refers to a cert which is both present in the store
-	   and currently active */
+	/* Make sure that the request is OK and if it's a revocation request 
+	   make sure that it refers to a certificate which is both present in 
+	   the store and currently active */
 	if( !checkRequest( iCertRequest, CRYPT_CERTACTION_NONE ) )
-		return( CRYPT_ARGERROR_NUM1 );
+		{
+		retExtArg( CRYPT_ARGERROR_NUM1, 
+				   ( CRYPT_ARGERROR_NUM1, errorInfo, 
+					 "Certificate request information "
+					 "inconsistent/invalid" ) );
+		}
 	if( requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION )
 		{
 		status = checkRevRequest( dbmsInfo, iCertRequest );
 		if( cryptStatusError( status ) )
-			return( status );
+			retExt( status, 
+					( status, errorInfo, 
+					  "Revocation request doesn't correspond to a currently "
+					  "active certificate" ) );
 		}
 
-	/* Extract the information that we need from the cert request */
-	status = getKeyID( certID, iCertRequest,
-					   CRYPT_CERTINFO_FINGERPRINT_SHA );
-	if( !cryptStatusError( status ) )
+	/* Extract the information that we need from the certificate request */
+	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
+					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+	if( cryptStatusOK( status ) )
 		{
-		MESSAGE_DATA msgData;
-
-		setMessageData( &msgData, certData, MAX_CERT_SIZE );
-		status = krnlSendMessage( iCertRequest, IMESSAGE_CRT_EXPORT,
-					&msgData,
-					( requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION ) ? \
-					CRYPT_ICERTFORMAT_DATA : CRYPT_CERTFORMAT_CERTIFICATE );
-		certDataLength = msgData.length;
+		status = extractCertData( iCertRequest, 
+								  ( requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION ) ? \
+									CRYPT_ICERTFORMAT_DATA : \
+									CRYPT_CERTFORMAT_CERTIFICATE,
+								  certData, MAX_CERT_SIZE, &certDataLength );
 		}
 	if( cryptStatusOK( status ) )
 		{
-		status = reqCertIDlength = getKeyID( reqCertID, iCertRequest,
-											 CRYPT_IATTRIBUTE_AUTHCERTID );
+		status = getKeyID( reqCertID, ENCODED_DBXKEYID_SIZE, &reqCertIDlength, 
+						   iCertRequest, CRYPT_IATTRIBUTE_AUTHCERTID );
 		if( cryptStatusError( status ) )
 			{
 			/* If the request is being added directly by the user, there's no
-			   authorising certificate/PKI user info present */
+			   authorising certificate/PKI user information present */
 			reqCertIDptr = NULL;
 			reqCertIDlength = 0;
 			status = CRYPT_OK;
 			}
 		}
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExt( status, 
+				( status, errorInfo, 
+				  "Couldn't extract certificate request data to add to "
+				  "certificate store" ) );
+		}
 
-	/* Check that the PKI user who authorised this cert issue still exists.
-	   If the CA has deleted them, all further requests for certs fail */
+	/* Check that the PKI user who authorised this certificate issue still 
+	   exists.  If the CA has deleted them all further requests for 
+	   certificates fail */
 	if( reqCertIDptr != NULL )
 		{
 		CRYPT_CERTIFICATE iPkiUser;
 
 		status = caGetIssuingUser( dbmsInfo, &iPkiUser, reqCertID, 
-								   reqCertIDlength );
+								   reqCertIDlength, errorInfo );
 		if( cryptStatusOK( status ) )
 			krnlSendNotifier( iPkiUser, IMESSAGE_DECREFCOUNT );
 		else
 			{
-			reqCertID[ reqCertIDlength ] = '\0';
 			updateCertErrorLog( dbmsInfo, CRYPT_ERROR_DUPLICATE,
-								"Cert request submitted for nonexistant PKI "
-								"user", NULL, reqCertID, NULL, NULL, 0 );
-			return( CRYPT_ERROR_PERMISSION );
+								"Certificate request submitted for "
+								"nonexistent PKI user", NULL, 0, 
+								reqCertID, reqCertIDlength, NULL, 0, 
+								NULL, 0 );
+			retExt( CRYPT_ERROR_PERMISSION, 
+					( CRYPT_ERROR_PERMISSION, errorInfo, 
+					  "Certificate request submitted for nonexistent PKI "
+					  "user" ) );
 			}
 		}
 
-	/* If there's an authorising PKI user present, make sure that it hasn't
-	   already been used to authorise the issuance of a cert.  This is 
-	   potentially vulnerable to the following race condition:
+	/* If there's an authorising PKI user present make sure that it hasn't
+	   already been used to authorise the issuance of a certificate.  This 
+	   is potentially vulnerable to the following race condition:
 
 		1: check authCertID -> OK
 		2: check authCertID -> OK
@@ -368,102 +442,123 @@ int caAddCertRequest( DBMS_INFO *dbmsInfo,
 		2: add
 
 	   In theory we could detect this by requiring the reqCertID to be 
-	   unique, however a PKI user can be used to request both a cert and 
-	   a revocation for the cert, and a signing cert can be used to request
-	   an update or revocation of both itself and one or more associated
-	   encryption certs.  We could probably handle this via the ID-mangling
-	   used for certIDs, but this makes tracing events through the audit log
-	   complex since there'll now be different effective IDs for the 
-	   authorising cert depending on what it was authorising.  In addition
-	   it's not certain how many further operations a cert (rather than a PKI
-	   user) can authorise, in theory a single signing cert can authorise at
-	   least four further operations, these being the update of itself, the
-	   update of an associated encryption cert, and the revocation of itself
-	   and the encryption cert.  In addition its possible that a signing cert
-	   could be used to authorise a series of short-duration encryption 
-	   certs, or a variety of other combinations of operations.
+	   unique, however a PKI user can be used to request both a certificate 
+	   and a revocation for the certificate and a signing certificate can 
+	   be used to request an update or revocation of both itself and one or 
+	   more associated encryption certificates.  We could probably handle 
+	   this via the ID-mangling used for certIDs but this makes tracing 
+	   events through the audit log complex since there'll now be different 
+	   effective IDs for the authorising certificate depending on what it 
+	   was authorising.  
+	   
+	   In addition it's not certain how many further operations a 
+	   certificate (rather than a PKI user) can authorise, in theory a 
+	   single signing certificate can authorise at least four further 
+	   operations, these being the update of itself, the update of an 
+	   associated encryption certificate, and the revocation of itself and 
+	   the encryption certificate.  In addition its possible that a signing 
+	   certificate could be used to authorise a series of short-duration 
+	   encryption certificates or a variety of other combinations of 
+	   operations.
 
-	   Because of these issues, we can't use a uniqueness constraint on the
+	   Because of these issues we can't use a uniqueness constraint on the
 	   reqCertID to enforce a single use of issuing authorisation by the
-	   database ifself, but have to do a manual check here, checking 
-	   specifically for the case where a PKI user authorises a cert issue */
-#if 0	/* This check is too restrictive because it blocks any further cert
-		   issues after the first one.  This is because as soon as a single
-		   issue has been authorised for a user, there'll be a request for
-		   that user logged so all further attempts to submit a request (for
-		   example for a renewal, or an encryption cert to go with a signing
-		   one) will fail */
+	   database ifself but have to do a manual check here, checking 
+	   specifically for the case where a PKI user authorises a certificate 
+	   issue */
+#if 0	/* This check is too restrictive because it blocks any further 
+		   certificate issues after the first one.  This is because as soon 
+		   as a single issue has been authorised for a user there'll be a 
+		   request for that user logged so all further attempts to submit a 
+		   request (for example for a renewal, or an encryption certificate 
+		   to go with a signing one) will fail */
 	if( reqCertIDptr != NULL )
 		{
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, reqCertID, reqCertIDlength );
 		status = dbmsQuery(
 			"SELECT certID FROM certLog WHERE reqCertID = ? "
 			"AND action = " TEXT_CERTACTION_REQUEST_CERT,
-							NULL, 0, reqCertID, reqCertIDlength, 0,
+							NULL, 0, NULL, boundDataPtr, 
 							DBMS_CACHEDQUERY_NONE, DBMS_QUERY_CHECK );
 		if( cryptStatusOK( status ) )
 			{
-			/* This user has already authorised the issue of a cert, it 
-			   can't be used to issue a second cert */
-			reqCertID[ reqCertIDlength ] = '\0';
+			/* This user has already authorised the issue of a certificate, 
+			   it can't be used to issue a second certificate */
 			updateCertErrorLog( dbmsInfo, CRYPT_ERROR_DUPLICATE,
-								"Attempt to authorise additional cert issue "
-								"when a cert for this user has already been "
-								"issued", NULL, reqCertID, NULL, NULL, 0 );
-			return( CRYPT_ERROR_DUPLICATE );
+								"Attempt to authorise additional certificate "
+								"issue when a certificate for this user has "
+								"already been issued", NULL, 0, 
+								reqCertID, reqCertIDlength, NULL, 0, NULL, 0 );
+			retExt( CRYPT_ERROR_DUPLICATE, 
+					( CRYPT_ERROR_DUPLICATE, errorInfo, 
+					  "Attempt to authorise additional certificate issue "
+					  "when a certificate for this user has already been "
+					  "issued" ) );
 			}
 		}
 #endif /* 0 */
 
-	/* Update the cert store.  Since a revocation request generally won't
-	   have any fields of any significance set, we have to use a special cut-
-	   down insert statement that doesn't expect to find any fields except
-	   the cert ID */
+	/* Update the certificate store.  Since a revocation request generally 
+	   won't have any fields of any significance set we have to use a 
+	   special cut-down insert statement that doesn't expect to find any 
+	   fields except the certificate ID */
 	if( requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION )
 		{
-		char sqlBuffer[ STANDARD_SQL_QUERY_SIZE + 8 ];
+		BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+		char encodedCertData[ MAX_ENCODED_CERT_SIZE + 8 ];
 
-		if( !hasBinaryBlobs( dbmsInfo ) )
+		initBoundData( boundDataPtr );
+		setBoundData( boundDataPtr, 0, certID, certIDlength );
+		if( hasBinaryBlobs( dbmsInfo ) )
 			{
-			char encodedCertData[ MAX_ENCODED_CERT_SIZE + 8 ];
-			int length;
-
-			length = base64encode( encodedCertData, MAX_ENCODED_CERT_SIZE,
-								   certData, certDataLength,
-								   CRYPT_CERTTYPE_NONE );
-			encodedCertData[ length ] = '\0';
-			dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
-				"INSERT INTO certRequests VALUES ("
-				TEXT_CERTTYPE_REQUEST_REVOCATION ", '', '', '', '', '', '', "
-				"'', '$', '$')",
-						   certID, encodedCertData );
+			setBoundDataBlob( boundDataPtr, 1, certData, certDataLength );
 			}
 		else
 			{
-			dbmsFormatSQL( sqlBuffer, STANDARD_SQL_QUERY_SIZE,
+			int encodedCertDataLength;
+			
+			status = base64encode( encodedCertData, MAX_ENCODED_CERT_SIZE, 
+								   &encodedCertDataLength, certData, 
+								   certDataLength, CRYPT_CERTTYPE_NONE );
+			if( cryptStatusError( status ) )
+				{
+				assert( DEBUG_WARN );
+				return( status );
+				}
+			setBoundData( boundDataPtr, 1, encodedCertData, 
+						  encodedCertDataLength );
+			}
+		status = dbmsUpdate( 
 				"INSERT INTO certRequests VALUES ("
 				TEXT_CERTTYPE_REQUEST_REVOCATION ", '', '', '', '', '', '', "
-				"'', '$', ?)",
-						   certID );
-			}
-		status = dbmsUpdate( sqlBuffer, hasBinaryBlobs( dbmsInfo ) ? \
-							 certData : NULL, certDataLength, 0,
-							 DBMS_UPDATE_BEGIN );
+				"'', ?, ?)", boundDataPtr, DBMS_UPDATE_BEGIN );
 		}
 	else
+		{
 		status = addCert( dbmsInfo, iCertRequest, CRYPT_CERTTYPE_REQUEST_CERT,
-						  CERTADD_NORMAL, DBMS_UPDATE_BEGIN );
+						  CERTADD_NORMAL, DBMS_UPDATE_BEGIN, errorInfo );
+		}
 	if( cryptStatusOK( status ) )
+		{
 		status = updateCertLog( dbmsInfo,
 						( requestType == CRYPT_CERTTYPE_REQUEST_REVOCATION ) ? \
 							CRYPT_CERTACTION_REQUEST_REVOCATION : \
 						( isRenewal ) ? \
 							CRYPT_CERTACTION_REQUEST_RENEWAL : \
 							CRYPT_CERTACTION_REQUEST_CERT,
-						certID, reqCertIDptr, NULL, certData,
-						certDataLength, DBMS_UPDATE_COMMIT );
+						certID, certIDlength, reqCertIDptr, reqCertIDlength, 
+						NULL, 0, certData, certDataLength, 
+						DBMS_UPDATE_COMMIT );
+		}
 	else
+		{
 		/* Something went wrong, abort the transaction */
-		dbmsUpdate( NULL, NULL, 0, 0, DBMS_UPDATE_ABORT );
+		dbmsUpdate( NULL, NULL, DBMS_UPDATE_ABORT );
+		retExtErr( status, 
+				   ( status, errorInfo, getDbmsErrorInfo( dbmsInfo ),
+					 "Certificate request add operation failed: " ) );
+		}
 
 	return( status );
 	}

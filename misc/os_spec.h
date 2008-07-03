@@ -122,22 +122,27 @@
    _MSC_VER.
 
 	Visual C++ 1.5 _MSC_VER = 800
+	Visual C++ 2.0 _MSC_VER = 900
+	Visual C++ 4.0 _MSC_VER = 1000
 	Visual C++ 5.0 _MSC_VER = 1100
 	Visual C++ 6.0 _MSC_VER = 1200
-	Visual C++ 7.0 (VC2002) _MSC_VER = 1300
-	Visual C++ 7.1 (VC2003) _MSC_VER = 1310
-	Visual C++ 8.0 (VC2005) _MSC_VER = 1400 */
+	Visual C++ 7.0 (VC++.NET/2002) _MSC_VER = 1300
+	Visual C++ 7.1 (VC++.NET/2003) _MSC_VER = 1310
+	Visual C++ 8.0 (VC2005) _MSC_VER = 1400 
+	Visual C++ 9.0 (VC2008) _MSC_VER = 1500 */
 
 #ifdef _MSC_VER
-  #define VC_16BIT( _MSC_VER )		( _MSC_VER <= 800 )
-  #define VC_LT_2005( _MSC_VER )	( _MSC_VER < 1400 )
-  #define VC_GE_2005( _MSC_VER )	( _MSC_VER >= 1400 )
+  #define VC_16BIT( version )		( version <= 800 )
+  #define VC_GE_2002( version )		( version >= 1300 )
+  #define VC_LT_2005( version )		( version < 1400 )
+  #define VC_GE_2005( version )		( version >= 1400 )
 #else
   /* These aren't specifically required on non-VC++ systems, but some 
      preprocessors get confused if they aren't defined since they're used */
-  #define VC_16BIT( _MSC_VER )		0
-  #define VC_LT_2005( _MSC_VER )	0
-  #define VC_GE_2005( _MSC_VER )	0
+  #define VC_16BIT( version )		0
+  #define VC_GE_2002( version )		0
+  #define VC_LT_2005( version )		0
+  #define VC_GE_2005( version )		0
 #endif /* Visual C++ */
 
 /* If we're compiling under VC++ with the maximum level of warnings, turn
@@ -150,37 +155,61 @@
   #endif /* 16-bit VC++ */
 
   /* Warning level 3 */
+  // Note: 4018 means the compiler has to convert the signed value to 
+  // unsigned to perform the comparison, should make this explicit with a
+  // cast.
   #pragma warning( disable: 4018 )	/* Comparing signed <-> unsigned value */
   #pragma warning( disable: 4127 )	/* Conditional is constant: while( TRUE ) */
 
   /* Warning level 4.  The function <-> data pointer cast warnings are
 	 orthogonal and impossible to disable (they override the universal
 	 'void *' pointer type), the signed/unsigned and size warnings are
-	 more compiler peeves as for the level 3 warnings, and the struct
-	 initialisation warnings are standards extensions that the struct
-	 STATIC_INIT macros manage for us */
+	 more compiler peeves as for the level 3 warnings (in particular the
+	 int <-> unsigned char/short warning isn't caused by dangerous 
+	 trunctions but by things like depositing a small value contained in
+	 an int into a byte array), and the struct initialisation warnings are 
+	 standards extensions that the struct STATIC_INIT macros manage for us */
+  // Note: Should remove 4244 (warn about truncation/data loss) and possibly
+  // 4389 (variant on 4018).
   #pragma warning( disable: 4054 )	/* Cast from fn.ptr -> generic (data) ptr.*/
   #pragma warning( disable: 4055 )	/* Cast from generic (data) ptr. -> fn.ptr.*/
   #pragma warning( disable: 4057 )	/* char vs.unsigned char use */
   #pragma warning( disable: 4204 )	/* Struct initialised with non-const value */
   #pragma warning( disable: 4221 )	/* Struct initialised with addr.of auto.var */
   #pragma warning( disable: 4244 )	/* int <-> unsigned char/short */
-  #pragma warning( disable: 4245 )	/* int <-> unsigned long */
   #pragma warning( disable: 4267 )	/* int <-> size_t */
   #pragma warning( disable: 4305 )	/* long <-> size_t */
   #pragma warning( disable: 4389 )	/* signed ==/!= unsigned compare */
 
+  /* Different versions of VC++ generates extra warnings at level 4 due to 
+	 problems in VC++/Platform SDK headers */
+  #if VC_LT_2005( _MSC_VER )
+	#pragma warning( disable: 4201 )/* Nameless struct/union in SQL/networking hdrs*/
+  #endif /* VC++ 6.0 and 2003 */
+  #if VC_GE_2005( _MSC_VER )
+	#pragma warning( disable: 4201 )/* Nameless struct/union */
+	#pragma warning( disable: 4214 )/* bit field types other than int */
+  #endif /* VC++ 2005 or newer */
+
+  /* Code analysis generates even more warnings.  C6011 is particularly 
+	 problematic, it's issued whenever a pointer is derefenced without first
+	 checking that it's not NULL */
+  #if defined( _MSC_VER ) && defined( _PREFAST_ ) 
+	#pragma warning( disable: 6011 )/* Deferencing NULL pointer */
+  #endif /* VC++ with source analysis enabled */
+
+  /* Windows DDK fre builds treat warnings as errors and the DDK headers
+	 have some problems so we have to disable additional warnings */
+  #ifdef WIN_DDK
+	#pragma warning( disable: 4242 )/* MS-only bit field type used */
+	#pragma warning( disable: 4731 )/* Frame pointer modified by inline asm */
+  #endif /* WIN_DDK */
+
   /* gcc -wall type warnings.  The highest warning level generates large
-     numbers of spurious warnings (including ones in VC++ headers), so it's
+	 numbers of spurious warnings (including ones in VC++ headers), so it's
 	 best to only enable them for one-off test builds requiring manual
-	 checking for real errors.  The used-before-initialised is particularly
-	 common during the code generation phase, when the compiler flags all
-	 values initialised in conditional code blocks as potential problems */
-  #if 1
-	#pragma warning( disable: 4100 )	/* Unreferenced parameter */
-	#pragma warning( disable: 4201 )	/* Nameless struct/union in VC++ header */
-	#pragma warning( disable: 4701 )	/* Variable used before initialised */
-  #endif /* 1 */
+	 checking for real errors */
+  #pragma warning( disable: 4100 )	/* Unreferenced parameter */
 #endif /* Visual C++ */
 
 /* VC++ 2005 implements the TR 24731 security extensions but doesn't yet 
@@ -258,13 +287,6 @@
   #pragma enum int
 #endif /* QNX and Watcom C */
 
-/* If it's a C99-compliant compiler, enable the use of varags macros */
-
-#if ( defined( __STDC_VERSION__ ) && ( __STDC_VERSION__ >= 199901L ) ) || \
-	( defined( __GNUC__ ) && ( __GNUC__ >= 3 ) )
-  #define VARARGS_MACROS
-#endif /* C99 compilers with varargs macro support */
-
 /* A few rare operations are word-size-dependant, which we detect via
    limits.h */
 
@@ -277,14 +299,34 @@
   #define SYSTEM_32BIT
 #endif /* 16- vs.32- vs.64-bit system */
 
-/* Useful data types */
+/* Useful data types.  Newer compilers provide a 'bool' datatype via 
+   stdbool.h, but in a fit of braindamage generally make this a char instead
+   of an int.  While Microsoft's use of char for BOOLEAN in the early 1980s
+   with 8/16-bit 8086s and 129K of RAM makes sense, it's a pretty stupid
+   choice for 32- or 64-bit CPUs because alignment issues mean that it'll
+   generally still require 32 or 64 bits of storage (except for special 
+   cases like an array of bool), but then the difficulty or even inability
+   of many CPUs and/or architectures in performing byte-level accesses means
+   that in order to update a boolean the system has to fetch a full machine
+   word, mask out the byte data, or/and in the value, and write the word 
+   back out.  So 'bool' = 'char' combines most of the worst features of both
+   char and int.  It also leads to really hard-to-find implementation bugs
+   due to the fact that '(bool) int = true' produces different results to
+   '*(bool *) intptr = true', something that was resolved years ago in enums
+   without causing such breakage.
+
+   Because of this we avoid the use of bool and just define it to int */
 
 typedef unsigned char		BYTE;
-#if defined( __WIN32__ ) || defined( __WINCE__ )
+#if defined( __STDC_VERSION__ ) && ( __STDC_VERSION__ >= 199901L ) && 0
+  #include <stdbool.h>
+  typedef bool              BOOLEAN;
+#elif defined( __WIN32__ ) || defined( __WINCE__ )
+  /* VC++ typedefs BOOLEAN so we need to use the preprocessor to override it */
   #define BOOLEAN			int
 #else
   typedef int				BOOLEAN;
-#endif /* __WIN32__ || __WINCE__ */
+#endif /* Boolean data type on different platforms */
 
 /* If we're building the Win32 kernel driver version, include the DDK
    headers */
@@ -328,15 +370,6 @@ typedef unsigned char		BYTE;
   #define CONFIG_CONSERVE_MEMORY
   #define CONFIG_NUM_OBJECTS		128
 #endif /* Memory-starved systems */
-
-/* Win32 consists of Win95/98/ME and WinNT/2000/XP, Win95 doesn't have a
-   number of the functions and services that exist in NT so we need to adapt
-   the code based on the Win32 variant.  The following flag records which OS
-   variant we're crawling under */
-
-#ifdef __WIN32__
-  extern BOOLEAN isWin95;
-#endif /* Win32 */
 
 /* Since the Win32 randomness-gathering uses a background randomness polling
    thread, we can't build a Win32 version with NO_THREADS */
@@ -425,17 +458,6 @@ typedef unsigned char		BYTE;
   #define CONST_SET_STRUCT_A( init )
 #endif /* Watcom C || SunPro C || SCO C */
 
-/* gcc provides extra parameter checking for printf-like functions, which
-   we enable for the extended-return functions */
-
-#ifdef __GNUC__
-  #define PRINTF_FN		__attribute__ (( format( printf, 3, 4 ) ))
-  #define PRINTF_FN_EX	__attribute__ (( format( printf, 4, 5 ) ))
-#else
-  #define PRINTF_FN
-  #define PRINTF_FN_EX
-#endif /* gcc */
-
 /* The Tandem mktime() is broken and can't convert dates beyond 2023, so we
    replace it with our own version which can */
 
@@ -443,9 +465,13 @@ typedef unsigned char		BYTE;
   #define mktime	my_mktime
 #endif /* __TANDEM_NSK__ || __TANDEM_OSS__ */
 
-/* Enable use of assembly-language alternatives to C functions if possible */
+/* Enable use of assembly-language alternatives to C functions if possible.
+   Note that the following asm defines are duplicated in crypt/osconfig.h,
+   because the OpenSSL headers are non-orthogonal to the cryptlib ones.  Any 
+   changes made here need to be reflected in osconfig.h */
 
-#if defined( __WIN32__ ) && !defined( __BORLANDC__ )
+#if defined( __WIN32__ ) && \
+	!( defined( _M_X64 ) || defined( __BORLANDC__ ) || defined( NO_ASM ) )
   /* Unlike the equivalent crypto code, the MD5, RIPEMD-160, and SHA-1
 	 hashing code needs special defines set to enable the use of asm
 	 alternatives.  Since this works by triggering redefines of function
@@ -462,15 +488,15 @@ typedef unsigned char		BYTE;
      x86 asm code contains some additional routines not present in the
      asm modules for other CPUs, so we have to define this to disable the
      equivalent C code, which must be present for non-x86 asm modules */
-  #define USE_ASM
+  #define BN_ASM
 
   /* Enable use of the AES ASM code */
   #define AES_ASM
 
-  /* Enable use of zlib ASM longest-match code.  zlib comes with two asm
-     files, of which match.asm (assemble with "ml /Zp /coff /c match.asm")
-	 causes segfaults, so we use gvmat32.asm */
+  /* Enable use of zlib ASM longest-match and decompression code.  Assemble
+     with "ml /Zp /coff /c gvmat32.asm" and "yasm -f win32 inffas32y.asm" */
   #define ASMV
+  #define ASMINF
 #endif /* Win32 */
 
 /****************************************************************************
@@ -492,9 +518,11 @@ typedef unsigned char		BYTE;
 
   /* Macros to map OS-specific dynamic-load values to generic ones */
   #if defined( __WINDOWS__ )
+	HMODULE WINAPI SafeLoadLibrary( LPCSTR lpFileName );
+
 	#define INSTANCE_HANDLE		HINSTANCE
 	#define NULL_INSTANCE		( HINSTANCE ) NULL
-	#define DynamicLoad( name )	LoadLibrary( name )
+	#define DynamicLoad( name )	SafeLoadLibrary( name )
 	#define DynamicUnload		FreeLibrary
 	#define DynamicBind			GetProcAddress
   #elif defined( __UNIX__ )
@@ -556,8 +584,8 @@ typedef unsigned char		BYTE;
 	#else
 	  #error BYTE_ORDER is neither BIG_ENDIAN nor LITTLE_ENDIAN
 	#endif /* BYTE_ORDER-specific define */
-  #elif defined( _M_I86 ) || defined( _M_IX86 ) || defined( __TURBOC__ ) || \
-		defined( __OS2__ )
+  #elif defined( _M_I86 ) || defined( _M_IX86 ) || defined( _M_X64 ) || \
+		defined( __TURBOC__ ) || defined( __OS2__ )
 	#define DATA_LITTLEENDIAN	/* Intel architecture always little-endian */
   #elif defined( __WINCE__ )
 	/* For WinCE it can get a bit complicated, however because of x86 cargo
@@ -625,6 +653,8 @@ typedef unsigned char		BYTE;
   #define MAX_PATH_LENGTH		PATH_MAX
 #elif defined( _POSIX_PATH_MAX )
   #define MAX_PATH_LENGTH		_POSIX_PATH_MAX
+#elif defined( __FileX__ )
+  #define MAX_PATH_LENGTH		FX_MAXIMUM_PATH
 #else
   #ifndef FILENAME_MAX
 	#include <stdio.h>
@@ -750,8 +780,10 @@ typedef unsigned char		BYTE;
    conversion */
 
 #ifdef UNICODE_CHARS
-  int asciiToUnicode( wchar_t *dest, const char *src, const int length );
-  int unicodeToAscii( char *dest, const wchar_t *src, const int length );
+  int asciiToUnicode( wchar_t *dest, const int destMaxLen, 
+					  const char *src, const int length );
+  int unicodeToAscii( char *dest, const int destMaxLen, 
+					  const wchar_t *src, const int length );
 #endif /* Windows CE */
 
 /* Since cryptlib uses ASCII internally, we have to force the use of
@@ -817,11 +849,15 @@ typedef unsigned char		BYTE;
   #define sPrintf_s			fixedSprintf
 #endif /* Old SunOS */
 
-/* Borland C++ before 5.50 doesn't have snprintf() */
+/* Borland C++ before 5.50 doesn't have snprintf() or vsnprintf() */
 
 #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
+  #include <stdarg.h>
+
   int bcSnprintf( char *buffer, const int bufSize,
 				  const char *format, ... );
+  int bcVsnprintf( char *buffer, const int bufSize,
+				   const char *format, va_list argPtr );
 #endif /* BC++ before 5.50 */
 
 /****************************************************************************
@@ -852,9 +888,17 @@ typedef unsigned char		BYTE;
 
 	   Because this could potentially result in a circular definition, we 
 	   have to kludge in an intermediate layer by renaming the call to 
-	   gmTime_s(), which we then re-map to the VC++ gmtime_s() */
+	   gmTime_s(), which we then remap to the VC++ gmtime_s() */
 	#define gmTime_s( timer, result )	\
 			( ( gmtime_s( result, timer ) == 0 ) ? result : NULL )
+
+	/* Complicating things further, the Windows DDK doesn't have gmtime_s(),
+	   although it does have all of the other TR 24731 functions.  To handle
+	   this, we use the same workaround as for the non-TR 24731 libcs */
+	#ifdef WIN_DDK
+	  #undef gmTime_s
+	  #define gmTime_s( timer, result )	gmtime( timer )
+	#endif /* WIN_DDK */
 
 	/* MS implements strlcpy/strlcat-equivalents via the TR 24731 
 	   functions */
@@ -884,9 +928,9 @@ typedef unsigned char		BYTE;
   #endif /* OpenBSD safe string functions */
 
   /* Widechar functions */
-  int mbstowcs_s( size_t *retval, wchar_t *dst, size_t dstmax, \
+  int mbstowcs_s( size_t *retval, wchar_t *dst, size_t dstmax, 
 				  const char *src, size_t len );
-  int wcstombs_s( size_t *retval, char *dst, size_t dstmax, \
+  int wcstombs_s( size_t *retval, char *dst, size_t dstmax, 
 				  const wchar_t *src, size_t len );
 
   /* printf() */
@@ -895,7 +939,7 @@ typedef unsigned char		BYTE;
 	#define vsprintf_s					_vsnprintf
   #elif defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
 	#define sprintf_s					bcSnprintf
-	#define vsprintf_s					vsnprintf
+	#define vsprintf_s					bcVsnprintf
   #elif defined( __QNX__ ) && ( OSVERSION <= 4 )
 	/* snprintf() exists under QNX 4.x but causes a SIGSEGV when called */
 	#define sprintf_s					_bprintf

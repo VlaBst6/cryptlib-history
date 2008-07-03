@@ -57,6 +57,7 @@
  */
 
 /* Removed ndebug definition - pcg */
+/* Added proper initialisation of data in all BN_X_init() functions - pcg */
 
 #if defined( _WIN32_WCE ) && _WIN32_WCE < 400
   #define assert( x )
@@ -320,6 +321,7 @@ BIGNUM *BN_new(void)
 		BNerr(BN_F_BN_NEW,ERR_R_MALLOC_FAILURE);
 		return(NULL);
 		}
+	memset( ret, 0, sizeof( BIGNUM ) );		/* pcg */
 	ret->flags=BN_FLG_MALLOCED;
 	ret->top=0;
 	ret->neg=0;
@@ -664,7 +666,7 @@ int BN_bn2bin(const BIGNUM *a, unsigned char *to)
 	while (i--)
 		{
 		l=a->d[i/BN_BYTES];
-		*(to++)=(unsigned char)(l>>(8*(i%BN_BYTES)))&0xff;
+		*(to++)=(unsigned char)((l>>(8*(i%BN_BYTES)))&0xff);
 		}
 	return(n);
 	}

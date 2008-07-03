@@ -52,13 +52,30 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr );
 /* Get random data from the device */
 
 static int getRandomFunction( DEVICE_INFO *deviceInfo, void *buffer,
-							  const int length )
+							  const int length,
+							  MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
 	CK_RV status;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
 
 	status = C_GenerateRandom( pkcs11Info->hSession, buffer, length );
 	return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+	}
+
+/* Perform a self-test */
+
+static int selfTestFunction( void )
+	{
+	/* PKCS #11 doesn't provide any explicit means of performing a self-
+	   test of a capability, and having to go through the gyrations needed 
+	   to do this via the PKCS #11 interface is excessively complex, so we
+	   just assume that everything is OK.  In general what a device does is
+	   device-specific, for example as part of FIPS 140 requirements or even
+	   just as general good engineering many will perform a self-test on
+	   power-up while others (typically smart cards) barely do any checking
+	   at all.  The result that we return here is an implicit "whatever the
+	   device does" */
+	return( CRYPT_ERROR_NOTAVAIL );
 	}
 
 /****************************************************************************
@@ -292,8 +309,10 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		status = pC_GetInfo( &info ) & 0xFFFF;
 		}
 	if( status == CKR_OK && info.cryptokiVersion.major <= 1 )
+		{
 		/* It's v1, we can't work with it */
 		status = CKR_FUNCTION_NOT_SUPPORTED;
+		}
 	if( status != CKR_OK )
 		{
 		if( isInitialised )
@@ -313,7 +332,8 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 	   may leave garbage in the high 16 bits that leads to all sorts of 
 	   confusion).  Because of this we explicitly fail if something claims 
 	   to be v1 even though it might work in practice */
-	pC_GetFunctionList = ( CK_C_GetFunctionList ) DynamicBind( pkcs11Info->hPKCS11, "C_GetFunctionList" );
+	pC_GetFunctionList = ( CK_C_GetFunctionList ) \
+				DynamicBind( pkcs11Info->hPKCS11, "C_GetFunctionList" );
 	if( pC_GetFunctionList == NULL )
 		status = CKR_GENERAL_ERROR;
 	else
@@ -330,10 +350,12 @@ static int loadPKCS11driver( PKCS11_DRIVER_INFO *pkcs11Info,
 		{
 		isInitialised = TRUE;
 		status = C_GetInfo( &info ) & 0xFFFF;
+		if( status == CKR_OK && info.cryptokiVersion.major <= 1 )
+			{
+			/* It's v1, we can't work with it */
+			status = CKR_FUNCTION_NOT_SUPPORTED;
+			}
 		}
-	if( status == CKR_OK && info.cryptokiVersion.major <= 1 )
-		/* It's v1, we can't work with it */
-		status = CKR_FUNCTION_NOT_SUPPORTED;
 	if( status != CKR_OK )
 		{
 		if( isInitialised )
@@ -494,54 +516,80 @@ void deviceEndPKCS11( void )
 
 static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	/* Encryption capabilities */
-	{ CRYPT_ALGO_DES, bitsToBytes( 64 ), "DES",
+	{ CRYPT_ALGO_DES, bitsToBytes( 64 ), "DES", 3,
 		MIN_KEYSIZE, bitsToBytes( 64 ), bitsToBytes( 64 ) },
-	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES",
+	{ CRYPT_ALGO_3DES, bitsToBytes( 64 ), "3DES", 4,
 		bitsToBytes( 64 + 8 ), bitsToBytes( 128 ), bitsToBytes( 192 ) },
-	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA",
+#ifdef USE_IDEA
+	{ CRYPT_ALGO_IDEA, bitsToBytes( 64 ), "IDEA", 4,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ) },
-	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128",
+#endif /* USE_IDEA */
+#ifdef USE_CAST
+	{ CRYPT_ALGO_CAST, bitsToBytes( 64 ), "CAST-128", 8,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 128 ) },
-	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2",
+#endif /* USE_CAST */
+#ifdef USE_RC2
+	{ CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2", 3,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 1024 ) },
-	{ CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4",
+#endif /* USE_RC2 */
+#ifdef USE_RC4
+	{ CRYPT_ALGO_RC4, bitsToBytes( 8 ), "RC4", 3,
 		MIN_KEYSIZE, bitsToBytes( 128 ), 256 },
-	{ CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5",
+#endif /* USE_RC4 */
+#ifdef USE_RC5
+	{ CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5", 3,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 832 ) },
-	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES",
+#endif /* USE_RC5 */
+	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 		bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ) },
-	{ CRYPT_ALGO_BLOWFISH, bitsToBytes( 64 ), "Blowfish",
+#ifdef USE_BLOWFISH
+	{ CRYPT_ALGO_BLOWFISH, bitsToBytes( 64 ), "Blowfish", 8,
 		MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 448 ) },
-	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack",
+#endif /* USE_BLOWFISH */
+#ifdef USE_SKIPJACK
+	{ CRYPT_ALGO_SKIPJACK, bitsToBytes( 64 ), "Skipjack", 8,
 		bitsToBytes( 80 ), bitsToBytes( 80 ), bitsToBytes( 80 ) },
+#endif /* USE_SKIPJACK */
 
 	/* Hash capabilities */
-	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2",
+#ifdef USE_MD2
+	{ CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5",
+#endif /* USE_MD2 */
+#ifdef USE_MD5
+	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
-	{ CRYPT_ALGO_SHA, bitsToBytes( 160 ), "SHA",
+#endif /* USE_MD2 */
+	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 #ifdef USE_SHA2
-	{ CRYPT_ALGO_SHA2, bitsToBytes( 256 ), "SHA2",
+	{ CRYPT_ALGO_SHA2, bitsToBytes( 256 ), "SHA2", 4,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 #endif /* USE_SHA2 */
 
 	/* MAC capabilities */
-	{ CRYPT_ALGO_HMAC_MD5, bitsToBytes( 128 ), "HMAC-MD5",
+#ifdef USE_HMAC_MD5
+	{ CRYPT_ALGO_HMAC_MD5, bitsToBytes( 128 ), "HMAC-MD5", 8,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
-	{ CRYPT_ALGO_HMAC_SHA, bitsToBytes( 160 ), "HMAC-SHA",
+#endif /* USE_HMAC_MD5 */
+	{ CRYPT_ALGO_HMAC_SHA, bitsToBytes( 160 ), "HMAC-SHA", 8,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
-	{ CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160",
+#ifdef USE_HMAC_RIPEMD160
+	{ CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160", 14,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
+#endif /* USE_HMAC_RIPEMD160 */
 
 	/* Public-key capabilities */
-	{ CRYPT_ALGO_DH, bitsToBytes( 0 ), "Diffie-Hellman",
+#ifdef USE_DH
+	{ CRYPT_ALGO_DH, bitsToBytes( 0 ), "Diffie-Hellman", 14,
 		MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
-	{ CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA",
+#endif /* USE_DH */
+	{ CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA", 3,
 		MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
-	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA",
+#ifdef USE_DSA
+	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 		MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE },
+#endif /* USE_DSA */
 
 	/* Hier ist der Mast zu ende */
 	{ CRYPT_ERROR }, { CRYPT_ERROR }
@@ -590,10 +638,9 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR && \
 				i < FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) )
+	if( i >= FAILSAFE_ARRAYSIZE( capabilityTemplates, CAPABILITY_INFO ) || \
+		capabilityTemplates[ i ].cryptAlgo == CRYPT_ERROR )
 		retIntError_Null();
-	assert( i < sizeof( capabilityTemplates ) / sizeof( CAPABILITY_INFO ) && \
-			capabilityTemplates[ i ].cryptAlgo != CRYPT_ERROR );
 	memcpy( capabilityInfo, &capabilityTemplates[ i ],
 			sizeof( CAPABILITY_INFO ) );
 
@@ -625,7 +672,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 			{
 			/* Serious braindamage in the driver, we'll just have to make
 			   a sensible guess */
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			capabilityInfo->maxKeySize = \
 									( cryptAlgo == CRYPT_ALGO_RSA || \
 									  isDlpAlgo( cryptAlgo ) ) ? 128 : 16;
@@ -636,6 +683,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		}
 
 	/* Set up the device-specific handlers */
+	capabilityInfo->selfTestFunction = selfTestFunction;
 	capabilityInfo->getInfoFunction = getDefaultInfo;
 	if( cryptAlgo != CRYPT_ALGO_DH && cryptAlgo != CRYPT_ALGO_RSA && \
 		cryptAlgo != CRYPT_ALGO_DSA )
@@ -800,7 +848,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				break;
 
 			default:
-				assert( NOTREACHED );
+				retIntError_Null();
 			}
 		}
 	if( iterationCount >= maxMechanisms )
@@ -876,7 +924,7 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 									   maxMechanisms - i );
 		if( newCapability == NULL )
 			continue;
-		assert( capabilityInfoOK( newCapability, 
+		REQUIRES( sanityCheckCapability( newCapability, 
 					( newCapability->cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 					  newCapability->cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
 					  TRUE : FALSE ) );
@@ -958,14 +1006,18 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( status != CKR_OK )
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
 	if( slotCount <= 0 )
+		{
 		/* There are token slots present but no tokens in the slots */
 		return( CRYPT_ERROR_OPEN );
+		}
 
 	/* Check whether a token name (used to select the slot) has been 
 	   specified */
 	for( i = 1; i < nameLength - 1; i++ )
+		{
 		if( name[ i ] == ':' && name[ i + 1 ] == ':' )
 			break;
+		}
 	if( i < nameLength - 1 )
 		{
 		const char *tokenName = name + i + 2;	/* Skip '::' */
@@ -1015,8 +1067,10 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
 		}
 	if( slotInfo.flags & CKF_REMOVABLE_DEVICE )
+		{
 		/* The device is removable */
 		deviceInfo->flags |= DEVICE_REMOVABLE;
+		}
 	status = C_GetTokenInfo( pkcs11Info->slotID, &tokenInfo );
 	if( status != CKR_OK )
 		{
@@ -1024,8 +1078,10 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
 		}
 	if( tokenInfo.flags & CKF_RNG )
+		{
 		/* The device has an onboard RNG that we can use */
 		deviceInfo->getRandomFunction = getRandomFunction;
+		}
 #if 0	/* The Spyrus driver for pre-Lynks-II cards returns the local system 
 		   time (with a GMT/localtime offset), ignoring the fact that the 
 		   token has an onboard clock, so having the CKF_CLOCK_ON_TOKEN not 
@@ -1034,6 +1090,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( !( tokenInfo.flags & CKF_CLOCK_ON_TOKEN ) && \
 		( !strCompare( tokenInfo.label, "Lynks Token", 11 ) || \
 		  !strCompare( tokenInfo.model, "Rosetta", 7 ) ) )
+		{
 		/* Fix buggy Spyrus PKCS #11 drivers which claim that the token
 		   doesn't have a RTC even though it does (the Rosetta (smart card) 
 		   form of the token is even worse, it returns garbage in the label 
@@ -1042,6 +1099,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		   batches of tokens with bad clocks), but the time check that 
 		   follows below will catch those */
 		tokenInfo.flags |= CKF_CLOCK_ON_TOKEN;
+		}
 #endif /* 0 */
 	if( tokenInfo.flags & CKF_CLOCK_ON_TOKEN )
 		{
@@ -1083,6 +1141,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		deviceInfo->flags |= DEVICE_READONLY;
 	if( ( tokenInfo.flags & CKF_LOGIN_REQUIRED ) || \
 		!( tokenInfo.flags & CKF_USER_PIN_INITIALIZED ) )
+		{
 		/* The user needs to log in before using various device functions.
 		   We check for the absence of CKF_USER_PIN_INITIALIZED as well as 
 		   the more obvious CKF_LOGIN_REQUIRED because if we've got an 
@@ -1097,17 +1156,22 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		   uninitialised device look like a login-required device, so the 
 		   user gets an invalid-PIN error if they try and proceed */
 		deviceInfo->flags |= DEVICE_NEEDSLOGIN;
+		}
 	if( ( pkcs11Info->minPinSize = ( int ) tokenInfo.ulMinPinLen ) < 4 )
+		{
 		/* Some devices report silly PIN sizes */
 		pkcs11Info->minPinSize = 4;
+		}
 	if( ( pkcs11Info->maxPinSize = ( int ) tokenInfo.ulMaxPinLen ) < 4 )
+		{
 		/* Some devices report silly PIN sizes (setting this to ULONG_MAX or
 		   4GB, which becomes -1 as an int, counts as silly).  Since we can't
 		   differentiate between 0xFFFFFFFF = bogus value and 0xFFFFFFFF = 
 		   ULONG_MAX we play it safe and set the limit to 8 bytes, which most
 		   devices should be able to handle */
 		pkcs11Info->maxPinSize = 8;
-	labelPtr = tokenInfo.label;
+		}
+	labelPtr = ( char * ) tokenInfo.label;
 	for( labelLength = 32;
 		 labelLength > 0 && \
 		 ( labelPtr[ labelLength - 1 ] == ' ' || \
@@ -1123,6 +1187,8 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		{
 		memcpy( pkcs11Info->label, labelPtr, labelLength );
 		pkcs11Info->labelLen = labelLength;
+		sanitiseString( pkcs11Info->label, CRYPT_MAX_TEXTSIZE, 
+						labelLength );
 		}
 	else
 		{
@@ -1157,6 +1223,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 		cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN );
 		if( cryptStatus == CRYPT_ERROR_OPEN && \
 			!( tokenInfo.flags & CKF_USER_PIN_INITIALIZED ) )
+			{
 			/* We couldn't do much with the error code, it could be that the
 			   token hasn't been initialised yet but unfortunately PKCS #11 
 			   doesn't define an error code for this condition.  In addition
@@ -1170,6 +1237,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 			   it's likely that the token as a whole hasn't been initialised 
 			   so we return a not initialised error */
 			cryptStatus = CRYPT_ERROR_NOTINITED;
+			}
 		return( cryptStatus );
 		}
 	assert( hSession != CK_OBJECT_NONE );
@@ -1205,7 +1273,7 @@ int initPKCS11Init( DEVICE_INFO *deviceInfo, const char *name,
 #ifdef DYNAMIC_LOAD
 	int i, driverNameLength = nameLength;
 #else
-	UNUSED( name );
+	UNUSED_ARG( name );
 #endif /* DYNAMIC_LOAD */
 
 	/* Make sure that the PKCS #11 driver DLL's are loaded */

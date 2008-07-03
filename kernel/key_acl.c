@@ -25,6 +25,58 @@ static KERNEL_DATA *krnlData = NULL;
 *																			*
 ****************************************************************************/
 
+/* ID information.  This defines the ID types that are valid for retrieving
+   each object type;
+
+	Public/private keys: Any ID is valid.  There's some overlap here because 
+		in some cases the private key is retrieved by first locating the
+		corresponding public key (which is what the ID actually points to)
+		and then using that to find the matching private key.
+
+	Secret keys: Only lookups by name or keyID are possible (all other ID
+		types are PKC-related).
+
+	Cert requests: Lookups by name or URI are allowed for the user-level 
+		CACertManagement() functions, lookups by certID are used for 
+		cryptlib-internal access.
+
+	PKI users: Lookups by name or URI are allowed for the user-level 
+		CACertManagement() functions, lookups by keyID and certID are used 
+		for cryptlib-internal access.  PKI users don't really have a keyID
+		in the sense of a subjectKeyIdentifier, in this case it's a 
+		randomly-generated value that's unique for each PKI user.
+
+	Revocation info: Lookups by certID and issuerID are used for cryptlib-
+		internal access.
+
+	Data: No ID is used, data objects are implicitly identified by type */
+
+static const CRYPT_KEYID_TYPE pubKeyIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_KEYID, 
+		CRYPT_IKEYID_PGPKEYID, CRYPT_IKEYID_CERTID, CRYPT_IKEYID_ISSUERID,
+		CRYPT_IKEYID_ISSUERANDSERIALNUMBER, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE privKeyIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_KEYID, 
+		CRYPT_IKEYID_PGPKEYID, CRYPT_IKEYID_CERTID, CRYPT_IKEYID_ISSUERID,
+		CRYPT_IKEYID_ISSUERANDSERIALNUMBER, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE secKeyIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_IKEYID_KEYID, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE certReqIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_CERTID, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE pkiUserIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_KEYID,
+		CRYPT_IKEYID_CERTID, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE revInfoIDs[] = { 
+		CRYPT_IKEYID_CERTID, CRYPT_IKEYID_ISSUERID, 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE dataIDs[] = { 
+		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+
 /* Key management ACL information.  These work in the same general way as the
    crypto mechanism ACL checks enforced by the kernel.  The ACL entries are:
 
@@ -32,6 +84,7 @@ static KERNEL_DATA *krnlData = NULL;
 	Valid keyset types for getFirst/Next access.
 	Valid keyset types for query access.
 	Valid object types to write.
+	Valid key IDs for read/getFirst/query access.
 	Valid key management flags in the mechanism info.
 	Access type for which an ID parameter is required.
 	Access type for which a password (or other aux.info) is required
@@ -51,6 +104,13 @@ static KERNEL_DATA *krnlData = NULL;
   in device doesn't), speculative reads from the keyset to determine
   presence (which don't require a password), and so on.
 
+  The key ID values are the union of the key ID types that are valid for
+  all of the keysets that can store the given object type.  These are
+  used to implement a two-level check, first the main ACL checks whether
+  this ID type is valid for this object type, and then a secondary ACL
+  is used to determine whether the ID type is valid for the source that
+  the object is being read from.
+
   The (optional) specific object types entry is required for some keysets
   that require a specific object (typically a certificate or cert chain)
   rather than just a generic PKC context for the overall keyset item type */
@@ -67,6 +127,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
 		/* Q */	ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_KEYSET_LDAP,
 		/*Obj*/	ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN,
+		/*IDs*/	pubKeyIDs,
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | KEYMGMT_MASK_CERTOPTIONS,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx,
 		ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_KEYSET_LDAP | \
@@ -80,6 +141,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/* D */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_CTX_PKC,
+		/*IDs*/	privKeyIDs,
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY | KEYMGMT_FLAG_LABEL_ONLY | KEYMGMT_MASK_USAGEOPTIONS,
 		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxXXx ),
 
@@ -88,6 +150,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*RWD*/	ST_KEYSET_FILE | ST_DEV_P11,
 		/*FnQ*/	ST_NONE,
 		/*Obj*/	ST_CTX_CONV,
+		/*IDs*/	secKeyIDs,
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY,
 		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxXXx ),
 
@@ -96,6 +159,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*RWD*/	ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS_STORE, ST_NONE,
 		/*FnQ*/	ST_NONE, ST_KEYSET_DBMS_STORE,
 		/*Obj*/	ST_CERT_CERTREQ | ST_CERT_REQ_CERT | ST_CERT_REQ_REV,
+		/*IDs*/	certReqIDs,
 		/*Flg*/	KEYMGMT_FLAG_UPDATE,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
 
@@ -104,6 +168,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*RWD*/	ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS_STORE,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_CERT_PKIUSER,
+		/*IDs*/	pkiUserIDs,
 		/*Flg*/	KEYMGMT_FLAG_GETISSUER,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
 
@@ -112,6 +177,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*RWD*/	ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS, ST_NONE,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_CERT_CRL,
+		/*IDs*/	revInfoIDs,
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
 
@@ -120,22 +186,47 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*RWD*/	ST_KEYSET_FILE, ST_KEYSET_FILE, ST_NONE,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_NONE,
+		/*IDs*/	dataIDs,
 		/*Flg*/	KEYMGMT_FLAG_NONE,
 		ACCESS_KEYSET_xxRWD, ACCESS_KEYSET_FNxxx ),
 
 	/* Last item type */
-	MK_KEYACL( KEYMGMT_ITEM_NONE,
-		/*RWD*/	ST_NONE,
-		/*FnQ*/	ST_NONE,
-		/*Obj*/	ST_NONE,
-		/*Flg*/	KEYMGMT_FLAG_NONE,
-		ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx ),
-	MK_KEYACL( KEYMGMT_ITEM_NONE,
-		/*RWD*/	ST_NONE,
-		/*FnQ*/	ST_NONE,
-		/*Obj*/	ST_NONE,
-		/*Flg*/	KEYMGMT_FLAG_NONE,
-		ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx )
+	MK_KEYACL( KEYMGMT_ITEM_NONE, ST_NONE, ST_NONE, ST_NONE, NULL, 
+		KEYMGMT_FLAG_NONE, ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx ),
+	MK_KEYACL( KEYMGMT_ITEM_NONE, ST_NONE, ST_NONE, ST_NONE, NULL, 
+		KEYMGMT_FLAG_NONE, ACCESS_KEYSET_xxxxx, ACCESS_KEYSET_xxxxx )
+	};
+
+/* A secondary ACL matching key ID types with keyset types.  This is a 
+   refinement of the generic list of permitted IDs per object type to
+   read, since this is actually a three-way match of 
+   keysetType :: itemType :: idType.  The keyManagementACL is used to
+   check itemType :: idType, this supplementary ACL takes the result
+   of that check and checks it against keysetType */
+
+typedef struct {
+	const CRYPT_KEYID_TYPE idType;
+	const OBJECT_SUBTYPE keysetSubTypeA;
+	} IDTYPE_ACL;
+
+static const IDTYPE_ACL idTypeACL[] = {
+	{ CRYPT_KEYID_NAME, 
+	  ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI },
+	{ CRYPT_KEYID_URI, 
+	  ST_KEYSET_ANY | ST_DEV_P11 },
+	{ CRYPT_IKEYID_KEYID, 
+	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
+	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 },
+	{ CRYPT_IKEYID_PGPKEYID, 
+	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL },
+	{ CRYPT_IKEYID_CERTID, 
+	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE },
+	{ CRYPT_IKEYID_ISSUERID, 
+	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE },
+	{ CRYPT_IKEYID_ISSUERANDSERIALNUMBER, 
+	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 },
+	{ CRYPT_KEYID_NONE, ST_NONE },
+		{ CRYPT_KEYID_NONE, ST_NONE }
 	};
 
 /****************************************************************************
@@ -148,12 +239,15 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	/* Perform a consistency check on the cert management ACLs */
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
+	/* Perform a consistency check on the key management ACLs */
 	for( i = 0; keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE && \
 				i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ); 
 		 i++ )
 		{
 		const KEYMGMT_ACL *keyMgmtACL = &keyManagementACL[ i ];
+		int j;
 
 		if( ( keyMgmtACL->keysetR_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetR_subTypeA & \
@@ -195,9 +289,17 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 			keyMgmtACL->objSubTypeB != ST_NONE )
 			retIntError();
 
-		if( keyMgmtACL->allowedFlags < KEYMGMT_FLAG_NONE || \
-			keyMgmtACL->allowedFlags >= KEYMGMT_FLAG_LAST )
-			retIntError();
+		ENSURES( keyMgmtACL->allowedKeyIDs != NULL );
+		for( j = 0; keyMgmtACL->allowedKeyIDs[ j ] != CRYPT_KEYID_NONE && \
+					j < FAILSAFE_ITERATIONS_SMALL; j++ )
+			{
+			ENSURES( keyMgmtACL->allowedKeyIDs[ j ] > CRYPT_KEYID_NONE && \
+					 keyMgmtACL->allowedKeyIDs[ j ] < CRYPT_KEYID_LAST );
+			}
+		ENSURES( j < FAILSAFE_ITERATIONS_SMALL );
+
+		ENSURES( keyMgmtACL->allowedFlags >= KEYMGMT_FLAG_NONE && \
+				 keyMgmtACL->allowedFlags < KEYMGMT_FLAG_LAST );
 
 		if( ( keyMgmtACL->specificKeysetSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->specificKeysetSubTypeA & \
@@ -212,8 +314,25 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 			keyMgmtACL->specificObjSubTypeB != ST_NONE )
 			retIntError();
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) );
+
+	/* Perform a consistency check on the supplementary ID ACLs */
+	for( i = 0; idTypeACL[ i ].idType != KEYMGMT_ITEM_NONE && \
+				i < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ); 
+		 i++ )
+		{
+		const IDTYPE_ACL *idACL = &idTypeACL[ i ];
+
+		ENSURES( idACL->idType > CRYPT_KEYID_NONE && \
+				 idACL->idType < CRYPT_KEYID_LAST );
+
+		if( ( idACL->keysetSubTypeA & SUBTYPE_CLASS_B ) || \
+			( idACL->keysetSubTypeA & \
+				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
+									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 )
+			retIntError();
+		}
+	ENSURES( i < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ) );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -262,7 +381,7 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 		 localMessage == MESSAGE_KEY_DELETEKEY || \
 		 localMessage == MESSAGE_KEY_GETFIRSTCERT || \
 		 localMessage == MESSAGE_KEY_GETNEXTCERT );
-	PRE( messageDataPtr != NULL );
+	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_KEYMGMT_INFO ) ) );
 	PRE( messageValue > KEYMGMT_ITEM_NONE && \
 		 messageValue < KEYMGMT_ITEM_LAST );
 	PRE( accessType != 0 );
@@ -272,13 +391,8 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 				keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE && \
 				i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) )
-		retIntError();
-	if( keyManagementACL[ i ].itemType == KEYMGMT_ITEM_NONE )
-		{
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
+	ENSURES( i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) );
+	ENSURES( keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE );
 	keymgmtACL = &keyManagementACL[ i ];
 
 	/* Perform a combined check to ensure that the item type being accessed
@@ -342,18 +456,74 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_NOTAVAIL );
+			retIntError();
 		}
 
-	/* Make sure that there's ID information present if required */
+	/* Make sure that there's appropriate ID information present if 
+	   required */
 	if( keymgmtACL->idUseFlags & accessType )
 		{
-		if( mechanismInfo->keyIDtype == CRYPT_KEYID_NONE )
+		const IDTYPE_ACL *idACL = NULL;
+		BOOLEAN keyIdOK = FALSE;
+		int index;
+
+		/* Make sure that the ID information is present and valid */
+		if( mechanismInfo->keyIDtype <= CRYPT_KEYID_NONE || \
+			mechanismInfo->keyIDtype >= CRYPT_KEYID_LAST )
 			return( CRYPT_ARGERROR_NUM1 );
-		if( mechanismInfo->keyIDlength < 1 || \
+		if( !isInternalMessage( message ) && \
+			mechanismInfo->keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
+			return( CRYPT_ARGERROR_NUM1 );
+		if( mechanismInfo->keyIDlength < MIN_NAME_LENGTH || \
+			mechanismInfo->keyIDlength >= MAX_ATTRIBUTE_SIZE || \
 			!isReadPtr( mechanismInfo->keyID, mechanismInfo->keyIDlength ) )
 			return( CRYPT_ARGERROR_STR1 );
+
+		/* Make sure that the key ID is of an appropriate type */
+		for( index = 0; \
+			 keymgmtACL->allowedKeyIDs[ index ] != CRYPT_KEYID_NONE && \
+				index < FAILSAFE_ITERATIONS_SMALL; index++ )
+			{
+			if( keymgmtACL->allowedKeyIDs[ index ] == mechanismInfo->keyIDtype )
+				{
+				keyIdOK = TRUE;
+				break;
+				}
+			}
+		ENSURES( index < FAILSAFE_ITERATIONS_SMALL );
+		if( !keyIdOK )
+			{
+			/* If we try and retrieve an object using an inappropriate ID 
+			   type then this is a programming error, but not a fatal one, 
+			   so we just report it as an unable-to-find object error */
+			assert( DEBUG_WARN );
+			return( CRYPT_ERROR_NOTFOUND );
+			}
+
+		/* Finally, check that the keyID is valid for the keyset type.  This 
+		   implements the third stage of the three-way check
+		   keysetType :: itemType :: idType */
+		for( index = 0; idTypeACL[ index ].idType != KEYMGMT_ITEM_NONE && \
+						index < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ); 
+			 index++ )
+			{
+			if( idTypeACL[ index ].idType == mechanismInfo->keyIDtype )
+				{
+				idACL = &idTypeACL[ index ];
+				break;
+				}
+			}
+		ENSURES( index < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ) );
+		if( idACL == NULL || \
+			!isValidSubtype( idACL->keysetSubTypeA, subType ) )
+			{
+			/* As before if we try and retrieve an object by an 
+			   inappropriate ID type then this is a nonfatal programming 
+			   error so we warn in the debug build but otherwise just report 
+			   it as an unable-to-find object error */
+			assert( DEBUG_WARN );
+			return( CRYPT_ERROR_NOTFOUND );
+			}
 		}
 
 	/* Make sure that there's a password present/not present if required.
@@ -375,10 +545,13 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			{
 			if( localMessage == MESSAGE_KEY_SETKEY && \
 				( mechanismInfo->auxInfo == NULL || \
-				  mechanismInfo->auxInfoLength < 1 ) )
+				  mechanismInfo->auxInfoLength < MIN_NAME_LENGTH ||
+				  mechanismInfo->auxInfoLength >= MAX_ATTRIBUTE_SIZE ) )
+				{
 				/* Private/secret key writes to a keyset must provide a 
 				   password */
 				return( CRYPT_ARGERROR_STR1 );
+				}
 			}
 		else
 			{
@@ -387,12 +560,14 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			if( ( mechanismInfo->flags != KEYMGMT_FLAG_LABEL_ONLY ) && \
 				( mechanismInfo->auxInfo != NULL || \
 				  mechanismInfo->auxInfoLength != 0 ) )
+				{
 				/* Private/secret key access to a device doesn't use a 
 				   password, however the auxInfo parameter is also used to 
 				   contain the label for key label reads so we only check 
 				   it if it's a standard key read */
 				return( ( keymgmtACL->idUseFlags & accessType ) ? \
 						CRYPT_ARGERROR_STR2 : CRYPT_ARGERROR_STR1 );
+				}
 			}
 		}
 
@@ -473,10 +648,12 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 				}
 			if( !isInHighState( paramObjectHandle ) && \
 				!( subType == ST_CERT_PKIUSER || subType == ST_CERT_REQ_REV ) )
+				{
 				/* PKI user info and revocation requests aren't signed.  Like
 				   private key password semantics, these are a bit too
 				   complex to express in the ACL so they're hardcoded */
 				return( CRYPT_ARGERROR_NUM1 );
+				}
 
 			/* If we don't need to perform an specific-object check, we're
 			   done */
@@ -510,8 +687,7 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_NOTAVAIL );
+			retIntError();
 		}
 
 	/* Postcondition: The access and parameters are valid and the object

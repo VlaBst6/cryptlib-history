@@ -9,14 +9,17 @@
    <hans-olof.hermansson@postnet.se>, Tor Rustad <Tor.Rustad@bbs.no>,
    Kjetil Barvik <kjetil.barvik@bbs.no>, James Sweeny <jsweeny@us.ibm.com>,
    Chris Ridd <chris.ridd@isode.com>, and several other people whose names
-   I've misplaced.  This code grew slowly over time without much design or
-   planning, with features being tacked on as required.  It's not
-   representative of my normal coding style.
+   I've misplaced (a number of those email addresses probably no longer
+   work, since this code has been around for awhile).
 
    Available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.c.
-   Last updated 22 June 2006 (version 20060622, if you prefer it that
+   Last updated 14 April 2008 (version 20080414, if you prefer it that
    way).  To build under Windows, use 'cl /MD dumpasn1.c'.  To build on OS390
    or z/OS, use '/bin/c89 -D OS390 -o dumpasn1 dumpasn1.c'.
+
+   This code grew slowly over time without much design or planning, and with
+   extra features being tacked on as required.  It's not representative of
+   my normal coding style.
 
    This version of dumpasn1 requires a config file dumpasn1.cfg to be present
    in the same location as the program itself or in a standard directory
@@ -49,7 +52,7 @@
 
 /* The update string, printed as part of the help screen */
 
-#define UPDATE_STRING	"22 June 2006"
+#define UPDATE_STRING	"14 April 2008"
 
 /* Useful defines */
 
@@ -373,7 +376,7 @@ static const char *configPaths[] = {
 
 /* Return descriptive strings for universal tags */
 
-char *idstr( const int tagID )
+static char *idstr( const int tagID )
 	{
 	switch( tagID )
 		{
@@ -444,9 +447,11 @@ static OIDINFO *getOIDinfo( char *oid, const int oidLength )
 
 	memset( oid + oidLength, 0, 2 );
 	for( oidPtr = oidList; oidPtr != NULL; oidPtr = oidPtr->next )
+		{
 		if( oidLength == oidPtr->oidLength - 2 && \
 			!memcmp( oidPtr->oid + 2, oid, oidLength ) )
 			return( oidPtr );
+		}
 
 	return( NULL );
 	}
@@ -570,8 +575,10 @@ static int readLine( FILE *file, char *buffer )
 
 	/* If we've just passed a CR, check for a following LF */
 	if( ch == '\r' )
+		{
 		if( ( ch = getc( file ) ) != '\n' )
 			ungetc( ch, file );
+		}
 
 	/* Skip trailing whitespace and add der terminador */
 	while( bufCount > 0 &&
@@ -581,9 +588,13 @@ static int readLine( FILE *file, char *buffer )
 
 	/* Handle special-case of ^Z if file came off an MSDOS system */
 	if( ch == CPM_EOF )
+		{
 		while( !feof( file ) )
+			{
 			/* Keep going until we hit the true EOF (or some sort of error) */
 			ch = getc( file );
+			}
+		}
 
 	return( ferror( file ) ? FALSE : TRUE );
 	}
@@ -623,7 +634,7 @@ static int processHexOID( OIDINFO *oidInfo, char *string )
 
 static int readConfig( const char *path, const int isDefaultConfig )
 	{
-	OIDINFO dummyOID = { NULL, "Dummy", "Dummy", "Dummy", 1 }, *oidPtr;
+	OIDINFO dummyOID = { NULL, "Dummy", "Dummy", "Dummy", 1, 1 }, *oidPtr;
 	FILE *file;
 	char buffer[ MAX_LINESIZE ];
 	int status;
@@ -953,7 +964,7 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 	long noBytes = length;
 	int zeroPadded = FALSE, warnPadding = FALSE, warnNegative = isInteger;
 	int singleLine = FALSE;
-	int maxLevel = ( doPure ) ? 15 : 8, i;
+	int maxLevel = ( doPure ) ? 15 : 8, prevCh = -1, i;
 
 	/* Check if LHS status info + indent + "OCTET STRING" string + data will
 	   wrap */
@@ -973,7 +984,7 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 		if( !( i % lineLength ) )
 			{
 			if( singleLine )
-				putchar( ' ' );
+				fputc( ' ', output );
 			else
 				{
 				if( dumpText )
@@ -996,15 +1007,22 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 
 		/* If we need to check for negative values and zero padding, check
 		   this now */
-		if( !i )
+		if( i == 0 )
 			{
+			prevCh = ch;
 			if( !ch )
 				zeroPadded = TRUE;
 			if( !( ch & 0x80 ) )
 				warnNegative = FALSE;
 			}
-		if( i == 1 && zeroPadded && ch < 0x80 )
-			warnPadding = TRUE;
+		if( i == 1 )
+			{
+			/* Check for the first 9 bits being identical */
+			if( ( prevCh == 0x00 ) && ( ( ch & 0x80 ) == 0x00 ) )
+				warnPadding = TRUE;
+			if( ( prevCh == 0xFF ) && ( ( ch & 0x80 ) == 0x80 ) )
+				warnPadding = TRUE;
+			}
 		}
 	if( dumpText )
 		{
@@ -1082,17 +1100,21 @@ static void dumpBitString( FILE *inFile, const int length, const int unused,
 			if( bitString & currentBitMask )
 				value |= bitFlag;
 			if( !( bitString & remainderMask ) )
+				{
 				/* The last valid bit should be a one bit */
 				errorStr = "Spurious zero bits in bitstring";
+				}
 			bitFlag <<= 1;
 			bitString <<= 1;
 			}
 		if( noBits < sizeof( int ) && \
 			( ( remainderMask << noBits ) & value ) )
+			{
 			/* There shouldn't be any bits set after the last valid one.  We
 			   have to do the noBits check to avoid a fencepost error when
 			   there's exactly 32 bits */
 			errorStr = "Spurious one bits in bitstring";
+			}
 		}
 	else
 		value = bitString;
@@ -1205,32 +1227,35 @@ static void displayString( FILE *inFile, long length, int level,
 				   which the first character looks like a single ASCII char */
 				outLen = wcstombs( outBuf, &wCh, 1 );
 				if( outLen < 1 )
+					{
 					/* Can't be displayed as Unicode, fall back to
 					   displaying it as normal text */
 					ungetc( wCh & 0xFF, inFile );
+					}
 				else
 					{
 					lineLength++;
 					i++;	/* We've read two characters for a wchar_t */
-#if defined( __WIN32__ ) 
+#if defined( __WIN32__ )
 					fputwc( wCh, output );
 #elif defined( __UNIX__ ) && !( defined( __MACH__ ) || defined( __OpenBSD__ ) )
-				/* Some Unix environments differentiate between char and 
-				   wide-oriented stdout (!!!), so it's necessary to manually 
-				   switch the orientation of stdout to make it wide-oriented 
-				   before calling a widechar output function or nothing will 
-				   be output (exactly what level of braindamage it takes to 
-				   have an implementation function like this is a mystery).  
-				   In order to safely display widechars, we therefore have 
-				   to use the fwide() kludge function to change stdout modes
-				   around the display of the widechar */
-				if( fwide( output, 1 ) > 0 )
-					{
-					fputwc( wCh, output );
-					fwide( output, -1 );
-					}
-				else
-					fputc( wCh, output );
+					/* Some Unix environments differentiate between char
+					   and wide-oriented stdout (!!!), so it's necessary to
+					   manually switch the orientation of stdout to make it
+					   wide-oriented before calling a widechar output
+					   function or nothing will be output (exactly what
+					   level of braindamage it takes to have an
+					   implementation function like this is a mystery).  In
+					   order to safely display widechars, we therefore have
+					   to use the fwide() kludge function to change stdout
+					   modes around the display of the widechar */
+					if( fwide( output, 1 ) > 0 )
+						{
+						fputwc( wCh, output );
+						fwide( output, -1 );
+						}
+					else
+						fputc( wCh, output );
 #else
   #ifdef __OS390__
 					/* This could use some improvement */
@@ -1260,8 +1285,10 @@ static void displayString( FILE *inFile, long length, int level,
 						ch = '.';	/* Convert non-ASCII to placeholders */
 					}
 				else
+					{
 					if( !isprint( ch ) )
 						ch = '.';	/* Convert non-ASCII to placeholders */
+					}
 #ifdef __OS390__
 				ch = asciiToEbcdic( ch );
 #endif /* __OS390__ */
@@ -1282,8 +1309,10 @@ static void displayString( FILE *inFile, long length, int level,
 
 			case STR_BMP_REVERSED:
 				if( i == noBytes - 1 && ( noBytes & 1 ) )
+					{
 					/* Odd-length BMP string, complain */
 					warnBMP = TRUE;
+					}
 
 				/* Wrong-endianness BMPStrings (Microsoft Unicode) can't be
 				   handled through the usual widechar-handling mechanism
@@ -1386,7 +1415,7 @@ static long getValue( FILE *inFile, const long length )
 
 /* Get an ASN.1 objects tag and length */
 
-int getItem( FILE *inFile, ASN1_ITEM *item )
+static int getItem( FILE *inFile, ASN1_ITEM *item )
 	{
 	int tag, length, index = 0;
 
@@ -1432,9 +1461,11 @@ int getItem( FILE *inFile, ASN1_ITEM *item )
 
 		length &= LEN_MASK;
 		if( length > 4 )
+			{
 			/* Impossible length value, probably because we've run into
 			   the weeds */
 			return( -1 );
+			}
 		item->headerSize += length;
 		item->length = 0;
 		if( !length )
@@ -1456,7 +1487,7 @@ int getItem( FILE *inFile, ASN1_ITEM *item )
 
 /* Check whether a BIT STRING or OCTET STRING encapsulates another object */
 
-static int checkEncapsulate( FILE *inFile, const int tag, const int length )
+static int checkEncapsulate( FILE *inFile, const int length )
 	{
 	ASN1_ITEM nestedItem;
 	const int currentPos = fPos;
@@ -1485,7 +1516,7 @@ static int checkEncapsulate( FILE *inFile, const int tag, const int length )
 
 /* Check whether a zero-length item is OK */
 
-int zeroLengthOK( const ASN1_ITEM *item )
+static int zeroLengthOK( const ASN1_ITEM *item )
 	{
 	/* An implicitly-tagged NULL can have a zero length.  An occurrence of this
 	   type of item is almost always an error, however OCSP uses a weird status
@@ -1536,7 +1567,7 @@ int zeroLengthOK( const ASN1_ITEM *item )
 
 /* Check whether the next item looks like text */
 
-static int checkForText( FILE *inFile, const int length )
+static STR_OPTION checkForText( FILE *inFile, const int length )
 	{
 	char buffer[ 16 ];
 	int isBMP = FALSE, isUnicode = FALSE;
@@ -1556,9 +1587,11 @@ static int checkForText( FILE *inFile, const int length )
 		sampleLength = fread( buffer, 1, sampleLength, inFile );
 		fseek( inFile, -sampleLength, SEEK_CUR );
 		for( i = 0; i < sampleLength; i++ )
+			{
 			if( !( isalpha( buffer[ i ] ) || isdigit( buffer[ i ] ) || \
 				   isspace( buffer[ i ] ) ) )
 				return( STR_NONE );
+			}
 		return( STR_IA5 );
 		}
 
@@ -1570,8 +1603,10 @@ static int checkForText( FILE *inFile, const int length )
 		{
 		/* It looks like a time string, make sure that it really is one */
 		for( i = 0; i < length - 1; i++ )
+			{
 			if( !isdigit( buffer[ i ] ) )
 				break;
+			}
 		if( i == length - 1 )
 			return( ( length == 13 ) ? STR_UTCTIME : STR_GENERALIZED );
 		}
@@ -1596,20 +1631,24 @@ static int checkForText( FILE *inFile, const int length )
 				   undecided, in which case this comment made a bit more
 				   sense) */
 				if( i < sampleLength - 2 )
+					{
 					/* If the last char(s) are zero but preceding ones
 					   weren't, don't treat it as a BMP string.  This can
 					   happen when storing a null-terminated string if the
 					   implementation gets the length wrong and stores the
 					   null as well */
 					isBMP = TRUE;
+					}
 				continue;
 				}
 			else
+				{
 				/* If we thought we were in a BMPString but we've found a
 				   nonzero byte where there should be a zero, it's neither
 				   an ASCII nor BMP string */
 				if( isBMP )
 					return( STR_NONE );
+				}
 			}
 		else
 			{
@@ -1677,7 +1716,8 @@ static void dumpHeader( FILE *inFile, const ASN1_ITEM *item )
 
 /* Print a constructed ASN.1 object */
 
-int printAsn1( FILE *inFile, const int level, long length, const int isIndefinite );
+static int printAsn1( FILE *inFile, const int level, long length,
+					  const int isIndefinite );
 
 static void printConstructed( FILE *inFile, int level, const ASN1_ITEM *item )
 	{
@@ -1707,7 +1747,7 @@ static void printConstructed( FILE *inFile, int level, const ASN1_ITEM *item )
 
 /* Print a single ASN.1 object */
 
-void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
+static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 	{
 	OIDINFO *oidInfo;
 	STR_OPTION stringType;
@@ -1843,7 +1883,7 @@ void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			/* Drop through to dump it as an octet string */
 
 		case OCTETSTRING:
-			if( checkEncapsulate( inFile, item->tag, item->length ) )
+			if( checkEncapsulate( inFile, item->length ) )
 				{
 				/* It's something encapsulated inside the string, print it as
 				   a constructed item */
@@ -1984,8 +2024,8 @@ void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 
 /* Print a complex ASN.1 object */
 
-int printAsn1( FILE *inFile, const int level, long length,
-			   const int isIndefinite )
+static int printAsn1( FILE *inFile, const int level, long length,
+					  const int isIndefinite )
 	{
 	ASN1_ITEM item;
 	long lastPos = fPos;
@@ -2074,6 +2114,7 @@ int printAsn1( FILE *inFile, const int level, long length,
 				return( 0 );
 			}
 		else
+			{
 			if( length <= 0 )
 				{
 				if( length < 0 )
@@ -2081,6 +2122,7 @@ int printAsn1( FILE *inFile, const int level, long length,
 				return( 0 );
 				}
 			else
+				{
 				if( length == 1 )
 					{
 					const int ch = fgetc( inFile );
@@ -2100,6 +2142,8 @@ int printAsn1( FILE *inFile, const int level, long length,
 						return( 1 );
 						}
 					}
+				}
+			}
 		}
 	if( status == -1 )
 		{
@@ -2126,10 +2170,10 @@ int printAsn1( FILE *inFile, const int level, long length,
 
 /* Show usage and exit */
 
-void usageExit( void )
+static void usageExit( void )
 	{
 	puts( "DumpASN1 - ASN.1 object dump/syntax check program." );
-	puts( "Copyright Peter Gutmann 1997 - 2006.  Last updated " UPDATE_STRING "." );
+	puts( "Copyright Peter Gutmann 1997 - 2008.  Last updated " UPDATE_STRING "." );
 	puts( "" );
 
 	puts( "Usage: dumpasn1 [-acdefhlprstuxz] <file>" );
@@ -2416,7 +2460,7 @@ int main( int argc, char *argv[] )
 		if( !feof( inFile ) )
 			{
 			fprintf( output, "Warning: Further data follows ASN.1 data at "
-					 "position %d.\n", position );
+					 "position %ld.\n", position );
 			noWarnings++;
 			}
 		}

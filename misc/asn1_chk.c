@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						   ASN.1 Checking Routines							*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -25,9 +25,10 @@
 
 /* When we parse a nested data object encapsulated within a larger object,
    the length is initially set to a magic value which is adjusted to the
-   actual length once we start parsing the object */
+   actual length once we start parsing the object.  Even CRLs will hopefully 
+   never reach 500MB, the current limits seems to be around 150MB */
 
-#define LENGTH_MAGIC		177545L
+#define LENGTH_MAGIC		500000000L
 
 /* Current parse state.  This is used to check for potential BIT STRING and
    OCTET STRING targets for OCTET/BIT STRING holes, which are always
@@ -66,7 +67,9 @@ typedef enum {
 	STATE_HOLE_OID, STATE_HOLE_BITSTRING, STATE_HOLE_OCTETSTRING,
 
 	/* Error state */
-	STATE_ERROR
+	STATE_ERROR,
+	
+	STATE_LAST
 	} ASN1_STATE;
 
 /* Structure to hold info on an ASN.1 item */
@@ -80,22 +83,38 @@ typedef struct {
 
 /* Get an ASN.1 object's tag and length */
 
-static int getItem( STREAM *stream, ASN1_ITEM *item )
+CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getItem( INOUT STREAM *stream, INOUT ASN1_ITEM *item )
 	{
 	const long offset = stell( stream );
 	long length;
 	int status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( item, sizeof( ASN1_ITEM ) ) );
+
+	/* Clear return value */
 	memset( item, 0, sizeof( ASN1_ITEM ) );
-	item->tag = peekTag( stream );
-	status = checkEOC( stream );
+
+	/* Read the tag.  We can't use peekTag() for this since we may be 
+	   reading EOC octets, which would be rejected by peekTag() */
+	status = item->tag = sPeek( stream );
 	if( cryptStatusError( status ) )
 		return( STATE_ERROR );
-	if( status == TRUE )
+	if( item->tag == BER_EOC )
 		{
-		item->headerSize = 2;
-		return( STATE_NONE );
+		/* It looks like EOC octets, make sure that they're in order */
+		status = checkEOC( stream );
+		if( cryptStatusError( status ) )
+			return( STATE_ERROR );
+		if( status == TRUE )
+			{
+			item->headerSize = 2;
+			return( STATE_NONE );
+			}
 		}
+
+	/* It's no an EOC, read the tag and length as a generic hole */
 	status = readLongGenericHole( stream, &length, item->tag );
 	if( cryptStatusError( status ) )
 		return( STATE_ERROR );
@@ -112,21 +131,37 @@ static int getItem( STREAM *stream, ASN1_ITEM *item )
    clear the stream error state since the probing for valid data could have
    set the error indicator if nothing valid was found */
 
-static BOOLEAN checkEncapsulation( STREAM *stream, const int length,
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN checkEncapsulation( INOUT STREAM *stream, 
+								   IN_LENGTH const int length,
 								   const BOOLEAN isBitstring,
-								   const ASN1_STATE state )
+								   IN_ENUM_OPT( ASN1_STATE ) \
+									const ASN1_STATE state )
 	{
 	BOOLEAN isEncapsulated = TRUE;
 	const long streamPos = stell( stream );
 	const int tag = peekTag( stream );
 	int innerLength, status;
 
-	/* Make sure that there's an encapsulated object present.  This is a
-	   reasonably effective check, but unfortunately its effectiveness
-	   means that it'll reject nested objects with incorrect lengths.  It's
-	   not really possible to fix this, either there'll be false positives
-	   due to true OCTET/BIT STRINGs that look like they might contain
-	   nested data, or there'll be no false positives but nested content
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES_B( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_B( state >= STATE_NONE && state < STATE_ERROR );
+
+	/* Make sure that the tag is in order */
+	if( cryptStatusError( tag ) )
+		{
+		sClearError( stream );
+		sseek( stream, streamPos );
+		return( FALSE );
+		}
+
+	/* Make sure that there's an encapsulated object present.  This is a 
+	   reasonably effective check, but unfortunately this same effectiveness 
+	   means that it'll reject nested objects with incorrect lengths.  It's 
+	   not really possible to fix this, either there'll be false positives 
+	   due to true OCTET/BIT STRINGs that look like they might contain 
+	   nested data, or there'll be no false positives but nested content 
 	   with slightly incorrect encodings will be missed */
 	status = readGenericHole( stream, &innerLength, 1, DEFAULT_TAG );
 	if( cryptStatusError( status ) || \
@@ -160,17 +195,24 @@ static BOOLEAN checkEncapsulation( STREAM *stream, const int length,
 		GeneralisedTime: invalidityDate: Not possible to check directly
 			since the obvious check for a valid length will also fail
 			invalid-length encodings, missing the very thing we usually
-			want to check for, so all we can check for is a vaguely valid
-			length.
+			want to check for, so all that we can check for is a vaguely 
+			valid length.
 		IA5String: Netscape extensions, the most that we can do is perform 
 			an approximate length range check
 		INTEGER: deltaCRLIndicator, crlNumber, must be <= 16 bits.
-		OCTET STRING: keyID, again the most we can do is perform an
+		OCTET STRING: keyID, again the most that we can do is perform an
 			approximate length range check.
 		OID: holdInstructionCode, again just an approximate length range 
 			check.
 		SEQUENCE: most extensions, a bit difficult to check but again we can 
-			make sure that the length is right for strict encapsulation */
+			make sure that the length is right for strict encapsulation.
+
+	   Note that we want these checks to be as liberal as possible since 
+	   we're only checking for the *possibility* of encapsulated data at
+	   this point.  Once we're fairly certain that it's encapsulated data
+	   then we recurse down into it with checkASN1().  If we rejected too
+	   many things at this level then it'd never get checked via 
+	   checkASN1() */
 	switch( tag )
 		{
 		case BER_BITSTRING:
@@ -202,7 +244,8 @@ static BOOLEAN checkEncapsulation( STREAM *stream, const int length,
 			break;
 
 		case BER_OBJECT_IDENTIFIER:
-			if( innerLength < 3 || innerLength > MAX_OID_SIZE )
+			if( innerLength < MIN_OID_SIZE - 2 || \
+				innerLength > MAX_OID_SIZE )
 				isEncapsulated = FALSE;
 			break;
 
@@ -219,30 +262,39 @@ static BOOLEAN checkEncapsulation( STREAM *stream, const int length,
 
 /* Check a primitive ASN.1 object */
 
-static ASN1_STATE checkASN1( STREAM *stream, long length,
-							 const int isIndefinite, const int level,
-							 ASN1_STATE state, 
+CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1 ) ) \
+static ASN1_STATE checkASN1( INOUT STREAM *stream, 
+							 IN_LENGTH const long length,
+							 const BOOLEAN isIndefinite, 
+							 IN_RANGE( 1, MAX_NESTING_LEVEL ) const int level,
+							 IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state, 
 							 const BOOLEAN checkDataElements );
 
-static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
-								  const int level, const ASN1_STATE state )
+CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
+								  IN_RANGE( 1, MAX_NESTING_LEVEL ) const int level, 
+								  IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state )
 	{
 	int length = ( int ) item->length, ch, i;
 
-	assert( state >= STATE_NONE && state <= STATE_ERROR );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( item, sizeof( ASN1_ITEM ) ) );
+	
+	REQUIRES( level > 0 && level <= MAX_NESTING_LEVEL );
+	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
+	REQUIRES( length >= 0 && length < MAX_INTLENGTH );
 
-	/* Perform a sanity check of input data */
-	if( level >= MAX_NESTING_LEVEL || state == STATE_ERROR || \
-		item->length < 0 )
+	/* Make sure that we're not processing suspiciosly deeply nested data */
+	if( level >= MAX_NESTING_LEVEL )
 		return( STATE_ERROR );
 
 	/* In theory only NULL and EOC elements (BER_RESERVED) are allowed to 
 	   have a zero length, but some broken implementations (Netscape, Van 
 	   Dyke) encode numeric zero values as a zero-length element so we have 
 	   to accept these as well */
-	if( item->length <= 0 && item->tag != BER_NULL && \
-							 item->tag != BER_RESERVED && \
-							 item->tag != BER_INTEGER )
+	if( length <= 0 && item->tag != BER_NULL && \
+					   item->tag != BER_RESERVED && \
+					   item->tag != BER_INTEGER )
 		return( STATE_ERROR );
 
 	/* Perform a general check that everything is OK.  We don't check for 
@@ -265,9 +317,12 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 			/* Check the number of unused bits */
 			ch = sgetc( stream );
 			length--;
-			if( length < 0 || ch < 0 || ch > 7 )
+			if( length < 0 || length >= MAX_INTLENGTH || \
+				ch < 0 || ch > 7 )
+				{
 				/* Invalid number of unused bits */
 				return( STATE_ERROR );
+				}
 
 			/* If it's short enough to be a bit flag, it's just a sequence 
 			   of bits */
@@ -282,7 +337,8 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 
 		case BER_OCTETSTRING:
 			{
-			const BOOLEAN isBitstring = item->tag == BER_BITSTRING;
+			const BOOLEAN isBitstring = ( item->tag == BER_BITSTRING ) ? \
+										TRUE : FALSE;
 
 			/* Check to see whether an OCTET STRING or BIT STRING hole is 
 			   allowed at this point (a BIT STRING must be preceded by 
@@ -298,7 +354,8 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 
 				encapsState = checkASN1( stream, length, item->indefinite,
 										 level + 1, STATE_NONE, TRUE );
-				return( ( encapsState == STATE_ERROR ) ? \
+				return( ( encapsState < STATE_NONE || \
+						  encapsState >= STATE_ERROR ) ? \
 						STATE_ERROR : STATE_NONE );
 				}
 
@@ -309,9 +366,11 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 
 		case BER_OBJECT_IDENTIFIER:
 			if( length > MAX_OID_SIZE - 2 )
+				{
 				/* Total OID size (including tag and length, since they're 
 				   treated as a blob) should be less than a sane limit */
 				return( STATE_ERROR );
+				}
 			return( cryptStatusError( sSkip( stream, length ) ) ? \
 					STATE_ERROR : STATE_OID );
 
@@ -340,12 +399,14 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 					return( STATE_ERROR );
 				}
 			else
-				if( length != 11 && length != 13 )
+				{
+				if( length != 13 )
 					return( STATE_ERROR );
+				}
 			for( i = 0; i < length - 1; i++ )
 				{
 				ch = sgetc( stream );
-				if( !isDigit( ch ) )
+				if( cryptStatusError( ch ) || !isDigit( ch ) )
 					return( STATE_ERROR );
 				}
 			if( sgetc( stream ) != 'Z' )
@@ -376,23 +437,32 @@ static ASN1_STATE checkPrimitive( STREAM *stream, const ASN1_ITEM *item,
 	00 00			cASN1 <- cAObj <- cASN1
 
    The use of checkASN1Object() leads to an (apparently) excessively deep 
-   call hierarchy, but that's mostly an artifact of the way that it's 
+   call hierarchy, but that's mostly just an artifact of the way that it's 
    diagrammed here */
 
-static ASN1_STATE checkASN1Object( STREAM *stream, const ASN1_ITEM *item,
-								   const int level, const ASN1_STATE state,
+CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
+								   IN_RANGE( 1, MAX_NESTING_LEVEL ) \
+									const int level, 
+								   IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state,
 								   const BOOLEAN checkDataElements )
 	{
 	ASN1_STATE newState;
 
-	assert( state >= STATE_NONE && state <= STATE_ERROR );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( item, sizeof( ASN1_ITEM ) ) );
 
-	/* Perform a sanity check of input data */
-	if( level >= MAX_NESTING_LEVEL || state == STATE_ERROR || \
-		item->length < 0 )
+	REQUIRES( level > 0 && level <= MAX_NESTING_LEVEL );
+	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
+
+	/* Make sure that we're not processing suspiciosly deeply nested data */
+	if( level >= MAX_NESTING_LEVEL )
 		return( STATE_ERROR );
 
-	/* If we're checking data elements, check the contents for validity */
+	/* If we're checking data elements, check the contents for validity.  A
+	   straight data-length check doesn't check nested elements since all it
+	   cares about is finding the overall length with as little effort as
+	   possible */
 	if( checkDataElements && ( item->tag & BER_CLASS_MASK ) == BER_UNIVERSAL )
 		{
 		/* If it's constructed, parse the nested object(s) */
@@ -411,6 +481,8 @@ static ASN1_STATE checkASN1Object( STREAM *stream, const ASN1_ITEM *item,
 		   update: SEQ + OID -> HOLE_OID; OID + { NULL | BOOLEAN } -> 
 		   HOLE_BITSTRING/HOLE_OCTETSTRING */
 		newState = checkPrimitive( stream, item, level + 1, state );
+		if( newState < STATE_NONE || newState >= STATE_ERROR )
+			return( STATE_ERROR );
 		if( state == STATE_SEQUENCE && newState == STATE_OID )
 			return( STATE_HOLE_OID );
 		if( state == STATE_HOLE_OID )
@@ -420,67 +492,86 @@ static ASN1_STATE checkASN1Object( STREAM *stream, const ASN1_ITEM *item,
 			if( newState == STATE_BOOLEAN )
 				return( STATE_HOLE_OCTETSTRING );
 			}
-		return( ( newState == STATE_ERROR ) ? STATE_ERROR : STATE_NONE );
+		return( STATE_NONE );
 		}
 
 	/* Zero-length objects are usually an error, however PKCS #10 has an
 	   attribute-encoding ambiguity that produces zero-length tagged 
 	   extensions and OCSP has its braindamaged context-specific tagged 
-	   NULLs so we don't complain about them if they have context-specific 
-	   tags */
+	   NULLs so we don't complain about them if they have low-valued 
+	   context-specific tags */
 	if( item->length <= 0 && !item->indefinite )
-		return( ( ( item->tag & BER_CLASS_MASK ) == BER_CONTEXT_SPECIFIC ) ? \
+		{
+		return( ( ( item->tag & BER_CLASS_MASK ) == BER_CONTEXT_SPECIFIC && \
+				  EXTRACT_CTAG( item->tag ) <= 3 ) ? \
 				STATE_NONE : STATE_ERROR );
+		}
 
-	assert( item->length > 0 || item->indefinite );
+	ENSURES( item->length > 0 || item->indefinite );
 
 	/* If it's constructed, parse the nested object(s) */
 	if( ( item->tag & BER_CONSTRUCTED_MASK ) == BER_CONSTRUCTED )
 		{
 		newState = checkASN1( stream, item->length, item->indefinite,
 							  level + 1, STATE_NONE, checkDataElements );
-		return( ( newState == STATE_ERROR ) ? \
+		return( ( newState < STATE_NONE || newState >= STATE_ERROR ) ? \
 				STATE_ERROR : STATE_NONE );
 		}
 
 	/* It's a context-specific tagged item that could contain anything, just 
 	   skip it */
 	if( ( item->tag & BER_CLASS_MASK ) != BER_CONTEXT_SPECIFIC || \
-		item->length <= 0 || \
-		cryptStatusError( sSkip( stream, item->length ) ) )
+		item->length <= 0 )
 		return( STATE_ERROR );
-	return( STATE_NONE );
+	return( cryptStatusError( sSkip( stream, item->length ) ) ? \
+			STATE_ERROR : STATE_NONE );
 	}
 
-/* Check a complex ASN.1 object */
+/* Check a complex ASN.1 object.  In order to handle huge CRLs with tens or 
+   hundreds of thousands of individual entries we can't use a fixed loop 
+   failsafe iteration count but have to vary it based on the size of the 
+   input data.  Luckily this situation is relatively easy to check for, it 
+   only occurs at a nesting level of 6 (when we find the CRL entries) and we 
+   only have to enable it when the data length is more than 30K since the 
+   default FAILSAFE_ITERATIONS_LARGE will handle anything smaller than that */
 
-static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite,
-							 const int level, ASN1_STATE state,
+CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1 ) ) \
+static ASN1_STATE checkASN1( INOUT STREAM *stream, 
+							 IN_LENGTH const long length, 
+							 const BOOLEAN isIndefinite, 
+							 IN_RANGE( 0, MAX_NESTING_LEVEL ) const int level, 
+							 IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state, 
 							 const BOOLEAN checkDataElements )
 	{
 	ASN1_ITEM item;
-	long lastPos = stell( stream );
-	ASN1_STATE status;
-	int iterationCount = 0;
+	ASN1_STATE newState;
+	const long maxIterationCount = ( level == 6 && length > 30000 ) ? \
+									length / 25 : FAILSAFE_ITERATIONS_LARGE;
+	long localLength = length, lastPos = stell( stream );
+	int iterationCount;
 
-	assert( state >= STATE_NONE && state <= STATE_ERROR );
-	assert( level > 0 || length == LENGTH_MAGIC );
-	assert( ( isIndefinite && length == 0 ) || \
-			( !isIndefinite && length >= 0 ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	/* Perform a sanity check of input data */
-	if( level < 0 || level >= MAX_NESTING_LEVEL || state == STATE_ERROR || \
-		length < 0 )
+	REQUIRES( ( level > 0 && level <= MAX_NESTING_LEVEL ) || \
+			  ( level == 0 && length == LENGTH_MAGIC ) );
+	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
+	REQUIRES( ( isIndefinite && length == 0 ) || \
+			  ( !isIndefinite && length >= 0 && length < MAX_INTLENGTH ) );
+
+	/* Make sure that we're not processing suspiciosly deeply nested data */
+	if( level >= MAX_NESTING_LEVEL )
 		return( STATE_ERROR );
 
-	while( ( status = getItem( stream, &item ) ) == STATE_NONE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0;
+		 ( newState = getItem( stream, &item ) ) == STATE_NONE && \
+			iterationCount < maxIterationCount;
+		 iterationCount++ )
 		{
-		/* If this is the top level (for which the level isn't known in
+		/* If this is the top level (for which the length isn't known in
 		   advance) and the item has a definite length, set the length to 
 		   the item's length */
-		if( level == 0 && !item.indefinite )
-			length = item.headerSize + item.length;
+		if( level <= 0 && !item.indefinite )
+			localLength = item.headerSize + item.length;
 
 		/* If this is an EOC (tag == BER_RESERVED) for an indefinite item, 
 		   we're done */
@@ -495,13 +586,15 @@ static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite
 			   length check) and the item has a definite length, just skip 
 			   over it and continue */
 			if( cryptStatusError( sSkip( stream, item.length ) ) )
-				state = STATE_ERROR;
+				return( STATE_ERROR );
 			}
 		else
-			state = checkASN1Object( stream, &item, level + 1, state, 
-									 checkDataElements );
-		if( state == STATE_ERROR || sGetStatus( stream ) != CRYPT_OK )
-			return( STATE_ERROR );
+			{
+			newState = checkASN1Object( stream, &item, level + 1, state, 
+										checkDataElements );
+			if( newState < STATE_NONE || newState >= STATE_ERROR )
+				return( STATE_ERROR );
+			}
 
 		/* If it's an indefinite-length object, we have to keep going until 
 		   we find the EOC octets */
@@ -518,92 +611,171 @@ static ASN1_STATE checkASN1( STREAM *stream, long length, const int isIndefinite
 
 		/* Check whether we've reached the end of the current (definite-
 		   length) object */
-		length -= stell( stream ) - lastPos;
+		localLength -= stell( stream ) - lastPos;
 		lastPos = stell( stream );
-		if( length <= 0 )
-			return( ( length < 0 ) ? STATE_ERROR : state );
+		if( localLength < 0 || localLength >= MAX_INTLENGTH )
+			return( STATE_ERROR );
+		if( localLength == 0 )
+			{
+			/* We've reached the end of the object, we're done */
+			return( newState );
+			}
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+	ENSURES_S( iterationCount < maxIterationCount );
 
-	return( ( status == STATE_NONE ) ? STATE_NONE : STATE_ERROR );
+	return( ( newState == STATE_NONE ) ? STATE_NONE : STATE_ERROR );
 	}
 
 /* Check the encoding of a complete object and determine its length */
 
-int checkObjectEncoding( const void *objectPtr, const int objectLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr, 
+						 IN_LENGTH const int objectLength )
 	{
 	STREAM stream;
 	ASN1_STATE state;
-	int length;
+	int length = DUMMY_INIT;
 
 	assert( isReadPtr( objectPtr, objectLength ) );
-	assert( objectLength > 0 );
+	
+	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
 
 	sMemConnect( &stream, objectPtr, objectLength );
 	state = checkASN1( &stream, LENGTH_MAGIC, FALSE, 0, STATE_NONE, TRUE );
-	length = stell( &stream );
+	if( state >= STATE_NONE && state < STATE_ERROR )
+		length = stell( &stream );
 	sMemDisconnect( &stream );
-	return( ( state == STATE_ERROR ) ? CRYPT_ERROR_BADDATA : length );
+	return( ( state < STATE_NONE ) ? CRYPT_ERROR_INTERNAL : \
+			( state >= STATE_ERROR ) ? CRYPT_ERROR_BADDATA : length );
 	}
 
 /* Recursively dig into an ASN.1 object as far as we need to to determine 
    its length */
 
-static long findObjectLength( STREAM *stream, const BOOLEAN isLongObject )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int findObjectLength( INOUT STREAM *stream, 
+							 OUT_LENGTH_Z long *length, 
+							 const BOOLEAN isLongObject )
 	{
 	const long startPos = stell( stream );
-	long length;
-	int shortLength, status;
+	long localLength;
+	int status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( length, sizeof( long ) ) );
+
+	/* Clear return value */
+	*length = 0;
 
 	/* Try for a definite length */
 	if( isLongObject )
-		status = readLongGenericHole( stream, &length, DEFAULT_TAG );
+		status = readLongGenericHole( stream, &localLength, DEFAULT_TAG );
 	else
+		{
+		int shortLength;
+
 		status = readGenericHoleI( stream, &shortLength, 0, DEFAULT_TAG );
+		localLength = shortLength;
+		}
 	if( cryptStatusError( status ) )
 		return( status );
-	if( !isLongObject )
-		length = shortLength;
 
 	/* If it's an indefinite-length object, burrow down into it to find its 
 	   actual length */
-	if( length == CRYPT_UNUSED )
+	if( localLength == CRYPT_UNUSED )
 		{
+		ASN1_STATE state;
+
+		/* We have to be a bit careful how we handle error reporting for 
+		   this since we can run out of input and hit an underflow while 
+		   we're in the process of burrowing through the data.  This is 
+		   somewhat unfortunate since it leads to non-orthogonal behaviour 
+		   because a definite length only requires checking a few bytes at 
+		   the start of the data but an indefinite length requires 
+		   processing the entire data quantity in order to determine where 
+		   it ends */
 		sseek( stream, startPos );
-		length = checkASN1( stream, LENGTH_MAGIC, FALSE, 0, STATE_NONE, FALSE );
-		if( length == STATE_ERROR )
-			return( CRYPT_ERROR_BADDATA );
-		length = stell( stream ) - startPos;
+		state = checkASN1( stream, LENGTH_MAGIC, FALSE, 0, STATE_NONE, 
+						   FALSE );
+		if( state < STATE_NONE || state >= STATE_ERROR )
+			{
+			return( ( state < STATE_NONE ) ? \
+						CRYPT_ERROR_INTERNAL : \
+					( sGetStatus( stream ) == CRYPT_ERROR_UNDERFLOW ) ? \
+						CRYPT_ERROR_UNDERFLOW : \
+						CRYPT_ERROR_BADDATA );
+			}
+		localLength = stell( stream ) - startPos;
 		}
 	else
+		{
 		/* It's a definite-length object, add the size of the tag+length */
-		length += stell( stream ) - startPos;
-	sseek( stream, startPos );
-	return( length );
+		localLength += stell( stream ) - startPos;
+		}
+
+	/* If it's not a long object, make sure that the length is within bounds.  
+	   We have to do this explicitly here because indefinite-length objects
+	   can be arbitrarily large so the length isn't checked as it is for
+	   readGenericHoleI() */
+	if( !isLongObject && localLength > 32767L )
+		return( CRYPT_ERROR_OVERFLOW );
+	*length = localLength;
+	return( sseek( stream, startPos ) );
 	}
 
-int getStreamObjectLength( STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getStreamObjectLength( INOUT STREAM *stream, OUT_LENGTH_Z int *length )
 	{
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	long localLength;
+	int status;
 
-	return( findObjectLength( stream, FALSE ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( length, sizeof( int ) ) );
+
+	/* Clear return value */
+	*length = 0;
+
+	status = findObjectLength( stream, &localLength, FALSE );
+	if( cryptStatusOK( status ) )
+		*length = localLength;
+	return( status );
 	}
 
-long getLongStreamObjectLength( STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getLongStreamObjectLength( INOUT STREAM *stream, 
+							   OUT_LENGTH_Z long *length )
 	{
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	long localLength;
+	int status;
 
-	return( findObjectLength( stream, TRUE ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( length, sizeof( long ) ) );
+
+	/* Clear return value */
+	*length = 0;
+
+	status = findObjectLength( stream, &localLength, FALSE );
+	if( cryptStatusOK( status ) )
+		*length = localLength;
+	return( status );
 	}
 
-int getObjectLength( const void *objectPtr, const int objectLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int getObjectLength( IN_BUFFER( objectLength ) const void *objectPtr, 
+					 IN_LENGTH const int objectLength, 
+					 OUT_LENGTH_Z int *length )
 	{
 	STREAM stream;
-	int length;
+	long localLength = DUMMY_INIT;
+	int status;
 
 	assert( isReadPtr( objectPtr, objectLength ) );
-	assert( objectLength > 0 );
+	assert( isWritePtr( length, sizeof( int ) ) );
+
+	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*length = 0;
 
 	sMemConnect( &stream, objectPtr, objectLength );
 	if( peekTag( &stream ) == BER_INTEGER )
@@ -616,28 +788,44 @@ int getObjectLength( const void *objectPtr, const int objectLength )
 		   
 		   An alternative processing mechanism would be to use peekTag() and
 		   readGenericHole() in combination with the peekTag() results */
-		length = readUniversal( &stream );
-		if( cryptStatusOK( length ) )
-			length = stell( &stream );
+		status = readUniversal( &stream );
+		if( cryptStatusOK( status ) )
+			localLength = stell( &stream );
 		}
 	else
-		length = findObjectLength( &stream, FALSE );
+		{
+		/* Quousque tandem? */
+		status = findObjectLength( &stream, &localLength, FALSE );
+		}
 	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
 
-	return( length );
+	*length = localLength;
+	return( CRYPT_OK );
 	}
 
-long getLongObjectLength( const void *objectPtr, const long objectLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int getLongObjectLength( IN_BUFFER( objectLength ) const void *objectPtr, 
+						 IN_LENGTH const long objectLength,
+						 OUT_LENGTH_Z long *length )
 	{
 	STREAM stream;
-	int length;
+	long localLength;
+	int status;
 
 	assert( isReadPtr( objectPtr, objectLength ) );
-	assert( objectLength > 0 );
+	assert( isWritePtr( length, sizeof( long ) ) );
+
+	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*length = 0;
 
 	sMemConnect( &stream, objectPtr, objectLength );
-	length = findObjectLength( &stream, TRUE );
+	status = findObjectLength( &stream, &localLength, TRUE );
 	sMemDisconnect( &stream );
-
-	return( length );
+	if( cryptStatusOK( status ) )
+		*length = localLength;
+	return( status );
 	}

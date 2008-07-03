@@ -1,6 +1,6 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 2003, Dr Brian Gladman, Worcester, UK.   All rights reserved.
+ Copyright (c) 1998-2006, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
@@ -27,7 +27,7 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue 09/09/2006
 */
 
 #define DO_TABLES
@@ -39,11 +39,6 @@
   #include "crypt/aes.h"
   #include "crypt/aesopt.h"
 #endif /* Compiler-specific includes */
-
-#if defined(__cplusplus)
-extern "C"
-{
-#endif
 
 #if defined(FIXED_TABLES)
 
@@ -196,17 +191,18 @@ extern "C"
 
 #endif
 
-#if defined( INC_ALL )		/* pcg */
-  #include "aestab.h"
-#else
-  #include "crypt/aestab.h"
-#endif /* Compiler-specific includes */
+#include "aestab.h"
+
+#if defined(__cplusplus)
+extern "C"
+{
+#endif
 
 #if defined(FIXED_TABLES)
 
 /* implemented in case of wrong call for fixed tables */
 
-AES_RETURN gen_tabs(void)
+AES_RETURN aes_init(void)
 {
     return EXIT_SUCCESS;
 }
@@ -273,14 +269,14 @@ static uint_8t fi(const uint_8t x)
 
 static int init = 0;
 
-AES_RETURN gen_tabs(void)
+AES_RETURN aes_init(void)
 {   uint_32t  i, w;
 
 #if defined(FF_TABLES)
 
     uint_8t  pow[512], log[256];
 
-    if(init) 
+    if(init)
         return EXIT_SUCCESS;
     /*  log and power tables for GF(2^8) finite field with
         WPOLY as modular polynomial - the simplest primitive
@@ -298,7 +294,7 @@ AES_RETURN gen_tabs(void)
     while (w != 1);
 
 #else
-    if(init) 
+    if(init)
         return EXIT_SUCCESS;
 #endif
 
@@ -394,3 +390,4 @@ AES_RETURN gen_tabs(void)
 #if defined(__cplusplus)
 }
 #endif
+

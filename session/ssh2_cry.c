@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib SSHv2 Crypto Routines					*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -239,10 +239,14 @@ int initDHcontextSSH( CRYPT_CONTEXT *iCryptContext, int *keySize,
 					  const void *keyData, const int keyDataLength,
 					  const int requestedKeySize )
 	{
+	CRYPT_CONTEXT iDHContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
-	int length, status;
+	int keyType = CRYPT_IATTRIBUTE_KEY_SSH, keyLength = keyDataLength;
+	int length = DUMMY_INIT, status;
 
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isWritePtr( keySize, sizeof( int ) ) );
 	assert( ( isReadPtr( keyData, keyDataLength ) && \
 			  requestedKeySize == CRYPT_UNUSED ) || \
 			( keyData == NULL && keyDataLength == 0 && \
@@ -251,106 +255,102 @@ int initDHcontextSSH( CRYPT_CONTEXT *iCryptContext, int *keySize,
 			  requestedKeySize >= MIN_PKCSIZE && \
 			  requestedKeySize <= CRYPT_MAX_PKCSIZE ) );
 
+	/* Clear return values */
 	*iCryptContext = CRYPT_ERROR;
 	*keySize = 0;
 
-	/* Create the DH context */
+	/* Create the DH context to contain the key */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_DH );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-
-	/* Load the key into the context */
+	iDHContext = createInfo.cryptHandle;
 	setMessageData( &msgData, "SSH DH key", 10 );
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
-							  &msgData, CRYPT_CTXINFO_LABEL );
-	if( cryptStatusOK( status ) )
+	status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
+							  CRYPT_CTXINFO_LABEL );
+	if( cryptStatusError( status ) )
 		{
-		int keyType = CRYPT_IATTRIBUTE_KEY_SSH;
+		krnlSendNotifier( iDHContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
 
-		/* If we're being given externally-supplied DH key components, load
-		   them */
-		if( keyData != NULL )
-			{ setMessageData( &msgData, ( void * ) keyData, keyDataLength ); }
-		else
+	/* If we're not being given externally-supplied DH key components, get 
+	   the actual key size based on the requested key size.  The spec 
+	   requires that we use the smallest key size that's larger than the 
+	   requested one, we allow for a small amount of slop to ensure that we 
+	   don't scale up to some huge key size if the client's keysize 
+	   calculation is off by a few bits */
+	if( keyData == NULL )
+		{
+		const int actualKeySize = \
+				( requestedKeySize == CRYPT_USE_DEFAULT ) ? SSH2_DEFAULT_KEYSIZE : \
+				( requestedKeySize < 128 + 8 ) ? bitsToBytes( 1024 ) : \
+				( requestedKeySize < 192 + 8 ) ? bitsToBytes( 1536 ) : \
+				( requestedKeySize < 256 + 8 ) ? bitsToBytes( 2048 ) : \
+				( requestedKeySize < 384 + 8 ) ? bitsToBytes( 3072 ) : \
+				0;
+
+		/* If the requested key size corresponds (at least approximately) to 
+		   a built-in DH value, load the built-in key value, otherwise 
+		   generate a new one.  In theory we should probably generate a new 
+		   DH key each time:
+
+			status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE,
+									  ( void * ) &requestedKeySize,
+									  CRYPT_CTXINFO_KEYSIZE );
+			if( cryptStatusOK( status ) )
+				status = krnlSendMessage( iDHContext, IMESSAGE_CTX_GENKEY, 
+										  NULL, FALSE );
+
+		   however because the handshake is set up so that the client (rather 
+		   than the server) chooses the key size, we can't actually perform 
+		   the generation until we're in the middle of the handshake.  This 
+		   means that the server will grind to a halt during each handshake 
+		   as it generates a new key of whatever size takes the client's 
+		   fancy (it also leads to a nice potential DoS attack on the 
+		   server).  To avoid this problem, we use fixed keys of various 
+		   common sizes */
+		switch( actualKeySize )
 			{
-			/* Get the actual key size based on the requested key size.  The
-			   spec requires that we use the smallest key size that's larger
-			   than the requested one, we allow for a small amount of slop
-			   to ensure that we don't scale up to some huge key size if the
-			   client's keysize calculation is off by a few bits */
-			const int actualKeySize = \
-					( requestedKeySize == CRYPT_USE_DEFAULT ) ? SSH2_DEFAULT_KEYSIZE : \
-					( requestedKeySize < 128 + 8 ) ? bitsToBytes( 1024 ) : \
-					( requestedKeySize < 192 + 8 ) ? bitsToBytes( 1536 ) : \
-					( requestedKeySize < 256 + 8 ) ? bitsToBytes( 2048 ) : \
-					( requestedKeySize < 384 + 8 ) ? bitsToBytes( 3072 ) : \
-					0;
-
-			/* If the request key size corresponds (at least approximately)
-			   to a built-in DH value, load the built-in key value,
-			   otherwise generate a new one.  In theory we should probably
-			   generate a new DH key each time:
-
-				status = krnlSendMessage( createInfo.cryptHandle,
-										  IMESSAGE_SETATTRIBUTE,
-										  ( void * ) &requestedKeySize,
-										  CRYPT_CTXINFO_KEYSIZE );
-				if( cryptStatusOK( status ) )
-					status = krnlSendMessage( createInfo.cryptHandle,
-											  IMESSAGE_CTX_GENKEY, NULL,
-											  FALSE );
-
-			   however because the handshake is set up so that the client
-			   (rather than the server) chooses the key size, we can't
-			   actually perform the generation until we're in the middle of
-			   the handshake.  This means that the server will grind to a
-			   halt during each handshake as it generates a new key of
-			   whatever size takes the client's fancy (it also leads to a
-			   nice potential DoS attack on the server).  To avoid this
-			   problem, we use fixed keys of various common sizes */
-			switch( actualKeySize )
-				{
-				case bitsToBytes( 1024 ):
-					setMessageData( &msgData, ( void * ) dh1024SPKI,
-									sizeof( dh1024SPKI ) );
+			case bitsToBytes( 1024 ):
+					keyData = dh1024SPKI;
+					keyLength = sizeof( dh1024SPKI );
 					keyType = CRYPT_IATTRIBUTE_KEY_SPKI;
 					break;
 
 				case bitsToBytes( 1536 ):
-					setMessageData( &msgData, ( void * ) dh1536SSH,
-									sizeof( dh1536SSH ) );
+					keyData = dh1536SSH,
+					keyLength = sizeof( dh1536SSH );
 					break;
 
 				case bitsToBytes( 2048 ):
-					setMessageData( &msgData, ( void * ) dh2048SSH,
-									sizeof( dh2048SSH ) );
+					keyData = dh2048SSH,
+					keyLength = sizeof( dh2048SSH );
 					break;
 
 				case bitsToBytes( 3072 ):
 				default:		/* Hier ist der mast zu ende */
-					setMessageData( &msgData, ( void * ) dh3072SSH,
-									sizeof( dh3072SSH ) );
+					keyData = dh3072SSH,
+					keyLength = sizeof( dh3072SSH );
 					break;
-				}
 			}
-		status = krnlSendMessage( createInfo.cryptHandle,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData,
-								  keyType );
 		}
+	setMessageData( &msgData, ( void * ) keyData, keyLength );
+	status = krnlSendMessage( iDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
+							  keyType );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( createInfo.cryptHandle,
-								  IMESSAGE_GETATTRIBUTE, &length,
-								  CRYPT_CTXINFO_KEYSIZE );
+		status = krnlSendMessage( iDHContext, IMESSAGE_GETATTRIBUTE, 
+								  &length, CRYPT_CTXINFO_KEYSIZE );
 	if( cryptStatusError( status ) )
 		{
-		assert( NOTREACHED );
-		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		assert( DEBUG_WARN );
+		krnlSendNotifier( iDHContext, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
-	*iCryptContext = createInfo.cryptHandle;
+	*iCryptContext = iDHContext;
 	*keySize = length;
+
 	return( CRYPT_OK );
 	}
 
@@ -360,7 +360,10 @@ int initDHcontextSSH( CRYPT_CONTEXT *iCryptContext, int *keySize,
 static int loadCryptovariable( const CRYPT_CONTEXT iCryptContext,
 							   const CRYPT_ATTRIBUTE_TYPE attribute,
 							   const int attributeSize, HASHFUNCTION hashFunction,
-							   const HASHINFO initialHashInfo, const BYTE *nonce,
+							   const HASHINFO initialHashInfo, 
+							   IN_BUFFER( nonceLen ) \
+							   const BYTE *nonce, const int nonceLen,
+							   IN_BUFFER( dataLen ) \
 							   const BYTE *data, const int dataLen )
 	{
 	MESSAGE_DATA msgData;
@@ -368,11 +371,20 @@ static int loadCryptovariable( const CRYPT_CONTEXT iCryptContext,
 	BYTE buffer[ CRYPT_MAX_KEYSIZE + 8 ];
 	int status;
 
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( attribute == CRYPT_CTXINFO_IV || \
+			attribute == CRYPT_CTXINFO_KEY );
+	assert( attributeSize >= 8 && attributeSize <= 40 );
+	assert( hashFunction != NULL );
+	assert( isReadPtr( initialHashInfo, sizeof( HASHINFO ) ) );
+	assert( isReadPtr( nonce, nonceLen ) );
+	assert( isReadPtr( data, dataLen ) );
+
 	/* Complete the hashing */
 	memcpy( hashInfo, initialHashInfo, sizeof( HASHINFO ) );
-	hashFunction( hashInfo, NULL, 0, nonce, 1, HASH_CONTINUE );
+	hashFunction( hashInfo, NULL, 0, nonce, nonceLen, HASH_STATE_CONTINUE );
 	hashFunction( hashInfo, buffer, CRYPT_MAX_KEYSIZE, data, dataLen, 
-				  HASH_END );
+				  HASH_STATE_END );
 	if( attributeSize > 20 )
 		{
 		/* If we need more data than the hashing will provide in one go,
@@ -385,7 +397,7 @@ static int loadCryptovariable( const CRYPT_CONTEXT iCryptContext,
 		   the output of the hash step above */
 		memcpy( hashInfo, initialHashInfo, sizeof( HASHINFO ) );
 		hashFunction( hashInfo, buffer + 20, CRYPT_MAX_KEYSIZE - 20,
-					  buffer, 20, HASH_END );
+					  buffer, 20, HASH_STATE_END );
 		}
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 
@@ -404,6 +416,8 @@ int initSecurityContextsSSH( SESSION_INFO *sessionInfoPtr )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	setMessageCreateObjectInfo( &createInfo, sessionInfoPtr->cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
@@ -427,7 +441,7 @@ int initSecurityContextsSSH( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusOK( status ) && sessionInfoPtr->version == 1 && \
 		sessionInfoPtr->cryptAlgo == CRYPT_ALGO_IDEA )
 		{
-		const int cryptMode = CRYPT_MODE_CFB;
+		const CRYPT_MODE_TYPE cryptMode = CRYPT_MODE_CFB;
 
 		/* SSHv1 uses stream ciphers in places, for which we have to set the
 		   mode explicitly */
@@ -436,10 +450,12 @@ int initSecurityContextsSSH( SESSION_INFO *sessionInfoPtr )
 								  ( void * ) &cryptMode,
 								  CRYPT_CTXINFO_MODE );
 		if( cryptStatusOK( status ) )
+			{
 			status = krnlSendMessage( sessionInfoPtr->iCryptOutContext,
 									  IMESSAGE_SETATTRIBUTE,
 									  ( void * ) &cryptMode,
 									  CRYPT_CTXINFO_MODE );
+			}
 		}
 	if( sessionInfoPtr->version == 2 )	/* Continue on to cSOK() check */
 #endif /* USE_SSH1 */
@@ -468,14 +484,18 @@ int initSecurityContextsSSH( SESSION_INFO *sessionInfoPtr )
 			}
 		}
 	if( cryptStatusError( status ) )
+		{
 		/* One or more of the contexts couldn't be created, destroy all the
 		   contexts that have been created so far */
 		destroySecurityContextsSSH( sessionInfoPtr );
+		}
 	return( status );
 	}
 
 void destroySecurityContextsSSH( SESSION_INFO *sessionInfoPtr )
 	{
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Destroy any active contexts */
 	if( sessionInfoPtr->iKeyexCryptContext != CRYPT_ERROR )
 		{
@@ -519,23 +539,34 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 	const BOOLEAN isClient = isServer( sessionInfoPtr ) ? FALSE : TRUE;
 	int keySize, ivSize, status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
+
 	/* Create the security contexts required for the session */
 	status = initSecurityContextsSSH( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( sessionInfoPtr->cryptAlgo == CRYPT_ALGO_BLOWFISH )
+		{
 		/* Blowfish has a variable-length key so we have to explicitly
 		   specify its length */
 		keySize = SSH2_FIXED_KEY_SIZE;
+		}
 	else
-		krnlSendMessage( sessionInfoPtr->iCryptInContext,
-						 IMESSAGE_GETATTRIBUTE, &keySize,
-						 CRYPT_CTXINFO_KEYSIZE );
+		{
+		status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
+								  IMESSAGE_GETATTRIBUTE, &keySize,
+								  CRYPT_CTXINFO_KEYSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	if( krnlSendMessage( sessionInfoPtr->iCryptInContext,
 						 IMESSAGE_GETATTRIBUTE, &ivSize,
 						 CRYPT_CTXINFO_IVSIZE ) == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* It's a stream cipher */
 		ivSize = 0;
+		}
 
 	/* Get the hash algorithm information and pre-hash the shared secret and
 	   exchange hash, which are re-used for all cryptovariables.  The
@@ -554,36 +585,46 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 	   Before we can hash the shared secret we have to convert it into MPI
 	   form, which we do by generating a pseudo-header and hashing that
 	   separately.  The nonce is "A", "B", "C", ... */
-	getHashParameters( CRYPT_ALGO_SHA, &hashFunction, NULL );
+	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, NULL );
 	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_NOHASHSECRET )
 		{
 		/* Some implementations erroneously omit the shared secret when
 		   creating the keying material.  This is suboptimal but not fatal,
 		   since the shared secret is also hashed into the exchange hash */
 		hashFunction( initialHashInfo, NULL, 0, handshakeInfo->sessionID,
-					  handshakeInfo->sessionIDlength, HASH_START );
+					  handshakeInfo->sessionIDlength, HASH_STATE_START );
 		}
 	else
 		{
-		BYTE header[ 8 + 8 ], *headerPtr = header;
+		STREAM stream;
+		BYTE header[ 8 + 8 ];
 		const int mpiLength = \
 					sizeofInteger32( handshakeInfo->secretValue,
 									 handshakeInfo->secretValueLength ) - \
 					LENGTH_SIZE;
+		int headerLength = DUMMY_INIT;
 
 		/* Hash the shared secret as an MPI.  We can't use hashAsMPI() for
 		   this because it works with contexts rather than the internal hash
 		   functions used here */
-		mputLong( headerPtr, mpiLength );
+		sMemOpen( &stream, header, 8 );
+		status = writeUint32( &stream, mpiLength );
 		if( handshakeInfo->secretValue[ 0 ] & 0x80 )
+			{
 			/* MPIs are signed values */
-			*headerPtr++ = 0;
-		hashFunction( initialHashInfo, NULL, 0, header, headerPtr - header,
-					  HASH_START );
+			status = sputc( &stream, 0 );
+			}
+		if( cryptStatusOK( status ) )
+			headerLength = stell( &stream );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		hashFunction( initialHashInfo, NULL, 0, header, headerLength,
+					  HASH_STATE_START );
 		hashFunction( initialHashInfo, NULL, 0, handshakeInfo->secretValue,
-					  handshakeInfo->secretValueLength, HASH_CONTINUE );
+					  handshakeInfo->secretValueLength, HASH_STATE_CONTINUE );
 		hashFunction( initialHashInfo, NULL, 0, handshakeInfo->sessionID,
-					  handshakeInfo->sessionIDlength, HASH_CONTINUE );
+					  handshakeInfo->sessionIDlength, HASH_STATE_CONTINUE );
 		}
 
 	/* Load the cryptovariables.  The order is:
@@ -603,7 +644,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptOutContext : \
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_IV, ivSize,
-									 hashFunction, initialHashInfo, "A",
+									 hashFunction, initialHashInfo, "A", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 		if( cryptStatusOK( status ) )
@@ -611,7 +652,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 											sessionInfoPtr->iCryptInContext : \
 											sessionInfoPtr->iCryptOutContext,
 										 CRYPT_CTXINFO_IV, ivSize,
-										 hashFunction, initialHashInfo, "B",
+										 hashFunction, initialHashInfo, "B", 1,
 										 handshakeInfo->sessionID,
 										 handshakeInfo->sessionIDlength );
 		}
@@ -620,7 +661,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptOutContext : \
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_KEY, keySize,
-									 hashFunction, initialHashInfo, "C",
+									 hashFunction, initialHashInfo, "C", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -628,7 +669,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptInContext : \
 										sessionInfoPtr->iCryptOutContext,
 									 CRYPT_CTXINFO_KEY, keySize,
-									 hashFunction, initialHashInfo, "D",
+									 hashFunction, initialHashInfo, "D", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -640,7 +681,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 									   SSH_PFLAG_HMACKEYSIZE ) ? \
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
-									 hashFunction, initialHashInfo, "E",
+									 hashFunction, initialHashInfo, "E", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -652,7 +693,7 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 									   SSH_PFLAG_HMACKEYSIZE ) ? \
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
-									 hashFunction, initialHashInfo, "F",
+									 hashFunction, initialHashInfo, "F", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	return( status );
@@ -669,26 +710,36 @@ int initSecurityInfo( SESSION_INFO *sessionInfoPtr,
 int hashAsString( const CRYPT_CONTEXT iHashContext,
 				  const BYTE *data, const int dataLength )
 	{
-	BYTE buffer[ 128 + 8 ], *bufPtr = buffer;
-	int status;
+	STREAM stream;
+	BYTE buffer[ 128 + 8 ];
+	int length = DUMMY_INIT, status;
+
+	assert( isHandleRangeValid( iHashContext ) );
+	assert( isReadPtr( data, dataLength ) );
 
 	/* Prepend the string length to the data and hash it.  If it'll fit into
 	   the buffer we copy it over to save a kernel call */
-	mputLong( bufPtr, dataLength );
-	if( dataLength <= 128 - LENGTH_SIZE )
+	sMemOpen( &stream, buffer, 128 );
+	status = writeUint32( &stream, dataLength );
+	if( cryptStatusOK( status ) && dataLength <= sMemDataLeft( &stream ) )
 		{
-		memcpy( buffer + LENGTH_SIZE, data, dataLength );
-		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer,
-								  LENGTH_SIZE + dataLength );
+		/* The data will fit into the buffer, copy it so that it can be 
+		   hashed in one go */
+		status = swrite( &stream, data, dataLength );
 		}
-	else
+	if( cryptStatusOK( status ) )
 		{
-		krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer,
-						 LENGTH_SIZE );
+		length = stell( &stream );
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
+								  buffer, length );
+		}
+	if( cryptStatusOK( status ) && length < dataLength )
+		{
+		/* The data didn't fit into the buffer, hash it separately */
 		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
 								  ( void * ) data, dataLength );
 		}
-	zeroise( buffer, 128 );
+	sMemClose( &stream );
 
 	return( status );
 	}
@@ -696,33 +747,55 @@ int hashAsString( const CRYPT_CONTEXT iHashContext,
 int hashAsMPI( const CRYPT_CONTEXT iHashContext, const BYTE *data,
 			   const int dataLength )
 	{
-	BYTE buffer[ 8 + 8 ], *bufPtr = buffer;
+	STREAM stream;
+	BYTE buffer[ 8 + 8 ];
 	const int length = ( data[ 0 ] & 0x80 ) ? dataLength + 1 : dataLength;
-	int headerLength = LENGTH_SIZE;
+	int headerLength = DUMMY_INIT, status;
+
+	assert( isHandleRangeValid( iHashContext ) );
+	assert( isReadPtr( data, dataLength ) );
 
 	/* Prepend the MPI length to the data and hash it.  Since this is often
 	   sensitive data, we don't take a local copy but hash it in two parts */
-	mputLong( bufPtr, length );
+	sMemOpen( &stream, buffer, 8 );
+	status = writeUint32( &stream, length );
 	if( data[ 0 ] & 0x80 )
 		{
 		/* MPIs are signed values */
-		*bufPtr++ = 0;
-		headerLength++;
+		status = sputc( &stream, 0 );
 		}
-	krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer, headerLength );
-	return( krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
-							  ( void * ) data, dataLength ) );
+	if( cryptStatusOK( status ) )
+		headerLength = stell( &stream );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
+							  buffer, headerLength );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
+								  ( void * ) data, dataLength );
+	return( status );
 	}
 
 /* MAC the payload of a data packet.  Since we may not have the whole packet
    available at once, we can do this in one go or incrementally */
 
-int macPayload( const CRYPT_CONTEXT iMacContext, const long seqNo,
-				const BYTE *data, const int dataLength,
-				const int packetDataLength, const MAC_TYPE macType,
-				const int macLength, const BOOLEAN isRead )
+static int macDataSSH( const CRYPT_CONTEXT iMacContext, const long seqNo,
+					   IN_BUFFER( dataLength ) \
+					   const BYTE *data, const int dataLength,
+					   const int packetDataLength, const MAC_TYPE macType )
 	{
 	int status;
+
+	assert( isHandleRangeValid( iMacContext ) );
+	assert( macType == MAC_END || seqNo >= 2 );
+			/* Since SSH starts counting packets from the first one but 
+			   unlike SSL doesn't MAC them, the seqNo is already nonzero 
+			   when we start */
+	assert( dataLength == 0 || \
+			isReadPtr( data, dataLength ) );
+	assert( packetDataLength >= 0 && packetDataLength < MAX_INTLENGTH );
+	assert( macType > MAC_NONE && macType < MAC_LAST );
 
 	/* MAC the data and either compare the result to the stored MAC or
 	   append the MAC value to the data:
@@ -737,8 +810,10 @@ int macPayload( const CRYPT_CONTEXT iMacContext, const long seqNo,
 	   packet in two parts */
 	if( macType == MAC_START || macType == MAC_ALL )
 		{
-		BYTE buffer[ 16 + 8 ], *bufPtr = buffer;
+		STREAM stream;
+		BYTE headerBuffer[ 16 + 8 ];
 		int length = ( macType == MAC_ALL ) ? dataLength : packetDataLength;
+		int headerLength = DUMMY_INIT;
 
 		assert( ( macType == MAC_ALL && packetDataLength == 0 ) || \
 				( macType == MAC_START && packetDataLength >= dataLength ) );
@@ -749,36 +824,104 @@ int macPayload( const CRYPT_CONTEXT iMacContext, const long seqNo,
 		   hash in parts, the amount of data being hashed won't match the
 		   overall length so the caller needs to supply the overall packet
 		   length as well as the current data length */
-		mputLong( bufPtr, seqNo );
-		mputLong( bufPtr, length );
+		sMemOpen( &stream, headerBuffer, 16 );
+		writeUint32( &stream, seqNo );
+		status = writeUint32( &stream, length );
+		if( cryptStatusOK( status ) )
+			headerLength = stell( &stream );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( status ) )
+			return( status );
 		krnlSendMessage( iMacContext, IMESSAGE_DELETEATTRIBUTE, NULL,
 						 CRYPT_CTXINFO_HASHVALUE );
-		krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, buffer,
-						 UINT32_SIZE + LENGTH_SIZE );
+		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, 
+								  headerBuffer, headerLength );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 	if( dataLength > 0 )
+		{
 		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH,
 								  ( void * ) data, dataLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	if( macType == MAC_END || macType == MAC_ALL )
 		{
-		MESSAGE_DATA msgData;
-
 		status = krnlSendMessage( iMacContext, IMESSAGE_CTX_HASH, "", 0 );
 		if( cryptStatusError( status ) )
 			return( status );
-		setMessageData( &msgData, ( BYTE * ) data + dataLength, macLength );
-		if( isRead )
-			/* It's a read, compare the MAC value to the stored MAC
-			   value */
-			status = krnlSendMessage( iMacContext, IMESSAGE_COMPARE,
-									  &msgData, MESSAGE_COMPARE_HASH );
-		else
-			/* It's a write, append the MAC value to the data */
-			status = krnlSendMessage( iMacContext, IMESSAGE_GETATTRIBUTE_S,
-									  &msgData, CRYPT_CTXINFO_HASHVALUE );
 		}
 
-	return( status );
+	return( CRYPT_OK );
+	}
+
+int checkMacSSH( const CRYPT_CONTEXT iMacContext, const long seqNo,
+				 const BYTE *data, const int dataMaxLength, 
+				 const int dataLength, const int packetDataLength, 
+				 const MAC_TYPE macType, const int macLength )
+	{
+	MESSAGE_DATA msgData;
+	int status;
+
+	assert( isHandleRangeValid( iMacContext ) );
+	assert( macType == MAC_END || seqNo >= 2 );
+	assert( isReadPtr( data, dataMaxLength ) );
+	assert( ( macType == MAC_START && \
+			  dataMaxLength == dataLength ) || \
+			( ( macType == MAC_ALL || macType == MAC_END ) && 
+			  dataLength + macLength <= dataMaxLength ) );
+	assert( packetDataLength >= 0 && packetDataLength < MAX_INTLENGTH );
+	assert( macType > MAC_NONE && macType < MAC_LAST );
+	assert( macLength >= 16 && macLength <= CRYPT_MAX_HASHSIZE );
+
+	/* Sanity-check the state */
+	if( dataLength + \
+		( ( macType == MAC_START ) ? 0 : macLength ) > dataMaxLength )
+		retIntError();
+
+	/* MAC the payload */
+	status = macDataSSH( iMacContext, seqNo, data, dataLength, 
+						 packetDataLength, macType );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If we're starting the ongoing hashing of a data block, we're done */
+	if( macType == MAC_START )
+		return( CRYPT_OK );
+
+	/* Compare the calculated MAC value to the stored MAC value */
+	setMessageData( &msgData, ( BYTE * ) data + dataLength, macLength );
+	return( krnlSendMessage( iMacContext, IMESSAGE_COMPARE, &msgData, 
+							 MESSAGE_COMPARE_HASH ) );
+	}
+
+int createMacSSH( const CRYPT_CONTEXT iMacContext, const long seqNo,
+				  BYTE *data, const int dataMaxLength, const int dataLength )
+	{
+	MESSAGE_DATA msgData;
+	BYTE mac[ CRYPT_MAX_HASHSIZE + 8 ];
+	int status;
+
+	assert( isHandleRangeValid( iMacContext ) );
+	assert( seqNo >= 2 );
+	assert( isWritePtr( data, dataLength ) );
+
+	/* MAC the payload */
+	status = macDataSSH( iMacContext, seqNo, data, dataLength, 0, MAC_ALL );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the calculated MAC value to the stream */
+	setMessageData( &msgData, mac, CRYPT_MAX_HASHSIZE );
+	status = krnlSendMessage( iMacContext, IMESSAGE_GETATTRIBUTE_S, &msgData, 
+							  CRYPT_CTXINFO_HASHVALUE );
+	if( cryptStatusError( status ) )
+		return( status );
+	assert( dataLength + msgData.length <= dataMaxLength );
+	memcpy( data + dataLength, mac, msgData.length );
+	
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -797,6 +940,9 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 	MESSAGE_DATA msgData;
 	STREAM stream;
 	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
 
 	/* Read the other side's key agreement information.  Note that the size
 	   check has already been performed at a higher level when the overall
@@ -818,8 +964,11 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 						handshakeInfo->serverKeySize, 0 ) )
 		status = CRYPT_ERROR_BADDATA;
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH phase 1 MPI" );
+		{
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH phase 1 MPI" ) );
+		}
 
 	/* Perform phase 2 of the DH key agreement */
 	status = krnlSendMessage( handshakeInfo->iServerCryptContext,
@@ -837,39 +986,50 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 
 	/* If we're using ephemeral DH, hash the requested keyex key length(s)
 	   and DH p and g values.  Since this has been deferred until long after
-	   the keyex negotiation took place, we have to recreate the original
-	   encoded values here */
+	   the keyex negotiation took place (so that the original data isn't 
+	   available any more), we have to recreate the original encoded values 
+	   here */
 	if( handshakeInfo->requestedServerKeySize > 0 )
 		{
 		BYTE keyexBuffer[ 128 + ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 		const int extraLength = LENGTH_SIZE + sizeofString32( "ssh-dh", 6 );
 
-		krnlSendMessage( handshakeInfo->iExchangeHashcontext,
-						 IMESSAGE_CTX_HASH,
-						 handshakeInfo->encodedReqKeySizes,
-						 handshakeInfo->encodedReqKeySizesLength );
+		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+								  IMESSAGE_CTX_HASH,
+								  handshakeInfo->encodedReqKeySizes,
+								  handshakeInfo->encodedReqKeySizesLength );
+		if( cryptStatusError( status ) )
+			return( status );
 		setMessageData( &msgData, keyexBuffer,
 						128 + ( CRYPT_MAX_PKCSIZE * 2 ) );
 		status = krnlSendMessage( handshakeInfo->iServerCryptContext,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_IATTRIBUTE_KEY_SSH );
+		if( cryptStatusOK( status ) )
+			{
+			status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+									  IMESSAGE_CTX_HASH, 
+									  keyexBuffer + extraLength,
+									  msgData.length - extraLength );
+			}
 		if( cryptStatusError( status ) )
 			return( status );
-		krnlSendMessage( handshakeInfo->iExchangeHashcontext,
-						 IMESSAGE_CTX_HASH, keyexBuffer + extraLength,
-						 msgData.length - extraLength );
 		}
 
 	/* Hash the client and server DH values and shared secret */
-	krnlSendMessage( handshakeInfo->iExchangeHashcontext, IMESSAGE_CTX_HASH,
-					 handshakeInfo->clientKeyexValue,
-					 handshakeInfo->clientKeyexValueLength );
-	krnlSendMessage( handshakeInfo->iExchangeHashcontext, IMESSAGE_CTX_HASH,
-					 handshakeInfo->serverKeyexValue,
-					 handshakeInfo->serverKeyexValueLength );
-	status = hashAsMPI( handshakeInfo->iExchangeHashcontext,
-						handshakeInfo->secretValue,
-						handshakeInfo->secretValueLength );
+	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+							  IMESSAGE_CTX_HASH,
+							  handshakeInfo->clientKeyexValue,
+							  handshakeInfo->clientKeyexValueLength );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+								  IMESSAGE_CTX_HASH,
+								  handshakeInfo->serverKeyexValue,
+								  handshakeInfo->serverKeyexValueLength );
+	if( cryptStatusOK( status ) )
+		status = hashAsMPI( handshakeInfo->iExchangeHashcontext,
+							handshakeInfo->secretValue,
+							handshakeInfo->secretValueLength );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -897,15 +1057,20 @@ int completeKeyex( SESSION_INFO *sessionInfoPtr,
 	   double-optional parameters are for the revised version of the DH
 	   negotiation mechanism, the original only had n, the revised version
 	   allowed a { min, n, max } range */
-	krnlSendMessage( handshakeInfo->iExchangeHashcontext, IMESSAGE_CTX_HASH,
-					 "", 0 );
-	setMessageData( &msgData, handshakeInfo->sessionID, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
-							  IMESSAGE_GETATTRIBUTE_S, &msgData,
-							  CRYPT_CTXINFO_HASHVALUE );
+	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+							  IMESSAGE_CTX_HASH, "", 0 );
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, handshakeInfo->sessionID, 
+						CRYPT_MAX_HASHSIZE );
+		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+								  IMESSAGE_GETATTRIBUTE_S, &msgData,
+								  CRYPT_CTXINFO_HASHVALUE );
+		if( cryptStatusOK( status ) )
+			handshakeInfo->sessionIDlength = msgData.length;
+		}
 	if( cryptStatusError( status ) )
 		return( status );
-	handshakeInfo->sessionIDlength = msgData.length;
 	krnlSendMessage( handshakeInfo->iExchangeHashcontext,
 					 IMESSAGE_DELETEATTRIBUTE, NULL,
 					 CRYPT_CTXINFO_HASHVALUE );

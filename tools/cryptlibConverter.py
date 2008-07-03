@@ -1712,7 +1712,7 @@ int getPointerString(JNIEnv* env, jstring str, jbyte** bytesPtrPtr)
    }
 
 #ifdef __WINCE__
-   status = asciiToUnicode (*bytesPtrPtr, rawBytesPtr, strLength+1);
+   status = asciiToUnicode (*bytesPtrPtr, strLength*2+2, rawBytesPtr, strLength+1);
    if (status == CRYPT_ERROR_BADDATA) {
        (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
        return 0;
@@ -1725,7 +1725,7 @@ int getPointerString(JNIEnv* env, jstring str, jbyte** bytesPtrPtr)
    (*env)->ReleaseStringUTFChars(env, str, rawBytesPtr);
 
    return 1;
-} 
+}
 
 void releasePointerString(JNIEnv* env, jstring str, jbyte* bytesPtr)
 {

@@ -96,9 +96,6 @@ case `uname` in
 	'OS/390')
 		$AS -c misc/mvsent.s -o ${OBJPATH}mvsent.o ;;
 
-	'OSF1')
-		$AS bn/alpha.s -o ${OBJPATH}bn_asm.o ;;
-
 	'SunOS')
 		if [ `uname -m` = 'i86pc' ] ; then
 			build_asm_files sol ;

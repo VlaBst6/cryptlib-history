@@ -40,7 +40,7 @@
 #endif /* Compiler-specific includes */
 #if defined( _MSC_VER )
   #pragma warning( disable: 4267 )	/* Warning about data size cast - pcg */
-#endif /* VC++ */
+#endif /* VC++ */					/* See also comment on line 225 - pcg */
 
 #ifdef DEBUG
 #  include <ctype.h>
@@ -222,11 +222,15 @@ local void send_bits(deflate_state *s, int value, int length)
 }
 #else /* !DEBUG */
 
+/* Note: The '& 0xFFFF' mask is required for Visual Studio 2008 to avoid an
+   exception being thrown due to data loss, since 'val' is an int but the
+   shifted result is being assigned to a ush - pcg */
+
 #define send_bits(s, value, length) \
 { int len = length;\
   if (s->bi_valid > (int)Buf_size - len) {\
     int val = value;\
-    s->bi_buf |= (val << s->bi_valid);\
+    s->bi_buf |= (val << s->bi_valid) & 0xFFFF;\
     put_short(s, s->bi_buf);\
     s->bi_buf = (ush)val >> (Buf_size - s->bi_valid);\
     s->bi_valid += len - Buf_size;\

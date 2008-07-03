@@ -1,6 +1,6 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 2003, Dr Brian Gladman, Worcester, UK.   All rights reserved.
+ Copyright (c) 1998-2006, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
@@ -27,20 +27,20 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue 09/09/2006
 */
 
 #if defined( INC_ALL )		/* pcg */
   #include "aesopt.h"
   #include "aestab.h"
   #ifdef USE_VIA_ACE_IF_PRESENT
-      #include "via_ace.h"
+      #include "aes_via_ace.h"
   #endif
 #else
   #include "crypt/aesopt.h"
   #include "crypt/aestab.h"
   #ifdef USE_VIA_ACE_IF_PRESENT
-      #include "crypt/via_ace.h"
+      #include "crypt/aes_via_ace.h"
   #endif
 #endif /* Compiler-specific includes */
 
@@ -92,7 +92,8 @@ AES_RETURN aes_encrypt_key128(const unsigned char *key, aes_encrypt_ctx cx[1])
             ke4(cx->ks, i);
     }
 #else
-    ke4(cx->ks, 0);  ke4(cx->ks, 1);
+    ke4(cx->ks, 0);  
+    ke4(cx->ks, 1);
     ke4(cx->ks, 2);  ke4(cx->ks, 3);
     ke4(cx->ks, 4);  ke4(cx->ks, 5);
     ke4(cx->ks, 6);  ke4(cx->ks, 7);
@@ -350,7 +351,8 @@ AES_RETURN aes_decrypt_key128(const unsigned char *key, aes_decrypt_ctx cx[1])
 #endif
     }
 #else
-    kdf4(cx->ks, 0);  kd4(cx->ks, 1);
+    kdf4(cx->ks, 0);  
+     kd4(cx->ks, 1);
      kd4(cx->ks, 2);  kd4(cx->ks, 3);
      kd4(cx->ks, 4);  kd4(cx->ks, 5);
      kd4(cx->ks, 6);  kd4(cx->ks, 7);

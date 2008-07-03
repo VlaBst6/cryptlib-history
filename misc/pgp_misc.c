@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							  PGP Support Routines							*
-*						Copyright Peter Gutmann 1992-2003					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -62,7 +62,7 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	/* Hash algos */
 	{ PGP_ALGO_MD2, PGP_ALGOCLASS_HASH, CRYPT_ALGO_MD2 },
 	{ PGP_ALGO_MD5, PGP_ALGOCLASS_HASH, CRYPT_ALGO_MD5 },
-	{ PGP_ALGO_SHA, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA },
+	{ PGP_ALGO_SHA, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA1 },
 	{ PGP_ALGO_RIPEMD160, PGP_ALGOCLASS_HASH, CRYPT_ALGO_RIPEMD160 },
 	{ PGP_ALGO_SHA2_256, PGP_ALGOCLASS_HASH, CRYPT_ALGO_SHA2 },
 
@@ -70,13 +70,22 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 	{ PGP_ALGO_NONE, 0, CRYPT_ALGO_NONE }
 	};
 
-CRYPT_ALGO_TYPE pgpToCryptlibAlgo( const int pgpAlgo,
-								   const PGP_ALGOCLASS_TYPE pgpAlgoClass )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo, 
+					   IN_ENUM( PGP_ALGOCLASS ) \
+						const PGP_ALGOCLASS_TYPE pgpAlgoClass,
+					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo )
 	{
 	int i;
 
-	assert( pgpAlgoClass > PGP_ALGOCLASS_NONE && \
-			pgpAlgoClass < PGP_ALGOCLASS_LAST );
+	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+
+	REQUIRES( pgpAlgo >= 0 && pgpAlgo <= 0xFF );
+	REQUIRES( pgpAlgoClass > PGP_ALGOCLASS_NONE && \
+			  pgpAlgoClass < PGP_ALGOCLASS_LAST );
+
+	/* Clear return value */
+	*cryptAlgo = CRYPT_ALGO_NONE;
 
 	for( i = 0;
 		 ( pgpAlgoMap[ i ].pgpAlgo != pgpAlgo || \
@@ -84,26 +93,67 @@ CRYPT_ALGO_TYPE pgpToCryptlibAlgo( const int pgpAlgo,
 			pgpAlgoMap[ i ].pgpAlgo != PGP_ALGO_NONE && \
 			i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) )
-		retIntError_Ext( CRYPT_ALGO_NONE );
-	return( pgpAlgoMap[ i ].cryptlibAlgo );
+	ENSURES( i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) );
+	if( pgpAlgoMap[ i ].cryptlibAlgo == PGP_ALGO_NONE )
+		return( CRYPT_ERROR_NOTAVAIL );
+	*cryptAlgo = pgpAlgoMap[ i ].cryptlibAlgo;
+
+	return( CRYPT_OK );
 	}
 
-int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
+					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) int *pgpAlgo )
 	{
 	int i;
 
-	assert( cryptlibAlgo > CRYPT_ALGO_NONE && \
-			cryptlibAlgo < CRYPT_ALGO_LAST );
+	assert( isWritePtr( pgpAlgo, sizeof( int ) ) );
+
+	REQUIRES( cryptlibAlgo > CRYPT_ALGO_NONE && \
+			  cryptlibAlgo < CRYPT_ALGO_LAST );
+
+	/* Clear return value */
+	*pgpAlgo = PGP_ALGO_NONE;
 
 	for( i = 0; 
 		 pgpAlgoMap[ i ].cryptlibAlgo != cryptlibAlgo && \
 			pgpAlgoMap[ i ].cryptlibAlgo != CRYPT_ALGO_NONE && \
 			i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ); 
 		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) )
-		retIntError_Ext( PGP_ALGO_NONE );
-	return( pgpAlgoMap[ i ].pgpAlgo );
+	ENSURES( i < FAILSAFE_ARRAYSIZE( pgpAlgoMap, PGP_ALGOMAP_INFO ) );
+	if( pgpAlgoMap[ i ].cryptlibAlgo == CRYPT_ALGO_NONE )
+		return( CRYPT_ERROR_NOTAVAIL );
+	*pgpAlgo = pgpAlgoMap[ i ].pgpAlgo;
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readPgpAlgo( INOUT STREAM *stream, 
+				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
+				 IN_ENUM( PGP_ALGOCLASS ) const PGP_ALGOCLASS_TYPE pgpAlgoClass )
+	{
+	CRYPT_ALGO_TYPE algo;
+	int value, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+
+	REQUIRES( pgpAlgoClass > PGP_ALGOCLASS_NONE && \
+			  pgpAlgoClass < PGP_ALGOCLASS_LAST );
+
+	/* Clear return value */
+	*cryptAlgo = CRYPT_ALGO_NONE;
+
+	value = sgetc( stream );
+	if( cryptStatusError( value ) )
+		return( value );
+	status = pgpToCryptlibAlgo( value, pgpAlgoClass, &algo );
+	if( cryptStatusError( status ) )
+		return( status );
+	*cryptAlgo = algo;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -114,24 +164,35 @@ int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo )
 
 /* Create an encryption key from a password */
 
-int pgpPasswordToKey( CRYPT_CONTEXT iCryptContext, const int optKeyLength,
-					  const char *password, const int passwordLength,
-					  const CRYPT_ALGO_TYPE hashAlgo, const BYTE *salt,
-					  const int iterations )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+					  IN_LENGTH_SHORT_OPT const int optKeyLength,
+					  IN_BUFFER( passwordLength ) const char *password, 
+					  IN_LENGTH_SHORT const int passwordLength, 
+					  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo, 
+					  IN_BUFFER_OPT( saltSize ) const BYTE *salt, 
+					  IN_RANGE( 0, CRYPT_MAX_HASHSIZE ) const int saltSize,
+					  IN_INT const int iterations )
 	{
 	CRYPT_ALGO_TYPE algorithm;
 	MESSAGE_DATA msgData;
 	BYTE hashedKey[ CRYPT_MAX_KEYSIZE + 8 ];
-	int keySize, status;
+	int keySize = DUMMY_INIT, status;
 
-	assert( isHandleRangeValid( iCryptContext ) );
-	assert( ( optKeyLength == CRYPT_UNUSED ) || \
-			( optKeyLength >= 8 && optKeyLength <= CRYPT_MAX_KEYSIZE ) );
 	assert( isReadPtr( password, passwordLength ) );
-	assert( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgo <= CRYPT_ALGO_LAST_HASH );
-	assert( ( salt == NULL ) || isReadPtr( salt, PGP_SALTSIZE ) );
-	assert( iterations >= 0 );
+	assert( ( salt == NULL && saltSize == 0 ) || \
+			isReadPtr( salt, saltSize ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH );
+	REQUIRES( ( optKeyLength == CRYPT_UNUSED ) || \
+			  ( optKeyLength >= MIN_KEYSIZE && \
+				optKeyLength <= CRYPT_MAX_KEYSIZE ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( ( salt == NULL && saltSize == 0 ) || \
+			  ( saltSize > 0 && saltSize <= CRYPT_MAX_HASHSIZE ) );
+	REQUIRES( iterations >= 0 && iterations < MAX_INTLENGTH );
 
 	/* Get various parameters needed to process the password */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
@@ -142,14 +203,19 @@ int pgpPasswordToKey( CRYPT_CONTEXT iCryptContext, const int optKeyLength,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( algorithm == CRYPT_ALGO_BLOWFISH )
+		{
 		/* PGP limits the Blowfish key size to 128 bits rather than the more
 		   usual 448 bits */
 		keySize = 16;
+		}
 	if( algorithm == CRYPT_ALGO_AES && optKeyLength != CRYPT_UNUSED )
+		{
 		/* PGP allows various AES key sizes and then encodes the size in the
 		   algorithm ID (ugh), to handle this we allow the caller to specify
 		   the actual size */
 		keySize = optKeyLength;
+		}
+	ENSURES( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
 
 	/* Hash the password */
 	if( salt != NULL )
@@ -159,33 +225,41 @@ int pgpPasswordToKey( CRYPT_CONTEXT iCryptContext, const int optKeyLength,
 		/* Turn the user key into an encryption context key */
 		setMechanismDeriveInfo( &mechanismInfo, hashedKey, keySize,
 								password, passwordLength, hashAlgo,
-								salt, PGP_SALTSIZE, iterations );
+								salt, saltSize, iterations );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 								  &mechanismInfo, MECHANISM_DERIVE_PGP );
 		if( cryptStatusError( status ) )
 			return( status );
 
 		/* Save the derivation info with the context */
-		setMessageData( &msgData, ( void * ) salt, PGP_SALTSIZE );
-		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT );
-		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &iterations, CRYPT_CTXINFO_KEYING_ITERATIONS );
-		status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &hashAlgo, CRYPT_CTXINFO_KEYING_ALGO );
+		setMessageData( &msgData, ( void * ) salt, saltSize );
+		status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+								  &msgData, CRYPT_CTXINFO_KEYING_SALT );
+		if( cryptStatusOK( status ) && iterations > 0 )
+			{
+			/* The number of key setup iterations may be zero for non-
+			   iterated hashing */
+			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+									  ( void * ) &iterations, 
+									  CRYPT_CTXINFO_KEYING_ITERATIONS );
+			}
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+									  ( void * ) &hashAlgo, 
+									  CRYPT_CTXINFO_KEYING_ALGO );
 		if( cryptStatusError( status ) )
 			{
 			zeroise( hashedKey, CRYPT_MAX_KEYSIZE );
-			return( status );
+			return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
 			}
 		}
 	else
 		{
-		HASHFUNCTION hashFunction;
+		HASHFUNCTION_ATOMIC hashFunctionAtomic;
 
-		getHashParameters( hashAlgo, &hashFunction, NULL );
-		hashFunction( NULL, hashedKey, CRYPT_MAX_KEYSIZE, 
-					  ( BYTE * ) password, passwordLength, HASH_ALL );
+		getHashAtomicParameters( hashAlgo, &hashFunctionAtomic, NULL );
+		hashFunctionAtomic( hashedKey, CRYPT_MAX_KEYSIZE, password, 
+							passwordLength );
 		}
 
 	/* Load the key into the context */
@@ -201,81 +275,93 @@ int pgpPasswordToKey( CRYPT_CONTEXT iCryptContext, const int optKeyLength,
    two bytes of check value, which is why it's denoted as 'ivInfo' rather
    than a pure 'iv' */
 
-int pgpProcessIV( const CRYPT_CONTEXT iCryptContext, BYTE *ivInfo,
-				  const int ivSize, const BOOLEAN isEncrypt,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int pgpProcessIV( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+				  INOUT_BUFFER_FIXED( ivInfoSize ) BYTE *ivInfo, 
+				  IN_RANGE( 8 + 2, CRYPT_MAX_IVSIZE + 2 ) const int ivInfoSize, 
+				  IN_LENGTH_IV const int ivDataSize, 
+				  const BOOLEAN isEncrypt, 
 				  const BOOLEAN resyncIV )
 	{
 	static const BYTE zeroIV[ CRYPT_MAX_IVSIZE ] = { 0 };
 	MESSAGE_DATA msgData;
 	int status;
 
-	assert( isHandleRangeValid( iCryptContext ) );
-	assert( isReadPtr( ivInfo, ivSize ) );
+	assert( isReadPtr( ivInfo, ivInfoSize ) );
 
-	/* PGP uses a bizarre way of handling IV's that resyncs the data on
-	   some boundaries, and doesn't actually use an IV but instead prefixes
-	   the data with ivSize bytes of random information (which is effectively
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( ivDataSize >= 8 && ivDataSize <= CRYPT_MAX_IVSIZE );
+	REQUIRES( ivInfoSize == ivDataSize + 2 );
+
+	/* PGP uses a bizarre way of handling IVs that resyncs the data on some 
+	   boundaries and doesn't actually use an IV but instead prefixes the 
+	   data with ivSize bytes of random information (which is effectively 
 	   the IV) followed by two bytes of key check value after which there's a
 	   resync boundary that requires reloading the IV from the last ivSize
 	   bytes of ciphertext.  Two exceptions are the encrypted private key,
 	   which does use an IV (although this can also be regarded as an
-	   ivSize-byte prefix), however there's no key check or resync, and an
-	   encrypted packet with MDC, which doesn't do the resync (if it weren't
-	   for that, it would be trivial to roll an MDC packet back to a non-MDC
-	   packet, only the non-resync prevents this since the first bytes of the
+	   ivSize-byte prefix) without a key check or resync, and an encrypted 
+	   packet with MDC, which doesn't do the resync (if it weren't for that 
+	   it would be trivial to roll an MDC packet back to a non-MDC packet, 
+	   only the non-resync prevents this since the first bytes of the
 	   encapsulated data packet will be corrupted).
 	   
 	   First, we load the all-zero IV */
-	setMessageData( &msgData, ( void * ) zeroIV, ivSize );
+	setMessageData( &msgData, ( void * ) zeroIV, ivDataSize );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 							  &msgData, CRYPT_CTXINFO_IV );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Then we encrypt or decrypt the first ivSize + 2 bytes of the IV
-	   data */
+	/* Then we encrypt or decrypt the IV info, which consists of the actual 
+	   IV data plus two bytes of check value */
 	if( isEncrypt )
 		{
 		/* Get some random data to serve as the IV, duplicate the last two
-		   bytes, and encrypt the lot */
-		setMessageData( &msgData, ivInfo, ivSize );
+		   bytes to create the check value, and encrypt the lot */
+		setMessageData( &msgData, ivInfo, ivDataSize );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 		if( cryptStatusOK( status ) )
 			{
-			memcpy( ivInfo + ivSize, ivInfo + ivSize - 2, 2 );
+			memcpy( ivInfo + ivDataSize, ivInfo + ivDataSize - 2, 2 );
 			status = krnlSendMessage( iCryptContext, IMESSAGE_CTX_ENCRYPT,
-									  ivInfo, ivSize + 2 );
+									  ivInfo, ivInfoSize );
 			}
 		}
 	else
 		{
 		BYTE ivInfoBuffer[ CRYPT_MAX_IVSIZE + 2 + 8 ];
 
-		/* Decrypt the first ivSize bytes (the effective IV) and following
-		   2-byte check value.  There's a potential problem here in which an
+		/* Decrypt the first ivSize bytes (the IV data) and the following 2-
+		   byte check value.  There's a potential problem here in which an 
 		   attacker that convinces us to act as an oracle for the valid/not
 		   valid status of the checksum can determine the contents of 16
 		   bits of the encrypted data in 2^15 queries on average.  This is
-		   incredibly unlikely, however if it's a concern then one
-		   ameliorating change would be to not perform the check for keys
-		   that were PKC-encrypted, because the PKC decryption process
-		   would  check the key for us */
-		memcpy( ivInfoBuffer, ivInfo, ivSize + 2 );
+		   incredibly unlikely (which implementation would auto-respond to
+		   32,000 reqpeated queries on a block of data and return the 
+		   results to an external agent?), however if it's a concern then 
+		   one ameliorating change would be to not perform the check for 
+		   keys that were PKC-encrypted, because the PKC decryption process
+		   would check the key for us */
+		memcpy( ivInfoBuffer, ivInfo, ivInfoSize );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_CTX_DECRYPT,
-								  ivInfoBuffer, ivSize + 2 );
+								  ivInfoBuffer, ivInfoSize );
 		if( cryptStatusOK( status ) && \
-			( ivInfoBuffer[ ivSize - 2 ] != ivInfoBuffer[ ivSize ] || \
-			  ivInfoBuffer[ ivSize - 1 ] != ivInfoBuffer[ ivSize + 1 ] ) )
+			( ivInfoBuffer[ ivDataSize - 2 ] != ivInfoBuffer[ ivDataSize + 0 ] || \
+			  ivInfoBuffer[ ivDataSize - 1 ] != ivInfoBuffer[ ivDataSize + 1 ] ) )
 			status = CRYPT_ERROR_WRONGKEY;
 		}
-	if( cryptStatusError( status ) || !resyncIV )
+	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Finally we've got the data the way we want it, resync the IV by
-	   setting it to the last ivSize bytes of data processed unless we've
-	   been told not to */
-	setMessageData( &msgData, ivInfo + 2, ivSize );
+	/* IF we've been told not to resync the IV, we're done */
+	if( !resyncIV )
+		return( CRYPT_OK );
+
+	/* Finally we've got the data the way that we want it, resync the IV by
+	   setting it to the last ivSize bytes of data processed */
+	setMessageData( &msgData, ivInfo + 2, ivDataSize );
 	return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 							 &msgData, CRYPT_CTXINFO_IV ) );
 	}

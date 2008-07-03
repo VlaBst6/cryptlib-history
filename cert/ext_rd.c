@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Read Routines					*
-*						 Copyright Peter Gutmann 1996-2006					*
+*						 Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -17,8 +17,8 @@
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
-/* Define the following to print a trace of the cert fields being parsed,
-   useful for debugging broken certs */
+/* Define the following to print a trace of the certificate fields being 
+   parsed, useful for debugging broken certificates */
 
 #if !defined( NDEBUG ) && 0
   #define TRACE_FIELDTYPE( attributeInfoPtr, stackPos ) \
@@ -31,8 +31,11 @@
 			  ( attributeInfoPtr )->description != NULL ) \
 			  puts( ( attributeInfoPtr )->description ); \
 		  }
+  #define TRACE_DEBUG( message, status ) \
+		  printf( message, status );
 #else
   #define TRACE_FIELDTYPE( attributeInfoPtr, stackPos )
+  #define TRACE_DEBUG( message, status )
 #endif /* NDEBUG */
 
 /****************************************************************************
@@ -43,60 +46,77 @@
 
 /* Get the tag for a field from the attribute field definition */
 
-static int getFieldTag( STREAM *stream, 
-						const ATTRIBUTE_INFO *attributeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int getFieldTag( INOUT STREAM *stream, 
+						const ATTRIBUTE_INFO *attributeInfoPtr,
+						int *tag )
 	{
-	int tag;
+	int status, value;
 
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( tag, sizeof( int ) ) );
 
-	/* If it's a tagged field, the actual tag is stored as the encoded-type 
-	   value */
-	if( attributeInfoPtr->fieldEncodedType > 0 )
+	/* Clear return value.  This is actually a bit difficult to do because 
+	   the output can have both positive values (tags) and negative values 
+	   (field codes), setting the output to -1000 is invalid for both 
+	   types */
+	*tag = -1000;
+
+	/* Check whether the field is tagged */
+	status = value = getFieldEncodedTag( attributeInfoPtr );
+	if( cryptStatusError( status ) )
 		{
-		tag = attributeInfoPtr->fieldEncodedType;
-
-		/* If it's an implictly tagged SET/SEQUENCE then it's constructed */
-		if( ( attributeInfoPtr->fieldType == BER_SEQUENCE ||
-			  attributeInfoPtr->fieldType == BER_SET ||
-			  attributeInfoPtr->fieldType == FIELDTYPE_DN ||
-			  ( attributeInfoPtr->flags & FL_EXPLICIT ) ) )
-			tag |= BER_CONSTRUCTED;
-
-		assert( tag > 0 && tag < 0xF0 );
-		return( tag );
+		/* If there's no tagging (i.e. the tag is the same as the field 
+		   type) we'll get an OK_SPECIAL return value, this isn't an 
+		   error */
+		if( status != OK_SPECIAL )
+			return( status );
 		}
+	else
+		{
+		/* It's a tagged field, return the encoded form */
+		*tag = value;
+
+		return( CRYPT_OK );
+		}
+	ENSURES( status == OK_SPECIAL );
 
 	/* It's a non-tagged field, the tag is the same as the field type */
-	tag = attributeInfoPtr->fieldType;
-	if( tag == FIELDTYPE_DISPLAYSTRING )
+	value = attributeInfoPtr->fieldType;
+	if( value == FIELDTYPE_DISPLAYSTRING )
 		{
 		/* This is a variable-tag field that can have one of a number of 
 		   tags.  To handle this we peek ahead into the stream to see if an 
-		   acceptable tag is present, and if not, set the value to a non-
+		   acceptable tag is present and if not set the value to a non-
 		   matching tag value */
-		tag = peekTag( stream );
-		if( ( tag != BER_STRING_IA5 ) && \
-			( tag != BER_STRING_ISO646 ) && \
-			( tag != BER_STRING_BMP ) && ( tag != BER_STRING_UTF8 ) )
-			tag++;	/* Make sure that it doesn't match */
+		status = value = peekTag( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( ( value != BER_STRING_IA5 ) && \
+			( value != BER_STRING_ISO646 ) && \
+			( value != BER_STRING_BMP ) && ( value != BER_STRING_UTF8 ) )
+			value++;	/* Make sure that it doesn't match */
 		}
 
-	assert( ( ( tag == FIELDTYPE_BLOB || tag == FIELDTYPE_DN ) && \
-			  !( attributeInfoPtr->flags & FL_OPTIONAL ) ) || \
-			( tag > 0 && tag < 0xF0 ) );
-	return( tag );
+	ENSURES( ( ( value == FIELDTYPE_BLOB || value == FIELDTYPE_DN ) && \
+			   !( attributeInfoPtr->flags & FL_OPTIONAL ) ) || \
+			 ( value > 0 && value < 0xF0 ) );
+	*tag = value;
+
+	return( CRYPT_OK );
 	}
 
 /* Find the end of an item (either primitive or constructed) in the attribute
    table.  Sometimes we may have already entered a constructed object (for
    example when an attribute has a version number so we don't know until we've
    started processing it that we can't do anything with it), if this is the
-   case the depth parameter indicates how many nesting levels we have to
+   case then the depth parameter indicates how many nesting levels we have to 
    undo */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int findItemEnd( const ATTRIBUTE_INFO **attributeInfoPtrPtr,
-						const int depth )
+						IN_RANGE( 0, 3 ) const int depth )
 	{
 	const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
 	BOOLEAN attributeContinues;
@@ -104,7 +124,8 @@ static int findItemEnd( const ATTRIBUTE_INFO **attributeInfoPtrPtr,
 
 	assert( isReadPtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
 	assert( isReadPtr( *attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( depth >= 0 && depth < 3 );
+
+	REQUIRES( depth >= 0 && depth < 3 );
 
 	/* Skip to the end of the (potentially) constructed item by recording the
 	   nesting level and continuing until either it reaches zero or we reach
@@ -124,8 +145,7 @@ static int findItemEnd( const ATTRIBUTE_INFO **attributeInfoPtrPtr,
 		}
 	while( currentDepth > 0 && attributeContinues && \
 		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	/* We return the previous entry, since we're going to move on to the 
 	   next entry once we return */
@@ -140,7 +160,7 @@ static int findItemEnd( const ATTRIBUTE_INFO **attributeInfoPtrPtr,
 ****************************************************************************/
 
 /* When we're processing SETs/SEQUENCEs (generically referred to as a SET
-   OF), we need to maintain a stack of state information to handle a nested 
+   OF) we need to maintain a stack of state information to handle a nested 
    SET OF.  The following code implements the state stack */
 
 #define SETOF_STATE_STACKSIZE	16
@@ -148,12 +168,12 @@ static int findItemEnd( const ATTRIBUTE_INFO **attributeInfoPtrPtr,
 #define SETOF_FLAG_NONE			0x00	/* No flag value */
 #define SETOF_FLAG_SUBTYPED		0x01	/* SET ends on a subtyped value */
 #define SETOF_FLAG_RESTARTPOINT	0x02	/* SET OF rather than SET */
-#define SETOF_FLAG_ISEMPTY		0x04	/* SET OF contains at least one entry */
+#define SETOF_FLAG_ISEMPTY		0x04	/* Cleared if SET OF contains at least one entry */
 
 typedef struct {
 	/* SET OF state information */
 	const ATTRIBUTE_INFO *infoStart;	/* Start of SET OF attribute info */
-	int endPos;				/* End position of SET OF */
+	int startPos, endPos;	/* Start and end position of SET OF */
 	int flags;				/* SET OF flags */
 
 	/* Subtype information */
@@ -162,97 +182,94 @@ typedef struct {
 	} SETOF_STATE_INFO;
 
 typedef struct {
+	ARRAY( SETOF_STATE_STACKSIZE, stackPos ) \
 	SETOF_STATE_INFO stateInfo[ SETOF_STATE_STACKSIZE + 8 ];
 	int stackPos;			/* Current position in stack */
 	} SETOF_STACK;
 
-static void setofStackInit( SETOF_STACK *setofStack )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void setofStackInit( OUT SETOF_STACK *setofStack )
 	{
+	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
+
 	memset( setofStack, 0, sizeof( SETOF_STACK ) );
 	}
 
-static BOOLEAN setofStackPush( SETOF_STACK *setofStack )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN setofStackPush( INOUT SETOF_STACK *setofStack )
 	{
 	const int newPos = setofStack->stackPos + 1;
 
+	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
+
 	/* Increment the stack pointer and make sure that we don't overflow */
-	if( newPos < 1 || newPos >= SETOF_STATE_STACKSIZE )
-		{
-		assert( NOTREACHED );	/* Should never occur */
-		return( FALSE );
-		}
+	ENSURES_B( newPos >= 1 && newPos < SETOF_STATE_STACKSIZE );
 	setofStack->stackPos = newPos;
 
 	/* Initialise the new entry */
 	memset( &setofStack->stateInfo[ newPos ], 0, \
 			sizeof( SETOF_STATE_INFO ) );
+
 	return( TRUE );
 	}
 
-static BOOLEAN setofStackPop( SETOF_STACK *setofStack )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN setofStackPop( INOUT SETOF_STACK *setofStack )
 	{
 	const int newPos = setofStack->stackPos - 1;
 
+	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
+
 	/* Decrement the stack pointer and make sure that we don't underflow */
-	if( newPos < 0 || newPos >= SETOF_STATE_STACKSIZE - 1 )
-		{
-		assert( NOTREACHED );	/* Should never occur */
-		return( FALSE );
-		}
+	ENSURES_B( newPos >= 0 && newPos < SETOF_STATE_STACKSIZE - 1 );
 	setofStack->stackPos = newPos;
+
 	return( TRUE );
 	}
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
 static SETOF_STATE_INFO *setofTOS( const SETOF_STACK *setofStack )
 	{
+	assert( isReadPtr( setofStack, sizeof( SETOF_STACK ) ) );
+
 	return( ( SETOF_STATE_INFO * ) \
 			&setofStack->stateInfo[ setofStack->stackPos ] );
 	}
 
 /* Process the start of a SET/SET OF/SEQUENCE/SEQUENCE OF */
 
-static int beginSetof( STREAM *stream, SETOF_STACK *setofStack, 
-					   const ATTRIBUTE_INFO *attributeInfoPtr,
-					   CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					   CRYPT_ERRTYPE_TYPE *errorType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int beginSetof( INOUT STREAM *stream, 
+					   INOUT SETOF_STACK *setofStack,
+					   const ATTRIBUTE_INFO *attributeInfoPtr )
 	{
 	SETOF_STATE_INFO *setofInfoPtr = setofTOS( setofStack );
 	CRYPT_ATTRIBUTE_TYPE oldSubtypeParent;
 	int oldInheritedFlags, setofLength, status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( !( attributeInfoPtr->flags & FL_EXPLICIT ) );
+	
+	REQUIRES( !( attributeInfoPtr->flags & FL_EXPLICIT ) );
 
-	/* Determine the length and start position of the SET OF items.  Some 
-	   broken Verisign certs suddenly break into BER inside the cert policy 
-	   extension, so if the length evaluates to zero we have to determine it 
-	   by burrowing into the ASN.1 */
-#if 0	/* 22/11/03 Removed since these Verisign certs have now expired */
-	objectPtr = sMemBufPtr( stream );
-#endif /* 0 */
-	if( attributeInfoPtr->fieldEncodedType > 0 )
+	/* Determine the length and start position of the SET OF items */
+	if( attributeInfoPtr->fieldEncodedType >= 0 )
+		{
 		status = readConstructed( stream, &setofLength,
 								  attributeInfoPtr->fieldEncodedType );
+		}
 	else
+		{
 		if( attributeInfoPtr->fieldType == BER_SET )
 			status = readSet( stream, &setofLength );
 		else
 			status = readSequence( stream, &setofLength );
-#if 0	/* 22/11/03 Removed since these Verisign certs have now expired */
-	if( cryptStatusOK( status ) && setofLength == CRYPT_UNUSED )
-		{
-		/* Get the overall length without the tag + indef.length */
-		status = setofLength = getObjectLength( objectPtr, \
-												sMemDataLeft( stream ) );
-		setofLength -= 2;
-		setEndEOC = 2;		/* Two bytes of EOC at end of object */
 		}
-#endif /* 0 */
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* When processing a SET/SEQUENCE with default values for the elements, 
+	/* When processing a SET/SEQUENCE with default values for the elements 
 	   the result may be a zero-length object, in which case we don't take 
 	   any action */
 	if( setofLength <= 0 )
@@ -264,8 +281,10 @@ static int beginSetof( STREAM *stream, SETOF_STACK *setofStack,
 	oldSubtypeParent = setofInfoPtr->subtypeParent;
 	oldInheritedFlags = setofInfoPtr->inheritedFlags;
 	if( !setofStackPush( setofStack ) )
-		/* Stack overflow, there's a problem with the cert */
+		{
+		/* Stack overflow, there's a problem with the certificate */
 		return( CRYPT_ERROR_OVERFLOW );
+		}
 	setofInfoPtr = setofTOS( setofStack );
 	setofInfoPtr->infoStart = attributeInfoPtr;
 	if( attributeInfoPtr->flags & FL_SETOF )
@@ -274,55 +293,55 @@ static int beginSetof( STREAM *stream, SETOF_STACK *setofStack,
 		setofInfoPtr->flags |= SETOF_FLAG_ISEMPTY;
 	setofInfoPtr->subtypeParent = oldSubtypeParent;
 	setofInfoPtr->inheritedFlags = oldInheritedFlags;
-	setofInfoPtr->endPos = stell( stream ) + setofLength;
-#if 0	/* 22/11/03 Removed since these Verisign certs have now expired */
-	setofInfoPtr->endPos = stell( stream ) + setofLength - setEndEOC;
-	setofInfoPtr->endEOC = setEndEOC ? TRUE : FALSE;
-#endif /* 0 */
+	setofInfoPtr->startPos = stell( stream );
+	setofInfoPtr->endPos = setofInfoPtr->startPos + setofLength;
+
 	return( CRYPT_OK );
 	}
 
-/* Check whether we've reached the end of a SET/SEQUENCE */
+/* Check whether we've reached the end of a SET/SEQUENCE.  Returns OK_SPECIAL
+   if the end has been reached */
 
-static int checkSetofEnd( STREAM *stream, SETOF_STACK *setofStack, 
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int checkSetofEnd( const STREAM *stream, 
+						  INOUT SETOF_STACK *setofStack,
 						  const ATTRIBUTE_INFO **attributeInfoPtrPtr )
 	{
 	const SETOF_STATE_INFO *setofInfoPtr = setofTOS( setofStack );
 	const ATTRIBUTE_INFO *oldAttributeInfoPtr = *attributeInfoPtrPtr;
 	const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
 	const int currentPos = stell( stream );
-	int iterationCount = 0;
+	int iterationCount;
 
-	assert( isReadPtr( setofStack, sizeof( SETOF_STACK ) ) );
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
 	assert( isReadPtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
 	assert( isReadPtr( *attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
 	/* If we're still within the SET/SEQUENCE, we're done */
 	if( setofStack->stackPos <= 0 || currentPos < setofInfoPtr->endPos )
-		return( FALSE );
+		return( CRYPT_OK );
 
 	/* We've reached the end of or or more layers of SET/SEQUENCE, keep 
 	   popping SET/SEQUENCE state info until we can continue */
-	while( setofStack->stackPos > 0 && \
-		   currentPos >= setofInfoPtr->endPos && \
-		   iterationCount++ < SETOF_STATE_STACKSIZE )
+	for( iterationCount = 0;
+		 setofStack->stackPos > 0 && \
+			currentPos >= setofInfoPtr->endPos && \
+			iterationCount < SETOF_STATE_STACKSIZE;
+		 iterationCount++ )
 		{
 		const int flags = setofInfoPtr->flags;
 
-#if 0	/* 22/11/03 Removed since these Verisign certs have now expired */
-		/* If the extension drops into BER, make sure that the EOC is 
-		   present */
-		if( setofInfoPtr->endEOC > 0 && checkEOC( stream ) != TRUE )
-			return( CRYPT_ERROR_BADDATA );
-#endif /* 0 */
-
 		/* Pop one level of parse state */
 		if( !setofStackPop( setofStack ) )
-			/* Stack underflow, there's a problem with the cert */
+			{
+			/* Stack underflow, there's a problem with the certificate */
 			return( CRYPT_ERROR_UNDERFLOW );
+			}
 		setofInfoPtr = setofTOS( setofStack );
 		attributeInfoPtr = setofInfoPtr->infoStart;
-		assert( setofInfoPtr->endPos > 0 && setofInfoPtr->endPos < 65536L );
+		ENSURES( setofInfoPtr->endPos > 0 && \
+				 setofInfoPtr->endPos < MAX_INTLENGTH_SHORT );
 
 		/* If it's a pure SET/SEQUENCE (not a SET OF/SEQUENCE OF) and there 
 		   are no more elements present, go to the end of the SET/SEQUENCE 
@@ -337,11 +356,11 @@ static int checkSetofEnd( STREAM *stream, SETOF_STACK *setofStack,
 				return( status );
 			}
 		}
-	if( iterationCount >= SETOF_STATE_STACKSIZE )
-		retIntError();
+	ENSURES( iterationCount < SETOF_STATE_STACKSIZE );
 
 	*attributeInfoPtrPtr = attributeInfoPtr;
-	return( ( attributeInfoPtr != oldAttributeInfoPtr ) ? TRUE : FALSE );
+	return( ( attributeInfoPtr != oldAttributeInfoPtr ) ? \
+			OK_SPECIAL : CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -356,19 +375,22 @@ static int checkSetofEnd( STREAM *stream, SETOF_STACK *setofStack,
    returned pointer points to this, if it contains a fixed value or isn't 
    present at all then the returned pointer points to the { type } portion */
 
-static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static const ATTRIBUTE_INFO *findIdentifiedItem( INOUT STREAM *stream,
 									const ATTRIBUTE_INFO *attributeInfoPtr )
 	{
 	BYTE oid[ MAX_OID_SIZE + 8 ];
-	int oidLength, sequenceLength, iterationCount = 0, status;
+	int oidLength, sequenceLength, iterationCount, status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( attributeInfoPtr->flags & FL_IDENTIFIER );
+
+	REQUIRES_N( attributeInfoPtr->flags & FL_IDENTIFIER );
 
 	/* Skip the header and read the OID.  We only check for a sane total
 	   length in the debug version since this isn't a fatal error */
 	readSequence( stream, &sequenceLength );
-	status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE,
+	status = readEncodedOID( stream, oid, MAX_OID_SIZE, &oidLength, 
 							 BER_OBJECT_IDENTIFIER );
 	if( cryptStatusError( status ) )
 		return( NULL );
@@ -379,8 +401,10 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 	   Unfortunately we can't use the attributeInfoSize bounds check limit 
 	   here because we don't know how far through the attribute table we 
 	   already are, so we have to use a generic large value */
-	while( ( attributeInfoPtr->flags & FL_IDENTIFIER ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0;
+		 ( attributeInfoPtr->flags & FL_IDENTIFIER ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		const BYTE *oidPtr;
 
@@ -391,11 +415,10 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 			attributeInfoPtr++;
 		else
 			{
-			/* If this is a blob field, we've hit a don't-care value 
-			   (usually the last in a series of type-and-value pairs) which 
-			   ensures that { type }s added after the encoding table was 
-			   defined don't get processed as errors, skip the field and 
-			   continue */
+			/* If this is a blob field we've hit a don't-care value (usually 
+			   the last in a series of type-and-value pairs) which ensures 
+			   that { type }s added after the encoding table was defined 
+			   don't get processed as errors, skip the field and continue */
 			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB )
 				{
 				/* If there's a { value } attached to the type, skip it */
@@ -407,11 +430,7 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 
 		/* In case there's an error in the encoding table, make sure that we
 		   don't die during parsing */
-		if( oidPtr == NULL )
-			{
-			assert( NOTREACHED );
-			return( NULL );
-			}
+		ENSURES_N( oidPtr != NULL );
 
 		/* If the OID matches, return a pointer to the value entry */
 		if( oidLength == sizeofOID( oidPtr ) && \
@@ -434,33 +453,43 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( STREAM *stream,
 			return( NULL );
 		attributeInfoPtr++;		/* Move to start of next item */
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* We reached the end of the set of entries without matching the OID */
 	return( NULL );
 	}
 
-static int processIdentifiedItem( STREAM *stream, 
-								  ATTRIBUTE_LIST **attributeListPtrPtr,
-								  const int flags, const SETOF_STACK *setofStack, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5, 6, 7 ) ) \
+static int processIdentifiedItem( INOUT STREAM *stream, 
+								  /*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
+								  IN_FLAGS( ATTR ) const int flags, 
+								  const SETOF_STACK *setofStack,
 								  const ATTRIBUTE_INFO **attributeInfoPtrPtr,
-								  CRYPT_ATTRIBUTE_TYPE *errorLocus,
-								  CRYPT_ERRTYPE_TYPE *errorType )
+								  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus,
+								  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	static const int dummy = CRYPT_UNUSED;
 	const SETOF_STATE_INFO *setofInfoPtr = setofTOS( setofStack );
 	const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( setofStack, sizeof( SETOF_STACK ) ) );
 	assert( isReadPtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
 	assert( isReadPtr( *attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+assert( ( flags & ~( ATTR_FLAG_CRITICAL ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_INVALID ) );
 
 	/* Search for the identified item from the start of the set of items.  
-	   The 0-th value is the SET OF/SEQUENCE OF, so we start the search at 
+	   The 0-th value is the SET OF/SEQUENCE OF so we start the search at 
 	   the next entry which is the first FL_IDENTIFIER */
-	assert( setofInfoPtr->infoStart->flags & FL_SETOF );
+	ENSURES( setofInfoPtr->infoStart->flags & FL_SETOF );
 	attributeInfoPtr = findIdentifiedItem( stream, 
 										   setofInfoPtr->infoStart + 1 );
 	if( attributeInfoPtr == NULL )
@@ -483,7 +512,7 @@ static int processIdentifiedItem( STREAM *stream,
 	   { algorithm, average key }, { algorithm, strong key }, however all 
 	   that we're interested in is the strong key so we ignore the value and 
 	   only use the type (in his ordo est ordinem non servare).  Since the 
-	   same type can be present multiple times (with different { value }s), 
+	   same type can be present multiple times (with different { value }s) 
 	   we ignore data duplicate errors and continue.  If we're processing a 
 	   blob field type, we've ended up at a generic catch-any value and 
 	   can't do much with it */
@@ -500,8 +529,10 @@ static int processIdentifiedItem( STREAM *stream,
 		if( status == CRYPT_ERROR_INITED )
 			status = CRYPT_OK;
 		else
+			{
 			if( cryptStatusError( status ) )
 				return( CRYPT_ERROR_BADDATA );
+			}
 		}
 
 	/* Reset the attribute info position in preparation for the next value 
@@ -514,46 +545,58 @@ static int processIdentifiedItem( STREAM *stream,
    This is used to read both SEQUENCE OF and CHOICE, with SEQUENCE OF 
    allowing multiple entries and CHOICE allowing only a single entry */
 
-static int readIdentifierFields( STREAM *stream, 
-								 ATTRIBUTE_LIST **attributeListPtrPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6, 7 ) ) \
+static int readIdentifierFields( INOUT STREAM *stream, 
+								 /*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
 								 const ATTRIBUTE_INFO **attributeInfoPtrPtr, 
-								 const int flags,
-								 const CRYPT_ATTRIBUTE_TYPE fieldID, 
-								 CRYPT_ATTRIBUTE_TYPE *errorLocus,
-								 CRYPT_ERRTYPE_TYPE *errorType )
+								 IN_FLAGS( ATTR ) const int flags,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID, 
+								 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus,
+								 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	const BOOLEAN isChoice = ( fieldID != CRYPT_ATTRIBUTE_NONE );
-	int count = 0, iterationCount = 0;
+	int count = 0, iterationCount;
 
-	assert( !( flags & ATTR_FLAG_INVALID ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
 	assert( isReadPtr( *attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 
-	while( peekTag( stream ) == BER_OBJECT_IDENTIFIER && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+assert( flags == ATTR_FLAG_NONE );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_INVALID ) );
+
+	for( iterationCount = 0;
+		 peekTag( stream ) == BER_OBJECT_IDENTIFIER && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
 		BYTE oid[ MAX_OID_SIZE + 8 ];
 		BOOLEAN addField = TRUE;
 		static const int dummy = CRYPT_UNUSED;
-		int oidLength, innerIterationCount = 0, status;
+		int oidLength, innerIterationCount, status;
 
 		/* Make sure that we don't die during parsing if there's an error in
 		   the encoding table */
-		if( attributeInfoPtr->oid == NULL )
-			retIntError();
+		ENSURES( attributeInfoPtr->oid != NULL );
 
 		/* Read the OID and walk down the list of possible OIDs up to the end
 		   of the group of alternatives trying to match it to an allowed
 		   value */
-		status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE,
+		status = readEncodedOID( stream, oid, MAX_OID_SIZE, &oidLength, 
 								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
 			return( status );
-		while( ( oidLength != sizeofOID( attributeInfoPtr->oid ) || \
-				 memcmp( attributeInfoPtr->oid, oid, oidLength ) ) && \
-			   innerIterationCount++ < FAILSAFE_ITERATIONS_MED )
+		for( innerIterationCount = 0;
+			 ( oidLength != sizeofOID( attributeInfoPtr->oid ) || \
+			   memcmp( attributeInfoPtr->oid, oid, oidLength ) ) && \
+			   innerIterationCount < FAILSAFE_ITERATIONS_MED;
+			 innerIterationCount++ )
 			{
 			/* If we've reached the end of the list and the OID wasn't
 			   matched, exit */
@@ -563,7 +606,7 @@ static int readIdentifierFields( STREAM *stream,
 
 			attributeInfoPtr++;
 
-			/* If this is a blob field, we've hit a don't-care value which 
+			/* If this is a blob field we've hit a don't-care value which 
 			   ensures that { type }s added after the encoding table was 
 			   defined don't get processed as errors, skip the field and 
 			   continue */
@@ -575,14 +618,9 @@ static int readIdentifierFields( STREAM *stream,
 
 			/* Make sure that we don't die during parsing if there's an error
 			   in the encoding table */
-			if( attributeInfoPtr->oid == NULL )
-				{
-				assert( NOTREACHED );
-				return( CRYPT_ERROR_INTERNAL );
-				}
+			ENSURES( attributeInfoPtr->oid != NULL );
 			}
-		if( innerIterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError();
+		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_MED );
 		TRACE_FIELDTYPE( attributeInfoPtr, 0 );
 		if( addField )
 			{
@@ -590,19 +628,23 @@ static int readIdentifierFields( STREAM *stream,
 			   will catch duplicate OIDs, since we can't add the same 
 			   identifier field twice */
 			if( isChoice )
+				{
 				/* If there's a field value present then this is a CHOICE of
-				   attributes whose value is the field value, so we add it with
+				   attributes whose value is the field value so we add it with
 				   this value */
 				status = addAttributeField( attributeListPtrPtr,
 									fieldID, CRYPT_ATTRIBUTE_NONE,
 									&attributeInfoPtr->fieldID, CRYPT_UNUSED,
 									flags, errorLocus, errorType );
+				}
 			else
+				{
 				/* It's a standard field */
 				status = addAttributeField( attributeListPtrPtr,
 							attributeInfoPtr->fieldID, CRYPT_ATTRIBUTE_NONE,
 							&dummy, CRYPT_UNUSED, 
 							flags, errorLocus, errorType );
+				}
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -616,8 +658,7 @@ static int readIdentifierFields( STREAM *stream,
 			return( CRYPT_ERROR_BADDATA );
 			}
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* We've processed the non-data field(s), move on to the next field.
 	   We move to the last valid non-data field rather than the start of the
@@ -631,8 +672,7 @@ static int readIdentifierFields( STREAM *stream,
 			( ( *attributeInfoPtrPtr )->flags & FL_MORE ) && \
 			iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
 		( *attributeInfoPtrPtr )++;
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	return( CRYPT_OK );
 	}
@@ -645,10 +685,21 @@ static int readIdentifierFields( STREAM *stream,
 
 /* Generic error-handler that sets extended error codes */
 
-static int fieldErrorReturn( CRYPT_ATTRIBUTE_TYPE *errorLocus,
-							 CRYPT_ERRTYPE_TYPE *errorType, const int status,
-							 const CRYPT_ATTRIBUTE_TYPE fieldID )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int fieldErrorReturn( OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+								CRYPT_ATTRIBUTE_TYPE *errorLocus,
+							 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+								CRYPT_ERRTYPE_TYPE *errorType, 
+							 IN_ERROR const int status,
+							 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID )
 	{
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( cryptStatusError( status ) );
+	REQUIRES( fieldID > CRYPT_ATTRIBUTE_NONE && \
+			  fieldID < CRYPT_IATTRIBUTE_LAST );
+
 	/* Since some fields are internal-use only (e.g. meaningless blob data,
 	   version numbers, and other paraphernalia) we only set the locus if
 	   it has a meaningful value */
@@ -661,19 +712,28 @@ static int fieldErrorReturn( CRYPT_ATTRIBUTE_TYPE *errorLocus,
 
 /* Switch from the main encoding table to a subtype encoding table */
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static ATTRIBUTE_INFO *switchToSubtype( const ATTRIBUTE_INFO *attributeInfoPtr,
-										SETOF_STATE_INFO *setofInfoPtr )
+										INOUT SETOF_STATE_INFO *setofInfoPtr )
 	{
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 	assert( isReadPtr( attributeInfoPtr->extraData, 
 					   sizeof( ATTRIBUTE_INFO ) ) );
 	assert( isWritePtr( setofInfoPtr, sizeof( SETOF_STATE_INFO ) ) );
 
+	REQUIRES_N( attributeInfoPtr->extraData != NULL );
+
 	/* Record the subtype parent information */
 	setofInfoPtr->subtypeParent = attributeInfoPtr->fieldID;
 	setofInfoPtr->inheritedFlags = \
 							( attributeInfoPtr->flags & FL_MULTIVALUED ) ? \
 								ATTR_FLAG_MULTIVALUED : ATTR_FLAG_NONE;
+
+	/* If the subtype is being used to process a list of { ... OPTIONAL, 
+	   ... OPTIONAL } and at least one entry must be present, remember 
+	   that we haven't seen any entries yet */
+	if( attributeInfoPtr->flags & FL_NONEMPTY )
+		setofInfoPtr->flags |= SETOF_FLAG_ISEMPTY;
 
 	/* If the subtype ends once the current SET/SEQUENCE ends, remember this 
 	   so that we return to the main type when appropriate */
@@ -687,24 +747,36 @@ static ATTRIBUTE_INFO *switchToSubtype( const ATTRIBUTE_INFO *attributeInfoPtr,
 
 /* Read the contents of an attribute field.  This uses the readXXXData() 
    variants of the read functions because the field that we're reading may 
-   be tagged, so we process the tag at a higher level and only read the 
+   be tagged so we process the tag at a higher level and only read the 
    contents here */
 
-static int readAttributeField( STREAM *stream, 
-							   ATTRIBUTE_LIST **attributeListPtrPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6, 7 ) ) \
+static int readAttributeField( INOUT STREAM *stream, 
+							   /*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
 							   const ATTRIBUTE_INFO *attributeInfoPtr,
-							   const CRYPT_ATTRIBUTE_TYPE subtypeParent, 
-							   const int flags, 
-							   CRYPT_ATTRIBUTE_TYPE *errorLocus, 
-							   CRYPT_ERRTYPE_TYPE *errorType )
+							   IN_ATTRIBUTE_OPT \
+									const CRYPT_ATTRIBUTE_TYPE subtypeParent, 
+							   IN_FLAGS( ATTR ) const int flags, 
+							   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus,
+							   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	CRYPT_ATTRIBUTE_TYPE fieldID, subFieldID;
 	const int fieldType = attributeInfoPtr->fieldType;
-	int length, status;
+	int length, status = CRYPT_OK;
 
-	assert( !( flags & ATTR_FLAG_INVALID ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( subtypeParent >= CRYPT_ATTRIBUTE_NONE && \
+			  subtypeParent < CRYPT_ATTRIBUTE_LAST );
+assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_INVALID ) );
 
 	/* Set up the field identifiers depending on whether it's a normal field
 	   or a subfield of a parent field */
@@ -761,8 +833,7 @@ static int readAttributeField( STREAM *stream,
 					break;
 
 				default:
-					assert( NOTREACHED );
-					return( CRYPT_ERROR );
+					retIntError();
 				}
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
@@ -804,7 +875,7 @@ static int readAttributeField( STREAM *stream,
 		case FIELDTYPE_BLOB:
 		case FIELDTYPE_DISPLAYSTRING:
 			{
-			/* If it's a string type or a blob, read it in as a blob (the 
+			/* If it's a string type or a blob read it in as a blob (the 
 			   only difference being that for a true blob we read the tag + 
 			   length as well) */
 			BYTE buffer[ 256 + 8 ];
@@ -813,6 +884,11 @@ static int readAttributeField( STREAM *stream,
 			if( fieldType == FIELDTYPE_BLOB )
 				{
 				const int tag = peekTag( stream );
+				if( cryptStatusError( tag ) )
+					{
+					return( fieldErrorReturn( errorLocus, errorType, tag,
+											  attributeInfoPtr->fieldID ) );
+					}
 
 				/* Reading in blob fields is somewhat difficult since these
 				   are typically used to read SET/SEQUENCE OF kitchensink
@@ -821,26 +897,24 @@ static int readAttributeField( STREAM *stream,
 				   the stream to get the tag and then pass that down to 
 				   readRawObject().  Note that this requires that the blob 
 				   have an internal structure (with its own { tag, length }
-				   data), since the caller has already stripped off the tag
+				   data) since the caller has already stripped off the tag
 				   and length */
-				if( !cryptStatusError( tag ) )
-					status = readRawObject( stream, buffer, &length, 256, 
-											tag );
-				else
-					status = tag;
+				status = readRawObject( stream, buffer, 256, &length, tag );
 				}
 			else
+				{
 				status = readOctetStringData( stream, buffer, &length, \
 											  1, 256 );
+				}
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
 
-			/* There are enough broken certs out there with enormously long
-			   disclaimers in the cert policy explicit text field that we
-			   have to specifically check for them here and truncate the 
-			   text at a valid length in order to get it past the extension
-			   validity checking code */
+			/* There are enough broken certificates out there with 
+			   enormously long disclaimers in the certificate policy 
+			   explicit text field that we have to specifically check for 
+			   them here and truncate the text at a valid length in order to 
+			   get it past the extension validity checking code */
 			if( fieldID == CRYPT_CERTINFO_CERTPOLICY_EXPLICITTEXT && \
 				length > 200 )
 				length = 200;
@@ -861,8 +935,8 @@ static int readAttributeField( STREAM *stream,
 			/* If it's an OID, we need to reassemble the entire OID since 
 			   this is the form expected by addAttributeField() */
 			oid[ 0 ] = BER_OBJECT_IDENTIFIER;	/* Add skipped tag */
-			status = readEncodedOID( stream, oid  + 1, &length, 
-									 MAX_OID_SIZE - 1, NO_TAG );
+			status = readEncodedOID( stream, oid  + 1, MAX_OID_SIZE - 1, 
+									 &length, NO_TAG );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
@@ -881,7 +955,8 @@ static int readAttributeField( STREAM *stream,
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
 
-			/* Some buggy certs can include zero-length DNs, which we skip */
+			/* Some buggy certificates can include zero-length DNs, which we 
+			   skip */
 			if( dnPtr == NULL )
 				return( CRYPT_OK );
 
@@ -896,17 +971,21 @@ static int readAttributeField( STREAM *stream,
 			}
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /* Read an attribute */
 
-static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6, 7 ) ) \
+static int readAttribute( INOUT STREAM *stream, 
+						  /*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
 						  const ATTRIBUTE_INFO *attributeInfoPtr, 
-						  const int attributeLength, const BOOLEAN criticalFlag, 
-						  CRYPT_ATTRIBUTE_TYPE *errorLocus,
-						  CRYPT_ERRTYPE_TYPE *errorType )
+						  IN_LENGTH_Z const int attributeLength, 
+						  const BOOLEAN criticalFlag, 
+						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							CRYPT_ATTRIBUTE_TYPE *errorLocus,
+						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+							CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	SETOF_STACK setofStack;
 	SETOF_STATE_INFO *setofInfoPtr;
@@ -915,10 +994,13 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 	int flags = criticalFlag ? ATTR_FLAG_CRITICAL : ATTR_FLAG_NONE;
 	int attributeFieldsProcessed = 0, status = CRYPT_OK;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( criticalFlag == TRUE || criticalFlag == FALSE );
-	assert( attributeLength >= 0 );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+	
+	REQUIRES( attributeLength >= 0 && attributeLength < MAX_INTLENGTH );
 
 	/* Initialise the SET OF state stack */
 	setofStackInit( &setofStack );
@@ -939,13 +1021,13 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			{
 			/* If we've reached the end of the collection of items, exit */
 			status = checkSetofEnd( stream, &setofStack, &attributeInfoPtr );
-			if( cryptStatusError( status ) )
+			if( cryptStatusError( status ) && status != OK_SPECIAL )
 				return( status );
 			setofInfoPtr = setofTOS( &setofStack );
-			if( status )
+			if( status == OK_SPECIAL )
 				goto continueDecoding;
 
-			/* If we're looking for a new item, find the table entry that it
+			/* If we're looking for a new item find the table entry that it
 			   corresponds to.  This takes a pointer to the start of a set of
 			   SEQUENCE { type, value } entries and returns a pointer to the
 			   appropriate value entry.
@@ -979,8 +1061,11 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 
 		/* Subtyped field: Switch to the new encoding table */
 		if( attributeInfoPtr->fieldType == FIELDTYPE_SUBTYPED )
+			{
 			attributeInfoPtr = switchToSubtype( attributeInfoPtr, 
 												setofInfoPtr );
+			ENSURES( attributeInfoPtr != NULL );
+			}
 
 		/* CHOICE (of object identifiers): Read a single OID from a
 		   selection.
@@ -1000,16 +1085,22 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 							errorLocus, errorType );
 				}
 			else
+				{
 				status = readIdentifierFields( stream, attributeListPtrPtr,
 							&attributeInfoPtr, flags, CRYPT_ATTRIBUTE_NONE, 
 							errorLocus, errorType );
+				}
 			if( cryptStatusError( status ) )
+				{
 				return( fieldErrorReturn( errorLocus, errorType,
 										  CRYPT_ERROR_BADDATA,
 										  attributeInfoPtr->fieldID ) );
+				}
 			if( setofInfoPtr->endPos > 0 )
+				{
 				/* Remember that we've seen an entry in the SET/SEQUENCE */
 				setofInfoPtr->flags &= ~SETOF_FLAG_ISEMPTY;
+				}
 			goto continueDecoding;
 			}
 
@@ -1025,13 +1116,17 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			if( cryptStatusError( status ) )
 				return( status );
 			if( setofInfoPtr->endPos > 0 )
+				{
 				/* Remember that we've seen an entry in the SET/SEQUENCE */
 				setofInfoPtr->flags &= ~SETOF_FLAG_ISEMPTY;
+				}
 			goto continueDecoding;
 			}
 
 		/* Get the tag for the field */
-		tag = getFieldTag( stream, attributeInfoPtr );
+		status = getFieldTag( stream, attributeInfoPtr, &tag );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* Optional field: Check whether it's present and if it isn't, move
 		   on to the next field */
@@ -1040,22 +1135,26 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			{
 			/* If it's a field with a default value, add that value.  This
 			   isn't needed for cryptlib's own use since it knows the default
-			   values for fields, but can cause confusion for the caller if
+			   values for fields but can cause confusion for the caller if 
 			   all fields in an attribute have default values because the
 			   attribute will appear to disappear when it's read in as no
 			   fields are ever added */
 			if( attributeInfoPtr->flags & FL_DEFAULT )
 				{
+				CRYPT_ATTRIBUTE_TYPE dummy1;
+				CRYPT_ERRTYPE_TYPE dummy2;
 				const int value = ( int ) attributeInfoPtr->defaultValue;
 
 				status = addAttributeField( attributeListPtrPtr,
 							attributeInfoPtr->fieldID, CRYPT_ATTRIBUTE_NONE,
-							&value, CRYPT_UNUSED, flags, NULL, NULL );
+							&value, CRYPT_UNUSED, flags, &dummy1, &dummy2 );
 				if( cryptStatusError( status ) )
+					{
 					/* This is a field contributed from internal data so we
 					   don't try and get an error locus or value for it
 					   since this would only confuse the caller */
 					return( CRYPT_ERROR_BADDATA );
+					}
 				}
 
 			/* Skip to the end of the item and continue */
@@ -1066,7 +1165,7 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			}
 
 		/* Print a trace of what we're processing.  Everything before this
-		   point does its own special-case tracing if required, so we don't
+		   point does its own special-case tracing if required so we don't
 		   trace before we get here to avoid displaying duplicate/
 		   misleading information */
 		TRACE_FIELDTYPE( attributeInfoPtr, setofStack.stackPos );
@@ -1075,9 +1174,13 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 		   that it matches what we're expecting */
 		if( attributeInfoPtr->flags & FL_EXPLICIT )
 			{
-			assert( attributeInfoPtr->fieldEncodedType > 0 );
-			assert( MAKE_CTAG( tag ) == tag );	/* Always constructed */
-			status = readConstructed( stream, NULL, tag );
+			ENSURES( attributeInfoPtr->fieldEncodedType >= 0 && \
+					 attributeInfoPtr->fieldEncodedType < MAX_TAG );
+			ENSURES( tag == MAKE_CTAG( attributeInfoPtr->fieldEncodedType ) ); 
+					 /* Always constructed */
+
+			status = readConstructed( stream, NULL, 
+									  attributeInfoPtr->fieldEncodedType );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
@@ -1099,6 +1202,7 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 										 flags | setofInfoPtr->inheritedFlags,
 										 errorLocus, errorType );
 			if( cryptStatusError( status ) )
+				{
 				/* Adding complex attributes such as DNs can return detailed
 				   error codes that report the exact parameter that was wrong,
 				   we don't need this much detail so we convert a parameter
@@ -1107,41 +1211,49 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 										  cryptArgError( status ) ? \
 											CRYPT_ERROR_BADDATA : status,
 										  attributeInfoPtr->fieldID ) );
+				}
 			if( setofInfoPtr->endPos > 0 )
+				{
 				/* Remember that we've seen an entry in the SET/SEQUENCE */
 				setofInfoPtr->flags &= ~SETOF_FLAG_ISEMPTY;
+				}
 			goto continueDecoding;
 			}
 
 		/* Standard field: Read the tag for the field and make sure that it
 		   matches what we're expecting */
 		if( peekTag( stream ) != tag )
+			{
 			return( fieldErrorReturn( errorLocus, errorType,
 									  CRYPT_ERROR_BADDATA,
 									  attributeInfoPtr->fieldID ) );
+			}
 		if( setofInfoPtr->endPos > 0 )
+			{
 			/* Remember that we've seen an entry in the SET/SEQUENCE */
 			setofInfoPtr->flags &= ~SETOF_FLAG_ISEMPTY;
+			}
 
 		/* SET/SET OF/SEQUENCE/SEQUENCE OF start: Record its end position,
 		   stack the current processing state, and continue */
 		if( attributeInfoPtr->fieldType == BER_SEQUENCE || \
 			attributeInfoPtr->fieldType == BER_SET )
 			{
-			status = beginSetof( stream, &setofStack, attributeInfoPtr, 
-								 errorLocus, errorType );
+			status = beginSetof( stream, &setofStack, attributeInfoPtr );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
 			setofInfoPtr = setofTOS( &setofStack );
 			goto continueDecoding;
 			}
-		assert( !( attributeInfoPtr->flags & FL_SETOF ) );
+		ENSURES( !( attributeInfoPtr->flags & FL_SETOF ) );
 
 		/* We've checked the tag, skip it.  We do this at this level rather
 		   than in readAttributeField() because it doesn't know about 
 		   context-specific tagging requirements */
-		readTag( stream );
+		status = readTag( stream );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* Standard field, read the field data */
 		status = readAttributeField( stream, attributeListPtrPtr,
@@ -1150,11 +1262,13 @@ static int readAttribute( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 									 flags | setofInfoPtr->inheritedFlags,
 									 errorLocus, errorType );
 		if( cryptStatusError( status ) )
+			{
 			/* Adding invalid attribute data can return detailed error codes
 			   that report the exact parameter that was wrong, we don't
 			   need this much detail so we convert a parameter error into a
 			   more general bad data status */
 			return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
+			}
 
 		/* Move on to the next field */
 continueDecoding:
@@ -1172,9 +1286,14 @@ continueDecoding:
 			if( setofInfoPtr->flags & SETOF_FLAG_ISEMPTY )
 				return( CRYPT_ERROR_BADDATA );
 
+			/* If we haven't made any progress in processing the SET OF/
+			   SEQUENCE OF then further iterations through the loop won't
+			   make any difference, there's a bug in the decoder */
+			ENSURES( stell( stream ) > setofInfoPtr->startPos );
+
 			/* Retry from the restart point */
-			assert( ( setofInfoPtr->flags & SETOF_FLAG_RESTARTPOINT ) || \
-					setofInfoPtr->infoStart[ 1 ].fieldType == FIELDTYPE_IDENTIFIER );
+			ENSURES( ( setofInfoPtr->flags & SETOF_FLAG_RESTARTPOINT ) || \
+					 setofInfoPtr->infoStart[ 1 ].fieldType == FIELDTYPE_IDENTIFIER );
 			attributeInfoPtr = setofInfoPtr->infoStart + 1;
 			attributeContinues = TRUE;
 			}
@@ -1187,23 +1306,24 @@ continueDecoding:
 	   exit.  This can happen in cases where there's a series of nested 
 	   sequences of optional attributes, where we have to keep backtracking 
 	   and trying again to try and find a match.  In this case it's possible
-	   to construct cert data that matches the first part of the optional
-	   data, but since the rest doesn't match we keep having to restart 
-	   (imagine an LL(1) parser trying to handle a non-LL(1) grammar).
+	   to construct certificate data that matches the first part of the 
+	   optional data, but since the rest doesn't match we keep having to 
+	   restart (imagine an LL(1) parser trying to handle a non-LL(1) 
+	   grammar).
 	   
-	   At this point we could have encountered either a cert-parsing error 
-	   or a CRYPT_ERROR_INTERNAL internal error, since we can't tell without 
-	   human intervention we treat it as a cert error rather than throwing a 
-	   retIntError() exception */
+	   At this point we could have encountered either a certificate-parsing 
+	   error or a CRYPT_ERROR_INTERNAL internal error, since we can't tell 
+	   without human intervention we treat it as a certificate error rather 
+	   than throwing a retIntError() exception */
 	if( attributeFieldsProcessed >= 256 )
 		{
-		assert( NOTREACHED );
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_BADDATA );
 		}
 
 	/* Handle the special case of (a) the encoded data ending but fields with
-	   default values being present, or (b) the encoded data continuing but
-	   no more decoding information being present */
+	   default values being present or (b) the encoded data continuing but no 
+	   more decoding information being present */
 	if( attributeContinues )
 		{
 		/* If there are default fields to follow, add the default value - see
@@ -1211,54 +1331,40 @@ continueDecoding:
 		   only add the first field since the only attributes where this
 		   case can occur have a single default value as the next possible
 		   entry, burrowing down further causes complications due to default
-		   values present in optional sequences.  As usual, we don't set any
+		   values present in optional sequences.  As usual we don't set any
 		   specific error information for the default fields */
 		if( attributeInfoPtr->flags & FL_DEFAULT )
 			{
+			CRYPT_ATTRIBUTE_TYPE dummy1;
+			CRYPT_ERRTYPE_TYPE dummy2;
 			const int value = ( int ) attributeInfoPtr->defaultValue;
 
 			status = addAttributeField( attributeListPtrPtr,
 						attributeInfoPtr->fieldID, CRYPT_ATTRIBUTE_NONE,
-						&value, CRYPT_UNUSED, flags, NULL, NULL );
+						&value, CRYPT_UNUSED, flags, &dummy1, &dummy2 );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
 		}
 	else
 		{
-		int iterationCount = 0;
+		int iterationCount;
 		
 		/* Some attributes have a SEQUENCE OF fields of no great use (e.g.
 		   Microsoft's extensive crlDistributionPoints lists providing
 		   redundant pointers to the same inaccessible site-internal
 		   servers, although these are already handled above), if there's
 		   any extraneous data left we just skip it */
-		while( stell( stream ) < endPos && cryptStatusOK( status ) && \
-			   peekTag( stream ) != 0 && \
-			   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+		for( iterationCount = 0;
+			 stell( stream ) < endPos && cryptStatusOK( status ) && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			 iterationCount++ )
 			{
-			assert( NOTREACHED );
+			assert( DEBUG_WARN );
 			status = readUniversal( stream );
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-			retIntError();
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 		}
-
-#if 0	/* 22/11/03 Removed since these Verisign certs have now expired */
-	/* More Verisign braindamage: There may be arbitrary levels of EOC's
-	   at the end of an attribute, so we sit in a loop skipping them.
-	   Eventually we'll run into the SEQUENCE for the signature
-	   AlgorithmIdentifier that always follows attributes in certs, cert
-	   requests, and CMS attributes.  Per varios casus... */
-	while( cryptStatusOK( status ) && peekTag( stream ) == BER_EOC )
-		{
-		status = checkEOC( stream );
-		if( status == TRUE )
-			/* checkEOC returns TRUE/FALSE for EOC */
-			status = CRYPT_OK;
-		}
-#endif /* 0 */
-
 	return( status );
 	}
 
@@ -1268,19 +1374,30 @@ continueDecoding:
 *																			*
 ****************************************************************************/
 
-/* Read the cert object-specific wrapper for a set of attributes */
+/* Read the certificate object-specific wrapper for a set of attributes */
 
-static int readAttributeWrapper( STREAM *stream, int *lengthPtr, 
-								 const CRYPT_CERTTYPE_TYPE type,
-								 const int attributeSize )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readAttributeWrapper( INOUT STREAM *stream, 
+								 OUT_LENGTH_Z int *lengthPtr, 
+								 IN_ENUM_OPT( CRYPT_CERTTYPE ) \
+									const CRYPT_CERTTYPE_TYPE type,
+								 IN_LENGTH const int attributeLength )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( lengthPtr, sizeof( int ) ) );
+
+	REQUIRES( type >= CRYPT_CERTTYPE_NONE && type < CRYPT_CERTTYPE_LAST );
+			  /* Single CRL entries have the special-case type 
+			     CRYPT_CERTTYPE_NONE */
+	REQUIRES( attributeLength >= 0 && attributeLength < MAX_INTLENGTH );
+
 	/* Clear return value */
 	*lengthPtr = 0;
 
 	/* Read the appropriate extensions tag for the certificate object and
 	   determine how far we can read.  CRLs and OCSP requests/responses have
 	   two extension types that have different tagging, per-entry extensions
-	   and entire-CRL/request extensions.  To differentiate between the two,
+	   and entire-CRL/request extensions.  To differentiate between the two
 	   we read per-entry extensions with a type of CRYPT_CERTTYPE_NONE */
 	switch( type )
 		{
@@ -1308,7 +1425,7 @@ static int readAttributeWrapper( STREAM *stream, int *lengthPtr,
 		case CRYPT_CERTTYPE_REQUEST_REVOCATION:
 			/* CRMF/CMP attributes don't contain any wrapper so there's
 			   nothing to read */
-			*lengthPtr = attributeSize;
+			*lengthPtr = attributeLength;
 			return( CRYPT_OK );
 
 		case CRYPT_CERTTYPE_RTCS_REQUEST:
@@ -1326,13 +1443,12 @@ static int readAttributeWrapper( STREAM *stream, int *lengthPtr,
 			return( readSequence( stream, lengthPtr ) );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_BADDATA );
+	retIntError();
 	}
 
-/* Read a cert-request wrapper for a set of attributes.  This isn't as 
-   simple as it should be because alongside their incompatible request 
-   extension OID, Microsoft also invented other values containing God knows 
+/* Read a certificate-request wrapper for a set of attributes.  This isn't 
+   as simple as it should be because alongside their incompatible request 
+   extension OID Microsoft also invented other values containing God knows 
    what sort of data (long Unicode strings describing the Windows module 
    that created it (as if you'd need that to know where it came from), the 
    scripts from "Gilligan's Island", every "Brady Bunch" episode ever made,
@@ -1342,20 +1458,35 @@ static int readAttributeWrapper( STREAM *stream, int *lengthPtr,
 
    Unfortunately this simple solution is complicated by the fact that SET 
    also defines non-CMMF-style attributes, however unlike MS's stuff these 
-   are documented and stable, so if we find SET-style attributes (or more 
+   are documented and stable so if we find SET-style attributes (or more 
    generally any attributes that we know about) we process them normally.  
    Finally, since all attributes may be either skipped or processed at this
-   stage, we include provisions for bailing out if we exhaust the available 
+   stage we include provisions for bailing out if we exhaust the available 
    attributes */
 
-static int readCertReqWrapper( STREAM *stream, 
-							   ATTRIBUTE_LIST **attributeListPtrPtr,
-							   int *lengthPtr, const int attributeSize,
-							   CRYPT_ATTRIBUTE_TYPE *errorLocus,
-							   CRYPT_ERRTYPE_TYPE *errorType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5, 6 ) ) \
+static int readCertReqWrapper( INOUT STREAM *stream, 
+							   /*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
+							   OUT_LENGTH_Z int *lengthPtr, 
+							   IN_LENGTH const int attributeLength,
+							   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus,
+							   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
 	{
-	const int endPos = stell( stream ) + attributeSize;
+	const int endPos = stell( stream ) + attributeLength;
 	int status, attributesProcessed = 0;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isWritePtr( lengthPtr, sizeof( int ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( attributeLength >= 0 && attributeLength < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*lengthPtr = 0;
 			
 	do
 		{
@@ -1370,21 +1501,24 @@ static int readCertReqWrapper( STREAM *stream,
 
 		/* Read the wrapper SEQUENCE and OID */
 		readSequence( stream, NULL );
-		status = readEncodedOID( stream, oid, &oidLength, MAX_OID_SIZE, 
+		status = readEncodedOID( stream, oid, MAX_OID_SIZE, &oidLength, 
 								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* Check for a known attribute, which can happen with SET cert 
-		   requests.  If it's a known attribute, process it */
-		attributeInfoPtr = oidToAttribute( ATTRIBUTE_CERTIFICATE, oid );
+		/* Check for a known attribute, which can happen with SET 
+		   certificate requests.  If it's a known attribute, process it */
+		attributeInfoPtr = oidToAttribute( ATTRIBUTE_CERTIFICATE, 
+										   oid, oidLength );
 		if( attributeInfoPtr != NULL )
 			{
 			status = readSet( stream, lengthPtr );
 			if( cryptStatusOK( status ) )
+				{
 				status = readAttribute( stream, attributeListPtrPtr,
 										attributeInfoPtr, *lengthPtr, FALSE, 
 										errorLocus, errorType );
+				}
 			}
 		else
 			{
@@ -1398,18 +1532,21 @@ static int readCertReqWrapper( STREAM *stream,
 				return( readSequence( stream, lengthPtr ) );
 				}
 			else
+				{
 				/* It's unknown MS garbage, skip it */
 				status = readUniversal( stream );
+				}
 			}
 		}
 	while( cryptStatusOK( status ) && attributesProcessed++ < 16 );
 	if( attributesProcessed >= 16 )
 		{
 		/* As with the check in readAttribute() above this could be either a 
-		   cert-parsing error or a CRYPT_ERROR_INTERNAL internal error, since 
-		   we can't tell without human intervention we treat it as a cert error 
-		   rather than throwing a retIntError() exception */
-		assert( NOTREACHED );
+		   certificate-parsing error or a CRYPT_ERROR_INTERNAL internal 
+		   error, since we can't tell without human intervention we treat it 
+		   as a certificate error rather than throwing a retIntError() 
+		   exception */
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_BADDATA );
 		}
 
@@ -1418,10 +1555,15 @@ static int readCertReqWrapper( STREAM *stream,
 
 /* Read a set of attributes */
 
-int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
-					const CRYPT_CERTTYPE_TYPE type, const int attributeSize,
-					CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					CRYPT_ERRTYPE_TYPE *errorType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5, 6 ) ) \
+int readAttributes( INOUT STREAM *stream, 
+					/*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
+					IN_ENUM_OPT( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type, 
+					IN_LENGTH_Z const int attributeLength,
+					OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+						CRYPT_ATTRIBUTE_TYPE *errorLocus,
+					OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+						CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	const ATTRIBUTE_TYPE attributeType = ( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES || \
 										   type == CRYPT_CERTTYPE_RTCS_REQUEST || \
@@ -1429,12 +1571,24 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 										 ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE;
 	const BOOLEAN wrapperTagSet = ( attributeType == ATTRIBUTE_CMS ) ? \
 								  TRUE : FALSE;
-	int length, endPos, complianceLevel, iterationCount = 0, status;
+	int length, endPos, complianceLevel, iterationCount, status;
 
-	/* Many certificates are invalid but are accepted by existing software
-	   that does little or no checking.  In order to be able to process
-	   these certs, the user can disable various levels of processing in
-	   order to be able to handle the cert */
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( type >= CRYPT_CERTTYPE_NONE && type < CRYPT_CERTTYPE_LAST );
+			  /* Single CRL entries have the special-case type 
+			     CRYPT_CERTTYPE_NONE */
+	REQUIRES( ( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES && \
+				attributeLength == 0 ) || \
+			  ( type != CRYPT_CERTTYPE_CMS_ATTRIBUTES && \
+				attributeLength >= 0 && attributeLength < MAX_INTLENGTH ) );
+			  /* CMS attributes are pure attribute data with no 
+			     encapsulation to indicate the length so the length is 
+				 implicitly "everything that's present" */
+
 	status = krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 							  IMESSAGE_GETATTRIBUTE, &complianceLevel,
 							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
@@ -1444,32 +1598,41 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 	/* Read the wrapper for the certificate object's attributes and 
 	   determine how far we can read */
 	if( type == CRYPT_CERTTYPE_CERTREQUEST )
+		{
 		status = readCertReqWrapper( stream, attributeListPtrPtr, &length, 
-									 attributeSize, errorLocus, errorType );
+									 attributeLength, errorLocus, errorType );
+		}
 	else
-		status = readAttributeWrapper( stream, &length, type, attributeSize );
+		status = readAttributeWrapper( stream, &length, type, attributeLength );
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
 
 	/* Read the collection of attributes.  We allow for a bit of slop for
 	   software that gets the length encoding wrong by a few bytes */
-	while( stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0;
+		 stell( stream ) <= endPos - MIN_ATTRIBUTE_SIZE && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		const ATTRIBUTE_INFO *attributeInfoPtr;
 		BYTE oid[ MAX_OID_SIZE + 8 ];
 		BOOLEAN criticalFlag = FALSE, ignoreAttribute = FALSE;
-		int attributeLength;
+		void *attributeDataPtr;
+		int oidLength, attributeDataLength;
 
 		/* Read the outer wrapper and determine the attribute type based on
 		   the OID */
 		readSequence( stream, NULL );
-		status = readEncodedOID( stream, oid, &length, MAX_OID_SIZE,
+		status = readEncodedOID( stream, oid, MAX_OID_SIZE, &oidLength, 
 								 BER_OBJECT_IDENTIFIER );
 		if( cryptStatusError( status ) )
+			{
+			TRACE_DEBUG( "Couldn't read attribute OID, status %d.\n", 
+						 status );
 			return( status );
-		attributeInfoPtr = oidToAttribute( attributeType, oid );
+			}
+		attributeInfoPtr = oidToAttribute( attributeType, oid, oidLength );
 		if( attributeInfoPtr != NULL && \
 			complianceLevel < decodeComplianceLevel( attributeInfoPtr->flags ) )
 			{
@@ -1481,10 +1644,11 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 			}
 
 		/* Read the optional critical flag if it's a certificate.  If the
-		   extension is marked critical and we don't recognise it, we don't 
+		   extension is marked critical and we don't recognise it we don't 
 		   reject it at this point because that'd make it impossible to 
-		   examine the contents of the cert or display it to the user.  
-		   Instead, we reject the cert when we try and check it */
+		   examine the contents of the certificate or display it to the 
+		   user.  Instead we reject the certificate when we try and check 
+		   it */
 		if( attributeType != ATTRIBUTE_CMS && \
 			peekTag( stream ) == BER_BOOLEAN )
 			{
@@ -1500,69 +1664,31 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 
 		/* Read the wrapper around the attribute payload */
 		if( wrapperTagSet )
-			status = readSet( stream, &attributeLength );
+			status = readSet( stream, &attributeDataLength );
 		else
-			status = readOctetStringHole( stream, &attributeLength, 2,
+			status = readOctetStringHole( stream, &attributeDataLength, 2,
 										  DEFAULT_TAG );
 		if( cryptStatusError( status ) )
 			{
 			*errorLocus = ( attributeInfoPtr != NULL ) ? \
 						  attributeInfoPtr->fieldID : CRYPT_ATTRIBUTE_NONE;
 			*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
+			TRACE_DEBUG( "Couldn't read attribute wrapper, status %d.\n", 
+						 status );
 			return( status );
-			}
-
-		/* Thawte certs for a period of about 6 months incorrectly encoded
-		   the authorityKeyIdentifier (containing a SHA-1 hash) with an
-		   EXPLICIT SEQUENCE so we check for this here.  These were at one
-		   time common enough that we provide a special-case workaround
-		   rather than using a compliance level reduction as a fix */
-		if( attributeInfoPtr != NULL && \
-			attributeInfoPtr->fieldID == CRYPT_CERTINFO_AUTHORITYKEYIDENTIFIER && \
-			attributeLength == 26 )
-			{
-			BYTE buffer[ 32 + 8 ];
-			long offset = stell( stream );
-			int length2, length3;
-
-			/* Burrow down into the encoding to see if it's an incorrectly
-			   encoded authorityKeyIdentifier.  There's a second type of
-			   incorrect encoding that still uses an explicit tag but that
-			   makes the contents the octet string data, this is rare and
-			   isn't checked for here */
-			readSequence( stream, &length );
-			readConstructed( stream, &length2, 0 );
-			status = readOctetString( stream, buffer, &length3, 1, 32 );
-			if( cryptStatusOK( status ) && \
-				length == 24 && length2 == 22 && length3 == 20 )
-				{
-				/* It's a SEQUENCE { [0] EXPLICIT SEQUENCE { ..., add the
-				   data as a keyIdentifier */
-				status = addAttributeField( attributeListPtrPtr,
-							CRYPT_CERTINFO_AUTHORITY_KEYIDENTIFIER,
-							CRYPT_ATTRIBUTE_NONE, buffer, 20,
-							criticalFlag ? \
-								( ATTR_FLAG_CRITICAL | ATTR_FLAG_BLOB ) : \
-								ATTR_FLAG_BLOB, errorLocus, errorType );
-				if( cryptStatusError( status ) )
-					return( status );
-				continue;
-				}
-
-			/* It's a correctly-encoded authorityKeyIdentifier, read it
-			   normally */
-			sClearError( stream );
-			sseek( stream, offset );
 			}
 
 		/* If it's a known attribute, parse the payload */
 		if( attributeInfoPtr != NULL )
 			{
 			status = readAttribute( stream, attributeListPtrPtr,
-									attributeInfoPtr, attributeLength,
+									attributeInfoPtr, attributeDataLength,
 									criticalFlag, errorLocus, errorType );
 			if( cryptStatusError( status ) )
+				{
+				TRACE_DEBUG( "Error %d reading attribute.\n", status );
 				return( status );
+				}
 			continue;
 			}
 
@@ -1570,16 +1696,22 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 		   A zero length indicates that the attribute contains all default
 		   values, however since we don't recognise the attribute we can't
 		   fill these in so the attribute is in effect not present */
-		if( attributeLength <= 0 )
+		if( attributeDataLength <= 0 )
 			continue;
 
 		/* It's an unrecognised or ignored attribute type, add the raw data
 		   to the list of attributes */
-		status = addAttribute( attributeType, attributeListPtrPtr, oid,
-							   criticalFlag, sMemBufPtr( stream ),
-							   attributeLength, ignoreAttribute ? \
-									ATTR_FLAG_BLOB | ATTR_FLAG_IGNORED : \
-									ATTR_FLAG_NONE );
+		status = sMemGetDataBlock( stream, &attributeDataPtr, 
+								   attributeDataLength );
+		if( cryptStatusOK( status ) )
+			{
+			status = addAttribute( attributeType, attributeListPtrPtr, 
+								   oid, oidLength, criticalFlag, 
+								   attributeDataPtr, attributeDataLength, 
+								   ignoreAttribute ? \
+										ATTR_FLAG_BLOB | ATTR_FLAG_IGNORED : \
+										ATTR_FLAG_NONE );
+			}
 		if( cryptStatusError( status ) )
 			{
 			if( status == CRYPT_ERROR_INITED )
@@ -1591,12 +1723,12 @@ int readAttributes( STREAM *stream, ATTRIBUTE_LIST **attributeListPtrPtr,
 				*errorType = CRYPT_ERRTYPE_ATTR_PRESENT;
 				status = CRYPT_ERROR_BADDATA;
 				}
+			TRACE_DEBUG( "Error %d adding attribute data.\n", status );
 			return( status );
 			}
-		sSkip( stream, attributeLength );	/* Skip the attribute data */
+		sSkip( stream, attributeDataLength );	/* Skip the attribute data */
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_LARGE )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( CRYPT_OK );
 	}

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Self-test Utility Routines					*
-*						Copyright Peter Gutmann 1997-2004					*
+*						Copyright Peter Gutmann 1997-2007					*
 *																			*
 ****************************************************************************/
 
@@ -32,7 +32,36 @@
 
 /****************************************************************************
 *																			*
-*							Import/Export Functions							*
+*								Utility Functions							*
+*																			*
+****************************************************************************/
+
+#ifndef _WIN32_WCE
+
+/* Since ctime() adds a '\n' to the string and may return NULL, we wrap it
+   in something that behaves as required */
+
+static char *getTimeString( const time_t theTime, const int bufNo )
+	{
+	static char timeString[ 2 ][ 64 ], *timeStringPtr;
+
+	assert( bufNo == 0 || bufNo == 1 );
+
+	timeStringPtr = ctime( &theTime );
+	if( timeStringPtr == NULL )
+		return( "(Not available)" );
+	strcpy( timeString[ bufNo ], timeStringPtr );
+	timeString[ bufNo ][ strlen( timeStringPtr ) - 1 ] = '\0';	/* Stomp '\n' */
+
+	return( timeString[ bufNo ] );
+	}
+#else
+  #define getTimeString( theTime, bufNo )	"(No time data available)"
+#endif /* _WIN32_WCE */
+
+/****************************************************************************
+*																			*
+*							General Checking Functions						*
 *																			*
 ****************************************************************************/
 
@@ -43,7 +72,8 @@ int checkFileAccess( void )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	FILE *filePtr;
-	int status;
+	BYTE buffer[ BUFFER_SIZE ];
+	int length, status;
 
 	/* First, check that the file actually exists so that we can return an
 	   appropriate error message */
@@ -58,8 +88,46 @@ int checkFileAccess( void )
 		}
 	fclose( filePtr );
 
-	/* The file exists and is accessible, now try and open it using the
-	   cryptlib file access functions */
+	/* Now read the test files and see if there's any problem due to data 
+	   conversion evident */
+	filenameFromTemplate( buffer, TESTDATA_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( buffer, "rb" ) ) == NULL )
+		{
+		puts( "Couldn't open binary data test file to check for data "
+			  "conversion problems." );
+		return( FALSE );
+		}
+	length = fread( buffer, 1, BUFFER_SIZE, filePtr );
+	fclose( filePtr );
+	if( length != 16 || \
+		memcmp( buffer, "\x30\x82\x02\x56\x30\x82\x02\x52\r\n\x08\x40\n" "tqz", 16 ) )
+		{
+		puts( "Binary data is corrupt, probably due to being unzipped or "
+			  "copied onto the\nsystem in a mode that tries to translate "
+			  "text data during processing/copying." );
+		return( FALSE );
+		}
+#ifdef __UNIX__
+	filenameFromTemplate( buffer, TESTDATA_FILE_TEMPLATE, 2 );
+	if( ( filePtr = fopen( buffer, "rb" ) ) == NULL )
+		{
+		puts( "Couldn't open text data test file to check for data "
+			  "conversion problems." );
+		return( FALSE );
+		}
+	length = fread( buffer, 1, BUFFER_SIZE, filePtr );
+	fclose( filePtr );
+	if( length != 10 || memcmp( buffer, "test\ntest\n" , 10 ) )
+		{
+		puts( "Text data is still in CRLF-delimited format, probably due "
+			  "to being unzipped\nwithout the '-a' option to translate "
+			  "text files for Unix systems." );
+		return( FALSE );
+		}
+#endif /* __UNIX__ */
+
+	/* The file exists and is accessible and was copied/installed correctly, 
+	   now try and open it using the cryptlib file access functions */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  CA_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusError( status ) )
@@ -79,6 +147,29 @@ int checkFileAccess( void )
 
 	return( TRUE );
 	}
+
+/* Check that external network sites are accessible, used to detect 
+   potential problems with machines stuck behind firewalls */
+
+int checkNetworkAccess( void )
+	{
+	CRYPT_KEYSET cryptKeyset;
+	int status;
+
+	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_HTTP,
+							  TEXT( "www.amazon.com" ), CRYPT_KEYOPT_READONLY );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	cryptKeysetClose( cryptKeyset );
+
+	return( TRUE );
+	}
+
+/****************************************************************************
+*																			*
+*							Import/Export Functions							*
+*																			*
+****************************************************************************/
 
 /* Import a certificate object */
 
@@ -173,19 +264,27 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 
 		puts( "                         ********************" );
 		if( validTo <= currentTime )
+			{
 			puts( "Warning: This key has expired.  Certificate-related "
 				  "operations will fail or\n         result in error "
 				  "messages from the test code." );
+			}
 		else
+			{
 			if( validTo - currentTime <= 86400 )
+				{
 				puts( "Warning: This key expires today.  Certificate-"
 					  "related operations may fail\n         or result in "
 					  "error messages from the test code." );
+				}
 			else
+				{
 				printf( "Warning: This key will expire in %ld days.  "
 						"Certificate-related operations\n         may fail "
 						"or result in error messages from the test code.\n",
 						( validTo - currentTime ) / 86400 );
+				}
+			}
 		puts( "                         ********************" );
 		printf( "Hit a key..." );
 		getchar();
@@ -194,7 +293,6 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 #endif /* _WIN32_WCE */
 	return( CRYPT_OK );
 	}
-
 
 /****************************************************************************
 *																			*
@@ -402,16 +500,33 @@ void createMutex( void )
 	{
 	hMutex = CreateMutex( NULL, FALSE, NULL );
 	}
-void releaseMutex( void )
+void acquireMutex( void )
 	{
-	ReleaseMutex( hMutex );
+	if( WaitForSingleObject( hMutex, 30000 ) == WAIT_TIMEOUT )
+		{
+		puts( "Warning: Couldn't acquire mutex after 30s wait.  Press a "
+			  "key to continue." );
+		getchar();
+		}
 	}
 int waitMutex( void )
 	{
 	if( WaitForSingleObject( hMutex, 30000 ) == WAIT_TIMEOUT )
 		return( CRYPT_ERROR_TIMEOUT );
-
+	
+	/* Since this is merely a synchronisation operation in which a later 
+	   thread waits to catch up to an earlier one, we release the mutex again
+	   so other threads can get in */
+	releaseMutex();
 	return( CRYPT_OK );
+	}
+void releaseMutex( void )
+	{
+	if( !ReleaseMutex( hMutex ) )
+		{
+		puts( "Warning: Couldn't release mutex.  Press a key to continue." );
+		getchar();
+		}
 	}
 void destroyMutex( void )
 	{
@@ -438,14 +553,23 @@ void createMutex( void )
 	{
 	pthread_mutex_init( &mutex, NULL );
 	}
-void releaseMutex( void )
+void acquireMutex( void )
 	{
-	pthread_mutex_unlock( &mutex );
+	pthread_mutex_lock( &mutex );
 	}
 int waitMutex( void )
 	{
 	pthread_mutex_lock( &mutex );
+	
+	/* Since this is merely a synchronisation operation in which a later 
+	   thread waits to catch up to an earlier one, we release the mutex again
+	   so other threads can get in */
+	releaseMutex();
 	return( CRYPT_OK );
+	}
+void releaseMutex( void )
+	{
+	pthread_mutex_unlock( &mutex );
 	}
 void destroyMutex( void )
 	{
@@ -469,6 +593,9 @@ void waitForThread( const pthread_t hThread )
 void createMutex( void )
 	{
 	}
+void acquireMutex( void )
+	{
+	}
 void releaseMutex( void )
 	{
 	}
@@ -480,6 +607,95 @@ void destroyMutex( void )
 	{
 	}
 #endif /* WINDOWS_THREADS */
+
+#if defined( WINDOWS_THREADS ) || defined( UNIX_THREADS )
+
+/* Dispatch multiple client and server threads and wait for them to exit */
+
+int multiThreadDispatch( THREAD_FUNC clientFunction,
+						 THREAD_FUNC serverFunction, const int noThreads )
+	{
+	THREAD_HANDLE hClientThreads[ MAX_NO_THREADS ];
+	THREAD_HANDLE hServerThreads[ MAX_NO_THREADS ];
+	int sessionID[ MAX_NO_THREADS ];
+	int i;
+
+	assert( noThreads <= MAX_NO_THREADS );
+
+	/* Set up the session ID values */	
+	for( i = 0; i < MAX_NO_THREADS; i++ )
+		sessionID[ i ] = i;
+
+	/* Start the sessions and wait for them initialise.  We have to wait for
+	   some time since the multiple private key reads can take awhile */
+	for( i = 0; i < noThreads; i++ )
+		{
+#ifdef WINDOWS_THREADS
+		unsigned int threadID;
+
+		hServerThreads[ i ] = ( HANDLE ) \
+						_beginthreadex( NULL, 0, serverFunction,
+										&sessionID[ i ], 0, &threadID );
+#else
+		pthread_t threadHandle;
+
+		hServerThreads[ i ] = 0;
+		if( pthread_create( &threadHandle, NULL, serverFunction,
+							&sessionID[ i ] ) == 0 )
+			hServerThreads[ i ] = threadHandle;
+#endif /* Windows vs. pthreads */
+		}
+	delayThread( 3 );
+
+	/* Connect to the local server */
+	for( i = 0; i < noThreads; i++ )
+		{
+#ifdef WINDOWS_THREADS
+		unsigned int threadID;
+
+		hClientThreads[ i ] = ( HANDLE ) \
+						_beginthreadex( NULL, 0, clientFunction,
+										&sessionID[ i ], 0, &threadID );
+#else
+		pthread_t threadHandle;
+
+		hServerThreads[ i ] = 0;
+		if( pthread_create( &threadHandle, NULL, clientFunction,
+							&sessionID[ i ] ) == 0 )
+			hClientThreads[ i ] = threadHandle;
+#endif /* Windows vs. pthreads */
+		}
+#ifdef WINDOWS_THREADS
+	if( WaitForMultipleObjects( noThreads, hServerThreads, TRUE,
+								60000 ) == WAIT_TIMEOUT || \
+		WaitForMultipleObjects( noThreads, hClientThreads, TRUE,
+								60000 ) == WAIT_TIMEOUT )
+#else
+	/* Posix doesn't have an ability to wait for multiple threads for mostly
+	   religious reasons ("That's not how we do things around here") so we
+	   just wait for two token threads */
+	pthread_join( hServerThreads[ 0 ], NULL );
+	pthread_join( hClientThreads[ 0 ], NULL );
+#endif /* Windows vs. pthreads */
+		{
+		puts( "Warning: Server threads are still active due to session "
+			  "negotiation failure,\n         this will cause an error "
+			  "condition when cryptEnd() is called due\n         to "
+			  "resources remaining allocated.  Press a key to continue." );
+		getchar();
+		}
+#ifdef WINDOWS_THREADS
+	for( i = 0; i < noThreads; i++ )
+		if( hServerThreads[ i ] != 0 )
+			CloseHandle( hServerThreads[ i ] );
+	for( i = 0; i < noThreads; i++ )
+		if( hClientThreads[ i ] != 0 )
+			CloseHandle( hClientThreads[ i ] );
+#endif /* Windows vs. pthreads */
+
+	return( TRUE );
+	}
+#endif /* Windows/Unix threads */
 
 /****************************************************************************
 *																			*
@@ -530,12 +746,15 @@ void printExtError( const CRYPT_HANDLE cryptHandle,
 		printErrorAttributeInfo( cryptHandle );
 		return;
 		}
-	printf( "  Extended error code = %d (0x%X)", errorCode, errorCode );
+	if( errorCode )
+		printf( "  Extended error code = %d (0x%X).\n", errorCode, 
+				errorCode );
 	if( cryptStatusOK( msgStatus ) )
 		{
 		errorMessage[ errorMessageLength ] = '\0';
-		printf( ", error message = %s'%s'.\n",
-				( errorMessageLength > 40 ) ? "\n  " : "", errorMessage );
+		printf( "  Error message = %s'%s'.\n",
+				( errorMessageLength > ( 80 - 21 ) ) ? "\n  " : "", 
+				errorMessage );
 		}
 	else
 		puts( "." );
@@ -740,35 +959,45 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
 #endif /* __UNIX__ */
 	const int length = strlen( fileName );
 
+	fileNameBuffer[ 0 ] = '\0';
 #if defined( _WIN32_WCE )
 	/* Under WinCE we don't want to scribble a ton of data into flash every
-	   time we're run, so we don't try and do anything */
+	   time we're run so we don't try and do anything */
 	return;
 #elif ( defined( _MSC_VER ) && !defined( __PALMSOURCE__ ) )
-	if( access( "d:/tmp/", 6 ) == 0 )
+	/* If the path isn't absolute, deposit it in a temp directory */
+	if( fileName[ 1 ] != ':' )
 		{
-		/* There's a data partition available, dump the info there */
-		if( access( "d:/tmp/", 6 ) == -1 && mkdir( "d:/tmp" ) == -1 )
-			return;
-		strcpy( fileNameBuffer, "d:/tmp/" );
-		}
-	else
-		{
-		/* There's no separate data partition, everything's dumped into the
-		   same partition */
-		if( access( "c:/tmp/", 6 ) == -1 && mkdir( "c:/tmp" ) == -1 )
-			return;
-		strcpy( fileNameBuffer, "c:/tmp/" );
+		if( access( "d:/tmp/", 6 ) == 0 )
+			{
+			/* There's a data partition available, dump the info there */
+			if( access( "d:/tmp/", 6 ) == -1 && \
+				!CreateDirectory( "d:/tmp", NULL ) )
+				return;
+			strcpy( fileNameBuffer, "d:/tmp/" );
+			}
+		else
+			{
+			/* There's no separate data partition, everything's dumped into 
+			   the same partition */
+			if( access( "c:/tmp/", 6 ) == -1 && mkdir( "c:/tmp" ) == -1 )
+				return;
+			strcpy( fileNameBuffer, "c:/tmp/" );
+			}
 		}
 #elif defined( __UNIX__ )
-	if( tmpPathLen > 3 && tmpPathLen < 768 )
+	/* If the path isn't absolute, deposit it in a temp directory */
+	if( fileName[ 0 ] != '/' )
 		{
-		strcpy( fileNameBuffer, tmpPath );
-		if( fileNameBuffer[ tmpPathLen - 1 ] != '/' )
-			strcat( fileNameBuffer + tmpPathLen, "/" );
+		if( tmpPathLen > 3 && tmpPathLen < FILENAME_BUFFER_SIZE - 64 )
+			{
+			strcpy( fileNameBuffer, tmpPath );
+			if( fileNameBuffer[ tmpPathLen - 1 ] != '/' )
+				strcat( fileNameBuffer + tmpPathLen, "/" );
+			}
+		else
+			strcpy( fileNameBuffer, "/tmp/" );
 		}
-	else
-		strcpy( fileNameBuffer, "/tmp/" );
 #else
 	fileNameBuffer[ 0 ] = '\0';
 #endif /* OS-specific paths */
@@ -819,12 +1048,15 @@ int printConnectInfo( const CRYPT_SESSION cryptSession )
 #else
 	serverName[ serverNameLength ] = '\0';
 	time( &theTime );
-	printf( "SVR: Connect attempt from %s, port %d, on %s", serverName,
-			serverPort, ctime( &theTime ) );
+	printf( "SVR: Connect attempt from %s, port %d, on %s.\n", serverName,
+			serverPort, getTimeString( theTime, 0 ) );
 #endif /* UNICODE_STRINGS */
+	fflush( stdout );
 
 	/* Display all the attributes that we've got */
-	return( displayAttributes( cryptSession ) );
+	status = displayAttributes( cryptSession );
+	fflush( stdout );
+	return( status );
 	}
 
 /* Print security info for the session */
@@ -833,8 +1065,7 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 					   const BOOLEAN isServer,
 					   const BOOLEAN showFingerprint )
 	{
-	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE ];
-	int cryptAlgo, keySize, version, length, i, status;
+	int cryptAlgo, keySize, version, status;
 
 	/* Print general security info */
 	status = cryptGetAttribute( cryptSession, CRYPT_CTXINFO_ALGO,
@@ -854,8 +1085,20 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 	printf( "%sSession is protected using algorithm %d with a %d bit key,\n"
 			"  protocol version %d.\n", isServer ? "SVR: " : "",
 			cryptAlgo, keySize * 8, version );
+	fflush( stdout );
 	if( isServer || !showFingerprint )
 		return( TRUE );
+
+	status = printFingerprint( cryptSession, FALSE );
+	fflush( stdout );
+	return( status );
+	}
+
+int printFingerprint( const CRYPT_SESSION cryptSession,
+					  const BOOLEAN isServer )
+	{
+	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE ];
+	int i, length, status;
 
 	/* Print the server key fingerprint */
 	status = cryptGetAttributeString( cryptSession,
@@ -871,6 +1114,7 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 	for( i = 0; i < length; i++ )
 		printf( " %02X", fingerPrint[ i ] );
 	puts( "." );
+	fflush( stdout );
 
 	return( TRUE );
 	}
@@ -915,6 +1159,62 @@ BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 	return( TRUE );
 	}
 
+/* Run a persistent server session, recycling the connection if the client
+   kept the link open */
+
+int activatePersistentServerSession( const CRYPT_SESSION cryptSession,
+									 const BOOLEAN showOperationType )
+	{
+	BOOLEAN connectionActive = FALSE;
+	int status;
+
+	do
+		{
+		/* Activate the connection */
+		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE,
+									TRUE );
+		if( status == CRYPT_ERROR_READ && connectionActive )
+			{
+			/* The other side closed the connection after a previous
+			   successful transaction, this isn't an error */
+			return( CRYPT_OK );
+			}
+
+		/* Print connection info and check whether the connection is still
+		   active.  If it is, we recycle the session so that we can process
+		   another request */
+		printConnectInfo( cryptSession );
+		if( cryptStatusOK( status ) && showOperationType )
+			{
+			char userID[ CRYPT_MAX_TEXTSIZE ];
+			int userIDsize, requestType;
+
+			status = cryptGetAttribute( cryptSession,
+										CRYPT_SESSINFO_CMP_REQUESTTYPE,
+										&requestType );
+			if( cryptStatusOK( status ) )
+				status = cryptGetAttributeString( cryptSession,
+											CRYPT_SESSINFO_USERNAME,
+											userID, &userIDsize );
+			if( cryptStatusError( status ) )
+				printf( "cryptGetAttribute/AttributeString() failed with "
+						"error code %d, line %d.\n", status, __LINE__ );
+			else
+				{
+				userID[ userIDsize ] = '\0';
+				printf( "SVR: Operation type was %d, user '%s'.\n",
+						requestType, userID );
+				fflush( stdout );
+				}
+			}
+		cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
+						   &connectionActive );
+		}
+	while( cryptStatusOK( status ) && connectionActive );
+
+	return( status );
+	}
+
 /****************************************************************************
 *																			*
 *							Attribute Dump Routines							*
@@ -930,10 +1230,7 @@ int displayAttributes( const CRYPT_HANDLE cryptHandle )
 	if( cryptStatusError( \
 			cryptSetAttribute( cryptHandle, CRYPT_ATTRIBUTE_CURRENT_GROUP,
 							   CRYPT_CURSOR_FIRST ) ) )
-		{
-		puts( "  (No attributes present)." );
 		return( TRUE );
-		}
 
 	puts( "Attributes present (by cryptlib ID) are:" );
 	do
@@ -1167,57 +1464,52 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 									  &validFrom, &length ) );
 		CHK( cryptGetAttributeString( certificate, CRYPT_CERTINFO_VALIDTO,
 									  &validTo, &length ) );
-		strcpy( buffer, ctime( &validFrom ) );
-		buffer[ strlen( buffer ) - 1 ] = '\0';	/* Stomp '\n' */
-		printf( "Certificate is valid from %s to %s", buffer,
-				ctime( &validTo ) );
+		printf( "Certificate is valid from %s to %s", 
+				getTimeString( validFrom, 0 ),
+				getTimeString( validTo, 1 ) );
 		}
 	if( certType == CRYPT_CERTTYPE_OCSP_RESPONSE )
 		{
-		char tuBuffer[ 50 ], nuBuffer[ 50 ];
-		time_t timeStamp;
+		time_t thisUpdate, nextUpdate;
 
 		status = cryptGetAttributeString( certificate, CRYPT_CERTINFO_THISUPDATE,
-										  &timeStamp, &length );
+										  &thisUpdate, &length );
 		if( cryptStatusOK( status ) )
 			{
 			/* RTCS basic responses only return a minimal valid/not valid
-			   status, so failing to find a time isn't an error */
-			strcpy( tuBuffer, ctime( &timeStamp ) );
-			tuBuffer[ strlen( tuBuffer ) - 1 ] = '\0';		/* Stomp '\n' */
+			   status so failing to find a time isn't an error */
 			status = cryptGetAttributeString( certificate,
 											  CRYPT_CERTINFO_NEXTUPDATE,
-											  &timeStamp, &length );
+											  &nextUpdate, &length );
 			if( cryptStatusOK( status ) )
 				{
-				strcpy( nuBuffer, ctime( &timeStamp ) );
-				nuBuffer[ strlen( nuBuffer ) - 1 ] = '\0';	/* Stomp '\n' */
-				printf( "OCSP source CRL time %s,\n  next update %s.\n", tuBuffer,
-						nuBuffer );
+				printf( "OCSP source CRL time %s,\n  next update %s.\n", 
+						getTimeString( thisUpdate, 0 ), 
+						getTimeString( nextUpdate, 1 ) );
 				}
 			else
-				printf( "OCSP source CRL time %s.\n", tuBuffer );
+				{
+				printf( "OCSP source CRL time %s.\n", 
+						getTimeString( thisUpdate, 0 ) );
+				}
 			}
 		}
 	if( certType == CRYPT_CERTTYPE_CRL )
 		{
-		char tuBuffer[ 50 ], nuBuffer[ 50 ];
-		time_t timeStamp;
+		time_t thisUpdate, nextUpdate;
 
 		CHK( cryptGetAttributeString( certificate, CRYPT_CERTINFO_THISUPDATE,
-									  &timeStamp, &length ) );
-		strcpy( tuBuffer, ctime( &timeStamp ) );
-		tuBuffer[ strlen( tuBuffer ) - 1 ] = '\0';		/* Stomp '\n' */
+									  &thisUpdate, &length ) );
 		status = cryptGetAttributeString( certificate, CRYPT_CERTINFO_NEXTUPDATE,
-										  &timeStamp, &length );
+										  &nextUpdate, &length );
 		if( cryptStatusOK( status ) )
 			{
-			strcpy( nuBuffer, ctime( &timeStamp ) );
-			nuBuffer[ strlen( nuBuffer ) - 1 ] = '\0';	/* Stomp '\n' */
-			printf( "CRL time %s,\n  next update %s.\n", tuBuffer, nuBuffer );
+			printf( "CRL time %s,\n  next update %s.\n", 
+					getTimeString( thisUpdate, 0 ), 
+					getTimeString( nextUpdate, 1 ) );
 			}
 		else
-			printf( "CRL time %s.\n", tuBuffer );
+			printf( "CRL time %s.\n", getTimeString( thisUpdate, 0 ) );
 		}
 #endif /* _WIN32_WCE */
 	if( certType == CRYPT_CERTTYPE_CRL || \
@@ -1233,9 +1525,8 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 			puts( "Revocation/validity list information: " );
 			do
 				{
-				char timeBuffer[ 50 ];
 #ifndef _WIN32_WCE
-				time_t timeStamp;
+				time_t timeStamp = 0;
 #endif /* _WIN32_WCE */
 				int revStatus, certStatus;
 
@@ -1262,12 +1553,8 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 					CHK( cryptGetAttributeString( certificate,
 								CRYPT_CERTINFO_REVOCATIONDATE, &timeStamp,
 								&length ) );
-					strcpy( timeBuffer, ctime( &timeStamp ) );
-					timeBuffer[ strlen( timeBuffer ) - 1 ] = '\0';	/* Stomp '\n' */
 					}
-				else
 #endif /* _WIN32_WCE */
-					strcpy( timeBuffer, "<None>" );
 
 				/* Make sure we don't print excessive amounts of
 				   information */
@@ -1300,12 +1587,12 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 									"not revoked" : \
 								( revStatus == CRYPT_OCSPSTATUS_REVOKED ) ? \
 									"revoked" : "unknown",
-								timeBuffer );
+								getTimeString( timeStamp, 0 ) );
 						break;
 
 					case CRYPT_CERTTYPE_CRL:
 						printf( "  Entry %d, revocation time %s.\n", noEntries,
-								timeBuffer );
+								getTimeString( timeStamp, 0 ) );
 						break;
 
 					default:
@@ -1369,7 +1656,8 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 								CRYPT_CERTINFO_INVALIDITYDATE, &theTime, &length );
 #ifndef _WIN32_WCE
 		if( cryptStatusOK( status ) )
-			printf( "  invalidityDate = %s", ctime( &theTime ) );
+			printf( "  invalidityDate = %s.\n", 
+					getTimeString( theTime, 0 ) );
 #endif /* _WIN32_WCE */
 		if( cryptStatusOK( \
 				cryptGetAttribute( certificate,
@@ -1392,7 +1680,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 										  CRYPT_CERTINFO_CMS_SIGNINGTIME,
 										  &signingTime, &length );
 		if( cryptStatusOK( status ) )
-			printf( "Signing time %s", ctime( &signingTime ) );
+			printf( "Signing time %s.\n", getTimeString( signingTime, 0 ) );
 		return( TRUE );
 		}
 #endif /* _WIN32_WCE */
@@ -1417,7 +1705,35 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 	status = cryptGetAttribute( certificate,
 								CRYPT_CERTINFO_KEYUSAGE, &value );
 	if( cryptStatusOK( status ) && value )
-		printf( "  keyUsage = %02X.\n", value );
+		{
+		static const struct { int flag; const char *name; } usageNames[] = {
+			{ CRYPT_KEYUSAGE_DIGITALSIGNATURE, "digSig" },
+			{ CRYPT_KEYUSAGE_NONREPUDIATION, "nonRep" },
+			{ CRYPT_KEYUSAGE_KEYENCIPHERMENT, "keyEnc" },
+			{ CRYPT_KEYUSAGE_DATAENCIPHERMENT, "dataEnc" },
+			{ CRYPT_KEYUSAGE_KEYAGREEMENT, "keyAgree" },
+			{ CRYPT_KEYUSAGE_KEYCERTSIGN, "certSign" },
+			{ CRYPT_KEYUSAGE_CRLSIGN, "crlSign" },
+			{ CRYPT_KEYUSAGE_ENCIPHERONLY, "encOnly" },
+			{ CRYPT_KEYUSAGE_DECIPHERONLY, "decOnly" },
+			{ CRYPT_KEYUSAGE_NONE, NULL }
+			};
+		BOOLEAN printedUsage = FALSE;
+		int i;
+
+		printf( "  keyUsage = %02X (", value );
+		for( i = 0; usageNames[ i ].flag != CRYPT_KEYUSAGE_NONE; i++ )
+			{
+			if( usageNames[ i ].flag & value )
+				{
+				if( printedUsage )
+					printf( ", " );
+				printf( "%s", usageNames[ i ].name );
+				printedUsage = TRUE;
+				}
+			}
+		puts( ")." );
+		}
 	status = cryptGetAttribute( certificate,
 								CRYPT_CERTINFO_EXTKEYUSAGE, &value );
 	if( cryptStatusOK( status ) && value )

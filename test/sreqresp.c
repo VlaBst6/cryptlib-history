@@ -27,7 +27,7 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 			  const CRYPT_SIGNATURELEVEL_TYPE sigLevel,
 			  const CRYPT_CONTEXT privKeyContext );
 
-#ifdef TEST_SESSION
+#if defined( TEST_SESSION ) || defined( TEST_SESSION_LOOPBACK )
 
 /****************************************************************************
 *																			*
@@ -152,14 +152,17 @@ static int connectCertstoreClient( void )
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_HTTP,
 							  TEXT( "localhost" ), CRYPT_KEYOPT_READONLY );
 	if( status == CRYPT_ERROR_PARAM3 )
+		{
 		/* This type of keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptKeysetOpen() failed with error code %d, line %d.\n",
 				status, __LINE__ );
 		return( CRYPT_ERROR_FAILED );
 		}
+
 
 	/* Read a present certificate from the keyset using the ASCII email
 	   address */
@@ -184,7 +187,11 @@ static int connectCertstoreClient( void )
 	/* Read the certificate from the keyset using the base64-encoded certID.
 	   Since this uses an internal identifier, we can't actually do it from
 	   here, this requires modifying the internal keyset read code to
-	   substitute the different identifier type */
+	   substitute the different identifier type.
+	   
+	   A second purpose for this call is to test the ability of the client
+	   to recover from the CRYPT_ERROR_NOTFOUND in the previous call, i.e.
+	   the error should be nonfatal with further requests possible */
 	status = cryptGetPublicKey( cryptKeyset, &cryptCert, CRYPT_KEYID_EMAIL,
 								cert1ID );
 	if( cryptStatusError( status ) )
@@ -258,7 +265,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 						const BOOLEAN localSession )
 	{
 	CRYPT_SESSION cryptSession;
-	CRYPT_CERTIFICATE cryptRTCSRequest, cryptRTCSResponse;
+	CRYPT_CERTIFICATE cryptRTCSRequest;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_RTCS_SERVER ) ? \
 							   TRUE : FALSE;
 	int status;
@@ -266,9 +273,13 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 	printf( "%sTesting %sRTCS session...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "" );
 
-	/* Acquire the init mutex if we're the server */
-	if( localSession && isServer )
-		waitMutex();
+	/* If we're the client, wait for the server to finish initialising */
+	if( localSession && !isServer && waitMutex() == CRYPT_ERROR_TIMEOUT )
+		{
+		printf( "Timed out waiting for server to initialise, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
 
 	/* Create the RTCS session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
@@ -432,6 +443,8 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 	/* Obtain the response information */
 	if( !isServer )
 		{
+		CRYPT_CERTIFICATE cryptRTCSResponse;
+		
 		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE,
 									&cryptRTCSResponse );
 		if( cryptStatusError( status ) )
@@ -441,10 +454,10 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			return( FALSE );
 			}
 		printCertInfo( cryptRTCSResponse );
+		cryptDestroyCert( cryptRTCSResponse );
 		}
 
 	/* Clean up */
-	cryptDestroyCert( cryptRTCSResponse );
 	status = cryptDestroySession( cryptSession );
 	if( cryptStatusError( status ) )
 		{
@@ -519,6 +532,7 @@ int testSessionRTCSServer( void )
 	int status;
 
 	createMutex();
+	acquireMutex();
 	status = connectRTCS( CRYPT_SESSION_RTCS_SERVER, FALSE, FALSE );
 	destroyMutex();
 
@@ -531,6 +545,7 @@ int testSessionRTCSServer( void )
 
 unsigned __stdcall rtcsServerThread( void *dummy )
 	{
+	acquireMutex();
 	connectRTCS( CRYPT_SESSION_RTCS_SERVER, FALSE, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
@@ -607,7 +622,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 						const BOOLEAN localSession )
 	{
 	CRYPT_SESSION cryptSession;
-	CRYPT_CERTIFICATE cryptOCSPRequest, cryptOCSPResponse;
+	CRYPT_CERTIFICATE cryptOCSPRequest;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_OCSP_SERVER ) ? \
 							   TRUE : FALSE;
 	int status;
@@ -615,9 +630,13 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 	printf( "%sTesting %sOCSP session...\n", isServer ? "SVR: " : "",
 			localSession ? "local " : "" );
 
-	/* Acquire the init mutex if we're the server */
-	if( localSession && isServer )
-		waitMutex();
+	/* If we're the client, wait for the server to finish initialising */
+	if( localSession && !isServer && waitMutex() == CRYPT_ERROR_TIMEOUT )
+		{
+		printf( "Timed out waiting for server to initialise, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
 
 	/* Create the OCSP session */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, sessionType );
@@ -760,6 +779,8 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 	/* Obtain the response information */
 	if( !isServer )
 		{
+		CRYPT_CERTIFICATE cryptOCSPResponse;
+		
 		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE,
 									&cryptOCSPResponse );
 		if( cryptStatusError( status ) )
@@ -769,6 +790,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			return( FALSE );
 			}
 		printCertInfo( cryptOCSPResponse );
+		cryptDestroyCert( cryptOCSPResponse );
 		}
 
 	/* There are so many weird ways to delegate trust and signing authority
@@ -783,7 +805,6 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 		return( attrErrorExit( cryptOCSPResponse , "cryptCheckCert()",
 							   status, __LINE__ ) );
 #endif /* 0 */
-	cryptDestroyCert( cryptOCSPResponse );
 
 	/* Clean up */
 	status = cryptDestroySession( cryptSession );
@@ -872,6 +893,7 @@ int testSessionOCSPServer( void )
 
 unsigned __stdcall ocspServerThread( void *dummy )
 	{
+	acquireMutex();
 	connectOCSP( CRYPT_SESSION_OCSP_SERVER, FALSE, FALSE, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
@@ -954,13 +976,24 @@ static int testTSP( const CRYPT_SESSION cryptSession,
 	{
 	int status;
 
+	/* If we're the client, wait for the server to finish initialising */
+	if( localSession && !isServer && waitMutex() == CRYPT_ERROR_TIMEOUT )
+		{
+		printf( "Timed out waiting for server to initialise, line %d.\n", 
+				__LINE__ );
+		return( FALSE );
+		}
+
 	/* If we're the client, create a message imprint to timestamp */
 	if( !isServer )
 		{
 		CRYPT_CONTEXT hashContext;
 
 		/* Create the hash value to add to the TSP request */
-		cryptCreateContext( &hashContext, CRYPT_UNUSED, CRYPT_ALGO_SHA );
+		status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
+									 CRYPT_ALGO_SHA );
+		if( cryptStatusError( status ) )
+			return( FALSE );
 		cryptEncrypt( hashContext, "12345678", 8 );
 		cryptEncrypt( hashContext, "", 0 );
 		if( isRecycledConnection )
@@ -1194,6 +1227,7 @@ int testSessionTSPServerEx( const CRYPT_CONTEXT privKeyContext )
 
 unsigned __stdcall tspServerThread( void *dummy )
 	{
+	acquireMutex();
 	connectTSP( CRYPT_SESSION_TSP_SERVER, CRYPT_UNUSED, FALSE, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
@@ -1220,6 +1254,7 @@ int testSessionTSPClientServer( void )
 
 unsigned __stdcall tspServerPersistentThread( void *dummy )
 	{
+	acquireMutex();
 	connectTSP( CRYPT_SESSION_TSP_SERVER, CRYPT_UNUSED, TRUE, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
@@ -1245,4 +1280,4 @@ int testSessionTSPClientServerPersistent( void )
 	}
 #endif /* WINDOWS_THREADS */
 
-#endif /* TEST_SESSION */
+#endif /* TEST_SESSION || TEST_SESSION_LOOPBACK */

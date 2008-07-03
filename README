@@ -1,3 +1,11 @@
+Changes in 3.3.2 release
+========================
+
+This release features numerous updates to the build mechanism and code to
+handle new compiler versions, as well as workarounds for interoperability
+problems with other implementations.  This version also features numerous
+reliability and stability enhancements.
+
 Changes in 3.3.1 release
 ========================
 

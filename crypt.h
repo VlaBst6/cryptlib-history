@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Internal General Header File 				*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2007					*
 *																			*
 ****************************************************************************/
 
@@ -253,6 +253,14 @@
   #include "misc/os_spec.h"
 #endif /* Compiler-specific includes */
 
+/* Pull in the source code analysis header */
+
+#if defined( INC_ALL )
+  #include "analyse.h"
+#else
+  #include "misc/analyse.h"
+#endif /* Compiler-specific includes */
+
 /****************************************************************************
 *																			*
 *								Config Options								*
@@ -286,8 +294,21 @@
 *																			*
 ****************************************************************************/
 
-/* Read/write values as 16- and 32-bit big-endian data, required for a
-   variety of non-ASN.1 data formats */
+/* Read/write values as 16- and 32-bit big-endian data in cases where we're
+   not dealing with a stream.  Usage:
+   
+	mget/putWord(): 
+		CMP "TCP" protocol (disabled by default).
+		SSHv1 (disabled by default).
+		SOCKS wrapper in network code (disabled by default).
+
+	mget/putLong(): 
+		CMP "TCP" protocol, also used in TSP (disabled by default in both).
+		SSHv1 (disabled by default).
+		Sampling data from the crypto RNG to detect stuck-at faults.
+		Debug version of clAlloc() */
+
+#if defined( USE_CMP_TRANSPORT ) || defined( USE_SSH1 ) 
 
 #define mgetWord( memPtr ) \
 		( ( ( unsigned int ) memPtr[ 0 ] << 8 ) | \
@@ -298,6 +319,8 @@
 		memPtr[ 0 ] = ( BYTE ) ( ( ( data ) >> 8 ) & 0xFF ); \
 		memPtr[ 1 ] = ( BYTE ) ( ( data ) & 0xFF ); \
 		memPtr += 2
+
+#endif /* USE_CMP_TRANSPORT || USE_SSH1 */
 
 #define mgetLong( memPtr ) \
 		( ( ( unsigned long ) memPtr[ 0 ] << 24 ) | \
@@ -348,10 +371,12 @@ typedef struct {
 	CRYPT_MODE_TYPE cryptMode;		/* The encryption mode */
 
 	/* The key ID for public key objects */
+	BUFFER( CRYPT_MAX_HASHSIZE, keyIDlength ) \
 	BYTE keyID[ CRYPT_MAX_HASHSIZE + 8 ];/* PKC key ID */
 	int keyIDlength;
 
 	/* The IV for conventionally encrypted data */
+	BUFFER( CRYPT_MAX_IVSIZE, ivLength ) \
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];/* IV */
 	int ivLength;
 
@@ -359,6 +384,7 @@ typedef struct {
 	   encrypted keys */
 	CRYPT_ALGO_TYPE keySetupAlgo;	/* Key setup algorithm */
 	int keySetupIterations;			/* Key setup iteration count */
+	BUFFER( CRYPT_MAX_HASHSIZE, saltLength ) \
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];/* Key setup salt */
 	int saltLength;
 
@@ -385,7 +411,11 @@ typedef struct {
    pass data to the DLP-based PKCs */
 
 typedef struct {
-	const BYTE *inParam1, *inParam2;	/* Input parameters */
+	BUFFER_FIXED( inLen1 ) \
+	const BYTE *inParam1;
+	BUFFER_OPT_FIXED( inLen2 ) \
+	const BYTE *inParam2;				/* Input parameters */
+	BUFFER_FIXED( outLen ) \
 	BYTE *outParam;						/* Output parameter */
 	int inLen1, inLen2, outLen;			/* Parameter lengths */
 	CRYPT_FORMAT_TYPE formatType;		/* Paramter format type */
@@ -418,13 +448,16 @@ typedef struct {
 	SSH, SSL: publicValue = y, wrappedKey = x */
 
 typedef struct {
+	BUFFER( CRYPT_MAX_PKCSIZE, publicValueLen ) \
 	BYTE publicValue[ CRYPT_MAX_PKCSIZE + 8 ];
 	int publicValueLen;				/* Public key value */
 #ifdef USE_FORTEZZA
+	BUFFER( CRYPT_MAX_PKCSIZE, ukmLen ) \
 	BYTE ukm[ CRYPT_MAX_PKCSIZE + 8 ];
 	int ukmLen;						/* User keying material */
 	CRYPT_CONTEXT sessionKeyContext;/* Context for derived key */
 #endif /* USE_FORTEZZA */
+	BUFFER( CRYPT_MAX_PKCSIZE, wrappedKeyLen ) \
 	BYTE wrappedKey[ CRYPT_MAX_PKCSIZE + 8 ];
 	int wrappedKeyLen;				/* Wrapped key */
 	} KEYAGREE_PARAMS;
@@ -438,7 +471,7 @@ typedef struct {
 /* Reasonably reliable way to get rid of unused argument warnings in a
    compiler-independant manner */
 
-#define UNUSED( arg )	( ( arg ) = ( arg ) )
+#define UNUSED_ARG( arg )	( ( arg ) = ( arg ) )
 
 /* Although min() and max() aren't in the ANSI standard, most compilers have
    them in one form or another, but just enough don't that we need to define 
@@ -468,9 +501,20 @@ typedef struct {
 
 /* A macro to clear sensitive data from memory.  This is somewhat easier to
    use than calling memset with the second parameter set to 0 all the time,
-   and makes it obvious where sensitive data is being erased */
+   and makes it obvious where sensitive data is being erased.  In addition
+   some systems, recognising the problem, have distinct memory zeroisation
+   support, so if available we use that */
 
-#define zeroise( memory, size )		memset( memory, 0, size )
+#if defined( _MSC_VER ) && VC_GE_2005( _MSC_VER )
+  /* This isn't terribly spectacular, just a mapping to 
+     RtlSecureZeroMemory() which is implemented as inline code implementing 
+	 a loop on a pointer declared volatile, but there's an implied contract
+	 that future versions will always zeroise memory even in the face of
+	 compiler changes that would otherwise optimise away the access */
+  #define zeroise( memory, size )	SecureZeroMemory( memory, size )
+#else
+  #define zeroise( memory, size )	memset( memory, 0, size )
+#endif /* Systems with distinct zeroise functions */
 
 /* A macro to check that a value is a possibly valid handle.  This doesn't
    check that the handle refers to a valid object, merely that the value is
@@ -517,8 +561,7 @@ typedef struct {
 	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
 #define isDlpAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_DSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL || \
-	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA || \
-	  ( algorithm ) == CRYPT_ALGO_ECDSA )
+	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
 #define isEccAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_ECDSA )
 
@@ -529,6 +572,15 @@ typedef struct {
 
 #define isShortPKCKey( keySize ) \
 		( ( keySize ) >= bitsToBytes( 504 ) && ( keySize ) < MIN_PKCSIZE )
+
+/* Perform a range check on a block of memory, checking that 
+   { start, length } falls within { 0, totalLength }.  The lower bound on 
+   the length is set by PGP attributes, which can consist of nothing but a
+   16-bit length */
+
+#define rangeCheck( start, length, totalLength ) \
+		( ( start ) <= 0 || ( length ) < 2 || \
+		  ( start ) + ( length ) > ( totalLength ) ) ? FALSE : TRUE
 
 /* Check the validity of a pointer passed to a cryptlib function.  Usually
    the best that we can do is check that it's not null, but some OSes allow
@@ -572,9 +624,25 @@ typedef struct {
    them up in assert()s.  Under Windows Vista, they've actually been turned
    into no-ops because of the above problems, although it's probable that
    they'll be replaced by a code to check for NULL pointers, since
-   Microsoft's docs indicate that this much checking will still be done */
+   Microsoft's docs indicate that this much checking will still be done.  If
+   necessary we could also replace the no-op'd out versions with the 
+   equivalent code:
 
-#if defined( __WIN32__ ) || defined( __WINCE__ )
+	inline BOOL IsBadReadPtr( const VOID *lp, UINT_PTR ucb )
+		{
+		__try { memcmp( p, p, cb ); }
+		__except( EXCEPTION_EXECUTE_HANDLER ) { return( FALSE ); }
+		return( TRUE );
+		}
+
+	inline BOOL IsBadWritePtr( LPVOID lp, UINT_PTR ucb )
+		{
+		__try { memset( p, 0, cb ); }
+		__except( EXCEPTION_EXECUTE_HANDLER ) { return( FALSE ); }
+		return( TRUE );
+		} */
+
+#if ( defined( __WIN32__ ) || defined( __WINCE__ ) ) && 1
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
 									  !IsBadReadPtr( ( ptr ), ( size ) ) )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
@@ -583,36 +651,6 @@ typedef struct {
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
 #endif /* Pointer check macros */
-
-/* Handle internal errors.  These follow a fixed pattern of "throw an 
-   exception, return an internal-error code" (with a few exceptions for
-   functions that return a pointer or void) */
-
-#define retIntError() \
-		{ \
-		assert( NOTREACHED ); \
-		return( CRYPT_ERROR_INTERNAL ); \
-		}
-#define retIntError_Null() \
-		{ \
-		assert( NOTREACHED ); \
-		return( NULL ); \
-		}
-#define retIntError_Boolean() \
-		{ \
-		assert( NOTREACHED ); \
-		return( FALSE ); \
-		}
-#define retIntError_Void() \
-		{ \
-		assert( NOTREACHED ); \
-		return; \
-		}
-#define retIntError_Ext( value ) \
-		{ \
-		assert( NOTREACHED ); \
-		return( value ); \
-		}
 
 /* Clear/set object error information */
 
@@ -694,18 +732,34 @@ typedef struct {
 #else
   #include <assert.h>
 #endif /* Systems without assert() */
-#define NOTREACHED	0	/* Force an assertion failure via assert( NOTREACHED ) */
+#define DEBUG_WARN	0	/* Force an assertion failure via assert( DEBUG_WARN ) */
 
-/* The following macro outputs an I-am-here to stdout, useful when tracing
-   errors in code without debug symbols available */
+/* Output an I-am-here to stdout, useful when tracing errors in code without 
+   debug symbols available */
 
-#define DEBUG_INFO()	printf( "%4d %s.\n", __LINE__, __FILE__ );
+#if defined( __GNUC__ ) || ( defined( _MSC_VER ) && VC_GE_2005( _MSC_VER ) )
+  /* Older version of gcc don't support the current syntax */
+  #if defined( __GNUC__ ) && ( __STDC_VERSION__ < 199901L )
+	#if __GNUC__ >= 2
+	  #define __FUNCTION__	__func__ 
+	#else
+	  #define __FUNCTION__	"<unknown>"
+	#endif /* gcc 2.x or newer */
+  #endif /* gcc without __func__ support */
 
-/* The following macros can be used to enable dumping of PDUs to disk and to
-   create a hex dump of the first n bytes of a buffer, along with the length
-   and a checksum of the entire buffer.  As a safeguard, these only work in
-   the Win32 debug version to prevent them from being accidentally enabled in
-   any release version */
+  #define DEBUG_ENTER()	printf( "Enter %s %s %d.\n", __FILE__, __FUNCTION__, __LINE__ )
+  #define DEBUG_IN()	printf( "In    %s %s %d.\n", __FILE__, __FUNCTION__, __LINE__ )
+  #define DEBUG_EXIT()	printf( "Exit  %s %s %d, status %d.\n", __FILE__, __FUNCTION__, __LINE__, status )
+#else
+  #define DEBUG_ENTER()	printf( "Enter %s %d.\n", __FILE__, __LINE__ )
+  #define DEBUG_IN()	printf( "In    %s %d.\n", __FILE__, __LINE__ )
+  #define DEBUG_EXIT()	printf( "Exit  %s %d, status %d.\n", __FILE__, __LINE__, status )
+#endif /* Compiler-specific diagnotics */
+
+/* Dump a PDU to disk and create a hex dump of the first n bytes of a buffer 
+   along with the length and a checksum of the entire buffer.  As a safeguard 
+   these only work in the Win32 debug version to prevent them from being 
+   accidentally enabled in any release version */
 
 #if defined( __WIN32__ ) && !defined( NDEBUG )
   #ifdef __STDC_LIB_EXT1__
@@ -758,27 +812,62 @@ typedef struct {
 		} \
 	}
 
-  #define DEBUG_DUMPHEX( dumpBuf, dumpLen ) \
+  /* The use of a memory buffer is to allow the hex dump to be performed 
+     from multiple threads without them fighting over stdout */
+  #define DEBUG_DUMPHEX( dumpPrefix, dumpBuf, dumpLen ) \
 	{ \
-	const int maxLen = min( dumpLen, 19 ); \
-	int i; \
+	char dumpBuffer[ 128 ]; \
+	int offset, i, j; \
 	\
-	printf( "%4d %04X ", dumpLen, checksumData( dumpBuf, dumpLen ) ); \
-	for( i = 0; i < maxLen; i++ ) \
-		printf( "%02X ", ( ( BYTE * ) dumpBuf )[ i ] ); \
-	for( i = 0; i < maxLen; i++ ) \
+	offset = sprintf( dumpBuffer, "%4s %4d %04X ", dumpPrefix, dumpLen, \
+					  checksumData( dumpBuf, dumpLen ) ); \
+	for( i = 0; i < dumpLen; i += 16 ) \
 		{ \
-		const BYTE ch = ( ( BYTE * ) dumpBuf )[ i ]; \
+		const int innerLen = min( dumpLen - i, 16 ); \
 		\
-		putchar( isprint( ch ) ? ch : '.' ); \
+		if( i > 0 ) \
+			offset = sprintf( dumpBuffer, "%4s           ", \
+							  dumpPrefix ); \
+		for( j = 0; j < innerLen; j++ ) \
+			offset += sprintf( dumpBuffer + offset, "%02X ", \
+							   ( ( BYTE * ) dumpBuf )[ i + j ] ); \
+		for( ; j < 16; j++ ) \
+			offset += sprintf( dumpBuffer + offset, "   " ); \
+		for( j = 0; j < innerLen; j++ ) \
+			{ \
+			const BYTE ch = ( ( BYTE * ) dumpBuf )[ i + j ]; \
+			\
+			offset += sprintf( dumpBuffer + offset, "%c", \
+							   isprint( ch ) ? ch : '.' ); \
+			} \
+		puts( dumpBuffer ); \
 		} \
-	putchar( '\n' ); \
+	fflush( stdout ); \
 	}
 #else
   #define DEBUG_DUMP( name, data, length )
   #define DEBUG_DUMP_CERT( name, data, length )
-  #define DEBUG_DUMPHEX( dumpBuf, dumpLen )
+  #define DEBUG_DUMPHEX( dumpPrefix, dumpBuf, dumpLen )
 #endif /* Win32 debug */
+
+/* Dump a trace of a double-linked list */
+
+#define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \
+		{ \
+		listType *listPtr; \
+		\
+		printf( "%s: Walking list beginning at %lX.\n", \
+				label, ( listHead ) ); \
+		for( listPtr = ( listHead ); \
+			 listPtr != NULL; listPtr = listPtr->next ) \
+			{ \
+			printf( "  Ptr = %lX, prev = %lX, next = %lX.\n", \
+					listPtr, listPtr->prev, listPtr->next ); \
+			} \
+		if( ( listHead ) != NULL ) \
+			printf( "  List tail = %lX.\n", ( listTail ) ); \
+		printf( "Finished walking list beginning at %lX.\n", ( listHead ) ); \
+		}
 
 /* In order to debug memory usage, we can define CONFIG_DEBUG_MALLOC to dump
    memory usage diagnostics to stdout (this would usually be done in the

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					Certificate Attribute Management Routines				*
-*						Copyright Peter Gutmann 1996-2004					*
+*						Copyright Peter Gutmann 1996-2007					*
 *																			*
 ****************************************************************************/
 
@@ -15,11 +15,6 @@
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
-/* Prototypes for functions in certdn.c */
-
-int convertEmail( CERT_INFO *certInfoPtr, void **dnListHead,
-				  const CRYPT_ATTRIBUTE_TYPE altNameType );
-
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -29,16 +24,29 @@ int convertEmail( CERT_INFO *certInfoPtr, void **dnListHead,
 /* Callback function used to provide external access to attribute list-
    internal fields */
 
-static const void *getAttrFunction( const void *attributePtr, 
-									CRYPT_ATTRIBUTE_TYPE *groupID, 
-									CRYPT_ATTRIBUTE_TYPE *attributeID, 
-									CRYPT_ATTRIBUTE_TYPE *instanceID,
-									const ATTR_TYPE attrGetType )
+CHECK_RETVAL_PTR \
+static const void *getAttrFunction( IN_OPT TYPECAST( ATTRIBUTE_LIST * ) \
+										const void *attributePtr, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *groupID, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *attributeID, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *instanceID,
+									IN_ENUM( ATTR ) const ATTR_TYPE attrGetType )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr = attributePtr;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( groupID == NULL || \
+			isWritePtr( groupID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( attributeID == NULL || \
+			isWritePtr( attributeID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( instanceID == NULL || \
+			isWritePtr( instanceID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+
+	REQUIRES_N( attrGetType > ATTR_NONE && attrGetType < ATTR_LAST );
 
 	/* Clear return values */
 	if( groupID != NULL )
@@ -49,14 +57,18 @@ static const void *getAttrFunction( const void *attributePtr,
 		*instanceID = CRYPT_ATTRIBUTE_NONE;
 
 	/* Move to the next or previous attribute if required */
-	if( !isValidAttributeField( attributeListPtr ) )
+	if( attributeListPtr == NULL || \
+		!isValidAttributeField( attributeListPtr ) )
 		return( NULL );
 	if( attrGetType == ATTR_PREV )
 		attributeListPtr = attributeListPtr->prev;
 	else
+		{
 		if( attrGetType == ATTR_NEXT )
 			attributeListPtr = attributeListPtr->next;
-	if( !isValidAttributeField( attributeListPtr ) )
+		}
+	if( attributeListPtr == NULL || \
+		!isValidAttributeField( attributeListPtr ) )
 		return( NULL );
 
 	/* Return ID information to the caller */
@@ -77,32 +89,41 @@ static const void *getAttrFunction( const void *attributePtr,
 
 /* Get the attribute information for a given OID */
 
-const ATTRIBUTE_INFO *oidToAttribute( const ATTRIBUTE_TYPE attributeType,
-									  const BYTE *oid )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+const ATTRIBUTE_INFO *oidToAttribute( IN_ENUM( ATTRIBUTE ) \
+										const ATTRIBUTE_TYPE attributeType,
+									  IN_BUFFER( oidLength ) const BYTE *oid, 
+									  IN_RANGE( MIN_OID_SIZE, MAX_OID_SIZE ) \
+										const int oidLength )
 	{
 	const ATTRIBUTE_INFO *attributeInfoPtr;
-	const int length = sizeofOID( oid );
 	const int attributeInfoSize = sizeofAttributeInfo( attributeType );
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( isReadPtr( selectAttributeInfo( attributeType ), 
 					   sizeof( ATTRIBUTE_INFO ) ) );
-	assert( isReadPtr( oid, sizeofOID( oid ) ) );
+	assert( isReadPtr( oid, oidLength ) );
+	
+	REQUIRES_N( attributeType == ATTRIBUTE_CERTIFICATE || \
+				attributeType == ATTRIBUTE_CMS );
+	REQUIRES_N( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE && \
+				oidLength == sizeofOID( oid ) );
+	REQUIRES_N( selectAttributeInfo( attributeType ) != NULL );
 
-	for( attributeInfoPtr = selectAttributeInfo( attributeType );
+	for( attributeInfoPtr = selectAttributeInfo( attributeType ), \
+			iterationCount = 0;
 		 attributeInfoPtr->fieldID != CRYPT_ERROR && \
-			iterationCount++ < attributeInfoSize; \
-		 attributeInfoPtr++ )
+			iterationCount < attributeInfoSize; \
+		 attributeInfoPtr++, iterationCount++ )
 		{
 		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
 		if( attributeInfoPtr->oid != NULL && \
-			sizeofOID( attributeInfoPtr->oid ) == length && \
-			!memcmp( attributeInfoPtr->oid, oid, length ) )
+			sizeofOID( attributeInfoPtr->oid ) == oidLength && \
+			!memcmp( attributeInfoPtr->oid, oid, oidLength ) )
 			return( attributeInfoPtr );
 		}
-	if( iterationCount >= attributeInfoSize )
-		retIntError_Null();
+	ENSURES_N( iterationCount < attributeInfoSize );
 
 	/* It's an unknown attribute */
 	return( NULL );
@@ -110,10 +131,15 @@ const ATTRIBUTE_INFO *oidToAttribute( const ATTRIBUTE_TYPE attributeType,
 
 /* Get the attribute and attributeID for a field ID */
 
-const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
-										  const CRYPT_ATTRIBUTE_TYPE fieldID, 
-										  const CRYPT_ATTRIBUTE_TYPE subFieldID,
-										  CRYPT_ATTRIBUTE_TYPE *attributeID )
+CHECK_RETVAL \
+const ATTRIBUTE_INFO *fieldIDToAttribute( IN_ENUM( ATTRIBUTE ) \
+											const ATTRIBUTE_TYPE attributeType,
+										  IN_ATTRIBUTE \
+											const CRYPT_ATTRIBUTE_TYPE fieldID, 
+										  IN_ATTRIBUTE_OPT \
+											const CRYPT_ATTRIBUTE_TYPE subFieldID,
+										  OUT_OPT_ATTRIBUTE_Z \
+											CRYPT_ATTRIBUTE_TYPE *attributeID )
 	{
 	const ATTRIBUTE_INFO *attributeInfoPtr = \
 							selectAttributeInfo( attributeType );
@@ -121,10 +147,17 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 	int i;
 
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	assert( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			fieldID <= CRYPT_CERTINFO_LAST );
 	assert( attributeID == NULL || \
 			isWritePtr( attributeID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+
+	REQUIRES_N( attributeType == ATTRIBUTE_CERTIFICATE || \
+				attributeType == ATTRIBUTE_CMS );
+	REQUIRES_N( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+				fieldID <= CRYPT_CERTINFO_LAST );
+	REQUIRES_N( subFieldID == CRYPT_ATTRIBUTE_NONE || \
+				( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
+				  subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
+	REQUIRES_N( attributeInfoPtr != NULL );
 
 	/* Clear the return value */
 	if( attributeID != NULL )
@@ -137,7 +170,7 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
 		/* If we're looking for an attribute ID and the previous entry 
-		   doesn't have more data following it, the current entry is the 
+		   doesn't have more data following it then the current entry is the 
 		   start of a complete attribute and therefore contains the 
 		   attribute ID */
 		if( attributeID != NULL && \
@@ -156,8 +189,7 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 			for( offset = 0; 
 				 attributeInfoPtr[ i + offset ].fieldID == FIELDID_FOLLOWS && \
 					i + offset < attributeInfoSize; offset++ );
-			if( i + offset >= attributeInfoSize )
-				retIntError_Null();
+			ENSURES_N( i + offset < attributeInfoSize );
 			*attributeID = attributeInfoPtr[ i + offset ].fieldID;
 			}
 
@@ -175,7 +207,7 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 
 				/* Unfortunately we can't use the attributeInfoSize bounds 
 				   check limit here because we don't know the size of the 
-				   alternative encoding table, so we have to use a generic
+				   alternative encoding table so we have to use a generic
 				   large value */
 				for( i = 0; altEncodingTable[ i ].fieldID != CRYPT_ERROR && \
 							i < FAILSAFE_ITERATIONS_LARGE; i++ )
@@ -184,21 +216,18 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 						return( &altEncodingTable[ i ] );
 					}
 
-				/* If we reach this point for any reason it's an error, so 
-				   we don't have to perform an explicit iteration-count 
-				   check */
-				assert( NOTREACHED );
-				return( NULL );
+				/* If we reach this point for any reason it's an error so we 
+				   don't have to perform an explicit iteration-count check */
+				retIntError_Null();
 				}
 
 			return( &attributeInfoPtr[ i ] );
 			}
 		}
 
-	/* If we reach this point for any reason it's an error, so we don't have
+	/* If we reach this point for any reason it's an error so we don't have
 	   to perform an explicit iteration-count check */
-	assert( NOTREACHED );
-	return( NULL );
+	retIntError_Null();
 	}
 
 /****************************************************************************
@@ -209,7 +238,8 @@ const ATTRIBUTE_INFO *fieldIDToAttribute( const ATTRIBUTE_TYPE attributeType,
 
 /* Find the start of an attribute from a field within the attribute */
 
-ATTRIBUTE_LIST *findAttributeStart( const ATTRIBUTE_LIST *attributeListPtr )
+CHECK_RETVAL_PTR \
+ATTRIBUTE_LIST *findAttributeStart( IN_OPT const ATTRIBUTE_LIST *attributeListPtr )
 	{
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
@@ -219,45 +249,58 @@ ATTRIBUTE_LIST *findAttributeStart( const ATTRIBUTE_LIST *attributeListPtr )
 
 /* Find an attribute in a list of certificate attributes by object identifier
    (for blob-type attributes) or by field and subfield ID (for known
-   attributes), with extended handling for fields with default values */
+   attributes) with extended handling for fields with default values */
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 ATTRIBUTE_LIST *findAttributeByOID( const ATTRIBUTE_LIST *attributeListPtr,
-									const BYTE *oid )
+									IN_BUFFER( oidLength ) const BYTE *oid, 
+									IN_RANGE( MIN_OID_SIZE, MAX_OID_SIZE ) \
+										const int oidLength )
 	{
-	const int length = sizeofOID( oid );
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( isReadPtr( oid, sizeofOID( oid ) ) );
+	assert( isReadPtr( oid, oidLength ) );
+	
+	REQUIRES_N( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE && \
+				oidLength == sizeofOID( oid ) );
 
 	/* Find the position of this component in the list */
-	while( attributeListPtr != NULL && \
-		   ( !isBlobAttribute( attributeListPtr ) || \
-			 sizeofOID( attributeListPtr->oid ) != length || \
-			 memcmp( attributeListPtr->oid, oid, length ) ) &&\
-		   iterationCount++ < FAILSAFE_ITERATIONS_MAX  )
-		 attributeListPtr = attributeListPtr->next;
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	for( iterationCount = 0;
+		 attributeListPtr != NULL && \
+			( !isBlobAttribute( attributeListPtr ) || \
+			  sizeofOID( attributeListPtr->oid ) != oidLength || \
+			  memcmp( attributeListPtr->oid, oid, oidLength ) ) && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ );
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( ( ATTRIBUTE_LIST * ) attributeListPtr );
 	}
 
-ATTRIBUTE_LIST *findAttributeField( const ATTRIBUTE_LIST *attributeListPtr,
-									const CRYPT_ATTRIBUTE_TYPE fieldID,
-									const CRYPT_ATTRIBUTE_TYPE subFieldID )
+CHECK_RETVAL_PTR \
+ATTRIBUTE_LIST *findAttributeField( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+									IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
+									IN_ATTRIBUTE_OPT \
+										const CRYPT_ATTRIBUTE_TYPE subFieldID )
 	{
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			fieldID <= CRYPT_CERTINFO_LAST );
+
+	REQUIRES_N( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+				fieldID <= CRYPT_CERTINFO_LAST );
+	REQUIRES_N( subFieldID == CRYPT_ATTRIBUTE_NONE || \
+				( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
+				  subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
 
 	return( attributeFind( attributeListPtr, getAttrFunction,
 						   fieldID, subFieldID ) );
 	}
 
-ATTRIBUTE_LIST *findAttributeFieldEx( const ATTRIBUTE_LIST *attributeListPtr,
-									  const CRYPT_ATTRIBUTE_TYPE fieldID )
+CHECK_RETVAL_PTR \
+ATTRIBUTE_LIST *findAttributeFieldEx( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+									  IN_ATTRIBUTE \
+										const CRYPT_ATTRIBUTE_TYPE fieldID )
 	{
 	static const ATTRIBUTE_LIST defaultField = DEFAULTFIELD_VALUE;
 	static const ATTRIBUTE_LIST completeAttribute = COMPLETEATTRIBUTE_VALUE;
@@ -267,12 +310,13 @@ ATTRIBUTE_LIST *findAttributeFieldEx( const ATTRIBUTE_LIST *attributeListPtr,
 							( fieldID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
 							ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE;
 	CRYPT_ATTRIBUTE_TYPE attributeID;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			fieldID <= CRYPT_CERTINFO_LAST );
+
+	REQUIRES_N( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+				fieldID <= CRYPT_CERTINFO_LAST );
 
 	if( attributeListPtr == NULL )
 		return( NULL );
@@ -290,19 +334,22 @@ ATTRIBUTE_LIST *findAttributeFieldEx( const ATTRIBUTE_LIST *attributeListPtr,
 	attributeInfoPtr = fieldIDToAttribute( attributeType, fieldID, 
 										   CRYPT_ATTRIBUTE_NONE, &attributeID );
 	if( attributeInfoPtr == NULL )
+		{
 		/* There's no attribute containing this field, exit */
 		return( NULL );
+		}
 
 	/* Check whether any part of the attribute that contains the given 
 	   field is present in the list of attribute fields */
-	for( attributeListCursor = attributeListPtr;
-		 isValidAttributeField( attributeListCursor ) && \
+	for( attributeListCursor = attributeListPtr, iterationCount = 0;
+		 attributeListCursor != NULL && \
+			isValidAttributeField( attributeListCursor ) && \
 			attributeListCursor->attributeID != attributeID && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX; 
-		 attributeListCursor = attributeListCursor->next );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
-	if( !isValidAttributeField( attributeListCursor ) )
+			iterationCount < FAILSAFE_ITERATIONS_MAX; 
+		 attributeListCursor = attributeListCursor->next, iterationCount++ );
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	if( attributeListCursor == NULL || \
+		!isValidAttributeField( attributeListCursor ) )
 		return( NULL );
 
 	/* Some other part of the attribute containing the given field is 
@@ -323,6 +370,7 @@ ATTRIBUTE_LIST *findAttributeFieldEx( const ATTRIBUTE_LIST *attributeListPtr,
    used to step through multiple instances of a field, for example where the
    attribute is defined as containing a SEQUENCE OF <field> */
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
 ATTRIBUTE_LIST *findNextFieldInstance( const ATTRIBUTE_LIST *attributeListPtr )
 	{
 	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
@@ -332,20 +380,22 @@ ATTRIBUTE_LIST *findNextFieldInstance( const ATTRIBUTE_LIST *attributeListPtr )
 	}
 
 /* Find an overall attribute in a list of attributes.  This is almost always
-   used as a check for the presence of an overall attribute, so we provide
-   a separate function to make this explicit */
+   used as a check for the presence of an overall attribute so we provide a 
+   separate function to make this explicit */
 
-ATTRIBUTE_LIST *findAttribute( const ATTRIBUTE_LIST *attributeListPtr,
-							   const CRYPT_ATTRIBUTE_TYPE attributeID,
+CHECK_RETVAL_PTR \
+ATTRIBUTE_LIST *findAttribute( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
 							   const BOOLEAN isFieldID )
 	{
 	CRYPT_ATTRIBUTE_TYPE localAttributeID = attributeID;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( attributeID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
-			attributeID <= CRYPT_CERTINFO_LAST );
+
+	REQUIRES_N( attributeID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+				attributeID <= CRYPT_CERTINFO_LAST );
 	
 	if( attributeListPtr == NULL )
 		return( NULL );
@@ -358,54 +408,68 @@ ATTRIBUTE_LIST *findAttribute( const ATTRIBUTE_LIST *attributeListPtr,
 									ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE, 
 								attributeID, CRYPT_ATTRIBUTE_NONE, 
 								&localAttributeID ) == NULL )
+			{
 			/* There's no attribute containing this field, exit */
 			return( NULL );
+			}
 		}
 	else
+		{
 		/* Make sure that we're searching on an attribute ID rather than a 
 		   field ID */
-		assert( \
+		ENSURES_N( \
 			fieldIDToAttribute( ( attributeID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
 									ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE, 
 								attributeID, CRYPT_ATTRIBUTE_NONE, 
 								&localAttributeID ) != NULL && \
 			attributeID == localAttributeID );
+		}
 
 	/* Check whether this attribute is present in the list of attribute 
 	   fields */
-	while( isValidAttributeField( attributeListPtr ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+	for( iterationCount = 0;
+		 attributeListPtr != NULL && \
+			isValidAttributeField( attributeListPtr ) && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		if( attributeListPtr->attributeID == localAttributeID )
 			return( ( ATTRIBUTE_LIST * ) attributeListPtr );
-		attributeListPtr = attributeListPtr->next;
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( NULL );
 	}
 
-BOOLEAN checkAttributePresent( const ATTRIBUTE_LIST *attributeListPtr,
-							   const CRYPT_ATTRIBUTE_TYPE fieldID )
+CHECK_RETVAL_BOOL \
+BOOLEAN checkAttributePresent( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID )
 	{
+	REQUIRES_B( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+				fieldID <= CRYPT_CERTINFO_LAST );
+
 	return( findAttribute( attributeListPtr, fieldID, FALSE ) != NULL ? \
 			TRUE : FALSE );
 	}
 
 /* Move the attribute cursor relative to the current cursor position */
 
-ATTRIBUTE_LIST *certMoveAttributeCursor( const ATTRIBUTE_LIST *currentCursor,
-										 const CRYPT_ATTRIBUTE_TYPE certInfoType, 
-										 const int position )
+CHECK_RETVAL_PTR \
+ATTRIBUTE_LIST *certMoveAttributeCursor( IN_OPT const ATTRIBUTE_LIST *currentCursor,
+										 IN_ATTRIBUTE \
+											const CRYPT_ATTRIBUTE_TYPE certInfoType,
+										 IN_RANGE( CRYPT_CURSOR_FIRST, \
+												   CRYPT_CURSOR_LAST ) \
+											const int position )
 	{
 	assert( currentCursor == NULL || \
 			isReadPtr( currentCursor, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( certInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
-			certInfoType == CRYPT_ATTRIBUTE_CURRENT || \
-			certInfoType == CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
-	assert( position <= CRYPT_CURSOR_FIRST && \
-			position >= CRYPT_CURSOR_LAST );
+
+	REQUIRES_N( certInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
+				certInfoType == CRYPT_ATTRIBUTE_CURRENT || \
+				certInfoType == CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
+	REQUIRES_N( position <= CRYPT_CURSOR_FIRST && \
+				position >= CRYPT_CURSOR_LAST );
 
 	return( ( ATTRIBUTE_LIST * ) \
 			attributeMoveCursor( currentCursor, getAttrFunction,
@@ -414,36 +478,41 @@ ATTRIBUTE_LIST *certMoveAttributeCursor( const ATTRIBUTE_LIST *currentCursor,
 
 /****************************************************************************
 *																			*
-*								Misc. Attribute Routines					*
+*						Miscellaneous Attribute Routines					*
 *																			*
 ****************************************************************************/
 
 /* Get the default value for an optional field of an attribute */
 
-int getDefaultFieldValue( const CRYPT_ATTRIBUTE_TYPE fieldID )
+CHECK_RETVAL \
+int getDefaultFieldValue( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID )
 	{
-	const ATTRIBUTE_INFO *attributeInfoPtr = \
-			fieldIDToAttribute( ( fieldID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
-									ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE,
-								fieldID, CRYPT_ATTRIBUTE_NONE, NULL );
+	const ATTRIBUTE_INFO *attributeInfoPtr;
 
-	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	REQUIRES( fieldID >= CRYPT_CERTINFO_FIRST_EXTENSION && \
+			  fieldID <= CRYPT_CERTINFO_LAST );
 
-	return( ( attributeInfoPtr == NULL ) ? \
-			CRYPT_ERROR : ( int ) attributeInfoPtr->defaultValue );
+	attributeInfoPtr = \
+		fieldIDToAttribute( ( fieldID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
+							ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE, fieldID, 
+							CRYPT_ATTRIBUTE_NONE, NULL );
+	ENSURES( attributeInfoPtr != NULL );
+
+	return( ( int ) attributeInfoPtr->defaultValue );
 	}
 
 /* Fix up certificate attributes, mapping from incorrect values to standards-
    compliant ones */
 
-int fixAttributes( CERT_INFO *certInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int fixAttributes( INOUT CERT_INFO *certInfoPtr )
 	{
 	int complianceLevel, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
 	/* Try and locate email addresses wherever they might be stashed and move
-	   them to the cert altNames */
+	   them to the certificate altNames */
 	status = convertEmail( certInfoPtr, &certInfoPtr->subjectName,
 						   CRYPT_CERTINFO_SUBJECTALTNAME );
 	if( cryptStatusOK( status ) )
@@ -453,7 +522,7 @@ int fixAttributes( CERT_INFO *certInfoPtr )
 		return( status );
 
 	/* If we're running at a compliance level of 
-	   CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL or above, don't try and compensate
+	   CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL or above don't try and compensate
 	   for dubious attributes */
 	status = krnlSendMessage( certInfoPtr->ownerHandle, 
 							  IMESSAGE_GETATTRIBUTE, &complianceLevel, 
@@ -471,14 +540,18 @@ int fixAttributes( CERT_INFO *certInfoPtr )
 							CRYPT_CERTINFO_NS_CERTTYPE, 
 							CRYPT_ATTRIBUTE_NONE ) != NULL )
 		{
-		status = getKeyUsageFromExtKeyUsage( certInfoPtr, 
+		int keyUsage;
+
+		status = getKeyUsageFromExtKeyUsage( certInfoPtr, &keyUsage,
 											 &certInfoPtr->errorLocus, 
 											 &certInfoPtr->errorType );
-		if( !cryptStatusError( status ) )
+		if( cryptStatusOK( status ) )
+			{
 			status = addAttributeField( &certInfoPtr->attributes,
 							CRYPT_CERTINFO_KEYUSAGE, CRYPT_ATTRIBUTE_NONE,
-							&status, CRYPT_UNUSED, ATTR_FLAG_NONE, 
+							&keyUsage, CRYPT_UNUSED, ATTR_FLAG_NONE, 
 							&certInfoPtr->errorLocus, &certInfoPtr->errorType );
+			}
 		if( cryptStatusError( status ) )
 			return( status );
 		}

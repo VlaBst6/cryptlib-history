@@ -686,7 +686,7 @@ static BOOLEAN loadDHKey( CRYPT_CONTEXT *cryptContext )
 							 "DH key", strlen( "DH key" ) );
 	if( cryptStatusOK( status ) )
 		{
-		RESOURCE_DATA msgData;
+		MESSAGE_DATA msgData;
 
 		setMessageData( &msgData, ( void * ) dh1024SPKI,
 						sizeof( dh1024SPKI ) );

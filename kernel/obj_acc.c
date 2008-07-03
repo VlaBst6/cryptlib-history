@@ -31,6 +31,24 @@
 
 static KERNEL_DATA *krnlData = NULL;
 
+/* Optionally include the Intel Thread Checker API to control analysis of 
+   the object mutexes */
+
+#if defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && 0
+  #include "../../../Intel/VTune/tcheck/Include/libittnotify.h"
+  #pragma comment( lib, "C:/Program Files/Intel/VTune/Analyzer/Lib/libittnotify.lib" )
+
+  #define THREAD_NOTIFY_PREPARE( id )	__itt_notify_sync_prepare( ( void * ) id );
+  #define THREAD_NOTIFY_CANCELLED( id )	__itt_notify_sync_prepare( ( void * ) id );
+  #define THREAD_NOTIFY_ACQUIRED( id )	__itt_notify_sync_acquired( ( void * ) id );
+  #define THREAD_NOTIFY_RELEASED( id )	__itt_notify_sync_releasing( ( void * ) id );
+#else
+  #define THREAD_NOTIFY_PREPARE( dummy )
+  #define THREAD_NOTIFY_CANCELLED( dummy )
+  #define THREAD_NOTIFY_ACQUIRED( dummy )
+  #define THREAD_NOTIFY_RELEASED( dummy )
+#endif /* VC++ 6.0 with Intel Thread Checker */
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -82,13 +100,14 @@ typedef enum {
 		potentially lengthy update.  Also used when performing the self-
 		test */
 
+CHECK_RETVAL \
 static int checkAccessValid( const int objectHandle,
 							 const ACCESS_CHECK_TYPE checkType,
 							 const int errorCode )
 	{
-	OBJECT_INFO *objectTable = krnlData->objectTable;
-	OBJECT_INFO *objectInfoPtr;
+	OBJECT_INFO *objectTable = krnlData->objectTable, *objectInfoPtr;
 
+	PRE( isValidObject( objectHandle ) );
 	PRE( checkType > ACCESS_CHECK_NONE && checkType < ACCESS_CHECK_LAST );
 	PRE( errorCode < 0 );
 
@@ -159,8 +178,7 @@ static int checkAccessValid( const int objectHandle,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( errorCode );
+			retIntError();
 		}
 
 	/* Postcondition: The object is of the appropriate type for the access */
@@ -183,9 +201,8 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 			   const ACCESS_CHECK_TYPE checkType, void **objectPtr, 
 			   const int refCount, const int errorCode )
 	{
-	OBJECT_INFO *objectTable = krnlData->objectTable;
-	OBJECT_INFO *objectInfoPtr;
-	int status = CRYPT_OK;
+	OBJECT_INFO *objectTable, *objectInfoPtr;
+	int status;
 
 	/* Preconditions: It's a valid object */
 	PRE( isValidHandle( objectHandle ) );
@@ -206,7 +223,9 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 	if( objectPtr != NULL )
 		*objectPtr = NULL;
 
+	THREAD_NOTIFY_PREPARE( objectHandle );
 	MUTEX_LOCK( objectTable );
+	objectTable = krnlData->objectTable;
 
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(), as well as situation-specific additional checks 
@@ -215,8 +234,8 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( objectTable );
-		assert( NOTREACHED );
-		return( status );
+		THREAD_NOTIFY_CANCELLED( objectHandle );
+		retIntError_Ext( status );
 		}
 
 	/* Perform additional checks for correct object types */
@@ -226,8 +245,8 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 		objectTable[ objectHandle ].type != type )
 		{
 		MUTEX_UNLOCK( objectTable );
-		assert( NOTREACHED );
-		return( errorCode );
+		THREAD_NOTIFY_CANCELLED( objectHandle );
+		retIntError_Ext( errorCode );
 		}
 
 	/* It's a valid object, get its info */
@@ -246,6 +265,7 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( objectTable );
+		THREAD_NOTIFY_CANCELLED( objectHandle );
 		return( status );
 		}
 
@@ -272,27 +292,40 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 		*objectPtr = objectInfoPtr->objectPtr;
 
 	MUTEX_UNLOCK( objectTable );
+	THREAD_NOTIFY_ACQUIRED( objectHandle );
 	return( status );
 	}
 
-/* Release an object that we previously acquired directly */
+/* Release an object that we previously acquired directly.  We don't require 
+   that the return value of this function be checked by the caller since the 
+   only time that we can get an error is if it's a 'can't-occur' internal 
+   error and it's not obvious what they should do in that case */
 
 static int releaseObject( const int objectHandle,
 						  const ACCESS_CHECK_TYPE checkType,
-						  int *refCount )
+						  OUT_OPT int *refCount )
 	{
-	OBJECT_INFO *objectTable = krnlData->objectTable;
-	OBJECT_INFO *objectInfoPtr;
+	OBJECT_INFO *objectTable, *objectInfoPtr;
 	int status;
 	DECLARE_ORIGINAL_INT( lockCount );
 
-	MUTEX_LOCK( objectTable );
-
-	/* Preconditions: It's a valid object in use by the caller */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isInUse( objectHandle ) && isObjectOwner( objectHandle ) );
+	/* Preconditions */
 	PRE( checkType > ACCESS_CHECK_NONE && \
 		 checkType < ACCESS_CHECK_LAST );
+	PRE( ( ( checkType == ACCESS_CHECK_EXTACCESS || \
+			 checkType == ACCESS_CHECK_KEYACCESS ) && refCount == NULL ) || \
+		 ( checkType == ACCESS_CHECK_SUSPEND && \
+		   isWritePtr( refCount, sizeof( int ) ) ) );
+
+	THREAD_NOTIFY_PREPARE( objectHandle );
+	MUTEX_LOCK( objectTable );
+	objectTable = krnlData->objectTable;
+
+	/* Preconditions: It's a valid object in use by the caller.  Since these 
+	   checks require access to the object table we can only perform them 
+	   after we've locked it */
+	PRE( isValidObject( objectHandle ) );
+	PRE( isInUse( objectHandle ) && isObjectOwner( objectHandle ) );
 
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(), as well as situation-specific additional checks 
@@ -302,8 +335,8 @@ static int releaseObject( const int objectHandle,
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( objectTable );
-		assert( NOTREACHED );
-		return( status );
+		THREAD_NOTIFY_CANCELLED( objectHandle );
+		retIntError_Ext( status );
 		}
 
 	/* Perform additional checks for correct object types.  The ownership 
@@ -313,8 +346,8 @@ static int releaseObject( const int objectHandle,
 	if( !isInUse( objectHandle ) || !isObjectOwner( objectHandle ) )
 		{
 		MUTEX_UNLOCK( objectTable );
-		assert( NOTREACHED );
-		return( CRYPT_ERROR_PERMISSION );
+		THREAD_NOTIFY_CANCELLED( objectHandle );
+		retIntError_Ext( CRYPT_ERROR_PERMISSION );
 		}
 
 	/* It's a valid object, get its info */
@@ -350,6 +383,7 @@ static int releaseObject( const int objectHandle,
 		}
 
 	MUTEX_UNLOCK( objectTable );
+	THREAD_NOTIFY_RELEASED( objectHandle );
 	return( CRYPT_OK );
 	}
 
@@ -361,6 +395,8 @@ static int releaseObject( const int objectHandle,
 
 int initObjectAltAccess( KERNEL_DATA *krnlDataPtr )
 	{
+	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
 
@@ -438,21 +474,34 @@ int krnlResumeObject( const int objectHandle, const int refCount )
 #define PKC_CONTEXT		/* Indicate that we're working with PKC context */
 #if defined( INC_ALL )
   #include "context.h"
+  #include "mech_int.h"
 #else
   #include "context/context.h"
+  #include "mechs/mech_int.h"
 #endif /* Compiler-specific includes */
 
-int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData, 
-					const int keyDataMaxLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) \
+int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+					OUT_BUFFER_FIXED( keyDataLen ) void *keyData, 
+					IN_LENGTH_SHORT_MIN( MIN_KEYSIZE ) const int keyDataLen, 
+					IN_BUFFER( accessKeyLen ) const char *accessKey, 
+					IN_LENGTH_FIXED( 7 ) const int accessKeyLen )
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
 
-	assert( isHandleRangeValid( iCryptContext ) );
-	assert( isWritePtr( keyData, keyDataMaxLen ) );
+	assert( isWritePtr( keyData, keyDataLen ) );
+	assert( isReadPtr( accessKey, accessKeyLen ) );
 
-	/* Clear return value */
-	memset( keyData, 0, keyDataMaxLen );
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( keyDataLen >= MIN_KEYSIZE && keyDataLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( accessKeyLen == 7 );
+
+	/* Clear return values */
+	memset( keyData, 0, keyDataLen );
+
+	/* Make sure that we really intended to call this function */
+	ENSURES( accessKeyLen == 7 && !memcmp( accessKey, "keydata", 7 ) );
 
 	/* Make sure that we've been given a conventional encryption or MAC 
 	   context with a key loaded.  This has already been checked at a higher 
@@ -465,7 +514,7 @@ int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData,
 		return( status );
 	if( ( contextInfoPtr->type != CONTEXT_CONV && \
 		  contextInfoPtr->type != CONTEXT_MAC ) || \
-		!( contextInfoPtr->flags & CONTEXT_KEY_SET ) )
+		!( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) )
 		{
 		releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 		return( CRYPT_ARGERROR_OBJECT );
@@ -475,38 +524,57 @@ int extractKeyData( const CRYPT_CONTEXT iCryptContext, void *keyData,
 	switch( contextInfoPtr->type )
 		{
 		case CONTEXT_CONV:
-			if( contextInfoPtr->ctxConv->userKeyLength > keyDataMaxLen )
+			if( contextInfoPtr->ctxConv->userKeyLength > keyDataLen )
+				{
+				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
+				}
 			else
+				{
 				memcpy( keyData, contextInfoPtr->ctxConv->userKey,
 						contextInfoPtr->ctxConv->userKeyLength );
+				}
 			break;
 
 		case CONTEXT_MAC:
-			if( contextInfoPtr->ctxMAC->userKeyLength > keyDataMaxLen )
+			if( contextInfoPtr->ctxMAC->userKeyLength > keyDataLen )
+				{
+				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
+				}
 			else
+				{
 				memcpy( keyData, contextInfoPtr->ctxMAC->userKey,
 						contextInfoPtr->ctxMAC->userKeyLength );
+				}
 			break;
 
 		default:
-			assert( NOTREACHED );
-			status = CRYPT_ARGERROR_OBJECT;
+			retIntError();
 		}
 	releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 	return( status );
 	}
 
-int exportPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
-						  const KEYFORMAT_TYPE formatType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int exportPrivateKeyData( INOUT STREAM *stream, 
+						  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+						  IN_ENUM( KEYFORMAT ) const KEYFORMAT_TYPE formatType,
+						  IN_BUFFER( accessKeyLen ) const char *accessKey, 
+						  IN_LENGTH_FIXED( 11 ) const int accessKeyLen )
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
-	assert( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
+	assert( isReadPtr( accessKey, accessKeyLen ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
+	REQUIRES( accessKeyLen == 11 );
+
+	/* Make sure that we really intended to call this function */
+	ENSURES( accessKeyLen == 11 && !memcmp( accessKey, "private_key", 11 ) );
 
 	/* Make sure that we've been given a PKC context with a private key
 	   loaded.  This has already been checked at a higher level, but we
@@ -518,8 +586,8 @@ int exportPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( contextInfoPtr->type != CONTEXT_PKC || \
-		!( contextInfoPtr->flags & CONTEXT_KEY_SET ) || \
-		( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+		!( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) || \
+		( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) )
 		{
 		releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 		return( CRYPT_ARGERROR_OBJECT );
@@ -527,20 +595,25 @@ int exportPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 
 	/* Export the key data from the context */
 	status = contextInfoPtr->ctxPKC->writePrivateKeyFunction( stream, 
-										contextInfoPtr, formatType, "private" );
+											contextInfoPtr, formatType, 
+											accessKey, accessKeyLen );
 	releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 	return( status );
 	}
 
-int importPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int importPrivateKeyData( INOUT STREAM *stream, 
+						  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+						  IN_ENUM( KEYFORMAT ) \
 						  const KEYFORMAT_TYPE formatType )
 	{
 	CONTEXT_INFO *contextInfoPtr;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isHandleRangeValid( iCryptContext ) );
-	assert( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( formatType > KEYFORMAT_NONE && formatType < KEYFORMAT_LAST );
 
 	/* Make sure that we've been given a PKC context with no private key
 	   loaded.  This has already been checked at a higher level, but we
@@ -552,8 +625,8 @@ int importPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( contextInfoPtr->type != CONTEXT_PKC || \
-		( contextInfoPtr->flags & CONTEXT_KEY_SET ) || \
-		( contextInfoPtr->flags & CONTEXT_ISPUBLICKEY ) )
+		( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) || \
+		( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) )
 		{
 		releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 		return( CRYPT_ARGERROR_OBJECT );
@@ -561,7 +634,7 @@ int importPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 
 	/* Import the key data into the context */
 	status = contextInfoPtr->ctxPKC->readPrivateKeyFunction( stream, 
-										contextInfoPtr, formatType );
+											contextInfoPtr, formatType );
 	if( cryptStatusOK( status ) )
 		{
 		/* If everything went OK, perform an internal load that uses the
@@ -572,13 +645,15 @@ int importPrivateKeyData( STREAM *stream, const CRYPT_CONTEXT iCryptContext,
 			krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
 							 MESSAGE_VALUE_UNUSED, 
 							 CRYPT_IATTRIBUTE_INITIALISED );
-			contextInfoPtr->flags |= CONTEXT_KEY_SET;
+			contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
 			}
 		else
+			{
 			/* If the problem was indicated as a function argument error, 
 			   map it to a more appropriate code */
 			if( cryptArgError( status ) )
 				status = CRYPT_ERROR_BADDATA;
+			}
 		}
 	releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
 	return( status );

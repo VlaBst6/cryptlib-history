@@ -1,11 +1,11 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Key Load Routines						*
-*						Copyright Peter Gutmann 1992-2006					*
+*						Copyright Peter Gutmann 1992-2008					*
 *																			*
 ****************************************************************************/
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -14,13 +14,54 @@
   #include "context/context.h"
 #endif /* Compiler-specific includes */
 
-/* Prototypes for functions in crypt.c */
+/* The default size of the salt for PKCS #5v2 key derivation, needed when we
+   set the CRYPT_CTXINFO_KEYING_VALUE */
 
-int clearTempBignums( PKC_INFO *pkcInfo );
+#define PKCS5_SALT_SIZE		8	/* 64 bits */
 
 /****************************************************************************
 *																			*
-*								Key Load Functions							*
+*								Utility Functions							*
+*																			*
+****************************************************************************/
+
+/* Convert a key attribute type into a key format type */
+
+CHECK_RETVAL \
+int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						   OUT_ENUM_OPT( KEYFORMAT ) KEYFORMAT_TYPE *keyformat )
+	{
+	static const MAP_TABLE attributeMapTbl[] = {
+		{ CRYPT_IATTRIBUTE_KEY_SSH, KEYFORMAT_SSH },
+		{ CRYPT_IATTRIBUTE_KEY_SSH1,  KEYFORMAT_SSH1 },
+		{ CRYPT_IATTRIBUTE_KEY_SSL, KEYFORMAT_SSL },
+		{ CRYPT_IATTRIBUTE_KEY_PGP, KEYFORMAT_PGP },
+		{ CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL, KEYFORMAT_PGP },
+		{ CRYPT_IATTRIBUTE_KEY_SPKI, KEYFORMAT_CERT },
+		{ CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL, KEYFORMAT_CERT },
+		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
+		};
+	int value, status;
+
+	assert( isWritePtr( keyformat, sizeof( KEYFORMAT_TYPE ) ) );
+
+	REQUIRES( isAttribute( attribute ) || \
+			  isInternalAttribute( attribute ) );
+
+	/* Clear return value */
+	*keyformat = KEYFORMAT_NONE;
+
+	status = mapValue( attribute, &value, attributeMapTbl, 
+					   FAILSAFE_ARRAYSIZE( attributeMapTbl, MAP_TABLE ) );
+	ENSURES( cryptStatusOK( status ) );
+	*keyformat = value;
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*						Key Parameter Handling Functions					*
 *																			*
 ****************************************************************************/
 
@@ -28,161 +69,212 @@ int clearTempBignums( PKC_INFO *pkcInfo );
    most capabilities.  This is never called directly, but is accessed
    through function pointers in the capability lists */
 
-int initKeyParams( CONTEXT_INFO *contextInfoPtr, const void *iv,
-				   const int ivLength, const CRYPT_MODE_TYPE mode )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initKeyParams( INOUT CONTEXT_INFO *contextInfoPtr, 
+				   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
+				   IN_OPT const void *data, 
+				   IN_INT const int dataLength )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
-	const int ivSize = ( ivLength == CRYPT_USE_DEFAULT ) ? \
-					   contextInfoPtr->capabilityInfo->blockSize : ivLength;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-	assert( contextInfoPtr->type == CONTEXT_CONV );
-	assert( ( iv != NULL && ( ivLength == CRYPT_USE_DEFAULT || ivLength > 0 ) ) || \
-			( mode != CRYPT_MODE_NONE ) );
-	assert( iv == NULL || isReadPtr( iv, ivSize ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
+	REQUIRES( paramType > KEYPARAM_NONE && paramType < KEYPARAM_LAST );
 
 	/* Set the en/decryption mode if required */
-	if( mode != CRYPT_MODE_NONE )
+	switch( paramType )
 		{
-		const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-		int ( *encryptFunction )( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
-								  int length ) = NULL;
-		int ( *decryptFunction )( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
-								  int length ) = NULL;
+		case KEYPARAM_MODE:
+			{
+			const CAPABILITY_INFO *capabilityInfoPtr = \
+										contextInfoPtr->capabilityInfo;
 
-		switch( mode )
-			{
-			case CRYPT_MODE_ECB:
-				encryptFunction = capabilityInfoPtr->encryptFunction;
-				decryptFunction = capabilityInfoPtr->decryptFunction;
-				break;
-			case CRYPT_MODE_CBC:
-				encryptFunction = capabilityInfoPtr->encryptCBCFunction;
-				decryptFunction = capabilityInfoPtr->decryptCBCFunction;
-				break;
-			case CRYPT_MODE_CFB:
-				encryptFunction = capabilityInfoPtr->encryptCFBFunction;
-				decryptFunction = capabilityInfoPtr->decryptCFBFunction;
-				break;
-			case CRYPT_MODE_OFB:
-				encryptFunction = capabilityInfoPtr->encryptOFBFunction;
-				decryptFunction = capabilityInfoPtr->decryptOFBFunction;
-				break;
-			default:
-				assert( NOTREACHED );
-				return( CRYPT_ERROR );
+			REQUIRES( data == NULL );
+			REQUIRES( dataLength > CRYPT_MODE_NONE && \
+					  dataLength < CRYPT_MODE_LAST );
+
+			switch( dataLength )
+				{
+				case CRYPT_MODE_ECB:
+					contextInfoPtr->encryptFunction = \
+							capabilityInfoPtr->encryptFunction;
+					contextInfoPtr->decryptFunction = \
+							capabilityInfoPtr->decryptFunction;
+					break;
+				case CRYPT_MODE_CBC:
+					contextInfoPtr->encryptFunction = \
+							capabilityInfoPtr->encryptCBCFunction;
+					contextInfoPtr->decryptFunction = \
+							capabilityInfoPtr->decryptCBCFunction;
+					break;
+				case CRYPT_MODE_CFB:
+					contextInfoPtr->encryptFunction = \
+							capabilityInfoPtr->encryptCFBFunction;
+					contextInfoPtr->decryptFunction = \
+							capabilityInfoPtr->decryptCFBFunction;
+					break;
+				case CRYPT_MODE_OFB:
+					contextInfoPtr->encryptFunction = \
+							capabilityInfoPtr->encryptOFBFunction;
+					contextInfoPtr->decryptFunction = \
+							capabilityInfoPtr->decryptOFBFunction;
+					break;
+				default:
+					retIntError();
+				}
+			ENSURES( ( contextInfoPtr->encryptFunction == NULL && \
+					   contextInfoPtr->decryptFunction == NULL ) || \
+					 ( contextInfoPtr->encryptFunction != NULL && \
+					   contextInfoPtr->decryptFunction != NULL ) );
+			if( contextInfoPtr->encryptFunction == NULL || \
+				contextInfoPtr->decryptFunction == NULL )
+				{
+				setErrorInfo( contextInfoPtr, CRYPT_CTXINFO_MODE, 
+							  CRYPT_ERRTYPE_ATTR_PRESENT );
+				return( CRYPT_ERROR_NOTAVAIL );
+				}
+			convInfo->mode = dataLength;
+
+			return( CRYPT_OK );
 			}
-		if( encryptFunction == NULL )
-			{
-			setErrorInfo( contextInfoPtr, CRYPT_CTXINFO_MODE, 
-						  CRYPT_ERRTYPE_ATTR_PRESENT );
-			return( CRYPT_ERROR_NOTAVAIL );
+
+		case KEYPARAM_IV:
+			assert( isReadPtr( data, dataLength ) );
+
+			REQUIRES( data != NULL && \
+					  dataLength >= 8 && dataLength <= CRYPT_MAX_IVSIZE );
+
+			/* Load an IV of the required length */
+			memcpy( convInfo->iv, data, dataLength );
+			convInfo->ivLength = dataLength;
+			convInfo->ivCount = 0;
+			memcpy( convInfo->currentIV, convInfo->iv, dataLength );
+			contextInfoPtr->flags |= CONTEXT_FLAG_IV_SET;
+
+			return( CRYPT_OK );
 			}
-		convInfo->mode = mode;
-		contextInfoPtr->encryptFunction = encryptFunction;
-		contextInfoPtr->decryptFunction = decryptFunction;
+
+	retIntError();
+	}
+
+/* Trim a user-supplied key down to an appropriate size */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int adjustUserKeySize( const CONTEXT_INFO *contextInfoPtr, 
+					   IN_RANGE( MIN_KEYSIZE, \
+								 CRYPT_MAX_PKCSIZE ) const int requestedKeySize, 
+					   OUT_LENGTH_PKC_Z int *keyLength )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+
+	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyLength, sizeof( int ) ) );
+
+	REQUIRES( requestedKeySize >= MIN_KEYSIZE && \
+			  requestedKeySize <= CRYPT_MAX_PKCSIZE );
+
+	/* Clear return value */
+	*keyLength = 0;
+
+	/* Trim the key to the appropriate size */
+	if( requestedKeySize < capabilityInfoPtr->minKeySize || \
+		requestedKeySize > capabilityInfoPtr->maxKeySize )
+		return( CRYPT_ARGERROR_NUM1 );
+	ENSURES( requestedKeySize > MIN_KEYSIZE && \
+			 requestedKeySize <= CRYPT_MAX_PKCSIZE );
+
+	/* If it's a PKC key we're done */
+	if( contextInfoPtr->type == CONTEXT_PKC )
+		{
+		*keyLength = requestedKeySize;
+
+		return( CRYPT_OK );
 		}
 
-	/* If there's no IV present, we're done */
-	if( iv == NULL )
-		return( CRYPT_OK );
-
-	/* Load an IV of the required length.  If the supplied IV size is less
-	   than the actual IV size, we pad it to the right with zeroes */
-	memset( convInfo->iv, 0, CRYPT_MAX_IVSIZE );
-	memcpy( convInfo->iv, iv, ivSize );
-	convInfo->ivLength = ivSize;
-	convInfo->ivCount = 0;
-	memcpy( convInfo->currentIV, convInfo->iv, CRYPT_MAX_IVSIZE );
-	contextInfoPtr->flags |= CONTEXT_IV_SET;
+	/* For conventional/MAC keys we need to limit the maximum working key 
+	   length to a sane size since the other side may not be able to handle
+	   stupidly large keys */
+	*keyLength = min( requestedKeySize, MAX_WORKING_KEYSIZE );
 
 	return( CRYPT_OK );
 	}
 
-/* Determine the optimal size for the generated key.  This isn't as easy as
+/* Determine the optimal size for a generated key.  This isn't as easy as
    just taking the default key size since some algorithms have variable key
    sizes (RCx) or alternative key sizes where the default isn't necessarily
    the best choice (two-key vs.three-key 3DES) */
 
-int getKeysize( CONTEXT_INFO *contextInfoPtr, const int requestedKeyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getDefaultKeysize( const CONTEXT_INFO *contextInfoPtr, 
+							  OUT_LENGTH_PKC_Z int *keyLength )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	int keyLength;
+	int localKeyLength;
 
-	assert( requestedKeyLength == 0 || \
-			( requestedKeyLength >= MIN_KEYSIZE && \
-			  requestedKeyLength <= CRYPT_MAX_PKCSIZE ) );
+	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( keyLength, sizeof( int ) ) );
 
-	/* Determine the upper limit on the key size and make sure that the 
-	   requested length is valid */
-	if( requestedKeyLength <= 0 )
-		{
-		/* For PKC contexts where we're generating a new key, we want to use
-		   the recommended (rather than the longest possible) key size,
-		   whereas for conventional contexts we want to use the longest
-		   possible size for the session key (this will be adjusted further
-		   down if necessary for those algorithms where it's excessively
-		   long) */
-		keyLength = ( contextInfoPtr->type == CONTEXT_PKC ) ? \
-						capabilityInfoPtr->keySize : \
-						capabilityInfoPtr->maxKeySize;
+	/* Clear return value */
+	*keyLength = 0;
+
+	/* For PKC contexts where we're generating a new key we want to use the 
+	   recommended (rather than the longest possible) key size whereas for 
+	   conventional contexts we want to use the longest possible size (this 
+	   will be adjusted further down if necessary for those algorithms where 
+	   it's excessively long) */
+	if( contextInfoPtr->type == CONTEXT_PKC )
+		localKeyLength = capabilityInfoPtr->keySize;
+	else
+		localKeyLength = capabilityInfoPtr->maxKeySize;
 
 #if defined( USE_RC2 ) || defined( USE_RC4 )
-		/* Although RC2 will handle keys of up to 1024 bits and RC4 up to 
-		   2048 bits, they're never used with this maximum size but (at 
-		   least in non-crippled implementations) always fixed at 128 bits, 
-		   so we limit them to the default rather than maximum possible 
-		   size */
-		if( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC2 || \
-			capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC4 )
-			keyLength = capabilityInfoPtr->keySize;
+	/* Although RC2 will handle keys of up to 1024 bits and RC4 up to 2048 
+	   bits they're never used with this maximum size but (at least in non-
+	   crippled implementations) always fixed at 128 bits, so we limit them 
+	   to the default rather than maximum possible size */
+	if( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC2 || \
+		capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RC4 )
+		localKeyLength = capabilityInfoPtr->keySize;
 #endif /* USE_RC2 || USE_RC4 */
-		}
-	else
-		{
-		if( requestedKeyLength < capabilityInfoPtr->minKeySize || \
-			requestedKeyLength > capabilityInfoPtr->maxKeySize )
-			{
-			setErrorInfo( contextInfoPtr, CRYPT_CTXINFO_KEY, 
-						  CRYPT_ERRTYPE_ATTR_SIZE );
-			return( CRYPT_ARGERROR_NUM1 );
-			}
-		keyLength = requestedKeyLength;
-		}
-	assert( keyLength > MIN_KEYSIZE && keyLength <= CRYPT_MAX_PKCSIZE );
 
-	/* If we're generating a conventional/MAC key we need to limit the
-	   maximum working key length in order to make it exportable via the 
-	   smallest normal (i.e. non-elliptic-curve) public key */
-	if( contextInfoPtr->type != CONTEXT_PKC && \
-		keyLength > MAX_WORKING_KEYSIZE )
-		keyLength = MAX_WORKING_KEYSIZE;
+	ENSURES( localKeyLength > MIN_KEYSIZE && \
+			 localKeyLength <= CRYPT_MAX_PKCSIZE );
 
-	return( keyLength );
+	/* Trim the key size to fit */
+	return( adjustUserKeySize( contextInfoPtr, localKeyLength, keyLength ) );
 	}
 
 /* Check that user-supplied supplied PKC parameters make sense (algorithm-
    parameter-specific validity checks are performed at a lower level).  
    Although the checks are somewhat specific to particular PKC algorithm 
-   classes, we have to do them at this point in order to avoid duplicating 
+   classes we have to do them at this point in order to avoid duplicating 
    them in every plug-in PKC module, and because strictly speaking it's the 
-   job of the higher-level code to ensure that the lower-level routines at 
-   least get fed approximately valid input */
+   job of the higher-level code to ensure that the lower-level routines get 
+   fed at least approximately valid input */
 
 #ifndef USE_FIPS140
 
-static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo, 
 						   const void *keyInfo )
 	{
 	const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) keyInfo;
 
+	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( keyInfo != NULL );
+
 	/* The ECC check is somewhat different to the others because ECC key
-	   sizes work in different ways, so we have to special-case this one */
+	   sizes work in different ways so we have to special-case this one */
 	if( isEccAlgo( cryptAlgo ) )
 		{
 		const CRYPT_PKCINFO_ECC *eccKey = ( CRYPT_PKCINFO_ECC * ) keyInfo;
 
-		/* Check the general info */
+		assert( isReadPtr( keyInfo, sizeof( CRYPT_PKCINFO_ECC ) ) );
+
+		/* Check the general info and make sure that all required values are
+		   initialised */
 		if( ( eccKey->isPublicKey != TRUE && eccKey->isPublicKey != FALSE ) )
 			return( CRYPT_ARGERROR_STR1 );
 		if( eccKey->pLen <= 0 || eccKey->aLen <= 0 || eccKey->bLen <= 0 || \
@@ -191,42 +283,46 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 			return( CRYPT_ARGERROR_STR1 );
 
 		/* Check the parameters and public components */
-		if( eccKey->pLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->aLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->aLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->bLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->bLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->gxLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->gxLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->gyLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->gyLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->rLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->rLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+		if( eccKey->pLen < bytesToBits( ECCPARAM_MIN_P ) || \
+			eccKey->pLen > bytesToBits( ECCPARAM_MAX_P ) || \
+			eccKey->aLen < bytesToBits( ECCPARAM_MIN_A ) || \
+			eccKey->aLen > bytesToBits( ECCPARAM_MAX_A ) || \
+			eccKey->bLen < bytesToBits( ECCPARAM_MIN_B ) || \
+			eccKey->bLen > bytesToBits( ECCPARAM_MAX_B ) || \
+			eccKey->gxLen < bytesToBits( ECCPARAM_MIN_GX ) || \
+			eccKey->gxLen > bytesToBits( ECCPARAM_MAX_GX ) || \
+			eccKey->gyLen < bytesToBits( ECCPARAM_MIN_GY ) || \
+			eccKey->gyLen > bytesToBits( ECCPARAM_MAX_GY ) || \
+			eccKey->rLen < bytesToBits( ECCPARAM_MIN_R ) || \
+			eccKey->rLen > bytesToBits( ECCPARAM_MAX_R ) )
 			return( CRYPT_ARGERROR_STR1 );
-		if( eccKey->qxLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->qxLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) || \
-			eccKey->qyLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->qyLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+		if( eccKey->qxLen < bytesToBits( ECCPARAM_MIN_QX ) || \
+			eccKey->qxLen > bytesToBits( ECCPARAM_MAX_QX ) || \
+			eccKey->qyLen < bytesToBits( ECCPARAM_MIN_QY ) || \
+			eccKey->qyLen > bytesToBits( ECCPARAM_MAX_QY ) )
 			return( CRYPT_ARGERROR_STR1 ); 
 		if( eccKey->isPublicKey )
 			return( CRYPT_OK );
 
 		/* Check the private components */
-		if( eccKey->dLen < bytesToBits( MIN_PKCSIZE_ECC ) || \
-			eccKey->dLen > bytesToBits( CRYPT_MAX_PKCSIZE_ECC ) )
+		if( eccKey->dLen < bytesToBits( ECCPARAM_MIN_D ) || \
+			eccKey->dLen > bytesToBits( ECCPARAM_MAX_D ) )
 			return( CRYPT_ARGERROR_STR1 );
 		return( CRYPT_OK );
 		}
 
-	/* For the non-ECC algorithms, the DLP check is simpler than the RSA one 
-	   because there are less odd parameter combinations possible, so we get 
-	   this one out of the way first */
+	/* For the non-ECC algorithms the DLP check is simpler than the RSA one 
+	   because there are less odd parameter combinations possible so we get 
+	   this one out of the way first.  Note that we don't get PKCS #3 DH 
+	   keys at this level so we always require that q be present */
 	if( isDlpAlgo( cryptAlgo ) )
 		{
 		const CRYPT_PKCINFO_DLP *dlpKey = ( CRYPT_PKCINFO_DLP * ) keyInfo;
 
-		/* Check the general info */
+		assert( isReadPtr( keyInfo, sizeof( CRYPT_PKCINFO_DLP ) ) );
+
+		/* Check the general info and make sure that all required values are
+		   initialised */
 		if( ( dlpKey->isPublicKey != TRUE && dlpKey->isPublicKey != FALSE ) )
 			return( CRYPT_ARGERROR_STR1 );
 		if( dlpKey->pLen <= 0 || dlpKey->qLen <= 0 || dlpKey->gLen <= 0 || \
@@ -235,29 +331,36 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 
 		/* Check the public components */
 		if( isShortPKCKey( dlpKey->pLen ) )
+			{
 			/* Special-case handling for insecure-sized public keys */
 			return( CRYPT_ERROR_NOSECURE );
-		if( dlpKey->pLen < bytesToBits( MIN_PKCSIZE ) || \
-			dlpKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
-			dlpKey->qLen < 128 || \
-			dlpKey->qLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
-			dlpKey->gLen < 2 || \
-			dlpKey->gLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
-			dlpKey->yLen < 0 || \
-			dlpKey->yLen > bytesToBits( CRYPT_MAX_PKCSIZE ) )
-			/* y may be 0 if only x and the public params are available */
+			}
+		if( dlpKey->pLen < bytesToBits( DLPPARAM_MIN_P ) || \
+			dlpKey->pLen > bytesToBits( DLPPARAM_MAX_P ) || \
+			dlpKey->qLen < bytesToBits( DLPPARAM_MIN_Q ) || \
+			dlpKey->qLen > bytesToBits( DLPPARAM_MAX_Q ) || \
+			dlpKey->gLen < bytesToBits( DLPPARAM_MIN_G ) || \
+			dlpKey->gLen > bytesToBits( DLPPARAM_MAX_G ) || \
+			dlpKey->yLen < bytesToBits( 0 ) || \
+			dlpKey->yLen > bytesToBits( DLPPARAM_MAX_Y ) )
+			/* y may be 0 if only x and the public parameters are available */
+			{
 			return( CRYPT_ARGERROR_STR1 );
+			}
 		if( dlpKey->isPublicKey )
 			return( CRYPT_OK );
 
 		/* Check the private components */
-		if( dlpKey->xLen < 128 || \
-			dlpKey->xLen > bytesToBits( CRYPT_MAX_PKCSIZE ) )
+		if( dlpKey->xLen < bytesToBits( DLPPARAM_MIN_X ) || \
+			dlpKey->xLen > bytesToBits( DLPPARAM_MAX_X ) )
 			return( CRYPT_ARGERROR_STR1 );
 		return( CRYPT_OK );
 		}
 
-	/* Check the general info */
+	assert( isReadPtr( keyInfo, sizeof( CRYPT_PKCINFO_RSA ) ) );
+
+	/* Check the general info and make sure that all required values are
+	   initialised */
 	if( rsaKey->isPublicKey != TRUE && rsaKey->isPublicKey != FALSE )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->nLen <= 0 || rsaKey->eLen <= 0 || \
@@ -267,11 +370,14 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 
 	/* Check the public components */
 	if( isShortPKCKey( rsaKey->nLen ) )
+		{
 		/* Special-case handling for insecure-sized public keys */
 		return( CRYPT_ERROR_NOSECURE );
-	if( rsaKey->nLen < bytesToBits( MIN_PKCSIZE ) || \
-		rsaKey->nLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
-		rsaKey->eLen < 2 || rsaKey->eLen > bytesToBits( 128 ) || \
+		}
+	if( rsaKey->nLen < bytesToBits( RSAPARAM_MIN_N ) || \
+		rsaKey->nLen > bytesToBits( RSAPARAM_MAX_N ) || \
+		rsaKey->eLen < bytesToBits( RSAPARAM_MIN_E ) || \
+		rsaKey->eLen > bytesToBits( RSAPARAM_MAX_E ) || \
 		rsaKey->eLen > rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->isPublicKey )
@@ -285,66 +391,90 @@ static int checkPKCparams( const CRYPT_ALGO_TYPE cryptAlgo,
 		d, p, q, e1, e2, u
 		   p, q, e1, e2, u
 
-	   The reason for some of the odder combinations is because some 
-	   implementations don't use all the values (for example d isn't needed at
-	   all for the CRT shortcut) or recreate them when the key is loaded.  If 
-	   only d, p, and q are present we recreate e1 and e2 from them, we also 
-	   create u if necessary */
-	if( rsaKey->pLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
-		rsaKey->pLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+	   The reason for some of the odder combinations is that some 
+	   implementations don't use all of the values (for example d isn't 
+	   needed at all for the CRT shortcut) or recreate them when the key is 
+	   loaded.  If only d, p, and q are present we recreate e1 and e2 from 
+	   them, we also create u if necessary */
+	if( rsaKey->pLen < bytesToBits( RSAPARAM_MIN_P ) || \
+		rsaKey->pLen > bytesToBits( RSAPARAM_MAX_P ) || \
 		rsaKey->pLen >= rsaKey->nLen || \
-		rsaKey->qLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
-		rsaKey->qLen > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
+		rsaKey->qLen < bytesToBits( RSAPARAM_MIN_Q ) || \
+		rsaKey->qLen > bytesToBits( RSAPARAM_MAX_Q ) || \
 		rsaKey->qLen >= rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
 	if( rsaKey->dLen <= 0 && rsaKey->e1Len <= 0 )
+		{
 		/* Must have either d or e1 et al */
 		return( CRYPT_ARGERROR_STR1 );
-	if( rsaKey->dLen && \
-		( rsaKey->dLen < bytesToBits( MIN_PKCSIZE ) || \
-		  rsaKey->dLen > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
+		}
+	if( rsaKey->dLen > 0 && \
+		( rsaKey->dLen < bytesToBits( RSAPARAM_MIN_D ) || \
+		  rsaKey->dLen > bytesToBits( RSAPARAM_MAX_D ) ) )
 		return( CRYPT_ARGERROR_STR1 );
-	if( rsaKey->e1Len && \
-		( rsaKey->e1Len < bytesToBits( MIN_PKCSIZE ) / 2 || \
-		  rsaKey->e1Len > bytesToBits( CRYPT_MAX_PKCSIZE ) || \
-		  rsaKey->e2Len < bytesToBits( MIN_PKCSIZE ) / 2 || \
-		  rsaKey->e2Len > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
+	if( rsaKey->e1Len > 0 && \
+		( rsaKey->e1Len < bytesToBits( RSAPARAM_MIN_EXP1 ) || \
+		  rsaKey->e1Len > bytesToBits( RSAPARAM_MAX_EXP1 ) || \
+		  rsaKey->e2Len < bytesToBits( RSAPARAM_MIN_EXP2 ) || \
+		  rsaKey->e2Len > bytesToBits( RSAPARAM_MAX_EXP2 ) ) )
 		return( CRYPT_ARGERROR_STR1 );
-	if( rsaKey->uLen && \
-		( rsaKey->uLen < bytesToBits( MIN_PKCSIZE ) / 2 || \
-		  rsaKey->uLen > bytesToBits( CRYPT_MAX_PKCSIZE ) ) )
+	if( rsaKey->uLen > 0 && \
+		( rsaKey->uLen < bytesToBits( RSAPARAM_MIN_U ) || \
+		  rsaKey->uLen > bytesToBits( RSAPARAM_MAX_U ) ) )
 		return( CRYPT_ARGERROR_STR1 );
 	return( CRYPT_OK );
 	}
 #endif /* USE_FIPS140 */
 
+/****************************************************************************
+*																			*
+*								Key Load Functions							*
+*																			*
+****************************************************************************/
+
 /* Load a key into a CONTEXT_INFO structure.  These functions are called by 
    the various higher-level functions that move a key into a context */
 
-static int loadKeyConvFunction( CONTEXT_INFO *contextInfoPtr, 
-								const void *key, const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int loadKeyConvFunction( INOUT CONTEXT_INFO *contextInfoPtr, 
+								IN_BUFFER( keyLength ) const void *key, 
+								IN_LENGTH_KEY const int keyLength )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 
-	assert( contextInfoPtr->type == CONTEXT_CONV );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
+	REQUIRES( keyLength >= MIN_KEYSIZE && keyLength <= CRYPT_MAX_KEYSIZE );
 
 	/* If we don't need an IV, record it as being set */
 	if( !needsIV( contextInfoPtr->ctxConv->mode ) || \
 		isStreamCipher( contextInfoPtr->capabilityInfo->cryptAlgo ) )
-		contextInfoPtr->flags |= CONTEXT_IV_SET;
+		contextInfoPtr->flags |= CONTEXT_FLAG_IV_SET;
 
 	/* Perform the key setup */
 	return( capabilityInfoPtr->initKeyFunction( contextInfoPtr, key, 
 												keyLength ) );
 	}
 
-static int loadKeyPKCFunction( CONTEXT_INFO *contextInfoPtr, 
-							   const void *key, const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int loadKeyPKCFunction( INOUT CONTEXT_INFO *contextInfoPtr, 
+							   IN_BUFFER_OPT( keyLength ) const void *key, 
+							   IN_LENGTH_SHORT_Z const int keyLength )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	int status;
 
-	assert( contextInfoPtr->type == CONTEXT_PKC );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( key == NULL ) || isReadPtr( key, keyLength ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
+	REQUIRES( ( key == NULL && keyLength == 0 ) || \
+			  ( key != NULL && \
+			    keyLength > 16 && keyLength < MAX_INTLENGTH_SHORT ) );
+			  /* The key data for this function may be NULL if the values
+			     have been read from encoded X.509/SSH/SSL/PPG data straight
+				 into the context bignums */
 
 #ifndef USE_FIPS140
 	/* If we're loading from externally-supplied parameters, make sure that 
@@ -361,15 +491,21 @@ static int loadKeyPKCFunction( CONTEXT_INFO *contextInfoPtr,
 	/* Load the keying info */
 	status = capabilityInfoPtr->initKeyFunction( contextInfoPtr, key, 
 												 keyLength );
-	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) )
 		clearTempBignums( contextInfoPtr->ctxPKC );
 	return( status );
 	}
 
-static int loadKeyMacFunction( CONTEXT_INFO *contextInfoPtr, 
-							   const void *key, const int keyLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int loadKeyMacFunction( INOUT CONTEXT_INFO *contextInfoPtr, 
+							   IN_BUFFER( keyLength ) const void *key, 
+							   IN_LENGTH_KEY const int keyLength )
 	{
-	assert( contextInfoPtr->type == CONTEXT_MAC );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_MAC );
+	REQUIRES( keyLength >= MIN_KEYSIZE && keyLength <= CRYPT_MAX_KEYSIZE );
 
 	return( contextInfoPtr->capabilityInfo->initKeyFunction( contextInfoPtr, 
 															 key, keyLength ) );
@@ -377,59 +513,234 @@ static int loadKeyMacFunction( CONTEXT_INFO *contextInfoPtr,
 
 /****************************************************************************
 *																			*
+*							Key Component Load Functions					*
+*																			*
+****************************************************************************/
+
+/* Load an encoded X.509/SSH/SSL/PGP key into a context.  This is used for 
+   two purposes, to load public key components into native contexts and to 
+   save encoded X.509 public-key data for use in certificates associated 
+   with non-native contexts held in a device.  The latter is required 
+   because there's no key data stored with the context itself that we can 
+   use to create the SubjectPublicKeyInfo, however it's necessary to have 
+   SubjectPublicKeyInfo available for certificate requests/certificates.  
+
+   Normally this is sufficient because cryptlib always generates native 
+   contexts for public keys/certificates and for private keys the data is 
+   generated in the device with the encoded public components attached to 
+   the context as described above.  However for DH keys this gets a bit more 
+   complex because although the private key is generated in the device, in 
+   the case of the DH responder this is only the DH x value, with the 
+   parameters (p and g) being supplied externally by the initiator.  This 
+   means that it's necessary to decode at least some of the public key data 
+   in order to create the y value after the x value has been generated in 
+   the device.  The only situation where this functionality is currently 
+   needed is for the SSHv2 code, which at the moment always uses native DH 
+   contexts.  For this reason we leave off resolving this issue until it's 
+   actually required */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+				   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE keyType, 
+				   IN_BUFFER( keyDataLen ) const void *keyData, 
+				   IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
+					const int keyDataLen )
+	{
+	static const int actionFlags = \
+		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_NONE_EXTERNAL ) | \
+		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_NONE_EXTERNAL );
+	static const int actionFlagsDH = ACTION_PERM_NONE_EXTERNAL_ALL;
+	static const int actionFlagsPGP = \
+		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL ) | \
+		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_ALL );
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	STREAM stream;
+	KEYFORMAT_TYPE formatType;
+	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( keyData, keyDataLen ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
+	REQUIRES( needsKey( contextInfoPtr ) || \
+			  ( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) );
+	REQUIRES( keyType == CRYPT_IATTRIBUTE_KEY_SPKI || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_PGP || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_SSH || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_SSH1 || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_SSL || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
+			  keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL );
+	REQUIRES( keyDataLen >= MIN_CRYPT_OBJECTSIZE && \
+			  keyDataLen < MAX_INTLENGTH_SHORT );
+
+	/* If the keys are held externally (e.g. in a crypto device), copy the 
+	   SubjectPublicKeyInfo data in and set up any other information that we 
+	   may need from it.  This information is used when loading a context 
+	   from a key contained in a device, for which the actual key components 
+	   aren't directly available in the context but may be needed in the 
+	   future for things like certificate requests and certificates */
+	if( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY )
+		{
+		REQUIRES( keyType == CRYPT_IATTRIBUTE_KEY_SPKI || \
+				  keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
+
+		if( ( contextInfoPtr->ctxPKC->publicKeyInfo = \
+					clAlloc( "setEncodedKey", keyDataLen ) ) == NULL )
+			return( CRYPT_ERROR_MEMORY );
+		memcpy( contextInfoPtr->ctxPKC->publicKeyInfo, keyData, keyDataLen );
+		contextInfoPtr->ctxPKC->publicKeyInfoSize = keyDataLen;
+		return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
+		}
+
+	/* Read the appropriately-formatted key data into the context, applying 
+	   a lowest-common-denominator set of usage flags to the loaded key */
+	status = attributeToFormatType( keyType, &formatType );
+	if( cryptStatusError( status ) )
+		return( status );
+	sMemConnect( &stream, keyData, keyDataLen );
+	status = contextInfoPtr->ctxPKC->readPublicKeyFunction( &stream,
+											contextInfoPtr, formatType );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If it's a partial load of the initial public portions of a private 
+	   key with further key component operations to follow, there's nothing 
+	   more to do at this point and we're done */
+	if( keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
+		keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL )
+		return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
+
+	/* Perform an internal load that uses the key component values that 
+	   we've just read into the context */
+	contextInfoPtr->flags |= CONTEXT_FLAG_ISPUBLICKEY;
+	status = contextInfoPtr->loadKeyFunction( contextInfoPtr, NULL, 0 );
+	if( cryptStatusError( status ) )
+		{
+		/* Map the status to a more appropriate code if necessary */
+		return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
+		}
+	contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
+
+	/* Restrict the key usage to public-key-only actions if necessary.  For 
+	   PGP key loads (which, apart from the restrictions specified with the 
+	   stored key data aren't constrained by the presence of ACLs in the 
+	   form of certificates) we allow external usage, for DH (whose keys can be 
+	   both public and private keys even though technically it's a public 
+	   key) we allow both encryption and decryption usage, and for public 
+	   keys read from certificates we  allow internal usage only */
+	status = krnlSendMessage( contextInfoPtr->objectHandle,
+						IMESSAGE_SETATTRIBUTE, 
+						( keyType == CRYPT_IATTRIBUTE_KEY_PGP ) ? \
+							( void * ) &actionFlagsPGP : \
+						( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_DH ) ? \
+							( void * ) &actionFlagsDH : \
+							( void * ) &actionFlags,
+						CRYPT_IATTRIBUTE_ACTIONPERMS );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
+	}
+
+/* Load the components of a composite PKC key into a context */
+
+#ifndef USE_FIPS140
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setKeyComponents( INOUT CONTEXT_INFO *contextInfoPtr, 
+					  IN_BUFFER( keyDataLen ) const void *keyData, 
+					  IN_LENGTH_SHORT_MIN( 32 ) const int keyDataLen )
+	{
+	static const int actionFlags = \
+		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL ) | \
+		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_ALL );
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	BOOLEAN isPublicKey;
+	int status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( keyData, keyDataLen ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
+			  needsKey( contextInfoPtr ) );
+	REQUIRES( keyDataLen == sizeof( CRYPT_PKCINFO_RSA ) || \
+			  keyDataLen == sizeof( CRYPT_PKCINFO_DLP ) || \
+			  keyDataLen == sizeof( CRYPT_PKCINFO_ECC ) );
+
+	/* If it's a private key we need to have a key label set before we can 
+	   continue.  The checking for this is a bit complex because at this
+	   point all that the context knows is that it's a generic PKC context,
+	   but it won't know whether it's a public- or private-key context until
+	   the key is actually loaded.  To determine what it'll become we look
+	   into the key data to see what's being loaded */
+	isPublicKey = isEccAlgo( capabilityInfoPtr->cryptAlgo ) ? \
+					( ( CRYPT_PKCINFO_ECC * ) keyData )->isPublicKey : \
+				  isDlpAlgo( capabilityInfoPtr->cryptAlgo ) ? \
+					( ( CRYPT_PKCINFO_DLP * ) keyData )->isPublicKey : \
+					( ( CRYPT_PKCINFO_RSA * ) keyData )->isPublicKey;
+	if( !isPublicKey && contextInfoPtr->labelSize <= 0 )
+		return( CRYPT_ERROR_NOTINITED );
+
+	/* If it's a dummy object with keys held externally (e.g. in a crypto 
+	   device) we need a key label set in order to access the object at a 
+	   later date */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) && \
+		contextInfoPtr->labelSize <= 0 )
+		return( CRYPT_ERROR_NOTINITED );
+
+	/* Load the key components into the context */
+	status = contextInfoPtr->loadKeyFunction( contextInfoPtr, keyData, 
+											  keyDataLen );
+	if( cryptStatusError( status ) )
+		return( status );
+	contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET | CONTEXT_FLAG_PBO;
+
+	/* Restrict the key usage to public-key-only actions if it's a public 
+	   key.  DH keys act as both public and private keys so we don't 
+	   restrict their usage */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_ISPUBLICKEY ) && \
+		( capabilityInfoPtr->cryptAlgo != CRYPT_ALGO_DH ) )
+		{
+		status = krnlSendMessage( contextInfoPtr->objectHandle,
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( void * ) &actionFlags,
+								  CRYPT_IATTRIBUTE_ACTIONPERMS );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	return( CRYPT_OK );
+	}
+#endif /* !USE_FIPS140 */
+
+/****************************************************************************
+*																			*
 *							Key Generation Functions						*
 *																			*
 ****************************************************************************/
 
-/* Threaded key generation for those OSes that support threads */
+/* Generate a key into a CONTEXT_INFO structure */
 
-#ifdef USE_THREADS
-
-void threadedKeygen( const THREAD_PARAMS *threadParams )
-	{
-	CONTEXT_INFO *contextInfoPtr = threadParams->ptrParam;
-	int busyStatus = CRYPT_ERROR_TIMEOUT;
-
-	/* Mark the object as busy, perform the keygen, and set it back to non-
-	   busy */
-	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 &busyStatus, CRYPT_IATTRIBUTE_STATUS );
-	contextInfoPtr->asyncStatus = \
-		contextInfoPtr->capabilityInfo->generateKeyFunction( contextInfoPtr,
-										contextInfoPtr->ctxPKC->keySizeBits );
-	if( cryptStatusOK( contextInfoPtr->asyncStatus ) )
-		contextInfoPtr->flags |= CONTEXT_KEY_SET;	/* There's now a key loaded */
-	contextInfoPtr->flags &= ~CONTEXT_ASYNC_ABORT;
-	contextInfoPtr->flags |= CONTEXT_ASYNC_DONE;
-	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
-		clearTempBignums( contextInfoPtr->ctxPKC );
-	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 MESSAGE_VALUE_OK, CRYPT_IATTRIBUTE_STATUS );
-	}
-#endif /* Threaded keygen function */
-
-/* Generate a key into a CONTEXT_INFO structure.  This low-level function is
-   called by both the normal and async keygen functions, which set the keygen
-   up as required (the only time there's any real difference is for PKC
-   keygen) */
-
-static int generateKeyConvFunction( CONTEXT_INFO *contextInfoPtr, 
-									const BOOLEAN isAsync )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKeyConvFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	MESSAGE_DATA msgData;
-	int keyLength, status;
+	int keyLength = contextInfoPtr->ctxConv->userKeyLength, status;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( contextInfoPtr->type == CONTEXT_CONV );
 
-	/* Determine the best keysize for this algorithm */
-	keyLength = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_KEYSIZE, 
-									contextInfoPtr,
-									contextInfoPtr->ctxConv->userKeyLength );
-	if( cryptStatusError( keyLength ) )
-		return( keyLength );
+	/* If there's no key size specified, use the default length */
+	if( keyLength <= 0 )
+		{
+		status = getDefaultKeysize( contextInfoPtr, &keyLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
-	/* If the context is implemented in a crypto device, it may have the
+	/* If the context is implemented in a crypto device it may have the
 	   capability to generate the key itself so if there's a keygen function
 	   present we call this to generate the key directly into the context
 	   rather than generating it ourselves and loading it in.  Note that to
@@ -439,12 +750,9 @@ static int generateKeyConvFunction( CONTEXT_INFO *contextInfoPtr,
 		return( capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
 												bytesToBits( keyLength ) ) );
 
-	/* Generate a random session key into the context.  We always use
-	   synchronous key generation even if the user has called the async
-	   function because it's quick enough that it doesn't make any
-	   difference.  In addition we load the random data directly into the
-	   pagelocked encryption context and pass that in as the key buffer -
-	   loadKey() won't copy the data if src == dest */
+	/* Generate a random session key into the context.  We load the random 
+	   data directly into the pagelocked encryption context and pass that in 
+	   as the key buffer, loadKey() won't copy the data if src == dest */
 	setMessageData( &msgData, contextInfoPtr->ctxConv->userKey, keyLength );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
 							  &msgData, CRYPT_IATTRIBUTE_RANDOM );
@@ -454,86 +762,69 @@ static int generateKeyConvFunction( CONTEXT_INFO *contextInfoPtr,
 								contextInfoPtr->ctxConv->userKey, keyLength ) );
 	}
 
-static int generateKeyPKCFunction( CONTEXT_INFO *contextInfoPtr, 
-								   const BOOLEAN isAsync )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKeyPKCFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	int keyLength, status;
+	int keyLength = bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits );
+	int status;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( contextInfoPtr->type == CONTEXT_PKC );
-	assert( capabilityInfoPtr->generateKeyFunction != NULL );
-
-	/* Safety check for absent key-generation capability */
-	if( capabilityInfoPtr->generateKeyFunction == NULL )
-		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Set up supplementary key information */
 	contextInfoPtr->ctxPKC->pgpCreationTime = getApproxTime();
 
-	/* Determine the best keysize for this algorithm */
-	keyLength = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_KEYSIZE, 
-						contextInfoPtr,
-						bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ) );
-	if( cryptStatusError( keyLength ) )
-		return( keyLength );
-
-	/* Generate the key into the context.  If it's an async keygen and the OS
-	   supports this, we set the context state for the async keygen and spawn 
-	   the thread/process for the task */
-#ifdef USE_THREADS
-	if( isAsync )
+	/* If there's no key size specified, use the default length */
+	if( keyLength <= 0 )
 		{
-		contextInfoPtr->flags &= ~( CONTEXT_ASYNC_ABORT | CONTEXT_ASYNC_DONE );
-		contextInfoPtr->asyncStatus = CRYPT_OK;
-		contextInfoPtr->ctxPKC->keySizeBits = bytesToBits( keyLength );
-		status = krnlDispatchThread( threadedKeygen, 
-									 contextInfoPtr->ctxPKC->threadState, 
-									 contextInfoPtr, 0, SEMAPHORE_NONE );
-		if( cryptStatusOK( status ) )
-			return( OK_SPECIAL );
-
-		/* The async keygen failed, fall back to a standard keygen */
+		status = getDefaultKeysize( contextInfoPtr, &keyLength );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
-#endif /* OSes with threads */
+
+	/* Generate the key into the context */
 	status = capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
 												bytesToBits( keyLength ) );
-	if( !( contextInfoPtr->flags & CONTEXT_DUMMY ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) )
 		clearTempBignums( contextInfoPtr->ctxPKC );
 	return( status );
 	}
 
-static int generateKeyMacFunction( CONTEXT_INFO *contextInfoPtr, 
-								   const BOOLEAN isAsync )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKeyMacFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
 	MESSAGE_DATA msgData;
-	int keyLength, status;
+	int keyLength = contextInfoPtr->ctxMAC->userKeyLength, status;
 
-	assert( contextInfoPtr->type == CONTEXT_MAC );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	
+	REQUIRES( contextInfoPtr->type == CONTEXT_MAC );
 
-	/* Determine the best keysize for this algorithm */
-	keyLength = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_KEYSIZE, 
-									contextInfoPtr,
-									contextInfoPtr->ctxMAC->userKeyLength );
-	if( cryptStatusError( keyLength ) )
-		return( keyLength );
+	/* If there's no key size specified, use the default length */
+	if( keyLength <= 0 )
+		{
+		status = getDefaultKeysize( contextInfoPtr, &keyLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
-	/* If the context is implemented in a crypto device, it may have the
+	/* If the context is implemented in a crypto device it may have the
 	   capability to generate the key itself so if there's a keygen function
 	   present we call this to generate the key directly into the context
 	   rather than generating it ourselves and loading it in.  Note that to
 	   export this key we'll need to use an exporting context which is also
 	   located in the device, since we can't access it externally */
 	if( capabilityInfoPtr->generateKeyFunction != NULL )
+		{
 		return( capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
 												bytesToBits( keyLength ) ) );
+		}
 
-	/* Generate a random session key into the context.  We always use
-	   synchronous key generation even if the user has called the async
-	   function because it's quick enough that it doesn't make any
-	   difference.  In addition we load the random data directly into the
-	   pagelocked encryption context and pass that in as the key buffer -
-	   loadKey() won't copy the data if src == dest */
+	/* Generate a random session key into the context.  We load the random 
+	   data directly into the pagelocked encryption context and pass that in 
+	   as the key buffer, loadKey() won't copy the data if src == dest */
 	setMessageData( &msgData, contextInfoPtr->ctxMAC->userKey, keyLength );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
 							  &msgData, CRYPT_IATTRIBUTE_RANDOM );
@@ -545,12 +836,161 @@ static int generateKeyMacFunction( CONTEXT_INFO *contextInfoPtr,
 
 /****************************************************************************
 *																			*
+*							Key Derivation Functions						*
+*																			*
+****************************************************************************/
+
+/* Derive a key into a context from a user-supplied keying value */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr, 
+			   IN_BUFFER( keyValueLen ) const void *keyValue, 
+			   IN_LENGTH_SHORT const int keyValueLen )
+	{
+	CRYPT_ALGO_TYPE hmacAlgo;
+	MECHANISM_DERIVE_INFO mechanismInfo;
+	static const MAP_TABLE mapTbl[] = {
+		{ CRYPT_ALGO_MD5, CRYPT_ALGO_HMAC_MD5 },
+		{ CRYPT_ALGO_SHA1, CRYPT_ALGO_HMAC_SHA1 },
+		{ CRYPT_ALGO_RIPEMD160, CRYPT_ALGO_HMAC_RIPEMD160 },
+		{ CRYPT_ALGO_SHA2, CRYPT_ALGO_HMAC_SHA2 },
+		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
+		};
+	int value = DUMMY_INIT, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( keyValue, keyValueLen ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_CONV || \
+			  contextInfoPtr->type == CONTEXT_MAC );
+	REQUIRES( needsKey( contextInfoPtr ) );
+	REQUIRES( keyValueLen > 0 && keyValueLen < MAX_INTLENGTH_SHORT );
+
+	/* If it's a persistent context we need to have a key label set before 
+	   we can continue */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) && \
+		contextInfoPtr->labelSize <= 0 )
+		return( CRYPT_ERROR_NOTINITED );
+
+	/* Set up various derivation parameters if they're not already set */
+	status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, &hmacAlgo, 
+							  CRYPT_OPTION_ENCR_HASH );
+	if( cryptStatusOK( status ) )
+		status = mapValue( hmacAlgo, &value, mapTbl, 
+						   FAILSAFE_ARRAYSIZE( mapTbl, MAP_TABLE ) );
+	if( cryptStatusError( status ) )
+		return( status );
+	hmacAlgo = value;
+	if( contextInfoPtr->type == CONTEXT_CONV )
+		{
+		CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+		int keySize = convInfo->userKeyLength;
+
+		if( keySize <= 0 )
+			{
+			/* There's no key size specified, use the default length */
+			status = getDefaultKeysize( contextInfoPtr, &keySize );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
+		if( convInfo->saltLength <= 0 )
+			{
+			MESSAGE_DATA nonceMsgData;
+
+			setMessageData( &nonceMsgData, convInfo->salt, PKCS5_SALT_SIZE );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_GETATTRIBUTE_S, &nonceMsgData,
+									  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+			if( cryptStatusError( status ) )
+				return( status );
+			convInfo->saltLength = PKCS5_SALT_SIZE;
+			}
+		convInfo->keySetupAlgorithm = hmacAlgo;
+		setMechanismDeriveInfo( &mechanismInfo, convInfo->userKey, keySize,
+								keyValue, keyValueLen, 
+								convInfo->keySetupAlgorithm, 
+								convInfo->salt, convInfo->saltLength, 
+								convInfo->keySetupIterations );
+		if( mechanismInfo.iterations <= 0 )
+			{
+			status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+									  IMESSAGE_GETATTRIBUTE, 
+									  &mechanismInfo.iterations, 
+									  CRYPT_OPTION_KEYING_ITERATIONS );
+			if( cryptStatusError( status ) )
+				return( status );
+			convInfo->keySetupIterations = mechanismInfo.iterations;
+			}
+		}
+	else
+		{
+		MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
+		int keySize = macInfo->userKeyLength;
+
+		if( keySize <= 0 )
+			{
+			/* There's no key size specified, use the default length */
+			status = getDefaultKeysize( contextInfoPtr, &keySize );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
+		if( macInfo->saltLength <= 0 )
+			{
+			MESSAGE_DATA nonceMsgData;
+
+			setMessageData( &nonceMsgData, macInfo->salt, PKCS5_SALT_SIZE );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_GETATTRIBUTE_S, &nonceMsgData,
+									  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+			if( cryptStatusError( status ) )
+				return( status );
+			macInfo->saltLength = PKCS5_SALT_SIZE;
+			}
+		contextInfoPtr->ctxConv->keySetupAlgorithm = hmacAlgo;
+		setMechanismDeriveInfo( &mechanismInfo, macInfo->userKey, keySize,
+								keyValue, keyValueLen, 
+								macInfo->keySetupAlgorithm, 
+								macInfo->salt, macInfo->saltLength,
+								macInfo->keySetupIterations );
+		if( mechanismInfo.iterations <= 0 )
+			{
+			status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+									  IMESSAGE_GETATTRIBUTE, 
+									  &mechanismInfo.iterations, 
+									  CRYPT_OPTION_KEYING_ITERATIONS );
+			if( cryptStatusError( status ) )
+				return( status );
+			macInfo->keySetupIterations = mechanismInfo.iterations;
+			}
+		}
+
+	/* Turn the user key into an encryption context key and load the key 
+	   into the context */
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE, 
+							  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
+	if( cryptStatusOK( status ) )
+		status = contextInfoPtr->loadKeyFunction( contextInfoPtr,
+												  mechanismInfo.dataOut,
+												  mechanismInfo.dataOutLength );
+	if( cryptStatusOK( status ) )
+		contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
+	zeroise( &mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) );
+
+	return( status );
+	}
+
+/****************************************************************************
+*																			*
 *							Context Access Routines							*
 *																			*
 ****************************************************************************/
 
-void initKeyHandling( CONTEXT_INFO *contextInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initKeyHandling( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
 	/* Set the access method pointers */
 	switch( contextInfoPtr->type )
 		{
@@ -570,6 +1010,6 @@ void initKeyHandling( CONTEXT_INFO *contextInfoPtr )
 			break;
 
 		default:
-			assert( NOTREACHED );
+			retIntError_Void();
 		}
 	}

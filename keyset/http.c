@@ -19,7 +19,7 @@
 
 /* The default size of the HTTP read buffer.  This is adjusted dynamically if
    the data being read won't fit (e.g. large CRLs).  The default size is 
-   fine for certs */
+   fine for certificates */
 
 #define HTTP_BUFFER_SIZE	4096
 
@@ -31,8 +31,12 @@
 
 /* Set up key information for a query */
 
-static const char *getKeyName( const CRYPT_KEYID_TYPE keyIDtype )
+CHECK_RETVAL_PTR \
+static const char *getKeyName( IN_KEYID const CRYPT_KEYID_TYPE keyIDtype )
 	{
+	REQUIRES_N( keyIDtype > CRYPT_KEYID_NONE && \
+				keyIDtype < CRYPT_KEYID_LAST );
+
 	switch( keyIDtype )
 		{
 		case CRYPT_KEYID_NAME:
@@ -51,33 +55,7 @@ static const char *getKeyName( const CRYPT_KEYID_TYPE keyIDtype )
 			return( "certHash" );
 		}
 
-	assert( NOTREACHED );
-	return( NULL );			/* Get rid of compiler warning */
-	}
-
-/* Callback function to adjust the I/O buffer size if the initial buffer
-   isn't large enough */
-
-static int bufferAdjustCallback( void *callbackParams, void **bufPtr,
-								 const int bufSize )
-	{
-	KEYSET_INFO *keysetInfo = ( KEYSET_INFO * ) callbackParams;
-	void *newBuffer;
-
-	assert( keysetInfo->type == KEYSET_HTTP );
-	assert( keysetInfo->subType == KEYSET_SUBTYPE_NONE );
-	assert( keysetInfo->keyData != NULL );
-	assert( keysetInfo->keyDataSize < bufSize );
-
-	/* Allocate a new buffer and replace the existing one */
-	if( ( newBuffer = clAlloc( "bufferAdjustCallback", bufSize ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	zeroise( keysetInfo->keyData, keysetInfo->keyDataSize );
-	clFree( "bufferAdjustCallback", keysetInfo->keyData );
-	*bufPtr = newBuffer;
-	keysetInfo->keyData = newBuffer;
-	keysetInfo->keyDataSize = bufSize;
-	return( CRYPT_OK );
+	retIntError_Null();
 	}
 
 /****************************************************************************
@@ -86,77 +64,113 @@ static int bufferAdjustCallback( void *callbackParams, void **bufPtr,
 *																			*
 ****************************************************************************/
 
-/* Retrieve a cert/CRL from an HTTP server, either as a flat URL if the key
-   name is "[none]" or as a cert store */
+/* Retrieve a certificate/CRL from an HTTP server, either as a flat URL if 
+   the key name is "[none]" or as a certificate store */
 
-static int getItemFunction( KEYSET_INFO *keysetInfo,
-							CRYPT_HANDLE *iCryptHandle,
-							const KEYMGMT_ITEM_TYPE itemType,
-							const CRYPT_KEYID_TYPE keyIDtype,
-							const void *keyID,  const int keyIDlength,
-							void *auxInfo, int *auxInfoLength,
-							const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+							OUT_HANDLE_OPT CRYPT_HANDLE *iCryptHandle,
+							IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType,
+							IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							IN_BUFFER( keyIDlength ) const void *keyID, 
+							IN_LENGTH_KEYID const int keyIDlength,
+							STDC_UNUSED void *auxInfo, 
+							STDC_UNUSED int *auxInfoLength,
+							IN_FLAGS_Z( KEYMGMT ) const int flags )
 	{
-	HTTP_INFO *httpInfo = keysetInfo->keysetHTTP;
+	HTTP_INFO *httpInfo = keysetInfoPtr->keysetHTTP;
+	HTTP_DATA_INFO httpDataInfo;
+	HTTP_URI_INFO httpReqInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int length, status;
+	BOOLEAN hasExplicitKeyID = FALSE;
+	long length;
+	int status;
 
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
-	assert( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
-	assert( auxInfo == NULL ); assert( *auxInfoLength == 0 );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCryptHandle, sizeof( CRYPT_HANDLE ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_HTTP );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( auxInfo == NULL ); assert( *auxInfoLength == 0 );
+	REQUIRES( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
 
 	/* Set the keyID as the query portion of the URL if necessary */
 	if( keyIDlength != 6 || strCompare( keyID, "[none]", 6 ) )
 		{
-		const char *keyName = getKeyName( keyIDtype );
-		char queryBuffer[ 1024 + 8 ], *queryBufPtr = queryBuffer;
-		const int queryBufSize = ( keyIDlength <= 1024 - 64 ) ? \
-								 1024 : keyIDlength + 64;
-		const int keyNameLen = strlen( keyName );
+		/* Make sure that the keyID is of an appropriate size */
+		if( keyIDlength > CRYPT_MAX_TEXTSIZE )
+			return( CRYPT_ARGERROR_STR1 );
 
-		if( queryBufSize > 1024 && \
-		    ( queryBufPtr = clDynAlloc( "getItemFunction", \
-										queryBufSize ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
-		strlcpy_s( queryBufPtr, queryBufSize, keyName );
-		strlcat_s( queryBufPtr + keyNameLen, queryBufSize, "=" );
-		memcpy( queryBufPtr + keyNameLen + 1, keyID, keyIDlength );
-		sioctl( &httpInfo->stream, STREAM_IOCTL_QUERY, queryBufPtr, 
-				keyNameLen + 1 + keyIDlength );
-		if( queryBufPtr != queryBuffer )
-			clFree( "getItemFunction", queryBufPtr );
+		hasExplicitKeyID = TRUE;
 		}
 
 	/* If we haven't allocated a buffer for the data yet, do so now */
-	if( keysetInfo->keyData == NULL )
+	if( keysetInfoPtr->keyData == NULL )
 		{
 		/* Allocate the initial I/O buffer */
-		if( ( keysetInfo->keyData = clAlloc( "getItemFunction", \
+		if( ( keysetInfoPtr->keyData = clAlloc( "getItemFunction", \
 											 HTTP_BUFFER_SIZE ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
-		keysetInfo->keyDataSize = HTTP_BUFFER_SIZE;
-
-		/* Since we don't know the size of the data being read in advance,
-		   we have to set up a callback to adjust the buffer size if
-		   necessary */
-		sioctl( &httpInfo->stream, STREAM_IOCTL_CALLBACKFUNCTION,
-				( void * ) bufferAdjustCallback, 0 );
-		sioctl( &httpInfo->stream, STREAM_IOCTL_CALLBACKPARAMS,
-				keysetInfo, 0 );
+		keysetInfoPtr->keyDataSize = HTTP_BUFFER_SIZE;
 		}
 	httpInfo->bufPos = 0;
 
-	/* Send the request to the server */
-	status = sread( &httpInfo->stream, keysetInfo->keyData,
-					keysetInfo->keyDataSize );
+	/* Set up the HTTP request information */
+	if( hasExplicitKeyID )
+		{
+		const char *keyName = getKeyName( keyIDtype );
+		int keyNameLen;
+
+		ENSURES( keyName != NULL );
+		keyNameLen = strlen( keyName );
+		initHttpDataInfoEx( &httpDataInfo, keysetInfoPtr->keyData,
+							keysetInfoPtr->keyDataSize, &httpReqInfo );
+		memcpy( httpReqInfo.attribute, keyName, keyNameLen );
+		httpReqInfo.attributeLen = keyNameLen;
+		memcpy( httpReqInfo.value, keyID, keyIDlength );
+		httpReqInfo.valueLen = keyIDlength;
+		}
+	else
+		{
+		initHttpDataInfo( &httpDataInfo, keysetInfoPtr->keyData,
+						  keysetInfoPtr->keyDataSize );
+		}
+
+	/* Some errors like a CRYPT_ERROR_NOTFOUND (= HTTP 404) aren't fatal in
+	   the same way as (say) a CRYPT_ERROR_BADDATA because while the latter
+	   means that the stream has been corrupted and we can't continue the
+	   former merely means that the requested certificate wasn't found but
+	   we can still submit further requests.  To let the lower-level code
+	   know this we set the HTTP_FLAG_SOFTERRORS flag */
+	httpDataInfo.softErrors = TRUE;
+
+	/* Send the request to the server.  Since we don't know the size of the 
+	   data being read in advance we have to tell the stream I/O code to 
+	   adjust the read buffer size if necessary */
+	httpDataInfo.bufferResize = TRUE;
+	status = sread( &httpInfo->stream, &httpDataInfo,
+					sizeof( HTTP_DATA_INFO ) );
+	if( httpDataInfo.bufferResize )
+		{
+		/* The read buffer may have been adjusted even though an error code
+		   was returned from a later operation so we process the resized 
+		   flag before we check for an error status */
+		keysetInfoPtr->keyData = httpDataInfo.buffer;
+		keysetInfoPtr->keyDataSize = httpDataInfo.bufSize;
+		}
 	if( cryptStatusError( status ) )
 		{
-		sNetGetErrorInfo( &httpInfo->stream, &keysetInfo->errorInfo );
+		sNetGetErrorInfo( &httpInfo->stream, &keysetInfoPtr->errorInfo );
 
-		/* If it's a not-found error, this is non-fatal condition (it just
-		   means that the requested cert wasn't found, but doesn't prevent 
-		   us from submitting further requests), so we clear the stream 
-		   status to allow further queries */
+		/* If it's a not-found error this is non-fatal condition (it just
+		   means that the requested certificate wasn't found but doesn't 
+		   prevent us from submitting further requests) so we clear the 
+		   stream status to allow further queries */
 		if( status == CRYPT_ERROR_NOTFOUND )
 			sClearError( &httpInfo->stream );
 		return( status );
@@ -167,13 +181,13 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 	   since checking the ASN.1, which is the data that will actually be
 	   processed, avoids any vagaries of server implementation oddities,
 	   which may send extra null bytes or CRLFs or do who knows what else */
-	length = getLongObjectLength( keysetInfo->keyData, 
-								  keysetInfo->keyDataSize );
-	if( cryptStatusError( length ) )
-		return( length );
+	status = getLongObjectLength( keysetInfoPtr->keyData, 
+								  httpDataInfo.bytesAvail, &length );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Create a certificate object from the returned data */
-	setMessageCreateObjectIndirectInfo( &createInfo, keysetInfo->keyData,
+	setMessageCreateObjectIndirectInfo( &createInfo, keysetInfoPtr->keyData,
 										length, CRYPT_CERTTYPE_NONE );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
@@ -185,46 +199,75 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 
 /* Prepare to open a connection to an HTTP server */
 
-static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
-						 const int nameLength,
-						 const CRYPT_KEYOPT_TYPE options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
+						 IN_BUFFER( nameLength ) const char *name, 
+						 IN_LENGTH_SHORT_Z const int nameLength,
+						 IN_ENUM( CRYPT_KEYOPT ) const CRYPT_KEYOPT_TYPE options )
 	{
-	HTTP_INFO *httpInfo = keysetInfo->keysetHTTP;
+	HTTP_INFO *httpInfo = keysetInfoPtr->keysetHTTP;
 	NET_CONNECT_INFO connectInfo;
+	int status;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isReadPtr( name, nameLength ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_HTTP );
+	REQUIRES( nameLength >= MIN_DNS_SIZE && nameLength < MAX_URL_SIZE );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* Set up the HTTP connection */
-	initNetConnectInfo( &connectInfo, keysetInfo->ownerHandle, CRYPT_ERROR, 
+	initNetConnectInfo( &connectInfo, keysetInfoPtr->ownerHandle, CRYPT_ERROR, 
 						CRYPT_ERROR, NET_OPTION_HOSTNAME );
 	connectInfo.name = name;
 	connectInfo.nameLength = nameLength;
 	connectInfo.port = 80;
-	return( sNetConnect( &httpInfo->stream, STREAM_PROTOCOL_HTTP, 
-						 &connectInfo, &keysetInfo->errorInfo ) );
+	status = sNetConnect( &httpInfo->stream, STREAM_PROTOCOL_HTTP, 
+						  &connectInfo, &keysetInfoPtr->errorInfo );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Since this isn't a general-purpose HTTP stream (of the kind used for 
+	   the HTTP-as-a-substrate PKI protocols) but is only being used for 
+	   HTTP 'GET' operations, we restrict the usage to just this operation */
+	sioctl( &httpInfo->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
+			STREAM_HTTPREQTYPE_GET );
+	return( CRYPT_OK );
 	}
 
 /* Close a previously-opened HTTP connection */
 
-static int shutdownFunction( KEYSET_INFO *keysetInfo )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static int shutdownFunction( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
-	HTTP_INFO *httpInfo = keysetInfo->keysetHTTP;
+	HTTP_INFO *httpInfo = keysetInfoPtr->keysetHTTP;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_HTTP );
 
 	sNetDisconnect( &httpInfo->stream );
-	if( keysetInfo->keyData != NULL )
+	if( keysetInfoPtr->keyData != NULL )
 		{
-		zeroise( keysetInfo->keyData, keysetInfo->keyDataSize );
-		clFree( "getItemFunction", keysetInfo->keyData );
-		keysetInfo->keyData = NULL;
+		zeroise( keysetInfoPtr->keyData, keysetInfoPtr->keyDataSize );
+		clFree( "getItemFunction", keysetInfoPtr->keyData );
+		keysetInfoPtr->keyData = NULL;
 		}
 
 	return( CRYPT_OK );
 	}
 
-int setAccessMethodHTTP( KEYSET_INFO *keysetInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodHTTP( KEYSET_INFO *keysetInfoPtr )
 	{
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_HTTP );
+
 	/* Set the access method pointers */
-	keysetInfo->initFunction = initFunction;
-	keysetInfo->shutdownFunction = shutdownFunction;
-	keysetInfo->getItemFunction = getItemFunction;
+	keysetInfoPtr->initFunction = initFunction;
+	keysetInfoPtr->shutdownFunction = shutdownFunction;
+	keysetInfoPtr->getItemFunction = getItemFunction;
 
 	return( CRYPT_OK );
 	}

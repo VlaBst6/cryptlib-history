@@ -42,8 +42,8 @@ void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 	/* If there's an explicit server name set, connect to it if we're the 
 	   client or bind to the named interface if we're the server */
 	if( ( attributeListPtr = \
-			findSessionAttribute( sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_NAME ) ) != NULL )
+			findSessionInfo( sessionInfoPtr->attributeList,
+							 CRYPT_SESSINFO_SERVER_NAME ) ) != NULL )
 		{
 		connectInfo->name = attributeListPtr->value;
 		connectInfo->nameLength = attributeListPtr->valueLength;
@@ -52,8 +52,8 @@ void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 	/* If there's an explicit port set, connect/bind to it, otherwise use the
 	   default port for the protocol */
 	if( ( attributeListPtr = \
-			findSessionAttribute( sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_PORT ) ) != NULL )
+			findSessionInfo( sessionInfoPtr->attributeList,
+							 CRYPT_SESSINFO_SERVER_PORT ) ) != NULL )
 		connectInfo->port = attributeListPtr->intValue;
 	else
 		connectInfo->port = sessionInfoPtr->protocolInfo->port;
@@ -61,6 +61,106 @@ void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 	/* Set the user-supplied transport session or socket if required */
 	connectInfo->iCryptSession = sessionInfoPtr->transportSession;
 	connectInfo->networkSocket = sessionInfoPtr->networkSocket;
+	}
+
+/* Make sure that mutually exclusive session attributes haven't been set.
+   The checks performed are:
+
+	CRYPT_SESSINFO_REQUEST		-> !CRYPT_SESSINFO_REQUEST, 
+								   !CRYPT_SESSINFO_PRIVATEKEY,
+								   !CRYPT_SESSINFO_CMP_PRIVKEYSET
+
+	CRYPT_SESSINFO_PRIVATEKEY	-> !CRYPT_SESSINFO_PRIVATEKEY,
+								   !CRYPT_SESSINFO_CMP_PRIVKEYSET
+
+	CRYPT_SESSINFO_CACERTIFICATE-> !CRYPT_SESSINFO_CACERTIFICATE,
+								   !CRYPT_SESSINFO_SERVER_FINGERPRINT
+
+	CRYPT_SESSINFO_SERVER_FINGERPRINT
+								-> !CRYPT_SESSINFO_SERVER_FINGERPRINT,
+								   !CRYPT_SESSINFO_CACERTIFICATE */
+
+#define CHECK_ATTR_NONE			0x00
+#define CHECK_ATTR_REQUEST		0x01
+#define CHECK_ATTR_PRIVKEY		0x02
+#define CHECK_ATTR_PRIVKEYSET	0x04
+#define CHECK_ATTR_CACERT		0x08
+#define CHECK_ATTR_FINGERPRINT	0x10
+
+typedef struct {
+	const CRYPT_ATTRIBUTE_TYPE attribute;
+	const int flags;
+	} EXCLUDED_ATTRIBUTE_INFO;
+
+BOOLEAN checkAttributesConsistent( SESSION_INFO *sessionInfoPtr,
+								   const CRYPT_ATTRIBUTE_TYPE attribute )
+	{
+	static const EXCLUDED_ATTRIBUTE_INFO excludedAttrInfo[] = {
+		{ CRYPT_SESSINFO_REQUEST, 
+			CHECK_ATTR_REQUEST | CHECK_ATTR_PRIVKEY | CHECK_ATTR_PRIVKEYSET },
+		{ CRYPT_SESSINFO_PRIVATEKEY,
+			CHECK_ATTR_PRIVKEY | CHECK_ATTR_PRIVKEYSET },
+		{ CRYPT_SESSINFO_CACERTIFICATE, 
+			CHECK_ATTR_CACERT | CHECK_ATTR_FINGERPRINT },
+		{ CRYPT_SESSINFO_SERVER_FINGERPRINT, 
+			CHECK_ATTR_FINGERPRINT | CHECK_ATTR_CACERT },
+		{ CRYPT_ATTRIBUTE_NONE, CHECK_ATTR_NONE },
+			{ CRYPT_ATTRIBUTE_NONE, CHECK_ATTR_NONE } 
+		};
+	int flags = 0, i;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( attribute == CRYPT_SESSINFO_REQUEST || \
+			attribute == CRYPT_SESSINFO_PRIVATEKEY || \
+			attribute == CRYPT_SESSINFO_CACERTIFICATE || \
+			attribute == CRYPT_SESSINFO_SERVER_FINGERPRINT );
+
+	/* Find the excluded-attribute info for this attribute */
+	for( i = 0; excludedAttrInfo[ i ].attribute != CRYPT_ATTRIBUTE_NONE && \
+				i < FAILSAFE_ARRAYSIZE( excludedAttrInfo, EXCLUDED_ATTRIBUTE_INFO ); 
+		 i++ )
+		{
+		if( excludedAttrInfo[ i ].attribute == attribute )
+			{
+			flags = excludedAttrInfo[ i ].flags;
+			break;
+			}
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( excludedAttrInfo, EXCLUDED_ATTRIBUTE_INFO ) )
+		retIntError();
+
+	/* Make sure that none of the excluded attributes are present */
+	if( ( flags & CHECK_ATTR_REQUEST ) && \
+		sessionInfoPtr->iCertRequest != CRYPT_ERROR )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_REQUEST,
+					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		return( FALSE );
+		}
+	if( ( flags & CHECK_ATTR_PRIVKEYSET ) && \
+		sessionInfoPtr->privKeyset != CRYPT_ERROR )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_CMP_PRIVKEYSET,
+					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		return( FALSE );
+		}
+	if( ( flags & CHECK_ATTR_CACERT ) && \
+		sessionInfoPtr->iAuthInContext != CRYPT_ERROR )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_CACERTIFICATE,
+					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		return( FALSE );
+		}
+	if( ( flags & CHECK_ATTR_FINGERPRINT ) && \
+		findSessionInfo( sessionInfoPtr->attributeList,
+						 CRYPT_SESSINFO_SERVER_FINGERPRINT ) != NULL )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_SERVER_FINGERPRINT,
+					  CRYPT_ERRTYPE_ATTR_PRESENT );
+		return( FALSE );
+		}
+	
+	return( TRUE );
 	}
 
 /****************************************************************************
@@ -76,19 +176,19 @@ static CRYPT_ATTRIBUTE_TYPE checkClientParameters( const SESSION_INFO *sessionIn
 	/* Make sure that the network comms parameters are present */
 	if( sessionInfoPtr->transportSession == CRYPT_ERROR && \
 		sessionInfoPtr->networkSocket == CRYPT_ERROR && \
-		findSessionAttribute( sessionInfoPtr->attributeList, 
-							  CRYPT_SESSINFO_SERVER_NAME ) == NULL )
+		findSessionInfo( sessionInfoPtr->attributeList, 
+						 CRYPT_SESSINFO_SERVER_NAME ) == NULL )
 		return( CRYPT_SESSINFO_SERVER_NAME );
 
 	/* Make sure that the username + password and/or user private key are 
 	   present if required */
 	if( ( sessionInfoPtr->clientReqAttrFlags & SESSION_NEEDS_USERID ) && \
-		findSessionAttribute( sessionInfoPtr->attributeList, 
-							  CRYPT_SESSINFO_USERNAME ) == NULL )
+		findSessionInfo( sessionInfoPtr->attributeList, 
+						 CRYPT_SESSINFO_USERNAME ) == NULL )
 		return( CRYPT_SESSINFO_USERNAME );
 	if( ( sessionInfoPtr->clientReqAttrFlags & SESSION_NEEDS_PASSWORD ) && \
-		findSessionAttribute( sessionInfoPtr->attributeList, 
-							  CRYPT_SESSINFO_PASSWORD ) == NULL )
+		findSessionInfo( sessionInfoPtr->attributeList, 
+						 CRYPT_SESSINFO_PASSWORD ) == NULL )
 		{
 		/* There's no password present, see if we can use a private key as 
 		   an alternative */
@@ -104,8 +204,8 @@ static CRYPT_ATTRIBUTE_TYPE checkClientParameters( const SESSION_INFO *sessionIn
 		   an alternative */
 		if( !( sessionInfoPtr->clientReqAttrFlags & \
 			   SESSION_NEEDS_KEYORPASSWORD ) || \
-			findSessionAttribute( sessionInfoPtr->attributeList, 
-								  CRYPT_SESSINFO_PASSWORD ) == NULL )
+			findSessionInfo( sessionInfoPtr->attributeList, 
+							 CRYPT_SESSINFO_PASSWORD ) == NULL )
 			return( CRYPT_SESSINFO_PRIVATEKEY );
 		}
 
@@ -135,8 +235,8 @@ static CRYPT_ATTRIBUTE_TYPE checkServerParameters( const SESSION_INFO *sessionIn
 		   handle this fully */
 		if( !( sessionInfoPtr->serverReqAttrFlags & \
 			   SESSION_NEEDS_KEYORPASSWORD ) || \
-			findSessionAttribute( sessionInfoPtr->attributeList, 
-								  CRYPT_SESSINFO_PASSWORD ) == NULL )
+			findSessionInfo( sessionInfoPtr->attributeList, 
+							 CRYPT_SESSINFO_PASSWORD ) == NULL )
 			return( CRYPT_SESSINFO_PRIVATEKEY );
 		}
 	if( ( sessionInfoPtr->serverReqAttrFlags & SESSION_NEEDS_KEYSET ) && \
@@ -195,11 +295,11 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 			}
 		}
 	assert( isServer( sessionInfoPtr ) || \
-			findSessionAttribute( sessionInfoPtr->attributeList, 
-								  CRYPT_SESSINFO_SERVER_NAME ) != NULL || \
+			findSessionInfo( sessionInfoPtr->attributeList, 
+							 CRYPT_SESSINFO_SERVER_NAME ) != NULL || \
 			sessionInfoPtr->networkSocket != CRYPT_ERROR );
-	assert( findSessionAttribute( sessionInfoPtr->attributeList,
-								  CRYPT_SESSINFO_SERVER_PORT ) != NULL || \
+	assert( findSessionInfo( sessionInfoPtr->attributeList,
+							 CRYPT_SESSINFO_SERVER_PORT ) != NULL || \
 			sessionInfoPtr->protocolInfo->port > 0 );
 	assert( sessionInfoPtr->receiveBuffer != NULL );
 
@@ -239,8 +339,10 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 	   until this very late stage because no networking functionality is
 	   used until this point */
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		{
 		/* The kernel is shutting down, bail out */
 		return( CRYPT_ERROR_PERMISSION );
+		}
 
 	/* If this is the first time we've got here, activate the session */
 	if( !( sessionInfoPtr->flags & SESSION_PARTIALOPEN ) )
@@ -294,8 +396,10 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		/* For data transport sessions, partial reads and writes (that is,
 		   sending and receiving partial packets in the presence of 
 		   timeouts) are permitted */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALREAD, NULL, 0 );
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALWRITE, NULL, 0 );
+		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALREAD, NULL, 
+				TRUE );
+		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALWRITE, NULL, 
+				TRUE );
 		}
 
 	/* The handshake has been completed, switch from the handshake timeout
@@ -343,9 +447,16 @@ int activateSession( SESSION_INFO *sessionInfoPtr )
 	/* Activate the connection if necessary */
 	if( !( sessionInfoPtr->flags & SESSION_ISOPEN ) )
 		{
+		/* Try and activate the session */
 		status = activateConnection( sessionInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
+
+		/* The session activation succeeded, make sure that we don't try
+		   and replace the ephemeral attributes established during the 
+		   session setup during any later operations */
+		if( sessionInfoPtr->attributeList != NULL )
+			lockEphemeralAttributes( sessionInfoPtr->attributeList );
 		}
 
 	/* If it's a secure data transport session, it's up to the caller to
@@ -412,10 +523,12 @@ int sendCloseNotification( SESSION_INFO *sessionInfoPtr,
 	   sending our close alert and receiving the other side's ack of the 
 	   close, but without leading to excessive delays during the shutdown */
 	if( isShutdown )
+		{
 		/* It's a cryptlib-wide shutdown, try and get out as quickly as
 		   possible */
 		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
 				NULL, 2 );
+		}
 	else
 		{
 		int timeout;
@@ -471,8 +584,7 @@ static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
 	/* Connect to the server */
 	initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		status = sNetConnect( &sessionInfoPtr->stream,
-							  STREAM_PROTOCOL_HTTP_TRANSACTION,
+		status = sNetConnect( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP,
 							  &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
@@ -495,27 +607,19 @@ static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
 								  STREAM_PROTOCOL_TCPIP,
 								  &connectInfo, &sessionInfoPtr->errorInfo );
 		}
-	if( cryptStatusError( status ) )
-		return( status );
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONTENTTYPE,
-				( void * ) protocolInfoPtr->clientContentType,
-				strlen( protocolInfoPtr->clientContentType ) );
-
-	return( CRYPT_OK );
+	return( status );
 	}
 
 static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 	{
 	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
 	NET_CONNECT_INFO connectInfo;
-	int port, status;
+	int nameLen, port, status;
 
 	/* Wait for a client connection */
 	initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		status = sNetListen( &sessionInfoPtr->stream,
-							 STREAM_PROTOCOL_HTTP_TRANSACTION,
+		status = sNetListen( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP,
 							 &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
@@ -540,29 +644,33 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONTENTTYPE,
-				( void * ) protocolInfoPtr->serverContentType,
-				strlen( protocolInfoPtr->serverContentType ) );
 
 	/* Save the client details for the caller, using the (always-present)
 	   receive buffer as the intermediate store */
-	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAME,
-					 sessionInfoPtr->receiveBuffer, CRYPT_MAX_TEXTSIZE );
+	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAMELEN,
+					 &nameLen, 0 );
+	if( cryptStatusOK( status ) )
+		status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAME,
+						 sessionInfoPtr->receiveBuffer, CRYPT_MAX_TEXTSIZE );
 	if( cryptStatusError( status ) )
+		{
 		/* No client info available, exit */
 		return( CRYPT_OK );
-	addSessionAttribute( &sessionInfoPtr->attributeList, 
-						 CRYPT_SESSINFO_CLIENT_NAME, 
-						 sessionInfoPtr->receiveBuffer,
-						 strlen( sessionInfoPtr->receiveBuffer ) );
+		}
+	status = addSessionInfo( &sessionInfoPtr->attributeList, 
+							 CRYPT_SESSINFO_CLIENT_NAME, 
+							 sessionInfoPtr->receiveBuffer, nameLen );
+	if( cryptStatusError( status ) )
+		return( status );
 	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, 
 					 &port, 0 );
-	if( cryptStatusOK( status ) )
-		addSessionAttribute( &sessionInfoPtr->attributeList, 
-							 CRYPT_SESSINFO_CLIENT_PORT, NULL, port );
-
-	return( CRYPT_OK );
+	if( cryptStatusError( status ) )
+		{
+		/* No port info available, exit */
+		return( CRYPT_OK );
+		}
+	return( addSessionInfo( &sessionInfoPtr->attributeList, 
+							CRYPT_SESSINFO_CLIENT_PORT, NULL, port ) );
 	}
 
 static void defaultShutdownFunction( SESSION_INFO *sessionInfoPtr )
@@ -584,6 +692,22 @@ static int defaultGetAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	/* If we didn't get a response there's nothing to return */
 	if( sessionInfoPtr->iCertResponse == CRYPT_ERROR )
 		return( CRYPT_ERROR_NOTFOUND );
+
+/************************************************************************/
+/* SCEP gets a bit complicated because a single object has to fill 
+   multiple roles, so that for example the issued cert has to do double 
+   duty for both encryption and authentication.  For now we work around 
+   this by juggling the values around */
+if( sessionInfoPtr->type == CRYPT_SESSION_SCEP && \
+	sessionInfoPtr->iAuthInContext != CRYPT_ERROR )
+	{
+	*responsePtr = sessionInfoPtr->iCertResponse;
+	sessionInfoPtr->iCertResponse = sessionInfoPtr->iAuthInContext;
+	sessionInfoPtr->iAuthInContext = CRYPT_ERROR;
+
+	return( CRYPT_OK );
+	}
+/************************************************************************/
 
 	/* Return the info to the caller */
 	krnlSendNotifier( sessionInfoPtr->iCertResponse, IMESSAGE_INCREFCOUNT );

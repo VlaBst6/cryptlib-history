@@ -1,6 +1,6 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 2003, Dr Brian Gladman, Worcester, UK.   All rights reserved.
+ Copyright (c) 1998-2006, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
@@ -27,7 +27,7 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 31/01/2006
+ Issue 09/09/2006
 */
 
 #if defined( INC_ALL )		/* pcg */
@@ -58,7 +58,7 @@ extern "C"
 #define state_out(y,x)  so(y,x,0); so(y,x,1); so(y,x,2); so(y,x,3)
 #define round(rm,y,x,k) rm(y,x,k,0); rm(y,x,k,1); rm(y,x,k,2); rm(y,x,k,3)
 
-#if ( FUNCS_IN_C & ENCRYPTION_IN_C)
+#if ( FUNCS_IN_C & ENCRYPTION_IN_C )
 
 /* Visual C++ .Net v7.1 provides the fastest encryption code when using
    Pentium optimiation with small code but this is poor for decryption

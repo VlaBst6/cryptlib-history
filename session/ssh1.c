@@ -343,8 +343,8 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
 	const ATTRIBUTE_LIST *attributeListPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_SERVER_FINGERPRINT );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_SERVER_FINGERPRINT );
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize;
 
@@ -353,9 +353,9 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 	hashFunction( hashInfo, fingerPrint, e, eLength, HASH_END );
 	if( attributeListPtr == NULL )
 		/* Remember the value for the caller */
-		return( addSessionAttribute( &sessionInfoPtr->attributeList,
-									 CRYPT_SESSINFO_SERVER_FINGERPRINT,
-									 fingerPrint, hashSize ) );
+		return( addSessionInfo( &sessionInfoPtr->attributeList,
+								CRYPT_SESSINFO_SERVER_FINGERPRINT,
+								fingerPrint, hashSize ) );
 
 	/* There's an existing fingerprint value, make sure that it matches what
 	   we just calculated */
@@ -821,12 +821,12 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	MESSAGE_DATA msgData;
 	BYTE *bufPtr;
 	const BOOLEAN hasPassword = \
-			( findSessionAttribute( sessionInfoPtr->attributeList,
-								    CRYPT_SESSINFO_PASSWORD ) != NULL ) ? \
+			( findSessionInfo( sessionInfoPtr->attributeList,
+							   CRYPT_SESSINFO_PASSWORD ) != NULL ) ? \
 			TRUE : FALSE;
 	const BOOLEAN hasPrivkey = \
-			( findSessionAttribute( sessionInfoPtr->attributeList,
-								    CRYPT_SESSINFO_PRIVATEKEY ) != NULL ) ? \
+			( findSessionInfo( sessionInfoPtr->attributeList,
+							   CRYPT_SESSINFO_PRIVATEKEY ) != NULL ) ? \
 			TRUE : FALSE;
 	BOOLEAN rsaOK, pwOK;
 	int hostKeyLength, serverKeyLength, keyDataLength, length, value, status;
@@ -961,11 +961,11 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 		if( hasPassword )
 			{
 			ATTRIBUTE_LIST *attributeListPtr = ( ATTRIBUTE_LIST * ) \
-					findSessionAttribute( sessionInfoPtr->attributeList,
-										  CRYPT_SESSINFO_PASSWORD );
+					findSessionInfo( sessionInfoPtr->attributeList,
+									 CRYPT_SESSINFO_PASSWORD );
 
-			deleteSessionAttribute( &sessionInfoPtr->attributeList,
-									attributeListPtr );
+			deleteSessionInfo( &sessionInfoPtr->attributeList,
+							   attributeListPtr );
 			}
 		}
 
@@ -1031,8 +1031,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 			value = SSH1_CIPHER_RC4;
 			break;
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR_NOTAVAIL );
+			retIntError();
 		}
 	*bufPtr++ = value;
 	memcpy( bufPtr, handshakeInfo->cookie, SSH1_COOKIE_SIZE );
@@ -1097,11 +1096,11 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 									SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_USERNAME );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_USERNAME );
 	const ATTRIBUTE_LIST *passwordPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_PASSWORD );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_PASSWORD );
 	BYTE *bufPtr;
 	int padLength, modulusLength, length, status;
 
@@ -1558,10 +1557,9 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 				"Invalid user name packet length %d, name length %d",
 				length, stringLength );
-	updateSessionAttribute( &sessionInfoPtr->attributeList,
-							CRYPT_SESSINFO_USERNAME, bufPtr,
-							stringLength, CRYPT_MAX_TEXTSIZE,
-							ATTR_FLAG_NONE );
+	updateSessionInfo( &sessionInfoPtr->attributeList,
+					   CRYPT_SESSINFO_USERNAME, bufPtr,
+					   stringLength, CRYPT_MAX_TEXTSIZE, ATTR_FLAG_NONE );
 
 	/* Send the server ack (which is actually a nack since the user needs
 	   to submit a password) and read back the password */
@@ -1579,10 +1577,9 @@ static int completeServerHandshake( SESSION_INFO *sessionInfoPtr,
 		retExt( sessionInfoPtr, CRYPT_ERROR_BADDATA,
 				"Invalid password packet length %d, password length %d",
 				length, stringLength );
-	updateSessionAttribute( &sessionInfoPtr->attributeList,
-							CRYPT_SESSINFO_PASSWORD, bufPtr,
-							stringLength, CRYPT_MAX_TEXTSIZE,
-							ATTR_FLAG_NONE );
+	updateSessionInfo( &sessionInfoPtr->attributeList,
+					   CRYPT_SESSINFO_PASSWORD, bufPtr,
+					   stringLength, CRYPT_MAX_TEXTSIZE, ATTR_FLAG_NONE );
 
 	/* Send the server ack and process any further junk that the caller may
 	   throw at us until we get an exec shell or command request.  At the

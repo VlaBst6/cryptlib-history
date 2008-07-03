@@ -62,7 +62,9 @@ AuthenticatedData ::= SEQUENCE {			-- PKCS #9 16 1 2
 		contentType		OBJECT IDENTIFIER id-Data/Sig/Encr/Env,
 		content		[0]	EXPLICIT OCTET STRING
 		}
+	authAttrs		[1]	SET OF Attribute OPTIONAL,
 	mac					OCTET STRING
+	unauthAttrs		[2]	SET OF Attribute OPTIONAL 
 	}
 
 -/ Encrypted data: Raw encrypted, enveloped /-
@@ -78,15 +80,28 @@ EncryptedData ::= SEQUENCE {				-- PKCS #7 6
 
 EnvelopedData ::= SEQUENCE {				-- PKCS #7 3
 	version				INTEGER (0),		-- PKCS #7 v1.5, v=2 for origInfo
-	originatorInfo	[0]	SEQUENCE { [0] SET OF Certificate } OPTIONAL,
 	recipientInfos		SET OF RecipientInfo,
 	encrContentInfo		SEQUENCE {
 		contentType		OBJECT IDENTIFIER id-Data/Sig/Encr/Env,
 		contentEncrAlgo	AlgorithmIdentifier,
 		content		[0]	OCTET STRING
 		},
-	unprotectedAttrs
-					[1]	UnprotectedAttributes OPTIONAL
+	unauthAttrs		[1]	SET OF Attribute OPTIONAL
+	}
+
+-/ Combined encrypted + authenticated data /-
+
+ AuthEnvelopedData ::= SEQUENCE {			-- PKCS #9 16 1 23
+ 	version				INTEGER (0),		-- CMS
+	recipientInfos		SET OF RecipientInfo,
+	encrContentInfo		SEQUENCE {
+		contentType		OBJECT IDENTIFIER id-Data/Sig/Encr/Env,
+		contentEncrAlgo	AlgorithmIdentifier,
+		content		[0]	OCTET STRING
+		},
+	authAttrs		[1]	SET OF Attribute OPTIONAL,
+	mac					OCTET STRING
+	unauthAttrs		[2]	SET OF Attribute OPTIONAL 
 	}
 
 ------------------------------------------------------------------------------
@@ -255,10 +270,11 @@ SignerInfo ::= SEQUENCE {					-- CMS - cryptlib
 			label		UTF8String,
 			...
 			},
-		SEQUENCE {							SEQUENCE {		-- ClassAttr
-			...									appOID		OBJECT IDENTIFIER (cryptlib),
-			},									...
-												},
+		SEQUENCE {											-- ClassAttr
+			...									
+			appOID		OBJECT IDENTIFIER (cryptlib),
+			...
+			},
 		[1] EXPLICIT SEQUENCE {
 			<data>
 			}
@@ -557,6 +573,8 @@ OCSPRequest ::= SEQUENCE {
 						SEQUENCE {			-- requestList
 						SEQUENCE {			-- request
 			certID		CertID,
+			singleReqExt
+					[0] EXPLICIT Extensions OPTIONAL
 				}
 			},
 		reqExts		[2] EXPLICIT Extensions OPTIONAL
@@ -749,7 +767,8 @@ xxxRequest ::= SEQUENCE {					-- ir/cr/kur, 3.3.1/3.3.3/3.3.5
 				subject	[5] EXPLICIT Name,
 				pubKey	[6] SubjectPublicKeyInfo,
 				exts	[9] Extensions OPTIONAL
-						}
+						},
+			cControls	SEQUENCE OF Attribute OPTIONAL		-- Ignored
 					},
 		pop			[1] EXPLICIT Signature	-- From X.509, for sig.key
 or		pop			[2] EXPLICIT [1] INTEGER (0)
@@ -827,9 +846,7 @@ Conf ::= SEQUENCE {							-- 3.3.17, profile = B8
 		transID		[4] EXPLICIT OCTET STRING SIZE (16),-- Must match previous
 						...					-- Ignored
 		},
-	body		   [19]	EXPLICIT SEQUENCE {
-						NULL
-		},
+	body		   [19]	EXPLICIT NULL,
 	protection		[0]	EXPLICIT BIT STRING	-- ix = MAC, cx/kux = SIG
 	}
 

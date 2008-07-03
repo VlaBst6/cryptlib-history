@@ -1,24 +1,17 @@
 /****************************************************************************
 *																			*
 *					 cryptlib PGP De-enveloping Routines					*
-*					 Copyright Peter Gutmann 1996-2006						*
+*					 Copyright Peter Gutmann 1996-2008						*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
   #include "envelope.h"
-  #include "misc_rw.h"
-  #include "pgp.h"
+  #include "pgp_rw.h"
 #else
   #include "envelope/envelope.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
-
-/* Prototypes for functions in pgp_env.c */
-
-BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo, 
-					  const CRYPT_MODE_TYPE cryptMode );
 
 #ifdef USE_PGP
 
@@ -28,24 +21,79 @@ BOOLEAN pgpCheckAlgo( const CRYPT_ALGO_TYPE cryptAlgo,
 *																			*
 ****************************************************************************/
 
+/* Sanity-check the envelope state */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	/* Make sure that general envelope state is in order */
+	if( !( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) )
+		return( FALSE );
+	if( envelopeInfoPtr->pgpDeenvState < PGP_DEENVSTATE_NONE || \
+		envelopeInfoPtr->pgpDeenvState >= PGP_DEENVSTATE_LAST )
+		return( FALSE );
+
+	/* Make sure that the buffer position is within bounds */
+	if( envelopeInfoPtr->buffer == NULL || \
+		envelopeInfoPtr->bufPos < 0 || \
+		envelopeInfoPtr->bufPos > envelopeInfoPtr->bufSize || \
+		envelopeInfoPtr->bufSize < MIN_BUFFER_SIZE || \
+		envelopeInfoPtr->bufSize >= MAX_INTLENGTH )
+		return( FALSE );
+
+	/* Make sure that the payload size is within bounds */
+	if( envelopeInfoPtr->payloadSize != CRYPT_UNUSED && \
+		( envelopeInfoPtr->payloadSize < 0 || \
+		  envelopeInfoPtr->payloadSize >= MAX_INTLENGTH ) )
+		return( FALSE );
+
+	/* Make sure that the out-of-band buffer state is OK.  The oobDataLeft 
+	   value is the general size of a data packet header plus the maximum 
+	   possible length for the variable-length filename portion */
+	if( envelopeInfoPtr->oobEventCount < 0 || \
+		envelopeInfoPtr->oobEventCount > 10 || \
+		envelopeInfoPtr->oobDataLeft < 0 || \
+		envelopeInfoPtr->oobDataLeft >= 32 + 256 )
+		return( FALSE );
+
+	/* Make sure that the packet data information is within bounds */
+	if( envelopeInfoPtr->segmentSize < 0 || \
+		envelopeInfoPtr->segmentSize >= MAX_INTLENGTH || \
+		envelopeInfoPtr->dataLeft < 0 || \
+		envelopeInfoPtr->dataLeft >= MAX_INTLENGTH )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
 /* Get information on a PGP data packet.  If the isIndefinite value is 
    present then an indefinite length (i.e. partial packet lengths) is 
    permitted, otherwise it isn't.  If the allowDummyPackets flag is set then
    we allow shorter-than-normal dummy packets (PGP_PACKET_MARKER), otherwise
    we enforce a sensible minimum packet size */
 
-static int getPacketInfo( STREAM *stream, ENVELOPE_INFO *envelopeInfoPtr,
-						  long *lengthPtr, BOOLEAN *isIndefinite,
-						  const BOOLEAN allowDummyPackets )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+static int getPacketInfo( INOUT STREAM *stream, 
+						  INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						  OUT_ENUM_OPT( PGP_PACKET ) PGP_PACKET_TYPE *packetType, 
+						  OUT_LENGTH_Z long *length, 
+						  OUT_OPT_BOOL BOOLEAN *isIndefinite,
+						  IN_LENGTH_SHORT int minPacketSize )
 	{
 	int ctb, version, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( isWritePtr( lengthPtr, sizeof( long ) ) );
+	assert( isWritePtr( packetType, sizeof( PGP_PACKET_TYPE ) ) );
+	assert( isWritePtr( length, sizeof( long ) ) );
+	assert( isIndefinite == NULL || \
+			isWritePtr( isIndefinite, sizeof( BOOLEAN ) ) );
+
+	ENSURES( minPacketSize > 0 && minPacketSize < MAX_INTLENGTH_SHORT );
 
 	/* Clear return values */
-	*lengthPtr = CRYPT_ERROR;
+	*packetType = PGP_PACKET_NONE;
+	*length = 0;
 	if( isIndefinite != NULL )
 		*isIndefinite = FALSE;
 
@@ -55,15 +103,14 @@ static int getPacketInfo( STREAM *stream, ENVELOPE_INFO *envelopeInfoPtr,
 	   and in fact a number of apps mix version numbers.  We treat the 
 	   version to report as the highest one that we find */
 	if( isIndefinite != NULL )
-		status = pgpReadPacketHeaderI( stream, &ctb, lengthPtr, 
-									   allowDummyPackets ? 3 : 8 );
+		status = pgpReadPacketHeaderI( stream, &ctb, length, minPacketSize );
 	else
-		status = pgpReadPacketHeader( stream, &ctb, lengthPtr, 8 );
+		status = pgpReadPacketHeader( stream, &ctb, length, minPacketSize );
 	if( cryptStatusError( status ) )
 		{
 		if( status != OK_SPECIAL )
 			return( status );
-		assert( isIndefinite != NULL );
+		ENSURES( isIndefinite != NULL );
 
 		/* Remember that the packet uses an indefinite-length encoding */
 		envelopeInfoPtr->dataFlags &= ~ENVDATA_NOSEGMENT;
@@ -71,10 +118,11 @@ static int getPacketInfo( STREAM *stream, ENVELOPE_INFO *envelopeInfoPtr,
 		}
 	version = pgpGetPacketVersion( ctb );
 	if( version > envelopeInfoPtr->version )
-		envelopeInfoPtr->version = pgpGetPacketVersion( ctb );
+		envelopeInfoPtr->version = version;
+	*packetType = pgpGetPacketType( ctb );
 
 	/* Extract and return the packet type */
-	return( pgpGetPacketType( ctb ) );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -85,33 +133,43 @@ static int getPacketInfo( STREAM *stream, ENVELOPE_INFO *envelopeInfoPtr,
 
 /* Add information about an object to an envelope's content information list */
 
-static int addContentListItem( STREAM *stream,
-							   ENVELOPE_INFO *envelopeInfoPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							   INOUT_OPT STREAM *stream,
 							   const BOOLEAN isContinuedSignature )
 	{
 	QUERY_INFO queryInfo;
 	CONTENT_LIST *contentListItem;
 	void *object = NULL;
-	int status;
+	int objectSize = 0, status;
 
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( ( stream == NULL && \
 			  envelopeInfoPtr->actionList == NULL && \
 			  envelopeInfoPtr->contentList == NULL ) || \
 			isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( ( stream == NULL && \
+				envelopeInfoPtr->actionList == NULL && \
+				envelopeInfoPtr->contentList == NULL ) || \
+			  ( stream != NULL ) );
+
+	/* Make sure that there's room to add another list item */
+	if( !moreContentItemsPossible( envelopeInfoPtr->contentList ) )
+		return( CRYPT_ERROR_OVERFLOW );
 
 	/* PGP 2.x password-encrypted data is detected by the absence of any
-	   other keying object rather than by finding a concrete object type, so
+	   other keying object rather than by finding a concrete object type so
 	   if we're passed a null stream we add a password pseudo-object */
 	if( stream == NULL )
 		{
 		CONTENT_ENCR_INFO *encrInfo;
 
-		contentListItem = createContentListItem( envelopeInfoPtr->memPoolState,
-												 CRYPT_FORMAT_PGP, NULL, 0, 
-												 FALSE );
-		if( contentListItem == NULL )
-			return( CRYPT_ERROR_MEMORY );
+		status = createContentListItem( &contentListItem, 
+										envelopeInfoPtr->memPoolState,
+										CRYPT_FORMAT_PGP, NULL, 0, FALSE );
+		if( cryptStatusError( status ) )
+			return( status );
 		encrInfo = &contentListItem->clEncrInfo;
 		contentListItem->envInfo = CRYPT_ENVINFO_PASSWORD;
 		encrInfo->cryptAlgo = CRYPT_ALGO_IDEA;
@@ -122,47 +180,55 @@ static int addContentListItem( STREAM *stream,
 		}
 
 	/* Find the size of the object, allocate a buffer for it if necessary,
-	   and copy it across */
+	   and copy it across.  This call verifies that all of the object data 
+	   is present in the stream so in theory we don't have to check the 
+	   following reads, but we check them anyway just to be sure */
 	status = queryPgpObject( stream, &queryInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( queryInfo.type == CRYPT_OBJECT_SIGNATURE && \
 		queryInfo.dataStart <= 0 )
 		{
+		ENSURES( !isContinuedSignature );
+
 		/* It's a one-pass signature packet, the signature information 
 		   follows in another packet that will be added later */
-		sSkip( stream, ( int ) queryInfo.size );
-		queryInfo.size = 0;
+		status = sSkip( stream, ( int ) queryInfo.size );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
 	else
 		{
-		if( ( object = clAlloc( "addContentListItem", \
-								( size_t ) queryInfo.size ) ) == NULL )
+		objectSize = ( int ) queryInfo.size;
+		if( ( object = clAlloc( "addContentListItem", objectSize ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
-		sread( stream, object, ( int ) queryInfo.size );
+		status = sread( stream, object, objectSize );
+		if( cryptStatusError( status ) )
+			{
+			clFree( "addContentListItem", object );
+			return( status );
+			}
 		}
 
 	/* If it's the rest of the signature data from a one-pass signature,
 	   locate the first half of the signature info and complete the
 	   information.  In theory this could get ugly because there could be
-	   multiple one-pass signature packets present, however PGP handles
-	   multiple signatures by nesting them so this isn't a problem */
+	   multiple one-pass signature packets present but PGP handles multiple 
+	   signatures by nesting them so this isn't a problem */
 	if( isContinuedSignature )
 		{
-		int iterationCount = 0;
+		int iterationCount;
 		
-		for( contentListItem = envelopeInfoPtr->contentList;
+		for( contentListItem = envelopeInfoPtr->contentList, \
+				iterationCount = 0;
 			 contentListItem != NULL && \
 				contentListItem->envInfo != CRYPT_ENVINFO_SIGNATURE && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-			 contentListItem = contentListItem->next );
-		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-			retIntError();
-		if( contentListItem == NULL )
-			retIntError();
-		assert( contentListItem != NULL && \
-				contentListItem->object == NULL && \
-				contentListItem->objectSize == 0 );
+				iterationCount < FAILSAFE_ITERATIONS_MED;
+			 contentListItem = contentListItem->next, iterationCount++ );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+		ENSURES( contentListItem != NULL && \
+				 contentListItem->object == NULL && \
+				 contentListItem->objectSize == 0 );
 
 		/* Consistency check, make sure that the hash algorithm and key ID 
 		   that we've been working with match what's in the signature */
@@ -178,31 +244,29 @@ static int addContentListItem( STREAM *stream,
 		/* We've got the right content list entry, point it to the newly-
 		   acquired signature data */
 		contentListItem->object = object;
-		contentListItem->objectSize = ( int ) queryInfo.size;
+		contentListItem->objectSize = objectSize;
 		}
 	else
 		{
 		/* Allocate memory for the new content list item and copy information
 		   on the item across */
-		contentListItem = createContentListItem( envelopeInfoPtr->memPoolState,
-									CRYPT_FORMAT_PGP, object,
-									( int ) queryInfo.size,
-									queryInfo.type == CRYPT_OBJECT_SIGNATURE );
-		if( contentListItem == NULL )
+		status = createContentListItem( &contentListItem, 
+							envelopeInfoPtr->memPoolState, 
+							CRYPT_FORMAT_PGP, object, objectSize,
+							( queryInfo.type == CRYPT_OBJECT_SIGNATURE ) ? \
+								TRUE : FALSE );
+		if( cryptStatusError( status ) )
 			{
 			if( object != NULL )
 				clFree( "addContentListItem", object );
-			return( CRYPT_ERROR_MEMORY );
+			return( status );
 			}
 		}
 	if( queryInfo.type == CRYPT_OBJECT_PKCENCRYPTED_KEY || \
 		queryInfo.type == CRYPT_OBJECT_SIGNATURE )
 		{
 		/* Remember details of the enveloping info that we require to 
-		   continue.  Note that if we're processing a one-pass signature 
-		   packet followed by signature data, the keyID and algorithm info
-		   in the signature packet takes precendence in case of 
-		   inconsistencies between the two */
+		   continue */
 		if( queryInfo.type == CRYPT_OBJECT_PKCENCRYPTED_KEY )
 			{
 			CONTENT_ENCR_INFO *encrInfo = &contentListItem->clEncrInfo;
@@ -218,22 +282,34 @@ static int addContentListItem( STREAM *stream,
 			sigInfo->hashAlgo = queryInfo.hashAlgo;
 			if( queryInfo.attributeStart > 0 )
 				{
+				REQUIRES( rangeCheck( queryInfo.attributeStart, 
+									  queryInfo.attributeLength, 
+									  objectSize ) );
 				sigInfo->extraData = \
-					( BYTE * ) contentListItem->object + queryInfo.attributeStart;
+								( BYTE * ) contentListItem->object + \
+										   queryInfo.attributeStart;
 				sigInfo->extraDataLength = queryInfo.attributeLength;
 				}
 			if( queryInfo.unauthAttributeStart > 0 )
 				{
+				REQUIRES( rangeCheck( queryInfo.unauthAttributeStart, 
+									  queryInfo.unauthAttributeLength, 
+									  objectSize ) );
 				sigInfo->extraData2 = \
-					( BYTE * ) contentListItem->object + queryInfo.unauthAttributeStart;
+								( BYTE * ) contentListItem->object + \
+										   queryInfo.unauthAttributeStart;
 				sigInfo->extraData2Length = queryInfo.unauthAttributeLength;
 				}
 			}
+		REQUIRES( queryInfo.keyIDlength > 0 && \
+				  queryInfo.keyIDlength <= CRYPT_MAX_HASHSIZE );
 		memcpy( contentListItem->keyID, queryInfo.keyID, 
-				queryInfo.keyIDlength );	/* Always PGP_KEYID_SIZE bytes */
+				queryInfo.keyIDlength );
 		contentListItem->keyIDsize = queryInfo.keyIDlength;
 		if( queryInfo.iAndSStart > 0 )
 			{
+			REQUIRES( rangeCheck( queryInfo.iAndSStart, 
+								  queryInfo.iAndSLength, objectSize ) );
 			contentListItem->issuerAndSerialNumber = \
 				( BYTE * ) contentListItem->object + queryInfo.iAndSStart;
 			contentListItem->issuerAndSerialNumberSize = queryInfo.iAndSLength;
@@ -250,8 +326,10 @@ static int addContentListItem( STREAM *stream,
 			contentListItem->envInfo = CRYPT_ENVINFO_PASSWORD;
 			encrInfo->keySetupAlgo = queryInfo.keySetupAlgo;
 			encrInfo->keySetupIterations = queryInfo.keySetupIterations;
+			REQUIRES( queryInfo.saltLength > 0 && \
+					  queryInfo.saltLength <= CRYPT_MAX_IVSIZE );
 			memcpy( encrInfo->saltOrIV, queryInfo.salt, 
-					queryInfo.saltLength );	/* Always PGP_SALTSIZE bytes */
+					queryInfo.saltLength );
 			encrInfo->saltOrIVsize = queryInfo.saltLength;
 			}
 		else
@@ -261,6 +339,8 @@ static int addContentListItem( STREAM *stream,
 		}
 	if( queryInfo.dataStart > 0 )
 		{
+		REQUIRES( rangeCheck( queryInfo.dataStart, queryInfo.dataLength, 
+							  objectSize ) );
 		contentListItem->payload = \
 			( BYTE * ) contentListItem->object + queryInfo.dataStart;
 		contentListItem->payloadSize = queryInfo.dataLength;
@@ -274,12 +354,14 @@ static int addContentListItem( STREAM *stream,
 		return( CRYPT_OK );
 
 	/* If it's signed data, create a hash action to process it.  Because PGP 
-	   only applies one level of signing per packet nesting level, we don't
-	   have to worry about this adding redundant hash actions as there'll
+	   only applies one level of signing per packet nesting level we don't 
+	   have to worry that this will add redundant hash actions as there'll 
 	   only ever be one */
 	if( queryInfo.type == CRYPT_OBJECT_SIGNATURE )
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
+
+		REQUIRES( moreActionsPossible( envelopeInfoPtr->actionList ) );
 
 		/* Append a new hash action to the action list */
 		setMessageCreateObjectInfo( &createInfo,
@@ -287,16 +369,19 @@ static int addContentListItem( STREAM *stream,
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo, 
 								  OBJECT_TYPE_CONTEXT );
-		if( cryptStatusOK( status ) && \
-			addAction( &envelopeInfoPtr->actionList, 
-					   envelopeInfoPtr->memPoolState, ACTION_HASH,
-					   createInfo.cryptHandle ) == NULL )
-			{
-			krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			status = CRYPT_ERROR_MEMORY;
-			}
 		if( cryptStatusError( status ) )
 			{
+			deleteContentList( envelopeInfoPtr->memPoolState, 
+							   &contentListItem );
+			return( status );
+			}
+		status = addAction( &envelopeInfoPtr->actionList, 
+							envelopeInfoPtr->memPoolState, ACTION_HASH,
+							createInfo.cryptHandle );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( createInfo.cryptHandle, 
+							  IMESSAGE_DECREFCOUNT );
 			deleteContentList( envelopeInfoPtr->memPoolState, 
 							   &contentListItem );
 			return( status );
@@ -309,38 +394,47 @@ static int addContentListItem( STREAM *stream,
 
 /****************************************************************************
 *																			*
-*						Packet Header Processing Routines					*
+*							Header Processing Routines						*
 *																			*
 ****************************************************************************/
 
 /* Process the header of a packet */
 
-static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr, 
-								STREAM *stream, PGP_DEENV_STATE *state )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int processPacketHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
+								INOUT STREAM *stream, 
+								INOUT_ENUM( PGP_DEENVSTATE ) \
+									PGP_DEENV_STATE *state )
 	{
 	const int streamPos = stell( stream );
+	PGP_PACKET_TYPE packetType;
 	BOOLEAN isIndefinite;
 	long packetLength;
-	int packetType, value, status;
+	int value, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( state, sizeof( PGP_DEENV_STATE ) ) );
 
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
+
 	/* Read the PGP packet type and figure out what we've got.  If we're at
-	   the start of the data we allow noise packets like PGP_PACKET_MARKER,
-	   otherwise we only allow standard packets */
-	status = packetType = getPacketInfo( stream, envelopeInfoPtr, 
-										 &packetLength, &isIndefinite,
-										 ( *state == PGP_DEENVSTATE_NONE ) ? \
-											TRUE : FALSE );
+	   the start of the data we allow noise packets like PGP_PACKET_MARKER
+	   (with a length of 3), otherwise we only allow standard packets */
+	status = getPacketInfo( stream, envelopeInfoPtr, &packetType, 
+							&packetLength, &isIndefinite,
+							( *state == PGP_DEENVSTATE_NONE ) ? 3 : 8 );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExt( status,
+				( status, ENVELOPE_ERRINFO,
+				  "Invalid PGP packet header" ) );
+		}
 
 	/* Process as much of the header as we can and move on to the next state.  
-	   Since PGP uses sequential discrete packets, for any of the non-payload 
-	   packet types we stay in the initial "none" state because we don't know 
-	   what's next */
+	   Since PGP uses sequential discrete packets, if we encounter any of 
+	   the non-payload packet types we stay in the initial "none" state 
+	   because we don't know what's next */
 	switch( packetType )
 		{
 		case PGP_PACKET_DATA:
@@ -353,20 +447,26 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 			if( !cryptStatusError( status ) )
 				status = sSkip( stream, length + 4 );
 			if( cryptStatusError( status ) )
-				return( status );
+				{
+				retExt( status,
+						( status, ENVELOPE_ERRINFO,
+						  "Invalid PGP data packet start" ) );
+				}
 
-			/* Remember where we are (if we have the necessary length 
-			   information) and move on to the next state */
+			/* Remember that this is a pure data packet, record the content 
+			   length (if we have the necessary information), and move on to 
+			   the payload */
+			envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
 			if( !isIndefinite )
 				{
 				const long payloadSize = \
 					packetLength - ( 1 + 1 + length + 4 );
-				if( payloadSize < 1 )
+				if( payloadSize < 1 || payloadSize > MAX_INTLENGTH )
 					return( CRYPT_ERROR_BADDATA );
 				envelopeInfoPtr->payloadSize = payloadSize;
 				}
 			*state = PGP_DEENVSTATE_DATA;
-			return( CRYPT_OK );
+			break;
 			}
 
 		case PGP_PACKET_COPR:
@@ -399,11 +499,30 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 					return( CRYPT_ERROR_NOTAVAIL );
 				}
 			envelopeInfoPtr->flags |= ENVELOPE_ZSTREAMINITED;
+			if( packetLength != CRYPT_UNUSED )
+				{
+				const long payloadSize = packetLength - 1;
+
+				/* Most implementations use the PGP 2.x "keep going until 
+				   you run out of data" non-length encoding that's neither
+				   a definite- nor an indefinite length, but it's possible
+				   that something somewhere will use a proper definite 
+				   length so we accomodate this here */
+				if( payloadSize < 1 || payloadSize > MAX_INTLENGTH )
+					return( CRYPT_ERROR_BADDATA );
+				envelopeInfoPtr->payloadSize = payloadSize;
+				}
+			else
+				{
+				/* Remember that we have no length information available for 
+				   the payload */
+				envelopeInfoPtr->dataFlags |= ENVDATA_NOLENGTHINFO;
+				}
+			*state = PGP_DEENVSTATE_DATA;
+			break;
 #else
 			return( CRYPT_ERROR_NOTAVAIL );
 #endif /* USE_COMPRESSION */
-			*state = PGP_DEENVSTATE_DATA;
-			return( CRYPT_OK );
 
 		case PGP_PACKET_SKE:
 		case PGP_PACKET_PKE:
@@ -413,27 +532,41 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 				return( CRYPT_ERROR_BADDATA );
 			envelopeInfoPtr->usage = ACTION_CRYPT;
 			sseek( stream, streamPos );	/* Reset to start of packet */
-			return( addContentListItem( stream, envelopeInfoPtr, FALSE ) );
+			status = addContentListItem( envelopeInfoPtr, stream, FALSE );
+			if( cryptStatusError( status ) )
+				{
+				retExt( status,
+						( status, ENVELOPE_ERRINFO,
+						  "Invalid PGP %s packet", 
+						  ( packetType == PGP_PACKET_SKE ) ? "SKE" : "PKE" ) );
+				}
+			break;
 
 		case PGP_PACKET_SIGNATURE:
 		case PGP_PACKET_SIGNATURE_ONEPASS:
 			/* Try and guess whether this is a standalone signature.  This 
-			   is rather difficult since, unlike S/MIME, there's no way to 
+			   is rather difficult since unlike S/MIME there's no way to 
 			   tell whether a PGP signature packet is part of other data or 
-			   standalone.  The best that we can do is assume that if the 
-			   caller added a hash action and we find a signature, it's a 
-			   detached signature.  Unfortunately there's no way to tell 
-			   whether a signature packet with no user-supplied hash is a 
-			   standalone signature or the start of further signed data, so 
+			   a standalone item.  The best that we can do is assume that if 
+			   the caller added a hash action and we find a signature then 
+			   it's a detached signature.  Unfortunately there's no way to 
+			   tell whether a signature packet with no user-supplied hash is 
+			   a standalone signature or the start of further signed data so 
 			   we can't handle detached signatures where the user doesn't 
 			   supply the hash */
 			if( envelopeInfoPtr->usage == ACTION_SIGN && \
 				envelopeInfoPtr->actionList != NULL && \
 				envelopeInfoPtr->actionList->action == ACTION_HASH )
 				{
-				/* We can't have a detached sig packet as a one-pass sig */
+				/* We can't have a detached signature packet as a one-pass 
+				   signature */
 				if( packetType == PGP_PACKET_SIGNATURE_ONEPASS )
-					return( CRYPT_ERROR_BADDATA );
+					{
+					retExt( CRYPT_ERROR_BADDATA,
+							( CRYPT_ERROR_BADDATA, ENVELOPE_ERRINFO,
+							  "PGP detached signature can't be a one-pass "
+							  "signature packet" ) );
+					}
 				envelopeInfoPtr->flags |= ENVELOPE_DETACHED_SIG;
 				}
 
@@ -447,30 +580,49 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 				return( CRYPT_ERROR_BADDATA );
 			envelopeInfoPtr->usage = ACTION_SIGN;
 			sseek( stream, streamPos );	/* Reset to start of packet */
-			status = addContentListItem( stream, envelopeInfoPtr, FALSE );
+			status = addContentListItem( envelopeInfoPtr, stream, FALSE );
 			if( cryptStatusError( status ) )
-				return( status );
+				{
+				retExt( status,
+						( status, ENVELOPE_ERRINFO,
+						  "Invalid PGP %s signature packet",
+						  ( packetType == PGP_PACKET_SIGNATURE_ONEPASS ) ? \
+							"one-pass" : "" ) );
+				}
 			if( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG )
 				{
-				/* If it's a one-pass sig, there's no payload present, we 
-				   can go straight to the postdata state */
+				/* If it's a one-pass signature there's no payload present 
+				   so we can go straight to the postdata state */
 				envelopeInfoPtr->dataFlags |= ENVDATA_HASHACTIONSACTIVE;
 				envelopeInfoPtr->payloadSize = 0;
 				*state = PGP_DEENVSTATE_DONE;
 				}
 			else
 				*state = PGP_DEENVSTATE_DATA;
-			return( CRYPT_OK );
+			break;
 
 		case PGP_PACKET_ENCR_MDC:
 			/* The encrypted-data-with-MDC packet is preceded by a version 
 			   number */
 			status = value = sgetc( stream );
+			if( !cryptStatusError( status ) && value != 1 )
+				status = CRYPT_ERROR_BADDATA;
+			if( !cryptStatusError( status ) )
+				{
+				/* Adjust the length for the version number and make sure 
+				   that what's left is valid.  In theory this check isn't
+				   necessary because getPacketInfo() has enforced a minimum
+				   length, but we do it anyway just to be sure */
+				packetLength--;
+				if( packetLength <= 0 || packetLength > MAX_INTLENGTH )
+					status = CRYPT_ERROR_BADDATA;
+				}
 			if( cryptStatusError( status ) )
-				return( status );
-			if( value != 1 )
-				return( CRYPT_ERROR_BADDATA );
-			packetLength--;
+				{
+				retExt( status,
+						( status, ENVELOPE_ERRINFO,
+						  "Invalid MDC packet header" ) );
+				}
 			/* Fall through */
 
 		case PGP_PACKET_ENCR:
@@ -482,27 +634,34 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
 			envelopeInfoPtr->usage = ACTION_CRYPT;
 			*state = ( packetType == PGP_PACKET_ENCR_MDC ) ? \
 					 PGP_DEENVSTATE_ENCR_MDC : PGP_DEENVSTATE_ENCR;
-			return( CRYPT_OK );
+			break;
 
 		case PGP_PACKET_MARKER:
 			/* Obsolete marker packet, skip it */
 			return( sSkip( stream, packetLength ) );
+		
+		default:
+			/* Unrecognised/invalid packet type */
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, ENVELOPE_ERRINFO,
+					  "Unrecognised PGP packet type %d", packetType ) );
 		}
 
-	/* Unrecognised/invalid packet type */
-	return( CRYPT_ERROR_BADDATA );
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
+	return( CRYPT_OK );
 	}
 
 /* PGP doesn't provide any indication of what the content of the packet's 
-   encrypted payload is, so we have to burrow down into the encrypted data 
-   to see whether the payload needs any further processing.  To do this we
-   look ahead into the data to see whether we need to strip the header (for 
-   a plain data packet) or inform the user that there's a nested content 
-   type.  This process is complicated by the fact that there are various
-   ways of representing the length information for both outer and inner
-   packets, and the fact that the payload can consist of more than one packet
-   but we're really only interested in the first one in most cases.  The
-   calculation of the encapsulated payload length is as follows:
+   encrypted payload is so we have to burrow down into the encrypted data to 
+   see whether the payload needs any further processing.  To do this we look 
+   ahead into the data to see whether we need to strip the header (for a 
+   plain data packet) or inform the user that there's a nested content type.  
+   This process is complicated by the fact that there are various ways of 
+   representing the length information for both outer and inner packets and 
+   the fact that the payload can consist of more than one packet, but we're 
+   really only interested in the first one in most cases.  The calculation 
+   of the encapsulated payload length is as follows:
 
 	+---+---+............................................
 	|len|hdr|											: Encrypted data
@@ -522,13 +681,12 @@ static int processPacketHeader( ENVELOPE_INFO *envelopeInfoPtr,
    Indefinite payload length: 
 		Payload = to EOC, handled by decode.c routines */
 
-static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
-									PGP_DEENV_STATE *state )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int processPacketDataHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+									OUT_ENUM_OPT( PGP_DEENVSTATE ) \
+										PGP_DEENV_STATE *state )
 	{
-	typedef struct {
-		const int pgpType; const int cryptlibType;
-		} TYPEMAP_INFO;
-	static const TYPEMAP_INFO typeMapTbl[] = {
+	static const MAP_TABLE typeMapTbl[] = {
 		{ PGP_PACKET_COPR, CRYPT_CONTENT_COMPRESSEDDATA },
 		{ PGP_PACKET_ENCR, CRYPT_CONTENT_ENCRYPTEDDATA },
 		{ PGP_PACKET_ENCR_MDC, CRYPT_CONTENT_ENCRYPTEDDATA },
@@ -540,20 +698,25 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 		};
 	STREAM headerStream;
 	BYTE buffer[ 32 + 256 + 8 ];	/* Max.data packet header size */
+	PGP_PACKET_TYPE packetType;
 	long packetLength;
-	int packetType, length, i;
+	int value, length, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->oobDataLeft < 32 + 256 );
+	assert( isWritePtr( state, sizeof( PGP_DEENV_STATE ) ) );
+	
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
+	REQUIRES( envelopeInfoPtr->oobDataLeft < 32 + 256 );
 
 	/* If we're down to stripping raw header data, remove it from the buffer
 	   and exit */
 	if( envelopeInfoPtr->oobEventCount <= 0 )
 		{
-		length = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr,
-										buffer, envelopeInfoPtr->oobDataLeft );
-		if( cryptStatusError( length ) )
-			return( length );
+		status = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr,
+										buffer, envelopeInfoPtr->oobDataLeft, 
+										&length, ENVCOPY_FLAG_NONE );
+		if( cryptStatusError( status ) )
+			return( status );
 		if( length < envelopeInfoPtr->oobDataLeft )
 			return( CRYPT_ERROR_UNDERFLOW );
 
@@ -566,23 +729,27 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 		if( envelopeInfoPtr->usage == ACTION_COMPRESS )
 			{
 			*state = PGP_DEENVSTATE_DONE;
+
+			ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 			return( CRYPT_OK );
 			}
 
 		/* Adjust the current data count by what we've removed.  The reason 
 		   we have to do this is because segmentSize records the amount of
-		   data copied in (rather than out, as we've done here), but since
-		   it was copied directly into the envelope buffer as part of the
+		   data copied in (rather than out, as we've done here) but since it 
+		   was copied directly into the envelope buffer as part of the 
 		   header-processing rather than via copyToDeenvelope() (which is
-		   what usually adjusts segmentSize for us), we have to manually 
+		   what usually adjusts segmentSize for us) we have to manually 
 		   adjust the value here */
 		if( envelopeInfoPtr->segmentSize > 0 )
 			{
 			envelopeInfoPtr->segmentSize -= length;
-			assert( envelopeInfoPtr->segmentSize >= 0 );
+			ENSURES( envelopeInfoPtr->segmentSize >= 0 && \
+					 envelopeInfoPtr->segmentSize < MAX_INTLENGTH );
 
 			/* If we've reached the end of the data (i.e. the entire current 
-			   segment is contained within the data present in the buffer), 
+			   segment is contained within the data present in the buffer) 
 			   remember that what's left still needs to be processed (e.g. 
 			   hashed in the case of signed data) on the way out */
 			if( envelopeInfoPtr->segmentSize <= envelopeInfoPtr->bufPos )
@@ -594,12 +761,14 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 
 		/* We've processed the header, if this is signed data we start 
 		   hashing from this point (the PGP RFCs are wrong in this regard, 
-		   only the payload is hashed, not the entire packet) */
+		   only the payload is hashed and not the entire packet) */
 		if( envelopeInfoPtr->usage == ACTION_SIGN )
 			envelopeInfoPtr->dataFlags |= ENVDATA_HASHACTIONSACTIVE;
 
 		/* We're done */
 		*state = PGP_DEENVSTATE_DONE;
+
+		ENSURES( sanityCheck( envelopeInfoPtr ) );
 		return( CRYPT_OK );
 		}
 
@@ -618,25 +787,26 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 	   The smallest size for this header (1-byte length, no filename) is 
 	   1 + 1 + 1 + 1 + 4 = 8 bytes.  This is also just enough to get us to 
 	   the filename length for a maximum-size header, which is 1 + 5 + 1 + 1 
-	   bytes up to the filename length, and covers the type + length range 
+	   bytes up to the filename length and covers the type + length range 
 	   of every other packet type, which can be from 1 to 1 + 5 bytes.  Thus 
-	   we read 8 bytes, using a negative length value to indicate that this 
-	   is a read-ahead read that doesn't remove data from the buffer */
-	length = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr,
-														buffer, -8 );
-	if( cryptStatusError( length ) )
-		return( length );
+	   we read 8 bytes, setting the OOB data flag to indicate that this is a 
+	   read-ahead read that doesn't remove data from the buffer */
+	status = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr,
+														buffer, 8, &length,
+														ENVCOPY_FLAG_OOBDATA );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( length < 8 )
 		return( CRYPT_ERROR_UNDERFLOW );
 
 	/* Read the header information and see what we've got */
 	sMemConnect( &headerStream, buffer, length );
-	packetType = getPacketInfo( &headerStream, envelopeInfoPtr, 
-								&packetLength, NULL, FALSE );
-	if( cryptStatusError( packetType ) )
+	status = getPacketInfo( &headerStream, envelopeInfoPtr, &packetType,
+							&packetLength, NULL, 8 );
+	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &headerStream );
-		return( packetType );
+		return( status );
 		}
 
 	/* Remember the total data packet size unless it's compressed data, 
@@ -654,15 +824,16 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 			envelopeInfoPtr->segmentSize = stell( &headerStream ) + \
 										   packetLength;
 
-			/* If we're using the definite-length encoding, the overall 
-			   payload size is equal to the segment size */
+			/* If we're using the definite-length encoding (which is the 
+			   default for PGP) then the overall payload size is equal to 
+			   the segment size */
 			if( envelopeInfoPtr->dataFlags & ENVDATA_NOSEGMENT )
 				envelopeInfoPtr->payloadSize = envelopeInfoPtr->segmentSize;
 			}
 		else
 			{
-			assert( packetType == PGP_PACKET_COPR );
-			assert( envelopeInfoPtr->payloadSize != CRYPT_UNUSED );
+			ENSURES( packetType == PGP_PACKET_COPR );
+			ENSURES( envelopeInfoPtr->payloadSize != CRYPT_UNUSED );
 
 			/* It's an arbitrary-length compressed data packet, use the
 			   length that we got earlier from the outer packet */
@@ -676,16 +847,24 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 	/* If it's a literal data packet, parse it so that we can strip it from 
 	   the data that we return to the caller.  We know that the reads can't
 	   fail because the readahead read has confirmed that there are at least
-	   8 bytes available */
+	   8 bytes available, but we check anyway just to be sure */
 	if( packetType == PGP_PACKET_DATA )
 		{
 		int extraLen;
 
 		sgetc( &headerStream );		/* Skip content type */
-		extraLen = sgetc( &headerStream );
-		envelopeInfoPtr->oobDataLeft = stell( &headerStream ) + \
-									   extraLen + 4;
+		status = extraLen = sgetc( &headerStream );
+		if( !cryptStatusError( status ) )
+			{
+			envelopeInfoPtr->oobDataLeft = stell( &headerStream ) + \
+										   extraLen + 4;
+			}
 		sMemDisconnect( &headerStream );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* Remember that this is a pure data packet */
+		envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
 
 		/* We've processed enough of the header to know what to do next, 
 		   move on to the next sub-state where we just consume all of the 
@@ -695,25 +874,19 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 		   and reading the out-of-band data itself */
 		envelopeInfoPtr->oobEventCount--;
 
+		ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 		return( CRYPT_OK );
 		}
 
 	sMemDisconnect( &headerStream );
 
 	/* If it's a known packet type, indicate it as the nested content type */
-	for( i = 0; typeMapTbl[ i ].pgpType != CRYPT_ERROR && \
-				i < FAILSAFE_ARRAYSIZE( typeMapTbl, TYPEMAP_INFO ); i++ )
-		{
-		if( typeMapTbl[ i ].pgpType == packetType )
-			{
-			envelopeInfoPtr->contentType = typeMapTbl[ i ].cryptlibType;
-			break;
-			}
-		}
-	if( i >= FAILSAFE_ARRAYSIZE( typeMapTbl, TYPEMAP_INFO ) )
-		retIntError();
-	if( typeMapTbl[ i ].pgpType == CRYPT_ERROR )
+	status = mapValue( packetType, &value, typeMapTbl, 
+					   FAILSAFE_ARRAYSIZE( typeMapTbl, MAP_TABLE ) );
+	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_BADDATA );
+	envelopeInfoPtr->contentType = value;
 
 #if 0	/* 12/4/06 See previous comment */
 	/* If it's not compressed data (which doesn't have a 1:1 correspondence 
@@ -733,22 +906,29 @@ static int processPacketDataHeader( ENVELOPE_INFO *envelopeInfoPtr,
 	envelopeInfoPtr->oobEventCount = envelopeInfoPtr->oobDataLeft = 0;
 	*state = PGP_DEENVSTATE_DONE;
 
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 	return( CRYPT_OK );
 	}
 
 /* Process the start of an encrypted data packet */
 
-static int processEncryptedPacket( ENVELOPE_INFO *envelopeInfoPtr, 
-								   STREAM *stream, 
-								   const PGP_DEENV_STATE state )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int processEncryptedPacket( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
+								   INOUT STREAM *stream, 
+								   IN_ENUM( PGP_DEENVSTATE ) \
+									const PGP_DEENV_STATE state )
 	{
 	BYTE ivInfoBuffer[ CRYPT_MAX_IVSIZE + 2 + 8 ];
 	int ivSize, offset, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
+	REQUIRES( state > PGP_DEENVSTATE_NONE && state < PGP_DEENVSTATE_LAST );
 
-	/* If there aren't any non-session-key keying resource objects present, 
+	/* If there aren't any non-session-key keying resource objects present 
 	   we can't go any further until we get a session key */
 	if( envelopeInfoPtr->actionList == NULL )
 		{
@@ -762,7 +942,7 @@ static int processEncryptedPacket( ENVELOPE_INFO *envelopeInfoPtr,
 		   algorithm */
 		if( envelopeInfoPtr->contentList == NULL )
 			{
-			status = addContentListItem( NULL, envelopeInfoPtr, FALSE );
+			status = addContentListItem( envelopeInfoPtr, NULL, FALSE );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
@@ -770,8 +950,8 @@ static int processEncryptedPacket( ENVELOPE_INFO *envelopeInfoPtr,
 		/* We can't continue until we're given some sort of keying resource */
 		return( CRYPT_ENVELOPE_RESOURCE );
 		}
-	assert( envelopeInfoPtr->actionList != NULL && \
-			envelopeInfoPtr->actionList->action == ACTION_CRYPT );
+	ENSURES( envelopeInfoPtr->actionList != NULL && \
+			 envelopeInfoPtr->actionList->action == ACTION_CRYPT );
 
 	/* Read and process PGP's peculiar two-stage IV */
 	status = krnlSendMessage( envelopeInfoPtr->actionList->iCryptHandle,
@@ -780,10 +960,12 @@ static int processEncryptedPacket( ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptStatusOK( status ) )
 		status = sread( stream, ivInfoBuffer, ivSize + 2 );
 	if( !cryptStatusError( status ) )
+		{
 		status = pgpProcessIV( envelopeInfoPtr->actionList->iCryptHandle,
-							   ivInfoBuffer, ivSize, FALSE,
+							   ivInfoBuffer, ivSize + 2, ivSize, FALSE,
 							   ( state == PGP_DEENVSTATE_ENCR ) ? \
 								 TRUE : FALSE );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 	envelopeInfoPtr->iCryptContext = \
@@ -810,15 +992,17 @@ krnlSendMessage( envelopeInfoPtr->iCryptContext, IMESSAGE_CTX_DECRYPT,
 			{
 			/* There was a bug in all versions of GPG before 1.0.8, which 
 			   omitted the MDC packet length when a packet was encrypted 
-			   without compression.  As a result, uncompressed messages 
+			   without compression.  As a result uncompressed messages 
 			   generated by these versions can't be processed */
 			offset += PGP_MDC_PACKET_SIZE;
 			}
 		else
+			{
 			/* We're using an indefinite-length encoding, remember that we 
 			   have to adjust for the tacked-on MDC packet when we hit the 
 			   last data segment */
 			envelopeInfoPtr->dataFlags |= ENVDATA_HASATTACHEDOOB;
+			}
 		}
 /******/
 /* Is the IV part of the length?  If so how to handle with indefinite lengths? */
@@ -833,23 +1017,123 @@ krnlSendMessage( envelopeInfoPtr->iCryptContext, IMESSAGE_CTX_DECRYPT,
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
 
+		REQUIRES( moreActionsPossible( envelopeInfoPtr->actionList ) );
+
 		/* Append a hash action to the action list */
-		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA );
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT,
 								  &createInfo, OBJECT_TYPE_CONTEXT );
 		if( cryptStatusError( status ) )
 			return( status );
-		if( addAction( &envelopeInfoPtr->actionList, 
-					   envelopeInfoPtr->memPoolState, ACTION_HASH,
-					   createInfo.cryptHandle ) == NULL )
+		status = addAction( &envelopeInfoPtr->actionList, 
+							envelopeInfoPtr->memPoolState, ACTION_HASH,
+							createInfo.cryptHandle );
+		if( cryptStatusError( status ) )
 			{
 			krnlSendNotifier( createInfo.cryptHandle,
 							  IMESSAGE_DECREFCOUNT );
-			return( CRYPT_ERROR_MEMORY );
+			return( status );
 			}
 		envelopeInfoPtr->dataFlags |= ENVDATA_HASHACTIONSACTIVE;
 		}
+
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Trailer Processing Routines						*
+*																			*
+****************************************************************************/
+
+/* Process an MDC packet */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int processMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	int status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
+
+	/* Make sure that there's enough data left in the stream to obtain the 
+	   MDC info */
+	if( envelopeInfoPtr->bufPos - \
+			envelopeInfoPtr->dataLeft < PGP_MDC_PACKET_SIZE )
+		return( CRYPT_ERROR_UNDERFLOW );
+
+	/* Processing beyond this point gets rather complex because we have to 
+	   defer reading the MDC packet until all of the remaining data has been 
+	   popped, while processing reaches this point when data is pushed.  
+	   Conventionally signed/hashed data hashes the plaintext so once we 
+	   reach this point we can wrap up the hashing ready for the (user-
+	   initiated) signature check.  The MDC packet however is still 
+	   encrypted at this point, along with some or all of the data to be 
+	   hashed, which means that we can't do anything yet:
+
+		<-- Decr. -><- Encrypted ->
+			--------+-------------+---------
+		....		|///////| MDC |			....
+			--------+-------------+---------
+					^			  ^
+				 bufPos			bufEnd
+	   
+	   In order to handle this special-case situation we'd have to add extra 
+	   capabilities to the data-popping code to tell it that after a certain 
+	   amount of data has been popped what's still left is MDC data.  This 
+	   severely screws up the layering because the functionality required is 
+	   neither at the cryptenv.c level nor at the decode.c level, and 
+	   represents an approach that was abandoned in cryptlib 2.1 when it 
+	   proved impossible to get it working reliably under all circumstances 
+	   (it's provably impossible to do with the ASN.1 variable-length length 
+	   encoding where changing data by one byte can result in a variable 
+	   change of length for inner lengths.  This makes it impossible to 
+	   encode some data lengths to the fixed size required by a CBC-mode 
+	   cipher, and OpenPGP's more recent variable-lengths are no better).  
+	   This is why cryptlib uses separate passes for each processing layer 
+	   rather than trying to combine encryption and signing into a single 
+	   pass.
+
+	   Because of this, handling of MDC packets is only done if all of the 
+	   data in the envelope has been popped (but see the note below), fully 
+	   general handling won't be added unless there is sufficient user 
+	   demand to justify messing up the architectural layering of the 
+	   enveloping code.  Note that this situation can never occur since 
+	   we're being called when data is pushed, the following code is present 
+	   only as a representative example */
+	if( envelopeInfoPtr->dataLeft == PGP_MDC_PACKET_SIZE )
+		{
+		BYTE buffer[ PGP_MDC_PACKET_SIZE + 8 ];
+		int length;
+
+		assert( DEBUG_WARN );
+
+		status = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr, 
+										buffer, PGP_MDC_PACKET_SIZE, &length,
+										ENVCOPY_FLAG_NONE );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( length < PGP_MDC_PACKET_SIZE || \
+			buffer[ 0 ] != 0xD0 || buffer[ 1 ] != 0x14 )
+			return( CRYPT_ERROR_BADDATA );
+
+		/* Hash the trailer bytes (the start of the MDC packet) and wrap up 
+		   the hashing */
+		status = envelopeInfoPtr->processExtraData( envelopeInfoPtr, 
+													buffer + 2,
+													PGP_MDC_PACKET_SIZE - 2 );
+		if( cryptStatusOK( status ) )
+			status = envelopeInfoPtr->processExtraData( envelopeInfoPtr, 
+														"", 0 );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
 
 	return( CRYPT_OK );
 	}
@@ -862,26 +1146,28 @@ krnlSendMessage( envelopeInfoPtr->iCryptContext, IMESSAGE_CTX_DECRYPT,
 
 /* Process the non-data portions of a PGP message.  This is a complex event-
    driven state machine, but instead of reading along a (hypothetical
-   Turing-machine) tape, someone has taken the tape and cut it into bits and
+   Turing-machine) tape someone has taken the tape and cut it into bits and
    keeps feeding them to us and saying "See what you can do with this" (and
    occasionally "Where's the bloody spoons?").  Since PGP uses sequential
    discrete packets rather than the nested objects encountered in the ASN.1-
-   encoded data format, the parsing code is made somewhat simpler because
+   encoded data format the parsing code is made slightly simpler because
    (for example) the PKC info is just an unconnected sequence of packets
    rather than a SEQUENCE or SET OF as for cryptlib and PKCS #7/CMS.  OTOH 
    since there's no indication of what's next we have to perform a complex
-   lookahead to see what actions we have to take once we get to the payload */
+   lookahead to see what actions we have to take once we get to the payload.
+   The end result is that teh code is actually vastly more complex than the
+   CMS equivalent */
 
-static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	PGP_DEENV_STATE state = envelopeInfoPtr->pgpDeenvState;
 	STREAM stream;
-	int length, streamPos = 0;
-	int iterationCount = 0, status = CRYPT_OK;
+	int remainder, streamPos = 0, iterationCount = 0, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->pgpDeenvState >= PGP_DEENVSTATE_NONE && \
-			envelopeInfoPtr->pgpDeenvState <= PGP_DEENVSTATE_DONE );
+
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* If we've finished processing the start of the message, header, don't
 	   do anything */
@@ -912,7 +1198,17 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			{
 			status = processEncryptedPacket( envelopeInfoPtr, &stream, state );
 			if( cryptStatusError( status ) )
+				{
+				/* If it's a resource-needed status then it's not an 
+				   error */
+				if( status == CRYPT_ENVELOPE_RESOURCE )
+					break;
+
+				setErrorString( ENVELOPE_ERRINFO, 
+								"Invalid PGP encrypted data packet header", 
+								40 );
 				break;
+				}
 
 			/* Remember where we are and move on to the next state */
 			streamPos = stell( &stream );
@@ -922,17 +1218,45 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 		/* Process the start of a data packet */
 		if( state == PGP_DEENVSTATE_DATA )
 			{
+			const int originalDataFlags = envelopeInfoPtr->dataFlags;
+
 			/* Synchronise the data stream processing to the start of the
-			   encrypted data */
+			   encapsulated data.  This is made somewhat complex by PGP's
+			   awkward packet format (see the comment for 
+			   processPacketDataHeader()) which, unlike CMS:
+
+				[ Hdr [ Encaps [ Octet String ] ] ]
+
+			   has:
+						   [ Hdr | Octet String ]
+				  [ Keyex ][ Hdr | Octet String ]
+				[ Onepass ][ Hdr | Octet String ][ Signature ]
+				   [ Copr ][ Hdr | Octet String ]
+
+			   This means that if we're not processing a data packet then 
+			   the content isn't the payload but a futher set of discrete 
+			   packets that we don't want to touch.  To work around this we 
+			   temporarily set the ENVDATA_NOLENGTHINFO flag to indicate 
+			   that it's a blob to be processed as an opaque unit, at the 
+			   same time temporarily clearing any other flags that might 
+			   mess up the opaque-blob handling */
+			if( envelopeInfoPtr->usage != ACTION_NONE )
+				envelopeInfoPtr->dataFlags = ENVDATA_NOLENGTHINFO;
 			status = envelopeInfoPtr->syncDeenvelopeData( envelopeInfoPtr,
 														  &stream );
+			envelopeInfoPtr->dataFlags = originalDataFlags;
 			if( cryptStatusError( status ) )
+				{
+				setErrorString( ENVELOPE_ERRINFO, 
+								"Couldn't synchronise envelope state prior "
+								"to data payload processing", 68 );
 				break;
+				}
 			streamPos = 0;
 
 			/* Move on to the next state.  For plain data we're done,
 			   however for other content types we have to either process or
-			   strip out the junk PGP that puts at the start of the 
+			   strip out the junk that PGP puts at the start of the 
 			   content */
 			if( envelopeInfoPtr->usage != ACTION_NONE )
 				{
@@ -941,11 +1265,11 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 				}
 			else
 				state = PGP_DEENVSTATE_DONE;
-			if( !checkActions( envelopeInfoPtr ) )
-				retIntError();
+			
+			ENSURES( checkActions( envelopeInfoPtr ) );
 			}
 
-		/* Burrow down into the encrypted data to see what's next */
+		/* Burrow down into the encapsulated data to see what's next */
 		if( state == PGP_DEENVSTATE_DATA_HEADER )
 			{
 			/* If there's no out-of-band data left to remove at the start of
@@ -953,9 +1277,9 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			   sometimes requires two passes, the first time through 
 			   oobEventCount is nonzero because it's been set in the 
 			   preceding PGP_DEENVSTATE_DATA state and we fall through to 
-			   processPacketDataHeader(), which decrements the oobEventCount
+			   processPacketDataHeader() which decrements the oobEventCount
 			   to zero.  However processPacketDataHeader() may need to read 
-			   out-of-band data, in which case on the second time around 
+			   out-of-band data in which case on the second time around 
 			   oobDataLeft will be nonzero, resulting in a second call to
 			   processPacketDataHeader() to clear the remaining out-of-band
 			   data */
@@ -969,25 +1293,38 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			/* Process the encapsulated data header */
 			status = processPacketDataHeader( envelopeInfoPtr, &state );
 			if( cryptStatusError( status ) )
+				{
+				setErrorString( ENVELOPE_ERRINFO, 
+								"Invalid PGP encapsulated content header", 
+								39 );
 				break;
+				}
 			}
 		}
 	sMemDisconnect( &stream );
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		/* Technically this would be an overflow, but that's a recoverable
+		{
+		/* Technically this would be an overflow but that's a recoverable
 		   error so we make it a BADDATA, which is really what it is */
 		return( CRYPT_ERROR_BADDATA );
+		}
 	envelopeInfoPtr->pgpDeenvState = state;
 
-	assert( streamPos >= 0 && envelopeInfoPtr->bufPos - streamPos >= 0 );
+	ENSURES( streamPos >= 0 && streamPos < MAX_INTLENGTH && \
+			 envelopeInfoPtr->bufPos - streamPos >= 0 );
 
 	/* Consume the input that we've processed so far by moving everything 
 	   past the current position down to the start of the envelope buffer */
-	length = envelopeInfoPtr->bufPos - streamPos;
-	if( length > 0 && streamPos > 0 )
+	remainder = envelopeInfoPtr->bufPos - streamPos;
+	REQUIRES( remainder >= 0 && remainder < MAX_INTLENGTH && \
+			  streamPos + remainder <= envelopeInfoPtr->bufSize );
+	if( remainder > 0 && streamPos > 0 )
+		{
 		memmove( envelopeInfoPtr->buffer, envelopeInfoPtr->buffer + streamPos,
-				length );
-	envelopeInfoPtr->bufPos = length;
+				 remainder );
+		}
+	envelopeInfoPtr->bufPos = remainder;
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -997,7 +1334,8 @@ static int processPreamble( ENVELOPE_INFO *envelopeInfoPtr )
 			CRYPT_ERROR_UNDERFLOW : CRYPT_OK );
 	}
 
-static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	CONTENT_LIST *contentListPtr;
 	const BOOLEAN hasMDC = \
@@ -1007,125 +1345,83 @@ static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->pgpDeenvState >= PGP_DEENVSTATE_NONE && \
-			envelopeInfoPtr->pgpDeenvState <= PGP_DEENVSTATE_DONE );
+	
+	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* If that's all there is, return */
 	if( envelopeInfoPtr->usage != ACTION_SIGN && !hasMDC )
 		return( CRYPT_OK );
 
-	/* If there's an MDC packet present, complete the hashing and make sure
+	/* If there's an MDC packet present complete the hashing and make sure
 	   that the integrity check matches */
 	if( hasMDC )
 		{
-		/* Make sure that there's enough data left in the stream to obtain 
-		   the MDC info, and get the MDC packet */
-		if( envelopeInfoPtr->bufPos - envelopeInfoPtr->dataLeft < \
-			PGP_MDC_PACKET_SIZE )
-			return( CRYPT_ERROR_UNDERFLOW );
-
-		/* Processing beyond this point gets rather complex because we have
-		   to defer reading the MDC packet until all of the remaining data 
-		   has been popped, while processing reaches this point when data is 
-		   pushed.  Conventionally signed/hashed data hashes the plaintext, 
-		   so once we reach this point we can wrap up the hashing ready for 
-		   the (user-initiated) sig check.  The MDC packet however is still
-		   encrypted at this point, along with some or all of the data to be 
-		   hashed, which means that we can't do anything yet.  In order to 
-		   handle this special-case situation, we'd have to add extra 
-		   capabilities to the data-popping code to tell it that after a 
-		   certain amount of data has been popped, what's still left is MDC
-		   data.  This severely screws up the layering, since the 
-		   functionality is neither at the cryptenv.c level nor at the 
-		   decode.c level, and represents an approach that was abandoned in
-		   cryptlib 2.1 when it proved impossible to get it working reliably
-		   under all circumstances (it's provably impossible to do with ASN.1
-		   variable-length length encoding where changing data by one byte
-		   can result in a variable change of length for inner lengths, 
-		   making it impossible to encode some data lengths to the fixed size 
-		   required by a CBC-mode cipher).  This is why cryptlib uses 
-		   separate passes for each processing layer rather than trying to 
-		   combine encryption and signing into a single pass.
-
-		   Because of this, handling of MDC packets is only done if all of 
-		   the data in the envelope has been popped (but see the note 
-		   below), fully general handling won't be added unless there is 
-		   sufficient user demand to justify messing up the architectural 
-		   layering of the enveloping code.  Note that this situation can 
-		   never occur (since we're being called when data is pushed, so 
-		   bufPos will never be zero), the following code is present only as 
-		   a representative example */
-		if( envelopeInfoPtr->dataLeft == PGP_MDC_PACKET_SIZE )
+		status = processMDC( envelopeInfoPtr );
+		if( cryptStatusError( status ) )
 			{
-			BYTE buffer[ PGP_MDC_PACKET_SIZE + 8 ];
-
-			envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr, 
-											buffer, PGP_MDC_PACKET_SIZE );
-			if( buffer[ 0 ] != 0xD0 || buffer[ 1 ] != 0x14 )
-				return( CRYPT_ERROR_BADDATA );
-
-			/* Hash the trailer bytes (the start of the MDC packet) and wrap 
-			   up the hashing */
-			envelopeInfoPtr->processExtraData( envelopeInfoPtr, buffer + 2,
-											   PGP_MDC_PACKET_SIZE - 2 );
-			status = envelopeInfoPtr->processExtraData( envelopeInfoPtr, 
-														"", 0 );
-			if( cryptStatusError( status ) )
-				return( status );
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Invalid MDC packet data" ) );
 			}
+		
 		return( CRYPT_OK );
 		}
 
 	/* Find the signature information in the content list.  In theory this
 	   could get ugly because there could be multiple one-pass signature
-	   packets present, however PGP handles multiple signatures by nesting
-	   them so this isn't a problem */
-	iterationCount = 0;
-	for( contentListPtr = envelopeInfoPtr->contentList;
+	   packets present but PGP handles multiple signatures by nesting them 
+	   so this isn't a problem */
+	for( contentListPtr = envelopeInfoPtr->contentList, iterationCount = 0;
 		 contentListPtr != NULL && \
 			contentListPtr->envInfo != CRYPT_ENVINFO_SIGNATURE && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 contentListPtr = contentListPtr->next );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError();
-	if( contentListPtr == NULL )
-		retIntError();
+			iterationCount < FAILSAFE_ITERATIONS_MED;
+		 contentListPtr = contentListPtr->next, iterationCount++ );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+	ENSURES( contentListPtr != NULL );
 
 	/* PGP 2.x prepended (!!) signatures to the signed data, OpenPGP fixed 
 	   this by splitting the signature into a header with signature info and 
 	   a trailer with the actual signature.  If we're processing a PGP 2.x
-	   signature, we'll already have the signature data present, so we only
+	   signature we'll already have the signature data present so we only 
 	   check for signature data if it's not already available */
 	if( contentListPtr->object == NULL )
 		{
 		STREAM stream;
 		long packetLength;
-		int packetType;
+		PGP_PACKET_TYPE packetType;
 
 		/* Make sure that there's enough data left in the stream to do 
-		   something with */
-		if( envelopeInfoPtr->bufPos - envelopeInfoPtr->dataLeft < \
-			PGP_MAX_HEADER_SIZE )
+		   something with.  We require a minimum of 44 bytes, the size
+		   of the DSA signature payload, in the stream */
+		if( envelopeInfoPtr->bufPos - \
+				envelopeInfoPtr->dataLeft < PGP_MAX_HEADER_SIZE + 44 )
 			return( CRYPT_ERROR_UNDERFLOW );
+
+		REQUIRES( moreContentItemsPossible( envelopeInfoPtr->contentList ) );
 
 		/* Read the signature packet at the end of the payload */
 		sMemConnect( &stream, envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft,
 					 envelopeInfoPtr->bufPos - envelopeInfoPtr->dataLeft );
-		status = packetType = getPacketInfo( &stream, envelopeInfoPtr, 
-											 &packetLength, NULL, FALSE );
-		if( !cryptStatusError( status ) && \
-			packetType != PGP_PACKET_SIGNATURE )
+		status = getPacketInfo( &stream, envelopeInfoPtr, &packetType, 
+								&packetLength, NULL, 8 );
+		if( cryptStatusOK( status ) && packetType != PGP_PACKET_SIGNATURE )
 			status = CRYPT_ERROR_BADDATA;
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
-			return( status );
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Invalid PGP signature packet header" ) );
 			}
 		sseek( &stream, 0 );
-		status = addContentListItem( &stream, envelopeInfoPtr, TRUE );
+		status = addContentListItem( envelopeInfoPtr, &stream, TRUE );
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
-			return( status );
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Invalid PGP signature packet" ) );
+			}
 		}
 
 	/* When we reach this point there may still be unhashed data left in the 
@@ -1133,12 +1429,19 @@ static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 	   when the data is copied out, after unwrapping and whatnot) so we hash 
 	   it before we exit.  Since we don't wrap up the hashing as we do with
 	   any other format (PGP hashes in all sorts of odds and ends after 
-	   hashing the message body), we have to manually turn off hashing here */
+	   hashing the message body) we have to manually turn off hashing here */
 	if( envelopeInfoPtr->dataLeft > 0 )
+		{
 		status = envelopeInfoPtr->processExtraData( envelopeInfoPtr,
 						envelopeInfoPtr->buffer, envelopeInfoPtr->dataLeft );
+		}
 	envelopeInfoPtr->dataFlags &= ~ENVDATA_HASHACTIONSACTIVE;
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -1147,10 +1450,12 @@ static int processPostamble( ENVELOPE_INFO *envelopeInfoPtr )
 *																			*
 ****************************************************************************/
 
-void initPGPDeenveloping( ENVELOPE_INFO *envelopeInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initPGPDeenveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	assert( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE );
+	
+	REQUIRES_V( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE );
 
 	/* Set the access method pointers */
 	envelopeInfoPtr->processPreambleFunction = processPreamble;

@@ -4,7 +4,7 @@
 
 # TARGTYPE "Win32 (x86) Console Application" 0x0103
 
-CFG=Test32 - Win32 Release
+CFG=Test32 - Win32 Debug
 !MESSAGE This is not a valid makefile. To build this project using NMAKE,
 !MESSAGE use the Export Makefile command and run
 !MESSAGE 
@@ -13,7 +13,7 @@ CFG=Test32 - Win32 Release
 !MESSAGE You can specify a configuration when running NMAKE
 !MESSAGE by defining the macro CFG on the command line. For example:
 !MESSAGE 
-!MESSAGE NMAKE /f "Test32.mak" CFG="Test32 - Win32 Release"
+!MESSAGE NMAKE /f "Test32.mak" CFG="Test32 - Win32 Debug"
 !MESSAGE 
 !MESSAGE Possible choices for configuration are:
 !MESSAGE 
@@ -83,7 +83,8 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:console /debug /machine:I386
-# ADD LINK32 kernel32.lib user32.lib wsock32.lib odbccp32.lib /nologo /subsystem:console /incremental:no /debug /machine:I386
+# ADD LINK32 kernel32.lib user32.lib wsock32.lib odbccp32.lib /nologo /subsystem:console /incremental:no /debug /machine:I386 /fixed:no
+# SUBTRACT LINK32 /pdb:none
 
 !ENDIF 
 
@@ -94,6 +95,14 @@ LINK32=link.exe
 # Begin Group "Source Files"
 
 # PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;hpj;bat;for;f90"
+# Begin Source File
+
+SOURCE=.\test\certimp.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\test\certproc.c
+# End Source File
 # Begin Source File
 
 SOURCE=.\test\certs.c
@@ -128,7 +137,11 @@ SOURCE=.\test\lowlvl.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\test\scert.c
+SOURCE=.\test\s_cmp.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\test\s_scep.c
 # End Source File
 # Begin Source File
 

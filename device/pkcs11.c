@@ -10,12 +10,14 @@
   #include "context.h"
   #include "device.h"
   #include "pkcs11_api.h"
+  #include "dev_mech.h"
   #include "asn1.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
   #include "device/device.h"
   #include "device/pkcs11_api.h"
+  #include "mechs/dev_mech.h"
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
@@ -45,7 +47,9 @@
 int pkcs11MapError( PKCS11_INFO *pkcs11Info, const CK_RV errorCode,
 					const int defaultError )
 	{
-	pkcs11Info->errorCode = ( int ) errorCode;
+	ERROR_INFO *errorInfo = &pkcs11Info->errorInfo;
+
+	errorInfo->errorCode = ( int ) errorCode;
 	switch( ( int ) errorCode )
 		{
 		case CKR_OK:
@@ -139,6 +143,38 @@ time_t getTokenTime( CK_TOKEN_INFO *tokenInfo )
 	return( ( cryptStatusOK( status ) ) ? theTime : 0 );
 	}
 
+/* Get access to the PKCS #11 device associated with a context */
+
+int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
+						  CRYPT_DEVICE *iCryptDevice, 
+						  PKCS11_INFO **pkcs11InfoPtrPtr )
+	{
+	CRYPT_DEVICE iLocalDevice;
+	DEVICE_INFO *deviceInfo;
+	int cryptStatus;
+
+	/* Clear return values */
+	*iCryptDevice = CRYPT_ERROR;
+	*pkcs11InfoPtrPtr = NULL;
+
+	/* Get the the device associated with this context */
+	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_GETDEPENDENT, 
+								   &iLocalDevice, OBJECT_TYPE_DEVICE );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+
+	/* Get the PKCS #11 info from the device info */
+	cryptStatus = krnlAcquireObject( iLocalDevice, OBJECT_TYPE_DEVICE, 
+									 ( void ** ) &deviceInfo, 
+									 CRYPT_ERROR_SIGNALLED );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+	*iCryptDevice = iLocalDevice;
+	*pkcs11InfoPtrPtr = deviceInfo->devicePKCS11;
+
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
 *					Device Init/Shutdown/Device Control Routines			*
@@ -152,9 +188,12 @@ static void freeCapabilities( DEVICE_INFO *deviceInfo );
 
 /* Handle device control functions */
 
-static int controlFunction( DEVICE_INFO *deviceInfo,
-							const CRYPT_ATTRIBUTE_TYPE type,
-							const void *data, const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
+							IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
+							IN_BUFFER_OPT( dataLength ) void *data, 
+							IN_LENGTH_SHORT_Z const int dataLength,
+							INOUT_OPT MESSAGE_FUNCTION_EXTINFO *messageExtInfo )
 	{
 	CK_RV status;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
@@ -193,8 +232,10 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		   device or perform some other action that we have no control over 
 		   in response to the token-removed notification */
 		status = C_GetTokenInfo( pkcs11Info->slotID, &tokenInfo );
-		if( status == CKR_OK )
-			status = C_GetSlotInfo( pkcs11Info->slotID, &slotInfo );
+		if( status != CKR_OK )
+			return( pkcs11MapError( pkcs11Info, status, 
+									CRYPT_ERROR_SIGNALLED ) );
+		status = C_GetSlotInfo( pkcs11Info->slotID, &slotInfo );
 		if( status != CKR_OK )
 			return( pkcs11MapError( pkcs11Info, status, 
 									CRYPT_ERROR_SIGNALLED ) );
@@ -208,6 +249,11 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 	if( type == CRYPT_DEVINFO_AUTHENT_USER || \
 		type == CRYPT_DEVINFO_AUTHENT_SUPERVISOR )
 		{
+		/* Make sure that the PIN is within range */
+		if( dataLength < pkcs11Info->minPinSize || \
+			dataLength > pkcs11Info->maxPinSize )
+			return( CRYPT_ARGERROR_NUM1 );
+
 		/* If the user is already logged in, log them out before we try
 		   logging in with a new authentication value */
 		if( deviceInfo->flags & DEVICE_LOGGEDIN )
@@ -232,7 +278,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 				{ CKA_TOKEN, ( CK_VOID_PTR ) &bFalse, sizeof( CK_BBOOL ) },
 				{ CKA_PRIVATE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
 				{ CKA_SENSITIVE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
-				{ CKA_VALUE, "12345678", 8 }
+				{ CKA_VALUE, "12345678", 8 }	/* Dummy key value */
 				};
 			CK_OBJECT_HANDLE hObject;
 
@@ -258,7 +304,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 									 &hObject );
 			if( status == CKR_USER_NOT_LOGGED_IN )
 				{
-				assert( NOTREACHED );
+				assert( DEBUG_WARN );
 				return( CRYPT_ERROR_NOTINITED );
 				}
 			assert( hObject != CK_OBJECT_NONE );
@@ -311,6 +357,11 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		SO */
 	if( type == CRYPT_DEVINFO_SET_AUTHENT_SUPERVISOR )
 		{
+		/* Make sure that the PIN is within range */
+		if( dataLength < pkcs11Info->minPinSize || \
+			dataLength > pkcs11Info->maxPinSize )
+			return( CRYPT_ARGERROR_NUM1 );
+
 		/* Make sure that there's an SSO PIN present from a previous device
 		   initialisation */
 		if( pkcs11Info->defaultSSOPinLen <= 0 )
@@ -332,6 +383,11 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		}
 	if( type == CRYPT_DEVINFO_SET_AUTHENT_USER )
 		{
+		/* Make sure that the PIN is within range */
+		if( dataLength < pkcs11Info->minPinSize || \
+			dataLength > pkcs11Info->maxPinSize )
+			return( CRYPT_ARGERROR_NUM1 );
+
 		status = C_InitPIN( pkcs11Info->hSession, ( CK_CHAR_PTR ) data, 
 							( CK_ULONG ) dataLength );
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
@@ -343,6 +399,11 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		{
 		CK_SESSION_HANDLE hSession;
 		CK_CHAR label[ 32 + 8 ];
+
+		/* Make sure that the PIN is within range */
+		if( dataLength < pkcs11Info->minPinSize || \
+			dataLength > pkcs11Info->maxPinSize )
+			return( CRYPT_ARGERROR_NUM1 );
 
 		/* If there's a session active with the device, log out and terminate
 		   the session, since the token init will reset this */
@@ -420,8 +481,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		return( CRYPT_OK );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR_NOTAVAIL );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /****************************************************************************
@@ -475,7 +535,6 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	int cryptStatus;
 
@@ -487,16 +546,10 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 		return( CRYPT_OK );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
 
 	/* If we're deleting an object that's in the middle of a multi-stage 
 	   operation, record the fact that the operation has now ended.  We
@@ -512,9 +565,9 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 	   and then destroying it leaks a PKCS #11 handle each time.  
 	   Unfortunately there's nothing that we can do about this since the
 	   problem lies at the PKCS #11 level */
-	if( contextInfoPtr->flags & CONTEXT_PERSISTENT )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( CRYPT_OK );
 		}
 
@@ -523,7 +576,7 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 	if( contextInfoPtr->altDeviceObject != CK_OBJECT_NONE )
 		C_DestroyObject( pkcs11Info->hSession, 
 						 contextInfoPtr->altDeviceObject );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( CRYPT_OK );
 	}
 
@@ -573,7 +626,6 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, CK_ATTRIBUTE *keyTemplate,
 	CRYPT_DEVICE iCryptDevice;
 	const CRYPT_ALGO_TYPE cryptAlgo = \
 				contextInfoPtr->capabilityInfo->cryptAlgo;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_OBJECT_HANDLE hObject;
 	CK_RV status;
@@ -591,17 +643,10 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, CK_ATTRIBUTE *keyTemplate,
 	assert( isReadPtr( key, keyLength ) );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Set up pointers to the appropriate object sub-type data */
 	if( contextInfoPtr->type == CONTEXT_CONV )
@@ -665,7 +710,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, CK_ATTRIBUTE *keyTemplate,
 		contextInfoPtr->ctxConv->userKeyLength = 0;
 		}
 	zeroise( keyTemplate, sizeof( CK_ATTRIBUTE ) * templateCount );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -689,7 +734,7 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{ CKA_LABEL, contextInfoPtr->label, contextInfoPtr->labelSize }
 		};
 	const int templateCount = \
-				( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ? 9 : 8;
+				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
@@ -697,7 +742,7 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
 	   to include the object label */
-	if( contextInfoPtr->flags & CONTEXT_PERSISTENT )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT )
 		keyTemplate[ 2 ].pValue = ( CK_VOID_PTR ) &bTrue;
 
 	return( initKey( contextInfoPtr, keyTemplate, templateCount, 
@@ -724,7 +769,7 @@ static int hmacInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		{ CKA_LABEL, contextInfoPtr->label, contextInfoPtr->labelSize }
 		};
 	const int templateCount = \
-				( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ? 9 : 8;
+				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
@@ -732,7 +777,7 @@ static int hmacInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
 	   to include the object label */
-	if( contextInfoPtr->flags & CONTEXT_PERSISTENT )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT )
 		keyTemplate[ 2 ].pValue = ( CK_VOID_PTR ) &bTrue;
 
 	return( initKey( contextInfoPtr, keyTemplate, templateCount, 
@@ -760,7 +805,6 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr,
 						const BOOLEAN isMAC )
 	{
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_MECHANISM mechanism = { contextInfoPtr->capabilityInfo->paramKeyGen, 
 							   NULL_PTR, 0 };
@@ -773,17 +817,10 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr,
 						templateCount * sizeof( CK_ATTRIBUTE ) ) );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
-	assert( !( deviceInfo->flags & DEVICE_READONLY ) );
 
 	/* Generate the key into the token */
 	status = C_GenerateKey( pkcs11Info->hSession, &mechanism, 
@@ -796,7 +833,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr,
 		contextInfoPtr->deviceObject = hObject;
 		}
 	zeroise( keyTemplate, sizeof( CK_ATTRIBUTE ) * templateCount );
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -821,14 +858,14 @@ static int cipherGenerateKey( CONTEXT_INFO *contextInfoPtr,
 		{ CKA_LABEL, contextInfoPtr->label, contextInfoPtr->labelSize }
 		};
 	const int templateCount = \
-				( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ? 9 : 8;
+				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
 	   to include the object label */
-	if( contextInfoPtr->flags & CONTEXT_PERSISTENT )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT )
 		keyTemplate[ 2 ].pValue = ( CK_VOID_PTR ) &bTrue;
 
 	return( generateKey( contextInfoPtr, keyTemplate, templateCount, FALSE ) );
@@ -855,14 +892,14 @@ static int hmacGenerateKey( CONTEXT_INFO *contextInfoPtr,
 		{ CKA_LABEL, contextInfoPtr->label, contextInfoPtr->labelSize }
 		};
 	const int templateCount = \
-				( contextInfoPtr->flags & CONTEXT_PERSISTENT ) ? 9 : 8;
+				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
 	   to include the object label */
-	if( contextInfoPtr->flags & CONTEXT_PERSISTENT )
+	if( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT )
 		keyTemplate[ 2 ].pValue = ( CK_VOID_PTR ) &bTrue;
 
 	return( generateKey( contextInfoPtr, keyTemplate, templateCount, TRUE ) );
@@ -936,7 +973,6 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	{
 	CK_MECHANISM mechanism = { mechanismType, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	BYTE paramDataBuffer[ 64 + 8 ];
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
@@ -950,6 +986,7 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 		mechanism.ulParameterLen = paramSize;
 		}
 	else
+		{
 		/* Even if there are no algorithm-specific parameters, there may 
 		   still be a mode-specific IV parameter */
 		if( needsIV( contextInfoPtr->ctxConv->mode ) && \
@@ -958,32 +995,30 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 			mechanism.pParameter = contextInfoPtr->ctxConv->currentIV;
 			mechanism.ulParameterLen = ivSize;
 			}
+		}
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
+
 	cryptStatus = genericEncrypt( pkcs11Info, contextInfoPtr, &mechanism, buffer,
 								  length, length );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		if( needsIV( contextInfoPtr->ctxConv->mode ) && \
 			!isStreamCipher( contextInfoPtr->capabilityInfo->cryptAlgo ) )
+			{
 			/* Since PKCS #11 assumes that either all data is encrypted at 
 			   once or that a given mechanism is devoted entirely to a single 
 			   operation, we have to preserve the state (the IV) across 
 			   calls */
 			memcpy( contextInfoPtr->ctxConv->currentIV, \
 					( BYTE * ) buffer + length - ivSize, ivSize );
+			}
 		}
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -992,7 +1027,6 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	{
 	CK_MECHANISM mechanism = { mechanismType, NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	BYTE paramDataBuffer[ 64 + 8 ], ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
@@ -1021,29 +1055,26 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 		memcpy( ivBuffer, ( BYTE * ) buffer + length - ivSize, ivSize );
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
+
 	cryptStatus = genericDecrypt( pkcs11Info, contextInfoPtr, &mechanism, buffer,
 								  length );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		if( needsIV( contextInfoPtr->ctxConv->mode ) && \
 			!isStreamCipher( contextInfoPtr->capabilityInfo->cryptAlgo ) )
+			{
 			/* Since PKCS #11 assumes that either all data is encrypted at 
 			   once or that a given mechanism is devoted entirely to a single 
 			   operation, we have to preserve the state (the IV) across 
 			   calls */
 			memcpy( contextInfoPtr->ctxConv->currentIV, ivBuffer, ivSize );
+			}
 		}
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -1067,6 +1098,7 @@ static int cipherEncryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 	return( cipherEncrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
+#ifdef USE_SKIPJACK
 static int cipherEncryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
@@ -1074,6 +1106,8 @@ static int cipherEncryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_CFB ) ) );
 	}
+#endif /* USE_SKIPJACK */
+#if defined( USE_RC4 ) || defined( USE_SKIPJACK )
 static int cipherEncryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
@@ -1083,6 +1117,7 @@ static int cipherEncryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_OFB ) ) );
 	}
+#endif /* USE_RC4 || USE_SKIPJACK */
 static int cipherDecryptECB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
@@ -1100,6 +1135,7 @@ static int cipherDecryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 	return( cipherDecrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
+#ifdef USE_SKIPJACK
 static int cipherDecryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
@@ -1107,6 +1143,8 @@ static int cipherDecryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_CFB ) ) );
 	}
+#endif /* USE_SKIPJACK */
+#if defined( USE_RC4 ) || defined( USE_SKIPJACK )
 static int cipherDecryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
@@ -1116,6 +1154,7 @@ static int cipherDecryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_OFB ) ) );
 	}
+#endif /* USE_RC4 || USE_SKIPJACK */
 
 /****************************************************************************
 *																			*
@@ -1136,22 +1175,15 @@ static int hmac( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	CK_MECHANISM mechanism = { contextInfoPtr->capabilityInfo->paramDefaultMech, 
 							   NULL_PTR, 0 };
 	CRYPT_DEVICE iCryptDevice;
-	DEVICE_INFO *deviceInfo;
 	PKCS11_INFO *pkcs11Info;
 	CK_RV status;
 	int cryptStatus;
 
 	/* Get the info for the device associated with this context */
-	cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-								   IMESSAGE_GETDEPENDENT, &iCryptDevice, 
-								   OBJECT_TYPE_DEVICE );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlAcquireObject( iCryptDevice, OBJECT_TYPE_DEVICE, 
-										 ( void ** ) &deviceInfo, 
-										 CRYPT_ERROR_SIGNALLED );
+	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
+										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
-	pkcs11Info = deviceInfo->devicePKCS11;
 
 	/* If we're currently in the middle of a multi-stage sign operation we
 	   can't start a new one.  We have to perform this tracking explicitly 
@@ -1159,18 +1191,18 @@ static int hmac( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	if( pkcs11Info->hActiveSignObject != CK_OBJECT_NONE && \
 		pkcs11Info->hActiveSignObject != contextInfoPtr->deviceObject )
 		{
-		krnlReleaseObject( deviceInfo->objectHandle );
+		krnlReleaseObject( iCryptDevice );
 		return( CRYPT_ERROR_INCOMPLETE );
 		}
 
 	/* If we haven't initialised the MAC operation yet, start it now */
-	if( !( contextInfoPtr->flags & CONTEXT_HASH_INITED ) )
+	if( !( contextInfoPtr->flags & CONTEXT_FLAG_HASH_INITED ) )
 		{
 		status = C_SignInit( pkcs11Info->hSession, &mechanism, 
 							 contextInfoPtr->deviceObject );
 		if( status != CKR_OK )
 			return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
-		contextInfoPtr->flags |= CONTEXT_HASH_INITED;
+		contextInfoPtr->flags |= CONTEXT_FLAG_HASH_INITED;
 		pkcs11Info->hActiveSignObject = contextInfoPtr->deviceObject;
 		}
 
@@ -1178,16 +1210,16 @@ static int hmac( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		status = C_SignUpdate( pkcs11Info->hSession, buffer, length  );
 	else
 		{
-		int macLen;
+		CK_ULONG dummy;
 
 		status = C_SignFinal( pkcs11Info->hSession, 
-							  contextInfoPtr->ctxMAC->mac, &macLen );
+							  contextInfoPtr->ctxMAC->mac, &dummy );
 		pkcs11Info->hActiveSignObject = CK_OBJECT_NONE;
 		}
 	if( status != CKR_OK )
 		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
 
-	krnlReleaseObject( deviceInfo->objectHandle );
+	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
 
@@ -1213,42 +1245,55 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	{ CKM_DES3_CBC, CKM_DES3_KEY_GEN, CKM_DES3_CBC, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, CKK_DES3,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#ifdef USE_IDEA
 	{ CKM_IDEA_ECB, CKM_IDEA_KEY_GEN, CKM_IDEA_CBC, CRYPT_ALGO_IDEA, CRYPT_MODE_ECB, CKK_IDEA,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
 	{ CKM_IDEA_CBC, CKM_IDEA_KEY_GEN, CKM_IDEA_CBC, CRYPT_ALGO_IDEA, CRYPT_MODE_CBC, CKK_IDEA,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#endif /* USE_IDEA */
+#ifdef USE_CAST
 	{ CKM_CAST5_ECB, CKM_CAST5_KEY_GEN, CKM_CAST5_CBC, CRYPT_ALGO_CAST, CRYPT_MODE_ECB, CKK_CAST5,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
 	{ CKM_CAST5_CBC, CKM_CAST5_KEY_GEN, CKM_CAST5_CBC, CRYPT_ALGO_CAST, CRYPT_MODE_CBC, CKK_CAST5,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#endif /* USE_CAST */
+#ifdef USE_RC2
 	{ CKM_RC2_ECB, CKM_RC2_KEY_GEN, CKM_RC2_CBC, CRYPT_ALGO_RC2, CRYPT_MODE_ECB, CKK_RC2,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
 	{ CKM_RC2_CBC, CKM_RC2_KEY_GEN, CKM_RC2_CBC, CRYPT_ALGO_RC2, CRYPT_MODE_CBC, CKK_RC2,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#endif /* USE_RC2 */
+#ifdef USE_RC4
 	{ CKM_RC4, CKM_RC4_KEY_GEN, CKM_RC4, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, CKK_RC4,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptOFB, cipherDecryptOFB, NULL, NULL },
+#endif /* USE_RC4 */
+#ifdef USE_RC5
 	{ CKM_RC5_ECB, CKM_RC5_KEY_GEN, CKM_RC5_CBC, CRYPT_ALGO_RC5, CRYPT_MODE_ECB, CKK_RC5,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
 	{ CKM_RC5_CBC, CKM_RC5_KEY_GEN, CKM_RC5_CBC, CRYPT_ALGO_RC5, CRYPT_MODE_CBC, CKK_RC5,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#endif /* USE_RC5 */
 	{ CKM_AES_ECB, CKM_AES_KEY_GEN, CKM_AES_CBC, CRYPT_ALGO_AES, CRYPT_MODE_ECB, CKK_AES,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
 	{ CKM_AES_CBC, CKM_AES_KEY_GEN, CKM_AES_CBC, CRYPT_ALGO_AES, CRYPT_MODE_CBC, CKK_AES,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#ifdef USE_BLOWFISH
 	{ CKM_BLOWFISH_CBC, CKM_BLOWFISH_KEY_GEN, CKM_BLOWFISH_CBC, CRYPT_ALGO_BLOWFISH, CRYPT_MODE_CBC, CKK_BLOWFISH,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptCBC, cipherDecryptCBC, NULL, NULL },
+#endif /* USE_BLOWFISH */
+#ifdef USE_SKIPJACK
 	{ CKM_SKIPJACK_ECB64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_ECB, CKK_SKIPJACK,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptECB, cipherDecryptECB, NULL, NULL },
@@ -1261,6 +1306,7 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	{ CKM_SKIPJACK_OFB64, CKM_SKIPJACK_KEY_GEN, CKM_SKIPJACK_CBC64, CRYPT_ALGO_SKIPJACK, CRYPT_MODE_OFB, CKK_SKIPJACK,
 	  genericEndFunction, cipherInitKey, cipherGenerateKey, 
 	  cipherEncryptOFB, cipherDecryptOFB, NULL, NULL },
+#endif /* USE_SKIPJACK */
 
 	/* MAC mechanisms.  The positioning of the encrypt/decrypt functions is 
 	   a bit odd because cryptlib treats hashing as an encrypt/decrypt
@@ -1275,15 +1321,19 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	   and key types, we use macros for CKM_x_HMAC_KEY_GEN and CKK_x_HMAC 
 	   that expand either to the vendor-specific type or the generic CKM/CKK
 	   types */
+#ifdef USE_HMAC_MD5
 	{ CKM_MD5_HMAC, CKM_MD5_HMAC_KEY_GEN, CKM_MD5_HMAC, CRYPT_ALGO_HMAC_MD5, CRYPT_MODE_NONE, CKK_MD5_HMAC,
 	  genericEndFunction, hmacInitKey, hmacGenerateKey, 
 	  hmac, hmac, NULL, NULL },
+#endif /* USE_HMAC_MD5 */
 	{ CKM_SHA_1_HMAC, CKM_SHA_1_HMAC_KEY_GEN, CKM_SHA_1_HMAC, CRYPT_ALGO_HMAC_SHA1, CRYPT_MODE_NONE, CKK_SHA_1_HMAC,
 	  genericEndFunction, hmacInitKey, hmacGenerateKey, 
 	  hmac, hmac, NULL, NULL },
+#ifdef USE_HMAC_RIPEMD160
 	{ CKM_RIPEMD160_HMAC, CKM_RIPEMD160_HMAC_KEY_GEN, CKM_RIPEMD160_HMAC, CRYPT_ALGO_HMAC_RIPEMD160, CRYPT_MODE_NONE, CKK_RIPEMD160_HMAC,
 	  genericEndFunction, hmacInitKey, hmacGenerateKey, 
 	  hmac, hmac, NULL, NULL },
+#endif /* USE_HMAC_RIPEMD160 */
 
 	{ CKM_NONE, CKM_NONE, CKM_NONE, CRYPT_ERROR, CRYPT_ERROR },
 		{ CKM_NONE, CKM_NONE, CKM_NONE, CRYPT_ERROR, CRYPT_ERROR }
@@ -1326,7 +1376,7 @@ static CK_MECHANISM_TYPE getMechanism( const GETMECH_TYPE mechType,
 				i < FAILSAFE_ARRAYSIZE( mechanismInfoConv, PKCS11_MECHANISM_INFO );
 		 i++ );
 	if( i >= FAILSAFE_ARRAYSIZE( mechanismInfoConv, PKCS11_MECHANISM_INFO ) )
-		retIntError();
+		retIntError_Ext( CKM_NONE );
 	assert( i < sizeof( mechanismInfoConv ) / sizeof( PKCS11_MECHANISM_INFO ) && \
 			mechanismInfoConv[ i ].cryptAlgo != CRYPT_ERROR );
 	if( mechType == MECH_MAC )
@@ -1342,7 +1392,7 @@ static CK_MECHANISM_TYPE getMechanism( const GETMECH_TYPE mechType,
 		   i < FAILSAFE_ARRAYSIZE( mechanismInfoConv, PKCS11_MECHANISM_INFO ) )
 		i++;
 	if( i >= FAILSAFE_ARRAYSIZE( mechanismInfoConv, PKCS11_MECHANISM_INFO ) )
-		retIntError();
+		retIntError_Ext( CKM_NONE );
 	assert( i < sizeof( mechanismInfoConv ) / sizeof( PKCS11_MECHANISM_INFO ) && \
 			mechanismInfoConv[ i ].cryptAlgo != CRYPT_ERROR );
 
@@ -1397,10 +1447,17 @@ static const FAR_BSS MECHANISM_FUNCTION_INFO mechanismFunctions[] = {
 
 /* Set up the function pointers to the device methods */
 
-int setDevicePKCS11( DEVICE_INFO *deviceInfo, const char *name, 
-					 const int nameLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setDevicePKCS11( INOUT DEVICE_INFO *deviceInfo, 
+					 IN_BUFFER( nameLength ) const char *name, 
+					 IN_LENGTH_ATTRIBUTE const int nameLength )
 	{
 	int status;
+
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
+	assert( isReadPtr( name, nameLength ) );
+
+	REQUIRES( nameLength > 0 && nameLength < MAX_ATTRIBUTE_SIZE );
 
 	status = initPKCS11Init( deviceInfo, name, nameLength );
 	if( cryptStatusError( status ) )

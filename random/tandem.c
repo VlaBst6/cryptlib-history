@@ -16,6 +16,7 @@
 /* General includes */
 
 #include "crypt.h"
+#include "random/random.h"
 
 /* OS-specific includes */
 

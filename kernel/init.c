@@ -49,6 +49,9 @@ THREADFUNC_DEFINE( threadServiceFunction, threadInfoPtr )
 	ORIGINAL_INT_VAR( intParam, threadInfo->threadParams.intParam );
 	ORIGINAL_INT_VAR( semaphore, threadInfo->semaphore );
 
+	PRE( threadServiceFunction != NULL );
+	PRE( isReadPtr( threadInfoPtr, sizeof( THREAD_INFO ) ) );
+
 	/* We're running as a thread, call the thread service function and clear
 	   the associated semaphore (if there is one) when we're done.  We check
 	   to make sure that the thread params are unchanged to catch erroneous
@@ -190,9 +193,24 @@ int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 
 void preInit( void )
 	{
+	int status;
+
 	krnlData = &krnlDataBlock;
 	memset( krnlData, 0, sizeof( KERNEL_DATA ) );
-	MUTEX_CREATE( initialisation );
+	MUTEX_CREATE( initialisation, status );
+	if( cryptStatusError( status ) )
+		{
+		/* Error handling at this point gets a bit complicated since these 
+		   functions are called before the main() is called or dlopen()
+		   returns, so there's no way to react to an error status.  Even
+		   the debug exception thrown by retIntError() may be dangerous,
+		   but it's only used in the debug version when (presumably) some
+		   sort of debugging support is present.  In any case if the mutex
+		   create fails at this point (a) something is seriously wrong and 
+		   (b) presumably successive mutex creations will fail as well, at
+		   which point they can be detected */
+		retIntError_Void();
+		}
 	}
 
 void postShutdown( void )
@@ -217,12 +235,14 @@ int krnlBeginInit( void )
 	int status;
 
 #ifdef STATIC_INIT
-	if( !krnlDataBlock.isInitialised )
+	/* If the krnlData hasn't been set up yet, set it up now */
+	if( krnlDataBlock.initLevel <= INIT_LEVEL_NONE )
 		{
 		/* We're starting up, set up the initialisation lock */
 		krnlData = &krnlDataBlock;
 		memset( krnlData, 0, sizeof( KERNEL_DATA ) );
-		MUTEX_CREATE( initialisation );
+		MUTEX_CREATE( initialisation, status );
+		ENSURES( cryptStatusOK( status ) );
 		}
 #endif /* STATIC_INIT */
 
@@ -231,7 +251,7 @@ int krnlBeginInit( void )
 	MUTEX_LOCK( initialisation );
 
 	/* If we're already initialised, don't to anything */
-	if( krnlData->isInitialised )
+	if( krnlData->initLevel > INIT_LEVEL_NONE )
 		{
 		MUTEX_UNLOCK( initialisation );
 		return( CRYPT_ERROR_INITED );
@@ -279,19 +299,20 @@ int krnlBeginInit( void )
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( initialisation );
-		assert( NOTREACHED );
-		return( status );
+		retIntError_Boolean();
 		}
 
 	/* The kernel data block has been initialised */
-	krnlData->isInitialised = TRUE;
+	krnlData->initLevel = INIT_LEVEL_KRNLDATA;
 
 	return( TRUE );
 	}
 
 void krnlCompleteInit( void )
 	{
-	krnlData->isInitialised = TRUE;
+	/* We've completed the initialisation process */
+	krnlData->initLevel = INIT_LEVEL_FULL;
+
 	MUTEX_UNLOCK( initialisation );
 	}
 
@@ -316,12 +337,16 @@ int krnlBeginShutdown( void )
 	   try to access it */
 	MUTEX_LOCK( initialisation );
 
+	/* We can only begin a shutdown if we're fully initialised */
+	PRE( krnlData->initLevel == INIT_LEVEL_FULL );
+
 	/* If we're already shut down, don't to anything */
-	if( !krnlData->isInitialised )
+	if( krnlData->initLevel <= INIT_LEVEL_NONE )
 		{
 		MUTEX_UNLOCK( initialisation );
 		return( CRYPT_ERROR_NOTINITED );
 		}
+	krnlData->initLevel = INIT_LEVEL_KRNLDATA;
 
 	/* Signal all remaining internal threads to exit */
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_THREADS;
@@ -337,8 +362,15 @@ int krnlCompleteShutdown( void )
 #endif /* 0 */
 
 	/* Once the kernel objects have been destroyed, we're in the closing-down
-	   state in which no more messages are processed */
-	assert( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES );
+	   state in which no more messages are processed.  There are a few 
+	   special-case situations such as a shutdown that occurs because of a
+	   failure to initialise that we also need to handle */
+	PRE( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
+		 ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
+		 ( krnlData->initLevel == INIT_LEVEL_FULL && \
+		   krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
 
 	/* Shut down all of the kernel modules */
 	endAllocation();
@@ -354,7 +386,7 @@ int krnlCompleteShutdown( void )
 	endSendMessage();
 
 	/* At this point all kernel services have been shut down */
-	assert( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES );
+	POST( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES );
 
 	/* Turn off the lights on the way out.  Note that the kernel data-
 	   clearing operation leaves the shutdown level set to handle any
@@ -400,6 +432,7 @@ BOOLEAN krnlIsExiting( void )
   #include "device/capabil.h"
 #endif /* Compiler-specific includes */
 
+CHECK_RETVAL \
 static BOOLEAN testGeneralAlgorithms( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo;
@@ -463,6 +496,7 @@ static BOOLEAN testGeneralAlgorithms( void )
 	Ability to lock an object, inability to change security parameters once
 		it's locked */
 
+CHECK_RETVAL \
 static BOOLEAN testKernelMechanisms( void )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -636,8 +670,8 @@ static BOOLEAN testKernelMechanisms( void )
 	setMessageData( &msgData, ( void * ) key, 8 );
 	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_KEY ) != CRYPT_ERROR_PERMISSION || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_GENKEY, NULL,
-						 FALSE ) != CRYPT_ERROR_PERMISSION )
+		krnlSendNotifier( cryptHandle, 
+						  IMESSAGE_CTX_GENKEY ) != CRYPT_ERROR_PERMISSION )
 		{
 		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
@@ -798,11 +832,7 @@ static BOOLEAN testKernelMechanisms( void )
 	   values.  Any value above the initial cutoff date should be OK */
 	status = CRYPT_OK;
 	setMessageData( &msgData, &timeVal, sizeof( time_t ) );
-	timeVal = -10;					/* Below (negative) */
-	if( timeVal >= 0 )
-		/* time_t is unsigned, set the time to an alternative (but still
-		   too-small) values */
-		timeVal = 10;
+	timeVal = 10;					/* Below */
 	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
 		status = CRYPT_ERROR;
@@ -918,10 +948,8 @@ static BOOLEAN testKernelMechanisms( void )
 
 int testKernel( void )
 	{
-	if( !testGeneralAlgorithms() )
-		retIntError();
-	if( !testKernelMechanisms() )
-		retIntError();
+	ENSURES( testGeneralAlgorithms() );
+	ENSURES( testKernelMechanisms() );
 
 	return( CRYPT_OK );
 	}

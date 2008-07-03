@@ -27,10 +27,10 @@
 ; in respect of its properties, including, but not limited to, correctness
 ; and/or fitness for purpose.
 ; ---------------------------------------------------------------------------
-; Issue 31/01/2006
+; Issue 09/09/2006
 
-; This code requires either ASM_X86_V2 or ASM_X86_V2C to be set in aesopt.h 
-; and the same define to be set here as well. If AES_V2C is set this file 
+; This code requires either ASM_X86_V2 or ASM_X86_V2C to be set in aesopt.h
+; and the same define to be set here as well. If AES_V2C is set this file
 ; requires the C files aeskey.c and aestab.c for support.
 
 ; An AES implementation for x86 processors using the YASM (or NASM) assembler.
@@ -48,18 +48,18 @@
 ; preserved across calls but eax, ecx and edx and the artihmetic status flags
 ; are not.  Although this is a full assembler implementation, it can be used
 ; in conjunction with my C code which provides faster key scheduling using
-; large tables. In this case aeskey.c should be compiled with USE_ASM defined.
-; It is also important that the defines below match those used in the C code.
-; This code uses the VC++ register saving conentions; if it is used with another
-; compiler, conventions for using and saving registers may need to be checked
-; (and calling conventions).  The YASM command line for the VC++ custom build
-; step is:
+; large tables. In this case aeskey.c should be compiled with ASM_X86_V2C
+; defined.  It is also important that the defines below match those used in the
+; C code.  This code uses the VC++ register saving conentions; if it is used
+; with another compiler, conventions for using and saving registers may need
+; to be checked (and calling conventions).  The YASM command line for the VC++
+; custom build step is:
 ;
 ;    yasm -Xvc -f win32 -D <Z> -o "$(TargetDir)\$(InputName).obj" "$(InputPath)"
 ;
 ; For the cryptlib build this is (pcg):
 ;
-;	yasm -Xvc -f win32 -D ASM_X86_V2 -o aescrypt2.obj aes_x86_v2.asm
+;	yasm -Xvc -f win32 -D ASM_X86_V2C -o aescrypt2.obj aes_x86_v2.asm
 ;
 ; where <Z> is ASM_X86_V2 or ASM_X86_V2C.  The calling intefaces are:
 ;
@@ -198,10 +198,10 @@
 
 %macro  do_call 1-2 parms
 %ifndef DLL_EXPORT
-    call	%1
-    add		esp,%2
+    call    %1
+    add     esp,%2
 %else
-    call	%1@%2
+    call    %1@%2
 %endif
 %endmacro
 
@@ -462,7 +462,7 @@ stk_spc equ    20   ; stack space
     mov     esi,[esp+ 8]
     mov     edi,[esp+ 4]
     add     esp,stk_spc
-    do_exit	12
+    do_exit 12
 
 %endif
 
@@ -700,14 +700,14 @@ stk_spc equ    20   ; stack space
     je      .3
     mov     eax,-1
     add     esp,8
-    do_exit	12
+    do_exit 12
 
 .1: do_call _aes_encrypt_key128,8
-    do_exit	12
+    do_exit 12
 .2: do_call _aes_encrypt_key192,8
-    do_exit	12
+    do_exit 12
 .3: do_call _aes_encrypt_key256,8
-    do_exit	12
+    do_exit 12
 
 %endif
 
@@ -869,7 +869,7 @@ enc_tab:
 
 %endmacro
 
-    section .text align=32
+    section .text
 
 ; AES Decryption Subroutine
 
@@ -940,7 +940,7 @@ enc_tab:
     mov     esi,[esp+ 8]
     mov     edi,[esp+ 4]
     add     esp,stk_spc
-    do_exit	12
+    do_exit 12
 
 %endif
 
@@ -980,7 +980,7 @@ enc_tab:
     mov     edx,[esp+20]    ; key
     push    eax
     push    edx
-    do_call _aes_encrypt_key128,8	; generate expanded encryption key
+    do_call _aes_encrypt_key128,8   ; generate expanded encryption key
     mov     eax,10*16
     mov     esi,[esp+24]    ; pointer to first round key
     lea     edi,[esi+eax]   ; pointer to last round key
@@ -1031,7 +1031,7 @@ enc_tab:
     mov     edx,[esp+20]    ; key
     push    eax
     push    edx
-    do_call _aes_encrypt_key192,8	; generate expanded encryption key
+    do_call _aes_encrypt_key192,8   ; generate expanded encryption key
     mov     eax,12*16
     mov     esi,[esp+24]    ; first round key
     lea     edi,[esi+eax]   ; last round key
@@ -1099,7 +1099,7 @@ enc_tab:
     mov     edx,[esp+20]
     push    eax
     push    edx
-    do_call _aes_encrypt_key256,8	; generate expanded encryption key
+    do_call _aes_encrypt_key256,8   ; generate expanded encryption key
     mov     eax,14*16
     mov     esi,[esp+24]
     lea     edi,[esi+eax]
@@ -1230,14 +1230,14 @@ dec_end:
     je      .3
     mov     eax,-1
     add     esp,8
-    do_exit	12
+    do_exit 12
 
 .1: do_call _aes_decrypt_key128,8
-    do_exit	12
+    do_exit 12
 .2: do_call _aes_decrypt_key192,8
-    do_exit	12
+    do_exit 12
 .3: do_call _aes_decrypt_key256,8
-    do_exit	12
+    do_exit 12
 
 %endif
 
@@ -1247,7 +1247,7 @@ dec_end:
 
 ; Inverse S-box data - 256 entries
 
-    section .data align=32
+    section .data
     align 32
 
 %define v8(x)   fe(x), f9(x), fd(x), fb(x), fe(x), f9(x), fd(x), x

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Keyset Routines						*
-*						Copyright Peter Gutmann 1995-2004					*
+*						Copyright Peter Gutmann 1995-2007					*
 *																			*
 ****************************************************************************/
 
@@ -12,10 +12,12 @@
   #include "keyset.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "pgp_rw.h"
 #else
   #include "keyset/keyset.h"
   #include "misc/asn1.h"
   #include "misc/asn1_ext.h"
+  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_KEYSETS
@@ -26,37 +28,16 @@
 *																			*
 ****************************************************************************/
 
-/* Exit after setting extended error information */
-
-static int exitError( KEYSET_INFO *keysetInfoPtr,
-					  const CRYPT_ATTRIBUTE_TYPE errorLocus,
-					  const CRYPT_ERRTYPE_TYPE errorType, const int status )
-	{
-	setErrorInfo( keysetInfoPtr, errorLocus, errorType );
-	return( status );
-	}
-
-static int exitErrorNotFound( KEYSET_INFO *keysetInfoPtr,
-							  const CRYPT_ATTRIBUTE_TYPE errorLocus )
-	{
-	return( exitError( keysetInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_ABSENT,
-					   CRYPT_ERROR_NOTFOUND ) );
-	}
-
-static int exitErrorIncomplete( KEYSET_INFO *keysetInfoPtr,
-								const CRYPT_ATTRIBUTE_TYPE errorLocus )
-	{
-	return( exitError( keysetInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_PRESENT,
-					   CRYPT_ERROR_INCOMPLETE ) );
-	}
-
 /* Clear the extended error information that may be present from a previous
    operation prior to beginning a new operation */
 
-static void resetErrorInfo( KEYSET_INFO *keysetInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void resetErrorInfo( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
 #ifdef KEYSET_HAS_ERRORINFO
 	ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
 
 	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
 #endif /* KEYSET_HAS_ERRORINFO */
@@ -67,19 +48,34 @@ static void resetErrorInfo( KEYSET_INFO *keysetInfoPtr )
 
 typedef struct {
 	CRYPT_KEYID_TYPE keyIDtype;		/* KeyID type */
+	BUFFER_FIXED( keyIDlength ) \
 	const void *keyID;				/* KeyID value */
 	int keyIDlength;
 	} KEYID_INFO;
 
-static int initKeysetUpdate( KEYSET_INFO *keysetInfoPtr, 
-							 KEYID_INFO *keyIDinfo, void *keyIDbuffer,
-							 const int keyIdMaxLength,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initKeysetUpdate( INOUT KEYSET_INFO *keysetInfoPtr, 
+							 INOUT_OPT KEYID_INFO *keyIDinfo, 
+							 OUT_BUFFER_OPT_FIXED( keyIdMaxLength ) \
+								void *keyIDbuffer,
+							 IN_LENGTH_SHORT_Z const int keyIdMaxLength,
 							 const BOOLEAN isRead )
 	{
-	/* If we're in the middle of a query, we can't do anything else */
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( ( keyIDinfo == NULL && \
+			  keyIDbuffer == NULL && keyIdMaxLength == 0 ) || \
+			( isWritePtr( keyIDinfo, sizeof( KEYID_INFO ) ) && \
+			  isReadPtr( keyIDbuffer, keyIdMaxLength ) ) );
+
+	REQUIRES( ( keyIDinfo == NULL && \
+				keyIDbuffer == NULL && keyIdMaxLength == 0 ) || \
+			  ( keyIDinfo != NULL && \
+				keyIDbuffer != NULL && keyIdMaxLength == KEYID_SIZE ) );
+
+	/* If we're in the middle of a query we can't do anything else */
 	if( keysetInfoPtr->isBusyFunction != NULL && \
 		keysetInfoPtr->isBusyFunction( keysetInfoPtr ) )
-		return( exitErrorIncomplete( keysetInfoPtr, CRYPT_KEYINFO_QUERY ) );
+		return( CRYPT_ERROR_INCOMPLETE );
 
 	/* If we've been passed a full issuerAndSerialNumber as a key ID and the 
 	   keyset needs an issuerID, convert it */
@@ -89,21 +85,22 @@ static int initKeysetUpdate( KEYSET_INFO *keysetInfoPtr,
 		  ( keysetInfoPtr->type == KEYSET_FILE && \
 		    keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) ) )
 		{
-		HASHFUNCTION hashFunction;
+		HASHFUNCTION_ATOMIC hashFunctionAtomic;
 		int hashSize;
 
 		/* Get the hash algorithm information */
-		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+								 &hashSize );
 
 		/* Hash the full iAndS to get an issuerID and use that for the keyID */
-		hashFunction( NULL, keyIDbuffer, keyIdMaxLength, keyIDinfo->keyID, 
-					  keyIDinfo->keyIDlength, HASH_ALL );
+		hashFunctionAtomic( keyIDbuffer, keyIdMaxLength, keyIDinfo->keyID, 
+							keyIDinfo->keyIDlength );
 		keyIDinfo->keyIDtype = CRYPT_IKEYID_ISSUERID;
 		keyIDinfo->keyID = keyIDbuffer;
 		keyIDinfo->keyIDlength = hashSize;
 		}
 
-	/* If this is a read access, there's nothing further to do */
+	/* If this is a read access there's nothing further to do */
 	if( isRead )
 		return( CRYPT_OK );
 
@@ -111,7 +108,7 @@ static int initKeysetUpdate( KEYSET_INFO *keysetInfoPtr,
 	   This covers all possibilities, both keyset types for which writing 
 	   isn't supported and individual keysets that we can't write to 
 	   because of things like file permissions, so once we pass this check 
-	   we know we can write to the keyset */
+	   we know that we can write to the keyset */
 	if( keysetInfoPtr->options == CRYPT_KEYOPT_READONLY )
 		return( CRYPT_ERROR_PERMISSION );
 
@@ -126,39 +123,40 @@ static int initKeysetUpdate( KEYSET_INFO *keysetInfoPtr,
 
 /* Identify a flat-file keyset type */
 
-#ifdef USE_PGP
-  #if defined( INC_ALL )
-	#include "misc_rw.h"
-	#include "pgp.h"
-  #else
-	#include "misc/misc_rw.h"
-	#include "misc/pgp.h"
-  #endif /* Compiler-specific includes */
-#endif /* USE_PGP */
-
-static KEYSET_SUBTYPE getKeysetType( STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getKeysetType( INOUT STREAM *stream,
+						  OUT_ENUM_OPT( KEYSET_SUBTYPE ) KEYSET_SUBTYPE *subType )
 	{
 	long length;
 	int value, status;
 
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( subType, sizeof( KEYSET_SUBTYPE ) ) );
+
+	/* Clear return value */
+	*subType = KEYSET_SUBTYPE_NONE;
+
 	/* Try and guess the basic type */
-	value = sPeek( stream );
+	status = value = sPeek( stream );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( value == BER_SEQUENCE )
 		{
-
-		/* Read the length of the object.  This should be between 64 and 64K
+		/* Read the length of the object, which should be between 64 and 64K 
 		   bytes in size.  We have to allow for very tiny files to handle 
-		   PKCS #15 files that contain only config data, and rather large 
-		   ones to handle the existence of large numbers of trusted certs,
-		   with a maximum of 32 objects * ~2K per object we can get close to
-		   64K in size.  The length may also be zero if the indefinite 
-		   encoding form is used.  Although PKCS #15 specifies the use of 
-		   DER, it doesn't hurt to allow this at least for the outer wrapper.  
-		   If Microsoft ever move to PKCS #15 they're bound to get it wrong */
+		   PKCS #15 files that contain only configuration data, and rather 
+		   large ones to handle the existence of large numbers of trusted 
+		   certificates, with a maximum of 32 objects * ~2K per object we 
+		   can get close to 64K in size.  The length may also be zero if the 
+		   indefinite encoding form is used.  Although PKCS #15 specifies 
+		   the use of DER, it doesn't hurt to allow this at least for the 
+		   outer wrapper, if Microsoft ever move to PKCS #15 they're bound 
+		   to get it wrong */
 		status = readLongSequence( stream, &length );
-		if( cryptStatusError( status ) || \
-			( length != CRYPT_UNUSED && ( length < 64 || length > 65535L ) ) )
-			return( KEYSET_SUBTYPE_ERROR );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( length != CRYPT_UNUSED && ( length < 64 || length > 65535L ) )
+			return( CRYPT_ERROR_BADDATA );
 
 		/* Check for a PKCS #12/#15 file */
 		if( peekTag( stream ) == BER_INTEGER )
@@ -166,19 +164,24 @@ static KEYSET_SUBTYPE getKeysetType( STREAM *stream )
 			long version;
 
 			/* Check for a PKCS #12 version number */
-			if( cryptStatusError( readShortInteger( stream, &version ) ) || \
-				version != 3 )
-				return( KEYSET_SUBTYPE_ERROR );
-			return( KEYSET_SUBTYPE_PKCS12 );
+			status = readShortInteger( stream, &version );
+			if( cryptStatusError( status ) )
+				return( status );
+			if( version != 3 )
+				return( CRYPT_ERROR_BADDATA );
+			*subType = KEYSET_SUBTYPE_PKCS12;
+
+			return( CRYPT_OK );
 			}
 
 		/* Check for a PKCS #15 OID */
-		if( !cryptStatusError( \
-					readFixedOID( stream, OID_PKCS15_CONTENTTYPE ) ) )
-			return( KEYSET_SUBTYPE_PKCS15 );
+		status = readFixedOID( stream, OID_PKCS15_CONTENTTYPE, 
+							   sizeofOID( OID_PKCS15_CONTENTTYPE ) );
+		if( cryptStatusError( status ) )
+			return( status );
+		*subType = KEYSET_SUBTYPE_PKCS15;
 
-		/* It's something DER-encoded, but not PKCS #12 or PKCS #15 */
-		return( KEYSET_SUBTYPE_ERROR );
+		return( CRYPT_OK );
 		}
 #ifdef USE_PGP
 	value = pgpGetPacketType( value );
@@ -194,39 +197,63 @@ static KEYSET_SUBTYPE getKeysetType( STREAM *stream )
 		   PGP keyring */
 		status = pgpReadPacketHeader( stream, &value, &length, 64 );
 		if( cryptStatusError( status ) )
-			return( KEYSET_SUBTYPE_ERROR );
+			return( status );
 		if( type == KEYSET_SUBTYPE_PGP_PUBLIC )
 			{
 			if( length < 64 || length > 1024  )
-				return( KEYSET_SUBTYPE_ERROR );
+				return( CRYPT_ERROR_BADDATA );
 			}
 		else
+			{
 			if( length < 200 || length > 4096 )
-				return( KEYSET_SUBTYPE_ERROR );
-		value = sgetc( stream );
+				return( CRYPT_ERROR_BADDATA );
+			}
+		status = value = sgetc( stream );
+		if( cryptStatusError( status ) )
+			return( status );
 		if( value != PGP_VERSION_2 && value != PGP_VERSION_3 && \
 			value != PGP_VERSION_OPENPGP )
-			return( KEYSET_SUBTYPE_ERROR );
-		return( type );
+			return( CRYPT_ERROR_BADDATA );
+		*subType = type;
+
+		return( CRYPT_OK );
 		}
 #endif /* USE_PGP */
 
 	/* "It doesn't look like anything from here" */
-	return( KEYSET_SUBTYPE_ERROR );
+	return( CRYPT_ERROR_BADDATA );
 	}
 
 /* Open a flat-file keyset */
 
-static int openKeysetStream( STREAM *stream, const char *name,
-							 const int nameLength,
-							 const CRYPT_KEYOPT_TYPE options,
-							 CRYPT_KEYOPT_TYPE *keysetOptions, 
-							 KEYSET_SUBTYPE *keysetSubType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5, 6 ) ) \
+static int openKeysetStream( INOUT STREAM *stream, 
+							 IN_BUFFER( nameLength ) const char *name,
+							 IN_LENGTH_SHORT_MIN( MIN_NAME_LENGTH ) \
+								const int nameLength,
+							 IN_ENUM_OPT( CRYPT_KEYOPT ) \
+								const CRYPT_KEYOPT_TYPE options,
+							 OUT_BOOL BOOLEAN *isReadOnly, 
+							 OUT_ENUM_OPT( KEYSET_SUBTYPE ) \
+								KEYSET_SUBTYPE *keysetSubType )
 	{
 	KEYSET_SUBTYPE subType = KEYSET_SUBTYPE_PKCS15;
 	char nameBuffer[ MAX_ATTRIBUTE_SIZE + 1 + 8 ];
 	const int suffixPos = nameLength - 4;
 	int openMode, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( name, nameLength ) );
+	assert( isWritePtr( isReadOnly, sizeof( BOOLEAN ) ) );
+	assert( isWritePtr( keysetSubType, sizeof( KEYSET_SUBTYPE ) ) );
+
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
+	REQUIRES( nameLength >= MIN_NAME_LENGTH && \
+			  nameLength < MAX_ATTRIBUTE_SIZE );
+
+	/* Clear return values */
+	*isReadOnly = FALSE;
+	*keysetSubType = KEYSET_SUBTYPE_NONE;
 
 	/* Convert the keyset name into a null-terminated string */
 	memcpy( nameBuffer, name, nameLength );
@@ -234,9 +261,7 @@ static int openKeysetStream( STREAM *stream, const char *name,
 
 	/* Get the expected subtype based on the keyset name (the default is
 	   PKCS #15 if no contraindication is found in the file suffix) */
-	if( suffixPos > 0 && \
-		( nameBuffer[ suffixPos ] == '.' || \
-		  nameBuffer[ suffixPos ] == ' ' ) )
+	if( suffixPos > 0 && nameBuffer[ suffixPos ] == '.' )
 		{
 		if( !strCompare( nameBuffer + suffixPos + 1, "pgp", 3 ) || \
 			!strCompare( nameBuffer + suffixPos + 1, "gpg", 3 ) || \
@@ -252,38 +277,42 @@ static int openKeysetStream( STREAM *stream, const char *name,
 	/* If the file is read-only, put the keyset into read-only mode */
 	if( fileReadonly( nameBuffer ) )
 		{
-		/* If we want to create a new file, we can't do it if we don't have
+		/* If we want to create a new file we can't do it if we don't have
 		   write permission */
 		if( options == CRYPT_KEYOPT_CREATE )
 			return( CRYPT_ERROR_PERMISSION );
 
 		/* Open the file in read-only mode */
-		*keysetOptions = CRYPT_KEYOPT_READONLY;
-		openMode = FILE_READ;
+		*isReadOnly = TRUE;
+		openMode = FILE_FLAG_READ;
 		}
 	else
+		{
 		/* If we're creating the file, open it in write-only mode.  Since
-		   we'll (presumably) be storing private keys in it, we mark it as
+		   we'll (presumably) be storing private keys in it we mark it as
 		   both private (owner-access-only ACL) and sensitive (store in
 		   secure storage if possible) */
 		if( options == CRYPT_KEYOPT_CREATE )
-			openMode = FILE_WRITE | FILE_EXCLUSIVE_ACCESS | \
-					   FILE_PRIVATE | FILE_SENSITIVE;
+			openMode = FILE_FLAG_WRITE | FILE_FLAG_EXCLUSIVE_ACCESS | \
+					   FILE_FLAG_PRIVATE | FILE_FLAG_SENSITIVE;
 		else
+			{
 			/* Open it for read or read/write depending on whether the
 			   readonly flag is set */
 			openMode = ( options == CRYPT_KEYOPT_READONLY ) ? \
-					   FILE_READ : FILE_READ | FILE_WRITE;
+					   FILE_FLAG_READ : FILE_FLAG_READ | FILE_FLAG_WRITE;
+			}
+		}
 	if( options == CRYPT_IKEYOPT_EXCLUSIVEACCESS )
-		openMode |= FILE_EXCLUSIVE_ACCESS;
+		openMode |= FILE_FLAG_EXCLUSIVE_ACCESS;
 
 	/* Pre-open the file containing the keyset.  This initially opens it in
 	   read-only mode for auto-detection of the file type so we can check for
 	   various problems */
-	status = sFileOpen( stream, nameBuffer, FILE_READ );
+	status = sFileOpen( stream, nameBuffer, FILE_FLAG_READ );
 	if( cryptStatusError( status ) )
 		{
-		/* The file doesn't exist, if the create-new-file flag isn't set
+		/* The file can't be opened, if the create-new-file flag isn't set 
 		   return an error.  If it is set, make sure that we're trying to 
 		   create a writeable keyset type */
 		if( options != CRYPT_KEYOPT_CREATE )
@@ -294,10 +323,12 @@ static int openKeysetStream( STREAM *stream, const char *name,
 		/* Try and create a new file */
 		status = sFileOpen( stream, nameBuffer, openMode );
 		if( cryptStatusError( status ) )
+			{
 			/* The file isn't open at this point so we have to exit 
 			   explicitly rather than falling through to the error handler
 			   below */
 			return( status );
+			}
 		}
 	else
 		{
@@ -308,8 +339,8 @@ static int openKeysetStream( STREAM *stream, const char *name,
 			BYTE buffer[ 512 + 8 ];
 
 			sioctl( stream, STREAM_IOCTL_IOBUFFER, buffer, 512 );
-			subType = getKeysetType( stream );
-			if( subType == KEYSET_SUBTYPE_ERROR )
+			status = getKeysetType( stream, &subType );
+			if( cryptStatusError( status ) )
 				{
 				/* "It doesn't look like anything from here" */
 				sFileClose( stream );
@@ -323,8 +354,13 @@ static int openKeysetStream( STREAM *stream, const char *name,
 		if( isWriteableFileKeyset( subType ) )
 			{
 			/* If we're opening it something other than read-only mode, 
-			   reopen it in that mode */
-			if( openMode != FILE_READ )
+			   reopen it in that mode.  Note that in theory this could make 
+			   us subject to a TOCTTOU attack but the only reason that we're 
+			   opening the file initially is to determine its type, so if an 
+			   attacker slips in a different file on the re-open it'll 
+			   either be a no-op if it's the same file type or we'll get a
+			   CRYPT_ERROR_BADDATA if it's the same file type */
+			if( openMode != FILE_FLAG_READ )
 				{
 				sFileClose( stream );
 				status = sFileOpen( stream, nameBuffer, openMode );
@@ -333,6 +369,7 @@ static int openKeysetStream( STREAM *stream, const char *name,
 				}
 			}
 		else
+			{
 			/* If it's a non-cryptlib keyset we can't open it for anything 
 			   other than read-only access.  We return a not-available error 
 			   rather than a permission error since this isn't a problem with
@@ -340,6 +377,7 @@ static int openKeysetStream( STREAM *stream, const char *name,
 			   write the key doesn't exist */
 			if( options != CRYPT_KEYOPT_READONLY )
 				status = CRYPT_ERROR_NOTAVAIL;
+			}
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -351,147 +389,101 @@ static int openKeysetStream( STREAM *stream, const char *name,
 	return( CRYPT_OK );
 	}
 
-/****************************************************************************
-*																			*
-*						Keyset Attribute Handling Functions					*
-*																			*
-****************************************************************************/
+/* Complete the open of a file keyset */
 
-/* Handle data sent to or read from a keyset object */
-
-static int processGetAttribute( KEYSET_INFO *keysetInfoPtr,
-								void *messageDataPtr, const int messageValue )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
+								   IN_ENUM( KEYSET_SUBTYPE ) \
+									KEYSET_SUBTYPE subType,
+								   INOUT STREAM *stream,
+								   IN_BUFFER( nameLength ) const char *name, 
+								   IN_LENGTH_SHORT_MIN( MIN_NAME_LENGTH ) \
+									const int nameLength )
 	{
-	int *valuePtr = ( int * ) messageDataPtr;
-
-	switch( messageValue )
-		{
-		case CRYPT_ATTRIBUTE_ERRORTYPE:
-			*valuePtr = keysetInfoPtr->errorType;
-			return( CRYPT_OK );
-
-		case CRYPT_ATTRIBUTE_ERRORLOCUS:
-			*valuePtr = keysetInfoPtr->errorLocus;
-			return( CRYPT_OK );
-
-		case CRYPT_ATTRIBUTE_INT_ERRORCODE:	
-#ifdef KEYSET_HAS_ERRORINFO
-			*valuePtr = keysetInfoPtr->errorInfo.errorCode;
-#else
-			*valuePtr = CRYPT_OK;
-#endif /* KEYSET_HAS_ERRORINFO */
-			return( CRYPT_OK );
-		}
-
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
-	}
-
-static int processGetAttributeS( KEYSET_INFO *keysetInfoPtr,
-								 void *messageDataPtr, const int messageValue )
-	{
-	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
-
-	switch( messageValue )
-		{
-		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
-			{
-#ifdef KEYSET_HAS_ERRORINFO
-			const char *errorMessagePtr = keysetInfoPtr->errorInfo.errorString;
-
-			if( *errorMessagePtr )
-				return( attributeCopy( msgData, errorMessagePtr,
-									   strlen( errorMessagePtr ) ) );
-#endif /* KEYSET_HAS_ERRORINFO */
-			return( exitErrorNotFound( keysetInfoPtr,
-									   CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
-			}
-
-		case CRYPT_IATTRIBUTE_CONFIGDATA:
-		case CRYPT_IATTRIBUTE_USERINDEX:
-		case CRYPT_IATTRIBUTE_USERINFO:
-		case CRYPT_IATTRIBUTE_TRUSTEDCERT:
-		case CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT:
-			/* It's encoded cryptlib-specific data, fetch it from to the
-			   keyset */
-			assert( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
-			return( keysetInfoPtr->getItemFunction( keysetInfoPtr, NULL,
-									KEYMGMT_ITEM_DATA, CRYPT_KEYID_NONE,
-									NULL, 0, msgData->data, &msgData->length,
-									messageValue ) );
-
-		}
-
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
-	}
-
-static int processSetAttribute( KEYSET_INFO *keysetInfoPtr,
-								void *messageDataPtr, const int messageValue )
-	{
-	switch( messageValue )
-		{
-		case CRYPT_IATTRIBUTE_INITIALISED:
-			/* It's an initialisation message, there's nothing to do */
-			return( CRYPT_OK );
-		}
-
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
-	}
-
-static int processSetAttributeS( KEYSET_INFO *keysetInfoPtr,
-								 void *messageDataPtr, const int messageValue )
-	{
-	MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
+	BYTE buffer[ STREAM_BUFSIZE + 8 ];
 	int status;
 
-	switch( messageValue )
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isReadPtr( name, nameLength ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( subType > KEYSET_SUBTYPE_NONE && \
+			  subType < KEYSET_SUBTYPE_LAST );
+	REQUIRES( nameLength >= MIN_NAME_LENGTH && \
+			  nameLength < MAX_ATTRIBUTE_SIZE );
+
+	/* Remember the key file's name (as a null-terminated string for 
+	   filesystem access) and I/O stream */
+	keysetInfoPtr->subType = subType;
+	memcpy( keysetInfoPtr->keysetFile->fileName, name, nameLength );
+	keysetInfoPtr->keysetFile->fileName[ nameLength ] = '\0';
+	memcpy( &keysetInfoPtr->keysetFile->stream, stream, sizeof( STREAM ) );
+
+	/* Make sure that we don't accidentally reuse the standalone stream */
+	memset( stream, 0, sizeof( STREAM ) );
+
+	/* Set up the access information for the file */
+	switch( keysetInfoPtr->subType )
 		{
-		case CRYPT_KEYINFO_QUERY:
-		case CRYPT_KEYINFO_QUERY_REQUESTS:
-			assert( keysetInfoPtr->getFirstItemFunction != NULL );
-			assert( keysetInfoPtr->isBusyFunction != NULL );
+		case KEYSET_SUBTYPE_PKCS12:
+			status = setAccessMethodPKCS12( keysetInfoPtr );
+			break;
 
-			/* If we're in the middle of an existing query the user needs to
-			   cancel it before starting another one */
-			if( keysetInfoPtr->isBusyFunction( keysetInfoPtr ) && \
-				( msgData->length != 6 || \
-				  strCompare( msgData->data, "cancel", msgData->length ) ) )
-				return( exitErrorIncomplete( keysetInfoPtr, messageValue ) );
+		case KEYSET_SUBTYPE_PKCS15:
+			status = setAccessMethodPKCS15( keysetInfoPtr );
+			break;
 
-			/* Send the query to the data source */
-			return( keysetInfoPtr->getFirstItemFunction( keysetInfoPtr, NULL,
-						NULL, CRYPT_KEYID_NAME, msgData->data, msgData->length,
-						( messageValue == CRYPT_KEYINFO_QUERY_REQUESTS ) ? \
-							KEYMGMT_ITEM_REQUEST : KEYMGMT_ITEM_PUBLICKEY,
-						KEYMGMT_FLAG_NONE ) );
+		case KEYSET_SUBTYPE_PGP_PUBLIC:
+			status = setAccessMethodPGPPublic( keysetInfoPtr );
+			break;
 
-		case CRYPT_IATTRIBUTE_CONFIGDATA:
-		case CRYPT_IATTRIBUTE_USERINDEX:
-		case CRYPT_IATTRIBUTE_USERID:
-		case CRYPT_IATTRIBUTE_USERINFO:
-			/* It's encoded cryptlib-specific data, pass it through to the
-			   keyset */
-			assert( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
-			assert( keysetInfoPtr->setItemFunction != NULL );
-			status = keysetInfoPtr->setItemFunction( keysetInfoPtr,
-							CRYPT_UNUSED, KEYMGMT_ITEM_DATA,
-							msgData->data, msgData->length, messageValue );
-			if( cryptStatusOK( status ) && \
-				messageValue != CRYPT_IATTRIBUTE_USERID )
-				{
-				/* The update succeeded, remember that the data in the keyset
-				   has changed, unless it's a userID that just modifies
-				   existing data */
-				keysetInfoPtr->flags |= KEYSET_DIRTY;
-				keysetInfoPtr->flags &= ~KEYSET_EMPTY;
-				}
-			return( status );
+		case KEYSET_SUBTYPE_PGP_PRIVATE:
+			status = setAccessMethodPGPPrivate( keysetInfoPtr );
+			break;
+
+		default:
+			retIntError();
 		}
+	if( cryptStatusError( status ) )
+		return( status );
+	ENSURES( keysetInfoPtr->initFunction != NULL && \
+			 keysetInfoPtr->shutdownFunction != NULL && \
+			 keysetInfoPtr->getItemFunction != NULL );
+	ENSURES( subType != SUBTYPE_KEYSET_FILE || \
+			 ( keysetInfoPtr->getSpecialItemFunction != NULL && \
+			   keysetInfoPtr->setItemFunction != NULL && \
+			   keysetInfoPtr->setSpecialItemFunction != NULL && \
+			   keysetInfoPtr->deleteItemFunction != NULL && \
+			   keysetInfoPtr->getFirstItemFunction != NULL && \
+			   keysetInfoPtr->getNextItemFunction != NULL ) );
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	/* Read the keyset contents into memory */
+	sioctl( &keysetInfoPtr->keysetFile->stream, STREAM_IOCTL_IOBUFFER, 
+			buffer, STREAM_BUFSIZE );
+	status = keysetInfoPtr->initFunction( keysetInfoPtr, NULL, 0,
+										  keysetInfoPtr->options );
+	sioctl( &keysetInfoPtr->keysetFile->stream, STREAM_IOCTL_IOBUFFER, 
+			NULL, 0 );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If we've got the keyset open in read-only mode then we don't need to 
+	   touch it again since everything is cached in-memory, so we can close 
+	   the file stream */
+	if( ( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 || \
+		  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
+		  keysetInfoPtr->subType == KEYSET_SUBTYPE_PGP_PRIVATE ) && \
+		( keysetInfoPtr->options == CRYPT_KEYOPT_READONLY ) )
+		sFileClose( &keysetInfoPtr->keysetFile->stream );
+	else
+		{
+		/* Remember that the stream is still open for further access */
+		keysetInfoPtr->flags |= KEYSET_STREAM_OPEN;
+		}
+	keysetInfoPtr->flags |= KEYSET_OPEN;
+	if( keysetInfoPtr->options == CRYPT_KEYOPT_CREATE )
+		keysetInfoPtr->flags |= KEYSET_EMPTY;
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -502,13 +494,20 @@ static int processSetAttributeS( KEYSET_INFO *keysetInfoPtr,
 
 /* Handle a message sent to a keyset object */
 
-static int keysetMessageFunction( void *objectInfoPtr,
-								  const MESSAGE_TYPE message,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int keysetMessageFunction( INOUT TYPECAST( KEYSET_INFO * ) \
+									void *objectInfoPtr,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  void *messageDataPtr,
-								  const int messageValue )
+								  IN_INT_Z const int messageValue )
 	{
 	KEYSET_INFO *keysetInfoPtr = ( KEYSET_INFO * ) objectInfoPtr;
 	int status;
+
+	assert( isWritePtr( objectInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( message > MESSAGE_NONE && message < MESSAGE_LAST );
+	REQUIRES( messageValue >= 0 && messageValue < MAX_INTLENGTH_SHORT );
 
 	/* Process the destroy object message */
 	if( message == MESSAGE_DESTROY )
@@ -517,11 +516,10 @@ static int keysetMessageFunction( void *objectInfoPtr,
 		if( keysetInfoPtr->flags & KEYSET_OPEN )
 			{
 			/* Shut down the keyset */
-			assert( keysetInfoPtr->shutdownFunction != NULL );
 			status = keysetInfoPtr->shutdownFunction( keysetInfoPtr );
 			if( cryptStatusError( status ) )
 				{
-				assert( NOTREACHED );
+				assert( INTERNAL_ERROR );
 
 				/* The shutdown failed for some reason.  This can only 
 				   really ever happen for file keysets, in general there's 
@@ -531,10 +529,10 @@ static int keysetMessageFunction( void *objectInfoPtr,
 				   file on disk we try and delete it if the shutdown fails.
 				   (There are a pile of tradeoffs to be made here, for 
 				   example in theory we could rename the file to something
-				   like .bak so that in theory the user could try and 
-				   recover whatever's left in there, however it's unlikely 
-				   that they'll be able to do much with an unknown-condition 
-				   binary blob, and in any case since we have no idea what
+				   like .bak so that the user could try and recover 
+				   whatever's left in there, however it's unlikely that 
+				   they'll be able to do much with an unknown-condition 
+				   binary blob and in any case since we have no idea what
 				   condition the file is in it's probably best to remove it
 				   rather than to leave who knows what lying around on 
 				   disk) */
@@ -559,13 +557,13 @@ static int keysetMessageFunction( void *objectInfoPtr,
 				return( CRYPT_OK );
 
 			/* The keyset has an open file stream */
-			assert( keysetInfoPtr->type == KEYSET_FILE && \
-					( keysetInfoPtr->flags & KEYSET_STREAM_OPEN ) );
+			REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+					  ( keysetInfoPtr->flags & KEYSET_STREAM_OPEN ) );
 
-			/* If the file keyset was updated in any way, the update may 
-			   have changed the overall file size, in which case we need to 
-			   clear any leftover data from the previous version of the 
-			   keyset before we close the file */
+			/* If the file keyset was updated in any way the update may have 
+			   changed the overall file size, in which case we need to clear 
+			   any leftover data from the previous version of the keyset 
+			   before we close the file */
 			if( keysetInfoPtr->flags & KEYSET_DIRTY )
 				fileClearToEOF( &keysetInfoPtr->keysetFile->stream );
 
@@ -597,59 +595,78 @@ static int keysetMessageFunction( void *objectInfoPtr,
 	/* Process attribute get/set/delete messages */
 	if( isAttributeMessage( message ) )
 		{
-		assert( message == MESSAGE_GETATTRIBUTE || \
-				message == MESSAGE_GETATTRIBUTE_S || \
-				message == MESSAGE_SETATTRIBUTE || \
-				message == MESSAGE_SETATTRIBUTE_S );
-
+		REQUIRES( message == MESSAGE_GETATTRIBUTE || \
+				  message == MESSAGE_GETATTRIBUTE_S || \
+				  message == MESSAGE_SETATTRIBUTE || \
+				  message == MESSAGE_SETATTRIBUTE_S );
 
 		/* If it's a keyset-specific attribute, forward it directly to
 		   the low-level code */
+#ifdef USE_LDAP
 		if( messageValue >= CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS && \
 			messageValue <= CRYPT_OPTION_KEYS_LDAP_EMAILNAME )
 			{
+			REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+
 			if( message == MESSAGE_SETATTRIBUTE || \
 				message == MESSAGE_SETATTRIBUTE_S )
 				{
-				assert( keysetInfoPtr->setAttributeFunction != NULL );
-
 				status = keysetInfoPtr->setAttributeFunction( keysetInfoPtr,
 											messageDataPtr, messageValue );
 				if( status == CRYPT_ERROR_INITED )
-					return( exitError( keysetInfoPtr, messageValue,
-									   CRYPT_ERRTYPE_ATTR_PRESENT,
-									   CRYPT_ERROR_INITED ) );
+					{
+					setErrorInfo( keysetInfoPtr, messageValue, 
+								  CRYPT_ERRTYPE_ATTR_PRESENT );
+					return( CRYPT_ERROR_INITED );
+					}
 				}
 			else
 				{
-				assert( message == MESSAGE_GETATTRIBUTE || \
-						message == MESSAGE_GETATTRIBUTE_S );
-				assert( keysetInfoPtr->getAttributeFunction != NULL );
+				REQUIRES( message == MESSAGE_GETATTRIBUTE || \
+						  message == MESSAGE_GETATTRIBUTE_S );
 
 				status = keysetInfoPtr->getAttributeFunction( keysetInfoPtr,
 											messageDataPtr, messageValue );
 				if( status == CRYPT_ERROR_NOTFOUND )
-					return( exitErrorNotFound( keysetInfoPtr, 
-											   messageValue ) );
+					{
+					setErrorInfo( keysetInfoPtr, messageValue, 
+								  CRYPT_ERRTYPE_ATTR_ABSENT );
+					return( CRYPT_ERROR_NOTFOUND );
+					}
 				}
 			return( status );
 			}
+#endif /* USE_LDAP */
 
 		if( message == MESSAGE_GETATTRIBUTE )
-			return( processGetAttribute( keysetInfoPtr, messageDataPtr,
-										 messageValue ) );
+			return( getKeysetAttribute( keysetInfoPtr, 
+										( int * ) messageDataPtr,
+										messageValue ) );
 		if( message == MESSAGE_GETATTRIBUTE_S )
-			return( processGetAttributeS( keysetInfoPtr, messageDataPtr,
-										  messageValue ) );
-		if( message == MESSAGE_SETATTRIBUTE )
-			return( processSetAttribute( keysetInfoPtr, messageDataPtr,
+			return( getKeysetAttributeS( keysetInfoPtr, 
+										 ( MESSAGE_DATA * ) messageDataPtr,
 										 messageValue ) );
-		if( message == MESSAGE_SETATTRIBUTE_S )
-			return( processSetAttributeS( keysetInfoPtr, messageDataPtr,
-										  messageValue ) );
+		if( message == MESSAGE_SETATTRIBUTE )
+			{
+			/* CRYPT_IATTRIBUTE_INITIALISED is purely a notification message 
+			   with no parameters so we don't pass it down to the attribute-
+			   handling code */
+			if( messageValue == CRYPT_IATTRIBUTE_INITIALISED )
+				return( CRYPT_OK );
 
-		assert( NOTREACHED );
-		return( CRYPT_ERROR );	/* Get rid of compiler warning */
+			return( setKeysetAttribute( keysetInfoPtr, 
+										*( ( int * ) messageDataPtr ),
+										messageValue ) );
+			}
+		if( message == MESSAGE_SETATTRIBUTE_S )
+			{
+			const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
+
+			return( setKeysetAttributeS( keysetInfoPtr, msgData->data, 
+										 msgData->length, messageValue ) );
+			}
+
+		retIntError();
 		}
 
 	/* Process messages that check a keyset */
@@ -657,15 +674,15 @@ static int keysetMessageFunction( void *objectInfoPtr,
 		{
 		/* The check for whether this keyset type can contain an object that 
 		   can perform the requested operation has already been performed by 
-		   the kernel, so there's nothing further to do here */
-		assert( ( messageValue != MESSAGE_CHECK_PKC_PRIVATE && \
-				  messageValue != MESSAGE_CHECK_PKC_DECRYPT && \
-				  messageValue != MESSAGE_CHECK_PKC_DECRYPT_AVAIL && \
-				  messageValue != MESSAGE_CHECK_PKC_SIGN && \
-				  messageValue != MESSAGE_CHECK_PKC_SIGN_AVAIL ) || 
-				( keysetInfoPtr->type != KEYSET_DBMS && \
-				  keysetInfoPtr->type != KEYSET_LDAP && \
-				  keysetInfoPtr->type != KEYSET_HTTP ) );
+		   the kernel so there's nothing further to do here */
+		REQUIRES( ( messageValue != MESSAGE_CHECK_PKC_PRIVATE && \
+					messageValue != MESSAGE_CHECK_PKC_DECRYPT && \
+					messageValue != MESSAGE_CHECK_PKC_DECRYPT_AVAIL && \
+					messageValue != MESSAGE_CHECK_PKC_SIGN && \
+					messageValue != MESSAGE_CHECK_PKC_SIGN_AVAIL ) || 
+				  ( keysetInfoPtr->type != KEYSET_DBMS && \
+					keysetInfoPtr->type != KEYSET_LDAP && \
+					keysetInfoPtr->type != KEYSET_HTTP ) );
 
 		return( CRYPT_OK );
 		}
@@ -684,84 +701,87 @@ static int keysetMessageFunction( void *objectInfoPtr,
 						  keyIDinfo.keyID = getkeyInfo->keyID; \
 						  keyIDinfo.keyIDlength = getkeyInfo->keyIDlength );
 
-		assert( keysetInfoPtr->getItemFunction != NULL );
-		assert( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
-				keyIDinfo.keyID != NULL && keyIDinfo.keyIDlength > 0 );
-		assert( messageValue != KEYMGMT_ITEM_PRIVATEKEY || \
-				keysetInfoPtr->type == KEYSET_FILE );
-		assert( ( messageValue != KEYMGMT_ITEM_SECRETKEY && \
-				  messageValue != KEYMGMT_ITEM_DATA ) || \
-				( keysetInfoPtr->type == KEYSET_FILE && \
-				  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
-		assert( ( messageValue != KEYMGMT_ITEM_REQUEST && \
-				  messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
-				  messageValue != KEYMGMT_ITEM_PKIUSER ) || \
-				keysetInfoPtr->type == KEYSET_DBMS );
+		REQUIRES( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
+				  keyIDinfo.keyID != NULL && \
+				  keyIDinfo.keyIDlength >= MIN_NAME_LENGTH && \
+				  keyIDinfo.keyIDlength < MAX_ATTRIBUTE_SIZE );
+		REQUIRES( messageValue != KEYMGMT_ITEM_PRIVATEKEY || \
+				  keysetInfoPtr->type == KEYSET_FILE );
+		REQUIRES( ( messageValue != KEYMGMT_ITEM_SECRETKEY && \
+					messageValue != KEYMGMT_ITEM_DATA ) || \
+				  ( keysetInfoPtr->type == KEYSET_FILE && \
+					keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
+		REQUIRES( ( messageValue != KEYMGMT_ITEM_REQUEST && \
+					messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
+					messageValue != KEYMGMT_ITEM_PKIUSER ) || \
+				  keysetInfoPtr->type == KEYSET_DBMS );
 
 		/* Get the key */
 		resetErrorInfo( keysetInfoPtr );
 		status = initKeysetUpdate( keysetInfoPtr, &keyIDinfo, keyIDbuffer,
 								   KEYID_SIZE, TRUE );
-		if( cryptStatusOK( status ) )
-			status = keysetInfoPtr->getItemFunction( keysetInfoPtr,
-								&getkeyInfo->cryptHandle, messageValue,
-								keyIDinfo.keyIDtype, keyIDinfo.keyID, 
-								keyIDinfo.keyIDlength, getkeyInfo->auxInfo, 
-								&getkeyInfo->auxInfoLength, 
-								getkeyInfo->flags );
-		return( status );
+		if( cryptStatusError( status ) )
+			return( status );
+		return( keysetInfoPtr->getItemFunction( keysetInfoPtr,
+							&getkeyInfo->cryptHandle, messageValue,
+							keyIDinfo.keyIDtype, keyIDinfo.keyID, 
+							keyIDinfo.keyIDlength, getkeyInfo->auxInfo, 
+							&getkeyInfo->auxInfoLength, 
+							getkeyInfo->flags ) );
 		}
 	if( message == MESSAGE_KEY_SETKEY )
 		{
 		MESSAGE_KEYMGMT_INFO *setkeyInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( keysetInfoPtr->setItemFunction != NULL );
-		assert( messageValue != KEYMGMT_ITEM_PRIVATEKEY || \
-				( keysetInfoPtr->type == KEYSET_FILE && \
-				  ( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
-					keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 ) ) );
-		assert( ( messageValue != KEYMGMT_ITEM_SECRETKEY && \
-				  messageValue != KEYMGMT_ITEM_DATA ) || \
-				( keysetInfoPtr->type == KEYSET_FILE && \
-				  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
-		assert( ( messageValue != KEYMGMT_ITEM_REQUEST && \
-				  messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
-				  messageValue != KEYMGMT_ITEM_PKIUSER ) || \
-				( keysetInfoPtr->type == KEYSET_DBMS ) );
+		REQUIRES( messageValue != KEYMGMT_ITEM_PRIVATEKEY || \
+				  ( keysetInfoPtr->type == KEYSET_FILE && \
+					( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
+					  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 ) ) );
+		REQUIRES( ( messageValue != KEYMGMT_ITEM_SECRETKEY && \
+					messageValue != KEYMGMT_ITEM_DATA ) || \
+				  ( keysetInfoPtr->type == KEYSET_FILE && \
+					keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
+		REQUIRES( ( messageValue != KEYMGMT_ITEM_REQUEST && \
+					messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
+					messageValue != KEYMGMT_ITEM_PKIUSER ) || \
+				  ( keysetInfoPtr->type == KEYSET_DBMS ) );
 
-		/* Set the key.  This is currently the only way to associate a cert
-		   with a context (that is, it's not possible to add a cert to an
-		   existing context directly).  At first glance this should be 
-		   possible since the required access checks are performed by the 
-		   kernel: The object is of the correct type (a certificate), in the 
-		   high state (it's been signed), and the cert owner and context 
-		   owner are the same.  However, the process of attaching the cert to
-		   the context is quite tricky.  The cert will have a public-key 
-		   context already attached to it from when the cert was created or 
-		   imported.  In order to attach this to the other context, we need 
-		   to first destroy the context associated with the cert and then 
-		   replace it with the other context.  This procedure is both messy 
-		   and non-atomic.  There are also complications surrounding use 
-		   with devices, where contexts are really cryptlib objects but just 
-		   dummy values that point back to the object for handling of 
+		/* Set the key.  This is currently the only way to associate a 
+		   certificate with a context (that is, it's not possible to add a 
+		   certificate to an existing context directly).  At first glance 
+		   this should be possible since the required access checks are 
+		   performed by the kernel: The object is of the correct type (a 
+		   certificate), in the high state (it's been signed), and the 
+		   certificate owner and context owner are the same.  However the 
+		   actual process of attaching the certificate to the context is 
+		   quite tricky.  The certificate will have a public-key context 
+		   already attached to it from when the certificate was created or 
+		   imported.  In order to attach this to the other context we'd need 
+		   to first destroy the context associated with the certificate and 
+		   then replace it with the other context, which is both messy and 
+		   non-atomic.  There are also complications surrounding use with 
+		   devices, where contexts aren't really full cryptlib objects but 
+		   just dummy values that point back to the device for handling of 
 		   operations.  Going via a keyset/device bypasses these issues, but 
 		   doing it directly shows up all of these problems */
 		resetErrorInfo( keysetInfoPtr );
 		status = initKeysetUpdate( keysetInfoPtr, NULL, NULL, 0, FALSE );
-		if( cryptStatusOK( status ) )
-			status = keysetInfoPtr->setItemFunction( keysetInfoPtr,
+		if( cryptStatusError( status ) )
+			return( status );
+		status = keysetInfoPtr->setItemFunction( keysetInfoPtr,
 							setkeyInfo->cryptHandle, messageValue,
 							setkeyInfo->auxInfo, setkeyInfo->auxInfoLength,
 							setkeyInfo->flags );
-		if( cryptStatusOK( status ) )
-			{
-			/* The update succeeded, remember that the data in the keyset has
-			   changed */
-			keysetInfoPtr->flags |= KEYSET_DIRTY;
-			keysetInfoPtr->flags &= ~KEYSET_EMPTY;
-			}
-		return( status );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* The update succeeded, remember that the data in the keyset has 
+		   changed */
+		keysetInfoPtr->flags |= KEYSET_DIRTY;
+		keysetInfoPtr->flags &= ~KEYSET_EMPTY;
+
+		return( CRYPT_OK );
 		}
 	if( message == MESSAGE_KEY_DELETEKEY )
 		{
@@ -776,22 +796,26 @@ static int keysetMessageFunction( void *objectInfoPtr,
 						  keyIDinfo.keyID = deletekeyInfo->keyID; \
 						  keyIDinfo.keyIDlength = deletekeyInfo->keyIDlength );
 
-		assert( keysetInfoPtr->deleteItemFunction != NULL );
-		assert( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
-				keyIDinfo.keyID != NULL && keyIDinfo.keyIDlength > 0 );
+		REQUIRES( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
+				  keyIDinfo.keyID != NULL && \
+				  keyIDinfo.keyIDlength >= MIN_NAME_LENGTH && \
+				  keyIDinfo.keyIDlength < MAX_ATTRIBUTE_SIZE );
 
 		/* Delete the key */
 		resetErrorInfo( keysetInfoPtr );
 		status = initKeysetUpdate( keysetInfoPtr, &keyIDinfo, keyIDbuffer,
 								   KEYID_SIZE, FALSE );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = keysetInfoPtr->deleteItemFunction( keysetInfoPtr,
+							messageValue, keyIDinfo.keyIDtype, 
+							keyIDinfo.keyID, keyIDinfo.keyIDlength );
 		if( cryptStatusOK( status ) )
-			status = keysetInfoPtr->deleteItemFunction( keysetInfoPtr,
-								messageValue, keyIDinfo.keyIDtype, 
-								keyIDinfo.keyID, keyIDinfo.keyIDlength );
-		if( cryptStatusOK( status ) )
-			/* The update succeeded, remember that the data in the keyset has
-			   changed */
+			{
+			/* The update succeeded, remember that the data in the keyset 
+			   has changed */
 			keysetInfoPtr->flags |= KEYSET_DIRTY;
+			}
 		return( status );
 		}
 	if( message == MESSAGE_KEY_GETFIRSTCERT )
@@ -807,40 +831,49 @@ static int keysetMessageFunction( void *objectInfoPtr,
 						  keyIDinfo.keyID = getnextcertInfo->keyID; \
 						  keyIDinfo.keyIDlength = getnextcertInfo->keyIDlength );
 
-		assert( keysetInfoPtr->getFirstItemFunction != NULL );
-		assert( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
-				keyIDinfo.keyID != NULL && keyIDinfo.keyIDlength > 0 );
-		assert( getnextcertInfo->auxInfo == NULL || \
-				getnextcertInfo->auxInfoLength == sizeof( int ) );
+		REQUIRES( keyIDinfo.keyIDtype != CRYPT_KEYID_NONE && \
+				  keyIDinfo.keyID != NULL && \
+				  keyIDinfo.keyIDlength >= MIN_NAME_LENGTH && \
+				  keyIDinfo.keyIDlength < MAX_ATTRIBUTE_SIZE );
+		REQUIRES( ( getnextcertInfo->auxInfo == NULL && \
+					getnextcertInfo->auxInfoLength == 0 ) || \
+				  ( getnextcertInfo->auxInfo != NULL && \
+					getnextcertInfo->auxInfoLength == sizeof( int ) ) );
 
-		/* Fetch the first cert in a sequence from the keyset */
+		/* Fetch the first certificate in a sequence from the keyset */
 		resetErrorInfo( keysetInfoPtr );
 		status = initKeysetUpdate( keysetInfoPtr, &keyIDinfo, keyIDbuffer, 
 								   KEYID_SIZE, TRUE );
-		if( cryptStatusOK( status ) )
-			status = keysetInfoPtr->getFirstItemFunction( keysetInfoPtr,
-						&getnextcertInfo->cryptHandle, getnextcertInfo->auxInfo,
-						keyIDinfo.keyIDtype, keyIDinfo.keyID,
-						keyIDinfo.keyIDlength, messageValue,
-						getnextcertInfo->flags );
-		return( status );
+		if( cryptStatusError( status ) )
+			return( status );
+		return( keysetInfoPtr->getFirstItemFunction( keysetInfoPtr,
+									&getnextcertInfo->cryptHandle, 
+									getnextcertInfo->auxInfo, messageValue, 
+									keyIDinfo.keyIDtype, keyIDinfo.keyID, 
+									keyIDinfo.keyIDlength, 
+									getnextcertInfo->flags ) );
 		}
 	if( message == MESSAGE_KEY_GETNEXTCERT )
 		{
 		MESSAGE_KEYMGMT_INFO *getnextcertInfo = \
 								( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-		assert( keysetInfoPtr->getNextItemFunction != NULL );
-		assert( getnextcertInfo->keyIDtype == CRYPT_KEYID_NONE && \
-				getnextcertInfo->keyID == NULL && \
-				getnextcertInfo->keyIDlength == 0 );
-		assert( getnextcertInfo->auxInfo == NULL || \
-				getnextcertInfo->auxInfoLength == sizeof( int ) );
+		REQUIRES( getnextcertInfo->keyIDtype == CRYPT_KEYID_NONE && \
+				  getnextcertInfo->keyID == NULL && \
+				  getnextcertInfo->keyIDlength == 0 );
+		REQUIRES( ( getnextcertInfo->auxInfo == NULL && \
+					getnextcertInfo->auxInfoLength == 0 ) || \
+				  ( getnextcertInfo->auxInfo != NULL && \
+					getnextcertInfo->auxInfoLength == sizeof( int ) ) );
+		REQUIRES( getnextcertInfo->flags >= KEYMGMT_FLAG_NONE && \
+				  getnextcertInfo->flags < KEYMGMT_FLAG_MAX && \
+				  ( getnextcertInfo->flags & ~KEYMGMT_MASK_CERTOPTIONS ) == 0 );
 
-		/* Fetch the next cert in a sequence from the keyset */
+		/* Fetch the next certificate in a sequence from the keyset */
 		return( keysetInfoPtr->getNextItemFunction( keysetInfoPtr,
-						&getnextcertInfo->cryptHandle, getnextcertInfo->auxInfo,
-						getnextcertInfo->flags ) );
+							&getnextcertInfo->cryptHandle, 
+							getnextcertInfo->auxInfo,
+							getnextcertInfo->flags ) );
 		}
 #ifdef USE_DBMS
 	if( message == MESSAGE_KEY_CERTMGMT )
@@ -848,47 +881,62 @@ static int keysetMessageFunction( void *objectInfoPtr,
 		MESSAGE_CERTMGMT_INFO *certMgmtInfo = \
 								( MESSAGE_CERTMGMT_INFO * ) messageDataPtr;
 
-		assert( keysetInfoPtr->keysetDBMS->certMgmtFunction != NULL );
-		assert( messageValue >= CRYPT_CERTACTION_CERT_CREATION && \
-				messageValue <= CRYPT_CERTACTION_LAST_USER );
-		assert( keysetInfoPtr->isBusyFunction != NULL );
+		REQUIRES( messageValue >= CRYPT_CERTACTION_CERT_CREATION && \
+				  messageValue <= CRYPT_CERTACTION_LAST_USER );
 
-		/* Perform the cert management operation */
+		/* Perform the certificate management operation */
 		resetErrorInfo( keysetInfoPtr );
 		status = initKeysetUpdate( keysetInfoPtr, NULL, NULL, 0, TRUE );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = keysetInfoPtr->keysetDBMS->certMgmtFunction( keysetInfoPtr,
+							( certMgmtInfo->cryptCert != CRYPT_UNUSED ) ? \
+								&certMgmtInfo->cryptCert : NULL, 
+							certMgmtInfo->caKey, certMgmtInfo->request, 
+							messageValue );
 		if( cryptStatusOK( status ) )
-			status = keysetInfoPtr->keysetDBMS->certMgmtFunction( keysetInfoPtr,
-						( certMgmtInfo->cryptCert != CRYPT_UNUSED ) ? \
-						&certMgmtInfo->cryptCert : NULL, certMgmtInfo->caKey,
-						certMgmtInfo->request, messageValue );
-		if( cryptStatusOK( status ) )
+			{
 			/* The update succeeded, remember that the data in the keyset has
 			   changed */
 			keysetInfoPtr->flags |= KEYSET_DIRTY;
+			}
 		return( status );
 		}
 #endif /* USE_DBMS */
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}
 
 /* Open a keyset.  This is a low-level function encapsulated by createKeyset()
    and used to manage error exits */
 
-static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
-					   const CRYPT_USER cryptOwner,
-					   const CRYPT_KEYSET_TYPE keysetType,
-					   const char *name, const int nameLength,
-					   const CRYPT_KEYOPT_TYPE options,
-					   KEYSET_INFO **keysetInfoPtrPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 7 ) ) \
+static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
+					   IN_HANDLE const CRYPT_USER iCryptOwner,
+					   IN_ENUM( CRYPT_KEYSET ) const CRYPT_KEYSET_TYPE keysetType,
+					   IN_BUFFER( nameLength ) const char *name, 
+					   IN_LENGTH_SHORT_MIN( MIN_NAME_LENGTH ) const int nameLength,
+					   IN_ENUM_OPT( CRYPT_KEYOPT ) const CRYPT_KEYOPT_TYPE options,
+					   OUT_PTR KEYSET_INFO **keysetInfoPtrPtr )
 	{
 	KEYSET_INFO *keysetInfoPtr;
 	STREAM stream;
 	CRYPT_KEYOPT_TYPE localOptions = options;
-	KEYSET_SUBTYPE keysetSubType;
+	KEYSET_SUBTYPE keysetSubType = DUMMY_INIT;
 	OBJECT_SUBTYPE subType;
 	int storageSize, status;
+
+	assert( isWritePtr( iCryptKeyset, sizeof( CRYPT_KEYSET ) ) );
+	assert( isReadPtr( name, nameLength ) );
+	assert( isWritePtr( keysetInfoPtrPtr, sizeof( KEYSET_INFO * ) ) );
+
+	REQUIRES( ( iCryptOwner == DEFAULTUSER_OBJECT_HANDLE ) || \
+			  isHandleRangeValid( iCryptOwner ) );
+	REQUIRES( keysetType > CRYPT_KEYSET_NONE && \
+			  keysetType < CRYPT_KEYSET_LAST );
+	REQUIRES( nameLength >= MIN_NAME_LENGTH && \
+			  nameLength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* Clear the return values */
 	*iCryptKeyset = CRYPT_ERROR;
@@ -899,9 +947,11 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 		  options != CRYPT_KEYOPT_READONLY ) || \
 		( keysetType == CRYPT_KEYSET_LDAP && \
 		  options == CRYPT_KEYOPT_CREATE ) )
+		{
 		/* We can't open an HTTP keyset for anything other than read-only
 		   access, and we can't create an LDAP directory */
 		return( CRYPT_ERROR_PERMISSION );
+		}
 	if( keysetType == CRYPT_KEYSET_FILE && nameLength > MAX_PATH_LENGTH - 1 )
 		return( CRYPT_ARGERROR_STR1 );
 
@@ -938,34 +988,45 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 			break;
 		
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ARGERROR_NUM1 );
+			retIntError();
 		}
 
+	/* Handle compiler warnings of uninitialised variables, unfortunately 
+	   since it's non-scalar data we can't do this with the usual 
+	   DUMMY_INIT */
+	memset( &stream, 0, sizeof( STREAM ) );	
+
 	/* If it's a flat-file keyset which is implemented on top of an I/O 
-	   stream, make sure that we can open the stream before we try and 
+	   stream make sure that we can open the stream before we try and 
 	   create the keyset object */
 	if( keysetType == CRYPT_KEYSET_FILE )
 		{
+		BOOLEAN isReadOnly;
+
 		status = openKeysetStream( &stream, name, nameLength, options, 
-								   &localOptions, &keysetSubType );
+								   &isReadOnly, &keysetSubType );
 		if( cryptStatusError( status ) )
 			return( status );
-		
+
+		/* If we tried to open the file in read/write mode and it's 
+		   read-only, change the access mode to read-only */
+		if( isReadOnly )
+			localOptions = CRYPT_KEYOPT_READONLY;
+
 		/* If the keyset contains the full set of search keys and index
-		   information needed to handle all keyset operations (e.g. cert 
-		   chain building, query by key usage types) we mark it as a full-
-		   function keyset with the same functionality as a DBMS keyset, 
-		   rather than just a generic flat-file store */
+		   information needed to handle all keyset operations (e.g. 
+		   certificate chain building, query by key usage types) we mark it 
+		   as a full-function keyset with the same functionality as a DBMS 
+		   keyset rather than just a generic flat-file store */
 		if( keysetSubType == KEYSET_SUBTYPE_PKCS15 )
 			subType = SUBTYPE_KEYSET_FILE;
 		}
 
 	/* Create the keyset object */
-	status = krnlCreateObject( ( void ** ) &keysetInfoPtr, 
+	status = krnlCreateObject( iCryptKeyset, ( void ** ) &keysetInfoPtr, 
 							   sizeof( KEYSET_INFO ) + storageSize, 
 							   OBJECT_TYPE_KEYSET, subType, 
-							   CREATEOBJECT_FLAG_NONE, cryptOwner, 
+							   CREATEOBJECT_FLAG_NONE, iCryptOwner, 
 							   ACTION_PERM_NONE_ALL, keysetMessageFunction );
 	if( cryptStatusError( status ) )
 		{
@@ -974,8 +1035,8 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 		return( status );
 		}
 	*keysetInfoPtrPtr = keysetInfoPtr;
-	*iCryptKeyset = keysetInfoPtr->objectHandle = status;
-	keysetInfoPtr->ownerHandle = cryptOwner;
+	keysetInfoPtr->objectHandle = *iCryptKeyset;
+	keysetInfoPtr->ownerHandle = iCryptOwner;
 	keysetInfoPtr->options = localOptions;
 	switch( keysetType )
 		{
@@ -1011,87 +1072,33 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 	   stream, handle it specially */
 	if( keysetType == CRYPT_KEYSET_FILE )
 		{
-		/* Remember the key file's name and I/O stream */
-		keysetInfoPtr->subType = keysetSubType;
-		memcpy( keysetInfoPtr->keysetFile->fileName, name, nameLength );
-		keysetInfoPtr->keysetFile->fileName[ nameLength ] = '\0';
-		keysetInfoPtr->keysetFile->stream = stream;
-
-		/* Set up the access information for the file */
-		switch( keysetInfoPtr->subType )
-			{
-			case KEYSET_SUBTYPE_PKCS12:
-				status = setAccessMethodPKCS12( keysetInfoPtr );
-				break;
-
-			case KEYSET_SUBTYPE_PKCS15:
-				status = setAccessMethodPKCS15( keysetInfoPtr );
-				break;
-
-			case KEYSET_SUBTYPE_PGP_PUBLIC:
-				status = setAccessMethodPGPPublic( keysetInfoPtr );
-				break;
-
-			case KEYSET_SUBTYPE_PGP_PRIVATE:
-				status = setAccessMethodPGPPrivate( keysetInfoPtr );
-				break;
-
-			default:
-				assert( NOTREACHED );
-				status = CRYPT_ERROR;
-			}
-		if( cryptStatusOK( status ) )
-			{
-			BYTE buffer[ STREAM_BUFSIZE + 8 ];
-
-			assert( keysetInfoPtr->initFunction != NULL && \
-					keysetInfoPtr->shutdownFunction != NULL && \
-					keysetInfoPtr->getItemFunction != NULL );
-			assert( subType != SUBTYPE_KEYSET_FILE || \
-					( keysetInfoPtr->setItemFunction != NULL && \
-					  keysetInfoPtr->deleteItemFunction != NULL && \
-					  keysetInfoPtr->getFirstItemFunction != NULL && \
-					  keysetInfoPtr->getNextItemFunction != NULL ) );
-
-			sioctl( &keysetInfoPtr->keysetFile->stream, 
-					STREAM_IOCTL_IOBUFFER, buffer, STREAM_BUFSIZE );
-			status = keysetInfoPtr->initFunction( keysetInfoPtr, NULL, 0,
-												  keysetInfoPtr->options );
-			sioctl( &keysetInfoPtr->keysetFile->stream, 
-					STREAM_IOCTL_IOBUFFER, NULL, 0 );
-			}
+		status = completeKeysetFileOpen( keysetInfoPtr, keysetSubType, 
+										 &stream, name, nameLength );
 		if( cryptStatusError( status ) )
 			{
 			sFileClose( &keysetInfoPtr->keysetFile->stream );
 			if( options == CRYPT_KEYOPT_CREATE )
+				{
 				/* It's a newly-created file, make sure that we don't leave 
 				   it lying around on disk */
 				fileErase( keysetInfoPtr->keysetFile->fileName );
+				}
 			return( status );
 			}
-		if( ( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 || \
-			  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
-			  keysetInfoPtr->subType == KEYSET_SUBTYPE_PGP_PRIVATE ) && \
-			( keysetInfoPtr->options == CRYPT_KEYOPT_READONLY ) )
-			/* If we've got the keyset open in read-only mode we don't need 
-			   to touch it again since everything is cached in-memory, so we 
-			   can close the file stream */
-			sFileClose( &keysetInfoPtr->keysetFile->stream );
-		else
-			keysetInfoPtr->flags |= KEYSET_STREAM_OPEN;
-		keysetInfoPtr->flags |= KEYSET_OPEN;
-		if( keysetInfoPtr->options == CRYPT_KEYOPT_CREATE )
-			keysetInfoPtr->flags |= KEYSET_EMPTY;
+		
 		return( CRYPT_OK );
 		}
 
 	/* Wait for any async keyset driver binding to complete.  We do this as 
 	   late as possible to prevent file keyset reads that occur on startup 
-	   (for example to get config options) from stalling the startup 
+	   (for example to get configuration options) from stalling the startup 
 	   process */
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
+		{
 		/* The kernel is shutting down, bail out */
+		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_PERMISSION );
+		}
 
 	/* It's a specific type of keyset, set up the access information for it
 	   and connect to it */
@@ -1115,27 +1122,30 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 			break;
 
 		default:
-			assert( NOTREACHED );
-			return( CRYPT_ERROR );
+			retIntError();
 		}
-	if( cryptStatusOK( status ) )
-		{
-		assert( keysetInfoPtr->initFunction != NULL && \
-				keysetInfoPtr->shutdownFunction != NULL && \
-				keysetInfoPtr->getItemFunction != NULL );
-		assert( keysetType == CRYPT_KEYSET_HTTP || \
-				( keysetInfoPtr->setItemFunction != NULL && \
-				  keysetInfoPtr->deleteItemFunction != NULL && \
-				  keysetInfoPtr->isBusyFunction != NULL ) );
-		assert( keysetType == CRYPT_KEYSET_HTTP || \
-				keysetType == CRYPT_KEYSET_LDAP || \
-				( keysetInfoPtr->getFirstItemFunction != NULL && \
-				  keysetInfoPtr->getNextItemFunction != NULL ) );
+	if( cryptStatusError( status ) )
+		return( status );
+	ENSURES( keysetInfoPtr->initFunction != NULL && \
+			 keysetInfoPtr->shutdownFunction != NULL && \
+			 keysetInfoPtr->getItemFunction != NULL );
+	ENSURES( keysetType == CRYPT_KEYSET_HTTP || \
+			 ( keysetInfoPtr->setItemFunction != NULL && \
+			   keysetInfoPtr->deleteItemFunction != NULL && \
+			   keysetInfoPtr->isBusyFunction != NULL ) );
+	ENSURES( keysetType == CRYPT_KEYSET_HTTP || \
+			 keysetType == CRYPT_KEYSET_LDAP || \
+			 ( keysetInfoPtr->getFirstItemFunction != NULL && \
+			   keysetInfoPtr->getNextItemFunction != NULL ) );
+#ifdef USE_LDAP
+	ENSURES( keysetType != CRYPT_KEYSET_LDAP || \
+			 ( keysetInfoPtr->getAttributeFunction != NULL && \
+			   keysetInfoPtr->setAttributeFunction != NULL ) );
+#endif /* USE_LDAP */
 
-		status = keysetInfoPtr->initFunction( keysetInfoPtr, name, 
-											  nameLength,
-											  keysetInfoPtr->options );
-		}
+	/* Initialise keyset access */
+	status = keysetInfoPtr->initFunction( keysetInfoPtr, name, nameLength,
+										  keysetInfoPtr->options );
 	if( cryptStatusOK( status ) )
 		{
 		keysetInfoPtr->flags |= KEYSET_OPEN;
@@ -1147,33 +1157,40 @@ static int openKeyset( CRYPT_KEYSET *iCryptKeyset,
 
 /* Create a keyset object */
 
-int createKeyset( MESSAGE_CREATEOBJECT_INFO *createInfo,
-				  const void *auxDataPtr, const int auxValue )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int createKeyset( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
+				  STDC_UNUSED const void *auxDataPtr, 
+				  STDC_UNUSED const int auxValue )
 	{
 	CRYPT_KEYSET iCryptKeyset;
-	KEYSET_INFO *keysetInfoPtr;
+	KEYSET_INFO *keysetInfoPtr = NULL;
 	int initStatus, status;
 
-	assert( auxDataPtr == NULL );
-	assert( auxValue == 0 );
-	assert( createInfo->arg1 > CRYPT_KEYSET_NONE && \
-			createInfo->arg1 < CRYPT_KEYSET_LAST );
-	assert( createInfo->arg2 >= CRYPT_KEYOPT_NONE && \
-			createInfo->arg2 < CRYPT_KEYOPT_LAST );
-	assert( createInfo->strArgLen1 >= MIN_NAME_LENGTH && \
-			createInfo->strArgLen1 < MAX_ATTRIBUTE_SIZE );
+	assert( isWritePtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
+
+	REQUIRES( auxDataPtr == NULL && auxValue == 0 );
+	REQUIRES( createInfo->arg1 > CRYPT_KEYSET_NONE && \
+			  createInfo->arg1 < CRYPT_KEYSET_LAST );
+	REQUIRES( createInfo->arg2 >= CRYPT_KEYOPT_NONE && \
+			  createInfo->arg2 < CRYPT_KEYOPT_LAST );
+	REQUIRES( createInfo->strArgLen1 >= MIN_NAME_LENGTH && \
+			  createInfo->strArgLen1 < MAX_ATTRIBUTE_SIZE );
 
 	/* Pass the call on to the lower-level open function */
 	initStatus = openKeyset( &iCryptKeyset, createInfo->cryptOwner,
 							 createInfo->arg1, createInfo->strArg1, 
 							 createInfo->strArgLen1, createInfo->arg2,
 							 &keysetInfoPtr );
-	if( keysetInfoPtr == NULL )
-		return( initStatus );	/* Create object failed, return immediately */
 	if( cryptStatusError( initStatus ) )
+		{
+		/* If the create object failed, return immediately */
+		if( keysetInfoPtr == NULL )
+			return( initStatus );
+
 		/* The init failed, make sure that the object gets destroyed when we 
 		   notify the kernel that the setup process is complete */
 		krnlSendNotifier( iCryptKeyset, IMESSAGE_DESTROY );
+		}
 
 	/* We've finished setting up the object-type-specific info, tell the
 	   kernel that the object is ready for use */
@@ -1187,13 +1204,15 @@ int createKeyset( MESSAGE_CREATEOBJECT_INFO *createInfo,
 
 /* Generic management function for this class of object */
 
-int keysetManagementFunction( const MANAGEMENT_ACTION_TYPE action )
+CHECK_RETVAL \
+int keysetManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action )
 	{
 	static int initLevel = 0;
 	int status;
 
-	assert( action == MANAGEMENT_ACTION_INIT || \
-			action == MANAGEMENT_ACTION_SHUTDOWN );
+	REQUIRES( action == MANAGEMENT_ACTION_INIT || \
+			  action == MANAGEMENT_ACTION_SHUTDOWN );
 
 	switch( action )
 		{
@@ -1203,8 +1222,10 @@ int keysetManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 				{
 				initLevel++;
 				if( krnlIsExiting() )
+					{
 					/* The kernel is shutting down, exit */
 					return( CRYPT_ERROR_PERMISSION );
+					}
 				status = dbxInitLDAP();
 				}
 			if( cryptStatusOK( status ) )
@@ -1220,7 +1241,6 @@ int keysetManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			return( CRYPT_OK );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}
 #endif /* USE_KEYSETS */

@@ -55,6 +55,7 @@
  */
 
 /* Removed NDEBUG redefinition - pcg */
+/* Added proper initialisation of data in all BN_X_init() functions - pcg */
 
 #include <stdio.h>
 #include <assert.h>
@@ -223,6 +224,7 @@ BN_CTX *BN_CTX_new(void)
 		BNerr(BN_F_BN_CTX_NEW,ERR_R_MALLOC_FAILURE);
 		return NULL;
 		}
+	memset( ret, 0, sizeof( BN_CTX ) );		/* pcg */
 	/* Initialise the structure */
 	BN_POOL_init(&ret->pool);
 	BN_STACK_init(&ret->stack);
@@ -342,6 +344,7 @@ void BN_CTX_clear( BN_CTX *bnCTX )
 
 static void BN_STACK_init(BN_STACK *st)
 	{
+	memset( st, 0, sizeof( BN_STACK ) );	/* pcg */
 	st->indexes = NULL;
 	st->depth = st->size = 0;
 	}
@@ -390,6 +393,7 @@ static unsigned int BN_STACK_pop(BN_STACK *st)
 
 static void BN_POOL_init(BN_POOL *p)
 	{
+	memset( p, 0, sizeof( BN_POOL ) );		/* pcg */
 	p->head = p->current = p->tail = NULL;
 	p->used = p->size = 0;
 	}

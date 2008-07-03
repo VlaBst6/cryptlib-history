@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*						cryptlib SSHv2 Session Management					*
-*						Copyright Peter Gutmann 1998-2004					*
+*						cryptlib SSHv2 Client Management					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -26,16 +26,16 @@
    or PKC as their authentication choice */
 
 static const ALGO_STRING_INFO FAR_BSS algoStringUserauthentPWTbl[] = {
-	{ "password", CRYPT_PSEUDOALGO_PASSWORD },
-	{ "keyboard-interactive", CRYPT_PSEUDOALGO_PAM },
-	{ "publickey", CRYPT_ALGO_RSA },
-	{ NULL, CRYPT_ALGO_NONE }
+	{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
+	{ "keyboard-interactive", 20, CRYPT_PSEUDOALGO_PAM },
+	{ "publickey", 9, CRYPT_ALGO_RSA },
+	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, 0, CRYPT_ALGO_NONE }
 	};
 static const ALGO_STRING_INFO FAR_BSS algoStringUserauthentPKCTbl[] = {
-	{ "publickey", CRYPT_ALGO_RSA },
-	{ "password", CRYPT_PSEUDOALGO_PASSWORD },
-	{ "keyboard-interactive", CRYPT_PSEUDOALGO_PAM },
-	{ NULL, CRYPT_ALGO_NONE }
+	{ "publickey", 9, CRYPT_ALGO_RSA },
+	{ "password", 8, CRYPT_PSEUDOALGO_PASSWORD },
+	{ "keyboard-interactive", 20, CRYPT_PSEUDOALGO_PAM },
+	{ NULL, 0, CRYPT_ALGO_NONE }, { NULL, CRYPT_ALGO_NONE }
 	};
 
 /****************************************************************************
@@ -51,21 +51,23 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 								  const void *keyData,
 								  const int keyDataLength )
 	{
-	HASHFUNCTION hashFunction;
+	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	const ATTRIBUTE_LIST *attributeListPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_SERVER_FINGERPRINT );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_SERVER_FINGERPRINT );
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize;
 
-	getHashParameters( CRYPT_ALGO_MD5, &hashFunction, &hashSize );
-	hashFunction( NULL, fingerPrint, CRYPT_MAX_HASHSIZE, 
-				  keyData, keyDataLength, HASH_ALL );
+	getHashAtomicParameters( CRYPT_ALGO_MD5, &hashFunctionAtomic, &hashSize );
+	hashFunctionAtomic( fingerPrint, CRYPT_MAX_HASHSIZE, 
+						keyData, keyDataLength );
 	if( attributeListPtr == NULL )
+		{
 		/* Remember the value for the caller */
-		return( addSessionAttribute( &sessionInfoPtr->attributeList,
-									 CRYPT_SESSINFO_SERVER_FINGERPRINT,
-									 fingerPrint, hashSize ) );
+		return( addSessionInfo( &sessionInfoPtr->attributeList,
+								CRYPT_SESSINFO_SERVER_FINGERPRINT,
+								fingerPrint, hashSize ) );
+		}
 
 	/* In the unlikely event that the user has passed us a SHA-1 fingerprint
 	   (which isn't allowed by the spec, but no doubt someone out there's
@@ -74,18 +76,22 @@ static int processKeyFingerprint( SESSION_INFO *sessionInfoPtr,
 	   fingerprint), calculate that instead */
 	if( attributeListPtr->valueLength == 20 )
 		{
-		getHashParameters( CRYPT_ALGO_SHA, &hashFunction, &hashSize );
-		hashFunction( NULL, fingerPrint, CRYPT_MAX_HASHSIZE, 
-					  keyData, keyDataLength, HASH_ALL );
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+								 &hashSize );
+		hashFunctionAtomic( fingerPrint, CRYPT_MAX_HASHSIZE, 
+							keyData, keyDataLength );
 		}
 
 	/* There's an existing fingerprint value, make sure that it matches what
 	   we just calculated */
 	if( attributeListPtr->valueLength != hashSize || \
 		memcmp( attributeListPtr->value, fingerPrint, hashSize ) )
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
-				"Server key fingerprint doesn't match requested "
-				"fingerprint" );
+		{
+		retExt( CRYPT_ERROR_WRONGKEY,
+				( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
+				  "Server key fingerprint doesn't match requested "
+				  "fingerprint" ) );
+		}
 
 	return( CRYPT_OK );
 	}
@@ -100,8 +106,8 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 	STREAM stream;
 	CRYPT_ALGO_TYPE authentAlgo;
 	const BOOLEAN hasPassword = \
-			( findSessionAttribute( sessionInfoPtr->attributeList,
-								    CRYPT_SESSINFO_PASSWORD ) != NULL ) ? \
+			( findSessionInfo( sessionInfoPtr->attributeList,
+							   CRYPT_SESSINFO_PASSWORD ) != NULL ) ? \
 			TRUE : FALSE;
 	int status;
 
@@ -127,10 +133,20 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 	  handle this stuff */
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
 	sgetc( &stream );		/* Skip packet type */
-	status = readAlgoString( &stream, hasPassword ? \
-								algoStringUserauthentPWTbl : \
-								algoStringUserauthentPKCTbl,
-							  &authentAlgo, FALSE, sessionInfoPtr );
+	if( hasPassword )
+		{
+		status = readAlgoString( &stream, algoStringUserauthentPWTbl,
+								 FAILSAFE_ARRAYSIZE( algoStringUserauthentPWTbl, \
+													 ALGO_STRING_INFO ),
+								 &authentAlgo, FALSE, SESSION_ERRINFO );
+		}
+	else
+		{
+		status = readAlgoString( &stream, algoStringUserauthentPKCTbl,
+								 FAILSAFE_ARRAYSIZE( algoStringUserauthentPKCTbl, \
+													 ALGO_STRING_INFO ),
+								 &authentAlgo, FALSE, SESSION_ERRINFO );
+		}
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -139,9 +155,12 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 		   through most of the handshake but failed at the authentication
 		   stage */
 		if( status == CRYPT_ERROR_NOTAVAIL )
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTAVAIL,
-					"Remote system supports neither password nor "
-					"public-key authentication" );
+			{
+			retExt( CRYPT_ERROR_NOTAVAIL,
+					( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
+					  "Remote system supports neither password nor "
+					  "public-key authentication" ) );
+			}
 
 		/* There was some other problem with the returned information, we
 		   still report it as a failed-authentication error but leave the
@@ -165,13 +184,15 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 			{
 			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_PASSWORD,
 						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTINITED,
-					"Server requested password authentication but only a "
-					"public/private key was available" );
+			retExt( CRYPT_ERROR_NOTINITED,
+					( CRYPT_ERROR_NOTINITED, SESSION_ERRINFO, 
+					  "Server requested password authentication but only a "
+					  "public/private key was available" ) );
 			}
 
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
-				"Server reported: Invalid public-key authentication" );
+		retExt( CRYPT_ERROR_WRONGKEY,
+				( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
+				  "Server reported: Invalid public-key authentication" ) );
 		}
 
 	/* If the server requested keyboard-interactive (== misnamed PAM)
@@ -188,13 +209,15 @@ static int reportAuthFailure( SESSION_INFO *sessionInfoPtr,
 		{
 		setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_PRIVATEKEY,
 					  CRYPT_ERRTYPE_ATTR_ABSENT );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_NOTINITED,
-				"Server requested public-key authentication but only a "
-				"password was available" );
+		retExt( CRYPT_ERROR_NOTINITED,
+				( CRYPT_ERROR_NOTINITED, SESSION_ERRINFO, 
+				  "Server requested public-key authentication but only a "
+				  "password was available" ) );
 		}
 
-	retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
-			"Server reported: Invalid password" );
+	retExt( CRYPT_ERROR_WRONGKEY,
+			( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
+			  "Server reported: Invalid password" ) );
 	}
 
 /* Handle an ephemeral DH key exchange */
@@ -204,8 +227,8 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 					   STREAM *stream, KEYAGREE_PARAMS *keyAgreeParams )
 	{
 	const int offset = LENGTH_SIZE + sizeofString32( "ssh-dh", 6 );
-	BYTE *keyexInfoPtr;
-	int keyexInfoLength, length, packetOffset, status;
+	void *keyexInfoPtr = DUMMY_INIT_PTR;
+	int keyexInfoLength = DUMMY_INIT, length, packetOffset, dummy, status;
 
 	/*	...
 		byte	type = SSH2_MSG_KEXDH_GEX_REQUEST_OLD
@@ -223,25 +246,36 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 	   servers just dropping the connection without any error response if
 	   they encounter the newer packet type */
 #if 1
-	packetOffset = continuePacketStreamSSH( stream,
-											SSH2_MSG_KEXDH_GEX_REQUEST_OLD );
-	streamBookmarkSet( stream, keyexInfoPtr, keyexInfoLength );
-	writeUint32( stream, bytesToBits( SSH2_DEFAULT_KEYSIZE ) );
+	status = continuePacketStreamSSH( stream, SSH2_MSG_KEXDH_GEX_REQUEST_OLD,
+									  &packetOffset );
+	if( cryptStatusOK( status ) )
+		{
+		streamBookmarkSet( stream, keyexInfoLength );
+		status = writeUint32( stream, bytesToBits( SSH2_DEFAULT_KEYSIZE ) );
+		}
 #else
-	packetOffset = continuePacketStreamSSH( stream,
-											SSH2_MSG_KEXDH_GEX_REQUEST_NEW );
-	streamBookmarkSet( stream, keyexInfoPtr, keyexInfoLength );
-	writeUint32( stream, 1024 );
-	writeUint32( stream, bytesToBits( SSH2_DEFAULT_KEYSIZE ) );
-	writeUint32( stream, bytesToBits( CRYPT_MAX_PKCSIZE ) );
+	status = continuePacketStreamSSH( stream, SSH2_MSG_KEXDH_GEX_REQUEST_NEW,
+									  &packetOffset );
+	if( cryptStatusOK( status ) )
+		{
+		streamBookmarkSet( stream, keyexInfoLength );
+		writeUint32( stream, 1024 );
+		writeUint32( stream, bytesToBits( SSH2_DEFAULT_KEYSIZE ) );
+		status = writeUint32( stream, bytesToBits( CRYPT_MAX_PKCSIZE ) );
+		}
 #endif /* 1 */
-	streamBookmarkComplete( stream, keyexInfoLength );
-	status = wrapPacketSSH2( sessionInfoPtr, stream, packetOffset );
+	if( cryptStatusOK( status ) )
+		status = streamBookmarkComplete( stream, &keyexInfoPtr, 
+										 &keyexInfoLength, keyexInfoLength );
+	if( cryptStatusOK( status ) )
+		status = wrapPacketSSH2( sessionInfoPtr, stream, packetOffset, 
+								 FALSE, TRUE );
 	if( cryptStatusOK( status ) )
 		status = sendPacketSSH2( sessionInfoPtr, stream, TRUE );
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	ENSURES( keyexInfoPtr != NULL );
 
 	/* Remember the encoded key size info for later when we generate the
 	   exchange hash */
@@ -254,37 +288,61 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 		byte	type = SSH2_MSG_KEXDH_GEX_GROUP
 		mpint	p
 		mpint	g */
-	length = readPacketSSH2( sessionInfoPtr, SSH2_MSG_KEXDH_GEX_GROUP,
-							 ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) + \
-							 sizeofString32( "", 1 ) );
-	if( cryptStatusError( length ) )
-		return( length );
+	status = length = \
+		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_KEXDH_GEX_GROUP,
+						  ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) + \
+							sizeofString32( "", 1 ) );
+	if( cryptStatusError( status ) )
+		return( status );
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
-	sgetc( stream );		/* Skip packet type */
-	streamBookmarkSet( stream, keyexInfoPtr, keyexInfoLength );
-	readInteger32( stream, NULL, NULL, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
-	status = readInteger32( stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-	streamBookmarkComplete( stream, keyexInfoLength );
+	status = sgetc( stream );		/* Skip packet type */
+	if( !cryptStatusError( status ) )
+		{
+		streamBookmarkSet( stream, keyexInfoLength );
+		status = readInteger32Checked( stream, NULL, &dummy, MIN_PKCSIZE, 
+									   CRYPT_MAX_PKCSIZE );
+		}
+	if( cryptStatusOK( status ) )
+		status = readInteger32( stream, NULL, &dummy, 1, 
+								CRYPT_MAX_PKCSIZE );
+	if( cryptStatusOK( status ) )
+		{
+		status = streamBookmarkComplete( stream, &keyexInfoPtr, 
+										 &keyexInfoLength, 
+										 keyexInfoLength );
+		}
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH ephemeral key data packet" );
+		{
+		/* Some misconfigured servers may use very short keys, we perform
+		   a special-case check for these and return a more specific message
+		   than the generic bad-data */
+		if( status == CRYPT_ERROR_NOSECURE )
+			{
+			retExt( CRYPT_ERROR_NOSECURE,
+					( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+					  "Insecure key used in key exchange" ) );
+			}
+
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH ephemeral key data packet" ) );
+		}
 
 	/* Since this phase of the key negotiation exchanges raw key components
 	   rather than the standard SSH public-key format, we have to rewrite
 	   the raw key components into a standard SSH key so that we can import
 	   it:
-
 			From:					To:
-
 								string		[ key/certificate ]
 									string	"ssh-dh"
 			mpint	p				mpint	p
 			mpint	g				mpint	g */
-	memmove( keyexInfoPtr + offset, keyexInfoPtr, keyexInfoLength );
+	memmove( ( BYTE * ) keyexInfoPtr + offset, keyexInfoPtr, 
+			 keyexInfoLength );
 	sMemOpen( stream, keyexInfoPtr, offset );
 	writeUint32( stream, ( offset - LENGTH_SIZE ) + keyexInfoLength );
-	writeString32( stream, "ssh-dh", 0 );
+	writeString32( stream, "ssh-dh", 6 );
 	sMemDisconnect( stream );
 
 	/* Destroy the existing static DH key, load the new one, and re-perform
@@ -319,11 +377,11 @@ static int processDHE( SESSION_INFO *sessionInfoPtr,
 static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 	{
 	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_USERNAME );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_USERNAME );
 	const ATTRIBUTE_LIST *passwordPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_PASSWORD );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_PASSWORD );
 	STREAM stream;
 	int length, pamIteration, status;
 
@@ -340,19 +398,24 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 	   implementation strategy in which the server ignores them so
 	   specifying anything here is mostly wishful thinking, but we ask for
 	   password auth. anyway in case it helps */
-	openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-						 SSH2_MSG_USERAUTH_REQUEST );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
+								  SSH2_MSG_USERAUTH_REQUEST );
+	if( cryptStatusError( status ) )
+		return( status );
 	writeString32( &stream, userNamePtr->value, userNamePtr->valueLength );
-	writeString32( &stream, "ssh-connection", 0 );
-	writeString32( &stream, "keyboard-interactive", 0 );
+	writeString32( &stream, "ssh-connection", 14 );
+	writeString32( &stream, "keyboard-interactive", 20 );
 	writeUint32( &stream, 0 );		/* No language tag */
 	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_PAMPW )
+		{
 		/* Some servers choke if we supply a sub-method hint for the
 		   authentication */
-		writeUint32( &stream, 0 );
+		status = writeUint32( &stream, 0 );
+		}
 	else
-		writeString32( &stream, "password", 0 );
-	status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
+		status = writeString32( &stream, "password", 8 );
+	if( cryptStatusOK( status ) )
+		status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -365,7 +428,7 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		{
 		BYTE nameBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 		BYTE promptBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int nameLength, promptLength, noPrompts = -1, type;
+		int nameLength, promptLength = -1, noPrompts = -1, type;
 
 		/* Read back the response to our last message.  Although the spec
 		   requires that the server not respond with a SSH2_MSG_USERAUTH_-
@@ -375,9 +438,9 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		   return a failure indication at this point so we have to allow for
 		   a failure response as well as the expected SSH2_MSG_USERAUTH_-
 		   INFO_REQUEST */
-		status = length = readPacketSSH2( sessionInfoPtr,
-										  SSH2_MSG_SPECIAL_USERAUTH_PAM,
-										  ID_SIZE );
+		status = length = \
+			readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH_PAM,
+							  ID_SIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 
@@ -403,15 +466,16 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			   just in case */
 			if( pamIteration == 0 )
 				{
-				char userNameBuffer[ CRYPT_MAX_TEXTSIZE + 1 + 8 ];
+				char userNameBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 
 				memcpy( userNameBuffer, userNamePtr->value,
 						userNamePtr->valueLength );
-				retExt( SESSION_ERRINFO, CRYPT_ERROR_WRONGKEY,
-						"Server reported: Invalid user name '%s'",
-						sanitiseString( userNameBuffer,
-									    userNamePtr->valueLength,
-										userNamePtr->valueLength ) );
+				retExt( CRYPT_ERROR_WRONGKEY,
+						( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
+						  "Server reported: Invalid user name '%s'",
+						  sanitiseString( userNameBuffer,
+										  CRYPT_MAX_TEXTSIZE,
+									      userNamePtr->valueLength ) ) );
 				}
 
 			/* It's a failure after we've tried to authenticate ourselves,
@@ -439,8 +503,8 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		   auth success or failure status, but could also send another
 		   SSH2_MSG_USERAUTH_INFO_REQUEST even if it contains no payload (an
 		   OpenSSH bug), so we have to handle this as a special case */
-		status = readString32( &stream, nameBuffer, &nameLength,
-							   CRYPT_MAX_TEXTSIZE );	/* Name */
+		status = readString32( &stream, nameBuffer, CRYPT_MAX_TEXTSIZE,
+							   &nameLength );			/* Name */
 		if( cryptStatusOK( status ) )
 			{
 			nameBuffer[ nameLength ] = '\0';
@@ -452,21 +516,26 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			{
 			status = noPrompts = readUint32( &stream );	/* No.prompts */
 			if( !cryptStatusError( status ) && noPrompts > 8 )
+				{
 				/* Requesting more than a small number of prompts is 
 				   suspicious */
 				status = CRYPT_ERROR_BADDATA;
+				}
 			}
 		if( !cryptStatusError( status ) && noPrompts > 0 )
 			{
-			status = readString32( &stream, promptBuffer, &promptLength,
-								   CRYPT_MAX_TEXTSIZE );
+			status = readString32( &stream, promptBuffer, 
+								   CRYPT_MAX_TEXTSIZE, &promptLength );
 			if( cryptStatusOK( status ) )
 				promptBuffer[ promptLength ] = '\0';
 			}
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
-			retExt( SESSION_ERRINFO, status,
-					"Invalid PAM authentication request packet" );
+			{
+			retExt( status,
+					( status, SESSION_ERRINFO, 
+					  "Invalid PAM authentication request packet" ) );
+			}
 
 		/* If we got a prompt, make sure that we're being asked for some
 		   form of password authentication.  This assumes that the prompt
@@ -477,13 +546,14 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 			( promptLength < 8 || \
 			  strCompare( promptBuffer, "Password", 8 ) ) )
 			{
-			retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-					"Server requested unknown PAM authentication type "
-					"'%s'", ( nameLength > 0 ) ? \
-						sanitiseString( nameBuffer, nameLength, 
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+					  "Server requested unknown PAM authentication type "
+					  "'%s'", ( nameLength > 0 ) ? \
+						sanitiseString( nameBuffer, CRYPT_MAX_TEXTSIZE, \
 										nameLength ) : \
-						sanitiseString( promptBuffer, promptLength, 
-										promptLength ) );
+						sanitiseString( promptBuffer, CRYPT_MAX_TEXTSIZE, \
+										promptLength ) ) );
 			}
 
 		/* Send back the PAM user-auth response:
@@ -498,20 +568,28 @@ static int processPamAuthentication( SESSION_INFO *sessionInfoPtr )
 		   encounter a situation where there's more than one prompt, it's
 		   probably a request to confirm the password, so we just send it
 		   again for successive prompts */
-		openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-							 SSH2_MSG_USERAUTH_INFO_RESPONSE );
-		writeUint32( &stream, noPrompts );
-		while( noPrompts-- > 0 )
-			writeString32( &stream, passwordPtr->value,
-						   passwordPtr->valueLength );
-		status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
+		status = openPacketStreamSSH( &stream, sessionInfoPtr, 
+									  CRYPT_USE_DEFAULT,
+									  SSH2_MSG_USERAUTH_INFO_RESPONSE );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = writeUint32( &stream, noPrompts );
+		while( cryptStatusOK( status ) && noPrompts-- > 0 )
+			{
+			status = writeString32( &stream, passwordPtr->value,
+									passwordPtr->valueLength );
+			}
+		if( cryptStatusOK( status ) )
+			status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
-	retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-			"Too many iterations of negotiation during PAM authentication" );
+	retExt( CRYPT_ERROR_BADDATA,
+			( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+			  "Too many iterations of negotiation during PAM "
+			  "authentication" ) );
 	}
 
 /****************************************************************************
@@ -528,15 +606,15 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	KEYAGREE_PARAMS keyAgreeParams;
 	STREAM stream;
-	void *clientHelloPtr, *keyexPtr;
-	int serverHelloLength, clientHelloLength, keyexLength;
+	void *clientHelloPtr = DUMMY_INIT_PTR, *keyexPtr = DUMMY_INIT_PTR;
+	int serverHelloLength, clientHelloLength, keyexLength = DUMMY_INIT;
 	int packetOffset, status;
 
 	/* The higher-level code has already read the server version info, send
 	   back our own version info (SSHv2 sends a CR and LF as terminator,
 	   but this isn't hashed) */
 	status = swrite( &sessionInfoPtr->stream, SSH2_ID_STRING "\r\n",
-					 strlen( SSH2_ID_STRING ) + 2 );
+					 SSH_ID_STRING_SIZE + 2 );
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
@@ -547,11 +625,14 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	/* SSHv2 hashes parts of the handshake messages for integrity-protection
 	   purposes, so we hash the ID strings (first our client string, then the
 	   server string that we read previously) encoded as SSH string values */
-	hashAsString( handshakeInfo->iExchangeHashcontext, SSH2_ID_STRING,
-				  strlen( SSH2_ID_STRING ) );
-	hashAsString( handshakeInfo->iExchangeHashcontext,
-				  sessionInfoPtr->receiveBuffer,
-				  strlen( sessionInfoPtr->receiveBuffer ) );
+	status = hashAsString( handshakeInfo->iExchangeHashcontext, 
+						   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
+	if( cryptStatusOK( status ) )
+		status = hashAsString( handshakeInfo->iExchangeHashcontext,
+							   sessionInfoPtr->receiveBuffer,
+							   strlen( sessionInfoPtr->receiveBuffer ) );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* While we wait for the server to digest our version info and send
 	   back its response, we can create the context with the DH key and
@@ -559,13 +640,12 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	status = initDHcontextSSH( &handshakeInfo->iServerCryptContext,
 							   &handshakeInfo->serverKeySize, NULL, 0,
 							   CRYPT_USE_DEFAULT );
-	if( cryptStatusOK( status ) )
-		{
-		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
-		status = krnlSendMessage( handshakeInfo->iServerCryptContext,
-								  IMESSAGE_CTX_ENCRYPT, &keyAgreeParams,
-								  sizeof( KEYAGREE_PARAMS ) );
-		}
+	if( cryptStatusError( status ) )
+		return( status );
+	memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
+	status = krnlSendMessage( handshakeInfo->iServerCryptContext,
+							  IMESSAGE_CTX_ENCRYPT, &keyAgreeParams,
+							  sizeof( KEYAGREE_PARAMS ) );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -614,12 +694,19 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	   To avoid this problem, we set keyex_follows to false to make it clear
 	   to the server that the keyex is the real thing and shouldn't be
 	   discarded */
-	openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-						 SSH2_MSG_KEXINIT );
-	streamBookmarkSetFullPacket( &stream, clientHelloPtr, clientHelloLength );
-	exportVarsizeAttributeToStream( &stream, SYSTEM_OBJECT_HANDLE,
-									CRYPT_IATTRIBUTE_RANDOM_NONCE,
-									SSH2_COOKIE_SIZE );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
+								  SSH2_MSG_KEXINIT );
+	if( cryptStatusError( status ) )
+		return( status );
+	streamBookmarkSetFullPacket( &stream, clientHelloLength );
+	status = exportVarsizeAttributeToStream( &stream, SYSTEM_OBJECT_HANDLE,
+											 CRYPT_IATTRIBUTE_RANDOM_NONCE,
+											 SSH2_COOKIE_SIZE );
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
+		return( status );
+		}
 	writeAlgoString( &stream,  ( handshakeInfo->requestedServerKeySize > 0 ) ? \
 					 CRYPT_PSEUDOALGO_DHE : CRYPT_ALGO_DH );
 	writeAlgoString( &stream, handshakeInfo->pubkeyAlgo );
@@ -632,22 +719,36 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	writeUint32( &stream, 0 );	/* No language tag */
 	writeUint32( &stream, 0 );
 	sputc( &stream, 0 );		/* Tell the server not to discard the packet */
-	writeUint32( &stream, 0 );	/* Reserved */
-	streamBookmarkComplete( &stream, clientHelloLength );
-	status = wrapPacketSSH2( sessionInfoPtr, &stream, 0 );
+	status = writeUint32( &stream, 0 );	/* Reserved */
+	if( cryptStatusOK( status ) )
+		{
+		status = streamBookmarkComplete( &stream, &clientHelloPtr, 
+										 &clientHelloLength, 
+										 clientHelloLength );
+		}
+	if( cryptStatusOK( status ) )
+		status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, FALSE, TRUE );
 	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
 		return( status );
+		}
 
 	/* Hash the client and server hello messages.  We have to do this now
 	   (rather than deferring it until we're waiting on network traffic from
 	   the server) because they may get overwritten by the keyex negotiation
 	   data if we're using a non-builtin DH key value */
-	hashAsString( handshakeInfo->iExchangeHashcontext, clientHelloPtr,
-				  clientHelloLength );
-	status = hashAsString( handshakeInfo->iExchangeHashcontext,
-						   sessionInfoPtr->receiveBuffer, serverHelloLength );
+	status = hashAsString( handshakeInfo->iExchangeHashcontext, 
+						   clientHelloPtr, clientHelloLength );
+	if( cryptStatusOK( status ) )
+		status = hashAsString( handshakeInfo->iExchangeHashcontext,
+							   sessionInfoPtr->receiveBuffer, 
+							   serverHelloLength );
 	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
 		return( status );
+		}
 
 	/* If we're using a non-builtin DH key value, request the keyex key from
 	   the server.  This requires disconnecting and re-connecting the stream
@@ -658,27 +759,40 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 		status = processDHE( sessionInfoPtr, handshakeInfo, &stream,
 							 &keyAgreeParams );
 		if( cryptStatusError( status ) )
+			{
+			/* processDHE() has already disconnected the stream */
 			return( status );
+			}
 		}
 
 	/*	...
 		byte	type = SSH2_MSG_KEXDH_INIT / SSH2_MSG_KEXDH_GEX_INIT
 		mpint	y */
-	packetOffset = continuePacketStreamSSH( &stream, \
+	status = continuePacketStreamSSH( &stream, \
 						( handshakeInfo->requestedServerKeySize > 0 ) ? \
-							SSH2_MSG_KEXDH_GEX_INIT : SSH2_MSG_KEXDH_INIT );
-	streamBookmarkSet( &stream, keyexPtr, keyexLength );
-	writeInteger32( &stream, keyAgreeParams.publicValue,
-							 keyAgreeParams.publicValueLen );
-	streamBookmarkComplete( &stream, keyexLength );
-	status = wrapPacketSSH2( sessionInfoPtr, &stream, packetOffset );
+							SSH2_MSG_KEXDH_GEX_INIT : SSH2_MSG_KEXDH_INIT,
+						&packetOffset );
 	if( cryptStatusOK( status ) )
+		{
+		streamBookmarkSet( &stream, keyexLength );
+		status = writeInteger32( &stream, keyAgreeParams.publicValue,
+								 keyAgreeParams.publicValueLen );
+		}
+	if( cryptStatusOK( status ) )
+		status = streamBookmarkComplete( &stream, &keyexPtr, &keyexLength, 
+										 keyexLength );
+	if( cryptStatusOK( status ) )
+		status = wrapPacketSSH2( sessionInfoPtr, &stream, packetOffset, 
+								 FALSE, TRUE );
+	if( cryptStatusOK( status ) )
+		{
 		/* Send the whole mess to the server.  Since SSH, unlike SSL,
 		   requires that each packet in a multi-packet group be wrapped as a
 		   separate packet, we have to first assemble the packets via
 		   wrapPacket() and then send them in a group via sendPacket() with
 		   the send-only flag set */
 		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
+		}
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -704,11 +818,13 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 							   SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
-	CRYPT_ALGO_TYPE pubkeyAlgo;
+	CRYPT_ALGO_TYPE pubkeyAlgo = DUMMY_INIT;
 	STREAM stream;
 	MESSAGE_DATA msgData;
-	void *keyPtr, *keyBlobPtr, *sigPtr;
-	int keyLength, keyBlobLength, sigLength, length, status;
+	void *keyPtr = DUMMY_INIT_PTR, *keyBlobPtr = DUMMY_INIT_PTR;
+	void *sigPtr = DUMMY_INIT_PTR;
+	int keyLength = DUMMY_INIT, keyBlobLength, sigLength, length;
+	int dummy, status;
 
 	/* Process the DH phase 2 keyex packet:
 
@@ -726,22 +842,30 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 
 	   First, we read and hash the server key/certificate.  Since this is
 	   already encoded as an SSH string, we can hash it directly */
-	length = readPacketSSH2( sessionInfoPtr,
-					( handshakeInfo->requestedServerKeySize > 0 ) ? \
-					SSH2_MSG_KEXDH_GEX_REPLY : SSH2_MSG_KEXDH_REPLY,
-					ID_SIZE + LENGTH_SIZE + sizeofString32( "", 6 ) + \
-					sizeofString32( "", 1 ) + \
-					sizeofString32( "", MIN_PKCSIZE ) + \
-					sizeofString32( "", MIN_PKCSIZE ) + \
-					LENGTH_SIZE + sizeofString32( "", 6 ) + 40 );
-	if( cryptStatusError( length ) )
-		return( length );
+	status = length = \
+		readHSPacketSSH2( sessionInfoPtr,
+						  ( handshakeInfo->requestedServerKeySize > 0 ) ? \
+							SSH2_MSG_KEXDH_GEX_REPLY : SSH2_MSG_KEXDH_REPLY,
+						  ID_SIZE + LENGTH_SIZE + sizeofString32( "", 6 ) + \
+							sizeofString32( "", 1 ) + \
+							sizeofString32( "", MIN_PKCSIZE ) + \
+							sizeofString32( "", MIN_PKCSIZE ) + \
+							LENGTH_SIZE + sizeofString32( "", 6 ) + 40 );
+	if( cryptStatusError( status ) )
+		return( status );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
-	sgetc( &stream );		/* Skip packet type */
-	streamBookmarkSet( &stream, keyPtr, keyLength );
-	readUint32( &stream );	/* Server key data size */
-	status = readAlgoString( &stream, handshakeInfo->algoStringPubkeyTbl,
-							 &pubkeyAlgo, TRUE, sessionInfoPtr );
+	status = sgetc( &stream );			/* Skip packet type */
+	if( !cryptStatusError( status ) )
+		{
+		streamBookmarkSet( &stream, keyLength );
+		status = readUint32( &stream );	/* Server key data size */
+		}
+	if( !cryptStatusError( status ) )
+		{
+		status = readAlgoString( &stream, handshakeInfo->algoStringPubkeyTbl,
+								 handshakeInfo->algoStringPubkeyTblNoEntries,
+								 &pubkeyAlgo, TRUE, SESSION_ERRINFO );
+		}
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -750,34 +874,55 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( pubkeyAlgo != handshakeInfo->pubkeyAlgo )
 		{
 		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH phase 2 public key algorithm %d, expected %d",
-				pubkeyAlgo, handshakeInfo->pubkeyAlgo );
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH phase 2 public key algorithm %d, expected %d",
+				  pubkeyAlgo, handshakeInfo->pubkeyAlgo ) );
 		}
-	streamBookmarkSet( &stream, keyBlobPtr, keyBlobLength );
+	streamBookmarkSet( &stream, keyBlobLength );
 	if( pubkeyAlgo == CRYPT_ALGO_RSA )
 		{
 		/* RSA e, n */
-		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-		status = readInteger32( &stream, NULL, NULL, MIN_PKCSIZE,
-								CRYPT_MAX_PKCSIZE );
+		readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
+		status = readInteger32Checked( &stream, NULL, &dummy, 
+									   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
 		}
 	else
 		{
 		/* DSA p, q, g, y */
-		readInteger32( &stream, NULL, NULL, MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
-		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-		readInteger32( &stream, NULL, NULL, 1, CRYPT_MAX_PKCSIZE );
-		status = readInteger32( &stream, NULL, NULL, MIN_PKCSIZE,
-								CRYPT_MAX_PKCSIZE );
+		status = readInteger32Checked( &stream, NULL, &dummy, 
+									   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+		if( cryptStatusOK( status ) )
+			{
+			readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
+			readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
+			status = readInteger32Checked( &stream, NULL, &dummy, 
+										   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+			}
 		}
-	streamBookmarkComplete( &stream, keyBlobLength );
-	streamBookmarkComplete( &stream, keyLength );
+	if( cryptStatusOK( status ) )
+		status = streamBookmarkComplete( &stream, &keyBlobPtr, 
+										 &keyBlobLength, keyBlobLength );
+	if( cryptStatusOK( status ) )
+		status = streamBookmarkComplete( &stream, &keyPtr, &keyLength, 
+										 keyLength );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH phase 2 packet" );
+
+		/* Some misconfigured servers may use very short keys, we perform
+		   a special-case check for these and return a more specific message
+		   than the generic bad-data */
+		if( status == CRYPT_ERROR_NOSECURE )
+			{
+			retExt( CRYPT_ERROR_NOSECURE,
+					( CRYPT_ERROR_NOSECURE, SESSION_ERRINFO, 
+					  "Insecure key used in key exchange" ) );
+			}
+
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH phase 2 packet" ) );
 		}
 	setMessageData( &msgData, keyPtr, keyLength );
 	status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext,
@@ -786,13 +931,16 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, cryptArgError( status ) ? \
+		retExt( cryptArgError( status ) ? \
 				CRYPT_ERROR_BADDATA : status,
-				"Invalid server key/certificate" );
+				( cryptArgError( status ) ? \
+				  CRYPT_ERROR_BADDATA : status, SESSION_ERRINFO, 
+				  "Invalid server key/certificate" ) );
 		}
 	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
 							  IMESSAGE_CTX_HASH, keyPtr, keyLength );
 	if( cryptStatusOK( status ) )
+		{
 		/* The fingerprint is computed from the "key blob", which is
 		   different from the server key.  The server key is the full key,
 		   while the "key blob" is only the raw key components (e, n for
@@ -802,6 +950,7 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		   hash an indication of the key type or format */
 		status = processKeyFingerprint( sessionInfoPtr,
 										keyBlobPtr, keyBlobLength );
+		}
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -810,15 +959,16 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 
 	/* Read the server DH keyex value and complete the DH key agreement */
 	status = readRawObject32( &stream, handshakeInfo->serverKeyexValue,
-							  &handshakeInfo->serverKeyexValueLength,
-							  sizeof( handshakeInfo->serverKeyexValue ) );
+							  CRYPT_MAX_PKCSIZE + 16,
+							  &handshakeInfo->serverKeyexValueLength );
 	if( cryptStatusError( status ) || \
 		!isValidDHsize( handshakeInfo->clientKeyexValueLength,
 						handshakeInfo->serverKeySize, LENGTH_SIZE ) )
 		{
 		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH phase 2 keyex value" );
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH phase 2 keyex value" ) );
 		}
 	status = completeKeyex( sessionInfoPtr, handshakeInfo, FALSE );
 	if( cryptStatusError( status ) )
@@ -828,18 +978,20 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Prepare to process the handshake packet signature */
-	streamBookmarkSet( &stream, sigPtr, sigLength );
-	status = readUint32( &stream );
+	streamBookmarkSet( &stream, sigLength );
+	status = length = readUint32( &stream );
 	if( !cryptStatusError( status ) )
-		status = sSkip( &stream, status );
+		status = sSkip( &stream, length );
+	if( cryptStatusOK( status ) )
+		status = streamBookmarkComplete( &stream, &sigPtr, &sigLength, 
+										 sigLength );
+	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
-		sMemDisconnect( &stream );
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid DH phase 2 packet signature data" );
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid DH phase 2 packet signature data" ) );
 		}
-	streamBookmarkComplete( &stream, sigLength );
-	sMemDisconnect( &stream );
 
 	/* Some implementations incorrectly format the signature packet,
 	   omitting the algorithm name and signature blob length for DSA sigs
@@ -869,22 +1021,24 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		  memcmp( ( BYTE * ) sigPtr + LENGTH_SIZE + LENGTH_SIZE,
 				  "pgp-sign-dss", 12 ) ) )
 		{
-		void *headerEndPtr;
-		int headerSize;
+		int headerSize = DUMMY_INIT;
 
-		/* Rewrite the signature to fix up the overall length at the start and
-		   insert the algorithm name and signature length */
+		/* Rewrite the signature to fix up the overall length at the start 
+		   and insert the algorithm name and signature length.  We can 
+		   safely reuse the receive buffer for this because the start 
+		   contains the server key/certificate and DH keyex value, which is 
+		   far longer than the 12 bytes of header plus signature that we'll
+		   be writing there */
 		sMemOpen( &stream, sessionInfoPtr->receiveBuffer,
-				  LENGTH_SIZE + sizeofString32( "ssh-dsa", 6 ) );
+				  LENGTH_SIZE + sizeofString32( "ssh-dsa", 6 ) + sigLength );
 		writeUint32( &stream, sizeofString32( "ssh-dsa", 6 ) );
 		writeAlgoString( &stream, CRYPT_ALGO_DSA );
-		headerSize = stell( &stream );
-		headerEndPtr = sMemBufPtr( &stream );
+		status = swrite( &stream, sigPtr, sigLength );
+		if( cryptStatusOK( status ) )
+			headerSize = stell( &stream );
 		sMemDisconnect( &stream );
-
-		/* Move the signature data down so that it follows the newly-created
-		   header */
-		memmove( headerEndPtr, sigPtr, sigLength );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* The rewritten signature is now at the start of the buffer, update
 		   the sig. pointer and size to accomodate the added header */
@@ -893,11 +1047,14 @@ static int exchangeClientKeys( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Finally, verify the server's signature on the exchange hash */
-	status = iCryptCheckSignatureEx( sigPtr, sigLength, CRYPT_IFORMAT_SSH,
-							sessionInfoPtr->iKeyexAuthContext,
-							handshakeInfo->iExchangeHashcontext, NULL );
+	status = iCryptCheckSignature( sigPtr, sigLength, CRYPT_IFORMAT_SSH,
+								   sessionInfoPtr->iKeyexAuthContext,
+								   handshakeInfo->iExchangeHashcontext, 
+								   CRYPT_UNUSED, NULL );
 	if( cryptStatusError( status ) )
-		retExt( SESSION_ERRINFO, status, "Bad handshake data signature" );
+		retExt( status, 
+				( status, SESSION_ERRINFO, 
+				  "Bad handshake data signature" ) );
 
 	/* We don't need the hash context any more, get rid of it */
 	krnlSendNotifier( handshakeInfo->iExchangeHashcontext,
@@ -913,15 +1070,14 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 									SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
 	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_USERNAME );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_USERNAME );
 	const ATTRIBUTE_LIST *passwordPtr = \
-				findSessionAttribute( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_PASSWORD );
+				findSessionInfo( sessionInfoPtr->attributeList,
+								 CRYPT_SESSINFO_PASSWORD );
 	STREAM stream;
 	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	void *signedDataPtr;
-	int signedDataLength, stringLength, length, packetOffset, status;
+	int stringLength, signedDataLength, length, packetOffset, status;
 
 	/* Set up the security information required for the session */
 	status = initSecurityInfo( sessionInfoPtr, handshakeInfo );
@@ -930,7 +1086,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 
 	/* Wait for the server's change cipherspec message.  From this point
 	   on the read channel is in the secure state */
-	status = readPacketSSH2( sessionInfoPtr, SSH2_MSG_NEWKEYS, ID_SIZE );
+	status = readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_NEWKEYS, ID_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );
 	sessionInfoPtr->flags |= SESSION_ISSECURE_READ;
@@ -942,9 +1098,10 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		...
 
 	   After this point the write channel is also in the secure state */
-	openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-						 SSH2_MSG_NEWKEYS );
-	status = wrapPacketSSH2( sessionInfoPtr, &stream, 0 );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
+								  SSH2_MSG_NEWKEYS );
+	if( cryptStatusOK( status ) )
+		status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, FALSE, TRUE );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -955,10 +1112,13 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 	/*	...
 		byte	type = SSH2_MSG_SERVICE_REQUEST
 		string	service_name = "ssh-userauth" */
-	packetOffset = continuePacketStreamSSH( &stream,
-											SSH2_MSG_SERVICE_REQUEST );
-	writeString32( &stream, "ssh-userauth", 0 );
-	status = wrapPacketSSH2( sessionInfoPtr, &stream, packetOffset );
+	status = continuePacketStreamSSH( &stream, SSH2_MSG_SERVICE_REQUEST,
+									  &packetOffset );
+	if( cryptStatusOK( status ) )
+		status = writeString32( &stream, "ssh-userauth", 12 );
+	if( cryptStatusOK( status ) )
+		status = wrapPacketSSH2( sessionInfoPtr, &stream, packetOffset, 
+								 FALSE, TRUE );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -1000,38 +1160,46 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 	   extra RTT delay */
 	status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
 	sMemDisconnect( &stream );
-	if( cryptStatusOK( status ) )
-		status = length = readPacketSSH2( sessionInfoPtr,
-									SSH2_MSG_SERVICE_ACCEPT,
-									ID_SIZE + sizeofString32( "", 8 ) );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = length = \
+		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SERVICE_ACCEPT,
+						  ID_SIZE + sizeofString32( "", 8 ) );
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
 	sgetc( &stream );		/* Skip packet type */
-	status = readString32( &stream, stringBuffer, &stringLength,
-						   CRYPT_MAX_TEXTSIZE );
+	status = readString32( &stream, stringBuffer, CRYPT_MAX_TEXTSIZE,
+						   &stringLength );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) || \
 		stringLength != 12 || memcmp( stringBuffer, "ssh-userauth", 12 ) )
+		{
 		/* More of a sanity check than anything else, the MAC should have
 		   caught any keying problems */
-		retExt( SESSION_ERRINFO, CRYPT_ERROR_BADDATA,
-				"Invalid service accept packet" );
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Invalid service accept packet" ) );
+		}
 
 	/* The buggy Tectia (ssh.com) server requires a dummy request for
 	   authentication methods, otherwise it rejects any method other than
 	   'password' as invalid, with the error "Client requested non-existing
 	   method 'publickey'".  To work around this we submit a dummy auth.
 	   request using the method 'none' */
-	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_TECTIA )
+	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_DUMMYUSERAUTH )
 		{
 		/* Send the dummy auth request */
-		openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-							 SSH2_MSG_USERAUTH_REQUEST );
+		status = openPacketStreamSSH( &stream, sessionInfoPtr, 
+									  CRYPT_USE_DEFAULT,
+									  SSH2_MSG_USERAUTH_REQUEST );
+		if( cryptStatusError( status ) )
+			return( status );
 		writeString32( &stream, userNamePtr->value, userNamePtr->valueLength );
-		writeString32( &stream, "ssh-connection", 0 );
-		writeString32( &stream, "none", 0 );
-		status = wrapPacketSSH2( sessionInfoPtr, &stream, 0 );
+		writeString32( &stream, "ssh-connection", 14 );
+		status = writeString32( &stream, "none", 4 );
+		if( cryptStatusOK( status ) )
+			status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, FALSE, TRUE );
 		if( cryptStatusOK( status ) )
 			status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
 		sMemDisconnect( &stream );
@@ -1042,8 +1210,9 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		   just something used to de-confuse the buggy Tectia server, we
 		   ignore the content (as long as the packet's valid), any auth.
 		   problems will be resolved by the real auth below */
-		status = length = readPacketSSH2( sessionInfoPtr,
-										  SSH2_MSG_SPECIAL_USERAUTH, ID_SIZE );
+		status = length = \
+			readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH, 
+							  ID_SIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -1064,18 +1233,20 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 	   handshake phase) is disconnect, tell the user what went wrong, and try
 	   again.  The current mechanism does this anyway, so we don't gain much
 	   except extra RTT delays by adding this question-and-answer facility */
-	openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-						 SSH2_MSG_USERAUTH_REQUEST );
-	streamBookmarkSetFullPacket( &stream, signedDataPtr, signedDataLength );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
+								  SSH2_MSG_USERAUTH_REQUEST );
+	if( cryptStatusError( status ) )
+		return( status );
+	streamBookmarkSetFullPacket( &stream, signedDataLength );
 	writeString32( &stream, userNamePtr->value, userNamePtr->valueLength );
-	writeString32( &stream, "ssh-connection", 0 );
+	writeString32( &stream, "ssh-connection", 14 );
 	if( passwordPtr != NULL )
 		{
 		/*	...
 			string	method-name = "password"
 			boolean	FALSE
 			string	password */
-		writeString32( &stream, "password", 0 );
+		writeString32( &stream, "password", 8 );
 		sputc( &stream, 0 );
 		status = writeString32( &stream, passwordPtr->value,
 								passwordPtr->valueLength );
@@ -1084,7 +1255,8 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		{
 		CRYPT_ALGO_TYPE pkcAlgo;
 		MESSAGE_CREATEOBJECT_INFO createInfo;
-		int sigLength;
+		void *dataPtr, *signedDataPtr = DUMMY_INIT_PTR;
+		int dataLength, sigLength = DUMMY_INIT;
 
 		krnlSendMessage( sessionInfoPtr->privateKey, IMESSAGE_GETATTRIBUTE,
 						 &pkcAlgo, CRYPT_CTXINFO_ALGO );
@@ -1106,24 +1278,29 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		   Note the doubled-up algorithm name, the spec first requires that
 		   the public-key auth packet send the algorithm name and then
 		   includes it a second time as part of the client key info */
-		writeString32( &stream, "publickey", 0 );
+		writeString32( &stream, "publickey", 9 );
 		sputc( &stream, 1 );
 		writeAlgoString( &stream, pkcAlgo );
 		status = exportAttributeToStream( &stream,
 										  sessionInfoPtr->privateKey,
 										  CRYPT_IATTRIBUTE_KEY_SSH );
+		if( cryptStatusOK( status ) )
+			{
+			status = streamBookmarkComplete( &stream, &signedDataPtr, 
+											 &signedDataLength, 
+											 signedDataLength );
+			}
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
 			return( status );
 			}
-		streamBookmarkComplete( &stream, signedDataLength );
 
 		/* Hash the authentication request data:
 
 			string		exchange hash
 			[ user_auth_request packet payload up to signature start ] */
-		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA );
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  OBJECT_TYPE_CONTEXT );
@@ -1133,18 +1310,27 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 			return( status );
 			}
 		if( sessionInfoPtr->protocolFlags & SSH_PFLAG_NOHASHLENGTH )
+			{
 			/* Some implementations erroneously omit the length when hashing
 			    the exchange hash */
-			krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-							 handshakeInfo->sessionID,
-							 handshakeInfo->sessionIDlength );
+			status = krnlSendMessage( createInfo.cryptHandle, 
+									  IMESSAGE_CTX_HASH,
+									  handshakeInfo->sessionID,
+									  handshakeInfo->sessionIDlength );
+			}
 		else
-			hashAsString( createInfo.cryptHandle, handshakeInfo->sessionID,
-						  handshakeInfo->sessionIDlength );
-		krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-						 signedDataPtr, signedDataLength );
-		status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_CTX_HASH,
-								  "", 0 );
+			{
+			status = hashAsString( createInfo.cryptHandle, 
+								   handshakeInfo->sessionID,
+								   handshakeInfo->sessionIDlength );
+			}
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( createInfo.cryptHandle, 
+									  IMESSAGE_CTX_HASH,
+									  signedDataPtr, signedDataLength );
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( createInfo.cryptHandle, 
+									  IMESSAGE_CTX_HASH, "", 0 );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -1153,13 +1339,18 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 			}
 
 		/* Sign the hash.  The reason for the min() part of the expression
-		   is that iCryptCreateSignatureEx() gets suspicious of very large
+		   is that iCryptCreateSignature() gets suspicious of very large 
 		   buffer sizes, for example when the user has specified the use of
-		   a 1MB send buffer */
-		status = iCryptCreateSignatureEx( sMemBufPtr( &stream ), &sigLength,
-						min( sMemDataLeft( &stream ), 16384 ),
-						CRYPT_IFORMAT_SSH, sessionInfoPtr->privateKey,
-						createInfo.cryptHandle, CRYPT_UNUSED, CRYPT_UNUSED );
+		   a huge send buffer */
+		status = sMemGetDataBlockRemaining( &stream, &dataPtr, &dataLength );
+		if( cryptStatusOK( status ) )
+			{
+			status = iCryptCreateSignature( dataPtr, 
+						min( dataLength, MAX_INTLENGTH_SHORT - 1 ), 
+						&sigLength, CRYPT_IFORMAT_SSH, 
+						sessionInfoPtr->privateKey, createInfo.cryptHandle, 
+						CRYPT_UNUSED, CRYPT_UNUSED );
+			}
 		if( cryptStatusOK( status ) )
 			status = sSkip( &stream, sigLength );
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
@@ -1171,7 +1362,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Send the authentication info to the server */
-	status = wrapPacketSSH2( sessionInfoPtr, &stream, 0 );
+	status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, TRUE, TRUE );
 	if( cryptStatusOK( status ) )
 		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
 	sMemDisconnect( &stream );
@@ -1179,8 +1370,9 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		return( status );
 
 	/* Wait for the server's ack of the authentication */
-	status = length = readPacketSSH2( sessionInfoPtr,
-									  SSH2_MSG_SPECIAL_USERAUTH, ID_SIZE );
+	status = length = \
+		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH, 
+						  ID_SIZE );
 	if( !cryptStatusError( status ) )
 		{
 		int type;
@@ -1189,10 +1381,12 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 		type = sgetc( &stream );
 		sMemDisconnect( &stream );
 		if( type == SSH2_MSG_USERAUTH_FAILURE )
+			{
 			/* The authentication failed, provide more specific details for
 			   the caller, with an optional fallback to PAM authentication
 			   if the server requested it */
 			status = reportAuthFailure( sessionInfoPtr, length, FALSE );
+			}
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1220,7 +1414,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 void initSSH2clientProcessing( SESSION_INFO *sessionInfoPtr,
 							   SSH_HANDSHAKE_INFO *handshakeInfo )
 	{
-	UNUSED( sessionInfoPtr );
+	UNUSED_ARG( sessionInfoPtr );
 
 	handshakeInfo->beginHandshake = beginClientHandshake;
 	handshakeInfo->exchangeKeys = exchangeClientKeys;

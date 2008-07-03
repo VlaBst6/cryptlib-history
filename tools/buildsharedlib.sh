@@ -67,8 +67,23 @@ shift
 shift
 shift
 
+# Create the response file to hold the link command
+
 rm -f $LINKFILE
 echo $* > $LINKFILE
+
+# Build the shared lib.  The use of x86 asm code causes some issues with
+# relocation, to avoid this we use the -Bsymbolic option with the linker,
+# which (explicitly) tells the linker to perform symbol lookup in the local
+# library first and (implicitly) gets rid of spurious relocations because
+# instead of having to perform intra-library references via the global
+# offset table using a call to a jump table based at %ebx, the linker
+# resolves the reference and uses a direct call as expected.  A nice
+# side-effect of this rewiring of indirect to direct calls is that it makes
+# it much harder to mess with library internals by getting your own symbols
+# referenced before the library-internal ones (for example by using
+# LD_PRELOAD), thus redirecting control flow to arbitrary external code.
+
 case $OSNAME in
 	'AIX')
 		$LD -o shrlibcl.o -bE:cryptlib.exp -bM:SRE -bnoentry -lpthread \
@@ -98,7 +113,15 @@ case $OSNAME in
 		strip $LIBNAME ;;
 
 	*)
-		$LD -shared -o $LIBNAME `cat $LINKFILE` `./tools/getlibs.sh autodetect` ;
+		if [ `$LD -v 2>&1 | grep -c gcc` -gt 0 -a \
+			`gcc -Wl,-Bsymbolic 2>&1 | grep -c unrecognized` = 0 ] ; then
+			$LD -shared -Wl,-Bsymbolic -o $LIBNAME `cat $LINKFILE` `./tools/getlibs.sh autodetect` ;
+		else
+			$LD -shared -o $LIBNAME `cat $LINKFILE` `./tools/getlibs.sh autodetect` ;
+		fi
+		if [ `which objdump` -a `objdump -p $LIBNAME | grep -c TEXTREL` -gt '0' ] ; then
+			echo "Warning: Shared library still contains TEXTREL records." ;
+		fi
 		strip $LIBNAME ;;
 esac
 rm -f $LINKFILE

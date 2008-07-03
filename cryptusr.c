@@ -26,7 +26,7 @@
    normal user and SO privileges.  This is because in its usual usage mode 
    where cryptlib is functioning as a single-user system the user doesn't 
    know about the existence of user objects and just wants everything to 
-   work the way that they expect.  Because of this, the default user has to 
+   work the way that they expect.  Because of this the default user has to 
    be able to perform the full range of available operations, requiring that 
    they appear as both a normal user and an SO.
 
@@ -36,7 +36,8 @@
    will need to be fixed */
 
 static const USER_FILE_INFO FAR_BSS defaultUserInfo = {
-#if 0	/* Disabled since ACL checks are messed up by dual-user, 18/5/02 */
+#if 0	/* 18/05/02 Disabled since ACL checks are messed up by the existence
+		   of dual-user roles */
 	CRYPT_USER_NONE,				/* Special-case SO+normal user */
 #else
 	CRYPT_USER_SO,					/* Special-case SO user */
@@ -53,393 +54,84 @@ static const USER_FILE_INFO FAR_BSS defaultUserInfo = {
 *																			*
 ****************************************************************************/
 
-/* Exit after setting extended error information */
+/* Process user-object-specific messages */
 
-static int exitError( USER_INFO *userInfoPtr,
-					  const CRYPT_ATTRIBUTE_TYPE errorLocus,
-					  const CRYPT_ERRTYPE_TYPE errorType, const int status )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int processUserManagement( INOUT USER_INFO *userInfoPtr, 
+								  STDC_UNUSED void *userMgtInfo, 
+								  IN_ENUM( MESSAGE_USERMGMT ) \
+									const MESSAGE_USERMGMT_TYPE userMgtType )
 	{
-	setErrorInfo( userInfoPtr, errorLocus, errorType );
-	return( status );
-	}
+	assert( isWritePtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	
+	REQUIRES( userMgtType > MESSAGE_USERMGMT_NONE && \
+			  userMgtType < MESSAGE_USERMGMT_LAST );
 
-static int exitErrorInited( USER_INFO *userInfoPtr,
-							const CRYPT_ATTRIBUTE_TYPE errorLocus )
-	{
-	return( exitError( userInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_PRESENT, 
-					   CRYPT_ERROR_INITED ) );
-	}
-
-static int exitErrorNotFound( USER_INFO *userInfoPtr,
-							  const CRYPT_ATTRIBUTE_TYPE errorLocus )
-	{
-	return( exitError( userInfoPtr, errorLocus, CRYPT_ERRTYPE_ATTR_ABSENT, 
-					   CRYPT_ERROR_NOTFOUND ) );
-	}
-
-/* Process a set-attribute operation that initiates an operation that's 
-   performed in two phases.  The reason for the split is that the second 
-   phase doesn't require the use of the user object data any more and can be 
-   a somewhat lengthy process due to disk accesses or lengthy crypto 
-   operations.  Because of this we unlock the user object between the two 
-   phases to ensure that the second phase doesn't stall all other operations 
-   that require this user object */
-
-static int processTwoPhaseOperation( USER_INFO *userInfoPtr, 
-									 const int messageValue, 
-									 const int value )
-	{
-	const CRYPT_USER iCryptUser = userInfoPtr->objectHandle;
-	int refCount, selfTestStatus, status;
-
-	assert( messageValue == CRYPT_OPTION_CONFIGCHANGED || \
-			messageValue == CRYPT_OPTION_SELFTESTOK );
-
-	if( messageValue == CRYPT_OPTION_CONFIGCHANGED )
+	switch( userMgtType )
 		{
-		char userFileName[ 16 + 8 ];
-		void *data;
-		int length;
-
-		/* The config option write is performed in two phases, a first phase
-		   that encodes the config data and a second phase that writes the 
-		   data to disk */
-		if( userInfoPtr->userFileInfo.fileRef == CRYPT_UNUSED )
-			strlcpy_s( userFileName, 16, "cryptlib" );
-		else
-			sprintf_s( userFileName, 16, "u%06x", 
-					   userInfoPtr->userFileInfo.fileRef );
-		status = prepareConfigData( userInfoPtr->configOptions,
-								    userFileName, userInfoPtr->trustInfoPtr,
-								    &data, &length );
-		if( status != OK_SPECIAL )
-			return( status );
-
-		/* If nothing in the config data has changed, we're done */
-		if( length <= 0 && !userInfoPtr->trustInfoChanged )
+		case MESSAGE_USERMGMT_ZEROISE:
+			userInfoPtr->flags |= USER_FLAG_ZEROISE;
 			return( CRYPT_OK );
-
-		/* We've got the config data in a memory buffer, we can unlock the
-		   user object to allow external access while we commit the in-memory
-		   data to disk */
-		krnlSuspendObject( iCryptUser, &refCount );
-		status = commitConfigData( iCryptUser, userFileName, data, length );
-		clFree( "userMessageFunction", data );
-		krnlResumeObject( iCryptUser, refCount );
-		if( cryptStatusOK( status ) )
-			userInfoPtr->trustInfoChanged = FALSE;
-
-		return( status );
 		}
 
-	/* It's a self-test, forward the message to the system object with 
-	   the user object unlocked, tell the system object to perform its self-
-	   test, and then re-lock the user object and set the self-test result 
-	   value.  Since the self-test config setting will be marked as in-use 
-	   at this point (to avoid having another thread update it while the
-	   user object was unlocked), it can't be written to directly.  In order
-	   to update it, we set the CRYPT_OPTION_LAST pseudo-option to the value 
-	   to store in the CRYPT_OPTION_SELFTESTOK option.
-	   
-	   An alternative way to handle this would be implement an advisory-
-	   locking mechanism for config options, but this adds a great deal of
-	   complexity just to handle this one single case, so until there's a
-	   wider need for general-purpose config option locking the current 
-	   approach will do */
-	krnlSuspendObject( iCryptUser, &refCount );
-	selfTestStatus = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
-									  IMESSAGE_SETATTRIBUTE, 
-									  ( void * ) &value,
-									  CRYPT_IATTRIBUTE_SELFTEST );
-	status = krnlResumeObject( iCryptUser, refCount );
-	if( cryptStatusOK( status ) )
-		status = setOption( userInfoPtr->configOptions, CRYPT_OPTION_LAST,
-							cryptStatusOK( selfTestStatus ) ? value : 0 );
-	return( status );
+	retIntError();
 	}
 
-/****************************************************************************
-*																			*
-*						User Attribute Handling Functions					*
-*																			*
-****************************************************************************/
-
-/* Handle data sent to or read from a user object */
-
-static int processGetAttribute( USER_INFO *userInfoPtr,
-								void *messageDataPtr, const int messageValue )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int processTrustManagement( INOUT USER_INFO *userInfoPtr, 
+								   INOUT_HANDLE CRYPT_HANDLE *iCertificate, 
+								   IN_ENUM( MESSAGE_TRUSTMGMT ) \
+									const MESSAGE_TRUSTMGMT_TYPE trustMgtType )
 	{
-	int *valuePtr = ( int * ) messageDataPtr;
 	int status;
 
-	/* Clear return value */
-	*valuePtr = CRYPT_ERROR;
+	assert( isWritePtr( userInfoPtr, sizeof( USER_INFO ) ) );
+	assert( isWritePtr( iCertificate, sizeof( CRYPT_HANDLE ) ) );
 
-	switch( messageValue )
+	REQUIRES( trustMgtType > MESSAGE_TRUSTMGMT_NONE && \
+			  trustMgtType < MESSAGE_TRUSTMGMT_LAST );
+
+	switch( trustMgtType )
 		{
-		case CRYPT_USERINFO_CAKEY_CERTSIGN:
-		case CRYPT_USERINFO_CAKEY_CRLSIGN:
-		case CRYPT_USERINFO_CAKEY_OCSPSIGN:
-			{
-			CRYPT_CERTIFICATE caCert;
-
-			/* Make sure that the key type that we're after is present in 
-			   the object */
-			if( userInfoPtr->iCryptContext == CRYPT_UNUSED )
-				return( exitErrorNotFound( userInfoPtr, messageValue ) );
-
-			/* Since the CA signing key tied to the user object is meant to 
-			   be used only through cryptlib-internal means, we shouldn't 
-			   really be returning it to the caller.  We can return the 
-			   ssociated CA cert, but this may be an internal-only object 
-			   that the caller can't do anything with.  To avoid this 
-			   problem, we isolate the cert by returning a copy of the
-			   associated certificate object */
-			status = krnlSendMessage( userInfoPtr->iCryptContext, 
-									  IMESSAGE_GETATTRIBUTE, &caCert,
-									  CRYPT_IATTRIBUTE_CERTCOPY );
-			if( cryptStatusOK( status ) )
-				*valuePtr = caCert;
-			return( status );
-			}
-
-		case CRYPT_IATTRIBUTE_CTL:
-			{
-			MESSAGE_CREATEOBJECT_INFO createInfo;
-
-			/* Check whether there are trusted certs present */
-			status = enumTrustedCerts( userInfoPtr->trustInfoPtr,
-									   CRYPT_UNUSED, CRYPT_UNUSED );
-			if( cryptStatusError( status ) )
-				return( status );
-
-			/* Create a cert chain meta-object to hold the overall set of
-			   certs */
-			setMessageCreateObjectInfo( &createInfo,
-										CRYPT_CERTTYPE_CERTCHAIN );
-			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-									  IMESSAGE_DEV_CREATEOBJECT,
-									  &createInfo, OBJECT_TYPE_CERTIFICATE );
-			if( cryptStatusError( status ) )
-				return( status );
-
-			/* Assemble the trusted certs into the cert chain */
-			status = enumTrustedCerts( userInfoPtr->trustInfoPtr,
-									   createInfo.cryptHandle, CRYPT_UNUSED );
-			if( cryptStatusOK( status ) )
-				*valuePtr = createInfo.cryptHandle;
-			else
-				krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			return( status );
-			}
-		}
-
-	/* Anything else has to be a config option */
-	assert( messageValue > CRYPT_OPTION_FIRST && \
-			messageValue < CRYPT_OPTION_LAST );
-
-	/* A numeric-value get can never fail because we always have default 
-	   values present */
-	*valuePtr = getOption( userInfoPtr->configOptions, messageValue );
-	return( CRYPT_OK );
-	}
-
-static int processGetAttributeS( USER_INFO *userInfoPtr,
-								 void *messageDataPtr, const int messageValue )
-	{
-	MESSAGE_DATA *msgData = messageDataPtr;
-	const char *stringVal;
-
-	/* This can only be a config option */
-	assert( messageValue > CRYPT_OPTION_FIRST && \
-			messageValue < CRYPT_OPTION_LAST );
-
-	/* Check whether there's a config value of this type present */
-	stringVal = getOptionString( userInfoPtr->configOptions, messageValue );
-	if( stringVal == NULL )
-		{
-		/* No value set, clear the return value in case the caller isn't 
-		   checking the return code */
-		if( msgData->data != NULL )
-			*( ( char * ) msgData->data ) = '\0';
-		msgData->length = 0;
-		return( CRYPT_ERROR_NOTFOUND );
-		}
-
-	return( attributeCopy( msgData, stringVal, strlen( stringVal ) ) );
-	}
-
-static int processSetAttribute( USER_INFO *userInfoPtr,
-								void *messageDataPtr, const int messageValue )
-	{
-	const int value = *( ( int * ) messageDataPtr );
-	int status;
-
-	switch( messageValue )
-		{
-		case CRYPT_USERINFO_CAKEY_CERTSIGN:
-		case CRYPT_USERINFO_CAKEY_CRLSIGN:
-		case CRYPT_USERINFO_CAKEY_OCSPSIGN:
-			{
-			const int requiredKeyUsage = \
-				( messageValue == CRYPT_USERINFO_CAKEY_CERTSIGN ) ? \
-					CRYPT_KEYUSAGE_KEYCERTSIGN : \
-				( messageValue == CRYPT_USERINFO_CAKEY_CRLSIGN ) ? \
-					CRYPT_KEYUSAGE_CRLSIGN : \
-					( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-					  CRYPT_KEYUSAGE_NONREPUDIATION );
-			int attributeValue;
-
-			/* Make sure that this key type isn't already present in the 
-			   object */
-			if( userInfoPtr->iCryptContext != CRYPT_UNUSED )
-				return( exitErrorInited( userInfoPtr, messageValue ) );
-
-			/* Make sure that we've been given a signing key */
-			status = krnlSendMessage( value, IMESSAGE_CHECK, NULL, 
-									  MESSAGE_CHECK_PKC_SIGN );
-			if( cryptStatusError( status ) )
-				return( CRYPT_ARGERROR_NUM1 );
-
-			/* Make sure that the object has an initialised cert of the
-			   correct type associated with it */
-			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
-									  &attributeValue, 
-									  CRYPT_CERTINFO_IMMUTABLE );
-			if( cryptStatusError( status ) || !attributeValue )
-				return( CRYPT_ARGERROR_NUM1 );
-			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
-									  &attributeValue, 
-									  CRYPT_CERTINFO_CERTTYPE );
-			if( cryptStatusError( status ) ||
-				( attributeValue != CRYPT_CERTTYPE_CERTIFICATE && \
-				  attributeValue != CRYPT_CERTTYPE_CERTCHAIN ) )
-				return( CRYPT_ARGERROR_NUM1 );
-
-			/* Make sure that the key usage required for this action is
-			   permitted.  OCSP is a bit difficult since the key may or may
-			   not have an OCSP extended usage (depending on whether the CA
-			   bothers to set it or not, even if they do they may delegate
-			   the functionality to a short-term generic signing key) and the
-			   signing ability may be indicated by either a digital signature
-			   flag or a nonrepudiation flag depending on whether the CA
-			   considers an OCSP signature to be short or long-term, so we
-			   just check for a generic signing ability */
-			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
-									  &attributeValue, 
-									  CRYPT_CERTINFO_KEYUSAGE );
-			if( cryptStatusError( status ) || \
-				!( attributeValue & requiredKeyUsage ) )
-				return( CRYPT_ARGERROR_NUM1 );
-
-			/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-			/* Save key in the keyset at some point */
-			/* Also handle get (gets public key) and /*
-			/*			   delete (removes key) */
-			/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-
-			return( status );
-			}
-
-		case CRYPT_IATTRIBUTE_INITIALISED:
-			/* If it's an initialisation message, there's nothing to do (we
-			   get these when creating the default user object, which doesn't
-			   require an explicit logon to move it into the high state) */
-			assert( userInfoPtr->objectHandle == DEFAULTUSER_OBJECT_HANDLE );
-			return( CRYPT_OK );
-
-		case CRYPT_IATTRUBUTE_CERTKEYSET:
-			/* If it's a presence check, handle it specially */
-			if( value == CRYPT_UNUSED )
-				return( enumTrustedCerts( userInfoPtr->trustInfoPtr,
-										  CRYPT_UNUSED, CRYPT_UNUSED ) );
-
-			/* Send all trusted certs to the keyset */
-			return( enumTrustedCerts( userInfoPtr->trustInfoPtr, 
-									  CRYPT_UNUSED, value ) );
-
-		case CRYPT_IATTRIBUTE_CTL:
-			/* Add the certs via the trust list */
-			status = addTrustEntry( userInfoPtr->trustInfoPtr,
-									value, NULL, 0, FALSE );
-			if( cryptStatusOK( status ) )
-				userInfoPtr->trustInfoChanged = TRUE;
-			return( status );
-
-		case CRYPT_IATTRIBUTE_CERT_TRUSTED:
+		case MESSAGE_TRUSTMGMT_ADD:
 			/* Add the cert to the trust info */
-			status = addTrustEntry( userInfoPtr->trustInfoPtr, value,
-									NULL, 0, TRUE );
-			if( cryptStatusOK( status ) )
-				{
-				userInfoPtr->trustInfoChanged = TRUE;
-				setOption( userInfoPtr->configOptions,
-						   CRYPT_OPTION_CONFIGCHANGED, TRUE );
-				}
-			return( status );
+			status = addTrustEntry( userInfoPtr->trustInfoPtr, 
+									*iCertificate, NULL, 0, TRUE );
+			if( cryptStatusError( status ) )
+				return( status );
+			userInfoPtr->trustInfoChanged = TRUE;
+			return( setOption( userInfoPtr->configOptions,
+							   CRYPT_OPTION_CONFIGCHANGED, TRUE ) );
 
-		case CRYPT_IATTRIBUTE_CERT_UNTRUSTED:
+		case MESSAGE_TRUSTMGMT_DELETE:
 			{
 			void *entryToDelete;
 
-			/* This is a rather ugly operation since what we're actually
-			   doing is removing a cert and not adding it, however we
-			   can't do this via an attribute delete because that just
-			   deletes a CRYPT_IATTRIBUTE_CERT_TRUSTED as an attribute, 
-			   but can't identify which trusted cert to delete.  A similar
-			   problem occurs with CRYPT_IATTRIBUTE_CERT_TRUSTEDISSUER
-			   below */
-
 			/* Find the entry to delete and remove it */
 			if( ( entryToDelete = findTrustEntry( userInfoPtr->trustInfoPtr,
-												  value, FALSE ) ) == NULL )
+												  *iCertificate, FALSE ) ) == NULL )
 				return( CRYPT_ERROR_NOTFOUND );
 			deleteTrustEntry( userInfoPtr->trustInfoPtr, entryToDelete );
 			userInfoPtr->trustInfoChanged = TRUE;
-			setOption( userInfoPtr->configOptions,
-					   CRYPT_OPTION_CONFIGCHANGED, TRUE );
-			return( CRYPT_OK );
+			return( setOption( userInfoPtr->configOptions,
+							   CRYPT_OPTION_CONFIGCHANGED, TRUE ) );
 			}
 
-		case CRYPT_IATTRIBUTE_CERT_CHECKTRUST:
-			{
-			int certType;
-
-			/* We can't perform this action as a MESSAGE_CHECK because these
-			   are sent to the object being checked (the certificate in this
-			   case) rather than the user object that it's associated with, 
-			   so we have to do it as a pseudo-attribute-set action */
-			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, 
-									  &certType, CRYPT_CERTINFO_CERTTYPE );
-			if( cryptStatusError( status ) || \
-				( certType != CRYPT_CERTTYPE_CERTIFICATE && \
-				  certType != CRYPT_CERTTYPE_CERTCHAIN ) )
-				/* A non-cert can never be implicitly trusted */
-				return( FALSE );
-
+		case MESSAGE_TRUSTMGMT_CHECK:
 			/* Check whether the cert is present in the trusted certs
 			   collection */
-			return( ( findTrustEntry( userInfoPtr->trustInfoPtr, value,
-									  FALSE ) != NULL ) ? \
+			return( ( findTrustEntry( userInfoPtr->trustInfoPtr, 
+									  *iCertificate, FALSE ) != NULL ) ? \
 					CRYPT_OK : CRYPT_ERROR_INVALID );
-			}
 
-		case CRYPT_IATTRIBUTE_CERT_TRUSTEDISSUER:
+		case MESSAGE_TRUSTMGMT_GETISSUER:
 			{
 			void *trustedIssuerInfo;
 			int trustedCert;
 
-			/* This is a highly nonstandard use of integer parameters that
-			   passes in the user cert as its parameter and returns the
-			   issuer cert in the same parameter, overwriting the user
-			   cert value.  This is the sole message that does this,
-			   unfortunately there's no clean way to handle this without
-			   implementing a new message type for this purpose.  Since the
-			   kernel is stateless it can only look at the parameter value
-			   but not detect that it's changed during the call, so it works
-			   for now, but it would be nicer to find some way to fix this */
+			/* Get the trusted issuer of this certificate */
 			trustedIssuerInfo = findTrustEntry( userInfoPtr->trustInfoPtr,
-												value, TRUE );
+												*iCertificate, TRUE );
 			if( trustedIssuerInfo == NULL )
 				return( CRYPT_ERROR_NOTFOUND );
 
@@ -447,70 +139,14 @@ static int processSetAttribute( USER_INFO *userInfoPtr,
 			trustedCert = getTrustedCert( trustedIssuerInfo );
 			if( cryptStatusError( trustedCert ) )
 				return( trustedCert );
-			assert( trustedCert != value );
-			*( ( int * ) messageDataPtr ) = trustedCert;
+			ENSURES( trustedCert != *iCertificate );
+			*iCertificate = trustedCert;
+
 			return( CRYPT_OK );
 			}
 		}
 
-	/* Anything else has to be a config option */
-	assert( messageValue > CRYPT_OPTION_FIRST && \
-			messageValue < CRYPT_OPTION_LAST );
-
-	/* Set the option.  If it's not one of the two special options with 
-	   side-effects, we're done */
-	status = setOption( userInfoPtr->configOptions, messageValue, value );
-	if( messageValue != CRYPT_OPTION_CONFIGCHANGED && \
-		messageValue != CRYPT_OPTION_SELFTESTOK )
-		return( status );
-
-	/* If there was a problem setting a side-effects option, don't go any 
-	   further */
-	if( status != OK_SPECIAL )
-		return( status );
-
-	/* Complete the processing of the special options */
-	return( processTwoPhaseOperation( userInfoPtr, messageValue, value ) );
-	}
-
-static int processSetAttributeS( USER_INFO *userInfoPtr,
-								 void *messageDataPtr, const int messageValue )
-	{
-	MESSAGE_DATA *msgData = messageDataPtr;
-
-	switch( messageValue )
-		{
-		case CRYPT_USERINFO_PASSWORD:
-			return( setUserPassword( userInfoPtr, msgData->data,
-									 msgData->length ) );
-		}
-
-	/* Anything else has to be a config option */
-	assert( messageValue > CRYPT_OPTION_FIRST && \
-			messageValue < CRYPT_OPTION_LAST );
-	return( setOptionString( userInfoPtr->configOptions, messageValue, 
-							 msgData->data, msgData->length ) );
-	}
-
-static int processDeleteAttribute( USER_INFO *userInfoPtr,
-								   const int messageValue )
-	{
-	switch( messageValue )
-		{
-		case CRYPT_USERINFO_CAKEY_CERTSIGN:
-		case CRYPT_USERINFO_CAKEY_CRLSIGN:
-		case CRYPT_USERINFO_CAKEY_OCSPSIGN:
-			return( CRYPT_ERROR_NOTFOUND );
-		}
-
-	/* Anything else has to be a config option */
-	assert( messageValue > CRYPT_OPTION_FIRST && \
-			messageValue < CRYPT_OPTION_LAST );
-
-	/* Only string attributes can be deleted (enforced by the kernel), so we 
-	   can safely pass all calls through to the set-string function */
-	return( setOptionString( userInfoPtr->configOptions, messageValue, 
-							 NULL, 0 ) );
+	retIntError();
 	}
 
 /****************************************************************************
@@ -521,11 +157,19 @@ static int processDeleteAttribute( USER_INFO *userInfoPtr,
 
 /* Handle a message sent to a user object */
 
-static int userMessageFunction( void *objectInfoPtr,
-								const MESSAGE_TYPE message,
-								void *messageDataPtr, const int messageValue )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int userMessageFunction( INOUT TYPECAST( USER_INFO * ) \
+									void *objectInfoPtr,
+								IN_MESSAGE const MESSAGE_TYPE message,
+								void *messageDataPtr, 
+								IN_INT_Z const int messageValue )
 	{
 	USER_INFO *userInfoPtr = ( USER_INFO * ) objectInfoPtr;
+
+	assert( isWritePtr( objectInfoPtr, sizeof( USER_INFO ) ) );
+
+	REQUIRES( message > MESSAGE_NONE && message < MESSAGE_LAST );
+	REQUIRES( messageValue >= 0 && messageValue < MAX_INTLENGTH );
 
 	/* Process destroy object messages */
 	if( message == MESSAGE_DESTROY )
@@ -537,62 +181,127 @@ static int userMessageFunction( void *objectInfoPtr,
 		if( userInfoPtr->iKeyset != CRYPT_ERROR )
 			krnlSendNotifier( userInfoPtr->iKeyset, IMESSAGE_DECREFCOUNT );
 
+		/* If we're doing a zeroise, clear any persistent user data.  It's a
+		   bit unclear what to do in case of an error at this point since 
+		   we're in the middle of a shutdown anyway.  We can't really cancel
+		   the shutdown because the zeroise fails (what do you do if there's
+		   an exception in the exception handler?) so we just have to 
+		   continue and ignore the failure */
+		if( userInfoPtr->flags & USER_FLAG_ZEROISE )
+			( void ) zeroiseUsers( userInfoPtr );
+
 		/* Clean up the trust info and config options */
-		endTrustInfo( userInfoPtr->trustInfoPtr );
-		endOptions( userInfoPtr->configOptions );
+		if( userInfoPtr->trustInfoPtr != NULL )
+			endTrustInfo( userInfoPtr->trustInfoPtr );
+		if( userInfoPtr->configOptions != NULL )
+			endOptions( userInfoPtr->configOptions );
+		if( userInfoPtr->userIndexPtr != NULL )
+			endUserIndex( userInfoPtr->userIndexPtr );
 
 		return( CRYPT_OK );
 		}
 
+	/* If we're doing a zeroise, don't process any further messages except a 
+	   destroy */
+	if( userInfoPtr->flags & USER_FLAG_ZEROISE )
+		return( CRYPT_ERROR_PERMISSION );
+
 	/* Process attribute get/set/delete messages */
 	if( isAttributeMessage( message ) )
 		{
-		if( message == MESSAGE_GETATTRIBUTE )
-			return( processGetAttribute( userInfoPtr, messageDataPtr,
-										 messageValue ) );
-		if( message == MESSAGE_GETATTRIBUTE_S )
-			return( processGetAttributeS( userInfoPtr, messageDataPtr,
-										  messageValue ) );
-		if( message == MESSAGE_SETATTRIBUTE )
-			return( processSetAttribute( userInfoPtr, messageDataPtr,
-										 messageValue ) );
-		if( message == MESSAGE_SETATTRIBUTE_S )
-			return( processSetAttributeS( userInfoPtr, messageDataPtr,
-										  messageValue ) );
-		if( message == MESSAGE_DELETEATTRIBUTE )
-			return( processDeleteAttribute( userInfoPtr, messageValue ) );
+		REQUIRES( message == MESSAGE_GETATTRIBUTE || \
+				  message == MESSAGE_GETATTRIBUTE_S || \
+				  message == MESSAGE_SETATTRIBUTE || \
+				  message == MESSAGE_SETATTRIBUTE_S || \
+				  message == MESSAGE_DELETEATTRIBUTE );
+		REQUIRES( isAttribute( messageValue ) || \
+				  isInternalAttribute( messageValue ) );
 
-		assert( NOTREACHED );
-		return( CRYPT_ERROR );	/* Get rid of compiler warning */
+		if( message == MESSAGE_GETATTRIBUTE )
+			return( getUserAttribute( userInfoPtr, 
+									  ( int * ) messageDataPtr,
+									  messageValue ) );
+		if( message == MESSAGE_GETATTRIBUTE_S )
+			return( getUserAttributeS( userInfoPtr, 
+									   ( MESSAGE_DATA * ) messageDataPtr,
+									   messageValue ) );
+		if( message == MESSAGE_SETATTRIBUTE )
+			{
+			/* CRYPT_IATTRIBUTE_INITIALISED is purely a notification message 
+			   with no parameters so we don't pass it down to the attribute-
+			   handling code */
+			if( messageValue == CRYPT_IATTRIBUTE_INITIALISED )
+				{
+				REQUIRES( userInfoPtr->objectHandle == \
+								DEFAULTUSER_OBJECT_HANDLE );
+				return( CRYPT_OK );
+				}
+
+			return( setUserAttribute( userInfoPtr, 
+									  *( ( int * ) messageDataPtr ),
+									  messageValue ) );
+			}
+		if( message == MESSAGE_SETATTRIBUTE_S )
+			{
+			const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) messageDataPtr;
+
+			return( setUserAttributeS( userInfoPtr, msgData->data, 
+									   msgData->length, messageValue ) );
+			}
+		if( message == MESSAGE_DELETEATTRIBUTE )
+			return( deleteUserAttribute( userInfoPtr, messageValue ) );
+
+		retIntError();
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	/* Process object-specific messages */
+	if( message == MESSAGE_USER_USERMGMT )
+		return( processUserManagement( userInfoPtr, messageDataPtr,
+									   messageValue ) );
+	if( message == MESSAGE_USER_TRUSTMGMT )
+		return( processTrustManagement( userInfoPtr, messageDataPtr,
+									    messageValue ) );
+
+	retIntError();
 	}
 
 /* Open a user object.  This is a low-level function encapsulated by
    createUser() and used to manage error exits */
 
-static int openUser( CRYPT_USER *iCryptUser, const CRYPT_USER cryptOwner,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int openUser( OUT_HANDLE_OPT CRYPT_USER *iCryptUser, 
+					 IN_HANDLE const CRYPT_USER iCryptOwner,
 					 const USER_FILE_INFO *userInfoTemplate,
-					 USER_INFO **userInfoPtrPtr )
+					 OUT_PTR USER_INFO **userInfoPtrPtr )
 	{
 	USER_INFO *userInfoPtr;
 	USER_FILE_INFO *userFileInfo;
-	const OBJECT_SUBTYPE subType = \
-		( userInfoTemplate->type == CRYPT_USER_SO ) ? SUBTYPE_USER_SO : \
-		( userInfoTemplate->type == CRYPT_USER_CA ) ? SUBTYPE_USER_CA : \
-		SUBTYPE_USER_NORMAL;
-	int status;
+	static const MAP_TABLE subtypeMapTbl[] = {
+		{ CRYPT_USER_SO, SUBTYPE_USER_SO },
+		{ CRYPT_USER_CA, SUBTYPE_USER_CA },
+		{ CRYPT_USER_NORMAL, SUBTYPE_USER_NORMAL },
+		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
+		};
+	OBJECT_SUBTYPE subType;
+	int value, status;
+
+	assert( isWritePtr( iCryptUser, sizeof( CRYPT_USER * ) ) );
+	assert( isReadPtr( userInfoTemplate, sizeof( USER_FILE_INFO ) ) );
+	assert( isWritePtr( userInfoPtrPtr, sizeof( USER_INFO * ) ) );
+
+	REQUIRES( ( iCryptOwner == SYSTEM_OBJECT_HANDLE ) || \
+			  ( iCryptOwner == DEFAULTUSER_OBJECT_HANDLE ) || \
+			  isHandleRangeValid( iCryptOwner ) );
 
 	/* The default user is a special type that has both normal user and SO
 	   privileges.  This is because in its usual usage mode where cryptlib 
 	   is functioning as a single-user system the user doesn't know about 
 	   the existence of user objects and just wants everything to work the 
-	   way that they expect.  Because of this, the default user has to be 
+	   way that they expect.  Because of this the default user has to be 
 	   able to perform the full range of available operations, requiring 
 	   that they appear as both a normal user and an SO */
-#if 0	/* Disabled since ACL checks are messed up by dual-user, 18/5/02 */
+#if 0	/* 18/05/02 Disabled since ACL checks are messed up by the existence
+		   of dual-user roles */
 	assert( userInfoTemplate->type == CRYPT_USER_NORMAL || \
 			userInfoTemplate->type == CRYPT_USER_SO || \
 			userInfoTemplate->type == CRYPT_USER_CA || \
@@ -601,10 +310,6 @@ static int openUser( CRYPT_USER *iCryptUser, const CRYPT_USER cryptOwner,
 								defaultUserInfo.userNameLength && \
 			  !memcmp( userInfoTemplate->userName, defaultUserInfo.userName,
 					   defaultUserInfo.userNameLength ) ) );
-#else
-	assert( userInfoTemplate->type == CRYPT_USER_NORMAL || \
-			userInfoTemplate->type == CRYPT_USER_SO || \
-			userInfoTemplate->type == CRYPT_USER_CA );
 #endif /* 0 */
 
 	/* Clear return values */
@@ -612,14 +317,18 @@ static int openUser( CRYPT_USER *iCryptUser, const CRYPT_USER cryptOwner,
 	*userInfoPtrPtr = NULL;
 
 	/* Create the user object */
-	status = krnlCreateObject( ( void ** ) &userInfoPtr, sizeof( USER_INFO ),
-							   OBJECT_TYPE_USER, subType,
-							   CREATEOBJECT_FLAG_NONE, cryptOwner,
+	status = mapValue( userInfoTemplate->type, &value, subtypeMapTbl, 
+					   FAILSAFE_ARRAYSIZE( subtypeMapTbl, MAP_TABLE ) );
+	ENSURES( cryptStatusOK( status ) );
+	subType = value;
+	status = krnlCreateObject( iCryptUser, ( void ** ) &userInfoPtr, 
+							   sizeof( USER_INFO ), OBJECT_TYPE_USER, 
+							   subType, CREATEOBJECT_FLAG_NONE, iCryptOwner,
 							   ACTION_PERM_NONE_ALL, userMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
 	*userInfoPtrPtr = userInfoPtr;
-	*iCryptUser = userInfoPtr->objectHandle = status;
+	userInfoPtr->objectHandle = *iCryptUser;
 	userFileInfo = &userInfoPtr->userFileInfo;
 	userFileInfo->type = userInfoTemplate->type;
 	userFileInfo->state = userInfoTemplate->state;
@@ -633,31 +342,30 @@ static int openUser( CRYPT_USER *iCryptUser, const CRYPT_USER cryptOwner,
 	/* Set up any internal objects to contain invalid handles */
 	userInfoPtr->iKeyset = userInfoPtr->iCryptContext = CRYPT_ERROR;
 
-	/* Initialise the default user config options */
+	/* Initialise the config options and trust info */
 	status = initTrustInfo( &userInfoPtr->trustInfoPtr );
 	if( cryptStatusOK( status ) )
 		status = initOptions( &userInfoPtr->configOptions );
 	return( status );
 	}
 
-int createUser( MESSAGE_CREATEOBJECT_INFO *createInfo,
-				const void *auxDataPtr, const int auxValue )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int createUser( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
+				STDC_UNUSED const void *auxDataPtr, 
+				STDC_UNUSED const int auxValue )
 	{
 	CRYPT_USER iCryptUser;
 	USER_INFO *userInfoPtr;
 	char userFileName[ 16 + 8 ];
 	int fileRef, initStatus, status;
 
-	assert( auxDataPtr == NULL );
-	assert( auxValue == 0 );
+	assert( isWritePtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
 
-	/* Perform basic error checking */
-	if( createInfo->strArgLen1 < MIN_NAME_LENGTH || \
-		createInfo->strArgLen1 > CRYPT_MAX_TEXTSIZE )
-		return( CRYPT_ARGERROR_STR1 );
-	if( createInfo->strArgLen2 < MIN_NAME_LENGTH || \
-		createInfo->strArgLen2 > CRYPT_MAX_TEXTSIZE )
-		return( CRYPT_ARGERROR_STR2 );
+	REQUIRES( auxDataPtr == NULL && auxValue == 0 );
+	REQUIRES( createInfo->strArgLen1 >= MIN_NAME_LENGTH && \
+			  createInfo->strArgLen1 <= CRYPT_MAX_TEXTSIZE );
+	REQUIRES( createInfo->strArgLen2 >= MIN_NAME_LENGTH && \
+			  createInfo->strArgLen2 <= CRYPT_MAX_TEXTSIZE );
 
 	/* We can't create another user object with the same name as the
 	   cryptlib default user (actually we could and nothing bad would happen,
@@ -666,20 +374,6 @@ int createUser( MESSAGE_CREATEOBJECT_INFO *createInfo,
 		!strCompare( createInfo->strArg1, defaultUserInfo.userName,
 					 defaultUserInfo.userNameLength ) )
 		return( CRYPT_ERROR_INITED );
-
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-/* Logging on with the primary SO default password triggers a zeroise,
-   normally we can only use this login after a zeroise but currently there's
-   no way for a user to trigger this so we perform it at the same time as
-   the login - the effect is the same, it just combines two operations in
-   one */
-if( isZeroisePassword( createInfo->strArg2, createInfo->strArgLen2 ) )
-	{
-	status = zeroiseUsers();
-	if( cryptStatusError( status ) )
-		return( status );
-	}
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 
 /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 /* Problem: Access to any user info is via the root user object, however */
@@ -745,12 +439,16 @@ initStatus = CRYPT_ERROR_FAILED;
 iCryptUser = CRYPT_UNUSED;
 fileRef = 0;
 }
-	if( userInfoPtr == NULL )
-		return( initStatus );	/* Create object failed, return immediately */
 	if( cryptStatusError( initStatus ) )
+		{
+		/* If the create object failed, return immediately */
+		if( userInfoPtr == NULL )
+			return( initStatus );
+
 		/* The init failed, make sure that the object gets destroyed when we
 		   notify the kernel that the setup process is complete */
 		krnlSendNotifier( iCryptUser, IMESSAGE_DESTROY );
+		}
 
 	/* We've finished setting up the object-type-specific info, tell the
 	   kernel that the object is ready for use */
@@ -767,7 +465,15 @@ fileRef = 0;
 	if( fileRef >= 0 )
 		{
 		sprintf_s( userFileName, 16, "u%06x", fileRef );
-		readConfig( iCryptUser, userFileName, userInfoPtr->trustInfoPtr );
+		status = readConfig( iCryptUser, userFileName, 
+							 userInfoPtr->trustInfoPtr );
+		if( cryptStatusError( status ) )
+			{
+			/* The config data read failed, we can't create the user 
+			   object that uses it */
+			krnlSendNotifier( iCryptUser, IMESSAGE_DESTROY );
+			return( status );
+			}
 		}
 	createInfo->cryptHandle = iCryptUser;
 	return( CRYPT_OK );
@@ -775,6 +481,7 @@ fileRef = 0;
 
 /* Create the default user object */
 
+CHECK_RETVAL \
 static int createDefaultUserObject( void )
 	{
 	CRYPT_USER iUserObject;
@@ -791,16 +498,28 @@ static int createDefaultUserObject( void )
 	   just pass the error code back to the caller, which causes the 
 	   cryptlib init to fail.
 
-	   In addition the init can fail in one of two ways, the object isn't
-	   even created (deviceInfoPtr == NULL, nothing to clean up), in which 
-	   case we bail out immediately, or the object is created but wasn't set 
-	   up properly (deviceInfoPtr is allocated, but the object can't be 
-	   used), in which case we bail out after we update its status */
+	   In addition the init can fail in one of two ways, either the object 
+	   isn't even created (deviceInfoPtr == NULL, nothing to clean up), in 
+	   which case we bail out immediately, or the object is created but wasn't 
+	   set up properly (deviceInfoPtr is allocated, but the object can't be 
+	   used) in which case we bail out after we update its status */
 	initStatus = openUser( &iUserObject, SYSTEM_OBJECT_HANDLE, &defaultUserInfo,
 						   &userInfoPtr );
-	if( userInfoPtr == NULL )
-		return( initStatus );	/* Create object failed, return immediately */
-	assert( iUserObject == DEFAULTUSER_OBJECT_HANDLE );
+	if( cryptStatusError( initStatus ) )
+		{
+		/* If the create object failed, return immediately */
+		if( userInfoPtr == NULL )
+			return( initStatus );
+		}
+	ENSURES( iUserObject == DEFAULTUSER_OBJECT_HANDLE );
+	if( cryptStatusOK( initStatus ) )
+		{
+		/* Read the user index.  We make this part of the object init because
+		   it's used for access control, unlike the config option read where
+		   we can fall back to defaults if there's a problem this one is
+		   critical enough that we abort the cryptlib init if it fails */
+		initStatus = initUserIndex( &userInfoPtr->userIndexPtr );
+		}
 
 	/* We've finished setting up the object-type-specific info, tell the
 	   kernel that the object is ready for use */
@@ -809,21 +528,19 @@ static int createDefaultUserObject( void )
 	if( cryptStatusError( initStatus ) || cryptStatusError( status ) )
 		return( cryptStatusError( initStatus ) ? initStatus : status );
 
-	/* Read any stored config options into the object and read the user 
-	   index.  We have to do this after it's initialised because the config 
-	   and index data, coming from an external (and therefore untrusted) 
-	   source has to go through the kernel's ACL checking.  Note that even 
-	   if the read fails we don't do anything (except throw an exception in 
-	   the debug build) since we don't want the whole cryptlib init to fail 
-	   because of a wrong entry in a file */
+	/* Read any stored config options into the object.  We have to do this 
+	   after it's initialised because the config data, coming from an 
+	   external (and therefore untrusted) source has to go through the 
+	   kernel's ACL checking.  
+	   
+	   What to do in case of an error reading the config file is a bit 
+	   problematic, we don't want to cause whatever application is using
+	   cryptlib to abort mysteriously just because a bit in some config file 
+	   that most people don't even know exists got flipped, so we treat the 
+	   read as an opportunistic read and fall back to built-in safe defaults 
+	   if there's a problem */
 	status = readConfig( iUserObject, "cryptlib", userInfoPtr->trustInfoPtr );
 	assert( cryptStatusOK( status ) );
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
-#if 0
-	status = readUserIndex( userInfoPtr );
-	assert( cryptStatusOK( status ) );
-#endif
-/*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 
 	/* The object has been initialised, move it into the initialised state */
 	return( krnlSendMessage( iUserObject, IMESSAGE_SETATTRIBUTE, 
@@ -833,9 +550,11 @@ static int createDefaultUserObject( void )
 
 /* Generic management function for this class of object */
 
-int userManagementFunction( const MANAGEMENT_ACTION_TYPE action )
+CHECK_RETVAL \
+int userManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
+								const MANAGEMENT_ACTION_TYPE action )
 	{
-	assert( action == MANAGEMENT_ACTION_INIT );
+	REQUIRES( action == MANAGEMENT_ACTION_INIT );
 
 	switch( action )
 		{
@@ -843,6 +562,5 @@ int userManagementFunction( const MANAGEMENT_ACTION_TYPE action )
 			return( createDefaultUserObject() );
 		}
 
-	assert( NOTREACHED );
-	return( CRYPT_ERROR );	/* Get rid of compiler warning */
+	retIntError();
 	}

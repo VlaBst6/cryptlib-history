@@ -673,9 +673,11 @@ typedef struct {
 	const OBJECT_SUBTYPE keysetFN_subTypeA, keysetFN_subTypeB;
 	const OBJECT_SUBTYPE keysetQ_subTypeA, keysetQ_subTypeB;
 
-	/* Permitted object types and key management flags for this item type */
+	/* Permitted object types, key IDs, and key management flags for this 
+	   item type */
 	const OBJECT_SUBTYPE objSubTypeA, objSubTypeB;
 									/* Permitted object types for item */
+	const CRYPT_KEYID_TYPE *allowedKeyIDs;	/* Permitted key IDs */
 	const int allowedFlags;			/* Permitted key management flags */
 
 	/* Parameter flags for the mechanism information.  These define which
@@ -704,25 +706,26 @@ typedef struct {
    types that must be written to some keyset types */
 
 #define MK_KEYACL( itemType, keysetRWDSubType, keysetFNQSubType, \
-				   objectSubType, flags, idUseFlags, pwUseFlags ) \
+				   objectSubType, keyIDs, flags, idUseFlags, pwUseFlags ) \
 			{ itemType, keysetRWDSubType, ST_NONE, keysetRWDSubType, ST_NONE, \
 			  keysetRWDSubType, ST_NONE, keysetFNQSubType, ST_NONE, \
 			  keysetFNQSubType, ST_NONE, objectSubType, ST_NONE, \
-			  flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
+			  keyIDs, flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
 #define MK_KEYACL_RWD( itemType, keysetR_SubType, keysetW_SubType, keysetD_SubType, \
-  					   keysetFN_SubType, keysetQ_SubType, objectSubType, flags, \
-  					   idUseFlags, pwUseFlags ) \
+  					   keysetFN_SubType, keysetQ_SubType, objectSubType, keyIDs, \
+					   flags, idUseFlags, pwUseFlags ) \
 			{ itemType, keysetR_SubType, ST_NONE, keysetW_SubType, ST_NONE, \
 			  keysetD_SubType, ST_NONE, keysetFN_SubType, ST_NONE, \
 			  keysetQ_SubType, ST_NONE, objectSubType, ST_NONE, \
-			  flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
+			  keyIDs, flags, idUseFlags, pwUseFlags, ST_NONE, ST_NONE }
 #define MK_KEYACL_EX( itemType, keysetR_SubType, keysetW_SubType, keysetD_SubType, \
-  					  keysetFN_SubType, keysetQ_SubType, objectSubType, flags, \
-  					  idUseFlags, pwUseFlags, specificKeysetType, specificObjectType ) \
+  					  keysetFN_SubType, keysetQ_SubType, objectSubType, keyIDs, \
+					  flags, idUseFlags, pwUseFlags, specificKeysetType, \
+					  specificObjectType ) \
 			{ itemType, keysetR_SubType, ST_NONE, keysetW_SubType, ST_NONE, \
 			  keysetD_SubType, ST_NONE, keysetFN_SubType, ST_NONE, \
 			  keysetQ_SubType, ST_NONE, objectSubType, ST_NONE, \
-			  flags, idUseFlags, pwUseFlags, specificKeysetType, ST_NONE, \
+			  keyIDs, flags, idUseFlags, pwUseFlags, specificKeysetType, ST_NONE, \
 			  specificObjectType, ST_NONE }
 
 /****************************************************************************

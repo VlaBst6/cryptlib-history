@@ -24,7 +24,8 @@ fi
 # the executable for the static-lib version or into the library itself for
 # the shared-lib version.  The OS's and their libraries are:
 #
-#	AIX:						-lc_r -lpthreads
+#	AIX 4.x:					-lc_r -lpthreads
+#	AIX 5.x:					-lc_r -lpthreads -lbsd
 #	BeOS:						None
 #	BeOS with BONE:				-lbind -lsocket
 #	BSDI:						-lgcc
@@ -32,11 +33,12 @@ fi
 #	Cygwin:						None
 #	FreeBSD:					See note for -lc_r, -lpthread
 #	Irix:						-lw
-#	Linux/OSF1/DEC Unix:		-lresolv -lpthread
+#	Linux:						-lresolv -lpthread (-ldl see note)
 #	NetBSD:						-lpthread
 #	MVS:						None
 #	NCR MP-RAS (threads):		-Xdce -lnsl -lsocket -lc89 -lresolv -lpthread
 #	NCR MP-RAS (no.threads):	-K xpg42 -lnsl -lsocket -lc89 -lresolv
+#	OSF1/DEC Unix:				-lresolv -lpthread
 #	PHUX 9.x, 10.x:				None
 #	PHUX 11.x:					-lpthread
 #	SunOS 4.x:					-ldl -lnsl -lposix4
@@ -47,6 +49,7 @@ fi
 #
 # Comments:
 #
+#	-lbsd = flock() support via BSD compatibility layer for Aches.
 #	-lc_r = libc extended with re-entrant functions needed for threading.
 #			This is required by FreeBSD 5.1-RELEASE but not FreeBSD 5.1-
 #			CURRENT, which has the standard libc re-entrant.  Because there's
@@ -55,7 +58,12 @@ fi
 #			using -pthread during the compile we can tell the compiler to
 #			sort the mess out for us - it'll link against libc_r or libc as
 #			appropriate.
-#	-ldl = dload support for dynamically loaded PKCS #11 drivers.
+#	-ldl = dload() support for dynamically loaded PKCS #11 drivers.  Some
+#			Debian releases require that the use of this library be
+#			explicitly specified, although there's no discernable pattern
+#			for when this might be required (or even any easy way to detect
+#			Debian), so we unconditionally include it under Linux if libdl
+#			exists.
 #	-lgcc = Extra gcc support lib needed for BSDI, which ships with gcc but
 #			not the proper libs for it.
 #	-lkstat = kstat functions for Solaris randomness gathering.
@@ -74,7 +82,11 @@ fi
 OSVERSION=`./tools/osversion.sh $OSNAME`
 case $OSNAME in
 	'AIX')
-		echo "-lc_r -lpthreads" ;;
+		if [ $OSVERSION -le 4 ] ; then
+			echo "-lc_r -lpthreads" ;
+		else
+			echo "-lc_r -lpthreads -lbsd" ;
+		fi ;;
 
 	'BeOS')
 		if [ -f /system/lib/libbind.so ] ; then
@@ -105,7 +117,14 @@ case $OSNAME in
 	'IRIX'|'IRIX64')
 		echo "-lw" ;;
 
-	'Linux'|'OSF1')
+	'Linux')
+		if [ -f /usr/lib/libdl.so ] ; then
+			echo "-lresolv -lpthread -ldl" ;
+		else
+			echo "-lresolv -lpthread" ;
+		fi ;;
+
+	'OSF1')
 		echo "-lresolv -lpthread" ;;
 
 	'SunOS')

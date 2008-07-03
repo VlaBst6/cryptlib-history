@@ -27,10 +27,6 @@
 
 /* Test the MD2 output against the test vectors given in RFC 1319 */
 
-void md2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
-					const int outBufMaxLength, const BYTE *inBuffer, 
-					const int inLength, const HASH_STATE hashState );
-
 static const struct {
 	const char *data;						/* Data to hash */
 	const int length;						/* Length of data */
@@ -63,13 +59,13 @@ static const struct {
 static int selfTest( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo = getMD2Capability();
-	BYTE hashData[ HASH_STATE_SIZE + 8 ];
+	BYTE hashState[ HASH_STATE_SIZE + 8 ];
 	int i, status;
 
 	/* Test MD2 against the test vectors given in RFC 1319 */
 	for( i = 0; digestValues[ i ].data != NULL; i++ )
 		{
-		status = testHash( capabilityInfo, hashData, digestValues[ i ].data, 
+		status = testHash( capabilityInfo, hashState, digestValues[ i ].data, 
 						   digestValues[ i ].length, digestValues[ i ].digest );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -86,13 +82,17 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, void *varParam,
-					const int constParam )
+static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
+					const int intParam, int *result )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
-		return( HASH_STATE_SIZE );
+		{
+		*result = HASH_STATE_SIZE;
 
-	return( getDefaultInfo( type, varParam, constParam ) );
+		return( CRYPT_OK );
+		}
+
+	return( getDefaultInfo( type, ptrParam, intParam, result ) );
 	}
 
 /****************************************************************************
@@ -120,57 +120,6 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	return( CRYPT_OK );
 	}
 
-/* Internal API: Hash a single block of memory without the overhead of
-   creating an encryption context */
-
-void md2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
-					const int outBufMaxLength, const BYTE *inBuffer, 
-					const int inLength, const HASH_STATE hashState )
-	{
-	MD2_CTX *md2Info = ( MD2_CTX * ) hashInfo;
-
-	assert( ( hashState == HASH_ALL && hashInfo == NULL ) || \
-			( hashState != HASH_ALL && \
-			  isWritePtr( hashInfo, sizeof( HASHINFO ) ) ) );
-	assert( ( ( hashState != HASH_END && hashState != HASH_ALL ) && \
-			  outBuffer == NULL && outBufMaxLength == 0 ) || \
-			( ( hashState == HASH_END || hashState == HASH_ALL ) && \
-			  isWritePtr( outBuffer, outBufMaxLength ) && \
-			  outBufMaxLength >= 16 ) );
-	assert( inBuffer == NULL || isReadPtr( inBuffer, inLength ) );
-
-	switch( hashState )
-		{
-		case HASH_START:
-			MD2_Init( md2Info );
-			/* Drop through */
-
-		case HASH_CONTINUE:
-			MD2_Update( md2Info, ( BYTE * ) inBuffer, inLength );
-			break;
-
-		case HASH_END:
-			if( inBuffer != NULL )
-				MD2_Update( md2Info, ( BYTE * ) inBuffer, inLength );
-			MD2_Final( outBuffer, md2Info );
-			break;
-
-		case HASH_ALL:
-			{
-			MD2_CTX md2InfoBuffer;
-
-			MD2_Init( &md2InfoBuffer );
-			MD2_Update( &md2InfoBuffer, ( BYTE * ) inBuffer, inLength );
-			MD2_Final( outBuffer, &md2InfoBuffer );
-			zeroise( &md2InfoBuffer, sizeof( MD2_CTX ) );
-			break;
-			}
-
-		default:
-			assert( NOTREACHED );
-		}
-	}
-
 /****************************************************************************
 *																			*
 *						Capability Access Routines							*
@@ -178,7 +127,7 @@ void md2HashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 ****************************************************************************/
 
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
-	CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2",
+	CRYPT_ALGO_MD2, bitsToBytes( 128 ), "MD2", 3,
 	bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 	selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
 	};

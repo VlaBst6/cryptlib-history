@@ -67,9 +67,11 @@
   #include "crypt/deslocl.h"
 #endif /* Compiler-specific includes */
 
+#ifndef USE_ASM
+
 /* OpenSSL includes some sort of Configure-based versioning mechanism which
-   includes an attribution notice in the code.  Since cryptlib doesn't use
-   Configure (or the OpenSSL config), we hardcode in the following which
+   includes an attribution notice in the code, since cryptlib doesn't use
+   Configure (or the OpenSSL config) we hardcode in the following which 
    should have the same effect */
 
 char *version1="This product includes cryptographic software written by Eric Young (eay@cryptsoft.com)";
@@ -420,3 +422,5 @@ void des_ede3_cbc_encrypt(const unsigned char *input, unsigned char *output,
 	}
 
 #endif /* DES_DEFAULT_OPTIONS */
+
+#endif /* USE_ASM */

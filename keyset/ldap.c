@@ -331,22 +331,24 @@ static void assignFieldName( const CRYPT_USER cryptOwner, char *buffer,
 
 /* Get information on an LDAP error */
 
-static void getErrorInfo( KEYSET_INFO *keysetInfo, int ldapStatus )
+static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 	{
-	ERROR_INFO *errorInfo = &keysetInfo->errorInfo;
+	ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
 #ifndef __WINDOWS__ 
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 #endif /* !__WINDOWS__ */
 	char *errorMessage;
 
 #if defined( __WINDOWS__ )
 	errorInfo->errorCode = LdapGetLastError();
 	if( errorInfo->errorCode == LDAP_SUCCESS )
+		{
 		/* In true Microsoft fashion LdapGetLastError() can return
 		   LDAP_SUCCESS with the error string set to "Success.", so if we
 		   get this we use the status value returned by the original LDAP
 		   function call instead */
 		errorInfo->errorCode = ldapStatus;
+		}
 	errorMessage = ldap_err2string( errorInfo->errorCode );
   #if 0
 	/* The exact conditions under which ldap_err2string() does something
@@ -371,14 +373,14 @@ static void getErrorInfo( KEYSET_INFO *keysetInfo, int ldapStatus )
   #else
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_RESULT_CODE, 
 					 &errorInfo->errorCode );
-  #endif /* Various ways of getting the error info */
+  #endif /* Various ways of getting the error information */
 	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_STRING, 
 					 &errorMessage );
 #endif /* Different LDAP client types */
 	if( errorMessage != NULL )
-		strlcpy_s( errorInfo->errorString, MAX_ERRMSG_SIZE, errorMessage );
+		setErrorString( errorInfo, errorMessage, strlen( errorMessage ) );
 	else
-		errorInfo->errorString[ 0 ] = '\0';
+		clearErrorString( errorInfo );
 	}
 
 /* Map an LDAP error to the corresponding cryptlib error.  The various LDAP
@@ -507,10 +509,10 @@ static LDAPMod *copyAttribute( const char *attributeName,
 
 /* Encode DN information in the RFC 1779 reversed format.  We don't have to
    explicitly check for overflows (which will lead to truncation of the 
-   resulting encoded DN) because the cert.management code limits the size of 
-   each component to a small fraction of the total buffer size.  Besides 
-   which, it's LDAP, anyone using this crap as a cert store is asking for it 
-   anyway */
+   resulting encoded DN) because the certificate management code limits the 
+   size of each component to a small fraction of the total buffer size.  
+   Besides which, it's LDAP, anyone using this crap as a certificate store 
+   is asking for it anyway */
 
 static void catComponent( char *dest, const int destLen, char *src )
 	{
@@ -519,10 +521,7 @@ static void catComponent( char *dest, const int destLen, char *src )
 	/* Find the end of the existing destination string */
 	for( i = 0; i < destLen && dest[ i ] != '\0'; i++ );
 	if( i >= destLen )
-		{
-		assert( NOTREACHED );
-		return;
-		}
+		retIntError_Void();
 
 	/* Append the source string, escaping special chars */
 	while( i < destLen - 1 && *src != '\0' )
@@ -617,9 +616,14 @@ static int parseURL( char *ldapServer, char **ldapUser, int *ldapPort )
    This is necessary because the complex LDAP open may require a fairly
    extensive cleanup afterwards */
 
-static int shutdownFunction( KEYSET_INFO *keysetInfo )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static int shutdownFunction( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
 
 	ldap_unbind( ldapInfo->ld );
 	ldapInfo->ld = NULL;
@@ -629,13 +633,22 @@ static int shutdownFunction( KEYSET_INFO *keysetInfo )
 
 /* Open a connection to an LDAP directory */
 
-static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
-						 const int nameLength,
-						 const CRYPT_KEYOPT_TYPE options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
+						 IN_BUFFER( nameLength ) const char *name,
+						 IN_LENGTH_SHORT const int nameLength,
+						 IN_ENUM( CRYPT_KEYOPT ) const CRYPT_KEYOPT_TYPE options )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 	char ldapServer[ MAX_URL_SIZE + 8 ], *ldapUser;
 	int maxEntries = 2, timeout, ldapPort, ldapStatus = LDAP_OTHER, status;
+
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isReadPtr( name, nameLength ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( nameLength >= MIN_URL_SIZE && nameLength < MAX_URL_SIZE );
+	REQUIRES( options >= CRYPT_KEYOPT_NONE && options < CRYPT_KEYOPT_LAST );
 
 	/* Check the URL.  The Netscape and OpenLDAP APIs provide the function
 	   ldap_is_ldap_url() for this, but this requires a complete LDAP URL
@@ -654,7 +667,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	if( ( ldapStatus = ldap_simple_bind_s( ldapInfo->ld, ldapUser, 
 										   NULL ) ) != LDAP_SUCCESS )
 		{
-		getErrorInfo( keysetInfo, ldapStatus );
+		getErrorInfo( keysetInfoPtr, ldapStatus );
 		ldap_unbind( ldapInfo->ld );
 		ldapInfo->ld = NULL;
 		return( mapLdapError( ldapStatus, CRYPT_ERROR_OPEN ) );
@@ -664,7 +677,7 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	   entries to 2 (setting the search timeout is mostly redundant since we
 	   use search_st anyway, however there may be other operations which also
 	   require some sort of timeout which can't be explicitly specified */
-	krnlSendMessage( keysetInfo->ownerHandle, IMESSAGE_GETATTRIBUTE,
+	krnlSendMessage( keysetInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE,
 					 &timeout, CRYPT_OPTION_NET_READTIMEOUT );
 	if( timeout < 15 )
 		/* Network I/O may be set to be nonblocking, so we make sure we try
@@ -674,19 +687,19 @@ static int initFunction( KEYSET_INFO *keysetInfo, const char *name,
 	ldap_set_option( ldapInfo->ld, LDAP_OPT_SIZELIMIT, &maxEntries );
 
 	/* Set up the names of the objects and attributes */
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameObjectClass,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameObjectClass,
 					 CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS );
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameFilter,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameFilter,
 					 CRYPT_OPTION_KEYS_LDAP_FILTER );
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameCACert,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameCACert,
 					 CRYPT_OPTION_KEYS_LDAP_CACERTNAME );
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameCert,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameCert,
 					 CRYPT_OPTION_KEYS_LDAP_CERTNAME );
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameCRL,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameCRL,
 					 CRYPT_OPTION_KEYS_LDAP_CRLNAME );
-	assignFieldName( keysetInfo->ownerHandle, ldapInfo->nameEmail,
+	assignFieldName( keysetInfoPtr->ownerHandle, ldapInfo->nameEmail,
 					 CRYPT_OPTION_KEYS_LDAP_EMAILNAME );
-	krnlSendMessage( keysetInfo->ownerHandle, IMESSAGE_GETATTRIBUTE,
+	krnlSendMessage( keysetInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE,
 					 &ldapInfo->objectType,
 					 CRYPT_OPTION_KEYS_LDAP_OBJECTTYPE );
 
@@ -726,14 +739,14 @@ static int sendLdapQuery( LDAP_INFO *ldapInfo, LDAPMessage **resultPtr,
 	/* Try and retrieve the entry for this DN from the directory.  We use a 
 	   base specified by the DN, a chop of 0 (to return only the current 
 	   entry), any object class (to get around the problem of 
-	   implementations which stash certs in whatever they feel like), and 
-	   look for a certificate attribute.  If the search fails for this 
+	   implementations which stash certificates in whatever they feel like), 
+	   and look for a certificate attribute.  If the search fails for this 
 	   attribute, we try again but this time go for a CA certificate 
 	   attribute which unfortunately slows down the search somewhat when the 
-	   cert isn't found but can't really be avoided since there's no way to 
-	   tell in advance whether a cert will be an end entity or a CA cert.  
-	   To complicate things even further, we may also need to check for a 
-	   CRL in case this is what the user is after */
+	   certificate isn't found but can't really be avoided since there's no 
+	   way to tell in advance whether a certificate will be an end entity or 
+	   a CA certificate.  To complicate things even further, we may also 
+	   need to check for a CRL in case this is what the user is after */
 	if( objectType == CRYPT_CERTTYPE_NONE || \
 		objectType == CRYPT_CERTTYPE_CERTIFICATE )
 		{
@@ -770,84 +783,65 @@ static int sendLdapQuery( LDAP_INFO *ldapInfo, LDAPMessage **resultPtr,
 
 /* Retrieve a key attribute from an LDAP directory */
 
-static int getItemFunction( KEYSET_INFO *keysetInfo,
-							CRYPT_HANDLE *iCryptHandle,
-							const KEYMGMT_ITEM_TYPE itemType,
-							const CRYPT_KEYID_TYPE keyIDtype,
-							const void *keyID, const int keyIDlength,
-							void *auxInfo, int *auxInfoLength,
-							const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+							OUT_HANDLE_OPT CRYPT_HANDLE *iCryptHandle,
+							IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType,
+							IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							IN_BUFFER( keyIDlength ) const void *keyID, 
+							IN_LENGTH_KEYID const int keyIDlength,
+							IN_OPT void *auxInfo, 
+							INOUT_OPT int *auxInfoLength,
+							IN_FLAGS_Z( KEYMGMT ) const int flags )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
-	LDAPMessage *result, *resultEntry;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
+	LDAPMessage *result = DUMMY_INIT_PTR, *resultEntry;
 	BerElement *ber;
 	struct berval **valuePtrs;
+	char dn[ MAX_DN_STRINGSIZE + 8 ];
 	char *attributePtr;
-	int status = CRYPT_OK;
+	int ldapStatus, status = CRYPT_OK;
 
-	assert( keyIDtype != CRYPT_KEYID_NONE || iCryptHandle != NULL );
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
-	assert( auxInfo == NULL ); assert( *auxInfoLength == 0 );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCryptHandle, sizeof( CRYPT_HANDLE ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
 
-	/* If we're not in the middle of an ongoing fetch, send the query to the
-	   server */
-	if( !ldapInfo->queryInProgress )
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
+	REQUIRES( keyIDtype != CRYPT_KEYID_NONE || iCryptHandle != NULL );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( auxInfo == NULL && *auxInfoLength == 0 );
+	REQUIRES( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
+
+	/* Convert the DN into a null-terminated form */
+	if( keyIDlength > MAX_DN_STRINGSIZE - 1 )
+		return( CRYPT_ARGERROR_STR1 );
+	memcpy( dn, keyID, keyIDlength );
+	dn[ keyIDlength ] = '\0';
+
+	/* Send the LDAP query to the server */
+	ldapStatus = sendLdapQuery( ldapInfo, &result, 
+								keysetInfoPtr->ownerHandle, dn );
+	if( ldapStatus != LDAP_SUCCESS )
 		{
-		char dn[ MAX_DN_STRINGSIZE + 8 ];
-		int ldapStatus;
-
-		/* Convert the DN into a null-terminated form */
-		if( keyIDlength > MAX_DN_STRINGSIZE - 1 )
-			return( CRYPT_ARGERROR_STR1 );
-		memcpy( dn, keyID, keyIDlength );
-		dn[ keyIDlength ] = '\0';
-
-		/* Send the LDAP query to the server */
-		ldapStatus = sendLdapQuery( ldapInfo, &result, 
-									keysetInfo->ownerHandle, dn );
-		if( ldapStatus != LDAP_SUCCESS )
-			{
-			getErrorInfo( keysetInfo, ldapStatus );
-			return( mapLdapError( ldapStatus, CRYPT_ERROR_READ ) );
-			}
-
-		/* We got something, start fetching the results */
-		if( ( resultEntry = ldap_first_entry( ldapInfo->ld, 
-											  result ) ) == NULL )
-			{
-			ldap_msgfree( result );
-			return( CRYPT_ERROR_NOTFOUND );
-			}
-
-		/* If we've been passed a null crypt handle, this is the start of a
-		   general-purpose query rather than a single cert fetch, save the
-		   query state and record the fact that we're in the middle of a
-		   query */
-		if( iCryptHandle == NULL )
-			{
-			ldapInfo->result = result;
-			ldapInfo->queryInProgress = TRUE;
-			}
+		getErrorInfo( keysetInfoPtr, ldapStatus );
+		return( mapLdapError( ldapStatus, CRYPT_ERROR_READ ) );
 		}
-	else
+
+	/* We got something, start fetching the results */
+	if( ( resultEntry = ldap_first_entry( ldapInfo->ld, result ) ) == NULL )
 		{
-		/* We're in an ongoing query, try and fetch the next set of results */
-		if( ( resultEntry = ldap_next_entry( ldapInfo->ld,
-											 ldapInfo->result ) ) == NULL )
-			{
-			/* No more results, wrap up the processing */
-			ldap_msgfree( ldapInfo->result );
-			ldapInfo->result = NULL;
-			return( CRYPT_ERROR_COMPLETE );
-			}
+		ldap_msgfree( result );
+		return( CRYPT_ERROR_NOTFOUND );
 		}
 
 	/* Copy out the certificate */
 	if( ( attributePtr = ldap_first_attribute( ldapInfo->ld, resultEntry, 
 											   &ber ) ) == NULL )
 		{
-		if( ldapInfo->queryInProgress )
-			ldap_msgfree( result );
+		ldap_msgfree( result );
 		return( CRYPT_ERROR_NOTFOUND );
 		}
 	valuePtrs = ldap_get_values_len( ldapInfo->ld, resultEntry, 
@@ -923,8 +917,8 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
 		ber_free( ber, 0 );
 #endif /* NETSCAPE_CLIENT */
 	ldap_memfree( attributePtr );
-	if( !ldapInfo->queryInProgress )
-		ldap_msgfree( result );
+	ldap_msgfree( result );
+
 	return( status );
 	}
 
@@ -935,9 +929,10 @@ static int getItemFunction( KEYSET_INFO *keysetInfo,
    assumes the user is requesting a superset of this behaviour and deletes
    the entire entry */
 
-static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
+static int addCert( KEYSET_INFO *keysetInfoPtr, 
+					const CRYPT_HANDLE iCryptHandle )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 	LDAPMod *ldapMod[ MAX_LDAP_ATTRIBUTES + 8 ];
 	MESSAGE_DATA msgData;
 	BYTE keyData[ MAX_CERT_SIZE + 8 ];
@@ -951,8 +946,9 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 	*C = *SP = *L = *O = *OU = *CN = *email = '\0';
 
 	/* Extract the DN and altName components.  This changes the currently
-	   selected DN components, but this is OK since we've got the cert
-	   locked and the prior state will be restored when we unlock it */
+	   selected DN components, but this is OK since we've got the 
+	   certificate locked and the prior state will be restored when we 
+	   unlock it */
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_UNUSED, CRYPT_CERTINFO_SUBJECTNAME );
 	setMessageData( &msgData, C, CRYPT_MAX_TEXTSIZE );
@@ -1001,26 +997,34 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 	if( cryptStatusOK( status ) )
 		CN[ msgData.length ] = '\0';
 	if( cryptStatusOK( status ) || status == CRYPT_ERROR_NOTFOUND )
+		{
 		/* Get the string form of the DN */
 		status = encodeDN( dn, MAX_DN_STRINGSIZE, C, SP, L, O, OU, CN );
-	if( cryptStatusOK( status ) )
-		{
-		/* Get the certificate data */
-		setMessageData( &msgData, keyData, MAX_CERT_SIZE );
-		status = krnlSendMessage( iCryptHandle, IMESSAGE_CRT_EXPORT,
-								  &msgData, CRYPT_CERTFORMAT_CERTIFICATE );
-		keyDataLength = msgData.length;
 		}
 	if( cryptStatusError( status ) )
-		/* Convert any low-level cert-specific error into something generic
-		   which makes a bit more sense to the caller */
+		{
+		/* Convert any low-level certificate-specific error into something 
+		   generic which makes a bit more sense to the caller */
 		return( CRYPT_ARGERROR_NUM1 );
+		}
+
+	/* Get the certificate data */
+	setMessageData( &msgData, keyData, MAX_CERT_SIZE );
+	status = krnlSendMessage( iCryptHandle, IMESSAGE_CRT_EXPORT, &msgData, 
+							  CRYPT_CERTFORMAT_CERTIFICATE );
+	keyDataLength = msgData.length;
+	if( cryptStatusError( status ) )
+		{
+		/* Convert any low-level certificate-specific error into something 
+		   generic which makes a bit more sense to the caller */
+		return( CRYPT_ARGERROR_NUM1 );
+		}
 
 	/* Set up the fixed attributes and certificate data.  This currently
-	   always adds a cert as a standard certificate rather than a CA
+	   always adds a certificate as a standard certificate rather than a CA 
 	   certificate because of uncertainty over what other implementations
-	   will try and look for, once enough other software uses the CA cert
-	   attribute this can be switched over */
+	   will try and look for, once enough other software uses the CA 
+	   certificate attribute this can be switched over */
 	if( ( ldapMod[ 0 ] = copyAttribute( ldapInfo->nameObjectClass,
 										"certPerson", 0 ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
@@ -1061,7 +1065,7 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 		if( ( ldapStatus = ldap_add_s( ldapInfo->ld, dn,
 									   ldapMod ) ) != LDAP_SUCCESS )
 			{
-			getErrorInfo( keysetInfo, ldapStatus );
+			getErrorInfo( keysetInfoPtr, ldapStatus );
 			status = mapLdapError( ldapStatus, CRYPT_ERROR_WRITE );
 			}
 		}
@@ -1087,19 +1091,27 @@ static int addCert( KEYSET_INFO *keysetInfo, const CRYPT_HANDLE iCryptHandle )
 	return( status );
 	}
 
-static int setItemFunction( KEYSET_INFO *keysetInfo,
-							const CRYPT_HANDLE iCryptHandle,
-							const KEYMGMT_ITEM_TYPE itemType,
-							const char *password, const int passwordLength,
-							const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+							IN_HANDLE const CRYPT_HANDLE iCryptHandle,
+							IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType,
+							STDC_UNUSED const char *password, 
+							STDC_UNUSED const int passwordLength,
+							IN_FLAGS( KEYMGMT ) const int flags )
 	{
 	BOOLEAN seenNonDuplicate = FALSE;
 	int type, iterationCount = 0, status;
 
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
-	assert( password == NULL ); assert( passwordLength == 0 );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
 
-	/* Make sure we've been given a cert or cert chain */
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( isHandleRangeValid( iCryptHandle ) );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
+	REQUIRES( password == NULL && passwordLength == 0 );
+	REQUIRES( flags == KEYMGMT_FLAG_NONE );
+
+	/* Make sure we've been given a certificate or certificate chain */
 	status = krnlSendMessage( iCryptHandle, MESSAGE_GETATTRIBUTE, &type, 
 							  CRYPT_CERTINFO_CERTTYPE );
 	if( cryptStatusError( status ) )
@@ -1108,9 +1120,10 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 		type != CRYPT_CERTTYPE_CERTCHAIN )
 		return( CRYPT_ARGERROR_NUM1 );
 
-	/* Lock the cert for our exclusive use (in case it's a cert chain, we
-	   also select the first cert in the chain), update the keyset with the
-	   cert(s), and unlock it to allow others access */
+	/* Lock the certificate for our exclusive use (in case it's a 
+	   certificate chain, we also select the first certificate in the 
+	   chain), update the keyset with the certificate(s), and unlock it to 
+	   allow others access */
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_CURSORFIRST,
 					 CRYPT_CERTINFO_CURRENT_CERTIFICATE );
@@ -1121,12 +1134,13 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 	do
 		{
 		/* Add the certificate */
-		status = addCert( keysetInfo, iCryptHandle );
+		status = addCert( keysetInfoPtr, iCryptHandle );
 
-		/* A cert being added may already be present, however we can't fail
-		   immediately because what's being added may be a chain containing
-		   further certs, so we keep track of whether we've successfully
-		   added at least one cert and clear data duplicate errors */
+		/* A certificate being added may already be present, however we 
+		   can't fail immediately because what's being added may be a chain 
+		   containing further certificates so we keep track of whether we've 
+		   successfully added at least one certificate and clear data 
+		   duplicate errors */
 		if( status == CRYPT_OK )
 			seenNonDuplicate = TRUE;
 		else
@@ -1152,17 +1166,26 @@ static int setItemFunction( KEYSET_INFO *keysetInfo,
 
 /* Delete an entry from an LDAP directory */
 
-static int deleteItemFunction( KEYSET_INFO *keysetInfo,
-							   const KEYMGMT_ITEM_TYPE itemType,
-							   const CRYPT_KEYID_TYPE keyIDtype,
-							   const void *keyID, const int keyIDlength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+static int deleteItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+							   IN_ENUM( KEYMGMT_ITEM ) \
+								const KEYMGMT_ITEM_TYPE itemType,
+							   IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+							   IN_BUFFER( keyIDlength ) const void *keyID, 
+							   IN_LENGTH_KEYID const int keyIDlength )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 	char dn[ MAX_DN_STRINGSIZE + 8 ];
 	int ldapStatus;
 
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
-	assert( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
+	REQUIRES( keyIDtype == CRYPT_KEYID_NAME || keyIDtype == CRYPT_KEYID_URI );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
 
 	/* Convert the DN into a null-terminated form */
 	if( keyIDlength > MAX_DN_STRINGSIZE - 1 )
@@ -1173,7 +1196,7 @@ static int deleteItemFunction( KEYSET_INFO *keysetInfo,
 	/* Delete the entry */
 	if( ( ldapStatus = ldap_delete_s( ldapInfo->ld, dn ) ) != LDAP_SUCCESS )
 		{
-		getErrorInfo( keysetInfo, ldapStatus );
+		getErrorInfo( keysetInfoPtr, ldapStatus );
 		return( mapLdapError( ldapStatus, CRYPT_ERROR_WRITE ) );
 		}
 
@@ -1182,46 +1205,70 @@ static int deleteItemFunction( KEYSET_INFO *keysetInfo,
 
 /* Perform a getFirst/getNext query on the LDAP directory */
 
-static int getFirstItemFunction( KEYSET_INFO *keysetInfo,
-								 CRYPT_CERTIFICATE *iCertificate,
-								 int *stateInfo,
-								 const CRYPT_KEYID_TYPE keyIDtype,
-								 const void *keyID, const int keyIDlength,
-								 const KEYMGMT_ITEM_TYPE itemType,
-								 const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
+static int getFirstItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+								 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+								 STDC_UNUSED int *stateInfo,
+								 IN_ENUM( KEYMGMT_ITEM ) \
+									const KEYMGMT_ITEM_TYPE itemType,
+								 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
+								 IN_BUFFER( keyIDlength ) const void *keyID, 
+								 IN_LENGTH_KEYID const int keyIDlength,
+								 IN_FLAGS( KEYMGMT ) const int options )
 	{
-	assert( stateInfo == NULL );
-	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
-	assert( options == KEYMGMT_FLAG_NONE );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
 
-	return( getItemFunction( keysetInfo, NULL, KEYMGMT_ITEM_PUBLICKEY,
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( stateInfo == NULL );
+	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY );
+	REQUIRES( keyIDtype != CRYPT_KEYID_NONE );
+	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
+			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( options == KEYMGMT_FLAG_NONE );
+
+	return( getItemFunction( keysetInfoPtr, NULL, KEYMGMT_ITEM_PUBLICKEY,
 							 CRYPT_KEYID_NAME, keyID, keyIDlength, NULL,
 							 0, 0 ) );
 	}
 
-static int getNextItemFunction( KEYSET_INFO *keysetInfo,
-								CRYPT_CERTIFICATE *iCertificate,
-								int *stateInfo, const int options )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int getNextItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
+								OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+								STDC_UNUSED int *stateInfo, 
+								IN_FLAGS( KEYMGMT ) const int options )
 	{
-	assert( stateInfo == NULL );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 
-	return( getItemFunction( keysetInfo, iCertificate, KEYMGMT_ITEM_PUBLICKEY,
-							 CRYPT_KEYID_NONE, NULL, 0, NULL, 0, 0 ) );
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+	REQUIRES( stateInfo == NULL );
+	REQUIRES( options == KEYMGMT_FLAG_NONE );
+
+	return( getItemFunction( keysetInfoPtr, iCertificate, 
+							 KEYMGMT_ITEM_PUBLICKEY, CRYPT_KEYID_NONE, 
+							 NULL, 0, NULL, 0, 0 ) );
 	}
 
-/* Return status info for the keyset */
+/* Return status information for the keyset */
 
-static BOOLEAN isBusyFunction( KEYSET_INFO *keysetInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN isBusyFunction( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
-	return( keysetInfo->keysetLDAP->queryInProgress );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+
+	return( FALSE );
 	}
 
 /* Get/set keyset attributes */
 
-static void *getAttributeDataPtr( KEYSET_INFO *keysetInfo, 
+static void *getAttributeDataPtr( KEYSET_INFO *keysetInfoPtr, 
 								  const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	LDAP_INFO *ldapInfo = keysetInfo->keysetLDAP;
+	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 
 	switch( type )
 		{
@@ -1247,34 +1294,54 @@ static void *getAttributeDataPtr( KEYSET_INFO *keysetInfo,
 	return( NULL );
 	}
 
-static int getAttributeFunction( KEYSET_INFO *keysetInfo, void *data,
-								 const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getAttributeFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
+								 OUT void *data,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
-	const void *attributeDataPtr = getAttributeDataPtr( keysetInfo, type );
+	const void *attributeDataPtr;
 
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+
+	attributeDataPtr = getAttributeDataPtr( keysetInfoPtr, type );
 	if( attributeDataPtr == NULL )
 		return( CRYPT_ARGERROR_VALUE );
 	return( attributeCopy( data, attributeDataPtr, 
 						   strlen( attributeDataPtr ) ) );
 	}
 
-static int setAttributeFunction( KEYSET_INFO *keysetInfo, const void *data,
-								 const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int setAttributeFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
+								 const void *data,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const MESSAGE_DATA *msgData = ( MESSAGE_DATA * ) data;
-	BYTE *attributeDataPtr = getAttributeDataPtr( keysetInfo, type );
+	BYTE *attributeDataPtr;
 
-	assert( msgData->length <= CRYPT_MAX_TEXTSIZE );
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+
+	attributeDataPtr = getAttributeDataPtr( keysetInfoPtr, type );
 	if( attributeDataPtr == NULL )
 		return( CRYPT_ARGERROR_VALUE );
+	if( msgData->length < 1 || msgData->length > CRYPT_MAX_TEXTSIZE )
+		return( CRYPT_ARGERROR_STR1 );
 	memcpy( attributeDataPtr, msgData->data, msgData->length );
 	attributeDataPtr[ msgData->length ] = '\0';
 
 	return( CRYPT_OK );
 	}
 
-int setAccessMethodLDAP( KEYSET_INFO *keysetInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodLDAP( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
+	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
+
+	REQUIRES( keysetInfoPtr->type == KEYSET_LDAP );
+
 #ifdef DYNAMIC_LOAD
 	/* Make sure that the LDAP driver is bound in */
 	if( hLDAP == NULL_INSTANCE )
@@ -1282,16 +1349,16 @@ int setAccessMethodLDAP( KEYSET_INFO *keysetInfo )
 #endif /* DYNAMIC_LOAD */
 
 	/* Set the access method pointers */
-	keysetInfo->initFunction = initFunction;
-	keysetInfo->shutdownFunction = shutdownFunction;
-	keysetInfo->getAttributeFunction = getAttributeFunction;
-	keysetInfo->setAttributeFunction = setAttributeFunction;
-	keysetInfo->getItemFunction = getItemFunction;
-	keysetInfo->setItemFunction = setItemFunction;
-	keysetInfo->deleteItemFunction = deleteItemFunction;
-	keysetInfo->getFirstItemFunction = getFirstItemFunction;
-	keysetInfo->getNextItemFunction = getNextItemFunction;
-	keysetInfo->isBusyFunction = isBusyFunction;
+	keysetInfoPtr->initFunction = initFunction;
+	keysetInfoPtr->shutdownFunction = shutdownFunction;
+	keysetInfoPtr->getAttributeFunction = getAttributeFunction;
+	keysetInfoPtr->setAttributeFunction = setAttributeFunction;
+	keysetInfoPtr->getItemFunction = getItemFunction;
+	keysetInfoPtr->setItemFunction = setItemFunction;
+	keysetInfoPtr->deleteItemFunction = deleteItemFunction;
+	keysetInfoPtr->getFirstItemFunction = getFirstItemFunction;
+	keysetInfoPtr->getNextItemFunction = getNextItemFunction;
+	keysetInfoPtr->isBusyFunction = isBusyFunction;
 
 	return( CRYPT_OK );
 	}
