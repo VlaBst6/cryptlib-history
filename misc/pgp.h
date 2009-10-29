@@ -145,17 +145,25 @@ typedef enum {
 #define PGP_S2K				0xFF	/* Standard S2K */
 #define PGP_S2K_HASHED		0xFE	/* S2K with hashed key */
 
-/* Signed data types */
+/* Signature types */
 
+#define PGP_SIG_NONE		0x00	/* Same as PGP_SIG_DATA, for range chk.*/
 #define PGP_SIG_DATA		0x00	/* Binary data */
 #define PGP_SIG_TEXT		0x01	/* Canonicalised text data */
+#define PGP_SIG_STANDALONE	0x02	/* Unknown purpose, from RFC 4880 */
 #define	PGP_SIG_CERT0		0x10	/* Key certificate, unknown assurance */
 #define	PGP_SIG_CERT1		0x11	/* Key certificate, no assurance */
 #define	PGP_SIG_CERT2		0x12	/* Key certificate, casual assurance */
 #define	PGP_SIG_CERT3		0x13	/* Key certificate, strong assurance */
-#define PGP_SIG_KRL			0x20	/* Key revocation */
+#define PGP_SIG_SUBKEY		0x18	/* Subkey binding signature */
+#define PGP_SIG_PRIMKEY		0x19	/* Primary key binding signature */
+#define PGP_SIG_DIRECTKEY	0x1F	/* Key self-signature */
+#define PGP_SIG_KEYREV		0x20	/* Key revocation */
+#define PGP_SIG_SUBKEYREV	0x28	/* Subkey revocation */
 #define PGP_SIG_CRL			0x30	/* Certificate revocation */
 #define	PGP_SIG_TS			0x40	/* Timestamp signature */
+#define	PGP_SIG_COUNTERSIG	0x50	/* Third-party countersignature */
+#define PGP_SIG_LAST		0x51	/* Last possible signature type */
 
 /* The size of the PGP version ID and algorithm ID */
 

@@ -8,6 +8,7 @@
 #include <limits.h>		/* To determine max.buffer size we can encrypt */
 #include "cryptlib.h"
 #include "test/test.h"
+#include "misc/config.h"	/* For checking availability of test options */
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -120,20 +121,35 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 		}
 	else
 		{
-		if( algorithm == CRYPT_ALGO_DSA )
-			status = loadDSAContexts( CRYPT_UNUSED, &signContext,
-									  &checkContext );
-		else
+		switch( algorithm )
 			{
-			if( useSHA2 )
-				/* If we're using SHA-2 then we have to use a larger RSA key
-				   to ensure that the hash values fits into the signature 
-				   data */
-				status = loadRSAContextsLarge( CRYPT_UNUSED, &checkContext,
-											   &signContext );
-			else
-				status = loadRSAContexts( CRYPT_UNUSED, &checkContext,
-										  &signContext );
+			case CRYPT_ALGO_RSA:
+				if( useSHA2 )
+					{
+					/* If we're using SHA-2 then we have to use a larger RSA 
+					   key to ensure that the hash values fits into the 
+					   signature data */
+					status = loadRSAContextsLarge( CRYPT_UNUSED, &checkContext,
+												   &signContext );
+					}
+				else
+					{
+					status = loadRSAContexts( CRYPT_UNUSED, &checkContext,
+											  &signContext );
+					}
+				break;
+
+			case CRYPT_ALGO_DSA:
+				status = loadDSAContexts( CRYPT_UNUSED, &signContext,
+										  &checkContext );
+				break;
+
+			case CRYPT_ALGO_ECDSA:
+				status = loadECDSAContexts( &signContext, &checkContext );
+				break;
+
+			default:
+				status = FALSE;
 			}
 		if( !status )
 			return( FALSE );
@@ -187,11 +203,16 @@ static int signData( const char *algoName, const CRYPT_ALGO_TYPE algorithm,
 			cryptObjectInfo.cryptAlgo, cryptObjectInfo.hashAlgo );
 	memset( &cryptObjectInfo, 0, sizeof( CRYPT_OBJECT_INFO ) );
 	if( formatType == CRYPT_FORMAT_CRYPTLIB )
+		{
 		debugDump( ( algorithm == CRYPT_ALGO_DSA ) ? "sigd" : \
+				   ( algorithm == CRYPT_ALGO_ECDSA ) ? "sigec" : \
 				   useSHA2 ? "sigr2" : "sigr", buffer, length );
+		}
 	else
+		{
 		debugDump( ( algorithm == CRYPT_ALGO_RSA ) ? \
 				   "sigr.pgp" : "sigd.pgp", buffer, length );
+		}
 
 	/* Check the signature on the hash.  We have to redo the hashing for PGP
 	   signatures since PGP hashes in extra odds and ends after the data has
@@ -370,7 +391,10 @@ int testLargeBufferEncrypt( void )
 	/* Encrypt the buffer */
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_DES );
 	if( cryptStatusError( status ) )
+		{
+		free( buffer );
 		return( FALSE );
+		}
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEY, "12345678", 8 );
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_IV,
 							 "\x00\x00\x00\x00\x00\x00\x00\x00", 8 );
@@ -379,6 +403,7 @@ int testLargeBufferEncrypt( void )
 		{
 		printf( "cryptEncrypt() of large data quantity failed with error "
 				"code %d, line %d.\n", status, __LINE__ );
+		free( buffer );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -386,7 +411,10 @@ int testLargeBufferEncrypt( void )
 	/* Decrypt the buffer */
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, CRYPT_ALGO_DES );
 	if( cryptStatusError( status ) )
+		{
+		free( buffer );
 		return( FALSE );
+		}
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEY, "12345678", 8 );
 	cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_IV,
 							 "\x00\x00\x00\x00\x00\x00\x00\x00", 8 );
@@ -395,6 +423,7 @@ int testLargeBufferEncrypt( void )
 		{
 		printf( "cryptDecrypt() of large data quantity failed with error "
 				"code %d, line %d.\n", status, __LINE__ );
+		free( buffer );
 		return( FALSE );
 		}
 	cryptDestroyContext( cryptContext );
@@ -406,6 +435,7 @@ int testLargeBufferEncrypt( void )
 			{
 			printf( "Decrypted data != original plaintext at position %d, "
 					"line %d.\n", i, __LINE__ );
+			free( buffer );
 			return( FALSE );
 			}
 		}
@@ -420,7 +450,8 @@ int testLargeBufferEncrypt( void )
 /* Test the code to derive a fixed-length encryption key from a variable-
    length user key */
 
-static int deriveKey( const C_STR userKey, const int userKeyLength )
+static int deriveKey( const C_STR userKey, const int userKeyLength,
+					  BOOLEAN useAltAlgo )
 	{
 	CRYPT_CONTEXT cryptContext, decryptContext;
 	int status;
@@ -439,6 +470,13 @@ static int deriveKey( const C_STR userKey, const int userKeyLength )
 							 "\x12\x34\x56\x78\x78\x56\x34\x12", 8 );
 	cryptSetAttributeString( decryptContext, CRYPT_CTXINFO_KEYING_SALT,
 							 "\x12\x34\x56\x78\x78\x56\x34\x12", 8 );
+	if( useAltAlgo )
+		{
+		cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYING_ALGO,
+						   CRYPT_ALGO_HMAC_SHA2 );
+		cryptSetAttribute( decryptContext, CRYPT_CTXINFO_KEYING_ALGO,
+						   CRYPT_ALGO_HMAC_SHA2 );
+		}
 
 	/* Load an IDEA key derived from a user key into both contexts */
 	status = cryptSetAttributeString( cryptContext,
@@ -504,11 +542,16 @@ int testDeriveKey( void )
 		}
 
 	/* Test the derivation of keys from short, medium, and long passwords */
-	status = deriveKey( shortUserKey, paramStrlen( shortUserKey ) );
+	status = deriveKey( shortUserKey, paramStrlen( shortUserKey ), FALSE );
 	if( status ) 
-		status = deriveKey( medUserKey, paramStrlen( medUserKey ) );
+		status = deriveKey( medUserKey, paramStrlen( medUserKey ), FALSE );
 	if( status ) 
-		status = deriveKey( longUserKey, paramStrlen( longUserKey ) );
+		status = deriveKey( longUserKey, paramStrlen( longUserKey ), FALSE );
+	if( !status ) 
+		return( FALSE );
+
+	/* Test the derivation process using a non-default hash algorithm */
+	status = deriveKey( shortUserKey, paramStrlen( shortUserKey ), TRUE );
 	if( !status ) 
 		return( FALSE );
 
@@ -574,7 +617,8 @@ int testDeriveKey( void )
 
 static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 									 const CRYPT_CONTEXT sessionKeyContext1,
-									 const CRYPT_CONTEXT sessionKeyContext2 )
+									 const CRYPT_CONTEXT sessionKeyContext2,
+									 BOOLEAN useAltAlgo )
 	{
 	CRYPT_OBJECT_INFO cryptObjectInfo;
 	CRYPT_CONTEXT decryptContext;
@@ -586,6 +630,9 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 	/* Set the key for the exporting context */
 	status = cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_KEYING_SALT,
 									  "\x12\x34\x56\x78\x78\x56\x34\x12", 8 );
+	if( cryptStatusOK( status ) && useAltAlgo )
+		status = cryptSetAttribute( cryptContext, CRYPT_CTXINFO_KEYING_ALGO,
+									CRYPT_ALGO_HMAC_SHA2 );
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttributeString( cryptContext,
 										  CRYPT_CTXINFO_KEYING_VALUE,
@@ -636,6 +683,13 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 			cryptObjectInfo.cryptMode );
 	debugDump( ( cryptObjectInfo.cryptAlgo == CRYPT_ALGO_AES ) ? \
 			   "kek_aes" : "kek", buffer, length );
+	if( useAltAlgo && cryptObjectInfo.hashAlgo != CRYPT_ALGO_HMAC_SHA2 )
+		{
+		printf( "Key wrap with algorithm CRYPT_ALGO_HMAC_SHA2 reported "
+			    "hash algorithm as %d, line %d.\n", status, __LINE__ );
+		free( buffer );
+		return( FALSE );
+		}
 
 	/* Recreate the session key by importing the encrypted key */
 	status = cryptCreateContext( &decryptContext, CRYPT_UNUSED,
@@ -653,6 +707,10 @@ static int conventionalExportImport( const CRYPT_CONTEXT cryptContext,
 									  CRYPT_CTXINFO_KEYING_SALT,
 									  cryptObjectInfo.salt,
 									  cryptObjectInfo.saltSize );
+	if( cryptStatusOK( status ) && useAltAlgo )
+		status = cryptSetAttribute( decryptContext,
+									CRYPT_CTXINFO_KEYING_ALGO,
+									cryptObjectInfo.hashAlgo  );
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttributeString( decryptContext,
 										  CRYPT_CTXINFO_KEYING_VALUE,
@@ -724,7 +782,7 @@ int testConventionalExportImport( void )
 
 	/* Export the key */
 	if( !conventionalExportImport( cryptContext, sessionKeyContext1,
-								   sessionKeyContext2 ) )
+								   sessionKeyContext2, FALSE ) )
 		return( FALSE );
 	cryptDestroyContext( cryptContext );
 	destroyContexts( CRYPT_UNUSED, sessionKeyContext1, sessionKeyContext2 );
@@ -732,7 +790,8 @@ int testConventionalExportImport( void )
 		  "conventional\n  encryption succeeded." );
 
 	/* Create AES contexts for the session key and another AES context to
-	   export the session key */
+	   export the session key.  In addition to using AES we use a non-
+	   default PRF algorithm */
 	status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED, 
 								 selectCipher( CRYPT_ALGO_AES ) );
 	if( cryptStatusOK( status ) )
@@ -764,7 +823,7 @@ int testConventionalExportImport( void )
 
 	/* Export the key */
 	if( !conventionalExportImport( cryptContext, sessionKeyContext1,
-								   sessionKeyContext2 ) )
+								   sessionKeyContext2, TRUE ) )
 		return( FALSE );
 	cryptDestroyContext( cryptContext );
 	destroyContexts( CRYPT_UNUSED, sessionKeyContext1, sessionKeyContext2 );
@@ -922,7 +981,8 @@ int testKeyExportImport( void )
 	{
 	if( !keyExportImport( "RSA", CRYPT_ALGO_RSA, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* RSA */
-	if( !keyExportImport( "Elgamal", CRYPT_ALGO_ELGAMAL, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) )
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
+		!keyExportImport( "Elgamal", CRYPT_ALGO_ELGAMAL, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Elgamal */
 	if( !keyExportImport( "RSA", CRYPT_ALGO_RSA, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* RSA, PGP format */
@@ -939,6 +999,9 @@ int testSignData( void )
 		return( FALSE );	/* RSA with SHA2 */
 	if( !signData( "DSA", CRYPT_ALGO_DSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* DSA */
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
+		!signData( "ECDSA", CRYPT_ALGO_ECDSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
+		return( FALSE );	/* ECDSA */
 	if( !signData( "RSA", CRYPT_ALGO_RSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* RSA, PGP format */
 	return( signData( "DSA", CRYPT_ALGO_DSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_PGP ) );
@@ -972,132 +1035,143 @@ static int keygen( const CRYPT_ALGO_TYPE cryptAlgo, const char *algoName )
 		}
 
 	/* Perform a test operation to check the new key */
-	if( cryptAlgo == CRYPT_ALGO_RSA || cryptAlgo == CRYPT_ALGO_DSA )
+	switch( cryptAlgo )
 		{
-		CRYPT_CONTEXT hashContext;
-		BYTE hashBuffer[] = "abcdefghijklmnopqrstuvwxyz";
-
-		/* Create an SHA hash context and hash the test buffer */
-		status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
-									 CRYPT_ALGO_SHA );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		cryptEncrypt( hashContext, hashBuffer, 26 );
-		cryptEncrypt( hashContext, hashBuffer, 0 );
-
-		/* Sign the hashed data and check the signature */
-		status = cryptCreateSignature( buffer, BUFFER_SIZE, &length,
-									   cryptContext, hashContext );
-		if( cryptStatusOK( status ) )
-			status = cryptCheckSignature( buffer, length, cryptContext,
-										  hashContext );
-
-		/* Clean up */
-		cryptDestroyContext( hashContext );
-		cryptDestroyContext( cryptContext );
-		if( cryptStatusError( status ) )
+		case CRYPT_ALGO_RSA:
+		case CRYPT_ALGO_DSA:
+		case CRYPT_ALGO_ECDSA:
 			{
-			printf( "Sign/signature check with generated key failed with "
-					"error code %d, line %d.\n", status, __LINE__ );
-			return( FALSE );
+			CRYPT_CONTEXT hashContext;
+			BYTE hashBuffer[] = "abcdefghijklmnopqrstuvwxyz";
+
+			/* Create an SHA hash context and hash the test buffer */
+			status = cryptCreateContext( &hashContext, CRYPT_UNUSED, 
+										 CRYPT_ALGO_SHA );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+			cryptEncrypt( hashContext, hashBuffer, 26 );
+			cryptEncrypt( hashContext, hashBuffer, 0 );
+
+			/* Sign the hashed data and check the signature */
+			status = cryptCreateSignature( buffer, BUFFER_SIZE, &length,
+										   cryptContext, hashContext );
+			if( cryptStatusOK( status ) )
+				status = cryptCheckSignature( buffer, length, cryptContext,
+											  hashContext );
+
+			/* Clean up */
+			cryptDestroyContext( hashContext );
+			cryptDestroyContext( cryptContext );
+			if( cryptStatusError( status ) )
+				{
+				printf( "Sign/signature check with generated key failed "
+						"with error code %d, line %d.\n", status, 
+						__LINE__ );
+				return( FALSE );
+				}
+			break;
 			}
-		}
-	else
-	if( cryptAlgo == CRYPT_ALGO_ELGAMAL )
-		{
-		CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
 
-		/* Test the key exchange */
-		status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
-									 CRYPT_ALGO_DES );
-		if( cryptStatusOK( status ) )
-			status = cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED,
-										 CRYPT_ALGO_DES );
-		if( cryptStatusOK( status ) )
-			status = cryptGenerateKey( sessionKeyContext1 );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		status = cryptExportKey( buffer, BUFFER_SIZE, &length, cryptContext,
-								 sessionKeyContext1 );
-		if( cryptStatusOK( status ) )
-			status = cryptImportKey( buffer, length, cryptContext,
-									 sessionKeyContext2 );
-		cryptDestroyContext( cryptContext );
-		if( cryptStatusError( status ) )
+		case CRYPT_ALGO_ELGAMAL:
 			{
+			CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
+
+			/* Test the key exchange */
+			status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
+										 CRYPT_ALGO_DES );
+			if( cryptStatusOK( status ) )
+				status = cryptCreateContext( &sessionKeyContext2, 
+											 CRYPT_UNUSED, CRYPT_ALGO_DES );
+			if( cryptStatusOK( status ) )
+				status = cryptGenerateKey( sessionKeyContext1 );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+			status = cryptExportKey( buffer, BUFFER_SIZE, &length, 
+									 cryptContext, sessionKeyContext1 );
+			if( cryptStatusOK( status ) )
+				status = cryptImportKey( buffer, length, cryptContext,
+										 sessionKeyContext2 );
+			cryptDestroyContext( cryptContext );
+			if( cryptStatusError( status ) )
+				{
+				destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
+								 sessionKeyContext2 );
+				printf( "Key exchange with generated key failed with error "
+						"code %d, line %d.\n", status, __LINE__ );
+				return( FALSE );
+				}
+
+			/* Make sure that the two keys match */
+			if( !compareSessionKeys( sessionKeyContext1, 
+									 sessionKeyContext2 ) )
+				return( FALSE );
+
+			/* Clean up */
 			destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
 							 sessionKeyContext2 );
-			printf( "Key exchange with generated key failed with error code "
-					"%d, line %d.\n", status, __LINE__ );
-			return( FALSE );
+			break;
 			}
 
-		/* Make sure that the two keys match */
-		if( !compareSessionKeys( sessionKeyContext1, sessionKeyContext2 ) )
-			return( FALSE );
-
-		/* Clean up */
-		destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
-						 sessionKeyContext2 );
-		}
-	else
-	if( cryptAlgo == CRYPT_ALGO_DH )
-		{
-KLUDGE_WARN( "DH test because of absence of DH key exchange mechanism" );
+		case CRYPT_ALGO_DH:
+		case CRYPT_ALGO_ECDH:
+			{
+KLUDGE_WARN( "DH/ECDH test because of absence of DH/ECDH key exchange mechanism" );
 cryptDestroyContext( cryptContext );
 return( TRUE );
 
-#if 0	/* Get rid if unreachable-code warnings */
-		CRYPT_CONTEXT dhContext;
-		CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
+#if 0		/* Get rid if unreachable-code warnings */
+			CRYPT_CONTEXT dhContext;
+			CRYPT_CONTEXT sessionKeyContext1, sessionKeyContext2;
 
-		/* Test the key exchange */
-		status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
-									 CRYPT_ALGO_DES );
-		if( cryptStatusOK( status ) )
-			status = cryptCreateContext( &sessionKeyContext2, CRYPT_UNUSED,
+			/* Test the key exchange */
+			status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
 										 CRYPT_ALGO_DES );
-		if( cryptStatusOK( status ) )
-			status = cryptCreateContext( &dhContext, CRYPT_UNUSED, 
-										 CRYPT_ALGO_DH );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		status = cryptExportKey( buffer, BUFFER_SIZE, &length, cryptContext,
-								  sessionKeyContext1 );
-		if( cryptStatusOK( status ) )
-			status = cryptImportKey( buffer, length, dhContext,
-									 sessionKeyContext2 );
-		if( cryptStatusOK( status ) )
-			status = cryptExportKey( buffer, BUFFER_SIZE, &length, dhContext,
-									 sessionKeyContext2 );
-		if( cryptStatusOK( status ) )
-			status = cryptImportKey( buffer, length, cryptContext,
-									 sessionKeyContext1 );
-		cryptDestroyContext( cryptContext );
-		cryptDestroyContext( dhContext );
-		if( cryptStatusError( status ) )
-			{
+			if( cryptStatusOK( status ) )
+				status = cryptCreateContext( &sessionKeyContext2, 
+											 CRYPT_UNUSED, CRYPT_ALGO_DES );
+			if( cryptStatusOK( status ) )
+				status = cryptCreateContext( &dhContext, CRYPT_UNUSED, 
+											 CRYPT_ALGO_DH );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+			status = cryptExportKey( buffer, BUFFER_SIZE, &length, 
+									 cryptContext, sessionKeyContext1 );
+			if( cryptStatusOK( status ) )
+				status = cryptImportKey( buffer, length, dhContext,
+										 sessionKeyContext2 );
+			if( cryptStatusOK( status ) )
+				status = cryptExportKey( buffer, BUFFER_SIZE, &length, 
+										 dhContext, sessionKeyContext2 );
+			if( cryptStatusOK( status ) )
+				status = cryptImportKey( buffer, length, cryptContext,
+										 sessionKeyContext1 );
+			cryptDestroyContext( cryptContext );
+			cryptDestroyContext( dhContext );
+			if( cryptStatusError( status ) )
+				{
+				destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
+								 sessionKeyContext2 );
+				printf( "Key exchange with generated key failed with error "
+						"code %d, line %d.\n", status, __LINE__ );
+				return( FALSE );
+				}
+
+			/* Make sure that the two keys match */
+			if( !compareSessionKeys( sessionKeyContext1, 
+									 sessionKeyContext2 ) )
+				return( FALSE );
+
+			/* Clean up */
 			destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
 							 sessionKeyContext2 );
-			printf( "Key exchange with generated key failed with error code "
-					"%d, line %d.\n", status, __LINE__ );
-			return( FALSE );
+			break;
+#endif /* 0 */
 			}
 
-		/* Make sure that the two keys match */
-		if( !compareSessionKeys( sessionKeyContext1, sessionKeyContext2 ) )
+		default:
+			printf( "Unexpected encryption algorithm %d found, line %d.\n", 
+					cryptAlgo, __LINE__ );
 			return( FALSE );
-
-		/* Clean up */
-		destroyContexts( CRYPT_UNUSED, sessionKeyContext1,
-						 sessionKeyContext2 );
-#endif /* 0 */
-		}
-	else
-		{
-		printf( "Unexpected encryption algorithm %d found, line %d.\n", 
-				cryptAlgo, __LINE__ );
-		return( FALSE );
 		}
 
 	printf( "%s key generation succeeded.\n", algoName );
@@ -1110,9 +1184,16 @@ int testKeygen( void )
 		return( FALSE );
 	if( !keygen( CRYPT_ALGO_DSA, "DSA" ) )
 		return( FALSE );
-	if( !keygen( CRYPT_ALGO_ELGAMAL, "Elgamal" ) )
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
+		!keygen( CRYPT_ALGO_ELGAMAL, "Elgamal" ) )
 		return( FALSE );
 	if( !keygen( CRYPT_ALGO_DH, "DH" ) )
+		return( FALSE );
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
+		!keygen( CRYPT_ALGO_ECDSA, "ECDSA" ) )
+		return( FALSE );
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDH, NULL ) ) && \
+		!keygen( CRYPT_ALGO_ECDH, "ECDH" ) )
 		return( FALSE );
 	printf( "\n" );
 	return( TRUE );
@@ -1307,7 +1388,7 @@ int testKeyExportImportCMS( void )
 
 	puts( "Testing CMS public-key export/import..." );
 
-	/* Get a private key with a cert chain attached */
+	/* Get a private key with a certificate chain attached */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  USER_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusOK( status ) )
@@ -1402,16 +1483,24 @@ int testKeyExportImportCMS( void )
 /* Test the code to create an CMS signature */
 
 static const CERT_DATA cmsAttributeData[] = {
+	/* We have to be careful when setting CMS attributes because most are 
+	   never used by anything so they're only available of use of obscure 
+	   attributes is enabled */
+#ifdef USE_CMS_OBSCURE
 	/* Content type */
 	{ CRYPT_CERTINFO_CMS_CONTENTTYPE, IS_NUMERIC, CRYPT_CONTENT_SPCINDIRECTDATACONTEXT },
 
 	/* Odds and ends.  We can't (portably) set the opusInfo name since it's
-	   a Unicode string, so we only add this one under Windows */
-#ifdef __WINDOWS__
+	   a Unicode string so we only add this one under Windows */
+  #ifdef __WINDOWS__
 	{ CRYPT_CERTINFO_CMS_SPCOPUSINFO_NAME, IS_WCSTRING, 0, L"Program v3.0 SP2" },
-#endif /* __WINDOWS__ */
+  #endif /* __WINDOWS__ */
 	{ CRYPT_CERTINFO_CMS_SPCOPUSINFO_URL, IS_STRING, 0, TEXT( "http://bugs-r-us.com" ) },
 	{ CRYPT_CERTINFO_CMS_SPCSTMT_COMMERCIALCODESIGNING, IS_NUMERIC, CRYPT_UNUSED },
+#else
+	/* Content type */
+	{ CRYPT_CERTINFO_CMS_CONTENTTYPE, IS_NUMERIC, CRYPT_CONTENT_ENCRYPTEDDATA },
+#endif /* USE_CMS_OBSCURE */
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -1435,7 +1524,7 @@ static int signDataCMS( const char *description,
 	cryptEncrypt( hashContext, hashBuffer, 26 );
 	cryptEncrypt( hashContext, hashBuffer, 0 );
 
-	/* Get a private key with a cert chain attached */
+	/* Get a private key with a certificate chain attached */
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_FILE,
 							  USER_PRIVKEY_FILE, CRYPT_KEYOPT_READONLY );
 	if( cryptStatusOK( status ) )

@@ -147,7 +147,7 @@ static int pgpExtractKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	if( cryptStatusError( status ) )
 		return( status );
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &mode, CRYPT_CTXINFO_MODE );
+							  ( MESSAGE_CAST ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusError( status ) )
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 	else
@@ -405,7 +405,7 @@ static int recoverPkcs1DataBlock( INOUT_BUFFER_FIXED( dataLength ) \
 		return( CRYPT_ERROR_BADDATA );
 	for( length = 2, ch = 0xFF; 
 		 length < dataLength - MIN_KEYSIZE && \
-			( ch = data[ length ] ) != 0x00; 
+			( ch = byteToInt( data[ length ] ) ) != 0x00; 
 		 length++ );
 	if( ch != 0x00 || length < 11 )
 		return( CRYPT_ERROR_BADDATA );
@@ -543,7 +543,7 @@ static int pkcs1Wrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 
 #ifdef USE_PGP
 		case PKCS1_WRAP_PGP:
-			*dataPtr++ = pgpAlgoID;
+			*dataPtr++ = intToByte( pgpAlgoID );
 			status = extractKeyData( mechanismInfo->keyContext, dataPtr,
 									 payloadSize - 3, "keydata", 7 );
 			if( cryptStatusOK( status ) )
@@ -632,7 +632,7 @@ static int pkcs1Unwrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 		case PKCS1_WRAP_NORMAL:
 			/* Load the decrypted keying information into the session key
 			   context */
-			setMessageData( &msgData, ( void * ) payloadPtr, length );
+			setMessageData( &msgData, ( MESSAGE_CAST ) payloadPtr, length );
 			status = krnlSendMessage( mechanismInfo->keyContext,
 									  IMESSAGE_SETATTRIBUTE_S, &msgData,
 									  CRYPT_CTXINFO_KEY );
@@ -951,8 +951,7 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 	
 	/* dbMask = MGF1( seed, dbLen ) */
 	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
-	if( cryptStatusError( status ) )
-		return( status );
+	ENSURES( cryptStatusOK( status ) );
 
 	/* maskedDB = db ^ dbMask */
 	for( i = 0; i < dbLen; i++ )
@@ -960,12 +959,12 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 
 	/* seedMask = MGF1( maskedDB, seedLen ) */
 	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
-	if( cryptStatusError( status ) )
-		return( status );
+	ENSURES( cryptStatusOK( status ) );
 
 	/* maskedSeed = seed ^ seedMask */
 	for( i = 0; i < seedLen; i++ )
-		maskedSeed[ i ] = ( ( const BYTE * ) seed )[ i ] ^ seedMask[ i ];
+		maskedSeed[ i ] = intToByte( ( ( const BYTE * ) seed )[ i ] ^ \
+									 seedMask[ i ] );
 
 	/* data = 0x00 || maskedSeed || maskedDB */
 	data[ 0 ] = 0x00;
@@ -988,7 +987,7 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ OAEP_MAX_HASHSIZE + 8 ];
 	BYTE dataBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE *seed, *db;
-	int seedLen, dbLen, length, i, m1status, m2status, dummy, status;
+	int seedLen, dbLen, length, i, dummy, status;
 
 	assert( isWritePtr( message, messageMaxLen ) );
 	assert( isWritePtr( messageLen, sizeof( int ) ) );
@@ -1024,22 +1023,24 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	ENSURES( dbLen >= 16 && 1 + seedLen + dbLen <= dataLen );
 
 	/* seedMask = MGF1( maskedDB, seedLen ) */
-	m1status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
-	if( m1status == CRYPT_ERROR_INTERNAL )
-		return( m1status );	/* Standard status values checked below */
+	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
+	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* seed = maskedSeed ^ seedMask */
 	for( i = 0; i < seedLen; i++ )
 		seed[ i ] ^= seedMask[ i ];
 
 	/* dbMask = MGF1( seed, dbLen ) */
-	m2status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
-	if( m2status == CRYPT_ERROR_INTERNAL )
-		return( m2status );	/* Standard status values checked below */
+	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
+	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* db = maskedDB ^ dbMask */
 	for( i = 0; i < dbLen; i++ )
 		db[ i ] ^= dbMask[ i ];
+
+	/* Get the (constant) lHash value */
+	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, &dummy, hashAlgo );
+	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* Verify that:
 
@@ -1053,12 +1054,10 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	   padding (OAEP)" by James Manger, Proceedings of Crypto'01, LNCS 
 	   No.2139, p.230.  To make this as hard as possible we cluster all of 
 	   the format checks as close together as we can to try and produce a 
-	   near-constant-time accept/reject decision */
-	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, &dummy, hashAlgo );
-	if( cryptStatusError( status ) )
-		return( status );	/* See earlier comment about oracle attacks */
-	if( cryptStatusError( m1status ) || cryptStatusError( m2status ) )
-		return( cryptStatusError( m1status ) ? m1status : m2status );
+	   near-constant-time accept/reject decision (unfortunately the complex
+	   processing required by OAEP makes it more or less impossible to 
+	   perform in a timing-independent manner, so the best that we can do
+	   is make it as hard as possible to get timing data) */
 	if( 1 + seedLen + seedLen + 1 + 1 + MIN_KEYSIZE > dataLen )
 		{
 		/* Make sure that at least a minimum-length payload fits:
@@ -1073,7 +1072,8 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 		   completed to try and avoid a timing attack */
 		return( CRYPT_ERROR_BADDATA );
 		}
-	if( dataBuffer[ 0 ] != 0x00 || memcmp( db, dbMask, seedLen ) )
+	if( dataBuffer[ 0 ] != 0x00 || \
+		!compareDataConstTime( db, dbMask, seedLen ) )
 		return( CRYPT_ERROR_BADDATA );
 	for( i = seedLen; i < dbLen && db[ i ] == 0x00; i++ );
 	if( i <= seedLen || i >= dbLen || db[ i++ ] != 0x01 )

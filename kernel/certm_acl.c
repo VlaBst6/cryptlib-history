@@ -154,6 +154,7 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 	  { MKACP_UNUSED(),
 		MKACP_UNUSED() } },
 
+	/* End-of-ACL marker */
 	{ CRYPT_CERTACTION_NONE,
 	  ACTION_PERM_NONE,
 	  { MKACP_END() } },
@@ -168,7 +169,8 @@ static const CERTMGMT_ACL FAR_BSS certMgmtACLTbl[] = {
 *																			*
 ****************************************************************************/
 
-int initCertMgmtACL( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
@@ -243,11 +245,14 @@ void endCertMgmtACL( void )
 
 /* Functions to implement the checks in the cert management ACL tables */
 
-int preDispatchCheckCertMgmtAccess( const int objectHandle,
-									const MESSAGE_TYPE message,
-									const void *messageDataPtr,
-									const int messageValue,
-									const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
+									IN_MESSAGE const MESSAGE_TYPE message,
+									IN_BUFFER( MESSAGE_CERTMGMT_INFO ) \
+										const void *messageDataPtr,
+									IN_ENUM( CRYPT_CERTACTION ) \
+										const int messageValue,
+									STDC_UNUSED const void *dummy )
 	{
 	const MESSAGE_CERTMGMT_INFO *mechanismInfo = \
 		  ( MESSAGE_CERTMGMT_INFO * ) messageDataPtr;

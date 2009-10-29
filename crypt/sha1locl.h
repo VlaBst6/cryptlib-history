@@ -60,10 +60,10 @@
 #include <string.h>
 
 #if defined( INC_ALL )
-  #include "crypt.h"
+  #include "crypt/osconfig.h"
   #include "sha.h"
 #else
-  #include "crypt.h"
+  #include "crypt/osconfig.h"
   #include "crypt/sha.h"
 #endif /* Compiler-specific includes */
 

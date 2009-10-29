@@ -9,50 +9,6 @@
 
 #define _INTAPI_DEFINED
 
-/* Internal forms of various external functions.  These work with internal
-   resources that are marked as being inaccessible to the corresponding
-   external functions, and don't perform all the checking that their
-   external equivalents perform, since the parameters have already been
-   checked by cryptlib */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
-int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength ) \
-							void *signature, 
-						   IN_LENGTH const int signatureMaxLength,
-						   OUT_LENGTH_Z int *signatureLength,
-						   IN_ENUM( CRYPT_FORMAT ) \
-							const CRYPT_FORMAT_TYPE formatType,
-						   IN_HANDLE const CRYPT_CONTEXT iSignContext,
-						   IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						   IN_HANDLE_OPT const CRYPT_CERTIFICATE iExtraData,
-						   IN_HANDLE_OPT const CRYPT_SESSION iTspSession );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature, 
-						  IN_LENGTH_SHORT const int signatureLength,
-						  IN_ENUM( CRYPT_FORMAT ) \
-							const CRYPT_FORMAT_TYPE formatType,
-						  IN_HANDLE const CRYPT_HANDLE iSigCheckKey,
-						  IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						  IN_HANDLE const CRYPT_CONTEXT iHash2Context,
-						  OUT_OPT_HANDLE_OPT CRYPT_HANDLE *extraData );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey, 
-					 IN_LENGTH_SHORT const int encryptedKeyLength,
-					 IN_ENUM( CRYPT_FORMAT ) \
-						const CRYPT_FORMAT_TYPE formatType,
-					 IN_HANDLE const CRYPT_CONTEXT iImportKey,
-					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
-					 OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iReturnedContext );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
-int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
-						void *encryptedKey, 
-					 IN_LENGTH_Z const int encryptedKeyMaxLength,
-					 OUT_LENGTH_Z int *encryptedKeyLength,
-					 IN_ENUM( CRYPT_FORMAT ) \
-						const CRYPT_FORMAT_TYPE formatType,
-					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
-					 IN_HANDLE const CRYPT_CONTEXT iExportKey );
-
 /* Copy a string attribute to external storage, with various range checks
    to follow the cryptlib external API semantics.  There are two variants
    of this function depending on whether the result parameters are passed
@@ -62,11 +18,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int attributeCopy( INOUT MESSAGE_DATA *msgData, 
 				   IN_BUFFER( attributeLength ) const void *attribute, 
 				   IN_LENGTH_SHORT_Z const int attributeLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int attributeCopyParams( OUT_BUFFER_OPT( destMaxLength, *destLength ) void *dest, 
 						 IN_LENGTH_SHORT_Z const int destMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *destLength, 
-						 IN_BUFFER( sourceLength ) const void *source, 
+						 IN_BUFFER_OPT( sourceLength ) const void *source, 
 						 IN_LENGTH_SHORT_Z const int sourceLength );
 
 /* Check whether a password is valid or not.  Currently this just checks that
@@ -75,11 +31,11 @@ int attributeCopyParams( OUT_BUFFER_OPT( destMaxLength, *destLength ) void *dest
 
 #ifdef UNICODE_CHARS
   #define isBadPassword( password ) \
-		  ( !isReadPtr( password, sizeof( wchar_t ) ) || \
+		  ( !isReadPtrConst( password, sizeof( wchar_t ) ) || \
 		    ( wcslen( password ) < 1 ) )
 #else
   #define isBadPassword( password ) \
-		  ( !isReadPtr( password, 1 ) || \
+		  ( !isReadPtrConst( password, 1 ) || \
 		    ( strlen( password ) < 1 ) )
 #endif /* Unicode vs. ASCII environments */
 
@@ -147,7 +103,8 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 #if defined( __WIN32__ ) || defined( __WINCE__ )
 typedef enum { 
 	SYSVAR_NONE,			/* No system variable */
-	SYSVAR_OSVERSION,		/* OS version number */
+	SYSVAR_OSMAJOR,			/* OS major version number */
+	SYSVAR_OSMINOR,			/* OS minor version number */
 	SYSVAR_ISWIN95,			/* Whether code base is Win95 or WinNT */
 	SYSVAR_HWCAP,			/* Hardware crypto capabilities */
 	SYSVAR_PAGESIZE,		/* System page size */
@@ -161,7 +118,11 @@ typedef enum {
 	SYSVAR_LAST				/* Last valid system variable type */
 	} SYSVAR_TYPE;
 #else
-typedef enum { SYSVAR_NONE, SYSVAR_LAST } SYSVAR_TYPE;
+typedef enum { 
+	SYSVAR_NONE,			/* No system variable */
+	SYSVAR_HWCAP,			/* Hardware crypto capabilities */
+	SYSVAR_LAST				/* Last valid system variable type */
+	} SYSVAR_TYPE;
 #endif /* OS-specific system variable types */
 
 CHECK_RETVAL \
@@ -222,6 +183,9 @@ int getSysVar( const SYSVAR_TYPE type );
      require the ANSI/ISO conformant _strXcmp */
   #define strnicmp	_strnicmp
   #define stricmp	_stricmp
+#elif defined( __ECOS__ )
+  #define strnicmp	strncasecmp
+  #define stricmp	strcasecmp
 #elif defined __PALMOS__
   /* PalmOS has strcasecmp()/strncasecmp() but these aren't i18n-aware so we
      have to use a system function instead */
@@ -342,7 +306,12 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 #define ENSURES_S( x )	if( !( x ) ) retIntError_Stream( stream )
 
 /* A struct to store extended error information.  This provides error info
-   above and beyond that provided by cryptlib error codes */
+   above and beyond that provided by cryptlib error codes.  Since this 
+   consumes a fair amount of memory, we make it conditional on USE_ERRMSGS
+   being defined and provide an alternative errorcode-only version if this
+   isn't enabled */
+
+#ifdef USE_ERRMSGS
 
 typedef struct {
 	int errorCode;					/* Low-level error code */
@@ -350,6 +319,13 @@ typedef struct {
 	char errorString[ MAX_ERRMSG_SIZE + 8 ];
 	int errorStringLength;			/* Error message */
 	} ERROR_INFO;
+#else
+
+typedef struct {
+	int errorCode;					/* Low-level error code */
+	} ERROR_INFO;
+
+#endif /* USE_ERRMSGS */
 
 /* Prototypes for various extended error-handling functions.  retExt() 
    returns after setting extended error information for the object.  
@@ -377,12 +353,18 @@ typedef struct {
 	retExtStr() takes an additional error string pointer and is used in the
 		same way as retExtErr() */
 
+#ifdef USE_ERRMSGS
+
 STDC_NONNULL_ARG( ( 1 ) ) \
 void clearErrorString( INOUT ERROR_INFO *errorInfoPtr );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void setErrorString( INOUT ERROR_INFO *errorInfoPtr, 
 					 IN_BUFFER( stringLength ) const char *string, 
 					 IN_LENGTH_ERRORMESSAGE  const int stringLength );
+#else
+  #define clearErrorString( errorInfoPtr )
+  #define setErrorString( errorInfoPtr, string, stringLength );
+#endif /* USE_ERRMSGS */
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
 void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr, 
 					const ERROR_INFO *srcErrorInfoPtr );
@@ -453,31 +435,33 @@ int retExtErrFn( IN_ERROR const int status,
 *																			*
 ****************************************************************************/
 
-/* Special-case certificate functions.  The indirect-import function works
-   somewhat like the import cert messages, but reads certs by sending
-   get_next_cert messages to the message source and provides extended control
-   over the format of the imported object.  The public-key read function
-   converts an X.509 SubjectPublicKeyInfo record into a context.  The first
-   parameter for this function is actually a STREAM *, but we can't use this
-   here since STREAM * hasn't been defined yet.
-
-   Neither of these are strictly speaking certificate functions, but the
-   best (meaning least inappropriate) place to put them is with the cert-
+/* Special-case certificate function that works somewhat like the import 
+   cert messages but reads certs by sending get_next_cert messages to the 
+   message source and provides extended control over the format of the 
+   imported object.  This isn't strictly speaking a certificate function but 
+   the best (meaning least inappropriate) place to put it is with the cert-
    management code */
 
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int iCryptImportCertIndirect( OUT CRYPT_CERTIFICATE *iCertificate,
 							  const CRYPT_HANDLE iCertSource,
 							  const CRYPT_KEYID_TYPE keyIDtype,
 							  IN_BUFFER( keyIDlength ) const void *keyID, 
 							  const int keyIDlength,
-							  const int options ) \
-							  STDC_NONNULL_ARG( ( 1, 4 ) );
-CHECK_RETVAL \
-int iCryptReadSubjectPublicKey( INOUT void *streamPtr, 
-								OUT CRYPT_CONTEXT *iCryptContext,
-								const BOOLEAN deferredLoad ) \
-								STDC_NONNULL_ARG( ( 1, 2 ) );
+							  const int options );
+
+/* Read a public key from an X.509 SubjectPublicKeyInfo record, creating the
+   context necessary to contain it in the process.  This is used by a variety
+   of modules including certificate-management, keyset, and crypto device. 
+
+   The use of the void * instead of STREAM * is necessary because the STREAM
+   type isn't visible at the global level */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int iCryptReadSubjectPublicKey( INOUT TYPECAST( STREAM * ) void *streamPtr, 
+								OUT_HANDLE_OPT CRYPT_CONTEXT *iPubkeyContext,
+								IN_HANDLE const CRYPT_DEVICE iCreatorHandle, 
+								const BOOLEAN deferredLoad );
 
 /* Get information on encoded object data.  The first parameter for this
    function is actually a STREAM *, but we can't use this here since
@@ -512,6 +496,7 @@ int exportCertToStream( INOUT void *streamPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int importCertFromStream( INOUT void *streamPtr,
 						  OUT_HANDLE_OPT CRYPT_CERTIFICATE *cryptCertificate,
+						  IN_HANDLE const CRYPT_USER iCryptOwner,
 						  IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType, 
 						  IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
@@ -576,8 +561,9 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 *																			*
 ****************************************************************************/
 
-/* Insert a new element into singly-linked and doubly-lined lists.  This is
-   the sort of thing we'd really need templates for */
+/* Insert and delete elements to/from singly-linked and doubly-lined lists.  
+   This is the sort of thing that we'd really need templates for, in their
+   absence we have to use (rather complex) macros */
 
 #define insertSingleListElement( listHead, insertPoint, newElement ) \
 		{ \
@@ -623,6 +609,10 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 				} \
 			else \
 				{ \
+				/* Make sure that the links are consistent */ \
+				ENSURES( ( insertPoint )->next == NULL || \
+						 ( insertPoint )->next->prev == ( insertPoint ) ); \
+				\
 				/* Insert the element in the middle or the end of the list */ \
 				( newEndElement )->next = ( insertPoint )->next; \
 				\
@@ -654,18 +644,25 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 
 #define deleteDoubleListElement( listHead, element ) \
 		{ \
+		/* Make sure that the links are consistent */ \
+		ENSURES( ( element )->next == NULL || \
+				 ( element )->next->prev == ( element ) ); \
+		ENSURES( ( element )->prev == NULL || \
+				 ( element )->prev->next == ( element ) ); \
+		\
+		/* Unlink the element from the list */ \
 		if( element == *( listHead ) ) \
 			{ \
 			/* Special case for first item */ \
-			*( listHead ) = element->next; \
+			*( listHead ) = ( element )->next; \
 			} \
 		else \
 			{ \
 			/* Delete from the middle or the end of the list */ \
-			element->prev->next = element->next; \
+			( element )->prev->next = ( element )->next; \
 			} \
-		if( element->next != NULL ) \
-			element->next->prev = element->prev; \
+		if( ( element )->next != NULL ) \
+			( element )->next->prev = ( element )->prev; \
 		}
 
 /****************************************************************************
@@ -759,8 +756,7 @@ time_t getReliableTime( IN_HANDLE const CRYPT_HANDLE cryptHandle );
    some trivial clock irregularity */
 
 typedef struct {
-	time_t endTime;
-	int origTimeout, timeRemaining;
+	time_t endTime, origTimeout, timeRemaining;
 	} MONOTIMER_INFO;
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -779,6 +775,103 @@ BOOLEAN checkMonoTimerExpiryImminent( INOUT MONOTIMER_INFO *timerInfo,
 
 CHECK_RETVAL \
 long getTickCount( long startTime );
+
+/****************************************************************************
+*																			*
+*						Dynamic Memory Management Functions					*
+*																			*
+****************************************************************************/
+
+/* Dynamic buffer management functions.  When reading variable-length
+   object data we can usually fit the data into a small fixed-length buffer, 
+   but occasionally we have to cope with larger data amounts that require a 
+   dynamically-allocated buffer.  The following routines manage this 
+   process, dynamically allocating and freeing a larger buffer if required */
+
+#define DYNBUF_SIZE		1024
+
+typedef struct {
+	BUFFER_FIXED( length ) \
+	void *data;						/* Pointer to data */
+	int length;
+	BUFFER( DYNBUF_SIZE, length ) \
+	BYTE dataBuffer[ DYNBUF_SIZE + 8 ];	/* Data buf.if size <= DYNBUF_SIZE */
+	} DYNBUF;
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int dynCreate( OUT DYNBUF *dynBuf, 
+			   IN_HANDLE const CRYPT_HANDLE cryptHandle,
+			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int dynCreateCert( OUT DYNBUF *dynBuf, 
+				   IN_HANDLE const CRYPT_HANDLE cryptHandle,
+				   IN_ENUM( CRYPT_CERTFORMAT ) \
+					const CRYPT_CERTFORMAT_TYPE formatType );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void dynDestroy( INOUT DYNBUF *dynBuf );
+
+#define dynLength( dynBuf )		( dynBuf ).length
+#define dynData( dynBuf )		( dynBuf ).data
+
+/* When allocating many little blocks of memory, especially in resource-
+   constrained systems, it's better if we pre-allocate a small memory pool
+   ourselves and grab chunks of it as required, falling back to dynamically
+   allocating memory later on if we exhaust the pool.  To use a custom
+   memory pool, the caller declares a state variable of type MEMPOOL_STATE,
+   calls initMemPool() to initialise the pool, and then calls getMemPool()
+   and freeMemPool() to allocate and free memory blocks.  The state pointer
+   is declared as a void * because to the caller it's an opaque memory block
+   while to the memPool routines it's structured storage */
+
+typedef BYTE MEMPOOL_STATE[ 32 ];
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initMemPool( OUT void *statePtr, 
+				 IN_BUFFER( memPoolSize ) void *memPool, 
+				 IN_LENGTH_SHORT_MIN( 64 ) const int memPoolSize );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+void *getMemPool( INOUT void *statePtr, IN_LENGTH_SHORT const int size );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void freeMemPool( INOUT void *statePtr, IN void *memblock );
+
+/* Almost all objects require object-subtype-specific amounts of memory to
+   store object information.  In addition some objects such as certificates
+   contain arbitrary numbers of arbitrary-sized bits and pieces, most of
+   which are quite small.  To avoid having to allocate worst-case sized
+   blocks of memory for objects (a problem in embedded environments) or large
+   numbers of tiny little blocks of memory for certificate attributes, we use
+   variable-length structures in which the payload is stored after the
+   structure, with a pointer inside the structure pointing into the payload
+   storage (a convenient side-effect of this is that it provides good 
+   spatial coherence when processing long lists of attributes).  To make 
+   this easier to handle, we use macros to set up and tear down the 
+   necessary variables.
+   
+   The use of 'storage[ 1 ]' means that the only element that's guaranteed 
+   to be valid is 'storage[ 0 ]' under strict C99 definitions, however 
+   declaring it as an unsized array leads to warnings of use of a zero-sized 
+   array from many compilers so we leave it as 'storage[ 1 ]' */
+
+#define DECLARE_VARSTRUCT_VARS \
+		int storageSize; \
+		BUFFER_FIXED( storageSize ) \
+		BYTE storage[ 1 ]
+
+#define initVarStruct( structure, structureType, size ) \
+		memset( structure, 0, sizeof( structureType ) ); \
+		structure->value = structure->storage; \
+		structure->storageSize = size
+
+#define copyVarStruct( destStructure, srcStructure, structureType ) \
+		memcpy( destStructure, srcStructure, \
+				sizeof( structureType ) + srcStructure->storageSize ); \
+		destStructure->value = destStructure->storage;
+
+#define endVarStruct( structure, structureType ) \
+		zeroise( structure, sizeof( structureType ) + structure->storageSize )
+
+#define sizeofVarStruct( structure, structureType ) \
+		( sizeof( structureType ) + structure->storageSize )
 
 /****************************************************************************
 *																			*
@@ -840,11 +933,10 @@ void getHashAtomicParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
 							  OUT_PTR HASHFUNCTION_ATOMIC *hashFunctionAtomic, 
 							  OUT_OPT_LENGTH_SHORT_Z int *hashOutputSize );
 
-/* Sometimes all we need is a quick-reject check, usually performed to
-   lighten the load before we do a full hash check.  The following
-   function returns an integer checksum that can be used to weed out
-   non-matches.  If the checksum matches, we use the more heavyweight
-   full hash of the data */
+/* Sometimes all that we need is a quick-reject check, usually performed to 
+   lighten the load before we do a full hash check.  The following function 
+   returns an integer checksum that can be used to weed out non-matches.  If 
+   the checksum matches, we use the more heavyweight full hash of the data */
 
 #define HASH_DATA_SIZE	16
 
@@ -857,102 +949,97 @@ void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash,
 			   IN_BUFFER( dataLength ) const void *data, 
 			   IN_LENGTH const int dataLength );
 
+/* When we're comparing two cryptographic values, for example two MAC 
+   values, and the developer's been careful to implement things really 
+   badly, it may be possible to use a timing attack to guess a MAC value a
+   byte at a time by using a high-resolution timer to check at which byte
+   the memcmp() exits, thus guessing the MAC value a byte at a time in the
+   same way that the old TENEX password-guessing bug worked.  This seems
+   highly unlikely given that cryptlib implementations of protocols won't
+   allow themselves to be used as an oracle in this manner and for someone
+   using cryptlib to implement their own protocol the overhead of a trip
+   through the kernel will mask out a few clock cycles of difference in
+   the memcmp() at the end, but we defend against it anyway because no doubt
+   someone will eventually publish a CERT advisory on it being a problem in
+   some app somewhere */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+BOOLEAN compareDataConstTime( IN_BUFFER( length ) const void *src,
+							  IN_BUFFER( length ) const void *dest,
+							  IN_LENGTH_SHORT const int length );
+
 /****************************************************************************
 *																			*
-*						Dynamic Memory Management Functions					*
+*							Signing/Key Wrap Functions						*
 *																			*
 ****************************************************************************/
 
-/* Dynamic buffer management functions.  When reading variable-length
-   object data we can usually fit the data into a small fixed-length buffer, 
-   but occasionally we have to cope with larger data amounts that require a 
-   dynamically-allocated buffer.  The following routines manage this 
-   process, dynamically allocating and freeing a larger buffer if required */
-
-#define DYNBUF_SIZE		1024
+/* Signatures can have all manner of additional odds and ends associated 
+   with them, the following structure contains these additional optional
+   values */
 
 typedef struct {
-	BUFFER_FIXED( length ) \
-	void *data;						/* Pointer to data */
-	int length;
-	BUFFER( DYNBUF_SIZE, length ) \
-	BYTE dataBuffer[ DYNBUF_SIZE + 8 ];	/* Data buf.if size <= DYNBUF_SIZE */
-	} DYNBUF;
+	/* CMS additional signature information */
+	BOOLEAN useDefaultAuthAttr;		/* Use built-in default auth.attr */
+	CRYPT_CERTIFICATE iAuthAttr;	/* User-supplied auth.attributes */
+	CRYPT_SESSION iTspSession;		/* TSP session for timestamping */
 
+	/* PGP additional signature information */
+	int sigType;					/* Signature type */
+
+	/* SSL/TLS additional signature information */
+	CRYPT_CONTEXT iSecondHash;		/* Second hash for dual sig.*/
+	} SIGPARAMS;
+
+#define initSigParams( sigParams ) \
+	{ \
+	memset( ( sigParams ), 0, sizeof( SIGPARAMS ) ); \
+	( sigParams )->iAuthAttr = ( sigParams )->iTspSession = \
+		( sigParams )->iSecondHash = CRYPT_ERROR; \
+	}
+
+/* Internal forms of various external functions.  These work with internal
+   resources that are marked as being inaccessible to the corresponding
+   external functions, and don't perform all the checking that their
+   external equivalents perform, since the parameters have already been
+   checked by cryptlib */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength ) \
+							void *signature, 
+						   IN_LENGTH_Z const int signatureMaxLength,
+						   OUT_LENGTH_Z int *signatureLength,
+						   IN_ENUM( CRYPT_FORMAT ) \
+							const CRYPT_FORMAT_TYPE formatType,
+						   IN_HANDLE const CRYPT_CONTEXT iSignContext,
+						   IN_HANDLE const CRYPT_CONTEXT iHashContext,
+						   IN_OPT const SIGPARAMS *sigParams );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int dynCreate( OUT DYNBUF *dynBuf, 
-			   IN_HANDLE const CRYPT_HANDLE cryptHandle,
-			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeType );
+int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature, 
+						  IN_LENGTH_SHORT const int signatureLength,
+						  IN_ENUM( CRYPT_FORMAT ) \
+							const CRYPT_FORMAT_TYPE formatType,
+						  IN_HANDLE const CRYPT_HANDLE iSigCheckKey,
+						  IN_HANDLE const CRYPT_CONTEXT iHashContext,
+						  IN_HANDLE const CRYPT_CONTEXT iHash2Context,
+						  OUT_OPT_HANDLE_OPT CRYPT_HANDLE *extraData );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int dynCreateCert( OUT DYNBUF *dynBuf, 
-				   IN_HANDLE const CRYPT_HANDLE cryptHandle,
-				   IN_ENUM( CRYPT_CERTFORMAT ) \
-					const CRYPT_CERTFORMAT_TYPE formatType );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void dynDestroy( INOUT DYNBUF *dynBuf );
-
-#define dynLength( dynBuf )		( dynBuf ).length
-#define dynData( dynBuf )		( dynBuf ).data
-
-/* When allocating many little blocks of memory, especially in resource-
-   constrained systems, it's better if we pre-allocate a small memory pool
-   ourselves and grab chunks of it as required, falling back to dynamically
-   allocating memory later on if we exhaust the pool.  To use a custom
-   memory pool, the caller declares a state variable of type MEMPOOL_STATE,
-   calls initMemPool() to initialise the pool, and then calls getMemPool()
-   and freeMemPool() to allocate and free memory blocks.  The state pointer
-   is declared as a void * because to the caller it's an opaque memory block
-   while to the memPool routines it's structured storage */
-
-typedef BYTE MEMPOOL_STATE[ 32 ];
-
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void initMemPool( OUT void *statePtr, 
-				  IN_BUFFER( memPoolSize ) void *memPool, 
-				  IN_LENGTH_SHORT_MIN( 64 ) const int memPoolSize );
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-void *getMemPool( INOUT void *statePtr, IN_LENGTH_SHORT const int size );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void freeMemPool( INOUT void *statePtr, IN void *memblock );
-
-/* Almost all objects require object-subtype-specific amounts of memory to
-   store object information.  In addition some objects such as certificates
-   contain arbitrary numbers of arbitrary-sized bits and pieces, most of
-   which are quite small.  To avoid having to allocate worst-case sized
-   blocks of memory for objects (a problem in embedded environments) or large
-   numbers of tiny little blocks of memory for certificate attributes, we use
-   variable-length structures in which the payload is stored after the
-   structure, with a pointer inside the structure pointing into the payload
-   storage (a convenient side-effect of this is that it provides good 
-   spatial coherence when processing long lists of attributes).  To make 
-   this easier to handle, we use macros to set up and tear down the 
-   necessary variables.
-   
-   The use of 'storage[ 1 ]' means that the only element that's guaranteed 
-   to be valid is 'storage[ 0 ]' under strict C99 definitions, however 
-   declaring it as an unsized array leads to warnings from many compilers of 
-   use of zero-sized arrays, so we leave it as 'storage[ 1 ]' */
-
-#define DECLARE_VARSTRUCT_VARS \
-		int storageSize; \
-		BUFFER_FIXED( storageSize ) \
-		BYTE storage[ 1 ]
-
-#define initVarStruct( structure, structureType, size ) \
-		memset( structure, 0, sizeof( structureType ) ); \
-		structure->value = structure->storage; \
-		structure->storageSize = size
-
-#define copyVarStruct( destStructure, srcStructure, structureType ) \
-		memcpy( destStructure, srcStructure, \
-				sizeof( structureType ) + srcStructure->storageSize ); \
-		destStructure->value = destStructure->storage;
-
-#define endVarStruct( structure, structureType ) \
-		zeroise( structure, sizeof( structureType ) + structure->storageSize )
-
-#define sizeofVarStruct( structure, structureType ) \
-		( sizeof( structureType ) + structure->storageSize )
+int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey, 
+					 IN_LENGTH_SHORT const int encryptedKeyLength,
+					 IN_ENUM( CRYPT_FORMAT ) \
+						const CRYPT_FORMAT_TYPE formatType,
+					 IN_HANDLE const CRYPT_CONTEXT iImportKey,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+					 OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iReturnedContext );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength ) \
+						void *encryptedKey, 
+					 IN_LENGTH_Z const int encryptedKeyMaxLength,
+					 OUT_LENGTH_Z int *encryptedKeyLength,
+					 IN_ENUM( CRYPT_FORMAT ) \
+						const CRYPT_FORMAT_TYPE formatType,
+					 IN_HANDLE_OPT const CRYPT_CONTEXT iSessionKeyContext,
+					 IN_HANDLE const CRYPT_CONTEXT iExportKey );
 
 /****************************************************************************
 *																			*
@@ -995,7 +1082,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 					  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
 					  OUT_LENGTH_Z int *outDataLength, 
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iSigCheckKey,
-					  OUT_RANGE( MAX_ERROR, CRYPT_OK ) int *sigResult, 
+					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes );
 
@@ -1034,9 +1121,10 @@ typedef struct {
 		( formatInfo )->isExplicit = ( formatIsExplicit )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
-int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
+int createX509signature( OUT_BUFFER_OPT( signedObjectMaxLength, \
+										 *signedObjectLength ) \
 							void *signedObject, 
-						 IN_LENGTH_Z const int sigMaxLength, 
+						 IN_LENGTH_Z const int signedObjectMaxLength, 
 						 OUT_LENGTH_Z int *signedObjectLength,
 						 IN_BUFFER( objectLength ) const void *object, 
 						 IN_LENGTH const int objectLength,
@@ -1094,18 +1182,43 @@ int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 /* Prototypes for functions in context/ctx_misc.c, used in the ASN.1/misc 
    read/write routines */
 
+typedef enum {
+	SHORTKEY_CHECK_NONE,	/* Don't check for short key sizes */
+	SHORTKEY_CHECK_PKC,		/* Check for a short PKC key */
+	SHORTKEY_CHECK_ECC,		/* Check for a short ECC key */
+	SHORTKEY_CHECK_LAST		/* Last valid check type */
+	} SHORTKEY_CHECK_TYPE;
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int extractBignum( INOUT void *bignumPtr, 
-				   IN_BUFFER( length ) const void *buffer, 
-				   IN_LENGTH_SHORT const int length,
-				   IN_LENGTH_PKC const int minLength, 
-				   IN_LENGTH_PKC const int maxLength, 
-				   INOUT_OPT const void *maxRangePtr,
-				   const BOOLEAN checkShortKey );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-int getBignumData( const void *bignumPtr,
-				   OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
-				   IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
-				   OUT_LENGTH_SHORT_Z int *dataLength );
+int importBignum( INOUT void *bignumPtr, 
+				  IN_BUFFER( length ) const void *buffer, 
+				  IN_LENGTH_SHORT const int length,
+				  IN_LENGTH_PKC const int minLength, 
+				  IN_LENGTH_PKC const int maxLength, 
+				  IN_OPT const void *maxRangePtr,
+				  IN_ENUM( SHORTKEY_CHECK ) \
+					const SHORTKEY_CHECK_TYPE checkType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int exportBignum( OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
+				  IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
+				  OUT_LENGTH_SHORT_Z int *dataLength,
+				  const void *bignumPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int importECCPoint( INOUT void *bignumPtr1, 
+					INOUT void *bignumPtr2, 
+				    IN_BUFFER( length ) const void *buffer, 
+				    IN_LENGTH_SHORT const int length,
+					IN_LENGTH_PKC const int minLength, 
+					IN_LENGTH_PKC const int maxLength, 
+					IN_LENGTH_PKC const int fieldSize,
+					IN_OPT const void *maxRangePtr,
+					IN_ENUM( SHORTKEY_CHECK ) \
+						const SHORTKEY_CHECK_TYPE checkType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5) ) \
+int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data, 
+					IN_LENGTH_SHORT_Z const int dataMaxLength, 
+					OUT_LENGTH_SHORT_Z int *dataLength,
+					const void *bignumPtr1, const void *bignumPtr2,
+					IN_LENGTH_SHORT_MIN( 16 ) const int fieldSize );
 
 #endif /* _INTAPI_DEFINED */

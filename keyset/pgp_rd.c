@@ -78,43 +78,48 @@ static int getMinPacketSize( IN_BYTE const int packetType )
 	}
 
 /* Scan a sequence of key packets to find the extent of the packet group.  In
-   addition to simply scanning, this function handles over-long packets by
+   addition to simply scanning this function handles over-long packets by
    reporting their overall length and returning OK_SPECIAL, and will try to 
    resync to a packet group if it starts in the middle of an arbitrary packet 
    collection, for example due to skipping of an over-long packet found 
    earlier */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int scanPacketGroup( IN_BUFFER( dataLength ) const void *data, 
-							IN_LENGTH_SHORT const int dataLength,
-							OUT_LENGTH_SHORT_Z int *packetGroupLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int scanPacketGroup( INOUT STREAM *stream,
+							OUT_LENGTH_SHORT_Z int *packetGroupLength,
+							const BOOLEAN isLastGroup )
 	{
-	STREAM stream;
 	BOOLEAN firstPacket = TRUE, skipPackets = FALSE;
-	int endPos = 0, iterationCount = 0, status = CRYPT_OK;
+	int endPos = 0, iterationCount, status = CRYPT_OK;
 
-	assert( isReadPtr( data, dataLength ) );
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( packetGroupLength, sizeof( int ) ) );
-
-	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
 	*packetGroupLength = 0;
 
-	sMemConnect( &stream, data, dataLength );
-	do
+	for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		long length;
 		int ctb, type;
 
 		/* Get the next CTB.  If it's the start of another packet group,
 		   we're done */
-		ctb = status = sPeek( &stream );
+		ctb = status = sPeek( stream );
 		if( cryptStatusOK( status ) && !( pgpIsCTB( ctb ) ) )
 			status = CRYPT_ERROR_BADDATA;
 		if( cryptStatusError( status ) )
 			{
-			sMemDisconnect( &stream );
+			/* If we ran out of input data let the caller know, however if 
+			   this is the last packet group then running out of data isn't
+			   an error */
+			if( status == CRYPT_ERROR_UNDERFLOW )
+				{
+				if( !isLastGroup )
+					skipPackets = TRUE;
+				break;
+				}
 			return( status );
 			}
 		type = pgpGetPacketType( ctb );
@@ -128,41 +133,37 @@ static int scanPacketGroup( IN_BUFFER( dataLength ) const void *data,
 			}
 		else
 			{
+			/* If we've found the start of a new packet group, we're done */
 			if( type == PGP_PACKET_PUBKEY || type == PGP_PACKET_SECKEY )
-				{
-				/* We've found the start of a new packet group, remember 
-				   where the current group ends and exit */
-				sMemDisconnect( &stream );
-				*packetGroupLength = endPos;
-
-				return( skipPackets ? OK_SPECIAL : CRYPT_OK );
-				}
+				break;
 			}
 
 		/* Skip the current packet in the buffer */
-		status = pgpReadPacketHeader( &stream, NULL, &length, \
+		status = pgpReadPacketHeader( stream, NULL, &length, \
 									  getMinPacketSize( type ) );
 		if( cryptStatusOK( status ) )
 			{
-			endPos = stell( &stream ) + length;
-			status = sSkip( &stream, length );
+			endPos = stell( stream ) + length;
+			status = sSkip( stream, length );
 			}
 		if( cryptStatusError( status ) )
 			{
-			sMemDisconnect( &stream );
+			/* If we ran out of input data let the caller know */
+			if( status == CRYPT_ERROR_UNDERFLOW )
+				{
+				skipPackets = TRUE;
+				break;
+				}
 			return( status );
 			}
 		}
-	while( endPos < dataLength && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
-	sMemDisconnect( &stream );
-	*packetGroupLength = endPos;
 
-	/* If we skipped packets or consumed all of the input in the buffer and 
-	   there's more present beyond that, tell the caller to discard the
-	   data and try again */
-	return( ( skipPackets || endPos > dataLength ) ? OK_SPECIAL : CRYPT_OK );
+	/* Remember where the current packet group ends.  If we skipped packets 
+	   or consumed all of the input in the buffer and there's more present 
+	   beyond that, tell the caller to discard the data and try again */
+	*packetGroupLength = endPos;
+	return( skipPackets ? OK_SPECIAL : CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -285,14 +286,31 @@ static int readPrivateKeyDecryptionInfo( INOUT STREAM *stream,
 		   with loop-AES that uses 8M setup iterations, why this is used and 
 		   why it writes PGP keys with this setting is uncertain but 
 		   cryptlib will reject keys with this value as being outside the 
-		   range of sane values */
+		   range of sane values (for an 8-byte salt and a typical 8-byte 
+		   password this would lead to 8M / 16 = 512K iterations of the PRF,
+		   a value so extreme that it'd normally only be used in a DoS 
+		   attack).
+		   
+		   Unfortunately however PGP Desktop 9 (apparently) in its default
+		   config will use values up to 4M (= 256K iterations of the PRF),
+		   which the sanity-check code would also reject.  It's uncertain at 
+		   which point we should draw the line here, on the one hand we want 
+		   to be able to handle PGP Desktop's data but we also want some 
+		   protection against DoS attacks due to ridiculously high iteration 
+		   counts.  For now we reject obviously invalid values (ones less 
+		   than zero or which would cause an overflow once the base * 64 
+		   scaling is applied) and in addition tell the caller to skip the
+		   packet (without rejecting the overall keyring data) if the
+		   iteration count would be larger than 128K for the typical 8-byte
+		   password case above */
 		value = sgetc( stream );
 		if( cryptStatusError( value ) )
 			return( value );
 		iterations = ( 16 + ( ( long ) value & 0x0F ) ) << ( value >> 4 );
-		if( iterations <= 0 || iterations > MAX_KEYSETUP_ITERATIONS || \
-			iterations >= MAX_INTLENGTH )
+		if( iterations <= 0 || iterations >= MAX_INTLENGTH / 64 )
 			return( CRYPT_ERROR_BADDATA );
+		if( iterations >= 32768L )	/* 32K * 4 = 128K iterations */
+			return( OK_SPECIAL );
 		keyInfo->keySetupIterations = ( int ) iterations;
 		}
 	if( ctb == PGP_S2K_HASHED )
@@ -416,15 +434,25 @@ static int readPublicKeyComponents( INOUT STREAM *stream,
 
 /* Read a sequence of userID packets */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int readUserID( INOUT STREAM *stream, 
-					   INOUT PGP_INFO *pgpInfo )
+					   INOUT_OPT PGP_INFO *pgpInfo,
+					   INOUT_OPT HASHINFO *hashInfo )
 	{
+	HASHINFO localHashInfo;
 	long packetLength;
 	int ctb, packetType = DUMMY_INIT, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( pgpInfo, sizeof( PGP_INFO ) ) );
+	assert( pgpInfo == NULL || \
+			isWritePtr( pgpInfo, sizeof( PGP_INFO ) ) );
+	assert( hashInfo == NULL || \
+			isWritePtr( hashInfo, sizeof( HASHINFO ) ) );
+
+	/* Take a local copy of the hash information from the primary key
+	   packet */
+	if( hashInfo != NULL )
+		memcpy( &localHashInfo, hashInfo, sizeof( HASHINFO ) );
 
 	/* Skip keyring trust packets, signature packets, and any private 
 	   packets (GPG uses packet type 61, which might be a DSA self-
@@ -465,8 +493,13 @@ static int readUserID( INOUT STREAM *stream,
 		   response */
 		status = pgpReadPacketHeader( stream, &ctb, &packetLength, \
 									  getMinPacketSize( packetType ) );
-		if( cryptStatusOK( status ) )
-			status = sSkip( stream, packetLength );
+		if( cryptStatusError( status ) )
+			break;
+		if( packetType == PGP_PACKET_SIGNATURE )
+			{
+			status = CRYPT_OK;
+			}
+		status = sSkip( stream, packetLength );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
@@ -477,15 +510,15 @@ static int readUserID( INOUT STREAM *stream,
 	if( cryptStatusError( status ) || packetType != PGP_PACKET_USERID )
 		return( OK_SPECIAL );
 
-	/* Record the userID.  If there are more userIDs than we can record we 
-	   silently ignore them.  This handles keys with weird numbers of 
-	   userIDs without rejecting them just because they have, well, a weird 
-	   number of userIDs */
+	/* Record the userID (unless we're skipping the packet).  If there are 
+	   more userIDs than we can record we silently ignore them.  This 
+	   handles keys with weird numbers of userIDs without rejecting them 
+	   just because they have, well, a weird number of userIDs */
 	status = pgpReadPacketHeader( stream, &ctb, &packetLength, \
 								  getMinPacketSize( packetType ) );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( pgpInfo->lastUserID < MAX_PGP_USERIDS )
+	if( pgpInfo != NULL && pgpInfo->lastUserID < MAX_PGP_USERIDS )
 		{
 		void *dataPtr;
 
@@ -504,7 +537,58 @@ static int readUserID( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Read a single key in a group of key packets */
+/* Read a single key in a group of key packets.  A packet group consists of 
+   a jumble of packets concatenated together following a primary key with 
+   the jumble continuing until we encounter another primary key, which is 
+   why we need the auxiliary scanPacketGroup() function to look ahead in the
+   data stream to determine when to stop.  A typical set of packets might be:
+
+	DSA key
+	UserID
+	Binding signature of DSA key and UserID
+	Trust rating
+	Elgamal subkey
+	Binding signature of DSA key and Elgamal subkey
+	Trust rating
+
+   but almost anything else is possible, there can be arbitrary further 
+   userIDs, keys, and other data floating around, all glued together in 
+   various locations with binding signatures (or possibly not, since the
+   signatures are optional).
+
+   All of this is read into memory in a PGP_INFO structure with the 
+   encoded data retained as follows:
+
+	pgpInfo[ index ]->keyData			= entire packet group
+					->key->pubKeyData	= DSA/RSA pubkey payload
+					->key->privKeyData	= DSA/RSA privkey payload (without
+										  decryption information, which is
+										  stored separately)
+					->subKey->pubKeyData= Elgamal pubkey payload
+					->subKey->privKeyData=Elgamal privkey as before.
+
+   This tries to simplify things somewhat because in practice there can be a 
+   more or less arbitrary number of subkeys present, not just the obvious 
+   encryption subkeys signed with the primary signing key but also further
+   signing keys as subkeys, with a binding signature between the primary and
+   subkey made using the subkey instead of the primary key (although it can
+   also contain another binding signature from the primary key as well).
+
+   The more or less arbitrarily complex nature of all of these bits and 
+   pieces is why PGP 5, which used a keying format that was still vastly
+   simpler than the current one, was split into two separate applications
+   of which the more complex one did nothing but key handling and the other,
+   simpler one did everything else in PGP.  It's also why we don't support
+   public keyring writes, it would require a complete keyring management
+   application just to deal with all of this complexity.
+
+   Even just to read all of this stuff we have to simplify the processing a
+   bit by recording the first primary key and subkey and skipping anything 
+   else that may be present, the addition of arbitrary numbers of further
+   subkeys each potentially with their own per-subkey userIDs is too complex
+   to handle without again building a complete key management application, 
+   and in any case such oddball keys are fairly rare and the basic greedy
+   algorithm for handling them seems to work fine */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int readKey( INOUT STREAM *stream, 
@@ -516,7 +600,7 @@ static int readKey( INOUT STREAM *stream,
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], packetHeader[ 64 + 8 ];
-	BOOLEAN isPublicKey = TRUE;
+	BOOLEAN isPublicKey = TRUE, isPrimaryKey = FALSE;
 	void *pubKeyPayload;
 	long packetLength;
 	int pubKeyPos, pubKeyPayloadPos, endPos, pubKeyPayloadLen;
@@ -542,7 +626,8 @@ static int readKey( INOUT STREAM *stream,
 		{
 		case PGP_PACKET_SECKEY_SUB:
 			keyInfo = &pgpInfo->subKey;
-			/* Fall through */
+			isPublicKey = FALSE;
+			break;
 
 		case PGP_PACKET_SECKEY:
 			isPublicKey = FALSE;
@@ -550,9 +635,10 @@ static int readKey( INOUT STREAM *stream,
 
 		case PGP_PACKET_PUBKEY_SUB:
 			keyInfo = &pgpInfo->subKey;
-			/* Fall through */
+			break;
 
 		case PGP_PACKET_PUBKEY:
+			isPrimaryKey = TRUE;
 			break;
 
 		default:
@@ -575,6 +661,31 @@ static int readKey( INOUT STREAM *stream,
 				( CRYPT_ERROR_BADDATA, errorInfo, 
 				  "Invalid PGP key packet length %ld for key packet group %d", 
 				  packetLength, keyGroupNo ) );
+		}
+
+	/* Since there can (in theory) be arbitrary numbers of subkeys and other 
+	   odds and ends attached to a key and the details of what to do with 
+	   these things gets a bit vague, we just skip any further subkeys that 
+	   may be present */
+	if( keyInfo->pkcAlgo != CRYPT_ALGO_NONE )
+		{
+		status = sSkip( stream, packetLength );
+		for( iterationCount = 0; 
+			 cryptStatusOK( status ) && \
+				iterationCount < FAILSAFE_ITERATIONS_MED; 
+			 iterationCount++ )
+			{
+			status = readUserID( stream, pgpInfo, 
+								 isPrimaryKey ? &hashInfo : NULL );
+			}
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+		if( cryptStatusError( status ) && status != OK_SPECIAL )
+			{
+			retExt( status, 
+					( status, errorInfo, 
+					  "Invalid additional PGP subkey information for key "
+					  "packet group %d", keyGroupNo ) );
+			}
 		}
 
 	/* Determine which bits make up the public and the private key data.  The
@@ -642,6 +753,8 @@ static int readKey( INOUT STREAM *stream,
 		   packet */
 		if( status == OK_SPECIAL )
 			{
+			DEBUG_DIAG(( "Encountered unrecognised algorithm while "
+						 "reading key" ));
 			assert( DEBUG_WARN );
 			return( OK_SPECIAL );
 			}
@@ -658,6 +771,7 @@ static int readKey( INOUT STREAM *stream,
 								  keyInfo->pubKeyDataLen );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Couldn't set up reference to key data" ));
 		assert( DEBUG_WARN );
 		return( status );
 		}
@@ -666,14 +780,15 @@ static int readKey( INOUT STREAM *stream,
 								  pubKeyPayloadLen );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Couldn't set up reference to key data" ));
 		assert( DEBUG_WARN );
 		return( status );
 		}
 
 	/* Complete the packet header that we read earlier on by adding the
 	   length information */
-	packetHeader[ 1 ] = ( ( 1 + 4 + length ) >> 8 ) & 0xFF;
-	packetHeader[ 2 ] = ( 1 + 4 + length ) & 0xFF;
+	packetHeader[ 1 ] = intToByte( ( ( 1 + 4 + length ) >> 8 ) & 0xFF );
+	packetHeader[ 2 ] = intToByte( ( 1 + 4 + length ) & 0xFF );
 
 	/* Hash the data needed to generate the OpenPGP keyID */
 	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, &hashSize );
@@ -697,6 +812,8 @@ static int readKey( INOUT STREAM *stream,
 			   the packet */
 			if( status == OK_SPECIAL )
 				{
+				DEBUG_DIAG(( "Encountered unrecognised algorithm while "
+							 "reading key" ));
 				assert( DEBUG_WARN );
 				return( OK_SPECIAL );
 				}
@@ -716,12 +833,28 @@ static int readKey( INOUT STREAM *stream,
 			return( status );
 		}
 
-	/* Read the userID packet(s) */
-	for( iterationCount = 0; \
-		 cryptStatusOK( status ) && iterationCount < FAILSAFE_ITERATIONS_MED; \
+	/* If it's the primary key, start hashing it in preparation for 
+	   performing signature checks on subpackets */
+	if( isPrimaryKey )
+		{
+		packetHeader[ 0 ] = 0x99;
+		packetHeader[ 1 ] = intToByte( ( keyInfo->pubKeyDataLen >> 8 ) & 0xFF );
+		packetHeader[ 2 ] = intToByte( keyInfo->pubKeyDataLen & 0xFF );	
+		hashFunction( hashInfo, NULL, 0, packetHeader, 1 + 2, 
+					  HASH_STATE_START );
+		hashFunction( hashInfo, NULL, 0, keyInfo->pubKeyData, 
+					  keyInfo->pubKeyDataLen, HASH_STATE_CONTINUE );
+		}
+
+	/* Read any associated subpacket(s), of which the only ones of real 
+	   interest are the userID packet(s) */
+	for( iterationCount = 0; 
+		 cryptStatusOK( status ) && \
+			iterationCount < FAILSAFE_ITERATIONS_MED; 
 		 iterationCount++ )
 		{
-		status = readUserID( stream, pgpInfo );
+		status = readUserID( stream, pgpInfo, 
+							 isPrimaryKey ? &hashInfo : NULL );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	if( cryptStatusError( status ) && status != OK_SPECIAL )
@@ -923,7 +1056,9 @@ static int processKeyringPackets( INOUT STREAM *stream,
 			}
 
 		/* Determine the size of the group of key packets in the buffer */
-		status = scanPacketGroup( buffer, bufEnd, &length );
+		sMemConnect( &keyStream, buffer, bufEnd );
+		status = scanPacketGroup( &keyStream, &length, !moreData );
+		sMemDisconnect( &keyStream );
 		if( status == OK_SPECIAL )
 			{
 			/* Remember that we hit something that we couldn't process */
@@ -934,7 +1069,11 @@ static int processKeyringPackets( INOUT STREAM *stream,
 			if( length <= bufEnd )
 				{
 				if( bufEnd - length > 0 )
+					{
+					REQUIRES( rangeCheck( length, bufEnd - length, 
+										  bufSize ) );
 					memmove( buffer, buffer + length, bufEnd - length );
+					}
 				bufEnd -= length;
 				continue;
 				}
@@ -969,7 +1108,10 @@ static int processKeyringPackets( INOUT STREAM *stream,
 			}
 		memcpy( pgpInfoPtr->keyData, buffer, length );
 		if( bufEnd > length )
+			{
+			REQUIRES( rangeCheck( length, bufEnd - length, bufSize ) );
 			memmove( buffer, buffer + length, bufEnd - length );
+			}
 		bufEnd -= length;
 
 		/* Process the current packet group */

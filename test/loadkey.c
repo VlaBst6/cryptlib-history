@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib Test Key Load Code						*
-*						Copyright Peter Gutmann 1995-2004					*
+*						Copyright Peter Gutmann 1995-2007					*
 *																			*
 ****************************************************************************/
 
@@ -530,12 +530,13 @@ static const BYTE FAR_BSS dh1024SPKI[] = {
 #endif /* TEST_DH */
 
 typedef struct {
+	const CRYPT_ECCCURVE_TYPE curveType;
 	const int pLen; const BYTE p[ 66 ];
 	const int aLen; const BYTE a[ 66 ];
 	const int bLen; const BYTE b[ 66 ];
 	const int gxLen; const BYTE gx[ 66 ];
 	const int gyLen; const BYTE gy[ 66 ];
-	const int rLen; const BYTE r[ 66 ];
+	const int nLen; const BYTE n[ 66 ];
 	const int qxLen; const BYTE qx[ 66 ];
 	const int qyLen; const BYTE qy[ 66 ];
 	const int dLen; const BYTE d[ 66 ];
@@ -544,6 +545,8 @@ typedef struct {
 /* NIST curve P-192 */
 
 static const ECC_KEY FAR_BSS eccP192TestKey = {
+#if 0
+	CRYPT_ECCCURVE_NONE,
 	/* p */
 	192,
 	{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 
@@ -569,11 +572,20 @@ static const ECC_KEY FAR_BSS eccP192TestKey = {
 	{ 0x07, 0x19, 0x2B, 0x95, 0xFF, 0xC8, 0xDA, 0x78, 
 	  0x63, 0x10, 0x11, 0xED, 0x6B, 0x24, 0xCD, 0xD5,
 	  0x73, 0xF9, 0x77, 0xA1, 0x1E, 0x79, 0x48, 0x11 },
-	/* r */
+	/* n */
 	192,
 	{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 
 	  0xFF, 0xFF, 0xFF, 0xFF, 0x99, 0xDE, 0xF8, 0x36,
 	  0x14, 0x6B, 0xC9, 0xB1, 0xB4, 0xD2, 0x28, 0x31 },
+#else
+	CRYPT_ECCCURVE_P192,
+	0, { 0 },	/* p */
+	0, { 0 },	/* a */
+	0, { 0 },	/* b */
+	0, { 0 },	/* gx */
+	0, { 0 },	/* gy */
+	0, { 0 },	/* n */
+#endif /* 0 */
 	/* qx */
 	192,
 	{ 0x43, 0x4F, 0x79, 0x78, 0xE7, 0x00, 0x55, 0x7F,
@@ -594,6 +606,8 @@ static const ECC_KEY FAR_BSS eccP192TestKey = {
 /* NIST curve P-256 */
 
 static const ECC_KEY FAR_BSS eccP256TestKey = {
+#if 0
+	CRYPT_ECCCURVE_NONE,
 	/* p */
 	256,
 	{ 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01, 
@@ -624,12 +638,21 @@ static const ECC_KEY FAR_BSS eccP256TestKey = {
 	  0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E, 0x16, 
 	  0x2B, 0xCE, 0x33, 0x57, 0x6B, 0x31, 0x5E, 0xCE, 
 	  0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF, 0x51, 0xF5 },
-	/* r */
+	/* n */
 	256,
 	{ 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,  
 	  0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 
 	  0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 
 	  0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51 },
+#else
+	CRYPT_ECCCURVE_P256,
+	0, { 0 },	/* p */
+	0, { 0 },	/* a */
+	0, { 0 },	/* b */
+	0, { 0 },	/* gx */
+	0, { 0 },	/* gy */
+	0, { 0 },	/* n */
+#endif /* 0 */
 	/* qx */
 	256,
 	{ 0x26, 0x0C, 0xAB, 0x1F, 0xF2, 0x5E, 0x8F, 0x54,
@@ -825,6 +848,7 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 				printf( "Device requires a %d-bit key, which doesn't "
 						"correspond to any built-in\ncryptlib key.\n",
 						cryptQueryInfo.keySize );
+				free( rsaKey );
 				return( FALSE );
 				}
 			rsaKeyTemplate = &rsa2048TestKey;
@@ -1036,6 +1060,7 @@ BOOLEAN loadDSAContextsEx( const CRYPT_DEVICE cryptDevice,
 		}
 	if( !setLabel( *sigCheckContext, sigCheckContextLabel ) )
 		{
+		free( dsaKey );
 		if( signContext != NULL )
 			{
 			cryptDestroyContext( *signContext );
@@ -1270,7 +1295,7 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
 						   CRYPT_CONTEXT *sigCheckContext )
 	{
 	CRYPT_PKCINFO_ECC *eccKey;
-	const ECC_KEY *eccKeyData = &eccP192TestKey;
+	const ECC_KEY *eccKeyData = &eccP256TestKey;
 	int status;
 
 	/* Allocate room for the public-key components */
@@ -1296,12 +1321,16 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
 			return( FALSE );
 			}
 		cryptInitComponents( eccKey, CRYPT_KEYTYPE_PRIVATE );
-		cryptSetComponent( eccKey->p, eccKeyData->p, eccKeyData->pLen );
-		cryptSetComponent( eccKey->a, eccKeyData->a, eccKeyData->aLen );
-		cryptSetComponent( eccKey->b, eccKeyData->b, eccKeyData->bLen );
-		cryptSetComponent( eccKey->gx, eccKeyData->gx, eccKeyData->gxLen );
-		cryptSetComponent( eccKey->gy, eccKeyData->gy, eccKeyData->gyLen );
-		cryptSetComponent( eccKey->r, eccKeyData->r, eccKeyData->rLen );
+		eccKey->curveType = CRYPT_ECCCURVE_P256;
+		if( eccKeyData->pLen > 0 )
+			{
+			cryptSetComponent( eccKey->p, eccKeyData->p, eccKeyData->pLen );
+			cryptSetComponent( eccKey->a, eccKeyData->a, eccKeyData->aLen );
+			cryptSetComponent( eccKey->b, eccKeyData->b, eccKeyData->bLen );
+			cryptSetComponent( eccKey->gx, eccKeyData->gx, eccKeyData->gxLen );
+			cryptSetComponent( eccKey->gy, eccKeyData->gy, eccKeyData->gyLen );
+			cryptSetComponent( eccKey->n, eccKeyData->n, eccKeyData->nLen );
+			}
 		cryptSetComponent( eccKey->qx, eccKeyData->qx, eccKeyData->qxLen );
 		cryptSetComponent( eccKey->qy, eccKeyData->qy, eccKeyData->qyLen );
 		cryptSetComponent( eccKey->d, eccKeyData->d, eccKeyData->dLen );
@@ -1338,18 +1367,25 @@ BOOLEAN loadECDSAContexts( CRYPT_CONTEXT *signContext,
 		}
 	if( !setLabel( *sigCheckContext, ECDSA_PRIVKEY_LABEL ) )
 		{
+		free( eccKey );
 		if( signContext != NULL )
 			cryptDestroyContext( *signContext );
 		cryptDestroyContext( *sigCheckContext );
 		return( FALSE );
 		}
 	cryptInitComponents( eccKey, CRYPT_KEYTYPE_PUBLIC );
-	cryptSetComponent( eccKey->p, eccKeyData->p, eccKeyData->pLen );
-	cryptSetComponent( eccKey->a, eccKeyData->a, eccKeyData->aLen );
-	cryptSetComponent( eccKey->b, eccKeyData->b, eccKeyData->bLen );
-	cryptSetComponent( eccKey->gx, eccKeyData->gx, eccKeyData->gxLen );
-	cryptSetComponent( eccKey->gy, eccKeyData->gy, eccKeyData->gyLen );
-	cryptSetComponent( eccKey->r, eccKeyData->r, eccKeyData->rLen );
+	eccKey->curveType = CRYPT_ECCCURVE_P256;
+	if( eccKeyData->pLen > 0 )
+		{
+		cryptSetComponent( eccKey->p, eccKeyData->p, eccKeyData->pLen );
+		cryptSetComponent( eccKey->a, eccKeyData->a, eccKeyData->aLen );
+		cryptSetComponent( eccKey->b, eccKeyData->b, eccKeyData->bLen );
+		cryptSetComponent( eccKey->gx, eccKeyData->gx, eccKeyData->gxLen );
+		cryptSetComponent( eccKey->gy, eccKeyData->gy, eccKeyData->gyLen );
+		cryptSetComponent( eccKey->n, eccKeyData->n, eccKeyData->nLen );
+		}
+	cryptSetComponent( eccKey->qx, eccKeyData->qx, eccKeyData->qxLen );
+	cryptSetComponent( eccKey->qy, eccKeyData->qy, eccKeyData->qyLen );
 	status = cryptSetAttributeString( *sigCheckContext,
 									  CRYPT_CTXINFO_KEY_COMPONENTS, eccKey,
 									  sizeof( CRYPT_PKCINFO_ECC ) );

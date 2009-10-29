@@ -300,6 +300,12 @@ int pgpReadPacketHeader( INOUT STREAM *stream, OUT_OPT_BYTE int *ctb,
 						 OUT_OPT_LENGTH_Z long *length, 
 						 IN_LENGTH_SHORT const int minLength )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( ctb == NULL || isWritePtr( ctb, sizeof( int ) ) );
+	assert( length == NULL || isWritePtr( length, sizeof( long ) ) );
+	
+	REQUIRES_S( minLength >= 0 && minLength < MAX_INTLENGTH_SHORT );
+
 	return( readPacketHeader( stream, ctb, length, minLength, MAX_INTLENGTH, 
 							  FALSE ) );
 	}
@@ -309,14 +315,23 @@ int pgpReadPacketHeaderI( INOUT STREAM *stream, OUT_OPT_BYTE int *ctb,
 						  OUT_OPT_LENGTH_Z long *length, 
 						  IN_LENGTH_SHORT const int minLength )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( ctb == NULL || isWritePtr( ctb, sizeof( int ) ) );
+	assert( length == NULL || isWritePtr( length, sizeof( long ) ) );
+	
+	REQUIRES_S( minLength >= 0 && minLength < MAX_INTLENGTH_SHORT );
+
 	return( readPacketHeader( stream, ctb, length, minLength, MAX_INTLENGTH, 
 							  TRUE ) );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int pgpReadPartialLength( INOUT STREAM *stream, 
-						  OUT_OPT_LENGTH_Z long *length )
+						  OUT_LENGTH_Z long *length )
 	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( length, sizeof( long ) ) );
+	
 	/* This is a raw length value so we have to feed in a pseudo-CTB */
 	return( pgpReadLength( stream, length, PGP_CTB_OPENPGP,
 						   0, MAX_INTLENGTH, TRUE ) );

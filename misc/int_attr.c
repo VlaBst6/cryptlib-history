@@ -22,7 +22,7 @@
 /* Movement codes for the attribute cursor */
 
 typedef enum {
-	CURSOR_MOVE_NONE,		/* No moveme type */
+	CURSOR_MOVE_NONE,		/* No movement type */
 	CURSOR_MOVE_START,		/* Move to first attribute */
 	CURSOR_MOVE_PREV,		/* Move to previous attribute */
 	CURSOR_MOVE_NEXT,		/* Move to next attribute */
@@ -532,7 +532,9 @@ const void *attributeMoveCursor( IN_OPT const void *currentCursor,
 	if( currentCursor == NULL )
 		return( NULL );
 
-	/* Convert the move type into a more logical cursor move code */
+	/* Convert the move type into a more logical cursor move code.  We can't
+	   use mapValue() for this because the move-type values overlap with the 
+	   end-of-table marker value expected by mapValue() */
 	for( i = 0; 
 		 moveCodeMap[ i ].moveCode != cursorMoveType && \
 			moveCodeMap[ i ].moveCode != 0 && \

@@ -114,7 +114,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/types.h>
-#if !( defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) )
+#if !( defined( __ECOS__ ) || defined( __TANDEM_NSK__ ) || \
+	   defined( __TANDEM_OSS__ ) )
   #include <sys/file.h>
 #endif /* Tandem */
 #include <sys/stat.h>
@@ -126,7 +127,7 @@
 	   defined( __NetBSD__ ) || defined( __OpenBSD__ ) || \
 	   defined( __QNX__ ) || ( defined( sun ) && OSVERSION == 4 ) || \
 	   defined ( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
-	   defined( __TANDEM_OSS__ ) )
+	   defined( __TANDEM_OSS__ ) || defined( USE_EMBEDDED_OS ) )
   #include <sys/mode.h>
 #endif /* Vaguely non-SYSV-ish systems */
 #include <unistd.h>

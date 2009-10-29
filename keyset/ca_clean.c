@@ -36,6 +36,72 @@
 *																			*
 ****************************************************************************/
 
+/* Delete a certificate request or partially-issued certificated if a 
+   cleanup operation for it failed, recording the failure details in the 
+   log */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+static int deleteIncompleteRequest( INOUT DBMS_INFO *dbmsInfo,
+									IN_BUFFER( reqCertIDlength ) \
+										const char *reqCertID, 
+									IN_LENGTH_SHORT_Z const int reqCertIDlength, 
+									IN_ERROR const int errorStatus,
+									IN_STRING const char *reasonMessage )
+	{
+	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+	int status;
+
+	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
+	assert( isReadPtr( reqCertID, reqCertIDlength ) );
+
+	REQUIRES( reqCertIDlength > 0 && reqCertIDlength < MAX_INTLENGTH_SHORT );
+	REQUIRES( cryptStatusError( errorStatus ) );
+
+	/* Delete the request and record the cause */
+	initBoundData( boundDataPtr );
+	setBoundData( boundDataPtr, 0, reqCertID, reqCertIDlength );
+	status = dbmsUpdate( 
+				"DELETE FROM certRequests WHERE certID = ?",
+								 boundDataPtr, DBMS_UPDATE_NORMAL );
+	updateCertErrorLog( dbmsInfo, errorStatus, reasonMessage, NULL, 0, 
+						NULL, 0, reqCertID, reqCertIDlength, NULL, 0 );
+	return( status );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+static int deleteIncompleteCert( INOUT DBMS_INFO *dbmsInfo,
+								 const BOOLEAN isRenewal,
+								 IN_ERROR const int errorStatus,
+								 IN_STRING const char *reasonMessage )
+	{
+	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+	BYTE certID[ MAX_QUERY_RESULT_SIZE + 8 ];
+	int certIDlength, status;
+
+	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
+
+	REQUIRES( cryptStatusError( errorStatus ) );
+
+	/* Get the certID for the incomplete certificate to delete */
+	status = dbmsQuery( isRenewal ? \
+				"SELECT certID FROM certificates WHERE keyID LIKE '" KEYID_ESC2 "%'" : \
+				"SELECT certID FROM certificates WHERE keyID LIKE '" KEYID_ESC1 "%'",
+						certID, MAX_QUERY_RESULT_SIZE, &certIDlength, NULL, 
+						DBMS_CACHEDQUERY_NONE, DBMS_QUERY_NORMAL );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Delete the request and record the cause */
+	initBoundData( boundDataPtr );
+	setBoundData( boundDataPtr, 0, certID, certIDlength );
+	status = dbmsUpdate( 
+				"DELETE FROM certificates WHERE certID = ?",
+								 boundDataPtr, DBMS_UPDATE_NORMAL );
+	updateCertErrorLog( dbmsInfo, errorStatus, reasonMessage, NULL, 0, 
+						NULL, 0, certID, certIDlength, NULL, 0 );
+	return( status );
+	}
+
 /* Get a partially-issued certificate.  We have to perform the import
    ourselves since it's marked as an incompletely-issued certificate and so 
    is invisible to accesses performed via the standard certificate fetch 
@@ -78,7 +144,14 @@ static int getNextPartialCert( INOUT DBMS_INFO *dbmsInfo,
 						certPtr, MAX_QUERY_RESULT_SIZE, &certSize, NULL, 
 						DBMS_CACHEDQUERY_NONE, DBMS_QUERY_NORMAL );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		if( status != CRYPT_ERROR_NOTFOUND )
+			return( status );
+
+		/* We've processed all of the entries, this isn't an error */
+		resetErrorInfo( dbmsInfo );
+		return( OK_SPECIAL );
+		}
 	if( !hasBinaryBlobs( dbmsInfo ) )
 		{
 		status = base64decode( certificate, MAX_CERT_SIZE, &certSize,
@@ -86,6 +159,7 @@ static int getNextPartialCert( INOUT DBMS_INFO *dbmsInfo,
 							   CRYPT_CERTFORMAT_NONE );
 		if( cryptStatusError( status ) )
 			{
+			DEBUG_DIAG(( "Couldn't base64-decode data" ));
 			assert( DEBUG_WARN );
 			return( status );
 			}
@@ -97,10 +171,12 @@ static int getNextPartialCert( INOUT DBMS_INFO *dbmsInfo,
 	if( !memcmp( prevCertData, certificate, \
 				 min( certSize, prevCertDataMaxLen ) ) )
 		{
+		DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_DUPLICATE );
 		}
-	memcpy( prevCertData, certificate, prevCertDataMaxLen );
+	memcpy( prevCertData, certificate, 
+			min( certSize, prevCertDataMaxLen ) );
 
 	/* Reset the first byte of the certificate data from the not-present 
 	   magic value to allow it to be imported and create a certificate from 
@@ -138,7 +214,7 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 	{
 	BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
 	BYTE prevCertData[ MAX_PREVCERT_DATA + 8 ];
-	char certID[ MAX_QUERY_RESULT_SIZE + 8 ];
+	BYTE certID[ MAX_QUERY_RESULT_SIZE + 8 ];
 	const time_t currentTime = getTime();
 	int certIDlength, errorCount, iterationCount, status;
 
@@ -200,6 +276,7 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 			}
 		if( certIDlength > MAX_PREVCERT_DATA )
 			{
+			DEBUG_DIAG(( "Certificate ID data too large" ));
 			assert( DEBUG_WARN );
 			certIDlength = MAX_PREVCERT_DATA;
 			}
@@ -207,6 +284,7 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 			{
 			/* We're stuck in a loop fetching the same value over and over,
 			   make an emergency exit */
+			DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 			assert( DEBUG_WARN );
 			break;
 			}
@@ -248,6 +326,7 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 		   that this is isn't an abnormal situation. Because of this we 
 		   don't flag it as an internal error but simply warn in the debug 
 		   build, although we do bail out after a fixed limit */
+		DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		}
 
@@ -323,34 +402,41 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 		/* Get the next partially-issued certificate */
 		status = getNextPartialCert( dbmsInfo, &iCertificate, 
 									 prevCertData, MAX_PREVCERT_DATA, FALSE );
-		if( status == CRYPT_ERROR_DUPLICATE )
+		if( cryptStatusError( status ) )
 			{
-			/* We're stuck in a loop fetching the same value over and over,
-			   make an emergency exit */
-			assert( DEBUG_WARN );
-			break;
+			/* If we've processed all of the entries, we're done */
+			if( status == OK_SPECIAL )
+				break;
+
+			/* If we're stuck in a loop fetching the same value over and 
+			   over, make an emergency exit */
+			if( status == CRYPT_ERROR_DUPLICATE )
+				{
+				DEBUG_DIAG(( "Certificate-fetch loop detected" ));
+				assert( DEBUG_WARN );
+				break;
+				}
+
+			/* It's some other type of problem, clear it and continue */
+			status = deleteIncompleteCert( dbmsInfo, FALSE, status, 
+										   "Couldn't get partially-issued "
+										   "certificate to complete issue, "
+										   "deleting and continuing" );
+			errorCount++;
+			continue;
 			}
-		if( cryptStatusOK( status ) )
-			{
-			/* We found a certificate to revoke, complete the revocation */
-			status = revokeCertDirect( dbmsInfo, iCertificate,
-									   CRYPT_CERTACTION_CERT_CREATION_REVERSE,
-									   errorInfo );
-			krnlSendNotifier( iCertificate, IMESSAGE_DECREFCOUNT );
-			}
-		else
-			{
-			/* If we've processed all of the entries this isn't an error */
-			if( status == CRYPT_ERROR_NOTFOUND )
-				resetErrorInfo( dbmsInfo );
-			else
-				errorCount++;
-			}
+
+		/* We found a certificate to revoke, complete the revocation */
+		status = revokeCertDirect( dbmsInfo, iCertificate,
+								   CRYPT_CERTACTION_CERT_CREATION_REVERSE,
+								   errorInfo );
+		krnlSendNotifier( iCertificate, IMESSAGE_DECREFCOUNT );
 		}
 	if( errorCount >= FAILSAFE_ITERATIONS_SMALL || \
 		iterationCount >= FAILSAFE_ITERATIONS_LARGE )
 		{
 		/* See note with earlier code */
+		DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		}
 
@@ -381,34 +467,39 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 		/* Get the next partially-completed certificate */
 		status = getNextPartialCert( dbmsInfo, &iCertificate, 
 									 prevCertData, MAX_PREVCERT_DATA, TRUE );
-		if( status == CRYPT_ERROR_DUPLICATE )
+		if( cryptStatusError( status ) )
 			{
-			/* We're stuck in a loop fetching the same value over and over,
-			   make an emergency exit */
-			assert( DEBUG_WARN );
-			break;
+			/* If we've processed all of the entries, we're done */
+			if( status == OK_SPECIAL )
+				break;
+
+			/* If we're stuck in a loop fetching the same value over and 
+			   over, make an emergency exit */
+			if( status == CRYPT_ERROR_DUPLICATE )
+				{
+				DEBUG_DIAG(( "Certificate-fetch loop detected" ));
+				assert( DEBUG_WARN );
+				break;
+				}
+
+			/* It's some other type of problem, clear it and continue */
+			status = deleteIncompleteCert( dbmsInfo, TRUE, status, 
+										   "Couldn't get partially-renewed "
+										   "certificate to complete renewal, "
+										   "deleting and continuing" );
+			errorCount++;
+			continue;
 			}
-		if( cryptStatusOK( status ) )
-			{
-			/* We found a partially-completed certificate, complete the 
-			   renewal */
-			status = completeCertRenewal( dbmsInfo, iCertificate, 
-										  errorInfo );
-			krnlSendNotifier( iCertificate, IMESSAGE_DECREFCOUNT );
-			}
-		else
-			{
-			/* If we've processed all of the entries this isn't an error */
-			if( status == CRYPT_ERROR_NOTFOUND )
-				resetErrorInfo( dbmsInfo );
-			else
-				errorCount++;
-			}
+
+		/* We found a partially-completed certificate, complete the renewal */
+		status = completeCertRenewal( dbmsInfo, iCertificate, errorInfo );
+		krnlSendNotifier( iCertificate, IMESSAGE_DECREFCOUNT );
 		}
 	if( errorCount >= FAILSAFE_ITERATIONS_SMALL || \
 		iterationCount >= FAILSAFE_ITERATIONS_LARGE )
 		{
 		/* See note with earlier code */
+		DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		}
 
@@ -439,13 +530,17 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 			{
 			/* If we've processed all of the entries this isn't an error */
 			if( status == CRYPT_ERROR_NOTFOUND )
+				{
 				resetErrorInfo( dbmsInfo );
-			else
-				errorCount++;
+				break;
+				}
+
+			errorCount++;
 			continue;
 			}
 		if( certIDlength > MAX_PREVCERT_DATA )
 			{
+			DEBUG_DIAG(( "Certificate ID data too large" ));
 			assert( DEBUG_WARN );
 			certIDlength = MAX_PREVCERT_DATA;
 			}
@@ -453,16 +548,22 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 			{
 			/* We're stuck in a loop fetching the same value over and over,
 			   make an emergency exit */
+			DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 			assert( DEBUG_WARN );
 			break;
 			}
 		memcpy( prevCertData, certID, certIDlength );
 		status = getItemData( dbmsInfo, &iCertRequest, &dummy, 
-							  KEYMGMT_ITEM_REQUEST, CRYPT_IKEYID_CERTID, 
+							  KEYMGMT_ITEM_REVREQUEST, CRYPT_IKEYID_CERTID, 
 							  certID, certIDlength, KEYMGMT_FLAG_NONE, 
 							  errorInfo );
 		if( cryptStatusError( status ) )
 			{
+			status = \
+				deleteIncompleteRequest( dbmsInfo, certID, certIDlength, status, 
+										 "Couldn't instantiate revocation "
+										 "request from stored data, deleting "
+										 "request and continuing" );
 			errorCount++;
 			continue;
 			}
@@ -471,20 +572,20 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 		status = caRevokeCert( dbmsInfo, iCertRequest, CRYPT_UNUSED,
 							   CRYPT_CERTACTION_RESTART_REVOKE_CERT,
 							   errorInfo );
-		if( status == CRYPT_ERROR_NOTFOUND )
+		if( cryptStatusError( status ) )
 			{
-			/* This is an allowable error type since the certificate may 
-			   have expired or been otherwise removed after the revocation
-			   request was received, just delete the entry */
-			initBoundData( boundDataPtr );
-			setBoundData( boundDataPtr, 0, certID, certIDlength );
-			status = dbmsUpdate( 
-				"DELETE FROM certRequests WHERE certID = ?",
-								 boundDataPtr, DBMS_UPDATE_NORMAL );
-			updateCertErrorLog( dbmsInfo, status, "Deleted revocation "
-								"request for non-present certificate",
-								NULL, 0, NULL, 0, certID, certIDlength, 
-								NULL, 0 );
+			/* If we get a not-found error this is an allowable condition 
+			   since the certificate may have expired or been otherwise 
+			   removed after the revocation request was received, so we 
+			   just delete the entry */
+			status = \
+				deleteIncompleteRequest( dbmsInfo, certID, certIDlength, status, 
+										 ( status == CRYPT_ERROR_NOTFOUND ) ? \
+										 "Deleted revocation request for "
+										 "non-present certificate" : \
+										 "Couldn't revoke certificate from "
+										 "revocation request, deleting "
+										 "request and continuing" );
 			}
 		krnlSendNotifier( iCertRequest, IMESSAGE_DECREFCOUNT );
 		}
@@ -492,6 +593,7 @@ int caCleanup( INOUT DBMS_INFO *dbmsInfo,
 		iterationCount >= FAILSAFE_ITERATIONS_LARGE )
 		{
 		/* See note with earlier code */
+		DEBUG_DIAG(( "Certificate-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		}
 

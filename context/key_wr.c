@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Public/Private Key Write Routines					*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -31,8 +31,8 @@
 
 	params = SEQ {
 		p INTEGER,
-		q INTEGER,
-		g INTEGER,
+		q INTEGER,				-- q for DSA
+		g INTEGER,				-- g for DSA
 		j INTEGER OPTIONAL,		-- X9.42 only
 		validationParams [...]	-- X9.42 only
 		}
@@ -50,7 +50,52 @@
 		( ( cryptAlgo ) == CRYPT_ALGO_DH || \
 		  ( cryptAlgo ) == CRYPT_ALGO_ELGAMAL )
 
+/* Prototypes for functions in key_rd.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getECCOidTbl( OUT const OID_INFO **oidTblPtr,
+				  OUT_INT_Z int *noOidTblEntries );
+
 #ifdef USE_PKC
+
+/****************************************************************************
+*																			*
+*								Utility Routines							*
+*																			*
+****************************************************************************/
+
+#if defined( USE_SSH )
+
+/* Write a bignum as a fixed-length value, needed by several encoding 
+   types and formats */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeFixedBignum( INOUT STREAM *stream, const BIGNUM *bignum,
+							 IN_LENGTH_SHORT_MIN( 20 ) const int fixedSize )
+	{
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	int bnLength, noZeroes, i, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
+
+	REQUIRES( fixedSize >= 20 && fixedSize <= CRYPT_MAX_PKCSIZE );
+
+	/* Extract the bignum data and get its length */
+	status = exportBignum( buffer, CRYPT_MAX_PKCSIZE, &bnLength, bignum );
+	ENSURES( cryptStatusOK( status ) );
+	noZeroes = fixedSize - bnLength;
+	REQUIRES( noZeroes >= 0 && noZeroes < fixedSize );
+
+	/* Write the leading zeroes followed by the bignum value */
+	for( i = 0; i < noZeroes; i++ )
+		sputc( stream, 0 );
+	status = swrite( stream, buffer, bnLength );
+	zeroise( buffer, CRYPT_MAX_PKCSIZE );
+	
+	return( status );
+	}
+#endif /* USE_SSH */
 
 /****************************************************************************
 *																			*
@@ -81,7 +126,7 @@ static int writeRsaSubjectPublicKey( INOUT STREAM *stream,
 										sizeofObject( length ) + 1 ) );
 	writeAlgoID( stream, CRYPT_ALGO_RSA );
 
-	/* Write the BITSTRING wrapper and the PKC information */
+	/* Write the BIT STRING wrapper and the PKC information */
 	writeBitStringHole( stream, ( int ) sizeofObject( length ), 
 						DEFAULT_TAG );
 	writeSequence( stream, length );
@@ -114,11 +159,12 @@ static int writeDlpSubjectPublicKey( INOUT STREAM *stream,
 	   the q parameter isn't present so we can't write the key in this format */
 	if( BN_is_zero( &dlpKey->dlpParam_q ) )
 		{
+		DEBUG_DIAG(( "Can't write Elgamal key due to missing q parameter" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
 
-	/* Determine the size of the AlgorithmIdentifier and the BITSTRING-
+	/* Determine the size of the AlgorithmIdentifier and the BIT STRING-
 	   encapsulated public-key data (the +1 is for the bitstring) */
 	totalSize = sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, parameterSize ) + \
 				( int ) sizeofObject( componentSize + 1 );
@@ -143,7 +189,7 @@ static int writeDlpSubjectPublicKey( INOUT STREAM *stream,
 		writeBignum( stream, &dlpKey->dlpParam_g );
 		}
 
-	/* Write the BITSTRING wrapper and the PKC information */
+	/* Write the BIT STRING wrapper and the PKC information */
 	writeBitStringHole( stream, componentSize, DEFAULT_TAG );
 	return( writeBignum( stream, &dlpKey->dlpParam_y ) );
 	}
@@ -154,13 +200,72 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeEccSubjectPublicKey( INOUT STREAM *stream, 
 									 const CONTEXT_INFO *contextInfoPtr )
 	{
+	const PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	const OID_INFO *oidTbl;
+	const BYTE *oid = NULL;
+	BYTE buffer[ MAX_PKCSIZE_ECCPOINT + 8 ];
+	int oidTblSize, fieldSize = DUMMY_INIT, encodedPointSize, totalSize;
+	int i, status;
+
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
-			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
-	
-	return( CRYPT_ERROR_NOTAVAIL );
+			  ( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA || \
+				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH ) );
+
+	/* Get the information that we'll need to encode the key.  Note that 
+	   this assumes that we'll be using a known (named) curve rather than
+	   arbitrary curve parameters, which has been enforced by the higher-
+	   level code */
+	status = getECCOidTbl( &oidTbl, &oidTblSize );
+	if( cryptStatusOK( status ) )
+		status = getECCFieldSize( eccKey->curveType, &fieldSize );
+	if( cryptStatusError( status ) )
+		return( status );
+	for( i = 0; oidTbl[ i ].oid != NULL && i < oidTblSize; i++ )
+		{
+		if( oidTbl[ i ].selectionID == eccKey->curveType )
+			{
+			oid = oidTbl[ i ].oid;
+			break;
+			}
+		}
+	ENSURES( i < oidTblSize );
+	ENSURES( oid != NULL );
+
+	/* Determine the size of the AlgorithmIdentifier and the BIT STRING-
+	   encapsulated public-key data (the final +1 is for the bitstring).  
+	   ECC algorithms are a bit strange because there's no specific type
+	   of "ECDSA key" or "ECDH key" or whatever, just a generic "ECC key",
+	   so if we're given an ECDH key we write it as a generic ECC key,
+	   denoted using the generic identifier CRYPT_ALGO_ECDSA */
+	status = exportECCPoint( NULL, 0, &encodedPointSize, 
+							 &eccKey->eccParam_qx, &eccKey->eccParam_qy, 
+							 fieldSize );
+	if( cryptStatusError( status ) )
+		return( status );
+	totalSize = sizeofAlgoIDex( CRYPT_ALGO_ECDSA, CRYPT_ALGO_NONE, 
+								sizeofOID( oid ) ) + \
+				( int ) sizeofObject( encodedPointSize + 1 );
+
+	/* Write the SubjectPublicKeyInfo header field */
+	writeSequence( stream, totalSize );
+	writeAlgoIDex( stream, CRYPT_ALGO_ECDSA, CRYPT_ALGO_NONE, 
+				   sizeofOID( oid ) );
+
+	/* Write the parameter data */
+	writeOID( stream, oid );
+
+	/* Write the BIT STRING wrapper and the PKC information */
+	writeBitStringHole( stream, encodedPointSize, DEFAULT_TAG );
+	status = exportECCPoint( buffer, MAX_PKCSIZE_ECCPOINT, &encodedPointSize, 
+							 &eccKey->eccParam_qx, &eccKey->eccParam_qy, 
+							 fieldSize );
+	if( cryptStatusOK( status ) )
+		status = swrite( stream, buffer, encodedPointSize );
+	zeroise( buffer, MAX_PKCSIZE_ECCPOINT );
+	return( status );
 	}
 #endif /* USE_ECC */
 
@@ -284,7 +389,10 @@ static int writePgpRsaPublicKey( INOUT STREAM *stream,
 			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RSA );
 
 	sputc( stream, PGP_VERSION_OPENPGP );
-	writeUint32Time( stream, rsaKey->pgpCreationTime );
+	if( rsaKey->pgpCreationTime < MIN_TIME_VALUE )
+		writeUint32( stream, 0 );
+	else
+		writeUint32Time( stream, rsaKey->pgpCreationTime );
 	sputc( stream, PGP_ALGO_RSA );
 	writeBignumInteger16Ubits( stream, &rsaKey->rsaParam_n );
 	return( writeBignumInteger16Ubits( stream, &rsaKey->rsaParam_e ) );
@@ -305,7 +413,10 @@ static int writePgpDlpPublicKey( INOUT STREAM *stream,
 				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ELGAMAL ) );
 
 	sputc( stream, PGP_VERSION_OPENPGP );
-	writeUint32Time( stream, dlpKey->pgpCreationTime );
+	if( dlpKey->pgpCreationTime < MIN_TIME_VALUE )
+		writeUint32( stream, 0 );
+	else
+		writeUint32Time( stream, dlpKey->pgpCreationTime );
 	sputc( stream, ( cryptAlgo == CRYPT_ALGO_DSA ) ? \
 		   PGP_ALGO_DSA : PGP_ALGO_ELGAMAL );
 	writeBignumInteger16Ubits( stream, &dlpKey->dlpParam_p );
@@ -431,7 +542,8 @@ static int writePublicKeyEccFunction( INOUT STREAM *stream,
 	assert( isReadPtr( accessKey, accessKeyLen ) );
 
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
-			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
+			  ( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA || \
+				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH ) );
 	REQUIRES( formatType == KEYFORMAT_CERT );
 	REQUIRES( accessKeyLen == 10 );
 
@@ -649,7 +761,7 @@ static int writePrivateKeyEccFunction( INOUT STREAM *stream,
 		retIntError();
 
 	/* Write the key components */
-	return( writeBignum( stream, &dlpKey->eccParam_x ) );
+	return( writeBignum( stream, &eccKey->eccParam_d ) );
 	}
 #endif /* USE_ECC */
 
@@ -760,14 +872,15 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 			    bufMaxSize > 64 && bufMaxSize < MAX_INTLENGTH_SHORT ) );
 	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 			  cryptAlgo <= CRYPT_ALGO_LAST_PKC && !isEccAlgo( cryptAlgo ) );
-	REQUIRES( component1Length > 0 && component1Length <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( component2Length > 0 && component2Length <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( component1Length >= MIN_PKCSIZE && \
+			  component1Length <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( component2Length >= 1 && component2Length <= CRYPT_MAX_PKCSIZE );
 	REQUIRES( ( component3 == NULL && component3Length == 0 ) || \
 			  ( component3 != NULL && \
-				component3Length > 0 && component3Length <= CRYPT_MAX_PKCSIZE ) );
+				component3Length >= 1 && component3Length <= CRYPT_MAX_PKCSIZE ) );
 	REQUIRES( ( component4 == NULL && component4Length == 0 ) || \
 			  ( component4 != NULL && \
-				component4Length > 0 && component4Length <= CRYPT_MAX_PKCSIZE ) );
+				component4Length >= 1 && component4Length <= CRYPT_MAX_PKCSIZE ) );
 
 	/* Clear return values */
 	if( buffer != NULL )
@@ -781,9 +894,11 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 		case CRYPT_ALGO_DH:
 		case CRYPT_ALGO_DSA:
 		case CRYPT_ALGO_ELGAMAL:
+			REQUIRES( component3 != NULL && component4 != NULL );
+
 			parameterSize = ( int ) sizeofObject( comp1Size + comp2Size + \
 												  comp3Size );
-			componentSize = 0;
+			componentSize = sizeofInteger( component4, component4Length );
 			break;
 
 #ifdef USE_KEA
@@ -794,6 +909,8 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 #endif /* USE_KEA */			
 		
 		case CRYPT_ALGO_RSA:
+			REQUIRES( component3 == NULL && component4 == NULL );
+
 			parameterSize = 0;
 			componentSize = ( int ) sizeofObject( comp1Size + comp2Size );
 			break;
@@ -802,7 +919,7 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 			retIntError();
 		}
 
-	/* Determine the size of the AlgorithmIdentifier and the BITSTRING-
+	/* Determine the size of the AlgorithmIdentifier and the BIT STRING-
 	   encapsulated public-key data (the +1 is for the bitstring) */
 	status = totalSize = sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, \
 										 parameterSize );
@@ -854,7 +971,7 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 		}
 #endif /* USE_KEA */
 
-	/* Write the BITSTRING wrapper and the PKC information */
+	/* Write the BIT STRING wrapper and the PKC information */
 	writeBitStringHole( &stream, componentSize, DEFAULT_TAG );
 	if( cryptAlgo == CRYPT_ALGO_RSA )
 		{
@@ -941,33 +1058,14 @@ static int encodeDLValuesFunction( OUT_BUFFER( bufMaxSize, \
 
 #ifdef USE_SSH
 		case CRYPT_IFORMAT_SSH:
-			{
-			int i;
-
-			/* SSH uses an awkward (and horribly inflexible) fixed format 
-			   with each of the nominally 160-bit DLP values at fixed 
-			   positions in a 2 x 20-byte buffer */
-			length = BN_num_bytes( value1 );
-			ENSURES( length > 15 && length <= 20 );
-			for( i = 0; i < 20 - length; i++ )
-				{
-				status = sputc( &stream, 0 );
-				ENSURES( !cryptStatusError( status ) );
-				}
-			status = writeBignum( &stream, value1 );
-			if( cryptStatusError( status ) )
-				break;
-			length = BN_num_bytes( value2 );
-			ENSURES( length > 15 && length <= 20 );
-			for( i = 0; i < 20 - length; i++ )
-				{
-				status = sputc( &stream, 0 );
-				ENSURES( !cryptStatusError( status ) );
-				}
-			status = writeBignum( &stream, value2 );
-			ENSURES( cryptStatusError( status ) || stell( &stream ) == 40 );
+			/* SSH uses an awkward and horribly inflexible fixed format with 
+			   each of the nominally 160-bit DLP values at fixed positions 
+			   in a 2 x 20-byte buffer, so we have to write the bignums as
+			   fixed-size value */
+			status = writeFixedBignum( &stream, value1, 20 );
+			if( cryptStatusOK( status ) )
+				status = writeFixedBignum( &stream, value2, 20 );
 			break;
-			}
 #endif /* USE_SSH */
 
 		default:
@@ -1012,6 +1110,7 @@ void initKeyWrite( INOUT CONTEXT_INFO *contextInfoPtr )
 		{
 		pkcInfo->writePublicKeyFunction = writePublicKeyEccFunction;
 		pkcInfo->writePrivateKeyFunction = writePrivateKeyEccFunction;
+		pkcInfo->encodeDLValuesFunction = encodeDLValuesFunction;
 
 		return;
 		}

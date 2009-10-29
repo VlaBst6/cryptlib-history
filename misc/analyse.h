@@ -9,6 +9,11 @@
 
 #define _ANALYSE_DEFINED
 
+/* A symbolic define for the maximum possible error value when we're 
+   checking ranges for status codes */
+
+#define MAX_ERROR		CRYPT_ENVELOPE_RESOURCE
+
 /****************************************************************************
 *																			*
 *							PREfast Analysis Support						*
@@ -36,6 +41,8 @@
 					no specific failure or success code.
 	RETVAL_ENUM		As CHECK_RETVAL but result is an enum following the 
 					rules for IN_ENUM further down.
+	RETVAL_LENGTH	As CHECK_RETVAL but result is a LENGTH following the 
+					rules for IN_LENGTH further down.
 	RETVAL_PTR		As CHECK_RETVAL but result is a pointer, non-null on
 					success.
 	RETVAL_RANGE	As CHECK_RETVAL but result must be in the range 
@@ -54,6 +61,9 @@
 								__checkReturn \
 								__success( result >= name##_NONE && result < name##_LAST ) \
 								__range( name##_NONE, name##_LAST - 1 )
+#define CHECK_RETVAL_LENGTH		__checkReturn \
+								__success( result >= 0 && result <= MAX_INTLENGTH - 1 ) \
+								__range( MAX_ERROR, MAX_INTLENGTH - 1 )
 #define CHECK_RETVAL_PTR		__checkReturn \
 								__success( result != NULL )
 #define CHECK_RETVAL_RANGE( low, high ) \
@@ -114,6 +124,7 @@
 	MODE		Value must be a cryptlib encryption mode.
 	PORT		Value must be a network port.
 	RANGE		User-specified range check.
+	STATUS		Value must be cryptlib status code
 
    In addition to these we allow the OPT specifier to indicate that the 
    value may be NULL for OUT parameters.
@@ -139,6 +150,7 @@
 #define IN_PORT_OPT				__in __in_range( CRYPT_UNUSED, 65535L )
 #define IN_RANGE( min, max )	__in __in_range( ( min ), ( max ) )
 #define IN_RANGE_FIXED( value )	__in __in_range( ( value ), ( value ) )
+#define IN_STATUS				__in __in_range( MAX_ERROR, CRYPT_OK )
 
 #define INOUT_HANDLE			__inout \
 								__in_range( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 ) \
@@ -151,11 +163,13 @@
 #define OUT_BOOL				__out __out_range( FALSE, TRUE )
 #define OUT_OPT_BOOL			__out_opt __out_range( FALSE, TRUE )
 #define OUT_OPT_BYTE			__out_opt __out_range( 0, 0xFF )
+#define OUT_ERROR				__out __out_range( MAX_ERROR, -1 )
 #define OUT_HANDLE_OPT			__out __out_range( CRYPT_ERROR, MAX_OBJECTS - 1 )
 #define OUT_OPT_HANDLE_OPT		__out_opt __out_range( SYSTEM_OBJECT_HANDLE, MAX_OBJECTS - 1 )
 #define OUT_PORT_Z				__out __out_range( 0, 65535L )
 #define OUT_RANGE( min, max )	__out __out_range( ( min ), ( max ) )
 #define OUT_OPT_RANGE( min, max ) __out_opt __out_range( ( min ), ( max ) )
+#define OUT_STATUS				__out __out_range( MAX_ERROR, CRYPT_OK )
 
 /* Length parameter checking:
 
@@ -177,6 +191,7 @@
    before */
 
 #define IN_LENGTH				__in __in_range( 1, MAX_INTLENGTH - 1 )
+#define IN_LENGTH_OPT			__in __in_range( CRYPT_UNUSED, MAX_INTLENGTH - 1 )
 #define IN_LENGTH_FIXED( size )	__in __in_range( ( size ), ( size ) )
 #define IN_LENGTH_MIN( min )	__in __in_range( ( min ), MAX_INTLENGTH - 1 )
 #define IN_LENGTH_Z				__in __in_range( 0, MAX_INTLENGTH - 1 )
@@ -255,12 +270,12 @@
 
 /* ASN.1 parameter checking, enabled if ANALYSE_ASN1 is defined:
 
-	IN_TAG			Value must be a valid tag or DEFAULT_TAG.  Note that 
+	TAG				Value must be a valid tag or DEFAULT_TAG.  Note that 
 					this is the raw tag value before any DER encoding, 
 					e.g. '0' rather than 'MAKE_CTAG( 0 )'.
-	IN_TAG_EXT		As IN_TAG but may also be ANY_TAG, is used internally 
+	TAG_EXT			As IN_TAG but may also be ANY_TAG, is used internally 
 					by the ASN.1 code to indicate a don't-care tag value.
-	IN_TAG_ENCODED	Value must be a valid DER-encoded tag value 
+	TAG_ENCODED		Value must be a valid DER-encoded tag value 
 
    In addition to these we allow the EXT specifier to indicate that the 
    value may also be ANY_TAG (a don't-care value) or the hidden NO_TAG used 
@@ -270,6 +285,8 @@
 #define IN_TAG_EXT				__in __in_range( ANY_TAG, MAX_TAG_VALUE - 1 )
 #define IN_TAG_ENCODED			__in __in_range( NO_TAG, MAX_TAG )
 #define IN_TAG_ENCODED_EXT		__in __in_range( ANY_TAG, MAX_TAG )
+
+#define OUT_TAG_ENCODED_Z		__out __out_range( 0, MAX_TAG )
 
 /* Enumerated type checking.  Due to the duality of 'int' and 'enum' under C
    these can normally be mixed freely until it comes back to bite on systems
@@ -288,6 +305,7 @@
 								__in_range( name##_NONE + 1, name##_LAST - 1 ) \
 								__out_range( name##_NONE + 1, name##_LAST - 1 )
 
+#define OUT_ENUM( name )		__out __out_range( name##_NONE + 1, name##_LAST - 1 )
 #define OUT_ENUM_OPT( name )	__out __out_range( name##_NONE, name##_LAST - 1 )
 
 /* Binary flag checking.  This works as for enumerated type checking and 
@@ -470,6 +488,7 @@
 		__attribute__(( warn_unused_result ))
 #define CHECK_RETVAL_BOOL				CHECK_RETVAL
 #define CHECK_RETVAL_ENUM( name )		CHECK_RETVAL
+#define CHECK_RETVAL_LENGTH				CHECK_RETVAL
 #define CHECK_RETVAL_PTR				CHECK_RETVAL
 #define CHECK_RETVAL_RANGE( low, high )	CHECK_RETVAL
 #define CHECK_RETVAL_SPECIAL			CHECK_RETVAL
@@ -499,6 +518,7 @@
 #define CHECK_RETVAL
 #define CHECK_RETVAL_BOOL
 #define CHECK_RETVAL_ENUM( name )
+#define CHECK_RETVAL_LENGTH
 #define CHECK_RETVAL_PTR
 #define CHECK_RETVAL_RANGE( low, high )
 #define CHECK_RETVAL_SPECIAL
@@ -539,6 +559,7 @@
 #define IN_PORT_OPT
 #define IN_RANGE( min, max )
 #define IN_RANGE_FIXED( value )
+#define IN_STATUS
 #define INOUT_HANDLE
 #define OUT_ALGO_Z
 #define OUT_OPT_ALGO_Z
@@ -547,13 +568,16 @@
 #define OUT_BOOL
 #define OUT_OPT_BOOL
 #define OUT_OPT_BYTE
+#define OUT_ERROR
 #define OUT_HANDLE_OPT
 #define OUT_OPT_HANDLE_OPT
 #define OUT_PORT_Z
 #define OUT_RANGE( min, max )
 #define OUT_OPT_RANGE( min, max )
+#define OUT_STATUS
 
 #define IN_LENGTH
+#define IN_LENGTH_OPT
 #define IN_LENGTH_FIXED( size )
 #define IN_LENGTH_MIN( min )
 #define IN_LENGTH_Z
@@ -595,10 +619,12 @@
 #define IN_TAG_EXT
 #define IN_TAG_ENCODED
 #define IN_TAG_ENCODED_EXT
+#define OUT_TAG_ENCODED_Z
 
 #define IN_ENUM( name )
 #define IN_ENUM_OPT( name )
 #define INOUT_ENUM( name )
+#define OUT_ENUM( name )
 #define OUT_ENUM_OPT( name )
 
 #define IN_FLAGS( name )

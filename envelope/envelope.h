@@ -653,10 +653,8 @@ typedef struct EI {
 	CRYPT_ATTRIBUTE_TYPE errorLocus;/* Error locus */
 	CRYPT_ERRTYPE_TYPE errorType;	/* Error type */
 
-#ifdef USE_ERRMSGS
 	/* Low-level error information */
 	ERROR_INFO errorInfo;
-#endif /* USE_ERRMSGS */
 
 	/* Pointers to the enveloping/de-enveloping functions */
 	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -746,8 +744,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 typedef int ( *CHECKACTIONFUNCTION )( const ACTION_LIST *actionListPtr,
 									  IN_INT_Z const int intParam );
 
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN moreActionsPossible( const ACTION_LIST *actionListPtr );
+CHECK_RETVAL_BOOL \
+BOOLEAN moreActionsPossible( IN_OPT const ACTION_LIST *actionListPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addAction( OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 			   INOUT MEMPOOL_STATE memPoolState,
@@ -759,16 +757,16 @@ int addActionEx( OUT_PTR ACTION_LIST **newActionPtrPtr,
 				 INOUT MEMPOOL_STATE memPoolState,
 				 IN_ENUM( ACTION ) const ACTION_TYPE actionType,
 				 IN_HANDLE const CRYPT_HANDLE cryptHandle );
-CHECK_RETVAL_ENUM( ACTION ) STDC_NONNULL_ARG( ( 1 ) ) \
-ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
+CHECK_RETVAL_ENUM( ACTION ) \
+ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 						   IN_ENUM( ACTION ) const ACTION_TYPE actionType, 
 						   IN_HANDLE const CRYPT_HANDLE cryptHandle );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int checkActionIndirect( const ACTION_LIST *actionListStart,
 						 IN CHECKACTIONFUNCTION checkActionFunction,
 						 IN_INT_Z const int intParam );
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-ACTION_LIST *findAction( const ACTION_LIST *actionListPtr,
+CHECK_RETVAL_PTR \
+ACTION_LIST *findAction( IN_OPT const ACTION_LIST *actionListPtr,
 						 IN_ENUM( ACTION ) const ACTION_TYPE actionType );
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
 ACTION_LIST *findLastAction( const ACTION_LIST *actionListPtr,
@@ -792,8 +790,8 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr );
 
 /* Prototypes for content list management functions */
 
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN moreContentItemsPossible( const CONTENT_LIST *contentListPtr );
+CHECK_RETVAL_BOOL \
+BOOLEAN moreContentItemsPossible( IN_OPT const CONTENT_LIST *contentListPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 						   INOUT MEMPOOL_STATE memPoolState, 
@@ -802,12 +800,12 @@ int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 						   IN_BUFFER_OPT( objectSize ) const void *object, 
 						   IN_LENGTH_Z const int objectSize,
 						   const BOOLEAN isSigObject );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						   INOUT CONTENT_LIST *contentListItem );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
-							INOUT CONTENT_LIST *contentListItem );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void deleteContentList( INOUT MEMPOOL_STATE memPoolState,
-						INOUT_PTR CONTENT_LIST **contentListHeadPtrPtr );
+int deleteContentList( INOUT MEMPOOL_STATE memPoolState,
+					   INOUT_PTR CONTENT_LIST **contentListHeadPtrPtr );
 
 /* Prototypes for misc.management functions */
 
@@ -845,6 +843,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int hashEnvelopeData( const ACTION_LIST *hashActionPtr,
 					  IN_BUFFER( dataLength ) const void *data, 
 					  IN_LENGTH const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int cmsInitSigParams( const ACTION_LIST *actionListPtr,
+					  IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
+					  IN_HANDLE const CRYPT_USER iCryptOwner,
+					  OUT SIGPARAMS *sigParams );
 
 /* Prototypes for envelope mapping functions */
 

@@ -11,7 +11,7 @@
    from the (exportable) printed manuals rather than through access to any
    original code */
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -267,7 +267,7 @@ int deviceInitFortezza( void )
 	static BOOLEAN initCalled = FALSE;
 	int status;
 
-	/* If we've previously tried to init the drivers, don't try it again */
+	/* If we've previously tried to initialise the drivers, don't try it again */
 	if( initCalled )
 		return( CRYPT_OK );
 	initCalled = TRUE;
@@ -536,9 +536,9 @@ static void getCertificateLabel( const int certIndex, const int parentIndex,
 	   identify individual keys as organisational ones some of the time, 
 	   but it's unlikely that anything distinguishes between I and O keys 
 	   anyway */
-	value = CRYPT_UNUSED;
-	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, &value, 
-					 CRYPT_CERTINFO_SUBJECTNAME );
+	value = CRYPT_CERTINFO_SUBJECTNAME;
+	krnlSendMessage( iCryptCert, IMESSAGE_SETATTRIBUTE, &value,
+					 CRYPT_ATTRIBUTE_CURRENT );
 	setMessageData( &msgData, NULL, 0 );
 	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S, &msgData, 
 							  CRYPT_CERTINFO_ORGANIZATIONNAME );
@@ -608,8 +608,8 @@ static int findCertificateFromLabel( const FORTEZZA_INFO *fortezzaInfo,
 							certIndex < FAILSAFE_ITERATIONS_MED; \
 			 certIndex++ )
 			{
-			if( !strncmp( personalityList[ certIndex ].CertLabel, \
-						  names[ labelIndex ], 4 ) )
+			if( !strCompare( personalityList[ certIndex ].CertLabel, \
+							 names[ labelIndex ], 4 ) )
 				return( certIndex );
 			}
 		if( certIndex >= FAILSAFE_ITERATIONS_MED )
@@ -980,7 +980,7 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 		int status;
 
 		/* If the certificate is already present, make sure that the parent 
-		   index info is correct */
+		   index information is correct */
 		if( currentCertInfo->certPresent )
 			{
 			CI_CERTIFICATE certificate;
@@ -1067,8 +1067,8 @@ static const MECHANISM_FUNCTION_INFO mechanismFunctions[] = {
 	};
 
 /* Close a previously-opened session with the device.  We have to have this
-   before the init function since it may be called by it if the init process
-   fails */
+   before the initialisation function since it may be called by it if the 
+   initialisation process fails */
 
 static void shutdownFunction( DEVICE_INFO *deviceInfo )
 	{
@@ -1226,10 +1226,11 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 
 	/* Set up device-specific information.  We can't read the personality 
 	   list until the user logs on, so all we can do at this point is 
-	   allocate memory for it.  Note that personality 0 can never be selected
-	   and so it isn't returned when the personality info is read, this leads 
-	   to confusing fencepost errors so when we allocate/read the personality
-	   info we leave space for a zero-th personality which is never used */
+	   allocate memory for it.  Note that personality 0 can never be 
+	   selected and so it isn't returned when the personality information is 
+	   read, this leads to confusing fencepost errors so when we 
+	   allocate/read the personality information we leave space for a 
+	   zero-th personality which is never used */
 	pCI_GetConfiguration( &deviceConfiguration );
 	fortezzaInfo->largestBlockSize = deviceConfiguration.LargestBlockSize;
 	fortezzaInfo->minPinSize = 4;
@@ -1345,6 +1346,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 			{
 			pCI_Reset();	/* Log off */
 			fortezzaInfo->errorInfo.errorCode = status;
+
 			return( CRYPT_ERROR_FAILED );
 			}
 
@@ -1362,8 +1364,8 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 
 		/* Handle LEAF suppression.  On LEAF-suppressed cards the LEAF bytes
 		   are replaced by 'THIS IS NOT LEAF', in case there are cards that
-		   use a different string we remember it with the device info so we 
-		   can load LEAF-less IV's */
+		   use a different string we remember it with the device information 
+		   so we can load LEAF-less IV's */
 		status = pCI_DeleteKey( 1 );
 		if( status == CI_OK )
 			status = pCI_GenerateMEK( 1, 0 );
@@ -1657,7 +1659,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		sMemConnect( &stream, certificate, 128 );
 		status = readSequence( &stream, NULL );
 		if( !cryptStatusError( status ) )
-			status = readAlgoID( &stream, &cryptAlgo );
+			status = readAlgoID( &stream, &cryptAlgo, ALGOID_CLASS_PKC );
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -1723,8 +1725,8 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		   that */
 		if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 			{
-			/* Set up the keying info in the context based on the data from
-			   the certificate if necessary */
+			/* Set up the keying information in the context based on the 
+			   data from the certificate if necessary */
 			if( cryptAlgo == CRYPT_ALGO_KEA )
 				{
 				BYTE keyDataBuffer[ 1024 + 8 ];
@@ -1749,14 +1751,15 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		}
 
 	/* Create a dummy context for the key, remember the device it's 
-	   contained in, the index of the device-internal key, and the object's 
-	   label, mark it as initialised (i.e. with a key loaded), and if 
-	   there's a certificate present attach it to the context.  The 
-	   certificate is an internal object used only by the context so we tell 
-	   the kernel to mark it as owned by the context only */
+	   contained in, the object's label, and the index of the device-internal 
+	   key, mark it as initialised (i.e. with a key loaded), and if there's a 
+	   certificate present attach it to the context.  The certificate is an 
+	   internal object used only by the context so we tell the kernel to mark 
+	   it as owned by the context only */
 	status = createContextFromCapability( iCryptContext, deviceInfo->ownerHandle,
 										  capabilityInfoPtr, 
-										  CREATEOBJECT_FLAG_DUMMY );
+										  CREATEOBJECT_FLAG_DUMMY | \
+										  CREATEOBJECT_FLAG_PERSISTENT );
 	if( cryptStatusError( status ) )
 		{
 		if( certPresent )
@@ -1765,27 +1768,31 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		}
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT,
 					 &deviceInfo->objectHandle, SETDEP_OPTION_INCREF );
-	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, &certIndex, 
-					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	setMessageData( &msgData, personality->CertLabel + 8,
 					 min( strlen( personality->CertLabel + 8 ),
 						  CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
 					 CRYPT_CTXINFO_LABEL );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &keySize, CRYPT_IATTRIBUTE_KEYSIZE );
+					 ( MESSAGE_CAST ) &keySize, CRYPT_IATTRIBUTE_KEYSIZE );
 	if( certPresent && cryptAlgo == CRYPT_ALGO_KEA )
 		{
 		BYTE keyDataBuffer[ 1024 + 8 ];
 
-		/* Set up the keying info in the context based on the data from the 
-		   certificate if necessary */
+		/* Set up the keying information in the context based on the data 
+		   from the certificate if necessary */
 		setMessageData( &msgData, keyDataBuffer, 1024 );
 		status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S, 
 								  &msgData, CRYPT_IATTRIBUTE_SPKI );
 		if( cryptStatusOK( status ) )
 			status = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 									  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+		if( cryptStatusOK( status ) )
+			{
+			status = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
+									  &certIndex, 
+									  CRYPT_IATTRIBUTE_DEVICEOBJECT );
+			}
 		if( cryptStatusError( status ) )
 			{
 			krnlSendNotifier( *iCryptContext, IMESSAGE_DECREFCOUNT );
@@ -1795,8 +1802,10 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		}
 	else
 		{
-		/* If we don't set keying the info, we have to manually move the 
-		   context into the initialised state */
+		/* If we don't set keying the information, we have to manually move 
+		   the context into the initialised state */
+		krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, &certIndex, 
+						 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 		krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE,
 						 MESSAGE_VALUE_UNUSED, CRYPT_IATTRIBUTE_INITIALISED );
 		}
@@ -1846,6 +1855,7 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
 	assert( keyIDtype == CRYPT_KEYID_NAME );
+	assert( keyIDlength > 0 && keyIDlength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Find the item to delete based on the label */
 	certIndex = findCertificateFromLabel( fortezzaInfo, keyID, keyIDlength );
@@ -1874,6 +1884,7 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 	int status;
 
 	assert( keyIDtype == CRYPT_KEYID_NAME && keyID != NULL );
+	assert( keyIDlength > 4 && keyIDlength < MAX_INTLENGTH_SHORT );
 	assert( stateInfo != NULL );
 
 	/* Find the certificate based on the label */
@@ -2244,7 +2255,7 @@ static int generateKeyFunction( CONTEXT_INFO *contextInfoPtr,
 
 	assert( keySizeBits == 80 || keySizeBits == bytesToBits( 128 ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = krnlSendMessage( contextInfoPtr->objectHandle, 
 							  IMESSAGE_GETDEPENDENT, &iCryptDevice, 
 							  OBJECT_TYPE_DEVICE );
@@ -2280,11 +2291,13 @@ static int generateKeyFunction( CONTEXT_INFO *contextInfoPtr,
 
 			/* Remember what we've set up */
 			krnlSendMessage( contextInfoPtr->objectHandle, 
-							 IMESSAGE_SETATTRIBUTE, ( void * ) &keyIndex, 
-							 CRYPT_IATTRIBUTE_DEVICEOBJECT );
-			krnlSendMessage( contextInfoPtr->objectHandle, 
-							 IMESSAGE_SETATTRIBUTE,  ( void * ) &keySize, 
+							 IMESSAGE_SETATTRIBUTE,  
+							 ( MESSAGE_CAST ) &keySize, 
 							 CRYPT_IATTRIBUTE_KEYSIZE );
+			krnlSendMessage( contextInfoPtr->objectHandle, 
+							 IMESSAGE_SETATTRIBUTE, 
+							 ( MESSAGE_CAST ) &keyIndex, 
+							 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 			}
 		status = mapError( status, CRYPT_ERROR_FAILED );
 
@@ -2318,15 +2331,13 @@ static int generateKeyFunction( CONTEXT_INFO *contextInfoPtr,
 	memcpy( yBuffer + 120, "\x12\x34\x56\x78\x90\x12\x34\x56", 8 );
 #endif /* NO_UPDATE */
 
-	/* Send the keying info to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	/* Send the keying information to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
 	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
 	   into the high state.  We don't want to do this because we're already 
 	   in the middle of processing a message that does this on completion, 
 	   all we're doing here is sending in encoded public key data for use by 
 	   objects such as certificates */
-	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE, 
-					 ( void * ) &keySizeBits, CRYPT_IATTRIBUTE_KEYSIZE );
 	status = writeFlatPublicKey( keyDataBuffer, 1024, &keyDataSize, cryptAlgo, 
 								 p, 128, q, 20, g, 128, yBuffer, 128 );
 	if( cryptStatusOK( status ) )
@@ -2347,9 +2358,9 @@ static int generateKeyFunction( CONTEXT_INFO *contextInfoPtr,
 		return( status );
 		}
 
-	/* Save the encoded public key info in the card.  We need to do this 
-	   because we can't recreate the y value without generating a new private
-	   key */
+	/* Save the encoded public key information in the card.  We need to do 
+	   this because we can't recreate the y value without generating a new 
+	   private key */
 	status = updateRawKey( fortezzaInfo, certIndex, keyDataBuffer, 
 						   keyDataSize, contextInfoPtr->label );
 	if( cryptStatusError( status ) )
@@ -2364,6 +2375,7 @@ static int generateKeyFunction( CONTEXT_INFO *contextInfoPtr,
 	/* Remember what we've set up */
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
 					 &certIndex, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 	contextInfoPtr->flags &= ~CONTEXT_FLAG_ISPUBLICKEY;
 
 	krnlReleaseObject( deviceInfo->objectHandle );
@@ -2545,8 +2557,8 @@ static int sigCheckFunction( CONTEXT_INFO *contextInfoPtr, void *buffer,
 		BYTE yBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
 		int yLength;
 
-		status = getBignumData( &contextInfoPtr->ctxPKC->dlpParam_y, yBuffer, 
-								CRYPT_MAX_PKCSIZE, &yLength );
+		status = exportBignum( yBuffer, CRYPT_MAX_PKCSIZE, &yLength,
+							   &contextInfoPtr->ctxPKC->dlpParam_y );
 		if( cryptStatusError( status ) )
 			return( status );
 		status = pCI_VerifySignature( ( void * ) dlpParams->inParam1, 
@@ -2704,11 +2716,11 @@ static int keyAgreeOriginatorFunction( CONTEXT_INFO *contextInfoPtr, void *buffe
 	if( cryptStatusError( status ) )
 		return( status );
 	
-	/* Get the info for the device associated with this context and keep it 
-	   locked it while we work with it.  This is necessary because of the 
-	   implicit key selection used by the Fortezza crypto library, if we were
-	   to unlock the device at any point another thread could enable the use 
-	   of a different key */
+	/* Get the information for the device associated with this context and 
+	   keep it locked it while we work with it.  This is necessary because 
+	   of the implicit key selection used by the Fortezza crypto library, if 
+	   we were to unlock the device at any point another thread could enable 
+	   the use of a different key */
 	status = krnlSendMessage( contextInfoPtr->objectHandle, 
 							  IMESSAGE_GETDEPENDENT, &iCryptDevice, 
 							  OBJECT_TYPE_DEVICE );
@@ -2785,11 +2797,11 @@ static int keyAgreeRecipientFunction( CONTEXT_INFO *contextInfoPtr, void *buffer
 	if( cryptStatusError( status ) )
 		return( status );
 	
-	/* Get the info for the device associated with this context and keep it 
-	   locked it while we work with it.  This is necessary because of the 
-	   implicit key selection used by the Fortezza crypto library, if we were
-	   to unlock the device at any point another thread could enable the use 
-	   of a different key */
+	/* Get the information for the device associated with this context and 
+	   keep it locked it while we work with it.  This is necessary because 
+	   of the implicit key selection used by the Fortezza crypto library, if 
+	   we were to unlock the device at any point another thread could enable 
+	   the use of a different key */
 	status = krnlSendMessage( contextInfoPtr->objectHandle, 
 							  IMESSAGE_GETDEPENDENT, &iCryptDevice, 
 							  OBJECT_TYPE_DEVICE );
@@ -2866,7 +2878,7 @@ static const CAPABILITY_INFO capabilities[] = {
 
 static CAPABILITY_INFO_LIST capabilityInfoList[ 4 ];
 
-/* Initialise the capability info */
+/* Initialise the capability information */
 
 static int initCapabilities( void )
 	{
@@ -2905,8 +2917,10 @@ int setDeviceFortezza( INOUT DEVICE_INFO *deviceInfo )
 	/* Load the Fortezza driver DLL's if they aren't already loaded */
 	if( hFortezza == NULL_HINSTANCE )
 		{
-		deviceInitFortezza();
-		if( hFortezza == NULL_HINSTANCE )
+		int status;
+		
+		status = deviceInitFortezza();
+		if( cryptStatusError( status ) )
 			return( CRYPT_ERROR_OPEN );
 		}
 

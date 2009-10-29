@@ -70,10 +70,14 @@ static int getObjectLabel( PKCS11_INFO *pkcs11Info,
 								  &keyLabelTemplate, 1 );
 	if( status == CKR_OK )
 		{
-		if( keyLabelTemplate.ulValueLen > CRYPT_MAX_TEXTSIZE && \
-			( labelPtr = clAlloc( "getObjectLabel", \
+		if( keyLabelTemplate.ulValueLen > CRYPT_MAX_TEXTSIZE )
+			{
+			if( keyLabelTemplate.ulValueLen >= MAX_INTLENGTH_SHORT )
+				return( CRYPT_ERROR_OVERFLOW );
+			if( ( labelPtr = clAlloc( "getObjectLabel", \
 					( size_t ) ( keyLabelTemplate.ulValueLen ) ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
+				return( CRYPT_ERROR_MEMORY );
+			}
 		keyLabelTemplate.pValue = labelPtr;
 		status = C_GetAttributeValue( pkcs11Info->hSession, hObject,
 									  &keyLabelTemplate, 1 );
@@ -192,17 +196,19 @@ static int getActionFlags( PKCS11_INFO *pkcs11Info,
 			actionFlags = MK_ACTION_PERM_NONE_EXTERNAL( actionFlags );
 		}
 	else
-		if( isDlpAlgo( cryptAlgo ) )
+		{
+		if( isDlpAlgo( cryptAlgo ) || isEccAlgo( cryptAlgo ) )
 			{
 			/* Because of the special-case data formatting requirements for 
-			   DLP algorithms, we make the usage internal-only */
+			   DLP/ECDLP algorithms we make the usage internal-only */
 			actionFlags = MK_ACTION_PERM_NONE_EXTERNAL( actionFlags );
 			}
+		}
 
 	return( actionFlags );
 	}
 
-/* Get cryptlib algorithm and capability info for a PKCS #11 object */
+/* Get cryptlib algorithm and capability information for a PKCS #11 object */
 
 static int getMechanismInfo( const PKCS11_INFO *pkcs11Info, 
 							 const CK_OBJECT_HANDLE hObject,
@@ -211,7 +217,7 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 							 const CAPABILITY_INFO **capabilityInfoPtrPtr,
 							 CRYPT_ALGO_TYPE *cryptAlgo )
 	{
-	CK_KEY_TYPE keyType;
+	CK_KEY_TYPE keyType = DUMMY_INIT;
 	CK_ATTRIBUTE keyTypeTemplate = \
 		{ CKA_KEY_TYPE, ( CK_VOID_PTR ) &keyType, sizeof( CK_KEY_TYPE ) };
 	CK_RV status;
@@ -234,6 +240,7 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 								  &keyTypeTemplate, 1 );
 	if( status != CKR_OK )
 		{
+		DEBUG_DIAG(( "Couldn't read key type" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_FAILED );
 		}
@@ -254,7 +261,7 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 		}
 
 	/* Get the equivalent cryptlib algorithm type and use that to get the
-	   capability info for the algorithm */
+	   capability information for the algorithm */
 	if( isPKC )
 		mechanismInfoPtr = getMechanismInfoPKC( &mechanismInfoSize );
 	else
@@ -276,14 +283,59 @@ static int getMechanismInfo( const PKCS11_INFO *pkcs11Info,
 /* Add the components of an issuerAndSerialnumber to a certificate 
    template */
 
+static int readIAndS( STREAM *stream,
+					  CK_ATTRIBUTE *certTemplateI, 
+					  CK_ATTRIBUTE *certTemplateS )
+	{
+	void *dataPtr = DUMMY_INIT_PTR;
+	int length, cryptStatus;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( certTemplateI, sizeof( CK_ATTRIBUTE ) ) );
+	assert( isWritePtr( certTemplateS, sizeof( CK_ATTRIBUTE ) ) );
+
+	/* Read the wrapper tag */
+	cryptStatus = readSequence( stream, NULL );
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+
+	/* Read the issuer DN and add it to the template */
+	cryptStatus = getStreamObjectLength( stream, &length );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplateI->ulValueLen = length;
+		cryptStatus = sMemGetDataBlock( stream, &dataPtr, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplateI->pValue = dataPtr;
+		cryptStatus = sSkip( stream, length );
+		}
+	if( cryptStatusError( cryptStatus ) )
+		return( cryptStatus );
+
+	/* Read the serial number and add it to the template */
+	cryptStatus = getStreamObjectLength( stream, &length );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplateS->ulValueLen = length;
+		cryptStatus = sMemGetDataBlock( stream, &dataPtr, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		certTemplateS->pValue = dataPtr;
+		cryptStatus = sSkip( stream, length );
+		}
+	return( cryptStatus );
+	}
+
 static int addIAndSToTemplate( CK_ATTRIBUTE *certTemplate, 
 							   const void *iAndSPtr, const int iAndSLength, 
 							   DYNBUF *iAndSDB, 
 							   const CRYPT_HANDLE iCryptHandle )
 	{
 	STREAM stream;
-	void *dataPtr = DUMMY_INIT_PTR;
-	int length, cryptStatus;
+	int cryptStatus;
 
 	assert( isWritePtr( certTemplate, sizeof( CK_ATTRIBUTE ) * 2 ) );
 	assert( ( iAndSPtr == NULL && iAndSLength == 0 && \
@@ -292,57 +344,35 @@ static int addIAndSToTemplate( CK_ATTRIBUTE *certTemplate,
 			( isReadPtr( iAndSPtr, iAndSLength ) && \
 			  iAndSDB == NULL && iCryptHandle == CRYPT_UNUSED ) );
 
-	/* Get the issuerAndSerialNumber from the certificate if necessary */
+	/* Get the issuerAndSerialNumber from the certificate if necessary and 
+	   add the data to the template */
 	if( iAndSDB != NULL )
 		{
 		cryptStatus = dynCreate( iAndSDB, iCryptHandle, 
 								 CRYPT_IATTRIBUTE_ISSUERANDSERIALNUMBER );
 		if( cryptStatusError( cryptStatus ) )
 			return( cryptStatus );
-		}
-
-	/* Parse the data and add it to the template */
-	if( iAndSDB != NULL )
 		sMemConnect( &stream, dynData( *iAndSDB ), dynLength( *iAndSDB ) );
-	else
-		sMemConnect( &stream, iAndSPtr, iAndSLength );
-	readSequence( &stream, NULL );
-	cryptStatus = getStreamObjectLength( &stream, &length );
-	if( cryptStatusOK( cryptStatus ) )		/* Issuer DN */
-		{
-		certTemplate->ulValueLen = length;
-		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
-		}
-	if( cryptStatusOK( cryptStatus ) )
-		{
-		certTemplate->pValue = dataPtr;
-		cryptStatus = sSkip( &stream, length );
-		}
-	if( cryptStatusOK( cryptStatus ) )
-		{
-		certTemplate;	/* Move on to next entry */
-		cryptStatus = getStreamObjectLength( &stream, &length );
-		}
-	if( cryptStatusOK( cryptStatus ) )		/* Serial number */
-		{
-		certTemplate->ulValueLen = length;
-		cryptStatus = sMemGetDataBlock( &stream, &dataPtr, length );
-		}
-	if( cryptStatusOK( cryptStatus ) )
-		{
-		certTemplate->pValue = dataPtr;
-		cryptStatus = sSkip( &stream, length );
-		}
-	sMemDisconnect( &stream );
-	if( cryptStatusError( cryptStatus ) )
-		{
-		assert( DEBUG_WARN );
-		if( iAndSDB != NULL )
+		cryptStatus = readIAndS( &stream, &certTemplate[ 0 ], 
+								 &certTemplate[ 1 ] );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( cryptStatus ) )
+			{
+			DEBUG_DIAG(( "Couldn't get issuerAndSerialNumber from "
+						 "certificate" ));
+			assert( DEBUG_WARN );
 			dynDestroy( iAndSDB );
+			}
 		return( cryptStatus );
 		}
 
-	return( CRYPT_OK );
+	/* Parse the iAndS data and add it to the template */
+	sMemConnect( &stream, iAndSPtr, iAndSLength );
+	cryptStatus = readIAndS( &stream, &certTemplate[ 0 ], 
+							 &certTemplate[ 1 ] );
+	sMemDisconnect( &stream );
+	assert( !cryptStatusError( cryptStatus ) );
+	return( cryptStatus );
 	}
 
 /****************************************************************************
@@ -411,6 +441,12 @@ static int findObject( PKCS11_INFO *pkcs11Info, CK_OBJECT_HANDLE *hObject,
 					   const CK_ATTRIBUTE *objectTemplate,
 					   const CK_ULONG templateCount )
 	{
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( hObject, sizeof( CK_OBJECT_HANDLE  ) ) );
+	assert( isReadPtr( objectTemplate, \
+					   sizeof( CK_ATTRIBUTE ) * templateCount ) );
+	assert( templateCount > 0 );
+
 	return( findDeviceObjects( pkcs11Info, hObject, 
 							   objectTemplate, templateCount, TRUE ) );
 	}
@@ -419,6 +455,12 @@ static int findObjectEx( PKCS11_INFO *pkcs11Info, CK_OBJECT_HANDLE *hObject,
 						 const CK_ATTRIBUTE *objectTemplate,
 						 const CK_ULONG templateCount )
 	{
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( hObject, sizeof( CK_OBJECT_HANDLE  ) ) );
+	assert( isReadPtr( objectTemplate, \
+					   sizeof( CK_ATTRIBUTE ) * templateCount ) );
+	assert( templateCount > 0 );
+
 	return( findDeviceObjects( pkcs11Info, hObject, 
 							   objectTemplate, templateCount, FALSE ) );
 	}
@@ -558,10 +600,14 @@ static int findCertFromObject( PKCS11_INFO *pkcs11Info,
 								  &idTemplate, 1 );
 	if( status == CKR_OK )
 		{
-		if( idTemplate.ulValueLen > MAX_BUFFER_SIZE && \
-			( bufPtr = clAlloc( "findCertFromObject", \
+		if( idTemplate.ulValueLen > MAX_BUFFER_SIZE )
+			{
+			if( idTemplate.ulValueLen >= MAX_INTLENGTH_SHORT )
+				return( CRYPT_ERROR_OVERFLOW );
+			if( ( bufPtr = clAlloc( "findCertFromObject", \
 						( size_t ) ( idTemplate.ulValueLen ) ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
+				return( CRYPT_ERROR_MEMORY );
+			}
 		idTemplate.pValue = bufPtr;
 		status = C_GetAttributeValue( pkcs11Info->hSession, hObject,
 									  &idTemplate, 1 );
@@ -647,10 +693,14 @@ static int findObjectFromObject( PKCS11_INFO *pkcs11Info,
 								  &idTemplate, 1 );
 	if( status == CKR_OK )
 		{
-		if( idTemplate.ulValueLen > MAX_BUFFER_SIZE && \
-			( bufPtr = clAlloc( "findObjectFromObject", \
+		if( idTemplate.ulValueLen > MAX_BUFFER_SIZE )
+			{
+			if( idTemplate.ulValueLen >= MAX_INTLENGTH_SHORT )
+				return( CRYPT_ERROR_OVERFLOW );
+			if( ( bufPtr = clAlloc( "findObjectFromObject", \
 						( size_t ) ( idTemplate.ulValueLen ) ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
+				return( CRYPT_ERROR_MEMORY );
+			}
 		idTemplate.pValue = bufPtr;
 		status = C_GetAttributeValue( pkcs11Info->hSession, hSourceObject,
 									  &idTemplate, 1 );
@@ -703,10 +753,14 @@ static int instantiateCert( PKCS11_INFO *pkcs11Info,
 								  &dataTemplate, 1 );
 	if( status == CKR_OK )
 		{
-		if( dataTemplate.ulValueLen > MAX_BUFFER_SIZE && \
-			( bufPtr = clAlloc( "instantiateCert", \
+		if( dataTemplate.ulValueLen > MAX_BUFFER_SIZE )
+			{
+			if( dataTemplate.ulValueLen >= MAX_INTLENGTH_SHORT )
+				return( CRYPT_ERROR_OVERFLOW );
+			if( ( bufPtr = clAlloc( "instantiateCert", \
 					( size_t ) ( dataTemplate.ulValueLen ) ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
+				return( CRYPT_ERROR_MEMORY );
+			}
 		dataTemplate.pValue = bufPtr;
 		status = C_GetAttributeValue( pkcs11Info->hSession, hCertificate,
 									  &dataTemplate, 1 );
@@ -761,10 +815,12 @@ static int getCertChain( PKCS11_INFO *pkcs11Info,
 									  &idTemplate, 1 );
 		}
 	if( status != CKR_OK || idTemplate.ulValueLen > MAX_BUFFER_SIZE )
+		{
 		/* We couldn't get the ID to build the chain or it's too large to be
 		   usable, we can at least still return the individual certificate */
 		return( instantiateCert( pkcs11Info, hCertificate, iCryptCert, 
 								 createContext ) );
+		}
 
 	/* Create the certificate chain via an indirect import */
 	return( iCryptImportCertIndirect( iCryptCert, iCertSource, 
@@ -957,7 +1013,7 @@ static int updateCertificate( PKCS11_INFO *pkcs11Info,
 		{
 		/* Support for the PKCS #11 v2.20 attribute CKA_URL is pretty hit-
 		   and-miss, some drivers from ca.2000 support it but others from 
-		   ca.2007 still don't, so if we get a CKR_ATTRIBUTE_TYPE_INVALID 
+		   ca.2007 still don't so if we get a CKR_ATTRIBUTE_TYPE_INVALID 
 		   return code we try again without the CKA_URL */
 		templateCount--;
 		status = C_CreateObject( pkcs11Info->hSession,
@@ -1133,7 +1189,7 @@ static int createNativeObject( PKCS11_INFO *pkcs11Info,
 		return( cryptStatus );
 	*iCryptContext = createInfo.cryptHandle;
 
-	/* Send the keying info to the context and set the action flags */
+	/* Send the keying information to the context and set the action flags */
 	if( cryptAlgo == CRYPT_ALGO_RSA )
 		cryptStatus = rsaSetPublicComponents( pkcs11Info, *iCryptContext, 
 											  hObject, TRUE );
@@ -1198,13 +1254,14 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 		return( CRYPT_ERROR_PERMISSION );
 		}
 
-	/* Create a dummy context for the key, remember the device that it's 
-	   contained in, and record the handle for the device-internal key */
+	/* Create a dummy context for the key and remember the device that it's 
+	   contained in */
 	cryptStatus = getObjectLabel( pkcs11Info, hObject, label, 
 								  CRYPT_MAX_TEXTSIZE, &labelLength );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = createContextFromCapability( iCryptContext, 
-							iOwnerHandle, capabilityInfoPtr, createFlags );
+							iOwnerHandle, capabilityInfoPtr, 
+							createFlags | CREATEOBJECT_FLAG_PERSISTENT );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		if( iCryptCert != CRYPT_UNUSED )
@@ -1212,12 +1269,8 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 		return( cryptStatus );
 		}
 	cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT,
-								   ( void * ) &iDeviceHandle, 
+								   ( MESSAGE_CAST ) &iDeviceHandle, 
 								   SETDEP_OPTION_INCREF );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
-									   ( void * ) &hObject, 
-									   CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
 									   &actionFlags, 
@@ -1230,27 +1283,28 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 		return( cryptStatus );
 		}
 
-	/* Set the object's label and mark it as initialised (i.e. with a key 
-	   loaded).  Setting the label requires special care because the label 
-	   that we're setting matches that of an existing object, so trying to
-	   set it as a standard CRYPT_CTXINFO_LABEL will return a 
-	   CRYPT_ERROR_DUPLICATE error when the context code checks for the
-	   existence of an existing label.  To handle this, we use the
-	   attribute CRYPT_IATTRIBUTE_EXISTINGLABEL to indicate that we're 
-	   setting a label that matches an existing object in the device */
+	/* Set the object's label, record the handle for the device-internal 
+	   key, and mark it as initialised (i.e. with a key loaded).  Setting 
+	   the label requires special care because the label that we're setting 
+	   matches that of an existing object so trying to set it as a standard 
+	   CRYPT_CTXINFO_LABEL will return a CRYPT_ERROR_DUPLICATE error when 
+	   the context code checks for the existence of an existing label.  To 
+	   handle this we use the attribute CRYPT_IATTRIBUTE_EXISTINGLABEL to 
+	   indicate that we're setting a label that matches an existing object 
+	   in the device */
 	if( labelLength <= 0 )
 		{
 		/* If there's no label present, use a dummy value */
 		strlcpy_s( label, CRYPT_MAX_TEXTSIZE, "Label-less PKCS #11 key" );
-		labelLength = strlen( label );
+		labelLength = 23;
 		}
 	setMessageData( &msgData, label, min( labelLength, CRYPT_MAX_TEXTSIZE ) );
 	cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 								   &msgData, CRYPT_IATTRIBUTE_EXISTINGLABEL );
 	if( cryptStatusOK( cryptStatus ) )
 		{
-		/* Send the keying info to the context.  For non-PKC contexts we 
-		   only need to set the key length to let the user query the key 
+		/* Send the keying information to the context.  For non-PKC contexts 
+		   we only need to set the key length to let the user query the key 
 		   size, for PKC contexts we also have to set the key components so
 		   they can be written into certificates.  Unfortunately we can't do 
 		   this for DLP private keys since we can't read y from a DLP 
@@ -1260,14 +1314,22 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 		   in the device by someone else, which is typically done in Europe 
 		   where DSA isn't used so this shouldn't be a problem */
 		if( cryptAlgo == CRYPT_ALGO_RSA )
+			{
 			cryptStatus = rsaSetPublicComponents( pkcs11Info, *iCryptContext, 
 												  hObject, FALSE );
+			}
 		else
+			{
 			cryptStatus = krnlSendMessage( *iCryptContext, 
 										   IMESSAGE_SETATTRIBUTE, 
-										   ( void * ) &keySize, 
+										   ( MESSAGE_CAST ) &keySize, 
 										   CRYPT_IATTRIBUTE_KEYSIZE );
+			}
 		}
+	if( cryptStatusOK( cryptStatus ) )
+		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
+									   ( MESSAGE_CAST ) &hObject, 
+									   CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE,
 									   MESSAGE_VALUE_UNUSED, 
@@ -1279,7 +1341,7 @@ static int createDeviceObject( PKCS11_INFO *pkcs11Info,
 		   by the context so we tell the kernel to mark it as owned by the 
 		   context only */
 		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT, 
-									   ( void * ) &iCryptCert, 
+									   ( MESSAGE_CAST ) &iCryptCert, 
 									   SETDEP_OPTION_NOINCREF );
 		}
 	if( cryptStatusError( cryptStatus ) )
@@ -1344,9 +1406,9 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 	   can only have a label as an ID */
 	if( itemType == KEYMGMT_ITEM_SECRETKEY )
 		{
-		CK_ULONG keySize;
-		CK_ATTRIBUTE keySizeTemplate = \
-			{ CKA_VALUE_LEN, &keySize, sizeof( CK_ULONG ) };
+		CK_ULONG secKeySize = DUMMY_INIT;
+		CK_ATTRIBUTE secKeySizeTemplate = \
+			{ CKA_VALUE_LEN, &secKeySize, sizeof( CK_ULONG ) };
 		int status;
 
 		assert( keyIDtype == CRYPT_KEYID_NAME || \
@@ -1383,7 +1445,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 		if( cryptStatusError( cryptStatus ) )
 			return( cryptStatus );
 		status = C_GetAttributeValue( pkcs11Info->hSession, hObject, 
-									  &keySizeTemplate, 1 );
+									  &secKeySizeTemplate, 1 );
 		if( status != CKR_OK )
 			return( pkcs11MapError( pkcs11Info, status, 
 									CRYPT_ERROR_NOTINITED ) );
@@ -1393,7 +1455,7 @@ static int getItemFunction( DEVICE_INFO *deviceInfo,
 								    CRYPT_UNUSED, deviceInfo->ownerHandle, 
 								    deviceInfo->objectHandle, capabilityInfoPtr,
 								    KEYMGMT_ITEM_SECRETKEY, cryptAlgo, 
-									keySize ) );
+									secKeySize ) );
 		}
 
 	/* If we're looking for something based on an issuerAndSerialNumber, set 
@@ -1773,7 +1835,8 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( keyIDtype == CRYPT_IKEYID_KEYID );
-	assert( keyIDlength > 4 && isReadPtr( keyID, keyIDlength ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
+	assert( keyIDlength > 4 && keyIDlength < MAX_INTLENGTH_SHORT );
 	assert( isWritePtr( stateInfo, sizeof( int ) ) );
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
 
@@ -1938,6 +2001,7 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 			itemType == KEYMGMT_ITEM_SECRETKEY );
 	assert( keyIDtype == CRYPT_KEYID_NAME );
 	assert( isReadPtr( keyID, keyIDlength ) );
+	assert( keyIDlength > 0 && keyIDlength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Find the object to delete based on the label.  Since we can have 
 	   multiple related objects (e.g. a key and a certificate) with the same 
@@ -2011,7 +2075,7 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 			hPubkey = CK_OBJECT_NONE;
 		}
 	if( hPrivkey == CK_OBJECT_NONE && hPubkey == CK_OBJECT_NONE && \
-		hSecretKey == CK_OBJECT_NONE )
+		hSecretKey == CK_OBJECT_NONE && hCertificate == CK_OBJECT_NONE )
 		return( CRYPT_ERROR_NOTFOUND );
 
 	/* Reset the status values, which may contain error values due to not 

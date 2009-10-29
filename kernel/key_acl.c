@@ -67,6 +67,8 @@ static const CRYPT_KEYID_TYPE secKeyIDs[] = {
 static const CRYPT_KEYID_TYPE certReqIDs[] = { 
 		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_CERTID, 
 		CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
+static const CRYPT_KEYID_TYPE revReqIDs[] = { 
+		CRYPT_KEYID_NAME, CRYPT_KEYID_NONE, CRYPT_KEYID_NONE };
 static const CRYPT_KEYID_TYPE pkiUserIDs[] = { 
 		CRYPT_KEYID_NAME, CRYPT_KEYID_URI, CRYPT_IKEYID_KEYID,
 		CRYPT_IKEYID_CERTID, 
@@ -118,13 +120,14 @@ static const CRYPT_KEYID_TYPE dataIDs[] = {
 static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 	/* Access public key */
 	MK_KEYACL_EX( KEYMGMT_ITEM_PUBLICKEY,
-		/* R */	ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+		/* R */	ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
+				ST_DEV_HW,
 		/* W */	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_LDAP | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* D */	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_LDAP | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* Fn*/	ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | \
-				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+				ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
 		/* Q */	ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_KEYSET_LDAP,
 		/*Obj*/	ST_CTX_PKC | ST_CERT_CERT | ST_CERT_CERTCHAIN,
 		/*IDs*/	pubKeyIDs,
@@ -136,9 +139,12 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 
 	/* Access private key */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_PRIVATEKEY,
-		/* R */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
-		/* W */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
-		/* D */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI,
+		/* R */	ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_FORT | \
+				ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW,
+		/* W */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
+				ST_DEV_HW,
+		/* D */	ST_KEYSET_FILE | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
+				ST_DEV_HW,
 		/*FnQ*/	ST_NONE, ST_NONE,
 		/*Obj*/	ST_CTX_PKC,
 		/*IDs*/	privKeyIDs,
@@ -154,13 +160,20 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY,
 		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxXXx ),
 
-	/* Access cert request */
+	/* Access certificate request/revocation request */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_REQUEST,
 		/*RWD*/	ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS_STORE, ST_NONE,
 		/*FnQ*/	ST_NONE, ST_KEYSET_DBMS_STORE,
-		/*Obj*/	ST_CERT_CERTREQ | ST_CERT_REQ_CERT | ST_CERT_REQ_REV,
+		/*Obj*/	ST_CERT_CERTREQ | ST_CERT_REQ_CERT,
 		/*IDs*/	certReqIDs,
-		/*Flg*/	KEYMGMT_FLAG_UPDATE,
+		/*Flg*/	KEYMGMT_FLAG_UPDATE | KEYMGMT_FLAG_INITIALOP,
+		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
+	MK_KEYACL_RWD( KEYMGMT_ITEM_REVREQUEST,
+		/*RWD*/	ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS_STORE, ST_NONE,
+		/*FnQ*/	ST_NONE, ST_KEYSET_DBMS_STORE,
+		/*Obj*/	ST_CERT_REQ_REV,
+		/*IDs*/	revReqIDs,
+		/*Flg*/	KEYMGMT_FLAG_NONE,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
 
 	/* Access PKI user info */
@@ -172,7 +185,7 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*Flg*/	KEYMGMT_FLAG_GETISSUER,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
 
-	/* Access revocation info/CRL */
+	/* Access revocation information/CRL */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_REVOCATIONINFO,
 		/*RWD*/	ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE, ST_KEYSET_DBMS, ST_NONE,
 		/*FnQ*/	ST_NONE, ST_NONE,
@@ -180,6 +193,15 @@ static const KEYMGMT_ACL FAR_BSS keyManagementACL[] = {
 		/*IDs*/	revInfoIDs,
 		/*Flg*/	KEYMGMT_FLAG_CHECK_ONLY,
 		ACCESS_KEYSET_FxRxD, ACCESS_KEYSET_FNxxx ),
+
+	/* Access key metadata for dummy contexts */
+	MK_KEYACL_RWD( KEYMGMT_ITEM_KEYMETADATA,
+		/*RWD*/	ST_NONE, ST_KEYSET_FILE, ST_NONE,
+		/*FnQ*/	ST_NONE, ST_NONE,
+		/*Obj*/	ST_CTX_PKC,
+		/*IDs*/	privKeyIDs,
+		/*Flg*/	KEYMGMT_FLAG_NONE,
+		ACCESS_KEYSET_xxRxD, ACCESS_KEYSET_xxxxx ),
 
 	/* Other data (for PKCS #15 tokens) */
 	MK_KEYACL_RWD( KEYMGMT_ITEM_DATA,
@@ -211,20 +233,21 @@ typedef struct {
 
 static const IDTYPE_ACL idTypeACL[] = {
 	{ CRYPT_KEYID_NAME, 
-	  ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI },
+	  ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | ST_DEV_HW },
 	{ CRYPT_KEYID_URI, 
-	  ST_KEYSET_ANY | ST_DEV_P11 },
+	  ST_KEYSET_ANY | ST_DEV_P11 | ST_DEV_HW },
 	{ CRYPT_IKEYID_KEYID, 
 	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 },
+	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 | ST_DEV_HW },
 	{ CRYPT_IKEYID_PGPKEYID, 
-	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL },
+	  ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | ST_DEV_HW },
 	{ CRYPT_IKEYID_CERTID, 
 	  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE },
 	{ CRYPT_IKEYID_ISSUERID, 
-	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE },
+	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_HW },
 	{ CRYPT_IKEYID_ISSUERANDSERIALNUMBER, 
-	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 },
+	  ST_KEYSET_FILE | ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | ST_DEV_P11 | \
+	  ST_DEV_HW },
 	{ CRYPT_KEYID_NONE, ST_NONE },
 		{ CRYPT_KEYID_NONE, ST_NONE }
 	};
@@ -235,7 +258,8 @@ static const IDTYPE_ACL idTypeACL[] = {
 *																			*
 ****************************************************************************/
 
-int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
@@ -252,40 +276,45 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 		if( ( keyMgmtACL->keysetR_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetR_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
+									 ST_DEV_P11 | ST_DEV_CAPI | \
+									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetR_subTypeB != ST_NONE )
 			retIntError();
 
 		if( ( keyMgmtACL->keysetW_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetW_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
+									 ST_DEV_P11 | ST_DEV_CAPI | \
+									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetW_subTypeB != ST_NONE )
 			retIntError();
 
 		if( ( keyMgmtACL->keysetD_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetD_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
+									 ST_DEV_P11 | ST_DEV_CAPI | \
+									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetD_subTypeB != ST_NONE )
 			retIntError();
 
 		if( ( keyMgmtACL->keysetFN_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetFN_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
+									 ST_DEV_P11 | ST_DEV_CAPI | \
+									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetFN_subTypeB != ST_NONE )
 			retIntError();
 
 		if( ( keyMgmtACL->keysetQ_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetQ_subTypeA & \
-				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | ST_DEV_P11 ) ) != 0 || \
+				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY ) ) != 0 || \
 			keyMgmtACL->keysetQ_subTypeB != ST_NONE )
 			retIntError();
 
 		if( ( keyMgmtACL->objSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->objSubTypeA & \
-				~( SUBTYPE_CLASS_A | ST_CERT_ANY | ST_CTX_PKC | ST_CTX_CONV ) ) != 0 || \
+				~( SUBTYPE_CLASS_A | ST_CERT_ANY | ST_CTX_PKC | \
+									 ST_CTX_CONV ) ) != 0 || \
 			keyMgmtACL->objSubTypeB != ST_NONE )
 			retIntError();
 
@@ -299,7 +328,7 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 		ENSURES( j < FAILSAFE_ITERATIONS_SMALL );
 
 		ENSURES( keyMgmtACL->allowedFlags >= KEYMGMT_FLAG_NONE && \
-				 keyMgmtACL->allowedFlags < KEYMGMT_FLAG_LAST );
+				 keyMgmtACL->allowedFlags < KEYMGMT_FLAG_MAX );
 
 		if( ( keyMgmtACL->specificKeysetSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->specificKeysetSubTypeA & \
@@ -329,7 +358,8 @@ int initKeymgmtACL( KERNEL_DATA *krnlDataPtr )
 		if( ( idACL->keysetSubTypeA & SUBTYPE_CLASS_B ) || \
 			( idACL->keysetSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
-									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 )
+									 ST_DEV_P11 | ST_DEV_CAPI | \
+									 ST_DEV_HW ) ) != 0 )
 			retIntError();
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ) );
@@ -354,11 +384,13 @@ void endKeymgmtACL( void )
 /* It's a keyset action message, check the access conditions for the mechanism
    objects */
 
-int preDispatchCheckKeysetAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,
-								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
+								  IN_BUFFER( MESSAGE_KEYMGMT_INFO ) \
+										const void *messageDataPtr,
+								  IN_ENUM( KEYMGMT_ITEM ) const int messageValue,
+								  STDC_UNUSED const void *dummy )
 	{
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	const MESSAGE_KEYMGMT_INFO *mechanismInfo = \
@@ -496,6 +528,8 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			/* If we try and retrieve an object using an inappropriate ID 
 			   type then this is a programming error, but not a fatal one, 
 			   so we just report it as an unable-to-find object error */
+			DEBUG_DIAG(( "Tried to retrieve object using inappropriate ID "
+						 "type %d", mechanismInfo->keyIDtype ));
 			assert( DEBUG_WARN );
 			return( CRYPT_ERROR_NOTFOUND );
 			}
@@ -521,6 +555,8 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 			   inappropriate ID type then this is a nonfatal programming 
 			   error so we warn in the debug build but otherwise just report 
 			   it as an unable-to-find object error */
+			DEBUG_DIAG(( "Tried to retrieve object using inappropriate ID "
+						 "type %d", mechanismInfo->keyIDtype ));
 			assert( DEBUG_WARN );
 			return( CRYPT_ERROR_NOTFOUND );
 			}
@@ -577,7 +613,7 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 	   is required is performed further down) */
 	PRE( !( ~keymgmtACL->allowedFlags & mechanismInfo->flags ) );
 	PRE( mechanismInfo->flags >= KEYMGMT_FLAG_NONE && \
-		 mechanismInfo->flags < KEYMGMT_FLAG_LAST );
+		 mechanismInfo->flags < KEYMGMT_FLAG_MAX );
 	PRE( ( mechanismInfo->flags & KEYMGMT_MASK_USAGEOPTIONS ) != \
 		 KEYMGMT_MASK_USAGEOPTIONS );
 	PRE( localMessage == MESSAGE_KEY_SETKEY || \
@@ -647,11 +683,15 @@ int preDispatchCheckKeysetAccess( const int objectHandle,
 					return( CRYPT_ARGERROR_NUM1 );
 				}
 			if( !isInHighState( paramObjectHandle ) && \
-				!( subType == ST_CERT_PKIUSER || subType == ST_CERT_REQ_REV ) )
+				!( subType == ST_CERT_PKIUSER || \
+				   subType == ST_CERT_REQ_REV || \
+				   messageValue == KEYMGMT_ITEM_KEYMETADATA ) )
 				{
-				/* PKI user info and revocation requests aren't signed.  Like
-				   private key password semantics, these are a bit too
-				   complex to express in the ACL so they're hardcoded */
+				/* PKI user info and revocation requests aren't signed, and 
+				   key metadata is contained in a dummy context that may not
+				   be in the high state yet.  Like private key password 
+				   semantics these are a bit too complex to express in the 
+				   ACL so they're hardcoded */
 				return( CRYPT_ARGERROR_NUM1 );
 				}
 

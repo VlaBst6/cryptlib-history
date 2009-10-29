@@ -60,6 +60,10 @@ CCARGS="`./tools/endian`"
 # loading support.  We could also check for the presence of
 # /usr/include/dlfcn.h, but this can lead to false positives on systems
 # that have dummy a dlfcn.h for compatibility reasons.
+#
+# When indicating the presence of a subsystem, we set the HAS_xxx flag to
+# indicate its presence rather than unconditionally setting the USE_xxx
+# flag.  This allows the facility to be disabled in config.h if required.
 
 HASDYNLOAD=0
 case $OSNAME in
@@ -79,28 +83,36 @@ esac
 if [ $HASDYNLOAD -gt 0 ] ; then
 	if [ -f /usr/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
-		CCARGS="$CCARGS -DUSE_ODBC" ;
+		CCARGS="$CCARGS -DHAS_ODBC" ;
 	elif [ -f /usr/local/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
-		CCARGS="$CCARGS -DUSE_ODBC -I/usr/local/include" ;
+		CCARGS="$CCARGS -DHAS_ODBC -I/usr/local/include" ;
 	elif [ "$OSNAME" = "HP-UX" -a -f /usr/include/hpodbc/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
-		CCARGS="$CCARGS -DUSE_ODBC -I/usr/include/hpodbc" ;
+		CCARGS="$CCARGS -DHAS_ODBC -I/usr/include/hpodbc" ;
 	fi
 	if [ -f /usr/include/ldap.h ] ; then
 		echo "LDAP interface detected, enabling LDAP support" >&2 ;
-		CCARGS="$CCARGS -DUSE_LDAP" ;
+		CCARGS="$CCARGS -DHAS_LDAP" ;
 	fi
 	if [ -f /usr/include/pkcs11.h -o -f /usr/include/security/pkcs11.h -o \
 		 -f /usr/include/opensc/pkcs11.h -o -f /usr/local/include/pkcs11.h ] ; then
 		echo "PKCS #11 interface detected, enabling PKCS #11 support." >&2 ;
-		CCARGS="$CCARGS -DUSE_PKCS11" ;
+		CCARGS="$CCARGS -DHAS_PKCS11" ;
 	fi
 	if [ -f /opt/nfast/toolkits/pkcs11/libcknfast.so -o \
 		 -f /usr/lib/libcknfast.so ] ; then
 		echo "  (Enabling use of nCipher PKCS #11 extensions)." >&2 ;
 		CCARGS="$CCARGS -DNCIPHER_PKCS11" ;
 	fi
+fi
+
+# If we're building on the usual development box, enable various unsafe
+# options that are normally disabled by default
+
+if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then
+	echo "(Enabling unsafe options for development version)." >&2 ;
+	CCARGS="$CCARGS -DHAS_DNSSRV -DHAS_CERT_DNSTRING -DHAS_LDAP" ;
 fi
 
 # If we're building a shared lib, set up the necessary additional cc args.
@@ -379,6 +391,18 @@ if [ $GCC_VER -ge 30 ] ; then
 	CCARGS="$CCARGS -std=gnu99" ;
 fi
 
+# Enable stack protection and extra checking for buffer overflows if it's
+# available.  This was introduced (in a slightly hit-and-miss fashion) in
+# later versions of gcc 4.1.x, to be on the safe side we only enable it
+# for gcc 4.2 and newer.
+
+if [ $GCC_VER -ge 42 ] ; then
+  if [ `$CC -fstack-protector -S -o /dev/null -xc /dev/null 2>&1 | grep -c "unrecog"` -eq 0 ] ; then
+	CCARGS="$CCARGS -fstack-protector" ;
+  fi ;
+  CCARGS="$CCARGS -D_FORTIFY_SOURCE=2" ;
+fi
+
 # Newer versions of gcc support marking the stack as nonexecutable (e.g.
 # using the x86-64 NX bit), so if it's available we enable it.  This is
 # easier than the alternative of adding a:
@@ -493,13 +517,16 @@ fi
 # In addition to the standard warnings we also enable the use of gcc
 # attributes warn_unused_result and nonnull, which are too broken (and in
 # the case of nonnull far too dangerous) to use in production code (see the
-# long comment in analyse.h for details).
+# long comment in analyse.h for details), and to catch the compiler
+# brokenness we undefine NDEBUG to enable the use of assertion checks that
+# will catch the problem.
 
 if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then
 	CCARGS="$CCARGS -Wall -Wno-switch -Waggregate-return -Wcast-align \
 					-Wformat-nonliteral -Wformat-security -Wpointer-arith \
 					-Wredundant-decls -Wshadow -Wstrict-prototypes -Wundef" ;
 	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES" ;
+	CCARGS="$CCARGS -UNDEBUG" ;
 fi
 
 # if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then

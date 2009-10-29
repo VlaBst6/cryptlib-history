@@ -81,9 +81,11 @@ static int getKeyIDs( INOUT PKCS15_INFO *pkcs15infoPtr,
 		setMessageData( &msgData, pkcs15infoPtr->openPGPKeyID, PGP_KEYID_SIZE );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
-		if( cryptStatusError( status ) )
-			return( status );
-		pkcs15infoPtr->openPGPKeyIDlength = msgData.length;
+		if( cryptStatusOK( status ) )
+			{
+			/* Not present for all key types so an error isn't fatal */
+			pkcs15infoPtr->openPGPKeyIDlength = msgData.length;
+			}
 		}
 
 	/* The subjectKeyIdentifier, if present, may not be the same as the 
@@ -215,11 +217,47 @@ CHECK_RETVAL \
 static int getKeyUsageFlags( IN_HANDLE const CRYPT_HANDLE iCryptContext,
 							 IN_FLAGS( PKCS15_USAGE ) const int privKeyUsage )
 	{
+	MESSAGE_DATA msgData;
 	int keyUsage = PKSC15_USAGE_FLAG_NONE, value, status;
 
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
 	REQUIRES( privKeyUsage >= PKSC15_USAGE_FLAG_NONE && \
 			  privKeyUsage < PKCS15_USAGE_FLAG_MAX );
+
+	/* There's one special-case situation in which there won't be any usage
+	   information available and that's when we've been passed a dummy 
+	   context that's used to contain key metadata for a crypto device.  If 
+	   this is the case, we allow any usage that the algorithm allows, it's
+	   up to the device (which we don't have any control over) to set more 
+	   specific restrictions */
+	setMessageData( &msgData, NULL, 0 );
+	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_DEVICESTORAGEID );
+	if( cryptStatusOK( status ) )
+		{
+		int cryptAlgo;
+		
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+								  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+		if( cryptStatusError( status ) )
+			return( status );
+		switch( cryptAlgo )
+			{
+			case CRYPT_ALGO_DH:
+				return( PKCS15_USAGE_DERIVE );
+
+			case CRYPT_ALGO_RSA:
+				return( PKCS15_USAGE_ENCRYPT | PKCS15_USAGE_DECRYPT | \
+						PKCS15_USAGE_SIGN | PKCS15_USAGE_VERIFY );
+
+			case CRYPT_ALGO_DSA:
+				return( PKCS15_USAGE_SIGN | PKCS15_USAGE_VERIFY );
+
+			case CRYPT_ALGO_ELGAMAL:
+				return( PKCS15_USAGE_ENCRYPT | PKCS15_USAGE_DECRYPT );
+			}
+		retIntError();
+		}
 
 	/* Obtaining the usage flags gets a bit complicated because they're a 
 	   mixture of parts of X.509 and PKCS #11 flags (and the X.509 -> PKCS 

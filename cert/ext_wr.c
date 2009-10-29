@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Write Routines				*
-*						 Copyright Peter Gutmann 1996-2007					*
+*						 Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -23,22 +23,62 @@
 *																			*
 ****************************************************************************/
 
-/* When we write the attributes as a SET OF Attribute (as CMS does) we have
-   to sort them by encoded value.  This is an incredible nuisance since it
-   requires that each value be encoded and stored in encoded form, then the
-   encoded forms sorted and emitted in that order.  To avoid this hassle we
-   keep a record of the current lowest encoded form and then find the next
-   one by encoding enough information (the SEQUENCE and OID, CMS attributes
-   don't have critical flags) on the fly to distinguish them.  This is
-   actually less overhead than storing the encoded form because there are
-   only a small total number of attributes (usually 3) and we don't have to
-   malloc() storage for each one and manage the stored form if we do things
-   on the fly */
+/* Get the encoding information needed to encode an attribute */
+
+static int getAttributeEncodingInfo( const ATTRIBUTE_LIST *attributeListPtr,
+									 OUT ATTRIBUTE_INFO **attributeInfoPtrPtr,
+									 OUT_INT_Z int *attributeDataSize )
+	{
+	const ATTRIBUTE_INFO *attributeInfoPtr;
+	BOOLEAN isConstructed = FALSE;
+
+	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
+	assert( isWritePtr( attributeDataSize, sizeof( int ) ) );
+
+	/* If it's a constructed attribute then the encoding information for
+	   the outermost wrapper will be recorded in the encoding FIFO, 
+	   otherwise it's present directly */
+	if( attributeListPtr->fifoEnd > 0 )
+		{
+		attributeInfoPtr = \
+			attributeListPtr->encodingFifo[ attributeListPtr->fifoEnd - 1 ];
+		isConstructed = TRUE;
+		}
+	else
+		attributeInfoPtr = attributeListPtr->attributeInfoPtr;
+
+	/* Determine the size of the attribute payload */
+	if( isConstructed && attributeInfoPtr->fieldType != FIELDTYPE_CHOICE )
+		{
+		*attributeDataSize = ( int ) sizeofObject( \
+				attributeListPtr->sizeFifo[ attributeListPtr->fifoEnd - 1 ] );
+		}
+	else
+		*attributeDataSize = attributeListPtr->encodedSize;
+	*attributeInfoPtrPtr = ( ATTRIBUTE_INFO * ) attributeInfoPtr;
+
+	return( CRYPT_OK );
+	}
+
+#ifdef USE_CMSATTR
+
+/* When we write the attributes as a SET OF Attribute (as CMS does) we have 
+   to sort them by encoded value.  This is an incredible nuisance since it 
+   requires that each value be encoded and stored in encoded form and then 
+   the encoded forms sorted and emitted in that order.  To avoid this hassle 
+   we keep a record of the current lowest encoded form and then find the 
+   next one by encoding enough information (the SEQUENCE and OID, CMS 
+   attributes don't have critical flags) on the fly to distinguish them.  
+   This is actually less overhead than storing the encoded form for sorting 
+   because there are only a small total number of attributes (usually 3) and 
+   we don't have to malloc() storage for each one and manage the stored form 
+   if we do things on the fly */
 
 #define ATTR_ENCODED_SIZE	( 16 + MAX_OID_SIZE )
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static ATTRIBUTE_LIST *getNextEncodedAttribute( IN const ATTRIBUTE_LIST *attributeListPtr,
+static ATTRIBUTE_LIST *getNextEncodedAttribute( const ATTRIBUTE_LIST *attributeListPtr,
 												OUT_BUFFER_FIXED( prevEncodedFormLength ) \
 													BYTE *prevEncodedForm,
 												IN_LENGTH_FIXED( ATTR_ENCODED_SIZE ) \
@@ -48,7 +88,7 @@ static ATTRIBUTE_LIST *getNextEncodedAttribute( IN const ATTRIBUTE_LIST *attribu
 	STREAM stream;
 	BYTE currentEncodedForm[ ATTR_ENCODED_SIZE + 8 ];
 	BYTE buffer[ ATTR_ENCODED_SIZE + 8 ];
-	int iterationCount;
+	int iterationCount, status;
 
 	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( prevEncodedForm, prevEncodedFormLength ) );
@@ -65,38 +105,35 @@ static ATTRIBUTE_LIST *getNextEncodedAttribute( IN const ATTRIBUTE_LIST *attribu
 	   or the first blob-type attribute */
 	for( iterationCount = 0;
 		 attributeListPtr != NULL && \
-			!isBlobAttribute( attributeListPtr ) && \
+			!checkAttributeProperty( attributeListPtr,
+									 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
 			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
 		 iterationCount++ )
 		{
-		const BOOLEAN isConstructed = ( attributeListPtr->fifoEnd ) ? TRUE : FALSE;
-		const ATTRIBUTE_INFO *attributeInfoPtr = ( isConstructed ) ? \
-			attributeListPtr->encodingFifo[ attributeListPtr->fifoEnd - 1 ] : \
-			attributeListPtr->attributeInfoPtr;
-		CRYPT_ATTRIBUTE_TYPE attributeID = attributeListPtr->attributeID;
+		CRYPT_ATTRIBUTE_TYPE attributeID;
+		const ATTRIBUTE_INFO *attributeInfoPtr;
 		int attributeDataSize;
 
-		/* Determine the size of the attribute payload */
-		if( isConstructed && attributeInfoPtr->fieldType != FIELDTYPE_CHOICE )
-			{
-			attributeDataSize = ( int ) sizeofObject( \
-				attributeListPtr->sizeFifo[ attributeListPtr->fifoEnd - 1 ] );
-			}
-		else
-			attributeDataSize = attributeListPtr->encodedSize;
+		/* Get the encoding information for the attribute */
+		status = getAttributeEncodingInfo( attributeListPtr, 
+								( ATTRIBUTE_INFO ** ) &attributeInfoPtr, 
+								&attributeDataSize );
+		ENSURES_N( cryptStatusOK( status ) );
+		attributeID = attributeListPtr->attributeID;
 
 		/* Write the header and OID */
 		sseek( &stream, 0 );
 		writeSequence( &stream, sizeofOID( attributeInfoPtr->oid ) + \
 					   ( int ) sizeofObject( attributeDataSize ) );
-		swrite( &stream, attributeInfoPtr->oid,
-				sizeofOID( attributeInfoPtr->oid ) );
+		status = swrite( &stream, attributeInfoPtr->oid,
+						 sizeofOID( attributeInfoPtr->oid ) );
+		ENSURES_N( cryptStatusOK( status ) );
 
-		/* Check to see whether this is larger than the previous value but
-		   smaller than any other one we've seen.  If it is, remember it.  A
-		   full-length memcmp() is safe here because no encoded form can be a
-		   prefix of another form so we always exit before we get into the 
-		   leftover data from previous encodings */
+		/* Check to see whether this is larger than the previous value but 
+		   smaller than any other one that we've seen.  If it is, remember 
+		   it.  A full-length memcmp() is safe here because no encoded form 
+		   can be a prefix of another form so we always exit before we get 
+		   into the leftover data from previous encodings */
 		if( memcmp( prevEncodedForm, buffer, ATTR_ENCODED_SIZE ) < 0 && \
 			memcmp( buffer, currentEncodedForm, ATTR_ENCODED_SIZE ) < 0 )
 			{
@@ -105,29 +142,34 @@ static ATTRIBUTE_LIST *getNextEncodedAttribute( IN const ATTRIBUTE_LIST *attribu
 			}
 
 		/* Move on to the next attribute */
-		while( attributeListPtr != NULL && \
+		for( /* Continue iterationCount from previous loop */ ;
+			 attributeListPtr != NULL && \
 				attributeListPtr->attributeID == attributeID && \
-				iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
-			attributeListPtr = attributeListPtr->next;
+				iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			 attributeListPtr = attributeListPtr->next, iterationCount++ );
 		}
 	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Write the blob-type attributes */
-	for( ; attributeListPtr != NULL && \
-		   iterationCount < FAILSAFE_ITERATIONS_LARGE; 
-		attributeListPtr = attributeListPtr->next, iterationCount++ )
+	for( /* Continue iterationCount from previous loop */ ;
+		 attributeListPtr != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
-		ENSURES_N( isBlobAttribute( attributeListPtr ) );
+		ENSURES_N( checkAttributeProperty( attributeListPtr,
+										   ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) );
 
 		/* Write the header and OID */
 		sseek( &stream, 0 );
 		writeSequence( &stream, sizeofOID( attributeListPtr->oid ) + \
 					   ( int ) sizeofObject( attributeListPtr->valueLength ) );
-		swrite( &stream, attributeListPtr->oid,
-				sizeofOID( attributeListPtr->oid ) );
+		status = swrite( &stream, attributeListPtr->oid,
+						 sizeofOID( attributeListPtr->oid ) );
+		ENSURES_N( cryptStatusOK( status ) );
 
 		/* Check to see whether this is larger than the previous value but
-		   smaller than any other one we've seen.  If it is, remember it */
+		   smaller than any other one that we've seen.  If it is, remember 
+		   it */
 		if( memcmp( prevEncodedForm, buffer, ATTR_ENCODED_SIZE ) < 0 && \
 			memcmp( buffer, currentEncodedForm, ATTR_ENCODED_SIZE ) < 0 )
 			{
@@ -144,57 +186,57 @@ static ATTRIBUTE_LIST *getNextEncodedAttribute( IN const ATTRIBUTE_LIST *attribu
 	memcpy( prevEncodedForm, currentEncodedForm, ATTR_ENCODED_SIZE );
 	return( ( ATTRIBUTE_LIST * ) currentAttributeListPtr );
 	}
+#endif /* USE_CMSATTR */
 
 /* Determine the size of a set of attributes and validate and preprocess the
    attribute information */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofAttributes( const ATTRIBUTE_LIST *attributeListPtr )
+CHECK_RETVAL \
+int sizeofAttributes( IN_OPT const ATTRIBUTE_PTR *attributePtr )
 	{
-	int signUnrecognised, attributeSize = 0, iterationCount;
+	const ATTRIBUTE_LIST *attributeListPtr = attributePtr;
+	int signUnrecognised, attributeSize = 0, iterationCount, status;
+
+	assert( attributePtr == NULL || \
+			isReadPtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
 
 	/* If there's nothing to write, return now */
 	if( attributeListPtr == NULL )
 		return( 0 );
 
-	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
-
 	/* Determine the size of the recognised attributes */
 	for( iterationCount = 0;
 		 attributeListPtr != NULL && \
-			!isBlobAttribute( attributeListPtr ) && \
+			!checkAttributeProperty( attributeListPtr,
+									 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
-		const BOOLEAN isConstructed = ( attributeListPtr->fifoEnd ) ? TRUE : FALSE;
-		const ATTRIBUTE_INFO *attributeInfoPtr = ( isConstructed ) ? \
-			attributeListPtr->encodingFifo[ attributeListPtr->fifoEnd - 1 ] : \
-			attributeListPtr->attributeInfoPtr;
-		const CRYPT_ATTRIBUTE_TYPE attributeID = attributeListPtr->attributeID;
-		int length;
+		CRYPT_ATTRIBUTE_TYPE attributeID;
+		const ATTRIBUTE_INFO *attributeInfoPtr;
+		int attributeDataSize;
 
-		/* Determine the size of the encapsulated attribute payload data */
-		if( isConstructed && attributeInfoPtr->fieldType != FIELDTYPE_CHOICE )
-			{
-			length = ( int ) sizeofObject( \
-				attributeListPtr->sizeFifo[ attributeListPtr->fifoEnd - 1 ] );
-			}
-		else
-			length = attributeListPtr->encodedSize;
-		length = ( int ) sizeofObject( length );
+		/* Get the encoding information for the attribute */
+		status = getAttributeEncodingInfo( attributeListPtr, 
+								( ATTRIBUTE_INFO ** ) &attributeInfoPtr, 
+								&attributeDataSize );
+		ENSURES( cryptStatusOK( status ) );
+		attributeID = attributeListPtr->attributeID;
+		attributeDataSize = ( int ) sizeofObject( attributeDataSize );
 
 		/* Determine the overall attribute size */
-		length += sizeofOID( attributeInfoPtr->oid );
-		if( ( attributeInfoPtr->flags & FL_CRITICAL ) || \
+		attributeDataSize += sizeofOID( attributeInfoPtr->oid );
+		if( ( attributeInfoPtr->typeInfoFlags & FL_ATTR_CRITICAL ) || \
 			( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) )
-			length += sizeofBoolean();
-		attributeSize += ( int ) sizeofObject( length );
+			attributeDataSize += sizeofBoolean();
+		attributeSize += ( int ) sizeofObject( attributeDataSize );
 
 		/* Skip everything else in the current attribute */
-		while( attributeListPtr != NULL && \
+		for( /* Continue iterationCount from previous loop */ ;
+			 attributeListPtr != NULL && \
 				attributeListPtr->attributeID == attributeID && \
-				iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
-			attributeListPtr = attributeListPtr->next;
+				iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			 attributeListPtr = attributeListPtr->next, iterationCount++ );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
@@ -210,7 +252,8 @@ int sizeofAttributes( const ATTRIBUTE_LIST *attributeListPtr )
 		   iterationCount < FAILSAFE_ITERATIONS_LARGE; 
 		attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
-		ENSURES( isBlobAttribute( attributeListPtr ) );
+		ENSURES( checkAttributeProperty( attributeListPtr,
+										 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) );
 
 		attributeSize += ( int ) \
 						 sizeofObject( sizeofOID( attributeListPtr->oid ) + \
@@ -259,8 +302,11 @@ static int calculateSpecialFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 		case FIELDTYPE_IDENTIFIER:
 			return( sizeofOID( attributeInfoPtr->oid ) );
 
+#if 0	/* 28/9/08 This shouldn't ever occur, defaultValue is only used for
+				   FIELDTYPE_BLOB and BOOLEAN fields */
 		case BER_INTEGER:
 			return( sizeofShortInteger( attributeInfoPtr->defaultValue ) );
+#endif /* 0 */
 
 		case BER_SEQUENCE:
 		case BER_SET:
@@ -278,9 +324,9 @@ static int calculateFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
-	REQUIRES( fieldType >= FIELDTYPE_DISPLAYSTRING && fieldType < MAX_TAG );
+	REQUIRES( fieldType >= FIELDTYPE_TEXTSTRING && fieldType < MAX_TAG );
 			  /* The default handler at the end can include fields up to 
-			     FIELDTYPE_DISPLAYSTRING */
+			     FIELDTYPE_TEXTSTRING */
 
 	switch( fieldType )
 		{
@@ -312,16 +358,6 @@ static int calculateFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 			return( sizeofNull() );
 
 		case BER_OCTETSTRING:
-			/* If it's an integer equivalent to an OCTET STRING hole, we 
-			   need to make sure we encode it correctly if the high bit is 
-			   set */
-			if( attributeInfoPtr->flags & FL_ALIAS )
-				{
-				ENSURES( attributeInfoPtr->fieldEncodedType == BER_INTEGER );
-
-				return( sizeofInteger( attributeListPtr->value, 
-									   attributeListPtr->valueLength ) );
-				}
 			return( ( int ) sizeofObject( attributeListPtr->valueLength ) );
 
 		case BER_TIME_GENERALIZED:
@@ -377,12 +413,12 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 	/* If we're just calculating the attribute size, don't write any data */
 	if( stream == NULL )
 		{
-		return( ( attributeInfoPtr->flags & FL_EXPLICIT ) ? \
+		return( ( attributeInfoPtr->encodingFlags & FL_EXPLICIT ) ? \
 				( int ) sizeofObject( size ) : size );
 		}
 
 	/* If the field is explicitly tagged, add another layer of wrapping */
-	if( attributeInfoPtr->flags & FL_EXPLICIT )
+	if( attributeInfoPtr->encodingFlags & FL_EXPLICIT )
 		writeConstructed( stream, size, attributeInfoPtr->fieldEncodedType );
 
 	/* If the encoded field type differs from the actual field type (because
@@ -392,7 +428,7 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 	   encoding rules) set the tag to the encoded field type rather than the
 	   actual field type */
 	if( attributeInfoPtr->fieldEncodedType >= 0 && \
-		!( attributeInfoPtr->flags & FL_EXPLICIT ) && \
+		!( attributeInfoPtr->encodingFlags & FL_EXPLICIT ) && \
 		attributeInfoPtr->fieldType != FIELDTYPE_DN )
 		tag = attributeInfoPtr->fieldEncodedType;
 	else
@@ -412,9 +448,11 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 			case FIELDTYPE_IDENTIFIER:
 				return( swrite( stream, attributeInfoPtr->oid, size ) );
 
+#if 0	/* 28/9/08 See comment in calculateSpecialFieldSize() */
 			case BER_INTEGER:
 				return( writeShortInteger( stream, attributeInfoPtr->defaultValue, 
 										   tag ) );
+#endif /* 0 */
 
 			case BER_SEQUENCE:
 			case BER_SET:
@@ -450,7 +488,7 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 			ENSURES( tag == DEFAULT_TAG );
 			return( swrite( stream, attributeInfoPtr->oid, size ) );
 
-		case FIELDTYPE_DISPLAYSTRING:
+		case FIELDTYPE_TEXTSTRING:
 			if( tag == DEFAULT_TAG )
 				{
 				tag = ( complianceLevel >= CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL ) ? \
@@ -493,17 +531,6 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 							attributeListPtr->valueLength ) );
 
 		case BER_OCTETSTRING:
-			/* If it's an integer equivalent to an OCTET STRING hole we need 
-			   to use the INTEGER encoding rules rather than the OCTET 
-			   STRING ones */
-			if( attributeInfoPtr->flags & FL_ALIAS )
-				{
-				ENSURES( attributeInfoPtr->fieldEncodedType == BER_INTEGER );
-
-				return( writeInteger( stream, dataPtr, 
-									  attributeListPtr->valueLength, 
-									  DEFAULT_TAG ) );
-				}
 			return( writeOctetString( stream, dataPtr, 
 									  attributeListPtr->valueLength, 
 									  tag ) );
@@ -539,8 +566,11 @@ static int writeAttribute( INOUT STREAM *stream,
 						   const BOOLEAN wrapperTagSet, 
 						   IN_RANGE( 0, 4 ) const int complianceLevel )
 	{
+	CRYPT_ATTRIBUTE_TYPE attributeID;
+	const ATTRIBUTE_INFO *attributeInfoPtr;
 	ATTRIBUTE_LIST *attributeListPtr = *attributeListPtrPtr;
-	int flagSize, status;
+	BOOLEAN isCritical = FALSE;
+	int attributeDataSize, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
@@ -549,98 +579,96 @@ static int writeAttribute( INOUT STREAM *stream,
 	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
 			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
 
-	/* If it's a non-blob attribute, write it field by field */
-	if( !isBlobAttribute( attributeListPtr ) )
+	/* Get the encoding information for the attribute */
+	status = getAttributeEncodingInfo( attributeListPtr, 
+								( ATTRIBUTE_INFO ** ) &attributeInfoPtr, 
+								&attributeDataSize );
+	ENSURES( cryptStatusOK( status ) );
+	attributeID = attributeListPtr->attributeID;
+	if( ( attributeInfoPtr->typeInfoFlags & FL_ATTR_CRITICAL ) || \
+		( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) )
+		isCritical = TRUE;
+
+	/* Write the outer SEQUENCE, OID, critical flag (if it's set) and 
+	   appropriate wrapper for the attribute payload */
+	writeSequence( stream, 
+				   sizeofOID( attributeInfoPtr->oid ) + \
+				   ( isCritical ? sizeofBoolean() : 0 ) + \
+				   ( int ) sizeofObject( attributeDataSize ) );
+	swrite( stream, attributeInfoPtr->oid,
+			sizeofOID( attributeInfoPtr->oid ) );
+	if( isCritical )
+		writeBoolean( stream, TRUE, DEFAULT_TAG );
+	if( wrapperTagSet )
+		status = writeSet( stream, attributeDataSize );
+	else
+		status = writeOctetStringHole( stream, attributeDataSize, 
+									   DEFAULT_TAG );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the current attribute */
+	for( iterationCount = 0;
+		 attributeListPtr != NULL && \
+			attributeListPtr->attributeID == attributeID && \
+			iterationCount < FAILSAFE_ITERATIONS_MED;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
-		const BOOLEAN isConstructed = ( attributeListPtr->fifoEnd ) ? \
-									  TRUE : FALSE;
-		const ATTRIBUTE_INFO *attributeInfoPtr = ( isConstructed ) ? \
-			attributeListPtr->encodingFifo[ attributeListPtr->fifoEnd - 1 ] : \
-			attributeListPtr->attributeInfoPtr;
-		const CRYPT_ATTRIBUTE_TYPE attributeID = attributeListPtr->attributeID;
-		int dataLength, length = sizeofOID( attributeInfoPtr->oid );
-		int iterationCount;
-
-		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-
-		/* Determine the size of the attribute payload */
-		flagSize = ( ( attributeInfoPtr->flags & FL_CRITICAL ) || \
-					 ( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) ) ? \
-				   sizeofBoolean() : 0;
-		if( isConstructed && attributeInfoPtr->fieldType != FIELDTYPE_CHOICE )
+		int innerIterationCount;
+			
+		/* Write any encapsulating SEQUENCEs if necessary, followed by the 
+		   field itself.  In some rare instances we may have a zero-length 
+		   SEQUENCE (if all the member(s) of the sequence have default 
+		   values) so we only try to write the member if there's encoding 
+		   information for it present */
+		for( attributeListPtr->fifoPos = attributeListPtr->fifoEnd, \
+				innerIterationCount = 0;
+			 cryptStatusOK( status ) && \
+				attributeListPtr->fifoPos > 0 && \
+				innerIterationCount < ENCODING_FIFO_SIZE;
+			 innerIterationCount++ )
 			{
-			dataLength = ( int ) sizeofObject( \
-				attributeListPtr->sizeFifo[ attributeListPtr->fifoEnd - 1 ] );
+			status = writeAttributeField( stream, 
+									( ATTRIBUTE_LIST * ) attributeListPtr,
+									complianceLevel );
 			}
-		else
-			dataLength = attributeListPtr->encodedSize;
-
-		/* Write the outer SEQUENCE, OID, critical flag (if it's set) and
-		   appropriate wrapper for the attribute payload */
-		writeSequence( stream, length + flagSize + \
-					   ( int ) sizeofObject( dataLength ) );
-		swrite( stream, attributeInfoPtr->oid,
-				sizeofOID( attributeInfoPtr->oid ) );
-		if( flagSize > 0 )
-			writeBoolean( stream, TRUE, DEFAULT_TAG );
-		if( wrapperTagSet )
-			status = writeSet( stream, dataLength );
-		else
-			status = writeOctetStringHole( stream, dataLength, DEFAULT_TAG );
+		ENSURES( innerIterationCount < ENCODING_FIFO_SIZE );
+		if( cryptStatusOK( status ) && \
+			attributeListPtr->attributeInfoPtr != NULL )
+			{
+			status = writeAttributeField( stream, 
+									( ATTRIBUTE_LIST * ) attributeListPtr,
+									complianceLevel );
+			}
 		if( cryptStatusError( status ) )
 			return( status );
-
-		/* Write the current attribute */
-		for( iterationCount = 0;
-			 attributeListPtr != NULL && \
-				attributeListPtr->attributeID == attributeID && \
-				iterationCount < FAILSAFE_ITERATIONS_MED;
-			 attributeListPtr = attributeListPtr->next, iterationCount++ )
-			{
-			int innerIterationCount;
-			
-			/* Write any encapsulating SEQUENCEs if necessary, followed by
-			   the field itself.  In some rare instances we may have a zero-
-			   length SEQUENCE (if all the member(s) of the sequence have
-			   default values) so we only try to write the member if there's
-			   encoding information for it present */
-			for( attributeListPtr->fifoPos = attributeListPtr->fifoEnd, \
-					innerIterationCount = 0;
-				 cryptStatusOK( status ) && \
-					attributeListPtr->fifoPos > 0 && \
-					innerIterationCount < ENCODING_FIFO_SIZE;
-				 innerIterationCount++ )
-				{
-				status = writeAttributeField( stream, 
-									( ATTRIBUTE_LIST * ) attributeListPtr,
-									complianceLevel );
-				}
-			ENSURES( innerIterationCount < ENCODING_FIFO_SIZE );
-			if( cryptStatusOK( status ) && \
-				attributeListPtr->attributeInfoPtr != NULL )
-				{
-				status = writeAttributeField( stream, 
-									( ATTRIBUTE_LIST * ) attributeListPtr,
-									complianceLevel );
-				}
-			if( cryptStatusError( status ) )
-				return( status );
-			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
-
-		*attributeListPtrPtr = attributeListPtr;
-		return( CRYPT_OK );
 		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
-	/* It's a blob attribute, write the header, OID, critical flag (if 
-	   present), and payload wrapped up as appropriate */
-	flagSize = ( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) ? \
-			   sizeofBoolean() : 0;
-	writeSequence( stream, sizeofOID( attributeListPtr->oid ) + flagSize + \
+	*attributeListPtrPtr = attributeListPtr;
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeBlobAttribute( INOUT STREAM *stream, 
+							   INOUT ATTRIBUTE_LIST **attributeListPtrPtr,
+							   const BOOLEAN wrapperTagSet, 
+							   IN_RANGE( 0, 4 ) const int complianceLevel )
+	{
+	ATTRIBUTE_LIST *attributeListPtr = *attributeListPtrPtr;
+	const BOOLEAN isCritical = \
+			( attributeListPtr->flags & ATTR_FLAG_CRITICAL ) ? TRUE : FALSE;
+	int status;
+
+	/* Write the header, OID, critical flag (if present), and payload 
+	   wrapped up as appropriate */
+	writeSequence( stream, 
+				   sizeofOID( attributeListPtr->oid ) + \
+				   ( isCritical ? sizeofBoolean() : 0 ) + \
 				   ( int ) sizeofObject( attributeListPtr->valueLength ) );
 	swrite( stream, attributeListPtr->oid,
 			sizeofOID( attributeListPtr->oid ) );
-	if( flagSize > 0 )
+	if( isCritical )
 		writeBoolean( stream, TRUE, DEFAULT_TAG );
 	if( wrapperTagSet )
 		writeSet( stream, attributeListPtr->valueLength );
@@ -656,6 +684,71 @@ static int writeAttribute( INOUT STREAM *stream,
 	return( status );
 	}
 
+#ifdef USE_CMSATTR
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writeCmsAttributes( INOUT STREAM *stream, 
+						const ATTRIBUTE_LIST *attributeListPtr,
+						IN_ENUM( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type,
+						IN_LENGTH const int attributeSize,
+						IN_RANGE( 0, 4 ) const int complianceLevel )
+	{
+	ATTRIBUTE_LIST *currentAttributePtr;
+	BYTE currentEncodedForm[ ATTR_ENCODED_SIZE + 8 ];
+	int iterationCount, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	REQUIRES( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES || \
+			  type == CRYPT_CERTTYPE_RTCS_REQUEST || \
+			  type == CRYPT_CERTTYPE_RTCS_RESPONSE );
+	REQUIRES( attributeSize > 0 && attributeSize < MAX_INTLENGTH );
+	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
+			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
+
+	/* Write the wrapper, depending on the object type */
+	if( type == CRYPT_CERTTYPE_RTCS_REQUEST )
+		status = writeSet( stream, attributeSize );
+	else
+		{
+		status = writeConstructed( stream, attributeSize, 
+								  ( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES ) ? \
+									CTAG_SI_AUTHENTICATEDATTRIBUTES : \
+									CTAG_RP_EXTENSIONS );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the attributes in sorted form */
+	memset( currentEncodedForm, 0, ATTR_ENCODED_SIZE );	/* Set lowest encoded form */
+	for( currentAttributePtr = getNextEncodedAttribute( attributeListPtr, \
+														currentEncodedForm,
+														ATTR_ENCODED_SIZE ),
+			iterationCount = 0;
+		 currentAttributePtr != NULL && cryptStatusOK( status ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		currentAttributePtr = getNextEncodedAttribute( attributeListPtr,
+													   currentEncodedForm,
+													   ATTR_ENCODED_SIZE ),
+			iterationCount++ )
+		{
+		if( checkAttributeProperty( attributeListPtr,
+									ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) )
+			status = writeBlobAttribute( stream, &currentAttributePtr, TRUE, 
+										 complianceLevel );
+		else
+			status = writeAttribute( stream, &currentAttributePtr, TRUE, 
+									 complianceLevel );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	return( CRYPT_OK );
+	}
+#endif /* USE_CMSATTR */
+
 /****************************************************************************
 *																			*
 *						Attribute Collection Write Routines					*
@@ -666,26 +759,27 @@ static int writeAttribute( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeAttributes( INOUT STREAM *stream, 
-					 INOUT ATTRIBUTE_LIST *attributeListPtr,
+					 INOUT ATTRIBUTE_PTR *attributePtr,
 					 IN_ENUM_OPT( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type,
 					 IN_LENGTH const int attributeSize )
 	{
+	ATTRIBUTE_LIST *attributeListPtr = attributePtr;
 	int signUnrecognised = DUMMY_INIT, complianceLevel, iterationCount;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
 
 	REQUIRES( type >= CRYPT_CERTTYPE_NONE && type < CRYPT_CERTTYPE_LAST );
 			  /* Single CRL entries have the special-case type 
 			     CRYPT_CERTTYPE_NONE */
 	REQUIRES( attributeSize > 0 && attributeSize < MAX_INTLENGTH );
 
-	/* Some attributes have odd encoding/handling requirements that can cause
-	   problems for other software so we only enforce peculiarities required
-	   by the standard at higher compliance levels.  In addition we only sign
-	   unrecognised attributes if we're explicitly asked to do so by the 
-	   user */
+	/* Some attributes have odd encoding/handling requirements that can 
+	   cause problems for other software so we only enforce peculiarities 
+	   required by some standards at higher compliance levels.  In addition 
+	   we only sign unrecognised attributes if we're explicitly asked to do 
+	   so by the user */
 	status = krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 							  IMESSAGE_GETATTRIBUTE, &complianceLevel,
 							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
@@ -704,43 +798,15 @@ int writeAttributes( INOUT STREAM *stream,
 	   this reason we don't write them sorted by OID as with the other 
 	   attributes but keep writing the next-lowest attribute until they've 
 	   all been written */
+#ifdef USE_CMSATTR
 	if( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES || \
 		type == CRYPT_CERTTYPE_RTCS_REQUEST || \
 		type == CRYPT_CERTTYPE_RTCS_RESPONSE )
 		{
-		ATTRIBUTE_LIST *currentAttributePtr;
-		BYTE currentEncodedForm[ ATTR_ENCODED_SIZE + 8 ];
-
-		/* Write the wrapper, depending on the object type */
-		if( type == CRYPT_CERTTYPE_RTCS_REQUEST )
-			writeSet( stream, attributeSize );
-		else
-			{
-			writeConstructed( stream, attributeSize, 
-							  ( type == CRYPT_CERTTYPE_CMS_ATTRIBUTES ) ? \
-								CTAG_SI_AUTHENTICATEDATTRIBUTES : \
-								CTAG_RP_EXTENSIONS );
-			}
-
-		/* Write the attributes in sorted form */
-		memset( currentEncodedForm, 0, ATTR_ENCODED_SIZE );	/* Set lowest encoded form */
-		for( currentAttributePtr = getNextEncodedAttribute( attributeListPtr, \
-															currentEncodedForm,
-															ATTR_ENCODED_SIZE ),
-				iterationCount = 0;
-			 currentAttributePtr != NULL && cryptStatusOK( status ) && \
-				iterationCount < FAILSAFE_ITERATIONS_LARGE;
-			currentAttributePtr = getNextEncodedAttribute( attributeListPtr,
-														   currentEncodedForm,
-														   ATTR_ENCODED_SIZE ),
-				iterationCount++ )
-			{
-			status = writeAttribute( stream, &currentAttributePtr, TRUE,
-									 complianceLevel );
-			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
-		return( status );
+		return( writeCmsAttributes( stream, attributeListPtr, type, 
+									attributeSize, complianceLevel ) );
 		}
+#endif /* USE_CMSATTR */
 
 	/* Write the appropriate extensions tag for the certificate object and 
 	   determine how far we can read.  CRLs and OCSP requests/responses have 
@@ -798,7 +864,8 @@ int writeAttributes( INOUT STREAM *stream,
 	   or the first blob-type attribute */
 	for( iterationCount = 0;
 		 cryptStatusOK( status ) && attributeListPtr != NULL && \
-			!isBlobAttribute( attributeListPtr ) && \
+			!checkAttributeProperty( attributeListPtr,
+									 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
@@ -815,8 +882,8 @@ int writeAttributes( INOUT STREAM *stream,
 			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
-		status = writeAttribute( stream, &attributeListPtr, FALSE, 
-								 complianceLevel );
+		status = writeBlobAttribute( stream, &attributeListPtr, FALSE, 
+									 complianceLevel );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	return( status );

@@ -1627,6 +1627,10 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_ECDSA", v);
     Py_DECREF(v); /* ECDSA */
 
+    v = Py_BuildValue("i", 106);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_ECDH", v);
+    Py_DECREF(v); /* ECDH */
+
     v = Py_BuildValue("i", 200);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_MD2", v);
     Py_DECREF(v); /* MD2 */
@@ -1640,8 +1644,12 @@ class CryptHandle:\n\
     Py_DECREF(v); /* MD5 */
 
     v = Py_BuildValue("i", 203);
-    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA1", v);
     Py_DECREF(v); /* SHA/SHA1 */
+
+    v = Py_BuildValue("i", 203);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA", v);
+    Py_DECREF(v); /* Older form */
 
     v = Py_BuildValue("i", 204);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_RIPEMD160", v);
@@ -1649,7 +1657,11 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 205);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA2", v);
-    Py_DECREF(v); /* SHA2 (SHA-256/384/512) */
+    Py_DECREF(v); /* SHA-256 */
+
+    v = Py_BuildValue("i", 206);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHAng", v);
+    Py_DECREF(v); /* Future SHA-nextgen standard */
 
     v = Py_BuildValue("i", 300);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_MD5", v);
@@ -1668,6 +1680,14 @@ class CryptHandle:\n\
     Py_DECREF(v); /* HMAC-RIPEMD-160 */
 
     v = Py_BuildValue("i", 303);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_SHA2", v);
+    Py_DECREF(v); /* HMAC-SHA2 */
+
+    v = Py_BuildValue("i", 304);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_HMAC_SHAng", v);
+    Py_DECREF(v); /* HMAC-future-SHA-nextgen */
+
+    v = Py_BuildValue("i", 305);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_LAST", v);
     Py_DECREF(v); /* Last possible crypt algo value */
 
@@ -1788,6 +1808,10 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Microsoft CryptoAPI */
 
     v = Py_BuildValue("i", 4);
+    PyDict_SetItemString(moduleDict, "CRYPT_DEVICE_HARDWARE", v);
+    Py_DECREF(v); /* Generic crypo HW plugin */
+
+    v = Py_BuildValue("i", 5);
     PyDict_SetItemString(moduleDict, "CRYPT_DEVICE_LAST", v);
     Py_DECREF(v); /* Last possible crypto device type */
 
@@ -3613,7 +3637,7 @@ class CryptHandle:\n\
 
     v = Py_BuildValue("i", 6021);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_CMP_PKIBOOT", v);
-    Py_DECREF(v); /* Enable PKIBoot facility */
+    Py_DECREF(v); /* Unused, to be removed in 3.4 */
 
     v = Py_BuildValue("i", 6022);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_CMP_PRIVKEYSET", v);
@@ -3736,6 +3760,10 @@ class CryptHandle:\n\
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 15);
+    PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_MRTD", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 16);
     PyDict_SetItemString(moduleDict, "CRYPT_CONTENT_LAST", v);
     Py_DECREF(v);
 
@@ -4010,6 +4038,34 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 3);
     PyDict_SetItemString(moduleDict, "CRYPT_KEYOPT_LAST", v);
     Py_DECREF(v); /* Last possible key option type */
+
+    v = Py_BuildValue("i", 0);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_NONE", v);
+    Py_DECREF(v); /* No ECC curve type */
+
+    v = Py_BuildValue("i", 1);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_P192", v);
+    Py_DECREF(v); /* NIST P192/X9.62 P192r1/SECG p192r1 curve */
+
+    v = Py_BuildValue("i", 2);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_P224", v);
+    Py_DECREF(v); /* NIST P224/X9.62 P224r1/SECG p224r1 curve */
+
+    v = Py_BuildValue("i", 3);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_P256", v);
+    Py_DECREF(v); /* NIST P256/X9.62 P256v1/SECG p256r1 curve */
+
+    v = Py_BuildValue("i", 4);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_P384", v);
+    Py_DECREF(v); /* NIST P384, SECG p384r1 curve */
+
+    v = Py_BuildValue("i", 5);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_P521", v);
+    Py_DECREF(v); /* NIST P521, SECG p521r1 */
+
+    v = Py_BuildValue("i", 6);
+    PyDict_SetItemString(moduleDict, "CRYPT_ECCCURVE_LAST", v);
+    Py_DECREF(v); /* Last valid ECC curve type */
 
     v = Py_BuildValue("i", 0);
     PyDict_SetItemString(moduleDict, "CRYPT_CRLREASON_UNSPECIFIED", v);
@@ -4331,7 +4387,7 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_PKCSIZE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 32);
+    v = Py_BuildValue("i", 72);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_PKCSIZE_ECC", v);
     Py_DECREF(v);
 
@@ -4342,6 +4398,18 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", 64);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_TEXTSIZE", v);
     Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0);
+    PyDict_SetItemString(moduleDict, "CRYPT_KEYTYPE_PRIVATE", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 1);
+    PyDict_SetItemString(moduleDict, "CRYPT_KEYTYPE_PUBLIC", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0);
+    PyDict_SetItemString(moduleDict, "CRYPT_OK", v);
+    Py_DECREF(v); /* No error */
 
     v = Py_BuildValue("i", -100);
     PyDict_SetItemString(moduleDict, "CRYPT_USE_DEFAULT", v);
@@ -4374,18 +4442,6 @@ class CryptHandle:\n\
     v = Py_BuildValue("i", -301);
     PyDict_SetItemString(moduleDict, "CRYPT_RANDOM_SLOWPOLL", v);
     Py_DECREF(v);
-
-    v = Py_BuildValue("i", 0);
-    PyDict_SetItemString(moduleDict, "CRYPT_KEYTYPE_PRIVATE", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 1);
-    PyDict_SetItemString(moduleDict, "CRYPT_KEYTYPE_PUBLIC", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 0);
-    PyDict_SetItemString(moduleDict, "CRYPT_OK", v);
-    Py_DECREF(v); /* No error */
 
     v = Py_BuildValue("i", -1);
     PyDict_SetItemString(moduleDict, "CRYPT_ERROR_PARAM1", v);

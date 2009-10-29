@@ -40,9 +40,10 @@
    ends are specified in the formatInfo structure */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
-int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
+int createX509signature( OUT_BUFFER_OPT( signedObjectMaxLength, \
+										 *signedObjectLength ) \
 							void *signedObject, 
-						 IN_LENGTH_Z const int sigMaxLength, 
+						 IN_LENGTH_Z const int signedObjectMaxLength, 
 						 OUT_LENGTH_Z int *signedObjectLength,
 						 IN_BUFFER( objectLength ) const void *object, 
 						 IN_LENGTH const int objectLength,
@@ -56,8 +57,8 @@ int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
 	BYTE dataSignature[ CRYPT_MAX_PKCSIZE + 128 + 8 ];
 	int signatureLength, totalSigLength, status;
 
-	assert( ( signedObject == NULL && sigMaxLength == 0 ) || \
-			isWritePtr( signedObject, sigMaxLength ) );
+	assert( signedObject == NULL || \
+			isWritePtr( signedObject, signedObjectMaxLength ) );
 	assert( isWritePtr( signedObjectLength, sizeof( int ) ) );
 	assert( isReadPtr( object, objectLength ) && \
 			!cryptStatusError( checkObjectEncoding( object, \
@@ -65,10 +66,10 @@ int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
 	assert( formatInfo == NULL || \
 			isReadPtr( formatInfo, sizeof( X509SIG_FORMATINFO ) ) );
 
-	REQUIRES( ( signedObject == NULL && sigMaxLength == 0 ) || \
+	REQUIRES( ( signedObject == NULL && signedObjectMaxLength == 0 ) || \
 			  ( signedObject != NULL && \
-				sigMaxLength > MIN_CRYPT_OBJECTSIZE && \
-				sigMaxLength < MAX_INTLENGTH ) );
+				signedObjectMaxLength > MIN_CRYPT_OBJECTSIZE && \
+				signedObjectMaxLength < MAX_INTLENGTH ) );
 	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
@@ -81,7 +82,7 @@ int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
 
 	/* Clear return values */
 	if( signedObject != NULL )
-		memset( signedObject, 0, min( 16, sigMaxLength ) );
+		memset( signedObject, 0, min( 16, signedObjectMaxLength ) );
 	*signedObjectLength = 0;
 
 	/* Hash the data to be signed */
@@ -92,7 +93,7 @@ int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
 		return( status );
 	iHashContext = createInfo.cryptHandle;
 	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
-							  ( void * ) object, objectLength );
+							  ( MESSAGE_CAST ) object, objectLength );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, "", 0 );
 	if( cryptStatusError( status ) )
@@ -132,12 +133,12 @@ int createX509signature( OUT_BUFFER_OPT( sigMaxLength, *signedObjectLength ) \
 	   enough room for the signed object in the output buffer.  This will be
 	   checked by the stream handling anyway but we make it explicit here */
 	if( signedObject != NULL && \
-		sizeofObject( objectLength + totalSigLength ) > sigMaxLength )
+		sizeofObject( objectLength + totalSigLength ) > signedObjectMaxLength )
 		return( CRYPT_ERROR_OVERFLOW );
 
 	/* Write the outer SEQUENCE wrapper and copy the payload into place 
 	   behind it */
-	sMemOpenOpt( &stream, signedObject, sigMaxLength );
+	sMemOpenOpt( &stream, signedObject, signedObjectMaxLength );
 	writeSequence( &stream, objectLength + totalSigLength );
 	swrite( &stream, object, objectLength );
 
@@ -249,7 +250,8 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 		sMemDisconnect( &stream );
 		return( status );
 		}
-	status = readAlgoIDext( &stream, &signAlgo, &hashAlgo );
+	status = readAlgoIDext( &stream, &signAlgo, &hashAlgo, 
+							ALGOID_CLASS_PKCSIG );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -292,12 +294,13 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 *																			*
 ****************************************************************************/
 
-/* The various PKIX cert management protocols are built using the twin 
-   design guidelines that nothing should use a standard style of signature 
-   and no two protocols should use the same nonstandard format, the only way 
-   to handle these (without creating dozens of new signature types, each 
-   with their own special-case handling) is to process most of the signature
-   information at the protocol level and just check the raw signature here */
+/* The various PKIX certificate management protocols are built using the 
+   twin design guidelines that nothing should use a standard style of 
+   signature and no two protocols should use the same nonstandard format, 
+   the only way to handle these (without creating dozens of new signature 
+   types, each with their own special-case handling) is to process most of 
+   the signature information at the protocol level and just check the raw 
+   signature here */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int createRawSignature( OUT_BUFFER( sigMaxLength, *signatureLength ) \

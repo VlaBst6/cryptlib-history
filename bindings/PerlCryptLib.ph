@@ -2,7 +2,7 @@
 # *****************************************************************************
 # *                                                                           *
 # *                        cryptlib External API Interface                    *
-# *                       Copyright Peter Gutmann 1997-2008                   *
+# *                       Copyright Peter Gutmann 1997-2009                   *
 # *                                                                           *
 # *                 adapted for Perl Version 5.x  by Alvaro Livraghi          *
 # *****************************************************************************
@@ -12,7 +12,7 @@
 #
 # This file has been created automatically by a perl script from the file:
 #
-# "cryptlib.h" dated Fri Nov 23 02:07:02 2007, filesize = 85740.
+# "cryptlib.h" dated Sun Jul  5 01:39:06 2009, filesize = 91488.
 #
 # Please check twice that the file matches the version of cryptlib.h
 # in your cryptlib source! If this is not the right version, try to download an
@@ -26,7 +26,6 @@
 #
 
 	sub CRYPTLIB_VERSION { 3320 }
-
 
 #****************************************************************************
 #*                                                                           *
@@ -59,20 +58,25 @@
 	sub CRYPT_ALGO_ELGAMAL { 103 }	# ElGamal
 	sub CRYPT_ALGO_KEA { 104 }	# KEA
 	sub CRYPT_ALGO_ECDSA { 105 }	# ECDSA
+	sub CRYPT_ALGO_ECDH { 106 }	# ECDH
 
 	# Hash algorithms
 	sub CRYPT_ALGO_MD2 { 200 }	# MD2
 	sub CRYPT_ALGO_MD4 { 201 }	# MD4
 	sub CRYPT_ALGO_MD5 { 202 }	# MD5
-	sub CRYPT_ALGO_SHA { 203 }	# SHA/SHA1
+	sub CRYPT_ALGO_SHA1 { 203 }	# SHA/SHA1
+	sub CRYPT_ALGO_SHA { CRYPT_ALGO_SHA1 }	# Older form
 	sub CRYPT_ALGO_RIPEMD160 { 204 }	# RIPE-MD 160
-	sub CRYPT_ALGO_SHA2 { 205 }	# SHA2 (SHA-256/384/512)
+	sub CRYPT_ALGO_SHA2 { 205 }	# SHA-256
+	sub CRYPT_ALGO_SHAng { 206 }	# Future SHA-nextgen standard
 
 	# MAC's
 	sub CRYPT_ALGO_HMAC_MD5 { 300 }	# HMAC-MD5
 	sub CRYPT_ALGO_HMAC_SHA1 { 301 }	# HMAC-SHA
 	sub CRYPT_ALGO_HMAC_SHA { CRYPT_ALGO_HMAC_SHA1 }	# Older form
 	sub CRYPT_ALGO_HMAC_RIPEMD160 { 302 }	# HMAC-RIPEMD-160
+	sub CRYPT_ALGO_HMAC_SHA2 { 303 }	# HMAC-SHA2
+	sub CRYPT_ALGO_HMAC_SHAng { 304 }	# HMAC-future-SHA-nextgen
 
 	# Vendors may want to use their own algorithms that aren't part of the
 	# general cryptlib suite.  The following values are for vendor-defined
@@ -80,7 +84,7 @@
 	# up to the vendor to keep track of what _VENDOR1 actually corresponds
 	# to)
 
-	sub CRYPT_ALGO_LAST { 303 }	# Last possible crypt algo value
+	sub CRYPT_ALGO_LAST { 305 }	# Last possible crypt algo value
 
 	# In order that we can scan through a range of algorithms with
 	# cryptQueryCapability(), we define the following boundary points for
@@ -138,7 +142,8 @@
 	sub CRYPT_DEVICE_FORTEZZA { 1 }	# Fortezza card
 	sub CRYPT_DEVICE_PKCS11 { 2 }	# PKCS #11 crypto token
 	sub CRYPT_DEVICE_CRYPTOAPI { 3 }	# Microsoft CryptoAPI
-	sub CRYPT_DEVICE_LAST { 4 }	# Last possible crypto device type
+	sub CRYPT_DEVICE_HARDWARE { 4 }	# Generic crypo HW plugin
+	sub CRYPT_DEVICE_LAST { 5 }	# Last possible crypto device type
 
 
 ##### END ENUM CRYPT_DEVICE_TYPE
@@ -930,7 +935,7 @@
 	# Protocol-specific information
 	sub CRYPT_SESSINFO_TSP_MSGIMPRINT { 6019 }	# TSP message imprint
 	sub CRYPT_SESSINFO_CMP_REQUESTTYPE { 6020 }	# Request type
-	sub CRYPT_SESSINFO_CMP_PKIBOOT { 6021 }	# Enable PKIBoot facility
+	sub CRYPT_SESSINFO_CMP_PKIBOOT { 6021 }	# Unused, to be removed in 3.4
 	sub CRYPT_SESSINFO_CMP_PRIVKEYSET { 6022 }	# Private-key keyset
 	sub CRYPT_SESSINFO_SSH_CHANNEL { 6023 }	# SSH current channel
 	sub CRYPT_SESSINFO_SSH_CHANNEL_TYPE { 6024 }	# SSH channel type
@@ -1077,7 +1082,8 @@
 	sub CRYPT_CONTENT_RTCSREQUEST { 7 }
 	sub CRYPT_CONTENT_RTCSRESPONSE { 7 }
 	sub CRYPT_CONTENT_RTCSRESPONSE_EXT { 8 }
-	sub CRYPT_CONTENT_LAST { 8 }
+	sub CRYPT_CONTENT_MRTD { 8 }
+	sub CRYPT_CONTENT_LAST { 9 }
 
 
 ##### END ENUM CRYPT_CONTENT_TYPE
@@ -1256,10 +1262,10 @@
 	sub CRYPT_MAX_IVSIZE { 32 }
 
 #  The maximum public-key component size - 4096 bits, and maximum component
-#  size for ECCs - 256 bits 
+#  size for ECCs - 576 bits (to handle the P521 curve) 
 
 	sub CRYPT_MAX_PKCSIZE { 512 }
-	sub CRYPT_MAX_PKCSIZE_ECC { 32 }
+	sub CRYPT_MAX_PKCSIZE_ECC { 72 }
 
 # The maximum hash size - 256 bits 
 
@@ -1270,27 +1276,46 @@
 	sub CRYPT_MAX_TEXTSIZE { 64 }
 
 #  A magic value indicating that the default setting for this parameter
-#  should be used 
+#  should be used.  The parentheses are to catch potential erroneous use 
+#  in an expression 
 
-	sub CRYPT_USE_DEFAULT { -100 }
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_USE_DEFAULT       ( -100 )
+#
 
 # A magic value for unused parameters 
 
-	sub CRYPT_UNUSED { -101 }
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_UNUSED            ( -101 )
+#
 
-# Cursor positioning codes for certificate/CRL extensions 
+#  Cursor positioning codes for certificate/CRL extensions.  The parentheses 
+#  are to catch potential erroneous use in an expression 
 
-	sub CRYPT_CURSOR_FIRST { -200 }
-	sub CRYPT_CURSOR_PREVIOUS { -201 }
-	sub CRYPT_CURSOR_NEXT { -202 }
-	sub CRYPT_CURSOR_LAST { -203 }
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_CURSOR_FIRST      ( -200 )
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_CURSOR_PREVIOUS   ( -201 )
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_CURSOR_NEXT       ( -202 )
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_CURSOR_LAST       ( -203 )
+#
 
 #  The type of information polling to perform to get random seed 
 #  information.  These values have to be negative because they're used
-#  as magic length values for cryptAddRandom() 
+#  as magic length values for cryptAddRandom().  The parentheses are to 
+#  catch potential erroneous use in an expression 
 
-	sub CRYPT_RANDOM_FASTPOLL { -300 }
-	sub CRYPT_RANDOM_SLOWPOLL { -301 }
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_RANDOM_FASTPOLL   ( -300 )
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_RANDOM_SLOWPOLL   ( -301 )
+#
 
 # Whether the PKC key is a public or private key 
 
@@ -1415,25 +1440,43 @@ sub CRYPT_PKCINFO_DLP
 	}
 }
 
+##### BEGIN ENUM CRYPT_ECCCURVE_TYPE
+
+	# Named ECC curves.  When updating these remember to also update the
+	# ECC fieldSizeInfo table in context/kg_ecc.c, the eccOIDinfo table and
+	# sslEccCurveInfo table in context/key_rd.c, and the curveIDTbl in
+	# session/ssl.c
+	sub CRYPT_ECCCURVE_NONE { 0 }	# No ECC curve type
+	sub CRYPT_ECCCURVE_P192 { 1 }	# NIST P192/X9.62 P192r1/SECG p192r1 curve
+	sub CRYPT_ECCCURVE_P224 { 2 }	# NIST P224/X9.62 P224r1/SECG p224r1 curve
+	sub CRYPT_ECCCURVE_P256 { 3 }	# NIST P256/X9.62 P256v1/SECG p256r1 curve
+	sub CRYPT_ECCCURVE_P384 { 4 }	# NIST P384, SECG p384r1 curve
+	sub CRYPT_ECCCURVE_P521 { 5 }	# NIST P521, SECG p521r1
+	sub CRYPT_ECCCURVE_LAST { 6 }	# Last valid ECC curve type
+
+
+##### END ENUM CRYPT_ECCCURVE_TYPE
+
 sub CRYPT_PKCINFO_ECC
 {
 	{
 	#  Status information 
      isPublicKey => 0	#  Whether this is a public or private key 
-	#  Curve 
+	#       Curve domain parameters.  Either the curveType or the explicit domain
+	#       parameters must be provided 
+    ,curveType => 0	#  Named curve 
     ,p => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Prime defining Fq 
     ,pLen => 0	#  Length of prime in bits 
     ,a => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Element in Fq defining curve 
     ,aLen => 0	#  Length of element a in bits 
     ,b => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Element in Fq defining curve 
     ,bLen => 0	#  Length of element b in bits 
-	#  Generator 
     ,gx => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Element in Fq defining point 
     ,gxLen => 0	#  Length of element gx in bits 
     ,gy => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Element in Fq defining point 
     ,gyLen => 0	#  Length of element gy in bits 
-    ,r => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Order of point 
-    ,rLen => 0	#  Length of order in bits 
+    ,n => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Order of point 
+    ,nLen => 0	#  Length of order in bits 
     ,h => ' ' x CRYPT_MAX_PKCSIZE_ECC	#  Optional cofactor 
     ,hLen => 0	#  Length of cofactor in bits 
 	#  Public components 
@@ -1478,57 +1521,122 @@ sub CRYPT_PKCINFO_ECC
 
 # No error in function call 
 
-	sub CRYPT_OK { 0 }   # No error 
+	sub CRYPT_OK { 0 }       # No error 
 
-# Error in parameters passed to function 
+#  Error in parameters passed to function.  The parentheses are to catch 
+#  potential erroneous use in an expression 
 
-	sub CRYPT_ERROR_PARAM1 { -1 }  # Bad argument, parameter 1 
-	sub CRYPT_ERROR_PARAM2 { -2 }  # Bad argument, parameter 2 
-	sub CRYPT_ERROR_PARAM3 { -3 }  # Bad argument, parameter 3 
-	sub CRYPT_ERROR_PARAM4 { -4 }  # Bad argument, parameter 4 
-	sub CRYPT_ERROR_PARAM5 { -5 }  # Bad argument, parameter 5 
-	sub CRYPT_ERROR_PARAM6 { -6 }  # Bad argument, parameter 6 
-	sub CRYPT_ERROR_PARAM7 { -7 }  # Bad argument, parameter 7 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM1      ( -1 )  # Bad argument, parameter 1 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM2      ( -2 )  # Bad argument, parameter 2 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM3      ( -3 )  # Bad argument, parameter 3 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM4      ( -4 )  # Bad argument, parameter 4 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM5      ( -5 )  # Bad argument, parameter 5 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM6      ( -6 )  # Bad argument, parameter 6 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PARAM7      ( -7 )  # Bad argument, parameter 7 
+#
 
 # Errors due to insufficient resources 
 
-	sub CRYPT_ERROR_MEMORY { -10 } # Out of memory 
-	sub CRYPT_ERROR_NOTINITED { -11 } # Data has not been initialised 
-	sub CRYPT_ERROR_INITED { -12 } # Data has already been init'd 
-	sub CRYPT_ERROR_NOSECURE { -13 } # Opn.not avail.at requested sec.level 
-	sub CRYPT_ERROR_RANDOM { -14 } # No reliable random data available 
-	sub CRYPT_ERROR_FAILED { -15 } # Operation failed 
-	sub CRYPT_ERROR_INTERNAL { -16 } # Internal consistency check failed 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_MEMORY      ( -10 ) # Out of memory 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_NOTINITED   ( -11 ) # Data has not been initialised 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_INITED      ( -12 ) # Data has already been init'd 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_NOSECURE    ( -13 ) # Opn.not avail.at requested sec.level 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_RANDOM      ( -14 ) # No reliable random data available 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_FAILED      ( -15 ) # Operation failed 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_INTERNAL    ( -16 ) # Internal consistency check failed 
+#
 
 # Security violations 
 
-	sub CRYPT_ERROR_NOTAVAIL { -20 } # This type of opn.not available 
-	sub CRYPT_ERROR_PERMISSION { -21 } # No permiss.to perform this operation 
-	sub CRYPT_ERROR_WRONGKEY { -22 } # Incorrect key used to decrypt data 
-	sub CRYPT_ERROR_INCOMPLETE { -23 } # Operation incomplete/still in progress 
-	sub CRYPT_ERROR_COMPLETE { -24 } # Operation complete/can't continue 
-	sub CRYPT_ERROR_TIMEOUT { -25 } # Operation timed out before completion 
-	sub CRYPT_ERROR_INVALID { -26 } # Invalid/inconsistent information 
-	sub CRYPT_ERROR_SIGNALLED { -27 } # Resource destroyed by extnl.event 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_NOTAVAIL    ( -20 ) # This type of opn.not available 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_PERMISSION  ( -21 ) # No permiss.to perform this operation 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_WRONGKEY    ( -22 ) # Incorrect key used to decrypt data 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_INCOMPLETE  ( -23 ) # Operation incomplete/still in progress 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_COMPLETE    ( -24 ) # Operation complete/can't continue 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_TIMEOUT     ( -25 ) # Operation timed out before completion 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_INVALID     ( -26 ) # Invalid/inconsistent information 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_SIGNALLED   ( -27 ) # Resource destroyed by extnl.event 
+#
 
 # High-level function errors 
 
-	sub CRYPT_ERROR_OVERFLOW { -30 } # Resources/space exhausted 
-	sub CRYPT_ERROR_UNDERFLOW { -31 } # Not enough data available 
-	sub CRYPT_ERROR_BADDATA { -32 } # Bad/unrecognised data format 
-	sub CRYPT_ERROR_SIGNATURE { -33 } # Signature/integrity check failed 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_OVERFLOW    ( -30 ) # Resources/space exhausted 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_UNDERFLOW   ( -31 ) # Not enough data available 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_BADDATA     ( -32 ) # Bad/unrecognised data format 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_SIGNATURE   ( -33 ) # Signature/integrity check failed 
+#
 
 # Data access function errors 
 
-	sub CRYPT_ERROR_OPEN { -40 } # Cannot open object 
-	sub CRYPT_ERROR_READ { -41 } # Cannot read item from object 
-	sub CRYPT_ERROR_WRITE { -42 } # Cannot write item to object 
-	sub CRYPT_ERROR_NOTFOUND { -43 } # Requested item not found in object 
-	sub CRYPT_ERROR_DUPLICATE { -44 } # Item already present in object 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_OPEN        ( -40 ) # Cannot open object 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_READ        ( -41 ) # Cannot read item from object 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_WRITE       ( -42 ) # Cannot write item to object 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_NOTFOUND    ( -43 ) # Requested item not found in object 
+#
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ERROR_DUPLICATE   ( -44 ) # Item already present in object 
+#
 
 # Data enveloping errors 
 
-	sub CRYPT_ENVELOPE_RESOURCE { -50 } # Need resource to proceed 
+# C-macro not translated to Perl code but implemented apart: 
+#   #define CRYPT_ENVELOPE_RESOURCE ( -50 ) # Need resource to proceed 
+#
 
 # Macros to examine return values 
 
@@ -1550,17 +1658,20 @@ sub CRYPT_PKCINFO_ECC
 
 # Initialise and shut down cryptlib 
 
-#C_RET cryptInit( void );
+ 
+##C_RET cryptInit( void );
 ##C_RET cryptEnd( void );
 #
 # Query cryptlibs capabilities 
 
-#C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
-#                            C_OUT CRYPT_QUERY_INFO C_PTR cryptQueryInfo );
+ 
+##C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
+#                            C_OUT_OPT CRYPT_QUERY_INFO C_PTR cryptQueryInfo );
 #
 # Create and destroy an encryption context 
 
-#C_RET cryptCreateContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
+  
+##C_RET cryptCreateContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 #                          C_IN CRYPT_USER cryptUser,
 #                          C_IN CRYPT_ALGO_TYPE cryptAlgo );
 ##C_RET cryptDestroyContext( C_IN CRYPT_CONTEXT cryptContext );
@@ -1571,15 +1682,21 @@ sub CRYPT_PKCINFO_ECC
 #
 # Generate a key into a context 
 
-#C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext );
+ 
+##C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext );
+# 
 ##C_RET cryptGenerateKeyAsync( C_IN CRYPT_CONTEXT cryptContext );
+# 
 ##C_RET cryptAsyncQuery( C_IN CRYPT_HANDLE cryptObject );
+# 
 ##C_RET cryptAsyncCancel( C_IN CRYPT_HANDLE cryptObject );
 #
 # Encrypt/decrypt/hash a block of memory 
 
-#C_RET cryptEncrypt( C_IN CRYPT_CONTEXT cryptContext, C_INOUT void C_PTR buffer,
+ 
+##C_RET cryptEncrypt( C_IN CRYPT_CONTEXT cryptContext, C_INOUT void C_PTR buffer,
 #                    C_IN int length );
+# 
 ##C_RET cryptDecrypt( C_IN CRYPT_CONTEXT cryptContext, C_INOUT void C_PTR buffer,
 #                    C_IN int length );
 #
@@ -1588,15 +1705,17 @@ sub CRYPT_PKCINFO_ECC
 #C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 #                         C_IN CRYPT_ATTRIBUTE_TYPE attributeType,
 #                         C_IN int value );
+# 
 ##C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 #                               C_IN CRYPT_ATTRIBUTE_TYPE attributeType,
 #                               C_IN void C_PTR value, C_IN int valueLength );
+# 
 ##C_RET cryptGetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 #                         C_IN CRYPT_ATTRIBUTE_TYPE attributeType,
 #                         C_OUT int C_PTR value );
 ##C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 #                               C_IN CRYPT_ATTRIBUTE_TYPE attributeType,
-#                               C_OUT void C_PTR value,
+#                               C_OUT_OPT void C_PTR value,
 #                               C_OUT int C_PTR valueLength );
 ##C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
 #                            C_IN CRYPT_ATTRIBUTE_TYPE attributeType );
@@ -1605,7 +1724,9 @@ sub CRYPT_PKCINFO_ECC
 #  or key data.  These are due to be replaced once a suitable alternative can
 #  be found 
 
-#C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength );
+ 
+##C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength );
+#  
 ##C_RET cryptQueryObject( C_IN void C_PTR objectData,
 #                        C_IN int objectDataLength,
 #                        C_OUT CRYPT_OBJECT_INFO C_PTR cryptObjectInfo );
@@ -1618,50 +1739,58 @@ sub CRYPT_PKCINFO_ECC
 
 # Export and import an encrypted session key 
 
-#C_RET cryptExportKey( C_OUT void C_PTR encryptedKey,
+  
+##C_RET cryptExportKey( C_OUT_OPT void C_PTR encryptedKey,
 #                      C_IN int encryptedKeyMaxLength,
 #                      C_OUT int C_PTR encryptedKeyLength,
 #                      C_IN CRYPT_HANDLE exportKey,
 #                      C_IN CRYPT_CONTEXT sessionKeyContext );
-##C_RET cryptExportKeyEx( C_OUT void C_PTR encryptedKey,
+#  
+##C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 #                        C_IN int encryptedKeyMaxLength,
 #                        C_OUT int C_PTR encryptedKeyLength,
 #                        C_IN CRYPT_FORMAT_TYPE formatType,
 #                        C_IN CRYPT_HANDLE exportKey,
 #                        C_IN CRYPT_CONTEXT sessionKeyContext );
+#  
 ##C_RET cryptImportKey( C_IN void C_PTR encryptedKey,
 #                      C_IN int encryptedKeyLength,
 #                      C_IN CRYPT_CONTEXT importKey,
 #                      C_IN CRYPT_CONTEXT sessionKeyContext );
+#  
 ##C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 #                        C_IN int encryptedKeyLength,
 #                        C_IN CRYPT_CONTEXT importKey,
 #                        C_IN CRYPT_CONTEXT sessionKeyContext,
-#                        C_OUT CRYPT_CONTEXT C_PTR returnedContext );
+#                        C_OUT_OPT CRYPT_CONTEXT C_PTR returnedContext );
 #
 # Create and check a digital signature 
 
-#C_RET cryptCreateSignature( C_OUT void C_PTR signature,
+  
+##C_RET cryptCreateSignature( C_OUT_OPT void C_PTR signature,
 #                            C_IN int signatureMaxLength,
 #                            C_OUT int C_PTR signatureLength,
 #                            C_IN CRYPT_CONTEXT signContext,
 #                            C_IN CRYPT_CONTEXT hashContext );
-##C_RET cryptCreateSignatureEx( C_OUT void C_PTR signature,
+#  
+##C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 #                              C_IN int signatureMaxLength,
 #                              C_OUT int C_PTR signatureLength,
 #                              C_IN CRYPT_FORMAT_TYPE formatType,
 #                              C_IN CRYPT_CONTEXT signContext,
 #                              C_IN CRYPT_CONTEXT hashContext,
 #                              C_IN CRYPT_CERTIFICATE extraData );
+#  
 ##C_RET cryptCheckSignature( C_IN void C_PTR signature,
 #                           C_IN int signatureLength,
 #                           C_IN CRYPT_HANDLE sigCheckKey,
 #                           C_IN CRYPT_CONTEXT hashContext );
+#  
 ##C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 #                             C_IN int signatureLength,
 #                             C_IN CRYPT_HANDLE sigCheckKey,
 #                             C_IN CRYPT_CONTEXT hashContext,
-#                             C_OUT CRYPT_HANDLE C_PTR extraData );
+#                             C_OUT_OPT CRYPT_HANDLE C_PTR extraData );
 #
 #****************************************************************************
 #*                                                                           *
@@ -1671,7 +1800,8 @@ sub CRYPT_PKCINFO_ECC
 
 # Open and close a keyset 
 
-#C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
+  
+##C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 #                       C_IN CRYPT_USER cryptUser,
 #                       C_IN CRYPT_KEYSET_TYPE keysetType,
 #                       C_IN C_STR name, C_IN CRYPT_KEYOPT_TYPE options );
@@ -1679,26 +1809,32 @@ sub CRYPT_PKCINFO_ECC
 #
 # Get a key from a keyset or device 
 
-#C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
+  
+##C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 #                         C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 #                         C_IN CRYPT_KEYID_TYPE keyIDtype,
-#                         C_IN C_STR keyID );
+#                         C_IN_OPT C_STR keyID );
+#  
 ##C_RET cryptGetPrivateKey( C_IN CRYPT_KEYSET keyset,
 #                          C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 #                          C_IN CRYPT_KEYID_TYPE keyIDtype,
-#                          C_IN C_STR keyID, C_IN C_STR password );
+#                          C_IN_OPT C_STR keyID, C_IN C_STR password );
+#  
 ##C_RET cryptGetKey( C_IN CRYPT_KEYSET keyset,
 #                   C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 #                   C_IN CRYPT_KEYID_TYPE keyIDtype, C_IN C_STR keyID, 
-#                   C_IN C_STR password );
+#                   C_IN_OPT C_STR password );
 #
 # Add/delete a key to/from a keyset or device 
 
-#C_RET cryptAddPublicKey( C_IN CRYPT_KEYSET keyset,
+ 
+##C_RET cryptAddPublicKey( C_IN CRYPT_KEYSET keyset,
 #                         C_IN CRYPT_CERTIFICATE certificate );
+#  
 ##C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 #                          C_IN CRYPT_HANDLE cryptKey,
 #                          C_IN C_STR password );
+# 
 ##C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 #                      C_IN CRYPT_KEYID_TYPE keyIDtype,
 #                      C_IN C_STR keyID );
@@ -1711,7 +1847,8 @@ sub CRYPT_PKCINFO_ECC
 
 # Create/destroy a certificate 
 
-#C_RET cryptCreateCert( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
+  
+##C_RET cryptCreateCert( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 #                       C_IN CRYPT_USER cryptUser,
 #                       C_IN CRYPT_CERTTYPE_TYPE certType );
 ##C_RET cryptDestroyCert( C_IN CRYPT_CERTIFICATE certificate );
@@ -1720,33 +1857,40 @@ sub CRYPT_PKCINFO_ECC
 #  functions whose use is discouraged, so they fix the string at char *
 #  rather than C_STR 
 
-#C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
+ 
+##C_RET cryptGetCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #                             C_IN char C_PTR oid,
 #                             C_OUT int C_PTR criticalFlag,
-#                             C_OUT void C_PTR extension,
+#                             C_OUT_OPT void C_PTR extension,
 #                             C_IN int extensionMaxLength,
 #                             C_OUT int C_PTR extensionLength );
+# 
 ##C_RET cryptAddCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #                             C_IN char C_PTR oid, C_IN int criticalFlag,
 #                             C_IN void C_PTR extension,
 #                             C_IN int extensionLength );
+# 
 ##C_RET cryptDeleteCertExtension( C_IN CRYPT_CERTIFICATE certificate,
 #                                C_IN char C_PTR oid );
 #
 # Sign/sig.check a certificate/certification request 
 
-#C_RET cryptSignCert( C_IN CRYPT_CERTIFICATE certificate,
+ 
+##C_RET cryptSignCert( C_IN CRYPT_CERTIFICATE certificate,
 #                     C_IN CRYPT_CONTEXT signContext );
+# 
 ##C_RET cryptCheckCert( C_IN CRYPT_CERTIFICATE certificate,
 #                      C_IN CRYPT_HANDLE sigCheckKey );
 #
 # Import/export a certificate/certification request 
 
-#C_RET cryptImportCert( C_IN void C_PTR certObject,
+  
+##C_RET cryptImportCert( C_IN void C_PTR certObject,
 #                       C_IN int certObjectLength,
 #                       C_IN CRYPT_USER cryptUser,
 #                       C_OUT CRYPT_CERTIFICATE C_PTR certificate );
-##C_RET cryptExportCert( C_OUT void C_PTR certObject,
+# 
+##C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
 #                       C_IN int certObjectMaxLength,
 #                       C_OUT int C_PTR certObjectLength,
 #                       C_IN CRYPT_CERTFORMAT_TYPE certFormatType,
@@ -1754,18 +1898,22 @@ sub CRYPT_PKCINFO_ECC
 #
 # CA management functions 
 
-#C_RET cryptCAAddItem( C_IN CRYPT_KEYSET keyset,
+ 
+##C_RET cryptCAAddItem( C_IN CRYPT_KEYSET keyset,
 #                      C_IN CRYPT_CERTIFICATE certificate );
+#  
 ##C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 #                      C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 #                      C_IN CRYPT_CERTTYPE_TYPE certType,
 #                      C_IN CRYPT_KEYID_TYPE keyIDtype,
-#                      C_IN C_STR keyID );
+#                      C_IN_OPT C_STR keyID );
+# 
 ##C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 #                         C_IN CRYPT_CERTTYPE_TYPE certType,
 #                         C_IN CRYPT_KEYID_TYPE keyIDtype,
 #                         C_IN C_STR keyID );
-##C_RET cryptCACertManagement( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
+# 
+##C_RET cryptCACertManagement( C_OUT_OPT CRYPT_CERTIFICATE C_PTR certificate,
 #                             C_IN CRYPT_CERTACTION_TYPE action,
 #                             C_IN CRYPT_KEYSET keyset,
 #                             C_IN CRYPT_CONTEXT caKey,
@@ -1779,23 +1927,28 @@ sub CRYPT_PKCINFO_ECC
 
 # Create/destroy an envelope 
 
-#C_RET cryptCreateEnvelope( C_OUT CRYPT_ENVELOPE C_PTR envelope,
+  
+##C_RET cryptCreateEnvelope( C_OUT CRYPT_ENVELOPE C_PTR envelope,
 #                           C_IN CRYPT_USER cryptUser,
 #                           C_IN CRYPT_FORMAT_TYPE formatType );
 ##C_RET cryptDestroyEnvelope( C_IN CRYPT_ENVELOPE envelope );
 #
 # Create/destroy a session 
 
-#C_RET cryptCreateSession( C_OUT CRYPT_SESSION C_PTR session,
+  
+##C_RET cryptCreateSession( C_OUT CRYPT_SESSION C_PTR session,
 #                          C_IN CRYPT_USER cryptUser,
 #                          C_IN CRYPT_SESSION_TYPE formatType );
 ##C_RET cryptDestroySession( C_IN CRYPT_SESSION session );
 #
 # Add/remove data to/from and envelope or session 
 
-#C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
+  
+##C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
 #                     C_IN int length, C_OUT int C_PTR bytesCopied );
+# 
 ##C_RET cryptFlushData( C_IN CRYPT_HANDLE envelope );
+#  
 ##C_RET cryptPopData( C_IN CRYPT_HANDLE envelope, C_OUT void C_PTR buffer,
 #                    C_IN int length, C_OUT int C_PTR bytesCopied );
 #
@@ -1807,21 +1960,24 @@ sub CRYPT_PKCINFO_ECC
 
 # Open and close a device 
 
-#C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
+  
+##C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 #                       C_IN CRYPT_USER cryptUser,
 #                       C_IN CRYPT_DEVICE_TYPE deviceType,
-#                       C_IN C_STR name );
+#                       C_IN_OPT C_STR name );
 ##C_RET cryptDeviceClose( C_IN CRYPT_DEVICE device );
 #
 # Query a devices capabilities 
 
-#C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
+ 
+##C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 #                                  C_IN CRYPT_ALGO_TYPE cryptAlgo,
-#                                  C_OUT CRYPT_QUERY_INFO C_PTR cryptQueryInfo );
+#                                  C_OUT_OPT CRYPT_QUERY_INFO C_PTR cryptQueryInfo );
 #
 # Create an encryption context via the device 
 
-#C_RET cryptDeviceCreateContext( C_IN CRYPT_DEVICE device,
+  
+##C_RET cryptDeviceCreateContext( C_IN CRYPT_DEVICE device,
 #                                C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 #                                C_IN CRYPT_ALGO_TYPE cryptAlgo );
 #
@@ -1833,10 +1989,17 @@ sub CRYPT_PKCINFO_ECC
 
 # Log on and off (create/destroy a user object) 
 
-#C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
+  
+##C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 #                  C_IN C_STR name, C_IN C_STR password );
 ##C_RET cryptLogout( C_IN CRYPT_USER user );
 #
+#****************************************************************************
+#*                                                                           *
+#*                           User Interface Functions                        *
+#*                                                                           *
+#****************************************************************************
+
 
 
 #

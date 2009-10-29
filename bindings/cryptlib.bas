@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2008                   *
+'*                       Copyright Peter Gutmann 1997-2009                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,22 +15,21 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Fri Nov 23 02:07:02 2007, filesize = 85740.
+'"cryptlib.h" dated Sun Jul  5 01:39:06 2009, filesize = 91488.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
-'update from "http://www.sogot.de/cryptlib/". If the filesize or file creation
+'update from "http://cryptlib.sogot.de/". If the filesize or file creation
 'date do not match, then please do not complain about problems.
 '
 'Examples using Visual Basic are available on the same web address.
 '
 'Published by W. Gothier, 
-'mailto: cryptlib@gothier.net if you find errors in this file.
+'mailto: problems@cryptlib.sogot.de if you find errors in this file.
 
 '-----------------------------------------------------------------------------
 
   Public Const CRYPTLIB_VERSION As Long = 3320
-
 
 '****************************************************************************
 '*                                                                           *
@@ -64,20 +63,25 @@ Public Enum CRYPT_ALGO_TYPE
     CRYPT_ALGO_ELGAMAL              ' ElGamal 
     CRYPT_ALGO_KEA                  ' KEA 
     CRYPT_ALGO_ECDSA                ' ECDSA 
+    CRYPT_ALGO_ECDH                 ' ECDH 
 
     ' Hash algorithms 
     CRYPT_ALGO_MD2 = 200            ' MD2 
     CRYPT_ALGO_MD4                  ' MD4 
     CRYPT_ALGO_MD5                  ' MD5 
-    CRYPT_ALGO_SHA                  ' SHA/SHA1 
+    CRYPT_ALGO_SHA1                 ' SHA/SHA1 
+        CRYPT_ALGO_SHA = CRYPT_ALGO_SHA1    ' Older form 
     CRYPT_ALGO_RIPEMD160            ' RIPE-MD 160 
-    CRYPT_ALGO_SHA2                 ' SHA2 (SHA-256/384/512)
+    CRYPT_ALGO_SHA2                 ' SHA-256 
+    CRYPT_ALGO_SHAng                ' Future SHA-nextgen standard 
 
     ' MAC's 
     CRYPT_ALGO_HMAC_MD5 = 300       ' HMAC-MD5 
     CRYPT_ALGO_HMAC_SHA1            ' HMAC-SHA 
         CRYPT_ALGO_HMAC_SHA = CRYPT_ALGO_HMAC_SHA1  ' Older form 
     CRYPT_ALGO_HMAC_RIPEMD160       ' HMAC-RIPEMD-160 
+    CRYPT_ALGO_HMAC_SHA2            ' HMAC-SHA2 
+    CRYPT_ALGO_HMAC_SHAng           ' HMAC-future-SHA-nextgen 
 
 '      Vendors may want to use their own algorithms that aren't part of the
 '      general cryptlib suite.  The following values are for vendor-defined
@@ -143,6 +147,7 @@ Public Enum CRYPT_DEVICE_TYPE
     CRYPT_DEVICE_FORTEZZA           ' Fortezza card 
     CRYPT_DEVICE_PKCS11             ' PKCS #11 crypto token 
     CRYPT_DEVICE_CRYPTOAPI          ' Microsoft CryptoAPI 
+    CRYPT_DEVICE_HARDWARE           ' Generic crypo HW plugin 
     CRYPT_DEVICE_LAST               ' Last possible crypto device type 
     
 
@@ -936,7 +941,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     ' Protocol-specific information 
     CRYPT_SESSINFO_TSP_MSGIMPRINT   ' TSP message imprint 
     CRYPT_SESSINFO_CMP_REQUESTTYPE  ' Request type 
-    CRYPT_SESSINFO_CMP_PKIBOOT      ' Enable PKIBoot facility 
+    CRYPT_SESSINFO_CMP_PKIBOOT      ' Unused, to be removed in 3.4 
     CRYPT_SESSINFO_CMP_PRIVKEYSET   ' Private-key keyset 
     CRYPT_SESSINFO_SSH_CHANNEL      ' SSH current channel 
     CRYPT_SESSINFO_SSH_CHANNEL_TYPE ' SSH channel type 
@@ -1083,6 +1088,7 @@ Public Enum CRYPT_CONTENT_TYPE
                CRYPT_CONTENT_RTCSREQUEST
                CRYPT_CONTENT_RTCSRESPONSE
                CRYPT_CONTENT_RTCSRESPONSE_EXT
+               CRYPT_CONTENT_MRTD
                CRYPT_CONTENT_LAST
              
 
@@ -1262,10 +1268,10 @@ End Enum
   Public Const CRYPT_MAX_IVSIZE As Long = 32
 
 '  The maximum public-key component size - 4096 bits, and maximum component
-'  size for ECCs - 256 bits 
+'  size for ECCs - 576 bits (to handle the P521 curve) 
 
   Public Const CRYPT_MAX_PKCSIZE As Long = 512
-  Public Const CRYPT_MAX_PKCSIZE_ECC As Long = 32
+  Public Const CRYPT_MAX_PKCSIZE_ECC As Long = 72
 
 ' The maximum hash size - 256 bits 
 
@@ -1276,7 +1282,8 @@ End Enum
   Public Const CRYPT_MAX_TEXTSIZE As Long = 64
 
 '  A magic value indicating that the default setting for this parameter
-'  should be used 
+'  should be used.  The parentheses are to catch potential erroneous use 
+'  in an expression 
 
   Public Const CRYPT_USE_DEFAULT As Long = -100
 
@@ -1284,7 +1291,8 @@ End Enum
 
   Public Const CRYPT_UNUSED As Long = -101
 
-' Cursor positioning codes for certificate/CRL extensions 
+'  Cursor positioning codes for certificate/CRL extensions.  The parentheses 
+'  are to catch potential erroneous use in an expression 
 
   Public Const CRYPT_CURSOR_FIRST As Long = -200
   Public Const CRYPT_CURSOR_PREVIOUS As Long = -201
@@ -1293,7 +1301,8 @@ End Enum
 
 '  The type of information polling to perform to get random seed 
 '  information.  These values have to be negative because they're used
-'  as magic length values for cryptAddRandom() 
+'  as magic length values for cryptAddRandom().  The parentheses are to 
+'  catch potential erroneous use in an expression 
 
   Public Const CRYPT_RANDOM_FASTPOLL As Long = -300
   Public Const CRYPT_RANDOM_SLOWPOLL As Long = -301
@@ -1423,25 +1432,42 @@ Public Type CRYPT_PKCINFO_DLP
 
 End Type
 
+Public Enum CRYPT_ECCCURVE_TYPE
+
+'      Named ECC curves.  When updating these remember to also update the 
+'      ECC fieldSizeInfo table in context/kg_ecc.c, the eccOIDinfo table and 
+'      sslEccCurveInfo table in context/key_rd.c, and the curveIDTbl in 
+'      session/ssl.c 
+    CRYPT_ECCCURVE_NONE         ' No ECC curve type 
+    CRYPT_ECCCURVE_P192         ' NIST P192/X9.62 P192r1/SECG p192r1 curve 
+    CRYPT_ECCCURVE_P224         ' NIST P224/X9.62 P224r1/SECG p224r1 curve 
+    CRYPT_ECCCURVE_P256         ' NIST P256/X9.62 P256v1/SECG p256r1 curve 
+    CRYPT_ECCCURVE_P384         ' NIST P384, SECG p384r1 curve 
+    CRYPT_ECCCURVE_P521         ' NIST P521, SECG p521r1 
+    CRYPT_ECCCURVE_LAST         ' Last valid ECC curve type 
+    
+
+End Enum
+
 Public Type CRYPT_PKCINFO_ECC 
     ' Status information 
     isPublicKey As Long            ' Whether this is a public or private key 
 
-    ' Curve 
+'      Curve domain parameters.  Either the curveType or the explicit domain
+'      parameters must be provided 
+    curveType As CRYPT_ECCCURVE_TYPE  ' Named curve 
     p(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Prime defining Fq 
     pLen As Long                   ' Length of prime in bits 
     a(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining curve 
     aLen As Long                   ' Length of element a in bits 
     b(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining curve 
     bLen As Long                   ' Length of element b in bits 
-
-    ' Generator 
     gx(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining point 
     gxLen As Long                  ' Length of element gx in bits 
     gy(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Element in Fq defining point 
     gyLen As Long                  ' Length of element gy in bits 
-    r(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Order of point 
-    rLen As Long                   ' Length of order in bits 
+    n(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Order of point 
+    nLen As Long                   ' Length of order in bits 
     h(CRYPT_MAX_PKCSIZE_ECC-1) As Byte' Optional cofactor 
     hLen As Long                   ' Length of cofactor in bits 
 
@@ -1488,9 +1514,10 @@ End Type
 
 ' No error in function call 
 
-  Public Const CRYPT_OK As Long = 0   ' No error 
+  Public Const CRYPT_OK As Long = 0       ' No error 
 
-' Error in parameters passed to function 
+'  Error in parameters passed to function.  The parentheses are to catch 
+'  potential erroneous use in an expression 
 
   Public Const CRYPT_ERROR_PARAM1 As Long = -1  ' Bad argument, parameter 1 
   Public Const CRYPT_ERROR_PARAM2 As Long = -2  ' Bad argument, parameter 2 
@@ -1560,6 +1587,7 @@ End Type
 
 ' Initialise and shut down cryptlib 
 
+ 
 Public Declare Function cryptInit Lib "CL32.DLL" () As Long
 
 
@@ -1932,6 +1960,12 @@ Public Declare Function cryptLogin Lib "CL32.DLL" ( ByRef user As Long, _
 
 Public Declare Function cryptLogout Lib "CL32.DLL" ( ByVal user As Long) As Long
 
+
+'****************************************************************************
+'*                                                                           *
+'*                           User Interface Functions                        *
+'*                                                                           *
+'****************************************************************************
 
 
 

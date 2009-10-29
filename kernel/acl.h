@@ -71,8 +71,9 @@
 #define ST_DEV_FORT				SUBTYPE_DEV_FORTEZZA
 #define ST_DEV_P11				SUBTYPE_DEV_PKCS11
 #define ST_DEV_CAPI				SUBTYPE_DEV_CRYPTOAPI
+#define ST_DEV_HW				SUBTYPE_DEV_HARDWARE
 #define ST_DEV_ANY_STD			( SUBTYPE_DEV_FORTEZZA | SUBTYPE_DEV_PKCS11 | \
-								  SUBTYPE_DEV_CRYPTOAPI )
+								  SUBTYPE_DEV_CRYPTOAPI | SUBTYPE_DEV_HARDWARE )
 #define ST_DEV_ANY				( ST_DEV_ANY_STD | SUBTYPE_DEV_SYSTEM )
 
 #define ST_SESS_SSH				SUBTYPE_SESSION_SSH
@@ -129,115 +130,11 @@
 *																			*
 ****************************************************************************/
 
-/* Read/write/delete permission flags.  Each object can have two modes, "low"
-   and "high", whose exact definition depends on the object type.  At some
-   point an operation on an object (loading a key for a context, signing a
-   cert) will move it from the low to the high state, at which point a much
-   more restrictive set of permissions apply.  The permissions are given as
-   RWD_RWD with the first set being for the object in the high state and the
-   second for the object in the low state.
-
-   In addition to the usual external-access permssions, some attributes are
-   only visible internally.  Normal attributes have matching internal-access
-   and external-access permssions but the internal-access-only ones have the
-   external-access permissions turned off.
-
-   Some of the odder combinations arise from ACLs with sub-ACLs, for which
-   the overall access permission is the union of the permissions in all the
-   sub-ACLs.  For example if one sub-ACL has xxx_RWx and another has xWD_xxx,
-   the parent ACL will have xWD_RWx.  Finally, there are a small number of
-   special-case permissions in which internal access differs from external
-   access.  This is used for attributes that are used for control purposes
-   (e.g. identifier information in cert requests) and can be set internally
-   but are read-only externally.
-
-			  Internal low ----++---- External high
-			  Internal high --+||+--- External low */
-#define ACCESS_xxx_xxx		0x0000	/* No access */
-#define ACCESS_xxx_xWx		0x0202	/* Low: Write-only */
-#define ACCESS_xxx_xWD		0x0303	/* Low: Write/delete */
-#define ACCESS_xxx_Rxx		0x0404	/* Low: Read-only */
-#define ACCESS_xxx_RWx		0x0606	/* Low: Read/write */
-#define ACCESS_xxx_RWD		0x0707	/* Low: All access */
-#define ACCESS_xWx_xWx		0x2222	/* High: Write-only, Low: Write-only */
-#define ACCESS_xWD_xWD		0x3333	/* High: Write/delete, Low: Write/delete */
-#define ACCESS_xWx_xxx		0x2020	/* High: Write-only, Low: None */
-#define ACCESS_Rxx_xxx		0x4040	/* High: Read-only, Low: None */
-#define ACCESS_Rxx_xWx		0x4242	/* High: Read-only, Low: Write-only */
-#define ACCESS_Rxx_Rxx		0x4444	/* High: Read-only, Low: Read-only */
-#define ACCESS_Rxx_RxD		0x4545	/* High: Read-only, Low: Read/delete */
-#define ACCESS_Rxx_RWx		0x4646	/* High: Read-only, Low: Read/write */
-#define ACCESS_Rxx_RWD		0x4747	/* High: Read-only, Low: All access */
-#define ACCESS_RxD_RxD		0x5555	/* High: Read/delete, Low: Read/delete */
-#define ACCESS_RWx_xxx		0x6060	/* High: Read/write, Low: None */
-#define ACCESS_RWx_xWx		0x6262	/* High: Read/write, Low: Write-only */
-#define ACCESS_RWx_Rxx		0x6464	/* High: Read/write, Low: Read-only */
-#define ACCESS_RWx_RWx		0x6666	/* High: Read/write, Low: Read/write */
-#define ACCESS_RWx_RWD		0x6767	/* High: Read/write, Low: All access */
-#define ACCESS_RWD_xxx		0x7070	/* High: All access, Low: None */
-#define ACCESS_RWD_xWD		0x7373	/* High: All access, Low: Write/delete */
-#define ACCESS_RWD_RWD		0x7777	/* High: All access, Low: All access */
-
-#define ACCESS_INT_xxx_xxx	0x0000	/* Internal: No access */
-#define ACCESS_INT_xxx_xWx	0x0200	/* Internal: None, write-only */
-#define ACCESS_INT_xxx_Rxx	0x0400	/* Internal: None, read-only */
-#define ACCESS_INT_xWx_xxx	0x2000	/* Internal: Write-only, none */
-#define ACCESS_INT_xWx_xWx	0x2200	/* Internal: Write-only, write-only */
-#define ACCESS_INT_Rxx_xxx	0x4000	/* Internal: Read-only, none */
-#define ACCESS_INT_Rxx_xWx	0x4200	/* Internal: Read-only, write-only */
-#define ACCESS_INT_Rxx_Rxx	0x4400	/* Internal: Read-only, read-only */
-#define ACCESS_INT_Rxx_RWx	0x4600	/* Internal: Read-only, read/write */
-#define ACCESS_INT_RWx_xxx	0x6000	/* Internal: Read/write, none */
-#define ACCESS_INT_RWx_RWx	0x6600	/* Internal: Read/write, read/write */
-
-#define ACCESS_SPECIAL_Rxx_RWx_Rxx_Rxx \
-							0x4644	/* Internal = Read-only, read/write,
-									   External = Read-only, read-only */
-#define ACCESS_SPECIAL_Rxx_RWD_Rxx_Rxx \
-							0x4744	/* Internal = Read-only, all access,
-									   External = Read-only, read-only */
-
-#define ACCESS_FLAG_R		0x0004	/* Read access permitted */
-#define ACCESS_FLAG_W		0x0002	/* Write access permitted */
-#define ACCESS_FLAG_D		0x0001	/* Delete access permitted */
-#define ACCESS_FLAG_H_R		0x0040	/* Read access permitted in high mode */
-#define ACCESS_FLAG_H_W		0x0020	/* Write access permitted in high mode */
-#define ACCESS_FLAG_H_D		0x0010	/* Delete access permitted in high mode */
-
-#define ACCESS_MASK_EXTERNAL 0x0077	/* External-access flags mask */
-#define ACCESS_MASK_INTERNAL 0x7700	/* Internal-access flags mask */
-
-#define MK_ACCESS_INTERNAL( value )	( ( value ) << 8 )
-
-/* The basic RWD access flags above are also used for checking some
-   parameters passed with keyset mechanism messages, however in addition to
-   these we have flags for getFirst/getNext functions that are only used
-   with keysets.  Note that although these partially overlap with the high-
-   mode access flags for attributes this isn't a problem since keysets don't
-   distinguish between high and low states.  In addition some of the
-   combinations may seem a bit odd, but that's because they're for mechanism
-   parameters such as key ID information which is needed for reads and
-   deletes but not writes, since it's implicitly included with the key which
-   is being written.  Finally, one type of mechanism has parameter semantics
-   that are too complex to express via a simple ACL entry, these are given a
-   different-looking ACL entry xxXXxx to indicate to readers that this isn't
-   the same as a normal entry with the same value.  In addition to this, the
-   semantics of some of the getFirst/Next accesses are complex enough that
-   we need to hardcode them into the ACL checking, leaving only a
-   representative entry on the ACL definition itself (see key_acl.c for more
-   details) */
-
-#define ACCESS_KEYSET_xxxxx	0x0000	/* No access */
-#define ACCESS_KEYSET_xxXXx	0x0006	/* Special-case values (params optional) */
-#define ACCESS_KEYSET_xxRxD	0x0005	/* Read and delete */
-#define ACCESS_KEYSET_xxRWx	0x0006	/* Read/write */
-#define ACCESS_KEYSET_xxRWD	0x0007	/* Read/write and delete */
-#define ACCESS_KEYSET_FxRxD	0x0015	/* GetFirst, read, and delete */
-#define ACCESS_KEYSET_FNxxx	0x0018	/* GetFirst/Next */
-#define ACCESS_KEYSET_FNRWD	0x001F	/* All access */
-
-#define ACCESS_FLAG_F		0x0010	/* GetFirst access permitted */
-#define ACCESS_FLAG_N		0x0008	/* GetNext access permitted */
+#if defined( INC_ALL )
+  #include "acl_perm.h"
+#else
+  #include "kernel/acl_perm.h"
+#endif /* Compiler-specific includes */
 
 /****************************************************************************
 *																			*
@@ -328,13 +225,7 @@
 		extendedInfo contains sub-acl [] of object type-specific sub-ACLs.
 		The main ACL is only used as a general template for checks, the real
 		checking is done via recursive application of the sub-ACL for the
-		specific object sub-type.
-	RANGE_SELECTVALUE
-		Special-case value that would normally be a RANGE_SUBTYPED value but
-		which is used frequently enough that it's handled specially.  On
-		write this value is CRYPT_UNUSED to select this attribute, on read
-		it's a presence check and returns TRUE or FALSE.  This is used for
-		composite attributes with sub-components, e.g. DNs */
+		specific object sub-type */
 
 typedef enum {
 	RANGEVAL_NONE,					/* No range type */
@@ -342,17 +233,15 @@ typedef enum {
 	RANGEVAL_ALLOWEDVALUES,			/* List of permissible values */
 	RANGEVAL_SUBRANGES,				/* List of permissible subranges */
 	RANGEVAL_SUBTYPED,				/* Object-subtype-specific sub-ACL */
-	RANGEVAL_SELECTVALUE,			/* Write = select attr, read = pres.chk */
 	RANGEVAL_LAST					/* Last valid range type */
 	} RANGEVAL_TYPE;
 
-#define RANGE_EXT_MARKER	-1000	/* Marker to denote extended range value */
+#define RANGE_EXT_MARKER	( -1000 )/* Marker to denote extended range value */
 
 #define RANGE_ANY			RANGE_EXT_MARKER, RANGEVAL_ANY
 #define RANGE_ALLOWEDVALUES	RANGE_EXT_MARKER, RANGEVAL_ALLOWEDVALUES
 #define RANGE_SUBRANGES		RANGE_EXT_MARKER, RANGEVAL_SUBRANGES
 #define RANGE_SUBTYPED		RANGE_EXT_MARKER, RANGEVAL_SUBTYPED
-#define RANGE_SELECTVALUE	RANGE_EXT_MARKER, RANGEVAL_SELECTVALUE
 #define RANGE( low, high )	( low ), ( high )
 
 /* The maximum possible integer value, used to indicate that any value is
@@ -941,7 +830,7 @@ typedef struct CAA {
 			depObj, { depObjSTA, ST_NONE, ACL_FLAG_HIGH_STATE }, fdCheck
 #define MK_CHKACL_ALT_END() \
 			MESSAGE_NONE, \
-			OBJECT_TYPE_NONE, { ST_NONE, ST_NONE, ACL_FLAG_NONE }, MESSAGE_NONE
+			OBJECT_TYPE_NONE, { ST_NONE, ST_NONE, ACL_FLAG_NONE }, MESSAGE_NONE, 
 
 /* Object dependency ACL entry, used when making one object dependent on
    another */
@@ -966,7 +855,6 @@ typedef struct {
 /* Flags for the dependency ACLs */
 
 #define DEP_FLAG_NONE		0x00	/* No dependency flag */
-#define DEP_FLAG_MORE		0x01	/* Further ACL entries follow */
-#define DEP_FLAG_UPDATEDEP	0x02	/* Update dependent object */
+#define DEP_FLAG_UPDATEDEP	0x01	/* Update dependent object */
 
 #endif /* _ACL_DEFINED */

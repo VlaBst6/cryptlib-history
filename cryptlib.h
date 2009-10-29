@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Interface							*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -9,9 +9,9 @@
 
 #define _CRYPTLIB_DEFINED
 
-/* The current cryptlib version: 3.3.2 */
+/* The current cryptlib version: 3.3.3 */
 
-#define CRYPTLIB_VERSION	3320
+#define CRYPTLIB_VERSION	3330
 
 /* Fixup for Windows support.  We need to include windows.h for various types
    and prototypes needed for DLL's.  In addition wincrypt.h defines some
@@ -39,9 +39,24 @@
   #define NOCRYPT				/* Disable include of wincrypt.h */
   #include <windows.h>
 
-  /* Catch use of CryptoAPI and cryptlib at the same time */
+  /* Catch use of CryptoAPI and cryptlib at the same time.  wxWidgets 
+     includes wincrypt.h by default so we undefine the conflicting values 
+	 and assume that the warning above will let users know that CryptoAPI 
+	 use isn't going to work properly, for anything else we require that the
+	 user explicitly fix things */
   #if defined( CRYPT_MODE_ECB )
-	#error "cryptlib.h and wincrypt.h can't both be used at the same time due to conflicting type names"
+	#pragma message( "Warning: Both cryptlib.h and wincrypt.h have been included into the same source file." )
+	#pragma message( "         These contain conflicting type names that prevent both from being used simultaneously." )
+	#ifdef __WXWINDOWS__
+	  #pragma message( "         To allow compilation to proceed the wincrypt.h encryption modes have been undefined." )
+	  #undef CRYPT_MODE_ECB
+	  #undef CRYPT_MODE_CBC
+	  #undef CRYPT_MODE_CFB
+	  #undef CRYPT_MODE_OFB
+	#else
+	  #pragma message( "         To allow compilation to proceed you need to avoid including wincrypt.h in your code." )
+	  #error "cryptlib.h and wincrypt.h can't both be used at the same time due to conflicting type names"
+	#endif /* __WXWINDOWS__ */
   #endif /* Clash with wincrypt.h defines */
 #endif /* Windows other than a cross-development environment */
 
@@ -186,6 +201,7 @@ typedef enum {						/* Algorithms */
 	CRYPT_ALGO_ELGAMAL,				/* ElGamal */
 	CRYPT_ALGO_KEA,					/* KEA */
 	CRYPT_ALGO_ECDSA,				/* ECDSA */
+	CRYPT_ALGO_ECDH,				/* ECDH */
 
 	/* Hash algorithms */
 	CRYPT_ALGO_MD2 = 200,			/* MD2 */
@@ -194,7 +210,8 @@ typedef enum {						/* Algorithms */
 	CRYPT_ALGO_SHA1,				/* SHA/SHA1 */
 		CRYPT_ALGO_SHA = CRYPT_ALGO_SHA1,	/* Older form */
 	CRYPT_ALGO_RIPEMD160,			/* RIPE-MD 160 */
-	CRYPT_ALGO_SHA2,				/* SHA2 (SHA-256/384/512)*/
+	CRYPT_ALGO_SHA2,				/* SHA-256 */
+	CRYPT_ALGO_SHAng,				/* Future SHA-nextgen standard */
 
 	/* MAC's */
 	CRYPT_ALGO_HMAC_MD5 = 300,		/* HMAC-MD5 */
@@ -202,6 +219,7 @@ typedef enum {						/* Algorithms */
 		CRYPT_ALGO_HMAC_SHA = CRYPT_ALGO_HMAC_SHA1,	/* Older form */
 	CRYPT_ALGO_HMAC_RIPEMD160,		/* HMAC-RIPEMD-160 */
 	CRYPT_ALGO_HMAC_SHA2,			/* HMAC-SHA2 */
+	CRYPT_ALGO_HMAC_SHAng,			/* HMAC-future-SHA-nextgen */
 
 	/* Vendors may want to use their own algorithms that aren't part of the
 	   general cryptlib suite.  The following values are for vendor-defined
@@ -272,6 +290,7 @@ typedef enum {						/* Crypto device types */
 	CRYPT_DEVICE_FORTEZZA,			/* Fortezza card */
 	CRYPT_DEVICE_PKCS11,			/* PKCS #11 crypto token */
 	CRYPT_DEVICE_CRYPTOAPI,			/* Microsoft CryptoAPI */
+	CRYPT_DEVICE_HARDWARE,			/* Generic crypo HW plugin */
 	CRYPT_DEVICE_LAST				/* Last possible crypto device type */
 	} CRYPT_DEVICE_TYPE;
 
@@ -552,6 +571,10 @@ typedef enum {
 	CRYPT_CERTINFO_FINGERPRINT,		/* Certificate fingerprints */
 		CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT,
 	CRYPT_CERTINFO_FINGERPRINT_SHA,
+#if 0	/* Not enabled until the next minor-version rev */
+	CRYPT_CERTINFO_FINGERPRINT_SHA2,
+	CRYPT_CERTINFO_FINGERPRINT_SHAng,
+#endif /* 0 */
 	CRYPT_CERTINFO_CURRENT_CERTIFICATE,/* Cursor mgt: Rel.pos in chain/CRL/OCSP */
 	CRYPT_CERTINFO_TRUSTED_USAGE,	/* Usage that cert is trusted for */
 	CRYPT_CERTINFO_TRUSTED_IMPLICIT,/* Whether cert is implicitly trusted */
@@ -603,7 +626,7 @@ typedef enum {
 	CRYPT_CERTINFO_RFC822NAME,				/* rfc822Name */
 		CRYPT_CERTINFO_EMAIL = CRYPT_CERTINFO_RFC822NAME,
 	CRYPT_CERTINFO_DNSNAME,					/* dNSName */
-#if 0	/* Not supported yet, these are never used in practice and have an
+#if 0	/* Not supported, these are never used in practice and have an
 		   insane internal structure */
 	CRYPT_CERTINFO_X400ADDRESS,				/* x400Address */
 #endif /* 0 */
@@ -1081,7 +1104,7 @@ typedef enum {
 	/* Protocol-specific information */
 	CRYPT_SESSINFO_TSP_MSGIMPRINT,	/* TSP message imprint */
 	CRYPT_SESSINFO_CMP_REQUESTTYPE,	/* Request type */
-	CRYPT_SESSINFO_CMP_PKIBOOT,		/* Enable PKIBoot facility */
+	CRYPT_SESSINFO_CMP_PKIBOOT,		/* Unused, to be removed in 3.4 */
 	CRYPT_SESSINFO_CMP_PRIVKEYSET,	/* Private-key keyset */
 	CRYPT_SESSINFO_SSH_CHANNEL,		/* SSH current channel */
 	CRYPT_SESSINFO_SSH_CHANNEL_TYPE,/* SSH channel type */
@@ -1154,6 +1177,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL,/* PGP public key w/o trigger */
 	CRYPT_IATTRIBUTE_PGPVALIDITY,	/* PGP key validity */
 	CRYPT_IATTRIBUTE_DEVICEOBJECT,	/* Device object handle */
+	CRYPT_IATTRIBUTE_DEVICESTORAGEID,/* Storage ID for data in device */
 	CRYPT_IATTRIBUTE_EXISTINGLABEL,	/* Existing label for object in device */
 
 	/* Certificate internal attributes */
@@ -1176,6 +1200,8 @@ typedef enum {
 	CRYPT_IATTRIBUTE_ESSCERTID,		/* ESSCertID */
 	CRYPT_IATTRIBUTE_CERTCOPY,		/* Copy of cert object */
 	CRYPT_IATTRIBUTE_CERTCOPY_DATAONLY,	/* Copy of cert object as data-only cert */
+	CRYPT_IATTRIBUTE_FINGERPRINT_SHA2,/* Certificate fingerprint: SHA-2 */
+	CRYPT_IATTRIBUTE_FINGERPRINT_SHAng,/* Certificate fingerprint: SHAng */
 
 	/* Device internal attributes */
 	CRYPT_IATTRIBUTE_ENTROPY,		/* Polled entropy data */
@@ -1199,6 +1225,7 @@ typedef enum {
 	CRYPT_IATTRIBUTE_USERINFO,		/* User information */
 	CRYPT_IATTRIBUTE_TRUSTEDCERT,	/* First trusted cert */
 	CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT,	/* Successive trusted certs */
+	CRYPT_IATTRIBUTE_HWSTORAGE,		/* Associated device for priv.key data */
 
 	/* Session internal attributes */
 	CRYPT_IATTRIBUTE_ENC_TIMESTAMP,	/* Encoded TSA timestamp */
@@ -1498,10 +1525,10 @@ typedef enum {
 #define CRYPT_MAX_IVSIZE		32
 
 /* The maximum public-key component size - 4096 bits, and maximum component
-   size for ECCs - 256 bits */
+   size for ECCs - 576 bits (to handle the P521 curve) */
 
 #define CRYPT_MAX_PKCSIZE		512
-#define CRYPT_MAX_PKCSIZE_ECC	32
+#define CRYPT_MAX_PKCSIZE_ECC	72
 
 /* The maximum hash size - 256 bits */
 
@@ -1512,27 +1539,30 @@ typedef enum {
 #define CRYPT_MAX_TEXTSIZE		64
 
 /* A magic value indicating that the default setting for this parameter
-   should be used */
+   should be used.  The parentheses are to catch potential erroneous use 
+   in an expression */
 
-#define CRYPT_USE_DEFAULT		-100
+#define CRYPT_USE_DEFAULT		( -100 )
 
 /* A magic value for unused parameters */
 
-#define CRYPT_UNUSED			-101
+#define CRYPT_UNUSED			( -101 )
 
-/* Cursor positioning codes for certificate/CRL extensions */
+/* Cursor positioning codes for certificate/CRL extensions.  The parentheses 
+   are to catch potential erroneous use in an expression */
 
-#define CRYPT_CURSOR_FIRST		-200
-#define CRYPT_CURSOR_PREVIOUS	-201
-#define CRYPT_CURSOR_NEXT		-202
-#define CRYPT_CURSOR_LAST		-203
+#define CRYPT_CURSOR_FIRST		( -200 )
+#define CRYPT_CURSOR_PREVIOUS	( -201 )
+#define CRYPT_CURSOR_NEXT		( -202 )
+#define CRYPT_CURSOR_LAST		( -203 )
 
 /* The type of information polling to perform to get random seed 
    information.  These values have to be negative because they're used
-   as magic length values for cryptAddRandom() */
+   as magic length values for cryptAddRandom().  The parentheses are to 
+   catch potential erroneous use in an expression */
 
-#define CRYPT_RANDOM_FASTPOLL	-300
-#define CRYPT_RANDOM_SLOWPOLL	-301
+#define CRYPT_RANDOM_FASTPOLL	( -300 )
+#define CRYPT_RANDOM_SLOWPOLL	( -301 )
 
 /* Whether the PKC key is a public or private key */
 
@@ -1656,25 +1686,39 @@ typedef struct {
 	int xLen;					/* Length of private integer in bits */
 	} CRYPT_PKCINFO_DLP;
 
+typedef enum {
+	/* Named ECC curves.  When updating these remember to also update the 
+	   ECC fieldSizeInfo table in context/kg_ecc.c, the eccOIDinfo table and 
+	   sslEccCurveInfo table in context/key_rd.c, and the curveIDTbl in 
+	   session/ssl.c */
+	CRYPT_ECCCURVE_NONE,		/* No ECC curve type */
+	CRYPT_ECCCURVE_P192,		/* NIST P192/X9.62 P192r1/SECG p192r1 curve */
+	CRYPT_ECCCURVE_P224,		/* NIST P224/X9.62 P224r1/SECG p224r1 curve */
+	CRYPT_ECCCURVE_P256,		/* NIST P256/X9.62 P256v1/SECG p256r1 curve */
+	CRYPT_ECCCURVE_P384,		/* NIST P384, SECG p384r1 curve */
+	CRYPT_ECCCURVE_P521,		/* NIST P521, SECG p521r1 */
+	CRYPT_ECCCURVE_LAST			/* Last valid ECC curve type */
+	} CRYPT_ECCCURVE_TYPE;
+
 typedef struct {
 	/* Status information */
 	int isPublicKey;			/* Whether this is a public or private key */
 
-	/* Curve */
+	/* Curve domain parameters.  Either the curveType or the explicit domain
+	   parameters must be provided */
+	CRYPT_ECCCURVE_TYPE curveType;	/* Named curve */
 	unsigned char p[ CRYPT_MAX_PKCSIZE_ECC ];/* Prime defining Fq */
 	int pLen;					/* Length of prime in bits */
 	unsigned char a[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	int aLen;					/* Length of element a in bits */
 	unsigned char b[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	int bLen;					/* Length of element b in bits */
-
-	/* Generator */
 	unsigned char gx[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	int gxLen;					/* Length of element gx in bits */
 	unsigned char gy[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	int gyLen;					/* Length of element gy in bits */
-	unsigned char r[ CRYPT_MAX_PKCSIZE_ECC ];/* Order of point */
-	int rLen;					/* Length of order in bits */
+	unsigned char n[ CRYPT_MAX_PKCSIZE_ECC ];/* Order of point */
+	int nLen;					/* Length of order in bits */
 	unsigned char h[ CRYPT_MAX_PKCSIZE_ECC ];/* Optional cofactor */
 	int hLen;					/* Length of cofactor in bits */
 
@@ -1713,57 +1757,58 @@ typedef struct {
 
 /* No error in function call */
 
-#define CRYPT_OK				0	/* No error */
+#define CRYPT_OK				0		/* No error */
 
-/* Error in parameters passed to function */
+/* Error in parameters passed to function.  The parentheses are to catch 
+   potential erroneous use in an expression */
 
-#define CRYPT_ERROR_PARAM1		-1	/* Bad argument, parameter 1 */
-#define CRYPT_ERROR_PARAM2		-2	/* Bad argument, parameter 2 */
-#define CRYPT_ERROR_PARAM3		-3	/* Bad argument, parameter 3 */
-#define CRYPT_ERROR_PARAM4		-4	/* Bad argument, parameter 4 */
-#define CRYPT_ERROR_PARAM5		-5	/* Bad argument, parameter 5 */
-#define CRYPT_ERROR_PARAM6		-6	/* Bad argument, parameter 6 */
-#define CRYPT_ERROR_PARAM7		-7	/* Bad argument, parameter 7 */
+#define CRYPT_ERROR_PARAM1		( -1 )	/* Bad argument, parameter 1 */
+#define CRYPT_ERROR_PARAM2		( -2 )	/* Bad argument, parameter 2 */
+#define CRYPT_ERROR_PARAM3		( -3 )	/* Bad argument, parameter 3 */
+#define CRYPT_ERROR_PARAM4		( -4 )	/* Bad argument, parameter 4 */
+#define CRYPT_ERROR_PARAM5		( -5 )	/* Bad argument, parameter 5 */
+#define CRYPT_ERROR_PARAM6		( -6 )	/* Bad argument, parameter 6 */
+#define CRYPT_ERROR_PARAM7		( -7 )	/* Bad argument, parameter 7 */
 
 /* Errors due to insufficient resources */
 
-#define CRYPT_ERROR_MEMORY		-10	/* Out of memory */
-#define CRYPT_ERROR_NOTINITED	-11	/* Data has not been initialised */
-#define CRYPT_ERROR_INITED		-12	/* Data has already been init'd */
-#define CRYPT_ERROR_NOSECURE	-13	/* Opn.not avail.at requested sec.level */
-#define CRYPT_ERROR_RANDOM		-14	/* No reliable random data available */
-#define CRYPT_ERROR_FAILED		-15	/* Operation failed */
-#define CRYPT_ERROR_INTERNAL	-16	/* Internal consistency check failed */
+#define CRYPT_ERROR_MEMORY		( -10 )	/* Out of memory */
+#define CRYPT_ERROR_NOTINITED	( -11 )	/* Data has not been initialised */
+#define CRYPT_ERROR_INITED		( -12 )	/* Data has already been init'd */
+#define CRYPT_ERROR_NOSECURE	( -13 )	/* Opn.not avail.at requested sec.level */
+#define CRYPT_ERROR_RANDOM		( -14 )	/* No reliable random data available */
+#define CRYPT_ERROR_FAILED		( -15 )	/* Operation failed */
+#define CRYPT_ERROR_INTERNAL	( -16 )	/* Internal consistency check failed */
 
 /* Security violations */
 
-#define CRYPT_ERROR_NOTAVAIL	-20	/* This type of opn.not available */
-#define CRYPT_ERROR_PERMISSION	-21	/* No permiss.to perform this operation */
-#define CRYPT_ERROR_WRONGKEY	-22	/* Incorrect key used to decrypt data */
-#define CRYPT_ERROR_INCOMPLETE	-23	/* Operation incomplete/still in progress */
-#define CRYPT_ERROR_COMPLETE	-24	/* Operation complete/can't continue */
-#define CRYPT_ERROR_TIMEOUT		-25	/* Operation timed out before completion */
-#define CRYPT_ERROR_INVALID		-26	/* Invalid/inconsistent information */
-#define CRYPT_ERROR_SIGNALLED	-27	/* Resource destroyed by extnl.event */
+#define CRYPT_ERROR_NOTAVAIL	( -20 )	/* This type of opn.not available */
+#define CRYPT_ERROR_PERMISSION	( -21 )	/* No permiss.to perform this operation */
+#define CRYPT_ERROR_WRONGKEY	( -22 )	/* Incorrect key used to decrypt data */
+#define CRYPT_ERROR_INCOMPLETE	( -23 )	/* Operation incomplete/still in progress */
+#define CRYPT_ERROR_COMPLETE	( -24 )	/* Operation complete/can't continue */
+#define CRYPT_ERROR_TIMEOUT		( -25 )	/* Operation timed out before completion */
+#define CRYPT_ERROR_INVALID		( -26 )	/* Invalid/inconsistent information */
+#define CRYPT_ERROR_SIGNALLED	( -27 )	/* Resource destroyed by extnl.event */
 
 /* High-level function errors */
 
-#define CRYPT_ERROR_OVERFLOW	-30	/* Resources/space exhausted */
-#define CRYPT_ERROR_UNDERFLOW	-31	/* Not enough data available */
-#define CRYPT_ERROR_BADDATA		-32	/* Bad/unrecognised data format */
-#define CRYPT_ERROR_SIGNATURE	-33	/* Signature/integrity check failed */
+#define CRYPT_ERROR_OVERFLOW	( -30 )	/* Resources/space exhausted */
+#define CRYPT_ERROR_UNDERFLOW	( -31 )	/* Not enough data available */
+#define CRYPT_ERROR_BADDATA		( -32 )	/* Bad/unrecognised data format */
+#define CRYPT_ERROR_SIGNATURE	( -33 )	/* Signature/integrity check failed */
 
 /* Data access function errors */
 
-#define CRYPT_ERROR_OPEN		-40	/* Cannot open object */
-#define CRYPT_ERROR_READ		-41	/* Cannot read item from object */
-#define CRYPT_ERROR_WRITE		-42	/* Cannot write item to object */
-#define CRYPT_ERROR_NOTFOUND	-43	/* Requested item not found in object */
-#define CRYPT_ERROR_DUPLICATE	-44	/* Item already present in object */
+#define CRYPT_ERROR_OPEN		( -40 )	/* Cannot open object */
+#define CRYPT_ERROR_READ		( -41 )	/* Cannot read item from object */
+#define CRYPT_ERROR_WRITE		( -42 )	/* Cannot write item to object */
+#define CRYPT_ERROR_NOTFOUND	( -43 )	/* Requested item not found in object */
+#define CRYPT_ERROR_DUPLICATE	( -44 )	/* Item already present in object */
 
 /* Data enveloping errors */
 
-#define CRYPT_ENVELOPE_RESOURCE	-50	/* Need resource to proceed */
+#define CRYPT_ENVELOPE_RESOURCE	( -50 )	/* Need resource to proceed */
 
 /* Macros to examine return values */
 

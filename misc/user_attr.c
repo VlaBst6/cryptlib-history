@@ -98,8 +98,10 @@ static int twoPhaseConfigUpdate( INOUT USER_INFO *userInfoPtr,
 		sprintf_s( userFileName, 16, "u%06x", 
 				   userInfoPtr->userFileInfo.fileRef );
 		}
-	status = prepareConfigData( userInfoPtr->configOptions, userFileName, 
-								userInfoPtr->trustInfoPtr, &data, &length );
+	status = prepareConfigData( userInfoPtr->configOptions, 
+								userInfoPtr->configOptionsCount, 
+								userFileName, userInfoPtr->trustInfoPtr, 
+								&data, &length );
 	if( status != OK_SPECIAL )
 		return( status );
 
@@ -167,6 +169,7 @@ static int twoPhaseSelftest( INOUT USER_INFO *userInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	return( setOptionSpecial( userInfoPtr->configOptions, 
+							  userInfoPtr->configOptionsCount,
 							  CRYPT_OPTION_SELFTESTOK,
 							  cryptStatusOK( selfTestStatus ) ? \
 								TRUE : FALSE ) );
@@ -261,7 +264,9 @@ int getUserAttribute( INOUT USER_INFO *userInfoPtr,
 
 	/* A numeric-value get can never fail because we always have default 
 	   values present */
-	return( getOption( userInfoPtr->configOptions, attribute, valuePtr ) );
+	return( getOption( userInfoPtr->configOptions, 
+					   userInfoPtr->configOptionsCount, attribute, 
+					   valuePtr ) );
 	}
 
 /* Get a string attribute */
@@ -285,7 +290,8 @@ int getUserAttributeS( INOUT USER_INFO *userInfoPtr,
 			  attribute < CRYPT_OPTION_LAST );
 
 	/* Check whether there's a configuration value of this type present */
-	status = getOptionString( userInfoPtr->configOptions, attribute, 
+	status = getOptionString( userInfoPtr->configOptions, 
+							  userInfoPtr->configOptionsCount, attribute, 
 							  &string, &stringLen );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -325,9 +331,7 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 				( attribute == CRYPT_USERINFO_CAKEY_CERTSIGN ) ? \
 					CRYPT_KEYUSAGE_KEYCERTSIGN : \
 				( attribute == CRYPT_USERINFO_CAKEY_CRLSIGN ) ? \
-					CRYPT_KEYUSAGE_CRLSIGN : \
-					( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-					  CRYPT_KEYUSAGE_NONREPUDIATION );
+					CRYPT_KEYUSAGE_CRLSIGN : KEYUSAGE_SIGN;
 			int attributeValue;
 
 			/* Make sure that this key type isn't already present in the 
@@ -407,7 +411,8 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 
 	/* Set the option.  If it's not one of the two special options with 
 	   side-effects, we're done */
-	status = setOption( userInfoPtr->configOptions, attribute, value );
+	status = setOption( userInfoPtr->configOptions, 
+						userInfoPtr->configOptionsCount, attribute, value );
 	if( attribute != CRYPT_OPTION_CONFIGCHANGED && \
 		attribute != CRYPT_OPTION_SELFTESTOK )
 		return( status );
@@ -447,7 +452,8 @@ int setUserAttributeS( INOUT USER_INFO *userInfoPtr,
 	/* Anything else has to be a configuration option */
 	REQUIRES( attribute > CRYPT_OPTION_FIRST && \
 			  attribute < CRYPT_OPTION_LAST );
-	return( setOptionString( userInfoPtr->configOptions, attribute, 
+	return( setOptionString( userInfoPtr->configOptions, 
+							 userInfoPtr->configOptionsCount, attribute, 
 							 data, dataLength ) );
 	}
 
@@ -480,5 +486,6 @@ int deleteUserAttribute( INOUT USER_INFO *userInfoPtr,
 	REQUIRES( attribute > CRYPT_OPTION_FIRST && \
 			  attribute < CRYPT_OPTION_LAST );
 
-	return( deleteOption( userInfoPtr->configOptions, attribute ) );
+	return( deleteOption( userInfoPtr->configOptions, 
+						  userInfoPtr->configOptionsCount, attribute ) );
 	}

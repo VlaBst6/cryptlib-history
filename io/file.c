@@ -109,10 +109,15 @@ static int appendFilename( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 
 	assert( isWritePtr( path, pathMaxLen ) );
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
-	assert( isReadPtr( fileName, fileNameLen ) );
+	assert( ( option == BUILDPATH_RNDSEEDFILE ) || \
+			isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH_SHORT );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 	REQUIRES( option > BUILDPATH_NONE && option < BUILDPATH_LAST );
 
 	/* Clear return value */
@@ -314,7 +319,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -376,7 +383,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -407,18 +415,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
@@ -607,7 +612,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -669,7 +676,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -698,18 +706,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* Build the path to the configuration file if necessary.  We assume that
 	   we're on the correct drive */
@@ -863,7 +868,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -929,7 +936,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -963,18 +971,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* Add the filename to the path */
 	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
@@ -1187,7 +1192,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -1245,7 +1252,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -1274,18 +1282,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	strlcpy_s( path, pathMaxLen, ":" );
 
@@ -1485,7 +1490,10 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 		/* Fetch the data into a buffer large enough to contain the entire
 		   stream */
 		if( ( stream->buffer = clAlloc( "sFileOpen", allocSize ) ) == NULL )
+			{
+			fclose( filePtr );
 			return( CRYPT_ERROR_MEMORY );
+			}
 		stream->bufSize = allocSize;
 		stream->bufEnd = length;
 		status = fread( stream->buffer, length, 1, filePtr );
@@ -1800,18 +1808,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __IBM4758__ )
@@ -2038,7 +2043,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -2102,7 +2109,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -2136,18 +2144,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 16 + fileNameLen + 8 );
 
 	/* Make sure that VFS services are available */
 	if( !checkVFSMgr() )
@@ -2385,7 +2390,9 @@ static void eraseFile( FX_FILE *filePtr, long position, long length )
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -2447,7 +2454,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -2461,8 +2469,8 @@ void fileErase( IN_STRING const char *fileName )
 		BYTE buffer[ 1 + 8 ];
 		int bytesRead;
 
-		if( fx_file_read( stream->filePtr, buffer, 1, \
-						  &bytesRead ) != FX_SUCCESS ) || bytesRead != 1 )
+		if( ( fx_file_read( stream->filePtr, buffer, 1, \
+							&bytesRead ) != FX_SUCCESS ) || bytesRead != 1 )
 			break;
 		}
 	fx_file_seek( stream->filePtr, 0 );
@@ -2492,18 +2500,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 10 + fileNameLen + 8 )
 
 	/* Build the path to the configuration file if necessary */
 	strlcpy_s( path, pathMaxLen, "/cryptlib/" );
@@ -2529,9 +2534,10 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 *																			*
 ****************************************************************************/
 
-#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __RTEMS__ ) || \
-	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
-	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ )
+#elif defined( __BEOS__ ) || defined( __ECOS__ ) || defined( __MVS__ ) || \
+	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
+	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
+	  defined( __UNIX__ )
 
 /* Tandem doesn't have ftruncate() even though there's a manpage for it
    (which claims that it's prototyped in sys/types.h (!!)).  unistd.h has
@@ -2605,6 +2611,9 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 #ifndef O_NOFOLLOW			/* Avoid following symlinks on open */
   #define O_NOFOLLOW	0
 #endif /* O_NOFOLLOW */
+#ifndef O_CLOEXEC			/* Don't let forked children inherit handle */
+  #define O_CLOEXEC		0
+#endif /* O_CLOEXEC */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int openFile( INOUT STREAM *stream, IN_STRING const char *fileName,
@@ -2625,7 +2634,12 @@ static int openFile( INOUT STREAM *stream, IN_STRING const char *fileName,
 	   former standard I/O ones.  This could cause private data to be
 	   written to stdout or error messages emitted by the calling app to go
 	   into the opened file.  To avoid this, we retry the open if we get the
-	   same handle as a standard I/O one */
+	   same handle as a standard I/O one.
+	   
+	   We use the O_NOFOLLOW flag to avoid following symlinks if the OS 
+	   supports it.  Note that this flag is dangerous to use when reading 
+	   things like /dev/random because they're symlinks on some OSes, but 
+	   these types of files aren't accessed through this function */
 	for( count = 0; count < 4; count++ )
 		{
 		fd = open( fileName, flags, openMode | O_NOFOLLOW );
@@ -2665,20 +2679,14 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
-#if defined( EBCDIC_CHARS )
-  #pragma convlit( suspend )
-#endif /* EBCDIC_CHARS */
-	static const int modes[] = { O_RDONLY, O_RDONLY, O_WRONLY, O_RDWR };
-#if defined( EBCDIC_CHARS )
-  #pragma convlit( resume )
-#endif /* EBCDIC_CHARS */
-	int openMode = modes[ mode & FILE_FLAG_RW_MASK ];
+	const int extraOpenFlags = ( mode & FILE_FLAG_EXCLUSIVE_ACCESS ) ? \
+							   O_CLOEXEC : 0;
 #ifdef EBCDIC_CHARS
 	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 #endif /* EBCDIC_CHARS */
-#ifdef USE_FCNTL_LOCKING
+#if !defined( USE_EMBEDDED_OS ) && defined( USE_FCNTL_LOCKING )
 	struct flock flockInfo;
-#endif /* USE_FCNTL_LOCKING */
+#endif /* !USE_EMBEDDED_OS && USE_FCNTL_LOCKING */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( fileName != NULL );
@@ -2744,7 +2752,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 			   NFSv2 and even for newer versions support can be hit-and-miss
 			   - under Linux for example it requires kernel versions 2.6.5
 			   or newer to work */
-			status = openFile( stream, fileName, O_CREAT | O_EXCL | O_RDWR,
+			status = openFile( stream, fileName, 
+							   O_CREAT | O_EXCL | O_RDWR | extraOpenFlags,
 							   0600 );
 			if( cryptStatusError( status ) )
 				return( status );
@@ -2759,7 +2768,7 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 				return( CRYPT_ERROR_OPEN );
 
 			/* Open an existing file */
-			status = openFile( stream, fileName, O_RDWR, 0 );
+			status = openFile( stream, fileName, O_RDWR | extraOpenFlags, 0 );
 			if( cryptStatusError( status ) )
 				return( status );
 
@@ -2795,15 +2804,22 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 				}
 
 			/* Turn the file into an empty file */
-			ftruncate( stream->fd, 0 );
+			if( ftruncate( stream->fd, 0 ) < 0 )
+				{
+				close( stream->fd );
+				return( CRYPT_ERROR_OPEN );
+				}
 			}
 		}
 	else
 		{
+		static const int modes[] = { O_RDONLY, O_RDONLY, O_WRONLY, O_RDWR };
 		int status;
 
 		/* Open an existing file for read access */
-		status = openFile( stream, fileName, openMode, 0 );
+		status = openFile( stream, fileName, 
+						   modes[ mode & FILE_FLAG_RW_MASK ] | extraOpenFlags, 
+						   0 );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -2875,7 +2891,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 
 	   This mess is why dotfile-locking is still so popular, but that's
 	   probably going a bit far for simple keyset accesses */
-#ifndef USE_FCNTL_LOCKING
+#ifndef USE_EMBEDDED_OS /* Embedded systems have no locking */
+  #ifndef USE_FCNTL_LOCKING
 	if( flock( stream->fd, ( mode & FILE_FLAG_EXCLUSIVE_ACCESS ) ? \
 						   LOCK_EX | LOCK_NB : LOCK_SH | LOCK_NB ) < 0 && \
 		errno == EWOULDBLOCK )
@@ -2883,7 +2900,7 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 		close( stream->fd );
 		return( CRYPT_ERROR_PERMISSION );
 		}
-#else
+  #else
 	memset( &flockInfo, 0, sizeof( struct flock ) );
 	flockInfo.l_type = ( mode & FILE_FLAG_EXCLUSIVE_ACCESS ) ? \
 					   F_WRLCK : F_RDLCK;
@@ -2904,7 +2921,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 		close( stream->fd );
 		return( CRYPT_ERROR_PERMISSION );
 		}
-#endif /* flock() vs. fcntl() locking */
+  #endif /* flock() vs. fcntl() locking */
+#endif /* USE_EMBEDDED_OS */
 
 	return( CRYPT_OK );
 	}
@@ -2923,9 +2941,9 @@ int sFileClose( INOUT STREAM *stream )
 	   no need to unlock the file since all locks are automatically released
 	   as soon as any handle to it is closed (see the long comment above for
 	   more on this complete braindamage) */
-#ifndef USE_FCNTL_LOCKING
+#if !defined( USE_EMBEDDED_OS ) && !defined( USE_FCNTL_LOCKING )
 	flock( stream->fd, LOCK_UN );
-#endif /* !USE_FCNTL_LOCKING */
+#endif /* !USE_EMBEDDED_OS && !USE_FCNTL_LOCKING */
 
 	/* Close the file.  In theory this shouldn't really be able to fail, but 
 	   NFS can elay the error reporting until this point rather than 
@@ -3104,7 +3122,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe the file.  This is a fairly crude function that performs a
 	   single pass of overwriting the data with random data, it's not
@@ -3129,7 +3149,7 @@ static void eraseFile( const STREAM *stream, long position, long length )
 		length -= bytesToWrite;
 		}
 	fsync( stream->fd );
-	ftruncate( stream->fd, position );
+	( void ) ftruncate( stream->fd, position );
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -3157,12 +3177,14 @@ void fileErase( IN_STRING const char *fileName )
 	{
 	STREAM stream;
 	struct stat fstatInfo;
-#if defined( __FreeBSD__ )
+#ifndef USE_EMBEDDED_OS /* Embedded systems have no file timestamps */
+  #if defined( __FreeBSD__ )
 	struct timeval timeVals[ 2 ];
-#elif !( defined( __APPLE__ ) || defined( __FreeBSD__ ) || \
-		 defined( __linux__ ) )
+  #elif !( defined( __APPLE__ ) || defined( __FreeBSD__ ) || \
+		   defined( __linux__ ) )
 	struct utimbuf timeStamp;
-#endif /* OS-specific variable declarations */
+  #endif /* OS-specific variable declarations */
+#endif /* USE_EMBEDDED_OS */
 #ifdef EBCDIC_CHARS
 	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
 #endif /* EBCDIC_CHARS */
@@ -3181,7 +3203,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		unlink( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			unlink( fileName );
 		return;
 		}
 
@@ -3210,36 +3233,71 @@ void fileErase( IN_STRING const char *fileName )
 	   directory permissions can do is cause us to delete another file in a
 	   generic DoS that they could perform anyway if they have the user's
 	   rights */
-#if defined( __APPLE__ )
+#ifndef USE_EMBEDDED_OS /* Embedded systems have no file timestamps */
+  #if defined( __APPLE__ )
 	futimes( stream.fd, NULL );
 	sFileClose( &stream );
-#elif defined( __FreeBSD__ )
+  #elif defined( __FreeBSD__ )
 	memset( timeVals, 0, sizeof( struct timeval ) * 2 );
 	futimes( stream.fd, timeVals );
 	futimes( stream.fd, timeVals );
 	sFileClose( &stream );
-#elif defined( __UCLIBC__ )
+  #elif defined( __UCLIBC__ )
 	sFileClose( &stream );
 	utimes( fileName, NULL );	/* uClibc doesn't have futimes() */
-#elif defined( __linux__ )
+  #elif defined( __linux__ )
 	if( futimes( stream.fd, NULL ) < 0 )
 		status = errno;			/* futimes() isn't available on all platforms */
 	sFileClose( &stream );
 	if( errno == ENOSYS )		/* futimes() failed, fall back to utimes() */
 		utimes( fileName, NULL );
-#else
+  #else
 	sFileClose( &stream );
 	memset( &timeStamp, 0, sizeof( struct utimbuf ) );
 	utime( fileName, &timeStamp );
-#endif /* OS-specific size and date-mangling */
+  #endif /* OS-specific size and date-mangling */
+#else
+	sFileClose( &stream );
+#endif /* USE_EMBEDDED_OS */
 	unlink( fileName );
 	}
 
 /* Build the path to a file in the cryptlib directory */
 
-#include <pwd.h>
+#if defined( USE_EMBEDDED_OS )
 
-#ifdef DDNAME_IO
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+						   IN_LENGTH_SHORT const int pathMaxLen, 
+						   OUT_LENGTH_SHORT_Z int *pathLen,
+						   IN_BUFFER( fileNameLen ) const char *fileName, 
+						   IN_LENGTH_SHORT const int fileNameLen,
+						   IN_ENUM( BUILDPATH_OPTION ) \
+						   const BUILDPATH_OPTION_TYPE option )
+	{
+	assert( isWritePtr( path, pathMaxLen ) );
+	assert( isWritePtr( pathLen, sizeof( int ) ) );
+	assert( ( fileName == NULL && fileNameLen == 0 ) || \
+			isReadPtr( fileName, fileNameLen ) );
+
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
+	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
+
+	/* Make sure that the open fails if we can't build the path */
+	*path = '\0';
+
+	/* Embedded OSes have little in the way of filesystems so rather than 
+	   trying to second-guess what might be available we just dump 
+	   everything in the current directory */
+	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
+							fileNameLen, option ) );
+	}
+
+#elif defined( DDNAME_IO )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
@@ -3254,18 +3312,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* MVS dataset name userid.CRYPTLIB.filename.  We can't use a PDS since
 	   multiple members have to be opened in write mode simultaneously */
@@ -3278,6 +3333,8 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 		}
 	}
 #else
+
+#include <pwd.h>
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
@@ -3299,16 +3356,33 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
 
-	/* Build the path to the configuration file if necessary */
+	/* Build the path to the configuration file if necessary.  In theory we 
+	   could perform further checking here to ensure that all directories in 
+	   the path to the target file are safe (i.e. not generally writeable) 
+	   because otherwise an attacker could remove a directory in the path 
+	   and substitute one of their own with the same name, which means that 
+	   we'd end up writing our config data into a directory that they 
+	   control, but in practice there's no easy way to enforce this because 
+	   it's unclear what the definition of "safe" is since it varies 
+	   depending on who the current user is, or more specifically what 
+	   rights the user currently has.  In addition the checking itself is 
+	   subject to race conditions which makes it complex to perform (see the 
+	   hoops that the file-open operation has to jump through above for a 
+	   small example of this).  In general when the system config is broken 
+	   enough to allow this type of attack there's not much more that we can 
+	   achieve with various Rube Goldberg checks, and on most systems all 
+	   it'll do is lead to lots of false positives because of the unclear 
+	   definition of what should be considered "safe" */
 #ifdef EBCDIC_CHARS
 	fileName = bufferToEbcdic( fileNameBuffer, fileName );
 	#pragma convlit( suspend )
@@ -3319,15 +3393,14 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	if( ( length = strlen( passwd->pw_dir ) ) > MAX_PATH_LENGTH - 64 )
 		return( CRYPT_ERROR_OPEN );	/* You're kidding, right? */
 
-	/* Make sure that the path buffer meets the minimum length
-	   requirements */
-#if defined( __APPLE__ )
-	REQUIRES( pathMaxLen >= length + 32 + fileNameLen + 8 );
-#else
-	REQUIRES( pathMaxLen >= length + 16 + fileNameLen + 8 );
-#endif /* OS X */
-
 	/* Set up the path to the cryptlib directory */
+#if defined( __APPLE__ )
+	if( length + 32 >= pathMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );	/* OS X uses slighly longer paths */
+#else
+	if( length + 16 >= pathMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );
+#endif /* OS X */
 	memcpy( path, passwd->pw_dir, length );
 	if( path[ length - 1 ] != '/' )
 		path[ length++ ] = '/';
@@ -3370,7 +3443,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	return( CRYPT_OK );
 #endif /* EBCDIC_CHARS */
 	}
-#endif /* DDNAME_IO */
+#endif /* OS-specific filesystem handling */
 
 /****************************************************************************
 *																			*
@@ -3622,7 +3695,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -3696,7 +3771,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -3735,18 +3811,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 #if 0	/* Default path is just cwd, which isn't too useful */
 	ioDefPathGet( path );
@@ -3894,12 +3967,12 @@ static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
 	assert( isReadPtr( fileName, sizeof( char * ) ) );
 
 	/* Load the MPR library.  We can't (safely) use an opportunistic
-	   GetModuleHandle() before the LoadLibrary() for this because the code
-	   that originally loaded the DLL might do a FreeLibrary in another
+	   GetModuleHandle() before the DynamicLoad() for this because the code
+	   that originally loaded the DLL might do a DynamicUnload() in another
 	   thread, causing the library to be removed from under us.  In any case
-	   LoadLibrary does this for us, merely incrementing the reference count
-	   if the DLL is already loaded */
-	hMPR = LoadLibrary( "Mpr.dll" );
+	   DynamicLoad() does this for us, merely incrementing the reference 
+	   count if the DLL is already loaded */
+	hMPR = DynamicLoad( "Mpr.dll" );
 	if( hMPR == NULL )
 		{
 		/* Should never happen, we can't have a mapped network drive if no
@@ -3920,7 +3993,7 @@ static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
 		*fileName = nameInfo->lpUniversalName;
 		gotUNC = TRUE;
 		}
-	FreeLibrary( hMPR );
+	DynamicUnload( hMPR );
 
 	return( gotUNC );
 	}
@@ -3941,12 +4014,12 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 	SID_NAME_USE eUse;
 	DWORD nameBufSize = PATH_BUFFER_SIZE, domainBufSize = PATH_BUFFER_SIZE;
 	BOOLEAN isMappedDrive = FALSE, tokenOK = FALSE;
-	int fileNamePtrLength = fileNameLength, serverNameLength;
+	int fileNamePtrLength = fileNameLength, serverNameLength, length;
 
 	assert( isReadPtr( fileName, fileNameLength ) );
 	assert( sizeof( UNIVERSAL_NAME_INFO ) + _MAX_PATH <= UNI_BUFFER_SIZE );
 
-	REQUIRES( fileNameLength > 0 && fileNameLength < _MAX_PATH );
+	REQUIRES_B( fileNameLength > 0 && fileNameLength < _MAX_PATH );
 
 	/* Win95 doesn't have any ACL-based security, there's nothing to do */
 	if( getSysVar( SYSVAR_ISWIN95 ) == TRUE )
@@ -3956,17 +4029,24 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 	   ones and converts forward to backwards slashes.  The latter is
 	   necessary because while the Windows filesystem functions will accept
 	   Unix-style forward slashes in paths, the WNetGetUniversalName()
-	   networking function doesn't */
-	if( GetFullPathName( fileNamePtr, PATH_BUFFER_SIZE, pathBuffer, \
-						 NULL ) > 0 )
+	   networking function doesn't.
+	   
+	   GetFullPathName() has a weird return value where it can return a
+	   success (nonzero) status even if it fails, which occurs when the
+	   resulting string is too long to fit into the buffer.  In this case it 
+	   returns the required buffer size, so we have to check whether the 
+	   return value falls within a certain range rather than just being 
+	   nonzero */
+	length = GetFullPathName( fileNamePtr, PATH_BUFFER_SIZE, pathBuffer, NULL );
+	if( length > 0 && length < PATH_BUFFER_SIZE )
 		{
 		fileNamePtr = pathBuffer;
-		fileNamePtrLength = strlen( pathBuffer );
+		fileNamePtrLength = length;
 		}
 
 	/* If the path is too short to contain a drive letter or UNC path, it
 	   must be local */
-	if( strlen( fileNamePtr ) <= 2 )
+	if( fileNamePtrLength <= 2 )
 		return( TRUE );
 
 	/* If there's a drive letter present, check whether it's a local or
@@ -4014,7 +4094,7 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 		 serverNameLength < fileNamePtrLength && \
 			fileNamePtr[ serverNameLength ] != '\\'; \
 		 serverNameLength++ );
-	if( serverNameLength >= PATH_BUFFER_SIZE - 2 )
+	if( serverNameLength <= 0 || serverNameLength >= PATH_BUFFER_SIZE - 2 )
 		{
 		/* Server name is too long, default to fail-safe handling */
 		return( TRUE );
@@ -4101,7 +4181,22 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 #endif /* __WINCE__ */
 
 	/* Don't allow the use of escapes that disable path parsing, and make
-	   sure that the path has a sensible length */
+	   sure that the path has a sensible length.  There are in theory 
+	   various additional checks that we could add at this point, for 
+	   example to try and detect spurious dots and spaces in the path, which 
+	   are handled by Windows in unexpected ways, generally by removing 
+	   them.  For example "foo...   . ... ..." would be opened as "foo.".  
+	   This can lead to tricks like specifying a name like "foo.exe  ..  .. 
+	   <to MAX_PATH>.txt" which is then truncated at MAX_PATH and the morse 
+	   code also truncated to create "foo.exe" instead of a text file.  
+	   Alternatively it's also possible to force the creation of files with 
+	   trailing dots and spaces by using an alternate data stream specifier 
+	   "::<name>" after the trailing junk, since ADS parsing occurs after 
+	   stripping of trailing junk, so the ADS specifier protects the 
+	   trailing junk.  On the other hand it's not exactly clear why a user 
+	   would be doing something like this with their crypto keyset, or even 
+	   whether we can evade all the various other tricks they could play at 
+	   the filesystem level */
 	if( !memcmp( fileNamePtr, "\\\\", 2 ) )
 		{
 		const int length = strlen( ( char * ) fileNamePtr );
@@ -4174,7 +4269,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 		CloseHandle( hFile );
 		if( type != FILE_TYPE_DISK )
 			{
-			freeACLInfo( aclInfo );
+			if( aclInfo != NULL )
+				freeACLInfo( aclInfo );
 			return( CRYPT_ERROR_OPEN );
 			}
 		}
@@ -4186,14 +4282,25 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 #endif /* __WINCE__ */
 	if( ( mode & FILE_FLAG_RW_MASK ) == FILE_FLAG_WRITE )
 		{
+		BOOL fSuccess;
+
 		/* If we're creating the file, we need to remove any existing file
 		   of the same name before we try and create a new one, otherwise
 		   the OS will pick up the permissions for the existing file and
 		   apply them to the new one.  This is safe because if an attacker
 		   tries to slip in a wide-open file between the delete and the
 		   create, we'll get a file-already-exists status returned that we
-		   can trap and turn into an error */
-		DeleteFile( fileNamePtr );
+		   can trap and turn into an error.  Since the DeleteFile() can fail 
+		   in ways that indicate that the following CreateFile() isn't going 
+		   to succeed either, we check for certain failure cases and exit 
+		   immediately if we encounter them */
+		fSuccess = DeleteFile( fileNamePtr );
+		if( !fSuccess && GetLastError() == ERROR_ACCESS_DENIED )
+			{
+			if( aclInfo != NULL )
+				freeACLInfo( aclInfo );
+			return( CRYPT_ERROR_PERMISSION );
+			}
 		stream->hFile = CreateFile( fileNamePtr, GENERIC_READ | GENERIC_WRITE, 0,
 									getACLInfo( aclInfo ), CREATE_ALWAYS,
 									FILE_ATTRIBUTES | FILE_FLAGS, NULL );
@@ -4226,7 +4333,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 			   in which an attacker creates a special file after we perform
 			   the check */
 			CloseHandle( stream->hFile );
-			freeACLInfo( aclInfo );
+			if( aclInfo != NULL )
+				freeACLInfo( aclInfo );
 			SetErrorMode( uErrorMode );
 			return( CRYPT_ERROR_OPEN );
 			}
@@ -4267,7 +4375,8 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 	   if they really feel they need to know this */
 
 	/* Clean up */
-	freeACLInfo( aclInfo );
+	if( aclInfo != NULL )
+		freeACLInfo( aclInfo );
 	return( status );
 	}
 
@@ -4413,7 +4522,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe the file */
 	while( length > 0 )
@@ -4482,8 +4593,10 @@ void fileErase( IN_STRING const char *fileName )
 
 	/* Convert the filename to the native character set if necessary */
 #ifdef __WINCE__
-	asciiToUnicode( fileNameBuffer, _MAX_PATH, fileName, 
-					strlen( fileName ) + 1 );
+	status = asciiToUnicode( fileNameBuffer, _MAX_PATH, fileName, 
+							 strlen( fileName ) + 1 );
+	if( cryptStatusError( status ) )
+		return;		/* Error converting filename string, exit */
 #endif /* __WINCE__ */
 
 	/* Try and open the file so that we can erase it.  If this fails, the
@@ -4493,7 +4606,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		DeleteFile( fileNamePtr );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			DeleteFile( fileNamePtr );
 		return;
 		}
 	eraseFile( &stream, 0, GetFileSize( stream.hFile, NULL ) );
@@ -4503,44 +4617,29 @@ void fileErase( IN_STRING const char *fileName )
 
 /* Build the path to a file in the cryptlib directory */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
-						   IN_LENGTH_SHORT const int pathMaxLen, 
-						   OUT_LENGTH_SHORT_Z int *pathLen,
-						   IN_BUFFER( fileNameLen ) const char *fileName, 
-						   IN_LENGTH_SHORT const int fileNameLen,
-						   IN_ENUM( BUILDPATH_OPTION ) \
-						   const BUILDPATH_OPTION_TYPE option )
-	{
 #if defined( __WIN32__ )
-  #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
-	#define HRESULT		DWORD	/* Not defined in older BC++ headers */
-  #endif /* BC++ before 5.5 */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int getFolderPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+						  IN_LENGTH_SHORT const int pathMaxLen, 
+						  OUT_LENGTH_SHORT_Z int *pathLen )
+	{
 	typedef HRESULT ( WINAPI *SHGETFOLDERPATH )( HWND hwndOwner,
 										int nFolder, HANDLE hToken,
 										DWORD dwFlags, LPTSTR lpszPath );
 	SHGETFOLDERPATH pSHGetFolderPath;
-	char *pathPtr = path;
-#elif defined( __WINCE__ )
-	wchar_t pathBuffer[ _MAX_PATH + 8 ], *pathPtr = pathBuffer;
-#endif /* Win32 vs. WinCE */
+	const int osMajorVersion = getSysVar( SYSVAR_OSMAJOR );
 	BOOLEAN gotPath = FALSE;
-	int length;
 
 	assert( isWritePtr( path, pathMaxLen ) );
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
-	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
-	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
+	/* Clear return value */
+	memset( path, 0, min( 16, pathMaxLen ) );
+	*pathLen = 0;
 
-#if defined( __WIN32__ )
 	/* SHGetFolderPath() doesn't have an explicit buffer-size parameter to
 	   pass to the function, it always assumes a buffer of at least MAX_PATH
 	   bytes, so before we can call it we have to ensure that we've got at
@@ -4549,12 +4648,12 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 
 	/* Build the path to the configuration file if necessary.  We can't
 	   (safely) use an opportunistic GetModuleHandle() before the
-	   LoadLibrary() for this because the code that originally loaded the
-	   DLL might do a FreeLibrary in another thread, causing the library to
-	   be removed from under us.  In any case LoadLibrary does this for us,
-	   merely incrementing the reference count if the DLL is already
+	   DynamicLoad() for this because the code that originally loaded the
+	   DLL might do a DynamicUnload() in another thread, causing the library 
+	   to be removed from under us.  In any case DynamicLoad() does this for 
+	   us, merely incrementing the reference count if the DLL is already
 	   loaded */
-	if( getSysVar( SYSVAR_OSVERSION ) <= 4 )
+	if( osMajorVersion <= 4 )
 		{
 		HINSTANCE hComCtl32, hSHFolder;
 
@@ -4572,69 +4671,163 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 		   existing SHGetFolderPath() is provided as a wrapper for
 		   SHGetKnownFolderPath() so we use that in all cases to keep
 		   things simple */
-		hComCtl32 = LoadLibrary( "ComCtl32.dll" );
-		if( ( hSHFolder = LoadLibrary( "SHFolder.dll" ) ) != NULL )
+		hComCtl32 = DynamicLoad( "ComCtl32.dll" );
+		if( hComCtl32 != NULL )
 			{
-			pSHGetFolderPath = ( SHGETFOLDERPATH ) \
-						   GetProcAddress( hSHFolder, "SHGetFolderPathA" );
-			if( pSHGetFolderPath != NULL && \
-				pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
-								  NULL, SHGFP_TYPE_CURRENT, path ) == S_OK )
-				gotPath = TRUE;
-			FreeLibrary( hSHFolder );
+			if( ( hSHFolder = DynamicLoad( "SHFolder.dll" ) ) != NULL )
+				{
+				pSHGetFolderPath = ( SHGETFOLDERPATH ) \
+							   GetProcAddress( hSHFolder, "SHGetFolderPathA" );
+				if( pSHGetFolderPath != NULL && \
+					pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
+									  NULL, SHGFP_TYPE_CURRENT, path ) == S_OK )
+					gotPath = TRUE;
+				DynamicUnload( hSHFolder );
+				}
+			DynamicUnload( hComCtl32 );
 			}
-		FreeLibrary( hComCtl32 );
 		}
 	else
 		{
+		const int osMinorVersion = getSysVar( SYSVAR_OSMINOR );
+		const BOOLEAN isXPOrNewer = ( osMajorVersion > 5 || \
+									( osMajorVersion == 5 && \
+									  osMinorVersion >= 1 ) ) ? TRUE : FALSE;
+		char defaultUserPath[ MAX_PATH + 16 ];
+		BOOLEAN isDefaultUserPath = FALSE;
 		HINSTANCE hShell32;
 
 		/* Try and find the location of the closest thing that Windows has
-		   to a home directory */
-		hShell32 = LoadLibrary( "Shell32.dll" );
-		pSHGetFolderPath = ( SHGETFOLDERPATH ) \
-						   GetProcAddress( hShell32, "SHGetFolderPathA" );
-		if( pSHGetFolderPath != NULL && \
-			pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
-							  NULL, SHGFP_TYPE_CURRENT, pathPtr ) == S_OK )
-			gotPath = TRUE;
-		FreeLibrary( hShell32 );
-		}
-	if( !gotPath )
-		{
-		/* Fall back to dumping it in the Windows directory.  This will
-		   probably fail on systems where the user doesn't have privs to
-		   write there but if SHGetFolderPath() fails it's an indication
-		   that something's wrong anyway.
-
-		   If this too fails, we fall back to the root dir.  This has the
-		   same problems as the Windows directory for non-admin users, but
-		   we try it just in case the user manually copied the config there
-		   as a last resort */
-		if( !GetWindowsDirectory( pathPtr, pathMaxLen - 8 ) )
-			*pathPtr = '\0';
-		}
-	else
-		{
-		if( strlen( pathPtr ) < 3 )
+		   to a home directory.  Note that this call can fail in nonobvious 
+		   ways in specific situations such as when we're being run as a 
+		   service (with no logged-on user) and so SHGetFolderPath() has no 
+		   user profile to access, which means it returns the default-user 
+		   profile.  In this case we don't have privileges to access it, and 
+		   the CreateDirectory() call that follows will fail.  There's no 
+		   programmatic way that we can address this here since it's 
+		   something caused by the calling application that we're part of, 
+		   the caller can take various steps such as explicitly calling 
+		   LoadUserProfile() to ensure that there's a user profile set when 
+		   SHGetFolderPath() gets called, but LoadUserProfile() in turn 
+		   requires admin or LocalSystem privs.  The best that we can do 
+		   here is to get the path for the default-user profile (which is 
+		   only possible for WinXP or newer) and if that matches the path 
+		   that the standard SHGetFolderPath() returned, record a diagnostic 
+		   and return an error, since the attempt to create a subdirectory 
+		   in the default-user path below will fail (and even if it doesn't 
+		   fail it's not safe to continue with it since whatever we store 
+		   there will be replicated for any new user that logs on) */
+		hShell32 = DynamicLoad( "Shell32.dll" );
+		if( hShell32 != NULL )
 			{
-			/* Under WinNT and Win2K the LocalSystem account doesn't have
-			   its own profile so SHGetFolderPath() will report success but
-			   return a zero-length path if we're running as a service.  In
-			   this case we use the nearest equivalent that LocalSystem has
-			   to its own directories, which is the Windows directory.  This
-			   is safe because LocalSystem always has permission to write
-			   there */
-			if( !GetWindowsDirectory( pathPtr, pathMaxLen - 8 ) )
-				*pathPtr = '\0';
+			pSHGetFolderPath = ( SHGETFOLDERPATH ) \
+							   GetProcAddress( hShell32, "SHGetFolderPathA" );
+			if( pSHGetFolderPath != NULL )
+				{
+				if( pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
+									  NULL, SHGFP_TYPE_CURRENT, path ) == S_OK )
+					gotPath = TRUE;
+				if( gotPath && isXPOrNewer && \
+					pSHGetFolderPath( NULL, CSIDL_APPDATA | CSIDL_FLAG_CREATE,
+									  ( HANDLE ) -1, SHGFP_TYPE_CURRENT, 
+									  defaultUserPath ) == S_OK )
+					{
+					if( !strcmp( path, defaultUserPath ) )
+						isDefaultUserPath = TRUE;
+					}
+				}
+			DynamicUnload( hShell32 );
+			}
+		if( isDefaultUserPath )
+			{
+			/* We've ended up with the profile for the default user, which 
+			   we can't store per-user configuration data in, warn the 
+			   caller (if possible) and exit */
+			DEBUG_PRINT(( "No Windows user profile available, is this "
+						  "application running as a service or using "
+						  "impersonation?" ));
+			return( CRYPT_ERROR_OPEN );
 			}
 		}
-	length = strlen( pathPtr );
+	if( gotPath )
+		{
+		*pathLen = strlen( path );
+		if( *pathLen < 3 )
+			{
+			/* Under WinNT and Win2K the LocalSystem account doesn't have 
+			   its own profile so SHGetFolderPath() will report success but 
+			   return a zero-length path if we're running as a service.  In 
+			   this case we use the nearest equivalent that LocalSystem has 
+			   to its own directories, which is the Windows directory.  This 
+			   is safe because LocalSystem always has permission to write 
+			   there */
+			if( !GetWindowsDirectory( path, pathMaxLen - 8 ) )
+				*path = '\0';
+			*pathLen = strlen( path );
+			}
+		return( CRYPT_OK );
+		}
 
-	/* Make sure that the path buffer meets the minimum-length 
-	   requirements */
-	REQUIRES( pathMaxLen >= length + 16 );
+	/* We didn't get the folder path, fall back to dumping data in the 
+	   Windows directory.  This will probably fail on systems where the user 
+	   doesn't have privs to write there but if SHGetFolderPath() fails it's 
+	   an indication that something's wrong anyway.
 
+	   If this too fails, we fall back to the root dir.  This has the same 
+	   problems as the Windows directory for non-admin users, but we try it 
+	   just in case the user manually copied the config there as a last 
+	   resort */
+	if( !GetWindowsDirectory( path, pathMaxLen - 8 ) )
+		*path = '\0';
+	*pathLen = strlen( path );
+
+	return( CRYPT_OK );
+	}
+#endif /* __WIN32__ */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+						   IN_LENGTH_SHORT const int pathMaxLen, 
+						   OUT_LENGTH_SHORT_Z int *pathLen,
+						   IN_BUFFER( fileNameLen ) const char *fileName, 
+						   IN_LENGTH_SHORT const int fileNameLen,
+						   IN_ENUM( BUILDPATH_OPTION ) \
+						   const BUILDPATH_OPTION_TYPE option )
+	{
+#if defined( __WIN32__ )
+  #if defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 )
+	#define HRESULT		DWORD	/* Not defined in older BC++ headers */
+  #endif /* BC++ before 5.5 */
+	char *pathPtr = path;
+	int length, status;
+#elif defined( __WINCE__ )
+	wchar_t pathBuffer[ _MAX_PATH + 8 ], *pathPtr = pathBuffer;
+	BOOLEAN gotPath = FALSE;
+	int length;
+#endif /* Win32 vs. WinCE */
+
+	assert( isWritePtr( path, pathMaxLen ) );
+	assert( isWritePtr( pathLen, sizeof( int ) ) );
+	assert( ( option == BUILDPATH_RNDSEEDFILE ) || \
+			isReadPtr( fileName, fileNameLen ) );
+
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
+	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
+
+	/* Make sure that the open fails if we can't build the path */
+	*path = '\0';
+
+#if defined( __WIN32__ )
+	/* Get the path to the user data folder/directory */
+	status = getFolderPath( path, pathMaxLen, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length + 16 >= pathMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );
 	strlcpy_s( pathPtr + length, pathMaxLen - length, "\\cryptlib" );
 #elif defined( __WINCE__ )
 	if( SHGetSpecialFolderPath( NULL, pathPtr, CSIDL_APPDATA, TRUE ) || \
@@ -4682,10 +4875,6 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 #if defined( __WINCE__ )
 	unicodeToAscii( path, pathMaxLen, pathPtr, wcslen( pathPtr ) + 1 );
 #endif /* __WINCE__ */
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( strlen( path ) + fileNameLen + 8 <= pathMaxLen );
 
 	/* Add the filename to the path */
 	strlcat_s( path, pathMaxLen, "\\" );
@@ -4885,18 +5074,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 10 + fileNameLen + 8 )
 
 	/* Build the path to the configuration file if necessary */
 	strlcpy_s( path, pathMaxLen, "/cryptlib/" );
@@ -5140,7 +5326,9 @@ static void eraseFile( const STREAM *stream, long position, long length )
 	
 	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
 	REQUIRES_V( position >= 0 && position < MAX_INTLENGTH );
-	REQUIRES_V( length > 0 && length < MAX_INTLENGTH );
+	REQUIRES_V( length >= 0 && length < MAX_INTLENGTH );
+				/* May be zero if a file-open failed leaving a zero-length 
+				   file */
 
 	/* Wipe everything past the current position in the file */
 	while( length > 0 )
@@ -5231,7 +5419,8 @@ void fileErase( IN_STRING const char *fileName )
 						FILE_FLAG_EXCLUSIVE_ACCESS );
 	if( cryptStatusError( status ) )
 		{
-		remove( fileName );
+		if( status != CRYPT_ERROR_NOTFOUND )
+			remove( fileName );
 		return;
 		}
 
@@ -5290,18 +5479,15 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	assert( isWritePtr( pathLen, sizeof( int ) ) );
 	assert( isReadPtr( fileName, fileNameLen ) );
 
-	REQUIRES( pathMaxLen > 8 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( fileNameLen > 0 && fileNameLen < MAX_INTLENGTH );
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
 	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL ) );
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
 
 	/* Make sure that the open fails if we can't build the path */
 	*path = '\0';
-
-	/* Make sure that the path buffer meets the minimum-length
-	   requirements */
-	REQUIRES( pathMaxLen >= 64 );
 
 	/* Build the path to the configuration file if necessary */
 #if defined( __MSDOS__ )

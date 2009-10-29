@@ -74,22 +74,22 @@ int envelopeWrap( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	iCryptEnvelope = createInfo.cryptHandle;
 	( void ) krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &minBufferSize, 
+							  ( MESSAGE_CAST ) &minBufferSize, 
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
 	status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &inDataLength,
+							  ( MESSAGE_CAST ) &inDataLength,
 							  CRYPT_ENVINFO_DATASIZE );
 	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_NONE )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &contentType,
+								  ( MESSAGE_CAST ) &contentType,
 								  CRYPT_ENVINFO_CONTENTTYPE );
 	if( cryptStatusOK( status ) && iPublicKey != CRYPT_UNUSED )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &iPublicKey,
+								  ( MESSAGE_CAST ) &iPublicKey,
 								  CRYPT_ENVINFO_PUBLICKEY );
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) inData, inDataLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) inData, inDataLength );
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_ENV_PUSHDATA,
 								  &msgData, 0 );
 		if( cryptStatusOK( status ) )
@@ -174,9 +174,9 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	iCryptEnvelope = createInfo.cryptHandle;
 	( void ) krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &minBufferSize, 
+							  ( MESSAGE_CAST ) &minBufferSize, 
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
-	setMessageData( &msgData, ( void * ) inData, inDataLength );
+	setMessageData( &msgData, ( MESSAGE_CAST ) inData, inDataLength );
 	status = krnlSendMessage( iCryptEnvelope, IMESSAGE_ENV_PUSHDATA,
 							  &msgData, 0 );
 	if( cryptStatusOK( status ) )
@@ -192,7 +192,7 @@ int envelopeUnwrap( IN_BUFFER( inDataLength ) const void *inData,
 		else
 			{
 			status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &iPrivKey,
+									  ( MESSAGE_CAST ) &iPrivKey,
 									  CRYPT_ENVINFO_PRIVATEKEY );
 			}
 		}
@@ -280,22 +280,22 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	iCryptEnvelope = createInfo.cryptHandle;
 	( void ) krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &minBufferSize, 
+							  ( MESSAGE_CAST ) &minBufferSize, 
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
 	status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &inDataLength,
+							  ( MESSAGE_CAST ) &inDataLength,
 							  CRYPT_ENVINFO_DATASIZE );
 	if( cryptStatusOK( status ) && contentType != CRYPT_CONTENT_NONE )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &contentType,
+								  ( MESSAGE_CAST ) &contentType,
 								  CRYPT_ENVINFO_CONTENTTYPE );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &iSigKey,
+								  ( MESSAGE_CAST ) &iSigKey,
 								  CRYPT_ENVINFO_SIGNATURE );
 	if( cryptStatusOK( status ) && iCmsAttributes != CRYPT_UNUSED )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &iCmsAttributes,
+								  ( MESSAGE_CAST ) &iCmsAttributes,
 								  CRYPT_ENVINFO_SIGNATURE_EXTRADATA );
 	if( cryptStatusOK( status ) )
 		{
@@ -309,7 +309,7 @@ int envelopeSign( IN_BUFFER( inDataLength ) const void *inData,
 			}
 		else
 			{
-			setMessageData( &msgData, ( void * ) inData, inDataLength );
+			setMessageData( &msgData, ( MESSAGE_CAST ) inData, inDataLength );
 			status = krnlSendMessage( iCryptEnvelope, IMESSAGE_ENV_PUSHDATA,
 									  &msgData, 0 );
 			if( cryptStatusOK( status ) )
@@ -355,7 +355,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 					  IN_LENGTH_MIN( 16 ) const int outDataMaxLength,
 					  OUT_LENGTH_Z int *outDataLength, 
 					  IN_HANDLE_OPT const CRYPT_CONTEXT iSigCheckKey,
-					  OUT_RANGE( MAX_ERROR, CRYPT_OK ) int *sigResult, 
+					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes )
 	{
@@ -412,14 +412,14 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	iCryptEnvelope = createInfo.cryptHandle;
 	( void ) krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &minBufferSize, 
+							  ( MESSAGE_CAST ) &minBufferSize, 
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
 	status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_TRUE, 
 							  CRYPT_IATTRIBUTE_ATTRONLY );
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) inData, inDataLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) inData, inDataLength );
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_ENV_PUSHDATA,
 								  &msgData, 0 );
 		}
@@ -436,7 +436,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 		}
 	if( cryptStatusOK( status ) && iSigCheckKey != CRYPT_UNUSED )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &iSigCheckKey,
+								  ( MESSAGE_CAST ) &iSigCheckKey,
 								  CRYPT_ENVINFO_SIGNATURE );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCryptEnvelope, IMESSAGE_GETATTRIBUTE,

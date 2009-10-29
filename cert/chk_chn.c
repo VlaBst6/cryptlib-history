@@ -1,9 +1,15 @@
 /****************************************************************************
 *																			*
 *					  Certificate Chain Checking Routines					*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
+
+#if defined( INC_ALL )
+  #include "cert.h"
+#else
+  #include "cert/cert.h"
+#endif /* Compiler-specific includes */
 
 /* This module and chk_cert.c implement the following PKIX checks (* =
    unhandled, see the code comments.  Currently only policy mapping is
@@ -33,7 +39,8 @@
 
 	Policy Constraints:
 
-	(d) Verify that policy info.is consistent with the initial policy set:
+	(d) Verify that policy information is consistent with the initial policy 
+		set:
 		(1) If the require explicit policy state variable is less than or 
 			equal to n, a policy identifier in the certificate must be in 
 			the initial policy set.
@@ -43,7 +50,8 @@
 			less than or equal to n, the anyPolicy policy is no longer 
 			considered a match (this also extends into (e) and (g) below).
 
-	(e) Verify that policy info.is consistent with the acceptable policy set:
+	(e) Verify that policy information is consistent with the acceptable policy 
+		set:
 		(1) If the policies extension is marked critical, the policies
 			extension must lie within the acceptable policy set.
 		(2) The acceptable policy set is assigned the resulting intersection
@@ -89,41 +97,38 @@
 	(m) If a key usage extension is marked critical, ensure that the 
 		keyCertSign bit is set */
 
-#if defined( INC_ALL )
-  #include "cert.h"
-#else
-  #include "cert/cert.h"
-#endif /* Compiler-specific includes */
-
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
 
-/* Get certificate information for a certificate in the chain */
+/* Get certificate information for a certificate in the chain.  The index 
+   value can go to -1, indicating the leaf certificate itself rather than a
+   certificate in the chain */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getCertInfo( const CERT_INFO *certInfoPtr,
 						INOUT_PTR CERT_INFO **certChainPtr, 
-						IN_RANGE( -2, MAX_CHAINLENGTH ) const int certChainIndex )
+						IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) const int certChainIndex )
 	{
+	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
+
 	assert( isReadPtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isWritePtr( certChainPtr, sizeof( CERT_INFO * ) ) );
 
-	REQUIRES( certChainIndex >= -2 && \
-			  certChainIndex < certInfoPtr->cCertCert->chainEnd && \
+	REQUIRES( certChainIndex >= -1 && \
+			  certChainIndex < certChainInfo->chainEnd && \
 			  certChainIndex < MAX_CHAINLENGTH );
 
 	/* Clear return value */
 	*certChainPtr = NULL;
 
-	/* If it's an index into the certificate chain, return info for the 
-	   certificate at that position */
-	if( certChainIndex >= 0 && \
-		certChainIndex < certInfoPtr->cCertCert->chainEnd )
+	/* If it's an index into the certificate chain, return information for 
+	   the certificate at that position */
+	if( certChainIndex >= 0 && certChainIndex < certChainInfo->chainEnd )
 		{
-		return( krnlAcquireObject( certInfoPtr->cCertCert->chain[ certChainIndex ], 
+		return( krnlAcquireObject( certChainInfo->chain[ certChainIndex ], 
 								   OBJECT_TYPE_CERTIFICATE, 
 								   ( void ** ) certChainPtr, 
 								   CRYPT_ERROR_SIGNALLED ) );
@@ -141,6 +146,63 @@ static int getCertInfo( const CERT_INFO *certInfoPtr,
 	return( CRYPT_ERROR_NOTFOUND );
 	}
 
+/* When checking a particular certificate in a chain via a message sent to 
+   the encompassing object we have to explicitly select the certificate that
+   we want to operate on, otherwise all messages will act on the currently-
+   selected certificate in the chain.  To do this we temporarily select the
+   target certificate in the chain and then restore the selection state when
+   we're done */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int performAbsTrustOperation( INOUT CERT_INFO *certInfoPtr, 
+									 IN_ENUM( MESSAGE_TRUSTMGMT ) \
+											const MESSAGE_TRUSTMGMT_TYPE operation,
+									 IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+											const int certChainIndex,
+									 OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iIssuerCert )
+	{
+	CRYPT_CERTIFICATE iLocalCert;
+	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
+	SELECTION_STATE savedState;
+	int status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( iIssuerCert == NULL || \
+			isWritePtr( iIssuerCert, sizeof( CRYPT_CERTIFICATE ) ) );
+
+	REQUIRES( certChainIndex >= -1 && \
+			  certChainIndex < certChainInfo->chainEnd && \
+			  certChainIndex < MAX_CHAINLENGTH );
+
+	/* Clear return value */
+	if( iIssuerCert != NULL )
+		*iIssuerCert = CRYPT_ERROR;
+
+	/* Perform the required operation at an absolute chain position */
+	saveSelectionState( savedState, certInfoPtr );
+	certChainInfo->chainPos = certChainIndex;
+	if( certChainIndex == -1 )
+		{
+		/* The -1th certificate is the leaf itself */
+		iLocalCert = certInfoPtr->objectHandle;
+		}
+	else
+		{
+		/* It's an index into the certificate chain, use the certificate at 
+		   that position */
+		iLocalCert = certChainInfo->chain[ certChainIndex ];
+		}
+	status = krnlSendMessage( certInfoPtr->ownerHandle, 
+							  IMESSAGE_USER_TRUSTMGMT, &iLocalCert, 
+							  operation );
+	restoreSelectionState( savedState, certInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( iIssuerCert != NULL )
+		*iIssuerCert = iLocalCert;
+	return( CRYPT_OK );
+	}
+
 /* Find the trust anchor in a certificate chain.  The definition of a 
    "trusted certificate" is somewhat ambiguous and can have at least two 
    different interpretations:
@@ -154,12 +216,10 @@ static int getCertInfo( const CERT_INFO *certInfoPtr,
 
    Situation 1 is useful where there's a requirement that things go up to an
    external CA somewhere but no-one particularly cares about (or trusts) the
-   external CA.  This is probably the most common situation in general PKC 
-   usage, in which the external CA requirement is more of an inconvenience
-   than anything else.  In this case the end user can choose to trust the
-   path at the point where it comes under their control (a local CA or 
-   directly trusting the leaf certificates) without having to bother about 
-   the external CA.
+   external CA.  In this case the end user can choose to trust the path at 
+   the point where it comes under their control (a local CA or directly 
+   trusting the leaf certificates) without having to bother about the 
+   external CA.
 
    Situation 2 is useful where there's a requirement to use the full PKI 
    model.  This can be enabled by having the user mark the root CA as
@@ -174,33 +234,28 @@ static int getCertInfo( const CERT_INFO *certInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int findTrustAnchor( INOUT CERT_INFO *certInfoPtr, 
-							OUT int *trustAnchorIndexPtr, 
-							OUT_HANDLE_OPT CRYPT_CERTIFICATE *trustAnchorCertPtr )
+							OUT_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+								int *trustAnchorIndexPtr, 
+							OUT_HANDLE_OPT CRYPT_CERTIFICATE *trustAnchorCert )
 	{
-	CRYPT_CERTIFICATE iIssuerCert;
+	CRYPT_CERTIFICATE iIssuerCert = DUMMY_INIT;
 	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
-	SELECTION_STATE savedState;
 	int trustAnchorIndex, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isWritePtr( trustAnchorIndexPtr, sizeof( int ) ) );
-	assert( isWritePtr( trustAnchorCertPtr, sizeof( CRYPT_CERTIFICATE ) ) );
+	assert( isWritePtr( trustAnchorCert, sizeof( CRYPT_CERTIFICATE ) ) );
 
 	/* Clear return value */
 	*trustAnchorIndexPtr = CRYPT_ERROR;
-	*trustAnchorCertPtr = CRYPT_ERROR;
+	*trustAnchorCert = CRYPT_ERROR;
 
-	/* If the leaf certificate is implicitly trusted, exit.  To perform this 
-	   check we have to explicitly select the leaf certificate by making it 
-	   appear that the certificate chain is empty.  This is required in 
-	   order to ensure that we check the leaf rather than the 
-	   currently-selected certificate */
-	saveSelectionState( savedState, certInfoPtr );
-	certChainInfo->chainPos = CRYPT_ERROR;
-	status = krnlSendMessage( certInfoPtr->ownerHandle, 
-					IMESSAGE_USER_TRUSTMGMT, &certInfoPtr->objectHandle, 
-					MESSAGE_TRUSTMGMT_CHECK );
-	restoreSelectionState( savedState, certInfoPtr );
+	/* If the leaf certificate is implicitly trusted, exit.  Since this is a
+	   certificate chain we have to explicitly perform the operation at an
+	   absolute position in the chain rather than the currently-selected 
+	   certificate, specifically the leaf at position -1 */
+	status = performAbsTrustOperation( certInfoPtr, MESSAGE_TRUSTMGMT_CHECK,
+									   -1, NULL );
 	if( cryptStatusOK( status ) )
 		{
 		/* Indicate that the leaf is trusted and there's nothing further to 
@@ -208,54 +263,122 @@ static int findTrustAnchor( INOUT CERT_INFO *certInfoPtr,
 		return( OK_SPECIAL );
 		}
 
-	/* Walk up the chain looking for a trusted certificate.  Note that the 
-	   evaluated trust anchor certificate position is one past the current 
-	   certificate position since we're looking for the issuer of the 
+	/* Walk up the chain looking for the trusted certificate that issued the
+	   current one.  The evaluated trust anchor certificate position is one 
+	   past the current position since we're looking for the issuer of the 
 	   current certificate at position n, which will be located at position 
-	   n+1.  This means that it may end up pointing past the end of the 
-	   chain if the trust anchor is present in the trust database but not in 
-	   the chain */
-	iIssuerCert = certInfoPtr->objectHandle;
-	status = krnlSendMessage( certInfoPtr->ownerHandle, 
-							  IMESSAGE_USER_TRUSTMGMT, &iIssuerCert, 
-							  MESSAGE_TRUSTMGMT_GETISSUER );
+	   n+1:
+	   
+		trustAnchorIndex	Cert queried	trustAnchorCert
+		----------------	------------	---------------
+				0			  cert #-1		 issuer( #-1 )
+				1			  cert #0		 issuer( #0 )
+				2			  cert #1		 issuer( #1 )
+	   
+	   This means that trustAnchorIndex may end up referencing a certificate 
+	   past the end of the chain if the trust anchor is present in the trust 
+	   database but not in the chain */
+	REQUIRES( certChainInfo->chainEnd >= 0 );
 	for( trustAnchorIndex = 0;
-		 cryptStatusError( status ) && \
-			trustAnchorIndex < certChainInfo->chainEnd && \
-			trustAnchorIndex < MAX_CHAINLENGTH ; )
+		 trustAnchorIndex <= certChainInfo->chainEnd && \
+			trustAnchorIndex < MAX_CHAINLENGTH; 
+		 trustAnchorIndex++ )
 		{
-		iIssuerCert = certChainInfo->chain[ trustAnchorIndex++ ];
-		status = krnlSendMessage( certInfoPtr->ownerHandle, 
-								  IMESSAGE_USER_TRUSTMGMT, &iIssuerCert, 
-								  MESSAGE_TRUSTMGMT_GETISSUER );
+		status = performAbsTrustOperation( certInfoPtr, 
+										   MESSAGE_TRUSTMGMT_GETISSUER, 
+										   trustAnchorIndex - 1, 
+										   &iIssuerCert );
+		if( cryptStatusOK( status ) )
+			break;
 		}
 	ENSURES( trustAnchorIndex < MAX_CHAINLENGTH );
 	if( cryptStatusError( status ) || \
 		trustAnchorIndex > certChainInfo->chainEnd )
 		return( CRYPT_ERROR_NOTFOUND );
-	*trustAnchorCertPtr = iIssuerCert;
 	*trustAnchorIndexPtr = trustAnchorIndex;
+	*trustAnchorCert = iIssuerCert;
 
 	/* If there are more certificates in the chain beyond the one that we 
-	   stopped at, check to see whether the next certificate is the same as 
-	   the trust anchor.  If it is we use the copy of the certificate in 
-	   the chain rather than the external one from the trust database */
+	   stopped at check to see whether the next certificate is the same as 
+	   the trust anchor.  If it is then we use the copy of the certificate 
+	   in the chain rather than the external one from the trust database */
 	if( trustAnchorIndex < certChainInfo->chainEnd - 1 )
 		{
 		status = krnlSendMessage( certChainInfo->chain[ trustAnchorIndex ],
 								  IMESSAGE_COMPARE, &iIssuerCert, 
 								  MESSAGE_COMPARE_CERTOBJ );
 		if( cryptStatusOK( status ) )
-			*trustAnchorCertPtr = certChainInfo->chain[ trustAnchorIndex ];
+			*trustAnchorCert = certChainInfo->chain[ trustAnchorIndex ];
 		}
 	return( CRYPT_OK );
 	}
 
+/* Set error information for the certificate that caused problems when 
+   looking for a trust anchor */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int setTrustAnchorErrorInfo( INOUT CERT_INFO *certInfoPtr )
+	{
+	CRYPT_ATTRIBUTE_TYPE attributeType;
+	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
+	CERT_INFO *subjectCertInfoPtr;
+	const int lastCertIndex = certChainInfo->chainEnd - 1;
+	int value, status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+
+	ENSURES( lastCertIndex >= 0 && lastCertIndex < certChainInfo->chainEnd );
+
+	/* Select the certificate that caused the problem, which is the highest-
+	   level certificate in the chain */
+	certChainInfo->chainPos = lastCertIndex;
+
+	/* We couldn't find a trust anchor, either there's a missing link in the 
+	   chain (CRYPT_ERROR_STUART) and it was truncated before we got to a 
+	   trusted certificate or it goes to a root certificate but it isn't 
+	   trusted.  Returning error information on this is a bit complex since 
+	   we've selected the certificate that caused the problem, which means 
+	   that any attempt to read error status information will read it from 
+	   this certificate rather than the encapsulating chain object.  To get 
+	   around this we set the error information for the selected certificate 
+	   rather than the chain */
+	status = krnlSendMessage( certChainInfo->chain[ lastCertIndex ], 
+							  IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_CERTINFO_SELFSIGNED );
+	if( cryptStatusOK( status ) && value > 0 )
+		{
+		/* We got a root certificate but it's not trusted */
+		attributeType = CRYPT_CERTINFO_TRUSTED_IMPLICIT;
+		}
+	else
+		{
+		/* There's a missing link in the chain and it stops at this 
+		   certificate */
+		attributeType = CRYPT_CERTINFO_CERTIFICATE;
+		}
+	status = getCertInfo( certInfoPtr, &subjectCertInfoPtr, 
+						  lastCertIndex );
+	if( cryptStatusOK( status ) )
+		{
+		setErrorInfo( subjectCertInfoPtr, attributeType, 
+					  CRYPT_ERRTYPE_ATTR_ABSENT );
+
+		/* If we're not at the leaf certificate then we have to unlock the 
+		   certificate that getCertInfo() provided us */
+		if( certInfoPtr != subjectCertInfoPtr )
+			krnlReleaseObject( subjectCertInfoPtr->objectHandle );
+		}
+
+	return( CRYPT_ERROR_INVALID );
+	}
+
 /****************************************************************************
 *																			*
-*							Verify a Certificate Chain						*
+*					Verify Constraints on a Certificate Chain				*
 *																			*
 ****************************************************************************/
+
+#ifdef USE_CERTLEVEL_PKIX_FULL
 
 /* Check constraints along a certificate chain in certInfoPtr from 
    startCertIndex on down, checked if complianceLevel >= 
@@ -265,38 +388,38 @@ static int findTrustAnchor( INOUT CERT_INFO *certInfoPtr,
 
    Path constraints are the easiest to check, just make sure that the number 
    of certificates from the issuer to the leaf is less than the constraint 
-   length with special handling for PKIX path kludge certificates.
+   length with special handling for PKIX path-kludge certificates.
 
    Name constraints are a bit more difficult, the abstract description
-   requires building and maintaining a (potentially enormous) name constraint
-   tree which is applied to each certificate in turn as it's processed, 
-   however since name constraints are practically nonexistant and chains are 
-   short it's more efficient to walk down the certificate chain when a 
+   requires building and maintaining a (potentially enormous) name 
+   constraint tree which is applied to each certificate in turn as it's 
+   processed.  Since name constraints are practically nonexistant and chains 
+   are short it's more efficient to walk down the certificate chain when a 
    constraint is encountered and check each certificate in turn, which 
    avoids having to maintain massive amounts of state information and is no 
    less efficient than a single monolithic state comparison.  Again there's 
-   special handling for PKIX path kludge certificates, see chk_cert.c for 
+   special handling for PKIX path-kludge certificates, see chk_cert.c for 
    details.
 
-   Policy constraints are hardest of all because, with the complex mishmash
-   of policies, policy constraints, qualifiers, and mappings it turns out
-   that no-one actually knows how to apply them and even if people could
-   agree, with the de facto use of the policy extension as the kitchenSink
-   extension it's uncertain how to apply the constraints to typical
-   kitchenSink constructs.  The ambiguity of name constraints when applied 
-   to altNames is bad enough, with a 50/50 split in PKIX about whether it 
-   should be an AND or OR operation and whether a DN constraint applies to a 
-   subjectName or altName or both.  In the absence of any consensus on the
-   issue the latter was fixed in the final version of RFC 2459 by somewhat 
-   arbitrarily requiring an AND rather than an OR although how many 
-   implementations follow exactly this version rather than the dozen earlier 
-   drafts or any other profile or interpretation is unknown.  With policy 
-   constraints it's even worse and no-one seems to be able to agree on what 
-   to do with them (or more specifically the people who write the standards 
-   don't seem to be aware that there are ambiguities and inconsistencies in 
-   the handling of these extensions.  Anyone who doesn't believe this is 
-   invited to try implementing the path-processing algorithm in RFC 3280 as 
-   described by the pseudocode there).
+   Policy constraints are the hardest of all to deal with because, with the 
+   complex mishmash of policies, policy constraints, qualifiers, and mappings 
+   it turns out that no-one actually knows how to apply them and even if 
+   people could agree, with the de facto use of the policy extension as the 
+   kitchenSink extension it's uncertain how to apply the constraints to 
+   typical kitchenSink constructs.  The ambiguity of name constraints when 
+   applied to altNames is bad enough, with a 50/50 split in PKIX about 
+   whether it should be an AND or OR operation and whether a DN constraint 
+   applies to a subjectName or altName or both.  In the absence of any 
+   consensus on the issue the latter was fixed in the final version of RFC 
+   2459 by somewhat arbitrarily requiring an AND rather than an OR although 
+   how many implementations follow exactly this version rather than the 
+   dozen earlier drafts or any other profile or interpretation is unknown.  
+   With policy constraints it's even worse and no-one seems to be able to 
+   agree on what to do with them, or more specifically the people who write 
+   the standards don't seem to be aware that there are ambiguities and 
+   inconsistencies in the handling of these extensions.  Anyone who doesn't 
+   believe this is invited to try implementing the path-processing algorithm 
+   in RFC 3280 as described by the pseudocode there.
    
    For example the various policy constraints in effect act as conditional 
    modifiers on the critical flag of the policies extension and/or the 
@@ -318,12 +441,14 @@ static int findTrustAnchor( INOUT CERT_INFO *certInfoPtr,
    implement the spec rather than the other way round).  Since the 
    virtual-criticality can switch itself on and off across certificates 
    depending on where in the path they are, the handling of policy 
-   constraints is reduced to a complete chaos if we try and interpret them 
-   as required by the spec - trying to implement the logic using decision 
-   tables ends up with expressions of more than a dozen variables, which 
-   indicates that the issue is more or less incomprehensible.  However 
-   since it's only applied at the CRYPT_COMPLIANCELEVEL_PKIX_FULL compliance 
-   level it's reasonably safe since users should be expecting peculiar 
+   constraints is reduced to complete chaos if we try and interpret them as 
+   required by the spec - an independent evaluation of the spec that tried to 
+   implement the logic using decision tables ended up with expressions of 
+   more than a dozen variables (and that was at a pre-3280 stage before the
+   state space explosion that occurred after that point) which indicates 
+   that the issue is more or less incomprehensible.  However since it's only 
+   applied at the CRYPT_COMPLIANCELEVEL_PKIX_FULL compliance level it's 
+   reasonably safe since users should be expecting all sorts of wierd 
    behaviour at this level anyway. 
 
    The requireExplicitPolicy constraint is particularly bizarre, it 
@@ -343,23 +468,23 @@ static int findTrustAnchor( INOUT CERT_INFO *certInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int checkConstraints( INOUT CERT_INFO *certInfoPtr, 
-							 IN_RANGE( -1, MAX_CHAINLENGTH ) \
+							 IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
 								const int startCertIndex,
 							 const CERT_INFO *issuerCertInfoPtr,
-							 OUT_RANGE( -1, MAX_CHAINLENGTH ) \
+							 OUT_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
 								int *errorCertIndex, 
 							 const BOOLEAN explicitPolicy )
 	{
-	const ATTRIBUTE_LIST *nameConstraintPtr = NULL, *policyConstraintPtr = NULL;
-	const ATTRIBUTE_LIST *inhibitPolicyPtr = NULL, *attributeListPtr;
-	ATTRIBUTE_LIST pathAttributeList;
+	const ATTRIBUTE_PTR *nameConstraintPtr = NULL, *policyConstraintPtr = NULL;
+	const ATTRIBUTE_PTR *inhibitPolicyPtr = NULL, *attributePtr;
 	BOOLEAN hasExcludedSubtrees = FALSE, hasPermittedSubtrees = FALSE;
 	BOOLEAN hasPolicy = FALSE, hasPathLength = FALSE;
 	BOOLEAN hasExplicitPolicy = FALSE, hasInhibitPolicyMap = FALSE;
 	BOOLEAN hasInhibitAnyPolicy = FALSE;
 	int requireExplicitPolicyLevel, inhibitPolicyMapLevel;
 	int inhibitAnyPolicyLevel;
-	int certIndex = startCertIndex, iterationCount, status = CRYPT_OK;
+	int pathLength = DUMMY_INIT, certIndex = startCertIndex;
+	int value, iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -372,13 +497,12 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 	*errorCertIndex = CRYPT_ERROR;
 
 	/* Check for path constraints */
-	memset( &pathAttributeList, 0, sizeof( ATTRIBUTE_LIST ) );
-	attributeListPtr = findAttributeField( issuerCertInfoPtr->attributes,
-										   CRYPT_CERTINFO_PATHLENCONSTRAINT, 
-										   CRYPT_ATTRIBUTE_NONE );
-	if( attributeListPtr != NULL )
+	status = getAttributeFieldValue( issuerCertInfoPtr->attributes,
+									 CRYPT_CERTINFO_PATHLENCONSTRAINT, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusOK( status ) )
 		{
-		pathAttributeList.intValue = attributeListPtr->intValue;
+		pathLength = value;
 		hasPathLength = TRUE;
 		}
 
@@ -391,21 +515,21 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 		   is only enforced if the explicit-policy option is set */
 		hasPolicy = TRUE;
 		}
-	attributeListPtr = findAttribute( issuerCertInfoPtr->attributes, \
-									  CRYPT_CERTINFO_POLICYCONSTRAINTS, FALSE );
-	if( attributeListPtr != NULL )
-		policyConstraintPtr = attributeListPtr;
-	attributeListPtr = findAttribute( issuerCertInfoPtr->attributes, \
-									  CRYPT_CERTINFO_INHIBITANYPOLICY, TRUE );
-	if( attributeListPtr != NULL )
-		inhibitPolicyPtr = attributeListPtr;
+	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+								  CRYPT_CERTINFO_POLICYCONSTRAINTS, FALSE );
+	if( attributePtr != NULL )
+		policyConstraintPtr = attributePtr;
+	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+								  CRYPT_CERTINFO_INHIBITANYPOLICY, TRUE );
+	if( attributePtr != NULL )
+		inhibitPolicyPtr = attributePtr;
 
 	/* Check for name constraints */
-	attributeListPtr = findAttribute( issuerCertInfoPtr->attributes, \
-									  CRYPT_CERTINFO_NAMECONSTRAINTS, FALSE );
-	if( attributeListPtr != NULL )
+	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+								  CRYPT_CERTINFO_NAMECONSTRAINTS, FALSE );
+	if( attributePtr != NULL )
 		{
-		nameConstraintPtr = attributeListPtr;
+		nameConstraintPtr = attributePtr;
 		hasExcludedSubtrees = findAttributeField( nameConstraintPtr, \
 												  CRYPT_CERTINFO_EXCLUDEDSUBTREES, 
 												  CRYPT_ATTRIBUTE_NONE ) != NULL;
@@ -425,25 +549,28 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 	   inhibitAnyPolicy attributes, which act as conditional modifiers on the
 	   criticality and contents of the policies extension */
 	requireExplicitPolicyLevel = inhibitPolicyMapLevel = inhibitAnyPolicyLevel = 0;
-	attributeListPtr = findAttributeField( policyConstraintPtr,
-										   CRYPT_CERTINFO_REQUIREEXPLICITPOLICY, 
-										   CRYPT_ATTRIBUTE_NONE );
-	if( attributeListPtr != NULL )
+	status = getAttributeFieldValue( policyConstraintPtr,
+									 CRYPT_CERTINFO_REQUIREEXPLICITPOLICY, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusOK( status ) )
 		{
-		requireExplicitPolicyLevel = attributeListPtr->intValue;
+		requireExplicitPolicyLevel = value;
 		hasExplicitPolicy = TRUE;
 		}
-	attributeListPtr = findAttributeField( policyConstraintPtr,
-										   CRYPT_CERTINFO_INHIBITPOLICYMAPPING, 
-										   CRYPT_ATTRIBUTE_NONE );
-	if( attributeListPtr != NULL )
+	status = getAttributeFieldValue( policyConstraintPtr,
+									 CRYPT_CERTINFO_INHIBITPOLICYMAPPING, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusOK( status ) )
 		{
-		inhibitPolicyMapLevel = attributeListPtr->intValue;
+		inhibitPolicyMapLevel = value;
 		hasInhibitPolicyMap = TRUE;
 		}
 	if( inhibitPolicyPtr != NULL )
 		{
-		inhibitAnyPolicyLevel = inhibitPolicyPtr->intValue;
+		status = getAttributeDataValue( inhibitPolicyPtr, 
+										&inhibitAnyPolicyLevel );
+		if( cryptStatusError( status ) )
+			return( status );
 		hasInhibitAnyPolicy = TRUE;
 		}
 
@@ -455,8 +582,9 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 		{
 		CERT_INFO *subjectCertInfoPtr;
 		POLICY_TYPE policyType;
+		int policyLevel;
 
-		/* Get info for the current certificate in the chain */
+		/* Get information for the current certificate in the chain */
 		status = getCertInfo( certInfoPtr, &subjectCertInfoPtr, certIndex );
 		if( cryptStatusError( status ) )
 			break;
@@ -465,34 +593,31 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 		   length value can only ever be decremented once set so if we find 
 		   a further value for the length constraint we set the overall 
 		   value to the smaller of the two */
-		attributeListPtr = findAttributeField( subjectCertInfoPtr->attributes,
-											   CRYPT_CERTINFO_REQUIREEXPLICITPOLICY, 
-											   CRYPT_ATTRIBUTE_NONE );
-		if( attributeListPtr != NULL )
+		status = getAttributeFieldValue( subjectCertInfoPtr->attributes,
+										 CRYPT_CERTINFO_REQUIREEXPLICITPOLICY, 
+										 CRYPT_ATTRIBUTE_NONE, &policyLevel );
+		if( cryptStatusOK( status ) )
 			{
-			if( !hasExplicitPolicy || \
-				attributeListPtr->intValue < requireExplicitPolicyLevel )
-				requireExplicitPolicyLevel = attributeListPtr->intValue;
+			if( !hasExplicitPolicy || policyLevel < requireExplicitPolicyLevel )
+				requireExplicitPolicyLevel = policyLevel;
 			hasExplicitPolicy = TRUE;
 			}
-		attributeListPtr = findAttributeField( subjectCertInfoPtr->attributes,
-											   CRYPT_CERTINFO_INHIBITPOLICYMAPPING, 
-											   CRYPT_ATTRIBUTE_NONE );
-		if( attributeListPtr != NULL )
+		status = getAttributeFieldValue( subjectCertInfoPtr->attributes,
+										 CRYPT_CERTINFO_INHIBITPOLICYMAPPING, 
+										 CRYPT_ATTRIBUTE_NONE, &policyLevel );
+		if( cryptStatusOK( status ) )
 			{
-			if( !hasInhibitPolicyMap || \
-				attributeListPtr->intValue < inhibitPolicyMapLevel )
-				inhibitPolicyMapLevel = attributeListPtr->intValue;
+			if( !hasInhibitPolicyMap || policyLevel < inhibitPolicyMapLevel )
+				inhibitPolicyMapLevel = policyLevel;
 			hasInhibitPolicyMap = TRUE;
 			}
-		attributeListPtr = findAttributeField( subjectCertInfoPtr->attributes,
-											   CRYPT_CERTINFO_INHIBITANYPOLICY, 
-											   CRYPT_ATTRIBUTE_NONE );
-		if( attributeListPtr != NULL )
+		status = getAttributeFieldValue( subjectCertInfoPtr->attributes,
+										 CRYPT_CERTINFO_INHIBITANYPOLICY, 
+										 CRYPT_ATTRIBUTE_NONE, &policyLevel );
+		if( cryptStatusOK( status ) )
 			{
-			if( !hasInhibitAnyPolicy || \
-				attributeListPtr->intValue < inhibitAnyPolicyLevel )
-				inhibitAnyPolicyLevel = attributeListPtr->intValue;
+			if( !hasInhibitAnyPolicy || policyLevel < inhibitAnyPolicyLevel )
+				inhibitAnyPolicyLevel = policyLevel;
 			hasInhibitAnyPolicy = TRUE;
 			}
 
@@ -552,8 +677,8 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 										&subjectCertInfoPtr->errorType ) ) )
 			status = CRYPT_ERROR_INVALID;
 		if( cryptStatusOK( status ) && hasPathLength && \
-			cryptStatusError( checkPathConstraints( subjectCertInfoPtr,
-										&pathAttributeList, 
+			cryptStatusError( checkPathConstraints( subjectCertInfoPtr, 
+										pathLength, 
 										&subjectCertInfoPtr->errorLocus, 
 										&subjectCertInfoPtr->errorType ) ) )
 			status = CRYPT_ERROR_INVALID;
@@ -593,7 +718,7 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 		   constraint purposes */
 		if( hasPathLength && \
 			( !( subjectCertInfoPtr->flags & CERT_FLAG_PATHKLUDGE ) ) )
-			pathAttributeList.intValue--;
+			pathLength--;
 		if( hasExplicitPolicy )
 			requireExplicitPolicyLevel--;
 		if( hasInhibitPolicyMap )
@@ -611,6 +736,13 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 
 	return( status );
 	}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
+
+/****************************************************************************
+*																			*
+*							Verify a Certificate Chain						*
+*																			*
+****************************************************************************/
 
 /* Walk down a chain checking each certificate */
 
@@ -620,7 +752,9 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 	CRYPT_CERTIFICATE iIssuerCert;
 	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
 	CERT_INFO *issuerCertInfoPtr, *subjectCertInfoPtr;
+#ifdef USE_CERTLEVEL_PKIX_FULL
 	BOOLEAN explicitPolicy = TRUE;
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 	int certIndex, complianceLevel, iterationCount, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
@@ -631,6 +765,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
 	if( cryptStatusError( status ) )
 		return( status );
+#ifdef USE_CERTLEVEL_PKIX_FULL
 	if( complianceLevel >= CRYPT_COMPLIANCELEVEL_PKIX_FULL )
 		{
 		int value;
@@ -641,6 +776,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		if( cryptStatusOK( status ) && !value )
 			explicitPolicy = FALSE;
 		}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 
 	/* Try and find a trust anchor for the chain */
 	status = findTrustAnchor( certInfoPtr, &certIndex, &iIssuerCert );
@@ -650,48 +786,8 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		return( CRYPT_OK );
 		}
 	if( cryptStatusError( status ) )
-		{
-		CRYPT_ATTRIBUTE_TYPE attributeType;
-		const int lastCertIndex = certChainInfo->chainEnd - 1;
-		int value;
+		return( setTrustAnchorErrorInfo( certInfoPtr ) );
 
-		/* Select the certificate that caused the problem, which is the 
-		   highest-level certificate in the chain */
-		certChainInfo->chainPos = lastCertIndex;
-
-		/* We couldn't find a trust anchor, either there's a missing link in 
-		   the chain (CRYPT_ERROR_STUART) and it was truncated before we got 
-		   to a trusted certificate or it goes to a root certificate but it 
-		   isn't trusted.  Returning error information on this is a bit 
-		   complex since we've selected the certificate that caused the 
-		   problem, which means that any attempt to read error status 
-		   information will read it from this certificate rather than the 
-		   encapsulating chain object.  To get around this we set the error 
-		   information for the selected certificate rather than the chain */
-		status = krnlSendMessage( certChainInfo->chain[ lastCertIndex ], 
-								  IMESSAGE_GETATTRIBUTE, &value, 
-								  CRYPT_CERTINFO_SELFSIGNED );
-		if( cryptStatusOK( status ) && value > 0 )
-			{
-			/* We got a root certificate but it's not trusted */
-			attributeType = CRYPT_CERTINFO_TRUSTED_IMPLICIT;
-			}
-		else
-			{
-			/* There's a missing link in the chain and it stops at this 
-			   certificate */
-			attributeType = CRYPT_CERTINFO_CERTIFICATE;
-			}
-		status = getCertInfo( certInfoPtr, &subjectCertInfoPtr, 
-							  lastCertIndex );
-		if( cryptStatusOK( status ) )
-			{
-			setErrorInfo( subjectCertInfoPtr, attributeType, 
-						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			krnlReleaseObject( subjectCertInfoPtr->objectHandle );
-			}
-		return( CRYPT_ERROR_INVALID );
-		}
 	status = krnlAcquireObject( iIssuerCert, OBJECT_TYPE_CERTIFICATE, 
 								( void ** ) &issuerCertInfoPtr, 
 								CRYPT_ERROR_SIGNALLED );
@@ -707,8 +803,8 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		CRYPT_ATTRIBUTE_TYPE dummyLocus;
 		CRYPT_ERRTYPE_TYPE dummyType;
 
-		/* The issuer certificate info is coming from the certificate trust 
-		   database, don't modify its state when we check it */
+		/* The issuer certificate information is coming from the certificate 
+		   trust database, don't modify its state when we check it */
 		status = checkCertDetails( issuerCertInfoPtr, issuerCertInfoPtr, 
 						( issuerCertInfoPtr->iPubkeyContext != CRYPT_ERROR ) ? \
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
@@ -729,7 +825,10 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		{
 		krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 		if( certIndex < certChainInfo->chainEnd )
+			{
+			/* Remember which certificate caused the problem */
 			certChainInfo->chainPos = certIndex;
+			}
 		return( status );
 		}
 
@@ -751,7 +850,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
 						NULL, FALSE, TRUE, &subjectCertInfoPtr->errorLocus, 
 						&subjectCertInfoPtr->errorType );
-		if( status == CRYPT_ARGERROR_NUM1 )
+		if( cryptArgError( status ) )
 			{
 			/* If there's a problem with the issuer's public key we'll get
 			   a parameter error, the most appropriate standard error code 
@@ -759,6 +858,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 			status = CRYPT_ERROR_SIGNATURE;
 			}
 
+#ifdef USE_CERTLEVEL_PKIX_FULL
 		/* Check any constraints that the issuer certificate may place on 
 		   the rest of the chain */
 		if( cryptStatusOK( status ) && \
@@ -772,6 +872,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 			if( cryptStatusError( status ) )
 				certIndex = errorCertIndex;
 			}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 
 		/* Move on to the next certificate */
 		krnlReleaseObject( issuerCertInfoPtr->objectHandle );
@@ -779,10 +880,10 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 		}
 	ENSURES( iterationCount < MAX_CHAINLENGTH );
 
-	/* If we stopped before we processed all the certificates in the chain, 
-	   select the one that caused the problem.  We also have to unlock the 
-	   last certificate that we got to if it wasn't the leaf, which 
-	   corresponds to the chain itself */
+	/* If we stopped before we processed all of the certificates in the 
+	   chain, select the one that caused the problem.  We also have to 
+	   unlock the last certificate that we got to if it wasn't the leaf, 
+	   which corresponds to the chain itself */
 	if( cryptStatusError( status ) )
 		{
 		certChainInfo->chainPos = certIndex + 1;

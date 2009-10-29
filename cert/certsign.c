@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Certificate Signing Routines						*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2008					*
 *																			*
 ****************************************************************************/
 
@@ -20,9 +20,9 @@
 ****************************************************************************/
 
 /* Recover information normally set up on certificate import.  After 
-   signing the certificate data is present without the certificate having 
-   been explicitly imported so we have to explicitly perform the actions 
-   normally performed on certificate import here */
+   signing the certificate the data is present without the certificate 
+   having been explicitly imported so we have to go back and perform the 
+   actions normally performed on certificate import here */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
@@ -39,8 +39,10 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( encodedCertData, encodedCertDataLength ) );
 
-	REQUIRES( certType > CRYPT_CERTTYPE_NONE && \
-			  certType < CRYPT_CERTTYPE_LAST );
+	REQUIRES( certType == CRYPT_CERTTYPE_CERTIFICATE || \
+			  certType == CRYPT_CERTTYPE_CERTCHAIN || \
+			  certType == CRYPT_CERTTYPE_REQUEST_CERT || \
+			  certType == CRYPT_CERTTYPE_PKIUSER );
 	REQUIRES( encodedCertDataLength >= 16 && \
 			  encodedCertDataLength < MAX_INTLENGTH_SHORT );
 
@@ -57,8 +59,10 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 	   the encoded DN if there is one (the issuer DN is already set up when
 	   the issuer certificate is added) and the public key.  The public key 
 	   is actually something of a special case in that in the CRMF/CMP 
-	   tradition it has a weird nonstandard tag which means that a straight 
-	   memcpy() won't move the data across correctly */
+	   tradition it has a weird nonstandard tag which means that we can't 
+	   directly use it elsewhere as a SubjectPublicKeyInfo blob.  In order 
+	   to work around this the code that reads SPKIs allows something other
+	   than a plain SEQUENCE for the outer wrapper */
 	if( certType == CRYPT_CERTTYPE_REQUEST_CERT )
 		{
 		sMemConnect( &stream, encodedCertData, encodedCertDataLength );
@@ -85,8 +89,8 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 		if( cryptStatusOK( status ) )
 			status = sMemGetDataBlock( &stream, &certInfoPtr->publicKeyInfo, 
 									   certInfoPtr->publicKeyInfoSize );
-		ENSURES( cryptStatusOK( status ) && \
-				 cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
+		ENSURES( cryptStatusOK( status ) );
+		ENSURES( cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
 				 length == certInfoPtr->publicKeyInfoSize );
 		sMemDisconnect( &stream );
 
@@ -139,19 +143,20 @@ static int recoverCertData( INOUT CERT_INFO *certInfoPtr,
 	if( cryptStatusOK( status ) )
 		status = sMemGetDataBlock( &stream, &certInfoPtr->publicKeyInfo, 
 								   certInfoPtr->publicKeyInfoSize );
-	ENSURES( cryptStatusOK( status ) && \
-			 cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
+	ENSURES( cryptStatusOK( status ) );
+	ENSURES( cryptStatusOK( getStreamObjectLength( &stream, &length ) ) && \
 			 length == certInfoPtr->publicKeyInfoSize );
 	sMemDisconnect( &stream );
 
 	/* Since the certificate may be used for public-key operations as soon 
 	   as it's signed we have to reconstruct the public-key context and 
-	   apply to it the constraints that would be applied on import */
+	   apply to it the constraints that would be applied on import, the 
+	   latter being done implicitly via the MESSAGE_SETDEPENDENT mechanism */
 	sMemConnect( &stream, certInfoPtr->publicKeyInfo,
 				 certInfoPtr->publicKeyInfoSize );
 	status = iCryptReadSubjectPublicKey( &stream,
 										 &certInfoPtr->iPubkeyContext,
-										 FALSE );
+										 SYSTEM_OBJECT_HANDLE, FALSE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -183,15 +188,19 @@ static int checkSigningKey( INOUT CERT_INFO *certInfoPtr,
 	REQUIRES( complianceLevel >= CRYPT_COMPLIANCELEVEL_OBLIVIOUS && \
 			  complianceLevel < CRYPT_COMPLIANCELEVEL_LAST );
 
-	/* Make sure that the signing key is associated with a complete issuer 
-	   certificate which is valid for certificate/CRL signing (if it's a 
-	   self-signed certificate then we don't have to have a completed 
-	   certificate present because the self-sign operation hasn't created it 
-	   yet) */
+	/* Make sure that the signing key is associated with an issuer 
+	   certificate rather than some other key-related object like a 
+	   certificate request */
+	if( issuerCertInfoPtr->type != CRYPT_CERTTYPE_CERTIFICATE && \
+		issuerCertInfoPtr->type != CRYPT_CERTTYPE_CERTCHAIN )
+		return( CRYPT_ARGERROR_VALUE );
+
+	/* Make sure that the signing key is associated with a completed issuer 
+	   certificate.  If it's a self-signed certificate then we don't have to 
+	   have a completed certificate present because the self-sign operation 
+	   hasn't created it yet */
 	if( ( !( certInfoPtr->flags & CERT_FLAG_SELFSIGNED ) && \
-		  issuerCertInfoPtr->certificate == NULL ) || \
-		( issuerCertInfoPtr->type != CRYPT_CERTTYPE_CERTIFICATE && \
-		  issuerCertInfoPtr->type != CRYPT_CERTTYPE_CERTCHAIN ) )
+		  issuerCertInfoPtr->certificate == NULL ) )
 		return( CRYPT_ARGERROR_VALUE );
 
 	/* If it's an OCSP request or response then the signing certificate has 
@@ -200,9 +209,8 @@ static int checkSigningKey( INOUT CERT_INFO *certInfoPtr,
 		certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE )
 		{
 		return( checkKeyUsage( issuerCertInfoPtr, CHECKKEY_FLAG_NONE,
-							   CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-							   CRYPT_KEYUSAGE_NONREPUDIATION,
-							   complianceLevel, &certInfoPtr->errorLocus,
+							   KEYUSAGE_SIGN, complianceLevel, 
+							   &certInfoPtr->errorLocus,
 							   &certInfoPtr->errorType ) );
 		}
 
@@ -230,6 +238,8 @@ static int checkSigningKey( INOUT CERT_INFO *certInfoPtr,
 		return( status );
 		}
 
+	/* It's a self-signed object, there are no further key-related checks 
+	   required */
 	return( CRYPT_OK );
 	}
 
@@ -260,6 +270,7 @@ static int copySigningCertChain( INOUT CERT_INFO *certInfoPtr,
 			
 		for( i = 0; i < certInfo->chainEnd && i < MAX_CHAINLENGTH; i++ )
 			krnlSendNotifier( certInfo->chain[ i ], IMESSAGE_DECREFCOUNT );
+		ENSURES( i < MAX_CHAINLENGTH );
 		certInfo->chainEnd = 0;
 		}
 
@@ -305,7 +316,8 @@ static int setCertTimeinfo( INOUT CERT_INFO *certInfoPtr,
 	   to GMT when we write it to the certificate.  Issues like validity
 	   period nesting and checking for valid time periods are handled
 	   elsewhere */
-	if( ( isCertificate || certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
+	if( ( isCertificate || \
+		  certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
 		  certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE ) && \
 		certInfoPtr->startTime <= MIN_TIME_VALUE )
 		{
@@ -338,10 +350,10 @@ static int setCertTimeinfo( INOUT CERT_INFO *certInfoPtr,
 			{
 			if( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE )
 				{
-				/* OCSP responses come directly from the certificate store
-				   and represent an atomic (and ephemeral) snapshot of the
-				   store state.  Because of this the next-update time is
-				   effectively immediately since the next snapshot could
+				/* OCSP responses come directly from the certificate store 
+				   and represent an atomic (and ephemeral) snapshot of the 
+				   store state.  Because of this the next-update time occurs 
+				   effectively immediately since the next snapshot could 
 				   provide a different response */
 				certInfoPtr->endTime = currentTime;
 				}
@@ -365,58 +377,174 @@ static int setCertTimeinfo( INOUT CERT_INFO *certInfoPtr,
 	return( CRYPT_OK );
 	}
 
+
+/* Perform any final initialisation of the certificate object before we sign 
+   it */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initSignatureInfo( INOUT CERT_INFO *certInfoPtr, 
+							  IN_OPT const CERT_INFO *issuerCertInfoPtr,
+							  IN_HANDLE_OPT const CRYPT_CONTEXT iSignContext,
+							  const BOOLEAN isCertificate,
+							  OUT_ALGO_Z CRYPT_ALGO_TYPE *hashAlgo,
+							  IN_ENUM( CRYPT_SIGNATURELEVEL ) \
+								const CRYPT_SIGNATURELEVEL_TYPE signatureLevel,
+							  OUT_OPT_LENGTH_SHORT_Z int *extraDataLength )
+	{
+	int status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( issuerCertInfoPtr == NULL || \
+			isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( isWritePtr( hashAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
+	assert( extraDataLength == NULL || \
+			isWritePtr( extraDataLength, sizeof( int ) ) );
+
+	REQUIRES( iSignContext == CRYPT_UNUSED || \
+			  isHandleRangeValid( iSignContext ) );
+	REQUIRES( ( signatureLevel == CRYPT_SIGNATURELEVEL_NONE && \
+				extraDataLength == NULL ) || \
+			  ( signatureLevel >= CRYPT_SIGNATURELEVEL_SIGNERCERT && \
+				signatureLevel < CRYPT_SIGNATURELEVEL_LAST && \
+				extraDataLength != NULL ) );
+
+	/* Clear return values */
+	*hashAlgo = CRYPT_ALGO_NONE;
+	if( extraDataLength != NULL )
+		*extraDataLength = 0;
+
+	/* If we need to include extra data in the signature make sure that it's
+	   available and determine how big it'll be.  If there's no issuer 
+	   certificate available and we've been asked for extra signature data 
+	   we fall back to providing just a raw signature rather than bailing 
+	   out completely */
+	if( extraDataLength != NULL && issuerCertInfoPtr != NULL )
+		{
+		ENSURES( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT || \
+				 certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST );
+
+		if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
+			{
+			status = exportCert( NULL, 0, extraDataLength,
+								 CRYPT_CERTFORMAT_CERTIFICATE,
+								 issuerCertInfoPtr );
+			}
+		else
+			{
+			MESSAGE_DATA msgData;
+
+			ENSURES( signatureLevel == CRYPT_SIGNATURELEVEL_ALL );
+
+			setMessageData( &msgData, NULL, 0 );
+			status = krnlSendMessage( issuerCertInfoPtr->objectHandle,
+									  IMESSAGE_CRT_EXPORT, &msgData,
+									  CRYPT_ICERTFORMAT_CERTSEQUENCE );
+			if( cryptStatusOK( status ) )
+				*extraDataLength = msgData.length;
+			}
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* If it's a certificate chain copy over the signing certificate(s) */
+	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN )
+		{
+		status = copySigningCertChain( certInfoPtr, iSignContext );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* Set up any required timestamps */
+	status = setCertTimeinfo( certInfoPtr, iSignContext, isCertificate );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If it's a certificate, set up the certificate serial number */
+	if( isCertificate )
+		{
+		status = setSerialNumber( certInfoPtr, NULL, 0 );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* Determine the hash algorithm to use and if it's a certificate or 
+	   CRL remember it for when we write the certificate (the value is 
+	   embedded in the certificate to prevent an obscure attack on unpadded 
+	   RSA signature algorithms) */
+	status = krnlSendMessage( certInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, hashAlgo, 
+							  CRYPT_OPTION_ENCR_HASH );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN || \
+		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT )
+		certInfoPtr->cCertCert->hashAlgo = *hashAlgo;
+	else
+		{
+		if( certInfoPtr->type == CRYPT_CERTTYPE_CRL )
+			certInfoPtr->cCertRev->hashAlgo = *hashAlgo;
+		}
+
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
 *								Signing Functions							*
 *																			*
 ****************************************************************************/
 
-/* Pseudo-sign certificate information by writing the outer wrapper and
-   moving the object into the initialised state */
+#if defined( USE_CERTREQ ) || defined( USE_CERTREV ) || \
+	defined( USE_CERTVAL ) || defined( USE_PKIUSER )
+
+/* Pseudo-sign certificate information by writing the outer wrapper around 
+   the certificate object data and moving the object into the initialised 
+   state */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
-								  INOUT_BUFFER_FIXED( signedCertObjectMaxLength ) \
-										void *signedCertObject,
+								  INOUT_BUFFER_FIXED( signedObjectMaxLength ) \
+										void *signedObject,
 								  IN_LENGTH_SHORT_MIN( 16 ) \
-										const int signedCertObjectMaxLength,
+										const int signedObjectMaxLength,
 								  IN_BUFFER( certObjectLength ) \
 										const void *certObject,
 								  IN_LENGTH_SHORT_MIN( 16 ) \
 										const int certObjectLength )
 	{
 	STREAM stream;
-	int signedCertObjectLength, status;
+	int signedObjectLength, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
-	assert( isWritePtr( signedCertObject, signedCertObjectMaxLength ) );
+	assert( isWritePtr( signedObject, signedObjectMaxLength ) );
 	assert( isReadPtr( certObject, certObjectLength ) );
 
-	REQUIRES( signedCertObjectMaxLength >= 16 && \
-			  signedCertObjectMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( signedObjectMaxLength >= 16 && \
+			  signedObjectMaxLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( certObjectLength >= 16 && \
-			  certObjectLength <= signedCertObjectMaxLength && \
+			  certObjectLength <= signedObjectMaxLength && \
 			  certObjectLength < MAX_INTLENGTH_SHORT );
 
 	switch( certInfoPtr->type )
 		{
 		case CRYPT_CERTTYPE_OCSP_REQUEST:
 		case CRYPT_CERTTYPE_PKIUSER:
-			/* It's an unsigned OCSP request or PKI user info, write the
-			   outer wrapper */
-			signedCertObjectLength = sizeofObject( certObjectLength );
-			ENSURES( signedCertObjectLength <= signedCertObjectMaxLength );
-			sMemOpen( &stream, signedCertObject, signedCertObjectLength );
+			/* It's an unsigned OCSP request or PKI user information, write 
+			   the outer wrapper */
+			signedObjectLength = sizeofObject( certObjectLength );
+			ENSURES( signedObjectLength >= 16 && \
+					 signedObjectLength <= signedObjectMaxLength );
+			sMemOpen( &stream, signedObject, signedObjectLength );
 			writeSequence( &stream, certObjectLength );
 			status = swrite( &stream, certObject, certObjectLength );
-			ENSURES( cryptStatusOK( status ) );
 			sMemDisconnect( &stream );
+			ENSURES( cryptStatusOK( status ) );
 			if( certInfoPtr->type == CRYPT_CERTTYPE_PKIUSER )
 				{
 				status = recoverCertData( certInfoPtr, 
 										  CRYPT_CERTTYPE_PKIUSER, 
-										  signedCertObject,
-										  signedCertObjectLength );
+										  signedObject, signedObjectLength );
 				if( cryptStatusError( status ) )
 					return( status );
 				}
@@ -427,9 +555,10 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 		case CRYPT_CERTTYPE_OCSP_RESPONSE:
 			/* It's an RTCS request/response or OCSP response, it's already
 			   in the form required */
-			signedCertObjectLength = certObjectLength;
-			ENSURES( signedCertObjectLength <= signedCertObjectMaxLength );
-			memcpy( signedCertObject, certObject, certObjectLength );
+			signedObjectLength = certObjectLength;
+			ENSURES( signedObjectLength >= 16 && \
+					 signedObjectLength <= signedObjectMaxLength );
+			memcpy( signedObject, certObject, certObjectLength );
 			break;
 
 		case CRYPT_CERTTYPE_REQUEST_CERT:
@@ -443,25 +572,26 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 			   with an indication that private key POP will be performed via 
 			   out-of-band means and remember where the encoded data 
 			   starts */
-			signedCertObjectLength = sizeofObject( dataSize );
-			ENSURES( signedCertObjectLength <= signedCertObjectMaxLength );
-			sMemOpen( &stream, signedCertObject, signedCertObjectLength );
+			signedObjectLength = sizeofObject( dataSize );
+			ENSURES( signedObjectLength >= 16 && \
+					 signedObjectLength <= signedObjectMaxLength );
+			sMemOpen( &stream, signedObject, signedObjectLength );
 			writeSequence( &stream, dataSize );
 			swrite( &stream, certObject, certObjectLength );
 			writeConstructed( &stream, sizeofShortInteger( 0 ), 2 );
 			status = writeShortInteger( &stream, 0, 1 );
-			ENSURES( cryptStatusOK( status ) );
 			sMemDisconnect( &stream );
+			ENSURES( cryptStatusOK( status ) );
 			status = recoverCertData( certInfoPtr, 
 									  CRYPT_CERTTYPE_REQUEST_CERT,
-									  signedCertObject,
-									  signedCertObjectLength );
+									  signedObject, signedObjectLength );
 			if( cryptStatusError( status ) )
 				return( status );
 
-			/* The pseudo-signature has been checked (since we just created
-			   it), this also avoids nasty semantic problems with not-really-
-			   signed CRMF requests with encryption-only keys */
+			/* Indicate that the pseudo-signature has been checked (since we 
+			   just created it), this also avoids nasty semantic problems 
+			   with not-really-signed CRMF requests containing encryption-
+			   only keys */
 			certInfoPtr->flags |= CERT_FLAG_SELFSIGNED;
 			break;
 			}
@@ -469,9 +599,10 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 		case CRYPT_CERTTYPE_REQUEST_REVOCATION:
 			/* Revocation requests can't be signed so the (pseudo-)signed
 			   data is just the object data */
-			signedCertObjectLength = certObjectLength;
-			ENSURES( signedCertObjectLength <= signedCertObjectMaxLength );
-			memcpy( signedCertObject, certObject, certObjectLength );
+			signedObjectLength = certObjectLength;
+			ENSURES( signedObjectLength >= 16 && \
+					 signedObjectLength <= signedObjectMaxLength );
+			memcpy( signedObject, certObject, certObjectLength );
 
 			/* Since revocation requests can't be signed we mark them as
 			   pseudo-signed to avoid any problems that might arise from
@@ -482,8 +613,8 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 		default:
 			retIntError();
 		}
-	certInfoPtr->certificate = signedCertObject;
-	certInfoPtr->certificateSize = signedCertObjectLength;
+	certInfoPtr->certificate = signedObject;
+	certInfoPtr->certificateSize = signedObjectLength;
 
 	/* The object is now (pseudo-)signed and initialised */
 	certInfoPtr->flags |= CERT_FLAG_SIGCHECKED;
@@ -498,6 +629,137 @@ static int pseudoSignCertificate( INOUT CERT_INFO *certInfoPtr,
 	return( krnlSendMessage( certInfoPtr->objectHandle,
 							 IMESSAGE_SETATTRIBUTE, MESSAGE_VALUE_UNUSED,
 							 CRYPT_IATTRIBUTE_INITIALISED ) );
+	}
+#endif /* USE_CERTREQ || USE_CERTREV || USE_CERTVAL || USE_PKIUSER */
+
+/* Sign the certificate information */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 6 ) ) \
+int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
+					void *signedObject, 
+				  IN_LENGTH const int signedObjectMaxLength, 
+				  OUT_LENGTH_Z int *signedObjectLength,
+				  IN_BUFFER( objectLength ) const void *object, 
+				  IN_LENGTH const int objectLength,
+				  INOUT CERT_INFO *certInfoPtr, 
+				  IN_HANDLE const CRYPT_CONTEXT iSignContext,
+				  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+				  IN_ENUM( CRYPT_SIGNATURELEVEL ) \
+					const CRYPT_SIGNATURELEVEL_TYPE signatureLevel,
+				  IN_LENGTH_SHORT_Z const int extraDataLength,
+				  const CERT_INFO *issuerCertInfoPtr )
+	{
+	STREAM stream;
+	const int extraDataType = \
+			( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT ) ? \
+			CRYPT_CERTFORMAT_CERTIFICATE : CRYPT_ICERTFORMAT_CERTSEQUENCE;
+	int status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( isWritePtr( signedObject, signedObjectMaxLength ) );
+	assert( isWritePtr( signedObjectLength, sizeof( int ) ) );
+	assert( isReadPtr( object, objectLength ) && \
+			!cryptStatusError( checkObjectEncoding( object, \
+													objectLength ) ) );
+	assert( issuerCertInfoPtr == NULL || \
+			isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
+
+	REQUIRES( signedObjectMaxLength >= 16 && \
+			  signedObjectMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( objectLength >= 16 && \
+			  objectLength <= signedObjectMaxLength && \
+			  objectLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( isHandleRangeValid( iSignContext ) );
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( signatureLevel >= CRYPT_SIGNATURELEVEL_NONE && \
+			  signatureLevel < CRYPT_SIGNATURELEVEL_LAST );
+	REQUIRES( extraDataLength >= 0 && \
+			  extraDataLength < MAX_INTLENGTH_SHORT );
+
+	/* Sign the certificate information.  CRMF and OCSP use a b0rken
+	   signature format (the authors couldn't quite manage a cut & paste of
+	   two lines of text) so if it's one of these we have to use nonstandard
+	   formatting */
+	if( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT || \
+		certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST )
+		{
+		X509SIG_FORMATINFO formatInfo;
+
+		if( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT )
+			{
+			/* [1] SEQUENCE */
+			setX509FormatInfo( &formatInfo, 1, FALSE );
+			}
+		else
+			{
+			/* [0] EXPLICIT SEQUENCE */
+			setX509FormatInfo( &formatInfo, 0, TRUE );
+			}
+		if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
+			{
+			formatInfo.extraLength = ( int ) \
+						sizeofObject( sizeofObject( extraDataLength ) );
+			}
+		else
+			{
+			if( signatureLevel == CRYPT_SIGNATURELEVEL_ALL )
+				{
+				formatInfo.extraLength = ( int ) \
+						sizeofObject( extraDataLength );
+				}
+			}
+		status = createX509signature( signedObject, signedObjectMaxLength, 
+								signedObjectLength, object, objectLength, 
+								iSignContext, hashAlgo, &formatInfo );
+		}
+	else
+		{
+		/* It's a standard signature */
+		status = createX509signature( signedObject, signedObjectMaxLength, 
+								signedObjectLength, object, objectLength, 
+								iSignContext, hashAlgo, NULL );
+		}
+	if( cryptStatusError( status ) )
+		return( cryptArgError( status ) ? CRYPT_ARGERROR_VALUE : status );
+
+	/* If there's no extra data to handle, we're done */
+	if( extraDataLength <= 0 )
+		{
+		ENSURES( !cryptStatusError( \
+					checkObjectEncoding( signedObject, \
+										 *signedObjectLength ) ) );
+		return( CRYPT_OK );
+		}
+
+	/* If we need to include extra data with the signature attach it to the 
+	   end of the signature */
+	ENSURES( rangeCheck( *signedObjectLength, 
+						 signedObjectMaxLength - *signedObjectLength, 
+						 signedObjectMaxLength ) );
+	sMemOpen( &stream, ( BYTE * ) signedObject + *signedObjectLength,
+			  signedObjectMaxLength - *signedObjectLength );
+	if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
+		{
+		writeConstructed( &stream, sizeofObject( extraDataLength ), 0 );
+		writeSequence( &stream, extraDataLength );
+		}
+	else
+		{
+		ENSURES( signatureLevel == CRYPT_SIGNATURELEVEL_ALL );
+
+		writeConstructed( &stream, extraDataLength, 0 );
+		}
+	status = exportCertToStream( &stream, issuerCertInfoPtr->objectHandle,
+								 extraDataType );
+	if( cryptStatusOK( status ) )
+		*signedObjectLength += stell( &stream );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	ENSURES( !cryptStatusError( \
+				checkObjectEncoding( signedObject, *signedObjectLength ) ) );
+	return( CRYPT_OK );
 	}
 
 /* Sign a certificate object */
@@ -521,8 +783,8 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	BOOLEAN issuerCertAcquired = FALSE, nonSigningKey = FALSE;
 	BYTE certObjectBuffer[ 1024 + 8 ], *certObjectPtr = certObjectBuffer;
 	void *signedCertObject;
-	int certObjectLength, signedCertObjectLength, signedCertAllocSize;
-	int extraDataLength = 0, complianceLevel, status;
+	int certObjectLength = DUMMY_INIT, signedCertObjectLength;
+	int signedCertAllocSize, extraDataLength = 0, complianceLevel, status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -548,8 +810,10 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 						  NULL, MESSAGE_CHECK_PKC_SIGN ) ) )
 		nonSigningKey = TRUE;
 
-	/* Obtain the issuer certificate from the private key if necessary */
-	if( isCertificate || certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
+	/* Obtain the issuer certificate from the private key if necessary 
+	  (aliena nobis, nostra plus aliis placent) */
+	if( isCertificate || \
+		certInfoPtr->type == CRYPT_CERTTYPE_CRL || \
 		( ( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST || \
 			certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE ) && \
 		  !nonSigningKey ) )
@@ -587,90 +851,18 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 			}
 		}
 
-	/* If we need to include extra data in the signature make sure that it's
-	   available and determine how big it'll be.  If there's no issuer 
-	   certificate available and we've been asked for extra signature data 
-	   we fall back to providing just a raw signature rather than bailing 
-	   out completely */
-	if( signatureLevel > CRYPT_SIGNATURELEVEL_NONE && \
-		issuerCertInfoPtr != NULL )
-		{
-		ENSURES( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT || \
-				 certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST );
-
-		if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
-			{
-			status = exportCert( NULL, 0, &extraDataLength,
-								 CRYPT_CERTFORMAT_CERTIFICATE,
-								 issuerCertInfoPtr );
-			}
-		else
-			{
-			MESSAGE_DATA msgData;
-
-			ENSURES( signatureLevel == CRYPT_SIGNATURELEVEL_ALL );
-
-			setMessageData( &msgData, NULL, 0 );
-			status = krnlSendMessage( issuerCertInfoPtr->objectHandle,
-									  IMESSAGE_CRT_EXPORT, &msgData,
-									  CRYPT_ICERTFORMAT_CERTSEQUENCE );
-			extraDataLength = msgData.length;
-			}
-		if( cryptStatusError( status ) )
-			{
-			if( issuerCertAcquired )
-				krnlReleaseObject( issuerCertInfoPtr->objectHandle );
-			return( status );
-			}
-		}
-
-	/* If it's a certificate chain copy over the signing certificate(s) */
-	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN )
-		{
-		status = copySigningCertChain( certInfoPtr, iSignContext );
-		if( cryptStatusError( status ) )
-			{
-			if( issuerCertAcquired )
-				krnlReleaseObject( issuerCertInfoPtr->objectHandle );
-			return( status );
-			}
-		}
-
-	/* Set up any required timestamps */
-	status = setCertTimeinfo( certInfoPtr, iSignContext, isCertificate );
+	/* Perform any final initialisation of the certificate object before we 
+	   sign it */
+	status = initSignatureInfo( certInfoPtr, issuerCertInfoPtr, 
+								iSignContext, isCertificate, &hashAlgo,
+								signatureLevel,
+								( signatureLevel > CRYPT_SIGNATURELEVEL_NONE ) ? \
+									&extraDataLength : NULL );
 	if( cryptStatusError( status ) )
 		{
 		if( issuerCertAcquired )
 			krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 		return( status );
-		}
-
-	/* If it's a certificate, set up the certificate serial number */
-	if( isCertificate )
-		{
-		status = setSerialNumber( certInfoPtr, NULL, 0 );
-		if( cryptStatusError( status ) )
-			{
-			if( issuerCertAcquired )
-				krnlReleaseObject( issuerCertInfoPtr->objectHandle );
-			return( status );
-			}
-		}
-
-	/* Determine the hash algorithm to use and if it's a certificate or 
-	   CRL remember it for when we write the certificate (the value is 
-	   embedded in the certificate to prevent an obscure attack on unpadded 
-	   RSA signature algorithms) */
-	krnlSendMessage( certInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE,
-					 &hashAlgo, CRYPT_OPTION_ENCR_HASH );
-	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
-		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN || \
-		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT )
-		certInfoPtr->cCertCert->hashAlgo = hashAlgo;
-	else
-		{
-		if( certInfoPtr->type == CRYPT_CERTTYPE_CRL )
-			certInfoPtr->cCertRev->hashAlgo = hashAlgo;
 		}
 
 	/* Select the function to use to write the certificate object to be
@@ -689,7 +881,8 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	sMemNullOpen( &stream );
 	status = writeCertFunction( &stream, certInfoPtr, issuerCertInfoPtr, 
 								iSignContext );
-	certObjectLength = stell( &stream );
+	if( cryptStatusOK( status ) )
+		certObjectLength = stell( &stream );
 	sMemClose( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -698,14 +891,15 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 		return( status );
 		}
 	signedCertAllocSize = certObjectLength + 1024 + extraDataLength;
-	if( ( certObjectLength > 1024 && \
-		  ( certObjectPtr = clDynAlloc( "signCert", \
-										certObjectLength ) ) == NULL ) || \
-		( signedCertObject = clAlloc( "signCert", \
-									  signedCertAllocSize ) ) == NULL )
+	if( certObjectLength > 1024 )
+		certObjectPtr = clDynAlloc( "signCert", certObjectLength );
+	signedCertObject = clAlloc( "signCert", signedCertAllocSize );
+	if( certObjectPtr == NULL || signedCertObject == NULL )
 		{
 		if( certObjectPtr != NULL && certObjectPtr != certObjectBuffer )
 			clFree( "signCert", certObjectPtr );
+		if( signedCertObject != NULL )
+			clFree( "signCert", signedCertObject );
 		if( issuerCertAcquired )
 			krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 		return( CRYPT_ERROR_MEMORY );
@@ -729,8 +923,10 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	ENSURES( !cryptStatusError( checkObjectEncoding( certObjectPtr, \
 													 certObjectLength ) ) );
 
-	/* If there's no signing key present pseudo-sign the certificate
-	   information by writing the outer wrapper and moving the object into
+#if defined( USE_CERTREQ ) || defined( USE_CERTREV ) || \
+	defined( USE_CERTVAL ) || defined( USE_PKIUSER )
+	/* If there's no signing key present we pseudo-sign the certificate 
+	   information by writing the outer wrapper and moving the object into 
 	   the initialised state */
 	if( nonSigningKey )
 		{
@@ -740,106 +936,30 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 		zeroise( certObjectPtr, certObjectLength );
 		if( certObjectPtr != certObjectBuffer )
 			clFree( "signCert", certObjectPtr );
-		ENSURES( !cryptStatusError( \
+		ENSURES( cryptStatusError( status ) || \
+				!cryptStatusError( \
 					checkObjectEncoding( certInfoPtr->certificate, \
 										 certInfoPtr->certificateSize ) ) );
 		return( status );
 		}
+#endif /* USE_CERTREQ || USE_CERTREV || USE_CERTVAL || USE_PKIUSER */
 
-	/* Sign the certificate information.  CRMF and OCSP use a b0rken
-	   signature format (the authors couldn't quite manage a cut & paste of
-	   two lines of text) so if it's one of these we have to use nonstandard
-	   formatting */
-	if( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT || \
-		certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST )
-		{
-		X509SIG_FORMATINFO formatInfo;
-
-		if( certInfoPtr->type == CRYPT_CERTTYPE_REQUEST_CERT )
-			{
-			/* [1] SEQUENCE */
-			setX509FormatInfo( &formatInfo, 1, FALSE );
-			}
-		else
-			{
-			/* [0] EXPLICIT SEQUENCE */
-			setX509FormatInfo( &formatInfo, 0, TRUE );
-			}
-		if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
-			{
-			formatInfo.extraLength = ( int ) \
-						sizeofObject( sizeofObject( extraDataLength ) );
-			}
-		else
-			{
-			if( signatureLevel == CRYPT_SIGNATURELEVEL_ALL )
-				{
-				formatInfo.extraLength = ( int ) \
-						sizeofObject( extraDataLength );
-				}
-			}
-		status = createX509signature( signedCertObject,
-							signedCertAllocSize, &signedCertObjectLength, 
-							certObjectPtr, certObjectLength, iSignContext,
-							hashAlgo, &formatInfo );
-		}
-	else
-		{
-		/* It's a standard signature */
-		status = createX509signature( signedCertObject,
-							signedCertAllocSize, &signedCertObjectLength, 
-							certObjectPtr, certObjectLength, iSignContext,
-							hashAlgo, NULL );
-		}
+	/* Sign the certificate information */
+	status = signCertInfo( signedCertObject, signedCertAllocSize, 
+						   &signedCertObjectLength, certObjectPtr, 
+						   certObjectLength, certInfoPtr, iSignContext, 
+						   hashAlgo, signatureLevel, extraDataLength,
+						   issuerCertInfoPtr );
 	zeroise( certObjectPtr, certObjectLength );
 	if( certObjectPtr != certObjectBuffer )
 		clFree( "signCert", certObjectPtr );
 	if( cryptStatusError( status ) )
 		{
-		return( ( status == CRYPT_ARGERROR_NUM1 ) ? \
-				CRYPT_ARGERROR_VALUE : status );
+		clFree( "signCert", signedCertObject );
+		return( status );
 		}
 	certInfoPtr->certificate = signedCertObject;
 	certInfoPtr->certificateSize = signedCertObjectLength;
-
-	/* If we need to include extra data with the signature attach it to the 
-	   end of the signature */
-	if( extraDataLength > 0 )
-		{
-		const int extraDataType = \
-			( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT ) ? \
-			CRYPT_CERTFORMAT_CERTIFICATE : CRYPT_ICERTFORMAT_CERTSEQUENCE;
-
-		sMemOpen( &stream, ( BYTE * ) signedCertObject + signedCertObjectLength,
-				  signedCertAllocSize - signedCertObjectLength );
-		if( signatureLevel == CRYPT_SIGNATURELEVEL_SIGNERCERT )
-			{
-			writeConstructed( &stream, sizeofObject( extraDataLength ), 0 );
-			writeSequence( &stream, extraDataLength );
-			}
-		else
-			{
-			ENSURES( signatureLevel == CRYPT_SIGNATURELEVEL_ALL );
-
-			writeConstructed( &stream, extraDataLength, 0 );
-			}
-		status = exportCertToStream( &stream, issuerCertInfoPtr->objectHandle,
-									 extraDataType );
-		certInfoPtr->certificateSize = signedCertObjectLength + \
-									   stell( &stream );
-		sMemDisconnect( &stream );
-		if( cryptStatusError( status ) )
-			{
-			zeroise( certInfoPtr->certificate, signedCertAllocSize );
-			clFree( "signCert", certInfoPtr->certificate );
-			certInfoPtr->certificate = NULL;
-			certInfoPtr->certificateSize = 0;
-			return( status );
-			}
-		}
-	ENSURES( !cryptStatusError( \
-				checkObjectEncoding( certInfoPtr->certificate, \
-									 certInfoPtr->certificateSize ) ) );
 
 	/* If it's a certification request it's now self-signed.  In addition 
 	   the signature has been checked since we've just created it */

@@ -114,8 +114,8 @@ static int writeNumeric( INOUT STREAM *stream, IN_INT const long integer )
 		{
 		/* Write a negative integer values.  This code is never executed 
 		   (and is actually checked for by the precondition at the start of
-		   theis function), it's present only in case it's ever needed in 
-		   the future */
+		   this function), it's present only in case it's ever needed in the 
+		   future */
 		iterationCount = 0;
 		do
 			{
@@ -165,14 +165,16 @@ long sizeofObject( IN_LENGTH const long length )
 	   unmodified */
 	if( length < 0 ) 
 		{
+		DEBUG_DIAG(( "Error code was passed to sizeof() function" ));
 		assert( DEBUG_WARN );
 		return( length );
 		}
 
 	/* If we're about to exceed the maximum safe length range, don't try and 
 	   go any further */
-	if( length > MAX_INTLENGTH - 10 )
+	if( length > MAX_INTLENGTH - 16 )
 		{
+		DEBUG_DIAG(( "Length exceeds maximum safe length value" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_OVERFLOW );
 		}
@@ -263,7 +265,7 @@ int writeBignumTag( INOUT STREAM *stream,
 	if( sIsNullStream( stream ) )
 		return( sSkip( stream, sizeofBignum( bignum ) ) );
 
-	status = getBignumData( bignum, buffer, CRYPT_MAX_PKCSIZE, &length );
+	status = exportBignum( buffer, CRYPT_MAX_PKCSIZE, &length, bignum );
 	if( cryptStatusError( status ) )
 		retIntError_Stream( stream );
 	status = writeInteger( stream, buffer, length, tag );
@@ -353,7 +355,7 @@ int writeOctetString( INOUT STREAM *stream,
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeCharacterString( INOUT STREAM *stream, 
-						  IN_BUFFER( bufSize ) const BYTE *string, 
+						  IN_BUFFER( bufSize ) const void *string, 
 						  IN_LENGTH_SHORT const int length, 
 						  IN_TAG_ENCODED const int tag )
 	{

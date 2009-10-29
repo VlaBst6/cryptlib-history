@@ -100,20 +100,23 @@ static int processTrustManagement( INOUT USER_INFO *userInfoPtr,
 			if( cryptStatusError( status ) )
 				return( status );
 			userInfoPtr->trustInfoChanged = TRUE;
-			return( setOption( userInfoPtr->configOptions,
+			return( setOption( userInfoPtr->configOptions, 
+							   userInfoPtr->configOptionsCount,
 							   CRYPT_OPTION_CONFIGCHANGED, TRUE ) );
 
 		case MESSAGE_TRUSTMGMT_DELETE:
 			{
 			void *entryToDelete;
 
-			/* Find the entry to delete and remove it */
+			/* Find the entry to delete and remove it (fides, ut anima, unde 
+			   abiit eo nunquam redit - Publius Syrus) */
 			if( ( entryToDelete = findTrustEntry( userInfoPtr->trustInfoPtr,
 												  *iCertificate, FALSE ) ) == NULL )
 				return( CRYPT_ERROR_NOTFOUND );
 			deleteTrustEntry( userInfoPtr->trustInfoPtr, entryToDelete );
 			userInfoPtr->trustInfoChanged = TRUE;
 			return( setOption( userInfoPtr->configOptions,
+							   userInfoPtr->configOptionsCount,
 							   CRYPT_OPTION_CONFIGCHANGED, TRUE ) );
 			}
 
@@ -194,7 +197,8 @@ static int userMessageFunction( INOUT TYPECAST( USER_INFO * ) \
 		if( userInfoPtr->trustInfoPtr != NULL )
 			endTrustInfo( userInfoPtr->trustInfoPtr );
 		if( userInfoPtr->configOptions != NULL )
-			endOptions( userInfoPtr->configOptions );
+			endOptions( userInfoPtr->configOptions, 
+						userInfoPtr->configOptionsCount );
 		if( userInfoPtr->userIndexPtr != NULL )
 			endUserIndex( userInfoPtr->userIndexPtr );
 
@@ -345,7 +349,8 @@ static int openUser( OUT_HANDLE_OPT CRYPT_USER *iCryptUser,
 	/* Initialise the config options and trust info */
 	status = initTrustInfo( &userInfoPtr->trustInfoPtr );
 	if( cryptStatusOK( status ) )
-		status = initOptions( &userInfoPtr->configOptions );
+		status = initOptions( &userInfoPtr->configOptions,
+							  &userInfoPtr->configOptionsCount );
 	return( status );
 	}
 
@@ -538,9 +543,15 @@ static int createDefaultUserObject( void )
 	   cryptlib to abort mysteriously just because a bit in some config file 
 	   that most people don't even know exists got flipped, so we treat the 
 	   read as an opportunistic read and fall back to built-in safe defaults 
-	   if there's a problem */
+	   if there's a problem, warning the user in debug mode */
 	status = readConfig( iUserObject, "cryptlib", userInfoPtr->trustInfoPtr );
-	assert( cryptStatusOK( status ) );
+	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "Couldn't read config data, using default config" ));
+		assert( DEBUG_WARN );
+		DEBUG_PRINT(( "Configuration file read failed with status %d.\n", 
+					  status ));
+		}
 
 	/* The object has been initialised, move it into the initialised state */
 	return( krnlSendMessage( iUserObject, IMESSAGE_SETATTRIBUTE, 

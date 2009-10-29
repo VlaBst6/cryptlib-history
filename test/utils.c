@@ -1,10 +1,11 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Self-test Utility Routines					*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
+#include <ctype.h>
 #include "cryptlib.h"
 #include "test/test.h"
 
@@ -58,6 +59,19 @@ static char *getTimeString( const time_t theTime, const int bufNo )
 #else
   #define getTimeString( theTime, bufNo )	"(No time data available)"
 #endif /* _WIN32_WCE */
+
+#if defined( _WIN32_WCE ) && _WIN32_WCE < 500
+
+int remove( const char *pathname )
+	{
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+
+	mbstowcs( wcBuffer, pathname, strlen( pathname ) + 1 );
+	DeleteFile( wcBuffer );
+
+	return( 0 );
+	}
+#endif /* WinCE < 5.x */
 
 /****************************************************************************
 *																			*
@@ -222,6 +236,8 @@ int getPublicKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 		return( status );
 	status = cryptGetPublicKey( cryptKeyset, cryptContext, CRYPT_KEYID_NAME,
 								keyName );
+	if( cryptStatusError( status ) )
+		printExtError( cryptKeyset, "cryptGetPublicKey", status, __LINE__ );
 	cryptKeysetClose( cryptKeyset );
 	return( status );
 	}
@@ -240,20 +256,25 @@ int getPrivateKey( CRYPT_CONTEXT *cryptContext, const C_STR keysetName,
 		return( status );
 	status = cryptGetPrivateKey( cryptKeyset, cryptContext, CRYPT_KEYID_NAME,
 								 keyName, password );
+	if( cryptStatusError( status ) )
+		printExtError( cryptKeyset, "cryptGetPrivateKey", status, __LINE__ );
 	cryptKeysetClose( cryptKeyset );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* If the key has a cert attached, make sure it's still valid before we
-	   hand it back to the self-test functions that will report the problem
-	   as being with the self-test rather than with the cert.  We check not
-	   just the expiry date but also the expiry interval, to make sure that
-	   we don't get false positives on short-validity certs */
+	/* If the key has a certificate attached, make sure it's still valid 
+	   before we hand it back to the self-test functions that will report 
+	   the problem as being with the self-test rather than with the 
+	   certificate.  We check not just the expiry date but also the expiry 
+	   interval to make sure that we don't get false positives on short-
+	   validity certificates */
 	status = cryptGetAttributeString( *cryptContext,
 					CRYPT_CERTINFO_VALIDFROM, &validFrom, &dummy );
 	if( cryptStatusError( status ) )
-		/* There's no cert there, this isn't an error */
+		{
+		/* There's no certificate there, this isn't an error */
 		return( CRYPT_OK );
+		}
 	cryptGetAttributeString( *cryptContext,
 					CRYPT_CERTINFO_VALIDTO, &validTo, &dummy );
 #ifndef _WIN32_WCE
@@ -310,6 +331,7 @@ const C_STR getKeyfileName( const KEYFILE_TYPE type,
 		case KEYFILE_X509:
 			return( USER_PRIVKEY_FILE );
 		case KEYFILE_PGP:
+		case KEYFILE_PGP_SPECIAL:
 			return( isPrivKey ? PGP_PRIVKEY_FILE : PGP_PUBKEY_FILE );
 		case KEYFILE_OPENPGP:
 			return( isPrivKey ? OPENPGP_PRIVKEY_FILE : OPENPGP_PUBKEY_FILE );
@@ -362,6 +384,8 @@ const C_STR getKeyfileUserID( const KEYFILE_TYPE type,
 			return( USER_PRIVKEY_LABEL );
 		case KEYFILE_PGP:
 			return( TEXT( "test" ) );
+		case KEYFILE_PGP_SPECIAL:
+			return( TEXT( "suzuki" ) );
 		case KEYFILE_NAIPGP:
 			return( isPrivKey ? TEXT( "test" ) : TEXT( "test cryptlib" ) );
 		case KEYFILE_OPENPGP:
@@ -714,8 +738,10 @@ void printErrorAttributeInfo( const CRYPT_HANDLE cryptHandle )
 								&errorType );
 	cryptGetAttribute( cryptHandle, CRYPT_ATTRIBUTE_ERRORLOCUS, &errorLocus );
 	if( cryptStatusOK( status ) && errorType != CRYPT_ERRTYPE_NONE )
+		{
 		printf( "  Error info attributes report locus %d, type %d.\n",
 				errorLocus, errorType );
+		}
 	}
 
 /* Print extended object error information */
@@ -725,28 +751,28 @@ void printExtError( const CRYPT_HANDLE cryptHandle,
 					const int lineNo )
 	{
 	char errorMessage[ 512 ];
-	int errorCode, errorMessageLength, status, msgStatus;
+	int errorCode = 0, errorMessageLength, status, msgStatus;
 
 	printf( "%s failed with error code %d, line %d.\n", functionName,
 			functionStatus, lineNo );
 	status = cryptGetAttribute( cryptHandle, CRYPT_ATTRIBUTE_INT_ERRORCODE,
 								&errorCode );
-	msgStatus = cryptGetAttributeString( cryptHandle,
-										 CRYPT_ATTRIBUTE_INT_ERRORMESSAGE,
-										 errorMessage, &errorMessageLength );
 	if( cryptStatusError( status ) )
 		{
 		printf( "Read of error attributes failed with error code %d, "
 				"line %d.\n", status, __LINE__ );
 		return;
 		}
-	if( !errorCode && cryptStatusError( msgStatus ) )
+	msgStatus = cryptGetAttributeString( cryptHandle,
+										 CRYPT_ATTRIBUTE_INT_ERRORMESSAGE,
+										 errorMessage, &errorMessageLength );
+	if( errorCode == 0 && cryptStatusError( msgStatus ) )
 		{
 		puts( "  No extended error information available." );
 		printErrorAttributeInfo( cryptHandle );
 		return;
 		}
-	if( errorCode )
+	if( errorCode != 0 )
 		printf( "  Extended error code = %d (0x%X).\n", errorCode, 
 				errorCode );
 	if( cryptStatusOK( msgStatus ) )
@@ -825,10 +851,12 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 				status = cryptSetAttribute( certificate,
 							certData[ i ].type, certData[ i ].numericValue );
 				if( cryptStatusError( status ) )
+					{
 					printf( "cryptSetAttribute() for entry %d, field ID %d,\n"
 							"  value %d, failed with error code %d, line %d.\n",
 							i + 1, certData[ i ].type, certData[ i ].numericValue,
 							status, lineNo );
+					}
 				break;
 
 			case IS_STRING:
@@ -848,7 +876,7 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 						puts( "                         ********************" );
 						puts( "If you're running this under BoundsChecker "
 							  "you need to disable it to complete\nthe test "
-							  "since it causes errors in the cert "
+							  "since it causes errors in the certificate "
 							  "string-checking code.  The\nfollowing error "
 							  "is caused by BoundsChecker, not by the "
 							  "self-test failing." );
@@ -869,11 +897,13 @@ int addCertFields( const CRYPT_CERTIFICATE certificate,
 							certData[ i ].type, certData[ i ].stringValue,
 							wcslen( certData[ i ].stringValue ) * sizeof( wchar_t ) );
 				if( cryptStatusError( status ) )
+					{
 					printf( "cryptSetAttributeString() for entry %d, field ID %d,\n"
 							"  value '%s', failed with error code %d, line %d.\n",
 							i + 1, certData[ i ].type,
 							( char * ) certData[ i ].stringValue, status,
 							lineNo );
+					}
 				break;
 #endif /* HAS_WIDECHAR */
 
@@ -921,7 +951,7 @@ void loadCertificates( void )
 		CRYPT_CERTIFICATE cryptCert;
 		int status;
 
-		printf( "Adding cert %s.\n", findData.cFileName );
+		printf( "Adding certificate %s.\n", findData.cFileName );
 		status = importCertFile( &cryptCert, findData.cFileName );
 		if( cryptStatusOK( status ) )
 			{
@@ -958,6 +988,7 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
 	char fileNameBuffer[ 128 ];
 #endif /* __UNIX__ */
 	const int length = strlen( fileName );
+	int count;
 
 	fileNameBuffer[ 0 ] = '\0';
 #if defined( _WIN32_WCE )
@@ -965,22 +996,32 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
 	   time we're run so we don't try and do anything */
 	return;
 #elif ( defined( _MSC_VER ) && !defined( __PALMSOURCE__ ) )
-	/* If the path isn't absolute, deposit it in a temp directory */
+	/* If the path isn't absolute, deposit it in a temp directory.  Note
+	   that we have to use underscores in front of the Posix functions
+	   because these were deprecated starting with VS 2005.  In addition we 
+	   have to explicitly exclude oldnames.lib (which usually isn't a 
+	   included in the libraries installed with VS) from the link, inclusion 
+	   of this is triggered by the compiler seeing the Posix or underscore-
+	   Posix functions */
+  #if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
+	#pragma comment(linker, "/nodefaultlib:oldnames.lib")
+  #endif /* VC++ 2005 and newer misconfiguration */
 	if( fileName[ 1 ] != ':' )
 		{
-		if( access( "d:/tmp/", 6 ) == 0 )
+		if( _access( "d:/tmp/", 6 ) == 0 )
 			{
 			/* There's a data partition available, dump the info there */
-			if( access( "d:/tmp/", 6 ) == -1 && \
+			if( _access( "d:/tmp/", 6 ) == -1 && \
 				!CreateDirectory( "d:/tmp", NULL ) )
 				return;
 			strcpy( fileNameBuffer, "d:/tmp/" );
 			}
 		else
 			{
-			/* There's no separate data partition, everything's dumped into 
+			/* There's no separate data partition, everything's dumped into
 			   the same partition */
-			if( access( "c:/tmp/", 6 ) == -1 && mkdir( "c:/tmp" ) == -1 )
+			if( _access( "c:/tmp/", 6 ) == -1 && \
+				!CreateDirectory( "c:/tmp", NULL ) )
 				return;
 			strcpy( fileNameBuffer, "c:/tmp/" );
 			}
@@ -1017,8 +1058,13 @@ void debugDump( const char *fileName, const void *data, const int dataLength )
 	if( ( filePtr = fopen( fileNameBuffer, "wb" ) ) == NULL )
 #endif /* __VMCMS__ */
 		return;
-	fwrite( data, dataLength, 1, filePtr );
+	count = fwrite( data, 1, dataLength, filePtr );
 	fclose( filePtr );
+	if( count < length )
+		{
+		printf( "Warning: Couldn't dump '%s' to disk.\n", fileName );
+		remove( fileName );
+		}
 	}
 
 /****************************************************************************
@@ -1162,6 +1208,44 @@ BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 /* Run a persistent server session, recycling the connection if the client
    kept the link open */
 
+static void printOperationType( const CRYPT_SESSION cryptSession )
+	{
+	struct {
+		const int operation; 
+		const char *name;
+		} operationTypeTbl[] = {
+		{ CRYPT_REQUESTTYPE_NONE, "(None)" },
+		{ CRYPT_REQUESTTYPE_INITIALISATION,	"ir" },
+		{ CRYPT_REQUESTTYPE_CERTIFICATE, "cr" },
+		{ CRYPT_REQUESTTYPE_KEYUPDATE, "kur" },
+		{ CRYPT_REQUESTTYPE_REVOCATION,	"rr" },
+		{ CRYPT_REQUESTTYPE_PKIBOOT, "pkiBoot" },
+		{ -1, "(Unknown)" }
+		};
+	char userID[ CRYPT_MAX_TEXTSIZE ];
+	int userIDsize, requestType, i, status;
+
+	status = cryptGetAttribute( cryptSession,
+								CRYPT_SESSINFO_CMP_REQUESTTYPE,
+								&requestType );
+	if( cryptStatusOK( status ) )
+		status = cryptGetAttributeString( cryptSession,
+									CRYPT_SESSINFO_USERNAME,
+									userID, &userIDsize );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptGetAttribute/AttributeString() failed with error "
+				"code %d, line %d.\n", status, __LINE__ );
+		return;
+		}
+	userID[ userIDsize ] = '\0';
+	for( i = 0; operationTypeTbl[ i ].operation != requestType && \
+				operationTypeTbl[ i ].operation != -1; i++ );
+	printf( "SVR: Operation type was %d = %s, user '%s'.\n",
+			requestType, operationTypeTbl[ i ].name, userID );
+	fflush( stdout );
+	}
+
 int activatePersistentServerSession( const CRYPT_SESSION cryptSession,
 									 const BOOLEAN showOperationType )
 	{
@@ -1185,28 +1269,7 @@ int activatePersistentServerSession( const CRYPT_SESSION cryptSession,
 		   another request */
 		printConnectInfo( cryptSession );
 		if( cryptStatusOK( status ) && showOperationType )
-			{
-			char userID[ CRYPT_MAX_TEXTSIZE ];
-			int userIDsize, requestType;
-
-			status = cryptGetAttribute( cryptSession,
-										CRYPT_SESSINFO_CMP_REQUESTTYPE,
-										&requestType );
-			if( cryptStatusOK( status ) )
-				status = cryptGetAttributeString( cryptSession,
-											CRYPT_SESSINFO_USERNAME,
-											userID, &userIDsize );
-			if( cryptStatusError( status ) )
-				printf( "cryptGetAttribute/AttributeString() failed with "
-						"error code %d, line %d.\n", status, __LINE__ );
-			else
-				{
-				userID[ userIDsize ] = '\0';
-				printf( "SVR: Operation type was %d, user '%s'.\n",
-						requestType, userID );
-				fflush( stdout );
-				}
-			}
+			printOperationType( cryptSession );
 		cryptGetAttribute( cryptSession, CRYPT_SESSINFO_CONNECTIONACTIVE,
 						   &connectionActive );
 		}
@@ -1283,6 +1346,34 @@ int displayAttributes( const CRYPT_HANDLE cryptHandle )
 *																			*
 ****************************************************************************/
 
+/* Check whether a string may be a Unicode string */
+
+static BOOLEAN isUnicode( const BYTE *value, const int length )
+	{
+	const wchar_t *wcValue = ( wchar_t * ) value;
+
+	/* If it's an odd length or too short to reliably guess, report it as 
+	   non-Unicode */
+	if( ( length % sizeof( wchar_t ) ) || length <= sizeof( wchar_t ) * 2 )
+		return( FALSE );
+
+	/* If the first four characters are ASCII then it's unlikely that it'll
+	   be Unicode */
+	if( isprint( value[ 0 ] ) && isprint( value[ 1 ] ) && \
+		isprint( value[ 2 ] ) && isprint( value[ 3 ] ) )
+		return( FALSE );
+
+	/* Check whether the first 3 widechars have identical high bytes.  This
+	   isn't totally reliable (e.g. "tanaka" will give a false positive, 
+	   { 0x0160, 0x0069, 0x006B } will give a false negative) but it's close
+	   enough */
+	if( ( wcValue[ 0 ] & 0xFF00 ) == ( wcValue[ 1 ] & 0xFF00 ) && \
+		( wcValue[ 0 ] & 0xFF00 ) == ( wcValue[ 2 ] & 0xFF00 ) )
+		return( TRUE );
+
+	return( FALSE );
+	}
+
 /* Print a hex string */
 
 static void printHex( const BYTE *value, const int length )
@@ -1296,87 +1387,6 @@ static void printHex( const BYTE *value, const int length )
 		printf( "%02X", value[ i ] );
 		}
 	puts( "." );
-	}
-
-/* Print a DN */
-
-static void printDN( const CRYPT_CERTIFICATE certificate )
-	{
-	char buffer[ 1024 + 1 ];
-	int length, status;
-
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_DN, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  DN string = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_COUNTRYNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  C = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_STATEORPROVINCENAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  S = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_LOCALITYNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  L = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_ORGANIZATIONNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  O = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  OU = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_COMMONNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  CN = %s.\n", buffer ); }
-	}
-
-/* Print an altName */
-
-static void printAltName( const CRYPT_CERTIFICATE certificate )
-	{
-	char buffer[ 512 ];
-	int length, status;
-
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_RFC822NAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  Email = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_DNSNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  DNSName = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_EDIPARTYNAME_NAMEASSIGNER, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  EDI Nameassigner = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_EDIPARTYNAME_PARTYNAME, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  EDI Partyname = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  URL = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_IPADDRESS, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  IP = %s.\n", buffer ); }
-	status = cryptGetAttributeString( certificate,
-						CRYPT_CERTINFO_REGISTEREDID, buffer, &length );
-	if( cryptStatusOK( status ) )
-		{ buffer[ length ] = '\0'; printf( "  Registered ID = %s.\n", buffer ); }
-	status = cryptSetAttribute( certificate, CRYPT_CERTINFO_DIRECTORYNAME,
-								CRYPT_UNUSED );
-	if( cryptStatusOK( status ) )
-		{
-		printf( "  altName DN is:\n" );
-		printDN( certificate );
-		}
 	}
 
 /* The following function performs many attribute accesses, rather than using
@@ -1394,6 +1404,106 @@ static int certInfoErrorExit( const char *functionCall, const int status,
 	printf( "\n%s failed with status %d, line %d.\n", functionCall,
 			status, line );
 	return( FALSE );
+	}
+
+/* Print a DN or altName */
+
+static int printComponent( const CRYPT_CERTIFICATE certificate,
+						   const CRYPT_ATTRIBUTE_TYPE component,
+						   const char *prefixString )
+	{
+	char buffer[ 1024 + 1 ];
+	int length, status;
+
+	status = cryptGetAttributeString( certificate, component, 
+									  buffer, &length );
+	if( cryptStatusError( status ) )
+		{
+		if( status == CRYPT_ERROR_NOTAVAIL && \
+			component == CRYPT_CERTINFO_DN )
+			{
+			/* Report this special-case condition explicitly */
+			puts( "  (Name contains characters that prevent it from being "
+				  "represented as a\n   text string)." ); 
+			}
+		return( FALSE );
+		}
+	if( isUnicode( buffer, length ) )
+		{
+		wchar_t *wcBuffer = ( wchar_t * ) buffer;
+
+		wcBuffer[ length / sizeof( wchar_t ) ] = TEXT( '\0' );
+		printf( "  %s = %S.\n", prefixString, wcBuffer ); 
+		return( TRUE );
+		}
+	buffer[ length ] = '\0'; 
+	printf( "  %s = %s.\n", prefixString, buffer ); 
+	
+	return( TRUE );
+	}
+
+static int printComponents( const CRYPT_CERTIFICATE certificate,
+							const CRYPT_ATTRIBUTE_TYPE component,
+							const char *prefixString )
+	{
+	int status;
+
+	/* Try and print the component if it's present */
+	if( !printComponent( certificate, component, prefixString ) )
+		return( FALSE );
+
+	/* If it's not a DN or altName component, we're done */
+	if( !( component >= CRYPT_CERTINFO_COUNTRYNAME && \
+		   component <= CRYPT_CERTINFO_COMMONNAME ) && \
+		!( component >= CRYPT_CERTINFO_OTHERNAME_TYPEID && \
+		   component > CRYPT_CERTINFO_REGISTEREDID ) )
+		return( TRUE );
+
+	/* Check for further components, for multivalued components in altNames */
+	CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT_INSTANCE, 
+							component ) );
+	while( cryptSetAttribute( certificate,
+							  CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+							  CRYPT_CURSOR_NEXT ) == CRYPT_OK )
+		{
+		char buffer[ 64 ];
+
+		sprintf( buffer, "  + %s", prefixString );
+		if( !printComponent( certificate, component, buffer ) )
+			return( FALSE );
+		}
+	return( TRUE );
+	}
+
+static void printDN( const CRYPT_CERTIFICATE certificate )
+	{
+	printComponents( certificate, CRYPT_CERTINFO_DN, "DN string" );
+	printComponents( certificate, CRYPT_CERTINFO_COUNTRYNAME, "C" );
+	printComponents( certificate, CRYPT_CERTINFO_STATEORPROVINCENAME, "S" );
+	printComponents( certificate, CRYPT_CERTINFO_LOCALITYNAME, "L" );
+	printComponents( certificate, CRYPT_CERTINFO_ORGANIZATIONNAME, "O" );
+	printComponents( certificate, CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, "OU" );
+	printComponents( certificate, CRYPT_CERTINFO_COMMONNAME, "CN" );
+	}
+
+static void printAltName( const CRYPT_CERTIFICATE certificate )
+	{
+	int status;
+
+	printComponents( certificate, CRYPT_CERTINFO_RFC822NAME, "Email" );
+	printComponents( certificate, CRYPT_CERTINFO_DNSNAME, "DNSName" );
+	printComponents( certificate, CRYPT_CERTINFO_EDIPARTYNAME_NAMEASSIGNER, "EDI Nameassigner" );
+	printComponents( certificate, CRYPT_CERTINFO_EDIPARTYNAME_PARTYNAME, "EDI Partyname" );
+	printComponents( certificate, CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, "URL" );
+	printComponents( certificate, CRYPT_CERTINFO_IPADDRESS, "IP" );
+	printComponents( certificate, CRYPT_CERTINFO_REGISTEREDID, "Registered ID" );
+	status = cryptSetAttribute( certificate, CRYPT_CERTINFO_DIRECTORYNAME,
+								CRYPT_UNUSED );
+	if( cryptStatusOK( status ) )
+		{
+		printf( "  altName DN is:\n" );
+		printDN( certificate );
+		}
 	}
 
 /* Print information on a certificate */
@@ -1418,8 +1528,8 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 		certType != CRYPT_CERTTYPE_PKIUSER )
 		{
 		puts( "Certificate object issuer name is:" );
-		CHK( cryptSetAttribute( certificate, CRYPT_CERTINFO_ISSUERNAME,
-								CRYPT_UNUSED ) );
+		CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,
+								CRYPT_CERTINFO_ISSUERNAME ) );
 		printDN( certificate );
 		if( cryptStatusOK( \
 				cryptGetAttribute( certificate,
@@ -1439,8 +1549,8 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 		certType != CRYPT_CERTTYPE_OCSP_RESPONSE )
 		{
 		puts( "Certificate object subject name is:" );
-		CHK( cryptSetAttribute( certificate, CRYPT_CERTINFO_SUBJECTNAME,
-								CRYPT_UNUSED ) );
+		CHK( cryptSetAttribute( certificate, CRYPT_ATTRIBUTE_CURRENT,
+								CRYPT_CERTINFO_SUBJECTNAME ) );
 		printDN( certificate );
 		if( cryptStatusOK( \
 				cryptGetAttribute( certificate,
@@ -1464,7 +1574,7 @@ int printCertInfo( const CRYPT_CERTIFICATE certificate )
 									  &validFrom, &length ) );
 		CHK( cryptGetAttributeString( certificate, CRYPT_CERTINFO_VALIDTO,
 									  &validTo, &length ) );
-		printf( "Certificate is valid from %s to %s", 
+		printf( "Certificate is valid from %s to %s.\n", 
 				getTimeString( validFrom, 0 ),
 				getTimeString( validTo, 1 ) );
 		}
@@ -1830,7 +1940,7 @@ int printCertChainInfo( const CRYPT_CERTIFICATE certChain )
 	{
 	int value, count, status;
 
-	/* Make sure it really is a cert chain */
+	/* Make sure it really is a certificate chain */
 	CHK( cryptGetAttribute( certChain, CRYPT_CERTINFO_CERTTYPE, &value ) );
 	if( value != CRYPT_CERTTYPE_CERTCHAIN )
 		{
@@ -1838,9 +1948,9 @@ int printCertChainInfo( const CRYPT_CERTIFICATE certChain )
 		return( TRUE );
 		}
 
-	/* Display info on each cert in the chain.  This uses the cursor
-	   mechanism to select successive certs in the chain from the leaf up to
-	   the root */
+	/* Display info on each certificate in the chain.  This uses the cursor
+	   mechanism to select successive certificates in the chain from the 
+	   leaf up to the root */
 	count = 0;
 	CHK( cryptSetAttribute( certChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
 							CRYPT_CURSOR_FIRST ) );

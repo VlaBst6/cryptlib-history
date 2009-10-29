@@ -20,12 +20,13 @@
 
 #define TESTBUFFER_SIZE		256
 
-/* Since the DH operations aren't visible externally, we have to use the
-   kernel API to perform the test.  To get the necessary definitions and
-   prototypes, we have to use crypt.h, however since we've already included
-   cryptlib.h the built-in guards preclude us from pulling it in again with
-   the internal-only values defined, so we have to explicitly define things
-   like attribute values that normally aren't visible externally */
+/* Since the DH/ECDH operations aren't visible externally, we have to use 
+   the kernel API to perform the test.  To get the necessary definitions 
+   and prototypes, we have to use crypt.h, however since we've already 
+   included cryptlib.h the built-in guards preclude us from pulling it in 
+   again with the internal-only values defined, so we have to explicitly 
+   define things like attribute values that normally aren't visible 
+   externally */
 
 #ifdef TEST_DH
   #undef __WINDOWS__
@@ -111,34 +112,36 @@ static void initTestBuffers( BYTE *buffer1, BYTE *buffer2, const int length )
 static BOOLEAN checkTestBuffers( const BYTE *buffer1, const BYTE *buffer2 )
 	{
 	/* Make sure that everything went OK */
-	if( memcmp( buffer1, buffer2, TESTBUFFER_SIZE ) )
-		{
-		puts( "Error: Decrypted data != original plaintext." );
+	if( !memcmp( buffer1, buffer2, TESTBUFFER_SIZE ) )
+		return( TRUE );
+	puts( "Error: Decrypted data != original plaintext." );
 
-		/* Try and guess at block chaining problems */
-		if( !memcmp( buffer1, "12345678****", 12 ) )
-			puts( "\t\bIt looks like there's a problem with block chaining." );
-		else
-			/* Try and guess at endianness problems - we want "1234" */
-			if( !memcmp( buffer1, "4321", 4 ) )
-				puts( "\t\bIt looks like the 32-bit word endianness is "
-					  "reversed." );
-			else
-				if( !memcmp( buffer1, "2143", 4 ) )
-					puts( "\t\bIt looks like the 16-bit word endianness is "
-						  "reversed." );
-			else
-				if( buffer1[ 0 ] >= '1' && buffer1[ 0 ] <= '9' )
-					puts( "\t\bIt looks like there's some sort of endianness "
-						  "problem which is\n\t more complex than just a "
-						  "reversal." );
-				else
-					puts( "\t\bIt's probably more than just an endianness "
-						  "problem." );
+	/* Try and guess at block chaining problems */
+	if( !memcmp( buffer1, "12345678****", 12 ) )
+		{
+		puts( "\t\bIt looks like there's a problem with block chaining." );
 		return( FALSE );
 		}
 
-	return( TRUE );
+	/* Try and guess at endianness problems - we want "1234" */
+	if( !memcmp( buffer1, "4321", 4 ) )
+		{
+		puts( "\t\bIt looks like the 32-bit word endianness is reversed." );
+		return( FALSE );
+		}
+	if( !memcmp( buffer1, "2143", 4 ) )
+		{
+		puts( "\t\bIt looks like the 16-bit word endianness is reversed." );
+		return( FALSE );
+		}
+	if( buffer1[ 0 ] >= '1' && buffer1[ 0 ] <= '9' )
+		{
+		puts( "\t\bIt looks like there's some sort of endianness problem "
+			  "which is\n\t more complex than just a reversal." );
+		return( FALSE );
+		}
+	puts( "\t\bIt's probably more than just an endianness problem." );
+	return( FALSE );
 	}
 
 /* Load the encryption contexts */
@@ -177,9 +180,11 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 			{
 			cryptDestroyContext( *cryptContext );
 			if( status == CRYPT_ERROR_NOTAVAIL )
+				{
 				/* This mode isn't available, return a special-case value to
 				   tell the calling code to continue */
 				return( status );
+				}
 			printf( "Encryption mode %d selection failed with status %d, "
 					"line %d.\n", cryptMode, status, __LINE__ );
 			return( FALSE );
@@ -231,9 +236,11 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 			{
 			cryptDestroyContext( *cryptContext );
 			if( status == CRYPT_ERROR_NOTAVAIL )
+				{
 				/* This mode isn't available, return a special-case value to
 				   tell the calling code to continue */
 				return( status );
+				}
 			printf( "Encryption mode %d selection failed with status %d, "
 					"line %d.\n", cryptMode, status, __LINE__ );
 			return( FALSE );
@@ -375,12 +382,12 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		return( CRYPT_OK );
 		}
 #ifdef TEST_DH
-	if( cryptAlgo == CRYPT_ALGO_DH )
+	if( cryptAlgo == CRYPT_ALGO_DH || cryptAlgo == CRYPT_ALGO_ECDH )
 		{
 		KEYAGREE_PARAMS keyAgreeParams;
 		int status;
 
-		/* Perform the DH key agreement */
+		/* Perform the DH/ECDH key agreement */
 		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
 #if 0
 		status = krnlSendMessage( cryptContext, IMESSAGE_CTX_ENCRYPT,
@@ -397,7 +404,7 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 #endif /* 0 */
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't perform DH key agreement, status = %d, "
+			printf( "Couldn't perform DH/ECDH key agreement, status = %d, "
 					"line %d.\n", status, __LINE__ );
 			return( status );
 			}
@@ -441,9 +448,11 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		   decryption operation */
 		memcpy( tmpBuffer, buffer, 18 );
 		if( isDevice )
+			{
 			memcpy( buffer, "\x00\x02\xA5\xA5\xA5\xA5\xA5\xA5"
 							"\xA5\xA5\xA5\xA5\xA5\xA5\xA5\xA5"
 							"\xA5\x00", 18 );
+			}
 		else
 			buffer[ 0 ] = 1;
 
@@ -476,14 +485,18 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			if( !noWarnFail )
 				{
 				if( encryptOK )
+					{
 					printf( "Couldn't decrypt data even though the "
 							"encrypted input data was valid,\nstatus = "
 							"%d, line %d.\n", status, __LINE__ );
+					}
 				else
+					{
 					printf( "Couldn't decrypt data, probably because the "
 							"data produced by the encrypt step\nwas "
 							"invalid, status = %d, line %d.\n", status, 
 							__LINE__ );
+					}
 				}
 			return( status );
 			}
@@ -496,15 +509,19 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		if( memcmp( buffer, testBuffer, length ) )
 			{
 			if( encryptOK )
+				{
 				/* This could happen with simple-minded CRT implementations
 				   that only work when p > q (the test key has p < q in
 				   order to find this problem) */
 				puts( "Decryption failed even though encryption produced "
 					  "valid data.  The RSA\ndecryption step is broken." );
+				}
 			else
+				{
 				puts( "Decryption failed because the encryption step "
 					  "produced invalid data. The RSA\nencryption step is "
 					  "broken." );
+				}
 			return( CRYPT_ERROR_FAILED );
 			}
 		else
@@ -592,11 +609,11 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 	if( checkOnly )
 		return( TRUE );
 
-	/* Since DH and KEA only perform key agreement rather than a true key
-	   exchange, we can't test their encryption capabilities unless we're
+	/* Since DH/ECDH and KEA only perform key agreement rather than a true 
+	   key exchange we can't test their encryption capabilities unless we're
 	   using a custom-modified version of cryptlib */
 #ifndef TEST_DH
-	if( cryptAlgo == CRYPT_ALGO_DH )
+	if( cryptAlgo == CRYPT_ALGO_DH || cryptAlgo == CRYPT_ALGO_ECDH )
 		return( TRUE );
 #endif /* TEST_DH */
 	if( cryptAlgo == CRYPT_ALGO_KEA )
@@ -685,6 +702,12 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			case CRYPT_ALGO_ECDSA:
 				status = loadECDSAContexts( &cryptContext, &decryptContext );
 				break;
+
+#ifdef TEST_DH
+			case CRYPT_ALGO_ECDH:
+				status = loadECDHKey( cryptDevice, &cryptContext );
+				break;
+#endif /* TEST_DH */
 
 			default:
 				printf( "Unknown encryption algorithm ID %d, cannot perform "
@@ -808,6 +831,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				}
 			}
 		else
+			{
 			/* If it's a PKC we'll have performed the check during the
 			   encrypt/decrypt step */
 			if( cryptAlgo < CRYPT_ALGO_FIRST_PKC && \
@@ -816,6 +840,7 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 				destroyContexts( cryptDevice, cryptContext, decryptContext );
 				return( FALSE );
 				}
+			}
 
 		/* Remember that at least one test succeeded */
 		testSucceeded = TRUE;

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Routines Header File 					*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -26,14 +26,22 @@
 
 #define MIN_ATTRIBUTE_SIZE		12
 
-/* The maximum size of a PKCS #7 certificate chain */
+/* The maximum size of a PKCS #7 certificate chain.  The built-in bounds
+   value FAILSAFE_ITERATIONS_MED is used as a safety check for an upper
+   limit on chain lengths (that is, if we hit FAILSAFE_ITERATIONS_MED on
+   processing a certificate chain it's an internal error), so it has to
+   be larger than MAX_CHAINLENGTH */
 
 #define MAX_CHAINLENGTH			16
+
+#if MAX_CHAINLENGTH > FAILSAFE_ITERATIONS_MED
+  #error FAILSAFE_ITERATIONS_MED must be larger than the maximum certificate chain length
+#endif /* MAX_CHAINLENGTH > FAILSAFE_ITERATIONS_MED */
 
 /* The default size of the serial number, size of the built-in serial number
    buffer (anything larger than this uses a dynamically-allocated buffer)
    and the maximum size in bytes of a serial number (for example in a
-   certificate or CRL).  Technically values of any size are allowed, but
+   certificate or CRL).  Technically values of any size are allowed but
    anything larger than this is probably an error */
 
 #define DEFAULT_SERIALNO_SIZE	8
@@ -41,7 +49,7 @@
 #define MAX_SERIALNO_SIZE		256
 
 /* The size of the PKI user binary authenticator information before
-   checksumming and encoding, and the size of the encrypted user info:
+   checksumming and encoding and the size of the encrypted user info:
    sizeofObject( 2 * sizeofObject( PKIUSER_AUTHENTICATOR_SIZE ) ) + PKCS #5
    padding = 2 + ( 2 + 12 + 2 + 12 ) = 30 + 2 = 32.  This works for both 64-
    and 128-bit block ciphers */
@@ -51,7 +59,7 @@
 
 /* The size of the FIFO used to encode nested SEQUENCEs */
 
-#define ENCODING_FIFO_SIZE				10
+#define ENCODING_FIFO_SIZE		10
 
 /* Normally we check for a valid time by making sure that it's more recent 
    than MIN_TIME_VALUE, however when reading a certificate the time can be 
@@ -60,46 +68,6 @@
    time value */
 
 #define MIN_CERT_TIME_VALUE		( ( 1996 - 1970 ) * 365 * 86400L )
-
-/* Attribute information flags.  These are:
-
-	FLAG_BLOB: Disables all type-checking on the field, needed to handle
-			some certificates that have invalid field encodings.
-
-	FLAG_BLOB_PAYLOAD: Disables type checking on the field payload, for
-			example checking that the chars in the string are valid for the
-			given ASN.1 string type.
-
-	FLAG_CRITICAL: The extension containing the field is marked criticial.
-
-	FLAG_DEFAULTVALUE: The field has a value which is equal to the default
-			for this field, so it doesn't get encoded.  This flag is set
-			during the encoding pre-processing pass.
-
-	FLAG_IGNORED: The field is recognised but was ignored at this compliance
-			level.  This prevents the certificate from being rejected if the 
-			field is marked critical.
-
-	FLAG_INVALID: Used to catch accidental use of a boolean value for the
-			flag (an early version of the code used a simple boolean
-			isCritical in place of the current multi-purpose flags).
-
-	FLAG_LOCKED: The attribute can't be deleted once set, needed to handle
-			fields that are added internally by cryptlib that shouldn't be
-			deleted by users once set.
-
-	FLAG_MULTIVALUED: Multiple instantiations of this field are allowed */
-
-#define ATTR_FLAG_NONE			0x00	/* No flag */
-#define ATTR_FLAG_INVALID		0x01	/* To catch use of TRUE */
-#define ATTR_FLAG_CRITICAL		0x02	/* Critical cert extension */
-#define ATTR_FLAG_LOCKED		0x04	/* Field can't be modified */
-#define ATTR_FLAG_BLOB			0x08	/* Non-type-checked blob data */
-#define ATTR_FLAG_BLOB_PAYLOAD	0x10	/* Payload is non-type-checked blob data */
-#define ATTR_FLAG_MULTIVALUED	0x20	/* Multiple instances allowed */
-#define ATTR_FLAG_DEFAULTVALUE	0x40	/* Field has default value */
-#define ATTR_FLAG_IGNORED		0x80	/* Attribute ignored at this compl.level */
-#define ATTR_FLAG_MAX			0xFF	/* Maximum possible flag value */
 
 /* Certificate information flags.  These are:
 
@@ -120,7 +88,7 @@
 			kludge certificate that's used to tie a re-issued CA certificate 
 			(with a new CA key) to existing issued certificates signed with 
 			the old CA key.  This kludge requires that issuer DN == subject 
-			DN, which denotes a CA root certificate under normal 
+			DN, which would denote a CA root certificate under normal 
 			circumstances.
 
 	FLAG_SELFSIGNED: Indicates that the certificate is self-signed.
@@ -137,10 +105,10 @@
 #define CERT_FLAG_NONE			0x00	/* No flag */
 #define CERT_FLAG_SELFSIGNED	0x01	/* Certificate is self-signed */
 #define CERT_FLAG_SIGCHECKED	0x02	/* Signature has been checked */
-#define CERT_FLAG_DATAONLY		0x04	/* Cert is data-only (no context) */
+#define CERT_FLAG_DATAONLY		0x04	/* Certificate is data-only (no context) */
 #define CERT_FLAG_CRLENTRY		0x08	/* CRL is a standalone single entry */
-#define CERT_FLAG_CERTCOLLECTION 0x10	/* Cert chain is unordered collection */
-#define CERT_FLAG_PATHKLUDGE	0x20	/* Cert is a PKIX path kludge */
+#define CERT_FLAG_CERTCOLLECTION 0x10	/* Certificate chain is unordered collection */
+#define CERT_FLAG_PATHKLUDGE	0x20	/* Certificate is a PKIX path kludge */
 #define CERT_FLAG_MAX			0x3F	/* Maximum possible flag value */
 
 /* When creating RTCS responses from a request there are several subtypes
@@ -157,18 +125,21 @@ typedef enum {
 
 /* Set the error locus and type.  This is used for certificate checking 
    functions that need to return extended error information but can't modify 
-   the certificate info, so that setErrorInfo() can't be used */
+   the certificate information struct due to it either being a const 
+   parameter or only being available via a handle so that setErrorInfo() 
+   can't be used */
 
 #define setErrorValues( locus, type ) \
 		*errorLocus = ( locus ); *errorType = ( type )
 
-/* The are several types of attributes that can be used depending on the
-   object that they're associated with.  The following values are used to
-   select the type of attribute that we want to work with */
+/* The are several different classes of attributes that can be used 
+   depending on the object that they're associated with.  The following 
+   values are used to select the class of attribute that we want to work 
+   with */
 
 typedef enum {
-	ATTRIBUTE_CERTIFICATE,				/* Certificate attribute */
-	ATTRIBUTE_CMS,						/* CMS / S/MIME attribute */
+	ATTRIBUTE_CERTIFICATE,				/* Certificate attributes */
+	ATTRIBUTE_CMS,						/* CMS / S/MIME attributes */
 	ATTRIBUTE_LAST						/* Last valid attribute type */
 	} ATTRIBUTE_TYPE;
 
@@ -187,6 +158,117 @@ typedef enum {							/* Issuer		Subject		*/
 	POLICY_BOTH_SPECIFIC,				/*	yes, !any	yes, !any	*/
 	POLICY_LAST							/* Last valid policy type */
 	} POLICY_TYPE;
+
+/* Selection options when working with DNs/GeneralNames in extensions.  These
+   are used internally when handling user get/set/delete DN/GeneralName
+   requests */
+
+typedef enum {
+	SELECTION_OPTION_NONE,	/* No selection option type */
+	MAY_BE_ABSENT,			/* Component may be absent */
+	MUST_BE_PRESENT,		/* Component must be present */
+	CREATE_IF_ABSENT,		/* Create component if absent */
+	SELECTION_OPTION_LAST	/* Last valid selection option type */
+	} SELECTION_OPTION;
+
+/* Certificate key check flags, used by checkKeyUsage().  These are:
+
+	FLAG_NONE: No specific check.
+
+	FLAG_CA: Certificate must contain a CA key.
+
+	FLAG_PRIVATEKEY: Check for constraints on the corresponding private
+			key's usage, not just the public key usage.
+
+	FLAG_GENCHECK: Perform a general check that the key usage details are
+			in order without checking for a particular usage */
+
+#define CHECKKEY_FLAG_NONE			0x00	/* No specific checks */
+#define CHECKKEY_FLAG_CA			0x01	/* Must be CA key */
+#define CHECKKEY_FLAG_PRIVATEKEY	0x02	/* Check priv.key constraints */
+#define CHECKKEY_FLAG_GENCHECK		0x04	/* General details check */
+#define CHECKKEY_FLAG_MAX			0x07	/* Maximum possible flag value */
+
+/* Before we encode a certificate object we have to perform various final 
+   setup actions and check that the object is ready for encoding.  The 
+   following setup operations can be requested by the caller via
+   preEncodeCertificate():
+
+	SET_ISSUERATTR: Copy issuer attributes to subject.
+
+	SET_ISSUERDN: Copy issuer DN to subject.
+
+	SET_REVINFO: Set up revocation information.
+
+	SET_STANDARDATTR: Set up standard extensions/attributes.
+
+	SET_VALIDITYPERIOD: Constrain subject validity to issuer validity.
+
+	SET_VALINFO: Set up validity information */
+
+#define PRE_SET_NONE			0x0000	/* No setup actions */
+#define PRE_SET_STANDARDATTR	0x0001	/* Set up standard extensions */
+#define PRE_SET_ISSUERATTR		0x0002	/* Copy issuer attr.to subject */
+#define PRE_SET_ISSUERDN		0x0004	/* Copy issuer DN to subject */
+#define PRE_SET_VALIDITYPERIOD	0x0008	/* Constrain subj.val.to issuer val.*/
+#define PRE_SET_VALINFO			0x0010	/* Set up validity information */
+#define PRE_SET_REVINFO			0x0020	/* Set up revocation information */
+
+#define PRE_SET_FLAG_NONE		0x0000	/* No setup actions */
+#define PRE_SET_FLAG_MAX		0x003F	/* Maximum possible flag value */
+
+/* The following checks can be requested by the caller via 
+   preCheckCertificate():
+
+	CHECK_DN: Full subject DN is present.
+
+	CHECK_DN_PARTIAL: Partial subject DN is present.  This is a DN template
+		so the full DN doesn't have to be present (the CA can fill in the 
+		rest later), only the CommonName.
+
+	CHECK_ISSUERDN: Issuer DN is present.
+
+	CHECK_ISSUERCERTDN: Issuer certificate's subject DN == subject 
+		certificate's issuer DN.
+
+	CHECK_NONSELFSIGNEDDN: Certificate's subject DN != certificate's issuer 
+		DN, which would make it appear to be a self-signed certificate.
+
+	CHECK_REVENTRIES: At least one revocation entry is present.
+
+	CHECK_SERIALNO: Serial number is present.
+
+	CHECK_SPKI: SubjectPublicKeyInfo is present.
+
+	CHECK_VALENTRIES: At least one validity entry is present */
+
+#define PRE_CHECK_NONE			0x0000	/* No check actions */
+#define PRE_CHECK_SPKI			0x0001	/* SPKI present */
+#define PRE_CHECK_DN			0x0002	/* Subject DN present */
+#define PRE_CHECK_DN_PARTIAL	0x0004	/* Partial subject DN present */
+#define PRE_CHECK_ISSUERDN		0x0008	/* Issuer DN present */
+#define PRE_CHECK_ISSUERCERTDN	0x0010	/* Issuer cert DN == subj.issuer DN */
+#define PRE_CHECK_NONSELFSIGNED_DN 0x0020	/* Issuer DN != subject DN */
+#define PRE_CHECK_SERIALNO		0x0040	/* SerialNo present */
+#define PRE_CHECK_VALENTRIES	0x0080	/* Validity entries present */
+#define PRE_CHECK_REVENTRIES	0x0100	/* Revocation entries present */
+
+#define PRE_CHECK_FLAG_NONE		0x0000	/* No check actions */
+#define PRE_CHECK_FLAG_MAX		0x01FF	/* Maximum possible flag value */
+
+/* Additional flags that control the checking operations indicated above */
+
+#define PRE_FLAG_NONE			0x0000	/* No special control options */
+#define PRE_FLAG_DN_IN_ISSUERCERT 0x0001/* Issuer DN is in issuer cert */
+#define PRE_FLAG_MAX			0x0001	/* Maximum possible flag value */
+
+/* The following checks can be requested by the caller via checkDN() */
+
+#define CHECKDN_FLAG_NONE			0x00	/* No DN check */
+#define CHECKDN_FLAG_COUNTRY		0x01	/* Check DN has C */
+#define CHECKDN_FLAG_COMMONNAME		0x02	/* Check DN has CN */
+#define CHECKDN_FLAG_WELLFORMED		0x04	/* Check DN is well-formed */
+#define CHECKDN_FLAG_MAX			0x0F	/* Maximum possible flag value */
 
 /****************************************************************************
 *																			*
@@ -244,88 +326,43 @@ enum { CTAG_SI_AUTHENTICATEDATTRIBUTES };
 *																			*
 ****************************************************************************/
 
-/* The structure to hold a field of a certificate attribute */
+/* Symbolic defines for data types handled in the certificate attribute and
+   DN handling code.  The ATTRIBUTE_PTR_STORAGE value is used in debug 
+   macros that check that an ATTRIBUTE_PTR points to at least 
+   ATTRIBUTE_PTR_STORAGE  bytes of readable/writeable memory */
 
-typedef struct AL {
-	/* Identification and encoding information for this attribute field or
-	   attribute.  This consists of the field ID for the attribute as a
-	   whole, for the attribute field (that is, a field of an attribute, not
-	   an attribute field) and for the subfield of the attribute field in the
-	   case of composite fields like GeneralNames, a pointer to the sync
-	   point used when encoding the attribute, and the encoded size of this
-	   field.  If it's a special-case attribute field the attributeID and
-	   fieldID are set to special values decoded by the isXXX() macros
-	   further down.  The subFieldID is only set if the fieldID is for a
-	   GeneralName field.
-
-	   Although the field type information is contained in the
-	   attributeInfoPtr it's sometimes needed before this has been set up
-	   to handle special formatting requirements, for example to enable
-	   special-case handling for a DN attribute field or to specify that an
-	   OID needs to be decoded into its string representation before being
-	   returned to the caller.  Because of this we store the field type here
-	   to allow for this special processing */
-	CRYPT_ATTRIBUTE_TYPE attributeID;/* Attribute ID */
-	CRYPT_ATTRIBUTE_TYPE fieldID;	/* Attribute field ID */
-	CRYPT_ATTRIBUTE_TYPE subFieldID;	/* Attribute subfield ID */
-	void *attributeInfoPtr;			/* Pointer to encoding sync point */
-	int encodedSize;				/* Encoded size of this field */
-	int fieldType;					/* Attribute field type */
-	int flags;						/* Flags for this field */
-
-	/* Sometimes a field is part of a constructed object or even a nested
-	   series of constructed objects (these are always SEQUENCEs).  Since
-	   this is purely an encoding issue there are no attribute list entries
-	   for the SEQUENCE fields so when we perform the first pass over the
-	   attribute list prior to encoding we remember the lengths of the
-	   SEQUENCEs for later use.  Since we can have nested SEQUENCEs
-	   containing a given field we store the lengths and pointers to the 
-	   table entries used to encode them in a fifo with the innermost one
-	   first and successive outer ones following it */
-	ARRAY( ENCODING_FIFO_SIZE, fifoPos ) \
-	int sizeFifo[ ENCODING_FIFO_SIZE + 2 ];	/* Encoded size of SEQUENCE containing
-									   this field, if present */
-	ARRAY( ENCODING_FIFO_SIZE, fifoPos ) \
-	void *encodingFifo[ ENCODING_FIFO_SIZE + 2 ];/* Encoding table entry used to 
-									   encode this SEQUENCE */
-	int fifoEnd;					/* End of list of SEQUENCE sizes */
-	int fifoPos;					/* Current position in list */
-
-	/* The data payload for this attribute field or attribute.  If it's
-	   numeric data such as a simple boolean, bitstring, or small integer,
-	   we store it in the intValue member.  If it's an OID or some form of
-	   string we store it in the variable-length buffer */
-	long intValue;					/* Integer value for simple types */
-	BUFFER_OPT_FIXED( valueLength ) \
-	void *value;					/* Attribute value */
-	int valueLength;				/* Attribute value length */
-
-	/* The OID, for blob-type attributes */
-	BYTE *oid;						/* Attribute OID */
-
-	/* The previous and next list element in the linked list of elements */
-	struct AL *prev, *next;
-
-	/* Variable-length storage for the attribute data */
-	DECLARE_VARSTRUCT_VARS;
-	} ATTRIBUTE_LIST;
+#define ATTRIBUTE_PTR			void
+#define ATTRIBUTE_PTR_STORAGE	char[ 64 ]
+#define DN_PTR					void
+#define DN_PTR_STORAGE			char[ 32 ]
 
 /* The structure to hold information on the current selection of attribute/
    GeneralName/DN data used when adding/reading/deleting certificate 
    components.  The usage of this information is too complex to explain 
-   here, see the comments at the start of comp_get.c for more information */
+   here, see the comments at the start of comp_get.c for more details.
+   
+   Note that the DN pointer stores a pointer to the head of the list of DN
+   elements rather than storing the list head itself since we need to pass 
+   it to functions that may modify the list head.  So dnPtr may contain
+   (for example) &certInfoPtr->subjectDN so that it can be passed to 
+   functions like deleteDnComponent() which may have to modify the list 
+   head if that's the entry that they're being asked to delete.  Storing a
+   copy of certInfoPtr->subjectDN in dnPtr and then passing &dnPtr to
+   deleteDnComponent() would update dnPtr but leave certInfoPtr->subjectDN 
+   with a dangling reference to the new-deleted DN element */
 
 typedef struct {
-	void **dnPtr;						/* Pointer to current DN */
+	DN_PTR **dnPtr;						/* Pointer to address of current DN */
 	CRYPT_ATTRIBUTE_TYPE generalName;	/* Selected GN */
+	CRYPT_ATTRIBUTE_TYPE dnComponent;	/* Selected component of DN */
+	int dnComponentCount;				/* Iterator for DN components */
 	BOOLEAN dnInExtension;				/* Whether DN is in extension */
 	BOOLEAN updateCursor;				/* Whether to upate attr.cursor */
 	} SELECTION_INFO;
 
 #define initSelectionInfo( certInfoPtr ) \
 	memset( &( certInfoPtr )->currentSelection, 0, sizeof( SELECTION_INFO ) ); \
-	( certInfoPtr )->currentSelection.dnPtr = &( ( certInfoPtr )->subjectName ); \
-	( certInfoPtr )->currentSelection.generalName = CRYPT_CERTINFO_SUBJECTALTNAME;
+	( certInfoPtr )->currentSelection.dnPtr = &( ( certInfoPtr )->subjectName )
 
 /* Sometimes we need to manipulate an internal component which is addressed
    indirectly as a side-effect of some other processing operation.  We can't
@@ -337,7 +374,7 @@ typedef struct {
 typedef struct {
 	int savedChainPos;					/* Current cert.chain position */
 	SELECTION_INFO savedSelectionInfo;	/* Current DN/GN selection info */
-	ATTRIBUTE_LIST *savedAttributeCursor;	/* Atribute cursor pos.*/
+	ATTRIBUTE_PTR *savedAttributeCursor;/* Atribute cursor pos.*/
 	} SELECTION_STATE;
 
 #define saveSelectionState( savedState, certInfoPtr ) \
@@ -357,6 +394,8 @@ typedef struct {
 	( certInfoPtr )->attributeCursor = ( savedState ).savedAttributeCursor; \
 	}
 
+#ifdef USE_CERTVAL
+
 /* The structure to hold a validity information entry */
 
 typedef struct VI {
@@ -368,19 +407,38 @@ typedef struct VI {
 	/* Validity information */
 	BOOLEAN status;					/* Valid/not valid */
 	int extStatus;					/* Extended validity status */
-	time_t invalidityTime;			/* Cert invalidity time */
+	time_t invalidityTime;			/* Certificate invalidity time */
 
 	/* Per-entry attributes.  These are a rather ugly special case for the
-	   user because, unlike the attributes for all other certificate objects 
+	   user because unlike the attributes for all other certificate objects 
 	   where cryptlib can provide the illusion of a flat type<->value 
-	   mapping, there can be multiple sets of identical per-entry attributes 
+	   mapping there can be multiple sets of identical per-entry attributes 
 	   present if there are multiple RTCS entries present */
-	ATTRIBUTE_LIST *attributes;		/* RTCS entry attributes */
+	ATTRIBUTE_PTR *attributes;		/* RTCS entry attributes */
 	int attributeSize;				/* Encoded size of attributes */
 
 	/* The next element in the linked list of elements */
 	struct VI *next;
 	} VALIDITY_INFO;
+
+typedef struct {
+	/* A list of RTCS request or response entries and a pointer to the
+	   request/response which is currently being accessed */
+	VALIDITY_INFO *validityInfo;	/* List of validity info */
+	VALIDITY_INFO *currentValidity;	/* Currently selected validity info */
+
+	/* The URL for the RTCS responder */
+	BUFFER_OPT_FIXED( responderUrlSize ) \
+	char *responderUrl;				/* RTCS responder URL */
+	int responderUrlSize;
+
+	/* Since RTCS allows for a variety of response types, we include an
+	   indication of the request/response format */
+	RTCSRESPONSE_TYPE responseType;	/* Request/response format */
+	} CERT_VAL_INFO;
+#endif /* USE_CERTVAL */
+
+#ifdef USE_CERTREV
 
 /* The structure to hold a revocation information entry, either a CRL entry
    or OCSP request/response information */
@@ -392,15 +450,14 @@ typedef struct RI {
 	   treated as an opaque blob of type CRYPT_ATTRIBUTE_NONE since it can't 
 	   be used in any useful way.  If we're using OCSP and an alternative ID 
 	   is supplied as an ESSCertID we point to this value (inside the 
-	   ESSCertID) in the altIdPtr field.  
-	   
-	   Usually the certificate ID information fits in the id field, if it's 
-	   longer than that (which can only occur with enormous serial numbers) 
-	   it's held in the dynamically-allocated idPtr value */
+	   ESSCertID) in the altIdPtr field.  Since we store this as a varstruct
+	   whose data is expected to be held in a field called 'value' we define
+	   a field of that name alongside the more obvious 'id' and set 'id' to
+	   'value' when we initialise the structure */
 	CRYPT_KEYID_TYPE idType;		/* ID type */
-	BUFFER( 128, idLength ) \
-	BYTE id[ 128 + 8 ], *idPtr;
-	int idLength;					/* ID information */
+	BUFFER_OPT_FIXED( idLength ) \
+	BYTE *id, *value;				/* ID information stored in varstruct */
+	int idLength;					/*  (see comment above for 'value') */
 	int idCheck;					/* Data checksum for quick match */
 	CRYPT_KEYID_TYPE altIdType;		/* Alt.ID type for OCSP */
 	BUFFER_FIXED( KEYID_SIZE ) \
@@ -408,19 +465,86 @@ typedef struct RI {
 
 	/* Revocation information */
 	int status;						/* OCSP revocation status */
-	time_t revocationTime;			/* Cert revocation time */
+	time_t revocationTime;			/* Certificate revocation time */
 
 	/* Per-entry attributes.  These are a rather ugly special case for the
-	   user because, unlike the attributes for all other certificate objects 
+	   user because unlike the attributes for all other certificate objects 
 	   where cryptlib can provide the illusion of a flat type<->value 
-	   mapping, there can be multiple sets of identical per-entry attributes 
+	   mapping there can be multiple sets of identical per-entry attributes 
 	   present if there are multiple CRL/OCSP entries present */
-	ATTRIBUTE_LIST *attributes;		/* CRL/OCSP entry attributes */
+	ATTRIBUTE_PTR *attributes;		/* CRL/OCSP entry attributes */
 	int attributeSize;				/* Encoded size of attributes */
 
 	/* The next element in the linked list of elements */
 	struct RI *next;
+
+	/* Variable-length storage for the ID information */
+	DECLARE_VARSTRUCT_VARS;
 	} REVOCATION_INFO;
+
+typedef struct {
+	/* The list of revocations for a CRL or a list of OCSP request or response
+	   entries, and a pointer to the revocation/request/response which is
+	   currently being accessed */
+	REVOCATION_INFO *revocations;	/* List of revocations */
+	REVOCATION_INFO *currentRevocation;	/* Currently selected revocation */
+
+	/* The default revocation time for a CRL, used for if no explicit time
+	   is set for a revocation */
+	time_t revocationTime;			/* Default certificate revocation time */
+
+	/* The URL for the OCSP responder */
+	BUFFER_OPT_FIXED( responderUrlSize ) \
+	char *responderUrl;
+	int responderUrlSize;			/* OCSP responder URL */
+
+	/* The hash algorithm used to sign the certificate.  Although it's a 
+	   part of the signature, a second copy of the algorithm ID is embedded 
+	   inside the signed certificate data because of a theoretical attack 
+	   that doesn't actually work with any standard signature padding
+	   technique.  Because of this we have to record the hash algorithm ID
+	   when we read/write the certificate so that we can write it again when
+	   we re-encode the certificate */
+	CRYPT_ALGO_TYPE hashAlgo;
+
+	/* Signed OCSP requests can include varying levels of detail in the
+	   signature.  The following value determines how much information is
+	   included in the signature */
+	CRYPT_SIGNATURELEVEL_TYPE signatureLevel;
+	} CERT_REV_INFO;
+#endif /* USE_CERTREV */
+
+#ifdef USE_CERTREQ
+
+typedef struct {
+	/* The certificate serial number, used when requesting a revocation by 
+	   issuerAndSerialNumber.  This is stored in the buffer if it fits (it
+	   almost always does), otherwise in a dynamically-allocated buffer */
+	BUFFER( SERIALNO_BUFSIZE, serialNumberLength ) \
+	BYTE serialNumberBuffer[ SERIALNO_BUFSIZE + 8 ];
+	BUFFER_OPT_FIXED( serialNumberLength ) \
+	void *serialNumber;
+	int serialNumberLength;			/* Certificate serial number */
+
+	/* The certificate ID of the PKI user or certificate that authorised 
+	   this request.  This is from an external source, supplied when the 
+	   request is used as part of the CMP protocol */
+	BUFFER_FIXED( KEYID_SIZE ) \
+	BYTE authCertID[ KEYID_SIZE + 8 ];
+	} CERT_REQ_INFO;
+#endif /* USE_CERTREQ */
+
+#ifdef USE_PKIUSER
+
+typedef struct {
+	/* The authenticator used for authenticating certificate issue and
+	   revocation requests */
+	BUFFER_FIXED( 16 ) \
+	BYTE pkiIssuePW[ 16 + 8 ];
+	BUFFER_FIXED( 16 ) \
+	BYTE pkiRevPW[ 16 + 8 ];
+	} CERT_PKIUSER_INFO;
+#endif /* USE_PKIUSER */
 
 /* The internal fields in a certificate that hold subtype-specific data for 
    the various certificate object types */
@@ -444,10 +568,10 @@ typedef struct {
 	/* The allowed usage for a certificate can be further controlled by the
 	   user.  The trustedUsage value is a mask which is applied to the key
 	   usage extension to further constrain usage, alongside this there is
-	   an additional implicit trustImplicit value that acts a boolean flag
-	   that indicates whether the user implicitly trusts this certificate
-	   (without requiring further checking upstream).  This value isn't
-	   stored with the certificate since it's a property of any 
+	   an additional implicit trustImplicit value that acts as a boolean 
+	   flag and indicates whether the user implicitly trusts this 
+	   certificate (without requiring further checking upstream).  This 
+	   value isn't stored with the certificate since it's a property of any 
 	   instantiation of the certificate rather than just the current one so 
 	   when the user queries it it's obtained dynamically from the trust 
 	   manager */
@@ -467,15 +591,15 @@ typedef struct {
 	   A possible alternative to this way of handling chains is to make the
 	   chain object a pure container object used only to hold pointers to
 	   the actual certificates, but this requires an extra level of 
-	   indirection every time a certificate chain object is used since in 
-	   virtually all cases what'll be used is the leaf certificate with 
+	   indirection every time that a certificate chain object is used since 
+	   in virtually all cases what'll be used is the leaf certificate with 
 	   which the chain-as-standard-certificate model is the default 
 	   certificate but with the chain-as-container model requires an extra 
 	   object dereference to obtain.
 
 	   In theory we should use a linked list to store chains but since the
 	   longest chain ever seen in the wild has a length of 4 using a fixed
-	   maximum length seveal times this size shouldn't be a problem.  The
+	   maximum length several times this size shouldn't be a problem.  The
 	   certificates in the chain are ordered from the parent of the leaf 
 	   certificate up to the root certificate with the leaf certificate 
 	   corresponding to the [-1]th entry in the list.  We also maintain a 
@@ -485,94 +609,25 @@ typedef struct {
 	   current certificate is the leaf certificate */
 	ARRAY( MAX_CHAINLENGTH, chainEnd ) \
 	CRYPT_CERTIFICATE chain[ MAX_CHAINLENGTH + 8 ];
-	int chainEnd;					/* Length of cert chain */
-	int chainPos;					/* Currently selected cert in chain */
+	int chainEnd;					/* Length of certificate chain */
+	int chainPos;					/* Currently selected certificate in chain */
 
-	/* The hash algorithm used to sign the certificate.  Although a part of
-	   the signature, a second copy of the algorithm ID is embedded inside
-	   the signed certificate data because of a theoretical attack that
-	   doesn't actually work with any standard signature padding
+	/* The hash algorithm used to sign the certificate.  Although it's a 
+	   part of the signature, a second copy of the algorithm ID is embedded 
+	   inside the signed certificate data because of a theoretical attack 
+	   that doesn't actually work with any standard signature padding
 	   technique */
 	CRYPT_ALGO_TYPE hashAlgo;
 
+#ifdef USE_CERT_OBSOLETE 
 	/* The (deprecated) X.509v2 unique ID */
 	BUFFER_OPT_FIXED( issuerUniqueIDlength ) \
 	void *issuerUniqueID;
 	BUFFER_OPT_FIXED( subjectUniqueIDlength ) \
 	void *subjectUniqueID;
 	int issuerUniqueIDlength, subjectUniqueIDlength;
+#endif /* USE_CERT_OBSOLETE */
 	} CERT_CERT_INFO;
-
-typedef struct {
-	/* The certificate serial number, used when requesting a revocation by 
-	   issuerAndSerialNumber.  This is stored in the buffer if it fits (it
-	   almost always does), otherwise in a dynamically-allocated buffer */
-	BUFFER( SERIALNO_BUFSIZE, serialNumberLength ) \
-	BYTE serialNumberBuffer[ SERIALNO_BUFSIZE + 8 ];
-	BUFFER_OPT_FIXED( serialNumberLength ) \
-	void *serialNumber;
-	int serialNumberLength;			/* Certificate serial number */
-
-	/* The certificate ID of the PKI user or certificate that authorised 
-	   this request.  This is from an external source, supplied when the 
-	   request is used as part of the CMP protocol */
-	BUFFER_FIXED( KEYID_SIZE ) \
-	BYTE authCertID[ KEYID_SIZE + 8 ];
-	} CERT_REQ_INFO;
-
-typedef struct {
-	/* The list of revocations for a CRL or a list of OCSP request or response
-	   entries, and a pointer to the revocation/request/response which is
-	   currently being accessed */
-	REVOCATION_INFO *revocations;	/* List of revocations */
-	REVOCATION_INFO *currentRevocation;	/* Currently selected revocation */
-
-	/* The default revocation time for a CRL, used for if no explicit time
-	   is set for a revocation */
-	time_t revocationTime;			/* Default certificate revocation time */
-
-	/* The URL for the OCSP responder */
-	BUFFER_OPT_FIXED( responderUrlSize ) \
-	char *responderUrl;
-	int responderUrlSize;			/* OCSP responder URL */
-
-	/* The hash algorithm used to sign the certificate.  Although a part of
-	   the signature, a second copy of the algorithm ID is embedded inside
-	   the signed certificate data because of a theoretical attack that
-	   doesn't actually work with any standard signature padding
-	   technique */
-	CRYPT_ALGO_TYPE hashAlgo;
-
-	/* Signed OCSP requests can include varying levels of detail in the
-	   signature.  The following value determines how much information is
-	   included in the signature */
-	CRYPT_SIGNATURELEVEL_TYPE signatureLevel;
-	} CERT_REV_INFO;
-
-typedef struct {
-	/* A list of RTCS request or response entries and a pointer to the
-	   request/response which is currently being accessed */
-	VALIDITY_INFO *validityInfo;	/* List of validity info */
-	VALIDITY_INFO *currentValidity;	/* Currently selected validity info */
-
-	/* The URL for the RTCS responder */
-	BUFFER_OPT_FIXED( responderUrlSize ) \
-	char *responderUrl;				/* RTCS responder URL */
-	int responderUrlSize;
-
-	/* Since RTCS allows for a variety of response types, we include an
-	   indication of the request/response format */
-	RTCSRESPONSE_TYPE responseType;	/* Request/response format */
-	} CERT_VAL_INFO;
-
-typedef struct {
-	/* The authenticator used for authenticating certificate issue and
-	   revocation requests */
-	BUFFER_FIXED( 16 ) \
-	BYTE pkiIssuePW[ 16 + 8 ];
-	BUFFER_FIXED( 16 ) \
-	BYTE pkiRevPW[ 16 + 8 ];
-	} CERT_PKIUSER_INFO;
 
 /* Defines to make access to the union fields less messy */
 
@@ -588,26 +643,34 @@ typedef struct {
 	/* General certificate information */
 	CRYPT_CERTTYPE_TYPE type;		/* Certificate type */
 	int flags;						/* Certificate flags */
-	int version;					/* Cert object version */
+	int version;					/* Certificate format version */
 
 	/* Certificate type-specific information */
 	union {
 		CERT_CERT_INFO *certInfo;
+#ifdef USE_CERTREQ
 		CERT_REQ_INFO *reqInfo;
+#endif /* USE_CERTREQ */
+#ifdef USE_CERTREV
 		CERT_REV_INFO *revInfo;
+#endif /* USE_CERTREV */
+#ifdef USE_CERTVAL
 		CERT_VAL_INFO *valInfo;
+#endif /* USE_CERTVAL */
+#ifdef USE_PKIUSER
 		CERT_PKIUSER_INFO *pkiUserInfo;
+#endif /* USE_PKIUSER */
 		} certInfo;
 
 	/* The encoded certificate object.  We save this when we import it
 	   because there are many different interpretations of how a certificate 
-	   should be encoded and if we parse and re-encode the cert object the
-	   signature check would fail */
+	   should be encoded and if we parse and then try to re-encode the 
+	   object the signature check would most likely fail */
 	BUFFER_OPT_FIXED( certificateSize ) \
 	void *certificate;
 	int certificateSize;
 
-	/* The public key associated with this certificate.  When the 
+	/* The public key associated with the certificate.  When the 
 	   certificate is in the low (unsigned state) this consists of the 
 	   encoded public-key data and associated attributes.  When the 
 	   certificate is in the high (signed) state, either by being imported 
@@ -620,12 +683,12 @@ typedef struct {
 	   context.  Since it's not known during the import stage whether a 
 	   certificate in a chain will be a data-only or standard certificate 
 	   (it's not known which certificate is the leaf certificate until the 
-	   entire chain has been processed), certificate chains from a trusted 
+	   entire chain has been processed) certificate chains from a trusted 
 	   source are imported as data-only certificates and then the leaf has 
 	   its context instantiated */
 	CRYPT_CONTEXT iPubkeyContext;	/* Public-key context */
 	CRYPT_ALGO_TYPE publicKeyAlgo;	/* Key algorithm */
-	int publicKeyFeatures;			/* Key features */
+	int publicKeyFeatures;			/* Key features flags */
 	BUFFER_OPT_FIXED( publicKeyInfoSize ) \
 	void *publicKeyInfo;			/* Encoded key information */
 	int publicKeyInfoSize;
@@ -633,8 +696,8 @@ typedef struct {
 	BYTE publicKeyID[ KEYID_SIZE + 8 ];	/* Key ID */
 
 	/* General certificate object information */
-	void *issuerName;				/* Issuer name */
-	void *subjectName;				/* Subject name */
+	DN_PTR *issuerName;				/* Issuer name */
+	DN_PTR *subjectName;			/* Subject name */
 	time_t startTime;				/* Validity start or update time */
 	time_t endTime;					/* Validity end or next update time */
 
@@ -643,13 +706,13 @@ typedef struct {
 	   implementations this will break chaining if we correct any problems 
 	   in the DN.  Because of this we need to preserve a copy of the 
 	   certificate's subject DN so that we can write it as a blob to the 
-	   issuer DN field of any certificates it signs.  We also need to 
+	   issuer DN field of any certificates that it signs.  We also need to 
 	   remember the encoded issuer DN so that we can chain upwards.  The 
 	   following fields identify the size and location of the encoded DNs 
 	   inside the encoded certificate object */
 	BUFFER_OPT_FIXED( subjectDNsize ) \
 	void *subjectDNptr;
-	BUFFER_OPT_FIXED( subjectDNsize ) \
+	BUFFER_OPT_FIXED( issuerDNsize ) \
 	void *issuerDNptr;					/* Pointer to encoded DN blobs */
 	int subjectDNsize, issuerDNsize;	/* Size of encoded DN blobs */
 
@@ -659,7 +722,12 @@ typedef struct {
 	   allocate a separate data area to copy the DN into.  This is used in
 	   cases where we don't copy in a full subject/issuerName but only use
 	   an encoded DN blob for the reasons described above */
-	void *publicKeyData, *subjectDNdata, *issuerDNdata;
+	BUFFER_OPT_FIXED( publicKeyInfoSize ) \
+	void *publicKeyData;
+	BUFFER_OPT_FIXED( subjectDNsize ) \
+	void *subjectDNdata;
+	BUFFER_OPT_FIXED( issuerDNsize ) \
+	void *issuerDNdata;
 
 	/* The certificate hash/fingerprint/oobCertID/thumbprint/whatever.  This
 	   is used so frequently that it's cached here for future re-use */
@@ -670,13 +738,13 @@ typedef struct {
 	/* Certificate object attributes and a cursor into the attribute list.
 	   This can be moved by the user on a per-attribute, per-field, and per-
 	   component basis */
-	ATTRIBUTE_LIST *attributes, *attributeCursor;
+	ATTRIBUTE_PTR *attributes, *attributeCursor;
 
 	/* The currently selected GeneralName and DN.  A certificate can contain 
 	   multiple GeneralNames and DNs that can be selected by their field 
-	   types, after which adding DN components will affected the selected 
-	   DN.  This value contains the currently selected GeneralName and DN 
-	   info */
+	   types after which adding DN components will affected the currently 
+	   selected DN.  This value contains the details of the currently 
+	   selected GeneralName and DN */
 	SELECTION_INFO currentSelection;
 
 	/* Save area for the currently selected GeneralName and DN, and position
@@ -703,9 +771,9 @@ typedef struct {
 	} CERT_INFO;
 
 /* Certificate read/write methods for the different format types.  
-   Specifying input ranges gets a bit complicated because the functions are 
-   polymorphic so we have to provide the lowest common denominator of all 
-   functions */
+   Specifying input ranges for the process gets a bit complicated because 
+   the functions are polymorphic so we have to use the lowest common 
+   denominator of all of the functions */
 
 typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 		int ( *READCERT_FUNCTION )( INOUT STREAM *stream, 
@@ -730,67 +798,21 @@ WRITECERT_FUNCTION getCertWriteFunction( IN_ENUM( CRYPT_CERTTYPE ) \
 *																			*
 ****************************************************************************/
 
-/* Determine whether an attribute list item is a dummy entry that denotes
-   that this field isn't present in the list but has a default value, that
-   this field isn't present in the list but represents an entire
-   (constructed) attribute, or that it contains a single blob-type
-   attribute */
-
-#define DEFAULTFIELD_VALUE		{ 0, CRYPT_ERROR, 0 }
-#define COMPLETEATTRIBUTE_VALUE	{ CRYPT_ERROR, 0, 0 }
-
-#define isDefaultFieldValue( attributeListPtr ) \
-		( ( attributeListPtr )->fieldID == CRYPT_ERROR && \
-		  ( attributeListPtr )->attributeID == 0 )
-#define isCompleteAttribute( attributeListPtr ) \
-		( ( attributeListPtr )->fieldID == 0 && \
-		  ( attributeListPtr )->attributeID == CRYPT_ERROR )
-#define isBlobAttribute( attributeListPtr ) \
-		( ( attributeListPtr )->fieldID == 0 && \
-		  ( attributeListPtr )->attributeID == 0 )
-
 /* Determine whether a component which is being added to a certificate is a 
    special-case DN selection component that selects the current DN without 
-   changing the certificate itself, a GeneralName selection component, an 
-   attribute cursor movement component, or a general control information 
-   component */
+   changing the certificate itself or a GeneralName selection component.  
+   The latter is sufficiently complex (GeneralNames are used almost 
+   everywhere in certificates where a basic text string would do) that we
+   break it out into a custom function */
 
 #define isDNSelectionComponent( certInfoType ) \
 	( ( certInfoType ) == CRYPT_CERTINFO_ISSUERNAME || \
 	  ( certInfoType ) == CRYPT_CERTINFO_SUBJECTNAME || \
 	  ( certInfoType ) == CRYPT_CERTINFO_DIRECTORYNAME )
 
-#define isGeneralNameSelectionComponent( certInfoType ) \
-	( ( certInfoType ) == CRYPT_CERTINFO_AUTHORITYINFO_RTCS || \
-	  ( certInfoType ) == CRYPT_CERTINFO_AUTHORITYINFO_OCSP || \
-	  ( certInfoType ) == CRYPT_CERTINFO_AUTHORITYINFO_CAISSUERS || \
-	  ( certInfoType ) == CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY || \
-	  ( certInfoType ) == CRYPT_CERTINFO_SUBJECTINFO_TIMESTAMPING || \
-	  ( certInfoType ) == CRYPT_CERTINFO_SIGG_PROCURE_SIGNINGFOR || \
-	  ( certInfoType ) == CRYPT_CERTINFO_SUBJECTALTNAME || \
-	  ( certInfoType ) == CRYPT_CERTINFO_ISSUERALTNAME || \
-	  ( certInfoType ) == CRYPT_CERTINFO_ISSUINGDIST_FULLNAME || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CERTIFICATEISSUER || \
-	  ( certInfoType ) == CRYPT_CERTINFO_PERMITTEDSUBTREES || \
-	  ( certInfoType ) == CRYPT_CERTINFO_EXCLUDEDSUBTREES || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CRLDIST_FULLNAME || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CRLDIST_CRLISSUER || \
-	  ( certInfoType ) == CRYPT_CERTINFO_AUTHORITY_CERTISSUER || \
-	  ( certInfoType ) == CRYPT_CERTINFO_FRESHESTCRL_FULLNAME || \
-	  ( certInfoType ) == CRYPT_CERTINFO_FRESHESTCRL_CRLISSUER || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CMS_RECEIPT_TO || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CMS_MLEXP_INSTEADOF || \
-	  ( certInfoType ) == CRYPT_CERTINFO_CMS_MLEXP_INADDITIONTO )
-
-#define isCursorComponent( certInfoType ) \
-	( ( certInfoType ) == CRYPT_CERTINFO_CURRENT_CERTIFICATE || \
-	  ( certInfoType ) == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
-	  ( certInfoType ) == CRYPT_ATTRIBUTE_CURRENT || \
-	  ( certInfoType ) == CRYPT_ATTRIBUTE_CURRENT_INSTANCE )
-
-#define isControlComponent( certInfoType ) \
-	( ( certInfoType ) == CRYPT_CERTINFO_TRUSTED_USAGE || \
-	  ( certInfoType ) == CRYPT_CERTINFO_TRUSTED_IMPLICIT )
+CHECK_RETVAL_BOOL \
+BOOLEAN isGeneralNameSelectionComponent( IN_ATTRIBUTE \
+											const CRYPT_ATTRIBUTE_TYPE certInfoType );
 
 /* Determine whether a component which is being added is a DN or GeneralName
    component */
@@ -829,633 +851,18 @@ WRITECERT_FUNCTION getCertWriteFunction( IN_ENUM( CRYPT_CERTTYPE ) \
 
 /****************************************************************************
 *																			*
-*							String-Handling Functions						*
+*							Certificate Functions 							*
 *																			*
 ****************************************************************************/
 
-/* Copy a string to/from an ASN.1 string type */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
-int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string, 
-					   IN_LENGTH_SHORT const int stringLen,
-					   OUT_RANGE( 0, 20 ) int *stringType, 
-					   int *asn1StringType,
-					   OUT_LENGTH_SHORT_Z int *asn1StringLen );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int copyToAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest, 
-					  IN_LENGTH_SHORT const int destMaxLen, 
-					  OUT_LENGTH_SHORT_Z int *destLen, 
-					  IN_BUFFER( sourceLen ) const void *source, 
-					  IN_LENGTH_SHORT const int sourceLen,
-					  IN_RANGE( 0, 20 ) const int stringType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest, 
-						IN_LENGTH_SHORT const int destMaxLen, 
-						OUT_LENGTH_SHORT_Z int *destLen, 
-						IN_BUFFER( sourceLen ) const void *source, 
-						IN_LENGTH_SHORT const int sourceLen,
-						IN_TAG_ENCODED const int stringTag );
-
-/* Check that a text string contains valid characters for its string type.
-   This is used in non-DN strings where we can't avoid the problem by varying
-   the string type based on the characters being used */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN checkTextStringData( IN_BUFFER( stringLen ) const char *string, 
-							 IN_LENGTH_SHORT const int stringLen,
-							 const BOOLEAN isPrintableString );
-
-/****************************************************************************
-*																			*
-*							DN Manipulation Functions						*
-*																			*
-****************************************************************************/
-
-/* Selection options when working with DNs/GeneralNames in extensions.  These
-   are used internally when handling user get/set/delete DN/GeneralName
-   requests */
-
-typedef enum {
-	SELECTION_OPTION_NONE,	/* No selection option type */
-	MAY_BE_ABSENT,			/* Component may be absent */
-	MUST_BE_PRESENT,		/* Component must be present */
-	CREATE_IF_ABSENT,		/* Create component if absent */
-	SELECTION_OPTION_LAST	/* Last valid selection option type */
-	} SELECTION_OPTION;
-
-/* DN manipulation routines */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int insertDNComponent( INOUT_PTR void **dnComponentListPtrPtr,
-					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE componentType,
-					   IN_BUFFER( valueLength ) const void *value, 
-					   IN_LENGTH_SHORT const int valueLength,
-					   OUT_ENUM_OPT( CRYPT_ERRTYPE_TYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int deleteDNComponent( INOUT_PTR void **dnComponentListPtrPtr, 
-					   const CRYPT_ATTRIBUTE_TYPE type,
-					   IN_BUFFER_OPT( valueLength ) \
-					   const void *value, const int valueLength );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteDN( INOUT_PTR void **dnComponentListPtrPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
-int getDNComponentValue( INOUT_PTR const void *dnComponentList,
-						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
-						 OUT_BUFFER_OPT( valueMaxLength, \
-										 valueLengthlength ) void *value, 
-						 IN_LENGTH_SHORT_Z const int valueMaxLength, 
-						 OUT_LENGTH_SHORT_Z int *valueLength );
-
-/* Copy and compare a DN */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int copyDN( OUT_PTR void **dnDest, IN_OPT const void *dnSrc );
-CHECK_RETVAL_BOOL \
-BOOLEAN compareDN( IN_OPT const void *dnComponentList1,
-				   IN_OPT const void *dnComponentList2,
-				   const BOOLEAN dn1substring );
-
-/* Read/write a DN */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 4, 5 ) ) \
-int checkDN( IN_OPT const void *dnComponentList,
-			 const BOOLEAN checkCN, const BOOLEAN checkC,
-			 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-				CRYPT_ATTRIBUTE_TYPE *errorLocus,
-			 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-				CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL \
-int sizeofDN( INOUT_OPT void *dnComponentList );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int readDN( INOUT STREAM *stream, 
-			INOUT_PTR void **dnComponentListPtrPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int writeDN( INOUT STREAM *stream, 
-			 IN_OPT const void *dnComponentList,
-			 IN_TAG const int tag );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int readDNstring( INOUT_PTR void **dnComponentListPtrPtr,
-				  IN_BUFFER( stringLength ) const char *string, 
-				  IN_LENGTH_ATTRIBUTE const int stringLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int writeDNstring( INOUT STREAM *stream, 
-				   IN_OPT const void *dnComponentList );
-
-/****************************************************************************
-*																			*
-*						Attribute Manipulation Functions					*
-*																			*
-****************************************************************************/
-
-/* Find information on an attribute */
-
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
-ATTRIBUTE_LIST *findAttributeByOID( const ATTRIBUTE_LIST *attributeListPtr,
-									IN_BUFFER( oidLength ) const BYTE *oid, 
-									IN_RANGE( 1, MAX_OID_SIZE ) \
-										const int oidLength );
-CHECK_RETVAL_PTR \
-ATTRIBUTE_LIST *findAttribute( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
-							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
-							   const BOOLEAN isFieldID );
-CHECK_RETVAL_PTR \
-ATTRIBUTE_LIST *findAttributeField( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
-									IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
-									IN_ATTRIBUTE_OPT \
-										const CRYPT_ATTRIBUTE_TYPE subFieldID );
-CHECK_RETVAL_PTR \
-ATTRIBUTE_LIST *findAttributeFieldEx( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
-									  IN_ATTRIBUTE \
-										const CRYPT_ATTRIBUTE_TYPE fieldID );
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-ATTRIBUTE_LIST *findNextFieldInstance( const ATTRIBUTE_LIST *attributeListPtr );
-CHECK_RETVAL \
-int getDefaultFieldValue( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID );
-CHECK_RETVAL_BOOL \
-BOOLEAN checkAttributePresent( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
-							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID );
-
-/* Move the current attribute cursor */
-
-CHECK_RETVAL_PTR \
-ATTRIBUTE_LIST *certMoveAttributeCursor( IN_OPT const ATTRIBUTE_LIST *currentCursor,
-										 IN_ATTRIBUTE \
-											const CRYPT_ATTRIBUTE_TYPE certInfoType,
-										 IN_RANGE( CRYPT_CURSOR_FIRST, \
-												   CRYPT_CURSOR_LAST ) \
-											const int position );
-
-/* Add/delete attributes/attribute fields */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 6 ) ) \
-int addAttribute( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
-				  /*?*/ ATTRIBUTE_LIST **listHeadPtr, 
-				  IN_BUFFER( oidLength ) const BYTE *oid, 
-				  IN_RANGE( 5, MAX_OID_SIZE ) const int oidLength,
-				  const BOOLEAN critical, 
-				  IN_BUFFER( dataLength ) const void *data, 
-				  IN_LENGTH_SHORT const int dataLength, 
-				  IN_FLAGS_Z( ATTR ) const int flags );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 7, 8 ) ) \
-int addAttributeField( ATTRIBUTE_LIST **attributeListPtr,
-					   const CRYPT_ATTRIBUTE_TYPE fieldID,
-					   const CRYPT_ATTRIBUTE_TYPE subFieldID,
-					   IN_BUFFER( dataLength ) const void *data, 
-					   const int dataLength,
-					   const int flags, 
-					   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-							CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
-RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int deleteAttributeField( INOUT ATTRIBUTE_LIST **attributeListPtr,
-						  INOUT_OPT ATTRIBUTE_LIST **listCursorPtr,
-						  INOUT ATTRIBUTE_LIST *listItem,
-						  IN_OPT const void *dnCursor );
-RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int deleteAttribute( INOUT ATTRIBUTE_LIST **attributeListPtr,
-					 INOUT_OPT ATTRIBUTE_LIST **listCursorPtr,
-					 INOUT ATTRIBUTE_LIST *listItem,
-					 IN_OPT const void *dnCursor );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteAttributes( INOUT ATTRIBUTE_LIST **attributeListPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-					const ATTRIBUTE_LIST *srcListPtr,
-					OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-						CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-						  const ATTRIBUTE_LIST *srcListPtr,
-						  const CRYPT_CERTTYPE_TYPE type,
-						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-							CRYPT_ATTRIBUTE_TYPE *errorLocus,
-						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyCRMFRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							   const ATTRIBUTE_LIST *srcListPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyOCSPRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							   const ATTRIBUTE_LIST *srcListPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyRevocationAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							  const ATTRIBUTE_LIST *srcListPtr );
-
-/* Read/write a collection of attributes */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
-int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
-					 const ATTRIBUTE_LIST *listHeadPtr,
-					 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-						CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofAttributes( const ATTRIBUTE_LIST *attributeListPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeAttributes( INOUT STREAM *stream, 
-					 INOUT ATTRIBUTE_LIST *attributeListPtr,
-					 IN_ENUM_OPT( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type,
-					 IN_LENGTH const int attributeSize );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5, 6 ) ) \
-int readAttributes( INOUT STREAM *stream, 
-					/*?*/ ATTRIBUTE_LIST **attributeListPtrPtr,
-					IN_ENUM_OPT( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type, 
-					IN_LENGTH_Z const int attributeLength,
-					OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-						CRYPT_ERRTYPE_TYPE *errorType );
-
-/****************************************************************************
-*																			*
-*			Validity/Revocation Information Manipulation Functions			*
-*																			*
-****************************************************************************/
-
-/* Read/write validity/revocation information */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofCRLentry( INOUT REVOCATION_INFO *crlEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-int readCRLentry( INOUT STREAM *stream, 
-				  INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-				  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-					CRYPT_ATTRIBUTE_TYPE *errorLocus,
-				  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-					CRYPT_ERRTYPE_TYPE *errorType );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeCRLentry( INOUT STREAM *stream, 
-				   const REVOCATION_INFO *crlEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofOcspRequestEntry( INOUT REVOCATION_INFO *ocspEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readOcspRequestEntry( INOUT STREAM *stream, 
-						  INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-						  INOUT CERT_INFO *certInfoPtr );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeOcspRequestEntry( INOUT STREAM *stream, 
-						   const REVOCATION_INFO *ocspEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofOcspResponseEntry( INOUT REVOCATION_INFO *ocspEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readOcspResponseEntry( INOUT STREAM *stream, 
-						   INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-						   INOUT CERT_INFO *certInfoPtr );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeOcspResponseEntry( INOUT STREAM *stream, 
-							const REVOCATION_INFO *ocspEntry,
-							const time_t entryTime );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofRtcsRequestEntry( INOUT VALIDITY_INFO *rtcsEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readRtcsRequestEntry( INOUT STREAM *stream, 
-						  INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-						  INOUT CERT_INFO *certInfoPtr );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeRtcsRequestEntry( INOUT STREAM *stream, 
-						   const VALIDITY_INFO *rtcsEntry );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofRtcsResponseEntry( INOUT VALIDITY_INFO *rtcsEntry,
-							 const BOOLEAN isFullResponse );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int readRtcsResponseEntry( INOUT STREAM *stream, 
-						   INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-						   INOUT CERT_INFO *certInfoPtr,
-						   const BOOLEAN isFullResponse );
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeRtcsResponseEntry( INOUT STREAM *stream, 
-						    const VALIDITY_INFO *rtcsEntry,
-							const BOOLEAN isFullResponse );
-
-/* Add/delete a validity/revocation entry */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-					  OUT_OPT_PTR VALIDITY_INFO **newEntryPosition,
-					  IN_BUFFER( valueLength ) const void *value, 
-					  IN_LENGTH_SHORT const int valueLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-int addRevocationEntry( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-						OUT_PTR REVOCATION_INFO **newEntryPosition,
-						IN_KEYID const CRYPT_KEYID_TYPE valueType,
-						IN_BUFFER( valueLength ) const void *value, 
-						IN_LENGTH_SHORT const int valueLength,
-						const BOOLEAN noCheck );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
-int prepareValidityEntries( INOUT_OPT VALIDITY_INFO *listPtr, 
-							OUT_PTR VALIDITY_INFO **errorEntry,
-							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-								CRYPT_ATTRIBUTE_TYPE *errorLocus,
-							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-								CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 6 ) ) \
-int prepareRevocationEntries( INOUT_OPT REVOCATION_INFO *listPtr, 
-							  const time_t defaultTime,
-							  OUT_PTR REVOCATION_INFO **errorEntry,
-							  const BOOLEAN isSingleEntry,
-							  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-								CRYPT_ATTRIBUTE_TYPE *errorLocus,
-							  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-								CRYPT_ERRTYPE_TYPE *errorType );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteValidityEntries( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr );
-STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteRevocationEntries( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr );
-
-/* Copy a set of validity/revocation entries */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyValidityEntries( INOUT_PTR VALIDITY_INFO **destListHeadPtrPtr,
-						 const VALIDITY_INFO *srcListPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyRevocationEntries( INOUT_PTR REVOCATION_INFO **destListHeadPtrPtr,
-						   const REVOCATION_INFO *srcListPtr );
-
-/* Determine whether a certificate has been revoked by this CRL/OCSP 
-   response */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int checkRevocation( const CERT_INFO *certInfoPtr, 
-					 INOUT CERT_INFO *revocationInfoPtr );
-
-/****************************************************************************
-*																			*
-*							Certificate Checking Functions					*
-*																			*
-****************************************************************************/
-
-/* Check a certificate object */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
-int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
-			   IN_OPT const CERT_INFO *issuerCertInfoPtr,
-			   const BOOLEAN shortCircuitCheck,
-			   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-					CRYPT_ATTRIBUTE_TYPE *errorLocus,
-			   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-					CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int checkCertChain( INOUT CERT_INFO *certInfoPtr );
-
-/* Certificate key check flags.  These are:
-
-	FLAG_NONE: No specific check.
-
-	FLAG_CA: Certificate must contain a CA key.
-
-	FLAG_PRIVATEKEY: Check for constraints on the corresponding private
-			key's usage, not just the public key usage.
-
-	FLAG_GENCHECK: Perform a general check that the key usage details are
-			in order without checking for a particular usage */
-
-#define CHECKKEY_FLAG_NONE			0x00	/* No specific checks */
-#define CHECKKEY_FLAG_CA			0x01	/* Must be CA key */
-#define CHECKKEY_FLAG_PRIVATEKEY	0x02	/* Check priv.key constraints */
-#define CHECKKEY_FLAG_GENCHECK		0x04	/* General details check */
-#define CHECKKEY_FLAG_MAX			0x07	/* Maximum possible flag value */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-int getKeyUsageFromExtKeyUsage( const CERT_INFO *certInfoPtr,
-								OUT_FLAGS_Z( CRYPT_KEYUSAGE ) int *keyUsage,
-								OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-									CRYPT_ATTRIBUTE_TYPE *errorLocus, 
-								OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-									CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5, 6 ) ) \
-int checkKeyUsage( const CERT_INFO *certInfoPtr,
-				   IN_FLAGS_Z( CHECKKEY ) const int flags, 
-				   IN_FLAGS_Z( CRYPT_KEYUSAGE ) const int specificUsage,
-				   IN_RANGE( CRYPT_COMPLIANCELEVEL_OBLIVIOUS, \
-							 CRYPT_COMPLIANCELEVEL_LAST - 1 ) \
-						const int complianceLevel,
-				   OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						CRYPT_ATTRIBUTE_TYPE *errorLocus,
-				   OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-						CRYPT_ERRTYPE_TYPE *errorType );
-
-/* Check certificate constraints */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-int checkNameConstraints( const CERT_INFO *subjectCertInfoPtr,
-						  const ATTRIBUTE_LIST *issuerAttributes,
-						  const BOOLEAN isExcluded,
-						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-							CRYPT_ATTRIBUTE_TYPE *errorLocus,
-						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-int checkPolicyConstraints( const CERT_INFO *subjectCertInfoPtr,
-							const ATTRIBUTE_LIST *issuerAttributes,
-							IN_ENUM_OPT( POLICY ) const POLICY_TYPE policyType,
-							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-								CRYPT_ATTRIBUTE_TYPE *errorLocus,
-							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-								CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-int checkPathConstraints( const CERT_INFO *subjectCertInfoPtr,
-						  const ATTRIBUTE_LIST *issuerAttributes,
-						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-							CRYPT_ATTRIBUTE_TYPE *errorLocus,
-						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-							CRYPT_ERRTYPE_TYPE *errorType );
-
-/* Sign/sig check a certificate */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int signCert( INOUT CERT_INFO *certInfoPtr, 
-			  IN_HANDLE_OPT const CRYPT_CONTEXT iSignContext );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int checkCertValidity( INOUT CERT_INFO *certInfoPtr, 
-					   IN_HANDLE_OPT const CRYPT_HANDLE iSigCheckObject );
-
-/****************************************************************************
-*																			*
-*							Certificate Chain Functions						*
-*																			*
-****************************************************************************/
-
-/* Read/write/copy a certificate chain */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int readCertChain( INOUT STREAM *stream, OUT CRYPT_CERTIFICATE *iCryptCert,
-				   IN_HANDLE const CRYPT_USER iCryptOwner,
-				   IN_ENUM( CRYPT_CERTTYPE ) const CRYPT_CERTTYPE_TYPE type,
-				   IN_KEYID_OPT const CRYPT_KEYID_TYPE keyIDtype,
-				   IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
-				   IN_LENGTH_KEYID_Z const int keyIDlength,
-				   const BOOLEAN dataOnlyCert );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeCertChain( INOUT STREAM *stream, 
-					const CERT_INFO *certInfoPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int copyCertChain( INOUT CERT_INFO *certInfoPtr, 
-				   IN_HANDLE const CRYPT_HANDLE certChain,
-				   const BOOLEAN isCertCollection );
-
-/* Read/write certificate collections in assorted formats */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sizeofCertCollection( const CERT_INFO *certInfoPtr,
-						  IN_ENUM( CRYPT_CERTFORMAT ) \
-							const CRYPT_CERTFORMAT_TYPE certFormatType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeCertCollection( INOUT STREAM *stream, 
-						 const CERT_INFO *certInfoPtr,
-						 IN_ENUM( CRYPT_CERTFORMAT ) \
-							const CRYPT_CERTFORMAT_TYPE certFormatType );
-
-/* Assemble a certificate chain from certificates read from an object */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
-int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
-					   IN_HANDLE const CRYPT_HANDLE iCertSource,
-					   IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
-					   IN_BUFFER( keyIDlength ) const void *keyID, 
-					   IN_LENGTH_KEYID const int keyIDlength,
-					   IN_FLAGS( KEYMGMT ) const int options );
-
-/****************************************************************************
-*																			*
-*								Certificate Functions						*
-*																			*
-****************************************************************************/
-
-/* Create a certificate object ready for further initialisation */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int createCertificateInfo( OUT_PTR CERT_INFO **certInfoPtrPtr, 
-						   IN_HANDLE const CRYPT_USER iCryptOwner,
-						   IN_ENUM( CRYPT_CERTTYPE ) \
-							const CRYPT_CERTTYPE_TYPE certType );
-
-/* Add/get/delete a certificate component */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int addCertComponent( INOUT CERT_INFO *certInfoPtr,
-					  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE certInfoType,
-					  /*?*/ const void *certInfo, 
-					  /*?*/ const int certInfoLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
-int getCertComponent( INOUT CERT_INFO *certInfoPtr,
-					  const CRYPT_ATTRIBUTE_TYPE certInfoType,
-					  OUT_BUFFER_OPT( certInfoMaxLength, \
-									  *certInfoLength ) void *certInfo, 
-					  const int certInfoMaxLength, 
-					  int *certInfoLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int deleteCertComponent( INOUT CERT_INFO *certInfoPtr,
-						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE certInfoType );
-
-/* Import/export a certificate */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int importCert( IN_BUFFER( certObjectLength ) const void *certObject, 
-				IN_LENGTH const int certObjectLength,
-				OUT_HANDLE_OPT CRYPT_CERTIFICATE *certificate,
-				IN_HANDLE const CRYPT_USER iCryptOwner,
-				IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
-				IN_BUFFER_OPT( keyIDlength ) const void *keyID, 
-				IN_LENGTH_KEYID_Z const int keyIDlength,
-				IN_ENUM_OPT( CRYPT_CERTTYPE ) \
-					const CRYPT_CERTTYPE_TYPE formatHint );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5 ) ) \
-int exportCert( OUT_BUFFER_OPT( certObjectMaxLength, *certObjectLength ) \
-					void *certObject, 
-				IN_LENGTH const int certObjectMaxLength, 
-				OUT_LENGTH_Z int *certObjectLength,
-				IN_ENUM( CRYPT_CERTFORMAT ) \
-					const CRYPT_CERTFORMAT_TYPE certFormatType,
-				const CERT_INFO *certInfoPtr );
-
-/* Oddball routines: work with a certificate's serial number */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int setSerialNumber( INOUT CERT_INFO *certInfoPtr, 
-					 IN_BUFFER_OPT( serialNumberLength ) const void *serialNumber, 
-					 IN_LENGTH_SHORT_Z const int serialNumberLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-BOOLEAN compareSerialNumber( IN_BUFFER( canonSerialNumberLength ) \
-								const void *canonSerialNumber,
-							 IN_LENGTH_SHORT const int canonSerialNumberLength,
-							 IN_BUFFER( serialNumberLength ) \
-								const void *serialNumber,
-							 IN_LENGTH_SHORT const int serialNumberLength );
-
-/****************************************************************************
-*																			*
-*							Miscellaneous Functions							*
-*																			*
-****************************************************************************/
-
-/* Convert a text-form OID to its binary form */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int textToOID( IN_BUFFER( oidLength ) const char *textOID, 
-			   IN_RANGE( MIN_ASCII_OIDSIZE, CRYPT_MAX_TEXTSIZE ) \
-					const int textOIDlength, 
-			   OUT_BUFFER( binaryOidMaxLen, binaryOidLen ) BYTE *binaryOID, 
-			   IN_LENGTH_SHORT const int binaryOidMaxLen, 
-			   OUT_LENGTH_SHORT_Z int *binaryOidLen );
-
-/* Prototypes for functions in certext.c */
-
-CHECK_RETVAL_BOOL \
-BOOLEAN isValidField( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
-					  IN_ENUM( CRYPT_CERTTYPE ) \
-						const CRYPT_CERTTYPE_TYPE certType );
-
-/* Prototypes for functions in comp_get.c */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int moveCursorToField( INOUT CERT_INFO *certInfoPtr,
-					   const CRYPT_ATTRIBUTE_TYPE certInfoType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int selectGeneralName( INOUT CERT_INFO *certInfoPtr,
-					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE certInfoType,
-					   IN_ENUM( SELECTION_OPTION ) const SELECTION_OPTION option );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int selectDN( INOUT CERT_INFO *certInfoPtr, 
-			  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE certInfoType,
-			  IN_ENUM( SELECTION_OPTION ) const SELECTION_OPTION option );
-void syncSelection( INOUT CERT_INFO *certInfoPtr ) \
-					STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-time_t *getRevocationTimePtr( const CERT_INFO *certInfoPtr );
-
-/* Prototypes for functions in certschk.c */
-
-int checkCertDetails( CERT_INFO *subjectCertInfoPtr,
-					  CERT_INFO *issuerCertInfoPtr,
-					  const CRYPT_CONTEXT iIssuerPubKey,
-					  const X509SIG_FORMATINFO *formatInfo,
-					  const BOOLEAN trustAnchorCheck,
-					  const BOOLEAN shortCircuitCheck,
-					  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						CRYPT_ATTRIBUTE_TYPE *errorLocus,
-					  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
-						CRYPT_ERRTYPE_TYPE *errorType );
-
-/* Prototypes for functions in dn.c */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int convertEmail( INOUT CERT_INFO *certInfoPtr, 
-				  /*?*/ void **dnComponentListPtrPtr,
-				  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE altNameType );
-
-/* Prototypes for functions in ext.c */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int fixAttributes( INOUT CERT_INFO *certInfoPtr );
-
-/* Prototypes for functions in ext_def.c */
-
-CHECK_RETVAL_BOOL \
-BOOLEAN checkExtensionTables( void );
+/* The huge complexity of the certificate management code means that there
+   are a sufficient number of functions required that we confine the
+   prototypes to their own file */
+
+#if defined( INC_ALL )
+  #include "certfn.h"
+#else
+  #include "cert/certfn.h"
+#endif /* Compiler-specific includes */
 
 #endif /* _CERT_DEFINED */

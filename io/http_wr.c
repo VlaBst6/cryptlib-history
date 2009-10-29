@@ -49,7 +49,7 @@ static void encodeRFC1866( INOUT STREAM *headerStream,
 
 	while( index < stringLength )
 		{
-		const int ch = string[ index++ ];
+		const int ch = byteToInt( string[ index++ ] );
 		int i;
 
 		if( isAlnum( ch ) )

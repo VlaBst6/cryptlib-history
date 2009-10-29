@@ -192,7 +192,8 @@ typedef struct ST {
    locations in the string data */
 
 typedef enum { URL_TYPE_NONE, URL_TYPE_HTTP, URL_TYPE_HTTPS, URL_TYPE_SSH,
-			   URL_TYPE_CMP, URL_TYPE_TSP, URL_TYPE_LAST } URL_TYPE;
+			   URL_TYPE_CMP, URL_TYPE_TSP, URL_TYPE_LDAP, 
+			   URL_TYPE_LAST } URL_TYPE;
 
 typedef struct {
 	URL_TYPE type;
@@ -247,7 +248,9 @@ typedef struct {
 	BUFFER_OPT_FIXED( nameLength ) \
 	const char *name;
 	int nameLength;
-	int port;					/* Host info */
+	int port;					/* Remote host info */
+	const char *interface;
+	int interfaceLength;		/* Local interface info */
 	int networkSocket;			/* Pre-connected network socket */
 	CRYPT_SESSION iCryptSession;/* cryptlib transport session */
 
@@ -341,9 +344,9 @@ typedef struct {
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sputc( INOUT STREAM *stream, IN_BYTE const int ch );
-RETVAL_RANGE( MAX_ERROR, 0xFF ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_RANGE( MAX_ERROR, 0xFF ) STDC_NONNULL_ARG( ( 1 ) ) \
 int sgetc( INOUT STREAM *stream );
-RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sread( INOUT STREAM *stream, 
 		   OUT_BUFFER_FIXED( length ) void *buffer, 
 		   IN_LENGTH const int length );

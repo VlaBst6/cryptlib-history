@@ -36,6 +36,10 @@ static void endSocketPool( void );
   #define TEXT		/* Win32 windows.h defines this, but not the Win16 one */
 #endif /* TEXT */
 
+#ifdef _MSC_VER
+  #pragma warning( disable: 4127 )	/* False-positive in winsock.h */
+#endif /* VC++ */
+
 /* Global function pointers.  These are necessary because the functions need
    to be dynamically linked since not all systems contain the necessary
    libraries */
@@ -518,9 +522,11 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 		"ETIMEDOUT: Function timed out before completion", 47 },
 	{ HOST_NOT_FOUND, CRYPT_ERROR_NOTFOUND, TRUE,
 		"HOST_NOT_FOUND: Not an official hostname or alias", 49 },
+#ifndef __ECOS__
 	{ NO_ADDRESS, CRYPT_ERROR_NOTFOUND, TRUE,
 		"NO_ADDRESS: Name is valid but does not have an IP address at the "
 		"name server", 76 },
+#endif /* __ECOS__ */
 	{ TRY_AGAIN, CRYPT_OK, FALSE,
 		"TRY_AGAIN: Local server did not receive a response from an "
 		"authoritative server", 79 },
@@ -532,8 +538,10 @@ static const SOCKETERROR_INFO FAR_BSS socketErrorInfo[] = {
 static const SOCKETERROR_INFO FAR_BSS hostErrorInfo[] = {
 	{ HOST_NOT_FOUND, CRYPT_ERROR_NOTFOUND, TRUE,
 		"HOST_NOT_FOUND: Host not found", 30 },
+#ifndef __ECOS__
 	{ NO_ADDRESS, CRYPT_ERROR_NOTFOUND, TRUE,
 		"NO_ADDRESS: No address record available for this name", 53 },
+#endif /* __ECOS__ */
 	{ NO_DATA, CRYPT_ERROR_NOTFOUND, TRUE,
 		"NO_DATA: Valid name, no data record of requested type", 53 },
 	{ TRY_AGAIN,  CRYPT_OK, FALSE,
@@ -544,7 +552,16 @@ static const SOCKETERROR_INFO FAR_BSS hostErrorInfo[] = {
 #endif /* System-specific socket error codes */
 
 /* Get and set the low-level error information from a socket- and host-
-   lookup-based error */
+   lookup-based error.  In theory under Windows we could also use the 
+   Network List Manager to try and get additional diagnostic information 
+   but this is only available under Vista and requires playing with COM 
+   objects, the significant extra complexity caused by this isn't worth the 
+   tiny additional level of granularity that we might gain in reporting 
+   errors.  In any case the NLM functionality seems primarily intended for 
+   interactively obtaining information before any networking actions are 
+   initiated ("Do we currently have an Internet connection?") rather than 
+   diagnosing problems afterwards ("What went wrong with the attempt to 
+   initiate an Internet connection?") */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int mapError( NET_STREAM_INFO *netStream, 
@@ -592,15 +609,21 @@ static int mapError( NET_STREAM_INFO *netStream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getSocketError( NET_STREAM_INFO *netStream, 
-					IN_ERROR const int status )
+					IN_ERROR const int status,
+					OUT_INT_Z int *socketErrorCode )
 	{
+	const int errorCode = getErrorCode();
+
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
+	assert( isWritePtr( socketErrorCode, sizeof( int ) ) );
 
 	REQUIRES( cryptStatusError( status ) );
 
 	/* Get the low-level error code and map it to an error string if
 	   possible */
-	netStream->errorInfo.errorCode = getErrorCode();
+	*socketErrorCode = errorCode;
+	netStream->errorInfo.errorCode = errorCode;
+
 	return( mapError( netStream, FALSE, status ) );
 	}
 
@@ -615,6 +638,7 @@ int getHostError( NET_STREAM_INFO *netStream,
 	/* Get the low-level error code and map it to an error string if
 	   possible */
 	netStream->errorInfo.errorCode = getHostErrorCode();
+
 	return( mapError( netStream, TRUE, status ) );
 	}
 
@@ -642,6 +666,107 @@ int setSocketError( INOUT NET_STREAM_INFO *netStream,
 		}
 	return( status );
 	}
+
+/* Some buggy firewall software will block any data transfer attempts made 
+   after the initial connection setup, if we're in a situation where this 
+   can happen then we check for the presence of a software firewall and 
+   report a problem due to the firewall rather than a general networking 
+   problem if we find one */
+
+#ifdef __WIN32__
+
+#define MAX_DRIVERS     1024
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkFirewallError( INOUT NET_STREAM_INFO *netStream )
+	{
+	INSTANCE_HANDLE hPSAPI = NULL_INSTANCE;
+	typedef BOOL ( WINAPI *ENUMDEVICEDRIVERS )( LPVOID *lpImageBase, DWORD cb,
+												LPDWORD lpcbNeeded );
+	typedef DWORD ( WINAPI *GETDEVICEDRIVERBASENAME )( LPVOID ImageBase,
+													   LPTSTR lpBaseName,
+													   DWORD nSize );
+	ENUMDEVICEDRIVERS pEnumDeviceDrivers;
+	GETDEVICEDRIVERBASENAME pGetDeviceDriverBaseName;
+	LPVOID drivers[ MAX_DRIVERS + 8 ];
+	DWORD cbNeeded;
+	int i;
+
+	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
+
+	/* Use the PSAPI library to check for the presence of firewall filter
+	   drivers.  Since this operation is rarely performed and is only called
+	   as part of an error handler in which performance isn't a major factor
+	   we load the library on demand each time (which we'd have to do in any 
+	   case because it's not supported on older systems) rather than using
+	   an on-init load as we do for the networking functions */
+	if( ( hPSAPI = DynamicLoad( "psapi.dll" ) ) == NULL_INSTANCE )
+		return( CRYPT_ERROR_TIMEOUT );
+	pEnumDeviceDrivers = ( ENUMDEVICEDRIVERS ) \
+						 GetProcAddress( hPSAPI, "EnumDeviceDrivers" );
+	pGetDeviceDriverBaseName = ( GETDEVICEDRIVERBASENAME ) \
+							   GetProcAddress( hPSAPI, "GetDeviceDriverBaseNameA" );
+	if( pEnumDeviceDrivers == NULL || \
+		pGetDeviceDriverBaseName == NULL || \
+		!pEnumDeviceDrivers( drivers, MAX_DRIVERS * sizeof( DWORD ), 
+							 &cbNeeded ) )
+		{
+		DynamicUnload( hPSAPI );
+		return( CRYPT_ERROR_TIMEOUT );
+		}
+
+	/* Check whether a suspect filter driver is present */
+	for( i = 0; i < cbNeeded / sizeof( DWORD ); i++ )
+		{
+		typedef struct {
+			const char *name;
+			const int nameLen;
+			const BOOLEAN isMcafee;
+			} DRIVER_INFO;
+		static const DRIVER_INFO driverInfoTbl[] = {
+			{ "firelm01.sys", 8, TRUE },	/* McAfee Host IPS */
+			{ "firehk4x.sys", 8, TRUE },	/* McAfee Host IPS */
+			{ "firehk5x.sys", 8, TRUE },	/* McAfee Host IPS */
+			{ "fw220.sys", 5, TRUE },		/* McAfee FW */
+			{ "mpfirewall.sys", 10, TRUE },	/* McAfee personal FW */
+			{ "symtdi.sys", 6, FALSE },		/* Symantec TDI */
+			{ "spbbcdrv.sys", 8, FALSE },	/* Norton Personal FW */
+			{ NULL, 0, FALSE }, { NULL, 0, FALSE }
+			};
+		char driverName[ 256 + 8 ];
+		int driverNameLen, driverIndex;
+
+		driverNameLen = pGetDeviceDriverBaseName( drivers[ i ], 
+												  driverName, 256 );
+		if( driverNameLen <= 0 )
+			continue;
+		for( driverIndex = 0; 
+			 driverInfoTbl[ driverIndex ].name != NULL && \
+				driverIndex < FAILSAFE_ARRAYSIZE( driverInfoTbl, \
+												  DRIVER_INFO );
+			 driverIndex++ )
+			{
+			if( driverNameLen >= driverInfoTbl[ driverIndex ].nameLen && \
+				!strnicmp( driverName, driverInfoTbl[ driverIndex ].name,
+						   driverInfoTbl[ driverIndex ].nameLen ) )
+				{
+				DynamicUnload( hPSAPI );
+				retExt( CRYPT_ERROR_TIMEOUT,
+						( CRYPT_ERROR_TIMEOUT, NETSTREAM_ERRINFO,
+						  "Network data transfer blocked, probably due to "
+						  "%s firewall software installed on the PC", 
+						  driverInfoTbl[ driverIndex ].isMcafee ? \
+							"McAfee" : "Symantec/Norton" ) );
+				}
+			}
+		}
+	DynamicUnload( hPSAPI );
+
+	return( CRYPT_ERROR_TIMEOUT );
+	}
+#else
+  #define checkFirewallError( netStream )	CRYPT_ERROR_TIMEOUT
+#endif /* Win32 */
 
 #if defined( __BEOS__ ) && !defined( BONE_VERSION )
 
@@ -774,7 +899,7 @@ typedef struct {
 	int refCount;			/* Reference count for the socket */
 	int iChecksum;			/* Family, interface, and port */
 	BYTE iData[ 32 + 8 ];	/*	info for server socket */
-	int iDataLen;
+	size_t iDataLen;
 	} SOCKET_INFO;
 
 static SOCKET_INFO *socketInfo;
@@ -858,6 +983,7 @@ static int newSocket( OUT SOCKET *newSocketPtr,
 				if( socketInfo[ i ].refCount >= 10000 )
 					{
 					krnlExitMutex( MUTEX_SOCKETPOOL );
+					DEBUG_DIAG(( "Socket in pool has reference count > 10,000" ));
 					assert( DEBUG_WARN );
 					return( CRYPT_ERROR_OVERFLOW );
 					}
@@ -897,6 +1023,8 @@ static int newSocket( OUT SOCKET *newSocketPtr,
 	if( i >= SOCKETPOOL_SIZE )
 		{
 		krnlExitMutex( MUTEX_SOCKETPOOL );
+		DEBUG_DIAG(( "Tried to add more than %d sockets to socket pool", 
+					 SOCKETPOOL_SIZE ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_OVERFLOW );	/* Should never happen */
 		}
@@ -965,6 +1093,8 @@ static int addSocket( const SOCKET netSocket )
 	if( i >= SOCKETPOOL_SIZE )
 		{
 		krnlExitMutex( MUTEX_SOCKETPOOL );
+		DEBUG_DIAG(( "Tried to add more than %d sockets to socket pool", 
+					 SOCKETPOOL_SIZE ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_OVERFLOW );
 		}
@@ -1020,6 +1150,7 @@ static void deleteSocket( const SOCKET netSocket )
 					sizeof( socketInfo[ i ].iData ) );
 			socketInfo[ i ].iDataLen = 0;
 
+			DEBUG_DIAG(( "Couldn't close socket pool socket" ));
 			assert( DEBUG_WARN );
 			}
 		else
@@ -1218,7 +1349,12 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 		   interrupted system call, exit.  For a transient problem, we just
 		   retry the select until the overall timeout expires */
 		if( isSocketError( status ) && !isRestartableError() )
-			return( getSocketError( netStream, errorInfo[ type ].status ) );
+			{
+			int dummy;
+
+			return( getSocketError( netStream, errorInfo[ type ].status, 
+									&dummy ) );
+			}
 		}
 	while( isSocketError( status ) && \
 		   !checkMonoTimerExpired( &timerInfo ) && \
@@ -1235,13 +1371,15 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 		   implementation, but without knowing in advance what caused this
 		   can't-occur condition it's difficult to anticipate the correct
 		   action to take, so all that we do is warn in the debug build */
+		DEBUG_DIAG(( "select() went through %d iterations without "
+					 "returning data", FAILSAFE_ITERATIONS_MED ));
 		assert( DEBUG_WARN );
 		errorMessageLength = sprintf_s( errorMessage, 128,
 										"select() on %s went through %d "
 										"iterations without returning a "
 										"result",
 										errorInfo[ type ].errorString, 
-										timeout );
+										selectIterations );
 		return( setSocketError( netStream, errorMessage, errorMessageLength,
 								CRYPT_ERROR_TIMEOUT, FALSE ) );
 		}
@@ -1315,8 +1453,11 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 	   receiving OOB data so we treat that as an error too */
 	if( FD_ISSET( netStream->netSocket, &exceptfds ) )
 		{
-		status = getSocketError( netStream, errorInfo[ type ].status );
-		if( netStream->errorInfo.errorCode == 0 )
+		int socketErrorCode;
+
+		status = getSocketError( netStream, errorInfo[ type ].status, 
+								 &socketErrorCode );
+		if( socketErrorCode == 0 )
 			{
 			/* If there's a (supposed) exception condition present but no
 			   error information available then this may be a mis-handled
@@ -1429,6 +1570,8 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 		/* We went through a suspiciously large number of remote server 
 		   addresses without being able to even initiate a connect attempt 
 		   to any of them, there's something wrong */
+		DEBUG_DIAG(( "Iterated through %d server addresses without being "
+					 "able to connect", IP_ADDR_COUNT ));
 		assert( DEBUG_WARN );
 		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
 		}
@@ -1514,7 +1657,9 @@ static int completeOpen( INOUT NET_STREAM_INFO *netStream )
 		/* Slowaris, error is in errno */
 		if( isSocketError( status ) )
 			{
-			status = getSocketError( netStream, CRYPT_ERROR_OPEN );
+			int dummy;
+
+			status = getSocketError( netStream, CRYPT_ERROR_OPEN, &dummy );
 			netStream->transportDisconnectFunction( netStream, TRUE );
 			return( status );
 			}
@@ -1575,9 +1720,46 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 
 	/* Set up addressing information.  If we're not binding to a specified 
 	   interface we allow connections on any interface.  Note that in 
-	   combination with SO_REUSEADDR and old unpatched kernels this allows 
-	   port hijacking by another process running on the same machine that 
-	   binds to the port with a more specific binding than "any" */
+	   combination with SO_REUSEADDR and old unpatched Unix kernels this 
+	   allows port hijacking by another process running on the same machine 
+	   that binds to the port with a more specific binding than "any".  It
+	   also allows port hijacking under Windows, where the situation is a 
+	   bit more complex.  Actually it's representative of the problem of the
+	   port-binding situation in general so it's informative to walk through 
+	   the issue.  
+	   
+	   Windows provides a socket option SO_EXCLUSIVEADDRUSE that can be used 
+	   to exclude re-binding to a socket.  Unfortunately what this means is
+	   that if this option is set for a socket then the port can't be re-
+	   used right after the socket is closed but only after the connection 
+	   is no longer active, where "active" means that it's not only not in 
+	   the ESTABLISHED state but also not in the FIN, FIN_WAIT, FIN_WAIT_2, 
+	   or LAST_ACK state.  However the ability to re-bind to the port at 
+	   this point is exactly what SO_REUSEADDR is supposed to allow.  In 
+	   other words use of SO_EXCLUSIVEADDRUSE is a bit like not setting 
+	   SO_REUSEADDR (with a few technical differences based on how 
+	   SO_EXCLUSIVEADDRUSE works that aren't important here).  So we have
+	   to not only close the socket but wait for the system to send all
+	   buffered data, hang around for data acks, send a disconnect to the 
+	   remote system, and wait to get a disconnect back.  If the remote 
+	   system (or a MITM) advertises a zero-length window or something 
+	   similar then the connection can remain "active" (in the sense of 
+	   preventing a re-bind, although not necessarily doing anything) more 
+	   or less indefinitely.
+
+	   This is a nasty situation because while SO_EXCLUSIVEADDRUSE can
+	   prevent local socket-hijacking attacks it opens us up to remote
+	   network-based DoS attacks.  In theory if we have complete control
+	   of the application we can use a background thread to wait in a recv()
+	   loop until all data is read after performing a shutdown( SD_SEND ) 
+	   and if necessary alert the user that something funny is going on, but 
+	   since we're a library (and sometimes running as a UI-less service) we 
+	   can't really do this.
+
+	   Given the choice between allowing a local session-hijack or a remote 
+	   DoS, we opt for the session hijack.  Since we're using secured
+	   protocols over the socket this isn't nearly as serious as (say) a 
+	   socket being used for straight HTTP */
 	status = getAddressInfo( netStream, &addrInfoPtr, host, hostNameLen, 
 							 port, TRUE );
 	if( cryptStatusError( status ) )
@@ -1648,6 +1830,8 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		/* We went through a suspiciously large number of server addresses 
 		   without being able to even initiate a listen attempt on any of 
 		   them, there's something wrong */
+		DEBUG_DIAG(( "Iterated through %d server addresses without being "
+					 "able to listen", IP_ADDR_COUNT ));
 		assert( DEBUG_WARN );
 		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
 		}
@@ -1715,7 +1899,11 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 									 70, CRYPT_ERROR_OPEN, TRUE );
 			}
 		else
-			status = getSocketError( netStream, CRYPT_ERROR_OPEN );
+			{
+			int dummy;
+
+			status = getSocketError( netStream, CRYPT_ERROR_OPEN, &dummy );
+			}
 		setSocketBlocking( listenSocket );
 		deleteSocket( listenSocket );
 		return( status );
@@ -1730,8 +1918,9 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 	   need it.  Since we don't want to abort an entire network connect just 
 	   because we can't return the peer's IP address, do don't do anything
 	   with the return value of this function */
-	( void ) getNameInfo( ( const struct sockaddr * ) &clientAddr,
-						  netStream->clientAddress, CRYPT_MAX_TEXTSIZE / 2,
+	( void ) getNameInfo( ( const struct sockaddr * ) &clientAddr, 
+						  clientAddrLen, netStream->clientAddress, 
+						  CRYPT_MAX_TEXTSIZE / 2, 
 						  &netStream->clientAddressLen, 
 						  &netStream->clientPort );
 
@@ -1908,7 +2097,11 @@ static int checkSocketFunction( INOUT NET_STREAM_INFO *netStream )
 	   blocking socket */
 	getSocketNonblockingStatus( netStream->netSocket, value );
 	if( isSocketError( value ) )
-		return( getSocketError( netStream, CRYPT_ARGERROR_NUM1 ) );
+		{
+		int dummy;
+
+		return( getSocketError( netStream, CRYPT_ARGERROR_NUM1, &dummy ) );
+		}
 	if( value )
 		{
 		return( setSocketError( netStream, "Socket is non-blocking", 22,
@@ -2011,12 +2204,30 @@ static int readSocketFunction( INOUT STREAM *stream,
 			return( CRYPT_OK );
 			}
 		if( cryptStatusError( status ) )
+			{
+			/* Some buggy firewall software will block any data transfer 
+			   attempts made after the initial connection setup 
+			   (specifically they'll allow the initial SYN/SYN/ACK to 
+			   establish connection state but then block any further 
+			   information from being transferred), to handle this we
+			   check whether we get a timeout on the first read and if we
+			   do then we check for the presence of the software firewall,
+			   reporting a problem due to the firewall rather than a
+			   general networking problem if we find one */
+			if( status == CRYPT_ERROR_TIMEOUT && \
+				( netStream->nFlags & STREAM_NFLAG_FIRSTREADOK ) )
+				{
+				return( checkFirewallError( netStream ) );
+				}
 			return( status );
+			}
 
 		/* We've got data waiting, read it */
 		bytesRead = recv( netStream->netSocket, bufPtr, bytesToRead, 0 );
 		if( isSocketError( bytesRead ) )
 			{
+			int dummy;
+
 			/* If it's a restartable read due to something like an
 			   interrupted system call, retry the read */
 			if( isRestartableError() )
@@ -2026,7 +2237,7 @@ static int readSocketFunction( INOUT STREAM *stream,
 				}
 
 			/* There was a problem with the read */
-			return( getSocketError( netStream, CRYPT_ERROR_READ ) );
+			return( getSocketError( netStream, CRYPT_ERROR_READ, &dummy ) );
 			}
 		if( bytesRead <= 0 )
 			{
@@ -2070,7 +2281,7 @@ static int readSocketFunction( INOUT STREAM *stream,
 			   (or at least until the loop iteration watchdog triggers) 
 			   waiting for data that can never be read */
 #if 0	/* See above comment */
-			getSocketError( stream, CRYPT_ERROR_READ );
+			getSocketError( stream, CRYPT_ERROR_READ, &dummy );
 			status = ioWait( stream, 0, 0, IOWAIT_READ );
 			if( cryptStatusOK( status ) )
 				continue;
@@ -2086,6 +2297,10 @@ static int readSocketFunction( INOUT STREAM *stream,
 		byteCount += bytesRead;
 		ENSURES_S( bytesToRead >= 0 && bytesToRead < MAX_INTLENGTH );
 		ENSURES_S( byteCount > 0 && byteCount < MAX_INTLENGTH );
+
+		/* Remember that we've got some data, used for error diagnosis (see
+		   the long comment above) */
+		netStream->nFlags |= STREAM_NFLAG_FIRSTREADOK;
 
 		/* If this is a blocking read and we've been moving data at a
 		   reasonable rate (~1K/s) and we're about to time out, adjust the
@@ -2167,9 +2382,10 @@ static int writeSocketFunction( INOUT STREAM *stream,
 	   possibly Win98 as well, Q177346) under which a select() indicates 
 	   writeability but send() returns EWOULDBLOCK.  Another select() 
 	   executed after the failed send() then causes select() to suddenly 
-	   realise that the socket is non-writeable.  Finally, in some cases 
-	   send() can return an error but WSAGetLastError() indicates that 
-	   there's no error, so we treat it as noise and try again */
+	   realise that the socket is non-writeable (accidit in puncto, quod 
+	   non seperatur in anno).  Finally, in some cases send() can return an 
+	   error but WSAGetLastError() indicates that there's no error, so we 
+	   treat it as noise and try again */
 	status = setMonoTimer( &timerInfo, timeout );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -2205,6 +2421,8 @@ static int writeSocketFunction( INOUT STREAM *stream,
 							 MSG_NOSIGNAL );
 		if( isSocketError( bytesWritten ) )
 			{
+			int dummy;
+
 			/* If it's a restartable write due to something like an
 			   interrupted system call (or a sockets bug), retry the
 			   write */
@@ -2225,7 +2443,7 @@ static int writeSocketFunction( INOUT STREAM *stream,
 #endif /* __WINDOWS__ */
 
 			/* There was a problem with the write */
-			return( getSocketError( netStream, CRYPT_ERROR_WRITE ) );
+			return( getSocketError( netStream, CRYPT_ERROR_WRITE, &dummy ) );
 			}
 		bufPtr += bytesWritten;
 		bytesToWrite -= bytesWritten;

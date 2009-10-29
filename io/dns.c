@@ -206,17 +206,18 @@ static int addAddrInfo( INOUT_OPT struct addrinfo *prevAddrInfoPtr,
 	*addrInfoPtrPtr = NULL;
 
 	/* Allocate the new element, clear it, and set fixed fields for IPv4 */
-	if( ( addrInfoPtr = clAlloc( "addAddrInfo", \
-								 sizeof( struct addrinfo ) ) ) == NULL || \
-		( sockAddrPtr = clAlloc( "addAddrInfo", \
-								 sizeof( struct sockaddr ) ) ) == NULL )
+	addrInfoPtr = clAlloc( "addAddrInfo", sizeof( struct addrinfo ) );
+	sockAddrPtr = clAlloc( "addAddrInfo", sizeof( struct sockaddr_in ) );
+	if( addrInfoPtr == NULL || sockAddrPtr == NULL )
 		{
 		if( addrInfoPtr != NULL )
 			clFree( "addAddrInfo", addrInfoPtr );
+		if( sockAddrPtr != NULL )
+			clFree( "addAddrInfo", sockAddrPtr );
 		return( -1 );
 		}
 	memset( addrInfoPtr, 0, sizeof( struct addrinfo ) );
-	memset( sockAddrPtr, 0, sizeof( struct sockaddr ) );
+	memset( sockAddrPtr, 0, sizeof( struct sockaddr_in ) );
 	if( prevAddrInfoPtr != NULL )
 		prevAddrInfoPtr->ai_next = addrInfoPtr;
 	addrInfoPtr->ai_family = PF_INET;
@@ -244,15 +245,15 @@ static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
 	{
 	struct hostent *pHostent;
 	struct addrinfo *currentAddrInfoPtr = NULL;
-	const int port = atoi( servname );
-	int hostErrno, i;
+	int port, hostErrno, i, status;
 	gethostbyname_vars();
 
-	assert( nodename != NULL || ( hints->ai_flags & AI_PASSIVE ) );
-	assert( servname != NULL );
 	assert( isReadPtr( hints, sizeof( struct addrinfo ) ) );
 	assert( isWritePtr( res, sizeof( struct addrinfo * ) ) );
 	assert( sizeof( in_addr_t ) == IP_ADDR_SIZE );
+
+	REQUIRES( nodename != NULL || ( hints->ai_flags & AI_PASSIVE ) );
+	REQUIRES( servname != NULL );
 
 	/* Clear return value */
 	*res = NULL;
@@ -264,6 +265,11 @@ static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
 	if( ( nodename == NULL && !( hints->ai_flags & AI_PASSIVE ) ) || \
 		servname == NULL || hints == NULL || res == NULL )
 		return( -1 );
+
+	/* Convert the text-string port number into a numeric value */
+	status = strGetNumeric( servname, strlen( servname ), &port, 1, 65535 );
+	if( cryptStatusError( status ) )
+		return( - 1 );
 
 	/* If there's no interface specified and we're creating a server-side
 	   socket, prepare to listen on any interface.  Note that BeOS can only
@@ -345,18 +351,20 @@ static void SOCKET_API my_freeaddrinfo( INOUT struct addrinfo *ai )
 	}
 									  
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) const struct sockaddr *sa, 
+static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) \
+											const struct sockaddr *sa, 
 									  IN SIZE_TYPE salen,
 									  OUT_BUFFER_FIXED( nodelen ) char *node, 
 									  IN_LENGTH_SHORT SIZE_TYPE nodelen,
-									  OUT_BUFFER_FIXED( servicelen ) char *service, 
+									  OUT_BUFFER_FIXED( servicelen ) \
+											char *service, 
 									  IN_LENGTH_SHORT SIZE_TYPE servicelen,
 									  IN int flags )
 	{
 	const struct sockaddr_in *sockAddr = ( struct sockaddr_in * ) sa;
 	const char *ipAddress;
 
-	assert( isReadPtr( sa, salen ) && salen >= sizeof( struct sockaddr ) );
+	assert( isReadPtr( sa, salen ) && salen >= sizeof( struct sockaddr_in ) );
 	assert( isReadPtr( node, nodelen ) && nodelen >= 10 );
 	assert( isReadPtr( service, servicelen ) && servicelen >= 8 );
 
@@ -365,7 +373,8 @@ static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) const struct sockaddr *
 	   REQUIRES()-style checking but only apply the basic checks that the 
 	   normal built-in form does */
 	if( sa == NULL || \
-		salen < sizeof( struct sockaddr ) || salen > MAX_INTLENGTH_SHORT || \
+		salen < sizeof( struct sockaddr_in ) || \
+		salen > MAX_INTLENGTH_SHORT || \
 		node == NULL || \
 		nodelen < 10 || nodelen > MAX_INTLENGTH_SHORT || \
 		service == NULL || \
@@ -514,8 +523,9 @@ void freeAddressInfo( struct addrinfo *addrInfoPtr )
 	freeaddrinfo( addrInfoPtr );
 	}
 
-STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-void getNameInfo( const struct sockaddr *sockAddr, 
+STDC_NONNULL_ARG( ( 1, 3, 5, 6 ) ) \
+void getNameInfo( IN_BUFFER( sockAddrLen ) const void *sockAddr,
+				  IN_LENGTH_SHORT_MIN( 8 ) const int sockAddrLen,
 				  OUT_BUFFER( addressMaxLen, *addressLen ) char *address, 
 				  IN_LENGTH_DNS const int addressMaxLen, 
 				  OUT_LENGTH_DNS_Z int *addressLen, 
@@ -525,10 +535,11 @@ void getNameInfo( const struct sockaddr *sockAddr,
 	char portBuffer[ 32 + 8 ];
 	int nameLength, portLength, localPort, status;
 
-	assert( isReadPtr( sockAddr, sizeof( struct sockaddr ) ) );
+	assert( isReadPtr( sockAddr, sockAddrLen ) );
 	assert( isWritePtr( address, addressMaxLen ) );
 	assert( isWritePtr( port, sizeof( int ) ) );
 
+	REQUIRES_V( sockAddrLen >= 8 && sockAddrLen < MAX_INTLENGTH_SHORT );
 	REQUIRES_V( addressMaxLen >= CRYPT_MAX_TEXTSIZE / 2 && \
 				addressMaxLen <= MAX_DNS_SIZE );
 
@@ -539,15 +550,15 @@ void getNameInfo( const struct sockaddr *sockAddr,
 
 	/* Some Windows implementations of getnameinfo() call down to
 	   getservbyport() assuming that it will always succeed and therefore
-	   leave the port/service arg unchanged when it doesn't, so the following
-	   call must be made with the NI_NUMERICSERV flag specified (which it
-	   would be anyway, cryptlib always treats the port as a numeric arg).
-	   Oddly enough the macro version of this function in wspiapi.h used for
-	   IPv4-only situations does get it correct */
-	if( getnameinfo( sockAddr, sizeof( struct sockaddr ), nameBuffer,
-					 MAX_DNS_SIZE, portBuffer, 32,
-					 NI_NUMERICHOST | NI_NUMERICSERV ) != 0 )
+	   leave the port/service argument unchanged when it doesn't, so the 
+	   following call must be made with the NI_NUMERICSERV flag specified 
+	   (which it would be anyway, cryptlib always treats the port as a 
+	   numeric arg).  Oddly enough the macro version of this function in 
+	   wspiapi.h used for IPv4-only situations does get it correct */
+	if( getnameinfo( sockAddr, sockAddrLen, nameBuffer, MAX_DNS_SIZE, 
+					 portBuffer, 32, NI_NUMERICHOST | NI_NUMERICSERV ) != 0 )
 		{
+		DEBUG_DIAG(( "Couldn't get host name for socket" ));
 		assert( DEBUG_WARN );
 		return;
 		}
@@ -556,6 +567,7 @@ void getNameInfo( const struct sockaddr *sockAddr,
 	if( nameLength <= 0 || nameLength > addressMaxLen || \
 		portLength <= 0 || portLength > 8 )
 		{
+		DEBUG_DIAG(( "Returned host name data is invalid" ));
 		assert( DEBUG_WARN );
 		return;
 		}
@@ -568,6 +580,7 @@ void getNameInfo( const struct sockaddr *sockAddr,
 	status = strGetNumeric( portBuffer, portLength, &localPort, 1, 65536 );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Returned host port is invalid" ));
 		assert( DEBUG_WARN );
 		return;
 		}

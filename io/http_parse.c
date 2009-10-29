@@ -60,7 +60,7 @@ static const HTTP_HEADER_PARSE_INFO FAR_BSS httpHeaderParseInfo[] = {
 	{ "Warning:", 8, HTTP_HEADER_WARNING },
 	{ "Location:", 9, HTTP_HEADER_LOCATION },
 	{ "Expect:", 7, HTTP_HEADER_EXPECT },
-	{ NULL, 0, HTTP_HEADER_NONE }
+	{ NULL, 0, HTTP_HEADER_NONE }, { NULL, 0, HTTP_HEADER_NONE }
 	};
 
 /* HTTP error/warning messages.  The mapped status for 30x redirects is
@@ -241,7 +241,7 @@ static int decodeRFC1866( IN_BUFFER( bufSize ) char *buffer,
 
 	while( srcIndex < bufSize )
 		{
-		int ch = buffer[ srcIndex++ ];
+		int ch = byteToInt( buffer[ srcIndex++ ] );
 
 		/* If it's an escaped character, decode it.  If it's not escaped we 
 		   can copy it straight over, the input has already been sanitised 
@@ -254,7 +254,7 @@ static int decodeRFC1866( IN_BUFFER( bufSize ) char *buffer,
 				return( ch );
 			srcIndex += 2;
 			}
-		buffer[ destIndex++ ] = ch;
+		buffer[ destIndex++ ] = intToByte( ch );
 		}
 
 	/* If we've processed an escape sequence (causing the data to change
@@ -325,7 +325,9 @@ int retTextLineError( INOUT STREAM *stream, IN_ERROR const int status,
 					  FORMAT_STRING const char *format, 
 					  const int value )
 	{
+#ifdef USE_ERRMSGS
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+#endif /* USE_ERRMSGS */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( cryptStatusError( status ) );
@@ -361,7 +363,9 @@ static int retHeaderError( INOUT STREAM *stream,
 						   IN_LENGTH_SHORT const int strArgLen, 
 						   const int lineNo )
 	{
+#ifdef USE_ERRMSGS
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+#endif /* USE_ERRMSGS */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( format, 4 ) );
@@ -421,7 +425,22 @@ int sendHTTPError( INOUT STREAM *stream,
 	swrite( &headerStream, statusString, HTTP_STATUSSTRING_LENGTH );
 	sputc( &headerStream, ' ' );
 	swrite( &headerStream, errorString, errorStringLength );
-	status = swrite( &headerStream, "\r\n\r\n", 4 );
+	swrite( &headerStream, "\r\n", 2 );
+	if( httpStatus == 501 )
+		{
+		/* Since the assumption on the web is that anything listening for
+		   HTTP requests is a conventional web server, we provide a bit more
+		   information to (probable) browsers that connect and send a GET
+		   request.  This is also useful for some browsers which hang around
+		   forever waiting for content if they don't see anything following
+		   the HTTP error status */
+		swrite( &headerStream, "Content-Length: 139\r\n\r\n", 23 );
+		swrite( &headerStream,
+				"<html><head><title>Invalid PKI Server Request</title></head>"
+				"<body>This is a PKI messaging service, not a standard web "
+				"server.</body></html>", 139 );
+		}
+	status = swrite( &headerStream, "\r\n", 2 );
 	if( cryptStatusOK( status ) )
 		length = stell( &headerStream );
 	sMemDisconnect( &headerStream );
@@ -783,7 +802,7 @@ static int processHeaderLine( IN_BUFFER( dataLength ) const char *data,
 							  IN_RANGE( 1, 999 ) const int errorLineNo )
 	{
 	const HTTP_HEADER_PARSE_INFO *headerParseInfoPtr = NULL;
-	const char firstChar = toUpper( *data );
+	const int firstChar = toUpper( *data );
 	int processedLength, dataLeft, i;
 
 	assert( isReadPtr( data, dataLength ) );
@@ -1157,9 +1176,10 @@ int readHeaderLines( INOUT STREAM *stream,
 				   printable.  If any implementations erroneously use a
 				   C-T-E, we make sure that it's something that we can
 				   handle */
-				if( lineLength < 6 || \
-					( strCompare( lineBufPtr, "Identity", 8 ) && \
-					  strCompare( lineBufPtr, "Binary", 6 ) ) )
+				if( !( lineLength >= 6 && \
+					   !strCompare( lineBufPtr, "Binary", 6 ) ) && \
+					!( lineLength >= 8 && \
+					   !strCompare( lineBufPtr, "Identity", 8 ) ) )
 					{
 					headerInfo->httpStatus = 415;	/* Unsupp.media type */
 					return( retHeaderError( stream, 
@@ -1381,7 +1401,9 @@ int readTrailerLines( INOUT STREAM *stream,
 					  OUT_BUFFER_FIXED( lineBufMaxLen ) char *lineBuffer, 
 					  IN_LENGTH_SHORT_MIN( 256 ) const int lineBufMaxLen )
 	{
+#ifdef USE_ERRMSGS
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+#endif /* USE_ERRMSGS */
 	HTTP_HEADER_INFO headerInfo;
 	BOOLEAN textDataError;
 	int readLength = DUMMY_INIT, dummy, status;

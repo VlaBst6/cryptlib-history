@@ -18,8 +18,8 @@
 #define SCEP_PFLAG_NONE			0x00	/* No protocol-specific flags */
 #define SCEP_PFLAG_PNPPKI		0x01	/* Session is PnP PKI-capable */
 
-/* The SCEP message type, status, and failure info.  For some bizarre
-   reason these integer values are communicated as text strings */
+/* The SCEP message type, status, and failure information.  For some 
+   bizarre reason these integer values are communicated as text strings */
 
 #define MESSAGETYPE_CERTREP				"3"
 #define MESSAGETYPE_PKCSREQ				"19"
@@ -33,6 +33,9 @@
 #define MESSAGEFAILINFO_BADREQUEST		"2"
 #define MESSAGEFAILINFO_BADTIME			"3"
 #define MESSAGEFAILINFO_BADCERTID		"4"
+
+#define MESSAGESTATUS_SIZE				1
+#define MESSAGEFAILINFO_SIZE			1
 
 /* Numeric equivalents of the above, to make them easier to work with */
 
@@ -63,63 +66,45 @@ typedef struct {
 	
 	   In order to accommodate nonstandard implementations, we allow for 
 	   nonces that are slightly larger than the required size */
+	BUFFER( CRYPT_MAX_HASHSIZE, transIDsize ) \
 	BYTE transID[ CRYPT_MAX_HASHSIZE + 8 ];	/* Transaction nonce */
+	BUFFER( CRYPT_MAX_HASHSIZE, nonceSize ) \
 	BYTE nonce[ CRYPT_MAX_HASHSIZE + 8 ];	/* Nonce */
 	int transIDsize, nonceSize;
 
 	/* When sending/receiving SCEP messages, the user has to sign the
 	   request data and decrypt the response data.  Since they don't
-	   have a cert at this point, they need to create an ephemeral
-	   self-signed cert to handle this task */
+	   have a certificate at this point, they need to create an ephemeral 
+	   self-signed certificate to handle this task */
 	CRYPT_CERTIFICATE iScepCert;
 	} SCEP_PROTOCOL_INFO;
 
 /* Prototypes for functions in scep.c */
 
-CHECK_RETVAL \
-BOOLEAN checkCACert( const CRYPT_CERTIFICATE iCaCert );
-CHECK_RETVAL \
-int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr ) \
-						   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initSCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void destroySCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo );
+CHECK_RETVAL_BOOL \
+BOOLEAN checkCACert( IN_HANDLE const CRYPT_CERTIFICATE iCaCert );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getScepStatusValue( IN_HANDLE const CRYPT_CERTIFICATE iCmsAttributes,
+						IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeType, 
+						OUT int *value );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int createScepAttributes( INOUT SESSION_INFO *sessionInfoPtr,
 						  INOUT SCEP_PROTOCOL_INFO *protocolInfo,
-						  OUT CRYPT_CERTIFICATE *iScepAttributes,
-						  const BOOLEAN isInitiator, const int scepStatus ) \
-						  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
-CHECK_RETVAL \
-int getScepStatusValue( const CRYPT_CERTIFICATE iCmsAttributes,
-						const CRYPT_ATTRIBUTE_TYPE attributeType, 
-						OUT int *value ) \
-						STDC_NONNULL_ARG( ( 3 ) );
+						  OUT_HANDLE_OPT CRYPT_CERTIFICATE *iScepAttributes,
+						  const BOOLEAN isInitiator, 
+						  IN_STATUS const int scepStatus );
 
-/* Prototypes for functions in scep_cli.c */
+/* Prototypes for functions in scep_cli/scep_svr.c */
 
-CHECK_RETVAL \
-int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
-					   INOUT SCEP_PROTOCOL_INFO *protocolInfo ) \
-					   STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
-					   INOUT SCEP_PROTOCOL_INFO *protocolInfo ) \
-					   STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int createAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr ) \
-								 STDC_NONNULL_ARG( ( 1 ) );
-
-/* Prototypes for functions in scep_svr.c */
-
-CHECK_RETVAL \
-int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
-					  INOUT SCEP_PROTOCOL_INFO *protocolInfo ) \
-					  STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
-						INOUT SCEP_PROTOCOL_INFO *protocolInfo ) \
-						STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int processAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
-								  const HTTP_URI_INFO *httpReqInfo ) \
-								  STDC_NONNULL_ARG( ( 1, 2 ) );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initSCEPclientProcessing( SESSION_INFO *sessionInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initSCEPserverProcessing( SESSION_INFO *sessionInfoPtr );
 
 #endif /* _SCEP_DEFINED */

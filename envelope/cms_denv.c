@@ -68,7 +68,7 @@ static const OID_INFO FAR_BSS nestedContentOIDinfo[] = {
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -280,7 +280,15 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 								   queryInfoPtr->dataStart;
 		contentListItem->payloadSize = queryInfoPtr->dataLength;
 		}
-	appendContentListItem( envelopeInfoPtr, contentListItem );
+	status = appendContentListItem( envelopeInfoPtr, contentListItem );
+	if( cryptStatusError( status ) )
+		{
+		deleteContentList( envelopeInfoPtr->memPoolState, 
+						   &contentListItem );
+		if( contentListObjectPtr == NULL )
+			clFree( "addContentListItem", contentListObjectPtr );
+		return( status );
+		}
 	*itemSize = ( int ) queryInfoPtr->size;
 
 	return( CRYPT_OK );
@@ -455,7 +463,8 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Create the hash object from the data */
-	status = readContextAlgoID( stream, &iHashContext, NULL, DEFAULT_TAG );
+	status = readContextAlgoID( stream, &iHashContext, NULL, DEFAULT_TAG,
+								ALGOID_CLASS_HASH );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 								  &hashAlgo, CRYPT_CTXINFO_ALGO );
@@ -728,7 +737,7 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	DEENV_STATE state = envelopeInfoPtr->deenvState;
 	STREAM stream;
-	int remainder, streamPos = 0, iterationCount = 0, status = CRYPT_OK;
+	int remainder, streamPos = 0, iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	
@@ -760,8 +769,9 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   messages with large numbers of recipients for mailing lists.  This 
 	   would never occur in any normal usage, but we have to allow for it for
 	   mailing-list use */
-	while( state != DEENVSTATE_DONE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0; 
+		 state != DEENVSTATE_DONE && iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		/* Read the start of the SET OF RecipientInfo/SET OF 
 		   DigestAlgorithmIdentifier */
@@ -1034,6 +1044,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			  streamPos + remainder <= envelopeInfoPtr->bufSize );
 	if( remainder > 0 && streamPos > 0 )
 		{
+		REQUIRES( rangeCheck( streamPos, remainder, 
+							  envelopeInfoPtr->bufSize ) );
 		memmove( envelopeInfoPtr->buffer, envelopeInfoPtr->buffer + streamPos,
 				 remainder );
 		}
@@ -1054,7 +1066,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	DEENV_STATE state = envelopeInfoPtr->deenvState;
 	STREAM stream;
 	BOOLEAN failedMAC = FALSE;
-	int remainder, streamPos = 0, iterationCount = 0, status = CRYPT_OK;
+	int remainder, streamPos = 0, iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -1119,8 +1131,9 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* Keep consuming information until we run out of input or reach the end
 	   of the data */
-	while( state != DEENVSTATE_DONE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	for( iterationCount = 0;
+		 state != DEENVSTATE_DONE && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
 		{
 		/* Read the certificate chain */
 		if( state == DEENVSTATE_CERTSET )
@@ -1286,6 +1299,8 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 					remainder <= envelopeInfoPtr->bufPos );
 	if( remainder > 0 && streamPos > 0 )
 		{
+		REQUIRES( rangeCheck( envelopeInfoPtr->dataLeft + streamPos,
+							  remainder, envelopeInfoPtr->bufPos ) );
 		memmove( envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft,
 				 envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft + streamPos,
 				 remainder );

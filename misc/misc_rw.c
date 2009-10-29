@@ -6,12 +6,12 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "bn.h"		/* bn.h must be included before crypt.h */
   #include "crypt.h"
+  #include "bn.h"
   #include "misc_rw.h"
 #else
-  #include "bn/bn.h"	/* bn.h must be included before crypt.h */
   #include "crypt.h"
+  #include "bn/bn.h"
   #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
@@ -73,7 +73,8 @@ static int readInteger( INOUT STREAM *stream,
 
 		/* If the length is below the minimum allowed but still looks at 
 		   least vaguely valid, report it as a too-short key rather than a
-		   bad data error */
+		   bad data error.  Note that this currently assumes that we're
+		   reading a non-ECC key, which is always the case */
 		if( isShortPKCKey( length ) )
 			return( CRYPT_ERROR_NOSECURE );
 		}
@@ -301,8 +302,8 @@ int readString32( INOUT STREAM *stream,
 				  OUT_LENGTH_SHORT_Z int *stringLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( string, stringMaxLength ) && \
-			isWritePtr( stringLength, sizeof( int ) ) );
+	assert( isWritePtr( string, stringMaxLength ) );
+	assert( isWritePtr( stringLength, sizeof( int ) ) );
 
 	REQUIRES_S( stringMaxLength > 0 && stringMaxLength < MAX_INTLENGTH_SHORT );
 
@@ -320,8 +321,8 @@ int readRawObject32( INOUT STREAM *stream,
 					 OUT_LENGTH_SHORT_Z int *bufferLength )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( buffer, bufferMaxLength ) &&
-			isWritePtr( bufferLength, sizeof( int ) ) );
+	assert( isWritePtr( buffer, bufferMaxLength ) );
+	assert( isWritePtr( bufferLength, sizeof( int ) ) );
 
 	REQUIRES_S( bufferMaxLength >= UINT32_SIZE + 1 && \
 				bufferMaxLength < MAX_INTLENGTH_SHORT );
@@ -338,7 +339,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int readUniversal( INOUT STREAM *stream, 
 						  IN_ENUM( LENGTH ) const LENGTH_TYPE lengthType )
 	{
-	int length;
+	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
@@ -346,14 +347,13 @@ static int readUniversal( INOUT STREAM *stream,
 
 	/* Read the length and skip the data */
 	if( lengthType == LENGTH_16U )
-		length = readUint16( stream );
+		status = length = readUint16( stream );
 	else
-		length = readUint32( stream );
+		status = length = readUint32( stream );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( length <= 0 )
-		{
-		/* Error or zero length */
-		return( length );
-		}
+		return( CRYPT_OK );		/* Zero-length data */
 	return( sSkip( stream, length ) );
 	}
 
@@ -446,7 +446,8 @@ static int readBignumInteger( INOUT STREAM *stream,
 							  IN_LENGTH_PKC const int maxLength,
 							  IN_OPT TYPECAST( BIGNUM * ) const void *maxRange, 
 							  IN_ENUM( LENGTH ) const LENGTH_TYPE lengthType,
-							  const BOOLEAN checkShortKey )
+							  IN_ENUM_OPT( SHORTKEY_CHECK ) \
+								const SHORTKEY_CHECK_TYPE checkType )
 	{
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	int length, status;
@@ -458,19 +459,21 @@ static int readBignumInteger( INOUT STREAM *stream,
 	REQUIRES_S( minLength > 0 && minLength < maxLength && \
 				maxLength <= CRYPT_MAX_PKCSIZE );
 	REQUIRES_S( lengthType > LENGTH_NONE && lengthType < LENGTH_LAST );
+	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
+			  checkType < SHORTKEY_CHECK_LAST );
 
 	/* Read the integer data */
 	status = readInteger( stream, buffer, &length, minLength, maxLength, 
-						  lengthType, checkShortKey );
+						  lengthType, checkType );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Convert the value to a bignum.  Note that we use the checkShortKey
-	   parameter for both readInteger() and extractBignum(), since the 
+	   parameter for both readInteger() and importBignum(), since the 
 	   former merely checks the byte count while the latter actually parses 
 	   and processes the bignum */
-	status = extractBignum( bignum, buffer, length, minLength, maxLength, 
-							maxRange, checkShortKey );
+	status = importBignum( bignum, buffer, length, minLength, maxLength, 
+						   maxRange, checkType );
 	if( cryptStatusError( status ) )
 		status = sSetError( stream, status );
 	zeroise( buffer, CRYPT_MAX_PKCSIZE );
@@ -485,7 +488,7 @@ int readBignumInteger16U( INOUT STREAM *stream,
 						  IN_OPT TYPECAST( BIGNUM * ) const void *maxRange )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength,
-							   maxRange, LENGTH_16U, FALSE ) );
+							   maxRange, LENGTH_16U, SHORTKEY_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -497,7 +500,7 @@ int readBignumInteger16Ubits( INOUT STREAM *stream,
 	{
 	return( readBignumInteger( stream, bignum, bitsToBytes( minBits ),
 							   bitsToBytes( maxBits ), maxRange, 
-							   LENGTH_16U_BITS, FALSE ) );
+							   LENGTH_16U_BITS, SHORTKEY_CHECK_NONE ) );
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -508,7 +511,7 @@ int readBignumInteger32( INOUT STREAM *stream,
 						 IN_OPT TYPECAST( BIGNUM * ) const void *maxRange )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   maxRange, LENGTH_32, FALSE ) );
+							   maxRange, LENGTH_32, SHORTKEY_CHECK_NONE ) );
 	}
 
 /* Special-case bignum read routines that explicitly check for a too-short 
@@ -522,7 +525,7 @@ int readBignumInteger16UChecked( INOUT STREAM *stream,
 								 IN_LENGTH_PKC const int maxLength )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, NULL, 
-							   LENGTH_16U, TRUE ) );
+							   LENGTH_16U, SHORTKEY_CHECK_PKC ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -533,7 +536,7 @@ int readBignumInteger16UbitsChecked( INOUT STREAM *stream,
 	{
 	return( readBignumInteger( stream, bignum, bitsToBytes( minBits ),
 							   bitsToBytes( maxBits ), NULL, 
-							   LENGTH_16U_BITS, TRUE ) );
+							   LENGTH_16U_BITS, SHORTKEY_CHECK_PKC ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -543,7 +546,7 @@ int readBignumInteger32Checked( INOUT STREAM *stream,
 								IN_LENGTH_PKC const int maxLength )
 	{
 	return( readBignumInteger( stream, bignum, minLength, maxLength, 
-							   NULL, LENGTH_32, TRUE ) );
+							   NULL, LENGTH_32, SHORTKEY_CHECK_PKC ) );
 	}
 #endif /* USE_PKC */
 
@@ -731,7 +734,7 @@ static int writeBignumInteger( INOUT STREAM *stream,
 
 	REQUIRES_S( lengthType > LENGTH_NONE && lengthType < LENGTH_LAST );
 
-	status = getBignumData( bignum, buffer, CRYPT_MAX_PKCSIZE, &bnLength );
+	status = exportBignum( buffer, CRYPT_MAX_PKCSIZE, &bnLength, bignum );
 	ENSURES_S( cryptStatusOK( status ) );
 	if( lengthType == LENGTH_16U_BITS )
 		{

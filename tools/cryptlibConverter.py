@@ -86,6 +86,8 @@ def parseFunctionParams(functionParams):
         elif len(pieces)==3:
             if pieces[0] == "C_OUT":
                 p.isOut = 1
+            if pieces[0] == "C_OUT_OPT":
+                p.isOut = 1
             if pieces[1] == "C_STR":
                 p.type = "char"
                 p.name = pieces[2]
@@ -96,6 +98,8 @@ def parseFunctionParams(functionParams):
                 p.isPtr = 0
         elif len(pieces)==4:    #Ie ["C_OUT", "CRYPT_CONTEXT", "C_PTR", "cryptContext"]
             if pieces[0] == "C_OUT":
+                p.isOut = 1
+            if pieces[0] == "C_OUT_OPT":
                 p.isOut = 1
             p.type = pieces[1]
             if pieces[2] == "C_PTR":
@@ -688,25 +692,36 @@ public class CRYPT_OBJECT_INFO
 
 public class CryptException : ApplicationException
 {
-    private int m_status;
-    private String m_message;
-    public int Status { get {return m_status;} }
-    public override String Message { get {return m_message;} }
+    public int Status { get { return (int)Data["Status"]; } }
+
+    public int ExtraInfo { get { return (int)Data["ExtraInfo"]; } }
 
     public CryptException(int status)
+        : base(convertMessage(status))
     {
-        m_status = status;
-        String prefix = Convert.ToString(status) + ": ";
+        Data.Add("Status", status);
+    }
 
+    public CryptException(int status, int extra)
+        : base(convertMessage(status))
+    {
+        Data.Add("Status", status);
+        Data.Add("ExtraInfo", extra);
+    }
+
+    private static string convertMessage(int status)
+    {
+        String prefix = Convert.ToString(status) + ": ";
+        switch (status)
+        {
 """
     exceptionPostfix = """\
-        m_message = prefix + "Unknown Exception ?!?!";
+            default: return prefix + "Unknown Exception ?!?!";
+        }
     }
 }"""
     exceptionTemplate = """\
-        if (m_status == crypt.%(name)s) {
-            m_message = prefix + "%(comment)s";
-            return; }
+		case crypt.%(name)s: return prefix + "%(comment)s";
 """
     addFunctionWrappers = 1
     wholeFunctionDeclaration = None
@@ -747,6 +762,13 @@ public class crypt
     {
         if (status < crypt.OK)
             throw new CryptException(status);
+    }
+
+
+    private static void processStatus(int status, int extraInfo)
+    {
+        if (status < crypt.OK)
+            throw new CryptException(status, extraInfo);
     }
 
     private static void checkIndices(byte[] array, int sequenceOffset, int sequenceLength)
@@ -825,6 +847,17 @@ while 1:
         break
     ifdefIndex = s.rfind("#if", 0, endifMatch.start())
     s = s[ : ifdefIndex] + s[endifMatch.end() : ]
+
+
+#Delete lines used for extended function and function-parameter checking
+#like C_CHECK_RETVAL C_NONNULL_ARG( ( 3 ) ) \
+#--------------------------------------------
+functionParamterPattern = re.compile(r"((C_CHECK_RETVAL|C_NONNULL_ARG\s*\(\s*\([ \t0-9,]+\s*\)\s*\))\s+(\\\n)?)", re.DOTALL)
+while 1:
+	deleteExtended = functionParamterPattern.search(s)
+	if deleteExtended == None:
+		break
+	s = s[ : deleteExtended.start(1) ] + s[ deleteExtended.end(1) : ]
 
 
 #Replace typedef enums
@@ -925,6 +958,49 @@ while simpleEnumMatch:
 #Replace #define'd constants
 #----------------------------
 definePattern = re.compile(r"#define[ \t]+(\w+)[ \t]+([-\w]+)[ \t]*(/\*.*\*/*)?")    # #define %1 %2 [/*%3*/]
+
+exceptionString = exceptionPrefix
+
+#Find the next #define
+defineMatch = definePattern.search(s)
+while defineMatch:
+
+    #Parse its contents
+    name, value, comment = defineMatch.groups()
+    if not name.startswith("CRYPT_"):
+        raise "name doesn't start with CRYPT_"+name
+    name = name.replace("CRYPT_", "")
+
+    #Construct its output equivalent from language-specific string templates
+    if not comment:
+        paddedTemplate = defineTemplate.replace("NPAD", defineNPad).replace("VPAD", defineVPad)
+        newDefine =  paddedTemplate % vars()
+    else:
+        comment = comment[2:-2].strip()
+        paddedTemplate = defineTemplateComment.replace("NPAD", defineNPad).replace("VPAD", defineVPad)
+        newDefine = paddedTemplate % vars()
+
+    #print "define: " + newDefine
+    #raw_input()
+
+    if sInts:
+        sInts += newDefine + "\n"
+
+    #Substitute the output equivalent for the input
+    s = s[ : defineMatch.start()] + newDefine + s[defineMatch.end() : ]
+
+    #Append to exception string if error
+    if name.startswith("ERROR_") or name.startswith("ENVELOPE_RESOURCE"):
+        exceptionString += exceptionTemplate % vars()
+
+    #Get next #define
+    defineMatch = definePattern.search(s, defineMatch.start() + len(newDefine))
+
+exceptionString += exceptionPostfix
+
+#Replace #define'd constants with parenthesis
+#--------------------------------------------
+definePattern = re.compile(r"#define[ \t]+(\w+)[ \t]+\([ \t]*([-0-9]+)[ \)]*\)[ \t]*(/\*.*\*/*)?")    # #define %1 ( %2 ) [/*%3*/]
 
 exceptionString = exceptionPrefix
 
@@ -2232,9 +2308,9 @@ elif language == "net":
                     argumentsWithNull = arguments.replace("%sPtr + %sOffset" % (n,n), "NULL")
                     newFunctionBody += "processStatus(wrapped_%s(%s));\n" % (functionName, argumentsWithNull)
                     newFunctionBody += "int %s = Marshal.ReadInt32(%sPtr);\n" % (returnName, returnName)
-            elif functionName.find("PopData") != -1:
-                newFunctionBody += "//CryptPopData is a special case that doesn't have the length querying call\n"
+            elif functionName.find("PopData") != -1 or functionName.find("PushData") != -1:
                 newFunctionBody += "int %s = 0;\n" % returnName
+		newFunctionBody += "int status;\n"
             if voidArrayNames:
                 for n in voidArrayNames:
                     index = [p.name for p in newParamStructs].index(n)
@@ -2251,16 +2327,24 @@ elif language == "net":
         elif returnName:
             newFunctionBody += "try\n{\n"
 
+	if functionName.find("PopData") == -1 and functionName.find("PushData") == -1:
+		newFunctionBody += "processStatus(wrapped_%s(%s));\n" % (functionName, arguments)
+	else:
+		newFunctionBody += "status = wrapped_%s(%s);\n" % (functionName, arguments)
+		newFunctionBody += "%s = Marshal.ReadInt32(%sPtr);\n" % (returnName, returnName)
+		newFunctionBody += "processStatus(status, %s);\n" %returnName
+
         #if newFunctionBody[-2] != "\n":
         #    newFunctionBody += "\n"
-        newFunctionBody += "processStatus(wrapped_%s(%s));\n" % (functionName, arguments)
-
         if returnName:
             if returnCategory == "structType":
                 newFunctionBody += "Marshal.PtrToStructure(%sPtr, %s);\n" % (returnName, returnName)
                 newFunctionBody += "return %s;\n" % returnName
             else:
-                newFunctionBody += "return Marshal.ReadInt32(%sPtr);\n" % returnName
+				if functionName.find("PopData") == -1 and functionName.find("PushData") == -1:
+					newFunctionBody += "return Marshal.ReadInt32(%sPtr);\n" % returnName
+				else:
+					newFunctionBody += "return %s;\n" %returnName
 
         if arrayNames or returnName:
             newFunctionBody += "}\nfinally\n{\n"

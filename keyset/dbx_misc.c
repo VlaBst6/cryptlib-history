@@ -23,13 +23,13 @@
 	certificates:
 		C, SP, L, O, OU, CN, email#, validTo, nameID#, issuerID#*, keyID#*, certID#*, certData
 	CRLs:
-		expiryDate+, nameID+, issuerID#*, certID#+, certData
+		expiryDate+, nameID+, issuerID#*, certID#+, crl.certData
 	pkiUsers+:
-		C, SP, L, O, OU, CN, nameID#*, keyID#*, certID, certData
+		C, SP, L, O, OU, CN, nameID#*, user.keyID#*, user.certID, user.certData
 	certRequests+:
-		type, C, SP, L, O, OU, CN, email, certID, certData
+		type, C, SP, L, O, OU, CN, email, req.certID, req.certData
 	certLog+:
-		action, date, certID#*, reqCertID, subjCertID, certData
+		action, date, certID#*, req.certID, subjCertID, log.certData
 
    Note that in the CRL table the certID is the ID of the certificate being 
    revoked and not of the per-entry CRL data, and in the  PKIUsers table the 
@@ -38,14 +38,18 @@
 
    The certificate store contains a table for logging certificate management 
    operations (e.g. when issued, when revoked, etc etc).  The operations are 
-   tied together by the certID of each object, associated with this in the 
-   log are optional certIDs of the request that caused the action to be 
-   taken and the subject that was affected by the request.  This allows a 
-   complete history of each item to be built via the log.  The certLog has a 
-   UNIQUE INDEX on the certID that detects attempts to add duplicates, 
-   although this unfortunately requires the addition of dummy nonce certIDs 
-   to handle certain types of actions that don't produce objects with 
-   certIDs.
+   tied together by the certID of the object that the log entry pertains to, 
+   associated with this in the log are optional certIDs of the request that 
+   caused the action to be taken and of the subject that was affected by the 
+   request.  For example in the most complex case of a revocation operation
+   the certID would be of the CRL entry that was created, the req.certID
+   would be for the revocation request, and the subjCertID would be for the
+   certificate being revoked.  This allows a complete history of each item 
+   to be built via the log.  The certLog has a UNIQUE INDEX on the certID 
+   that detects attempts to add duplicates, although this unfortunately 
+   requires the addition of dummy nonce certIDs to handle certain types of 
+   actions that don't produce objects with certIDs (see the comment further 
+   down on the use of constraints).
 
    The handling for each type of CA management operation is:
 
@@ -129,25 +133,42 @@
 	
 	An additional feature that we could make use of for CA operations is the 
 	use of foreign keys to ensure referential integrity, usually via entries 
-	in the certificate log.  For example we could require that all 
-	certificate requests be authorised by adding an authCertID column to the 
-	certReq table and constraining it with:
+	in the certificate log.  
+	
+	It's not clear though what the primary key (or keys in different tables) 
+	should be.  We can't use certificates.certID as a foreign key for CRLs 
+	because a general-purpose certificate keyset (rather than specifically a 
+	CA certificate store) can store any CRLs and not just ones for 
+	certificates in the keyset.  In addition we want to return the CRL entry 
+	even if the certificate is deleted (in fact the creation of the CRL 
+	entry implies the deletion of the corresponding certificate entry).  The 
+	certificate store isn't something like a customer database where 
+	everything is tied to a unique customer ID but more a transactional 
+	system where an object appearing in one table requires the deletion of a 
+	corresponding object in another table (e.g. certificate request -> 
+	certificate, revocation request -> CRL + certificate deletion) which 
+	can't be easily handled with something as simple as a foreign key but 
+	has to be done with transactions.
+	
+	We could in theory require that all certificate requests be authorised 
+	by adding an authCertID column to the certReq table and constraining it 
+	with:
 
 		FOREIGN KEY (authCertID) REFERENCES certLog.reqCertID
 
-	however (apart from the overhead of adding extra indexed columns just to 
-	ensure referential integrity) the syntax for this varies somewhat 
-	between vendors so that it'd require assorted rewriting by the back-end 
-	glue code to handle the different requirements for each database type.  
-	In addition since the foreign key constraint is specified at table 
-	create time we could experience strange failures on table creation 
-	requiring special-purpose workarounds where we remove the foreign-key 
-	constraint in the hope that the table create then succeeds.
+	but even then (apart from the overhead of adding extra indexed columns 
+	just to ensure referential integrity) the syntax for this varies 
+	somewhat between vendors so that it'd require assorted rewriting by the 
+	back-end glue code to handle the different requirements for each 
+	database type.  In addition since the foreign key constraint is 
+	specified at table create time we could experience strange failures on 
+	table creation requiring special-purpose workarounds where we remove the 
+	foreign-key constraint in the hope that the table create then succeeds.
 
 	An easier way to handle this is via manual references to entries in the 
 	certificate log.  Since this is append-only, a manual presence check can 
 	never return an incorrect result (an entry can't be removed between time 
-	of  check and time of use) so this provides the same result as using 
+	of check and time of use) so this provides the same result as using 
 	referential integrity mechanisms.
 
 	Another database feature that we could use is database triggers as a 
@@ -163,7 +184,20 @@
 	process is *extremely* back-end specific (far more so than access 
 	controls and the use of foreign keys) so we can't really do much here 
 	without ending up having to set different triggers for each back-end 
-	type and even back-end version */
+	type and even back-end version.
+
+	A final feature that we could in theory use is the ability to impose 
+	uniqueness constraints based on more than one column, for example the 
+	certLog 'action' and 'certID' could be handled using a constraint of:
+
+		UNIQUE (action, certID)
+
+	however this isn't desirable for all combinations of (action, certID) 
+	but only some, so that just the certID by itself must be unique in most 
+	cases except for one or two where it's sufficient that (action, certID) 
+	be unique.  Because of this, as with foreign keys, we need to enforce 
+	the constraint via transactions, which gives us more control over how 
+	things are handled */
 
 /****************************************************************************
 *																			*
@@ -225,7 +259,7 @@ int makeKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 			   do this but this complicates indexing and there's no reason 
 			   why we can't do it here */
 			for( i = 0; i < idLength; i++ )
-				keyID[ i ] = toLower( keyID[ i ] );
+				keyID[ i ] = intToByte( toLower( keyID[ i ] ) );
 			}
 		*keyIdLen = idLength;
 
@@ -449,6 +483,7 @@ int resetErrorInfo( INOUT DBMS_INFO *dbmsInfo )
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_INFO ) ) );
 
 	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
+
 	return( CRYPT_OK );
 	}
 
@@ -624,15 +659,21 @@ static int createDatabase( INOUT DBMS_INFO *dbmsInfo,
 	   used but is made a UNIQUE INDEX to ensure that the same entry can't 
 	   be added more than once) and the certID in the certificate log (this 
 	   also isn't used but is made a UNIQUE INDEX to ensure that the same 
-	   entry can't be added more than once).  We have to give these unique 
-	   names since some databases don't allow two indexes to have the same 
-	   name even if they're in a different table.  Since most of the fields 
-	   in the tables are supposed to be unique we can specify this for the 
-	   indexes that we're creating, however we can't do it for the email 
-	   address or the nameID in the certificates table since there could be 
-	   multiple certificates present that differ only in key usage.  We 
-	   don't index the other tables since indexes consume space and we don't 
-	   expect to access any of these much */
+	   entry can't be added more than once).  In theory we could force the 
+	   UNIQUE constraint on the column rather than indirectly via an index 
+	   but some databases will quietly create a unique index anyway in order 
+	   to do that so we make the creation of the index explicit rather than 
+	   leaving it as a maybe/maybe not option for the database. + CRLF
+	   
+	   We have to give these unique names since some databases don't allow 
+	   two indexes to have the same name even if they're in a different 
+	   table.  Since most of the fields in the tables are supposed to be 
+	   unique we can specify this for the indexes that we're creating, 
+	   however we can't do it for the email address or the nameID in the 
+	   certificates table since there could be multiple certificates present 
+	   that differ only in key usage.  We don't index the other tables since 
+	   indexes consume space and we don't expect to access any of these 
+	   much */
 	status = dbmsStaticUpdate(
 			"CREATE INDEX emailIdx ON certificates(email)" );
 	if( cryptStatusOK( status ) )

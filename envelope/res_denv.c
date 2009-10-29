@@ -34,8 +34,8 @@
 
 /* Check whether more content items can be added to a content list */
 
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN moreContentItemsPossible( const CONTENT_LIST *contentListPtr )
+CHECK_RETVAL_BOOL \
+BOOLEAN moreContentItemsPossible( IN_OPT const CONTENT_LIST *contentListPtr )
 	{
 	int contentListCount;
 
@@ -95,9 +95,9 @@ int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 
 /* Add an item to the content list */
 
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
-							INOUT CONTENT_LIST *contentListItem )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						   INOUT CONTENT_LIST *contentListItem )
 	{
 	CONTENT_LIST *contentListPtr = envelopeInfoPtr->contentList;
 
@@ -115,17 +115,19 @@ void appendContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			 contentListPtr->next != NULL && \
 			   iterationCount < FAILSAFE_ITERATIONS_LARGE;
 			contentListPtr = contentListPtr->next, iterationCount++ );
-		ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 		}
 	insertDoubleListElements( &envelopeInfoPtr->contentList, contentListPtr,
 							  contentListItem, contentListItem );
+
+	return( CRYPT_OK );
 	}
 
 /* Delete a content list */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void deleteContentList( INOUT MEMPOOL_STATE memPoolState,
-						INOUT_PTR CONTENT_LIST **contentListHeadPtrPtr )
+int deleteContentList( INOUT MEMPOOL_STATE memPoolState,
+					   INOUT_PTR CONTENT_LIST **contentListHeadPtrPtr )
 	{
 	CONTENT_LIST *contentListCursor;
 	int iterationCount;
@@ -170,9 +172,11 @@ void deleteContentList( INOUT MEMPOOL_STATE memPoolState,
 		zeroise( contentListItem, sizeof( CONTENT_LIST ) );
 		freeMemPool( memPoolState, contentListItem );
 		}
-	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	*contentListHeadPtrPtr = NULL;
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -214,11 +218,12 @@ static int processTimestamp( INOUT CONTENT_LIST *contentListPtr,
 
 	/* Push in the timestamp data */
 	status = krnlSendMessage( iTimestampEnvelope, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &bufSize, 
+							  ( MESSAGE_CAST ) &bufSize, 
 							  CRYPT_ATTRIBUTE_BUFFERSIZE );
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) timestamp, timestampLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) timestamp, \
+						timestampLength );
 		status = krnlSendMessage( iTimestampEnvelope, IMESSAGE_ENV_PUSHDATA,
 								  &msgData, 0 );
 		}
@@ -253,7 +258,7 @@ static int processUnauthAttributes( INOUT CONTENT_LIST *contentListPtr,
 										const int unauthAttrLength )
 	{
 	STREAM stream;
-	int iterationCount = 0, status;
+	int iterationCount, status;
 
 	assert( isWritePtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
 	assert( isReadPtr( unauthAttr, unauthAttrLength ) );
@@ -271,9 +276,11 @@ static int processUnauthAttributes( INOUT CONTENT_LIST *contentListPtr,
 	/* Process each attribute */
 	sMemConnect( &stream, unauthAttr, unauthAttrLength );
 	status = readConstructed( &stream, NULL, 1 );
-	while( cryptStatusOK( status ) && \
-		   sMemDataLeft( &stream ) >= MIN_CRYPT_OBJECTSIZE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0;
+		 cryptStatusOK( status ) && \
+			sMemDataLeft( &stream ) >= MIN_CRYPT_OBJECTSIZE && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 iterationCount++ )
 		{
 		BYTE oid[ MAX_OID_SIZE + 8 ];
 		void *dataPtr;
@@ -471,7 +478,7 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 		return( status );
 	iSessionKey = createInfo.cryptHandle;
 	status = krnlSendMessage( iSessionKey, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &sessionKeyInfoPtr->clEncrInfo.cryptMode,
+							  ( MESSAGE_CAST ) &sessionKeyInfoPtr->clEncrInfo.cryptMode,
 							  CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		{
@@ -554,7 +561,7 @@ static int initSessionKeyDecryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   it */
 	return( krnlSendMessage( envelopeInfoPtr->objectHandle, 
 							 IMESSAGE_SETDEPENDENT, 
-							 ( void * ) &iSessionKeyContext, 
+							 ( MESSAGE_CAST ) &iSessionKeyContext, 
 							 SETDEP_OPTION_NOINCREF ) );
 	}
 
@@ -718,7 +725,7 @@ static int addPrivkeyPasswordInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				( contentListPtr->formatType == CRYPT_FORMAT_PGP ) ? \
 				CRYPT_IKEYID_PGPKEYID : CRYPT_IKEYID_KEYID,
 				contentListPtr->keyID, contentListPtr->keyIDsize,
-				( void * ) password, passwordLength, 
+				( MESSAGE_CAST ) password, passwordLength, 
 				KEYMGMT_FLAG_USAGE_CRYPT );
 		}
 	else
@@ -727,7 +734,7 @@ static int addPrivkeyPasswordInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				CRYPT_IKEYID_ISSUERANDSERIALNUMBER,
 				contentListPtr->issuerAndSerialNumber,
 				contentListPtr->issuerAndSerialNumberSize,
-				( void * ) password, passwordLength, 
+				( MESSAGE_CAST ) password, passwordLength, 
 				KEYMGMT_FLAG_USAGE_CRYPT );
 		}
 	status = krnlSendMessage( envelopeInfoPtr->iDecryptionKeyset,
@@ -735,9 +742,11 @@ static int addPrivkeyPasswordInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 							  KEYMGMT_ITEM_PRIVATEKEY );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, ENVELOPE_ERRINFO,
-				  "Couldn't retrieve private key from decryption keyset" ) );
+		retExtObj( status,
+				   ( status, ENVELOPE_ERRINFO,
+				     envelopeInfoPtr->iDecryptionKeyset,
+					 "Couldn't retrieve private key from decryption "
+					 "keyset/device" ) );
 		}
 
 	/* We managed to get the private key, push it into the envelope.  If the
@@ -795,7 +804,7 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 		return( status );
 	iCryptContext = createInfo.cryptHandle;
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &encrInfo->cryptMode,
+							  ( MESSAGE_CAST ) &encrInfo->cryptMode,
 							  CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		{
@@ -815,11 +824,11 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 
 			/* Load the derivation information into the context */
 			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &encrInfo->keySetupIterations,
+									  ( MESSAGE_CAST ) &encrInfo->keySetupIterations,
 									  CRYPT_CTXINFO_KEYING_ITERATIONS );
 			if( cryptStatusOK( status ) )
 				{
-				setMessageData( &msgData, ( void * ) encrInfo->saltOrIV,
+				setMessageData( &msgData, ( MESSAGE_CAST ) encrInfo->saltOrIV,
 								encrInfo->saltOrIVsize );
 				status = krnlSendMessage( iCryptContext,
 									IMESSAGE_SETATTRIBUTE_S, &msgData,
@@ -827,7 +836,7 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 				}
 			if( cryptStatusOK( status ) )
 				{
-				setMessageData( &msgData, ( void * ) password, 
+				setMessageData( &msgData, ( MESSAGE_CAST ) password, 
 								passwordLength );
 				status = krnlSendMessage( iCryptContext,
 									IMESSAGE_SETATTRIBUTE_S, &msgData,

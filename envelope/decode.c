@@ -53,7 +53,7 @@
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -117,8 +117,6 @@ static int processDataEnd( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		{
 		int padSize, i;
 
-		REQUIRES( envelopeInfoPtr->bufPos > 0 );
-
 		/* Make sure that the padding size is valid */
 		padSize = envelopeInfoPtr->buffer[ envelopeInfoPtr->bufPos - 1 ];
 		if( padSize < 1 || padSize > envelopeInfoPtr->blockSize || \
@@ -133,7 +131,7 @@ static int processDataEnd( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				return( CRYPT_ERROR_BADDATA );
 			}
 		ENSURES( envelopeInfoPtr->bufPos >= 0 && \
-				 envelopeInfoPtr->bufPos < MAX_INTLENGTH );
+				 envelopeInfoPtr->bufPos < envelopeInfoPtr->bufSize );
 		}
 
 	/* Remember that we've reached the end of the payload and where the
@@ -142,6 +140,7 @@ static int processDataEnd( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	envelopeInfoPtr->dataLeft = envelopeInfoPtr->bufPos;
 
 	ENSURES( sanityCheck( envelopeInfoPtr ) );
+
 	return( CRYPT_OK );
 	}
 
@@ -254,6 +253,8 @@ static int processPgpSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		*segmentLength -= PGP_MDC_PACKET_SIZE;
 		if( *segmentLength < 0 )
 			{
+			DEBUG_DIAG(( "MDC data was broken over a partial-length "
+						 "segment" ));
 			assert( DEBUG_WARN );
 
 			*segmentLength = 0;
@@ -490,6 +491,9 @@ static int copyEncryptedDataBlocks( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   buffer */
 	if( envelopeInfoPtr->blockBufferPos > 0 )
 		{
+		REQUIRES( bytesFromBB >= 0 && \
+				  bytesFromBB <= envelopeInfoPtr->blockSize );
+
 		bytesFromBB = envelopeInfoPtr->blockBufferPos;
 		memcpy( bufPtr, envelopeInfoPtr->blockBuffer, bytesFromBB );
 		}
@@ -781,11 +785,16 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 				return( status );
 			if( bytesConsumed <= 0 )
 				{
+				const int prevBytesConsumed = length - currentLength;
+
 				/* We don't have enough input data left to read the
-				   information for the next segment, exit */
+				   information for the next segment, exit.  If we couldn't
+				   process any data at all we return a more specific
+				   underflow error rather than just a zero byte-count */
 				ENSURES( segmentStatus == SEGMENT_INSUFFICIENTDATA );
 				ENSURES( sanityCheck( envelopeInfoPtr ) );
-				return( length - currentLength );
+				return( ( prevBytesConsumed <= 0 ) ?
+						CRYPT_ERROR_UNDERFLOW : prevBytesConsumed );
 				}
 			bufPtr += bytesConsumed;
 			currentLength -= bytesConsumed;
@@ -866,9 +875,10 @@ static int copyOobData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 	REQUIRES( maxLength > 0 && maxLength < MAX_INTLENGTH );
+	REQUIRES( oobBytesToCopy > 0 && \
+			  oobBytesToCopy <= envelopeInfoPtr->oobBufPos && \
+			  oobBytesToCopy <= OOB_BUFFER_SIZE );
 
-	ENSURES( oobBytesToCopy > 0 && \
-			 oobBytesToCopy <= envelopeInfoPtr->oobBufPos );
 	memcpy( buffer, envelopeInfoPtr->oobBuffer, oobBytesToCopy );
 	*length = oobBytesToCopy;
 
@@ -884,6 +894,8 @@ static int copyOobData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   contents */
 	if( oobRemainder > 0 )
 		{
+		REQUIRES( rangeCheck( oobBytesToCopy, oobRemainder,
+							  OOB_BUFFER_SIZE ) );
 		memmove( envelopeInfoPtr->oobBuffer,
 				 envelopeInfoPtr->oobBuffer + oobBytesToCopy, oobRemainder );
 		}
@@ -924,7 +936,7 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 	REQUIRES( flags == ENVCOPY_FLAG_NONE || flags == ENVCOPY_FLAG_OOBDATA );
 
 	/* Clear return values */
-	memset( buffer, 0, min( bytesToCopy, 8 ) );
+	memset( buffer, 0, min( 16, bytesToCopy ) );
 	*length = 0;
 
 	/* If we're verifying a detached signature the data is communicated 
@@ -1018,12 +1030,12 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 				 bytesToCopy < MAX_INTLENGTH );
 
 #if 0	/* 7/6/07 This check doesn't seem to serve any useful purpose since 
-		   EOCs are handled at a higher level.  In particular the check for 
-		   a single pair of EOCs produces false positives when there's a 
-		   string of EOCs present at the end of the data.  This code goes 
-		   back to at least 3.0 while the EOC handling has changed a fair 
-		   bit since then so it's likely that it's an artefact from much 
-		   older code */
+				  EOCs are handled at a higher level.  In particular the 
+				  check for a single pair of EOCs produces false positives 
+				  when there's a string of EOCs present at the end of the 
+				  data.  This code goes back to at least 3.0 while the EOC 
+				  handling has changed a fair bit since then so it's likely 
+				  that it's an artefact from much older code */
 		/* If we consumed all of the input and there's extra data left after
 		   the end of the data stream, it's EOC information, mark that as
 		   consumed as well */
@@ -1142,6 +1154,8 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 			 bytesCopied + remainder <= envelopeInfoPtr->bufSize );
 	if( remainder > 0 && bytesCopied > 0 )
 		{
+		REQUIRES( rangeCheck( bytesCopied, remainder, 
+							  envelopeInfoPtr->bufSize ) );
 		memmove( envelopeInfoPtr->buffer, 
 				 envelopeInfoPtr->buffer + bytesCopied, remainder );
 		}
@@ -1184,7 +1198,7 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 /*///////////////////////////////////////////////////*/
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
-	REQUIRES( !cryptStatusError( dataStartPos ) );
+	REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_INTLENGTH );
 
 	/* After the envelope header has been processed, what's left is payload
 	   data that requires special processing because of segmenting and
@@ -1267,7 +1281,6 @@ assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
 						bytesToCopy <= envelopeInfoPtr->bufSize && \
 				  bytesCopied + dataStartPos + \
 						bytesToCopy <= envelopeInfoPtr->bufSize );
-
 		memmove( envelopeInfoPtr->buffer + envelopeInfoPtr->dataLeft,
 				 envelopeInfoPtr->buffer + dataStartPos + bytesCopied,
 				 bytesToCopy );

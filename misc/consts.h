@@ -62,8 +62,30 @@
    special value for ECC keys, for which key sizes work differently that
    conventional PKCs */
 
-#define MIN_PKCSIZE				( bitsToBytes( 1024 ) - 4 )
-#define MIN_PKCSIZE_ECC			( bitsToBytes( 192 ) - 4 )
+#define MIN_PKCSIZE				( bitsToBytes( 1024 ) - 1 )
+#define MIN_PKCSIZE_ECC			( bitsToBytes( 192 ) - 1 )
+
+/* When we read a public key, a value that's too short to be even vaguely
+   sensible is reported as CRYPT_ERROR_BADDATA, but it's it's at least 
+   vaguely sensible but too short to be secure it's reported as 
+   CRYPT_ERROR_NOSECURE.  The following value defines the cutoff point 
+   between "obviously invalid" and "theoretically valid but not secure",
+   so that 0...MIN_PKCSIZE_THRESHOLD - 1 is rejected with 
+   CRYPT_ERROR_BADDATA, MIN_PKCSIZE_THRESHOLD... MIN_PKCSIZE - 1 is rejected 
+   with CRYPT_ERROR_NOSECURE, and MIN_PKCSIZE...CRYPT_MAX_PKCSIZE is 
+   accepted */
+
+#define MIN_PKCSIZE_THRESHOLD	( bitsToBytes( 504 ) )
+#define MIN_PKCSIZE_ECC_THRESHOLD ( bitsToBytes( 120 ) )
+
+/* ECC points present special problems of their own since they're encoded
+   by stuffing them into byte strings with a type indicator at the start 
+   which leads to a length that bears no relation to the actual key size */
+
+#define MIN_PKCSIZE_ECCPOINT	( 1 + ( MIN_PKCSIZE_ECC * 2 ) )
+#define MIN_PKCSIZE_ECCPOINT_THRESHOLD \
+								( 1 + ( MIN_PKCSIZE_ECC_THRESHOLD * 2 ) )
+#define MAX_PKCSIZE_ECCPOINT	( 1 + ( CRYPT_MAX_PKCSIZE_ECC * 2 ) )
 
 /* The size of the largest public-key wrapped value, corresponding to an
    ASN.1-encoded Elgamal-encrypted key */
@@ -121,15 +143,15 @@
 
 /* The minimum time value that's regarded as being a valid time (we have to 
    allow dates slightly before the current time because of things like 
-   backdated cert revocations, as a rule of thumb we allow a date up to five 
+   backdated cert revocations, as a rule of thumb we allow a date up to two
    years in the past), an approximation of the current time (with the 
    constraint that it's not after the current date), and a somewhat more
    relaxed minimum time value used when reading stored data, which can
    contain keys that have been hanging around for years */
 
-#define MIN_TIME_VALUE			( ( 2003 - 1970 ) * 365 * 86400L )
+#define MIN_TIME_VALUE			( ( 2007 - 1970 ) * 365 * 86400L )
+#define CURRENT_TIME_VALUE		( ( 2009 - 1970 ) * 365 * 86400L )
 #define MIN_STORED_TIME_VALUE	( ( 1995 - 1970 ) * 365 * 86400L )
-#define CURRENT_TIME_VALUE		( MIN_TIME_VALUE + ( 86400L * 365 * 5 ) )
 
 /* The minimum and maximum network port numbers.  Note that we allow ports 
    down to 21 (= FTP) rather than the more obvious 22 (= SSH) provided by 
@@ -139,8 +161,8 @@
    port range, 49152-65535 is for ephemeral ports that are only valid for 
    the duration of a TCP session */
 
-#define MIN_PORT_NUMBER		21
-#define MAX_PORT_NUMBER		49151L
+#define MIN_PORT_NUMBER			21
+#define MAX_PORT_NUMBER			49151L
 
 /* Some object types interact with exteral services that can return detailed
    error messages when problems occur, the following is the maximum length
@@ -153,6 +175,16 @@
    containing excessive iteration counts */
 
 #define MAX_KEYSETUP_ITERATIONS	20000
+
+/* The maximum certificate compliance level */
+
+#if defined( USE_CERTLEVEL_PKIX_FULL )
+  #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_PKIX_FULL
+#elif defined( USE_CERTLEVEL_PKIX_PARTIAL )
+  #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL
+#else
+  #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_PKIX_STANDARD
+#endif /* Maximum compliance level */
 
 /* All non-constant loops contain a guard to prevent excessive looping.  
    This is a generalisation of the programming practice that when looping on 
@@ -200,10 +232,12 @@
 #endif /* 16-bit vs 32/64-bit systems */
 
 /* Pseudo-constants used for array bounds-checking.  These provide a more
-   precise limit than the FAILSAFE_ITERATIONS_xxx values above */
+   precise limit than the FAILSAFE_ITERATIONS_xxx values above.  We subtract
+   one from the total count because static arrays are always overallocated 
+   with two extra dummy elements at the end */
 
 #define FAILSAFE_ARRAYSIZE( array, elementType ) \
-		( sizeof( array ) / sizeof( elementType ) )
+		( ( sizeof( array ) / sizeof( elementType ) ) - 1 )
 
 /* The minimum and maximum size of various Internet-related values, used for
    range checking */
@@ -238,15 +272,17 @@
 
 #define DUMMY_INIT				0
 #define DUMMY_INIT_PTR			NULL
+#define DUMMY_INIT_STRUCT		{ 0 }
 
 /* A special return code to indicate that everything went OK but there's
    some special action to perform.  This is generally used when a lower-level
    routine wants to return a CRYPT_OK with some condition attached, typically
    that the calling routine not update state information since it's already
    been done by the returning routine or because the returning routine has
-   more work to do on a later call */
+   more work to do on a later call.  The parentheses are to catch potential
+   erroneous use in an expression */
 
-#define OK_SPECIAL				-4321
+#define OK_SPECIAL				( -4321 )
 
 /* When parameters get passed in messages, their mapping to parameters passed
    to the calling function gets lost.  The following error codes are used to
@@ -255,14 +291,15 @@
 
 	krnlSendMessage( object, {args}, MESSAGE_TYPE, value );
 
-   we have the following possible error codes */
+   we have the following possible error codes.  The parentheses are to catch
+   potential erroneous use in an expression */
 
-#define CRYPT_ARGERROR_OBJECT	-1000		/* Error in object being sent msg.*/
-#define CRYPT_ARGERROR_VALUE	-1001		/* Error in message value */
-#define CRYPT_ARGERROR_STR1		-1002		/* Error in first string arg */
-#define CRYPT_ARGERROR_STR2		-1003		/* Error in second string arg */
-#define CRYPT_ARGERROR_NUM1		-1004		/* Error in first numeric arg */
-#define CRYPT_ARGERROR_NUM2		-1005		/* Error in second numeric arg */
+#define CRYPT_ARGERROR_OBJECT	( -1000 )	/* Error in object being sent msg.*/
+#define CRYPT_ARGERROR_VALUE	( -1001 )	/* Error in message value */
+#define CRYPT_ARGERROR_STR1		( -1002 )	/* Error in first string arg */
+#define CRYPT_ARGERROR_STR2		( -1003 )	/* Error in second string arg */
+#define CRYPT_ARGERROR_NUM1		( -1004 )	/* Error in first numeric arg */
+#define CRYPT_ARGERROR_NUM2		( -1005 )	/* Error in second numeric arg */
 
 #define cryptArgError( status )	\
 		( ( status ) >= CRYPT_ARGERROR_NUM2 && ( status ) <= CRYPT_ARGERROR_OBJECT )
@@ -297,5 +334,18 @@ typedef enum {
 	MANAGEMENT_ACTION_SHUTDOWN,			/* Shutdown */
 	MANAGEMENT_ACTION_LAST				/* Last possible management action */
 	} MANAGEMENT_ACTION_TYPE;
+
+/* Certificate key usage types.  SIGN is for data signing, CA is for 
+   certificate signing, and SIGN_GENERIC is for either type of signing */
+
+#define KEYUSAGE_SIGN			( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
+								  CRYPT_KEYUSAGE_NONREPUDIATION )
+#define KEYUSAGE_CA				( CRYPT_KEYUSAGE_KEYCERTSIGN | \
+								  CRYPT_KEYUSAGE_CRLSIGN )
+#define KEYUSAGE_CRYPT			( CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
+								  CRYPT_KEYUSAGE_DATAENCIPHERMENT )
+#define KEYUSAGE_KEYAGREEMENT	( CRYPT_KEYUSAGE_KEYAGREEMENT | \
+								  CRYPT_KEYUSAGE_ENCIPHERONLY | \
+								  CRYPT_KEYUSAGE_DECIPHERONLY )
 
 #endif /* _CONSTS_DEFINED */

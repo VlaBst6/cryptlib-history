@@ -1,9 +1,49 @@
+Changes in 3.3.3 release
+========================
+
+This is another maintenance release with updates for new compiler versions and
+OS releases, as well as code changes to handle upgrades to newer hash
+algorithms in the SHA-2 family for protocols that previously used SHA-1.  In
+addition the Windows DLL version included with the release is now built with
+VS 2005 instead of VC 6, since it's unlikely that there are any systems left
+that don't have the runtime libraries needed for this.
+
+A number of rarely-used facilities that, due to their complexity, have a large
+attack surface or considerable potential for abuse, have been disabled by
+default in this release.  These are DNS SRV, LDAP, string-format X.500 DNs,
+and SSH subsystems and channel multiplexing.  If you really require any of
+these you can enable them as described in "Optional cryptlib Components" in
+the manual.  You should only enable these facilities if you absolutely need
+them, and your security guarantee is void if you do.
+
+There's one small change made to the handling of certificate attribute
+selection, currently all attributes except certificate subject and issuer
+names are selected with 'cryptSetAttribute( cryptCert,
+CRYPT_CERTINFO_CURRENT_ATTRIBUTE, <attribute-type> )' while the certificate
+subject and issuer names are selected with 'cryptSetAttribute( cryptCert,
+CRYPT_CERTINFO_SUBJECTNAME, CRYPT_UNUSED )' (this is done for historical
+reasons because the subject and issuer names aren't X.509 certificate
+extensions and so exist in a different space than standard certificate
+extensions, putting them outside the reach of the standard attribute cursor
+mechanisms).
+
+This version of cryptlib now allows issuer and subject names to be selected in
+the same way as other attributes, 'cryptSetAttribute( cryptCert,
+CRYPT_CERTINFO_CURRENT_ATTRIBUTE, CRYPT_CERTINFO_SUBJECTNAME )'.  The previous
+method is still supported for backwards-compatibility purposes, but for
+forwards compatibility you should search your code for occurrences of
+CRYPT_CERTINFO_SUBJECTNAME/ISSUERNAME and switch the attributes around to use
+the new form.  To alert you to cases where you're using the old way of doing
+things, the debug build of cryptlib will thrown an exception if it detects
+this (the standard build will continue to function as before, it's only the
+debug build that will notify you of the superseded usage).
+
 Changes in 3.3.2 release
 ========================
 
 This release features numerous updates to the build mechanism and code to
 handle new compiler versions, as well as workarounds for interoperability
-problems with other implementations.  This version also features numerous
+problems with other implementations.  This version also features various
 reliability and stability enhancements.
 
 Changes in 3.3.1 release

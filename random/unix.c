@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Unix Randomness-Gathering Code					*
-*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2007		*
+*	Copyright Peter Gutmann, Paul Kendall, and Chris Wedgwood 1996-2008		*
 *																			*
 ****************************************************************************/
 
@@ -862,7 +862,11 @@ static int getKstatData( void )
 #endif /* Slowaris */
 
 /* SYSV /proc interface, which provides assorted information that usually
-   has to be obtained the hard way via a slow poll */
+   has to be obtained the hard way via a slow poll.
+
+   Note that getProcData() gets data from the legacy /proc pseudo-filesystem
+   using ioctls() whereas getProcFSdata()gets data from the current /procfs
+   filesystem using file reads */
 
 #if ( defined( sun ) && ( OSVERSION >= 5 ) ) || defined( __osf__ ) || \
 	  defined( __alpha__ ) || defined( __linux__ )
@@ -882,12 +886,19 @@ static int getProcData( void )
 #ifdef PIOCUSAGE
 	prusage_t prUsage;
 #endif /* PIOCUSAGE */
+#ifdef PIOCACINFO
+	struct pracinfo pracInfo;
+#endif /* PIOCACINFO */
+
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE + 8 ];
 	char fileName[ 128 + 8 ];
 	int fd, noEntries = 0, quality, status;
 
-	/* Try and open the process info for this process */
+	/* Try and open the process info for this process.  We don't use 
+	   O_NOFOLLOW because on some Unixen special files can be symlinks and 
+	   in any case a system that allows attackers to mess with privileged 
+	   filesystems like this is presumably a goner anyway */
 	sprintf_s( fileName, 128, "/proc/%d", getpid() );
 	if( ( fd = open( fileName, O_RDONLY ) ) == -1 )
 		return( 0 );
@@ -936,6 +947,18 @@ static int getProcData( void )
 		noEntries++;
 		}
 #endif /* PIOCUSAGE */
+
+#ifdef PIOCACINFO
+	if( ioctl( fd, PIOCACINFO, &pracInfo ) != -1 )
+		{
+#ifdef DEBUG_RANDOM
+		printf( __FILE__ ": PIOCACINFO contributed %d bytes.\n",
+				sizeof( struct pracinfo ) );
+#endif /* DEBUG_RANDOM */
+		addRandomData( randomState, &pracInfo, sizeof( struct pracinfo ) );
+		noEntries++;
+		}
+#endif /* PIOCACINFO */
 	close( fd );
 
 	/* Flush any remaining data through and produce an estimate of its
@@ -950,6 +973,96 @@ static int getProcData( void )
 	return( quality );
 	}
 #endif /* Slowaris || OSF/1 || Linux */
+
+/* Named process information /procfs interface.  Each source is given a 
+   weighting of 1-3, with 1 being a static (although unpredictable) source,
+   2 being a slowly-changing source, and 3 being a rapidly-changing
+   source */
+
+CHECK_RETVAL \
+static int getProcFSdata( void )
+	{
+	typedef struct {
+		const char *source;
+		const int value;
+		} PROCSOURCE_INFO;
+	static const PROCSOURCE_INFO procSources[] = {
+		{ "/proc/diskstats", 2 }, { "/proc/interrupts", 3 },
+		{ "/proc/loadavg", 2 }, { "/proc/locks", 1 },
+		{ "/proc/meminfo", 3 }, { "/proc/net/dev", 2 },
+		{ "/proc/net/ipx", 2 }, { "/proc/modules", 1 },
+		{ "/proc/mounts", 1 }, { "/proc/net/netstat", 2 },
+		{ "/proc/net/rt_cache", 1 }, { "/proc/net/rt_cache_stat", 3 },
+		{ "/proc/net/snmp", 2 }, { "/proc/net/softnet_stat", 2 },
+		{ "/proc/net/stat/arp_cache", 3 }, { "/proc/net/stat/ndisc_cache", 2 },
+		{ "/proc/net/stat/rt_cache", 3 }, { "/proc/net/tcp", 3 },
+		{ "/proc/net/udp", 2 }, { "/proc/net/wireless", 2 },
+		{ "/proc/slabinfo", 3 }, { "/proc/stat", 3 },
+		{ "/proc/sys/fs/inode-state", 1 }, { "/proc/sys/fs/file-nr", 1 },
+		{ "/proc/sys/fs/dentry-state", 1 }, { "/proc/sysvipc/msg", 1 },
+		{ "/proc/sysvipc/sem", 1 }, { "/proc/sysvipc/shm", 1 },
+		{ "/proc/zoneinfo", 3 },
+		{ "/sys/devices/system/node/node0/numastat", 2 },
+		{ NULL, 0 }, { NULL, 0 }
+		};
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 1024 + 8 ];
+	int procIndex, procFD, procValue = 0, quality;
+
+	/* Read the first 1K of data from some of the more useful sources (most
+	   of these produce far less than 1K output) */
+	for( procIndex = 0; 
+		 procSources[ procIndex ].source != NULL && \
+			procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO );
+		 procIndex++ )
+		{
+		int count, status;
+
+		/* Try and open the data source.  We don't use O_NOFOLLOW because on 
+		   some Unixen special files can be symlinks and in any case a 
+		   system that allows attackers to mess with privileged filesystems 
+		   like this is presumably a goner anyway */
+		procFD = open( procSources[ procIndex ].source, O_RDONLY );
+		if( procFD < 0 )
+			continue;
+		if( procFD <= 2 )
+			{
+			/* We've been given a standard I/O handle, something's wrong */
+			close( procFD );
+			return( 0 );
+			}
+
+		/* Read data from the source */
+		count = read( procFD, buffer, 1024 );
+		if( count > 16 )
+			{
+#ifdef DEBUG_RANDOM
+			printf( __FILE__ ": %s contributed %d bytes.\n",
+					procSources[ procIndex ].source, count );
+#endif /* DEBUG_RANDOM */
+			setMessageData( &msgData, buffer, count );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_ENTROPY );
+			if( cryptStatusOK( status ) )
+				procValue += procSources[ procIndex ].value;
+			}
+		close( procFD );
+		}
+	ENSURES( procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO ) );
+	zeroise( buffer, 1024 );
+	if( procValue < 5 )
+		return( 0 );
+
+	/* Produce an estimate of the data's value.  We require that we get a
+	   quality value of at least 5 and limit it to a maximum value of 50 to 
+	   ensure that some data is still coming from other sources */
+	quality = min( procValue, 50 );
+	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+					 ( MESSAGE_CAST ) &quality, 
+					 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+	return( quality );
+	}
 
 /* /dev/random interface */
 
@@ -967,7 +1080,10 @@ static int getDevRandomData( void )
 #endif /* Mac OS X || FreeBSD 5.x */
 	int randFD, noBytes;
 
-	/* Check whether there's a /dev/random present */
+	/* Check whether there's a /dev/random present.  We don't use O_NOFOLLOW 
+	   because on some Unixen special files can be symlinks and in any case 
+	   a system that allows attackers to mess with privileged filesystems 
+	   like this is presumably a goner anyway */
 	if( ( randFD = open( "/dev/urandom", O_RDONLY ) ) < 0 )
 		return( 0 );
 	if( randFD <= 2 )
@@ -978,13 +1094,22 @@ static int getDevRandomData( void )
 		}
 
 	/* Read data from /dev/urandom, which won't block (although the quality
-	   of the noise is less).  We only assign this a 75% quality factor to
-	   ensure that we still get randomness from other sources as well.  Under
-	   FreeBSD 5.x and OS X, the /dev/random implementation is broken, using
-	   a pretend dev-random implemented with Yarrow and a 160-bit pool, so
-	   we only assign a 50% quality factor.  These generators also lie about
-	   entropy, with both /random and /urandom being the same PRNG-based
-	   implementation */
+	   of the noise is arguably slighly less).  We only assign this a 75% 
+	   quality factor to ensure that we still get randomness from other 
+	   sources as well.  Under FreeBSD 5.x and OS X, the /dev/random 
+	   implementation is broken, using a pretend dev-random implemented with 
+	   Yarrow and a 160-bit pool (animi sub vulpe latent) so we only assign 
+	   a 50% quality factor.  These generators also lie about entropy, with 
+	   both /random and /urandom being the same PRNG-based implementation.
+	   The AIX /dev/random isn't an original /dev/random either but merely 
+	   provides a compatible interface, taking its input from interrupt 
+	   timings of a very small number of sources such as ethernet and SCSI 
+	   adapters and postprocessing them with Yarrow.  This implementation is 
+	   also a lot more conservative about its entropy estimation, such that 
+	   the blocking interface blocks a lot more often than the original 
+	   /dev/random implementation would.  In addition it stops gathering 
+	   entropy (from interrupts) when it thinks it has enough, and only 
+	   resumes when the value falls below a certain value */
 	noBytes = read( randFD, buffer, DEVRANDOM_BYTES );
 	close( randFD );
 	if( noBytes < 1 )
@@ -1004,7 +1129,8 @@ static int getDevRandomData( void )
 	if( noBytes < DEVRANDOM_BYTES )
 		return( 0 );
 	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+					 ( MESSAGE_CAST ) &quality, 
+					 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 	return( quality );
 	}
 
@@ -1088,92 +1214,8 @@ static int getEGDdata( void )
 	if( noBytes < DEVRANDOM_BYTES )
 		return( 0 );
 	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
-	return( quality );
-	}
-
-/* Named process information /procfs interface.  Each source is given a 
-   weighting of 1-3, with 1 being a static (although unpredictable) source,
-   2 being a slowly-changing source, and 3 being a rapidly-changing
-   source */
-
-CHECK_RETVAL \
-static int getProcFSdata( void )
-	{
-	typedef struct {
-		const char *source;
-		const int value;
-		} PROCSOURCE_INFO;
-	static const PROCSOURCE_INFO procSources[] = {
-		{ "/proc/diskstats", 2 }, { "/proc/interrupts", 3 },
-		{ "/proc/loadavg", 2 }, { "/proc/locks", 1 },
-		{ "/proc/meminfo", 3 }, { "/proc/net/dev", 2 },
-		{ "/proc/net/ipx", 2 }, { "/proc/modules", 1 },
-		{ "/proc/mounts", 1 }, { "/proc/net/netstat", 2 },
-		{ "/proc/net/rt_cache", 1 }, { "/proc/net/rt_cache_stat", 3 },
-		{ "/proc/net/snmp", 2 }, { "/proc/net/softnet_stat", 2 },
-		{ "/proc/net/stat/arp_cache", 3 }, { "/proc/net/stat/ndisc_cache", 2 },
-		{ "/proc/net/stat/rt_cache", 3 }, { "/proc/net/tcp", 3 },
-		{ "/proc/net/udp", 2 }, { "/proc/net/wireless", 2 },
-		{ "/proc/slabinfo", 3 }, { "/proc/stat", 3 },
-		{ "/proc/sys/fs/inode-state", 1 }, { "/proc/sys/fs/file-nr", 1 },
-		{ "/proc/sys/fs/dentry-state", 1 }, { "/proc/sysvipc/msg", 1 },
-		{ "/proc/sysvipc/sem", 1 }, { "/proc/sysvipc/shm", 1 },
-		{ "/proc/zoneinfo", 3 },
-		{ NULL, 0 }, { NULL, 0 }
-		};
-	MESSAGE_DATA msgData;
-	BYTE buffer[ 1024 + 8 ];
-	int procIndex, procFD, procValue = 0, quality;
-
-	/* Read the first 1K of data from some of the more useful sources (most
-	   of these produce far less than 1K output) */
-	for( procIndex = 0; 
-		 procSources[ procIndex ].source != NULL && \
-			procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO );
-		 procIndex++ )
-		{
-		int count, status;
-
-		/* Try and open the data source */
-		procFD = open( procSources[ procIndex ].source, O_RDONLY );
-		if( procFD < 0 )
-			continue;
-		if( procFD <= 2 )
-			{
-			/* We've been given a standard I/O handle, something's wrong */
-			close( procFD );
-			return( 0 );
-			}
-
-		/* Read data from the source */
-		count = read( procFD, buffer, 1024 );
-		if( count > 16 )
-			{
-#ifdef DEBUG_RANDOM
-			printf( __FILE__ ": %s contributed %d bytes.\n",
-					procSources[ procIndex ].source, count );
-#endif /* DEBUG_RANDOM */
-			setMessageData( &msgData, buffer, count );
-			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
-									  IMESSAGE_SETATTRIBUTE_S, &msgData,
-									  CRYPT_IATTRIBUTE_ENTROPY );
-			if( cryptStatusOK( status ) )
-				procValue += procSources[ procIndex ].value;
-			}
-		close( procFD );
-		}
-	ENSURES( procIndex < FAILSAFE_ARRAYSIZE( procSources, PROCSOURCE_INFO ) );
-	zeroise( buffer, 1024 );
-	if( procValue < 5 )
-		return( 0 );
-
-	/* Produce an estimate of the data's value.  We require that we get a
-	   quality value of at least 5 and limit it to a maximum value of 50 to 
-	   ensure that some data is still coming from other sources */
-	quality = min( procValue, 50 );
-	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+					 ( MESSAGE_CAST ) &quality, 
+					 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 	return( quality );
 	}
 
@@ -1204,11 +1246,15 @@ static int getEntropySourceData( INOUT DATA_SOURCE_INFO *dataSource,
 		if( dataSource->usefulness != 0 )
 			{
 			if( dataSource->usefulness < 0 )
+				{
 				/* Absolute rating, 1024 / -n */
 				total = 1025 / -dataSource->usefulness;
+				}
 			else
+				{
 				/* Relative rating, 1024 * n */
 				total = dataSource->length / dataSource->usefulness;
+				}
 			}
 #ifdef DEBUG_RANDOM
 		printf( __FILE__ ": %s %s contributed %d bytes (compressed), "
@@ -1231,7 +1277,7 @@ static int getEntropySourceData( INOUT DATA_SOURCE_INFO *dataSource,
 	/* Run-length compress the input byte sequence */
 	while( bufReadPos < noBytes )
 		{
-		const int ch = bufPtr[ bufReadPos ];
+		const int ch = byteToInt( bufPtr[ bufReadPos ] );
 
 		/* If it's a single byte or we're at the end of the buffer, just
 		   copy it over */
@@ -1289,7 +1335,16 @@ static void childPollingProcess( const int existingEntropy )
 	   FILE * buffer at the time of the fork() being written twice.  An
 	   alternative solution would be to call _exit() instead if exit() below,
 	   but this is somewhat system-dependant and therefore a bit risky to
-	   use.
+	   use.  Note that we don't close any of the standard handles because 
+	   this could lead to the next file being opened being given the stdin/
+	   stdout/stderr handle, which in general is just a nuisance but then 
+	   some older kernels didn't check handles when running a setuid program 
+	   so that it was actually an exploitable flaw.  In addition some later
+	   kernels (e.g. NetBSD) overreact to the problem a bit and complain 
+	   when they see a setuid program with stdin/stdout/stderr closed, so 
+	   it's a good idea to leave these open.  We could in theory close them
+	   anyway and reopen them to /dev/null, but it's not clear whether this
+	   really buys us anything.
 
 	   In addition to this we should in theory call cryptEnd() since we
 	   don't need any cryptlib objects beyond this point and it'd be a good
@@ -1377,7 +1432,8 @@ static void childPollingProcess( const int existingEntropy )
 		/* If there are alternatives for this command, don't try and execute
 		   them */
 		iterationCount = 0;
-		while( dataSources[ i ].hasAlternative && \
+		while( dataSources[ i ].path != NULL && \
+			   dataSources[ i ].hasAlternative && \
 			   i < FAILSAFE_ARRAYSIZE( dataSources, DATA_SOURCE_INFO ) && \
 			   iterationCount++ < FAILSAFE_ITERATIONS_MED ) 
 			{
@@ -1519,7 +1575,6 @@ static void childPollingProcess( const int existingEntropy )
 
 void slowPoll( void )
 	{
-	struct sigaction act;
 	const int pageSize = getSysVar( SYSVAR_PAGESIZE );
 	int extraEntropy = 0;
 
@@ -1554,8 +1609,10 @@ void slowPoll( void )
 	printf( __FILE__ ": Got %d additional entropy from direct sources.\n",
 			extraEntropy );
 	if( extraEntropy >= 100 )
+		{
 		puts( "  (Skipping full slowpoll since sufficient entropy is "
 			  "available)." );
+		}
 #endif /* DEBUG_RANDOM */
 	if( extraEntropy >= 100 )
 		{
@@ -1579,17 +1636,14 @@ void slowPoll( void )
 	abort();
 #else
 
-	/* Reset the SIGCHLD handler to the system default.  This is necessary
-	   because if the program that cryptlib is a part of installs its own
-	   SIGCHLD handler, it will end up reaping the cryptlib children before
-	   cryptlib can.  As a result, my_pclose() will call waitpid() on a
+	/* Check whether a non-default SIGCHLD handler is present.  This is 
+	   necessary because if the program that cryptlib is a part of installs 
+	   its own handler it will end up reaping the cryptlib children before
+	   cryptlib can.  As a result my_pclose() will call waitpid() on a
 	   process that has already been reaped by the installed handler and
 	   return an error, so the read data won't be added to the randomness
 	   pool */
-	memset( &act, 0, sizeof( act ) );
-	act.sa_handler = SIG_DFL;
-	sigemptyset( &act.sa_mask );
-	if( sigaction( SIGCHLD, &act, &gathererOldHandler ) < 0 )
+	if( sigaction( SIGCHLD, NULL, &gathererOldHandler ) < 0 )
 		{
 		/* This assumes that stderr is open, i.e. that we're not a daemon
 		   (this should be the case at least during the development/debugging
@@ -1611,6 +1665,18 @@ void slowPoll( void )
 #endif /* DEBUG_CONFLICTS */
 		}
 
+	/* If a non-default handler is present, replace it with the default 
+	   handler */
+	if( gathererOldHandler.sa_handler != SIG_DFL )
+		{
+		struct sigaction newHandler;
+
+		memset( &newHandler, 0, sizeof( newHandler ) );
+		newHandler.sa_handler = SIG_DFL;
+		sigemptyset( &newHandler.sa_mask );
+		sigaction( SIGCHLD, &newHandler, NULL );
+		}
+
 	/* Set up the shared memory */
 	gathererBufSize = ( SHARED_BUFSIZE / pageSize ) * ( pageSize + 1 );
 	if( ( gathererMemID = shmget( IPC_PRIVATE, gathererBufSize,
@@ -1622,12 +1688,14 @@ void slowPoll( void )
 		   and exit */
 #ifdef _CRAY
 		if( errno == ENOSYS )
+			{
 			/* Unicos supports shmget/shmat, but older Crays don't implement
 			   it and return ENOSYS */
 			fprintf( stderr, "cryptlib: SYSV shared memory required for "
 					 "random number gathering isn't\n  supported on this "
 					 "type of Cray hardware (ENOSYS),\n  file " __FILE__ 
 					 ", line %d.\n", __LINE__ );
+			}
 #endif /* Cray */
 #ifdef DEBUG_CONFLICTS
 		fprintf( stderr, "cryptlib: shmget()/shmat() failed, errno = %d, "
@@ -1676,7 +1744,8 @@ void slowPoll( void )
 #endif /* DEBUG_CONFLICTS */
 		lockPollingMutex();
 		shmctl( gathererMemID, IPC_RMID, NULL );
-		sigaction( SIGCHLD, &gathererOldHandler, NULL );
+		if( gathererOldHandler.sa_handler != SIG_DFL )
+			sigaction( SIGCHLD, &gathererOldHandler, NULL );
 		gathererProcess = 0;
 		unlockPollingMutex();
 		return;

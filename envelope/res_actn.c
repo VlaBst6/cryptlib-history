@@ -31,8 +31,8 @@
    that while the functions don't change the action list entries, the caller 
    will */
 
-CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-ACTION_LIST *findAction( const ACTION_LIST *actionListPtr,
+CHECK_RETVAL_PTR \
+ACTION_LIST *findAction( IN_OPT const ACTION_LIST *actionListPtr,
 						 IN_ENUM( ACTION ) const ACTION_TYPE actionType )
 	{
 	int iterationCount;
@@ -130,8 +130,8 @@ ACTION_LIST *findActionIndirect( const ACTION_LIST *actionListStart,
 
 /* Check whether more actions can be added to an action list */
 
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN moreActionsPossible( const ACTION_LIST *actionListPtr )
+CHECK_RETVAL_BOOL \
+BOOLEAN moreActionsPossible( IN_OPT const ACTION_LIST *actionListPtr )
 	{
 	int actionCount;
 
@@ -355,8 +355,8 @@ void deleteUnusedActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 /* Check a new action to make sure that it isn't already present in the
    action list, producing an ACTION_RESULT outcome */
 
-CHECK_RETVAL_ENUM( ACTION ) STDC_NONNULL_ARG( ( 1 ) ) \
-ACTION_RESULT checkAction( const ACTION_LIST *actionListStart,
+CHECK_RETVAL_ENUM( ACTION ) \
+ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 						   IN_ENUM( ACTION ) const ACTION_TYPE actionType, 
 						   IN_HANDLE const CRYPT_HANDLE cryptHandle )
 	{

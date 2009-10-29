@@ -62,6 +62,7 @@ static int calculatePubkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
 								sizeofObject( \
 									sizeofObject( pubKeySize ) + \
 									extraDataSize ) ) );
+	ENSURES( *newPubKeyDataSize > 0 && *newPubKeyDataSize < MAX_INTLENGTH );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newPubKeyDataSize <= pkcs15infoPtr->pubKeyDataSize )
@@ -97,6 +98,7 @@ static int calculateCertStorage( const PKCS15_INFO *pkcs15infoPtr,
 	*newCertDataSize = sizeofObject( certAttributeSize + \
 									 sizeofObject( \
 										sizeofObject( certSize ) ) );
+	ENSURES( *newCertDataSize > 0 && *newCertDataSize < MAX_INTLENGTH );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newCertDataSize <= pkcs15infoPtr->certDataSize )
@@ -251,7 +253,10 @@ int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr,
 		return( status );
 
 	/* If we've been passed a standalone certificate it has to be 
-	   implicitly trusted in order to be added */
+	   implicitly trusted in order to be added.  We don't perform this check 
+	   if this is a storage object for a hardware device, which acts as a 
+	   generic information store with no restrictions on what can be 
+	   stored */
 	if( certAddType == CERTADD_STANDALONE_CERT )
 		{
 		int value;
@@ -334,6 +339,7 @@ int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr,
 		{
 		/* Undo what we've done so far without changing the existing PKCS #15
 		   data */
+		DEBUG_DIAG(( "Failed to set up/write certificate data" ));
 		assert( DEBUG_WARN );
 		if( newPrivKeyData != pkcs15infoPtr->privKeyData )
 			clFree( "addCert", newPrivKeyData );
@@ -477,7 +483,7 @@ int pkcs15AddCertChain( INOUT PKCS15_INFO *pkcs15info,
 
 /* Add a public key to a PKCS #15 collection */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 7 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 8 ) ) \
 int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 						IN_HANDLE const CRYPT_HANDLE iCryptContext, 
 						IN_BUFFER( pubKeyAttributeSize ) \
@@ -485,8 +491,11 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 						IN_LENGTH_SHORT const int pubKeyAttributeSize,
 						IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
 						IN_LENGTH_PKC const int modulusSize, 
+						const BOOLEAN isStorageObject, 
 						INOUT ERROR_INFO *errorInfo )
 	{
+	const CRYPT_ATTRIBUTE_TYPE keyDataType = isStorageObject ? \
+			CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL : CRYPT_IATTRIBUTE_KEY_SPKI;
 	MESSAGE_DATA msgData;
 	STREAM stream;
 	void *newPubKeyData = pkcs15infoPtr->pubKeyData;
@@ -501,8 +510,12 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 			  pubKeyAttributeSize < MAX_INTLENGTH_SHORT );
 	REQUIRES( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 			  pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
-	REQUIRES( modulusSize >= MIN_PKCSIZE && \
-			  modulusSize <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( ( isEccAlgo( pkcCryptAlgo ) && \
+				modulusSize >= MIN_PKCSIZE_ECC && \
+				modulusSize <= CRYPT_MAX_PKCSIZE_ECC ) || \
+			  ( !isEccAlgo( pkcCryptAlgo ) && \
+				modulusSize >= MIN_PKCSIZE && \
+				modulusSize <= CRYPT_MAX_PKCSIZE ) );
 	REQUIRES( errorInfo != NULL );
 
 	/* Get the tag for encoding the key data */
@@ -510,10 +523,15 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Find out how big the PKCS #15 data will be and allocate room for it */
+	/* Find out how big the PKCS #15 data will be and allocate room for it.
+	   If it's a key metadata object then we have to read the information
+	   using CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL since it's not necessarily
+	   in the high state as required by CRYPT_IATTRIBUTE_KEY_SPKI because
+	   the hardware may not be ready yet, but we can still fetch the stored
+	   public-key data from it */
 	setMessageData( &msgData, NULL, 0 );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S, 
-							  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
+							  &msgData, keyDataType );
 	if( cryptStatusError( status ) )
 		return( status );
 	pubKeySize = msgData.length;
@@ -547,7 +565,7 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 		{
 		newPubKeyOffset = stell( &stream );
 		status = exportAttributeToStream( &stream, iCryptContext,
-										  CRYPT_IATTRIBUTE_KEY_SPKI );
+										  keyDataType );
 		}
 	if( cryptStatusOK( status ) && pkcCryptAlgo == CRYPT_ALGO_RSA )
 		{
@@ -564,6 +582,7 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Failed to set up/write public key data" ));
 		assert( DEBUG_WARN );
 		if( newPubKeyData != pkcs15infoPtr->pubKeyData )
 			clFree( "addPublicKey", newPubKeyData );

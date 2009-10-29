@@ -171,6 +171,8 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   specially */
 	if( envelopeInfoPtr->state == STATE_PREDATA )
 		{
+		BOOLEAN copiedData = FALSE;
+
 		/* Perform any initialisation actions */
 		if( envelopeInfoPtr->buffer == NULL )
 			{
@@ -214,6 +216,7 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				bytesIn -= bytesToCopy;
 				*bytesCopied = bytesToCopy;
 				bufPtr += bytesToCopy;
+				copiedData = TRUE;
 				}
 			}
 
@@ -221,8 +224,22 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		status = envelopeInfoPtr->processPreambleFunction( envelopeInfoPtr );
 		if( cryptStatusError( status ) )
 			{
-			if( !isRecoverableError( status ) )
+			/* If we've processed at least some data and it's a non-fatal
+			   error like an underflow, suppress it.  We need to do this
+			   because the copy function above will always consume input (if
+			   it can) and if we returned an error at this point it would
+			   indicate to the caller that they can ignore the bytes-copied
+			   parameter */
+			if( isRecoverableError( status ) )
+				{
+				if( copiedData )
+					return( CRYPT_OK );
+				}
+			else
+				{
+				/* It's a fatal error, make it persistent */
 				envelopeInfoPtr->errorState = status;
+				}
 			return( status );
 			}
 
@@ -842,8 +859,10 @@ static int initEnvelope( OUT_HANDLE_OPT CRYPT_ENVELOPE *iCryptEnvelope,
 	envelopeInfoPtr->type = formatType;
 	envelopeInfoPtr->state = STATE_PREDATA;
 	envelopeInfoPtr->storageSize = storageSize;
-	initMemPool( envelopeInfoPtr->memPoolState, envelopeInfoPtr->storage, 
-				 storageSize );
+	status = initMemPool( envelopeInfoPtr->memPoolState, 
+						  envelopeInfoPtr->storage, storageSize );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Set up any internal objects to contain invalid handles */
 	envelopeInfoPtr->iCryptContext = \

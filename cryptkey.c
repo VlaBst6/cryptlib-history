@@ -34,13 +34,11 @@
 STDC_NONNULL_ARG( ( 1 ) ) \
 static void resetErrorInfo( INOUT KEYSET_INFO *keysetInfoPtr )
 	{
-#ifdef KEYSET_HAS_ERRORINFO
 	ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
 
 	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
 
 	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
-#endif /* KEYSET_HAS_ERRORINFO */
 	}
 
 /* Prepare to update a keyset, performing various access checks and pre-
@@ -400,6 +398,7 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 								   IN_LENGTH_SHORT_MIN( MIN_NAME_LENGTH ) \
 									const int nameLength )
 	{
+	FILE_INFO *fileInfo = keysetInfoPtr->keysetFile;
 	BYTE buffer[ STREAM_BUFSIZE + 8 ];
 	int status;
 
@@ -414,10 +413,15 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 
 	/* Remember the key file's name (as a null-terminated string for 
 	   filesystem access) and I/O stream */
+	if( nameLength > MAX_PATH_LENGTH - 1 )
+		return( CRYPT_ARGERROR_STR1 );
 	keysetInfoPtr->subType = subType;
-	memcpy( keysetInfoPtr->keysetFile->fileName, name, nameLength );
-	keysetInfoPtr->keysetFile->fileName[ nameLength ] = '\0';
-	memcpy( &keysetInfoPtr->keysetFile->stream, stream, sizeof( STREAM ) );
+	memcpy( fileInfo->fileName, name, nameLength );
+	fileInfo->fileName[ nameLength ] = '\0';
+	memcpy( &fileInfo->stream, stream, sizeof( STREAM ) );
+
+	/* Set various values to their default settings */
+	fileInfo->iHardwareDevice = CRYPT_UNUSED;
 
 	/* Make sure that we don't accidentally reuse the standalone stream */
 	memset( stream, 0, sizeof( STREAM ) );
@@ -458,12 +462,11 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 			   keysetInfoPtr->getNextItemFunction != NULL ) );
 
 	/* Read the keyset contents into memory */
-	sioctl( &keysetInfoPtr->keysetFile->stream, STREAM_IOCTL_IOBUFFER, 
-			buffer, STREAM_BUFSIZE );
+	sioctl( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, buffer, 
+			STREAM_BUFSIZE );
 	status = keysetInfoPtr->initFunction( keysetInfoPtr, NULL, 0,
 										  keysetInfoPtr->options );
-	sioctl( &keysetInfoPtr->keysetFile->stream, STREAM_IOCTL_IOBUFFER, 
-			NULL, 0 );
+	sioctl( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, NULL, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -474,7 +477,7 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 		  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
 		  keysetInfoPtr->subType == KEYSET_SUBTYPE_PGP_PRIVATE ) && \
 		( keysetInfoPtr->options == CRYPT_KEYOPT_READONLY ) )
-		sFileClose( &keysetInfoPtr->keysetFile->stream );
+		sFileClose( &fileInfo->stream );
 	else
 		{
 		/* Remember that the stream is still open for further access */
@@ -712,6 +715,7 @@ static int keysetMessageFunction( INOUT TYPECAST( KEYSET_INFO * ) \
 				  ( keysetInfoPtr->type == KEYSET_FILE && \
 					keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
 		REQUIRES( ( messageValue != KEYMGMT_ITEM_REQUEST && \
+					messageValue != KEYMGMT_ITEM_REVREQUEST && \
 					messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
 					messageValue != KEYMGMT_ITEM_PKIUSER ) || \
 				  keysetInfoPtr->type == KEYSET_DBMS );
@@ -739,10 +743,12 @@ static int keysetMessageFunction( INOUT TYPECAST( KEYSET_INFO * ) \
 					( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 || \
 					  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS12 ) ) );
 		REQUIRES( ( messageValue != KEYMGMT_ITEM_SECRETKEY && \
-					messageValue != KEYMGMT_ITEM_DATA ) || \
+					messageValue != KEYMGMT_ITEM_DATA && \
+					messageValue != KEYMGMT_ITEM_KEYMETADATA ) || \
 				  ( keysetInfoPtr->type == KEYSET_FILE && \
 					keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 ) );
 		REQUIRES( ( messageValue != KEYMGMT_ITEM_REQUEST && \
+					messageValue != KEYMGMT_ITEM_REVREQUEST && \
 					messageValue != KEYMGMT_ITEM_REVOCATIONINFO && \
 					messageValue != KEYMGMT_ITEM_PKIUSER ) || \
 				  ( keysetInfoPtr->type == KEYSET_DBMS ) );
@@ -1096,6 +1102,7 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
 		{
 		/* The kernel is shutting down, bail out */
+		DEBUG_DIAG(( "Exiting due to kernel shutdown" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_PERMISSION );
 		}

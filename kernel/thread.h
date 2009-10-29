@@ -94,6 +94,31 @@
    reason it's essential that the owner field be reset before the mutex is
    unlocked.
 
+   Note that this implementation of re-entrant mutexes will cause some 
+   static source analysers to give false-positive warnings about not 
+   unlocking mutexes, since they don't understand the reference-counting 
+   mechanism and assume that the mutex is always locked but not always 
+   unlocked.
+
+   An additional benefit to performing our own OS object management is that 
+   we can avoid OS-specific exposure issues arising from the use of global 
+   objects.  For example under Windows if an object with a given name 
+   already exists, CreateXYZ() opens the existing object, ignores the 
+   security parameters and the object-held flag (!!), and returns a success 
+   status.  The only way to tell that we didn't actually get what we asked 
+   for is that GetLastError() will return ERROR_ALREADY_EXISTS.  Without 
+   this check we could end up thinking we safely hold the object (via the 
+   ignored object-held flag) when in fact we don't.  Under Unix it's no 
+   better, since a semaphore set (for example) is disconnected from the 
+   processes that use it (access requires an on-demand lookup by semid) it's 
+   possible for a name-squatting process to create the set before we do, we 
+   "create" (= open) it, and then the other process deletes it and recreates 
+   it in a different (and totally unexpected) configuration.  To our process 
+   the disconnected lookup makes it appear to be the same semaphore set.  By 
+   synthesising any higher-level objects that we need from low-level 
+   primitives that aren't visible outside our process, we avoid this type 
+   of exposure.
+
    The types and macros that need to be declared to handle threading are:
 
 	THREAD_HANDLE			-- Handle for threads
@@ -523,6 +548,11 @@ int threadPriority( void );
 #define THREAD_HANDLE			cyg_handle_t
 #define MUTEX_HANDLE			cyg_sem_t
 
+/* Since eCOS has non-scalar handles we need to define a custom version of
+   the value DUMMY_INIT_MUTEX (see the end of this file) */
+
+#define DUMMY_INIT_MUTEX		{ 0 }
+
 /* Mutex management functions */
 
 #define MUTEX_DECLARE_STORAGE( name ) \
@@ -546,7 +576,7 @@ int threadPriority( void );
 			krnlData->name##MutexInitialised = FALSE; \
 			}
 #define MUTEX_LOCK( name ) \
-		if( cyg_mutex_trylock( &krnlData->name##Mutex ) ) \
+		if( !cyg_mutex_trylock( &krnlData->name##Mutex ) ) \
 			{ \
 			if( !THREAD_SAME( krnlData->name##MutexOwner, THREAD_SELF() ) ) \
 				cyg_mutex_lock( &krnlData->name##Mutex ); \
@@ -1712,7 +1742,7 @@ rtems_id threadSelf( void );
 	 underlying process context should yield the associated thread */
   #define THREAD_YIELD()		yield()
 #else
-  #ifdef __linux__
+  #if defined( __linux__ ) && !defined( __USE_GNU )
 	void pthread_yield( void );
   #endif /* Present but not prototyped unless GNU extensions are enabled */
   #define  THREAD_YIELD()		pthread_yield()
@@ -2365,5 +2395,19 @@ void threadYield( void );
 #define THREAD_CLOSE( sync )
 
 #endif /* Threading support macros */
+
+/****************************************************************************
+*																			*
+*								Generic Defines								*
+*																			*
+****************************************************************************/
+
+/* To initialise thread/mutex handles we need our own version of DUMMY_INIT,
+   since this may be an OS-specific and/or non-scalar value we only define
+   it if it hasn't already been defined above */
+
+#ifndef DUMMY_INIT_MUTEX
+  #define DUMMY_INIT_MUTEX	( MUTEX_HANDLE ) DUMMY_INIT
+#endif /* !DUMMY_INIT_MUTEX */
 
 #endif /* _THREAD_DEFINED */

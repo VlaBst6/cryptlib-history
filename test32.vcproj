@@ -15,8 +15,8 @@
 	<Configurations>
 		<Configuration
 			Name="Debug|Win32"
-			OutputDirectory=".\binaries"
-			IntermediateDirectory=".\binaries"
+			OutputDirectory=".\binaries_vs"
+			IntermediateDirectory=".\binaries_vs"
 			ConfigurationType="1"
 			InheritedPropertySheets="$(VCInstallDir)VCProjectDefaults\UpgradeFromVC60.vsprops"
 			UseOfMFC="0"
@@ -48,10 +48,10 @@
 				ExceptionHandling="0"
 				BasicRuntimeChecks="3"
 				RuntimeLibrary="3"
-				PrecompiledHeaderFile=".\binaries/Test32.pch"
-				AssemblerListingLocation=".\binaries/"
-				ObjectFile=".\binaries/"
-				ProgramDataBaseFileName=".\binaries/"
+				PrecompiledHeaderFile=".\binaries_vs/Test32.pch"
+				AssemblerListingLocation=".\binaries_vs/"
+				ObjectFile=".\binaries_vs/"
+				ProgramDataBaseFileName=".\binaries_vs/"
 				WarningLevel="3"
 				SuppressStartupBanner="true"
 				DebugInformationFormat="3"
@@ -71,12 +71,12 @@
 				Name="VCLinkerTool"
 				AdditionalOptions="/FIXED:NO"
 				AdditionalDependencies="wsock32.lib odbccp32.lib"
-				OutputFile=".\binaries/Test32.exe"
+				OutputFile=".\binaries_vs/Test32.exe"
 				LinkIncremental="1"
 				SuppressStartupBanner="true"
 				IgnoreDefaultLibraryNames=""
 				GenerateDebugInformation="true"
-				ProgramDatabaseFile=".\binaries/Test32.pdb"
+				ProgramDatabaseFile=".\binaries_vs/Test32.pdb"
 				SubSystem="1"
 				TargetMachine="1"
 			/>
@@ -142,10 +142,10 @@
 				StringPooling="true"
 				RuntimeLibrary="2"
 				EnableFunctionLevelLinking="true"
-				PrecompiledHeaderFile=".\binaries/Test32.pch"
-				AssemblerListingLocation=".\binaries/"
-				ObjectFile=".\binaries/"
-				ProgramDataBaseFileName=".\binaries/"
+				PrecompiledHeaderFile=".\binaries_vs/Test32.pch"
+				AssemblerListingLocation=".\binaries_vs/"
+				ObjectFile=".\binaries_vs/"
+				ProgramDataBaseFileName=".\binaries_vs/"
 				WarningLevel="3"
 				SuppressStartupBanner="true"
 			/>
@@ -163,10 +163,10 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalDependencies="wsock32.lib odbccp32.lib"
-				OutputFile=".\binaries/Test32.exe"
+				OutputFile=".\binaries_vs/Test32.exe"
 				LinkIncremental="1"
 				SuppressStartupBanner="true"
-				ProgramDatabaseFile=".\binaries/Test32.pdb"
+				ProgramDatabaseFile=".\binaries_vs/Test32.pdb"
 				SubSystem="1"
 				TargetMachine="1"
 			/>
@@ -558,6 +558,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\test\testfunc.c"
+				>
+			</File>
+			<File
 				RelativePath="test\testlib.c"
 				>
 				<FileConfiguration
@@ -625,7 +629,7 @@
 			>
 		</Filter>
 		<File
-			RelativePath="binaries\cl32.lib"
+			RelativePath=".\binaries_vs\cl32.lib"
 			>
 		</File>
 	</Files>

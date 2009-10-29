@@ -94,7 +94,8 @@ static const OBJECT_STATE_INFO FAR_BSS OBJECT_STATE_INFO_TEMPLATE = {
    and deleting them at the end when everything else has been shut down
    isn't possible */
 
-int initObjects( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initObjects( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i, status;
 
@@ -150,9 +151,9 @@ int initObjects( KERNEL_DATA *krnlDataPtr )
 	/* Postconditions */
 	POST( krnlData->objectTable != NULL );
 	POST( krnlData->objectTableSize == OBJECT_TABLE_ALLOCSIZE );
-	FORALL( i, 0, OBJECT_TABLE_ALLOCSIZE,
-			!memcmp( &krnlData->objectTable[ i ], &OBJECT_INFO_TEMPLATE, \
-					 sizeof( OBJECT_INFO ) ) );
+	FORALL( i, 0, OBJECT_TABLE_ALLOCSIZE, \
+			!memcmp( &krnlData->objectTable[ i ], \
+					 &OBJECT_INFO_TEMPLATE, sizeof( OBJECT_INFO ) ) );
 	POST( krnlData->objectStateInfo.lfsrMask == OBJECT_TABLE_ALLOCSIZE && \
 		  krnlData->objectStateInfo.lfsrPoly == INITIAL_LFSRPOLY && \
 		  krnlData->objectStateInfo.objectHandle == SYSTEM_OBJECT_HANDLE - 1 );
@@ -184,7 +185,7 @@ void endObjects( void )
 
 /* Destroy an object's instance data and object table entry */
 
-void destroyObjectData( const int objectHandle )
+void destroyObjectData( IN_HANDLE const int objectHandle )
 	{
 	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 
@@ -196,6 +197,7 @@ void destroyObjectData( const int objectHandle )
 		krnlMemfree( &objectInfoPtr->objectPtr );
 	else
 		{
+		/* Mors ultima linea rerum est */
 		zeroise( objectInfoPtr->objectPtr, objectInfoPtr->objectSize );
 		clFree( "destroyObjectData", objectInfoPtr->objectPtr );
 		}
@@ -240,7 +242,7 @@ static void destroyObject( const int objectHandle )
 /* Destroy all objects at a given nesting level */
 
 CHECK_RETVAL \
-static int destroySelectedObjects( const int currentDepth )
+static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	int objectHandle, status = CRYPT_OK;
@@ -304,8 +306,9 @@ static int destroySelectedObjects( const int currentDepth )
 	return( status );
 	}
 
-/* Destroy all objects */
+/* Destroy all objects (homini necesse est mori) */
 
+CHECK_RETVAL \
 int destroyObjects( void )
 	{
 	int depth, objectHandle, status = CRYPT_OK;
@@ -572,12 +575,16 @@ static int expandObjectTable( void )
 	return( objectHandle );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 9 ) ) \
 int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
-					  void **objectDataPtr, const int objectDataSize,
-					  const OBJECT_TYPE type, const OBJECT_SUBTYPE subType,
-					  const int createObjectFlags, const CRYPT_USER owner,
-					  const int actionFlags,
-					  MESSAGE_FUNCTION messageFunction )
+					  OUT_PTR void **objectDataPtr, 
+					  IN_LENGTH_SHORT const int objectDataSize,
+					  IN_ENUM( OBJECT ) const OBJECT_TYPE type, 
+					  IN_ENUM( OBJECT_SUB ) const OBJECT_SUBTYPE subType,
+					  IN_FLAGS( CREATEOBJECT ) const int createObjectFlags, 
+					  IN_HANDLE const CRYPT_USER owner,
+					  IN_FLAGS( ACTION ) const int actionFlags,
+					  IN CALLBACK_FUNCTION MESSAGE_FUNCTION messageFunction )
 	{
 	OBJECT_INFO objectInfo;
 	OBJECT_STATE_INFO *objectStateInfo = &krnlData->objectStateInfo;
@@ -607,7 +614,7 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	bitCount = ( subType & ~SUBTYPE_CLASS_MASK ) - \
 			   ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 1 ) & 033333333333L ) - \
 			   ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 2 ) & 011111111111L );
-	if( !isWritePtr( objectDataPtr, sizeof( void * ) ) || \
+	if( !isWritePtrConst( objectDataPtr, sizeof( void * ) ) || \
 		objectDataSize <= 16 || objectDataSize >= 16384 || \
 		!isValidType( type ) || \
 		( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 != 1 || \
@@ -627,11 +634,12 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 
 	/* If we haven't been initialised yet or we're in the middle of a
 	   shutdown, we can't create any new objects */
-	if( !isWritePtr( krnlData, sizeof( KERNEL_DATA ) ) || \
+	if( !isWritePtrConst( krnlData, sizeof( KERNEL_DATA ) ) || \
 		krnlData->initLevel <= INIT_LEVEL_NONE )
 		return( CRYPT_ERROR_NOTINITED );
 	if( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES )
 		{
+		DEBUG_DIAG(( "Can't create new objects during a shutdown" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_PERMISSION );
 		}
@@ -730,11 +738,22 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	krnlData->objectTable[ localObjectHandle ] = objectInfo;
 	if( localObjectHandle == NO_SYSTEM_OBJECTS - 1 )
 		{
+		time_t theTime;
+		
+		/* Get a non-constant seed to use for the initial object handle.  
+		   See the comment in findFreeResource() for why this is done, and 
+		   why it only uses a relatively weak seed.  Since we may be running 
+		   on an embedded system with no reliable time source available we 
+		   use getApproxTime() rather than getTime(), the check for correct 
+		   functioning of the time source on non-embedded systems has 
+		   already been done in the init code */
+		theTime = getApproxTime();
+
 		/* If this is the last system object, we've been allocating handles
 		   sequentially up to this point.  From now on we start allocating
 		   handles starting from a randomised location in the table */
 		objectStateInfo->objectHandle = \
-			( ( int ) getTime() ) & ( objectStateInfo->lfsrMask - 1 );
+				( int ) theTime & ( objectStateInfo->lfsrMask - 1 );
 		if( objectStateInfo->objectHandle < NO_SYSTEM_OBJECTS )
 			{
 			/* Can occur with probability

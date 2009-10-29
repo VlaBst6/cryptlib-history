@@ -88,11 +88,11 @@ enum { BER_ID_RESERVED, BER_ID_BOOLEAN, BER_ID_INTEGER, BER_ID_BITSTRING,
 
 /* The encodings for constructed, indefinite-length tags and lengths */
 
-#define BER_OCTETSTRING_INDEF	( ( BYTE * ) "\x24\x80" )
-#define BER_SEQUENCE_INDEF		( ( BYTE * ) "\x30\x80" )
-#define BER_SET_INDEF			( ( BYTE * ) "\x31\x80" )
-#define BER_CTAG0_INDEF			( ( BYTE * ) "\xA0\x80" )
-#define BER_END_INDEF			( ( BYTE * ) "\x00\x00" )
+#define BER_OCTETSTRING_INDEF	MKDATA( "\x24\x80" )
+#define BER_SEQUENCE_INDEF		MKDATA( "\x30\x80" )
+#define BER_SET_INDEF			MKDATA( "\x31\x80" )
+#define BER_CTAG0_INDEF			MKDATA( "\xA0\x80" )
+#define BER_END_INDEF			MKDATA( "\x00\x00" )
 
 /* Masks to extract information from a tag number */
 
@@ -126,11 +126,12 @@ enum { BER_ID_RESERVED, BER_ID_BOOLEAN, BER_ID_INTEGER, BER_ID_BITSTRING,
 /* Special-case tags.  If DEFAULT_TAG is given the basic type (e.g. INTEGER,
    ENUMERATED) is used, otherwise the value is used as a context-specific
    tag.  If NO_TAG is given, processing of the tag is skipped.  If ANY_TAG
-   is given, the tag is ignored */
+   is given, the tag is ignored.  The parentheses are to catch potential
+   erroneous use in an expression */
 
-#define DEFAULT_TAG			-1
-#define NO_TAG				-2
-#define ANY_TAG				-3
+#define DEFAULT_TAG			( -1 )
+#define NO_TAG				( -2 )
+#define ANY_TAG				( -3 )
 
 /* The highest encoded tag value */
 
@@ -161,7 +162,7 @@ enum { BER_ID_RESERVED, BER_ID_BOOLEAN, BER_ID_INTEGER, BER_ID_BITSTRING,
 #define MIN_OID_SIZE		5
 #define MAX_OID_SIZE		32
 
-/* When reading an OID selection with readOID(), we sometimes need to handle
+/* When reading an OID selection with readOID() we sometimes need to allow
    a catch-all default value that's used when nothing else matches.  This is
    typically used for type-and-value data where we want to ignore anything
    that we don't recognise.  The following value is used as a match-all
@@ -172,7 +173,7 @@ enum { BER_ID_RESERVED, BER_ID_BOOLEAN, BER_ID_INTEGER, BER_ID_BITSTRING,
 
 #define WILDCARD_OID		( const BYTE * ) \
 							"\xFF\x0E\xFF\x00\xFF\x00\xFF\x00\xFF\x00\xFF\x00\xFF\x00\xFF\x00"
-#define WILDCARD_OID_SZE	16
+#define WILDCARD_OID_SIZE	16
 
 /* A macro to make make declaring OIDs simpler */
 
@@ -224,8 +225,7 @@ RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readUniversal( INOUT STREAM *stream );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readRawObject( INOUT STREAM *stream, 
-				   OUT_BUFFER( bufferMaxLength, bufferLength ) \
-				   BYTE *buffer, 
+				   OUT_BUFFER( bufferMaxLength, *bufferLength ) BYTE *buffer, 
 				   IN_LENGTH_SHORT_MIN( 3 ) const int bufferMaxLength, 
 				   OUT_LENGTH_SHORT_Z int *bufferLength, 
 				   IN_TAG_ENCODED const int tag );
@@ -302,7 +302,7 @@ int readIntegerTag( INOUT STREAM *stream,
 					OUT_BUFFER_OPT( integerMaxLength, *integerLength ) \
 					BYTE *integer, 
 					IN_LENGTH_SHORT const int integerMaxLength, 
-					OUT_LENGTH_SHORT_Z int *integerLength, 
+					OUT_OPT_LENGTH_SHORT_Z int *integerLength, 
 					IN_TAG_EXT const int tag );
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeInteger( INOUT STREAM *stream, 
@@ -445,13 +445,13 @@ int readOctetStringTag( INOUT STREAM *stream,
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int writeCharacterString( INOUT STREAM *stream, 
 						  IN_BUFFER( bufSize ) \
-						  const BYTE *string, 
+						  const void *string, 
 						  IN_LENGTH_SHORT const int length, 
 						  IN_TAG_ENCODED const int tag );
 RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int readCharacterString( INOUT STREAM *stream, 
 						 OUT_BUFFER( stringMaxLength, *stringLength ) \
-						 BYTE *string, 
+						 void *string, 
 						 IN_LENGTH_SHORT const int stringMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *stringLength, 
 						 IN_TAG_EXT const int tag );
@@ -563,6 +563,15 @@ int readGenericHoleI( INOUT STREAM *stream,
 					  OUT_OPT_LENGTH_INDEF int *length, 
 					  IN_LENGTH_SHORT const int minLength, 
 					  IN_TAG const int tag );
+
+/* Read a generic object header, used by other ASN.1 routines like 
+   getXXXObjectLength() to find the length of an object being read as a 
+   blob */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readGenericObjectHeader( INOUT STREAM *stream, 
+							 OUT_LENGTH_INDEF long *length, 
+							 const BOOLEAN isLongObject );
 
 /* Determine the length of an ASN.1-encoded object (this just reads the
    outer length if present, but will burrow down into the object if necessary

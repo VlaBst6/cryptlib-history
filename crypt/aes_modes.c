@@ -464,7 +464,10 @@ AES_RETURN aes_cfb_encrypt(const unsigned char *ibuf, unsigned char *obuf,
     if(b_pos)           /* complete any partial block   */
     {
         while(b_pos < AES_BLOCK_SIZE && cnt < len)
-            *obuf++ = iv[b_pos++] ^= *ibuf++, cnt++;
+        {
+            *obuf++ = iv[b_pos++] ^= *ibuf++;
+            cnt++;
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
@@ -567,12 +570,15 @@ AES_RETURN aes_cfb_encrypt(const unsigned char *ibuf, unsigned char *obuf,
 			return EXIT_FAILURE;
 
         while(cnt < len && b_pos < AES_BLOCK_SIZE)
-            *obuf++ = iv[b_pos++] ^= *ibuf++, cnt++;
+        {
+            *obuf++ = iv[b_pos++] ^= *ibuf++;
+            cnt++;
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
 
-    ctx->inf.b[2] = b_pos;
+    ctx->inf.b[2] = (uint_8t)b_pos;
     return EXIT_SUCCESS;
 }
 
@@ -581,10 +587,15 @@ AES_RETURN aes_cfb_decrypt(const unsigned char *ibuf, unsigned char *obuf,
 {   int cnt = 0, b_pos = (int)ctx->inf.b[2], nb;
 
     if(b_pos)           /* complete any partial block   */
-    {   uint_8t t;
+    {   unsigned char t;
 
         while(b_pos < AES_BLOCK_SIZE && cnt < len)
-            t = *ibuf++, *obuf++ = t ^ iv[b_pos], iv[b_pos++] = t, cnt++;
+        {    
+            t = *ibuf++; 
+            *obuf++ = (unsigned char)(t ^ iv[b_pos]); 
+            iv[b_pos++] = t; 
+            cnt++; 
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
@@ -692,18 +703,23 @@ AES_RETURN aes_cfb_decrypt(const unsigned char *ibuf, unsigned char *obuf,
     }
 
     while(cnt < len)
-    {   uint_8t t;
+    {   unsigned char t;
 
         if(!b_pos && aes_encrypt(iv, iv, ctx) != EXIT_SUCCESS)
 			return EXIT_FAILURE;
 
         while(cnt < len && b_pos < AES_BLOCK_SIZE)
-            t = *ibuf++, *obuf++ = t ^ iv[b_pos], iv[b_pos++] = t, cnt++;
+        {
+            t = *ibuf++; 
+            *obuf++ = (unsigned char)(t ^ iv[b_pos]); 
+            iv[b_pos++] = t;
+            cnt++;
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
 
-    ctx->inf.b[2] = b_pos;
+    ctx->inf.b[2] = (uint_8t)b_pos;
     return EXIT_SUCCESS;
 }
 
@@ -714,7 +730,10 @@ AES_RETURN aes_ofb_crypt(const unsigned char *ibuf, unsigned char *obuf,
     if(b_pos)           /* complete any partial block   */
     {
         while(b_pos < AES_BLOCK_SIZE && cnt < len)
-            *obuf++ = iv[b_pos++] ^ *ibuf++, cnt++;
+        {
+            *obuf++ = (unsigned char)(iv[b_pos++] ^ *ibuf++);
+            cnt++;
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
@@ -817,12 +836,15 @@ AES_RETURN aes_ofb_crypt(const unsigned char *ibuf, unsigned char *obuf,
 			return EXIT_FAILURE;
 
         while(cnt < len && b_pos < AES_BLOCK_SIZE)
-            *obuf++ = iv[b_pos++] ^ *ibuf++, cnt++;
+        {
+            *obuf++ = (unsigned char)(iv[b_pos++] ^ *ibuf++);
+            cnt++;
+        }
 
         b_pos = (b_pos == AES_BLOCK_SIZE ? 0 : b_pos);
     }
 
-    ctx->inf.b[2] = b_pos;
+    ctx->inf.b[2] = (uint_8t)b_pos;
     return EXIT_SUCCESS;
 }
 
@@ -830,8 +852,8 @@ AES_RETURN aes_ofb_crypt(const unsigned char *ibuf, unsigned char *obuf,
 
 AES_RETURN aes_ctr_crypt(const unsigned char *ibuf, unsigned char *obuf,
             int len, unsigned char *cbuf, cbuf_inc ctr_inc, aes_encrypt_ctx ctx[1])
-{   uint_8t *ip;
-    int     i, blen, b_pos = (int)(ctx->inf.b[2]);
+{   unsigned char   *ip;
+    int             i, blen, b_pos = (int)(ctx->inf.b[2]);
 
 #if defined( USE_VIA_ACE_IF_PRESENT )
     aligned_auto(uint_8t, buf, BFR_LENGTH, 16);
@@ -847,7 +869,11 @@ AES_RETURN aes_ctr_crypt(const unsigned char *ibuf, unsigned char *obuf,
         if(aes_ecb_encrypt(buf, buf, AES_BLOCK_SIZE, ctx) != EXIT_SUCCESS)
 			return EXIT_FAILURE;
         while(b_pos < AES_BLOCK_SIZE && len)
-            *obuf++ = *ibuf++ ^ buf[b_pos++], --len;
+        {
+            *obuf++ = (unsigned char)(*ibuf++ ^ buf[b_pos++]);
+            --len;
+        }
+
         if(len)
             ctr_inc(cbuf), b_pos = 0;
     }
@@ -895,14 +921,22 @@ AES_RETURN aes_ctr_crypt(const unsigned char *ibuf, unsigned char *obuf,
 #endif
             while(i + AES_BLOCK_SIZE <= blen)
             {
-                obuf[ 0] = ibuf[ 0] ^ ip[ 0]; obuf[ 1] = ibuf[ 1] ^ ip[ 1];
-                obuf[ 2] = ibuf[ 2] ^ ip[ 2]; obuf[ 3] = ibuf[ 3] ^ ip[ 3];
-                obuf[ 4] = ibuf[ 4] ^ ip[ 4]; obuf[ 5] = ibuf[ 5] ^ ip[ 5];
-                obuf[ 6] = ibuf[ 6] ^ ip[ 6]; obuf[ 7] = ibuf[ 7] ^ ip[ 7];
-                obuf[ 8] = ibuf[ 8] ^ ip[ 8]; obuf[ 9] = ibuf[ 9] ^ ip[ 9];
-                obuf[10] = ibuf[10] ^ ip[10]; obuf[11] = ibuf[11] ^ ip[11];
-                obuf[12] = ibuf[12] ^ ip[12]; obuf[13] = ibuf[13] ^ ip[13];
-                obuf[14] = ibuf[14] ^ ip[14]; obuf[15] = ibuf[15] ^ ip[15];
+                obuf[ 0] = (unsigned char)(ibuf[ 0] ^ ip[ 0]); 
+                obuf[ 1] = (unsigned char)(ibuf[ 1] ^ ip[ 1]);
+                obuf[ 2] = (unsigned char)(ibuf[ 2] ^ ip[ 2]); 
+                obuf[ 3] = (unsigned char)(ibuf[ 3] ^ ip[ 3]);
+                obuf[ 4] = (unsigned char)(ibuf[ 4] ^ ip[ 4]); 
+                obuf[ 5] = (unsigned char)(ibuf[ 5] ^ ip[ 5]);
+                obuf[ 6] = (unsigned char)(ibuf[ 6] ^ ip[ 6]); 
+                obuf[ 7] = (unsigned char)(ibuf[ 7] ^ ip[ 7]);
+                obuf[ 8] = (unsigned char)(ibuf[ 8] ^ ip[ 8]); 
+                obuf[ 9] = (unsigned char)(ibuf[ 9] ^ ip[ 9]);
+                obuf[10] = (unsigned char)(ibuf[10] ^ ip[10]); 
+                obuf[11] = (unsigned char)(ibuf[11] ^ ip[11]);
+                obuf[12] = (unsigned char)(ibuf[12] ^ ip[12]); 
+                obuf[13] = (unsigned char)(ibuf[13] ^ ip[13]);
+                obuf[14] = (unsigned char)(ibuf[14] ^ ip[14]); 
+                obuf[15] = (unsigned char)(ibuf[15] ^ ip[15]);
                 i += AES_BLOCK_SIZE;
                 ip += AES_BLOCK_SIZE;
                 ibuf += AES_BLOCK_SIZE;
@@ -910,10 +944,10 @@ AES_RETURN aes_ctr_crypt(const unsigned char *ibuf, unsigned char *obuf,
             }
 
         while(i++ < blen)
-            *obuf++ = *ibuf++ ^ ip[b_pos++];
+            *obuf++ = (unsigned char)(*ibuf++ ^ ip[b_pos++]);
     }
 
-    ctx->inf.b[2] = b_pos;
+    ctx->inf.b[2] = (uint_8t)b_pos;
     return EXIT_SUCCESS;
 }
 

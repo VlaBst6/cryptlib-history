@@ -90,7 +90,7 @@ static int initMemoryStream( INOUT STREAM *stream,
 			( !nullStreamOK && isReadPtr( buffer, length ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	/* Clear the stream data and make it a null stream if required.  Note 
@@ -133,7 +133,7 @@ static int shutdownMemoryStream( INOUT STREAM *stream,
 			  stream->type == STREAM_TYPE_MEMORY );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	/* Clear the stream structure */
@@ -285,7 +285,7 @@ static int getMemoryBlock( INOUT STREAM *stream,
 	assert( isWritePtr( dataPtrPtr, sizeof( void * ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES( sanityCheck( stream ) && \
@@ -319,7 +319,7 @@ int sMemDataLeft( const STREAM *stream )
 			stream->type == STREAM_TYPE_MEMORY );
 
 	/* Check that the input parameters are in order */
-	if( !isReadPtr( stream, sizeof( STREAM ) ) )
+	if( !isReadPtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	/* We can't use REQUIRES_S() in this case because the stream is a const 

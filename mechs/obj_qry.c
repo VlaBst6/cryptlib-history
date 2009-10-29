@@ -88,6 +88,7 @@ static int getObjectInfo( INOUT STREAM *stream,
 			   CRYPT_ERROR_BADDATA if we encounter it rather than just 
 			   ignoring it */
 			queryInfo->type = CRYPT_OBJECT_NONE;
+			DEBUG_DIAG(( "Found keyAgreeRecipientInfo" ));
 			assert( DEBUG_WARN );
 			break;
 
@@ -101,6 +102,7 @@ static int getObjectInfo( INOUT STREAM *stream,
 				tag <= MAKE_CTAG( CTAG_RI_MAX ) )
 				{
 				/* This is probably a new RecipientInfo type, skip it */
+				DEBUG_DIAG(( "Found unknown RecipientInfo %X", tag ));
 				assert( DEBUG_WARN );
 				break;
 				}
@@ -163,6 +165,7 @@ int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
 			break;
 
 		default:
+			DEBUG_DIAG(( "Found unrecognised ctb %X", ctb ));
 			assert( DEBUG_WARN );
 			return( CRYPT_ERROR_BADDATA );
 		}
@@ -345,7 +348,7 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 		return( CRYPT_ERROR_PARAM2 );
 	if( !isReadPtr( objectData, objectDataLength ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( cryptObjectInfo, sizeof( CRYPT_OBJECT_INFO ) ) )
+	if( !isWritePtrConst( cryptObjectInfo, sizeof( CRYPT_OBJECT_INFO ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	memset( cryptObjectInfo, 0, sizeof( CRYPT_OBJECT_INFO ) );
 
@@ -354,7 +357,12 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 	   because we want to continue processing (or at least checking for) PGP 
 	   data if it's no ASN.1 */
 	sMemConnect( &stream, ( void * ) objectData, length );
-	value = sPeek( &stream );
+	status = value = sPeek( &stream );
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( &stream );
+		return( status );
+		}
 	if( value == BER_SEQUENCE || value == MAKE_CTAG( CTAG_RI_PWRI ) )
 		status = queryAsn1Object( &stream, &queryInfo );
 	else
@@ -380,6 +388,8 @@ C_RET cryptQueryObject( C_IN void C_PTR objectData,
 		{
 		memcpy( cryptObjectInfo->salt, queryInfo.salt, queryInfo.saltLength );
 		cryptObjectInfo->saltSize = queryInfo.saltLength;
+		if( queryInfo.keySetupAlgo != CRYPT_ALGO_NONE )
+			cryptObjectInfo->hashAlgo = queryInfo.keySetupAlgo;
 		}
 
 	return( CRYPT_OK );

@@ -343,7 +343,7 @@ static int transportSessionWriteFunction( INOUT STREAM *stream,
 	/* Clear return value */
 	*length = 0;
 
-	setMessageData( &msgData, ( void * ) buffer, maxLength );
+	setMessageData( &msgData, ( MESSAGE_CAST ) buffer, maxLength );
 	status = krnlSendMessage( netStream->iTransportSession,
 							  IMESSAGE_ENV_PUSHDATA, &msgData, 0 );
 	if( cryptStatusOK( status ) )
@@ -461,6 +461,8 @@ static int bufferedTransportReadFunction( INOUT STREAM *stream,
 		{
 		if( bytesLeft > 0 )
 			{
+			REQUIRES_S( rangeCheck( stream->bufPos, bytesLeft,
+								    stream->bufEnd ) );
 			memmove( stream->buffer, stream->buffer + stream->bufPos,
 					 bytesLeft );
 			}
@@ -637,8 +639,8 @@ static int processIncompleteWrite( INOUT NET_STREAM_INFO *netStream,
 	   down to the start.  This shouldn't be needed since the caller will 
 	   convert the failure to write the full amount into a write timeout but 
 	   we do it anyway just to be neat */
-	ENSURES( bytesLeftToWrite > 0 && \
-			 bytesLeftToWrite <= netStream->writeBufEnd );
+	REQUIRES( rangeCheck( bytesWritten, bytesLeftToWrite,
+						  netStream->writeBufEnd ) );
 	memmove( netStream->writeBuffer, netStream->writeBuffer + bytesWritten,
 			 bytesLeftToWrite );
 	netStream->writeBufEnd = bytesLeftToWrite;

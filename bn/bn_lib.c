@@ -873,3 +873,16 @@ int BN_high_bit(BIGNUM *a)	/* pcg */
 	l=a->d[i/BN_BYTES];
 	return((l>>(8*(i%BN_BYTES)))&0x80?1:0);
 	}
+
+void BN_checksum(BIGNUM *a, BN_ULONG *chk)	/* pcg */
+	{
+	int i;
+	BN_ULONG sum1 = 0, sum2 = *chk;
+
+	for (i=a->top-1; i>=0; i--)
+		{
+		sum1 += a->d[i];
+		sum2 += sum1;
+		}
+	*chk = sum2;
+	}

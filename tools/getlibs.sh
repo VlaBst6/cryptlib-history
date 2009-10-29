@@ -63,7 +63,8 @@ fi
 #			explicitly specified, although there's no discernable pattern
 #			for when this might be required (or even any easy way to detect
 #			Debian), so we unconditionally include it under Linux if libdl
-#			exists.
+#			exists.  Note that on some Linux systems it's hidden in
+#			/usr/lib64 so we check for both locations.
 #	-lgcc = Extra gcc support lib needed for BSDI, which ships with gcc but
 #			not the proper libs for it.
 #	-lkstat = kstat functions for Solaris randomness gathering.
@@ -118,7 +119,7 @@ case $OSNAME in
 		echo "-lw" ;;
 
 	'Linux')
-		if [ -f /usr/lib/libdl.so ] ; then
+		if [ -f /usr/lib/libdl.so -o -f /usr/lib64/libdl.so ] ; then
 			echo "-lresolv -lpthread -ldl" ;
 		else
 			echo "-lresolv -lpthread" ;

@@ -180,7 +180,7 @@
 #endif /* OS x || BeOS || *BSDs || PHUX || SunOS 4.x/2.5.x || Symbian OS */
 #include <arpa/inet.h>
 #if !( defined( __CYGWIN__ ) || defined( __PALMOS__ ) || \
-	   defined( __SYMBIAN32__ ) )
+	   defined( __SYMBIAN32__ ) || defined( USE_EMBEDDED_OS ) )
   #include <arpa/nameser.h>
 #endif /* Cygwin || Symbian OS */
 #if defined( __MVS__ ) || defined( __VMCMS__ )
@@ -194,10 +194,10 @@
   #include <netinet/tcp.h>
 #endif /* !MVS */
 #if !( defined( __CYGWIN__ ) || defined( __PALMOS__ ) || \
-	   defined( __SYMBIAN32__ ) )
+	   defined( __SYMBIAN32__ ) || defined( USE_EMBEDDED_OS ) )
   #include <resolv.h>
 #endif /* Cygwin || Symbian OS */
-#ifndef TCP_NODELAY
+#if !defined( TCP_NODELAY ) && !defined( USE_EMBEDDED_OS )
   #include <xti.h>
   #if defined( __MVS__ ) || defined( __VMCMS__ )
 	/* The following have conflicting definitions in nameser.h */
@@ -884,7 +884,11 @@
    When we get the nonblocking status, if there's an error getting the
    status we report it as a non-blocking socket, which results in the socket
    being reported as invalid, the same as if it were a a genuine non-
-   blocking socket */
+   blocking socket.
+   
+   If we're using the ioctlsocket() interface we make the argument an
+   unsigned long, in most cases this is a 'void *' but under Windows it's
+   an 'unsigned long *' so we use the most restrictive type */
 
 #if defined( F_GETFL ) && defined( F_SETFL ) && defined( O_NONBLOCK )
   #define getSocketNonblockingStatus( socket, value ) \
@@ -906,18 +910,18 @@
 #elif defined( FIONBIO )
   #define getSocketNonblockingStatus( socket, value ) \
 			{ \
-			long nonBlock = FALSE; \
+			unsigned long nonBlock = FALSE; \
 			value = ioctlsocket( socket, FIONBIO, &nonBlock ); \
 			value = isSocketError( value ) ? TRUE : FALSE; \
 			}
   #define setSocketNonblocking( socket ) \
 			{ \
-			long nonBlock = TRUE; \
+			unsigned long nonBlock = TRUE; \
 			ioctlsocket( socket, FIONBIO, &nonBlock ); \
 			}
   #define setSocketBlocking( socket ) \
 			{ \
-			long nonBlock = FALSE; \
+			unsigned long nonBlock = FALSE; \
 			ioctlsocket( socket, FIONBIO, &nonBlock ); \
 			}
 #elif defined( __AMX__ ) || defined( __BEOS__ )
@@ -977,8 +981,9 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 					IN_PORT const int port, const BOOLEAN isServer );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void freeAddressInfo( struct addrinfo *addrInfoPtr );
-STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-void getNameInfo( const struct sockaddr *sockAddr, 
+STDC_NONNULL_ARG( ( 1, 3, 5, 6 ) ) \
+void getNameInfo( IN_BUFFER( sockAddrLen ) const void *sockAddr,
+				  IN_LENGTH_SHORT_MIN( 8 ) const int sockAddrLen,
 				  OUT_BUFFER( addressMaxLen, *addressLen ) \
 				  char *address, IN_LENGTH_DNS const int addressMaxLen, 
 				  OUT_LENGTH_DNS_Z int *addressLen, 
@@ -1009,7 +1014,9 @@ void getNameInfo( const struct sockaddr *sockAddr,
 /* Prototypes for functions in tcp.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int getSocketError( NET_STREAM_INFO *netStream, IN_ERROR const int status );
+int getSocketError( NET_STREAM_INFO *netStream, 
+					IN_ERROR const int status,
+					OUT_INT_Z int *socketErrorCode );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getHostError( NET_STREAM_INFO *netStream, IN_ERROR const int status );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \

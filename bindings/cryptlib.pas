@@ -5,7 +5,7 @@ interface
 {****************************************************************************
 *                                                                           *
 *                     Cryptlib external API interface                       *
-*                    Copyright Peter Gutmann 1997-2008                      *
+*                    Copyright Peter Gutmann 1997-2009                      *
 *                                                                           *
 *        adapted for Delphi Version 5 (32 bit) and Kylix Version 3          *
 *                              by W. Gothier                                *
@@ -16,15 +16,15 @@ interface
 
  This file has been created automatically by a perl script from the file:
 
- "cryptlib.h" dated Fri Nov 23 02:07:02 2007, filesize = 85740.
+ "cryptlib.h" dated Sun Jul  5 01:39:06 2009, filesize = 91488.
 
  Please check twice that the file matches the version of cryptlib.h
  in your cryptlib source! If this is not the right version, try to download an
- update from "http://www.sogot.de/cryptlib/". If the filesize or file creation
+ update from "http://cryptlib.sogot.de/". If the filesize or file creation
  date do not match, then please do not complain about problems.
 
  Published by W. Gothier, 
- mailto: cryptlib@gothier.net if you find errors in this file.
+ mailto: problems@cryptlib.sogot.de if you find errors in this file.
 
 -------------------------------------------------------------------------------}
 
@@ -43,7 +43,6 @@ const
 
 const
   CRYPTLIB_VERSION = 3320;
-
 
 {****************************************************************************
 *                                                                           *
@@ -80,20 +79,25 @@ const
   CRYPT_ALGO_ELGAMAL = 103;  { ElGamal }
   CRYPT_ALGO_KEA = 104;  { KEA }
   CRYPT_ALGO_ECDSA = 105;  { ECDSA }
+  CRYPT_ALGO_ECDH = 106;  { ECDH }
   
   { Hash algorithms }
   CRYPT_ALGO_MD2 = 200;  { MD2 }
   CRYPT_ALGO_MD4 = 201;  { MD4 }
   CRYPT_ALGO_MD5 = 202;  { MD5 }
-  CRYPT_ALGO_SHA = 203;  { SHA/SHA1 }
+  CRYPT_ALGO_SHA1 = 203;  { SHA/SHA1 }
+  CRYPT_ALGO_SHA = 203; { = CRYPT_ALGO_SHA1 }  { Older form }
   CRYPT_ALGO_RIPEMD160 = 204;  { RIPE-MD 160 }
-  CRYPT_ALGO_SHA2 = 205;  { SHA2 (SHA-256/384/512)}
+  CRYPT_ALGO_SHA2 = 205;  { SHA-256 }
+  CRYPT_ALGO_SHAng = 206;  { Future SHA-nextgen standard }
   
   { MAC's }
   CRYPT_ALGO_HMAC_MD5 = 300;  { HMAC-MD5 }
   CRYPT_ALGO_HMAC_SHA1 = 301;  { HMAC-SHA }
   CRYPT_ALGO_HMAC_SHA = 301; { = CRYPT_ALGO_HMAC_SHA1 }  { Older form }
   CRYPT_ALGO_HMAC_RIPEMD160 = 302;  { HMAC-RIPEMD-160 }
+  CRYPT_ALGO_HMAC_SHA2 = 303;  { HMAC-SHA2 }
+  CRYPT_ALGO_HMAC_SHAng = 304;  { HMAC-future-SHA-nextgen }
   
   { Vendors may want to use their own algorithms that aren't part of the
   general cryptlib suite.  The following values are for vendor-defined
@@ -101,7 +105,7 @@ const
   up to the vendor to keep track of what _VENDOR1 actually corresponds
   to) }
   
-  CRYPT_ALGO_LAST = 303;  { Last possible crypt algo value }
+  CRYPT_ALGO_LAST = 305;  { Last possible crypt algo value }
   
   { In order that we can scan through a range of algorithms with
   cryptQueryCapability(), we define the following boundary points for
@@ -156,6 +160,7 @@ type
     CRYPT_DEVICE_FORTEZZA,          {  Fortezza card  }
     CRYPT_DEVICE_PKCS11,            {  PKCS #11 crypto token  }
     CRYPT_DEVICE_CRYPTOAPI,         {  Microsoft CryptoAPI  }
+    CRYPT_DEVICE_HARDWARE,          {  Generic crypo HW plugin  }
     CRYPT_DEVICE_LAST               {  Last possible crypto device type  }
     
   );
@@ -937,7 +942,7 @@ const
   { Protocol-specific information }
   CRYPT_SESSINFO_TSP_MSGIMPRINT = 6019;  { TSP message imprint }
   CRYPT_SESSINFO_CMP_REQUESTTYPE = 6020;  { Request type }
-  CRYPT_SESSINFO_CMP_PKIBOOT = 6021;  { Enable PKIBoot facility }
+  CRYPT_SESSINFO_CMP_PKIBOOT = 6021;  { Unused, to be removed in 3.4 }
   CRYPT_SESSINFO_CMP_PRIVKEYSET = 6022;  { Private-key keyset }
   CRYPT_SESSINFO_SSH_CHANNEL = 6023;  { SSH current channel }
   CRYPT_SESSINFO_SSH_CHANNEL_TYPE = 6024;  { SSH channel type }
@@ -1083,7 +1088,8 @@ type
                CRYPT_CONTENT_AUTHENVDATA, CRYPT_CONTENT_TSTINFO,
                CRYPT_CONTENT_SPCINDIRECTDATACONTEXT,
                CRYPT_CONTENT_RTCSREQUEST, CRYPT_CONTENT_RTCSRESPONSE,
-               CRYPT_CONTENT_RTCSRESPONSE_EXT, CRYPT_CONTENT_LAST
+               CRYPT_CONTENT_RTCSRESPONSE_EXT, CRYPT_CONTENT_MRTD, 
+               CRYPT_CONTENT_LAST
              
   );
 
@@ -1265,10 +1271,10 @@ const
   CRYPT_MAX_IVSIZE = 32;
 
 {  The maximum public-key component size - 4096 bits, and maximum component
-   size for ECCs - 256 bits  }
+   size for ECCs - 576 bits (to handle the P521 curve)  }
 
   CRYPT_MAX_PKCSIZE = 512;
-  CRYPT_MAX_PKCSIZE_ECC = 32;
+  CRYPT_MAX_PKCSIZE_ECC = 72;
 
 {  The maximum hash size - 256 bits  }
 
@@ -1279,7 +1285,8 @@ const
   CRYPT_MAX_TEXTSIZE = 64;
 
 {  A magic value indicating that the default setting for this parameter
-   should be used  }
+   should be used.  The parentheses are to catch potential erroneous use 
+   in an expression  }
 
   CRYPT_USE_DEFAULT = -100;
 
@@ -1287,7 +1294,8 @@ const
 
   CRYPT_UNUSED = -101;
 
-{  Cursor positioning codes for certificate/CRL extensions  }
+{  Cursor positioning codes for certificate/CRL extensions.  The parentheses 
+   are to catch potential erroneous use in an expression  }
 
   CRYPT_CURSOR_FIRST = -200;
   CRYPT_CURSOR_PREVIOUS = -201;
@@ -1296,7 +1304,8 @@ const
 
 {  The type of information polling to perform to get random seed 
    information.  These values have to be negative because they're used
-   as magic length values for cryptAddRandom()  }
+   as magic length values for cryptAddRandom().  The parentheses are to 
+   catch potential erroneous use in an expression  }
 
   CRYPT_RANDOM_FASTPOLL = -300;
   CRYPT_RANDOM_SLOWPOLL = -301;
@@ -1426,25 +1435,40 @@ type
 
   end;
 
+  CRYPT_ECCCURVE_TYPE = (  
+    {  Named ECC curves.  When updating these remember to also update the 
+       ECC fieldSizeInfo table in context/kg_ecc.c, the eccOIDinfo table and 
+       sslEccCurveInfo table in context/key_rd.c, and the curveIDTbl in 
+       session/ssl.c  }
+    CRYPT_ECCCURVE_NONE,        {  No ECC curve type  }
+    CRYPT_ECCCURVE_P192,        {  NIST P192/X9.62 P192r1/SECG p192r1 curve  }
+    CRYPT_ECCCURVE_P224,        {  NIST P224/X9.62 P224r1/SECG p224r1 curve  }
+    CRYPT_ECCCURVE_P256,        {  NIST P256/X9.62 P256v1/SECG p256r1 curve  }
+    CRYPT_ECCCURVE_P384,        {  NIST P384, SECG p384r1 curve  }
+    CRYPT_ECCCURVE_P521,        {  NIST P521, SECG p521r1  }
+    CRYPT_ECCCURVE_LAST         {  Last valid ECC curve type  }
+    
+  );
+
   CRYPT_PKCINFO_ECC = record  
     { Status information }
     isPublicKey: Integer;            { Whether this is a public or private key }
 
-    { Curve }
+    {  Curve domain parameters.  Either the curveType or the explicit domain
+       parameters must be provided  }
+    CRYPT_ECCCURVE_TYPE curveType  { Named curve }
     p: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Prime defining Fq }
     pLen: Integer;                   { Length of prime in bits }
     a: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining curve }
     aLen: Integer;                   { Length of element a in bits }
     b: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining curve }
     bLen: Integer;                   { Length of element b in bits }
-
-    { Generator }
     gx: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining point }
     gxLen: Integer;                  { Length of element gx in bits }
     gy: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Element in Fq defining point }
     gyLen: Integer;                  { Length of element gy in bits }
-    r: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Order of point }
-    rLen: Integer;                   { Length of order in bits }
+    n: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Order of point }
+    nLen: Integer;                   { Length of order in bits }
     h: array[0 .. CRYPT_MAX_PKCSIZE_ECC-1] of byte;{ Optional cofactor }
     hLen: Integer;                   { Length of cofactor in bits }
 
@@ -1490,9 +1514,10 @@ type
 
 
 const
-  CRYPT_OK = 0;   {  No error  }
+  CRYPT_OK = 0;       {  No error  }
 
-{  Error in parameters passed to function  }
+{  Error in parameters passed to function.  The parentheses are to catch 
+   potential erroneous use in an expression  }
 
   CRYPT_ERROR_PARAM1 = -1;  {  Bad argument, parameter 1  }
   CRYPT_ERROR_PARAM2 = -2;  {  Bad argument, parameter 2  }
@@ -1560,6 +1585,7 @@ const
 
 {  Initialise and shut down cryptlib  }
 
+ 
 function cryptInit: Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
@@ -1744,7 +1770,7 @@ function cryptCheckSignatureEx( const signature: Pointer;
 function cryptKeysetOpen( var keyset: CRYPT_KEYSET;
   const cryptUser: CRYPT_USER;
   const keysetType: CRYPT_KEYSET_TYPE;
-  const name: PChar;
+  const name: PAnsiChar;
   const options: CRYPT_KEYOPT_TYPE ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
@@ -1757,21 +1783,21 @@ function cryptKeysetClose( const keyset: CRYPT_KEYSET ): Integer;
 function cryptGetPublicKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptGetPrivateKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar;
-  const password: PChar ): Integer;
+  const keyID: PAnsiChar;
+  const password: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptGetKey( const keyset: CRYPT_KEYSET;
   var cryptContext: CRYPT_CONTEXT;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar;
-  const password: PChar ): Integer;
+  const keyID: PAnsiChar;
+  const password: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
@@ -1783,12 +1809,12 @@ function cryptAddPublicKey( const keyset: CRYPT_KEYSET;
 
 function cryptAddPrivateKey( const keyset: CRYPT_KEYSET;
   const cryptKey: CRYPT_HANDLE;
-  const password: PChar ): Integer;
+  const password: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptDeleteKey( const keyset: CRYPT_KEYSET;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
@@ -1814,7 +1840,7 @@ function cryptDestroyCert( const certificate: CRYPT_CERTIFICATE ): Integer;
    rather than C_STR  }
 
 function cryptGetCertExtension( const certificate: CRYPT_CERTIFICATE;
-  const oid: PChar;
+  const oid: PAnsiChar;
   var criticalFlag: Integer;
   extension: Pointer;
   const extensionMaxLength: Integer;
@@ -1822,14 +1848,14 @@ function cryptGetCertExtension( const certificate: CRYPT_CERTIFICATE;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptAddCertExtension( const certificate: CRYPT_CERTIFICATE;
-  const oid: PChar;
+  const oid: PAnsiChar;
   const criticalFlag: Integer;
   const extension: Pointer;
   const extensionLength: Integer ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptDeleteCertExtension( const certificate: CRYPT_CERTIFICATE;
-  const oid: PChar ): Integer;
+  const oid: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 
@@ -1870,13 +1896,13 @@ function cryptCAGetItem( const keyset: CRYPT_KEYSET;
   var certificate: CRYPT_CERTIFICATE;
   const certType: CRYPT_CERTTYPE_TYPE;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptCADeleteItem( const keyset: CRYPT_KEYSET;
   const certType: CRYPT_CERTTYPE_TYPE;
   const keyIDtype: CRYPT_KEYID_TYPE;
-  const keyID: PChar ): Integer;
+  const keyID: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptCACertManagement( var certificate: CRYPT_CERTIFICATE;
@@ -1944,7 +1970,7 @@ function cryptPopData( const envelope: CRYPT_HANDLE;
 function cryptDeviceOpen( var device: CRYPT_DEVICE;
   const cryptUser: CRYPT_USER;
   const deviceType: CRYPT_DEVICE_TYPE;
-  const name: PChar ): Integer;
+  const name: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptDeviceClose( const device: CRYPT_DEVICE ): Integer;
@@ -1976,13 +2002,19 @@ function cryptDeviceCreateContext( const device: CRYPT_DEVICE;
 {  Log on and off (create/destroy a user object)  }
 
 function cryptLogin( var user: CRYPT_USER;
-  const name: PChar;
-  const password: PChar ): Integer;
+  const name: PAnsiChar;
+  const password: PAnsiChar ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
 function cryptLogout( const user: CRYPT_USER ): Integer;
 {$IFDEF WIN32} stdcall; {$ELSE} cdecl; {$ENDIF} external cryptlibname;
 
+
+{****************************************************************************
+*                                                                           *
+*                           User Interface Functions                        *
+*                                                                           *
+****************************************************************************}
 
 
 

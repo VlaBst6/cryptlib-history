@@ -302,9 +302,9 @@ static int openNetworkConnection( INOUT NET_STREAM_INFO *netStream,
 			/* The proxy URL was invalid, provide more information for the
 			   caller */
 			netStream->errorInfo.errorCode = CRYPT_ERROR_NOTFOUND;
-			setErrorString( NETSTREAM_ERRINFO, 
-							"Couldn't auto-detect HTTP proxy", 31 );
-			return( CRYPT_ERROR_OPEN );
+			retExt( CRYPT_ERROR_OPEN,
+					( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
+					  "Couldn't auto-detect HTTP proxy" ) );
 			}
 		url = urlBuffer;
 		}
@@ -317,8 +317,9 @@ static int openNetworkConnection( INOUT NET_STREAM_INFO *netStream,
 		/* The proxy URL was invalid, provide more information for the
 		   caller */
 		netStream->errorInfo.errorCode = CRYPT_ERROR_BADDATA;
-		setErrorString( NETSTREAM_ERRINFO, "Invalid HTTP proxy URL", 22 );
-		return( CRYPT_ERROR_OPEN );
+		retExt( CRYPT_ERROR_OPEN,
+				( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
+				  "Invalid HTTP proxy URL" ) );
 		}
 
 	/* Since we're going via a proxy, open the connection to the proxy
@@ -385,6 +386,7 @@ static int initStream( OUT STREAM *stream,
 	if( timeout < 5 )
 		{
 		/* Enforce the same minimum connect timeout as the kernel ACLs */
+		DEBUG_DIAG(( "Timeout is < 5s" ));
 		assert( DEBUG_WARN );
 		timeout = 5;
 		}
@@ -445,7 +447,8 @@ static int processConnectOptions( INOUT STREAM *stream,
 								  OUT_OPT URL_INFO *urlInfo,
 								  const NET_CONNECT_INFO *connectInfo )
 	{
-	int status;
+	const void *name = connectInfo->name;
+	int nameLength = connectInfo->nameLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
@@ -460,12 +463,15 @@ static int processConnectOptions( INOUT STREAM *stream,
 					connectInfo->options == NET_OPTION_NETWORKSOCKET || \
 					connectInfo->options == NET_OPTION_NETWORKSOCKET_DUMMY ) && \
 					urlInfo == NULL ) || \
-				( ( connectInfo->options == NET_OPTION_HOSTNAME || \
+				( !( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
+				  ( connectInfo->options == NET_OPTION_HOSTNAME || \
 					connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL ) && \
 				  connectInfo->name != NULL && urlInfo != NULL ) || \
-				( connectInfo->options == NET_OPTION_HOSTNAME && \
-				  ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
-				  connectInfo->name == NULL && urlInfo == NULL ) );
+				( ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
+				  connectInfo->options == NET_OPTION_HOSTNAME && \
+				  connectInfo->name == NULL && \
+				  ( ( connectInfo->interface == NULL && urlInfo == NULL ) || \
+					( connectInfo->interface != NULL && urlInfo != NULL ) ) ) );
 
 	/* Clear return value */
 	if( urlInfo != NULL )
@@ -500,16 +506,20 @@ static int processConnectOptions( INOUT STREAM *stream,
 				  connectInfo->nameLength > 0 && \
 				  connectInfo->nameLength < MAX_INTLENGTH_SHORT ) );
 
-	/* If it's a server (i.e. we're opening a listen socket) then the name
-	   is optional */
-	if( ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) && \
-		connectInfo->name == NULL )
-		return( CRYPT_OK );
+	/* If it's a server (i.e. we're opening a listen socket) then the 
+	   name is the interface name to bind to, defaulting to the first
+	   interface we find/localhost if none is given */
+	if( netStream->nFlags & STREAM_NFLAG_ISSERVER )
+		{
+		if( connectInfo->interface == NULL )
+			return( CRYPT_OK );
+		name = connectInfo->interface;
+		nameLength = connectInfo->interfaceLength;
+		}
 	ENSURES( urlInfo != NULL );
 
 	/* Parse the URI into its various components */
-	status = parseURL( urlInfo, connectInfo->name, connectInfo->nameLength, 
-					   connectInfo->port,
+	status = parseURL( urlInfo, name, nameLength, connectInfo->port,
 					   ( netStream->protocol == STREAM_PROTOCOL_HTTP ) ? \
 							URL_TYPE_HTTP : 
 					   ( netStream->protocol == STREAM_PROTOCOL_CMP ) ? \
@@ -518,8 +528,11 @@ static int processConnectOptions( INOUT STREAM *stream,
 		{
 		/* There's an error in the URL format, provide more information to 
 		   the caller */
-		setErrorString( NETSTREAM_ERRINFO, "Invalid host name/URL", 21 );
-		return( CRYPT_ERROR_OPEN );
+		retExt( CRYPT_ERROR_OPEN,
+				( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
+				  "Invalid %s name/URL", 
+				  ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) ? \
+				  "interface" : "host" ) );
 		}
 	return( CRYPT_OK );
 	}
@@ -557,6 +570,9 @@ static int completeConnect( INOUT STREAM *stream,
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
 				/* We can't use the sanity-check function because the stream
 				   hasn't been fully set up yet */
+	REQUIRES( urlInfo == NULL || \
+			  ( urlInfo != NULL && \
+				urlInfo->host != NULL && urlInfo->hostLen > 0 ) );
 	REQUIRES_S( protocol > STREAM_PROTOCOL_NONE && \
 				protocol < STREAM_PROTOCOL_LAST );
 	REQUIRES_S( options > NET_OPTION_NONE && options < NET_OPTION_LAST );
@@ -631,24 +647,27 @@ static int completeConnect( INOUT STREAM *stream,
 		if( cryptStatusOK( status ) && timeout < fixedTimeout )
 			{
 			( void ) krnlSendMessage( netStreamTemplate->iTransportSession,
-							IMESSAGE_SETATTRIBUTE, ( void * ) &fixedTimeout,
-							CRYPT_OPTION_NET_CONNECTTIMEOUT );
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &fixedTimeout,
+									  CRYPT_OPTION_NET_CONNECTTIMEOUT );
 			}
 		status = krnlSendMessage( iUserObject, IMESSAGE_GETATTRIBUTE,
 								  &timeout, CRYPT_OPTION_NET_READTIMEOUT );
 		if( cryptStatusOK( status ) && timeout < fixedTimeout )
 			{
 			( void ) krnlSendMessage( netStreamTemplate->iTransportSession, 
-							IMESSAGE_SETATTRIBUTE, ( void * ) &fixedTimeout,
-							CRYPT_OPTION_NET_READTIMEOUT );
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &fixedTimeout,
+									  CRYPT_OPTION_NET_READTIMEOUT );
 			}
 		status = krnlSendMessage( iUserObject, IMESSAGE_GETATTRIBUTE,
 								  &timeout, CRYPT_OPTION_NET_WRITETIMEOUT );
 		if( cryptStatusOK( status ) && timeout < fixedTimeout )
 			{
 			( void ) krnlSendMessage( netStreamTemplate->iTransportSession, 
-							IMESSAGE_SETATTRIBUTE, ( void * ) &fixedTimeout,
-							CRYPT_OPTION_NET_WRITETIMEOUT );
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &fixedTimeout,
+									  CRYPT_OPTION_NET_WRITETIMEOUT );
 			}
 		status = CRYPT_OK;	/* Reset status from above checks */
 		}
@@ -659,12 +678,11 @@ static int completeConnect( INOUT STREAM *stream,
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) || \
 		!netStreamTemplate->transportOKFunction() )
 		{
-		/* Provide more information on the nature of the problem */
-		setErrorString( errorInfo, "Networking subsystem not available", 34 );
-
 		/* Clean up */
 		zeroise( stream, sizeof( STREAM ) );
-		return( CRYPT_ERROR_NOTINITED );
+		retExt( CRYPT_ERROR_NOTINITED,
+				( CRYPT_ERROR_NOTINITED, errorInfo, 
+				  "Networking subsystem not available" ) );
 		}
 
 	/* Allocate room for the network stream information */
@@ -737,6 +755,7 @@ static int completeConnect( INOUT STREAM *stream,
 	if( proxyUrl == NULL )
 		return( CRYPT_OK );
 
+#ifdef USE_HTTP
 	/* Complete the connect via the appropriate proxy type */
 	status = connectViaHttpProxy( stream, errorInfo );
 	if( cryptStatusError( status ) )
@@ -751,6 +770,12 @@ static int completeConnect( INOUT STREAM *stream,
 		cleanupStream( stream, FALSE );
 		return( status );
 		}
+#else
+	cleanupStream( stream, FALSE );
+	retExt( CRYPT_ERROR_NOTAVAIL,
+			( CRYPT_ERROR_NOTAVAIL, NETSTREAM_ERRINFO, 
+			  "HTTP proxy support not available" ) );
+#endif /* USE_HTTP */
 
 	return( CRYPT_OK );
 	}
@@ -801,6 +826,7 @@ int sNetConnect( INOUT STREAM *stream,
 	REQUIRES( connectInfo->options != NET_OPTION_TRANSPORTSESSION || \
 			  ( connectInfo->options == NET_OPTION_TRANSPORTSESSION && \
 				connectInfo->name == NULL && connectInfo->nameLength == 0 && \
+				connectInfo->interface == NULL && connectInfo->interfaceLength == 0 && \
 				connectInfo->iCryptSession != CRYPT_ERROR && \
 				connectInfo->networkSocket == CRYPT_ERROR ) );
 	REQUIRES( ( connectInfo->options != NET_OPTION_NETWORKSOCKET && \
@@ -808,6 +834,7 @@ int sNetConnect( INOUT STREAM *stream,
 			  ( ( connectInfo->options == NET_OPTION_NETWORKSOCKET || \
 				  connectInfo->options == NET_OPTION_NETWORKSOCKET_DUMMY ) && \
 				connectInfo->name == NULL && connectInfo->nameLength == 0 && \
+				connectInfo->interface == NULL && connectInfo->interfaceLength == 0 && \
 				connectInfo->iCryptSession == CRYPT_ERROR && \
 				connectInfo->networkSocket != CRYPT_ERROR ) );
 	REQUIRES( connectInfo->iUserObject == DEFAULTUSER_OBJECT_HANDLE || \
@@ -882,18 +909,19 @@ int sNetListen( INOUT STREAM *stream,
 				connectInfo->networkSocket == CRYPT_ERROR ) );
 	REQUIRES( connectInfo->options != NET_OPTION_TRANSPORTSESSION || \
 			  ( connectInfo->options == NET_OPTION_TRANSPORTSESSION && \
-				connectInfo->name == NULL && connectInfo->nameLength == 0 && \
+				connectInfo->interface == NULL && connectInfo->interfaceLength == 0 && \
 				connectInfo->iCryptSession != CRYPT_ERROR && \
 				connectInfo->networkSocket == CRYPT_ERROR ) );
 	REQUIRES( ( connectInfo->options != NET_OPTION_NETWORKSOCKET && \
 				connectInfo->options != NET_OPTION_NETWORKSOCKET_DUMMY ) || 
 			  ( ( connectInfo->options == NET_OPTION_NETWORKSOCKET || \
 				  connectInfo->options == NET_OPTION_NETWORKSOCKET_DUMMY ) && \
-				connectInfo->name == NULL && connectInfo->nameLength == 0 &&  \
+				connectInfo->interface == NULL && connectInfo->interfaceLength == 0 && \
 				connectInfo->iCryptSession == CRYPT_ERROR && \
 				connectInfo->networkSocket != CRYPT_ERROR ) );
 	REQUIRES( connectInfo->iUserObject == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( connectInfo->iUserObject ) );
+	REQUIRES( connectInfo->name == NULL && connectInfo->nameLength == 0 );
 
 	/* Clear the return values */
 	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
@@ -903,7 +931,7 @@ int sNetListen( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( connectInfo->options == NET_OPTION_HOSTNAME && \
-		connectInfo->name != NULL )
+		connectInfo->interface != NULL )
 		urlInfoPtr = &urlInfo;
 	status = processConnectOptions( stream, &netStream, urlInfoPtr, 
 									connectInfo );

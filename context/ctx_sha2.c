@@ -8,7 +8,7 @@
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
-  #include "sha.h"
+  #include "sha2.h"
 #else
   #include "crypt.h"
   #include "context/context.h"

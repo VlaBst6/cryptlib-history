@@ -117,7 +117,8 @@ static int createDecryptionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iSessionKey,
 		return( status );
 	iLocalContext = createInfo.cryptHandle;
 	status = krnlSendMessage( iLocalContext, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &cryptMode, CRYPT_CTXINFO_MODE );
+							  ( MESSAGE_CAST ) &cryptMode, 
+							  CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		{
 		status = pgpPasswordToKey( iLocalContext, 
@@ -143,7 +144,8 @@ static int createDecryptionContext( OUT_HANDLE_OPT CRYPT_CONTEXT *iSessionKey,
 		status = CRYPT_ERROR_BADDATA;
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) keyInfo->iv, keyInfo->ivSize );
+		setMessageData( &msgData, ( MESSAGE_CAST ) keyInfo->iv, 
+						keyInfo->ivSize );
 		status = krnlSendMessage( iLocalContext, IMESSAGE_SETATTRIBUTE_S, 
 								  &msgData, CRYPT_CTXINFO_IV );
 		}
@@ -219,11 +221,12 @@ static BOOLEAN matchKeyID( const PGP_KEYINFO *keyInfo,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Couldn't create PKC context to generate key ID" ));
 		assert( DEBUG_WARN );
 		return( FALSE );
 		}
 	iLocalContext = createInfo.cryptHandle;
-	setMessageData( &msgData, ( void * ) keyInfo->openPGPkeyID, 
+	setMessageData( &msgData, ( MESSAGE_CAST ) keyInfo->openPGPkeyID, 
 					PGP_KEYID_SIZE );
 	status = krnlSendMessage( iLocalContext, IMESSAGE_SETATTRIBUTE_S, 
 							  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
@@ -243,6 +246,7 @@ static BOOLEAN matchKeyID( const PGP_KEYINFO *keyInfo,
 	krnlSendNotifier( iLocalContext, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Couldn't initialise PKC context to generate key ID" ));
 		assert( DEBUG_WARN );
 		return( FALSE );
 		}

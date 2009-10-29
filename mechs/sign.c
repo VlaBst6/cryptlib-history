@@ -119,19 +119,22 @@ C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 							  C_IN CRYPT_CONTEXT hashContext,
 							  C_IN CRYPT_HANDLE extraData )
 	{
+	SIGPARAMS sigParams;
+	BOOLEAN hasSigParams = FALSE;
 	int value, status;
 
 	/* Perform basic error checking.  We have to use an internal message to
 	   check for signing capability because the DLP algorithms have
 	   specialised data-formatting requirements that can't normally be
 	   directly accessed via external messages, and even the non-DLP
-	   algorithms may be internal-use-only if there's a cert attached to
-	   the context.  To make sure that the context is OK we first check its 
-	   external accessibility by performing a dummy attribute read.  Note 
-	   that we can't safely use the cert-type read performed later on for 
-	   this check because some error conditions (e.g. "not a certificate") 
-	   are valid in this case, but we don't want to have mess with trying to 
-	   distinguish OK-in-this-instance vs.not-OK error conditions */
+	   algorithms may be internal-use-only if there's a certificate attached 
+	   to the context.  To make sure that the context is OK we first check 
+	   its external accessibility by performing a dummy attribute read.  
+	   Note that we can't safely use the certificate-type read performed 
+	   later on for this check because some error conditions (e.g. "not a 
+	   certificate") are valid in this case, but we don't want to have mess 
+	   with trying to distinguish OK-in-this-instance vs.not-OK error 
+	   conditions */
 	if( signature != NULL )
 		{
 		if( signatureMaxLength <= MIN_CRYPT_OBJECTSIZE || \
@@ -146,7 +149,7 @@ C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 		if( signatureMaxLength != 0 )
 			return( CRYPT_ERROR_PARAM2 );
 		}
-	if( !isWritePtr( signatureLength, sizeof( int ) ) )
+	if( !isWritePtrConst( signatureLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	*signatureLength = 0;
 	if( formatType <= CRYPT_FORMAT_NONE || \
@@ -181,7 +184,8 @@ C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 			{
 			CRYPT_CERTTYPE_TYPE certType;
 
-			/* Make sure that the signing context has a cert attached to it */
+			/* Make sure that the signing context has a certificate attached 
+			   to it */
 			status = krnlSendMessage( signContext, MESSAGE_GETATTRIBUTE,
 									  &certType, CRYPT_CERTINFO_CERTTYPE );
 			if( cryptStatusError( status ) || \
@@ -211,11 +215,28 @@ C_RET cryptCreateSignatureEx( C_OUT_OPT void C_PTR signature,
 			retIntError();
 		}
 
+	/* Set up any optional signing parameters if required */
+	if( extraData != CRYPT_UNUSED )
+		{
+		initSigParams( &sigParams );
+		if( extraData == CRYPT_USE_DEFAULT )
+			sigParams.useDefaultAuthAttr = TRUE;
+		else
+			sigParams.iAuthAttr = extraData;
+		hasSigParams = TRUE;
+		}
+	if( formatType == CRYPT_FORMAT_PGP )
+		{
+		initSigParams( &sigParams );
+		sigParams.sigType = PGP_SIG_DATA;
+		hasSigParams = TRUE;
+		}
+
 	/* Call the low-level signature create function to create the
 	   signature */
 	status = iCryptCreateSignature( signature, signatureMaxLength,
-							signatureLength, formatType, signContext, 
-							hashContext, extraData, CRYPT_UNUSED );
+					signatureLength, formatType, signContext, hashContext, 
+					hasSigParams ? &sigParams : NULL );
 	if( cryptArgError( status ) )
 		{
 		/* Remap the error code to refer to the correct parameter */
@@ -263,7 +284,7 @@ C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 							 C_OUT_OPT CRYPT_HANDLE C_PTR extraData )
 	{
 	CRYPT_FORMAT_TYPE formatType;
-	CRYPT_CERTIFICATE iExtraData;
+	CRYPT_CERTIFICATE iExtraData = DUMMY_INIT;
 	CRYPT_CONTEXT sigCheckContext;
 	int status;
 
@@ -300,7 +321,7 @@ C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 		{
 		CRYPT_CERTTYPE_TYPE certType;
 
-		/* Make sure that the sig check key includes a cert */
+		/* Make sure that the sig check key includes a certificate */
 		status = krnlSendMessage( sigCheckKey, MESSAGE_GETATTRIBUTE,
 								  &certType, CRYPT_CERTINFO_CERTTYPE );
 		if( cryptStatusError( status ) ||
@@ -323,7 +344,7 @@ C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 		case CRYPT_FORMAT_SMIME:
 			if( extraData != NULL )
 				{
-				if( !isWritePtr( extraData, sizeof( int ) ) )
+				if( !isWritePtrConst( extraData, sizeof( int ) ) )
 					return( CRYPT_ERROR_PARAM6 );
 				*extraData = CRYPT_ERROR;
 				}
@@ -351,26 +372,28 @@ C_RET cryptCheckSignatureEx( C_IN void C_PTR signature,
 		status = ( status == CRYPT_ARGERROR_NUM1 ) ? \
 				 CRYPT_ERROR_PARAM3 : CRYPT_ERROR_PARAM4;
 		}
-	if( extraData != NULL )
+	if( extraData == NULL )
+		return( status );
+	
+	/* The caller has requested to see the the recovered signing attributes, 
+	   make them externally visible.  Bailing out if this operation fails 
+	   may be a bit excessive in that the signature has already verified so 
+	   failing the whole operation just because we can't make auxiliary 
+	   attributes visible could be seen as overkill, however since the 
+	   caller has indicated an interest in the attributes it can be argued 
+	   that an inability to return them is as serious as a general sig.check 
+	   failure */
+	status = krnlSendMessage( iExtraData, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_FALSE,
+							  CRYPT_IATTRIBUTE_INTERNAL );
+	if( cryptStatusError( status ) )
 		{
-		/* Make the recovered signing attributes externally visible.  Bailing
-		   out if this operation fails may be a bit excessive in that the 
-		   signature has already verified so failing the whole operation just
-		   because we can't make auxiliary attributes visible could be seen 
-		   as overkill, however since the caller has indicated an interest in
-		   the attributes it can be argued that an inability to return them 
-		   is as serious as a general sig.check failure */
-		status = krnlSendMessage( iExtraData, IMESSAGE_SETATTRIBUTE,
-								  MESSAGE_VALUE_FALSE,
-								  CRYPT_IATTRIBUTE_INTERNAL );
-		if( cryptStatusError( status ) )
-			{
-			krnlSendNotifier( iExtraData, IMESSAGE_DECREFCOUNT );
-			return( status );
-			}
-		*extraData = iExtraData;
+		krnlSendNotifier( iExtraData, IMESSAGE_DECREFCOUNT );
+		return( status );
 		}
-	return( status );
+	*extraData = iExtraData;
+
+	return( CRYPT_OK );
 	}
 
 C_RET cryptCheckSignature( C_IN void C_PTR signature,
@@ -391,27 +414,25 @@ C_RET cryptCheckSignature( C_IN void C_PTR signature,
 /* Internal versions of the above.  These skip a lot of the explicit 
    checking done by the external versions (e.g. "Is this value really a 
    handle to a valid PKC context?") since they're only called by cryptlib 
-   internal functions rather than being passed untrusted user data.  In
-   addition the iExtraData value can take an extra value CRYPT_UNUSED
-   (don't use any signing attributes) */
+   internal functions rather than being passed untrusted user data */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength ) \
 							void *signature, 
-						   IN_LENGTH const int signatureMaxLength,
+						   IN_LENGTH_Z const int signatureMaxLength,
 						   OUT_LENGTH_Z int *signatureLength,
 						   IN_ENUM( CRYPT_FORMAT ) \
 							const CRYPT_FORMAT_TYPE formatType,
 						   IN_HANDLE const CRYPT_CONTEXT iSignContext,
 						   IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						   IN_HANDLE_OPT const CRYPT_CERTIFICATE iExtraData,
-						   IN_HANDLE_OPT const CRYPT_SESSION iTspSession )
+						   IN_OPT const SIGPARAMS *sigParams )
 	{
 	CRYPT_CERTTYPE_TYPE certType;
 	int status;
 
 	assert( signature == NULL || isWritePtr( signature, signatureMaxLength ) );
 	assert( isWritePtr( signatureLength, sizeof( int ) ) );
+	assert( sigParams == NULL || isReadPtr( sigParams, sizeof( SIGPARAMS ) ) );
 
 	REQUIRES( ( signature == NULL && signatureMaxLength == 0 ) || \
 			  ( signature != NULL && \
@@ -421,41 +442,40 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 			  formatType < CRYPT_FORMAT_LAST );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
-	REQUIRES( ( formatType == CRYPT_IFORMAT_SSL && \
-				isHandleRangeValid( iExtraData ) ) || \
+	REQUIRES( ( ( formatType == CRYPT_FORMAT_CRYPTLIB || \
+				  formatType == CRYPT_IFORMAT_SSH ) && \
+				sigParams == NULL ) || 
 			  ( ( formatType == CRYPT_FORMAT_CMS || \
-				  formatType == CRYPT_FORMAT_SMIME ) && \
-				( iExtraData == CRYPT_UNUSED || \
-				  iExtraData == CRYPT_USE_DEFAULT || \
-				  isHandleRangeValid( iExtraData ) ) ) || \
-			  ( iExtraData == CRYPT_UNUSED ) );
-	REQUIRES( ( ( formatType == CRYPT_FORMAT_CMS || \
-				  formatType == CRYPT_FORMAT_SMIME ) && \
-				( ( iTspSession == CRYPT_UNUSED ) || \
-				  isHandleRangeValid( iTspSession ) ) ) || \
-			  ( iTspSession == CRYPT_UNUSED ) );
+				  formatType == CRYPT_FORMAT_SMIME || \
+				  formatType == CRYPT_FORMAT_PGP || \
+				  formatType == CRYPT_IFORMAT_SSL ) && \
+				sigParams != NULL ) );
+			  /* The sigParams structure is too complex to check fully here
+			     so we check it in the switch statement below */
 
 	/* Clear return value */
 	*signatureLength = 0;
 
-	/* If the signing context has a cert chain attached then the currently-
-	   selected cert may not be the leaf cert.  To ensure that we use the
-	   correct cert we lock the chain (which both protects us from having
-	   the user select a different cert while we're using it and saves the
-	   selection state for when we later unlock it) and explicitly select
-	   the leaf cert.  Certs are used for formats other than the obvious
-	   CRYPT_FORMAT_CMS/CRYPT_FORMAT_SMIME so we perform this operation
-	   unconditionally rather than only for those two formats */
+	/* If the signing context has a certificate chain attached then the 
+	   currently-selected certificate may not be the leaf certificate.  To 
+	   ensure that we use the correct certificate we lock the chain (which 
+	   both protects us from having the user select a different certificate 
+	   while we're using it and saves the selection state for when we later 
+	   unlock it) and explicitly select the leaf certificate.  Certificates 
+	   are used for formats other than the obvious CRYPT_FORMAT_CMS/
+	   CRYPT_FORMAT_SMIME so we perform this operation unconditionally 
+	   rather than only for those two formats */
 	status = krnlSendMessage( iSignContext, MESSAGE_GETATTRIBUTE,
 							  &certType, CRYPT_CERTINFO_CERTTYPE );
 	if( cryptStatusError( status ) )
 		{
-		/* There's no cert of the required type attached */
+		/* There's no certificate of the required type attached */
 		certType = CRYPT_CERTTYPE_NONE;
 		}
 	else
 		{
-		/* If it's a cert chain, lock it and select the leaf cert */
+		/* If it's a certificate chain, lock it and select the leaf 
+		   certificate */
 		if( certType == CRYPT_CERTTYPE_CERTCHAIN )
 			{
 			status = krnlSendMessage( iSignContext, IMESSAGE_SETATTRIBUTE,
@@ -486,19 +506,57 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 									  SIGNATURE_CRYPTLIB );
 			break;
 
+		case CRYPT_FORMAT_CMS:
+		case CRYPT_FORMAT_SMIME:
+			{
+			REQUIRES( ( sigParams->iAuthAttr == CRYPT_ERROR && \
+						sigParams->useDefaultAuthAttr == FALSE ) || \
+					  ( sigParams->iAuthAttr == CRYPT_ERROR && \
+						sigParams->useDefaultAuthAttr == TRUE ) || \
+					  ( isHandleRangeValid( sigParams->iAuthAttr ) && \
+					    sigParams->useDefaultAuthAttr == FALSE ) );
+			REQUIRES( sigParams->iTspSession == CRYPT_ERROR || \
+					  isHandleRangeValid( sigParams->iTspSession ) );
+
+			status = createSignatureCMS( signature, signatureMaxLength, 
+										 signatureLength, iSignContext,
+										 iHashContext, 
+										 sigParams->useDefaultAuthAttr, 
+										 ( sigParams->iAuthAttr == CRYPT_ERROR ) ? \
+											CRYPT_UNUSED : sigParams->iAuthAttr,
+										 ( sigParams->iTspSession == CRYPT_ERROR ) ? \
+											CRYPT_UNUSED : sigParams->iTspSession, 
+										 formatType );
+			}
+			break;
+
+
 #ifdef USE_PGP
 		case CRYPT_FORMAT_PGP:
+			REQUIRES( sigParams->useDefaultAuthAttr == FALSE && \
+					  sigParams->iAuthAttr == CRYPT_ERROR && \
+					  sigParams->iTspSession == CRYPT_ERROR && \
+					  ( sigParams->sigType >= PGP_SIG_NONE && \
+					    sigParams->sigType < PGP_SIG_LAST ) && \
+					  sigParams->iSecondHash == CRYPT_ERROR );
+
 			status = createSignaturePGP( signature, signatureMaxLength, 
 										 signatureLength, iSignContext,
-										 iHashContext );
+										 iHashContext, sigParams->sigType );
 			break;
 #endif /* USE_PGP */
 
 #ifdef USE_SSL
 		case CRYPT_IFORMAT_SSL:
+			REQUIRES( sigParams->useDefaultAuthAttr == FALSE && \
+					  sigParams->iAuthAttr == CRYPT_ERROR && \
+					  sigParams->iTspSession == CRYPT_ERROR && \
+					  sigParams->sigType == PGP_SIG_NONE && \
+					  isHandleRangeValid( sigParams->iSecondHash ) );
+
 			status = createSignature( signature, signatureMaxLength, 
 									  signatureLength, iSignContext,
-									  iHashContext, iExtraData,
+									  iHashContext, sigParams->iSecondHash,
 									  SIGNATURE_SSL );
 			break;
 #endif /* USE_SSL */
@@ -512,28 +570,21 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 			break;
 #endif /* USE_SSH */
 
-		case CRYPT_FORMAT_CMS:
-		case CRYPT_FORMAT_SMIME:
-			status = createSignatureCMS( signature, signatureMaxLength, 
-										 signatureLength, iSignContext,
-										 iHashContext, iExtraData,
-										 iTspSession, formatType );
-			break;
-
 		default:
 			retIntError();
 		}
 	if( cryptArgError( status ) )
 		{
 		/* Catch any parameter errors that slip through */
+		DEBUG_DIAG(( "Signature creation return argError status" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
 	if( certType == CRYPT_CERTTYPE_CERTCHAIN )
 		{
-		/* We're signing with a cert chain, restore its state and unlock it
-		   to allow others access.  If this fails there's not much that we 
-		   can do to recover so we don't do anything with the return 
+		/* We're signing with a certificate chain, restore its state and 
+		   unlock it to allow others access.  If this fails there's not much 
+		   that we can do to recover so we don't do anything with the return 
 		   value */
 		( void ) krnlSendMessage( iSignContext, IMESSAGE_SETATTRIBUTE,
 								  MESSAGE_VALUE_FALSE, 
@@ -566,9 +617,13 @@ int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature,
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 	REQUIRES( ( formatType == CRYPT_IFORMAT_SSL && \
 				isHandleRangeValid( iHash2Context ) && extraData == NULL ) || \
-			  ( ( formatType == CRYPT_FORMAT_CMS || CRYPT_FORMAT_SMIME ) && \
+			  ( ( formatType == CRYPT_FORMAT_CMS || \
+				  formatType == CRYPT_FORMAT_SMIME ) && \
 				iHash2Context == CRYPT_UNUSED ) || \
-			  ( iHash2Context == CRYPT_UNUSED && extraData == NULL ) );
+			  ( ( formatType == CRYPT_FORMAT_CRYPTLIB || \
+				  formatType == CRYPT_FORMAT_PGP || \
+				  formatType == CRYPT_IFORMAT_SSH ) && \
+				iHash2Context == CRYPT_UNUSED && extraData == NULL ) );
 
 	/* Perform basic error checking */
 	status = krnlSendMessage( iSigCheckKey, IMESSAGE_GETDEPENDENT,
@@ -623,6 +678,7 @@ int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature,
 	if( cryptArgError( status ) )
 		{
 		/* Catch any parameter errors that slip through */
+		DEBUG_DIAG(( "Signature creation return argError status" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_SIGNATURE;
 		}

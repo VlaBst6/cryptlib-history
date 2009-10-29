@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Session Support Routines					*
-*						Copyright Peter Gutmann 1998-2005					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -21,13 +21,49 @@
 *																			*
 ****************************************************************************/
 
+/* Reset the state of a request/response session for reuse so that it can
+   process another request or response */
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void cleanupReqResp( INOUT SESSION_INFO *sessionInfoPtr,
+							const BOOLEAN isPostTransaction )
+	{
+	const BOOLEAN isServer = isServer( sessionInfoPtr );
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Clean up server requests left over from a previous transaction or 
+	   that have been created by the just-completed transaction */
+	if( isServer && sessionInfoPtr->iCertRequest != CRYPT_ERROR )
+		{
+		krnlSendNotifier( sessionInfoPtr->iCertRequest,
+						  IMESSAGE_DECREFCOUNT );
+		sessionInfoPtr->iCertRequest = CRYPT_ERROR;
+		}
+
+	/* Clean up client/server responses left over from a previous
+	   transaction and server responses created by the just-completed
+	   transaction */
+	if( ( isServer || !isPostTransaction ) && \
+		sessionInfoPtr->iCertResponse != CRYPT_ERROR )
+		{
+		krnlSendNotifier( sessionInfoPtr->iCertResponse,
+						  IMESSAGE_DECREFCOUNT );
+		sessionInfoPtr->iCertResponse = CRYPT_ERROR;
+		}
+	}
+
 /* Initialise network connection information based on the contents of the
    session object */
 
-void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
-								NET_CONNECT_INFO *connectInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
+							   INOUT NET_CONNECT_INFO *connectInfo )
 	{
-	const ATTRIBUTE_LIST *attributeListPtr;
+	const ATTRIBUTE_LIST *clientNamePtr, *serverNamePtr, *portInfoPtr;
+
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( connectInfo, sizeof( NET_CONNECT_INFO ) ) );
 
 	initNetConnectInfo( connectInfo, sessionInfoPtr->ownerHandle,
 				sessionInfoPtr->readTimeout, sessionInfoPtr->connectTimeout,
@@ -39,28 +75,59 @@ void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 					NET_OPTION_HOSTNAME_TUNNEL : \
 					NET_OPTION_HOSTNAME );
 
-	/* If there's an explicit server name set, connect to it if we're the 
-	   client or bind to the named interface if we're the server */
-	if( ( attributeListPtr = \
-			findSessionInfo( sessionInfoPtr->attributeList,
-							 CRYPT_SESSINFO_SERVER_NAME ) ) != NULL )
+	/* If the user has supplied the network transport information, there's
+	   nothing further to do */
+	if( sessionInfoPtr->transportSession != CRYPT_ERROR )
 		{
-		connectInfo->name = attributeListPtr->value;
-		connectInfo->nameLength = attributeListPtr->valueLength;
+		connectInfo->iCryptSession = sessionInfoPtr->transportSession;
+		return( CRYPT_OK );
+		}
+	if( sessionInfoPtr->networkSocket != CRYPT_ERROR )
+		{
+		connectInfo->networkSocket = sessionInfoPtr->networkSocket;
+		return( CRYPT_OK );
+		}
+
+	/* If there are explicit client and/or server names set, record them.  
+	   For a client the server name is the remote system to connect to
+	   and the client name is the optional local interface to bind to, for
+	   the server the server name is the optional local interface to bind
+	   to */
+	clientNamePtr = findSessionInfo( sessionInfoPtr->attributeList,
+									 CRYPT_SESSINFO_CLIENT_NAME );
+	serverNamePtr = findSessionInfo( sessionInfoPtr->attributeList,
+									 CRYPT_SESSINFO_SERVER_NAME );
+	if( isServer( sessionInfoPtr ) )
+		{
+		if( serverNamePtr != NULL )
+			{
+			connectInfo->interface = serverNamePtr->value;
+			connectInfo->interfaceLength = serverNamePtr->valueLength;
+			}
+		}
+	else
+		{
+		REQUIRES( serverNamePtr != NULL );
+
+		connectInfo->name = serverNamePtr->value;
+		connectInfo->nameLength = serverNamePtr->valueLength;
+		if( clientNamePtr != NULL )
+			{
+			connectInfo->interface = clientNamePtr->value;
+			connectInfo->interfaceLength = clientNamePtr->valueLength;
+			}
 		}
 
 	/* If there's an explicit port set, connect/bind to it, otherwise use the
 	   default port for the protocol */
-	if( ( attributeListPtr = \
+	if( ( portInfoPtr = \
 			findSessionInfo( sessionInfoPtr->attributeList,
 							 CRYPT_SESSINFO_SERVER_PORT ) ) != NULL )
-		connectInfo->port = attributeListPtr->intValue;
+		connectInfo->port = portInfoPtr->intValue;
 	else
 		connectInfo->port = sessionInfoPtr->protocolInfo->port;
 
-	/* Set the user-supplied transport session or socket if required */
-	connectInfo->iCryptSession = sessionInfoPtr->transportSession;
-	connectInfo->networkSocket = sessionInfoPtr->networkSocket;
+	return( CRYPT_OK );
 	}
 
 /* Make sure that mutually exclusive session attributes haven't been set.
@@ -87,15 +154,11 @@ void initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
 #define CHECK_ATTR_CACERT		0x08
 #define CHECK_ATTR_FINGERPRINT	0x10
 
-typedef struct {
-	const CRYPT_ATTRIBUTE_TYPE attribute;
-	const int flags;
-	} EXCLUDED_ATTRIBUTE_INFO;
-
-BOOLEAN checkAttributesConsistent( SESSION_INFO *sessionInfoPtr,
-								   const CRYPT_ATTRIBUTE_TYPE attribute )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN checkAttributesConsistent( INOUT SESSION_INFO *sessionInfoPtr,
+								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute )
 	{
-	static const EXCLUDED_ATTRIBUTE_INFO excludedAttrInfo[] = {
+	static const MAP_TABLE excludedAttrTbl[] = {
 		{ CRYPT_SESSINFO_REQUEST, 
 			CHECK_ATTR_REQUEST | CHECK_ATTR_PRIVKEY | CHECK_ATTR_PRIVKEYSET },
 		{ CRYPT_SESSINFO_PRIVATEKEY,
@@ -104,30 +167,21 @@ BOOLEAN checkAttributesConsistent( SESSION_INFO *sessionInfoPtr,
 			CHECK_ATTR_CACERT | CHECK_ATTR_FINGERPRINT },
 		{ CRYPT_SESSINFO_SERVER_FINGERPRINT, 
 			CHECK_ATTR_FINGERPRINT | CHECK_ATTR_CACERT },
-		{ CRYPT_ATTRIBUTE_NONE, CHECK_ATTR_NONE },
-			{ CRYPT_ATTRIBUTE_NONE, CHECK_ATTR_NONE } 
+		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 } 
 		};
-	int flags = 0, i;
+	int flags = 0, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( attribute == CRYPT_SESSINFO_REQUEST || \
-			attribute == CRYPT_SESSINFO_PRIVATEKEY || \
-			attribute == CRYPT_SESSINFO_CACERTIFICATE || \
-			attribute == CRYPT_SESSINFO_SERVER_FINGERPRINT );
+	
+	REQUIRES_B( attribute == CRYPT_SESSINFO_REQUEST || \
+				attribute == CRYPT_SESSINFO_PRIVATEKEY || \
+				attribute == CRYPT_SESSINFO_CACERTIFICATE || \
+				attribute == CRYPT_SESSINFO_SERVER_FINGERPRINT );
 
-	/* Find the excluded-attribute info for this attribute */
-	for( i = 0; excludedAttrInfo[ i ].attribute != CRYPT_ATTRIBUTE_NONE && \
-				i < FAILSAFE_ARRAYSIZE( excludedAttrInfo, EXCLUDED_ATTRIBUTE_INFO ); 
-		 i++ )
-		{
-		if( excludedAttrInfo[ i ].attribute == attribute )
-			{
-			flags = excludedAttrInfo[ i ].flags;
-			break;
-			}
-		}
-	if( i >= FAILSAFE_ARRAYSIZE( excludedAttrInfo, EXCLUDED_ATTRIBUTE_INFO ) )
-		retIntError();
+	/* Find the excluded-attribute information for this attribute */
+	status = mapValue( attribute, &flags, excludedAttrTbl,
+					   FAILSAFE_ARRAYSIZE( excludedAttrTbl, MAP_TABLE ) );
+	ENSURES( cryptStatusOK( status  ) );
 
 	/* Make sure that none of the excluded attributes are present */
 	if( ( flags & CHECK_ATTR_REQUEST ) && \
@@ -171,8 +225,11 @@ BOOLEAN checkAttributesConsistent( SESSION_INFO *sessionInfoPtr,
 
 /* Check client/server-specific required values */
 
+CHECK_RETVAL_ENUM( CRYPT_ATTRIBUTE_TYPE ) STDC_NONNULL_ARG( ( 1 ) ) \
 static CRYPT_ATTRIBUTE_TYPE checkClientParameters( const SESSION_INFO *sessionInfoPtr )
 	{
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Make sure that the network comms parameters are present */
 	if( sessionInfoPtr->transportSession == CRYPT_ERROR && \
 		sessionInfoPtr->networkSocket == CRYPT_ERROR && \
@@ -217,22 +274,18 @@ static CRYPT_ATTRIBUTE_TYPE checkClientParameters( const SESSION_INFO *sessionIn
 	return( CRYPT_ATTRIBUTE_NONE );
 	}
 
+CHECK_RETVAL_ENUM( CRYPT_ATTRIBUTE_TYPE ) STDC_NONNULL_ARG( ( 1 ) ) \
 static CRYPT_ATTRIBUTE_TYPE checkServerParameters( const SESSION_INFO *sessionInfoPtr )
 	{
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Make sure that server key and keyset information is present if 
 	   required */
 	if( ( sessionInfoPtr->serverReqAttrFlags & SESSION_NEEDS_PRIVATEKEY ) && \
 		sessionInfoPtr->privateKey == CRYPT_ERROR )
 		{
 		/* There's no private key present, see if we can use a username +
-		   password as an alternative.  In the special case of password-
-		   based SSL this isn't completely foolproof since the passwords are 
-		   entered into a pool from which they can be deleted explicitly if 
-		   the session is aborted in a non-resumable manner (but see the 
-		   note in ssl_rw.c) or implicitly over time as they're displaced by 
-		   other entries, however this is an extremely unlikely case and 
-		   it's too tricky trying to track what is and isn't still active to 
-		   handle this fully */
+		   password as an alternative */
 		if( !( sessionInfoPtr->serverReqAttrFlags & \
 			   SESSION_NEEDS_KEYORPASSWORD ) || \
 			findSessionInfo( sessionInfoPtr->attributeList, 
@@ -248,10 +301,13 @@ static CRYPT_ATTRIBUTE_TYPE checkServerParameters( const SESSION_INFO *sessionIn
 
 /* Activate the network connection for a session */
 
-static int activateConnection( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int activateConnection( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_ATTRIBUTE_TYPE errorAttribute;
 	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Make sure that everything is set up ready to go */
 	errorAttribute = isServer( sessionInfoPtr ) ? \
@@ -263,16 +319,25 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 					  CRYPT_ERRTYPE_ATTR_ABSENT );
 		return( CRYPT_ERROR_NOTINITED );
 		}
+	ENSURES( isServer( sessionInfoPtr ) || \
+			 findSessionInfo( sessionInfoPtr->attributeList, 
+							  CRYPT_SESSINFO_SERVER_NAME ) != NULL || \
+			 sessionInfoPtr->networkSocket != CRYPT_ERROR );
+	ENSURES( findSessionInfo( sessionInfoPtr->attributeList,
+							  CRYPT_SESSINFO_SERVER_PORT ) != NULL || \
+			 sessionInfoPtr->protocolInfo->port > 0 );
 
 	/* Allocate the send and receive buffers if necessary.  The send buffer
 	   isn't used for request-response session types that use the receive
-	   buffer for both outgoing and incoming data, so we only allocate it if
+	   buffer for both outgoing and incoming data so we only allocate it if
 	   it's actually required */
 	if( sessionInfoPtr->sendBuffer == NULL )
 		{
-		assert( sessionInfoPtr->receiveBufSize >= MIN_BUFFER_SIZE && \
-				( sessionInfoPtr->sendBufSize >= MIN_BUFFER_SIZE || \
-				  sessionInfoPtr->sendBufSize == CRYPT_UNUSED ) );
+		REQUIRES( sessionInfoPtr->receiveBufSize >= MIN_BUFFER_SIZE && \
+				  sessionInfoPtr->receiveBufSize < MAX_INTLENGTH );
+		REQUIRES( ( sessionInfoPtr->sendBufSize >= MIN_BUFFER_SIZE && \
+					sessionInfoPtr->sendBufSize < MAX_INTLENGTH ) || \
+				  sessionInfoPtr->sendBufSize == CRYPT_UNUSED );
 
 		if( ( sessionInfoPtr->receiveBuffer = \
 						clAlloc( "activateConnection", \
@@ -280,7 +345,7 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 			return( CRYPT_ERROR_MEMORY );
 		if( sessionInfoPtr->sendBufSize != CRYPT_UNUSED )
 			{
-			/* When allocating the send buffer we use the size for the
+			/* When allocating the send buffer we use the size given for the
 			   receive buffer since the user may have overridden the default
 			   buffer size */
 			if( ( sessionInfoPtr->sendBuffer = \
@@ -294,16 +359,16 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 			sessionInfoPtr->sendBufSize = sessionInfoPtr->receiveBufSize;
 			}
 		}
-	assert( isServer( sessionInfoPtr ) || \
-			findSessionInfo( sessionInfoPtr->attributeList, 
-							 CRYPT_SESSINFO_SERVER_NAME ) != NULL || \
-			sessionInfoPtr->networkSocket != CRYPT_ERROR );
-	assert( findSessionInfo( sessionInfoPtr->attributeList,
-							 CRYPT_SESSINFO_SERVER_PORT ) != NULL || \
-			sessionInfoPtr->protocolInfo->port > 0 );
-	assert( sessionInfoPtr->receiveBuffer != NULL );
+	ENSURES( sessionInfoPtr->receiveBuffer != NULL && \
+			 sessionInfoPtr->receiveBufSize >= MIN_BUFFER_SIZE && \
+			 sessionInfoPtr->receiveBufSize < MAX_INTLENGTH );
+	ENSURES( sessionInfoPtr->sendBufSize == CRYPT_UNUSED || \
+			 sessionInfoPtr->sendBuffer != NULL );
 
-	/* Set timeouts if they're not set yet */
+	/* Set timeouts if they're not set yet.  If there's an error then we use
+	   the default value rather than aborting the entire session because of 
+	   a minor difference in timeout values, although we also warn the 
+	   caller in debug mode */
 	if( sessionInfoPtr->connectTimeout == CRYPT_ERROR )
 		{
 		int timeout;
@@ -311,8 +376,14 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		status = krnlSendMessage( sessionInfoPtr->ownerHandle,
 								  IMESSAGE_GETATTRIBUTE, &timeout,
 								  CRYPT_OPTION_NET_CONNECTTIMEOUT );
-		sessionInfoPtr->connectTimeout = cryptStatusOK( status ) ? \
-										 timeout : 30;
+		if( cryptStatusOK( status ) )
+			sessionInfoPtr->connectTimeout = timeout;
+		else
+			{
+			DEBUG_DIAG(( "Couldn't get connect timeout config value" ));
+			assert( DEBUG_WARN );
+			sessionInfoPtr->connectTimeout = 30;
+			}
 		}
 	if( sessionInfoPtr->readTimeout == CRYPT_ERROR )
 		{
@@ -321,8 +392,14 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		status = krnlSendMessage( sessionInfoPtr->ownerHandle,
 								  IMESSAGE_GETATTRIBUTE, &timeout,
 								  CRYPT_OPTION_NET_READTIMEOUT );
-		sessionInfoPtr->readTimeout = cryptStatusOK( status ) ? \
-									  timeout : 30;
+		if( cryptStatusOK( status ) )
+			sessionInfoPtr->readTimeout = timeout;
+		else
+			{
+			DEBUG_DIAG(( "Couldn't get read timeout config value" ));
+			assert( DEBUG_WARN );
+			sessionInfoPtr->readTimeout = 30;
+			}
 		}
 	if( sessionInfoPtr->writeTimeout == CRYPT_ERROR )
 		{
@@ -331,8 +408,14 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		status = krnlSendMessage( sessionInfoPtr->ownerHandle,
 								  IMESSAGE_GETATTRIBUTE, &timeout,
 								  CRYPT_OPTION_NET_WRITETIMEOUT );
-		sessionInfoPtr->writeTimeout = cryptStatusOK( status ) ? \
-									   timeout : 30;
+		if( cryptStatusOK( status ) )
+			sessionInfoPtr->writeTimeout = timeout;
+		else
+			{
+			DEBUG_DIAG(( "Couldn't get write timeout config value" ));
+			assert( DEBUG_WARN );
+			sessionInfoPtr->writeTimeout = 30;
+			}
 		}
 
 	/* Wait for any async driver binding to complete.  We can delay this
@@ -344,31 +427,32 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 		return( CRYPT_ERROR_PERMISSION );
 		}
 
-	/* If this is the first time we've got here, activate the session */
+	/* If this is the first time that we've got here, activate the session */
 	if( !( sessionInfoPtr->flags & SESSION_PARTIALOPEN ) )
 		{
+		REQUIRES( !( sessionInfoPtr->flags & SESSION_ISOPEN ) )
+
 		status = sessionInfoPtr->connectFunction( sessionInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-	assert( !sIsNullStream( &sessionInfoPtr->stream ) );
 
 	/* If it's a secure data transport session, complete the session state
-	   setup.  Note that some sessions dynamically change the protocol info
-	   during the handshake to accommodate parameters negotiated during the
-	   handshake, so we can only access the protocol info after the handshake
-	   has completed */
+	   setup.  Note that some sessions dynamically change the protocol 
+	   information during the handshake to accommodate parameters negotiated 
+	   during the handshake so we can only access the protocol information 
+	   after the handshake has completed */
 	if( !sessionInfoPtr->protocolInfo->isReqResp )
 		{
 		/* Complete the session handshake to set up the secure state */
 		status = sessionInfoPtr->transactFunction( sessionInfoPtr );
 		if( cryptStatusError( status ) )
 			{
-			/* If we need a check of a resource (for example a user name and
-			   password or cert supplied by the other side) before we can 
-			   complete the handshake, we remain in the handshake state so
-			   the user can re-activate the session after confirming (or
-			   denying) the resource */
+			/* If we need feedback from the user before we can complete the 
+			   handshake (for example checking a user name and password or 
+			   certificate supplied by the other side) we remain in the 
+			   handshake state so that the user can re-activate the session 
+			   after confirming (or denying) the check */
 			if( status == CRYPT_ENVELOPE_RESOURCE )
 				sessionInfoPtr->flags |= SESSION_PARTIALOPEN;
 
@@ -377,14 +461,15 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 
 		/* Notify the kernel that the session key context is attached to the
 		   session object.  Note that we increment its reference count even
-		   though it's an internal object used only by the session, because
+		   though it's an internal object used only by the session because
 		   otherwise it'll be automatically destroyed by the kernel as a
 		   zero-reference dependent object when the session object is
-		   destroyed (but before the session object itself, since it's a
-		   dependent object).  This automatic cleanup could cause problems 
-		   for lower-level session management code that tries to work with 
-		   the (apparently still-valid) handle, for example protocols that 
-		   need to encrypt a close-channel message on shutdown */
+		   destroyed (but before the session object itself since the context 
+		   is just a dependent object).  This automatic cleanup could cause 
+		   problems for lower-level session management code that tries to 
+		   work with the (apparently still-valid) handle, for example 
+		   protocols that need to encrypt a close-channel message on session 
+		   shutdown */
 		krnlSendMessage( sessionInfoPtr->objectHandle, IMESSAGE_SETDEPENDENT,
 						 &sessionInfoPtr->iCryptInContext,
 						 SETDEP_OPTION_INCREF );
@@ -414,35 +499,12 @@ static int activateConnection( SESSION_INFO *sessionInfoPtr )
 
 /* Activate a session */
 
-static void cleanupReqResp( SESSION_INFO *sessionInfoPtr,
-							const BOOLEAN isPostTransaction )
-	{
-	const BOOLEAN isServer = isServer( sessionInfoPtr );
-
-	/* Clean up server requests left over from a previous transaction/
-	   created by the just-completed transaction */
-	if( isServer && sessionInfoPtr->iCertRequest != CRYPT_ERROR )
-		{
-		krnlSendNotifier( sessionInfoPtr->iCertRequest,
-						  IMESSAGE_DECREFCOUNT );
-		sessionInfoPtr->iCertRequest = CRYPT_ERROR;
-		}
-
-	/* Clean up client/server responses left over from a previous
-	   transaction and server responses created by the just-completed
-	   transaction */
-	if( ( isServer || !isPostTransaction ) && \
-		sessionInfoPtr->iCertResponse != CRYPT_ERROR )
-		{
-		krnlSendNotifier( sessionInfoPtr->iCertResponse,
-						  IMESSAGE_DECREFCOUNT );
-		sessionInfoPtr->iCertResponse = CRYPT_ERROR;
-		}
-	}
-
-int activateSession( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int activateSession( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	int streamState, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Activate the connection if necessary */
 	if( !( sessionInfoPtr->flags & SESSION_ISOPEN ) )
@@ -454,20 +516,27 @@ int activateSession( SESSION_INFO *sessionInfoPtr )
 
 		/* The session activation succeeded, make sure that we don't try
 		   and replace the ephemeral attributes established during the 
-		   session setup during any later operations */
+		   session setup during any later operations.  This is used for
+		   example when we're the server and the client provides us with 
+		   authentication data but the validity of the data hasn't been 
+		   confirmed yet by the user (see the comment about the 
+		   CRYPT_ENVELOPE_RESOURCE status in activateConnection()), normally 
+		   this would be deleted/overwritten when the session is recycled 
+		   but once the caller has confirmed it as being valid we lock it to 
+		   make sure that it won't be changed any more */
 		if( sessionInfoPtr->attributeList != NULL )
 			lockEphemeralAttributes( sessionInfoPtr->attributeList );
 		}
 
-	/* If it's a secure data transport session, it's up to the caller to
-	   move data over it, and we're done */
+	/* If it's a secure data transport session it's up to the caller to move 
+	   data over it, and we're done */
 	if( !sessionInfoPtr->protocolInfo->isReqResp )
 		return( CRYPT_OK );
 
-	/* Carry out the transaction on the request-response connection.  We
+	/* Carry out a transaction on the request-response connection.  We
 	   perform a cleanup of request/response data around the activation,
 	   beforehand to catch data such as responses left over from a previous
-	   transaction, and afterwards to clean up ephemeral data such as
+	   transaction and afterwards to clean up ephemeral data such as
 	   requests sent to a server */
 	cleanupReqResp( sessionInfoPtr, FALSE );
 	status = sessionInfoPtr->transactFunction( sessionInfoPtr );
@@ -496,32 +565,42 @@ int activateSession( SESSION_INFO *sessionInfoPtr )
 
 /* Send a close notification.  This requires special-case handling because
    it's not certain how long we should wait around for the close to happen.
-   If we're in the middle of a cryptlib shutdown we don't want to wait 
+   If we're in the middle of a cryptlib shutdown then we don't want to wait 
    around forever since this would stall the overall shutdown, but if it's a 
-   standard session shutdown we should wait for at least a small amount of
-   time to ensure that all of the data is sent */
+   standard session shutdown then we should wait for at least a small amount 
+   of time to ensure that all of the data is sent */
 
-int sendCloseNotification( SESSION_INFO *sessionInfoPtr,
-						   const void *data, const int length )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
+						   IN_BUFFER_OPT( length ) const void *data, 
+						   IN_LENGTH_SHORT_Z const int length )
 	{
 	BOOLEAN isShutdown = FALSE;
 	int dummy, status = CRYPT_OK;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( ( data == NULL && length == 0 ) || \
 			isReadPtr( data, length ) );
 
+	REQUIRES( ( data == NULL && length == 0 ) || \
+			  ( data != NULL && \
+				length > 0 && length < MAX_INTLENGTH_SHORT ) );
+
 	/* Determine whether we're being shut down as a part of a general 
 	   cryptlib shutdown or just a session shutdown.  We do this by trying 
-	   to read a config option from the owning user object, if the kernel is 
-	   in the middle of a shutdown it disallows all frivolous messages so 
-	   if we get a permission error we're in the middle of the shutdown */
-	if( krnlSendMessage( sessionInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE, 
-						 &dummy, CRYPT_OPTION_INFO_MAJORVERSION ) == CRYPT_ERROR_PERMISSION )
+	   to read a configuration option from the owning user object, if the 
+	   kernel is in the middle of a shutdown it disallows all frivolous 
+	   messages so if we get a permission error then we're in the middle of 
+	   the shutdown */
+	if( krnlSendMessage( sessionInfoPtr->ownerHandle, 
+						 IMESSAGE_GETATTRIBUTE, &dummy, 
+						 CRYPT_OPTION_INFO_MAJORVERSION ) == CRYPT_ERROR_PERMISSION )
 		isShutdown = TRUE;
 
 	/* If necessary set a timeout sufficient to at least provide a chance of 
-	   sending our close alert and receiving the other side's ack of the 
-	   close, but without leading to excessive delays during the shutdown */
+	   sending our close notification and receiving the other side's ack of 
+	   the close, but without leading to excessive delays during the 
+	   shutdown */
 	if( isShutdown )
 		{
 		/* It's a cryptlib-wide shutdown, try and get out as quickly as
@@ -539,8 +618,11 @@ int sendCloseNotification( SESSION_INFO *sessionInfoPtr,
 				&timeout, 0 );
 		if( timeout < 5 )
 			timeout = 5;
-		if( timeout > 15 )
-			timeout = 15;
+		else
+			{
+			if( timeout > 15 )
+				timeout = 15;
+			}
 		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
 				NULL, timeout );
 		}
@@ -575,23 +657,28 @@ int sendCloseNotification( SESSION_INFO *sessionInfoPtr,
 /* Default init/shutdown functions used when no session-specific ones are
    provided */
 
-static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int defaultClientStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
 	NET_CONNECT_INFO connectInfo;
 	int status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Connect to the server */
-	initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
+	status = initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
 		status = sNetConnect( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP,
 							  &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
+#ifdef USE_CMP_TRANSPORT
 		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
 			{
 			const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									protocolInfoPtr->altProtocolInfo;
+									sessionInfoPtr->protocolInfo->altProtocolInfo;
 
 			/* If we'd be using the HTTP port for a session-specific 
 			   protocol, change it to the default port for the session-
@@ -603,30 +690,38 @@ static int defaultClientStartupFunction( SESSION_INFO *sessionInfoPtr )
 								  &connectInfo, &sessionInfoPtr->errorInfo );
 			}
 		else
+#endif /* USE_CMP_TRANSPORT */
+			{
 			status = sNetConnect( &sessionInfoPtr->stream,
 								  STREAM_PROTOCOL_TCPIP,
 								  &connectInfo, &sessionInfoPtr->errorInfo );
+			}
 		}
 	return( status );
 	}
 
-static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int defaultServerStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
 	NET_CONNECT_INFO connectInfo;
 	int nameLen, port, status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Wait for a client connection */
-	initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
+	status = initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
+	if( cryptStatusError( status ) )
+		return( status );
 	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
 		status = sNetListen( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP,
 							 &connectInfo, &sessionInfoPtr->errorInfo );
 	else
 		{
+#ifdef USE_CMP_TRANSPORT
 		if( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT )
 			{
 			const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									protocolInfoPtr->altProtocolInfo;
+									sessionInfoPtr->protocolInfo->altProtocolInfo;
 
 			/* If we'd be using the HTTP port for a session-specific 
 			   protocol, change it to the default port for the session-
@@ -638,9 +733,12 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 								 &connectInfo, &sessionInfoPtr->errorInfo );
 			}
 		else
+#endif /* USE_CMP_TRANSPORT */
+			{
 			status = sNetListen( &sessionInfoPtr->stream,
 								 STREAM_PROTOCOL_TCPIP,
 								 &connectInfo, &sessionInfoPtr->errorInfo );
+			}
 		}
 	if( cryptStatusError( status ) )
 		return( status );
@@ -654,40 +752,47 @@ static int defaultServerStartupFunction( SESSION_INFO *sessionInfoPtr )
 						 sessionInfoPtr->receiveBuffer, CRYPT_MAX_TEXTSIZE );
 	if( cryptStatusError( status ) )
 		{
-		/* No client info available, exit */
+		/* No client information available, exit */
 		return( CRYPT_OK );
 		}
-	status = addSessionInfo( &sessionInfoPtr->attributeList, 
-							 CRYPT_SESSINFO_CLIENT_NAME, 
-							 sessionInfoPtr->receiveBuffer, nameLen );
+	status = addSessionInfoS( &sessionInfoPtr->attributeList, 
+							  CRYPT_SESSINFO_CLIENT_NAME, 
+							  sessionInfoPtr->receiveBuffer, nameLen );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, 
 					 &port, 0 );
 	if( cryptStatusError( status ) )
 		{
-		/* No port info available, exit */
+		/* No port information available, exit */
 		return( CRYPT_OK );
 		}
 	return( addSessionInfo( &sessionInfoPtr->attributeList, 
-							CRYPT_SESSINFO_CLIENT_PORT, NULL, port ) );
+							CRYPT_SESSINFO_CLIENT_PORT, port ) );
 	}
 
-static void defaultShutdownFunction( SESSION_INFO *sessionInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void defaultShutdownFunction( INOUT SESSION_INFO *sessionInfoPtr )
 	{
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	sNetDisconnect( &sessionInfoPtr->stream );
 	}
 
 /* Default get-attribute function used when no session-specific one is
    provided */
 
-static int defaultGetAttributeFunction( SESSION_INFO *sessionInfoPtr,
-										void *data,
-										const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int defaultGetAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+										OUT void *data,
+										IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	CRYPT_CERTIFICATE *responsePtr = ( CRYPT_CERTIFICATE * ) data;
 
-	assert( type == CRYPT_SESSINFO_RESPONSE );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( data, sizeof( int ) ) );
+
+	REQUIRES( type == CRYPT_SESSINFO_RESPONSE );
 
 	/* If we didn't get a response there's nothing to return */
 	if( sessionInfoPtr->iCertResponse == CRYPT_ERROR )
@@ -695,9 +800,9 @@ static int defaultGetAttributeFunction( SESSION_INFO *sessionInfoPtr,
 
 /************************************************************************/
 /* SCEP gets a bit complicated because a single object has to fill 
-   multiple roles, so that for example the issued cert has to do double 
-   duty for both encryption and authentication.  For now we work around 
-   this by juggling the values around */
+   multiple roles so that for example the issued certificate has to do 
+   double duty for both encryption and authentication.  For now we work 
+   around this by juggling the values around */
 if( sessionInfoPtr->type == CRYPT_SESSION_SCEP && \
 	sessionInfoPtr->iAuthInContext != CRYPT_ERROR )
 	{
@@ -709,7 +814,7 @@ if( sessionInfoPtr->type == CRYPT_SESSION_SCEP && \
 	}
 /************************************************************************/
 
-	/* Return the info to the caller */
+	/* Return the information to the caller */
 	krnlSendNotifier( sessionInfoPtr->iCertResponse, IMESSAGE_INCREFCOUNT );
 	*responsePtr = sessionInfoPtr->iCertResponse;
 	return( CRYPT_OK );
@@ -717,9 +822,12 @@ if( sessionInfoPtr->type == CRYPT_SESSION_SCEP && \
 
 /* Set up the function pointers to the session I/O methods */
 
-int initSessionIO( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSessionIO( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Install default handler functions if required */
 	if( sessionInfoPtr->shutdownFunction == NULL )

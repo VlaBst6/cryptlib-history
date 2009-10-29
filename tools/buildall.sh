@@ -31,7 +31,7 @@ shift
 
 MAJ="3"
 MIN="3"
-PLV="2"
+PLV="3"
 PROJ="cl"
 SHARED_OBJ_PATH="./shared-obj/"
 if [ $OSNAME = "Darwin" ] ; then
@@ -55,6 +55,28 @@ if [ $OSNAME = "SunOS" -a `which cc | grep -c "no cc"` = '1' ] ; then
 	fi ;
 	exit 1;
 fi
+
+# OS X Snow Leopard broke dlopen(), if it's called from a (sub-)thread then it
+# dies with a SIGTRAP.  Specifically, if you dlopen() a shared library linked
+# with CoreFoundation from a thread and the calling app wasn't linked with
+# CoreFoundation then the function CFInitialize() inside dlopen() checks if
+# the thread is the main thread and if it isn't it crashes with a SIGTRAP.
+#
+# This is now handled in cryptlib.c by disabling asynchronous driver binding,
+# the following check is left here in case this isn't sufficient.
+#
+#if [ $OSNAME = "Darwin" -a `sw_vers -productVersion | grep -c "10\.6"` = '1' ] ; then
+#	echo "This version of OS X Snow Leopard may have a buggy dlopen() that crashes" ;
+#	echo "with a SIGTRAP when called from a thread.  If the cryptlib self-test dies" ;
+#	echo "with the message 'Trace/BPT trap' then add:" ;
+#	echo "" ;
+#	echo "  #undef USE_THREADS" ;
+#	echo "" ;
+#	echo "at around line 40 of cryptlib.c and rebuild.  Note that this will disable" ;
+#	echo "the use of asynchronous driver binding, which may make startups a little" ;
+#	echo "slower." ;
+#	echo "" ;
+#fi
 
 # Unicos has a broken uname so we override detection.
 

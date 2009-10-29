@@ -129,7 +129,7 @@ int revokeCertDirect( INOUT DBMS_INFO *dbmsInfo,
 		return( status );
 	iLocalCRL = createInfo.cryptHandle;
 	status = krnlSendMessage( iLocalCRL, IMESSAGE_SETATTRIBUTE, 
-							  ( void * ) &iCertificate, 
+							  ( MESSAGE_CAST ) &iCertificate, 
 							  CRYPT_CERTINFO_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		{
@@ -146,7 +146,7 @@ int revokeCertDirect( INOUT DBMS_INFO *dbmsInfo,
 		/* We're revoking the certificate because we're about to replace it, 
 		   set the revocation reason to superseded */
 		status = krnlSendMessage( iLocalCRL, IMESSAGE_SETATTRIBUTE, 
-								  ( void * ) &crlReason, 
+								  ( MESSAGE_CAST ) &crlReason, 
 								  CRYPT_CERTINFO_CRLREASON );
 		}
 	else
@@ -170,7 +170,8 @@ int revokeCertDirect( INOUT DBMS_INFO *dbmsInfo,
 							&msgData, CRYPT_CERTINFO_INVALIDITYDATE );
 		if( cryptStatusOK( status ) )
 			status = krnlSendMessage( iLocalCRL, IMESSAGE_SETATTRIBUTE, 
-							( void * ) &crlReason, CRYPT_CERTINFO_CRLREASON );
+							( MESSAGE_CAST ) &crlReason, 
+							CRYPT_CERTINFO_CRLREASON );
 		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iLocalCRL, IMESSAGE_SETATTRIBUTE, 
@@ -279,7 +280,7 @@ int caRevokeCert( INOUT DBMS_INFO *dbmsInfo,
 			/* Fill in the CRL from the revocation request */
 			iLocalCRL = createInfo.cryptHandle;
 			status = krnlSendMessage( iLocalCRL, IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &iCertRequest,
+									  ( MESSAGE_CAST ) &iCertRequest,
 									  CRYPT_IATTRIBUTE_REVREQUEST );
 			if( cryptStatusError( status ) )
 				krnlSendNotifier( iLocalCRL, IMESSAGE_DECREFCOUNT );
@@ -598,6 +599,7 @@ int caIssueCRL( INOUT DBMS_INFO *dbmsInfo,
 		   it as an internal error but simply warn in the debug build, 
 		   although we do bail out rather than trying to construct some
 		   monster CRL */
+		DEBUG_DIAG(( "CRL-entry-fetch loop detected" ));
 		assert( DEBUG_WARN );
 		}
 	if( cryptStatusError( operationStatus ) )

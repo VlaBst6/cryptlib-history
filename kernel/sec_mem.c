@@ -86,7 +86,7 @@ static int checkInitAlloc( OUT void **allocPtrPtr,
 							const int size )
 	{
 	/* Make sure that the parameters are in order */
-	if( !isWritePtr( allocPtrPtr, sizeof( void * ) ) )
+	if( !isWritePtrConst( allocPtrPtr, sizeof( void * ) ) )
 		retIntError();
 	
 	REQUIRES( size >= MIN_ALLOC_SIZE && size <= MAX_ALLOC_SIZE );
@@ -105,13 +105,13 @@ static int checkInitFree( void **freePtrPtr, OUT_PTR BYTE **memPtrPtr,
 	PRE( isWritePtr( memBlockPtrPtr, sizeof( MEMLOCK_INFO * ) ) );
 
 	/* Make sure that the parameters are in order */
-	if( !isReadPtr( freePtrPtr, sizeof( void * ) ) || \
-		!isReadPtr( *freePtrPtr, sizeof( MIN_ALLOC_SIZE ) ) )
+	if( !isReadPtrConst( freePtrPtr, sizeof( void * ) ) || \
+		!isReadPtrConst( *freePtrPtr, MIN_ALLOC_SIZE ) )
 		retIntError();
 
 	/* Recover the actual allocated memory block data from the pointer */
 	memPtr = ( ( BYTE * ) *freePtrPtr ) - MEMLOCK_HEADERSIZE;
-	if( !isReadPtr( memPtr, sizeof( MEMLOCK_INFO ) ) )
+	if( !isReadPtrConst( memPtr, sizeof( MEMLOCK_INFO ) ) )
 		retIntError();
 	memBlockPtr = ( MEMLOCK_INFO * ) memPtr;
 	REQUIRES( memBlockPtr->size >= sizeof( MEMLOCK_INFO ) + MIN_ALLOC_SIZE && \
@@ -259,7 +259,8 @@ static void touchAllocatedPages( void )
 
 /* Create and destroy the secure allocation information */
 
-int initAllocation( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initAllocation( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int status;
 
@@ -321,7 +322,8 @@ void endAllocation( void )
 
 /* A safe malloc function that performs page locking if possible */
 
-int krnlMemalloc( void **pointer, int size )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -403,7 +405,8 @@ int krnlMemalloc( void **pointer, int size )
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-void krnlMemfree( void **pointer )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -522,15 +525,17 @@ void krnlMemfree( void **pointer )
   int munlock( void *address, size_t length );
 #endif /* Unix-variant-specific includes */
 
-/* Under many Unix variants the SYSV/Posix mlock() call can be used, but only
-   by the superuser.  OSF/1 has mlock(), but this is defined to the
-   nonexistant memlk() so we need to special-case it out.  QNX (depending on
-   the version) either doesn't have mlock() at all or it's a dummy that just
-   returns -1, so we no-op it out.  Aches, A/UX, PHUX, Linux < 1.3.something,
-   and Ultrix don't even pretend to have mlock().  Many systems also have
-   plock(), but this is pretty crude since it locks all data, and also has
-   various other shortcomings.  Finally, PHUX has datalock(), which is just
-   a plock() variant */
+/* Under many Unix variants the SYSV/Posix mlock() call can be used, but 
+   only by the superuser (with occasional OS-specific variants, for example 
+   under some newer Linux variants the caller needs the specific 
+   CAP_IPC_LOCK privilege rather than just generally being root).  OSF/1 has 
+   mlock(), but this is defined to the nonexistant memlk() so we need to 
+   special-case it out.  QNX (depending on the version) either doesn't have 
+   mlock() at all or it's a dummy that just returns -1, so we no-op it out.  
+   Aches, A/UX, PHUX, Linux < 1.3.something, and Ultrix don't even pretend 
+   to have mlock().  Many systems also have plock(), but this is pretty 
+   crude since it locks all data, and also has various other shortcomings.  
+   Finally, PHUX has datalock(), which is just a plock() variant */
 
 #if defined( _AIX ) || defined( __alpha__ ) || defined( __aux ) || \
 	defined( _CRAY ) || defined( __CYGWIN__ ) || defined( __hpux ) || \
@@ -545,7 +550,8 @@ void krnlMemfree( void **pointer )
 
 /* A safe malloc function that performs page locking if possible */
 
-int krnlMemalloc( void **pointer, int size )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -624,7 +630,8 @@ int krnlMemalloc( void **pointer, int size )
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-void krnlMemfree( void **pointer )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -679,7 +686,8 @@ void krnlMemfree( void **pointer )
 
 /* A safe malloc function that performs page locking if possible */
 
-int krnlMemalloc( void **pointer, int size )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -721,7 +729,8 @@ int krnlMemalloc( void **pointer, int size )
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-void krnlMemfree( void **pointer )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -760,7 +769,8 @@ void krnlMemfree( void **pointer )
 
 /* A safe malloc function that performs page locking if possible */
 
-int krnlMemalloc( void **pointer, int size )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -811,7 +821,8 @@ int krnlMemalloc( void **pointer, int size )
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-void krnlMemfree( void **pointer )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -856,7 +867,8 @@ void krnlMemfree( void **pointer )
 
 /* A safe malloc function that performs page locking if possible */
 
-int krnlMemalloc( void **pointer, int size )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -903,7 +915,8 @@ int krnlMemalloc( void **pointer, int size )
 	 And never be met with again"	- Lewis Carroll,
 									  "The Hunting of the Snark" */
 
-void krnlMemfree( void **pointer )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;

@@ -297,7 +297,7 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 						C_IN CRYPT_CONTEXT sessionKeyContext,
 						C_OUT CRYPT_CONTEXT C_PTR returnedContext )
 	{
-	CRYPT_CONTEXT iReturnedContext;
+	CRYPT_CONTEXT iReturnedContext = DUMMY_INIT;
 	CRYPT_FORMAT_TYPE formatType;
 	CRYPT_ALGO_TYPE importAlgo;
 	int owner, originalOwner, status;
@@ -329,7 +329,7 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 		   data, so the user can't provide a context */
 		if( sessionKeyContext != CRYPT_UNUSED )
 			return( CRYPT_ERROR_PARAM4 );
-		if( !isWritePtr( returnedContext, sizeof( CRYPT_CONTEXT ) ) )
+		if( !isWritePtrConst( returnedContext, sizeof( CRYPT_CONTEXT ) ) )
 			return( CRYPT_ERROR_PARAM5 );
 		*returnedContext = CRYPT_ERROR;
 		}
@@ -483,7 +483,7 @@ C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 		if( encryptedKeyMaxLength != 0 )
 			return( CRYPT_ERROR_PARAM2 );
 		}
-	if( !isWritePtr( encryptedKeyLength, sizeof( int ) ) )
+	if( !isWritePtrConst( encryptedKeyLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	*encryptedKeyLength = 0;
 	if( formatType != CRYPT_FORMAT_CRYPTLIB && \
@@ -679,8 +679,8 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 
 	/* We're exporting a key in CMS format we need to obtain recipient 
 	   information from the certificate associated with the export context.
-	   First we lock the cert for our exclusive use and in case it's a cert 
-	   chain select the first cert in the chain */
+	   First we lock the certificate for our exclusive use and in case it's 
+	   a certificate chain select the first certificate in the chain */
 	status = krnlSendMessage( iExportKey, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_TRUE, CRYPT_IATTRIBUTE_LOCKED );
 	if( cryptStatusError( status ) )
@@ -699,7 +699,8 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 		return( CRYPT_ERROR_PARAM5 );
 		}
 
-	/* Next we get the recipient information from the cert into a dynbuf */
+	/* Next we get the recipient information from the certificate into a 
+	   dynbuf */
 	status = dynCreate( &auxDB, iExportKey,
 						( exportAlgo == CRYPT_ALGO_KEA ) ? \
 							CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER : \

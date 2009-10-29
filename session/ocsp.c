@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib OCSP Session Management					*
-*						Copyright Peter Gutmann 1999-2003					*
+*						Copyright Peter Gutmann 1999-2008					*
 *																			*
 ****************************************************************************/
 
@@ -59,10 +59,18 @@ typedef struct {
    case of an error except close the connection, which we do anyway since
    this is the last message */
 
-static void sendErrorResponse( SESSION_INFO *sessionInfoPtr,
-							   const void *responseData,
-							   const int responseDataLength )
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static void sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
+							   IN_BUFFER( responseDataLength ) \
+									const void *responseData,
+							   IN_LENGTH_SHORT const int responseDataLength )
 	{
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( responseData, responseDataLength ) );
+
+	REQUIRES_V( responseDataLength > 0 && \
+				responseDataLength < MAX_INTLENGTH_SHORT );
+
 	/* Since we're already in an error state there's not much that we can do
 	   in terms of alerting the user if a further error occurs when writing 
 	   the error response, so we ignore any potential write errors that occur
@@ -76,15 +84,22 @@ static void sendErrorResponse( SESSION_INFO *sessionInfoPtr,
 
 /* Compare the nonce in a request with the returned nonce in the response */
 
-static BOOLEAN checkNonce( const CRYPT_CERTIFICATE iCertResponse,
-						   const void *requestNonce, 
-						   const int requestNonceLength )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 2 ) ) \
+static BOOLEAN checkNonce( IN_HANDLE const CRYPT_CERTIFICATE iCertResponse,
+						   IN_BUFFER( requestNonceLength ) const void *requestNonce, 
+						   IN_LENGTH_SHORT const int requestNonceLength )
 	{
 	MESSAGE_DATA responseMsgData;
 	BYTE responseNonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 
+	assert( isReadPtr( requestNonce, requestNonceLength ) );
+
+	REQUIRES( isHandleRangeValid( iCertResponse ) );
+	REQUIRES( requestNonceLength > 0 && \
+			  requestNonceLength < MAX_INTLENGTH_SHORT );
+
 	/* Make sure that the nonce has a plausible length */
-	if( requestNonceLength < 4 )
+	if( requestNonceLength < 4 || requestNonceLength > CRYPT_MAX_HASHSIZE )
 		return( FALSE );
 
 	/* Try and read the nonce from the response */
@@ -96,22 +111,24 @@ static BOOLEAN checkNonce( const CRYPT_CERTIFICATE iCertResponse,
 		return( FALSE );
 
 	/* Make sure that the two nonces match.  The comparison is somewhat 
-	   complex because for no known reason OCSP uses integers rather than 
-	   octet strings as nonces, so the nonce is encoded using the integer 
-	   analog to an OCTET STRING hole and may have a leading zero byte if 
-	   the high bit is set.  Because of this we treat the two as equal if 
-	   they really are equal or if they differ only by a leading zero byte 
-	   (in practice the cert-handling code ensures that the high bit is 
-	   never set, but we leave the extra checking in there just in case) */
+	   complex because OCSP never specifies how the nonce is meant to be
+	   encoded so it's possible that some implementations will use things
+	   like TSP's bizarre INTEGER rather than the obvious and logical OCTET 
+	   STRING.  In theory we could check for the INTEGER-encoding 
+	   alternative, but this doesn't seem to be required any more since 
+	   everyone use a de facto encoding of OCTET STRING */
 	if( requestNonceLength == responseMsgData.length && \
 		!memcmp( requestNonce, responseMsgData.data, requestNonceLength ) )
-		/* Literal nonce comparison */
 		return( TRUE );
+#if 0	/* 24/9/08 Doesn't seem to be required any more */
 	if( requestNonceLength == responseMsgData.length - 1 && \
 		responseNonceBuffer[ 0 ] == 0 && \
 		!memcmp( requestNonce, responseNonceBuffer + 1, requestNonceLength ) )
+		{
 		/* INTEGER-encoding nonce comparison */
 		return( TRUE );
+		}
+#endif /* 0 */
 
 	return( FALSE );
 	}
@@ -126,29 +143,34 @@ static BOOLEAN checkNonce( const CRYPT_CERTIFICATE iCertResponse,
 
 static const OID_INFO FAR_BSS ocspOIDinfo[] = {
 	{ OID_OCSP_RESPONSE_OCSP, OCSPRESPONSE_TYPE_OCSP },
-	{ NULL, 0 }
+	{ NULL, 0 }, { NULL, 0 }
 	};
 
 /* Send a request to an OCSP server */
 
-static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	MESSAGE_DATA msgData;
 	int status;
 
-	/* Get the encoded request data.  We store this in the send buffer, which
-	   at its minimum size is roughly two orders of magnitude larger than the
-	   request */
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Get the encoded request data.  We store this in the session buffer, 
+	   which at its minimum size is roughly two orders of magnitude larger 
+	   than the request */
 	setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
 					sessionInfoPtr->receiveBufSize );
 	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
 							  IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
 	if( cryptStatusError( status ) )
+		{
 		retExt( status,
 				( status, SESSION_ERRINFO, 
 				  "Couldn't get OCSP request data from OCSP request "
 				  "object" ) );
+		}
 	sessionInfoPtr->receiveBufEnd = msgData.length;
 	DEBUG_DUMP( "ocsp_req", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );
@@ -160,7 +182,8 @@ static int sendClientRequest( SESSION_INFO *sessionInfoPtr )
 
 /* Read the response from the OCSP server */
 
-static int readServerResponse( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_CERTIFICATE iCertResponse;
 	MESSAGE_DATA msgData;
@@ -169,6 +192,8 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	const char *errorString = NULL;
 	int value, responseType, length, status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
 	/* Read the response from the responder */
 	status = readPkiDatagram( sessionInfoPtr );
 	if( cryptStatusError( status ) )
@@ -176,7 +201,12 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	DEBUG_DUMP( "ocsp_resp", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );
 
-	/* Try and extract an OCSP status code from the returned object */
+	/* Try and extract an OCSP status code from the returned object:
+
+		SEQUENCE {
+			respStatus			ENUMERATED,			-- 0 = OK
+			respBytes		[0]	EXPLICIT SEQUENCE {
+								... */
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
 	readSequence( &stream, NULL );
@@ -184,13 +214,15 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
-		return( status );
+		retExt( status,
+				( status, SESSION_ERRINFO, 
+				  "Invalid OCSP response status data" ) );
 		}
 
 	/* If it's an error status, try and translate it into something a bit 
-	   more meaningful (some of the translations are a bit questionable, but 
-	   it's better than the generic no va response (which should actually be 
-	   "no marcha" in any case)) */
+	   more meaningful.  Some of the translations are a bit questionable, 
+	   but it's better than the generic no va response (which should 
+	   actually be "no marcha" in any case) */
 	sessionInfoPtr->errorInfo.errorCode = value;
 	switch( value )
 		{
@@ -229,7 +261,7 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 
 	/* We've got a valid response, read the [0] EXPLICIT SEQUENCE { OID,
 	   OCTET STRING { encapsulation and import the response into an OCSP
-	   cert object */
+	   certificate object */
 	readConstructed( &stream, NULL, 0 );		/* responseBytes */
 	readSequence( &stream, NULL );
 	readOID( &stream, ocspOIDinfo,				/* responseType */
@@ -240,9 +272,10 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 		sMemDisconnect( &stream );
 		retExt( status, 
 				( status, SESSION_ERRINFO, 
-				  "Invalid OCSP response header" ) );
+				  "Invalid OCSP response data header" ) );
 		}
-	status = importCertFromStream( &stream, &iCertResponse,
+	status = importCertFromStream( &stream, &iCertResponse, 
+								   DEFAULTUSER_OBJECT_HANDLE,
 								   CRYPT_CERTTYPE_OCSP_RESPONSE, length );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
@@ -261,7 +294,12 @@ static int readServerResponse( SESSION_INFO *sessionInfoPtr )
 		/* The response doesn't contain a nonce or it doesn't match what we 
 		   sent, we can't trust it.  The best error that we can return here 
 		   is a signature error to indicate that the integrity check 
-		   failed */
+		   failed (note that a later modification to OCSP, in an attempt to
+		   make it scale, removed the nonce, thus breaking the security of
+		   the protocol against replay attack.  Since the protocol is now
+		   broken against attack we treat a nonce-less response from one of
+		   these responders as a failure, since it's indistinguishable from
+		   an actual attack */
 		krnlSendNotifier( iCertResponse, IMESSAGE_DECREFCOUNT );
 		retExt( CRYPT_ERROR_SIGNATURE,
 				( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
@@ -298,12 +336,15 @@ static const BYTE FAR_BSS respIntError[] = {
 
 /* Read a request from an OCSP client */
 
-static int readClientRequest( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_CERTIFICATE iOcspRequest;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	STREAM stream;
 	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Read the request data from the client.  We don't write an error
 	   response at this initial stage to prevent scanning/DOS attacks
@@ -314,7 +355,16 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 	DEBUG_DUMP( "ocsp_sreq", sessionInfoPtr->receiveBuffer,
 				sessionInfoPtr->receiveBufEnd );
 
-	/* Basic lint filter to check for approximately-OK requests */
+	/* Basic lint filter to check for approximately-OK requests before we
+	   try creating a certificate object from the data:
+
+		SEQUENCE {
+			SEQUENCE {					-- tbsRequest
+				version		[0]	...
+				reqName		[1]	...
+				SEQUENCE {				-- requestList
+					SEQUENCE {			-- request
+					... */
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
 	readSequence( &stream, NULL );
@@ -374,16 +424,20 @@ static int readClientRequest( SESSION_INFO *sessionInfoPtr )
 
 /* Return a response to an OCSP client */
 
-static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	MESSAGE_DATA msgData;
 	STREAM stream;
 	int responseLength, responseDataLength, status;
 
-	/* Check the entries from the request against the cert store and sign
-	   the resulting status information ("Love, ken").  Note that
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Check the entries from the request against the certificate store and 
+	   sign the resulting status information ("Love, ken").  Note that
 	   CRYPT_ERROR_INVALID is a valid return status for the sigcheck call
-	   since it indicates that one (or more) of the certs was revoked */
+	   since it indicates that one (or more) of the certificates was 
+	   revoked */
 	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
 							  IMESSAGE_CRT_SIGCHECK, NULL,
 							  sessionInfoPtr->cryptKeyset );
@@ -403,7 +457,6 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 		status = krnlSendMessage( sessionInfoPtr->iCertResponse,
 								  IMESSAGE_CRT_EXPORT, &msgData,
 								  CRYPT_CERTFORMAT_CERTIFICATE );
-	responseDataLength = msgData.length;
 	if( cryptStatusError( status ) )
 		{
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
@@ -411,6 +464,7 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 				( status, SESSION_ERRINFO, 
 				  "Couldn't create signed OCSP response" ) );
 		}
+	responseDataLength = msgData.length;
 
 	/* Write the wrapper for the response */
 	sMemOpen( &stream, sessionInfoPtr->receiveBuffer,
@@ -428,7 +482,8 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 	/* Get the encoded response data */
 	status = exportCertToStream( &stream, sessionInfoPtr->iCertResponse,
 								 CRYPT_CERTFORMAT_CERTIFICATE );
-	sessionInfoPtr->receiveBufEnd = stell( &stream );
+	if( cryptStatusOK( status ) )
+		sessionInfoPtr->receiveBufEnd = stell( &stream );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -451,22 +506,28 @@ static int sendServerResponse( SESSION_INFO *sessionInfoPtr )
 
 /* Exchange data with an OCSP client/server */
 
-static int clientTransact( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	int status;
 
-	/* Get cert revocation information from the server */
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Get certificate revocation information from the server */
 	status = sendClientRequest( sessionInfoPtr );
 	if( cryptStatusOK( status ) )
 		status = readServerResponse( sessionInfoPtr );
 	return( status );
 	}
 
-static int serverTransact( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	int status;
 
-	/* Send cert revocation information to the client */
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* Send certificate revocation information to the client */
 	status = readClientRequest( sessionInfoPtr );
 	if( cryptStatusOK( status ) )
 		status = sendServerResponse( sessionInfoPtr );
@@ -479,29 +540,34 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 *																			*
 ****************************************************************************/
 
-static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
-								 const void *data,
-								 const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+								 IN const void *data,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const CRYPT_CERTIFICATE ocspRequest = *( ( CRYPT_CERTIFICATE * ) data );
 	MESSAGE_DATA msgData = { NULL, 0 };
 	int status;
 
-	assert( type == CRYPT_SESSINFO_REQUEST );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( data, sizeof( int ) ) );
+
+	REQUIRES( type == CRYPT_SESSINFO_REQUEST );
 
 	/* Make sure that everything is set up ready to go.  Since OCSP requests
-	   aren't (usually) signed like normal cert objects, we can't just check
-	   the immutable attribute but have to perform a dummy export for which
-	   the cert export code will return an error status if there's a
-	   problem with the request.  If not, it pseudo-signs the request (if it
-	   hasn't already done so) and prepares it for use */
+	   aren't (usually) signed like normal certificate objects we can't just 
+	   check the immutable attribute but have to perform a dummy export for 
+	   which the certificate export code will return an error status if 
+	   there's a problem with the request.  If not, it pseudo-signs the 
+	   request (if it hasn't already done so) and prepares it for use */
 	status = krnlSendMessage( ocspRequest, IMESSAGE_CRT_EXPORT, &msgData,
 							  CRYPT_ICERTFORMAT_DATA );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ARGERROR_NUM1 );
 
 	/* If we haven't already got a server name explicitly set, try and get
-	   it from the request */
+	   it from the request.  This is an opportunistic action so we ignore 
+	   any potential error, the caller can still set the value explicitly */
 	if( findSessionInfo( sessionInfoPtr->attributeList,
 						 CRYPT_SESSINFO_SERVER_NAME ) == NULL )
 		{
@@ -511,9 +577,9 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		status = krnlSendMessage( ocspRequest, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_RESPONDERURL );
 		if( cryptStatusOK( status ) )
-			krnlSendMessage( sessionInfoPtr->objectHandle,
-							 IMESSAGE_SETATTRIBUTE_S, &msgData,
-							 CRYPT_SESSINFO_SERVER_NAME );
+			( void ) krnlSendMessage( sessionInfoPtr->objectHandle,
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_SESSINFO_SERVER_NAME );
 		}
 
 	/* Add the request and increment its usage count */
@@ -529,7 +595,8 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-int setAccessMethodOCSP( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodOCSP( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */
@@ -545,6 +612,8 @@ int setAccessMethodOCSP( SESSION_INFO *sessionInfoPtr )
 
 		/* Protocol-specific information */
 		};
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Set the access method pointers */
 	sessionInfoPtr->protocolInfo = &protocolInfo;

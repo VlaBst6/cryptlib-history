@@ -284,6 +284,7 @@ CRYPT_CERTIFICATE getTrustedCert( INOUT TYPECAST( TRUST_INFO ** ) \
 								  &createInfo, OBJECT_TYPE_CERTIFICATE );
 		if( cryptStatusError( status ) )
 			{
+			DEBUG_DIAG(( "Couldn't instantiate trusted certificate" ));
 			assert( DEBUG_WARN );
 			return( status );
 			}
@@ -355,7 +356,7 @@ int enumTrustedCerts( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr,
 				/* We're sending trusted certificates to a certificate trust 
 				   list */
 				status = krnlSendMessage( iCryptCtl, IMESSAGE_SETATTRIBUTE,
-										  ( void * ) &iCryptCert,
+										  ( MESSAGE_CAST ) &iCryptCert,
 										  CRYPT_IATTRIBUTE_CERTCOLLECTION );
 				}
 			else
@@ -723,7 +724,7 @@ void deleteTrustEntry( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initTrustInfo( OUT_PTR TYPECAST( TRUST_INFO ** ) void **trustInfoPtrPtr )
 	{
-	TRUST_INFO *trustInfoIndex;
+	TRUST_INFO **trustInfoIndex;
 
 	assert( isWritePtr( trustInfoPtrPtr, sizeof( void * ) ) );
 

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					Certificate Attribute Checking Routines					*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -17,21 +17,41 @@
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
+/* Define the following to print a trace of the certificate fields being 
+   checked */
+
+#if !defined( NDEBUG ) && 0
+  #define TRACE_FIELDTYPE( attributeInfoPtr ) \
+		  { \
+		  if( ( attributeInfoPtr ) != NULL && \
+			  ( attributeInfoPtr )->description != NULL ) \
+			  DEBUG_PRINT(( ( attributeInfoPtr )->description )); \
+		  else \
+			  DEBUG_PRINT(( "<Unrecognised attribute>" )); \
+		  DEBUG_PRINT(( "\n" )); \
+		  }
+  #define TRACE_DEBUG( message ) \
+		  DEBUG_PRINT( message )
+#else
+  #define TRACE_FIELDTYPE( attributeInfoPtr )
+  #define TRACE_DEBUG( message )
+#endif /* NDEBUG */
+
 /****************************************************************************
 *																			*
 *							Attribute Field Type Checking					*
 *																			*
 ****************************************************************************/
 
-/* Validate and preprocess a set of attributes in preparation for writing
-   them to a certificate or CRL and set up links to the information in the
-   attribute information table prior to encoding the attributes.  This is a
-   rather complex process that relies on stepping through the list of
-   attribute fields and the attribute information table in sync and making
-   sure that the list of fields is consistent with the attribute information
-   table.  In addition we set up synchronisation points between the list and 
-   table that are used during the encoding process.  For example assume that 
-   we have the following attribute:
+/* Validate and preprocess a set of attributes and set up links to the 
+   information in the attribute information table in preparation for 
+   encoding the attribute.  This is a rather complex process that relies on 
+   stepping through the list of attribute fields and the attribute 
+   information table in sync and making sure that the list of fields is 
+   consistent with the attribute information table.  In addition we set up 
+   synchronisation points between the list and table that are used during 
+   the encoding process.  For example assume that we have the following 
+   attribute:
 
 	attribute ::= SEQUENCE {
 		foo		BOOLEAN DEFAULT TRUE,
@@ -40,19 +60,19 @@
 
    The attribute information table would encode this attribute as:
 
-	t1:	OID	SEQUENCE	MORE
-	t2:		BOOLEAN		MORE	OPTIONAL
-	t3:		SEQUENCE	MORE
-	t4:		OID
+	t1:	OID	SEQUENCE
+	t2:		BOOLEAN		OPTIONAL
+	t3:		SEQUENCE
+	t4:		OID			END
 
-   The first table entry t1 contains the OID, the SEQUENCE wrapper, and a
-   continuation flag.  For the purposes of comparison with the list this is
-   a no-op and can be skipped since it's only used for encoding purposes.  
-   The next table entry t2 contains the first attribute field, an optional
-   boolean and a continuation flag.  The next table entry t3 contains another
-   SEQUENCE wrapper that again is only used for encoding and can be skipped
-   for comparing with the list, and a continuation flag.  Finally, the last
-   table entry t4 contains the second attribute field, an OID.
+   The first table entry t1 contains the OID, the SEQUENCE wrapper.  For the 
+   purposes of comparison with the list this is a no-op and can be skipped 
+   since it's only used for encoding purposes.  The next table entry t2 
+   contains the first attribute field, an optional boolean.  The next table 
+   entry t3 contains another SEQUENCE wrapper that again is only used for 
+   encoding and can be skipped for comparing with the list.  Finally, the 
+   last table entry t4 contains the second attribute field, an OID, and the
+   end-of-attribute flag.
 
    Assuming that the attribute list contains the following:
 
@@ -62,9 +82,9 @@
    The attribute validation process sets the synchronisation point for the 
    first attribute list entry to point to t1 and the second one to point to 
    t3.  When we encode the attribute we encode t1 (the OID, critical flag, 
-   and SEQUENCE wrapper) since the field IDs won't match we step to t2 and 
-   use that to encode the boolean.  We then do the same for t3 with the 
-   SEQUENCE and OID.
+   and SEQUENCE wrapper) and then since the field IDs won't match we step on 
+   to t2 and use that to encode the boolean.  We then do the same for t3 
+   with the SEQUENCE and OID.
 
    If the attribute list instead contained only:
 
@@ -116,7 +136,7 @@
 
 typedef struct {
 	ATTRIBUTE_LIST *attributeListPtr;	/* List entry that this applies to */
-	ATTRIBUTE_INFO *attributeInfoPtr;	/* Encoding point for sequence */
+	const ATTRIBUTE_INFO *attributeInfoPtr;	/* Encoding point for sequence */
 	int size;							/* Size of sequence */
 	} ATTRIBUTE_STACK;
 
@@ -139,59 +159,71 @@ static int updateStackedInfo( INOUT_ARRAY( ATTRIBUTE_STACKSIZE ) \
 							  IN_RANGE( 0, ATTRIBUTE_STACKSIZE - 1 ) int count, 
 							  const BOOLEAN isRelative )
 	{
-	int currentStackPos = stackPos;
+	int currentStackPos = stackPos, iterationCount;
 
 	assert( isWritePtr( stack, sizeof( ATTRIBUTE_STACK ) * \
 							   ATTRIBUTE_STACKSIZE ) );
 	assert( isWritePtr( newStackPosPtr, sizeof( int ) ) );
+	assert( ENCODING_FIFO_SIZE >= ATTRIBUTE_STACKSIZE );
 	
 	REQUIRES( stackPos >= 0 && stackPos < ATTRIBUTE_STACKSIZE );
 	REQUIRES( count >= 0 && count <= stackPos );
 
-	while( count-- > 0 )
+	for( iterationCount = 0; \
+		 count > 0 && iterationCount < ATTRIBUTE_STACKSIZE; \
+		 count--, iterationCount++ )
 		{
-		ATTRIBUTE_LIST *attributeFifoPtr = stack[ --currentStackPos ].attributeListPtr;
-		const ATTRIBUTE_INFO *attributeInfoPtr = stack[ currentStackPos ].attributeInfoPtr;
-		const int size = stack[ currentStackPos ].size;
+		ATTRIBUTE_LIST *attributeFifoPtr;
+		const ATTRIBUTE_INFO *attributeInfoPtr;
+		int size;
 
-		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+		ENSURES( count > 0 && count <= currentStackPos );
 
-		ENSURES( count >= 0 && count <= currentStackPos );
+		/* Unstack the current entry */
+		currentStackPos--;
 		ENSURES( currentStackPos >= 0 && \
 				 currentStackPos < ATTRIBUTE_STACKSIZE );
+		attributeFifoPtr = stack[ currentStackPos ].attributeListPtr;
+		attributeInfoPtr = stack[ currentStackPos ].attributeInfoPtr;
+		size = stack[ currentStackPos ].size;
 		ENSURES( size >= 0 && size < MAX_INTLENGTH );
+		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
-		/* If there's nothing to encode, continue.  There are a few special
-		   cases here where even if the sequence is of zero length we may
-		   have to encode something.  Firstly, if there's a member with a
-		   default value present (resulting in nothing being encoded) we still
-		   have to encode a zero-length sequence.  In addition if all of the
-		   members have non-encoding values (e.g. OIDs and fixed attributes,
-		   none of which are specified by the user) we have to encode these
-		   even though there's no actual value associated with them since
-		   their mere presence conveys the necessary information.
+		/* If there's nothing to encode, continue.  There are a few special 
+		   cases here where even if the sequence is of zero length we may 
+		   have to encode something.  Firstly, if there's a member with a 
+		   default value present (resulting in nothing being encoded) we 
+		   still have to encode a zero-length sequence.  In addition if all 
+		   of the members have non-encoding values (e.g. OIDs and fixed 
+		   attributes, none of which are specified by the user) then we have 
+		   to encode these even though there's no actual value associated 
+		   with them since their mere presence conveys the necessary 
+		   information.
 
-		   In addition sometimes we can reach the end of the attribute list
-		   but there are further actions defined in the encoding table (for
-		   example cleanup actions in nested sequences).  In this case the
+		   In addition sometimes we can reach the end of the attribute list 
+		   but there are further actions defined in the encoding table (for 
+		   example cleanup actions in nested sequences).  In this case the 
 		   stacked attributeFifoPtr is NULL and the size is zero so we 
 		   perform an additional check to make sure that the pointer is 
 		   non-null */
-		if( !( size > 0 || \
-			   ( attributeFifoPtr != NULL && \
-				 ( ( attributeFifoPtr->flags & ATTR_FLAG_DEFAULTVALUE ) || \
-				   ( attributeInfoPtr->flags & FL_NONENCODING ) ) ) ) )
+		if( attributeFifoPtr == NULL )
+			{
+			ENSURES( size == 0 );
 			continue;
-
-		assert( isWritePtr( attributeFifoPtr, sizeof( ATTRIBUTE_LIST ) ) );
-		assert( sizeof( attributeFifoPtr->sizeFifo ) / sizeof( int ) >= \
-														ATTRIBUTE_STACKSIZE );
+			}
+		if( size <= 0 && \
+			!( ( attributeFifoPtr->flags & ATTR_FLAG_DEFAULTVALUE ) || \
+			   ( attributeInfoPtr->encodingFlags & FL_NONENCODING ) ) )
+			continue;
 
 		/* Remember the size and table entry used to encode this stack 
 		   entry */
 		attributeFifoPtr->sizeFifo[ attributeFifoPtr->fifoEnd ] = size;
 		attributeFifoPtr->encodingFifo[ attributeFifoPtr->fifoEnd++ ] = \
 								stack[ currentStackPos ].attributeInfoPtr;
+
+		ENSURES( attributeFifoPtr->fifoEnd > 0 && \
+				 attributeFifoPtr->fifoEnd < ENCODING_FIFO_SIZE );
 
 		/* If there are no further items on the stack, continue */
 		if( currentStackPos <= 0 )
@@ -205,10 +237,19 @@ static int updateStackedInfo( INOUT_ARRAY( ATTRIBUTE_STACKSIZE ) \
 		if( attributeInfoPtr->fieldType != BER_SEQUENCE && \
 			attributeInfoPtr->fieldType != BER_SET )
 			{
-			const int newLength = \
-					( attributeInfoPtr->fieldType == FIELDTYPE_IDENTIFIER ) ? \
-						sizeofOID( attributeInfoPtr->oid ) : \
-						( int ) attributeInfoPtr->defaultValue;
+			int newLength;
+
+			/* Calculate the size of the encoded field data.  A sequence of
+			   identifier fields has a final catch-all entry without an OID 
+			   which is only used for decoding, we should never see this 
+			   when encoding but we make the check explicit just in case */
+			if( attributeInfoPtr->fieldType == FIELDTYPE_IDENTIFIER )
+				{
+				ENSURES( attributeInfoPtr->oid );
+				newLength = sizeofOID( attributeInfoPtr->oid );
+				}
+			else
+				newLength = ( int ) attributeInfoPtr->defaultValue;
 
 			/* Add the new length to the existing data size.  Since this is a
 			   non-constructed field it doesn't count as a reduction in the
@@ -226,23 +267,24 @@ static int updateStackedInfo( INOUT_ARRAY( ATTRIBUTE_STACKSIZE ) \
 			stack[ currentStackPos - 1 ].size += ( int ) sizeofObject( size );
 			}
 		}
+	ENSURES( iterationCount < ATTRIBUTE_STACKSIZE );
 
 	*newStackPosPtr = currentStackPos;
 
 	return( CRYPT_OK );
 	}
 
-/* Some attributes contain a sequence of items of the attributeTypeAndValue
-   form (i.e. OID, ANY DEFINED BY OID).  To process these a check is made to
-   determine whether the named value component in the attribute list is
-   present in the current attributeTypeAndValue definition.  If it isn't the
-   item is given a zero length, which means that it's never encoded since the 
-   field is marked as optional.  The following function checks whether a 
-   named value component is present in the item */
+/* Some attributes contain a sequence of items of the attributeTypeAndValue 
+   form (i.e. OID, ANY DEFINED BY OID).  To process these we check whether 
+   the named value component in the attribute list is present in the current 
+   attributeTypeAndValue definition.  If it isn't the item is given a zero 
+   length, which means that it's never encoded since the field is marked as 
+   optional.  The following function checks whether a named value component 
+   is present in the item */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 static int checkComponentPresent( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
-								  /*?*/ ATTRIBUTE_INFO **attributeInfoPtrPtr )
+								  INOUT ATTRIBUTE_INFO **attributeInfoPtrPtr )
 	{
 	const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
 	int nestLevel = 0, iterationCount;
@@ -257,7 +299,7 @@ static int checkComponentPresent( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldI
 			     and just want to skip to the end of the 
 				 attributeTypeAndValue */
 
-	/* Check each field we find until we find the end of the
+	/* Check each field that we find until we find the end of the
 	   attributeTypeAndValue.  Unfortunately we don't know how many 
 	   attribute table entries are left so we have to use the generic
 	   FAILSAFE_ITERATIONS_LARGE for the bounds check */
@@ -272,7 +314,7 @@ static int checkComponentPresent( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldI
 		   leaving a sequence */
 		if( attributeInfoPtr->fieldType == BER_SEQUENCE )
 			nestLevel++;
-		nestLevel -= decodeNestingLevel( attributeInfoPtr->flags );
+		nestLevel -= decodeNestingLevel( attributeInfoPtr->encodingFlags );
 
 		/* If the field is present in this attributeTypeAndValue, return */
 		if( attributeInfoPtr->fieldID == fieldID )
@@ -281,7 +323,8 @@ static int checkComponentPresent( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldI
 		/* If we're at the end of the attribute or the attributeTypeAndValue,
 		   exit the loop before adjusting the attributeInfoPtr so that we're
 		   still pointing at the end-of-attribute field */
-		if( nestLevel <= 0 || !( attributeInfoPtr->flags & FL_MORE ) )
+		if( nestLevel <= 0 || \
+			( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTREND ) )
 			break;
 
 		attributeInfoPtr++;
@@ -319,7 +362,7 @@ typedef struct {
 	   the same parent field.  If we're not currently encoding a subtyped
 	   field, this field is set to CRYPT_ATTRIBUTE_NONE */
 	ATTRIBUTE_LIST *attributeListPtr;	/* Position in attribute list */
-	ATTRIBUTE_INFO *attributeInfoPtr;	/* Position in attribute table */
+	const ATTRIBUTE_INFO *attributeInfoPtr;	/* Position in attribute table */
 	CRYPT_ATTRIBUTE_TYPE subtypeParent;	/* Parent of subtype being processed */
 	CHOICE_STATE choiceState;			/* State of CHOICE processing */
 
@@ -327,6 +370,7 @@ typedef struct {
 	   items from both the subfield and the encapsulating field so we also
 	   record the current stack top to make sure that we don't go past this 
 	   level when popping items after we've finished encoding a subfield */
+	ARRAY( ATTRIBUTE_STACKSIZE, stackPos ) \
 	ATTRIBUTE_STACK stack[ ATTRIBUTE_STACKSIZE + 8 ];
 	int stackPos;					/* Encoding stack position */
 	int stackTop;
@@ -340,7 +384,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int stackInfo( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 						ATTRIBUTE_CHECK_INFO *attributeCheckInfo,
 					  IN_OPT ATTRIBUTE_LIST *attributeListPtr,
-					  IN ATTRIBUTE_INFO *attributeInfoPtr )
+					  const ATTRIBUTE_INFO *attributeInfoPtr )
 	{
 	ATTRIBUTE_STACK *stack = attributeCheckInfo->stack;
 
@@ -370,12 +414,17 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 									ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
 	{
 	ATTRIBUTE_LIST *attributeListPtr = attributeCheckInfo->attributeListPtr;
-	ATTRIBUTE_INFO *attributeInfoPtr = attributeCheckInfo->attributeInfoPtr;
+	const ATTRIBUTE_INFO *attributeInfoPtr = attributeCheckInfo->attributeInfoPtr;
 	ATTRIBUTE_STACK *stack = attributeCheckInfo->stack;
 	CRYPT_ATTRIBUTE_TYPE fieldID;
 
 	assert( isWritePtr( attributeCheckInfo, \
 						sizeof( ATTRIBUTE_CHECK_INFO ) ) );
+	assert( attributeListPtr == NULL || \
+			isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( stack, \
+						sizeof( ATTRIBUTE_STACK ) * ATTRIBUTE_STACKSIZE ) );
 
 	/* Determine the fieldID for the current attribute field.  Once we get 
 	   to the end of an attribute list entry we may still run through this 
@@ -427,23 +476,24 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 				attributeCheckInfo->choiceState = CHOICE_START;
 				}
 			attributeCheckInfo->attributeInfoPtr = \
-							( ATTRIBUTE_INFO * ) attributeInfoPtr->extraData;
+					( const ATTRIBUTE_INFO * ) attributeInfoPtr->extraData;
 			attributeCheckInfo->subtypeParent = attributeListPtr->fieldID;
 			attributeCheckInfo->stackTop = attributeCheckInfo->stackPos;
 			status = checkAttribute( attributeCheckInfo );
 			attributeCheckInfo->attributeInfoPtr = attributeInfoPtr;
 			attributeCheckInfo->subtypeParent = CRYPT_ATTRIBUTE_NONE;
 			attributeCheckInfo->stackTop = 0;
-			if( !( attributeInfoPtr->flags & FL_OPTIONAL ) && \
+			if( !( attributeInfoPtr->encodingFlags & FL_OPTIONAL ) && \
 				attributeCheckInfo->attributeListPtr == attributeListPtr )
 				{
 				/* The subtyped field was non-optional but we failed to 
 				   match anything in it against the current attribute list 
-				   entry, there's a problem with the encoding table.  This 
-				   check is used to catch situations where a subtyped field 
-				   is used to encode a CHOICE for which each CHOICE field is 
-				   optional but at least one component of the CHOICE must be 
-				   present */
+				   entry (meaning that the atributeListPtr in the check info
+				   hasn't been advanced), there's a problem with the 
+				   encoding table.  This check is used to catch situations 
+				   where a subtyped field is used to encode a CHOICE for 
+				   which each CHOICE field is optional but at least one 
+				   component of the CHOICE must be present */
 				retIntError();
 				}
 			return( status );
@@ -464,7 +514,7 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 
 		/* If this is an optional field and the value is the same as the
 		   default value remember that it doesn't get encoded */
-		if( ( attributeInfoPtr->flags & FL_DEFAULT ) && \
+		if( ( attributeInfoPtr->encodingFlags & FL_DEFAULT ) && \
 			( attributeInfoPtr->defaultValue == attributeListPtr->intValue ) )
 			{
 			attributeListPtr->flags |= ATTR_FLAG_DEFAULTVALUE;
@@ -473,7 +523,11 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 			return( CRYPT_OK );
 			}
 
-		/* Remember the encoded size of this field */
+		/* Remember the encoded size of this field.  writeAttributeField()
+		   takes a compliance-level parameter that controls stricter 
+		   encoding of some string types at higher compliance levels but 
+		   this doesn't affect the encoded size so we always use 
+		   CRYPT_COMPLIANCELEVEL_STANDARD for the size calculation */
 		attributeListPtr->attributeInfoPtr = attributeInfoPtr;
 		attributeListPtr->encodedSize = \
 					writeAttributeField( NULL, attributeListPtr, 
@@ -507,13 +561,21 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 		}
 
 	/* If it's an attributeTypeAndValue sequence check whether it contains
-	   the field that we want */
-	if( attributeInfoPtr->flags & FL_IDENTIFIER )
+	   the field that we want:
+
+			t0:	BER_SEQUENCE	IDENTIFIER
+			t1:	OID
+		  [ t2:	params			NONENCODING ]
+
+	   The initialisation sanity-check has already confirmed the validity of 
+	   the above format in the encoding table on startup */
+	if( attributeInfoPtr->encodingFlags & FL_IDENTIFIER )
 		{
 		BOOLEAN endOfAttributeField = FALSE;
 		int status;
 
-		status = checkComponentPresent( fieldID, &attributeInfoPtr );
+		status = checkComponentPresent( fieldID, 
+										( ATTRIBUTE_INFO ** ) &attributeInfoPtr );
 		if( status == CRYPT_ERROR_NOTFOUND )
 			{
 			/* Since we've jumped over several items we may be pointing at an
@@ -536,13 +598,13 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 
 		/* If the OID entry is marked as the end-of-sequence there are no
 		   parameters attached so we move on to the next entry */
-		if( attributeInfoPtr->flags & FL_SEQEND_MASK )
+		if( attributeInfoPtr->encodingFlags & FL_SEQEND_MASK )
 			endOfAttributeField = TRUE;
 
 		/* Sometimes the OID is followed by a fixed-value blob field that
 		   constitutes parameters for the OID, if this is present we stack it
 		   as well */
-		if( attributeInfoPtr[ 1 ].flags & FL_NONENCODING )
+		if( attributeInfoPtr[ 1 ].encodingFlags & FL_NONENCODING )
 			{
 			attributeInfoPtr++;
 			status = stackInfo( attributeCheckInfo, attributeListPtr, 
@@ -573,7 +635,7 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 	   remember it for later encoding */
 	if( attributeInfoPtr->fieldType == BER_SEQUENCE || \
 		attributeInfoPtr->fieldType == BER_SET || \
-		attributeInfoPtr->flags & FL_NONENCODING )
+		attributeInfoPtr->encodingFlags & FL_NONENCODING )
 		{
 		/* Stack the sequence or value start position in the attribute list */
 		return( stackInfo( attributeCheckInfo, attributeListPtr, 
@@ -585,7 +647,7 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 	   attributeInfoPtr->fieldID (optional subfield
 	   attributeInfoPtr->subFieldID) (set by the error handler in the calling
 	   code) */
-	if( !( attributeInfoPtr->flags & FL_OPTIONAL ) )
+	if( !( attributeInfoPtr->encodingFlags & FL_OPTIONAL ) )
 		{
 		attributeCheckInfo->errorType = CRYPT_ERRTYPE_ATTR_ABSENT;
 		return( CRYPT_ERROR_NOTINITED );
@@ -601,19 +663,24 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 								ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
 	{
 	ATTRIBUTE_LIST *restartEntry = NULL;
-	ATTRIBUTE_INFO *restartPoint = NULL;
-	int restartStackPos = 0, iterationCount = 0;
-	BOOLEAN attributeContinues;
+	const ATTRIBUTE_INFO *restartPoint = NULL;
+	int restartStackPos = 0, iterationCount;
 
 	assert( isWritePtr( attributeCheckInfo, \
 						sizeof( ATTRIBUTE_CHECK_INFO ) ) );
+	assert( isReadPtr( attributeCheckInfo->attributeInfoPtr,
+					   sizeof( ATTRIBUTE_INFO ) ) );
+
+	TRACE_DEBUG(( "Checking attribute " ));
+	TRACE_FIELDTYPE( attributeCheckInfo->attributeInfoPtr );
 
 	/* Step through the attribute comparing the fields that are present in
 	   the attribute list with the fields that should be present according
 	   to the table and set encoding synchronisation points as required */
-	do
+	for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 iterationCount++ )
 		{
-		int status;
+		int typeInfoFlags, status;
 
 		/* Sanity check to make sure that we don't fall off the end of the 
 		   encoding table */
@@ -621,8 +688,8 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 
 		/* Check whether this is a repeated instance of the same attribute
 		   and if it is remember the encoding restart point.  We have to do
-		   this before we check the attribute info because it usually
-		   updates the info after the check */
+		   this before we check the attribute information because it usually
+		   updates the information after the check */
 		if( restartEntry == NULL && \
 			attributeCheckInfo->attributeListPtr != NULL && \
 			attributeCheckInfo->attributeListPtr->next != NULL && \
@@ -654,7 +721,7 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 			status = updateStackedInfo( attributeCheckInfo->stack,
 										attributeCheckInfo->stackPos,
 										&attributeCheckInfo->stackPos,
-				decodeNestingLevel( attributeCheckInfo->attributeInfoPtr->flags ),
+				decodeNestingLevel( attributeCheckInfo->attributeInfoPtr->encodingFlags ),
 										TRUE );
 			if( cryptStatusError( status ) )
 				return( status );
@@ -665,17 +732,9 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 		if( restartEntry != NULL && \
 			restartEntry != attributeCheckInfo->attributeListPtr )
 			{
-#if 0
-			/* Currently we don't allow the creation of multivalued
-			   instances of fields although we can read certificates that 
-			   contain them */
-			retIntError();
-#endif /* 0 */
-
 			/* Restart at the table entry for the previous instance of the 
 			   item and adjust the stack to match */
 			attributeCheckInfo->attributeInfoPtr = restartPoint;
-			attributeContinues = TRUE;
 			if( attributeCheckInfo->stackPos > restartStackPos )
 				{
 				status = updateStackedInfo( attributeCheckInfo->stack,
@@ -696,20 +755,18 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 		/* Move on to the next table entry.  We have to check the
 		   continuation flag before we move to the next table entry in order
 		   to include processing of the last field in an attribute */
-		attributeContinues = \
-				( attributeCheckInfo->attributeInfoPtr->flags & FL_MORE ) ? \
-				TRUE : FALSE;
+		typeInfoFlags = attributeCheckInfo->attributeInfoPtr->typeInfoFlags;
 		attributeCheckInfo->attributeInfoPtr++;
+		if( typeInfoFlags & FL_ATTR_ATTREND )
+			break;
 		}
-	while( attributeContinues && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE );
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	attributeCheckInfo->choiceState = CHOICE_NONE;
 	
 	/* We've reached the end of the attribute, if there are still constructed
 	   objects stacked, unstack them and update their length information.  If
 	   it's a sequence with all fields optional (so that nothing gets
-	   encoded) we don't do anything */
+	   encoded) this won't do anything */
 	return( updateStackedInfo( attributeCheckInfo->stack, 
 							   attributeCheckInfo->stackPos,
 							   &attributeCheckInfo->stackPos,
@@ -721,17 +778,16 @@ static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
-					 const ATTRIBUTE_LIST *listHeadPtr,
+					 const ATTRIBUTE_PTR *listHeadPtr,
 					 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 						CRYPT_ATTRIBUTE_TYPE *errorLocus,
 					 OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
 						CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	ATTRIBUTE_CHECK_INFO attributeCheckInfo;
-	const ATTRIBUTE_INFO *attributeInfoStartPtr = \
-							selectAttributeInfo( attributeType );
+	const ATTRIBUTE_INFO *attributeInfoStartPtr;
 	ATTRIBUTE_LIST *attributeListPtr;
-	int iterationCount;
+	int dummy, iterationCount, status;
 
 	assert( isReadPtr( listHeadPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
@@ -739,7 +795,14 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 
 	REQUIRES( attributeType == ATTRIBUTE_CERTIFICATE || \
 			  attributeType == ATTRIBUTE_CMS );
-	REQUIRES( attributeInfoStartPtr != NULL );
+
+	/* Get the attribute encoding information.  We can't use the size value
+	   returned from this because of the nested-loop structure below which 
+	   only ever iterates through a subset of the encoding information so we
+	   leave it as a dummy value */
+	status = getAttributeInfo( attributeType, &attributeInfoStartPtr, 
+							   &dummy );
+	ENSURES( cryptStatusOK( status ) );
 
 	/* If we've already done a validation pass some of the fields will
 	   contain values that were previously set so before we begin we walk
@@ -749,7 +812,7 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 			iterationCount = 0;
 		 attributeListPtr != NULL && \
 			isValidAttributeField( attributeListPtr ) && \
-			iterationCount < FAILSAFE_ITERATIONS_MAX; 
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
 		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		if( attributeListPtr->next != NULL && \
@@ -765,47 +828,52 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 			attributeListPtr->fifoEnd = 0;
 		attributeListPtr->flags &= ~ATTR_FLAG_DEFAULTVALUE;
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* Set up the attribute-checking state information */
 	memset( &attributeCheckInfo, 0, sizeof( ATTRIBUTE_CHECK_INFO ) );
 	attributeCheckInfo.attributeListPtr = ( ATTRIBUTE_LIST * ) listHeadPtr;
-	attributeCheckInfo.attributeInfoPtr = ( ATTRIBUTE_INFO * ) attributeInfoStartPtr;
+	attributeCheckInfo.attributeInfoPtr = attributeInfoStartPtr;
 
 	/* Walk down the list of known attributes checking each one for
 	   consistency */
 	for( iterationCount = 0;
 		 attributeCheckInfo.attributeListPtr != NULL && \
 			attributeCheckInfo.attributeListPtr->fieldID != CRYPT_ATTRIBUTE_NONE && \
-			iterationCount < FAILSAFE_ITERATIONS_MAX;
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
-		int innerIterationCount, status;
+		int innerIterationCount;
 
-		/* Find the start of this attribute in the attribute info table and
-		   remember it as an encoding synchronisation point.  Comparing the 
-		   field ID with the attribute ID is usually valid because the 
-		   attribute info table always begins the series of entries for an 
-		   attribute with the attribute ID.  The one exception is where the 
-		   attribute ID is the same as the field ID but they're separate 
-		   entries in the table, in which case the first entries will 
-		   contain a FIELDID_FOLLOWS code to indicate that a following field 
-		   contains the attribute/fieldID */
+		/* Find the start of this attribute in the attribute information 
+		   table and remember it as an encoding synchronisation point.  
+		   Comparing the field ID with the attribute ID is usually valid 
+		   because the attribute information table always begins the series 
+		   of entries for an attribute with the attribute ID.  The one 
+		   exception is where the attribute ID is the same as the field ID 
+		   but they're separate entries in the table, in which case the 
+		   first entries will contain a FIELDID_FOLLOWS code to indicate 
+		   that the following field contains the attribute/fieldID */
 		for( innerIterationCount = 0;
-			 ( attributeCheckInfo.attributeInfoPtr->fieldID != \
-					attributeCheckInfo.attributeListPtr->attributeID ) && \
-				attributeCheckInfo.attributeInfoPtr->fieldID != CRYPT_ERROR && \
+			 attributeCheckInfo.attributeInfoPtr->fieldID != CRYPT_ERROR && \
 				innerIterationCount < FAILSAFE_ITERATIONS_LARGE;
-			 attributeCheckInfo.attributeInfoPtr++, innerIterationCount++ );
+			 attributeCheckInfo.attributeInfoPtr++, innerIterationCount++ )
+			{
+			if( attributeCheckInfo.attributeInfoPtr->fieldID == FIELDID_FOLLOWS )
+				{
+				if( attributeCheckInfo.attributeInfoPtr[ 1 ].fieldID == \
+						attributeCheckInfo.attributeListPtr->attributeID )
+					break;
+				}
+			else
+				{
+				if( attributeCheckInfo.attributeInfoPtr->fieldID == \
+						attributeCheckInfo.attributeListPtr->attributeID )
+					break;
+				}
+			}
 		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_LARGE );
 		ENSURES( attributeCheckInfo.attributeInfoPtr->fieldID != CRYPT_ERROR );
-
-		for( innerIterationCount = 0;
-			 attributeCheckInfo.attributeInfoPtr != attributeInfoStartPtr && \
-				attributeCheckInfo.attributeInfoPtr[ -1 ].fieldID == FIELDID_FOLLOWS && \
-				innerIterationCount < FAILSAFE_ITERATIONS_LARGE;
-			 attributeCheckInfo.attributeInfoPtr--, innerIterationCount++ );
-		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 		/* Check this attribute */
 		status = checkAttribute( &attributeCheckInfo );
@@ -816,7 +884,8 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 			return( status );
 			}
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( CRYPT_OK );
 	}
+

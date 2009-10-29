@@ -23,7 +23,7 @@
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	/* Make sure that general envelope state is in order */
@@ -175,7 +175,12 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		encrInfo->cryptAlgo = CRYPT_ALGO_IDEA;
 		encrInfo->cryptMode = CRYPT_MODE_CFB;
 		encrInfo->keySetupAlgo = CRYPT_ALGO_MD5;
-		appendContentListItem( envelopeInfoPtr, contentListItem );
+		status = appendContentListItem( envelopeInfoPtr, contentListItem );
+		if( cryptStatusError( status ) )
+			{
+			clFree( "addContentListItem", contentListItem );
+			return( status );
+			}
 		return( CRYPT_OK );
 		}
 
@@ -200,7 +205,8 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	else
 		{
 		objectSize = ( int ) queryInfo.size;
-		if( ( object = clAlloc( "addContentListItem", objectSize ) ) == NULL )
+		if( ( object = clAlloc( "addContentListItem", \
+								objectSize ) ) == NULL )
 			return( CRYPT_ERROR_MEMORY );
 		status = sread( stream, object, objectSize );
 		if( cryptStatusError( status ) )
@@ -387,7 +393,13 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( status );
 			}
 		}
-	appendContentListItem( envelopeInfoPtr, contentListItem );
+	status = appendContentListItem( envelopeInfoPtr, contentListItem );
+	if( cryptStatusError( status ) )
+		{
+		deleteContentList( envelopeInfoPtr->memPoolState, 
+						   &contentListItem );
+		return( status );
+		}
 
 	return( CRYPT_OK );
 	}
@@ -417,6 +429,7 @@ static int processPacketHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( state, sizeof( PGP_DEENV_STATE ) ) );
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
+	REQUIRES( streamPos >= 0 && streamPos < MAX_INTLENGTH );
 
 	/* Read the PGP packet type and figure out what we've got.  If we're at
 	   the start of the data we allow noise packets like PGP_PACKET_MARKER
@@ -838,9 +851,29 @@ static int processPacketDataHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			/* It's an arbitrary-length compressed data packet, use the
 			   length that we got earlier from the outer packet */
 			if( envelopeInfoPtr->dataFlags & ENVDATA_ENDOFCONTENTS )
-				;
+				{
+/******/
+/* What happens in this case? */
+/******/
+				DEBUG_DIAG(( "Found EOC for unknown-length compressed "
+							 "data" ));
+				assert( DEBUG_WARN );
+				}
 			else
+				{
 				envelopeInfoPtr->segmentSize = envelopeInfoPtr->payloadSize;
+
+				/* If we've reached the end of the data (i.e. the entire 
+				   current segment is contained within the data present in 
+				   the buffer) remember that what's left still needs to be 
+				   processed (e.g. hashed in the case of signed data) on the 
+				   way out */
+				if( envelopeInfoPtr->segmentSize <= envelopeInfoPtr->bufPos )
+					{
+					envelopeInfoPtr->dataLeft = envelopeInfoPtr->segmentSize;
+					envelopeInfoPtr->segmentSize = 0;
+					}
+				}
 			}
 		}
 
@@ -852,7 +885,7 @@ static int processPacketDataHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		{
 		int extraLen;
 
-		sgetc( &headerStream );		/* Skip content type */
+		( void ) sgetc( &headerStream );	/* Skip content type */
 		status = extraLen = sgetc( &headerStream );
 		if( !cryptStatusError( status ) )
 			{
@@ -1110,6 +1143,7 @@ static int processMDC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		BYTE buffer[ PGP_MDC_PACKET_SIZE + 8 ];
 		int length;
 
+		DEBUG_DIAG(( "Processing MDC data at end of packet" ));
 		assert( DEBUG_WARN );
 
 		status = envelopeInfoPtr->copyFromEnvelopeFunction( envelopeInfoPtr, 
@@ -1163,7 +1197,7 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	PGP_DEENV_STATE state = envelopeInfoPtr->pgpDeenvState;
 	STREAM stream;
-	int remainder, streamPos = 0, iterationCount = 0, status = CRYPT_OK;
+	int remainder, streamPos = 0, iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -1178,8 +1212,9 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* Keep consuming information until we run out of input or reach the
 	   plaintext data packet */
-	while( state != PGP_DEENVSTATE_DONE && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	for( iterationCount = 0;
+		 state != PGP_DEENVSTATE_DONE && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
 		{
 		/* Read the PGP packet type and figure out what we've got */
 		if( state == PGP_DEENVSTATE_NONE )
@@ -1320,6 +1355,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			  streamPos + remainder <= envelopeInfoPtr->bufSize );
 	if( remainder > 0 && streamPos > 0 )
 		{
+		REQUIRES( rangeCheck( streamPos, remainder, 
+							  envelopeInfoPtr->bufSize ) );
 		memmove( envelopeInfoPtr->buffer, envelopeInfoPtr->buffer + streamPos,
 				 remainder );
 		}

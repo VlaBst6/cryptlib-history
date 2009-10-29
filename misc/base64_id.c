@@ -120,7 +120,7 @@ int encodePKIUserValue( OUT_BUFFER( encValMaxLen, *encValLen ) char *encVal,
 	/* Calculate the Fletcher checksum and prepend it to the data bytes
 	   This is easier than handling the addition of a non-byte-aligned
 	   quantity to the end of the data */
-	valBuf[ 0 ] = checksumData( valBuf + 1, length - 1 ) & 0xFF;
+	valBuf[ 0 ] = intToByte( checksumData( valBuf + 1, length - 1 ) & 0xFF );
 
 	/* Encode the binary data as text */
 	for( length = 0, i = 1; i <= noCodeGroups * 5; i++ )
@@ -206,7 +206,7 @@ BOOLEAN isPKIUserValue( IN_BUFFER( encValLength ) const char *encVal,
 		   check the index value */
 		for( j = 0; j < 5; j++ )
 			{
-			const int ch = encVal[ i++ ];
+			const int ch = byteToInt( encVal[ i++ ] );
 
 			if( !isAlnum( ch ) )
 				return( FALSE );
@@ -249,6 +249,7 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 	   that there's a problem with the PKI user value as a whole */
 	if( encValLength < ( 3 * 5 ) || encValLength > CRYPT_MAX_TEXTSIZE )
 		{
+		DEBUG_DIAG(( "PKI user value has invalid length" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_BADDATA );
 		}
@@ -263,13 +264,13 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 
 		for( j = 0; j < 5; j++ )
 			{
-			const int ch = encVal[ i++ ];
+			const int ch = byteToInt( encVal[ i++ ] );
 
 			/* Note that we've just incremented 'i', so the range check is
 			   '>' rather than '>=' */
 			if( !isAlnum( ch ) || i > encValLength )
 				return( CRYPT_ERROR_BADDATA );
-			encBuf[ length++ ] = toUpper( ch );
+			encBuf[ length++ ] = intToByte( toUpper( ch ) );
 			}
 		if( i < encValLength && encVal[ i++ ] != '-' )
 			return( CRYPT_ERROR_BADDATA );
@@ -281,7 +282,7 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 	memset( valBuf, 0, 128 );
 	for( i = 0; i < length; i ++ )
 		{
-		const int ch = encBuf[ i ];
+		const int ch = byteToInt( encBuf[ i ] );
 		int chunkValue;
 
 		for( chunkValue = 0; chunkValue < 0x20; chunkValue++ )
@@ -310,9 +311,11 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 				/* The data spans two bytes, shift the bits from the high
 				   byte down and the bits from the low byte up */
 				valBuf[ byteCount ] |= \
-							( chunkValue >> ( bitCount - 3 ) ) & hiMask[ bitCount ];
+							intToByte( ( chunkValue >> ( bitCount - 3 ) ) & \
+										 hiMask[ bitCount ] );
 				valBuf[ byteCount + 1 ] = \
-							( chunkValue << ( 11 - bitCount ) ) & loMask[ bitCount ];
+							intToByte( ( chunkValue << ( 11 - bitCount ) ) & \
+										 loMask[ bitCount ] );
 				}
 			}
 
@@ -334,12 +337,9 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Return the decoded value to the caller */
-	if( value != NULL )
-		{
-		ENSURES( byteCount - 1 <= valueMaxLen );
-		memcpy( value, valBuf + 1, byteCount - 1 );
-		}
-
+	ENSURES( byteCount - 1 <= valueMaxLen );
+	memcpy( value, valBuf + 1, byteCount - 1 );
 	*valueLen = byteCount - 1;
+
 	return( CRYPT_OK );
 	}

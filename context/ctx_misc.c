@@ -274,6 +274,13 @@ void clearTempBignums( INOUT PKC_INFO *pkcInfo )
 	BN_clear( &pkcInfo->tmp1 );
 	BN_clear( &pkcInfo->tmp2 );
 	BN_clear( &pkcInfo->tmp3 );
+#ifdef USE_ECC
+	if( pkcInfo->isECC )
+		{
+		BN_clear( &pkcInfo->tmp4 );
+		BN_clear( &pkcInfo->tmp5 );
+		}
+#endif /* USE_ECC */
 	BN_CTX_clear( pkcInfo->bnCTX );
 	}
 
@@ -281,7 +288,8 @@ void clearTempBignums( INOUT PKC_INFO *pkcInfo )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initContextBignums( INOUT PKC_INFO *pkcInfo, 
-						IN_RANGE( 0, 3 ) const int sideChannelProtectionLevel )
+						IN_RANGE( 0, 3 ) const int sideChannelProtectionLevel,
+						const BOOLEAN isECC )
 	{
 	BN_CTX *bnCTX;
 
@@ -312,6 +320,29 @@ int initContextBignums( INOUT PKC_INFO *pkcInfo,
 	BN_init( &pkcInfo->tmp1 );
 	BN_init( &pkcInfo->tmp2 );
 	BN_init( &pkcInfo->tmp3 );
+#ifdef USE_ECC
+	if( isECC )
+		{
+		pkcInfo->isECC = TRUE;
+		BN_init( &pkcInfo->tmp4 );
+		BN_init( &pkcInfo->tmp5 );
+		pkcInfo->ecCTX = EC_GROUP_new( EC_GFp_simple_method() );
+		pkcInfo->ecPoint = EC_POINT_new( pkcInfo->ecCTX );
+		pkcInfo->tmpPoint = EC_POINT_new( pkcInfo->ecCTX );
+		if( pkcInfo->ecCTX == NULL || pkcInfo->ecPoint == NULL || \
+			pkcInfo->tmpPoint == NULL )
+			{
+			if( pkcInfo->tmpPoint != NULL )
+				EC_POINT_free( pkcInfo->tmpPoint );
+			if( pkcInfo->ecPoint != NULL )
+				EC_POINT_free( pkcInfo->ecPoint );
+			if( pkcInfo->ecCTX != NULL )
+				EC_GROUP_free( pkcInfo->ecCTX );
+			BN_CTX_free( bnCTX );
+			return( CRYPT_ERROR_MEMORY );
+			}
+		}
+#endif /* USE_ECC */
 	pkcInfo->bnCTX = bnCTX;
 	BN_MONT_CTX_init( &pkcInfo->montCTX1 );
 	BN_MONT_CTX_init( &pkcInfo->montCTX2 );
@@ -347,6 +378,16 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 		BN_clear_free( &pkcInfo->tmp1 );
 		BN_clear_free( &pkcInfo->tmp2 );
 		BN_clear_free( &pkcInfo->tmp3 );
+#ifdef USE_ECC
+		if( pkcInfo->isECC )
+			{
+			BN_clear_free( &pkcInfo->tmp4 );
+			BN_clear_free( &pkcInfo->tmp5 );
+			EC_POINT_free( pkcInfo->tmpPoint );
+			EC_POINT_free( pkcInfo->ecPoint );
+			EC_GROUP_free( pkcInfo->ecCTX );
+			}
+#endif /* USE_ECC */
 		BN_MONT_CTX_free( &pkcInfo->montCTX1 );
 		BN_MONT_CTX_free( &pkcInfo->montCTX2 );
 		BN_MONT_CTX_free( &pkcInfo->montCTX3 );
@@ -356,39 +397,103 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 		clFree( "contextMessageFunction", pkcInfo->publicKeyInfo );
 	}
 
-/* Convert a byte string into a BIGNUM value */
+/* Calculate a key checksum */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int extractBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr, 
-				   IN_BUFFER( length ) const void *buffer, 
-				   IN_LENGTH_SHORT const int length,
-				   IN_LENGTH_PKC const int minLength, 
-				   IN_LENGTH_PKC const int maxLength, 
-				   INOUT_OPT const void *maxRangePtr,
-				   const BOOLEAN checkShortKey )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo, 
+							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	{
-	BIGNUM *bignum = ( BIGNUM * ) bignumPtr;
-	BIGNUM *maxRange = ( BIGNUM * ) maxRangePtr;
+	BN_ULONG checksum = 0L;
+
+	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
+
+	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  cryptAlgo < CRYPT_ALGO_LAST_PKC );
+
+	/* Calculate the key data checksum */
+#ifdef USE_ECC
+	if( isEccAlgo( cryptAlgo ) )
+		{
+		BN_checksum( &pkcInfo->eccParam_p, &checksum );
+		BN_checksum( &pkcInfo->eccParam_a, &checksum );
+		BN_checksum( &pkcInfo->eccParam_b, &checksum );
+		BN_checksum( &pkcInfo->eccParam_gx, &checksum );
+		BN_checksum( &pkcInfo->eccParam_gy, &checksum );
+		BN_checksum( &pkcInfo->eccParam_n, &checksum );
+		BN_checksum( &pkcInfo->eccParam_h, &checksum );
+		BN_checksum( &pkcInfo->eccParam_qx, &checksum );
+		BN_checksum( &pkcInfo->eccParam_qy, &checksum );
+		BN_checksum( &pkcInfo->eccParam_d, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_p.RR, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_p.N, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_p.Ni, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_n.RR, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_n.N, &checksum );
+		BN_checksum( &pkcInfo->eccParam_mont_n.Ni, &checksum );
+		}
+	else
+#endif /* USE_ECC */
+	if( isDlpAlgo( cryptAlgo ) )
+		{
+		BN_checksum( &pkcInfo->dlpParam_p, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_g, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_q, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_y, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_x, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_mont_p.RR, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_mont_p.N, &checksum );
+		BN_checksum( &pkcInfo->dlpParam_mont_p.Ni, &checksum );
+		}
+	else
+		{
+		BN_checksum( &pkcInfo->rsaParam_n, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_e, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_d, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_p, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_q, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_u, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_exponent1, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_exponent2, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_n.RR, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_n.N, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_n.Ni, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_p.RR, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_p.N, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_p.Ni, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_q.RR, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_q.N, &checksum );
+		BN_checksum( &pkcInfo->rsaParam_mont_q.Ni, &checksum );
+		}
+
+	/* Set or update the checksum */
+	if( pkcInfo->checksum == 0L )
+		{
+		pkcInfo->checksum = checksum;
+		return( CRYPT_OK );
+		}
+	return( ( pkcInfo->checksum == checksum ) ? CRYPT_OK : CRYPT_ERROR );
+	}
+
+/* Convert a byte string to and from a BIGNUM value */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkBignum( const BIGNUM *bignum,
+						IN_LENGTH_PKC const int minLength, 
+						IN_LENGTH_PKC const int maxLength, 
+						IN_OPT const BIGNUM *maxRange,
+						IN_ENUM_OPT( SHORTKEY_CHECK ) \
+							const SHORTKEY_CHECK_TYPE checkType )
+	{
 	BN_ULONG bnWord;
 	int bignumLength;
 
-	assert( isWritePtr( bignum, sizeof( BIGNUM ) ) );
-	assert( isReadPtr( buffer, length ) );
+	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
 	assert( maxRange == NULL || isReadPtr( maxRange, sizeof( BIGNUM ) ) );
 
 	REQUIRES( minLength > 0 && minLength <= maxLength && \
 			  maxLength <= CRYPT_MAX_PKCSIZE );
-
-	/* Make sure that we've been given valid input.  This should have been 
-	   checked by the caller anyway using far more specific checks than the
-	   very generic values that we use here, but we perform the check anyway
-	   just to be sure */
-	if( length < 1 || length > CRYPT_MAX_PKCSIZE )
-		return( CRYPT_ERROR_BADDATA );
-
-	/* Convert the byte string into a bignum */
-	if( BN_bin2bn( buffer, length, bignum ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
+	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
+			  checkType < SHORTKEY_CHECK_LAST );
 
 	/* The following should never happen because BN_bin2bn() works with 
 	   unsigned values but we perform the check anyway just in case someone 
@@ -403,18 +508,27 @@ int extractBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr,
 	if( bnWord < BN_MASK2 && bnWord <= 1 )
 		return( CRYPT_ERROR_BADDATA );
 
-	/* Check that the final bignum value falls within the allowed length 
-	   range */
+	/* Check that the bignum value falls within the allowed length range.  
+	   Before we do the general length check we perform a more specific 
+	   check for the case where the length is below the minimum allowed but 
+	   still looks at least vaguely valid, in which case we report it as a 
+	   too-short key rather than a bad data error */
 	bignumLength = BN_num_bytes( bignum );
-	if( checkShortKey )
+	switch( checkType )
 		{
-		REQUIRES( minLength > bitsToBytes( 256 ) );
+		case SHORTKEY_CHECK_NONE:
+			/* No specific weak-key check for this value */
+			break;
 
-		/* If the length is below the minimum allowed but still looks at 
-		   least vaguely valid, report it as a too-short key rather than a
-		   bad data error */
-		if( isShortPKCKey( bignumLength ) )
-			return( CRYPT_ERROR_NOSECURE );
+		case SHORTKEY_CHECK_PKC:
+			if( isShortPKCKey( bignumLength ) )
+				return( CRYPT_ERROR_NOSECURE );
+			break;
+
+		case SHORTKEY_CHECK_ECC:
+			if( isShortECCKey( bignumLength ) )
+				return( CRYPT_ERROR_NOSECURE );
+			break;
 		}
 	if( bignumLength < minLength || bignumLength > maxLength )
 		return( CRYPT_ERROR_BADDATA );
@@ -427,22 +541,58 @@ int extractBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr,
 	return( CRYPT_OK );
 	}
 
-/* Convert a BIGNUM value into a byte string */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-int getBignumData( IN TYPECAST( BIGNUM * ) const void *bignumPtr,
-				   OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
-				   IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
-				   OUT_LENGTH_SHORT_Z int *dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr, 
+				  IN_BUFFER( length ) const void *buffer, 
+				  IN_LENGTH_SHORT const int length,
+				  IN_LENGTH_PKC const int minLength, 
+				  IN_LENGTH_PKC const int maxLength, 
+				  IN_OPT const void *maxRangePtr,
+				  IN_ENUM_OPT( SHORTKEY_CHECK ) \
+					const SHORTKEY_CHECK_TYPE checkType )
 	{
 	BIGNUM *bignum = ( BIGNUM * ) bignumPtr;
-	int length;
+	BIGNUM *maxRange = ( BIGNUM * ) maxRangePtr;
 
-	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
+	assert( isWritePtr( bignum, sizeof( BIGNUM ) ) );
+	assert( isReadPtr( buffer, length ) );
+	assert( maxRange == NULL || isReadPtr( maxRange, sizeof( BIGNUM ) ) );
+
+	REQUIRES( minLength > 0 && minLength <= maxLength && \
+			  maxLength <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
+			  checkType < SHORTKEY_CHECK_LAST );
+
+	/* Make sure that we've been given valid input.  This should have been 
+	   checked by the caller anyway using far more specific checks than the
+	   very generic values that we use here, but we perform the check anyway
+	   just to be sure */
+	if( length < 1 || length > CRYPT_MAX_PKCSIZE )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* Convert the byte string into a bignum */
+	if( BN_bin2bn( buffer, length, bignum ) == NULL )
+		return( CRYPT_ERROR_MEMORY );
+
+	/* Check the value that we've just imported */
+	return( checkBignum( bignum, minLength, maxLength, maxRange, 
+						 checkType ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int exportBignum( OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
+				  IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
+				  OUT_LENGTH_SHORT_Z int *dataLength,
+				  IN TYPECAST( BIGNUM * ) const void *bignumPtr )
+	{
+	BIGNUM *bignum = ( BIGNUM * ) bignumPtr;
+	int length, result;
+
 	assert( isWritePtr( data, dataMaxLength ) );
 	assert( isWritePtr( dataLength, sizeof( int ) ) );
+	assert( isReadPtr( bignum, sizeof( BIGNUM ) ) );
 
-	REQUIRES( dataMaxLength > 16 && dataMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( dataMaxLength >= 16 && dataMaxLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return values */
 	memset( data, 0, min( 16, dataMaxLength ) );
@@ -452,12 +602,150 @@ int getBignumData( IN TYPECAST( BIGNUM * ) const void *bignumPtr,
 	length = BN_num_bytes( bignum );
 	ENSURES( length > 0 && length <= CRYPT_MAX_PKCSIZE );
 
-	length = BN_bn2bin( bignum, data );
-	ENSURES( length > 0 && length <= CRYPT_MAX_PKCSIZE );
+	/* Export the bignum into the output buffer */
+	result = BN_bn2bin( bignum, data );
+	ENSURES( result == length );
 	*dataLength = length;
 
 	return( CRYPT_OK );
 	}
+
+#ifdef USE_ECC
+
+/* Convert a byte string to and from an ECC point */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int importECCPoint( INOUT TYPECAST( BIGNUM * ) void *bignumPtr1, 
+					INOUT TYPECAST( BIGNUM * ) void *bignumPtr2, 
+				    IN_BUFFER( length ) const void *buffer, 
+				    IN_LENGTH_SHORT const int length,
+					IN_LENGTH_PKC const int minLength, 
+					IN_LENGTH_PKC const int maxLength, 
+					IN_LENGTH_PKC const int fieldSize,
+					IN_OPT const void *maxRangePtr,
+					IN_ENUM( SHORTKEY_CHECK ) \
+						const SHORTKEY_CHECK_TYPE checkType )
+	{
+	const BYTE *eccPointData = buffer;
+	BIGNUM *bignum1 = ( BIGNUM * ) bignumPtr1;
+	BIGNUM *bignum2 = ( BIGNUM * ) bignumPtr2;
+	BIGNUM *maxRange = ( BIGNUM * ) maxRangePtr;
+	int status;
+
+	assert( isWritePtr( bignum1, sizeof( BIGNUM ) ) );
+	assert( isWritePtr( bignum2, sizeof( BIGNUM ) ) );
+	assert( isReadPtr( buffer, length ) );
+	assert( maxRange == NULL || isReadPtr( maxRange, sizeof( BIGNUM ) ) );
+
+	REQUIRES( minLength > 0 && minLength <= maxLength && \
+			  maxLength <= CRYPT_MAX_PKCSIZE_ECC );
+	REQUIRES( fieldSize >= MIN_PKCSIZE_ECC && \
+			  fieldSize <= CRYPT_MAX_PKCSIZE_ECC );
+	REQUIRES( checkType >= SHORTKEY_CHECK_NONE && \
+			  checkType < SHORTKEY_CHECK_LAST );
+
+	/* Make sure that we've been given valid input.  This should have been 
+	   checked by the caller anyway using far more specific checks than the
+	   very generic values that we use here, but we perform the check anyway
+	   just to be sure */
+	if( length < MIN_PKCSIZE_ECCPOINT_THRESHOLD || \
+		length > MAX_PKCSIZE_ECCPOINT )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* Decode the ECC point data.  At this point we run into another 
+	   artefact of the chronic indecisiveness of the ECC standards authors, 
+	   because of the large variety of ways in which ECC data can be encoded 
+	   there's no single way of representing a point.  The only encoding 
+	   that's actually of any practical use is the straight (x, y) 
+	   coordinate form with no special-case encoding or other tricks, 
+	   denoted by an 0x04 byte at the start of the data:
+
+		+---+---------------+---------------+
+		|ID	|		qx		|		qy		|
+		+---+---------------+---------------+
+			|<- fldSize --> |<- fldSize --> |
+
+	   There's also a hybrid form that combines the patent encumbrance of 
+	   point compression with the size of the uncompressed form that we 
+	   could in theory allow for, but it's unlikely that anyone's going to
+	   be crazy enough to use this */
+	if( length != ( fieldSize * 2 ) + 1 )
+		return( CRYPT_ERROR_BADDATA );
+	if( eccPointData[ 0 ] != 0x04 )
+		return( CRYPT_ERROR_BADDATA );
+	status = importBignum( bignum1, eccPointData + 1, fieldSize,
+						   minLength, maxLength, maxRange, checkType );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( importBignum( bignum2, eccPointData + 1 + fieldSize, 
+						  fieldSize, minLength, maxLength, maxRange, 
+						  checkType ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4, 5) ) \
+int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data, 
+					IN_LENGTH_SHORT_Z const int dataMaxLength, 
+					OUT_LENGTH_SHORT_Z int *dataLength,
+					IN TYPECAST( BIGNUM * ) const void *bignumPtr1, 
+					IN TYPECAST( BIGNUM * ) const void *bignumPtr2,
+					IN_LENGTH_PKC const int fieldSize )
+	{
+	BIGNUM *bignum1 = ( BIGNUM * ) bignumPtr1;
+	BIGNUM *bignum2 = ( BIGNUM * ) bignumPtr2;
+	BYTE *bufPtr = data;
+	int length, result;
+
+	assert( data == NULL || isWritePtr( data, dataMaxLength ) );
+	assert( isWritePtr( dataLength, sizeof( int ) ) );
+	assert( isReadPtr( bignum1, sizeof( BIGNUM ) ) );
+	assert( isReadPtr( bignum2, sizeof( BIGNUM ) ) );
+
+	REQUIRES( ( data == NULL && dataMaxLength == 0 ) || \
+			  ( data != NULL && \
+				dataMaxLength >= 16 && \
+				dataMaxLength < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( fieldSize >= MIN_PKCSIZE_ECC && \
+			  fieldSize <= CRYPT_MAX_PKCSIZE_ECC );
+
+	/* Clear return values */
+	if( data != NULL )
+		memset( data, 0, min( 16, dataMaxLength ) );
+	*dataLength = 0;
+
+	/* If it's just an encoding-length check there's nothing to do */
+	if( data == NULL )
+		{
+		*dataLength = 1 + ( fieldSize * 2 );
+		return( CRYPT_OK );
+		}
+
+	/* Encode the ECC point data, which consists of the Q coordinates 
+	   stuffed into a byte string with an encoding-specifier byte 0x04 at 
+	   the start:
+
+		+---+---------------+---------------+
+		|ID	|		qx		|		qy		|
+		+---+---------------+---------------+
+			|<-- fldSize -> |<- fldSize --> | */
+	if( dataMaxLength < 1 + ( fieldSize * 2 ) )
+		return( CRYPT_ERROR_OVERFLOW );
+	*bufPtr++ = 0x04;
+	memset( bufPtr, 0, fieldSize * 2 );
+	length = BN_num_bytes( bignum1 );
+	ENSURES( length > 0 && length <= fieldSize );
+	result = BN_bn2bin( bignum1, bufPtr + ( fieldSize - length ) );
+	ENSURES( result == length );
+	bufPtr += fieldSize;
+	length = BN_num_bytes( bignum2 );
+	ENSURES( length > 0 && length <= fieldSize );
+	result = BN_bn2bin( bignum2, bufPtr + ( fieldSize - length ) );
+	ENSURES( result == length );
+	*dataLength = 1 + ( fieldSize * 2 );
+
+	return( CRYPT_OK );
+	}
+#endif /* USE_ECC */
+
 #else
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -482,7 +770,9 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 *																			*
 ****************************************************************************/
 
-/* Statically initialised a context used for the internal self-test */
+/* Statically initialise a context for the internal self-test and a few 
+   other internal-only functions such as when generating keyIDs for raw 
+   encoded key data where no context is available */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int staticInitContext( INOUT CONTEXT_INFO *contextInfoPtr, 
@@ -506,6 +796,7 @@ int staticInitContext( INOUT CONTEXT_INFO *contextInfoPtr,
 	memset( contextData, 0, contextDataSize );
 	contextInfoPtr->type = type;
 	contextInfoPtr->capabilityInfo = capabilityInfoPtr;
+	contextInfoPtr->flags = CONTEXT_FLAG_STATICCONTEXT;
 	switch( type )
 		{
 		case CONTEXT_CONV:
@@ -525,13 +816,15 @@ int staticInitContext( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CONTEXT_PKC:
 			/* PKC context initialisation is a bit more complex because we
-			   have to set up all of the bignum values as well */
+			   have to set up all of the bignum values as well.  Since static
+			   contexts are only used for self-test operations we set the 
+			   side-channel protection level to zero */
 			contextInfoPtr->ctxPKC = ( PKC_INFO * ) contextData;
-			status = initContextBignums( contextData, 
-						( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_RSA ) ? \
-						TRUE : FALSE );
+			status = initContextBignums( contextData, 0,
+							isEccAlgo( capabilityInfoPtr->cryptAlgo ) );
 			if( cryptStatusError( status ) )
 				return( status );
+			initKeyID( contextInfoPtr );
 			initKeyRead( contextInfoPtr );
 			initKeyWrite( contextInfoPtr );		/* For calcKeyID() */
 			break;
@@ -547,6 +840,8 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 void staticDestroyContext( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	ENSURES_V( contextInfoPtr->flags & CONTEXT_FLAG_STATICCONTEXT );
 
 	if( contextInfoPtr->type == CONTEXT_PKC )
 		{
@@ -645,7 +940,8 @@ int testHash( const CAPABILITY_INFO *capabilityInfo,
 		contextInfo.flags |= CONTEXT_FLAG_HASH_INITED;
 		}
 	if( cryptStatusOK( status ) )
-		status = capabilityInfo->encryptFunction( &contextInfo, "", 0 );
+		status = capabilityInfo->encryptFunction( &contextInfo, 
+												  MKDATA( "" ), 0 );
 	if( cryptStatusOK( status ) && \
 		memcmp( contextInfo.ctxHash->hash, hashValue, 
 				capabilityInfo->blockSize ) )
@@ -691,7 +987,8 @@ int testMAC( const CAPABILITY_INFO *capabilityInfo,
 		contextInfo.flags |= CONTEXT_FLAG_HASH_INITED;
 		}
 	if( cryptStatusOK( status ) )
-		status = capabilityInfo->encryptFunction( &contextInfo, "", 0 );
+		status = capabilityInfo->encryptFunction( &contextInfo, 
+												  MKDATA( "" ), 0 );
 	if( cryptStatusOK( status ) && \
 		memcmp( contextInfo.ctxMAC->mac, hashValue, 
 				capabilityInfo->blockSize ) )

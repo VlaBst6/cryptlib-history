@@ -68,6 +68,7 @@ THREADFUNC_DEFINE( threadServiceFunction, threadInfoPtr )
    is NULL we use the kernel's thread data storage, otherwise we use the
    caller-provided storage */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 						THREAD_STATE threadState, void *ptrParam, 
 						const int intParam, const SEMAPHORE_TYPE semaphore )
@@ -161,6 +162,13 @@ int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 	 return */
   void preInit( void ) __attribute__ ((constructor));
   void postShutdown( void ) __attribute__ ((destructor));
+#elif defined( __SUNPRO_C ) && ( __SUNPRO_C >= 0x570 )
+  /* The value of __SUNPRO_C bears no relation whatsoever to the actual 
+	 version number of the compiler and even Sun's docs give different 
+	 values in different places for the same compiler version, but 0x570 
+	 seems to work */
+  #pragma init ( preInit )
+  #pragma fini ( postShutdown )
 #elif defined( __PALMOS__ )
   /* PalmOS supports dynamic initialisation by allowing the init/shutdown
 	 functions to be called from PilotMain */
@@ -230,6 +238,7 @@ void postShutdown( void )
    mutex locked between the two calls to allow external initialisation of
    further, non-kernel-related items */
 
+CHECK_RETVAL \
 int krnlBeginInit( void )
 	{
 	int status;
@@ -257,13 +266,20 @@ int krnlBeginInit( void )
 		return( CRYPT_ERROR_INITED );
 		}
 
+#ifndef USE_EMBEDDED_OS
 	/* If the time is screwed up we can't safely do much since so many
-	   protocols and operations depend on it */
+	   protocols and operations depend on it, however since embedded 
+	   systems may not have RTCs or if they have them they're inevitably 
+	   not set right, we don't perform this sanity-check if it's an
+	   embedded build */
 	if( getTime() <= MIN_TIME_VALUE )
 		{
 		MUTEX_UNLOCK( initialisation );
+		DEBUG_PRINT(( "System time is severely messed up, cannot continue "
+					  "without a correctly set system clock" ));
 		retIntError();
 		}
+#endif /* USE_EMBEDDED_OS */
 
 	/* Initialise the ephemeral portions of the kernel data block.  Since
 	   the shutdown level value is non-ephemeral (it has to persist across
@@ -299,7 +315,7 @@ int krnlBeginInit( void )
 	if( cryptStatusError( status ) )
 		{
 		MUTEX_UNLOCK( initialisation );
-		retIntError_Boolean();
+		retIntError();
 		}
 
 	/* The kernel data block has been initialised */
@@ -331,6 +347,7 @@ void krnlCompleteInit( void )
 		(shutdownLevel = SHUTDOWN_LEVEL_MUTEXES);
 	clear kernel data; */
 
+CHECK_RETVAL \
 int krnlBeginShutdown( void )
 	{
 	/* Lock the initialisation mutex to make sure that other threads don't
@@ -348,7 +365,8 @@ int krnlBeginShutdown( void )
 		}
 	krnlData->initLevel = INIT_LEVEL_KRNLDATA;
 
-	/* Signal all remaining internal threads to exit */
+	/* Signal all remaining internal threads to exit (dum differtur, vita 
+	   transcurrit) */
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_THREADS;
 
 	return( CRYPT_OK );
@@ -411,6 +429,7 @@ int krnlCompleteShutdown( void )
    serious problem, it's checked at regular intervals by worker threads so
    if the thread misses the flag update it'll bve caught at the next check */
 
+CHECK_RETVAL_BOOL \
 BOOLEAN krnlIsExiting( void )
 	{
 	return( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_THREADS );
@@ -432,7 +451,7 @@ BOOLEAN krnlIsExiting( void )
   #include "device/capabil.h"
 #endif /* Compiler-specific includes */
 
-CHECK_RETVAL \
+CHECK_RETVAL_BOOL \
 static BOOLEAN testGeneralAlgorithms( void )
 	{
 	const CAPABILITY_INFO *capabilityInfo;
@@ -496,17 +515,369 @@ static BOOLEAN testGeneralAlgorithms( void )
 	Ability to lock an object, inability to change security parameters once
 		it's locked */
 
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkNumericRange( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
+	{
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptContext ) );
+
+	/* Verify kernel range checking of numeric values */
+	value = -10;		/* Below (negative) */
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = 0;			/* Lower bound fencepost error */
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = 1;			/* Lower bound */
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
+		return( FALSE );
+	value = 10000;		/* Mid-range */
+	krnlSendMessage( iCryptContext, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CTXINFO_KEYING_ITERATIONS );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
+		return( FALSE );
+	value = 20000;		/* Upper bound */
+	krnlSendMessage( iCryptContext, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CTXINFO_KEYING_ITERATIONS );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
+		return( FALSE );
+	value = 20001;		/* Upper bound fencepost error */
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = 32767;		/* High */
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkStringRange( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
+	{
+	MESSAGE_DATA msgData;
+	BYTE buffer[ CRYPT_MAX_HASHSIZE + 1 + 8 ];
+
+	REQUIRES_B( isHandleRangeValid( iCryptContext ) );
+
+	/* Verify kernel range checking of string values.  We have to disable 
+	   the more outrageous out-of-bounds values in the debug version since 
+	   they'll cause the debug kernel to throw an exception if it sees 
+	   them */
+	memset( buffer, '*', CRYPT_MAX_HASHSIZE + 1 );
+#ifdef NDEBUG
+	/* Below (negative) */
+	setMessageData( &msgData, buffer, -10 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+#endif /* NDEBUG */
+	/* Lower bound fencepost error */
+	setMessageData( &msgData, buffer, 7 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	/* Lower bound */
+	setMessageData( &msgData, buffer, 8 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
+		return( FALSE );
+	/* Mid-range */
+	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE / 2 );
+	krnlSendMessage( iCryptContext, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CTXINFO_KEYING_SALT );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
+		return( FALSE );
+	/* Upper bound */
+	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE );
+	krnlSendMessage( iCryptContext, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CTXINFO_KEYING_SALT );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
+		return( FALSE );
+	/* Upper bound fencepost error */
+	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE + 1 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+#ifdef NDEBUG
+	/* High */
+	setMessageData( &msgData, buffer, 32767 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+#endif /* NDEBUG */
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkUsageCount( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
+	{
+	BYTE buffer[ 16 + 8 ];
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptContext ) );
+
+	/* Verify the ability to use an object with a finite usage count, the
+	   inability to increment the count, the ability to decrement the count,
+	   and the inability to exceed the usage count */
+	value = 10;
+	memset( buffer, 0, 16 );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_CTX_ENCRYPT,
+						 buffer, 8 ) != CRYPT_OK )
+		return( FALSE );
+	value = 20;
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_ERROR_PERMISSION )
+		return( FALSE );
+	value = 1;
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_CTX_ENCRYPT,
+						 buffer, 8 ) != CRYPT_OK || \
+		krnlSendMessage( iCryptContext, IMESSAGE_CTX_ENCRYPT,
+						 buffer, 8 ) != CRYPT_ERROR_PERMISSION )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkLocking( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
+	{
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptContext ) );
+
+	/* Verify the ability to lock an object and the inability to change
+	   security parameters once it's locked */
+	value = 5;
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_OK || \
+		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+						 MESSAGE_VALUE_TRUE,
+						 CRYPT_PROPERTY_HIGHSECURITY ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_LOCKED ) != CRYPT_OK || \
+		value != TRUE || \
+		krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_ERROR_PERMISSION )
+		{
+		/* Object should be locked, forwardcount should be inaccessible */
+		return( FALSE );
+		}
+	value = 1;
+	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_ERROR_PERMISSION )
+		{
+		/* Security parameters shouldn't be writeable */
+		return( FALSE );
+		}
+
+	return( TRUE );
+	}
+
+#ifdef USE_CERTIFICATES
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkBooleanRange( IN_HANDLE const CRYPT_CONTEXT iCryptCertificate )
+	{
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptCertificate ) );
+
+	/* Verify functioning of the kernel range checking, phase 3: Boolean
+	   values.  Any value should be OK, with conversion to TRUE/FALSE */
+	value = 0;		/* FALSE */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
+		value != FALSE )
+		return( FALSE );
+	value = 1;		/* TRUE */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
+		value != TRUE )
+		return( FALSE );
+	value = 10000;	/* Positive true-equivalent */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
+		value != TRUE )
+		return( FALSE );
+	value = -1;		/* Negative true-equivalent */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
+		return( FALSE );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_GETATTRIBUTE, &value,
+						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
+		value != TRUE )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkTimeRange( IN_HANDLE const CRYPT_CONTEXT iCryptCertificate )
+	{
+	MESSAGE_DATA msgData;
+	time_t timeVal;
+
+	REQUIRES_B( isHandleRangeValid( iCryptCertificate ) );
+
+	/* Verify kernel range checking of time values.  Any value above the 
+	   initial cutoff date should be OK */
+	setMessageData( &msgData, &timeVal, sizeof( time_t ) );
+	timeVal = 10;					/* Below */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
+		return( FALSE );
+	timeVal = MIN_TIME_VALUE;		/* Lower bound fencepost error */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
+		return( FALSE );
+	timeVal = MIN_TIME_VALUE + 1;	/* Lower bound */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_OK )
+		return( FALSE );
+	timeVal = roundUp( timeVal, 0x10000000L );	/* Mid-range */
+	krnlSendMessage( iCryptCertificate, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CERTINFO_VALIDFROM );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_OK )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkAllowedValuesRange( IN_HANDLE const CRYPT_CONTEXT iCryptCertificate )
+	{
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 16 + 8 ];
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptCertificate ) );
+
+	/* Verify kernel range checking of special-case allowed values.  Valid 
+	   values are either a 4-byte IPv4 address or a 16-byte IPv6 address */
+	value = CRYPT_CERTINFO_SUBJECTALTNAME;
+	memset( buffer, 0, 16 );
+	setMessageData( &msgData, buffer, 3 );	/* Below, allowed value 1 */
+	krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+					 CRYPT_ATTRIBUTE_CURRENT );
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	setMessageData( &msgData, buffer, 4 );	/* Equal, allowed value 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_OK )
+		return( FALSE );
+	krnlSendMessage( iCryptCertificate, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CERTINFO_IPADDRESS );
+	krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+					 CRYPT_ATTRIBUTE_CURRENT );
+	setMessageData( &msgData, buffer, 5 );	/* Above, allowed value 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	setMessageData( &msgData, buffer, 15 );	/* Below, allowed value 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	setMessageData( &msgData, buffer, 16 );	/* Equal, allowed value 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_OK )
+		return( FALSE );
+	krnlSendMessage( iCryptCertificate, IMESSAGE_DELETEATTRIBUTE, NULL,
+					 CRYPT_CERTINFO_IPADDRESS );
+	krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+					 CRYPT_ATTRIBUTE_CURRENT );
+	setMessageData( &msgData, buffer, 17 );	/* Above, allowed value 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE_S, &msgData,
+						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+
+	return( TRUE );
+	}
+
+CHECK_RETVAL_BOOL \
+static BOOLEAN checkSubrangeRange( IN_HANDLE const CRYPT_CONTEXT iCryptCertificate )
+	{
+	int value;
+
+	REQUIRES_B( isHandleRangeValid( iCryptCertificate ) );
+
+	/* Verify kernel range checking of special-case subranges.  Valid values 
+	   are either CRYPT_CURSOR_FIRST ... CRYPT_CURSOR_LAST or an extension 
+	   ID.  Since the cursor movement codes are negative values an out-of-
+	   bounds value is MIN + 1 or MAX - 1, not the other way round */
+	value = CRYPT_CURSOR_FIRST + 1;			/* Below, subrange 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = CRYPT_CURSOR_FIRST;				/* Low bound, subrange 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
+		return( FALSE );
+	value = CRYPT_CURSOR_LAST;				/* High bound, subrange 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
+		return( FALSE );
+	value = CRYPT_CURSOR_LAST - 1;			/* Above, subrange 1 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = CRYPT_CERTINFO_FIRST_EXTENSION - 1;	/* Below, subrange 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+	value = CRYPT_CERTINFO_FIRST_EXTENSION;		/* Low bound, subrange 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
+		return( FALSE );
+	value = CRYPT_CERTINFO_LAST_EXTENSION;		/* High bound, subrange 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
+		return( FALSE );
+	value = CRYPT_CERTINFO_LAST_EXTENSION + 1;	/* Above, subrange 2 */
+	if( krnlSendMessage( iCryptCertificate, IMESSAGE_SETATTRIBUTE, &value,
+						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
+		return( FALSE );
+
+	return( TRUE );
+	}
+#endif /* USE_CERTIFICATES */
+
 CHECK_RETVAL \
 static BOOLEAN testKernelMechanisms( void )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
-	CRYPT_CONTEXT cryptHandle;
+	CRYPT_CONTEXT iCryptHandle;
 	static const BYTE FAR_BSS key[] = { 0x10, 0x46, 0x91, 0x34, 0x89, 0x98, 0x01, 0x31 };
 	BYTE buffer[ 128 + 8 ];
-#ifdef USE_CERTIFICATES
-	time_t timeVal;
-#endif /* USE_CERTIFICATES */
 	int value, status;
 
 	/* Verify object creation */
@@ -515,138 +886,58 @@ static BOOLEAN testKernelMechanisms( void )
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( FALSE );
-	cryptHandle = createInfo.cryptHandle;
+	iCryptHandle = createInfo.cryptHandle;
 
 	/* Verify the inability to access an internal object or attribute using
 	   an external message.  The attribute access will be stopped by the
 	   object access check before it even gets to the attribute access check,
 	   so we also re-do the check further on when the object is made
 	   externally visible to verify the attribute-level checks as well */
-	if( krnlSendMessage( cryptHandle, MESSAGE_GETATTRIBUTE, &value,
+	if( krnlSendMessage( iCryptHandle, MESSAGE_GETATTRIBUTE, &value,
 						 CRYPT_CTXINFO_ALGO ) != CRYPT_ARGERROR_OBJECT || \
-		krnlSendMessage( cryptHandle, MESSAGE_GETATTRIBUTE, &value,
+		krnlSendMessage( iCryptHandle, MESSAGE_GETATTRIBUTE, &value,
 						 CRYPT_IATTRIBUTE_TYPE ) != CRYPT_ARGERROR_VALUE )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the ability to perform standard operations and the inability
 	   to perform a state = high operation on a state = low object */
-	setMessageData( &msgData, ( void * ) key, 8 );
+	setMessageData( &msgData, ( MESSAGE_CAST ) key, 8 );
 	memset( buffer, 0, 16 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
+	if( krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_IV ) != CRYPT_OK || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_ENCRYPT,
+		krnlSendMessage( iCryptHandle, IMESSAGE_CTX_ENCRYPT,
 						 buffer, 8 ) != CRYPT_ERROR_NOTINITED )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the functioning of kernel range checking, phase 1: Numeric
 	   values */
-	status = CRYPT_OK;
-	value = -10;		/* Below (negative) */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = 0;			/* Lower bound fencepost error */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = 1;			/* Lower bound */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	value = 10000;		/* Mid-range */
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CTXINFO_KEYING_ITERATIONS );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	value = 20000;		/* Upper bound */
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CTXINFO_KEYING_ITERATIONS );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	value = 20001;		/* Upper bound fencepost error */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = 32767;		/* High */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CTXINFO_KEYING_ITERATIONS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	if( cryptStatusError( status ) )
+	if( !checkNumericRange( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the functioning of kernel range checking, phase 2: String
-	   values.  We have to disable the more outrageous out-of-bounds values
-	   in the debug version since they'll cause the debug kernel to throw an
-	   exception if it sees them */
-	status = CRYPT_OK;
-	memset( buffer, '*', CRYPT_MAX_HASHSIZE + 1 );
-#ifdef NDEBUG
-	/* Below (negative) */
-	setMessageData( &msgData, buffer, -10 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-#endif /* NDEBUG */
-	/* Lower bound fencepost error */
-	setMessageData( &msgData, buffer, 7 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	/* Lower bound */
-	setMessageData( &msgData, buffer, 8 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	/* Mid-range */
-	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE / 2 );
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CTXINFO_KEYING_SALT );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	/* Upper bound */
-	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE );
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CTXINFO_KEYING_SALT );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	/* Upper bound fencepost error */
-	setMessageData( &msgData, buffer, CRYPT_MAX_HASHSIZE + 1 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-#ifdef NDEBUG
-	/* High */
-	setMessageData( &msgData, buffer, 32767 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-#endif /* NDEBUG */
-	if( cryptStatusError( status ) )
+	   values */
+	if( !checkStringRange( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the ability to transition a state = low object to state =
 	   high */
-	setMessageData( &msgData, ( void * ) key, 8 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
+	setMessageData( &msgData, ( MESSAGE_CAST ) key, 8 );
+	if( krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_KEY ) != CRYPT_OK )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
@@ -654,26 +945,26 @@ static BOOLEAN testKernelMechanisms( void )
 	   only attribute, or delete a non-deletable attribute */
 	value = CRYPT_MODE_CBC;
 	setMessageData( &msgData, NULL, 0 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
+	if( krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE, &value,
 						 CRYPT_CTXINFO_BLOCKSIZE ) != CRYPT_ERROR_PERMISSION || \
-		krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S, &msgData,
+		krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_KEY ) != CRYPT_ERROR_PERMISSION || \
-		krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
+		krnlSendMessage( iCryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
 						 CRYPT_CTXINFO_MODE ) != CRYPT_ERROR_PERMISSION )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the inability to perform state = low operations on a state =
 	   high object */
-	setMessageData( &msgData, ( void * ) key, 8 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
+	setMessageData( &msgData, ( MESSAGE_CAST ) key, 8 );
+	if( krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
 						 CRYPT_CTXINFO_KEY ) != CRYPT_ERROR_PERMISSION || \
-		krnlSendNotifier( cryptHandle, 
+		krnlSendNotifier( iCryptHandle, 
 						  IMESSAGE_CTX_GENKEY ) != CRYPT_ERROR_PERMISSION )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
@@ -689,87 +980,44 @@ static BOOLEAN testKernelMechanisms( void )
 		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_NONE_EXTERNAL );
 	memset( buffer, 0, 16 );
-	krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
+	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE, &value,
 					 CRYPT_IATTRIBUTE_ACTIONPERMS );
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_INTERNAL );
-	if( krnlSendMessage( cryptHandle, MESSAGE_CTX_ENCRYPT,
+	if( krnlSendMessage( iCryptHandle, MESSAGE_CTX_ENCRYPT,
 						 buffer, 8 ) != CRYPT_ERROR_PERMISSION || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_ENCRYPT,
+		krnlSendMessage( iCryptHandle, IMESSAGE_CTX_ENCRYPT,
 						 buffer, 8 ) != CRYPT_OK )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
-	if( krnlSendMessage( cryptHandle, MESSAGE_GETATTRIBUTE, &value,
+	if( krnlSendMessage( iCryptHandle, MESSAGE_GETATTRIBUTE, &value,
 						 CRYPT_IATTRIBUTE_TYPE ) != CRYPT_ARGERROR_VALUE )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
-	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 					 MESSAGE_VALUE_TRUE, CRYPT_IATTRIBUTE_INTERNAL );
 
 	/* Verify the ability to use an object with a finite usage count, the
 	   inability to increment the count, the ability to decrement the count,
 	   and the inability to exceed the usage count */
-	status = CRYPT_OK;
-	value = 10;
-	memset( buffer, 0, 16 );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_OK || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_ENCRYPT,
-						 buffer, 8 ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	value = 20;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_ERROR_PERMISSION )
-		status = CRYPT_ERROR;
-	value = 1;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_USAGECOUNT ) != CRYPT_OK || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_ENCRYPT,
-						 buffer, 8 ) != CRYPT_OK || \
-		krnlSendMessage( cryptHandle, IMESSAGE_CTX_ENCRYPT,
-						 buffer, 8 ) != CRYPT_ERROR_PERMISSION )
-		status = CRYPT_ERROR;
-	if( cryptStatusError( status ) )
+	if( !checkUsageCount( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify the ability to lock an object and the inability to change
 	   security parameters once it's locked */
-	value = 5;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_OK || \
-		krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE,
-						 MESSAGE_VALUE_TRUE,
-						 CRYPT_PROPERTY_HIGHSECURITY ) != CRYPT_OK )
+	if( !checkLocking( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
-	if( krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_LOCKED ) != CRYPT_OK || \
-		value != TRUE || \
-		krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_ERROR_PERMISSION )
-		{
-		/* Object should be locked, forwardcount should be inaccessible */
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
-		return( FALSE );
-		}
-	value = 1;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_PROPERTY_FORWARDCOUNT ) != CRYPT_ERROR_PERMISSION )
-		{
-		/* Security parameters shouldn't be writeable */
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
-		return( FALSE );
-		}
-	krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+	krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 
 	/* The following checks require that use of certificates be enabled in
 	   order to perform them.  This is because these attribute types are
@@ -785,167 +1033,46 @@ static BOOLEAN testKernelMechanisms( void )
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		return( FALSE );
-	cryptHandle = createInfo.cryptHandle;
+	iCryptHandle = createInfo.cryptHandle;
 
 	/* Verify functioning of the kernel range checking, phase 3: Boolean
-	   values.  Any value should be OK, with conversion to TRUE/FALSE */
-	status = CRYPT_OK;
-	value = 0;		/* FALSE */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
-		value != FALSE )
-		status = CRYPT_ERROR;
-	value = 1;		/* TRUE */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
-		value != TRUE )
-		status = CRYPT_ERROR;
-	value = 10000;	/* Positive true-equivalent */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
-		value != TRUE )
-		status = CRYPT_ERROR;
-	value = -1;		/* Negative true-equivalent */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	if( krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE, &value,
-						 CRYPT_CERTINFO_SELFSIGNED ) != CRYPT_OK || \
-		value != TRUE )
-		status = CRYPT_ERROR;
-	if( cryptStatusError( status ) )
+	   values */
+	if( !checkBooleanRange( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify functioning of the kernel range checking, phase 4: Time
-	   values.  Any value above the initial cutoff date should be OK */
-	status = CRYPT_OK;
-	setMessageData( &msgData, &timeVal, sizeof( time_t ) );
-	timeVal = 10;					/* Below */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
-		status = CRYPT_ERROR;
-	timeVal = MIN_TIME_VALUE;		/* Lower bound fencepost error */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_ARGERROR_STR1 )
-		status = CRYPT_ERROR;
-	timeVal = MIN_TIME_VALUE + 1;	/* Lower bound */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	timeVal = 0x40000000L;			/* Mid-range */
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CERTINFO_VALIDFROM );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_VALIDFROM ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	if( cryptStatusError( status ) )
+	   values */
+	if( !checkTimeRange( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify functioning of kernel range-checking, phase 6: Special-case
-	   checks, allowed values.  Valid values are either a 4-byte IPv4
-	   address or a 16-byte IPv6 address */
-	value = CRYPT_CERTINFO_SUBJECTALTNAME;
-	memset( buffer, 0, 16 );
-	setMessageData( &msgData, buffer, 3 );	/* Below, allowed value 1 */
-	krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-					 CRYPT_ATTRIBUTE_CURRENT );
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	setMessageData( &msgData, buffer, 4 );	/* Equal, allowed value 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CERTINFO_IPADDRESS );
-	krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-					 CRYPT_ATTRIBUTE_CURRENT );
-	setMessageData( &msgData, buffer, 5 );	/* Above, allowed value 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	setMessageData( &msgData, buffer, 15 );	/* Below, allowed value 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	setMessageData( &msgData, buffer, 16 );	/* Equal, allowed value 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_OK )
-		status = CRYPT_ERROR;
-	krnlSendMessage( cryptHandle, IMESSAGE_DELETEATTRIBUTE, NULL,
-					 CRYPT_CERTINFO_IPADDRESS );
-	krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-					 CRYPT_ATTRIBUTE_CURRENT );
-	setMessageData( &msgData, buffer, 17 );	/* Above, allowed value 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CERTINFO_IPADDRESS ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	if( cryptStatusError( status ) )
+	   checks, allowed values */
+	if( !checkAllowedValuesRange( iCryptHandle ) )
 		{
-		krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
 		}
 
 	/* Verify functioning of kernel range-checking, phase 6: Special-case
-	   checks, subranges.  Valid values are either CRYPT_CURSOR_FIRST ...
-	   CRYPT_CURSOR_LAST or an extension ID.  Since the cursor movement codes
-	   are negative values, an out-of-bounds value is MIN + 1 or MAX - 1, not
-	   the other way round */
-	value = CRYPT_CURSOR_FIRST + 1;			/* Below, subrange 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = CRYPT_CURSOR_FIRST;				/* Low bound, subrange 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
-		status = CRYPT_ERROR;
-	value = CRYPT_CURSOR_LAST;				/* High bound, subrange 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
-		status = CRYPT_ERROR;
-	value = CRYPT_CURSOR_LAST - 1;			/* Above, subrange 1 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = CRYPT_CERTINFO_FIRST_EXTENSION - 1;	/* Below, subrange 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	value = CRYPT_CERTINFO_FIRST_EXTENSION;		/* Low bound, subrange 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
-		status = CRYPT_ERROR;
-	value = CRYPT_CERTINFO_LAST_EXTENSION;		/* High bound, subrange 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ERROR_NOTFOUND )
-		status = CRYPT_ERROR;
-	value = CRYPT_CERTINFO_LAST_EXTENSION + 1;	/* Above, subrange 2 */
-	if( krnlSendMessage( cryptHandle, IMESSAGE_SETATTRIBUTE, &value,
-						 CRYPT_ATTRIBUTE_CURRENT_GROUP ) != CRYPT_ARGERROR_NUM1 )
-		status = CRYPT_ERROR;
-	krnlSendNotifier( cryptHandle, IMESSAGE_DECREFCOUNT );
-	if( cryptStatusError( status ) )
+	   checks, subranges */
+	if( !checkSubrangeRange( iCryptHandle ) )
+		{
+		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 		return( FALSE );
+		}
+	krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
 #endif /* USE_CERTIFICATES */
 
 	return( TRUE );
 	}
 
+CHECK_RETVAL \
 int testKernel( void )
 	{
 	ENSURES( testGeneralAlgorithms() );

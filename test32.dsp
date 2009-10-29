@@ -161,6 +161,10 @@ SOURCE=.\test\stress.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\test\testfunc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\test\testlib.c
 # End Source File
 # Begin Source File

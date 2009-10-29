@@ -23,7 +23,7 @@
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -416,7 +416,7 @@ static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		   because the key length is communicated as part of the wrapped 
 		   key, but some implementations choke if it's not exactly 128 bits */
 		status = krnlSendMessage( iSessionKeyContext, IMESSAGE_SETATTRIBUTE, 
-								  ( void * ) &keySize, 
+								  ( MESSAGE_CAST ) &keySize, 
 								  CRYPT_CTXINFO_KEYSIZE );
 		if( cryptStatusError( status ) )
 			{
@@ -425,7 +425,7 @@ static int createSessionKey( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			}
 		}
 	status = krnlSendMessage( iSessionKeyContext, IMESSAGE_SETATTRIBUTE, 
-							  ( void * ) &mode, CRYPT_CTXINFO_MODE );
+							  ( MESSAGE_CAST ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusOK( status ) )
 		status = krnlSendNotifier( iSessionKeyContext, IMESSAGE_CTX_GENKEY );
 	if( cryptStatusError( status ) )
@@ -538,6 +538,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int preEnvelopeSign( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr = envelopeInfoPtr->postActionList;
+	SIGPARAMS sigParams;
 
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
@@ -552,10 +553,12 @@ static int preEnvelopeSign( const ENVELOPE_INFO *envelopeInfoPtr )
 	REQUIRES( actionListPtr->associatedAction != NULL );
 
 	/* Evaluate the size of the signature action */
+	initSigParams( &sigParams );
+	sigParams.sigType = PGP_SIG_DATA;
 	return( iCryptCreateSignature( NULL, 0, &actionListPtr->encodedSize, 
 							CRYPT_FORMAT_PGP, actionListPtr->iCryptHandle, 
 							actionListPtr->associatedAction->iCryptHandle,
-							CRYPT_UNUSED, CRYPT_UNUSED ) );
+							&sigParams ) );
 	}
 
 /****************************************************************************
@@ -736,6 +739,7 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
+	SIGPARAMS sigParams;
 	int sigBufSize, sigSize, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -781,12 +785,13 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		return( CRYPT_ERROR_OVERFLOW );
 
 	/* Sign the data */
+	initSigParams( &sigParams );
+	sigParams.sigType = PGP_SIG_DATA;
 	status = iCryptCreateSignature( envelopeInfoPtr->buffer + \
 					envelopeInfoPtr->bufPos, sigBufSize, &sigSize, 
 					CRYPT_FORMAT_PGP, 
 					envelopeInfoPtr->postActionList->iCryptHandle, 
-					envelopeInfoPtr->actionList->iCryptHandle, CRYPT_UNUSED, 
-					CRYPT_UNUSED );
+					envelopeInfoPtr->actionList->iCryptHandle, &sigParams );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status,

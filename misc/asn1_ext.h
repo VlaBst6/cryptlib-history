@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				ASN.1 Supplementary Constants and Structures				*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -20,9 +20,8 @@
 						 4 = blowfishOFB
 					   2 = public-key encryption
 						 1 = elgamal
-						   1 = elgamalWithSHA-1
-						   2 = elgamalWithRIPEMD-160
 					   3 = hash
+					   4 = MAC
 					 2 = mechanism
 					 3 = attribute
 					   1 = PKIX fixes
@@ -114,6 +113,15 @@ typedef struct {
    obtaining algorithm parameters or during some other non-stream-related
    operation */
 
+typedef enum {
+	ALGOID_CLASS_NONE,		/* No AlgoID class */
+	ALGOID_CLASS_CRYPT,		/* Encryption algorithms */
+	ALGOID_CLASS_HASH,		/* Hash/MAC algorithm */
+	ALGOID_CLASS_PKC,		/* Generic PKC algorithm */
+	ALGOID_CLASS_PKCSIG,	/* PKC signature algorithm (+ hash algorithm) */
+	ALGOID_CLASS_LAST		/* Last possible AlgoID class */
+	} ALGOID_CLASS_TYPE;
+
 CHECK_RETVAL_BOOL \
 BOOLEAN checkAlgoID( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 					 IN_MODE const CRYPT_MODE_TYPE cryptMode );
@@ -133,14 +141,17 @@ int writeAlgoIDex( INOUT STREAM *stream,
 				   IN_LENGTH_SHORT_Z const int extraLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2) ) \
 int readAlgoID( INOUT STREAM *stream, 
-				OUT_OPT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo );
+				OUT_OPT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+				IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDext( INOUT STREAM *stream, OUT CRYPT_ALGO_TYPE *cryptAlgo,
-				   OUT CRYPT_ALGO_TYPE *altCryptAlgo );
+				   OUT CRYPT_ALGO_TYPE *altCryptAlgo,
+				   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDparams( INOUT STREAM *stream, 
 					  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-					  OUT_LENGTH_SHORT_Z int *extraLength );
+					  OUT_LENGTH_SHORT_Z int *extraLength,
+					  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 
 /* Alternative versions that read/write various algorithm ID types (algo and
    mode only or full details depending on the option parameter) from contexts */
@@ -152,7 +163,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readContextAlgoID( INOUT STREAM *stream, 
 					   OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 					   INOUT_OPT QUERY_INFO *queryInfo, 
-					   IN_TAG const int tag );
+					   IN_TAG const int tag,
+					   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeContextAlgoID( INOUT STREAM *stream, 
 						IN_HANDLE const CRYPT_CONTEXT iCryptContext,

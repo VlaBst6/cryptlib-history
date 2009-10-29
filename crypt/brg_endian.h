@@ -47,8 +47,6 @@
 #  endif
 #else
 
-#endif							/* pcg */
-
 /* Include files where endian defines and byteswap functions may reside */
 #if defined( __sun )
 #  include <sys/isa_defs.h>
@@ -65,6 +63,8 @@
 #    endif
 #  endif
 #endif
+
+#endif							/* pcg */
 
 /* Now attempt to set the define for platform byte order using any  */
 /* of the four forms SYMBOL, _SYMBOL, __SYMBOL & __SYMBOL__, which  */

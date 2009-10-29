@@ -49,6 +49,9 @@ int pkcs11MapError( PKCS11_INFO *pkcs11Info, const CK_RV errorCode,
 	{
 	ERROR_INFO *errorInfo = &pkcs11Info->errorInfo;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( cryptStatusError( defaultError ) );
+
 	errorInfo->errorCode = ( int ) errorCode;
 	switch( ( int ) errorCode )
 		{
@@ -128,6 +131,8 @@ time_t getTokenTime( CK_TOKEN_INFO *tokenInfo )
 	time_t theTime = MIN_TIME_VALUE + 1;
 	int length, status;
 
+	assert( isWritePtr( tokenInfo, sizeof( CK_TOKEN_INFO ) ) );
+
 	/* Convert the token time to an ASN.1 time string that we can read using
 	   the standard ASN.1 routines by writing a dummy time value and inserting 
 	   the token's time string in its place */
@@ -153,6 +158,10 @@ int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 	DEVICE_INFO *deviceInfo;
 	int cryptStatus;
 
+	assert( isHandleRangeValid( iCryptContext ) );
+	assert( isWritePtr( iCryptDevice, sizeof( CRYPT_DEVICE ) ) );
+	assert( isWritePtr( pkcs11InfoPtrPtr, sizeof( PKCS11_INFO * ) ) );
+
 	/* Clear return values */
 	*iCryptDevice = CRYPT_ERROR;
 	*pkcs11InfoPtrPtr = NULL;
@@ -163,7 +172,7 @@ int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Get the PKCS #11 info from the device info */
+	/* Get the PKCS #11 information from the device information */
 	cryptStatus = krnlAcquireObject( iLocalDevice, OBJECT_TYPE_DEVICE, 
 									 ( void ** ) &deviceInfo, 
 									 CRYPT_ERROR_SIGNALLED );
@@ -171,6 +180,64 @@ int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 		return( cryptStatus );
 	*iCryptDevice = iLocalDevice;
 	*pkcs11InfoPtrPtr = deviceInfo->devicePKCS11;
+
+	return( CRYPT_OK );
+	}
+
+/* Create and try and use a dummy object to check for various PKCS #11 
+   driver bugs */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkDriverBugs( PKCS11_INFO *pkcs11Info )
+	{
+	static const CK_OBJECT_CLASS class = CKO_SECRET_KEY;
+	const CK_KEY_TYPE type = CKK_DES;
+	static const CK_BBOOL bFalse = FALSE, bTrue = TRUE;
+	const CK_ATTRIBUTE keyTemplate[] = {
+		{ CKA_CLASS, ( CK_VOID_PTR ) &class, sizeof( CK_OBJECT_CLASS ) },
+		{ CKA_KEY_TYPE, ( CK_VOID_PTR ) &type, sizeof( CK_KEY_TYPE ) },
+		{ CKA_TOKEN, ( CK_VOID_PTR ) &bFalse, sizeof( CK_BBOOL ) },
+		{ CKA_PRIVATE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
+		{ CKA_SENSITIVE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
+		{ CKA_VALUE, "12345678", 8 }	/* Dummy key value */
+		};
+	const CK_MECHANISM mechanism = { CKM_DES_ECB, NULL, 0 };
+	CK_OBJECT_HANDLE hObject;
+	CK_RV status;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+
+	/* Try and create the sort of object that'd normally require a login.  
+	   This can fail for reasons other than driver bugs (for example DES 
+	   isn't supported for this token type) so we only check for the 
+	   specific error code returned by a login bug */
+	status = C_CreateObject( pkcs11Info->hSession, 
+							 ( CK_ATTRIBUTE_PTR ) keyTemplate, 6, 
+							 &hObject );
+	if( status == CKR_USER_NOT_LOGGED_IN )
+		{
+		DEBUG_DIAG(( "PKCS #11 driver bug detected, attempt to log in to "
+					 "the device apparently succeeded but logged-on "
+					 "operation failed with CKR_USER_NOT_LOGGED_IN" ));
+		assert( DEBUG_WARN );
+		return( CRYPT_ERROR_NOTINITED );
+		}
+	assert( hObject != CK_OBJECT_NONE );
+
+	/* Try and use the object to encrypt data (or at least call the pre-
+	   encrypt call, which should be enough to shake out most bugs) */
+	status = C_EncryptInit( pkcs11Info->hSession, 
+							( CK_MECHANISM_PTR ) &mechanism, hObject );
+	C_DestroyObject( pkcs11Info->hSession, hObject );
+	if( status != CKR_OK )
+		{
+		DEBUG_DIAG(( "PKCS #11 driver bug detected, attempt to use object "
+					 "in logged-in device failed, this can happen when "
+					 "using C_InitToken() rather than the proprietary "
+					 "vendor-supplied utility to initialise the device" ));
+		assert( DEBUG_WARN );
+		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+		}
 
 	return( CRYPT_OK );
 	}
@@ -197,6 +264,9 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 	{
 	CK_RV status;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
+
+	assert( isWritePtr( deviceInfo, sizeof( DEVICE_INFO ) ) );
+	assert( isAttribute( type ) || isInternalAttribute( type ) );
 
 	/* Handle token present/active checks */
 	if( type == CRYPT_DEVINFO_LOGGEDIN )
@@ -269,23 +339,12 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 						  ( CK_ULONG ) dataLength );
 		if( status != CKR_OK )
 			{
-			static const CK_OBJECT_CLASS class = CKO_SECRET_KEY;
-			const CK_KEY_TYPE type = CKK_DES;
-			static const CK_BBOOL bFalse = FALSE, bTrue = TRUE;
-			CK_ATTRIBUTE keyTemplate[] = {
-				{ CKA_CLASS, ( CK_VOID_PTR ) &class, sizeof( CK_OBJECT_CLASS ) },
-				{ CKA_KEY_TYPE, ( CK_VOID_PTR ) &type, sizeof( CK_KEY_TYPE ) },
-				{ CKA_TOKEN, ( CK_VOID_PTR ) &bFalse, sizeof( CK_BBOOL ) },
-				{ CKA_PRIVATE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
-				{ CKA_SENSITIVE, ( CK_VOID_PTR ) &bTrue, sizeof( CK_BBOOL ) },
-				{ CKA_VALUE, "12345678", 8 }	/* Dummy key value */
-				};
-			CK_OBJECT_HANDLE hObject;
+			int cryptStatus;
 
 			/* The check for CKR_USER_ALREADY_LOGGED_IN is logical since we 
 			   may already be logged in from another session, however 
 			   several buggy drivers return CKR_USER_ALREADY_LOGGED_IN 
-			   without actually logging the user in, so that all further 
+			   without actually logging the user in so that all further 
 			   operations fail with CKR_USER_NOT_LOGGED_IN.  To try and
 			   detect this, if we get a CKR_USER_ALREADY_LOGGED_IN we try
 			   and create the sort of object that's likely to require a
@@ -294,21 +353,9 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 			if( status != CKR_USER_ALREADY_LOGGED_IN )
 				return( pkcs11MapError( pkcs11Info, status, 
 										CRYPT_ERROR_FAILED ) );
-
-			/* Try and create the sort of object that'd normally require a 
-			   login.  This can fail for reasons other than the login bug
-			   (for example DES isn't supported for this token type) so we
-			   only check for the specific login bug error code */
-			status = C_CreateObject( pkcs11Info->hSession,
-									 ( CK_ATTRIBUTE_PTR ) keyTemplate, 6, 
-									 &hObject );
-			if( status == CKR_USER_NOT_LOGGED_IN )
-				{
-				assert( DEBUG_WARN );
-				return( CRYPT_ERROR_NOTINITED );
-				}
-			assert( hObject != CK_OBJECT_NONE );
-			C_DestroyObject( pkcs11Info->hSession, hObject );
+			cryptStatus = checkDriverBugs( pkcs11Info );
+			return( cryptStatusError( cryptStatus ) ? \
+					cryptStatus : CRYPT_ERROR_FAILED );
 			}
 
 		/* The device is now ready for use */
@@ -316,7 +363,7 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 		return( CRYPT_OK );
 		}
 
-	/* Handle authorisation value changes.  The init SO/user PIN 
+	/* Handle authorisation value changes.  The initialise SO/user PIN 
 	   functionality is a bit awkward in that it has to fill the gap between 
 	   C_InitToken() (which usually sets the SSO PIN but may also take an
 	   initialisation PIN and leave the token in a state where the only valid
@@ -371,9 +418,9 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 			return( CRYPT_ERROR_NOTINITED );
 			}
 
-		/* Change the SSO PIN from the init PIN.  Once we've done this we 
-		   clear the initial SSO PIN, since it's no longer valid in the new
-		   state */
+		/* Change the SSO PIN from the initialisation PIN.  Once we've done 
+		   this we clear the initial SSO PIN, since it's no longer valid in 
+		   the new state */
 		status = C_SetPIN( pkcs11Info->hSession, pkcs11Info->defaultSSOPin,
 						   pkcs11Info->defaultSSOPinLen, 
 						   ( CK_CHAR_PTR ) data, ( CK_ULONG ) dataLength );
@@ -399,6 +446,7 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 		{
 		CK_SESSION_HANDLE hSession;
 		CK_CHAR label[ 32 + 8 ];
+		int cryptStatus;
 
 		/* Make sure that the PIN is within range */
 		if( dataLength < pkcs11Info->minPinSize || \
@@ -406,7 +454,7 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 			return( CRYPT_ARGERROR_NUM1 );
 
 		/* If there's a session active with the device, log out and terminate
-		   the session, since the token init will reset this */
+		   the session, since the token initialisation will reset this */
 		if( pkcs11Info->hSession != CK_OBJECT_NONE )
 			{
 			C_Logout( pkcs11Info->hSession );
@@ -458,6 +506,16 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 		memcpy( pkcs11Info->defaultSSOPin, data, dataLength );
 		pkcs11Info->defaultSSOPinLen = dataLength;
 
+		/* A number of PKCS #11 devices can't actually be initialised 
+		   through C_InitToken() but require a vendor-supplied proprietary
+		   application to do this, apparently succeeding with C_InitToken() 
+		   but then failing in various strange and unpredictable ways later
+		   on.  We try and detect this situation here by creating a dummy
+		   object in the device and trying to use it */
+		cryptStatus = checkDriverBugs( pkcs11Info );
+		if( cryptStatusError( cryptStatus ) )
+			return( cryptStatus );
+
 		/* We're logged in and ready to go */
 		deviceInfo->flags |= DEVICE_LOGGEDIN;
 		return( CRYPT_OK );
@@ -469,7 +527,7 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 		CK_TOKEN_INFO tokenInfo;
 		time_t *timePtr = ( time_t * ) data, theTime;
 
-		/* Get the token's time, returned as part of the token info 
+		/* Get the token's time, returned as part of the token information 
 		   structure */
 		status = C_GetTokenInfo( pkcs11Info->slotID, &tokenInfo );
 		if( status != CKR_OK )
@@ -500,6 +558,12 @@ static int genericEncrypt( PKCS11_INFO *pkcs11Info,
 	CK_ULONG resultLen = outLength;
 	CK_RV status;
 
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
+	assert( isWritePtr( buffer, length ) );
+	assert( length == outLength );
+
 	status = C_EncryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
 							contextInfoPtr->deviceObject );
@@ -518,6 +582,11 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 	{
 	CK_ULONG resultLen = length;
 	CK_RV status;
+
+	assert( isWritePtr( pkcs11Info, sizeof( PKCS11_INFO ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( pMechanism, sizeof( CK_MECHANISM ) ) );
+	assert( isWritePtr( buffer, length ) );
 
 	status = C_DecryptInit( pkcs11Info->hSession,
 							( CK_MECHANISM_PTR ) pMechanism,
@@ -538,6 +607,8 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 	PKCS11_INFO *pkcs11Info;
 	int cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
 	/* Since the device object that corresponds to the cryptlib object is
 	   created on-demand, it may not exist yet if the action that triggers
 	   the on-demand creation hasn't been taken yet.  If no device object
@@ -545,7 +616,7 @@ int genericEndFunction( CONTEXT_INFO *contextInfoPtr )
 	if( contextInfoPtr->deviceObject == CRYPT_ERROR )
 		return( CRYPT_OK );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -596,8 +667,8 @@ static CK_MECHANISM_TYPE getMechanism( const GETMECH_TYPE mechType,
 									   const CRYPT_ALGO_TYPE cryptAlgo,
 									   const CRYPT_MODE_TYPE cryptMode );
 
-/* Set up a key template and context info in preparation for creating a 
-   device object */
+/* Set up a key template and context information in preparation for creating 
+   a device object */
 
 static void adjustKeyParity( BYTE *key, const int length )
 	{
@@ -608,7 +679,7 @@ static void adjustKeyParity( BYTE *key, const int length )
 	/* Adjust a key to have odd parity, needed for DES keys */
 	for( i = 0; i < length; i++ )
 		{
-		BYTE ch = key[ i ];
+		int ch = byteToInt( key[ i ] );
 		
 		ch = ( ch & 0x55 ) + ( ( ch >> 1 ) & 0x55 );
 		ch = ( ch & 0x33 ) + ( ( ch >> 2 ) & 0x33 );
@@ -619,9 +690,9 @@ static void adjustKeyParity( BYTE *key, const int length )
 
 /* Load a key into a device object */
 
-static int initKey( CONTEXT_INFO *contextInfoPtr, CK_ATTRIBUTE *keyTemplate,
-					const int templateCount, const void *key, 
-					const int keyLength )
+static int initKey( CONTEXT_INFO *contextInfoPtr, 
+					CK_ATTRIBUTE *keyTemplate, const int templateCount, 
+					const void *key, const int keyLength )
 	{
 	CRYPT_DEVICE iCryptDevice;
 	const CRYPT_ALGO_TYPE cryptAlgo = \
@@ -642,7 +713,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, CK_ATTRIBUTE *keyTemplate,
 						templateCount * sizeof( CK_ATTRIBUTE ) ) );
 	assert( isReadPtr( key, keyLength ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -816,7 +887,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr,
 	assert( isWritePtr( keyTemplate, \
 						templateCount * sizeof( CK_ATTRIBUTE ) ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -861,6 +932,8 @@ static int cipherGenerateKey( CONTEXT_INFO *contextInfoPtr,
 				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( keySizeBits >= bytesToBits( MIN_KEYSIZE ) && \
+			keySizeBits <= bytesToBits( CRYPT_MAX_KEYSIZE ) );
 
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
@@ -895,6 +968,8 @@ static int hmacGenerateKey( CONTEXT_INFO *contextInfoPtr,
 				( contextInfoPtr->flags & CONTEXT_FLAG_PERSISTENT ) ? 9 : 8;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( keySizeBits >= bytesToBits( MIN_KEYSIZE ) && \
+			keySizeBits <= bytesToBits( CRYPT_MAX_KEYSIZE ) );
 
 	/* If this is meant to be a persistent object, modify the template to 
 	   make it a persistent token object and adjust the template entry count
@@ -904,7 +979,6 @@ static int hmacGenerateKey( CONTEXT_INFO *contextInfoPtr,
 
 	return( generateKey( contextInfoPtr, keyTemplate, templateCount, TRUE ) );
 	}
-
 #else
 
 #define cipherGenerateKey	NULL
@@ -923,6 +997,8 @@ static int hmacGenerateKey( CONTEXT_INFO *contextInfoPtr,
 static int initCryptParams( CONTEXT_INFO *contextInfoPtr, void *paramData )
 	{
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RC2 )
 		{
@@ -978,6 +1054,9 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
 	int paramSize, cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	/* Set up algorithm and mode-specific parameters */
 	paramSize = initCryptParams( contextInfoPtr, &paramDataBuffer );
 	if( paramSize > 0 )
@@ -997,7 +1076,7 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 			}
 		}
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1032,6 +1111,9 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 	const int ivSize = contextInfoPtr->capabilityInfo->blockSize;
 	int paramSize, cryptStatus;
 
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	/* Set up algorithm and mode-specific parameters */
 	paramSize = initCryptParams( contextInfoPtr, &paramDataBuffer );
 	if( paramSize > 0 )
@@ -1054,7 +1136,7 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 		!isStreamCipher( contextInfoPtr->capabilityInfo->cryptAlgo ) )
 		memcpy( ivBuffer, ( BYTE * ) buffer + length - ivSize, ivSize );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1084,6 +1166,9 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 static int cipherEncryptECB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_3DES )
 		return( cipherEncrypt( contextInfoPtr, buffer, length, CKM_DES3_ECB ) );
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_AES )
@@ -1095,6 +1180,9 @@ static int cipherEncryptECB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherEncryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	return( cipherEncrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
@@ -1102,6 +1190,9 @@ static int cipherEncryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherEncryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	return( cipherEncrypt( contextInfoPtr, buffer, length, 
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_CFB ) ) );
@@ -1111,6 +1202,9 @@ static int cipherEncryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherEncryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RC4 )
 		return( cipherEncrypt( contextInfoPtr, buffer, length, CKM_RC4 ) );
 	return( cipherEncrypt( contextInfoPtr, buffer, length, 
@@ -1121,6 +1215,9 @@ static int cipherEncryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherDecryptECB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_3DES )
 		return( cipherDecrypt( contextInfoPtr, buffer, length, CKM_DES3_ECB ) );
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_AES )
@@ -1132,6 +1229,9 @@ static int cipherDecryptECB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherDecryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	return( cipherDecrypt( contextInfoPtr, buffer, length, 
 						   contextInfoPtr->capabilityInfo->paramDefaultMech ) );
 	}
@@ -1139,6 +1239,9 @@ static int cipherDecryptCBC( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherDecryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	return( cipherDecrypt( contextInfoPtr, buffer, length, 
 				getMechanism( MECH_CONV, contextInfoPtr->capabilityInfo->cryptAlgo, 
 							  CRYPT_MODE_CFB ) ) );
@@ -1148,6 +1251,9 @@ static int cipherDecryptCFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 static int cipherDecryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
 							 int length )
 	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( buffer, length ) );
+
 	if( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RC4 )
 		return( cipherDecrypt( contextInfoPtr, buffer, length, CKM_RC4 ) );
 	return( cipherDecrypt( contextInfoPtr, buffer, length, 
@@ -1179,7 +1285,10 @@ static int hmac( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	CK_RV status;
 	int cryptStatus;
 
-	/* Get the info for the device associated with this context */
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 ) || isWritePtr( buffer, length ) );
+
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1229,7 +1338,7 @@ static int hmac( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 *																			*
 ****************************************************************************/
 
-/* Conventional encryption and MAC mechanism info */
+/* Conventional encryption and MAC mechanism information */
 
 static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 	/* Conventional encryption mechanisms */
@@ -1341,6 +1450,8 @@ static const PKCS11_MECHANISM_INFO mechanismInfoConv[] = {
 
 const PKCS11_MECHANISM_INFO *getMechanismInfoConv( int *mechanismInfoSize )
 	{
+	assert( isWritePtr( mechanismInfoSize, sizeof( int ) ) );
+
 	*mechanismInfoSize = FAILSAFE_ARRAYSIZE( mechanismInfoConv, \
 											 PKCS11_MECHANISM_INFO );
 	return( mechanismInfoConv );

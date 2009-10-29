@@ -3,7 +3,7 @@
 # Copyright (C) 2003-2004 Wolfgang Gothier
 
 #####
-#       G E N V B . P L   Version 3.2 (last changes 2005-09-07)
+#       G E N V B . P L   $Id: GenVB.pl,v 1.3 2009/07/13 20:27:20 wogo Exp $
 #       --------------------------------------------------------------------
 #
 #       PERL script for translation of the cryptlib header file
@@ -36,7 +36,7 @@ use File::Basename;
 my $FileName = shift @ARGV || 'cryptlib.h';		# default filename is "cryptlib.h"
 my %DEFINED = ( 1, 1,                         # ifdef 1 is to be included
                 "USE_VENDOR_ALGOS", 0 );			# set to 1 to include #IFDEF USE_VENDOR_ALGOS
-my $Startline = qr{^#define C_INOUT};					# ignore all lines before this one
+my $Startline = qr{^#endif\s+\/\*\s+_CRYPTLIB_DEFINED\s+\*\/};	# ignore all lines before this one
 
 my ($FileBase, $Path, $Ext) = fileparse($FileName, qr{\.[^.]*$});
 die("\"usage: $0 cryptlib.h\"\nParameter must be a C header file\nStop") unless ($Ext =~ m/^\.h$/i) && -r $FileName;
@@ -66,9 +66,12 @@ my $LEVEL = 0;
 my $COMMENT = 0;
 # handle conditionals, include conditional code only if definition agrees with %DEFINED
 while (<INFILE>) { 
+    # remove preprocessor symbols
+    s/C_CHECK_RETVAL//;
+    s/C_NONNULL_ARG\s*\(\s*\([ \t0-9,]+\s*\)\s*\)//;
 
-		# remove tabs
-		1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;
+    # remove tabs
+    1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;
 
     if (/^\s*#if(\s|def\s)(\w+)/) {
         $LEVEL += 1;
@@ -147,6 +150,7 @@ while ($_ = shift @source) {
     
 		# constant definitions
 		s/^\s*#define\s+(\w+)\s+(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)/  Public Const $1 As Long = $2/;
+		s/^\s*#define\s+(\w+)\s+\(\s*(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)\s*\)/  Public Const $1 As Long = $2/;
 
     # typedef struct
     if (s!^(\s*)typedef\s+struct\s*{([^}]*)}\s*(\w+)\s*;!&typelist(split(/;/,$2))!e) {
@@ -226,13 +230,13 @@ Option Explicit
 '
 'Please check twice that the file matches the version of $filename
 'in your cryptlib source! If this is not the right version, try to download an
-'update from "http://www.sogot.de/cryptlib/". If the filesize or file creation
+'update from "http://cryptlib.sogot.de/". If the filesize or file creation
 'date do not match, then please do not complain about problems.
 '
 'Examples using Visual Basic are available on the same web address.
 '
 'Published by W. Gothier, 
-'mailto: cryptlib\@gothier.net if you find errors in this file.
+'mailto: problems\@cryptlib.sogot.de if you find errors in this file.
 
 '-----------------------------------------------------------------------------
 
@@ -348,22 +352,22 @@ sub convpar {
 #   conversion of a single parameter in a parameter list
 sub convpar1 {
     my $par = shift;
-    if ($par =~ s/^\s*C_IN\s+(.+)\s+(\w+)\s*/&typeconv($1)/e) {
-        return " ByVal $2 As $par";
+    if ($par =~ s/^\s*(C_IN\s+|C_IN_OPT\s+)(.+)\s+(\w+)\s*/&typeconv($2)/e) {
+        return " ByVal $3 As $par";
     }
     if ($par =~ s/^\s*C_INOUT\s+(.+)\s+(\w+)\s*/&typeconv($1)/e) {
         $Warn = "will replace the String '$2'";
         return " ByVal $2 As $par";
     }
-    if ($par =~ s/^\s*C_OUT\s+void\s+C_PTR\s+(\w+)\s*/$1/) {
+    if ($par =~ s/^\s*(C_OUT\s+|C_OUT_OPT\s+)void\s+C_PTR\s+(\w+)\s*/$2/) {
         $Warn = "will modify the String '$par'";
         return " ByVal $par As String";
     }
-    if ($par =~ s/^\s*C_OUT\s+(.+)\s+C_PTR\s+(\w+)\s*/&typeconv($1)/e) {
-        return " ByRef $2 As $par";
+    if ($par =~ s/^\s*(C_OUT\s+|C_OUT_OPT\s+)(.+)\s+C_PTR\s+(\w+)\s*/&typeconv($2)/e) {
+        return " ByRef $3 As $par";
     }
-    if ($par =~ s/^\s*C_OUT\s+(.+)\s+(\w+)\s*/&typeconv($1)/e) {
-        return " $2 As $par";
+    if ($par =~ s/^\s*(C_OUT\s+|C_OUT_OPT\s+)(.+)\s+(\w+)\s*/&typeconv($2)/e) {
+        return " $3 As $par";
     }
     return $par;
 }

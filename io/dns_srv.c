@@ -16,6 +16,22 @@
   #include "io/tcp.h"
 #endif /* Compiler-specific includes */
 
+/* Use DNS SRV to auto-detect host information.  Note that this code is 
+   disabled by default, before enabling it you should make sure that your
+   system's DNS services can't serve as an attack vector due to the 
+   complexity of DNS packet processing.  The Unix DNS interface is 
+   particularly bad here, the problematic nature of the requirement that 
+   implementations manually disassemble the DNS data themselves has been 
+   demonstrated by the numerous bugs that have hit implementations that did 
+   this, examples being the bind 9.2.1 gethostans() vulnerability and, in a 
+   rather extreme example, the l0pht antisniff 1.0 vulnerability which 
+   required no less than three successive patches to the same code to 
+   finally eradicate the one bug (!!).  The fact that every new 
+   implementation that wants to use this functionality has to independently 
+   reinvent the code to do it means that these vulnerabilities will be with 
+   us more or less forever, which is why this facility is disabled by 
+   default */
+
 #if defined( USE_TCP ) && defined( USE_DNSSRV )
 
 /****************************************************************************
@@ -136,11 +152,6 @@ void endDNSSRV( const INSTANCE_HANDLE hTCP )
 *						 	Windows DNS SRV Interface						*
 *																			*
 ****************************************************************************/
-
-/* Use DNS SRV to auto-detect host information.  Note that this code is 
-   disabled by default, before enabling it you should make sure that your
-   system's DNS services can't serve as an attack vector due to the 
-   complexity of DNS packet processing */
 
 #if defined( __WINDOWS__ ) && !defined( __WIN16__ )
 
@@ -331,7 +342,11 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 	dwRet = DnsQuery( ( const LPSTR ) name, DNS_TYPE_SRV, DNS_QUERY_STANDARD,
 					  NULL, &pDns, NULL );
 	if( dwRet != 0 || pDns == NULL )
-		return( getSocketError( netStream, CRYPT_ERROR_NOTFOUND ) );
+		{
+		int dummy;
+
+		return( getSocketError( netStream, CRYPT_ERROR_NOTFOUND, &dummy ) );
+		}
 	for( pDnsCursor = pDns, i = 0; 
 		 pDnsCursor != NULL && i < IP_ADDR_COUNT;
 		 pDnsCursor = pDnsCursor->pNext, i++ )
@@ -393,7 +408,7 @@ static int getFQDN( INOUT NET_STREAM_INFO *netStream,
 	{
 	struct hostent *hostInfo;
 	char *hostNamePtr = NULL;
-	int i, addressCount;
+	int addressCount;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( isWritePtr( fqdn, fqdnMaxLen ) );
@@ -422,12 +437,11 @@ static int getFQDN( INOUT NET_STREAM_INFO *netStream,
 	/* Now get the hostent info and walk through it looking for the FQDN */
 	if( ( hostInfo = gethostbyname( fqdn ) ) == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
-	for( i = 0; 
-		 hostInfo->h_addr_list[ i ] != NULL && addressCount < IP_ADDR_COUNT; 
-		 i++ )
+	for( addressCount = 0; hostInfo->h_addr_list[ addressCount ] != NULL && \
+						   addressCount < IP_ADDR_COUNT; addressCount++ )
 		{
 		char **aliasPtrPtr;	
-		int j;
+		int i;
 	
 		/* If the hostname has a dot in it, it's the FQDN.  This should be
 		   the same as the gethostname() output, but we check again just in
@@ -441,10 +455,10 @@ static int getFQDN( INOUT NET_STREAM_INFO *netStream,
 		/* Try for the FQDN in the aliases */
 		if( hostInfo->h_aliases == NULL )
 			continue;
-		for( aliasPtrPtr = hostInfo->h_aliases, j = 0;
+		for( aliasPtrPtr = hostInfo->h_aliases, i = 0;
 			 *aliasPtrPtr != NULL && !strchr( *aliasPtrPtr, '.' ) && \
-					j < IP_ADDR_COUNT; 
-			 aliasPtrPtr++, j++ );
+					i < IP_ADDR_COUNT; 
+			 aliasPtrPtr++, i++ );
 		if( *aliasPtrPtr != NULL )
 			{
 			hostNamePtr = *aliasPtrPtr;
@@ -475,7 +489,7 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 		} dnsQueryInfo;
 	BYTE *namePtr, *endPtr;
 	char nameBuffer[ MAX_DNS_SIZE + 8 ];
-	int resultLen, nameLen, qCount, aCount, minPriority = 32767;
+	int resultLen, nameSegmentLen, qCount, aCount, minPriority = 32767;
 	int i;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
@@ -519,11 +533,18 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 	/* Try and fetch a DNS SRV record (RFC 2782) matching the host info.  
 	   Unlike Windows' relatively nice DnsQuery() API, Unix has a horribly
 	   clunky interface that requires manually grovelling through wire-
-	   format data to dig out the bits of interest */
+	   format data to dig out the bits of interest.  OpenBSD provides a 
+	   function getrrsetbyname()/freerrset() that's equivalent to Windows' 
+	   DnsQuery()/DnsFree() but it's OpenBSD-only so we can't really rely 
+	   on it being present */
 	resultLen = res_query( name, C_IN, T_SRV, dnsQueryInfo.buffer,
 						   NS_PACKETSZ );
 	if( resultLen < NS_HFIXEDSZ || resultLen > NS_PACKETSZ )
-		return( getSocketError( netStream, CRYPT_ERROR_NOTFOUND ) );
+		{
+		int dummy;
+
+		return( getSocketError( netStream, CRYPT_ERROR_NOTFOUND, &dummy ) );
+		}
 	if( dnsQueryInfo.header.rcode != 0 || dnsQueryInfo.header.tc != 0 )
 		{
 		/* If we get a non-zero response code (rcode) or the results were
@@ -553,14 +574,14 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 	endPtr = dnsQueryInfo.buffer + resultLen;
 	for( i = 0; i < qCount && namePtr < endPtr && i < 100; i++ )
 		{
-		nameLen = dn_skipname( namePtr, endPtr );
-		if( nameLen <= 0 || nameLen > MAX_DNS_SIZE )
+		nameSegmentLen = dn_skipname( namePtr, endPtr );
+		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE )
 			{
 			return( setSocketError( netStream, 
 									"RR contains invalid question", 28,
 									CRYPT_ERROR_BADDATA, FALSE ) );
 			}
-		namePtr += nameLen + NS_QFIXEDSZ;
+		namePtr += nameSegmentLen + NS_QFIXEDSZ;
 		}
 	if( namePtr > endPtr )
 		{
@@ -576,36 +597,36 @@ int findHostInfo( INOUT NET_STREAM_INFO *netStream,
 		{
 		int priority, port;
 
-		nameLen = dn_skipname( namePtr, endPtr );
-		if( nameLen <= 0 )
+		nameSegmentLen = dn_skipname( namePtr, endPtr );
+		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE )
 			{
 	        return( setSocketError( netStream, "RR contains invalid answer", 26,
 	                                CRYPT_ERROR_BADDATA, FALSE ) );
 			}
-		namePtr += nameLen;
+		namePtr += nameSegmentLen;
 		priority = ntohs( *( ( u_short * ) ( namePtr + SRV_PRIORITY_OFFSET ) ) );
 		port = ntohs( *( ( u_short * ) ( namePtr + SRV_PORT_OFFSET ) ) );
 		namePtr += NS_SRVFIXEDSZ;
 		if( priority < minPriority )
 			{
 			/* We've got a new higher-priority host, use that */
-			nameLen = dn_expand( dnsQueryInfo.buffer, endPtr,
-								 namePtr, hostName, hostNameMaxLen );
+			nameSegmentLen = dn_expand( dnsQueryInfo.buffer, endPtr,
+										namePtr, hostName, hostNameMaxLen );
 			*hostPort = port;
 			minPriority = priority;
 			}
 		else
 			{
 			/* It's a lower-priority host, skip it */
-			nameLen = dn_skipname( namePtr, endPtr );
+			nameSegmentLen = dn_skipname( namePtr, endPtr );
 			}
-		if( nameLen <= 0 || nameLen > MAX_DNS_SIZE )
+		if( nameSegmentLen <= 0 || nameSegmentLen > MAX_DNS_SIZE )
 			{
 	        return( setSocketError( netStream, "RR contains invalid answer", 26,
 	                                CRYPT_ERROR_NOTFOUND, FALSE ) );
 			}
-		hostName[ nameLen ] = '\0';
-		namePtr += nameLen;
+		hostName[ nameSegmentLen ] = '\0';
+		namePtr += nameSegmentLen;
 		}
 	if( namePtr > endPtr )
 		{

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								Read CMP Messages							*
-*						Copyright Peter Gutmann 1999-2007					*
+*						Copyright Peter Gutmann 1999-2009					*
 *																			*
 ****************************************************************************/
 
@@ -28,987 +28,411 @@
 *																			*
 ****************************************************************************/
 
-/* Read the CMP/Entrust MAC information:
-
-	macInfo ::= SEQUENCE {
-		algoID			OBJECT IDENTIFIER (entrustMAC),
-		algoParams		SEQUENCE {
-			salt		OCTET STRING,
-			pwHashAlgo	AlgorithmIdentifier (SHA-1)
-			iterations	INTEGER,
-			macAlgo		AlgorithmIdentifier (HMAC-SHA1)
-			} OPTIONAL
-		} */
-
-static int readMacInfo( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
-						const void *password, const int passwordLength,
-						INOUT ERROR_INFO *errorInfo )
-	{
-	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];
-	long value;
-	int saltLength, iterations, status;
-
-	/* Read the various parameter fields */
-	readSequence( stream, NULL );
-	status = readFixedOID( stream, OID_ENTRUST_MAC,
-						   sizeofOID( OID_ENTRUST_MAC ) );
-	if( cryptStatusError( status ) )
-		{
-		/* If we don't find this OID we specifically report it as an unknown
-		   algorithm problem rather than a generic bad data error */
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADALG;
-		retExt( status, 
-				( status, errorInfo, "Unrecognised MAC algorithm" ) );
-		}
-	if( peekTag( stream ) == BER_NULL )
-		{
-		/* No parameters, use the same values as for the previous
-		   transaction */
-		return( CRYPT_OK );
-		}
-	readSequence( stream, NULL );
-	readOctetString( stream, salt, &saltLength, 4, CRYPT_MAX_HASHSIZE );
-	readUniversal( stream );			/* pwHashAlgo */
-	readShortInteger( stream, &value );
-	status = readUniversal( stream );	/* macAlgo */
-	if( cryptStatusError( status ) )
-		retExt( status, 
-				( status, errorInfo, "Invalid MAC algorithm information" ) );
-	iterations = ( int ) value;
-	if( iterations < 1 || iterations > CMP_MAX_PASSWORD_ITERATIONS )
-		{
-		/* Prevent DoS attacks due to excessive iteration counts (bad
-		   algorithm is about the most appropriate error we can return
-		   here).  The spec never defines any appropriate limits for this
-		   value, which leads to interesting effects when submitting a
-		   request for bignum iterations to some implementations */
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADALG;
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, errorInfo, 
-				  "Invalid MAC iteration count %d", iterations ) );
-		}
-
-	/* If we're the responder and the MAC parameters aren't set yet, set
-	   them based on the initiator's values.  If we're using MAC protection
-	   and the parameters match our original MAC, reuse the MAC context.
-	   As usual the spec is ambiguous over the use of the MAC info, leaving
-	   it possible for implementations to re-key the MAC on a per-message
-	   basis.  We try and cache MAC info as much as possible to reduce the
-	   performance hit from re-keying for each message */
-	if( protocolInfo->saltSize <= 0 )
-		{
-		status = initMacInfo( protocolInfo->iMacContext, password,
-							  passwordLength, salt, saltLength, iterations );
-		memcpy( protocolInfo->salt, salt, saltLength );
-		protocolInfo->saltSize = saltLength;
-		protocolInfo->iterations = iterations;
-		if( cryptStatusError( status ) )
-			retExt( status,
-					( status, errorInfo, 
-					  "Couldn't initialise MAC information" ) );
-		return( CRYPT_OK );
-		}
-	if( protocolInfo->iterations && \
-		saltLength == protocolInfo->saltSize && \
-		!memcmp( salt, protocolInfo->salt, saltLength ) && \
-		iterations == protocolInfo->iterations )
-		{
-		protocolInfo->useAltMAC = FALSE;
-		return( CRYPT_OK );
-		}
-	protocolInfo->useAltMAC = TRUE;	/* Use the alternative MAC context */
-
-	/* If we've got an alternative MAC context using the parameters from a
-	   previous message already set up, reuse this */
-	if( protocolInfo->iAltMacContext != CRYPT_ERROR && \
-		saltLength == protocolInfo->altSaltSize && \
-		!memcmp( salt, protocolInfo->altSalt, saltLength ) && \
-		iterations == protocolInfo->altIterations )
-		return( CRYPT_OK );
-
-	/* This is a new set of parameters, create a new altMAC context with
-	   them */
-	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
-							  &createInfo, OBJECT_TYPE_CONTEXT );
-	if( cryptStatusError( status ) )
-		return( status );
-	status = initMacInfo( createInfo.cryptHandle, password, passwordLength,
-						  salt, saltLength, iterations );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-		retExt( status,
-				( status, errorInfo, 
-				  "Couldn't initialise alternative MAC information" ) );
-		}
-	if( protocolInfo->iAltMacContext != CRYPT_ERROR )
-		krnlSendNotifier( protocolInfo->iAltMacContext,
-						  IMESSAGE_DECREFCOUNT );
-	protocolInfo->iAltMacContext = createInfo.cryptHandle;
-	memcpy( protocolInfo->altSalt, salt, saltLength );
-	protocolInfo->altSaltSize = saltLength;
-	protocolInfo->altIterations = iterations;
-
-	return( CRYPT_OK );
-	}
-
-/* Read a cert encrypted with CMP's garbled reinvention of CMS content:
-
-	EncryptedCert ::= SEQUENCE {
-		dummy			[0]	... OPTIONAL,		-- Ignored
-		cekAlg			[1]	AlgorithmIdentifier,-- CEK algorithm
-		encCEK			[2]	BIT STRING,			-- Encrypted CEK
-		dummy			[3]	... OPTIONAL,		-- Ignored
-		dummy			[4] ... OPTIONAL,		-- Ignored
-		encData			BIT STRING				-- Encrypted cert
-		} */
-
-static int readEncryptedDataInfo( STREAM *stream, void **encKeyPtrPtr, 
-								  int *encKeyLength, void **encCertPtrPtr, 
-								  int *encCertLength )
-	{
-	void *dataPtr;
-	int length, status;
-
-	/* Clear return values */
-	*encKeyPtrPtr = *encCertPtrPtr = NULL;
-	*encKeyLength = *encCertLength = 0;
-
-	status = readBitStringHole( stream, &length, 56, 
-								CTAG_EV_ENCCEK );
-	if( cryptStatusError( status ) )			/* Encrypted CEK */
-		return( status );
-	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
-		return( CRYPT_ERROR_BADDATA );
-	status = sMemGetDataBlock( stream, &dataPtr, length );
-	if( cryptStatusError( status ) )
-		return( status );
-	sSkip( stream, length );
-	*encKeyPtrPtr = dataPtr;
-	*encKeyLength = length;
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_EV_DUMMY2 ) )
-		readUniversal( stream );				/* Junk */
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_EV_DUMMY3 ) )
-		readUniversal( stream );				/* Junk */
-	status = readBitStringHole( stream, &length, 128, DEFAULT_TAG );
-	if( cryptStatusError( status ) )			/* Encrypted cert */
-		return( status );
-	if( length < 128 || length > 8192 )
-		return( CRYPT_ERROR_BADDATA );
-	status = sMemGetDataBlock( stream, &dataPtr, length );
-	if( cryptStatusError( status ) )
-		return( status );
-	*encCertPtrPtr = dataPtr;
-	*encCertLength = length;
-	return( sSkip( stream, length ) );
-	}
-
-static int readEncryptedCert( STREAM *stream,
-							  const CRYPT_CONTEXT iImportContext,
-							  INOUT ERROR_INFO *errorInfo )
-	{
-	CRYPT_CONTEXT iSessionKey;
-	MECHANISM_WRAP_INFO mechanismInfo;
-	QUERY_INFO queryInfo;
-	void *encKeyPtr, *encCertPtr;
-	int encKeyLength, encCertLength, status;
-
-	/* Read the CEK algorithm identifier and encrypted CEK.  All of the
-	   values are optional although there's no indication of why or what
-	   you're supposed to do if they're not present (OTOH for others there's
-	   no indication of what you're supposed to do when they're present
-	   either) so we treat an absent required value as an error and ignore
-	   the others */
-	readSequence( stream, NULL );
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_EV_DUMMY1 ) )
-		readUniversal( stream );				/* Junk */
-	status = readContextAlgoID( stream, &iSessionKey, &queryInfo,
-								CTAG_EV_CEKALGO );
-	if( cryptStatusError( status ) )			/* CEK algo */
-		{
-		retExt( status,
-				( status, errorInfo, 
-				  "Invalid encrypted certificate CEK algorithm" ) );
-		}
-	status = readEncryptedDataInfo( stream, &encKeyPtr, &encKeyLength, 
-									&encCertPtr, &encCertLength );
-	if( cryptStatusOK( status ) && \
-		( queryInfo.cryptMode == CRYPT_MODE_ECB || \
-		  queryInfo.cryptMode == CRYPT_MODE_CBC ) )
-		{
-		int blockSize;
-
-		/* Make sure that the data length is valid.  Checking at this point
-		   saves a lot of unnecessary processing and allows us to return a
-		   more meaningful error code */
-		status = krnlSendMessage( iSessionKey, IMESSAGE_GETATTRIBUTE, 
-								  &blockSize, CRYPT_CTXINFO_BLOCKSIZE );
-		if( cryptStatusError( status ) || \
-			( queryInfo.size % blockSize ) != 0 )
-			status = CRYPT_ERROR_BADDATA;
-		}
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
-		retExt( status,
-				( status, errorInfo, 
-				  "Invalid encrypted certificate CEK data" ) );
-		}
-
-	/* Copy the encrypted key to the buffer and import it into the session
-	   key context */
-	setMechanismWrapInfo( &mechanismInfo, encKeyPtr, encKeyLength,
-						  NULL, 0, iSessionKey, iImportContext );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT,
-							  &mechanismInfo, MECHANISM_ENC_PKCS1 );
-	clearMechanismInfo( &mechanismInfo );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
-		retExt( status,
-				( status, errorInfo, 
-				  "Couldn't decrypt encrypted certificate CEK" ) );
-		}
-
-	/* Decrypt the returned cert */
-	status = krnlSendMessage( iSessionKey, IMESSAGE_CTX_DECRYPT,
-							  encCertPtr, encCertLength );
-	krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status,
-				( status, errorInfo, 
-				  "Couldn't decrypt returned encrypted certificate using "
-				  "CEK" ) );
-		}
-	return( CRYPT_OK );
-	}
-
 /* Read the kitchen-sink field in the PKI header */
 
-static int readGeneralInfo( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readGeneralInfoAttribute( INOUT STREAM *stream, 
+									 INOUT CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	int generalInfoEndPos = stell( stream ), length;
-	int iterationCount = 0, status;
+	BYTE oid[ MAX_OID_SIZE + 8 ];
+	int length, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	/* Read the attribute.  Since there are only two attribute types that we 
+	   use, we hardcode the read in here rather than performing a general-
+	   purpose attribute read */
+	readSequence( stream, NULL );
+	status = readEncodedOID( stream, oid, MAX_OID_SIZE, &length, 
+							 BER_OBJECT_IDENTIFIER );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Process the cryptlib presence-check value */
+	if( length == sizeofOID( OID_CRYPTLIB_PRESENCECHECK ) && \
+		!memcmp( oid, OID_CRYPTLIB_PRESENCECHECK, length ) )
+		{
+		/* The other side is running cryptlib, we can make some common-sense 
+		   assumptions about its behaviour */
+		protocolInfo->isCryptlib = TRUE;
+		return( readUniversal( stream ) );			/* Attribute */
+		}
+
+	/* Check for the ESSCertID, which fixes CMP's broken certificate 
+	   identification mechanism */
+	if( length == sizeofOID( OID_ESS_CERTID ) && \
+		!memcmp( oid, OID_ESS_CERTID, length ) )
+		{
+		BYTE certID[ CRYPT_MAX_HASHSIZE + 8 ];
+		int certIDsize, endPos;
+
+		/* Extract the certificate hash from the ESSCertID */
+		readSet( stream, NULL );					/* Attribute */
+		readSequence( stream, NULL );				/* SigningCerts */
+		readSequence( stream, NULL );				/* Certs */
+		status = readSequence( stream, &length );	/* ESSCertID */
+		if( cryptStatusError( status ) )
+			return( status );
+		endPos = stell( stream ) + length;
+		status = readOctetString( stream, certID, &certIDsize, 
+								  KEYID_SIZE, KEYID_SIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( protocolInfo->certIDsize != KEYID_SIZE || \
+			memcmp( certID, protocolInfo->certID, KEYID_SIZE ) )
+			{
+			/* The certificate used for authentication purposes has changed,
+			   remember the new certID */
+			memcpy( protocolInfo->certID, certID, KEYID_SIZE );
+			protocolInfo->certIDsize = KEYID_SIZE;
+			protocolInfo->certIDchanged = TRUE;
+			}
+		if( stell( stream ) < endPos )
+			{
+			/* Skip the issuerSerial if there's one present.  We can't 
+			   really do much with it in this form without rewriting it into 
+			   the standard issuerAndSerialNumber, but in any case we don't 
+			   need it because we've already got the certificate ID */
+			status = readUniversal( stream );
+			}
+		return( status );
+		}
+
+	/* It's something that we don't recognise, skip it */
+	return( readUniversal( stream ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readGeneralInfo( INOUT STREAM *stream, 
+							INOUT CMP_PROTOCOL_INFO *protocolInfo )
+	{
+	long endPos;
+	int length, iterationCount, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Go through the various attributes looking for anything that we can
 	   use */
 	readConstructed( stream, NULL, CTAG_PH_GENERALINFO );
 	status = readSequence( stream, &length );
-	generalInfoEndPos += length;
-	while( cryptStatusOK( status ) && \
-		   stell( stream ) < generalInfoEndPos && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
-		{
-		BYTE oid[ MAX_OID_SIZE + 8 ];
-
-		/* Read the attribute.  Since there are only two attribute types
-		   that we use, we hardcode the read in here rather than performing
-		   a general-purpose attribute read */
-		readSequence( stream, NULL );
-		status = readEncodedOID( stream, oid, MAX_OID_SIZE, &length, 
-								 BER_OBJECT_IDENTIFIER );
-		if( cryptStatusError( status ) )
-			break;
-
-		/* Process the cryptlib presence-check value */
-		if( length == sizeofOID( OID_CRYPTLIB_PRESENCECHECK ) && \
-			!memcmp( oid, OID_CRYPTLIB_PRESENCECHECK, length ) )
-			{
-			/* The other side is running cryptlib, we can make some common-
-			   sense assumptions about its behaviour */
-			protocolInfo->isCryptlib = TRUE;
-			status = readSet( stream, NULL );/* Attribute */
-			continue;
-			}
-
-		/* Check for the ESSCertID, which fixes CMP's broken cert
-		   identification mechanism */
-		if( length == sizeofOID( OID_ESS_CERTID ) && \
-			!memcmp( oid, OID_ESS_CERTID, length ) )
-			{
-			int endPos;
-
-			/* Extract the cert hash from the ESSCertID */
-			readSet( stream, NULL );		/* Attribute */
-			readSequence( stream, NULL );	/* SigningCerts */
-			readSequence( stream, NULL );	/* Certs */
-			readSequence( stream, &length );/* ESSCertID */
-			endPos = stell( stream ) + length;
-			status = readOctetString( stream, protocolInfo->certID,
-									  &protocolInfo->certIDsize,
-									  8, CRYPT_MAX_HASHSIZE );
-			if( cryptStatusOK( status ) && \
-				protocolInfo->certIDsize != KEYID_SIZE )
-				status = CRYPT_ERROR_BADDATA;
-			if( cryptStatusError( status ) )
-				continue;
-			protocolInfo->certIDchanged = TRUE;
-			if( stell( stream ) < endPos )
-				/* Skip the issuerSerial if there's one present.  We can't
-				   really do much with it in this form without rewriting it
-				   into the standard issuerAndSerialNumber form, but in any
-				   case we don't need it because we've already got the cert
-				   ID */
-				status = readUniversal( stream );
-			continue;
-			}
-
-		/* It's something that we don't recognise, skip it */
-		status = readUniversal( stream );
-		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
-
-	return( status );
-	}
-#endif /* USE_CMP */
-
-/****************************************************************************
-*																			*
-*								Read Status Info							*
-*																			*
-****************************************************************************/
-
-/* The following code is shared between CMP and TSP due to TSP's use of
-   random elements cut & pasted from CMP without any real understanding of
-   their function or semantics */
-
-#if defined( USE_CMP ) || defined( USE_TSP )
-
-/* Map a PKI failure info value to an error string */
-
-static int getFailureString( const char **stringPtrPtr, int *stringLength,
-							 const int value )
-	{
-	typedef struct {
-		const char FAR_BSS *string;
-		const int stringLength;
-		} FAILURE_INFO;
-	static const FAILURE_INFO FAR_BSS failureInfo[] = {
-		{ "Unrecognized or unsupported Algorithm Identifier", 48 },
-		{ "The integrity check failed (e.g. signature did not verify)", 58 },
-		{ "This transaction is not permitted or supported", 46 },
-		{ "The messageTime was not sufficiently close to the system time as "
-		  "defined by local policy", 88 },
-		{ "No certificate could be found matching the provided criteria", 60 },
-		{ "The data submitted has the wrong format", 39 },
-		{ "The authority indicated in the request is different from the one "
-		  "creating the response token", 92 },
-		{ "The requester's data is incorrect (used for notary services)", 60 },
-		{ "Timestamp is missing but should be there (by policy)", 52 },
-		{ "The proof-of-possession failed", 30 },
-		{ "The certificate has already been revoked", 40 },
-		{ "The certificate has already been confirmed", 42 },
-		{ "Invalid integrity, password based instead of signature or vice "
-		  "versa", 68 },
-		{ "Invalid recipient nonce, either missing or wrong value", 54 },
-		{ "The TSA's time source is not available", 38 },
-		{ "The requested TSA policy is not supported by the TSA", 52 },
-		{ "The requested extension is not supported by the TSA", 51 },
-		{ "The additional information requested could not be understood or "
-		  "is not available", 80 },
-		{ "Invalid sender nonce, either missing or wrong size", 50 },
-		{ "Invalid certificate template or missing mandatory information", 61 },
-		{ "Signer of the message unknown or not trusted", 44 },
-		{ "The transaction identifier is already in use", 44 },
-		{ "The version of the message is not supported", 43 },
-		{ "The sender was not authorized to make the preceding request or "
-		  "perform the preceding action", 91 },
-		{ "The request cannot be handled due to system unavailability", 58 },
-		{ "The request cannot be handled due to system failure", 51 },
-		{ "Certificate cannot be issued because a duplicate certificate "
-		  "already exists", 75 },
-		{ "Unknown PKI failure code", 24 }, { "Unknown PKI failure code", 25 }
-		};
-	int bitIndex = 0, bitFlags = value, iterationCount = 0;
-
-	/* Clear return values */
-	*stringPtrPtr = NULL;
-	*stringLength = 0;
-
-	/* Find the first failure string corresponding to a bit set in the
-	   failure info */
-	if( bitFlags <= 0 )
-		{
-		*stringPtrPtr = "Missing PKI failure code";
-		*stringLength = 24;
-
-		return( CRYPT_OK );
-		}
-	while( !( bitFlags & 1 ) && \
-		   iterationCount++ < FAILSAFE_ARRAYSIZE( failureInfo, FAILURE_INFO ) )
-		{
-		bitIndex++;
-		bitFlags >>= 1;
-		}
-	if( iterationCount >= FAILSAFE_ARRAYSIZE( failureInfo, FAILURE_INFO ) )
-		retIntError();
-	if( bitIndex >= 28 )
-		{
-		*stringPtrPtr = "Unknown PKI failure code";
-		*stringLength = 24;
-
-		return( CRYPT_OK );
-		}
-	*stringPtrPtr = failureInfo[ bitIndex ].string;
-	*stringLength = failureInfo[ bitIndex ].stringLength;
-
-	return( CRYPT_OK );
-	}
-
-/* Read PKIStatus information:
-
-	PKIStatusInfo ::= SEQUENCE {
-		status			INTEGER,
-		statusString	SEQUENCE OF UTF8String OPTIONAL,
-		failInfo		BIT STRING OPTIONAL
-		} 
-
-  Note that readPkiStatusInfo() is declared global, since it's used by the 
-  TSP code due to TSP's use of random elements cut & pasted from CMP */
-
-static int readFreeText( STREAM *stream, char *string, const int stringMaxLen,
-						 int *stringLength )
-	{
-	int endPos, length, status;
-
-	/* Read the status string(s).  There can be more than one of these,
-	   there's no indication of what the subsequent ones are used for and
-	   not much we can do with them in any case, so we skip them */
-	readSequence( stream, &endPos );
-	endPos += stell( stream );
-	status = readCharacterString( stream, string, stringMaxLen, 
-								  &length, BER_STRING_UTF8 );
 	if( cryptStatusError( status ) )
-		{
-		strlcpy_s( string, stringMaxLen, "Invalid PKI free text" );
 		return( status );
-		}
-	*stringLength = length;
-	return( ( stell( stream ) < endPos ) ? \
-			sSkip( stream, endPos - stell( stream ) ) : CRYPT_OK );
-	}
-
-int readPkiStatusInfo( STREAM *stream, ERROR_INFO *errorInfo )
-	{
-	char errorMessage[ MAX_ERRMSG_SIZE + 8 ], textBitString[ 128 + 8 ];
-	long value, endPos;
-	int errorMessageLength = 0, textBitStringLength;
-	int bitString, noBits, bitMask, bitNo = -1, i, length, status;
-
-	/* Clear the return values */
-	memset( errorInfo, 0, sizeof( ERROR_INFO ) );
-
-	/* Read the outer wrapper and status value */
-	readSequence( stream, &length );
 	endPos = stell( stream ) + length;
-	status = readShortInteger( stream, &value );
-	if( cryptStatusError( status ) )
+	for( iterationCount = 0; 
+		 stell( stream ) < endPos && \
+			iterationCount < FAILSAFE_ITERATIONS_MED; iterationCount++ )
 		{
-		setErrorString( errorInfo, "Invalid PKI status value", 24 );
-		return( status );
-		}
-	errorInfo->errorCode = ( int ) value;
-	if( stell( stream ) < endPos && peekTag( stream ) == BER_SEQUENCE )
-		{
-		memcpy( errorMessage, "Server returned error: ", 23 );
-
-		status = readFreeText( stream, errorMessage + 23,
-							   MAX_ERRMSG_SIZE - 32, &errorMessageLength );
+		status = readGeneralInfoAttribute( stream, protocolInfo );
 		if( cryptStatusError( status ) )
 			return( status );
-		errorMessageLength += 23;
 		}
-	if( stell( stream ) >= endPos )
-		{
-		/* If there was a problem but there's no extra error information
-		   present, return a "This page deliberately left blank" error */
-		if( errorMessageLength <= 0 && errorInfo->errorCode != PKISTATUS_OK )
-			{
-			setErrorString( errorInfo, 
-							"Server returned nonspecific error information", 
-							45 );
-			}
-
-		/* See comment at end for the translation of error codes */
-		return( ( errorInfo->errorCode == PKISTATUS_OK || \
-				  errorInfo->errorCode == PKISTATUS_OK_WITHINFO ) ? \
-				CRYPT_OK : CRYPT_ERROR_FAILED );
-		}
-
-	/* Read the failure info and slot it into the error string */
-	status = readBitString( stream, &bitString );
-	if( cryptStatusError( status ) )
-		{
-		setErrorString( errorInfo, "Invalid PKI failure info", 24 );
-		return( status );
-		}
-	memcpy( textBitString, "Server returned status value ", 29 );
-	textBitStringLength = 29;
-	i = bitString;
-	for( noBits = 0; i > 0 && noBits < 32; noBits++ )
-		i >>= 1;
-	bitMask = 1 << ( noBits - 1 );
-	for( i = 0; i < noBits; i++ )
-		{
-		if( bitString & bitMask )
-			{
-			/* If there's no bit set yet, set it.  If there's already a bit 
-			   set, set it to a non-value that indicates that more than one 
-			   bit is set */
-			bitNo = ( bitNo == -1 ) ? ( noBits - 1 ) - i : -2;
-			textBitString[ textBitStringLength++ ] = '1';
-			}
-		else
-			textBitString[ textBitStringLength++ ] = '0';
-		bitMask >>= 1;
-		}
-	if( bitNo >= 0 )
-		{
-		textBitStringLength = \
-			sprintf_s( textBitString, 64,
-					   "Server returned status bit %d: ", bitNo );
-		}
-	else
-		{
-		memcpy( textBitString + textBitStringLength, "'B: ", 4 );
-		textBitStringLength += 4;
-		}
-	if( errorMessageLength > 0 )
-		{
-		/* There's error message text present, move it up to make room for 
-		   the bit string text */
-		if( errorMessageLength > MAX_ERRMSG_SIZE - textBitStringLength )
-			errorMessageLength = MAX_ERRMSG_SIZE - textBitStringLength;
-		memmove( errorMessage + textBitStringLength, 
-				 errorMessage, errorMessageLength );
-		memcpy( errorMessage, textBitString, textBitStringLength );
-		errorMessageLength += textBitStringLength;
-		}
-	else
-		{
-		/* If there's a failure code present, turn it into an error string */
-		if( bitString > 0 )
-			{
-			const char *failureString;
-			int failureStringLength;
-
-			memcpy( errorMessage, textBitString, textBitStringLength );
-			status = getFailureString( &failureString, &failureStringLength, 
-									   bitString );
-			if( cryptStatusError( status ) || \
-				textBitStringLength + failureStringLength >= MAX_ERRMSG_SIZE )
-				{
-				failureString = "[...]";
-				failureStringLength = 5;
-				}
-			memcpy( errorMessage + textBitStringLength, failureString,
-					failureStringLength );
-			errorMessageLength = textBitStringLength + failureStringLength;
-			}
-		}
-	if( errorMessageLength > 0 )
-		setErrorString( errorInfo, errorMessage, errorMessageLength );
-
-	/* If we can return something more useful than the generic "failed" 
-	   error code, try and do so */
-	if( bitString & CMPFAILINFO_BADALG )
-		return( CRYPT_ERROR_NOTAVAIL );
-	if( ( bitString & CMPFAILINFO_BADMESSAGECHECK ) || \
-		( bitString & CMPFAILINFO_BADPOP ) || \
-		( bitString & CMPFAILINFO_WRONGINTEGRITY ) )
-		return( CRYPT_ERROR_WRONGKEY );
-	if( ( bitString & CMPFAILINFO_BADREQUEST ) || \
-		( bitString & CMPFAILINFO_SIGNERNOTTRUSTED ) || \
-		( bitString & CMPFAILINFO_NOTAUTHORIZED ) )
-		return( CRYPT_ERROR_PERMISSION );
-	if( bitString & CMPFAILINFO_BADDATAFORMAT )
-		return( CRYPT_ERROR_BADDATA );
-	if( ( bitString & CMPFAILINFO_UNACCEPTEDPOLICY ) || \
-		( bitString & CMPFAILINFO_UNACCEPTEDEXTENSION ) || \
-		( bitString & CMPFAILINFO_BADCERTTEMPLATE ) )
-		return( CRYPT_ERROR_INVALID );
-	if( ( bitString & CMPFAILINFO_TRANSACTIONIDINUSE ) || \
-		( bitString & CMPFAILINFO_DUPLICATECERTREQ ) )
-		return( CRYPT_ERROR_DUPLICATE );
-
-	/* A PKI status code is a bit difficult to turn into anything useful,
-	   the best we can do is to report that the operation failed and let
-	   the user get the exact details from the PKI status info */
-	return( ( errorInfo->errorCode == PKISTATUS_OK || \
-			  errorInfo->errorCode == PKISTATUS_OK_WITHINFO ) ? \
-			CRYPT_OK : CRYPT_ERROR_FAILED );
-	}
-#endif /* USE_CMP || USE_TSP */
-
-#ifdef USE_CMP
-
-/****************************************************************************
-*																			*
-*								PKI Body Functions							*
-*																			*
-****************************************************************************/
-
-/* Read request body */
-
-static int readRequestBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
-							CMP_PROTOCOL_INFO *protocolInfo,
-							const int messageType )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	MESSAGE_DATA msgData;
-	BYTE authCertID[ CRYPT_MAX_HASHSIZE + 8 ];
-	int value, length, status;
-
-	/* Import the CRMF request */
-	status = readSequence( stream, &length );
-	if( cryptStatusOK( status ) )
-		status = importCertFromStream( stream,
-								&sessionInfoPtr->iCertRequest,
-								( messageType == CTAG_PB_P10CR ) ? \
-									CRYPT_CERTTYPE_CERTREQUEST : \
-								( messageType == CTAG_PB_RR ) ? \
-									CRYPT_CERTTYPE_REQUEST_REVOCATION : \
-									CRYPT_CERTTYPE_REQUEST_CERT,
-								length );
-	if( cryptStatusError( status ) )
-		{
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADCERTTEMPLATE;
-		retExt( status, 
-				( status, SESSION_ERRINFO, "Invalid CRMF request" ) );
-		}
-
-	/* If the request is from an encryption-only key, remember this so that
-	   we can peform special-case processing later on */
-	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-							  IMESSAGE_GETATTRIBUTE, &value,
-							  CRYPT_CERTINFO_SELFSIGNED );
-	if( cryptStatusOK( status ) && !value )
-		{
-		/* If the request indicates that it's a signing key then it has to
-		   be signed */
-		status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-								  IMESSAGE_GETATTRIBUTE, &value,
-								  CRYPT_CERTINFO_KEYUSAGE );
-		if( cryptStatusOK( status ) && \
-			( value & ( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-						CRYPT_KEYUSAGE_NONREPUDIATION ) ) )
-			{
-			protocolInfo->pkiFailInfo = CMPFAILINFO_BADCERTTEMPLATE;
-			retExt( CRYPT_ERROR_INVALID,
-					( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
-					  "CRMF request is for a signing key but the request "
-					  "isn't signed" ) );
-			}
-		protocolInfo->cryptOnlyKey = TRUE;
-		}
-
-	/* Record the identity of the PKI user (for a MAC'd request) or cert (for
-	   a signed request) that authorised this request */
-	setMessageData( &msgData, authCertID, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( protocolInfo->useMACreceive ? \
-								cmpInfo->userInfo : \
-								sessionInfoPtr->iAuthInContext,
-							  IMESSAGE_GETATTRIBUTE_S, &msgData,
-							  CRYPT_CERTINFO_FINGERPRINT_SHA );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData,
-								  CRYPT_IATTRIBUTE_AUTHCERTID );
-	if( cryptStatusError( status ) || messageType != CTAG_PB_IR )
-		return( status );
-
-	/* If it's an ir, the subject may not know their DN or may only know
-	   their CN, in which case they'll send an empty/CN-only subject DN in
-	   the hope that we can fill it in for them.  In addition there may be
-	   other constraints that the CA wants to apply, these are handled by
-	   applying the PKI user info to the request */
-	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-							  IMESSAGE_SETATTRIBUTE, &cmpInfo->userInfo,
-							  CRYPT_IATTRIBUTE_PKIUSERINFO );
-	if( cryptStatusError( status ) )
-		{
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADCERTTEMPLATE;
-		retExt( CRYPT_ERROR_INVALID,
-				( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
-				  "User information in request can't be reconciled with "
-				  "our information for the user" ) );
-		}
-	return( CRYPT_OK );
-	}
-
-/* Read response body */
-
-static int readResponseBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
-							 CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	MESSAGE_CREATEOBJECT_INFO createInfo;
-	void *bodyInfoPtr = DUMMY_INIT_PTR;
-	int bodyLength, tag, status;
-
-	/* If it's a revocation response, the only returned data is the status
-	   value */
-	if( protocolInfo->operation == CTAG_PB_RR )
-		{
-		readSequence( stream, NULL );		/* Outer wrapper */
-		readSequence( stream, NULL );		/* Inner wrapper */
-		return( readPkiStatusInfo( stream, &sessionInfoPtr->errorInfo ) );
-		}
-
-	/* It's a cert response, unwrap the body to find the certificate
-	   payload */
-	readSequence( stream, NULL );			/* Outer wrapper */
-	if( peekTag( stream ) == MAKE_CTAG( 1 ) )
-		readUniversal( stream );			/* caPubs */
-	readSequence( stream, NULL );
-	readSequence( stream, NULL );			/* Inner wrapper */
-	readUniversal( stream );				/* certReqId */
-	status = readPkiStatusInfo( stream, &sessionInfoPtr->errorInfo );
-	if( cryptStatusError( status ) )
-		return( status );
-	readSequence( stream, NULL );			/* certKeyPair wrapper */
-	tag = peekTag( stream );
-	if( cryptStatusError( tag ) )
-		return( tag );
-	tag = EXTRACT_CTAG( tag );
-	status = readConstructed( stream, &bodyLength, tag );
-	if( cryptStatusOK( status ) )
-		status = sMemGetDataBlock( stream, &bodyInfoPtr, bodyLength );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Process the returned cert as required */
-	switch( tag )
-		{
-		case  CTAG_CK_CERT:
-			/* Plaintext cert, we're done */
-			break;
-
-		case CTAG_CK_ENCRYPTEDCERT:
-			/* Cert encrypted with CMP's garbled attempt at doing CMS, try
-			   and decrypt it */
-			status = readEncryptedCert( stream, sessionInfoPtr->privateKey,
-										SESSION_ERRINFO );
-			break;
-
-		case CTAG_CK_NEWENCRYPTEDCERT:
-			/* Cert encrypted with CMS, unwrap it */
-			status = envelopeUnwrap( bodyInfoPtr, bodyLength,
-									 bodyInfoPtr, bodyLength, &bodyLength,
-									 sessionInfoPtr->privateKey );
-			if( cryptStatusError( status ) )
-				{
-				retExt( cryptArgError( status ) ? \
-						CRYPT_ERROR_FAILED : status,
-						( cryptArgError( status ) ? \
-						  CRYPT_ERROR_FAILED : status, SESSION_ERRINFO,
-						  "Couldn't decrypt CMS enveloped certificate" ) );
-				}
-			break;
-
-		default:
-			retExt( status,
-					( status, SESSION_ERRINFO, 
-					  "Unknown returned certificate encapsulation type %d",
-					  tag ) );
-		}
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Import the cert as a cryptlib object */
-	setMessageCreateObjectIndirectInfo( &createInfo, bodyInfoPtr, bodyLength,
-										CRYPT_CERTTYPE_CERTIFICATE );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, &createInfo,
-							  OBJECT_TYPE_CERTIFICATE );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Invalid returned certificate" ) );
-		}
-	sessionInfoPtr->iCertResponse = createInfo.cryptHandle;
-
-	/* In order to acknowledge receipt of this message we have to return at a
-	   later point a hash of the cert carried in this message created using
-	   the hash algorithm used in the cert signature.  This makes the CMP-
-	   level transport layer dependant on the certificate format it's
-	   carrying (so the code will repeatedly break every time a new cert
-	   format is added), but that's what the standard requires */
-	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
-							  IMESSAGE_GETATTRIBUTE,
-							  &protocolInfo->confHashAlgo,
-							  CRYPT_IATTRIBUTE_CERTHASHALGO );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't extract confirmation hash type from "
-				  "certificate" ) );
-		}
-	if( protocolInfo->confHashAlgo != CRYPT_ALGO_MD5 && \
-		protocolInfo->confHashAlgo != CRYPT_ALGO_SHA1 )
-		{
-		/* Certs can only provide MD5 and SHA-1 fingerprints */
-		retExt( CRYPT_ERROR_NOTAVAIL,
-				( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
-				  "Can't confirm certificate issue using algorithm %d",
-				  protocolInfo->confHashAlgo ) );
-		}
-
-	return( CRYPT_OK );
-	}
-
-/* Read conf body */
-
-static int readConfBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
-						 CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	MESSAGE_DATA msgData;
-	BYTE certHash[ CRYPT_MAX_HASHSIZE + 8 ];
-	int length, status;
-
-	/* Read the client's returned confirmation information */
-	status = readSequence( stream, &length );
-	if( cryptStatusOK( status ) && length <= 0 )
-		{
-		/* Missing certStatus, the client has rejected the cert.  This isn't
-		   an explicit error since it's a valid protocol outcome, so we
-		   return an OK status but set the overall protocol status to a
-		   generic error value to indicate that we don't want to continue
-		   normally */
-		protocolInfo->status = CRYPT_ERROR;
-		return( CRYPT_OK );
-		}
-	readSequence( stream, NULL );
-	status = readOctetString( stream, certHash, &length,
-							  8, CRYPT_MAX_HASHSIZE );
-	if( cryptStatusError( status ) )
-		retExt( status, 
-				( status, SESSION_ERRINFO, "Invalid cert confirmation" ) );
-
-	/* Get the local cert hash and compare it to the client's one.  Since
-	   we're the server, this is a cryptlib-issued cert so we know that
-	   it'll always use SHA-1 */
-	setMessageData( &msgData, certHash, length );
-	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
-							  IMESSAGE_COMPARE, &msgData,
-							  MESSAGE_COMPARE_FINGERPRINT );
-	if( cryptStatusError( status ) )
-		{
-		/* The user is confirming an unknown cert, the best that we can do
-		   is return a generic cert-mismatch error */
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADCERTID;
-		retExt( CRYPT_ERROR_NOTFOUND,
-				( CRYPT_ERROR_NOTFOUND, SESSION_ERRINFO, 
-				  "Returned cert hash doesn't match issued certificate" ) );
-		}
-	return( CRYPT_OK );
-	}
-
-/* Read genMsg body */
-
-static int readGenMsgBody( STREAM *stream, SESSION_INFO *sessionInfoPtr,
-						   const BOOLEAN isRequest )
-	{
-	int bodyLength, status;
-
-	status = readSequence( stream, &bodyLength );
-	if( cryptStatusError( status ) )
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid genMsg header" ) );
-	if( isRequest )
-		{
-		/* It's a request GenMsg, check for a PKIBoot request */
-		if( bodyLength < sizeofObject( sizeofOID( OID_PKIBOOT ) ) || \
-			bodyLength > sMemDataLeft( stream ) )
-			{
-			retExt( CRYPT_ERROR_BADDATA,
-					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid genMsg length %d", bodyLength ) );
-			}
-		readSequence( stream, NULL );
-		status = readFixedOID( stream, OID_PKIBOOT, 
-							   sizeofOID( OID_PKIBOOT ) );
-		if( cryptStatusError( status ) )
-			{
-			retExt( CRYPT_ERROR_NOTAVAIL,
-					( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
-					  "Invalid genMsg type, expected PKIBoot request" ) );
-			}
-		return( CRYPT_OK );
-		}
-
-	/* It's a PKIBoot response with the InfoTypeAndValue handled as CMS
-	   content (see the comment for writeGenMsgBody()), import the cert
-	   trust list.  Since this isn't a true cert chain and isn't used as
-	   such, we use data-only certs (specified using the special-case
-	   CRYPT_ICERTTYPE_CTL type specifier) */
-	status = importCertFromStream( stream, &sessionInfoPtr->iCertResponse,
-								   CRYPT_ICERTTYPE_CTL, bodyLength );
-	if( cryptStatusError( status ) )
-		retExt( status, 
-				( status, SESSION_ERRINFO, "Invalid PKIBoot response" ) );
-	return( CRYPT_OK );
-	}
-
-/* Read error body */
-
-static int readErrorBody( STREAM *stream, SESSION_INFO *sessionInfoPtr )
-	{
-	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-	int endPos, length, status;
-
-	/* Read the outer wrapper and PKI status info.  An error return status
-	   is valid when we read the status info since we're reading an error
-	   status and converting it into a cryptlib status, so we don't exit
-	   unless it's a problem with the status info itself */
-	readConstructed( stream, NULL, CTAG_PB_ERROR );
-	readSequence( stream, &length );	/* Outer wrapper */
-	endPos = stell( stream ) + length;
-	status = readPkiStatusInfo( stream, &sessionInfoPtr->errorInfo );
-	if( status == CRYPT_ERROR_BADDATA || status == CRYPT_ERROR_UNDERFLOW )
-		return( status );
-
-	/* In addition to the PKI status info there can be another layer of
-	   error information wrapped around it which is exactly the same only
-	   different, so if we haven't got anything from the status info we
-	   check to see whether this layer can give us anything */
-	if( stell( stream ) < endPos && peekTag( stream ) == BER_INTEGER )
-		{
-		/* If there's an error code present and we haven't already set the
-		   error code from the pkiStatusInfo, set it now */
-		if( !errorInfo->errorCode )
-			{
-			long value;
-
-			status = readShortInteger( stream, &value );
-			if( cryptStatusOK( status ) )
-				errorInfo->errorCode = ( int ) value;
-			}
-		else
-			readUniversal( stream );
-		}
-	if( stell( stream ) < endPos && peekTag( stream ) == BER_SEQUENCE && \
-		errorInfo->errorStringLength <= 0 )
-		{
-		char errorMessage[ MAX_ERRMSG_SIZE + 8 ];
-		int errorMessageLength;
-
-		/* Read the error text, ignoring any possible error status since the
-		   overall error code from the status info is more meaningful than
-		   a data format problem in trying to read the error text */
-		status = readFreeText( stream, errorMessage, MAX_ERRMSG_SIZE, 
-							   &errorMessageLength );
-		if( cryptStatusOK( status ) )
-			setErrorString( errorInfo, errorMessage, errorMessageLength );
-		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	return( status );
+	}
+
+/* Read the user ID in the PKI header */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readUserID( INOUT STREAM *stream, 
+					   INOUT CMP_PROTOCOL_INFO *protocolInfo,
+					   const BOOLEAN isServerInitialMessage )
+	{
+	BYTE userID[ CRYPT_MAX_HASHSIZE + 8 ];
+	int userIDsize, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+#if 0	/* 28/9/08 Why is this here?  Should always check the ID */
+	/* If we're in the middle of an ongoing transaction, skip the user ID, 
+	   which we already know */
+	if( !isServerInitialMessage )
+		return( readUniversal( stream ) );
+#endif /* 0 */
+
+	/* Read the PKI user ID that we'll need to handle the integrity 
+	   protection on the message */
+	readConstructed( stream, NULL, CTAG_PH_SENDERKID );
+	status = readOctetString( stream, userID, &userIDsize, 8, 
+							  CRYPT_MAX_HASHSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If there's already been a previous transaction (which means that we 
+	   have PKI user information present) and the current transaction 
+	   matches what was used in the previous one, we don't have to update 
+	   the user information */
+	if( protocolInfo->userIDsize == userIDsize && \
+		!memcmp( protocolInfo->userID, userID, userIDsize ) )
+		{
+		DEBUG_PRINT(( "%s: Skipped repeated userID.\n",
+					  protocolInfo->isServer ? "SVR" : "CLI" ));
+		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					   protocolInfo->userID, protocolInfo->userIDsize );
+		return( CRYPT_OK );
+		}
+
+	/* Record the new or changed the PKI user information and delete the 
+	   MAC context associated with the previous user if necessary */
+	memcpy( protocolInfo->userID, userID, userIDsize );
+	protocolInfo->userIDsize = userIDsize;
+	protocolInfo->userIDchanged = TRUE;
+	if( protocolInfo->iMacContext != CRYPT_ERROR )
+		{
+		krnlSendNotifier( protocolInfo->iMacContext,
+						  IMESSAGE_DECREFCOUNT );
+		protocolInfo->iMacContext = CRYPT_ERROR;
+		}
+	DEBUG_PRINT(( "%s: Read new userID.\n",
+				  protocolInfo->isServer ? "SVR" : "CLI" ));
+	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+				   protocolInfo->userID, protocolInfo->userIDsize );
+
+	return( CRYPT_OK );
+	}
+
+/* Read the transaction ID (effectively the nonce) in the PKI header */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readTransactionID( INOUT STREAM *stream, 
+							  INOUT CMP_PROTOCOL_INFO *protocolInfo,
+							  const BOOLEAN isServerInitialMessage )
+	{
+	BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
+	int length, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	/* If this is the first message and we're the server, record the 
+	   transaction ID for later */
+	if( isServerInitialMessage )
+		{
+		status = readOctetString( stream, protocolInfo->transID,
+								  &protocolInfo->transIDsize,
+								  4, CRYPT_MAX_HASHSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		DEBUG_PRINT(( "%s: Read initial transID.\n",
+					  protocolInfo->isServer ? "SVR" : "CLI" ));
+		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					   protocolInfo->transID, protocolInfo->transIDsize );
+		return( CRYPT_OK );
+		}
+
+	/* Make sure that the transaction ID for this message matches the 
+	   recorded value (the bad signature error code is the best that we can 
+	   provide here) */
+	status = readOctetString( stream, buffer, &length, 4, 
+							  CRYPT_MAX_HASHSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	DEBUG_PRINT(( "%s: Read transID.\n",
+				  protocolInfo->isServer ? "SVR" : "CLI" ));
+	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+				   protocolInfo->transID, protocolInfo->transIDsize );
+	if( protocolInfo->transIDsize != length || \
+		memcmp( protocolInfo->transID, buffer, length ) )
+		return( CRYPT_ERROR_SIGNATURE );
+
+	return( CRYPT_OK );
+	}
+
+/* Read the integrity protection algorithm information in the PKI header */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int readProtectionAlgo( INOUT STREAM *stream, 
+							   INOUT CMP_PROTOCOL_INFO *protocolInfo )
+	{
+	CRYPT_ALGO_TYPE cryptAlgo, hashAlgo;
+	int streamPos, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	/* Read the wrapper.  If there's a problem we exit immediately since an 
+	   error status from the readAlgoIDex() that follows is interpreted to 
+	   indicate the presence of the weird Entrust MAC rather than a real 
+	   error */
+	status = readConstructed( stream, NULL, CTAG_PH_PROTECTIONALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+	streamPos = stell( stream );
+	status = readAlgoIDext( stream, &cryptAlgo, &hashAlgo, 
+							ALGOID_CLASS_PKCSIG );
+	if( cryptStatusOK( status ) )
+		{
+		/* Make sure that it's a recognised signature algorithm to avoid
+		   false positives if the other side sends some bizarre algorithm 
+		   ID */
+		if( !isSigAlgo( cryptAlgo ) )
+			return( CRYPT_ERROR_NOTAVAIL );
+
+		/* It's a recognised signature algorithm, use the CA certificate to 
+		   verify it rather than the MAC */
+		protocolInfo->useMACreceive = FALSE;
+		protocolInfo->hashAlgo = hashAlgo;
+
+		return( CRYPT_OK );
+		}
+	ENSURES( cryptStatusError( status ) );
+
+	/* It's nothing normal, it must be the Entrust MAC algorithm information, 
+	   remember where it starts so that we can process it later */
+	sClearError( stream );
+	protocolInfo->macInfoPos = streamPos;
+	status = readUniversal( stream );
+	protocolInfo->useMACreceive = TRUE;
+
+	return( status );
+	}
+
+/* Update the session's user ID and certificate ID information from the 
+   newly-read protocol information */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int updateUserID( INOUT SESSION_INFO *sessionInfoPtr,
+				  INOUT CMP_PROTOCOL_INFO *protocolInfo,
+				  const BOOLEAN isServerInitialMessage,
+				  const BOOLEAN useMAC )
+	{
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	/* We've got a new PKI user ID, if it looks like a cryptlib encoded ID 
+	   save it in encoded form, otherwise save it as is.  Again, CMP's
+	   totally ambiguous protocol fields complicate things for us because 
+	   although in theory we could reject any message containing a 
+	   non-cryptlib user ID on the basis that it couldn't have been assigned 
+	   to the user by a cryptlib server, the fact that an arbitrary client 
+	   could be sending us who knows what sort of data in the user ID field, 
+	   expecting the key to be identified through other means, means that we 
+	   can't perform this simple check.  We can at least reject a 
+	   non-cryptlib ID for the ir, which must be MAC'd */
+	if( isServer( sessionInfoPtr ) && protocolInfo->userIDsize == 9 )
+		{
+		BYTE encodedUserID[ CRYPT_MAX_TEXTSIZE + 8 ];
+		int encodedUserIDLength;
+
+		status = encodePKIUserValue( encodedUserID, CRYPT_MAX_TEXTSIZE,
+									 &encodedUserIDLength, 
+									 protocolInfo->userID, 
+									 protocolInfo->userIDsize, 3 );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = updateSessionInfo( &sessionInfoPtr->attributeList,
+									CRYPT_SESSINFO_USERNAME, encodedUserID,
+									encodedUserIDLength, CRYPT_MAX_TEXTSIZE,
+									ATTR_FLAG_ENCODEDVALUE );
+		}
+	else
+		{
+		/* If we're processing an ir then that at least must have a valid 
+		   cryptlib user ID */
+		if( isServerInitialMessage && useMAC )
+			{
+			retExt( CRYPT_ERROR_WRONGKEY,
+					( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO,
+					  "User ID provided by client isn't a cryptlib user "
+					  "ID" ) );
+			}
+
+		/* It's not a valid cryptlib PKI user ID, save it anyway since
+		   it'll be used for diagnostic/error-reporting purposes */
+		status = updateSessionInfo( &sessionInfoPtr->attributeList,
+									CRYPT_SESSINFO_USERNAME,
+									protocolInfo->userID,
+									protocolInfo->userIDsize,
+									CRYPT_MAX_TEXTSIZE, ATTR_FLAG_NONE );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If this is the first message to the server and we're using MAC-based
+	   authentication, set up the server's MAC context based on the 
+	   information supplied by the client */
+	if( isServerInitialMessage && useMAC )
+		return( initServerAuthentMAC( sessionInfoPtr, protocolInfo ) );
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int updateCertID( INOUT SESSION_INFO *sessionInfoPtr,
+				  INOUT CMP_PROTOCOL_INFO *protocolInfo,
+				  const BOOLEAN isServerInitialMessage )
+	{
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	status = addSessionInfoS( &sessionInfoPtr->attributeList,
+							  CRYPT_SESSINFO_SERVER_FINGERPRINT,
+							  protocolInfo->certID,
+							  protocolInfo->certIDsize );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If this is the first message to the server, set up the server's 
+	   public-key context for the client's key based on the information
+	   supplied by the client */
+	if( isServerInitialMessage )
+		return( initServerAuthentSign( sessionInfoPtr, protocolInfo ) );
+
+	return( CRYPT_OK );
+	}
+
+/* In another piece of brilliant design, CMP provides the information 
+   required to set up MAC processing in reverse order, so we don't know what 
+   to do with any MAC information that may be present in the header until 
+   we've read the start of the message body.  To handle this we have to 
+   record the position of the MAC information in the header and then go back 
+   and process it once we've read the necessary additional data from the 
+   message body, which is handled by the following function */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int updateMacInfo( INOUT SESSION_INFO *sessionInfoPtr,
+						  INOUT CMP_PROTOCOL_INFO *protocolInfo,
+						  INOUT STREAM *stream )
+	{
+	const ATTRIBUTE_LIST *passwordPtr = \
+					findSessionInfo( sessionInfoPtr->attributeList,
+									 CRYPT_SESSINFO_PASSWORD );
+	BYTE macKey[ 64 + 8 ];
+	const BYTE *macKeyPtr = macKey;
+	const int streamPos = stell( stream );
+	int macKeyLength, status;
+
+	REQUIRES( passwordPtr != NULL );
+
+	sseek( stream, protocolInfo->macInfoPos );
+	if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
+		{
+		/* It's an encoded value, get the decoded form */
+		status = decodePKIUserValue( macKey, 64, &macKeyLength, 
+									 passwordPtr->value, 
+									 passwordPtr->valueLength );
+		ENSURES( cryptStatusOK( status ) );
+		}
+	else
+		{
+		macKeyPtr = passwordPtr->value;
+		macKeyLength = passwordPtr->valueLength;
+		}
+	status = readMacInfo( stream, protocolInfo, macKeyPtr,
+						  macKeyLength, SESSION_ERRINFO );
+	zeroise( macKey, CRYPT_MAX_TEXTSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	sseek( stream, streamPos );
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -1020,46 +444,54 @@ static int readErrorBody( STREAM *stream, SESSION_INFO *sessionInfoPtr )
 /* Read a PKI header and make sure that it matches the header that we sent
    (for EE or non-initial CA/RA messages) or set up the EE information in
    response to an initial message (for an initial CA/RA message).  We ignore
-   all the redundant fields in the header that don't directly affect the
+   all of the redundant fields in the header that don't directly affect the
    protocol, based on the results of CMP interop testing this appears to be
-   standard practice among implementors.  This also helps get around problems
-   with implementations that get the fields wrong, since most of the fields
-   aren't generally useful it doesn't affect the processing while making the
-   code more tolerant of implementation errors:
+   standard practice among implementers.  This also helps get around 
+   problems with implementations that get the fields wrong, since most of 
+   the fields aren't useful it doesn't affect the processing while making 
+   the code more tolerant of implementation errors:
 
 	header				SEQUENCE {
 		version			INTEGER (2),
-		dummy		[4]	EXPLICIT DirectoryName,		-- Ignored
 		senderDN	[4]	EXPLICIT DirectoryName,		-- Copied if non-clib
+		dummy		[4]	EXPLICIT DirectoryName,		-- Ignored
+		dummy		[0] EXPLICIT GeneralisedTime OPT,-- Ignored
 		protAlgo	[1]	EXPLICIT AlgorithmIdentifier,
 		protKeyID	[2] EXPLICIT OCTET STRING,		-- Copied if changed
-		dummy		[3] EXPLICIT OCTET STRING,		-- Ignored
+		dummy		[3] EXPLICIT OCTET STRING OPT,	-- Ignored
 		transID		[4] EXPLICIT OCTET STRING,
-		nonce		[5] EXPLICIT OCTET STRING,		-- Copied if non-clib
-		dummy		[6] EXPLICIT OCTET STRING,		-- Ignored
-		dummy		[7] SEQUENCE OF UTF8String,		-- Ignored
-		generalInfo	[8] EXPLICIT SEQUENCE OF Info OPT	-- cryptlib-specific info
+		nonce		[5] EXPLICIT OCTET STRING OPT,	-- Copied if non-clib
+		dummy		[6] EXPLICIT OCTET STRING OPT,	-- Ignored
+		dummy		[7] SEQUENCE OF UTF8String OPT,	-- Ignored
+		generalInfo	[8] EXPLICIT SEQUENCE OF Info OPT -- cryptlib-specific info
 		} */
 
-static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readPkiHeader( INOUT STREAM *stream, 
+						  INOUT CMP_PROTOCOL_INFO *protocolInfo,
 						  INOUT ERROR_INFO *errorInfo,
 						  const BOOLEAN isServerInitialMessage )
 	{
-	CRYPT_ALGO_TYPE cryptAlgo, hashAlgo;
-	BYTE buffer[ CRYPT_MAX_HASHSIZE + 8 ];
-	int length, streamPos, endPos, status;
+	int length, endPos, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
 	/* Clear per-message state information */
-	protocolInfo->userIDchanged = protocolInfo->certIDchanged = FALSE;
+	protocolInfo->userIDchanged = protocolInfo->certIDchanged = \
+		protocolInfo->useMACreceive = FALSE;
 	protocolInfo->macInfoPos = CRYPT_ERROR;
 	protocolInfo->senderDNPtr = NULL;
 	protocolInfo->senderDNlength = 0;
 	protocolInfo->headerRead = FALSE;
 
-	/* Read the wrapper and skip the static info, which matches what we sent
-	   and is protected by the MAC so there's little point in looking at
-	   it */
-	readSequence( stream, &length );
+	/* Read the wrapper and skip the static information, which matches what 
+	   we sent and is protected by the MAC so there's little point in 
+	   looking at it */
+	status = readSequence( stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
 	endPos = stell( stream ) + length;
 	readShortInteger( stream, NULL );		/* Version */
 	if( !protocolInfo->isCryptlib )
@@ -1067,23 +499,23 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 		/* The ID of the key used for integrity protection (or in general
 		   the identity of the sender) can be specified either as the sender
 		   DN or the senderKID or both, or in some cases even indirectly via
-		   the transaction ID.  With no real guidance as to which one to use,
-		   implementors are using any of these options to identify the key.
-		   Since we need to check that the integrity-protection key we're
-		   using is correct so that we can report a more appropriate error
-		   than bad signature or bad data, we need to remember the sender DN
-		   for later in case this is the only form of key identification
-		   provided.  Unfortunately since the sender DN can't uniquely
-		   identify a cert, if this is all we get then the caller can still
-		   get a bad signature error, yet another one of CMPs many wonderful
-		   features */
+		   the transaction ID.  With no real guidance as to which one to 
+		   use, implementors are using any of these options to identify the 
+		   key.  Since we need to check that the integrity-protection key 
+		   that we're using is correct so that we can report a more 
+		   appropriate error than bad signature or bad data, we need to 
+		   remember the sender DN for later in case this is the only form of 
+		   key identification provided.  Unfortunately since the sender DN 
+		   can't uniquely identify a certificate, if this is the only 
+		   identifier that we're given then the caller can still get a bad 
+		   signature error, yet another one of CMPs many wonderful features */
 		status = readConstructed( stream, &protocolInfo->senderDNlength, 4 );
 		if( cryptStatusOK( status ) && protocolInfo->senderDNlength > 0 )
 			{
 			status = sMemGetDataBlock( stream, &protocolInfo->senderDNPtr, 
 									   protocolInfo->senderDNlength );
 			if( cryptStatusOK( status ) )
-				status = readUniversal( stream );/* Sender DN */
+				status = readUniversal( stream );
 			}
 		}
 	else
@@ -1093,13 +525,14 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 		status = readUniversal( stream );	/* Sender DN */
 		}
 	if( cryptStatusOK( status ) )
-		status = readUniversal( stream );	/* Recipient */
+		status = readUniversal( stream );	/* Recipient DN */
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_MESSAGETIME ) )
 		status = readUniversal( stream );	/* Message time */
 	if( cryptStatusError( status ) )
 		{
 		retExt( CRYPT_ERROR_BADDATA, 
-				( CRYPT_ERROR_BADDATA, errorInfo, "Invalid PKI header" ) );
+				( CRYPT_ERROR_BADDATA, errorInfo, 
+				  "Invalid DN information in PKI header" ) );
 		}
 	if( peekTag( stream ) != MAKE_CTAG( CTAG_PH_PROTECTIONALGO ) )
 		{
@@ -1110,75 +543,22 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 				( CRYPT_ERROR_SIGNATURE, errorInfo, 
 				  "Message was sent without integrity protection" ) );
 		}
-	status = readConstructed( stream, NULL, CTAG_PH_PROTECTIONALGO );
+	status = readProtectionAlgo( stream, protocolInfo );
 	if( cryptStatusError( status ) )
 		{
-		/* If there was a problem we should exit now since an error status
-		   from the following readAlgoIDex() is interpreted to indicate the
-		   presence of the weird Entrust MAC rather than a real error */
 		retExt( status,
 				( status, errorInfo, 
-				  "Invalid integrity protection info in PKI header" ) );
-		}
-	streamPos = stell( stream );
-	status = readAlgoIDext( stream, &cryptAlgo, &hashAlgo );
-	if( cryptStatusOK( status ) )
-		{
-		/* It's a known signature algorithm, use the CA cert to verify it
-		   rather than the MAC */
-		protocolInfo->useMACreceive = FALSE;
-		protocolInfo->hashAlgo = hashAlgo;
-		}
-	else
-		{
-		/* It's nothing normal, it must be the Entrust MAC algorithm info,
-		   remember where it starts so that we can process it later */
-		sClearError( stream );
-		protocolInfo->macInfoPos = streamPos;
-		readUniversal( stream );
-		protocolInfo->useMACreceive = TRUE;
+				  "Invalid integrity protection information in PKI "
+				  "header" ) );
 		}
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_SENDERKID ) )
 		{								/* Sender protection keyID */
-		if( isServerInitialMessage )
+		status = readUserID( stream, protocolInfo, isServerInitialMessage );
+		if( cryptStatusError( status ) )
 			{
-			BYTE userID[ CRYPT_MAX_HASHSIZE + 8 ];
-			int userIDsize;
-
-			/* Read the PKI user ID that we'll need to handle the integrity
-			   protection on the message */
-			readConstructed( stream, NULL, CTAG_PH_SENDERKID );
-			status = readOctetString( stream, userID, &userIDsize,
-									  8, CRYPT_MAX_HASHSIZE );
-			if( cryptStatusError( status ) )
-				retExt( status,
-						( status, errorInfo, 
-						  "Invalid user ID in PKI header" ) );
-
-			/* If there's already been a previous transaction (which means
-			   that we have PKI user info present) and the current
-			   transaction matches what was used in the previous one, we
-			   don't have to update the user info */
-			if( protocolInfo->userIDsize <= 0 || \
-				protocolInfo->userIDsize != userIDsize || \
-				memcmp( protocolInfo->userID, userID, userIDsize ) )
-				{
-				memcpy( protocolInfo->userID, userID, userIDsize );
-				protocolInfo->userIDsize = userIDsize;
-				protocolInfo->userIDchanged = TRUE;
-				if( protocolInfo->iMacContext != CRYPT_ERROR )
-					{
-					krnlSendNotifier( protocolInfo->iMacContext,
-									  IMESSAGE_DECREFCOUNT );
-					protocolInfo->iMacContext = CRYPT_ERROR;
-					}
-				}
-			}
-		else
-			{
-			/* We're in the middle of an ongoing transaction, skip the user
-			   ID, which we already know */
-			readUniversal( stream );
+			retExt( status,
+					( status, errorInfo, 
+					  "Invalid PKI user ID in PKI header" ) );
 			}
 		}
 	else
@@ -1187,18 +567,21 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 		   first message unless we got one in an earlier transaction */
 		if( isServerInitialMessage && protocolInfo->userIDsize <= 0 )
 			{
-			retExt( status, 
-					( status, errorInfo, "Missing user ID in PKI header" ) );
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Missing PKI user ID in PKI header" ) );
 			}
 		}
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_RECIPKID ) )
 		readUniversal( stream );			/* Recipient protection keyID */
 
-	/* Record the transaction ID or make sure that it matches the one that
-	   we sent.  There's no real need to do an explicit duplicate check
-	   since a replay attempt will be rejected as a duplicate by the cert
-	   store and the locking performed at that level makes it a much better
-	   place to catch duplicates, but we do it anyway */
+	/* Record the transaction ID (which is effectively the nonce) or make 
+	   sure that it matches the one that we sent.  There's no real need to 
+	   do an explicit duplicate check since a replay attempt will be 
+	   rejected as a duplicate by the certificate store and the locking 
+	   performed at that level makes it a much better place to catch 
+	   duplicates, but we do it anyway because it doesn't cost anything and
+	   we can catch at least some problems a bit earlier */
 	status = readConstructed( stream, NULL, CTAG_PH_TRANSACTIONID );
 	if( cryptStatusError( status ) )
 		{
@@ -1206,37 +589,16 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 				( status, errorInfo, 
 				  "Missing transaction ID in PKI header" ) );
 		}
-	if( isServerInitialMessage )
-		{
-		/* This is the first message and we're the server, record the
-		   transaction ID for later */
-		status = readOctetString( stream, protocolInfo->transID,
-								  &protocolInfo->transIDsize,
-								  4, CRYPT_MAX_HASHSIZE );
-		}
-	else
-		{
-		/* Make sure that the transaction ID for this message matches the
-		   recorded value (the bad recipient nonce/bad signature error code
-		   is the best that we can provide here) */
-		status = readOctetString( stream, buffer, &length,
-								  4, CRYPT_MAX_HASHSIZE );
-		if( cryptStatusOK( status ) && \
-			( protocolInfo->transIDsize < 4 || \
-			  protocolInfo->transIDsize != length || \
-			  memcmp( protocolInfo->transID, buffer, length ) ) )
-			{
-			protocolInfo->pkiFailInfo = CMPFAILINFO_BADRECIPIENTNONCE;
-			retExt( CRYPT_ERROR_SIGNATURE,
-					( CRYPT_ERROR_SIGNATURE, errorInfo, 
-					  "Returned message transaction ID doesn't match our "
-					  "transaction ID" ) );
-			}
-		}
+	status = readTransactionID( stream, protocolInfo, 
+								isServerInitialMessage );
 	if( cryptStatusError( status ) )
 		{
+		protocolInfo->pkiFailInfo = CMPFAILINFO_BADRECIPIENTNONCE;
 		retExt( status, 
 				( status, errorInfo, 
+				  ( status == CRYPT_ERROR_SIGNATURE ) ? \
+				  "Returned message transaction ID doesn't match our "
+						"transaction ID" : \
 				  "Invalid transaction ID in PKI header" ) );
 		}
 
@@ -1247,7 +609,8 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 	   response to an error that occurred before it could read the nonce from
 	   a request.  In any case we don't bother checking the nonce values
 	   since the transaction ID serves the same purpose */
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_SENDERNONCE ) )
+	if( stell( stream ) < endPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_PH_SENDERNONCE ) )
 		{
 		readConstructed( stream, NULL, CTAG_PH_SENDERNONCE );
 		status = readOctetString( stream, protocolInfo->recipNonce,
@@ -1261,7 +624,8 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 					  "Invalid sender nonce in PKI header" ) );
 			}
 		}
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_PH_RECIPNONCE ) )
+	if( stell( stream ) < endPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_PH_RECIPNONCE ) )
 		{
 		readConstructed( stream, NULL, CTAG_PH_RECIPNONCE );
 		status = readUniversal( stream );
@@ -1274,41 +638,32 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
 			}
 		}
 
-	/* Remember that we've successfully read the header information, or at
-	   least the information that we need to generate a response */
+	/* Remember that we've successfully read enough of the header 
+	   information to generate a response */
 	protocolInfo->headerRead = TRUE;
 
-	/* Generate a new sender nonce (unless this is the first message and
-	   we're still setting things up) and see if there's anything useful
-	   present in the general info */
-	if( protocolInfo->senderNonceSize > 0 )
-		{
-		MESSAGE_DATA msgData;
-
-		setMessageData( &msgData, protocolInfo->senderNonce,
-						protocolInfo->senderNonceSize );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
-		}
+	/* Skip any further junk and process the general information if there is 
+	   any */
 	if( stell( stream ) < endPos && \
 		peekTag( stream ) == MAKE_CTAG( CTAG_PH_FREETEXT ) )
+		{
 		status = readUniversal( stream );	/* Junk */
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	if( stell( stream ) < endPos && \
 		peekTag( stream ) == MAKE_CTAG( CTAG_PH_GENERALINFO ) )
 		{
 		status = readGeneralInfo( stream, protocolInfo );
 		if( cryptStatusError( status ) )
+			{
 			retExt( status,
 					( status, errorInfo, 
 					  "Invalid generalInfo information in PKI header" ) );
-		}
-	if( stell( stream ) < endPos )
-		{
-		/* Skip any remaining junk */
-		status = sseek( stream, endPos );
+			}
 		}
 
-	return( status );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -1328,158 +683,141 @@ static int readPkiHeader( STREAM *stream, CMP_PROTOCOL_INFO *protocolInfo,
    Note that readPkiDatagram() has already performed an initial valid-ASN.1
    check before we get here */
 
-int readPkiMessage( SESSION_INFO *sessionInfoPtr,
-					CMP_PROTOCOL_INFO *protocolInfo,
-					int messageType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
+					INOUT CMP_PROTOCOL_INFO *protocolInfo,
+					IN_ENUM_OPT( CTAG_PB ) CMP_MESSAGE_TYPE messageType )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-	MESSAGE_CREATEOBJECT_INFO createInfo;
+#endif /* USE_ERRMSGS */
+	READMESSAGE_FUNCTION readMessageFunction;
 	STREAM stream;
-	const BOOLEAN isServerInitialMessage = ( messageType == CRYPT_UNUSED );
-	BOOLEAN useMAC;
+	const BOOLEAN isServerInitialMessage = \
+					( messageType == CTAG_PB_READ_ANY ) ? TRUE : FALSE;
 	void *integrityInfoPtr = DUMMY_INIT_PTR;
-	int protPartStart, protPartSize, bodyStart = DUMMY_INIT;
+	int protPartStart = DUMMY_INIT, protPartSize, bodyStart = DUMMY_INIT;
 	int length, integrityInfoLength, tag, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	REQUIRES( ( messageType >= CTAG_PB_IR && \
+				messageType < CTAG_PB_LAST ) || \
+			  ( messageType == CTAG_PB_READ_ANY ) );
+			  /* CTAG_PB_IR == 0 so this is the same as _NONE */
+
+	DEBUG_PRINT(( "%s: Reading message type %d.\n",
+				  protocolInfo->isServer ? "SVR" : "CLI", messageType ));
 
 	/* Strip off the header and PKIStatus wrapper */
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
-	readSequence( &stream, NULL );		/* Outer wrapper */
-	protPartStart = stell( &stream );
-	status = readPkiHeader( &stream, protocolInfo, SESSION_ERRINFO,
-							isServerInitialMessage );
+	status = readSequence( &stream, NULL );		/* Outer wrapper */
+	if( cryptStatusOK( status ) )
+		{
+		protPartStart = stell( &stream );
+		status = readPkiHeader( &stream, protocolInfo, SESSION_ERRINFO,
+								isServerInitialMessage );
+		}
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
 		return( status );
 		}
+	ENSURES( protocolInfo->transIDsize > 0 && \
+			 protocolInfo->transIDsize <= CRYPT_MAX_HASHSIZE );
 
-	/* Set up state information based on the header that we've just read.  If
-	   this is the first message from the client and we've been sent a new
-	   user ID or cert ID, process the user/authentication info.  We
-	   couldn't process this info before this point because we didn't know
-	   what would be required, but now that we've read the header we can
-	   set it up and get the user authentication information from the cert
-	   store */
-	useMAC = ( protocolInfo->macInfoPos > 0 ) ? TRUE : FALSE;
+	/* Set up session state information based on the header that we've just 
+	   read */
 	if( protocolInfo->isCryptlib )
 		sessionInfoPtr->flags |= SESSION_ISCRYPTLIB;
+
+	/* In order to fix CMP's inability to properly identify keys via 
+	   certificates, we use the certID field in the generalInfo.  If there's
+	   no PKI user ID present but no certID either then we can't identify 
+	   the key that's needed in order to continue.  This also retroactively 
+	   invalidates the headerRead flag, since we don't know which key to use
+	   to authenticate our response.
+
+	   In theory we shouldn't ever get into this state because we require 
+	   a PKI user ID for the client's initial message and the server will
+	   always send a certID for its signing certificate, but due to the
+	   confusing combination of values that can affect the protocol state
+	   (see the start of writePkiHeader() in cmp_wr.c for an example) we
+	   do the following as a safety check to catch potential problems 
+	   early.
+	   
+	   This also leads to a special-case exception, if we're the client then
+	   the server may identify its signing key purely through the 
+	   dysfunctional sender DN mechanism (see the comment in 
+	   readPkiHeader()) so we allow this option as well.  The DN can't 
+	   usefully tell us whether it's the correct key or not (see the
+	   comment in checkMessageSignature()) but there's not much else that
+	   we can do */
+	if( protocolInfo->useMACreceive )
+		{
+		/* There is one special-case situation in which we can have no user 
+		   ID present and that's when we're doing a PnP PKI transaction with 
+		   an initial PKIBoot that creates the required MAC context followed 
+		   by an ir that doesn't need to send any ID information since it's 
+		   reusing the MAC context that was created by the PKIBoot */
+		if( protocolInfo->userIDsize <= 0 && \
+			!( protocolInfo->isCryptlib && \
+			   protocolInfo->iMacContext != CRYPT_ERROR ) )
+			{
+			sMemDisconnect( &stream );
+			protocolInfo->headerRead = FALSE;
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Missing PKI user ID for MAC authentication of PKI "
+					  "messages" ) );
+			}
+		}
+	else
+		{
+		/* As with the case for MAC contexts, there's a special-case 
+		   situation in which there's no certID present and that's during a 
+		   PnP PKI transaction preceded by a PKIBoot that communicates the 
+		   CA's certificate, where the PKIBoot creates the required 
+		   sig-check context as part of the initialisation process.  In
+		   addition we have to allow for DN-only identification from 
+		   servers, see the comment above for details */
+		if( protocolInfo->certIDsize <= 0 && \
+			( !isServer ( sessionInfoPtr ) && 
+			  protocolInfo->senderDNlength <= 0 ) && \
+			!( protocolInfo->isCryptlib && \
+			   sessionInfoPtr->iAuthInContext != CRYPT_ERROR ) )
+			{
+			sMemDisconnect( &stream );
+			protocolInfo->headerRead = FALSE;
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Missing certificate ID for signature authentication "
+					  "of PKI messages" ) );
+			}
+		}
+
+	/* If this is the first message from the client and we've been sent a 
+	   new user ID or certificate ID (via the ESSCertID in the header's
+	   kitchen-sink field, used to identify the signing certificate when
+	   signature-based authentication is used), process the user/
+	   authentication information */
 	if( protocolInfo->userIDchanged )
 		{
-		/* We've got a new PKI user ID, if it looks like a cryptlib encoded
-		   ID save it in encoded form, otherwise save it as is */
-		if( protocolInfo->isCryptlib && \
-			protocolInfo->userIDsize == 9 )
+		status = updateUserID( sessionInfoPtr, protocolInfo,
+							   isServerInitialMessage, 
+							   protocolInfo->useMACreceive );
+		if( cryptStatusError( status ) )
 			{
-			BYTE encodedUserID[ CRYPT_MAX_TEXTSIZE + 8 ];
-			int encodedUserIDLength;
-
-			status = encodePKIUserValue( encodedUserID, CRYPT_MAX_TEXTSIZE,
-										 &encodedUserIDLength, 
-										 protocolInfo->userID, 
-										 protocolInfo->userIDsize, 3 );
-			if( cryptStatusOK( status ) )
-				status = updateSessionInfo( &sessionInfoPtr->attributeList,
-									CRYPT_SESSINFO_USERNAME, encodedUserID,
-									encodedUserIDLength, CRYPT_MAX_TEXTSIZE,
-									ATTR_FLAG_ENCODEDVALUE );
+			sMemDisconnect( &stream );
+			return( status );
 			}
-		else
-			{
-			status = updateSessionInfo( &sessionInfoPtr->attributeList,
-									CRYPT_SESSINFO_USERNAME,
-									protocolInfo->userID,
-									protocolInfo->userIDsize,
-									CRYPT_MAX_TEXTSIZE, ATTR_FLAG_NONE );
-			}
-		if( cryptStatusOK( status ) && isServerInitialMessage && useMAC )
-			status = initServerAuthentMAC( sessionInfoPtr, protocolInfo );
 		}
-	if( cryptStatusOK( status ) && protocolInfo->certIDchanged )
+	if( protocolInfo->certIDchanged )
 		{
-		status = addSessionInfo( &sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_FINGERPRINT,
-								 protocolInfo->certID,
-								 protocolInfo->certIDsize );
-		if( cryptStatusOK( status ) && isServerInitialMessage )
-			status = initServerAuthentSign( sessionInfoPtr, protocolInfo );
-		}
-	if( cryptStatusError( status ) )
-		{
-		sMemDisconnect( &stream );
-		return( status );
-		}
-
-	/* Determine the message body type.  An error response can occur at any
-	   point in an exchange so we process this immediately.  We don't do an
-	   integrity verification at this point since it's not certain what we
-	   should report if the check fails, and an unauthenticated error
-	   message is better than an authenticated paketewhainau */
-	tag = peekTag( &stream );
-	if( cryptStatusError( tag ) )
-		return( tag );
-	tag = EXTRACT_CTAG( tag );
-	if( tag == CTAG_PB_ERROR )
-		{
-		status = readErrorBody( &stream, sessionInfoPtr );
-		sMemDisconnect( &stream );
-		return( status );
-		}
-
-	/* If this is an initial message we don't know what to expect yet so we
-	   set the type to whatever we find, as long as it's a valid message to
-	   send to a CA */
-	if( isServerInitialMessage && \
-		( tag == CTAG_PB_IR || tag == CTAG_PB_CR || tag == CTAG_PB_P10CR || \
-		  tag == CTAG_PB_KUR || tag == CTAG_PB_RR || tag == CTAG_PB_GENM ) )
-		protocolInfo->operation = messageType = tag;
-
-	/* If we're using a MAC for authentication, we can finally set up the
-	   MAC info using the appropriate password */
-	if( useMAC )
-		{
-		const ATTRIBUTE_LIST *passwordPtr = \
-					findSessionInfo( sessionInfoPtr->attributeList,
-									 CRYPT_SESSINFO_PASSWORD );
-		BYTE decodedValue[ 64 + 8 ];
-		const BYTE *decodedValuePtr = decodedValue;
-		int decodedValueLength;
-
-		if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
-			{
-			/* It's an encoded value, get the decoded form */
-			status = decodePKIUserValue( decodedValue, 64, 
-										 &decodedValueLength, 
-										 passwordPtr->value, 
-										 passwordPtr->valueLength );
-			if( cryptStatusError( status ) )
-				{
-				assert( DEBUG_WARN );
-				sMemDisconnect( &stream );
-				retExt( status,
-						( status, SESSION_ERRINFO, 
-						  "Invalid PKI user password" ) );
-				}
-			}
-		else
-			{
-			decodedValuePtr = passwordPtr->value;
-			decodedValueLength = passwordPtr->valueLength;
-			}
-
-		/* We couldn't initialise the MAC information when we read the
-		   header because the order of the information used to set this up
-		   is backwards, so we have to go back and re-process it now */
-		if( cryptStatusOK( status ) )
-			{
-			const int streamPos = stell( &stream );
-
-			sseek( &stream, protocolInfo->macInfoPos );
-			status = readMacInfo( &stream, protocolInfo, decodedValuePtr,
-								  decodedValueLength, SESSION_ERRINFO );
-			sseek( &stream, streamPos );
-			}
-		zeroise( decodedValue, CRYPT_MAX_TEXTSIZE );
+		status = updateCertID( sessionInfoPtr, protocolInfo,
+							   isServerInitialMessage );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -1487,25 +825,82 @@ int readPkiMessage( SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
-	/* Make sure that it's what we're after, remember where the message body
-	   starts, and skip it (it'll be processed after we verify its integrity) */
-	if( tag != messageType )
+	/* Determine the message body type.  An error response can occur at any
+	   point in an exchange so we process this immediately.  We don't do an
+	   integrity verification for this one since it's not certain what we
+	   should report if the check fails (what if the error response is to
+	   report that no key is available to authenticate the user, for 
+	   example?), and an unauthenticated error message is better than an 
+	   authenticated paketewhainau */
+	tag = peekTag( &stream );
+	if( cryptStatusError( tag ) )
+		return( tag );
+	tag = EXTRACT_CTAG( tag );
+	if( tag == CTAG_PB_ERROR )
 		{
+		readMessageFunction = getMessageReadFunction( CTAG_PB_ERROR );
+		ENSURES( readMessageFunction != NULL );
+		readConstructed( &stream, NULL, CTAG_PB_ERROR );
+		status = readSequence( &stream, &length );
+		if( cryptStatusOK( status ) )
+			status = readMessageFunction( &stream, sessionInfoPtr, 
+										  protocolInfo, CTAG_PB_ERROR, 
+										  length );
 		sMemDisconnect( &stream );
-		protocolInfo->pkiFailInfo = CMPFAILINFO_BADREQUEST;
-		if( isServerInitialMessage )
+		return( status );
+		}
+
+	/* If this is an initial message then we don't know what to expect yet 
+	   so we set the type to whatever we find, as long as it's a valid 
+	   message to send to a CA */
+	if( messageType == CTAG_PB_READ_ANY )
+		{
+		if( tag == CTAG_PB_IR || tag == CTAG_PB_CR || \
+			tag == CTAG_PB_P10CR || tag == CTAG_PB_KUR || \
+			tag == CTAG_PB_RR || \
+			( messageType == CTAG_PB_READ_ANY && tag == CTAG_PB_GENM ) )
+			protocolInfo->operation = messageType = tag;
+		else
 			{
-			/* This is the first message and we got no recognisable message
-			   of any type */
+			sMemDisconnect( &stream );
+			protocolInfo->pkiFailInfo = CMPFAILINFO_BADREQUEST;
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid message type %d", tag ) );
+					  "Client sent invalid initial message type %d", 
+					  tag ) );
 			}
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid message type, expected %d, got %d", messageType,
-				  tag ) );
 		}
+	else
+		{
+		/* Make sure that this is what we're after */
+		if( tag != messageType )
+			{
+			sMemDisconnect( &stream );
+			protocolInfo->pkiFailInfo = CMPFAILINFO_BADREQUEST;
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+					  "Invalid message type, expected %d, got %d", 
+					  messageType, tag ) );
+			}
+		}
+
+	/* If we're using a MAC for authentication, we can finally set up the
+	   MAC information using the appropriate password.  We couldn't do this 
+	   when we read the header because the order of the information used to 
+	   set this up is backwards, so we have to go back and re-process it 
+	   now */
+	if( protocolInfo->useMACreceive )
+		{
+		status = updateMacInfo( sessionInfoPtr, protocolInfo, &stream );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		}
+
+	/* Remember where the message body starts and skip it (it'll be 
+	   processed after we verify its integrity) */
 	status = readConstructed( &stream, &length, messageType );
 	if( cryptStatusOK ( status ) )
 		{
@@ -1521,98 +916,72 @@ int readPkiMessage( SESSION_INFO *sessionInfoPtr,
 				  "Invalid message body start" ) );
 		}
 
-	/* Read the start of the message integrity info */
+	/* Read the start of the message integrity information */
 	protPartSize = stell( &stream ) - protPartStart;
+	ENSURES( protPartSize > 0 && protPartSize < MAX_INTLENGTH_SHORT );
 	status = readConstructed( &stream, &integrityInfoLength,
 							  CTAG_PM_PROTECTION );
 	if( cryptStatusOK( status ) )
 		{
 		status = sMemGetDataBlock( &stream, &integrityInfoPtr, 
 								   integrityInfoLength );
-		if( cryptStatusError( status ) )
-			{
-			/* If there integrity protection is missing, report it as a 
-			   wrong-integrity-info problem, the closest we can get to the 
-			   real error.  This has already been checked by the high-level 
-			   PKI datagram read code anyway, but we check gain here just to 
-			   be safe */
-			protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
-			setErrorString( errorInfo, 
-							"Signature/MAC data is missing or truncated", 
-							42 );
-			status = CRYPT_ERROR_SIGNATURE;
-			}
-		}
-	if( cryptStatusOK( status ) && tag == CTAG_PB_IR && !useMAC )
-		{
-		/* An ir has to be MAC'ed, in theory this doesn't really matter but
-		   the spec requires that we only allow a MAC.  If it's not MAC'ed it
-		   has to be a cr, which is exactly the same only different */
-		protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
-		setErrorString( errorInfo, 
-						"Received signed ir, should be MAC'ed", 36 );
-		status = CRYPT_ERROR_SIGNATURE;
-		}
-	if( cryptStatusOK( status ) && tag == CTAG_PB_RR && useMAC )
-		{
-		/* An rr can't be MAC'ed because the trail from the original PKI
-		   user to the cert being revoked can become arbitrarily blurred,
-		   with the cert being revoked having a different DN,
-		   issuerAndSerialNumber, and public key after various updates,
-		   replacements, and reissues.  In fact cryptlib tracks the
-		   resulting directed graph via the cert store log and allows
-		   fetching the original authorising issuer of a cert using the
-		   KEYMGMT_FLAG_GETISSUER option, however this requires that the
-		   client also be running cryptlib, or specifically that it submit
-		   a cert ID in the request, this being the only identifier that
-		   reliably identifies the cert being revoked.  Since it's somewhat
-		   unsound to assume this, we don't currently handle MAC'ed rr's,
-		   however everything is in place to allow them to be implemented
-		   if they're really needed */
-		protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
-		setErrorString( errorInfo, 
-						"Received MAC'ed rr, should be signed", 36 );
-		status = CRYPT_ERROR_SIGNATURE;
 		}
 	if( cryptStatusError( status ) )
 		{
+		/* If the integrity protection is missing report it as a wrong-
+		   integrity-information problem, the closest that we can get to the 
+		   real error */
+		protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
 		sMemDisconnect( &stream );
-		return( status );
+		retExt( CRYPT_ERROR_SIGNATURE,
+				( CRYPT_ERROR_SIGNATURE, errorInfo, 
+				  "Signature/MAC data is missing or truncated" ) );
+		}
+	if( tag == CTAG_PB_IR && !protocolInfo->useMACreceive )
+		{
+		/* An ir has to be MAC'd, in theory this doesn't really matter but
+		   the spec requires that we only allow a MAC.  If it's not MAC'd it
+		   has to be a cr, which is exactly the same only different */
+		sMemDisconnect( &stream );
+		protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
+		retExt( CRYPT_ERROR_SIGNATURE,
+				( CRYPT_ERROR_SIGNATURE, errorInfo, 
+				  "Received signed ir, should be MAC'd" ) );
+		}
+	if( tag == CTAG_PB_RR && protocolInfo->useMACreceive )
+		{
+		/* An rr can't be MAC'd because the trail from the original PKI
+		   user to the certificate being revoked can become arbitrarily 
+		   blurred, with the certificate being revoked having a different 
+		   DN, issuerAndSerialNumber, and public key after various updates,
+		   replacements, and reissues.  cryptlib does actually track the
+		   resulting directed graph via the certificate store log and allows
+		   fetching the original authorising issuer of a certificate using 
+		   the KEYMGMT_FLAG_GETISSUER option, however this requires that the
+		   client also be running cryptlib, or specifically that it submit
+		   a certificate ID in the request, this being the only identifier 
+		   that reliably identifies the certificate being revoked.  Since 
+		   it's somewhat unsound to assume this, we don't currently handle 
+		   MAC'ed rr's, however everything is in place to allow them to be 
+		   implemented if they're really needed */
+		sMemDisconnect( &stream );
+		protocolInfo->pkiFailInfo = CMPFAILINFO_WRONGINTEGRITY;
+		retExt( CRYPT_ERROR_SIGNATURE,
+				( CRYPT_ERROR_SIGNATURE, errorInfo, 
+				  "Received MAC'd rr, should be signed" ) );
 		}
 
-	/* Verify the message integrity */
+	/* Verify the message integrity.  We convert any error that we encounter 
+	   during this check to a CRYPT_ERROR_SIGNATURE, this is somewhat 
+	   overreaching since it could have been something like a formatting 
+	   error but overall the problem is in the signature-check so we make 
+	   this explicit rather than returning a somewhat vague underflow/
+	   overflow/bad-data/whatever */
 	if( protocolInfo->useMACreceive )
 		{
-		const CRYPT_CONTEXT iMacContext = ( protocolInfo->useAltMAC ) ? \
-					protocolInfo->iAltMacContext : protocolInfo->iMacContext;
-		void *protectionPtr = DUMMY_INIT_PTR;
-		int protectionLength;
-
-		/* Read the BIT STRING encapsulation, MAC the data, and make sure
-		   that it matches the value attached to the message */
-		status = readBitStringHole( &stream, &protectionLength, 16, 
-									DEFAULT_TAG );
-		if( cryptStatusOK( status ) )
-			status = sMemGetDataBlock( &stream, &protectionPtr, 
-									   protectionLength );
-		if( cryptStatusOK( status ) && \
-			( protectionLength < 16 || \
-			  protectionLength > CRYPT_MAX_HASHSIZE ) )
-			status = CRYPT_ERROR_BADDATA;
-		if( cryptStatusOK( status ) )
-			status = hashMessageContents( iMacContext,
-							sessionInfoPtr->receiveBuffer + protPartStart,
-							protPartSize );
-		if( cryptStatusOK( status ) )
-			{
-			MESSAGE_DATA msgData;
-
-			setMessageData( &msgData, protectionPtr, protectionLength );
-			if( cryptStatusError( \
-				krnlSendMessage( iMacContext, IMESSAGE_COMPARE, &msgData,
-								 MESSAGE_COMPARE_HASH ) ) )
-				status = CRYPT_ERROR_SIGNATURE;
-			}
+		status = checkMessageMAC( &stream, protocolInfo, 
+						sessionInfoPtr->receiveBuffer + protPartStart,
+						protPartSize  );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
@@ -1623,113 +992,57 @@ int readPkiMessage( SESSION_INFO *sessionInfoPtr,
 		}
 	else
 		{
-		if( !protocolInfo->isCryptlib )
+		status = checkMessageSignature( protocolInfo,
+						sessionInfoPtr->receiveBuffer + protPartStart,
+						protPartSize, integrityInfoPtr, integrityInfoLength, 
+						sessionInfoPtr->iAuthInContext );
+		if( cryptStatusError( status ) )
 			{
-			MESSAGE_DATA msgData;
-
-			/* Make sure that the sig-check key that we'll be using is the
-			   correct one.  Because of CMP's use of a raw signature format
-			   we have to do this manually rather than relying on the sig-
-			   check code to do it for us, and because of the braindamaged
-			   way of identifying integrity-protection keys for non-cryptlib
-			   messages even this isn't enough to definitely tell us that
-			   we're using the right key, in which case we'll get a bad data
-			   or bad sig response from the sig check code */
-			setMessageData( &msgData, protocolInfo->senderDNPtr,
-							protocolInfo->senderDNlength );
-			status = krnlSendMessage( sessionInfoPtr->iAuthInContext,
-									  IMESSAGE_COMPARE, &msgData,
-									  MESSAGE_COMPARE_SUBJECT );
-			if( cryptStatusError( status ) )
+			sMemDisconnect( &stream );
+			if( status == CRYPT_ERROR_WRONGKEY )
 				{
-				/* A failed comparison is reported as a generic CRYPT_ERROR,
-				   convert it into a wrong-key error if necessary */
-				sMemDisconnect( &stream );
-				retExt( ( status == CRYPT_ERROR ) ? \
-						CRYPT_ERROR_WRONGKEY : status,
-						( ( status == CRYPT_ERROR ) ? \
-						  CRYPT_ERROR_WRONGKEY : status, SESSION_ERRINFO, 
+				/* Provide a more specific error message for the wrong-key 
+				   error */
+				retExt( CRYPT_ERROR_WRONGKEY,
+						( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
 						  "Message signature key doesn't match our "
 						  "signature check key, signature can't be "
 						  "checked" ) );
 				}
+			retExt( CRYPT_ERROR_SIGNATURE,
+					( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
+					   "Bad message signature" ) );
 			}
-
-		/* Hash the data and verify the signature */
-		setMessageCreateObjectInfo( &createInfo, protocolInfo->hashAlgo );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-								  OBJECT_TYPE_CONTEXT );
-		if( cryptStatusOK( status ) )
-			{
-			status = hashMessageContents( createInfo.cryptHandle,
-							sessionInfoPtr->receiveBuffer + protPartStart,
-							protPartSize );
-			if( cryptStatusOK( status ) )
-				{
-				status = checkRawSignature( integrityInfoPtr, 
-											integrityInfoLength,
-											sessionInfoPtr->iAuthInContext,
-											createInfo.cryptHandle );
-				}
-			krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			if( cryptStatusError( status ) )
-				{
-				sMemDisconnect( &stream );
-				retExt( CRYPT_ERROR_SIGNATURE,
-						( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
-						  "Bad message signature" ) );
-				}
-			}
-		}
-	if( cryptStatusError( status ) )
-		{
-		sMemDisconnect( &stream );
-		return( status );
 		}
 	sseek( &stream, bodyStart );
 
-	/* If it's a client request, import the encapsulated request data */
-	switch( messageType )
+	/* In the usual CMP tradition there's a nonstandard way used to encode
+	   one of the message types, which we have to handle specially here */
+	if( messageType == CTAG_PB_PKICONF )
 		{
-		case CTAG_PB_IR:
-		case CTAG_PB_CR:
-		case CTAG_PB_P10CR:
-		case CTAG_PB_KUR:
-		case CTAG_PB_RR:
-			status = readRequestBody( &stream, sessionInfoPtr, protocolInfo,
-									  messageType );
-			break;
-
-		case CTAG_PB_IP:
-		case CTAG_PB_CP:
-		case CTAG_PB_KUP:
-		case CTAG_PB_RP:
-			status = readResponseBody( &stream, sessionInfoPtr,
-									   protocolInfo );
-			break;
-
-		case CTAG_PB_CERTCONF:
-			status = readConfBody( &stream, sessionInfoPtr, protocolInfo );
-			break;
-
-		case CTAG_PB_PKICONF:
-			/* If it's a confirmation there's no message body and we're
-			   done */
-			break;
-
-		case CTAG_PB_GENM:
-		case CTAG_PB_GENP:
-			status = readGenMsgBody( &stream, sessionInfoPtr,
-									 messageType == CTAG_PB_GENM );
-			break;
-
-		default:
-			assert( DEBUG_WARN );
-			retExt( CRYPT_ERROR_BADDATA,
-					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Unexpected message type %d", messageType ) );
+		status = readNull( &stream );
+		sMemDisconnect( &stream );
+		return( status );
 		}
+
+	/* Read the message body wrapper */
+	status = readSequence( &stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Process the message body */
+	readMessageFunction = getMessageReadFunction( messageType );
+	if( readMessageFunction == NULL )
+		{
+		DEBUG_DIAG(( "No message-read function available for message "
+					 "type %d", messageType ));
+		assert( DEBUG_WARN );
+		retExt( CRYPT_ERROR_BADDATA,
+				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
+				  "Unexpected message type %d", messageType ) );
+		}
+	status = readMessageFunction( &stream, sessionInfoPtr, protocolInfo,
+								  messageType, length );
 	sMemDisconnect( &stream );
 	return( status );
 	}

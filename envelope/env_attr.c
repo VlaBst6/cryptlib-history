@@ -376,20 +376,53 @@ static int getCurrentAttributeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptArgError( status ) )
 		{
 		/* Make sure that any argument errors arising from this internal key 
-		   fetch don't get propagated back up to the caller */
+		   fetch don't get propagated back up to the caller.  Note that this 
+		   error is converted to a CRYPT_OK later on (see the comment further 
+		   down) but we perform the cleanup here to keep things tidy */
 		status = CRYPT_ERROR_NOTFOUND;
 		}
 
 	/* If we managed to get the private key (either bcause it wasn't 
 	   protected by a password if it's in a keyset or because it came from a 
 	   device), push it into the envelope.  If the call succeeds this will 
-	   import the session key and delete the required-information list */
+	   import the session key and delete the required-information list.
+
+	   What to do when this operation fails is a bit tricky since the 
+	   supposedly idempotent step of reading an attribute can have side-
+	   effects if it results in a key being read from a crypto device that 
+	   in turn is used to import a wrapped session key.  Changing the
+	   externally-visible behaviour isn't really an option because the 
+	   import is normally triggered by the addition of unwrap keying 
+	   material but in this case it's already present, and the caller has
+	   nothing to add to trigger the import.  Conversely though it's a bit
+	   confusing to report side-effects of the (invisible) key-unwrap 
+	   process to the caller in response to an attribute read.  However, 
+	   masking the details entirely can lead the caller down a blind alley 
+	   in which they apparently need to add an unwrap key but it's already
+	   been added via the device and the unwrap process failed.
+
+	   A compromise solution is to select the return values the definitely
+	   indicate that there's no chance of continuing and report those, and
+	   otherwise to indicate that an unwrap key is needed.  The only return
+	   value that's really a ne pas ultra in this case is 
+	   CRYPT_ERROR_BADDATA, all others are potentially recoverable or at 
+	   least misleading if returned in this context (for example 
+	   CRYPT_ERROR_NOTAVAIL interpreted in the context of read-current-
+	   attribute has a very different meaning than in the context of unwrap-
+	   key) */
 	if( cryptStatusOK( status ) )
 		{
 		status = envelopeInfoPtr->addInfo( envelopeInfoPtr, 
 										   CRYPT_ENVINFO_PRIVATEKEY,
 										   getkeyInfo.cryptHandle );
 		krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		if( status == CRYPT_ERROR_BADDATA )
+			{
+			/* We've reached a cant-continue condition, report it to the
+			   caller */
+			*valuePtr = CRYPT_ATTRIBUTE_NONE;
+			return( CRYPT_ERROR_BADDATA );
+			}
 		}
 
 	/* If we got the key, there's nothing else needed.  If we didn't we still 
@@ -518,7 +551,12 @@ static int getSignatureResult( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 							  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
 							  KEYMGMT_ITEM_PUBLICKEY );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		retExtObj( status,
+				   ( status, ENVELOPE_ERRINFO, 
+				     envelopeInfoPtr->iSigCheckKeyset,
+					 "Couldn't retrieve signature-check key from keyset" ) );
+		}
 	iCryptHandle = getkeyInfo.cryptHandle;
 
 	/* Push the public key into the envelope, which performs the signature 
@@ -1069,10 +1107,16 @@ int getEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		status = krnlSendMessage( envelopeInfoPtr->iDecryptionKeyset,
 								  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
 								  KEYMGMT_ITEM_PRIVATEKEY );
-		if( cryptStatusOK( status ) )
-			return( attributeCopy( msgData, getkeyInfo.auxInfo,
-								   getkeyInfo.auxInfoLength ) );
-		return( status );
+		if( cryptStatusError( status ) )
+			{
+			retExtObj( status,
+					   ( status, ENVELOPE_ERRINFO,
+					     envelopeInfoPtr->iDecryptionKeyset,
+						 "Couldn't retrieve private-key label from "
+						 "keyset/device" ) );
+			}
+		return( attributeCopy( msgData, getkeyInfo.auxInfo,
+							   getkeyInfo.auxInfoLength ) );
 		}
 
 	retIntError();
@@ -1188,7 +1232,7 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		ENSURES( envelopeInfoPtr->contentListCurrent != NULL );
 
 		/* Move the cursor */
-		contentListCursor = \
+		contentListCursor = ( const CONTENT_LIST * ) \
 			attributeMoveCursor( envelopeInfoPtr->contentListCurrent, 
 								 getAttrFunction, attribute, value );
 		if( contentListCursor == NULL )
@@ -1453,14 +1497,35 @@ int setEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			status = krnlSendMessage( envelopeInfoPtr->iEncryptionKeyset,
 									  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
 									  KEYMGMT_ITEM_PUBLICKEY );
-			if( cryptStatusOK( status ) && \
-				cryptStatusError( \
+			if( status == CRYPT_ERROR_NOTFOUND )
+				{
+				/* Technically what we're looking for is an email address
+				   (since this facility is meant for email encryption, thus
+				   the "recipient" in the name) but it's possible that it's 
+				   being used in a more general manner to mean "any random
+				   key label", so if the fetch based on email address fails
+				   we try again with a fetch based on name */
+				setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, data, 
+									   dataLength, NULL, 0, 
+									   KEYMGMT_FLAG_USAGE_CRYPT );
+				status = krnlSendMessage( envelopeInfoPtr->iEncryptionKeyset,
+										  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
+										  KEYMGMT_ITEM_PUBLICKEY );
+				}
+			if( cryptStatusError( status ) )
+				{
+				retExtObj( status,
+						   ( status, ENVELOPE_ERRINFO,
+						     envelopeInfoPtr->iEncryptionKeyset,
+							 "Couldn't retrieve encryption key from keyset" ) );
+				}
+			if( cryptStatusError( \
 					krnlSendMessage( getkeyInfo.cryptHandle, IMESSAGE_CHECK, 
 									 NULL, MESSAGE_CHECK_PKC_ENCRYPT ) ) )
 				{
 				krnlSendNotifier( getkeyInfo.cryptHandle,
 								  IMESSAGE_DECREFCOUNT );
-				status = CRYPT_ERROR_NOTFOUND;
+				return( CRYPT_ERROR_NOTFOUND );
 				}
 			if( cryptStatusOK( status ) )
 				{
@@ -1477,7 +1542,6 @@ int setEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		default:
 			retIntError();
 		}
-
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_INITED )

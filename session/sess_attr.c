@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Session Attribute Routines					*
-*						Copyright Peter Gutmann 1998-2007					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -98,8 +98,8 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 	
 	REQUIRES( urlLength > 0 && urlLength < MAX_URL_SIZE );
 
-	/* If there's already a transport session or network socket specified, 
-	   we can't set a server name as well */
+	/* If there's already a transport session or network socket specified 
+	   then we can't set a server name as well */
 	if( sessionInfoPtr->transportSession != CRYPT_ERROR )
 		return( exitErrorInited( sessionInfoPtr, CRYPT_SESSINFO_SESSION ) );
 	if( sessionInfoPtr->networkSocket != CRYPT_ERROR )
@@ -109,9 +109,9 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Parse the server name.  The PKI protocols all use HTTP as their 
 	   substrate so if it's not SSH or SSL/TLS we require HTTP.  For TSP
 	   and CMP the user can also specify the braindamaged "TCP transport"
-	   protocol but luckily this seems to have mostly sunk without trace,
-	   other portions of the session-handling code also discourage its
-	   use so we don't encourate it here */
+	   protocol but luckily this seems to have sunk without trace, other 
+	   portions of the session-handling code also discourage its use so we 
+	   don't encourate it here */
 	status = sNetParseURL( &urlInfo, url, urlLength,
 						   ( sessionInfoPtr->type == CRYPT_SESSION_SSH ) ? \
 								URL_TYPE_SSH : \
@@ -122,7 +122,8 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
 
 	/* We can only use autodetection with PKI services */
-	if( !strCompare( url, "[Autodetect]", urlLength ) && \
+	if( urlInfo.hostLen == 12 && \
+		!strCompare( urlInfo.host, "[Autodetect]", urlInfo.hostLen ) && \
 		!protocolInfoPtr->isReqResp )
 		return( exitError( sessionInfoPtr, CRYPT_SESSINFO_SERVER_NAME, 
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
@@ -138,20 +139,22 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	if( urlInfo.locationLen <= 0 )
 		{
-		status = addSessionInfo( &sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_NAME, 
-								 urlInfo.host, urlInfo.hostLen );
+		status = addSessionInfoS( &sessionInfoPtr->attributeList,
+								  CRYPT_SESSINFO_SERVER_NAME, 
+								  urlInfo.host, urlInfo.hostLen );
 		}
 	else
 		{
 		char urlBuffer[ MAX_URL_SIZE + 8 ];
 
+		ENSURES( rangeCheck( urlInfo.hostLen, urlInfo.locationLen,
+							 MAX_URL_SIZE ) );
 		memcpy( urlBuffer, urlInfo.host, urlInfo.hostLen );
 		memcpy( urlBuffer + urlInfo.hostLen, urlInfo.location, 
 				urlInfo.locationLen );
-		status = addSessionInfo( &sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_SERVER_NAME, urlBuffer, 
-								 urlInfo.hostLen + urlInfo.locationLen );
+		status = addSessionInfoS( &sessionInfoPtr->attributeList,
+								  CRYPT_SESSINFO_SERVER_NAME, urlBuffer, 
+								  urlInfo.hostLen + urlInfo.locationLen );
 		}
 	if( cryptStatusError( status ) )
 		return( exitError( sessionInfoPtr, CRYPT_SESSINFO_SERVER_NAME, 
@@ -178,7 +181,7 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 		( void ) krnlSendMessage( sessionInfoPtr->objectHandle, 
 								  IMESSAGE_DELETEATTRIBUTE, NULL,
 								  CRYPT_SESSINFO_USERNAME );
-		setMessageData( &userInfoMsgData, ( void * ) urlInfo.userInfo, 
+		setMessageData( &userInfoMsgData, ( MESSAGE_CAST ) urlInfo.userInfo, 
 						urlInfo.userInfoLen );
 		status = krnlSendMessage( sessionInfoPtr->objectHandle, 
 								  IMESSAGE_SETATTRIBUTE_S, &userInfoMsgData,
@@ -189,6 +192,7 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 						   CRYPT_ERRTYPE_ATTR_VALUE, CRYPT_ARGERROR_STR1 ) );
 
 	/* Remember the transport type */
+#ifdef USE_CMP_TRANSPORT
 	if( protocolInfoPtr->altProtocolInfo != NULL && \
 		urlInfo.schemaLen == \
 					protocolInfoPtr->altProtocolInfo->uriTypeLen && \
@@ -202,6 +206,7 @@ static int addUrl( INOUT SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->flags |= protocolInfoPtr->altProtocolInfo->newFlags;
 		}
 	else
+#endif /* USE_CMP_TRANSPORT */
 		{
 		if( sessionInfoPtr->protocolInfo->flags & SESSION_ISHTTPTRANSPORT )
 			{
@@ -241,11 +246,12 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 		case CRYPT_ATTRIBUTE_CURRENT:
 		case CRYPT_ATTRIBUTE_CURRENT_GROUP:
 			{
-			int value, status;
+			CRYPT_ATTRIBUTE_TYPE attributeID;
+			int status;
 
 			status = getSessionAttributeCursor( sessionInfoPtr->attributeList,
 									sessionInfoPtr->attributeListCurrent, 
-									attribute, &value );
+									attribute, &attributeID );
 			if( status == OK_SPECIAL )
 				{
 				/* The attribute list wasn't initialised yet, initialise it 
@@ -259,7 +265,7 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 					return( exitError( sessionInfoPtr, attribute, 
 									   CRYPT_ERRTYPE_ATTR_ABSENT, status ) );
 				}
-			*valuePtr = value;
+			*valuePtr = attributeID;
 
 			return( CRYPT_OK );
 			}
@@ -309,10 +315,10 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			/* Only secure transport sessions can be persistently active,
 			   request/response sessions are only active while the 
 			   transaction is in progress.  Note that this differs from the
-			   connection-active state, which records the fact that there's 
-			   a network-level connection established but no messages or
-			   secure session active across it.  See the comment in 
-			   setSessionAttribute() for more on this */
+			   connection-active state below, which records the fact that 
+			   there's a network-level connection established but not whether
+			   there's any messages or a secure session active across it.  
+			   See the comment in setSessionAttribute() for more on this */
 			*valuePtr = sessionInfoPtr->iCryptInContext != CRYPT_ERROR && \
 						( sessionInfoPtr->flags & SESSION_ISOPEN ) ? \
 						TRUE : FALSE;
@@ -327,8 +333,8 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 		case CRYPT_SESSINFO_CLIENT_PORT:
 			{
 			const ATTRIBUTE_LIST *attributeListPtr = \
-						findSessionInfo( sessionInfoPtr->attributeList,
-											  attribute );
+							findSessionInfo( sessionInfoPtr->attributeList,
+											 attribute );
 			if( attributeListPtr == NULL )
 				return( exitErrorNotInited( sessionInfoPtr, attribute ) );
 			*valuePtr = attributeListPtr->intValue;
@@ -340,7 +346,12 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_SESSINFO_AUTHRESPONSE:
-			*valuePtr = sessionInfoPtr->authResponse;
+			if( sessionInfoPtr->authResponse == AUTHRESPONSE_NONE )
+				return( exitErrorNotFound( sessionInfoPtr, 
+										   CRYPT_SESSINFO_AUTHRESPONSE ) );
+			*valuePtr = \
+				( sessionInfoPtr->authResponse == AUTHRESPONSE_SUCCESS ) ? \
+				TRUE : FALSE;
 			return( CRYPT_OK );
 		}
 
@@ -371,17 +382,20 @@ int getSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 
 		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
 			{
+#ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 
-			if( errorInfo->errorStringLength <= 0 )
+			if( errorInfo->errorStringLength > 0 )
 				{
-				/* We don't set extended error information for this atribute
-				   because it's usually read in response to an existing error, 
-				   which would overwrite the existing error information */
-				return( CRYPT_ERROR_NOTFOUND );
+				return( attributeCopy( msgData, errorInfo->errorString,
+									   errorInfo->errorStringLength ) );
 				}
-			return( attributeCopy( msgData, errorInfo->errorString,
-								   errorInfo->errorStringLength ) );
+#endif /* USE_ERRMSGS */
+
+			/* We don't set extended error information for this atribute 
+			   because it's usually read in response to an existing error, 
+			   which would overwrite the existing error information */
+			return( CRYPT_ERROR_NOTFOUND );
 			}
 
 		case CRYPT_SESSINFO_USERNAME:
@@ -424,20 +438,6 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 	REQUIRES( isAttribute( attribute ) || \
 			  isInternalAttribute( attribute ) );
 
-	/* If we're in the middle of a paired-attribute add, make sure that the 
-	   conditions under which it's occurring are valid.  In theory since 
-	   non-string attributes are never part of any paired attributes we 
-	   shouldn't really allow them to be added if we're in the middle of a 
-	   paired-attribute add but in practice this isn't such a big deal 
-	   because the only attribute add that can affect an attribute pair is 
-	   an attempt to move the attribute cursor, so we only disallow cursor- 
-	   affecting attribute adds.  This leniency makes it less difficult to 
-	   add related attributes like a server URL, user name, and port */
-	if( sessionInfoPtr->lastAddedAttributeID != CRYPT_ATTRIBUTE_NONE && \
-		( attribute == CRYPT_ATTRIBUTE_CURRENT || \
-		  attribute == CRYPT_ATTRIBUTE_CURRENT_GROUP ) )
-		return( CRYPT_ARGERROR_VALUE );
-
 	/* Handle the various information types */
 	switch( attribute )
 		{
@@ -453,7 +453,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 				return( exitError( sessionInfoPtr, attribute, 
 								   CRYPT_ERRTYPE_ATTR_ABSENT, status ) );
 			sessionInfoPtr->attributeListCurrent = attributeListPtr;
-			return( status );
+			return( CRYPT_OK );
 			}
 
 		case CRYPT_OPTION_NET_CONNECTTIMEOUT:
@@ -483,7 +483,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			   of the session as a whole, and the CRYPT_SESSINFO_-
 			   CONNECTIONACTIVE attribute records the state of the 
 			   underlying comms session.  Setting CRYPT_SESSINFO_ACTIVE for 
-			   the first time activates the comms session, and leaves it 
+			   the first time activates the comms session and leaves it 
 			   active if the underlying mechanism (e.g. HTTP 1.1 persistent 
 			   connections) supports it.  The CRYPT_SESSINFO_ACTIVE 
 			   attribute is reset once the transaction completes, and 
@@ -507,15 +507,14 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 				return( CRYPT_OK );	/* No-op */
 
 			/* If the session is in the partially-open state while we wait 
-			   for the caller to allow or disallow the session 
-			   authentication, they have to provide a clear yes or no 
-			   indication by setting the CRYPT_SESSINFO_AUTHRESPONSE to TRUE 
-			   or FALSE before they can try to continue the session 
-			   activation */
+			   for the caller to allow or disallow the session authentication 
+			   they have to provide a clear yes or no indication by setting 
+			   the CRYPT_SESSINFO_AUTHRESPONSE to TRUE or FALSE before they 
+			   can try to continue the session activation */
 			if( ( sessionInfoPtr->flags & SESSION_PARTIALOPEN ) && \
-				sessionInfoPtr->authResponse == CRYPT_UNUSED )
-				return( exitErrorInited( sessionInfoPtr,
-										 CRYPT_SESSINFO_AUTHRESPONSE ) );
+				sessionInfoPtr->authResponse == AUTHRESPONSE_NONE )
+				return( exitErrorNotInited( sessionInfoPtr,
+										    CRYPT_SESSINFO_AUTHRESPONSE ) );
 
 			/* Make sure that all of the information that we need to proceed 
 			   is present */
@@ -532,6 +531,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 				   other cryptlib objects so it's possible that an 
 				   unexpected failure at some point will leak through an 
 				   inappropriate status value */
+				DEBUG_DIAG(( "Session activate returned argError status" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_FAILED;
 				}
@@ -540,7 +540,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 
 		case CRYPT_SESSINFO_SERVER_PORT:
 			/* If there's already a transport session or network socket 
-			   specified we can't set a port as well */
+			   specified then we can't set a port as well */
 			if( sessionInfoPtr->transportSession != CRYPT_ERROR )
 				return( exitErrorInited( sessionInfoPtr,
 										 CRYPT_SESSINFO_SESSION ) );
@@ -549,8 +549,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 										 CRYPT_SESSINFO_NETWORKSOCKET ) );
 
 			return( addSessionInfo( &sessionInfoPtr->attributeList,
-									CRYPT_SESSINFO_SERVER_PORT, NULL,
-									value ) );
+									CRYPT_SESSINFO_SERVER_PORT, value ) );
 
 		case CRYPT_SESSINFO_VERSION:
 			if( value < sessionInfoPtr->protocolInfo->minVersion || \
@@ -622,43 +621,30 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 					return( CRYPT_ARGERROR_NUM1 );
 				status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, 
 									&attrValue, CRYPT_CERTINFO_CERTTYPE );
-				if( cryptStatusError( status ) ||
+				if( cryptStatusError( status ) || \
 					( attrValue != CRYPT_CERTTYPE_CERTIFICATE && \
 					  attrValue != CRYPT_CERTTYPE_CERTCHAIN ) )
 					return( CRYPT_ARGERROR_NUM1 );
 				}
-			if( ( requiredAttributeFlags & SESSION_NEEDS_PRIVKEYCACERT ) && \
-				cryptStatusError( \
-					krnlSendMessage( value, IMESSAGE_CHECK, NULL,
-									 MESSAGE_CHECK_CA ) ) )
-					return( CRYPT_ARGERROR_NUM1 );
-
-			/* Make sure that the key meets the mininum height requirements.  
-			   We only perform this check if we're explicitly being asked to
-			   perform the check and it's a server session (which has certain
-			   minimum length requirements for private keys), for client
-			   sessions the permitted length/security level is controlled by
-			   the server so we can't really perform much checking */
-			if( sessionInfoPtr->protocolInfo->requiredPrivateKeySize && \
-				isServer( sessionInfoPtr ) )
+			if( requiredAttributeFlags & SESSION_NEEDS_PRIVKEYCACERT )
 				{
-				int length;
-
-				status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE,
-										  &length, CRYPT_CTXINFO_KEYSIZE );
-				if( cryptStatusError( status ) || \
-					length < sessionInfoPtr->protocolInfo->requiredPrivateKeySize )
-					return( exitError( sessionInfoPtr,
-									   CRYPT_SESSINFO_PRIVATEKEY,
-									   CRYPT_ERRTYPE_ATTR_SIZE,
-									   CRYPT_ARGERROR_NUM1 ) );
+				status = krnlSendMessage( value, IMESSAGE_CHECK, NULL,
+										  MESSAGE_CHECK_CA );
+				if( cryptStatusError( status ) )
+					return( CRYPT_ARGERROR_NUM1 );
 				}
 
 			/* Perform any protocol-specific additional checks if necessary */
 			if( sessionInfoPtr->checkAttributeFunction != NULL )
 				{
 				status = sessionInfoPtr->checkAttributeFunction( sessionInfoPtr,
-														value, attribute );
+														&value, attribute );
+				if( status == OK_SPECIAL )
+					{
+					/* The value was dealt with as a side-effect of the check
+					   function, there's nothing more to do */
+					return( CRYPT_OK );
+					}
 				if( cryptStatusError( status ) )
 					return( status );
 				}
@@ -679,7 +665,7 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			   certificate store if not required.  This is to prevent a 
 			   session running with unnecessary privileges, we should only 
 			   be using a certificate store if it's actually required.  The 
-			   checking is already performed by the kernel, but we do it 
+			   checking is already performed by the kernel but we do it 
 			   again here just to be safe */
 			status = krnlSendMessage( value, IMESSAGE_GETATTRIBUTE, &type, 
 									  CRYPT_IATTRIBUTE_SUBTYPE );
@@ -704,11 +690,12 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 
 		case CRYPT_SESSINFO_AUTHRESPONSE:
-			sessionInfoPtr->authResponse = value;
+			sessionInfoPtr->authResponse = value ? AUTHRESPONSE_SUCCESS : \
+												   AUTHRESPONSE_FAILURE;
 			return( CRYPT_OK );
 
 		case CRYPT_SESSINFO_SESSION:
-			/* If there's already a host or network socket specified we 
+			/* If there's already a host or network socket specified then we 
 			   can't set a transport session as well */
 			if( findSessionInfo( sessionInfoPtr->attributeList,
 								 CRYPT_SESSINFO_SERVER_NAME ) != NULL )
@@ -730,8 +717,8 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			NET_CONNECT_INFO connectInfo;
 			STREAM stream;
 
-			/* If there's already a host or session specified we can't set a 
-			   network socket as well */
+			/* If there's already a host or session specified then we can't 
+			   set a network socket as well */
 			if( findSessionInfo( sessionInfoPtr->attributeList,
 								 CRYPT_SESSINFO_SERVER_NAME ) != NULL )
 				return( exitErrorInited( sessionInfoPtr,
@@ -774,22 +761,9 @@ int setSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( data, dataLength ) );
 
-	/* If we're in the middle of a paired-attribute add, make sure that the
-	   conditions under which it's occurring are valid */
-	if( sessionInfoPtr->lastAddedAttributeID != CRYPT_ATTRIBUTE_NONE )
-		{
-		switch( sessionInfoPtr->lastAddedAttributeID )
-			{
-			case CRYPT_SESSINFO_USERNAME:
-				/* Username must be followed by a password */
-				if( attribute != CRYPT_SESSINFO_PASSWORD )
-					return( CRYPT_ARGERROR_VALUE );
-				break;
-
-			default:
-				retIntError();
-			}
-		}
+	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
+	REQUIRES( isAttribute( attribute ) || \
+			  isInternalAttribute( attribute ) );
 
 	/* Handle the various information types */
 	switch( attribute )
@@ -804,28 +778,42 @@ int setSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 		case CRYPT_SESSINFO_USERNAME:
 		case CRYPT_SESSINFO_PASSWORD:
 			{
+			ATTRIBUTE_LIST *attributeListPtr = NULL;
 			int flags = isServer( sessionInfoPtr ) ? \
 						ATTR_FLAG_MULTIVALUED : ATTR_FLAG_NONE;
 			int status;
 
 			REQUIRES( dataLength > 0 && dataLength <= CRYPT_MAX_TEXTSIZE );
 
-			/* If this is a client session we can only have a single 
+			/* If this is a client session then we can only have a single 
 			   instance of this attribute */
 			if( !isServer( sessionInfoPtr ) && \
 				findSessionInfo( sessionInfoPtr->attributeList, 
 								 attribute ) != NULL )
 				return( exitErrorInited( sessionInfoPtr, attribute ) );
-				
-			/* If it's a username, make sure that it doesn't duplicate an
-			   existing one */
+
+			/* Get the last-added attribute so that we can check that it's
+			   consistent with what's being added now */
+			status = setSessionAttributeCursor( sessionInfoPtr->attributeList,
+												&attributeListPtr, 
+												CRYPT_ATTRIBUTE_CURRENT_GROUP, 
+												CRYPT_CURSOR_LAST );
 			if( attribute == CRYPT_SESSINFO_USERNAME )
 				{
+				/* It's a username make sure that the last attribute added 
+				   wasn't also a username and that it doesn't duplicate an 
+				   existing name */
+				if( cryptStatusOK( status ) && \
+					attributeListPtr->attributeID == CRYPT_SESSINFO_USERNAME )
+					return( exitErrorInited( sessionInfoPtr, 
+											 CRYPT_SESSINFO_USERNAME ) );
 				if( findSessionInfoEx( sessionInfoPtr->attributeList, 
 									   attribute, data, dataLength ) != NULL )
+					{
 					return( exitError( sessionInfoPtr, attribute,
 									   CRYPT_ERRTYPE_ATTR_PRESENT, 
 									   CRYPT_ERROR_DUPLICATE ) );
+					}
 				}
 			else
 				{
@@ -842,7 +830,8 @@ int setSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 				   exceptions, so we keep it simple and only allow passwords
 				   to be added if there's an immediately preceding
 				   username */
-				if( sessionInfoPtr->lastAddedAttributeID != CRYPT_SESSINFO_USERNAME )
+				if( cryptStatusError( status ) || \
+					attributeListPtr->attributeID != CRYPT_SESSINFO_USERNAME )
 					return( exitErrorNotInited( sessionInfoPtr, 
 												CRYPT_SESSINFO_USERNAME ) );
 				}
@@ -864,21 +853,33 @@ int setSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 				flags = ATTR_FLAG_ENCODEDVALUE;
 				}
 
+			/* Perform any protocol-specific additional checks if necessary */
+			if( sessionInfoPtr->checkAttributeFunction != NULL )
+				{
+				MESSAGE_DATA msgData;
+
+				setMessageData( &msgData, ( MESSAGE_CAST ) data, dataLength );
+				status = sessionInfoPtr->checkAttributeFunction( sessionInfoPtr,
+														&msgData, attribute );
+				if( status == OK_SPECIAL )
+					{
+					/* The value was dealt with as a side-effect of the check
+					   function, there's nothing more to do */
+					return( CRYPT_OK );
+					}
+				if( cryptStatusError( status ) )
+					return( status );
+				}
+
 			/* Remember the value */
-			status = addSessionInfoEx( &sessionInfoPtr->attributeList,
-									   attribute, data, dataLength, flags );
-			if( cryptStatusError( status ) )
-				return( status );
-			sessionInfoPtr->lastAddedAttributeID = \
-							( attribute == CRYPT_SESSINFO_USERNAME ) ? \
-							CRYPT_SESSINFO_USERNAME : CRYPT_ATTRIBUTE_NONE;
-			return( CRYPT_OK );
+			return( addSessionInfoEx( &sessionInfoPtr->attributeList,
+									  attribute, data, dataLength, flags ) );
 			}
 
 		case CRYPT_SESSINFO_SERVER_FINGERPRINT:
 			/* Remember the value */
-			return( addSessionInfo( &sessionInfoPtr->attributeList,
-									attribute, data, dataLength ) );
+			return( addSessionInfoS( &sessionInfoPtr->attributeList,
+									 attribute, data, dataLength ) );
 
 		case CRYPT_SESSINFO_SERVER_NAME:
 			return( addUrl( sessionInfoPtr, data, dataLength ) );
@@ -940,23 +941,19 @@ int deleteSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			if( attributeListPtr == NULL )
 				return( exitErrorNotFound( sessionInfoPtr, attribute ) );
 
-			/* If we're in the middle of a paired-attribute add and the 
-			   delete affects the paired attribute, delete it.  This can
-			   get quite complex because the user could (for example) add
-			   a { username, password } pair, then add a second username
-			   (but not password), and then delete the first password, which
-			   will reset the lastAddedAttributeID, leaving an orphaned
-			   password followed by an orphaned username.  There isn't any
-			   easy way to fix this short of forcing some form of group 
-			   delete of paired attributes, but this gets too complicated
-			   both to implement and to explain to the user in an error
-			   status.  What we do here is handle the simple case and let
-			   the pre-session-activation sanity check catch situations 
-			   where the user's gone out of their way to be difficult */
-			if( sessionInfoPtr->lastAddedAttributeID == attribute )
-				sessionInfoPtr->lastAddedAttributeID = CRYPT_ATTRIBUTE_NONE;
-
-			/* Delete the attribute */
+			/* Delete the attribute.  If we're in the middle of a paired-
+			   attribute add then the delete affects the paired attribute.  
+			   This can get quite complex because the user could (for 
+			   example) add a { username, password } pair, then add a second 
+			   username (but not password), and then delete the first 
+			   password, leaving an orphaned password followed by an 
+			   orphaned username.  There isn't any easy way to fix this 
+			   short of forcing some form of group delete of paired 
+			   attributes, but this gets too complicated both to implement 
+			   and to explain to the user in an error status.  What we do 
+			   here is handle the simple case and let the pre-session-
+			   activation sanity check catch situations where the user's 
+			   gone out of their way to be difficult */
 			deleteSessionInfo( &sessionInfoPtr->attributeList,
 							   &sessionInfoPtr->attributeListCurrent,
 							   ( ATTRIBUTE_LIST * ) attributeListPtr );
@@ -985,5 +982,4 @@ int deleteSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 
 	retIntError();
 	}
-
 #endif /* USE_SESSIONS */

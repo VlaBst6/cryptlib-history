@@ -114,7 +114,7 @@ void slowPoll( void )
 		close( fd );
 
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
+						 ( MESSAGE_CAST ) &quality,
 						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 		return;
 		}

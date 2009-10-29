@@ -28,6 +28,13 @@
 	  #include "bn/bn.h"
 	#endif /* Compiler-specific includes */
   #endif /* HEADER_BN_H */
+  #if defined( USE_ECC ) && !defined( HEADER_EC_H )
+	#if defined( INC_ALL )
+	  #include "ec_lcl.h"
+	#else
+	  #include "bn/ec_lcl.h"
+	#endif /* Compiler-specific includes */
+  #endif /* USE_ECC && HEADER_EC_H */
 #endif /* Extra eaders needed only for PKC contexts */
 #ifndef _CRYPTCAP_DEFINED
   #if defined( INC_ALL )
@@ -40,36 +47,43 @@
 /* Context information flags.  Most of these flags are context-type-specific,
    and are only used with some context types:
 
-	CONTEXT_DUMMY: The context is a dummy context with actions handled 
-			through an external crypto device.  When a device context is
-			created, it usually isn't instantiated at the device level until 
-			the key (and possibly other parameters) are available because
-			most devices use an atomic created-initialised-context operation
+	FLAG_DUMMY: The context is a dummy context with actions handled through 
+			an external crypto device.  When a device context is created, it 
+			usually isn't instantiated at the device level until the key 
+			(and possibly other parameters) are available because most 
+			devices use an atomic created-initialised-context operation 
 			rather than allowing incremental parameter setting like cryptlib
 			does.  To handle this, we first create a dummy context and then
 			fill in the details on demand.
 
-	CONTEXT_DUMMY_INITED: The dummy context has been initialised.  Since
-			the context isn't instantiated until required, this flag is 
-			needed to keep track of whether any cached parameters retained 
-			from the dummy state need to be set when the context is used.
+	FLAG_DUMMY_INITED: The dummy context has been initialised.  Since the 
+			context isn't instantiated until required, this flag is needed 
+			to keep track of whether any cached parameters retained from the 
+			dummy state need to be set when the context is used.
 
-	CONTEXT_HASH_INITED: The hash parameters have been inited.
-	CONTEXT_HASH_DONE: The hash operation is complete, no further hashing
-			can be done 
+	FLAG_HASH_INITED: The hash parameters have been inited.
+	FLAG_HASH_DONE: The hash operation is complete, no further hashing can 
+			be done 
 
-	CONTEXT_ISPUBLICKEY: The key is a public or private key.
-	CONTEXT_ISPRIVATEKEY:
+	FLAG_ISPUBLICKEY: The key is a public or private key.
+	FLAG_ISPRIVATEKEY:
 
-	CONTEXT_IV_SET: The IV has been set.
+	FLAG_IV_SET: The IV has been set.
+	FLAG_KEY_SET: The key has been initialised.
+	FLAG_PGPKEYID_SET: The PGP keyID has been set (this is only valid for 
+			RSA keys, and may not be enabled if we're not using PGP).
+	FLAG_OPENPGPKEYID_SET: The OpenPGP keyID has been set (this may not be 
+			enabled if we're not using PGP).
 
-	CONTEXT_KEY_SET: The key has been initialised.
+	FLAG_PERSISTENT: The context is backed by a keyset or crypto device.
 
-	CONTEXT_PERSISTENT: The context is backed by a keyset or crypto device.
-
-	CONTEXT_SIDECHANNELPROTECTION: The context has side-channel protection
+	FLAG_SIDECHANNELPROTECTION: The context has side-channel protection
 			(additional checking for crypto operations, blinding, and so
-			on) enabled */
+			on) enabled.
+	
+	FLAG_FLAG_STATICCONTEXT: The context data has been instantiated via
+			staticInitContext() for internal use and doesn't correspond to 
+			an actual cryptlib object */
 
 #define CONTEXT_FLAG_NONE			0x0000	/* No context flag */
 #define CONTEXT_FLAG_KEY_SET		0x0001	/* Key has been set */
@@ -83,16 +97,10 @@
 									0x0080	/* Enabled side-channel prot.in ops */
 #define CONTEXT_FLAG_HASH_INITED	0x0100	/* Hash parameters have been inited */
 #define CONTEXT_FLAG_HASH_DONE		0x0200	/* Hash operation is complete */
-#define CONTEXT_FLAG_MAX			0x02FF	/* Maximum possible flag value */
-
-/* Predefined ECC parameter sets */
-
-typedef enum {
-	ECC_PARAM_NONE,		/* No ECC parameter type */
-	ECC_PARAM_P192,		/* NIST P192/X9.62 P192v1 curve */
-	ECC_PARAM_P256,		/* NIST P256/X9.62 P256v1 curve */
-	ECC_PARAM_LAST		/* Last valid ECC parameter type */
-	} ECC_PARAM_TYPE;
+#define CONTEXT_FLAG_PGPKEYID_SET	0x0400	/* PGP keyID is set */
+#define CONTEXT_FLAG_OPENPGPKEYID_SET 0x0800 /* OpenPGP keyID is set */
+#define CONTEXT_FLAG_STATICCONTEXT	0x1000	/* Static context */
+#define CONTEXT_FLAG_MAX			0x1FFF	/* Maximum possible flag value */
 
 /****************************************************************************
 *																			*
@@ -165,7 +173,6 @@ typedef struct {
 	BYTE pgp2KeyID[ PGP_KEYID_SIZE + 8 ];/* PGP 2 key ID for this key */
 	BUFFER_FIXED( PGP_KEYID_SIZE ) \
 	BYTE openPgpKeyID[ PGP_KEYID_SIZE + 8 ];/* OpenPGP key ID for this key */
-	BOOLEAN openPgpKeyIDSet;		/* Whether the OpenPGP key ID has been set */
 	time_t pgpCreationTime;			/* Key creation time (for OpenPGP ID) */
 
 	/* Public-key encryption keying information.  Since each algorithm has
@@ -189,8 +196,12 @@ typedef struct {
 	BN_MONT_CTX montCTX2;
 	BN_MONT_CTX montCTX3;
 #ifdef USE_ECC
-	ECC_PARAM_TYPE eccParamType;
+	CRYPT_ECCCURVE_TYPE curveType;	/* Additional info.needed for ECC ctxs.*/
+	BOOLEAN isECC;
+	EC_GROUP *ecCTX;
+	EC_POINT *ecPoint;
 #endif /* USE_ECC */
+	BN_ULONG checksum;				/* Checksum for key value */
 
 	/* Temporary workspace values used to avoid having to allocate and
 	   deallocate them on each PKC operation, and to keep better control
@@ -199,7 +210,8 @@ typedef struct {
 	   above, since they're not used for keying material */
 	BIGNUM tmp1, tmp2, tmp3;
 #ifdef USE_ECC
-	BIGNUM tmp4;
+	BIGNUM tmp4, tmp5;
+	EC_POINT *tmpPoint;
 #endif /* USE_ECC */
 	BN_CTX *bnCTX;
 	#define CONTEXT_FLAG_PBO 0x08
@@ -283,7 +295,7 @@ typedef struct {
 
 	/* State information needed to allow background key generation */
 #ifdef USE_THREADS
-	THREAD_STATE threadState;
+//	THREAD_STATE threadState;
 #endif /* OS's with threads */
 	} PKC_INFO;
 #endif /* PKC_CONTEXT */
@@ -353,6 +365,15 @@ typedef struct CI {
 	   objects but a mixture of both require a second handle to the other 
 	   part of the object in the device */
 	long deviceObject, altDeviceObject;
+
+  #ifdef USE_HARDWARE
+	/* When data used to instantiate a context is stored in a device we may
+	   need a unique ID value to locate the data, the following value 
+	   contains this storage ID */
+	BUFFER_FIXED( KEYID_SIZE ) \
+	BYTE deviceStorageID[ KEYID_SIZE + 8 ];
+	BOOLEAN deviceStorageIDset;
+  #endif /* USE_HARDWARE */
 #endif /* USE_DEVICES */
 
 	/* The label for this object, typically used to identify stored keys */
@@ -428,13 +449,13 @@ typedef struct CI {
 #define eccParam_b			param3
 #define eccParam_gx			param4
 #define eccParam_gy			param5
-#define eccParam_r			param6
+#define eccParam_n			param6
 #define eccParam_h			param7
 #define eccParam_qx			param8
 #define eccParam_qy			param9
 #define eccParam_d			param10
 #define eccParam_mont_p		montCTX1
-#define eccParam_mont_r		montCTX2
+#define eccParam_mont_n		montCTX2
 
 /* Minimum and maximum permitted lengths for various PKC components.  These
    can be loaded in various ways (read from ASN.1 data, read from 
@@ -470,29 +491,29 @@ typedef struct CI {
 #define DLPPARAM_MIN_X		bitsToBytes( 128 )
 #define DLPPARAM_MAX_X		CRYPT_MAX_PKCSIZE
 
-#define DLPPARAM_MIN_R		DLPPARAM_MIN_Q	/* For DSA sigs */
-#define DLPPARAM_MIN_S		DLPPARAM_MIN_Q	/* For DSA sigs */
+#define DLPPARAM_MIN_SIG_R	DLPPARAM_MIN_Q	/* For DSA sigs */
+#define DLPPARAM_MIN_SIG_S	DLPPARAM_MIN_Q	/* For DSA sigs */
 
 #define ECCPARAM_MIN_P		MIN_PKCSIZE_ECC
 #define ECCPARAM_MAX_P		CRYPT_MAX_PKCSIZE_ECC
-#define ECCPARAM_MIN_A		1	/* Need to set to actual values */
-#define ECCPARAM_MAX_A		4	/* when implemented */
-#define ECCPARAM_MIN_B		1
-#define ECCPARAM_MAX_B		4
+#define ECCPARAM_MIN_A		MIN_PKCSIZE_ECC / 2
+#define ECCPARAM_MAX_A		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_B		MIN_PKCSIZE_ECC / 2
+#define ECCPARAM_MAX_B		CRYPT_MAX_PKCSIZE_ECC
 #define ECCPARAM_MIN_GX		1
-#define ECCPARAM_MAX_GX		4
+#define ECCPARAM_MAX_GX		CRYPT_MAX_PKCSIZE_ECC
 #define ECCPARAM_MIN_GY		1
-#define ECCPARAM_MAX_GY		4
-#define ECCPARAM_MIN_R		1
-#define ECCPARAM_MAX_R		4
-#define ECCPARAM_MIN_H		1
-#define ECCPARAM_MAX_H		4
-#define ECCPARAM_MIN_QX		1
-#define ECCPARAM_MAX_QX		4
-#define ECCPARAM_MIN_QY		1
-#define ECCPARAM_MAX_QY		4
-#define ECCPARAM_MIN_D		1
-#define ECCPARAM_MAX_D		4
+#define ECCPARAM_MAX_GY		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_N		MIN_PKCSIZE_ECC
+#define ECCPARAM_MAX_N		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_H		MIN_PKCSIZE_ECC
+#define ECCPARAM_MAX_H		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_QX		MIN_PKCSIZE_ECC / 2
+#define ECCPARAM_MAX_QX		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_QY		MIN_PKCSIZE_ECC / 2
+#define ECCPARAM_MAX_QY		CRYPT_MAX_PKCSIZE_ECC
+#define ECCPARAM_MIN_D		MIN_PKCSIZE_ECC / 2
+#define ECCPARAM_MAX_D		CRYPT_MAX_PKCSIZE_ECC
 
 /* Because there's no really clean way to throw an exception in C and the
    bnlib routines don't carry around state information like cryptlib objects
@@ -598,8 +619,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr, 
 				   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE keyType, 
 				   IN_BUFFER( keyDataLen ) const void *keyData, 
-				   IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
-					const int keyDataLen );
+				   IN_LENGTH_SHORT const int keyDataLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int setKeyComponents( INOUT CONTEXT_INFO *contextInfoPtr, 
 					  IN_BUFFER( keyDataLen ) const void *keyData, 
@@ -614,9 +634,8 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 #ifdef PKC_CONTEXT
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initDLPkey( INOUT CONTEXT_INFO *contextInfoPtr, const BOOLEAN isDH );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int checkDLPkey( const CONTEXT_INFO *contextInfoPtr, const BOOLEAN isPKCS3 );
+int initCheckDLPkey( INOUT CONTEXT_INFO *contextInfoPtr, 
+					 const BOOLEAN isDH, const BOOLEAN isPKCS3 );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateDLPkey( INOUT CONTEXT_INFO *contextInfoPtr, 
 					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits );
@@ -626,15 +645,14 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateRSAkey( INOUT CONTEXT_INFO *contextInfoPtr, 
 					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initECCkey( INOUT CONTEXT_INFO *contextInfoPtr );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int checkECCkey( const CONTEXT_INFO *contextInfoPtr );
+int initCheckECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
+					 const BOOLEAN isECDH );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr, 
 					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int loadECCparams( INOUT CONTEXT_INFO *contextInfoPtr, 
-				   const ECC_PARAM_TYPE eccParamType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID,
+					 OUT_INT_Z int *fieldSize );
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateBignum( INOUT BIGNUM *bn, 
@@ -644,15 +662,20 @@ STDC_NONNULL_ARG( ( 1 ) ) \
 void clearTempBignums( INOUT PKC_INFO *pkcInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initContextBignums( INOUT PKC_INFO *pkcInfo, 
-						IN_RANGE( 0, 3 ) const int sideChannelProtectionLevel );
+						IN_RANGE( 0, 3 ) const int sideChannelProtectionLevel,
+						const BOOLEAN isECC );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void freeContextBignums( INOUT PKC_INFO *pkcInfo, 
 						 IN_FLAGS( CONTEXT ) const int contextFlags );
-
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo, 
+							 IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo );
 #endif /* PKC_CONTEXT */
 
 /* Key read/write routines */
 
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initKeyID( INOUT CONTEXT_INFO *contextInfoPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void initKeyRead( INOUT CONTEXT_INFO *contextInfoPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \

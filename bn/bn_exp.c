@@ -136,7 +136,10 @@ int BN_exp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 
 	BN_CTX_start(ctx);
 	if ((r == a) || (r == p))
+		{
 		rr = BN_CTX_get(ctx);
+		if( rr == NULL ) goto err;		/* pcg */
+		}
 	else
 		rr = r;
 	if ((v = BN_CTX_get(ctx)) == NULL) goto err;

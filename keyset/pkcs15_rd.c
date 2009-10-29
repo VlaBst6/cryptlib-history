@@ -195,6 +195,7 @@ static int copyObjectPayloadInfo( INOUT PKCS15_INFO *pkcs15infoPtr,
 			/* We don't try and return an error for this, it's not something
 			   that we can make use of but if it's ever reached it just ends 
 			   up as an empty (non-useful) object entry */
+			DEBUG_DIAG(( "Found secret-key object" ));
 			assert( DEBUG_WARN );
 			break;
 
@@ -210,6 +211,7 @@ static int copyObjectPayloadInfo( INOUT PKCS15_INFO *pkcs15infoPtr,
 			/* We don't try and return an error for this, it's not something
 			   that we can make use of but if it's ever reached it just ends 
 			   up as an empty (non-useful) object entry */
+			DEBUG_DIAG(( "Found unknown object type %d", type ));
 			assert( DEBUG_WARN );
 			break;
 		}
@@ -225,13 +227,14 @@ static int copyObjectPayloadInfo( INOUT PKCS15_INFO *pkcs15infoPtr,
 
 /* Read public-key components from a PKCS #15 object entry */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 7, 8, 9, 10, 11 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 8, 9, 10, 11, 12 ) ) \
 int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							 IN_HANDLE const CRYPT_KEYSET iCryptKeysetCallback,
 							 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 							 IN_BUFFER( keyIDlength ) const void *keyID, 
 							 IN_LENGTH_KEYID const int keyIDlength,
 							 const BOOLEAN publicComponentsOnly,
+							 IN_HANDLE const CRYPT_DEVICE iDeviceObject, 
 							 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContextPtr,
 							 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iDataCertPtr,
 							 OUT_FLAGS_Z( ACTION ) int *pubkeyActionFlags, 
@@ -259,6 +262,8 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 			  keyIDtype == CRYPT_IKEYID_ISSUERID );
 	REQUIRES( keyIDlength >= MIN_NAME_LENGTH && \
 			  keyIDlength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( iDeviceObject == SYSTEM_OBJECT_HANDLE || \
+			  isHandleRangeValid( iDeviceObject ) );
 	REQUIRES( errorInfo != NULL );
 
 	/* Clear return values */
@@ -305,7 +310,7 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 			sMemConnect( &stream, dynData( pubKeyDB ),
 						 dynLength( pubKeyDB ) );
 			status = iCryptReadSubjectPublicKey( &stream, &iCryptContext,
-												 TRUE );
+												 iDeviceObject, TRUE );
 			sMemDisconnect( &stream );
 			dynDestroy( &pubKeyDB );
 			if( cryptStatusError( status ) )
@@ -332,6 +337,7 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 					 ( BYTE * ) pkcs15infoPtr->pubKeyData + pubKeyStartOffset,
 					 pubKeyTotalSize - pubKeyStartOffset );
 		status = iCryptReadSubjectPublicKey( &stream, &iCryptContext,
+											 iDeviceObject, 
 											 !publicComponentsOnly );
 		sMemDisconnect( &stream );
 		if( cryptStatusError( status ) )
@@ -386,18 +392,19 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 
 /* Read private-key components from a PKCS #15 object entry */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 6 ) ) \
 int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 							  IN_BUFFER( passwordLength ) const void *password, 
 							  IN_LENGTH_NAME const int passwordLength, 
+							  const BOOLEAN isStorageObject, 
 							  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CONTEXT iSessionKey;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MECHANISM_WRAP_INFO mechanismInfo;
 	MESSAGE_DATA msgData;
-	QUERY_INFO queryInfo, contentQueryInfo;
+	QUERY_INFO queryInfo = DUMMY_INIT_STRUCT, contentQueryInfo;
 	STREAM stream;
 	const int privKeyStartOffset = pkcs15infoPtr->privKeyOffset;
 	const int privKeyTotalSize = pkcs15infoPtr->privKeyDataSize;
@@ -406,11 +413,17 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	int tag, status;
 
 	assert( isReadPtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
-	assert( isReadPtr( password, passwordLength ) );
+	assert( ( isStorageObject && \
+			  password == NULL && passwordLength == 0 ) || \
+			( !isStorageObject && \
+			  isReadPtr( password, passwordLength ) ) );
 
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
-	REQUIRES( passwordLength >= MIN_NAME_LENGTH && \
-			  passwordLength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( ( isStorageObject && \
+				password == NULL && passwordLength == 0 ) || \
+			  ( !isStorageObject && \
+				passwordLength >= MIN_NAME_LENGTH && \
+				passwordLength < MAX_ATTRIBUTE_SIZE ) );
 	REQUIRES( errorInfo != NULL );
 
 	/* Skip the outer wrapper, version number, and header for the SET OF 
@@ -436,10 +449,38 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 				  "Key is protected using AuthEnvelopedData, this requires "
 				  "a newer version of cryptlib to process" ) );
 		}
+	if( isStorageObject )
+		{
+		BYTE storageID[ KEYID_SIZE + 8 ];
+		int length;
+
+		/* If this is a PKCS #15 storage object then it'll contain only 
+		   private-key metadata, with the content being merely a reference
+		   to external hardware, so we just read the storage object
+		   reference and save it to the dummy context */
+		if( tag != BER_SEQUENCE )
+			{
+			sMemDisconnect( &stream );
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Expected device storage ID, not item type %02X",
+					  tag ) );
+			}
+		readSequence( &stream, NULL );
+		status = readOctetString( &stream, storageID, &length, 
+								  KEYID_SIZE, KEYID_SIZE );
+		sMemDisconnect( &stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		setMessageData( &msgData, storageID, KEYID_SIZE );
+		return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
+								 &msgData, CRYPT_IATTRIBUTE_DEVICESTORAGEID ) );
+		}
 	readConstructed( &stream, NULL, CTAG_OV_DIRECTPROTECTED );
 	readShortInteger( &stream, NULL );
-	readSet( &stream, NULL );
-	status = queryAsn1Object( &stream, &queryInfo );
+	status = readSet( &stream, NULL );
+	if( cryptStatusOK( status ) )
+		status = queryAsn1Object( &stream, &queryInfo );
 	if( cryptStatusOK( status ) && \
 		queryInfo.type != CRYPT_OBJECT_ENCRYPTED_KEY )
 		status = CRYPT_ERROR_BADDATA;
@@ -520,7 +561,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 		}
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) password, passwordLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) password, passwordLength );
 		status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S, 
 								  &msgData, CRYPT_CTXINFO_KEYING_VALUE );
 		}
@@ -544,7 +585,7 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 		}
 
 	/* Import the encrypted key into the PKC context */
-	setMechanismWrapInfo( &mechanismInfo, ( void * ) encryptedContent,
+	setMechanismWrapInfo( &mechanismInfo, ( MESSAGE_CAST ) encryptedContent,
 						  encryptedContentLength, NULL, 0, iCryptContext,
 						  iSessionKey );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_IMPORT,
@@ -553,8 +594,32 @@ int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 	krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
-		retExt( status, 
-				( status, errorInfo, "Couldn't unwrap private key" ) );
+		/* We can end up here due to a whole range of possible low-level 
+		   problems, to make things easier on the caller we provide a 
+		   somewhat more detailed breakdown of possible causes */
+		switch( status )
+			{
+			case CRYPT_ERROR_WRONGKEY:
+				retExt( status,
+						( status, errorInfo, 
+						  "Couldn't unwrap private key, probably due to "
+						  "incorrect decryption key being used" ) );
+
+			case CRYPT_ERROR_BADDATA:
+				retExt( status,
+						( status, errorInfo, 
+						  "Private key data corrupted or invalid" ) );
+
+			case CRYPT_ERROR_INVALID:
+				retExt( status,
+						( status, errorInfo, 
+						  "Private key components failed validity check" ) );
+
+			default:
+				retExt( status,
+						( status, errorInfo, 
+						  "Couldn't unwrap/import private key" ) );
+			}
 		}
 	return( CRYPT_OK );
 	}
@@ -689,11 +754,7 @@ int readKeyset( INOUT STREAM *stream,
 		 cryptStatusOK( status ) && stell( stream ) < endPos && \
 			iterationCount < FAILSAFE_ITERATIONS_MED; iterationCount++ )
 		{
-		typedef struct {
-			int tag;
-			PKCS15_OBJECT_TYPE type;
-			} TAGTOTYPE_INFO;
-		static const TAGTOTYPE_INFO tagToTypeTbl[] = {
+		static const MAP_TABLE tagToTypeTbl[] = {
 			{ CTAG_PO_PRIVKEY, PKCS15_OBJECT_PRIVKEY },
 			{ CTAG_PO_PUBKEY, PKCS15_OBJECT_PUBKEY },
 			{ CTAG_PO_TRUSTEDPUBKEY, PKCS15_OBJECT_PUBKEY },
@@ -702,35 +763,25 @@ int readKeyset( INOUT STREAM *stream,
 			{ CTAG_PO_TRUSTEDCERT, PKCS15_OBJECT_CERT },
 			{ CTAG_PO_USEFULCERT, PKCS15_OBJECT_CERT },
 			{ CTAG_PO_DATA, PKCS15_OBJECT_DATA },
-			{ CTAG_PO_AUTH, PKCS15_OBJECT_NONE },
-			{ CRYPT_ERROR, PKCS15_OBJECT_NONE }, 
-				{ CRYPT_ERROR, PKCS15_OBJECT_NONE }
+			{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 			};
 		PKCS15_OBJECT_TYPE type = PKCS15_OBJECT_NONE;
-		int tag, innerEndPos, i, innerIterationCount;
+		int tag, value, innerEndPos, innerIterationCount;
 
 		/* Map the object tag to a PKCS #15 object type */
 		tag = peekTag( stream );
 		if( cryptStatusError( tag ) )
 			return( tag );
 		tag = EXTRACT_CTAG( tag );
-		for( i = 0; tagToTypeTbl[ i ].tag != CRYPT_ERROR && \
-					i < FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ); 
-			 i++ )
-			{
-			if( tagToTypeTbl[ i ].tag == tag )
-				{
-				type = tagToTypeTbl[ i ].type;
-				break;
-				}
-			}
-		ENSURES( i < FAILSAFE_ARRAYSIZE( tagToTypeTbl, TAGTOTYPE_INFO ) );
-		if( type == PKCS15_OBJECT_NONE )
+		status = mapValue( tag, &value, tagToTypeTbl,
+						   FAILSAFE_ARRAYSIZE( tagToTypeTbl, MAP_TABLE ) );
+		if( cryptStatusError( status ) )
 			{
 			retExt( CRYPT_ERROR_BADDATA, 
 					( CRYPT_ERROR_BADDATA, errorInfo, 
 					  "Invalid PKCS #15 object type %02X", tag ) );
 			}
+		type = value;
 
 		/* Read the [n] [0] wrapper to find out what we're dealing with.  
 		   Note that we set the upper limit at MAX_INTLENGTH rather than

@@ -86,7 +86,7 @@ int readMessageDigest( INOUT STREAM *stream,
 
 	/* Read the message digest, enforcing sensible size values */
 	readSequence( stream, NULL );
-	status = readAlgoID( stream, hashAlgo );
+	status = readAlgoID( stream, hashAlgo, ALGOID_CLASS_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
 	return( readOctetString( stream, hash, hashSize, 16, hashMaxLen ) );
@@ -381,7 +381,7 @@ int readCMSencrHeader( INOUT STREAM *stream,
 	status = readOID( stream, oidInfo, noOidInfoEntries, &selectionID );
 	if( cryptStatusOK( status ) )
 		status = readContextAlgoID( stream, iCryptContext, queryInfoPtr,
-									DEFAULT_TAG );
+									DEFAULT_TAG, ALGOID_CLASS_CRYPT );
 	if( cryptStatusError( status ) )
 		return( status );
 

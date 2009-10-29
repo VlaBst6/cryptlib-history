@@ -110,6 +110,8 @@ static MD2_INT S[256]={
 	0xDB, 0x99, 0x8D, 0x33, 0x9F, 0x11, 0x83, 0x14,
 	};
 
+#if 0
+
 const char *MD2_options(void)
 	{
 	if (sizeof(MD2_INT) == 1)
@@ -117,6 +119,7 @@ const char *MD2_options(void)
 	else
 		return("md2(int)");
 	}
+#endif
 
 void MD2_Init(MD2_CTX *c)
 	{

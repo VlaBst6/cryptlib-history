@@ -94,7 +94,7 @@
 /* The maximum size of a certificate in binary and base64-encoded form */
 
 #define MAX_CERT_SIZE		2048
-#define MAX_ENCODED_CERT_SIZE ( MAX_CERT_SIZE * 4 ) / 3
+#define MAX_ENCODED_CERT_SIZE ( ( MAX_CERT_SIZE * 4 ) / 3 )
 
 /* Keyset information flags */
 
@@ -216,6 +216,12 @@ typedef struct {
 	/* The I/O stream and file name */
 	STREAM stream;					/* I/O stream for key file */
 	char fileName[ MAX_PATH_LENGTH + 8 ];/* Name of key file */
+
+	/* If this keyset is being used as a structured storage object for a 
+	   hardware device then we need to record the device handle so that we
+	   can associate any items retrieved from the keyset with the 
+	   hardware */
+	CRYPT_DEVICE iHardwareDevice;
 	} FILE_INFO;
 
 typedef struct DI {
@@ -265,7 +271,7 @@ typedef struct DI {
 									const char *command,
 								  IN_LENGTH_SHORT_Z const int commandLength, 
 								  OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
-									char *data, 
+									void *data, 
 								  IN_LENGTH_SHORT_Z const int dataMaxLength,  
 								  OUT_LENGTH_SHORT_Z int *dataLength, 
 								  IN_OPT const void *boundData, 
@@ -300,7 +306,7 @@ typedef struct DI {
 	int ( *performQueryFunction )( INOUT struct DI *dbmsInfo, 
 								   IN_STRING_OPT const char *command,
 								   OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
-									char *data, 
+									void *data, 
 								   IN_LENGTH_SHORT_Z const int dataMaxLength, 
 								   OUT_LENGTH_SHORT_Z int *dataLength, 
 								   IN const void *boundData,
@@ -483,13 +489,8 @@ typedef struct KI {
 	CRYPT_ATTRIBUTE_TYPE errorLocus;/* Error locus */
 	CRYPT_ERRTYPE_TYPE errorType;	/* Error type */
 
-	/* Low-level error information.  Since this is fairly space-consuming, we
-	   only use it if we're using one of the heavyweight keyset types that 
-	   require it */
-#if defined( USE_DBMS ) || defined( USE_HTTP ) || defined( USE_LDAP )
-	#define KEYSET_HAS_ERRORINFO
+	/* Low-level error information */
 	ERROR_INFO errorInfo;
-#endif /* USE_DBMS || USE_HTTP || USE_LDAP */
 
 	/* The object's handle and the handle of the user who owns this object.
 	   The former is used when sending messages to the object when only the

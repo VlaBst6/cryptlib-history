@@ -37,6 +37,7 @@ typedef struct {
 	   associated with the signing key (usually the system device, but can
 	   be a crypto device) used to obtain the signing time.  The TSP session
 	   is an optional session that's used to timestamp the signature */
+	BOOLEAN useDefaultAttributes;		/* Whether we provide default attrs.*/
 	CRYPT_CERTIFICATE iCmsAttributes;	/* CMS attributes */
 	CRYPT_CONTEXT iMessageHash;			/* Hash for MessageDigest */
 	CRYPT_HANDLE iTimeSource;			/* Time source for signing time */
@@ -55,9 +56,10 @@ typedef struct {
 	int encodedAttributeSize;
 	} CMS_ATTRIBUTE_INFO;
 
-#define initCmsAttributeInfo( attributeInfo, format, cmsAttributes, messageHash, timeSource, tspSession ) \
+#define initCmsAttributeInfo( attributeInfo, format, useDefault, cmsAttributes, messageHash, timeSource, tspSession ) \
 		memset( attributeInfo, 0, sizeof( CMS_ATTRIBUTE_INFO ) ); \
 		( attributeInfo )->formatType = format; \
+		( attributeInfo )->useDefaultAttributes = useDefault; \
 		( attributeInfo )->iCmsAttributes = cmsAttributes; \
 		( attributeInfo )->iMessageHash = messageHash; \
 		( attributeInfo )->iTimeSource = timeSource; \
@@ -223,7 +225,7 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 	sMemDisconnect( &stream );
 #else	/* Broken TSP not-quite-countersignature */
 	krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
-					 ( void * ) dataSignature, dataSignatureSize );
+					 ( MESSAGE_CAST ) dataSignature, dataSignatureSize );
 #endif /* 1 */
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, "", 0 );
@@ -369,7 +371,7 @@ static int hashCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 
 		if( currentTime > MIN_TIME_VALUE )
 			{
-			setMessageData( &msgData, ( void * ) &currentTime,
+			setMessageData( &msgData, ( MESSAGE_CAST ) &currentTime,
 							sizeof( time_t ) );
 			( void ) krnlSendMessage( cmsAttributeInfo->iCmsAttributes, 
 									  IMESSAGE_DELETEATTRIBUTE, NULL,
@@ -422,7 +424,7 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 								const BOOLEAN lengthCheckOnly )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	BOOLEAN createdLocalAttributes = FALSE, createdHashContext = FALSE;
+	BOOLEAN createdHashContext = FALSE;
 	int status;
 
 	assert( isWritePtr( cmsAttributeInfo, sizeof( CMS_ATTRIBUTE_INFO ) ) );
@@ -432,8 +434,12 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 
 	REQUIRES( cmsAttributeInfo->formatType == CRYPT_FORMAT_CMS || \
 			  cmsAttributeInfo->formatType == CRYPT_FORMAT_SMIME );
-	REQUIRES( ( cmsAttributeInfo->iCmsAttributes == CRYPT_USE_DEFAULT ) || \
-			  isHandleRangeValid( cmsAttributeInfo->iCmsAttributes ) );
+	REQUIRES( ( cmsAttributeInfo->iCmsAttributes == CRYPT_UNUSED && \
+				cmsAttributeInfo->useDefaultAttributes == FALSE ) || \
+			  ( cmsAttributeInfo->iCmsAttributes == CRYPT_UNUSED && \
+				cmsAttributeInfo->useDefaultAttributes == TRUE ) || \
+			  ( isHandleRangeValid( cmsAttributeInfo->iCmsAttributes ) && \
+			    cmsAttributeInfo->useDefaultAttributes == FALSE ) );
 	REQUIRES( isHandleRangeValid( cmsAttributeInfo->iMessageHash ) );
 	REQUIRES( isHandleRangeValid( cmsAttributeInfo->iTimeSource ) );
 	REQUIRES( ( cmsAttributeInfo->iTspSession == CRYPT_UNUSED ) || \
@@ -450,7 +456,7 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 	cmsAttributeInfo->encodedAttributes = cmsAttributeInfo->attributeBuffer;
 
 	/* If the user hasn't supplied the attributes, generate them ourselves */
-	if( cmsAttributeInfo->iCmsAttributes == CRYPT_USE_DEFAULT )
+	if( cmsAttributeInfo->useDefaultAttributes )
 		{
 		setMessageCreateObjectInfo( &createInfo,
 									CRYPT_CERTTYPE_CMS_ATTRIBUTES );
@@ -460,8 +466,8 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 		if( cryptStatusError( status ) )
 			return( status );
 		cmsAttributeInfo->iCmsAttributes = createInfo.cryptHandle;
-		createdLocalAttributes = TRUE;
 		}
+	ENSURES( isHandleRangeValid( cmsAttributeInfo->iCmsAttributes ) );
 
 	/* If it's an S/MIME (vs.pure CMS) signature add the sMIMECapabilities 
 	   to further bloat things up.  Since these are no-value attributes 
@@ -481,7 +487,7 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 		status = hashCmsAttributes( cmsAttributeInfo, createInfo.cryptHandle, 
 									lengthCheckOnly );
 		}
-	if( createdLocalAttributes )
+	if( cmsAttributeInfo->useDefaultAttributes )
 		{
 		krnlSendNotifier( cmsAttributeInfo->iCmsAttributes, 
 						  IMESSAGE_DECREFCOUNT );
@@ -506,27 +512,29 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 *																			*
 ****************************************************************************/
 
-/* Create a CMS signature.  The extraData parameter contains the information 
-   for signed attributes, and can take one of three values:
+/* Create a CMS signature.  The use of authenticated attributes is a three-
+   way choice:
 
-	Cert.object handle: Signed attributes to use.
+	useDefaultAuthAttr = FALSE,		No attributes.
+	iAuthAttr = CRYPT_UNUSED
 
-	CRYPT_USE_DEFAULT: Generate default signing attributes when we create 
-					   the signature.
+	useDefaultAuthAttr = TRUE,		We supply default attributes.
+	iAuthAttr = CRYPT_UNUSED
 
-	CRYPT_UNUSED: Don't use signing attributes */
+	useDefaultAuthAttr = FALSE,		Caller has supplied attributes
+	iAuthAttr = validhandle */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
-							void *signature, 
-						IN_LENGTH_Z const int sigMaxLength, 
+						void *signature, IN_LENGTH_Z const int sigMaxLength, 
 						OUT_LENGTH_Z int *signatureLength,
 						IN_HANDLE const CRYPT_CONTEXT signContext,
 						IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						IN_HANDLE_OPT const CRYPT_CERTIFICATE extraData,
+						const BOOLEAN useDefaultAuthAttr,
+						IN_HANDLE_OPT const CRYPT_CERTIFICATE iAuthAttr,
 						IN_HANDLE_OPT const CRYPT_SESSION iTspSession,
 						IN_ENUM( CRYPT_FORMAT ) \
-							const CRYPT_FORMAT_TYPE formatType )
+						const CRYPT_FORMAT_TYPE formatType )
 	{
 	CRYPT_CONTEXT iCmsHashContext = iHashContext;
 	CRYPT_CERTIFICATE iSigningCert;
@@ -548,9 +556,12 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 				sigMaxLength < MAX_INTLENGTH ) );
 	REQUIRES( isHandleRangeValid( signContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
-	REQUIRES( ( extraData == CRYPT_UNUSED ) || \
-			  ( extraData == CRYPT_USE_DEFAULT ) || \
-			  isHandleRangeValid( extraData ) );
+	REQUIRES( ( iAuthAttr == CRYPT_UNUSED && \
+				useDefaultAuthAttr == FALSE ) || \
+			  ( iAuthAttr == CRYPT_UNUSED && \
+				useDefaultAuthAttr == TRUE ) || \
+			  ( isHandleRangeValid( iAuthAttr ) && \
+			    useDefaultAuthAttr == FALSE ) );
 	REQUIRES( ( iTspSession == CRYPT_UNUSED ) || \
 			  isHandleRangeValid( iTspSession ) );
 	REQUIRES( formatType == CRYPT_FORMAT_CMS || \
@@ -559,10 +570,11 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	/* Clear return value */
 	*signatureLength = 0;
 
-	initCmsAttributeInfo( &cmsAttributeInfo, formatType, extraData, \
-						  iHashContext, signContext, iTspSession );
+	initCmsAttributeInfo( &cmsAttributeInfo, formatType, 
+						  useDefaultAuthAttr, iAuthAttr, iHashContext, 
+						  signContext, iTspSession );
 
-	/* Get the message hash algo and signing cert */
+	/* Get the message hash algo and signing certificate */
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
@@ -574,7 +586,7 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 
 	/* If we're using signed attributes, set them up to be added to the
 	   signature info */
-	if( cmsAttributeInfo.iCmsAttributes != CRYPT_UNUSED )
+	if( useDefaultAuthAttr || iAuthAttr != CRYPT_UNUSED )
 		{
 		status = createCmsAttributes( &cmsAttributeInfo, &iCmsHashContext, 
 									  hashAlgo, ( signature == NULL ) ? \
@@ -627,18 +639,18 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		   size increase is just a guess since we can't really be sure how
 		   much bigger it'll get without contacting the TSA, however this
 		   should be big enough to hold a simple SignedData value without
-		   attached certs.  If a TSA gets the implementation wrong and
-		   returns a timestamp with an attached cert chain and the chain is
-		   too large the worst that'll happen is that we'll get a
-		   CRYPT_ERROR_OVERFLOW when we try and read the TSA data from the
-		   session object.  Note that this behaviour is envelope-specific
-		   and assumes that we're being called from the enveloping code, 
-		   this is curently the only location from which we can be called 
-		   because a timestamp only makes sense as a countersignature on CMS 
-		   data.  It's somewhat ugly because it asumes internal knowledge
-		   of the envelope abstraction but there isn't really any clean way
-		   to handle this because we can't tell in advance how much data the
-		   TSA will send us */
+		   attached certificates.  If a TSA gets the implementation wrong 
+		   and returns a timestamp with an attached certificate chain and 
+		   the chain is too large the worst that'll happen is that we'll 
+		   get a CRYPT_ERROR_OVERFLOW when we try and read the TSA data 
+		   from the session object.  Note that this behaviour is envelope-
+		   specific and assumes that we're being called from the enveloping 
+		   code, this is curently the only location from which we can be 
+		   called because a timestamp only makes sense as a countersignature 
+		   on CMS data.  It's somewhat ugly because it asumes internal 
+		   knowledge of the envelope abstraction but there isn't really any 
+		   clean way to handle this because we can't tell in advance how 
+		   much data the TSA will send us */
 		if( MIN_BUFFER_SIZE - length <= 1024 )
 			length = roundUp( length, MIN_BUFFER_SIZE ) + MIN_BUFFER_SIZE;
 		else

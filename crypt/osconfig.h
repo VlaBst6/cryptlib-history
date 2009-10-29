@@ -1,6 +1,10 @@
 #ifndef _OSCONFIG_DEFINED
 #define _OSCONFIG_DEFINED
 
+/* Pull in cryptlib-wide configuration options */
+
+#include "misc/config.h"
+
 /* OpenSSL-specific defines */
 
 #define OPENSSL_EXTERN	extern
@@ -34,7 +38,9 @@
   #define ASM_EXPORT
 #endif /* System-specific interface to ASM files */
 
-/* General defines */
+/* General defines.  A generic config from the original OpenSSL version can 
+   be found at http://lists.alioth.debian.org/pipermail/pkg-openssl-changes/-
+   2005-October/000012.html */
 
 #include <limits.h>
 #if ULONG_MAX > 0xFFFFFFFFUL
@@ -81,6 +87,7 @@
 	#define B_ENDIAN
 	#define BN_LLONG
 	#define BF_PTR
+	#define DES_RISC1
 	#define DES_UNROLL
 	#define RC4_CHAR
 	#define RC4_CHUNK
@@ -119,12 +126,14 @@
 	#define B_ENDIAN
 	#define BN_LLONG
 	#define BF_PTR
+	#define DES_RISC1
 	#define DES_UNROLL
 	#define RC4_CHAR
 	#define RC4_CHUNK
   #elif defined( __arm ) || defined( __arm__ )
 	#define L_ENDIAN
-	/* Not sure what other options the ARM build should enable... */
+	#define BN_LLONG
+	#define DES_RISC1
   #else
 	#error Need to define CPU type for non-x86/non-PPC Linux
   #endif /* *BSD/Linux variants */
@@ -224,6 +233,7 @@
   #endif
   #define BN_LLONG
   #define BF_PTR
+  #define DES_RISC1
   #define DES_UNROLL
   #define RC4_CHAR
   #define RC4_CHUNK
@@ -260,7 +270,8 @@
 #if defined( __PALMSOURCE__ )
   #if defined( __arm ) || defined( __arm__ )
 	#define L_ENDIAN
-	/* Not sure what other options the ARM build should enable... */
+	#define BN_LLONG
+	#define DES_RISC1
   #else
 	#error Need to define architecture-specific values for crypto code
   #endif /* Palm OS variants */
@@ -393,7 +404,8 @@
 #if defined( __SYMBIAN32__ )
   #ifdef __MARM__
 	#define L_ENDIAN
-	/* Not sure what other options the ARM build should enable... */
+	#define BN_LLONG
+	#define DES_RISC1
   #else
 	#error Need to define architecture-specific values for crypto code
   #endif /* Symbian OS variants */
@@ -476,25 +488,58 @@
 #endif /* gcc native under Cygwin (i.e. not a Cygwin-hosted
 		  cross-development toolchain */
 
-/* Xilinx XMK */
+/* Embeded OSes get a bit complicated because they're usually cross-
+   compiled, first we try for OS-specific options, then we try for the most 
+   obvious generic options like the GNU toolchain, and finally if we can't 
+   find anything we bail out with an error message */
 
-#if defined ( _XMK ) || defined( __XMK__ )
-  #if defined( __mb__ )
-	#define B_ENDIAN
-	/* Not sure what other options the MicroBlaze build should enable... */
-  #elif defined( __ppc__ )
+#if defined( USE_EMBEDDED_OS )
+
+  /* Xilinx XMK */
+  #if defined ( _XMK ) || defined( __XMK__ )
+	#if defined( __mb__ )
+	  #define B_ENDIAN
+	  /* Not sure what other options the MicroBlaze build should enable... */
+	#elif defined( __ppc__ )
+	  #define B_ENDIAN
+	  #define BN_LLONG
+	  #define BF_PTR
+	  #define DES_RISC1
+	  #define DES_UNROLL
+	  #define RC4_CHAR
+	  #define RC4_CHUNK
+	#else
+	  #error Need to define CPU type for non-MicroBlaze/non-PPC XMK.
+	#endif /* XMK target variants */
+
+  /* Generic gcc */
+  #elif defined( __i386__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define DES_PTR
+	#define DES_RISC1
+	#define DES_UNROLL
+	#define RC4_INDEX
+  #elif defined( __ppc__ ) || defined( __powerpc__ )
 	#define B_ENDIAN
 	#define BN_LLONG
 	#define BF_PTR
+	#define DES_RISC1
 	#define DES_UNROLL
 	#define RC4_CHAR
 	#define RC4_CHUNK
-  #else
-	#error Need to define CPU type for non-MicroBlaze/non-PPC XMK
-  #endif /* XMK target variants */
-#endif /* Xilinx XMK */
+  #elif defined( __arm ) || defined( __arm__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define DES_RISC1
 
-/* RC4_CHUNK is actually a data type rather than a straight define, so we
+  /* We need the developer's help to sort it out */
+  #else
+	#error Need to configure the crypto build options for your toolchain.
+  #endif /* Embedded OS variants */
+#endif /* Embedded OSes */
+
+/* RC4_CHUNK is actually a data type rather than a straight define so we
    redefine it as a data type if it's been defined */
 
 #ifdef RC4_CHUNK
@@ -508,7 +553,15 @@
 #if !defined( _CRAY ) && !defined( L_ENDIAN ) && !defined( B_ENDIAN )
   #error You need to add system-specific configuration settings to osconfig.h
 #endif /* Endianness not defined */
-#ifdef CHECK_ENDIANNESS		/* One-off check in des_enc.c */
+#if defined( CHECK_ENDIANNESS ) && !defined( OSX_UNIVERSAL_BINARY )
+  /* One-off check in des_enc.c, however for OS X universal (fat) binaries
+	 we're effectively cross-compiling for multiple targets so we don't
+	 perform the check, which would yield false positives */
+  #undef _CONFIG_DEFINED
+	/* Including crypt.h at this point violates the normal include order 
+	   because we've already included config.h which normally depends on 
+	   settings in crypt.h, however for this one-off check it isn't a 
+	   problem so we fake out the include-order check in config.h */
   #include "crypt.h"
   #if ( defined( L_ENDIAN ) && !defined( DATA_LITTLEENDIAN ) ) || \
 	  ( defined( B_ENDIAN ) && !defined( DATA_BIGENDIAN ) )

@@ -35,7 +35,8 @@ static const SEMAPHORE_INFO SEMAPHORE_INFO_TEMPLATE = \
    manipulate various fields, we have to handle a pile of them individually 
    rather than using an array of mutexes */
 
-int initSemaphores( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i, status;
 
@@ -128,7 +129,7 @@ void endSemaphores( void )
    semaphore object is still present, the last thread out should delete it,
    bringing it to the true clear state */
 
-void setSemaphore( const SEMAPHORE_TYPE semaphore,
+void setSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore,
 				   const MUTEX_HANDLE object )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
@@ -152,7 +153,7 @@ void setSemaphore( const SEMAPHORE_TYPE semaphore,
 	MUTEX_UNLOCK( semaphore );
 	}
 
-void clearSemaphore( const SEMAPHORE_TYPE semaphore )
+void clearSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
 
@@ -196,17 +197,18 @@ void clearSemaphore( const SEMAPHORE_TYPE semaphore )
    few ms.  Once the wait has completed, we update the semaphore state as
    per the longer description above */
 
-BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
+CHECK_RETVAL_BOOL \
+BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
-	MUTEX_HANDLE object = ( MUTEX_HANDLE ) DUMMY_INIT;	/* Maybe be int or ptr */
+	MUTEX_HANDLE object = DUMMY_INIT_MUTEX;
 	BOOLEAN semaphoreSet = FALSE;
 	int status = CRYPT_OK;
 
 	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 
 	/* Make sure that the selected semaphore is valid */
-	REQUIRES( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+	REQUIRES_B( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 
 	/* If we're in a shutdown and the semaphores have been destroyed, don't
 	   try and acquire the semaphore mutex.  In this case anything that 
@@ -240,7 +242,12 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 	assert( memcmp( &object, &SEMAPHORE_INFO_TEMPLATE.object,
 					sizeof( MUTEX_HANDLE ) ) );
 	THREAD_WAIT( object, status );
-	ENSURES( cryptStatusOK( status ) );
+	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "Wait on object failed" ));
+		assert( DEBUG_WARN );
+		return( FALSE );
+		}
 
 	/* Lock the semaphore table, update the information, and unlock it
 	   again */
@@ -277,7 +284,8 @@ BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore )
 
 /* Enter and exit a mutex */
 
-int krnlEnterMutex( const MUTEX_TYPE mutex )
+CHECK_RETVAL \
+int krnlEnterMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex )
 	{
 	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 
@@ -312,7 +320,7 @@ int krnlEnterMutex( const MUTEX_TYPE mutex )
 	return( CRYPT_OK );
 	}
 
-void krnlExitMutex( const MUTEX_TYPE mutex )
+void krnlExitMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex )
 	{
 	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 

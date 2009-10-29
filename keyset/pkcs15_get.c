@@ -48,7 +48,7 @@ static int setKeyAttributes( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	if( actionFlags != 0 )
 		{
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &actionFlags,
+								  ( MESSAGE_CAST ) &actionFlags,
 								  CRYPT_IATTRIBUTE_ACTIONPERMS );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -57,7 +57,7 @@ static int setKeyAttributes( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 		{
 		MESSAGE_DATA msgData;
 
-		setMessageData( &msgData, ( void * ) pkcs15infoPtr->openPGPKeyID,
+		setMessageData( &msgData, ( MESSAGE_CAST ) pkcs15infoPtr->openPGPKeyID,
 						pkcs15infoPtr->openPGPKeyIDlength );
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_KEYID_OPENPGP );
@@ -71,7 +71,7 @@ static int setKeyAttributes( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 		/* This isn't really used for anything but is required to generate
 		   the OpenPGP keyID, which includes the key creation time in the
 		   ID-generation process */
-		setMessageData( &msgData, ( void * ) &pkcs15infoPtr->validFrom,
+		setMessageData( &msgData, ( MESSAGE_CAST ) &pkcs15infoPtr->validFrom,
 						sizeof( time_t ) );
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_PGPVALIDITY );
@@ -244,6 +244,9 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	MESSAGE_DATA msgData;
 	const BOOLEAN publicComponentsOnly = \
 					( itemType != KEYMGMT_ITEM_PRIVATEKEY ) ? TRUE : FALSE;
+	const BOOLEAN isStorageObject = \
+			( keysetInfoPtr->keysetFile->iHardwareDevice != CRYPT_UNUSED ) ? \
+			TRUE : FALSE;
 	const int auxInfoMaxLength = *auxInfoLength;
 	int pubkeyActionFlags = 0, privkeyActionFlags = 0, status;
 
@@ -314,16 +317,20 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 									 pkcs15infoPtr->labelLength ) );
 		}
 
-	/* If we're reading the private key, make sure that the user has
-	   supplied a password.  This is checked by the kernel but we perform
-	   another check here just to be safe*/
-	if( !publicComponentsOnly && auxInfo == NULL )
+	/* If we're reading the private key and this isn't a PKCS #15 object 
+	   store (which only contains metadata for private keys), make sure that 
+	   the user has supplied a password.  This is checked by the kernel but 
+	   we perform another check here just to be safe*/
+	if( !publicComponentsOnly && !isStorageObject && auxInfo == NULL )
 		return( CRYPT_ERROR_WRONGKEY );
 
 	/* Read the public components */
 	status = readPublicKeyComponents( pkcs15infoPtr, keysetInfoPtr->objectHandle,
 									  keyIDtype, keyID, keyIDlength, 
 									  publicComponentsOnly,
+									  isStorageObject ? \
+										keysetInfoPtr->keysetFile->iHardwareDevice : \
+										SYSTEM_OBJECT_HANDLE,
 									  &iCryptContext, &iDataCert,
 									  &pubkeyActionFlags, 
 									  &privkeyActionFlags, KEYSET_ERRINFO );
@@ -356,20 +363,25 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 
 	/* Set the key label and read the private key components.  We have to 
 	   set the label before we load the key or the key load will be blocked 
-	   by the kernel */
+	   by the kernel.  In addition if this keyset is a device object store
+	   we have to set the label as a CRYPT_IATTRIBUTE_EXISTINGLABEL 
+	   otherwise the existing item's label will be erroneously reported as
+	   a duplicate */
 	if( pkcs15infoPtr->labelLength > 0 )
-		{ setMessageData( &msgData, ( void * ) pkcs15infoPtr->label,
+		{ setMessageData( &msgData, ( MESSAGE_CAST ) pkcs15infoPtr->label,
 						  min( pkcs15infoPtr->labelLength, \
 							   CRYPT_MAX_TEXTSIZE ) ); }
 	else
-		{ setMessageData( &msgData, ( void * ) "Dummy label", 11 ); }
+		{ setMessageData( &msgData, ( MESSAGE_CAST ) "Dummy label", 11 ); }
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
-							  &msgData, CRYPT_CTXINFO_LABEL );
+							  &msgData, isStorageObject ? \
+								CRYPT_IATTRIBUTE_EXISTINGLABEL : \
+								CRYPT_CTXINFO_LABEL );
 	if( cryptStatusOK( status ) )
 		{
 		status = readPrivateKeyComponents( pkcs15infoPtr, iCryptContext, 
-										   auxInfo, *auxInfoLength, 
-										   KEYSET_ERRINFO );
+								auxInfo, *auxInfoLength, isStorageObject,
+								KEYSET_ERRINFO );
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -436,6 +448,9 @@ static int getSpecialItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( ( data == NULL && dataMaxLength == 0 ) || \
 			  ( data != NULL && \
 			    dataMaxLength >= 16 && dataMaxLength < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( ( dataType != CRYPT_IATTRIBUTE_TRUSTEDCERT && \
+				dataType != CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT ) || \
+			  data != NULL );
 
 	/* Clear return values */
 	if( data != NULL )
@@ -542,7 +557,7 @@ static int getItem( INOUT_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info,
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT, 
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
-	*certDataPtr = tag;
+	*certDataPtr = intToByte( tag );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status, 

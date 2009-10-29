@@ -121,6 +121,8 @@ static int getRandomChecked( INOUT DEVICE_INFO *deviceInfoPtr,
 	/* We couldn't get anything that passed the FIPS 140 tests, we can't
 	   go any further */
 	zeroise( data, length );
+	DEBUG_DIAG(( "Random data didn't pass FIPS 140 tests after %d "
+				 "iterations", NO_ENTROPY_FAILURES ));
 	assert( DEBUG_WARN );
 	return( CRYPT_ERROR_RANDOM );
 	}
@@ -279,6 +281,7 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 		{
 		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
 			{
+#ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo;
 
 			switch( deviceInfoPtr->type )
@@ -300,11 +303,14 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 									CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
 				}
 
-			if( errorInfo->errorStringLength )
-				return( exitErrorNotFound( deviceInfoPtr,
-									CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
-			return( attributeCopy( msgData, errorInfo->errorString,
-								   errorInfo->errorStringLength ) );
+			if( errorInfo->errorStringLength > 0 )
+				{
+				return( attributeCopy( msgData, errorInfo->errorString,
+									   errorInfo->errorStringLength ) );
+				}
+#endif /* USE_ERRMSGS */
+			return( exitErrorNotFound( deviceInfoPtr,
+								CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
 			}
 
 		case CRYPT_DEVINFO_LABEL:

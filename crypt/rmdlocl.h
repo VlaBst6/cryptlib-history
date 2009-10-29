@@ -59,10 +59,10 @@
 #include <stdlib.h>
 #include <string.h>
 #if defined( INC_ALL )
-  #include "crypt.h"
+  #include "crypt/osconfig.h"
   #include "ripemd.h"
 #else
-  #include "crypt.h"
+  #include "crypt/osconfig.h"
   #include "crypt/ripemd.h"
 #endif /* Compiler-specific includes */
 

@@ -26,7 +26,10 @@
 ****************************************************************************/
 
 #if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox */
+		   Firefox.  In practice Firefox *still* sends SSLv2 hellos (up to
+		   at least version 3.x) although the developers claim that it 
+		   doesn't, so if they say it doesn't then we don't have to handle
+		   them */
 
 /* Process an SSLv2 client hello:
 
@@ -42,14 +45,21 @@
    the body in v2.  What's left for the v2 hello is the remainder of the 
    payload */
 
-static int processHelloSSLv2( SESSION_INFO *sessionInfoPtr, 
-							  SSL_HANDSHAKE_INFO *handshakeInfo, 
-							  STREAM *stream, int *resumedSessionID )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
+static int processHelloSSLv2( INOUT SESSION_INFO *sessionInfoPtr, 
+							  INOUT SSL_HANDSHAKE_INFO *handshakeInfo, 
+							  INOUT STREAM *stream, 
+							  OUT int *resumedSessionID )
 	{
 	int suiteLength, sessionIDlength, nonceLength, status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( resumedSessionID, sizeof( int ) ) );
+
 	/* Clear return values */
-	*resumedSessionID = SCOREBOARD_UNIQUEID_NONE;
+	*resumedSessionID = CRYPT_ERROR;
 
 	/* Read the SSLv2 hello */
 	suiteLength = readUint16( stream );
@@ -82,13 +92,17 @@ static int processHelloSSLv2( SESSION_INFO *sessionInfoPtr,
 
 /* Perform the initial part of the handshake with the client */
 
-int beginServerHandshake( SESSION_INFO *sessionInfoPtr, 
-						  SSL_HANDSHAKE_INFO *handshakeInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr, 
+						  INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM *stream = &handshakeInfo->stream;
 	MESSAGE_DATA msgData;
-	int length, resumedSessionID = SCOREBOARD_UNIQUEID_NONE;
+	int length, resumedSessionID = CRYPT_ERROR;
 	int packetOffset, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 
 	/* Read the hello packet from the client */
 	status = readHSPacketSSL( sessionInfoPtr, handshakeInfo, &length,
@@ -98,11 +112,11 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 
 	/* Process the client hello.  Although this should be a v3 hello, 
 	   Netscape always sends a v2 hello (even if SSLv2 is disabled) and
-	   in any case both MSIE and Mozilla still have SSLv2 enabled by
+	   in any case both MSIE 6 and Mozilla still have SSLv2 enabled by
 	   default (!!) so we have to process both types */
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
 #if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox */
+		   Firefox (but see the comment for processHelloSSLv2() above) */
 	if( handshakeInfo->isSSLv2 )
 		status = processHelloSSLv2( sessionInfoPtr, handshakeInfo, 
 									stream, &resumedSessionID );
@@ -111,22 +125,24 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		status = processHelloSSL( sessionInfoPtr, handshakeInfo, stream, 
 								  TRUE );
 	sMemDisconnect( stream );
-	if( cryptStatusError( status ) && status != OK_SPECIAL )
-		return( status );
+	if( cryptStatusError( status ) )
+		{
+		if( status != OK_SPECIAL )
+			return( status );
 
-	/* Handle session resumption */
-	if( status == OK_SPECIAL )
-		{
+		/* The client has sent us a sessionID in an attempt to resume a 
+		   previous session, see if it's in the session cache */
 		resumedSessionID = \
-				findScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
-						handshakeInfo->sessionID, handshakeInfo->sessionIDlength,
-						handshakeInfo->premasterSecret, SSL_SECRET_SIZE,
-						&handshakeInfo->premasterSecretSize );
+			findScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+					handshakeInfo->sessionID, handshakeInfo->sessionIDlength,
+					handshakeInfo->premasterSecret, SSL_SECRET_SIZE,
+					&handshakeInfo->premasterSecretSize );
 		}
-	if( resumedSessionID == SCOREBOARD_UNIQUEID_NONE )
+
+	/* Handle session resumption.  If it's a new session or the session data 
+	   has expired from the cache, generate a new session ID */
+	if( cryptStatusError( resumedSessionID ) )
 		{
-		/* It's a new session or the session data has expired from the 
-		   cache, generate a new session ID */
 		setMessageData( &msgData, handshakeInfo->sessionID, SESSIONID_SIZE );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
@@ -136,8 +152,8 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		handshakeInfo->sessionIDlength = SESSIONID_SIZE;
 		}
 
-	/* Get the nonce that's used to randomise all crypto ops and set up the
-	   server DH context if necessary */
+	/* Get the nonce that's used to randomise all crypto operations and set 
+	   up the server DH/ECDH context if necessary */
 	setMessageData( &msgData, handshakeInfo->serverNonce, SSL_NONCE_SIZE );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
 							  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
@@ -145,12 +161,15 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		{
 		status = initDHcontextSSL( &handshakeInfo->dhContext, NULL, 0,
 							( handshakeInfo->authAlgo != CRYPT_ALGO_NONE ) ? \
-							sessionInfoPtr->privateKey : CRYPT_UNUSED );
+							sessionInfoPtr->privateKey : CRYPT_UNUSED,
+							isEccAlgo( handshakeInfo->keyexAlgo ) ? \
+								handshakeInfo->eccCurveID : CRYPT_ECCCURVE_NONE );
 		}
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Build the server hello, cert, optional cert request, and done packets:
+	/* Build the server hello, certificate, optional certificate request, 
+	   and done packets:
 
 		byte		ID = SSL_HAND_SERVER_HELLO
 		uint24		len
@@ -161,51 +180,60 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		byte[]		sessID
 		uint16		suite
 		byte		copr = 0
-		... */
+		...
+
+	   We have to be careful how we handle extensions because the RFC makes 
+	   the rather optimistic assumption that implementations can handle the 
+	   presence of unexpected data at the end of the hello packet, to avoid 
+	   problems with this we avoid sending extensions unless they're in 
+	   response to extensions already sent by the client */
 	status = openPacketStreamSSL( stream, sessionInfoPtr, CRYPT_USE_DEFAULT, 
 								  SSL_MSG_HANDSHAKE );
 	if( cryptStatusError( status ) )
 		return( status );
-	packetOffset = continueHSPacketStream( stream, SSL_HAND_SERVER_HELLO );
+	status = continueHSPacketStream( stream, SSL_HAND_SERVER_HELLO, 
+									 &packetOffset );
+	if( cryptStatusError( status ) )
+		{
+		sMemDisconnect( stream );
+		return( status );
+		}
 	sputc( stream, SSL_MAJOR_VERSION );
 	sputc( stream, sessionInfoPtr->version );
 	swrite( stream, handshakeInfo->serverNonce, SSL_NONCE_SIZE );
 	sputc( stream, handshakeInfo->sessionIDlength );
-	if( handshakeInfo->sessionIDlength > 0 )
-		swrite( stream, handshakeInfo->sessionID, 
-				handshakeInfo->sessionIDlength );
+	swrite( stream, handshakeInfo->sessionID, 
+			handshakeInfo->sessionIDlength );
 	writeUint16( stream, handshakeInfo->cipherSuite ); 
-	sputc( stream, 0 );	/* No compression */
-#if 0	
+	status = sputc( stream, 0 );	/* No compression */
 	if( handshakeInfo->hasExtensions )
 		{
-		/* TLS extension code.  Since almost no clients/servers (except maybe 
-		   some obscure bits of code embedded in cellphones) do this, we'll 
-		   have to wait for something that implements it to come along so we 
-		   can send back the appropriate response.  The RFC makes the rather 
-		   optimistic assumption that implementations can handle the presence 
-		   of unexpected data at the end of the hello packet, since  this is 
-		   rarely the case we leave the following disabled by default so as 
-		   not to confuse clients that leave some garbage at the end of their
-		   client hello and suddenly get back an extension response from the
-		   server */
-		writeUint16( stream, ID_SIZE + UINT16_SIZE + 1 );
-		writeUint16( stream, TLS_EXT_MAX_FRAGMENT_LENTH );
-		writeUint16( stream, 1 );
-		sputc( stream, 3 );
+		/* If the client sent ECC extensions and we've negotiated an ECC 
+		   cipher suite, send back the appropriate response.  We don't have 
+		   to send back the curve ID that we've chosen because this is
+		   communicated explicitly in the server keyex */
+		if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
+			handshakeInfo->sendECCPointExtn )
+			{
+			writeUint16( stream, ID_SIZE + UINT16_SIZE + 1 + 1 );
+			writeUint16( stream, TLS_EXT_EC_POINT_FORMATS );
+			writeUint16( stream, 1 + 1 );	/* Extn. length */
+			sputc( stream, 1 );				/* Point-format list len.*/
+			status = sputc( stream, 0 );	/* Uncompressed points */
+			}
 		}
-#endif /* 0 */
-	status = completeHSPacketStream( stream, packetOffset );
+	if( cryptStatusOK( status ) )
+		status = completeHSPacketStream( stream, packetOffset );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( stream );
 		return( status );
 		}
 
-	/* If it's a resumed session, the server hello is followed immediately 
-	   by the change cipherspec, which is sent by the shared handshake
-	   completion code */
-	if( resumedSessionID != SCOREBOARD_UNIQUEID_NONE )
+	/* If it's a resumed session then the server hello is followed 
+	   immediately by the change cipherspec, which is sent by the shared 
+	   handshake completion code */
+	if( !cryptStatusError( resumedSessionID ) )
 		{
 		status = completePacketStreamSSL( stream, 0 );
 		if( cryptStatusOK( status ) )
@@ -215,7 +243,9 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 			sMemDisconnect( stream );
 			return( status );
 			}
-		return( OK_SPECIAL );	/* Tell caller that it's a resumed session */
+
+		/* Tell the caller that it's a resumed session */
+		return( OK_SPECIAL );
 		}
 
 	/*	...	(optional server supplemental data)
@@ -227,7 +257,7 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		... */
 
 	/*	...
-		(optional server cert chain)
+		(optional server certificate chain)
 		... */
 	if( handshakeInfo->authAlgo != CRYPT_ALGO_NONE )
 		{
@@ -242,12 +272,20 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 	/*	...			(optional server keyex)
 		byte		ID = SSL_HAND_SERVER_KEYEXCHANGE
 		uint24		len
+	   DH:
 		uint16		dh_pLen
 		byte[]		dh_p
 		uint16		dh_gLen
 		byte[]		dh_g
 		uint16		dh_YsLen
 		byte[]		dh_Ys
+		uint16		signatureLen
+		byte[]		signature
+	   ECDH:
+		byte		curveType
+		uint16		namedCurve
+		uint8		ecPointLen	-- NB uint8 not uint16
+		uint16		ecPoint
 		uint16		signatureLen
 		byte[]		signature */
 	if( isKeyxAlgo( handshakeInfo->keyexAlgo ) )
@@ -256,7 +294,7 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 		void *keyData = DUMMY_INIT_PTR;
 		int keyDataOffset, keyDataLength = DUMMY_INIT;
 
-		/* Perform phase 1 of the DH key agreement process */
+		/* Perform phase 1 of the DH/ECDH key agreement process */
 		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
 		status = krnlSendMessage( handshakeInfo->dhContext,
 								  IMESSAGE_CTX_ENCRYPT, &keyAgreeParams,
@@ -268,9 +306,14 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 			return( status );
 			}
 
-		/* Write the DH key parameters and DH public value and sign them */
-		packetOffset = \
-			continueHSPacketStream( stream, SSL_HAND_SERVER_KEYEXCHANGE );
+		/* Write the DH/ECDH key parameters and public value and sign them */
+		status = continueHSPacketStream( stream, SSL_HAND_SERVER_KEYEXCHANGE, 
+										 &packetOffset );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( stream );
+			return( status );
+			}
 		keyDataOffset = stell( stream );
 		status = exportAttributeToStream( stream, handshakeInfo->dhContext,
 										  CRYPT_IATTRIBUTE_KEY_SSL );
@@ -298,25 +341,39 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
-	/*	...			(optional client cert request)
+	/*	...			(optional client certificate request)
 		byte		ID = SSL_HAND_SERVER_CERTREQUEST
 		uint24		len
-		byte		certTypeLen = 2
-		byte[2]		certType = { 0x01, 0x02 } (RSA,DSA)
+		byte		certTypeLen
+		byte[2]		certType = { 1, 2, 64 } (RSA,DSA,ECDSA)
 		uint16		caNameListLen = 4
-		uint16		caNameLen = 2
-		byte[]		caName = { 0x30, 0x00 }
+			uint16	caNameLen = 2
+			byte[]	caName = { 0x30, 0x00 }
 		... */
 	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
 		{
-		packetOffset = \
-			continueHSPacketStream( stream, SSL_HAND_SERVER_CERTREQUEST );
-		sputc( stream, 2 );	
-		swrite( stream, "\x01\x02", 2 );
+		const BOOLEAN dsaAvailable = algoAvailable( CRYPT_ALGO_DSA );
+		const BOOLEAN ecdsaAvailable = algoAvailable( CRYPT_ALGO_ECDSA );
+
+		status = continueHSPacketStream( stream, SSL_HAND_SERVER_CERTREQUEST, 
+										 &packetOffset );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( stream );
+			return( status );
+			}
+		sputc( stream, 1 + ( dsaAvailable ? 1 : 0 ) + \
+					   ( ecdsaAvailable ? 1 : 0 ) );
+		sputc( stream, 1 );			/* RSA */
+		if( dsaAvailable )
+			sputc( stream, 2 );		/* DSA */
+		if( ecdsaAvailable )
+			sputc( stream, 64 );	/* ECDSA */
 		writeUint16( stream, 4 );
 		writeUint16( stream, 2 );
-		swrite( stream, "\x30\x00", 2 );
-		status = completeHSPacketStream( stream, packetOffset );
+		status = swrite( stream, "\x30\x00", 2 );
+		if( cryptStatusOK( status ) )
+			status = completeHSPacketStream( stream, packetOffset );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
@@ -327,9 +384,10 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 	/*	...
 		byte		ID = SSL_HAND_SERVER_HELLODONE
 		uint24		len = 0 */
-	packetOffset = \
-		continueHSPacketStream( stream, SSL_HAND_SERVER_HELLODONE );
-	status = completeHSPacketStream( stream, packetOffset );
+	status = continueHSPacketStream( stream, SSL_HAND_SERVER_HELLODONE, 
+									 &packetOffset );
+	if( cryptStatusOK( status ) )
+		status = completeHSPacketStream( stream, packetOffset );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( stream );
@@ -348,14 +406,18 @@ int beginServerHandshake( SESSION_INFO *sessionInfoPtr,
 
 /* Exchange keys with the client */
 
-int exchangeServerKeys( SESSION_INFO *sessionInfoPtr, 
-						SSL_HANDSHAKE_INFO *handshakeInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr, 
+						INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	STREAM *stream = &handshakeInfo->stream;
 	int length, status;
 
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+
 	/* Read the response from the client and, if we're expecting a client 
-	   cert, make sure that it's present */
+	   certificate, make sure that it's present */
 	status = readHSPacketSSL( sessionInfoPtr, handshakeInfo, &length,
 							  SSL_MSG_HANDSHAKE );
 	if( cryptStatusError( status ) )
@@ -367,7 +429,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 		MESSAGE_DATA msgData;
 		BYTE certID[ KEYID_SIZE + 8 ];
 
-		/* Process the client cert chain */
+		/* Process the client certificate chain */
 		status = readSSLCertChain( sessionInfoPtr, handshakeInfo,
 								   stream, &sessionInfoPtr->iKeyexAuthContext, 
 								   TRUE );
@@ -377,9 +439,10 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			return( status );
 			}
 
-		/* Make sure that the client cert is present in our cert store.  
-		   Since we've already got a copy of the cert, we only do a presence 
-		   check rather than actually fetching the cert */
+		/* Make sure that the client certificate is present in our 
+		   certificate store.  Since we've already got a copy of the 
+		   certificate, we only do a presence check rather than actually 
+		   fetching the certificate */
 		setMessageData( &msgData, certID, KEYID_SIZE );
 		status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
 								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
@@ -391,7 +454,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 								   KEYMGMT_FLAG_CHECK_ONLY );
 			status = krnlSendMessage( sessionInfoPtr->cryptKeyset, 
 									  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
-										  KEYMGMT_ITEM_PUBLICKEY );
+									  KEYMGMT_ITEM_PUBLICKEY );
 			}
 		if( cryptStatusError( status ) )
 			{
@@ -415,11 +478,14 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 	   DH:
 		uint16		yLen
 		byte[]		y
+	   ECDH:
+		uint16		ecPointLen
+		byte[]		ecPoint
 	   PSK:
 		uint16		userIDLen
 		byte[]		userID 
 	   RSA:
-	  [ uint16		encKeyLen - TLS only ]
+	  [ uint16		encKeyLen - Omitted in SSL ]
 		byte[]		rsaPKCS1( byte[2] { 0x03, 0x0n } || byte[46] random ) */
 	status = checkHSPacketHeader( sessionInfoPtr, stream, &length,
 								  SSL_HAND_CLIENT_KEYEXCHANGE, 
@@ -453,10 +519,10 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid DH key agreement data" ) );
+					  "Invalid DH phase 2 key agreement data" ) );
 			}
 
-		/* Perform phase 2 of the DH key agreement */
+		/* Perform phase 2 of the DH/ECDH key agreement */
 		status = krnlSendMessage( handshakeInfo->dhContext,
 								  IMESSAGE_CTX_DECRYPT, &keyAgreeParams, 
 								  sizeof( KEYAGREE_PARAMS ) );
@@ -464,8 +530,12 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			{
 			zeroise( &keyAgreeParams, sizeof( KEYAGREE_PARAMS ) );
 			sMemDisconnect( stream );
-			return( status );
+			retExt( status,
+					( status, SESSION_ERRINFO, 
+					  "Invalid DH phase 2 key agreement value" ) );
 			}
+		ENSURES( rangeCheckZ( 0, keyAgreeParams.wrappedKeyLen,
+							  CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE ) );
 		memcpy( handshakeInfo->premasterSecret, keyAgreeParams.wrappedKey,
 				keyAgreeParams.wrappedKeyLen );
 		handshakeInfo->premasterSecretSize = keyAgreeParams.wrappedKeyLen;
@@ -483,14 +553,16 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			   we can either bail out immediately or invent a fake 
 			   password for the (non-)user and continue with that.  The
 			   problem with this is that it doesn't really help hide 
-			   whether the user is valid or not because we're still 
-			   vulnerable to a timing attack because it takes considerably 
-			   longer to generate the fake password than it does to read a 
-			   fixed password string from memory, so an attacker can tell 
-			   from the timing whether the username is valid or not.  
-			   Because of this we don't try and fake out the valid/invalid 
-			   user name indication but just exit immediately if an invalid
-			   name is found */
+			   whether the user is valid or not due to the fact that we're 
+			   still vulnerable to a timing attack because it takes 
+			   considerably longer to generate the random password than it 
+			   does to read a fixed password string from memory, so an 
+			   attacker can tell from the timing whether the username is 
+			   valid or not.  In addition usability research on real-world 
+			   users indicates that this actually reduces security while 
+			   having little to no tangible benefit.  Because of this we 
+			   don't try and fake out the valid/invalid user name indication 
+			   but just exit immediately if an invalid name is found */
 			length = readUint16( stream );
 			if( length < 1 || length > CRYPT_MAX_TEXTSIZE || \
 				cryptStatusError( sread( stream, userID, length ) ) )
@@ -518,20 +590,24 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			sessionInfoPtr->attributeListCurrent = \
 								( ATTRIBUTE_LIST * ) attributeListPtr;
 			attributeListPtr = attributeListPtr->next;
-			assert( attributeListPtr->attributeID == CRYPT_SESSINFO_PASSWORD );
+			ENSURES( attributeListPtr != NULL && \
+					 attributeListPtr->attributeID == CRYPT_SESSINFO_PASSWORD );
 
 			/* Create the shared premaster secret from the user password */
 			status = createSharedPremasterSecret( \
-									handshakeInfo->premasterSecret,
-									CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE,
-									&handshakeInfo->premasterSecretSize, 
-									attributeListPtr );
+							handshakeInfo->premasterSecret,
+							CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE,
+							&handshakeInfo->premasterSecretSize, 
+							attributeListPtr->value,
+							attributeListPtr->valueLength,
+							( attributeListPtr->flags & ATTR_FLAG_ENCODEDVALUE ) ? \
+								TRUE : FALSE );
 			if( cryptStatusError( status ) )
 				{
 				sMemDisconnect( stream );
 				retExt( status, 
 						( status, SESSION_ERRINFO, 
-						  "Couldn't create SSL master secret from shared "
+						  "Couldn't create master secret from shared "
 						  "secret/password value" ) );
 				}
 			}
@@ -546,10 +622,17 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 				   it became the de facto standard way to do it (Sic faciunt 
 				   omnes.  The spec itself is ambiguous on the topic).  This 
 				   was fixed in TLS (although the spec is still ambigous) so 
-				   the encoding differs slightly between SSL and TLS */
-				if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE || \
-					cryptStatusError( sread( stream, wrappedKey, length ) ) )
-					status = CRYPT_ERROR_BADDATA;
+				   the encoding differs slightly between SSL and TLS.  To 
+				   work around this we have to duplicate a certain amount of
+				   the integer-read code here */
+				if( isShortPKCKey( length ) )
+					status = CRYPT_ERROR_NOSECURE;
+				else
+					{
+					if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE || \
+						cryptStatusError( sread( stream, wrappedKey, length ) ) )
+						status = CRYPT_ERROR_BADDATA;
+					}
 				}
 			else
 				{
@@ -587,7 +670,8 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
-	/* If we're expecting a client cert, process the client cert verify */
+	/* If we're expecting a client certificate, process the client 
+	   certificate verify */
 	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
 		{
 		/* Read the next packet(s) if necessary */
@@ -595,7 +679,7 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/* Process the client cert verify packet:
+		/* Process the client certificate verify packet:
 
 			byte		ID = SSL_HAND_CLIENT_CERTVERIFY
 			uint24		len
@@ -623,8 +707,11 @@ int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
+STDC_NONNULL_ARG( ( 1 ) ) \
 void initSSLserverProcessing( SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+
 	handshakeInfo->beginHandshake = beginServerHandshake;
 	handshakeInfo->exchangeKeys = exchangeServerKeys;
 	}

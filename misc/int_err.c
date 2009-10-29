@@ -46,6 +46,7 @@ static int convertErrorStatus( IN_ERROR const int status )
 
 	if( cryptArgError( status ) )
 		{
+		DEBUG_DIAG(( "Error exit was passed argError status" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_FAILED );
 		}
@@ -66,11 +67,24 @@ static BOOLEAN formatErrorString( INOUT ERROR_INFO *errorInfoPtr,
 
 	REQUIRES_B( argPtr != NULL );
 
+	/* This function is a bit tricky to deal with because of the 
+	   braindamaged behaviour of some of the underlying functions that it 
+	   may be mapped to.  Specifically, (v)snprintf() returns the number of 
+	   bytes it *could* have written had it felt like it rather than how 
+	   many it actually wrote on non-Windows systems and an error indicator 
+	   with no guarantee of null-termination on Windows systems.  The latter 
+	   isn't a problem because we both catch the error and don't require 
+	   null termination, the former is more problematic because it can lead 
+	   to a length indication that's larger than the actual buffer.  To 
+	   handle this we explicitly check for an overflow as well as an 
+	   error/underflow */
 	errorInfoPtr->errorStringLength = \
 				vsprintf_s( errorInfoPtr->errorString, MAX_ERRMSG_SIZE, 
 							format, argPtr ); 
-	if( errorInfoPtr->errorStringLength <= 0 )
+	if( errorInfoPtr->errorStringLength <= 0 || \
+		errorInfoPtr->errorStringLength > MAX_ERRMSG_SIZE )
 		{
+		DEBUG_DIAG(( "Invalid error string data" ));
 		assert( DEBUG_WARN );
 		setErrorString( errorInfoPtr, 
 						"(Couldn't record error information)", 35 );
@@ -106,6 +120,8 @@ static void appendErrorString( INOUT ERROR_INFO *errorInfoPtr,
 	if( errorInfoPtr->errorStringLength + \
 			extErrorStringLength < MAX_ERRMSG_SIZE - 8 )
 		{
+		ENSURES_V( rangeCheck( errorInfoPtr->errorStringLength,
+							   extErrorStringLength, MAX_ERRMSG_SIZE ) );
 		memcpy( errorInfoPtr->errorString + errorInfoPtr->errorStringLength,
 				extErrorString, extErrorStringLength );
 		errorInfoPtr->errorStringLength += extErrorStringLength;
@@ -146,6 +162,7 @@ void setErrorString( INOUT ERROR_INFO *errorInfoPtr,
 	   but make the sanity-checking of parameters explicit */
 	if( stringLength <= 0 || stringLength > MAX_ERRMSG_SIZE )
 		{
+		DEBUG_DIAG(( "Invalid error string data" ));
 		assert( DEBUG_WARN );
 		string = "(Couldn't record error information)";
 		length = 35;
@@ -163,8 +180,8 @@ void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr,
 					const ERROR_INFO *srcErrorInfoPtr )
 	{
 	assert( isWritePtr( destErrorInfoPtr, sizeof( ERROR_INFO ) ) );
-	assert( isWritePtr( destErrorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
 	assert( isReadPtr( srcErrorInfoPtr, sizeof( ERROR_INFO ) ) );
+	assert( isWritePtr( destErrorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
 	assert( isReadPtr( srcErrorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
 
 	memset( destErrorInfoPtr, 0, sizeof( ERROR_INFO ) );
@@ -288,6 +305,8 @@ int retExtObjFn( IN_ERROR const int status,
 	   fetch it and append it to the session-level error message */
 	if( errorStringLength + extErrorStringLength < MAX_ERRMSG_SIZE - 32 )
 		{
+		ENSURES( rangeCheck( errorStringLength + 26, extErrorStringLength,
+							 MAX_ERRMSG_SIZE ) );
 		memcpy( errorInfoPtr->errorString + errorStringLength, 
 				". Additional information: ", 26 );
 		memcpy( errorInfoPtr->errorString + errorStringLength + 26,
@@ -382,5 +401,27 @@ int retExtErrFn( IN_ERROR const int status,
 	/* Append the additional status string */
 	appendErrorString( errorInfoPtr, extErrorString, extErrorStringLength );
 	return( localStatus );
+	}
+#else
+
+/****************************************************************************
+*																			*
+*						Minimal Error Reporting Functions					*
+*																			*
+****************************************************************************/
+
+/* If we're not using extended error reporting there is one minimal facility 
+   that we still need to support, which is the copying of an integer error 
+   code from source to destination */
+
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr, 
+					const ERROR_INFO *srcErrorInfoPtr )
+	{
+	assert( isWritePtr( destErrorInfoPtr, sizeof( ERROR_INFO ) ) );
+	assert( isReadPtr( srcErrorInfoPtr, sizeof( ERROR_INFO ) ) );
+
+	memset( destErrorInfoPtr, 0, sizeof( ERROR_INFO ) );
+	destErrorInfoPtr->errorCode = srcErrorInfoPtr->errorCode;
 	}
 #endif /* USE_ERRMSGS */

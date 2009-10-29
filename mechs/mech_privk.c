@@ -257,7 +257,7 @@ static int checkOpenPgpKeyIntegrity( IN_BUFFER( dataLength ) const void *data,
 	/* Hash the data and make sure that it matches the stored MDC */
 	hashFunctionAtomic( hashValue, CRYPT_MAX_HASHSIZE, data, 
 						dataLength - hashSize );
-	if( memcmp( hashValue, hashValuePtr, hashSize ) )
+	if( !compareDataConstTime( hashValue, hashValuePtr, hashSize ) )
 		return( CRYPT_ERROR_WRONGKEY );
 
 	return( CRYPT_OK );
@@ -351,7 +351,7 @@ static int privateKeyWrap( STDC_UNUSED void *dummy,
 
 		/* Add the PKCS #5 padding and encrypt the data */
 		for( i = 0; i < padSize; i++ )
-			dataPtr[ payloadSize + i ] = padSize;
+			dataPtr[ payloadSize + i ] = intToByte( padSize );
 		status = krnlSendMessage( mechanismInfo->wrapContext,
 								  IMESSAGE_CTX_ENCRYPT,
 								  mechanismInfo->wrappedData,
@@ -364,6 +364,7 @@ static int privateKeyWrap( STDC_UNUSED void *dummy,
 			( !memcmp( startSample, dataPtr, 8 ) || \
 			  !memcmp( endSample, dataEndPtr, 8 ) ) )
 			{
+			DEBUG_DIAG(( "Failed to encrypt private-key data" ));
 			assert( DEBUG_WARN );
 			status = CRYPT_ERROR_FAILED;
 			}
@@ -437,8 +438,6 @@ static int privateKeyUnwrap( STDC_UNUSED void *dummy,
 		status = importPrivateKeyData( &stream, mechanismInfo->keyContext,
 									   formatType );
 		sMemDisconnect( &stream );
-		if( status == CRYPT_ERROR_BADDATA )
-			status = CRYPT_ERROR_WRONGKEY;
 		}
 	zeroise( buffer, mechanismInfo->wrappedDataLength );
 	krnlMemfree( &buffer );
@@ -566,7 +565,7 @@ static int privateKeyUnwrapPGP( STDC_UNUSED void *dummy,
 		type == PRIVATEKEYPGP_WRAP_OPENPGP_OLD )
 		{
 		/* Before the use of MDCs for private-key data there was a mutant 
-		   halfway stage that use the PGP 2.x checksum but encrypted all of 
+		   halfway stage that used the PGP 2.x checksum but encrypted all of 
 		   the key data in the OpenPGP manner.  If we're using this halfway 
 		   variant then the amount of data to checksum is the total amount
 		   minus the size of the checksum */

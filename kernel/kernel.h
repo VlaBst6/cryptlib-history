@@ -305,7 +305,51 @@ typedef struct {
    the exception of the special-case values at the start, all values in this
    block should be set to use zero/NULL as their ground state (for example a
    boolean variable should have a ground state of FALSE (zero) rather than
-   TRUE (nonzero)) */
+   TRUE (nonzero)).
+
+   If the objectTable giant lock (or more strictly speaking monolithic lock, 
+   since the kernel's message-handling is designed to be straight-line code 
+   and so never blocks for any amount of time like the Linux giant lock can) 
+   ever proves to be a problem then the solution would be to use lock 
+   striping, dividing the load of the object table across NO_TABLE_LOCKS 
+   locks.  This gets a bit tricky because the object table is dynamically
+   resizeable, a basic mod_NO_TABLE_LOCKS strategy where every n-th entry 
+   uses the same lock works but then we'd still need a giant lock to check 
+   whether the table is being resized.  To avoid this we can use a lock-free 
+   implementation that operates by acquiring each lock (to make sure we have 
+   complete control of the table), checking whether another thread beat us to 
+   it, and if not resizing the table.  The pseudocode for this is as 
+   follows:
+
+	// Remember the original table size
+	const int oldSize = krnlData->objectTableSize;
+
+	// Acquire each lock
+	for( i = 0; i < NO_LOCKS; i++ )
+		THREAD_LOCK( krnlData->locks[ i ] );
+
+	// Check whether another thread beat us to the resize while we were 
+	// acquiring locks
+	if( krnlData->objectTableSize != oldSize )
+		{
+		// Unlock all the locks
+		// ... //
+		return;
+		}
+
+	// We hold all the locks and therefore have exclusive control of the 
+	// table, resize it
+	// ... //
+
+	// Release each lock again //
+	for( i = 0; i < NO_LOCKS; i++ )
+		THREAD_UNLOCK( krnlData->locks[ i ] );
+
+   This is a conventional lock-free implementation of such an algorithm but 
+   is conceptually ugly in that it accesses protected data outside the lock, 
+   which will cause concurrency-checking tools to complain.  Until the fast-
+   path through the kernel actually becomes a real bottleneck it's probably 
+   best to leave well enough alone */
 
 typedef struct {
 	/* The kernel initialisation state and a lock to protect it.  The
@@ -390,172 +434,170 @@ typedef struct {
 
 /* Prototypes for functions in certm_acl.c */
 
-CHECK_RETVAL \
-int preDispatchCheckCertMgmtAccess( const int objectHandle,
-									const MESSAGE_TYPE message,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
+									IN_MESSAGE const MESSAGE_TYPE message,
 									IN_BUFFER( MESSAGE_CERTMGMT_INFO ) \
-									const void *messageDataPtr,
-									const int messageValue,
-									const void *dummy ) \
-									STDC_NONNULL_ARG( ( 3 ) );
+										const void *messageDataPtr,
+									IN_ENUM( CRYPT_CERTACTION ) \
+										const int messageValue,
+									STDC_UNUSED const void *dummy );
 
 /* Prototypes for functions in key_acl.c */
 
-CHECK_RETVAL \
-int preDispatchCheckKeysetAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  IN_BUFFER( MESSAGE_KEYMGMT_INFO ) \
-								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy ) \
-								  STDC_NONNULL_ARG( ( 3 ) );
+										const void *messageDataPtr,
+								  IN_ENUM( KEYMGMT_ITEM ) const int messageValue,
+								  STDC_UNUSED const void *dummy );
 
 /* Prototypes for functions in mech_acl.c */
 
-CHECK_RETVAL \
-int preDispatchCheckMechanismWrapAccess( const int objectHandle,
-										 const MESSAGE_TYPE message,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismWrapAccess( IN_HANDLE const int objectHandle,
+										 IN_MESSAGE const MESSAGE_TYPE message,
 										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
-										 const void *messageDataPtr,
-										 const int messageValue,
-										 const void *dummy ) \
-										 STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int preDispatchCheckMechanismSignAccess( const int objectHandle,
-										 const MESSAGE_TYPE message,
+											const void *messageDataPtr,
+										 IN_ENUM( MECHANISM ) const int messageValue,
+										 STDC_UNUSED const void *dummy );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismSignAccess( IN_HANDLE const int objectHandle,
+										 IN_MESSAGE const MESSAGE_TYPE message,
 										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
-										 const void *messageDataPtr,
-										 const int messageValue,
-										 const void *dummy ) \
-										 STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
-										   const MESSAGE_TYPE message,
+											const void *messageDataPtr,
+										 IN_ENUM( MECHANISM ) const int messageValue,
+										 STDC_UNUSED const void *dummy );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismDeriveAccess( IN_HANDLE const int objectHandle,
+										   IN_MESSAGE const MESSAGE_TYPE message,
 										   IN_BUFFER( MECHANISM_WRAP_INFO ) \
-										   const void *messageDataPtr,
-										   const int messageValue,
-										   const void *dummy ) \
-										   STDC_NONNULL_ARG( ( 3 ) );
+												const void *messageDataPtr,
+										   IN_ENUM( MECHANISM ) const int messageValue,
+										   STDC_UNUSED const void *dummy );
 
 /* Prototypes for functions in msg_acl.c */
 
 CHECK_RETVAL \
-int preDispatchSignalDependentObjects( const int objectHandle,
-									   const MESSAGE_TYPE message,
-									   const void *messageDataPtr,
-									   const int messageValue,
-									   const void *dummy );
+int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
+									   STDC_UNUSED const MESSAGE_TYPE dummy1,
+									   STDC_UNUSED const void *dummy2,
+									   STDC_UNUSED const int dummy3,
+									   STDC_UNUSED const void *dummy4 );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 5 ) ) \
+int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
+									 IN_MESSAGE const MESSAGE_TYPE message,
+									 IN_OPT const void *messageDataPtr,
+									 IN_ATTRIBUTE const int messageValue,
+									 IN TYPECAST( ATTRIBUTE_ACL * ) \
+										const void *auxInfo );
 CHECK_RETVAL \
-int preDispatchCheckAttributeAccess( const int objectHandle,
-									 const MESSAGE_TYPE message,
-									 const void *messageDataPtr,
-									 const int messageValue,
-									 const void *auxInfo );
-CHECK_RETVAL \
-int preDispatchCheckCompareParam( const int objectHandle,
-								  const MESSAGE_TYPE message,
+int preDispatchCheckCompareParam( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy );
+								  IN_ENUM( MESSAGE_COMPARE ) const int messageValue,
+								  STDC_UNUSED const void *dummy2 );
 CHECK_RETVAL \
-int preDispatchCheckCheckParam( const int objectHandle,
-								const MESSAGE_TYPE message,
-								const void *messageDataPtr,
-								const int messageValue,
-								const void *dummy );
+int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
+								IN_MESSAGE const MESSAGE_TYPE message,
+								STDC_UNUSED const void *dummy1,
+								IN_ENUM( MESSAGE_CHECK ) const int messageValue,
+								STDC_UNUSED const void *dummy2 );
 CHECK_RETVAL \
-int preDispatchCheckActionAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,
-								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy );
+int preDispatchCheckActionAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
+								  STDC_UNUSED const void *dummy1,
+								  STDC_UNUSED const int dummy2,
+								  STDC_UNUSED const void *dummy3 );
 CHECK_RETVAL \
-int preDispatchCheckState( const int objectHandle,
-						   const MESSAGE_TYPE message,
-						   const void *messageDataPtr,
-						   const int messageValue, const void *dummy );
+int preDispatchCheckState( IN_HANDLE const int objectHandle,
+						   IN_MESSAGE const MESSAGE_TYPE message,
+						   STDC_UNUSED const void *dummy1,
+						   STDC_UNUSED const int dummy2, 
+						   STDC_UNUSED const void *dummy3 );
 CHECK_RETVAL \
-int preDispatchCheckParamHandleOpt( const int objectHandle,
-									const MESSAGE_TYPE message,
-									const void *messageDataPtr,
+int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
+									IN_MESSAGE const MESSAGE_TYPE message,
+									STDC_UNUSED const void *dummy1,
 									const int messageValue,
-									const void *auxInfo );
+									IN TYPECAST( MESSAGE_ACL * ) \
+										const void *auxInfo );
 CHECK_RETVAL \
-int preDispatchCheckStateParamHandle( const int objectHandle,
-									  const MESSAGE_TYPE message,
-									  const void *messageDataPtr,
+int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
+									  IN_MESSAGE const MESSAGE_TYPE message,
+									  STDC_UNUSED const void *dummy1,
 									  const int messageValue,
-									  const void *auxInfo );
+									  IN TYPECAST( MESSAGE_ACL * ) \
+											const void *auxInfo );
 CHECK_RETVAL \
-int preDispatchCheckExportAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,
+int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy );
-CHECK_RETVAL \
-int preDispatchCheckData( const int objectHandle,
-						  const MESSAGE_TYPE message,
+								  IN_ENUM( CRYPT_CERTFORMAT ) const int messageValue,
+								  STDC_UNUSED const void *dummy2 );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckData( IN_HANDLE const int objectHandle,
+						  IN_MESSAGE const MESSAGE_TYPE message,
 						  IN_BUFFER( MESSAGE_DATA ) \
-						  const void *messageDataPtr,
-						  const int messageValue,
-						  const void *dummy ) \
-						  STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int preDispatchCheckCreate( const int objectHandle,
-							const MESSAGE_TYPE message,
+								const void *messageDataPtr,
+						  STDC_UNUSED const int dummy1,
+						  STDC_UNUSED const void *dummy2 );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
+							IN_MESSAGE const MESSAGE_TYPE message,
 							IN_BUFFER( MESSAGE_CREATEOBJECT_INFO ) \
-							const void *messageDataPtr,
-							const int messageValue,
-							const void *dummy ) \
-							STDC_NONNULL_ARG( ( 3 ) );
+								const void *messageDataPtr,
+							IN_ENUM( OBJECT ) const int messageValue,
+							STDC_UNUSED const void *dummy );
 CHECK_RETVAL \
-int preDispatchCheckUserMgmtAccess( const int objectHandle, 
-									const MESSAGE_TYPE message,
-									const void *messageDataPtr,
-									const int messageValue, 
-									const void *dummy );
+int preDispatchCheckUserMgmtAccess( IN_HANDLE const int objectHandle, 
+									IN_MESSAGE const MESSAGE_TYPE message,
+									STDC_UNUSED const void *dummy1,
+									IN_ENUM( MESSAGE_USERMGMT ) const int messageValue, 
+									STDC_UNUSED const void *dummy2 );
 CHECK_RETVAL \
-int preDispatchCheckTrustMgmtAccess( const int objectHandle, 
-									 const MESSAGE_TYPE message,
+int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle, 
+									 IN_MESSAGE const MESSAGE_TYPE message,
 									 const void *messageDataPtr,
-									 const int messageValue, 
-									 const void *dummy );
+									 STDC_UNUSED const int messageValue, 
+									 STDC_UNUSED const void *dummy );
 CHECK_RETVAL \
-int postDispatchMakeObjectExternal( const int dummy,
-									const MESSAGE_TYPE message,
+int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
+									IN_MESSAGE const MESSAGE_TYPE message,
 									const void *messageDataPtr,
 									const int messageValue,
 									const void *auxInfo );
 CHECK_RETVAL \
-int postDispatchForwardToDependentObject( const int objectHandle,
-										  const MESSAGE_TYPE message,
-										  const void *dummy1,
-										  const int messageValue,
-										  const void *dummy2 );
+int postDispatchForwardToDependentObject( IN_HANDLE const int objectHandle,
+										  IN_MESSAGE const MESSAGE_TYPE message,
+										  STDC_UNUSED const void *dummy1,
+										  IN_ENUM( MESSAGE_CHECK ) const int messageValue,
+										  STDC_UNUSED const void *dummy2 );
 CHECK_RETVAL \
-int postDispatchUpdateUsageCount( const int objectHandle,
-								  const MESSAGE_TYPE message,
-								  const void *dummy1,
-								  const int messageValue,
-								  const void *dummy2 );
+int postDispatchUpdateUsageCount( IN_HANDLE const int objectHandle,
+								  STDC_UNUSED const MESSAGE_TYPE dummy1,
+								  STDC_UNUSED const void *dummy2,
+								  STDC_UNUSED const int dummy3,
+								  STDC_UNUSED const void *dummy4 );
 CHECK_RETVAL \
-int postDispatchChangeState( const int objectHandle,
-							 const MESSAGE_TYPE message,
-							 const void *dummy1,
-							 const int messageValue,
-							 const void *dummy2 );
+int postDispatchChangeState( IN_HANDLE const int objectHandle,
+							 STDC_UNUSED const MESSAGE_TYPE dummy1,
+							 STDC_UNUSED const void *dummy2,
+							 STDC_UNUSED const int dummy3,
+							 STDC_UNUSED const void *dummy4 );
 CHECK_RETVAL \
-int postDispatchChangeStateOpt( const int objectHandle,
-								const MESSAGE_TYPE message,
-								const void *dummy1,
+int postDispatchChangeStateOpt( IN_HANDLE const int objectHandle,
+								STDC_UNUSED const MESSAGE_TYPE dummy1,
+								STDC_UNUSED const void *dummy2,
 								const int messageValue,
-								const void *auxInfo );
+								IN TYPECAST( ATTRIBUTE_ACL * ) const void *auxInfo );
 CHECK_RETVAL \
-int postDispatchHandleZeroise( const int objectHandle, 
-							   const MESSAGE_TYPE message,
-							   const void *dummy1,
-							   const int messageValue,
-							   const void *dummy2 );
+int postDispatchHandleZeroise( IN_HANDLE const int objectHandle, 
+							   IN_MESSAGE const MESSAGE_TYPE message,
+							   STDC_UNUSED const void *dummy2,
+							   IN_ENUM( MESSAGE_USERMGMT ) const int messageValue,
+							   STDC_UNUSED const void *dummy3 );
 
 /****************************************************************************
 *																			*
@@ -565,113 +607,105 @@ int postDispatchHandleZeroise( const int objectHandle,
 
 /* Prototypes for functions in attr_acl.c */
 
-CHECK_RETVAL \
-const void *findAttributeACL( const CRYPT_ATTRIBUTE_TYPE attribute,
+CHECK_RETVAL_PTR \
+const void *findAttributeACL( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 							  const BOOLEAN isInternalMessage );
 
 /* Prototypes for functions in int_msg.c */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getPropertyAttribute( IN_HANDLE const int objectHandle,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  OUT_BUFFER_FIXED( sizeof( int ) ) void *messageDataPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int setPropertyAttribute( IN_HANDLE const int objectHandle,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  IN_BUFFER( sizeof( int ) ) void *messageDataPtr );
 CHECK_RETVAL \
-int getPropertyAttribute( const int objectHandle,
-						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  OUT_BUFFER_FIXED( sizeof( int ) ) \
-						  void *messageDataPtr ) \
-						  STDC_NONNULL_ARG( ( 3 ) );
+int incRefCount( IN_HANDLE const int objectHandle, 
+				 STDC_UNUSED const int dummy1,
+				 STDC_UNUSED const void *dummy2, 
+				 STDC_UNUSED const BOOLEAN dummy3 );
 CHECK_RETVAL \
-int setPropertyAttribute( const int objectHandle,
-						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  IN_BUFFER( sizeof( int ) ) \
-						  void *messageDataPtr ) \
-						  STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int incRefCount( const int objectHandle, const int dummy1,
-				 const void *dummy2, const BOOLEAN dummy3 );
-CHECK_RETVAL \
-int decRefCount( const int objectHandle, const int dummy1,
-				 const void *dummy2, const BOOLEAN isInternal );
-CHECK_RETVAL \
-int getDependentObject( const int objectHandle, const int targetType,
+int decRefCount( IN_HANDLE const int objectHandle, 
+				 STDC_UNUSED const int dummy1,
+				 STDC_UNUSED const void *dummy2, 
+				 const BOOLEAN isInternal );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getDependentObject( IN_HANDLE const int objectHandle, 
+						const int targetType,
 						OUT_BUFFER_FIXED( sizeof( int ) ) \
-						const void *messageDataPtr,
-						const BOOLEAN dummy ) \
-						STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int setDependentObject( const int objectHandle, const int incReferenceCount,
+								const void *messageDataPtr,
+						STDC_UNUSED const BOOLEAN dummy );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int setDependentObject( IN_HANDLE const int objectHandle, 
+						IN_ENUM( SETDEP_OPTION ) const int option,
 						IN_BUFFER( sizeof( int ) ) \
-						const void *messageDataPtr,
-						const BOOLEAN dummy ) \
-						STDC_NONNULL_ARG( ( 3 ) );
+								const void *messageDataPtr,
+						STDC_UNUSED const BOOLEAN dummy );
 CHECK_RETVAL \
-int cloneObject( const int objectHandle, const int clonedObject,
-				 const void *dummy1, const BOOLEAN dummy2 );
+int cloneObject( IN_HANDLE const int objectHandle, 
+				 IN_HANDLE const int clonedObject,
+				 STDC_UNUSED const void *dummy1, 
+				 STDC_UNUSED const BOOLEAN dummy2 );
 
 /* Prototypes for functions in sendmsg.c */
 
 CHECK_RETVAL \
-int checkTargetType( const int objectHandle, const long targets );
+int checkTargetType( IN_HANDLE const int objectHandle, const long targets );
 CHECK_RETVAL \
-int findTargetType( const int originalObjectHandle, const long targets );
-CHECK_RETVAL \
-int waitForObject( const int objectHandle, 
-				   OUT_PTR OBJECT_INFO **objectInfoPtrPtr ) \
-				   STDC_NONNULL_ARG( ( 2 ) );
+int findTargetType( IN_HANDLE const int originalObjectHandle, 
+					const long targets );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int waitForObject( IN_HANDLE const int objectHandle, 
+				   OUT_PTR OBJECT_INFO **objectInfoPtrPtr );
 
 /* Prototypes for functions in objects.c */
 
-void destroyObjectData( const int objectHandle );
+void destroyObjectData( IN_HANDLE const int objectHandle );
+CHECK_RETVAL \
 int destroyObjects( void );
 
 /* Prototypes for functions in semaphore.c */
 
-void setSemaphore( const SEMAPHORE_TYPE semaphore,
+void setSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore,
 				   const MUTEX_HANDLE object );
-void clearSemaphore( const SEMAPHORE_TYPE semaphore );
+void clearSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore );
 
 /* Init/shutdown functions for each kernel module */
 
-CHECK_RETVAL \
-int initAllocation( INOUT KERNEL_DATA *krnlDataPtr ) \
-					STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initAllocation( INOUT KERNEL_DATA *krnlDataPtr );
 void endAllocation( void );
-CHECK_RETVAL \
-int initAttributeACL( INOUT KERNEL_DATA *krnlDataPtr ) \
-					  STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initAttributeACL( INOUT KERNEL_DATA *krnlDataPtr );
 void endAttributeACL( void );
-CHECK_RETVAL \
-int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr ) \
-					 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr );
 void endCertMgmtACL( void );
-CHECK_RETVAL \
-int initInternalMsgs( INOUT KERNEL_DATA *krnlDataPtr ) \
-					  STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initInternalMsgs( INOUT KERNEL_DATA *krnlDataPtr );
 void endInternalMsgs( void );
-CHECK_RETVAL \
-int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr ) \
-					STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr );
 void endKeymgmtACL( void );
-CHECK_RETVAL \
-int initMechanismACL( INOUT KERNEL_DATA *krnlDataPtr ) \
-					  STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initMechanismACL( INOUT KERNEL_DATA *krnlDataPtr );
 void endMechanismACL( void );
-CHECK_RETVAL \
-int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr ) \
-					STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr );
 void endMessageACL( void );
-CHECK_RETVAL \
-int initObjects( INOUT KERNEL_DATA *krnlDataPtr ) \
-				 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initObjects( INOUT KERNEL_DATA *krnlDataPtr );
 void endObjects( void );
-CHECK_RETVAL \
-int initObjectAltAccess( INOUT KERNEL_DATA *krnlDataPtr ) \
-						 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initObjectAltAccess( INOUT KERNEL_DATA *krnlDataPtr );
 void endObjectAltAccess( void );
-CHECK_RETVAL \
-int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr ) \
-					STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr );
 void endSemaphores( void );
-CHECK_RETVAL \
-int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr ) \
-					 STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr );
 void endSendMessage( void );
 
 #endif /* _KERNEL_DEFINED */

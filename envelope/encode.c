@@ -49,7 +49,7 @@
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -148,7 +148,7 @@ int hashEnvelopeData( const ACTION_LIST *hashActionPtr,
 		 hashActionPtr = hashActionPtr->next, iterationCount++ )
 		{
 		status = krnlSendMessage( hashActionPtr->iCryptHandle,
-								  IMESSAGE_CTX_HASH, ( void * ) data, 
+								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data, 
 								  dataLength );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -261,6 +261,9 @@ static int beginSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   the remaining space */
 	if( envelopeInfoPtr->blockBufferPos > 0 )
 		{
+		REQUIRES( rangeCheckZ( envelopeInfoPtr->bufPos,
+							   envelopeInfoPtr->blockBufferPos,
+							   envelopeInfoPtr->bufSize ) );
 		memcpy( envelopeInfoPtr->buffer + envelopeInfoPtr->bufPos,
 				envelopeInfoPtr->blockBuffer, envelopeInfoPtr->blockBufferPos );
 		envelopeInfoPtr->bufPos += envelopeInfoPtr->blockBufferPos;
@@ -432,7 +435,10 @@ static int encodeSegmentHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		/* Add the block padding and set the remainder to zero, since we're
 		   now at an even block boundary */
 		for( i = 0; i < padSize; i++ )
-			envelopeInfoPtr->buffer[ envelopeInfoPtr->bufPos + i ] = padSize;
+			{
+			envelopeInfoPtr->buffer[ envelopeInfoPtr->bufPos + i ] = \
+												intToByte( padSize );
+			}
 		envelopeInfoPtr->bufPos += padSize;
 		envelopeInfoPtr->dataFlags &= ~ENVDATA_NEEDSPADDING;
 		ENSURES( envelopeInfoPtr->bufPos >= 0 && \
@@ -876,6 +882,8 @@ static int copyFromEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		/* Move any remaining data down in the buffer */
 		if( remainder > 0 )
 			{
+			REQUIRES( rangeCheck( bytesToCopy, remainder,
+								  envelopeInfoPtr->bufPos ) );
 			memmove( envelopeInfoPtr->buffer,
 					 envelopeInfoPtr->buffer + bytesToCopy, remainder );
 			}

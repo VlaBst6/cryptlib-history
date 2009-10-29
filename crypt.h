@@ -493,6 +493,13 @@ typedef struct {
 #define bitsToBytes( bits )			( ( ( bits ) + 7 ) >> 3 )
 #define bytesToBits( bytes )		( ( bytes ) << 3 )
 
+/* When initialising a static block of bytes, it's useful to be able to 
+   specify it as a character string, however this runs into problems with
+   the fact that the default char type is signed.  To get around this the
+   following macro declares a byte string as a set of unsigned bytes */
+
+#define MKDATA( x )					( ( unsigned char * ) ( x  ) )
+
 /* Macro to round a value up to the nearest multiple of a second value,
    with the second value being a power of 2 */
 
@@ -549,8 +556,14 @@ typedef struct {
 #define isWeakCryptAlgo( algorithm )	( ( algorithm ) == CRYPT_ALGO_DES || \
 										  ( algorithm ) == CRYPT_ALGO_RC4 )
 
-/* Macros to check whether a PKC algorithm is useful for a certain purpose or
-   requires special-case handling */
+/* Macros to check whether a PKC algorithm is useful for a certain purpose 
+   or requires special-case handling.  Note that isDlpAlgo() doesn't include 
+   the ECC algorithms, which are also based on the DLP (although in this 
+   case the ECDLP and not the standard DLP).  This is a bit ugly but it's 
+   used in various places to distinguish DLP-based PKCs from non-DLP-based
+   PKCs, while ECDLP-based-PKCs are in a separate class.  This means that
+   when checking for the extended class { DLP | ECDLP } it's necessary to
+   explicitly include isEccAlgo() alongside isDlpAlgo() */
 
 #define isSigAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_RSA || ( algorithm ) == CRYPT_ALGO_DSA || \
@@ -558,28 +571,40 @@ typedef struct {
 #define isCryptAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_RSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL )
 #define isKeyxAlgo( algorithm ) \
-	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
+	( ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA || \
+	  ( algorithm ) == CRYPT_ALGO_ECDH )
 #define isDlpAlgo( algorithm ) \
 	( ( algorithm ) == CRYPT_ALGO_DSA || ( algorithm ) == CRYPT_ALGO_ELGAMAL || \
 	  ( algorithm ) == CRYPT_ALGO_DH || ( algorithm ) == CRYPT_ALGO_KEA )
 #define isEccAlgo( algorithm ) \
-	( ( algorithm ) == CRYPT_ALGO_ECDSA )
+	( ( algorithm ) == CRYPT_ALGO_ECDSA || ( algorithm ) == CRYPT_ALGO_ECDH )
 
 /* A macro to check whether a public key is too short to be secure.  This
    is a bit more complex than just a range check because any length below 
    about 512 bits is probably a bad data error, while lengths from about
-   512 bits to MIN_PKCSIZE are too-short key errors */
+   512 bits to MIN_PKCSIZE (for standard PKCs) or 120 bits to 
+   MIN_PKCSIZE_ECC are too-short key errors */
 
 #define isShortPKCKey( keySize ) \
-		( ( keySize ) >= bitsToBytes( 504 ) && ( keySize ) < MIN_PKCSIZE )
+		( ( keySize ) >= MIN_PKCSIZE_THRESHOLD && \
+		  ( keySize ) < MIN_PKCSIZE )
+#define isShortECCKey( keySize ) \
+		( ( keySize ) >= MIN_PKCSIZE_ECC_THRESHOLD && \
+		  ( keySize ) < MIN_PKCSIZE_ECC )
 
 /* Perform a range check on a block of memory, checking that 
-   { start, length } falls within { 0, totalLength }.  The lower bound on 
-   the length is set by PGP attributes, which can consist of nothing but a
-   16-bit length */
+   { start, length } falls within { 0, totalLength }.  There are two 
+   versions of this, the default which requires a nonzero start offset and 
+   the special-case variant which allows a zero start offset, which is used 
+   for situations like optionally MIME-wrapped data which have a nonzero 
+   offset if there's a MIME header to be skipped but a zero offset if it's 
+   unencapsulated data */
 
 #define rangeCheck( start, length, totalLength ) \
-		( ( start ) <= 0 || ( length ) < 2 || \
+		( ( start ) <= 0 || ( length ) < 1 || \
+		  ( start ) + ( length ) > ( totalLength ) ) ? FALSE : TRUE
+#define rangeCheckZ( start, length, totalLength ) \
+		( ( start ) < 0 || ( length ) < 1 || \
 		  ( start ) + ( length ) > ( totalLength ) ) ? FALSE : TRUE
 
 /* Check the validity of a pointer passed to a cryptlib function.  Usually
@@ -621,12 +646,12 @@ typedef struct {
    checks to do something like this.
 
    For these reasons we use these functions mostly for debugging, wrapping
-   them up in assert()s.  Under Windows Vista, they've actually been turned
-   into no-ops because of the above problems, although it's probable that
-   they'll be replaced by a code to check for NULL pointers, since
-   Microsoft's docs indicate that this much checking will still be done.  If
-   necessary we could also replace the no-op'd out versions with the 
-   equivalent code:
+   them up in assert()s in most cases where they're used.  Under Windows 
+   Vista they've actually been turned into no-ops because of the above 
+   problems, although it's probable that they'll be replaced by code to 
+   check for NULL pointers, since Microsoft's docs indicate that this much 
+   checking will still be done.  If necessary we could also replace the 
+   no-op'd out versions with the equivalent code:
 
 	inline BOOL IsBadReadPtr( const VOID *lp, UINT_PTR ucb )
 		{
@@ -640,17 +665,70 @@ typedef struct {
 		__try { memset( p, 0, cb ); }
 		__except( EXCEPTION_EXECUTE_HANDLER ) { return( FALSE ); }
 		return( TRUE );
-		} */
+		} 
 
-#if ( defined( __WIN32__ ) || defined( __WINCE__ ) ) && 1
+   In a number of cases the code is called as 
+   isXXXPtr( ptr, sizeof( ptrObject ) ), which causes warnings about 
+   constant expressions, to avoid this we define a separate version 
+   that takes as argument the object type that's pointed to and that
+   avoids the size check.
+   
+   The Unix version of the memory-checking using _etext is also problematic 
+   because with shared libraries the single shared image can be mapped 
+   pretty much anywhere into the process' address space and there can be 
+   multiple _etext's present, one per shared library.  Because of this we 
+   disable the check using _etext if we can detect that we're being built as 
+   a shared library */
+
+#if defined( __WIN32__ ) || defined( __WINCE__ )
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
 									  !IsBadReadPtr( ( ptr ), ( size ) ) )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
 									  !IsBadWritePtr( ( ptr ), ( size ) ) )
+  #define isReadPtrConst( ptr, type ) \
+									( ( ptr ) != NULL && \
+									  !IsBadReadPtr( ( ptr ), sizeof( type ) ) )
+  #define isWritePtrConst( ptr, type ) \
+									( ( ptr ) != NULL && \
+									  !IsBadWritePtr( ( ptr ), sizeof( type ) ) )
+#elif defined( __UNIX__ ) && \
+	  ( defined( _AIX ) || defined( __linux__ ) || \
+		( defined( sun ) && OSVERSION >= 5 ) ) && \
+	  !defined( __PIC__ )
+  extern int _etext;
+
+  #define isReadPtr( ptr, size )	( ( ptr ) != NULL && \
+									  ( void * ) ( ptr ) > ( void * ) &_etext && \
+									  ( size ) > 0 )
+  #define isWritePtr( ptr, size )	( ( ptr ) != NULL && \
+									  ( void * ) ( ptr ) > ( void * ) &_etext && \
+									  ( size ) > 0 )
+  #define isReadPtrConst( ptr, type ) \
+									( ( ptr ) != NULL && \
+									  ( void * ) ( ptr ) > ( void * ) &_etext )
+  #define isWritePtrConst( ptr, type ) \
+									( ( ptr ) != NULL && \
+									  ( void * ) ( ptr ) > ( void * ) &_etext )
 #else
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
   #define isWritePtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 )
+  #define isReadPtrConst( ptr, type ) \
+									( ( ptr ) != NULL )
+  #define isWritePtrConst( ptr, type ) \
+									( ( ptr ) != NULL )
 #endif /* Pointer check macros */
+
+/* To avoid problems with signs, for example due to (signed) characters
+   being potentially converted to large signed integer values we perform a
+   safe conversion by going via an intermediate unsigned value, which in
+   the case of char -> int results in 0xFF turning into 0x000000FF rather
+   than 0xFFFFFFFF */
+
+#define byteToInt( x )				( ( unsigned char ) ( x ) )
+#define intToLong( x )				( ( unsigned int ) ( x ) )
+
+#define sizeToInt( x )				( ( unsigned int ) ( x ) )
+#define intToByte( x )				( ( unsigned char ) ( x ) )
 
 /* Clear/set object error information */
 
@@ -732,13 +810,44 @@ typedef struct {
 #else
   #include <assert.h>
 #endif /* Systems without assert() */
-#define DEBUG_WARN	0	/* Force an assertion failure via assert( DEBUG_WARN ) */
 
-/* Output an I-am-here to stdout, useful when tracing errors in code without 
-   debug symbols available */
+/* Force an assertion failure via assert( DEBUG_WARN ) */
+
+#define DEBUG_WARN				0
+
+/* Debugging printf() that sends its output to the debug output, usually
+   stdout but we use system-specific debug facilities if they're present.  
+   In addition since we sometimes need to output per-formatted strings 
+   (which may contain '%' signs interpreted by printf()) we also provide an
+   alternative that just outputs a fixed text string */
+
+#if defined( NDEBUG )
+  #define DEBUG_PRINT( x )
+  #define DEBUG_OUT( string )
+#elif defined( __WIN32__ )
+  int debugPrintf( const char *format, ... );
+
+  #define DEBUG_PRINT( x )		debugPrintf x
+  #define DEBUG_OUT( string )	OutputDebugString( string )
+#elif defined( __WINCE__ )
+  int debugPrintf( const char *format, ... );
+
+  #define DEBUG_PRINT( x )		debugPrintf x
+  #define DEBUG_OUT( string )	NKDbgPrintfW( L"%s", string )
+#elif defined( __ECOS__ )
+  #define DEBUG_PRINT( x )		diag_printf x
+  #define DEBUG_OUT( string )	diag_printf( "%s", string )
+#else
+  #include <stdio.h>			/* Needed for printf() */
+  #define DEBUG_PRINT( x )		printf x
+  #define DEBUG_OUT( string )	printf( "%s", string )
+#endif /* OS-specific diagnostic functions */
+
+/* Output an I-am-here to the debugging outout (usually stdout), useful when 
+   tracing errors in code without debug symbols available */
 
 #if defined( __GNUC__ ) || ( defined( _MSC_VER ) && VC_GE_2005( _MSC_VER ) )
-  /* Older version of gcc don't support the current syntax */
+  /* Older versions of gcc don't support the current syntax */
   #if defined( __GNUC__ ) && ( __STDC_VERSION__ < 199901L )
 	#if __GNUC__ >= 2
 	  #define __FUNCTION__	__func__ 
@@ -747,127 +856,82 @@ typedef struct {
 	#endif /* gcc 2.x or newer */
   #endif /* gcc without __func__ support */
 
-  #define DEBUG_ENTER()	printf( "Enter %s %s %d.\n", __FILE__, __FUNCTION__, __LINE__ )
-  #define DEBUG_IN()	printf( "In    %s %s %d.\n", __FILE__, __FUNCTION__, __LINE__ )
-  #define DEBUG_EXIT()	printf( "Exit  %s %s %d, status %d.\n", __FILE__, __FUNCTION__, __LINE__, status )
+  #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
+  #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
+  #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%s:%d, status %d.\n", __FILE__, __FUNCTION__, __LINE__, status ))
+
+  #define DEBUG_DIAG( x )	DEBUG_PRINT(( "%s:%s:%d: ", __FILE__, __FUNCTION__, __LINE__ )); \
+							DEBUG_PRINT( x ); \
+							DEBUG_PRINT(( ".\n" ))
 #else
-  #define DEBUG_ENTER()	printf( "Enter %s %d.\n", __FILE__, __LINE__ )
-  #define DEBUG_IN()	printf( "In    %s %d.\n", __FILE__, __LINE__ )
-  #define DEBUG_EXIT()	printf( "Exit  %s %d, status %d.\n", __FILE__, __LINE__, status )
+  #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%d.\n", __FILE__, __LINE__ ))
+  #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%d.\n", __FILE__, __LINE__ ))
+  #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%d, status %d.\n", __FILE__, __LINE__, status ))
+
+  #define DEBUG_DIAG( x )	DEBUG_PRINT(( "%s:%d: ", __FILE__, __LINE__ )); \
+							DEBUG_PRINT( x ); \
+							DEBUG_PRINT(( ".\n" ))
 #endif /* Compiler-specific diagnotics */
 
-/* Dump a PDU to disk and create a hex dump of the first n bytes of a buffer 
-   along with the length and a checksum of the entire buffer.  As a safeguard 
-   these only work in the Win32 debug version to prevent them from being 
-   accidentally enabled in any release version */
+/* Dump PDU to disk or screen.  As a safeguard these only work in the Win32 
+   debug version to prevent them from being accidentally enabled in any 
+   release version.  Note that the required support functions are present 
+   for non-Windows OSes, they're just disabled at this level for safety 
+   purposes because the cl32.dll with debug options safely disabled is 
+   included with the release while there's no control over which version 
+   gets built for other releases.  If you know what you're doing then you 
+   can enable the debug-dump options by removing the __WIN32__ check below */
 
 #if defined( __WIN32__ ) && !defined( NDEBUG )
-  #ifdef __STDC_LIB_EXT1__
-	#define OPEN_FILE( filePtr, fileName ) \
-			if( fopen_s( &filePtr, fileName, "wb" ) != 0 ) \
-				filePtr = NULL
-  #else
-	#define OPEN_FILE( filePtr, fileName ) \
-			filePtr = fopen( fileName, "wb" )
-  #endif /* __STDC_LIB_EXT1__ */
+  #define DEBUG_DUMP		debugDumpFile
+  #define DEBUG_DUMP_CERT	debugDumpFileCert
+  #define DEBUG_DUMPHEX		debugDumpHex
+  #define DEBUG_DUMPDATA	debugDumpData
 
-  #define DEBUG_DUMP( name, data, length ) \
-	{ \
-	FILE *filePtr; \
-	char fileName[ 1024 ]; \
-	\
-	GetTempPath( 512, fileName ); \
-	strlcat_s( fileName, 1024, name ); \
-	strlcat_s( fileName, 1024, ".der" ); \
-	\
-	OPEN_FILE( filePtr, fileName ); \
-	if( filePtr != NULL ) \
-		{ \
-		if( length > 0 ) \
-			fwrite( data, 1, length, filePtr ); \
-		fclose( filePtr ); \
-		} \
-	}
-
-  #define DEBUG_DUMP_CERT( name, cert ) \
-	{ \
-	RESOURCE_DATA msgData; \
-	FILE *filePtr; \
-	char fileName[ 1024 ]; \
-	BYTE certData[ 2048 ]; \
-	\
-	GetTempPath( 512, fileName ); \
-	strlcat_s( fileName, 1024, name ); \
-	strlcat_s( fileName, 1024, ".der" ); \
-	\
-	OPEN_FILE( filePtr, fileName ); \
-	if( filePtr != NULL ) \
-		{ \
-		setMessageData( &msgData, certData, 2048 ); \
-		status = krnlSendMessage( cert, IMESSAGE_CRT_EXPORT, &msgData, \
-								  CRYPT_CERTFORMAT_CERTIFICATE ); \
-		if( cryptStatusOK( status ) ) \
-			fwrite( msgData.data, 1, msgData.length, filePtr ); \
-		fclose( filePtr ); \
-		} \
-	}
-
-  /* The use of a memory buffer is to allow the hex dump to be performed 
-     from multiple threads without them fighting over stdout */
-  #define DEBUG_DUMPHEX( dumpPrefix, dumpBuf, dumpLen ) \
-	{ \
-	char dumpBuffer[ 128 ]; \
-	int offset, i, j; \
-	\
-	offset = sprintf( dumpBuffer, "%4s %4d %04X ", dumpPrefix, dumpLen, \
-					  checksumData( dumpBuf, dumpLen ) ); \
-	for( i = 0; i < dumpLen; i += 16 ) \
-		{ \
-		const int innerLen = min( dumpLen - i, 16 ); \
-		\
-		if( i > 0 ) \
-			offset = sprintf( dumpBuffer, "%4s           ", \
-							  dumpPrefix ); \
-		for( j = 0; j < innerLen; j++ ) \
-			offset += sprintf( dumpBuffer + offset, "%02X ", \
-							   ( ( BYTE * ) dumpBuf )[ i + j ] ); \
-		for( ; j < 16; j++ ) \
-			offset += sprintf( dumpBuffer + offset, "   " ); \
-		for( j = 0; j < innerLen; j++ ) \
-			{ \
-			const BYTE ch = ( ( BYTE * ) dumpBuf )[ i + j ]; \
-			\
-			offset += sprintf( dumpBuffer + offset, "%c", \
-							   isprint( ch ) ? ch : '.' ); \
-			} \
-		puts( dumpBuffer ); \
-		} \
-	fflush( stdout ); \
-	}
+  STDC_NONNULL_ARG( ( 1, 2 ) ) \
+  void debugDumpFile( IN_STRING const char *fileName, 
+					  IN_BUFFER( dataLength ) const void *data, 
+					  IN_LENGTH_SHORT const int dataLength );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void debugDumpFileCert( IN_STRING const char *fileName, 
+						  IN_HANDLE const CRYPT_CERTIFICATE iCryptCert );
+  STDC_NONNULL_ARG( ( 1, 2 ) ) \
+  void debugDumpHex( IN_STRING const char *prefixString, 
+					 IN_BUFFER( dataLength ) const void *data, 
+					 IN_LENGTH_SHORT const int dataLength );
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  void debugDumpData( IN_BUFFER( dataLength ) const void *data, 
+					  IN_LENGTH_SHORT const int dataLength );
 #else
   #define DEBUG_DUMP( name, data, length )
   #define DEBUG_DUMP_CERT( name, data, length )
   #define DEBUG_DUMPHEX( dumpPrefix, dumpBuf, dumpLen )
+  #define DEBUG_DUMPDATA( dumpBuf, dumpLen )
 #endif /* Win32 debug */
 
-/* Dump a trace of a double-linked list */
+/* Dump a trace of a double-linked list.  This has to be done as a macro 
+   because it requires in-place substitution of code */
 
-#define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \
+#if defined( NDEBUG )
+  #define DEBUG_DUMP_LIST( label, listHead, listTail, listType )
+#else
+  #define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \
 		{ \
 		listType *listPtr; \
 		\
-		printf( "%s: Walking list beginning at %lX.\n", \
-				label, ( listHead ) ); \
+		DEBUG_PRINT(( "%s: Walking list beginning at %lX.\n", \
+					  label, ( listHead ) )); \
 		for( listPtr = ( listHead ); \
 			 listPtr != NULL; listPtr = listPtr->next ) \
 			{ \
-			printf( "  Ptr = %lX, prev = %lX, next = %lX.\n", \
-					listPtr, listPtr->prev, listPtr->next ); \
+			DEBUG_PRINT(( "  Ptr = %lX, prev = %lX, next = %lX.\n", \
+						  listPtr, listPtr->prev, listPtr->next )); \
 			} \
 		if( ( listHead ) != NULL ) \
-			printf( "  List tail = %lX.\n", ( listTail ) ); \
-		printf( "Finished walking list beginning at %lX.\n", ( listHead ) ); \
+			DEBUG_PRINT(( "  List tail = %lX.\n", ( listTail ) )); \
+		DEBUG_PRINT(( "Finished walking list beginning at %lX.\n", ( listHead ) )); \
 		}
+#endif /* NDEBUG */
 
 /* In order to debug memory usage, we can define CONFIG_DEBUG_MALLOC to dump
    memory usage diagnostics to stdout (this would usually be done in the
@@ -902,5 +966,22 @@ typedef struct {
 #else
   #define clDynAlloc( string, size )	clAlloc( string, size )
 #endif /* CONFIG_NO_DYNALLOC */
+
+/* To provide fault-injection testing capabilities we can have memory 
+   allocations fail after a given count, thus exercising a large number of 
+   failure code paths that are normally never taken.  The following 
+   configuration define enables this fault-malloc(), with the first call 
+   setting the allocation call at which failure occurs */
+
+#ifdef CONFIG_FAULT_MALLOC
+  #undef clAlloc
+  #undef clFree
+  #define clAlloc( string, size ) \
+		  clFaultAllocFn( __FILE__, ( string ), __LINE__, ( size ) )
+  #define clFree( string, memblock )	free( memblock )
+  void *clFaultAllocFn( const char *fileName, const char *fnName, 
+						const int lineNo, size_t size );
+  void clFaultSet( const int number );
+#endif /* CONFIG_FAULT_MALLOC */
 
 #endif /* _CRYPT_DEFINED */

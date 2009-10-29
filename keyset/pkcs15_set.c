@@ -161,7 +161,10 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	PKCS15_INFO *pkcs15info = keysetInfoPtr->keyData, *pkcs15infoPtr;
 	MESSAGE_DATA msgData;
 	BYTE iD[ CRYPT_MAX_HASHSIZE + 8 ];
-	BOOLEAN certPresent = FALSE, privkeyPresent;
+	const BOOLEAN isStorageObject = \
+			( keysetInfoPtr->keysetFile->iHardwareDevice != CRYPT_UNUSED ) ? \
+			TRUE : FALSE;
+	BOOLEAN certPresent = FALSE, privkeyPresent = FALSE;
 	BOOLEAN pkcs15certPresent = FALSE, pkcs15keyPresent = FALSE;
 	BOOLEAN isCertChain = FALSE, isCertUpdate = FALSE;
 	const int noPkcs15objects = keysetInfoPtr->keyDataNoObjects;
@@ -176,16 +179,23 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( isHandleRangeValid( cryptHandle ) );
 	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			  itemType == KEYMGMT_ITEM_PRIVATEKEY || \
-			  itemType == KEYMGMT_ITEM_SECRETKEY );
+			  itemType == KEYMGMT_ITEM_SECRETKEY || \
+			  itemType == KEYMGMT_ITEM_KEYMETADATA );
 	REQUIRES( ( password == NULL && passwordLength == 0 ) || \
 			  ( password != NULL && \
 				passwordLength >= MIN_NAME_LENGTH && \
 				passwordLength < MAX_ATTRIBUTE_SIZE ) );
-	REQUIRES( ( itemType == KEYMGMT_ITEM_PUBLICKEY && \
+	REQUIRES( ( ( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+				  itemType == KEYMGMT_ITEM_KEYMETADATA ) && \
 				password == NULL && passwordLength == 0 ) || \
 			  ( ( itemType == KEYMGMT_ITEM_PRIVATEKEY || \
 				  itemType == KEYMGMT_ITEM_SECRETKEY ) && \
 				password != NULL && passwordLength != 0 ) );
+	REQUIRES( ( isStorageObject && \
+				( itemType == KEYMGMT_ITEM_PUBLICKEY || \
+				  itemType == KEYMGMT_ITEM_KEYMETADATA ) ) || \
+			   ( !isStorageObject && \
+			     itemType != KEYMGMT_ITEM_KEYMETADATA ) );
 	REQUIRES( flags == KEYMGMT_FLAG_NONE );
 
 	/* If we're being sent a secret key, add it to the PKCS #15 keyset and 
@@ -198,7 +208,10 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   certificate object) or a private-key context (which produces a PKCS 
 	   #15 private key object and either a PKCS #15 public-key object (if 
 	   there's no certificate present) or a certificate object (if there's 
-	   a certificate present)).
+	   a certificate present)).  If it's a dummy context being used to
+	   store key metadata then it won't necessarily be usable for encryption
+	   operations so we skip the initial check in this case, the kernel will
+	   already have performed the basic type check.
 
 	   Note that we don't allow the addition of standalone public keys
 	   (without corresponding private keys) since file keysets are private-
@@ -215,19 +228,53 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   presence a private-key-labelled certificate, which is even more 
 	   strange for users to comprehend.  To keep things sensible we 
 	   therefore disallow the addition of standalone public keys */
-	status = krnlSendMessage( cryptHandle, IMESSAGE_CHECK, NULL,
-							  MESSAGE_CHECK_PKC );
-	if( cryptStatusError( status ) )
-		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
+	if( itemType != KEYMGMT_ITEM_KEYMETADATA )
+		{
+		status = krnlSendMessage( cryptHandle, IMESSAGE_CHECK, NULL,
+								  MESSAGE_CHECK_PKC );
+		if( cryptStatusError( status ) )
+			return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
+		if( cryptStatusOK( \
+			krnlSendMessage( cryptHandle, IMESSAGE_CHECK, NULL,
+							 MESSAGE_CHECK_PKC_PRIVATE ) ) )
+			privkeyPresent = TRUE;
+		}
+	else
+		{
+		/* Private-key metadata implicitly has a private key present even
+		   if it's not explicitly present in the dummy context */
+		privkeyPresent = TRUE;
+		}
 	setMessageData( &msgData, iD, CRYPT_MAX_HASHSIZE );
 	status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_KEYID );
 	if( cryptStatusError( status ) )
 		return( status );
 	iDsize = msgData.length;
-	privkeyPresent = cryptStatusOK( \
-			krnlSendMessage( cryptHandle, IMESSAGE_CHECK, NULL,
-							 MESSAGE_CHECK_PKC_PRIVATE ) ) ? TRUE : FALSE;
+
+	/* If the object being added isn't a generic public key/certificate and 
+	   is bound to crypto hardware, make sure that this keyset is PKCS #15 
+	   object store */
+	if( itemType != KEYMGMT_ITEM_PUBLICKEY )
+		{
+		setMessageData( &msgData, NULL, 0 );
+		status = krnlSendMessage( cryptHandle, IMESSAGE_GETATTRIBUTE_S,
+								  &msgData, 
+								  CRYPT_IATTRIBUTE_DEVICESTORAGEID );
+		if( cryptStatusOK( status ) )
+			{
+			/* A hardware-bound object can't be added to a general-purpose 
+			   keyset because there's no way to access the key components 
+			   that are required to be stored */
+			if( !isStorageObject )
+				return( CRYPT_ERROR_PERMISSION );
+			}
+		else
+			{
+			if( isStorageObject )
+				return( CRYPT_ERROR_PERMISSION );
+			}
+		}
 
 	/* If we're adding a private key make sure that there's a context and a
 	   password present.  Conversely if we're adding a public key make sure 
@@ -239,6 +286,7 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	switch( itemType )
 		{
 		case KEYMGMT_ITEM_PUBLICKEY:
+		case KEYMGMT_ITEM_KEYMETADATA:
 			if( password != NULL )
 				return( CRYPT_ARGERROR_STR1 );
 			break;
@@ -403,7 +451,8 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 						   privkeyPresent, certPresent, 
 						   ( isCertUpdate || !pkcs15certPresent ) ? \
 								TRUE : FALSE, 
-						   pkcs15keyPresent, KEYSET_ERRINFO );
+						   pkcs15keyPresent, isStorageObject,
+						   KEYSET_ERRINFO );
 	if( cryptStatusError( status ) )
 		{
 		if( certPresent )
@@ -472,8 +521,19 @@ static int setSpecialItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( dataType == CRYPT_IATTRIBUTE_CONFIGDATA || \
 			  dataType == CRYPT_IATTRIBUTE_USERINDEX || \
 			  dataType == CRYPT_IATTRIBUTE_USERID || \
-			  dataType == CRYPT_IATTRIBUTE_USERINFO );
+			  dataType == CRYPT_IATTRIBUTE_USERINFO || \
+			  dataType == CRYPT_IATTRIBUTE_HWSTORAGE );
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
+
+	/* Some hardware devices use PKCS #15 as their storage format for 
+	   structured data, in which case this is a notification that some rules
+	   about what can be added to a PKCS #15 keyset can be relaxed */
+	if( dataType == CRYPT_IATTRIBUTE_HWSTORAGE )
+		{
+		keysetInfoPtr->keysetFile->iHardwareDevice = \
+										*( ( CRYPT_HANDLE * ) data );
+		return( CRYPT_OK );
+		}
 
 	return( addConfigData( pkcs15info, noPkcs15objects, dataType,
 						   data, dataLength ) );

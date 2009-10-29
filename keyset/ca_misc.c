@@ -246,6 +246,7 @@ int updateCertLog( INOUT DBMS_INFO *dbmsInfo,
 								   CRYPT_CERTTYPE_NONE );
 			if( cryptStatusError( status ) )
 				{
+				DEBUG_DIAG(( "Couldn't base64-encode data" ));
 				assert( DEBUG_WARN );
 				return( status );
 				}
@@ -384,8 +385,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
 int caGetIssuingUser( INOUT DBMS_INFO *dbmsInfo, 
 					  OUT_HANDLE_OPT CRYPT_CERTIFICATE *iPkiUser,
 					  IN_BUFFER( initialCertIDlength ) const char *initialCertID, 
-					  IN_LENGTH_SHORT_MIN( ENCODED_DBXKEYID_SIZE ) \
-						const int initialCertIDlength, 
+					  IN_LENGTH_FIXED( ENCODED_DBXKEYID_SIZE ) \
+							const int initialCertIDlength, 
 					  INOUT ERROR_INFO *errorInfo )
 	{
 	char certID[ ENCODED_DBXKEYID_SIZE + 8 ];
@@ -395,8 +396,7 @@ int caGetIssuingUser( INOUT DBMS_INFO *dbmsInfo,
 	assert( isWritePtr( iPkiUser, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( isReadPtr( initialCertID, ENCODED_DBXKEYID_SIZE ) );
 
-	REQUIRES( initialCertIDlength >= ENCODED_DBXKEYID_SIZE && \
-			  initialCertIDlength < MAX_INTLENGTH_SHORT );
+	REQUIRES( initialCertIDlength == ENCODED_DBXKEYID_SIZE );
 	REQUIRES( errorInfo != NULL );
 
 	/* Clear return value */
@@ -410,7 +410,7 @@ int caGetIssuingUser( INOUT DBMS_INFO *dbmsInfo,
 		 chainingLevel++ )
 		{
 		BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
-		char certData[ MAX_QUERY_RESULT_SIZE + 8 ];
+		BYTE certData[ MAX_QUERY_RESULT_SIZE + 8 ];
 		int certDataLength;
 
 		/* Find out whether this is a PKI user.  The comparison for the

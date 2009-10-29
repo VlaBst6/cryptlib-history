@@ -62,6 +62,7 @@ typedef struct UI {
 	   user config code, so they're just treated as a dynamically-allocated 
 	   blob within the user object */
 	void *configOptions;
+	int configOptionsCount;
 
 	/* Certificate trust information for this user, and a flag indicating
 	   whether the trust info has changed and potentially needs to be
@@ -139,36 +140,44 @@ void endUserIndex( INOUT void *userIndexPtr );
 
 /* Prototypes for functions in user_cfg.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initOptions( OUT_PTR void **configOptionsPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initOptions( OUT_PTR void **configOptionsPtr, 
+				 OUT_INT_SHORT_Z int *configOptionsCount );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void endOptions( INOUT void *configOptions );
+void endOptions( INOUT void *configOptions, 
+				 IN_INT_SHORT const int configOptionsCount );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setOption( INOUT void *configOptions, 
+			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   IN_INT const int value );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setOptionSpecial( INOUT void *configOptions, 
+					  IN_INT_SHORT const int configOptionsCount, 
 					  IN_RANGE( CRYPT_OPTION_SELFTESTOK, CRYPT_OPTION_SELFTESTOK ) \
 					  const CRYPT_ATTRIBUTE_TYPE option,
 					  IN_INT const int value );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int setOptionString( void *configOptions, 
+					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 					 IN_BUFFER( valueLength ) \
 					 const char *value, 
 					 IN_LENGTH_SHORT const int valueLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 int getOption( const void *configOptions, 
+			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   OUT_INT_Z int *value );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
 int getOptionString( const void *configOptions,
+					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 					 OUT_PTR const void **strPtrPtr, 
 					 OUT_LENGTH_SHORT_Z int *strLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int deleteOption( INOUT void *configOptions, 
+				  IN_INT_SHORT const int configOptionsCount,
 				  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option );
 
 /* Prototypes for functions in user_rw.c */
@@ -176,8 +185,9 @@ int deleteOption( INOUT void *configOptions,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
 int readConfig( IN_HANDLE const CRYPT_USER iCryptUser, 
 				IN_STRING const char *fileName, INOUT void *trustInfoPtr );
-CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 5 ) ) \
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3, 4, 5, 6 ) ) \
 int prepareConfigData( INOUT void *configOptions, 
+					   IN_INT_SHORT const int configOptionsCount, 	
 					   IN_STRING const char *fileName,
 					   INOUT void *trustInfoPtr, 
 					   OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 

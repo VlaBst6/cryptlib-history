@@ -36,10 +36,10 @@
 static const BUILTIN_OPTION_INFO FAR_BSS builtinOptionInfo[] = {
 	/* cryptlib information (read-only) */
 	MK_OPTION_S( CRYPT_OPTION_INFO_DESCRIPTION, "cryptlib security toolkit", 25, CRYPT_UNUSED ),
-	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2008", 55, CRYPT_UNUSED ),
+	MK_OPTION_S( CRYPT_OPTION_INFO_COPYRIGHT, "Copyright Peter Gutmann, Eric Young, OpenSSL, 1994-2009", 55, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MAJORVERSION, 3, CRYPT_UNUSED ),
 	MK_OPTION( CRYPT_OPTION_INFO_MINORVERSION, 3, CRYPT_UNUSED ),
-	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 2, CRYPT_UNUSED ),
+	MK_OPTION( CRYPT_OPTION_INFO_STEPPING, 3, CRYPT_UNUSED ),
 
 	/* Context options, base = 0 */
 	/* Algorithm = Conventional encryption/hash/MAC options */
@@ -141,15 +141,15 @@ static const BUILTIN_OPTION_INFO FAR_BSS builtinOptionInfo[] = {
    option code that identifies it when it's written to disk */
 
 CHECK_RETVAL_PTR \
-const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_STORED_OPTION ) \
+const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_OPTION_INDEX ) \
 														const int optionCode )
 	{
 	int i;
 
-	REQUIRES_N( optionCode >= 0 && optionCode <= LAST_STORED_OPTION );
+	REQUIRES_N( optionCode >= 0 && optionCode <= LAST_OPTION_INDEX );
 
 	for( i = 0; 
-		 builtinOptionInfo[ i ].index <= LAST_STORED_OPTION && \
+		 builtinOptionInfo[ i ].option <= LAST_STORED_OPTION && \
 			i < FAILSAFE_ARRAYSIZE( builtinOptionInfo, BUILTIN_OPTION_INFO ); i++ )
 		{
 		if( builtinOptionInfo[ i ].index == optionCode )
@@ -166,43 +166,49 @@ const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_STORED_
 /* Locate an entry in the current configuration options */
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-static OPTION_INFO *getOptionInfo( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-									OPTION_INFO *optionList,
+static OPTION_INFO *getOptionInfo( INOUT_ARRAY( configOptionsCount ) \
+										OPTION_INFO *optionList,
+								   IN_INT_SHORT const int configOptionsCount, 
 								   IN_ATTRIBUTE \
-									const CRYPT_ATTRIBUTE_TYPE option )
+										const CRYPT_ATTRIBUTE_TYPE option )
 	{
 	int i;
 
-	assert( isWritePtr( optionList, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+	assert( isReadPtr( optionList, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 
+	REQUIRES_N( configOptionsCount > 0 && \
+				configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES_N( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo->option != CRYPT_ATTRIBUTE_NONE && \
-			i < FAILSAFE_ITERATIONS_MED; i++ )
+		 optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option != CRYPT_ATTRIBUTE_NONE && \
+			i < configOptionsCount; i++ )
 		{
 		if( optionList[ i ].builtinOptionInfo->option == option )
 			return( &optionList[ i ] );
 		}
-	ENSURES_N( i < FAILSAFE_ITERATIONS_MED );
+	ENSURES_N( i < configOptionsCount );
 
 	retIntError_Null();
 	}
 
 /* Record the fact that one of the configuration options has been changed */
 
-static void setConfigChanged( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-								OPTION_INFO *optionList )
+static void setConfigChanged( INOUT_ARRAY( configOptionsCount ) \
+									OPTION_INFO *optionList,
+							  IN_INT_SHORT const int configOptionsCount )
 	{
 	OPTION_INFO *optionInfoPtr;
 
-	assert( isWritePtr( optionList, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+	assert( isReadPtr( optionList, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 
-	optionInfoPtr = getOptionInfo( optionList, 
+	REQUIRES_V( configOptionsCount > 0 && \
+				configOptionsCount < MAX_INTLENGTH_SHORT );
+
+	optionInfoPtr = getOptionInfo( optionList, configOptionsCount,
 								   CRYPT_OPTION_CONFIGCHANGED );
 	ENSURES_V( optionInfoPtr != NULL );
 	optionInfoPtr->intValue = TRUE;
@@ -211,23 +217,27 @@ static void setConfigChanged( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRS
 /* Check whether a configuration option has been changed */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN checkConfigChanged( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-								const OPTION_INFO *optionList )
+BOOLEAN checkConfigChanged( INOUT_ARRAY( configOptionsCount ) \
+								const OPTION_INFO *optionList,
+							IN_INT_SHORT const int configOptionsCount )
 	{
 	int i;
 
 	assert( isReadPtr( optionList, 
-					   sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo->index <= LAST_STORED_OPTION && \
-			i < FAILSAFE_ITERATIONS_MED; i++ )
+		 optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
+			i < configOptionsCount; i++ )
 		{
 		if( optionList[ i ].dirty )
 			return( TRUE );
 		}
-	ENSURES_B( i < FAILSAFE_ITERATIONS_MED );
+	ENSURES_B( i < configOptionsCount );
 
 	return( FALSE );
 	}
@@ -240,25 +250,28 @@ BOOLEAN checkConfigChanged( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 
 /* Query the value of a numeric or string option */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int getOption( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-				TYPECAST( OPTION_INFO * ) const void *configOptions, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int getOption( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					const void *configOptions, 
+			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   OUT_INT_Z int *value )
 	{
 	OPTION_INFO *optionInfoPtr;
 
 	assert( isReadPtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 	assert( isWritePtr( value, sizeof( int ) ) );
 
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 
 	/* Clear return value */
 	*value = 0;
 
-	optionInfoPtr = getOptionInfo( ( void * ) configOptions, option );
+	optionInfoPtr = getOptionInfo( ( void * ) configOptions, 
+								   configOptionsCount, option );
 	ENSURES( optionInfoPtr != NULL && \
 			 ( optionInfoPtr->builtinOptionInfo->type == OPTION_NUMERIC || \
 			   optionInfoPtr->builtinOptionInfo->type == OPTION_BOOLEAN ) );
@@ -267,9 +280,10 @@ int getOption( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	return( CRYPT_OK );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int getOptionString( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-						TYPECAST( OPTION_INFO * ) const void *configOptions,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
+int getOptionString( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						const void *configOptions,
+					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 					 OUT_PTR const void **strPtrPtr, 
 					 OUT_LENGTH_SHORT_Z int *strLen )
@@ -277,18 +291,20 @@ int getOptionString( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	OPTION_INFO *optionInfoPtr;
 
 	assert( isReadPtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 	assert( isReadPtr( strPtrPtr, sizeof( void * ) ) );
 	assert( isWritePtr( strLen, sizeof( int ) ) );
 
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 
 	/* Clear return values */
 	*strPtrPtr = NULL;
 	*strLen = 0;
 
-	optionInfoPtr = getOptionInfo( ( void * ) configOptions, option );
+	optionInfoPtr = getOptionInfo( ( void * ) configOptions, 
+								   configOptionsCount, option );
 	ENSURES( optionInfoPtr != NULL && \
 			 optionInfoPtr->builtinOptionInfo->type == OPTION_STRING );
 	if( optionInfoPtr->intValue <= 0 )
@@ -308,24 +324,27 @@ int getOptionString( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 /* Set the value of a numeric or string option */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int setOption( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-				TYPECAST( OPTION_INFO * ) void *configOptions, 
+int setOption( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					void *configOptions, 
+			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   IN_INT const int value )
 	{
 	const BUILTIN_OPTION_INFO *builtinOptionInfoPtr;
 	OPTION_INFO *optionInfoPtr;
 
-	assert( isWritePtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+	assert( isReadPtr( configOptions, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 	REQUIRES( value >= 0 && value < MAX_INTLENGTH );
 
 	/* Get a pointer to the option information and make sure that everything
 	   is OK */
-	optionInfoPtr = getOptionInfo( configOptions, option );
+	optionInfoPtr = getOptionInfo( configOptions, configOptionsCount, 
+								   option );
 	ENSURES( optionInfoPtr != NULL );
 	builtinOptionInfoPtr = optionInfoPtr->builtinOptionInfo;
 	ENSURES( builtinOptionInfoPtr != NULL && \
@@ -401,19 +420,26 @@ int setOption( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	else
 		optionInfoPtr->intValue = value;
 	optionInfoPtr->dirty = TRUE;
-	setConfigChanged( configOptions );
+	setConfigChanged( configOptions, configOptionsCount );
 
 	return( CRYPT_OK );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int setOptionSpecial( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-						TYPECAST( OPTION_INFO * ) void *configOptions, 
+int setOptionSpecial( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
+					  IN_INT_SHORT const int configOptionsCount, 
 					  IN_RANGE_FIXED( CRYPT_OPTION_SELFTESTOK ) \
-						const CRYPT_ATTRIBUTE_TYPE option,
+							const CRYPT_ATTRIBUTE_TYPE option,
 					  IN_INT const int value )
 	{
 	OPTION_INFO *optionInfoPtr;
+
+	assert( isReadPtr( configOptions, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	/* The update of the self-test status is performed in two phases.  When 
 	   we begin the self-test, triggered by the user setting the 
@@ -426,7 +452,8 @@ int setOptionSpecial( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 
 	/* Get a pointer to the option information and make sure that everything
 	   is OK */
-	optionInfoPtr = getOptionInfo( configOptions, option );
+	optionInfoPtr = getOptionInfo( configOptions, configOptionsCount, 
+								   option );
 	ENSURES( optionInfoPtr != NULL && \
 			 optionInfoPtr->intValue == CRYPT_ERROR );
 
@@ -435,9 +462,10 @@ int setOptionSpecial( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	return( CRYPT_OK );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int setOptionString( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-						TYPECAST( OPTION_INFO * ) void *configOptions, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int setOptionString( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						void *configOptions, 
+					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 					 IN_BUFFER( valueLength ) const char *value, 
 					 IN_LENGTH_SHORT const int valueLength )
@@ -446,17 +474,19 @@ int setOptionString( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	OPTION_INFO *optionInfoPtr;
 	char *valuePtr;
 
-	assert( isWritePtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+	assert( isReadPtr( configOptions, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 	assert( isReadPtr( value, valueLength ) );
 
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 	REQUIRES( valueLength > 0 && valueLength < MAX_INTLENGTH_SHORT );
 
 	/* Get a pointer to the option information and make sure that everything
 	   is OK */
-	optionInfoPtr = getOptionInfo( configOptions, option );
+	optionInfoPtr = getOptionInfo( configOptions, configOptionsCount, 
+								   option );
 	ENSURES( optionInfoPtr != NULL );
 	builtinOptionInfoPtr = optionInfoPtr->builtinOptionInfo;
 	ENSURES( builtinOptionInfoPtr != NULL && \
@@ -482,7 +512,7 @@ int setOptionString( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 			}
 		optionInfoPtr->strValue = ( char * ) builtinOptionInfoPtr->strDefault;
 		optionInfoPtr->dirty = TRUE;
-		setConfigChanged( configOptions );
+		setConfigChanged( configOptions, configOptionsCount );
 		return( CRYPT_OK );
 		}
 
@@ -505,7 +535,7 @@ int setOptionString( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	optionInfoPtr->strValue = valuePtr;
 	optionInfoPtr->intValue = valueLength;
 	optionInfoPtr->dirty = TRUE;
-	setConfigChanged( configOptions );
+	setConfigChanged( configOptions, configOptionsCount );
 	return( CRYPT_OK );
 	}
 
@@ -518,22 +548,24 @@ int setOptionString( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 /* Delete an option */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int deleteOption( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-					TYPECAST( OPTION_INFO * ) void *configOptions, 
+int deleteOption( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						void *configOptions, 
+				  IN_INT_SHORT const int configOptionsCount, 
 				  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option )
 	{
 	const BUILTIN_OPTION_INFO *builtinOptionInfoPtr;
 	OPTION_INFO *optionInfoPtr;
 
-	assert( isWritePtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+	assert( isReadPtr( configOptions, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 	REQUIRES( option > CRYPT_OPTION_FIRST && option < CRYPT_OPTION_LAST );
 
 	/* Get a pointer to the option information and make sure that everything
 	   is OK */
-	optionInfoPtr = getOptionInfo( configOptions, option );
+	optionInfoPtr = getOptionInfo( configOptions, configOptionsCount, option );
 	ENSURES( optionInfoPtr != NULL );
 	builtinOptionInfoPtr = optionInfoPtr->builtinOptionInfo;
 	ENSURES( builtinOptionInfoPtr != NULL && \
@@ -551,17 +583,22 @@ int deleteOption( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	optionInfoPtr->strValue = NULL;
 	optionInfoPtr->intValue = 0;
 	optionInfoPtr->dirty = TRUE;
-	setConfigChanged( configOptions );
+	setConfigChanged( configOptions, configOptionsCount );
 	return( CRYPT_OK );
 	}
 
 /* Initialise/shut down the configuration option handling */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initOptions( OUT_PTR void **configOptionsPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initOptions( OUT_PTR void **configOptionsPtr, 
+				 OUT_INT_SHORT_Z int *configOptionsCount )
 	{
 	OPTION_INFO *optionList;
 	int i;
+
+	/* Clear return values */
+	*configOptionsPtr = NULL;
+	*configOptionsCount = 0;
 
 	/* Perform a consistency check on the options */
 	FORALL( i, 0, CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST - 1,
@@ -575,8 +612,8 @@ int initOptions( OUT_PTR void **configOptionsPtr )
 	/* Walk through the configuration option list setting up each option to 
 	   contain its default value */
 	for( i = 0; builtinOptionInfo[ i ].option != CRYPT_ATTRIBUTE_NONE && \
-				i < FAILSAFE_ARRAYSIZE( builtinOptionInfo, BUILTIN_OPTION_INFO ); 
-		 i++ )
+				i < FAILSAFE_ARRAYSIZE( builtinOptionInfo, \
+										BUILTIN_OPTION_INFO ); i++ )
 		{
 		const BUILTIN_OPTION_INFO *builtinOptionInfoPtr = &builtinOptionInfo[ i ];
 		OPTION_INFO *optionInfoPtr = &optionList[ i ];
@@ -588,20 +625,25 @@ int initOptions( OUT_PTR void **configOptionsPtr )
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( builtinOptionInfo, BUILTIN_OPTION_INFO ) );
 	*configOptionsPtr = optionList;
+	*configOptionsCount = FAILSAFE_ARRAYSIZE( builtinOptionInfo, \
+											  BUILTIN_OPTION_INFO );
 
 	return( CRYPT_OK );
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void endOptions( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-					TYPECAST( OPTION_INFO * ) void *configOptions )
+void endOptions( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					void *configOptions, 
+				 IN_INT_SHORT const int configOptionsCount )
 	{
 	OPTION_INFO *optionList = configOptions;
 	int i;
 
 	assert( isReadPtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
+
+	REQUIRES_V( configOptionsCount > 0 && \
+				configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	/* Walk through the configuration option list clearing and freeing each 
 	   option */
@@ -624,6 +666,7 @@ void endOptions( INOUT_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 			}
 		}
 	ENSURES_V( i < FAILSAFE_ARRAYSIZE( builtinOptionInfo, BUILTIN_OPTION_INFO ) );
+	ENSURES_V( i == configOptionsCount - 1 );
 
 	/* Clear and free the configuration option list */
 	memset( optionList, 0, OPTION_INFO_SIZE );

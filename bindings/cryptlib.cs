@@ -8,6 +8,10 @@ namespace cryptlib
 public class crypt
 {
     
+	/* Additional defines for compilers that provide extended function and 
+	   function-parameter checking */
+	
+	
 	
 	/****************************************************************************
 	*																			*
@@ -35,17 +39,22 @@ public class crypt
 	public const int ALGO_ELGAMAL            = 103; // ElGamal
 	public const int ALGO_KEA                = 104; // KEA
 	public const int ALGO_ECDSA              = 105; // ECDSA
+	public const int ALGO_ECDH               = 106; // ECDH
 	public const int ALGO_MD2                = 200; // MD2
 	public const int ALGO_MD4                = 201; // MD4
 	public const int ALGO_MD5                = 202; // MD5
-	public const int ALGO_SHA                = 203; // SHA/SHA1
+	public const int ALGO_SHA1               = 203; // SHA/SHA1
+	public const int ALGO_SHA                = 203; // Older form
 	public const int ALGO_RIPEMD160          = 204; // RIPE-MD 160
-	public const int ALGO_SHA2               = 205; // SHA2 (SHA-256/384/512)
+	public const int ALGO_SHA2               = 205; // SHA-256
+	public const int ALGO_SHAng              = 206; // Future SHA-nextgen standard
 	public const int ALGO_HMAC_MD5           = 300; // HMAC-MD5
 	public const int ALGO_HMAC_SHA1          = 301; // HMAC-SHA
 	public const int ALGO_HMAC_SHA           = 301; // Older form
 	public const int ALGO_HMAC_RIPEMD160     = 302; // HMAC-RIPEMD-160
-	public const int ALGO_LAST               = 303; // Last possible crypt algo value
+	public const int ALGO_HMAC_SHA2          = 303; // HMAC-SHA2
+	public const int ALGO_HMAC_SHAng         = 304; // HMAC-future-SHA-nextgen
+	public const int ALGO_LAST               = 305; // Last possible crypt algo value
 	public const int ALGO_FIRST_CONVENTIONAL = 1  ;
 	public const int ALGO_LAST_CONVENTIONAL  = 99 ;
 	public const int ALGO_FIRST_PKC          = 100;
@@ -86,7 +95,8 @@ public class crypt
 	public const int DEVICE_FORTEZZA  = 1; // Fortezza card
 	public const int DEVICE_PKCS11    = 2; // PKCS #11 crypto token
 	public const int DEVICE_CRYPTOAPI = 3; // Microsoft CryptoAPI
-	public const int DEVICE_LAST      = 4; // Last possible crypto device type
+	public const int DEVICE_HARDWARE  = 4; // Generic crypo HW plugin
+	public const int DEVICE_LAST      = 5; // Last possible crypto device type
 	
 	/* Certificate subtypes */
 	
@@ -579,7 +589,7 @@ public class crypt
 	public const int SESSINFO_CACERTIFICATE                      = 6018; // Issuing CA certificate
 	public const int SESSINFO_TSP_MSGIMPRINT                     = 6019; // TSP message imprint
 	public const int SESSINFO_CMP_REQUESTTYPE                    = 6020; // Request type
-	public const int SESSINFO_CMP_PKIBOOT                        = 6021; // Enable PKIBoot facility
+	public const int SESSINFO_CMP_PKIBOOT                        = 6021; // Unused, to be removed in 3.4
 	public const int SESSINFO_CMP_PRIVKEYSET                     = 6022; // Private-key keyset
 	public const int SESSINFO_SSH_CHANNEL                        = 6023; // SSH current channel
 	public const int SESSINFO_SSH_CHANNEL_TYPE                   = 6024; // SSH channel type
@@ -707,7 +717,8 @@ public class crypt
 	public const int CONTENT_RTCSREQUEST            = 12;
 	public const int CONTENT_RTCSRESPONSE           = 13;
 	public const int CONTENT_RTCSRESPONSE_EXT       = 14;
-	public const int CONTENT_LAST                   = 15;
+	public const int CONTENT_MRTD                   = 15;
+	public const int CONTENT_LAST                   = 16;
 	
 	/* ESS securityClassification codes */
 	
@@ -848,10 +859,10 @@ public class crypt
 	public const int MAX_IVSIZE                               = 32  ;
 	
 	/* The maximum public-key component size - 4096 bits, and maximum component
-	   size for ECCs - 256 bits */
+	   size for ECCs - 576 bits (to handle the P521 curve) */
 	
 	public const int MAX_PKCSIZE                              = 512 ;
-	public const int MAX_PKCSIZE_ECC                          = 32  ;
+	public const int MAX_PKCSIZE_ECC                          = 72  ;
 	
 	/* The maximum hash size - 256 bits */
 	
@@ -862,7 +873,8 @@ public class crypt
 	public const int MAX_TEXTSIZE                             = 64  ;
 	
 	/* A magic value indicating that the default setting for this parameter
-	   should be used */
+	   should be used.  The parentheses are to catch potential erroneous use 
+	   in an expression */
 	
 	public const int USE_DEFAULT                              = -100;
 	
@@ -870,7 +882,8 @@ public class crypt
 	
 	public const int UNUSED                                   = -101;
 	
-	/* Cursor positioning codes for certificate/CRL extensions */
+	/* Cursor positioning codes for certificate/CRL extensions.  The parentheses 
+	   are to catch potential erroneous use in an expression */
 	
 	public const int CURSOR_FIRST                             = -200;
 	public const int CURSOR_PREVIOUS                          = -201;
@@ -879,7 +892,8 @@ public class crypt
 	
 	/* The type of information polling to perform to get random seed 
 	   information.  These values have to be negative because they're used
-	   as magic length values for cryptAddRandom() */
+	   as magic length values for cryptAddRandom().  The parentheses are to 
+	   catch potential erroneous use in an expression */
 	
 	public const int RANDOM_FASTPOLL                          = -300;
 	public const int RANDOM_SLOWPOLL                          = -301;
@@ -1001,26 +1015,35 @@ public class crypt
 	//	int xLen;					/* Length of private integer in bits */
 	//	} CRYPT_PKCINFO_DLP;
 	
+	// CRYPT_ECCCURVE_TYPE
+	public const int ECCCURVE_NONE = 0; // No ECC curve type
+	public const int ECCCURVE_P192 = 1; // NIST P192/X9.62 P192r1/SECG p192r1 curve
+	public const int ECCCURVE_P224 = 2; // NIST P224/X9.62 P224r1/SECG p224r1 curve
+	public const int ECCCURVE_P256 = 3; // NIST P256/X9.62 P256v1/SECG p256r1 curve
+	public const int ECCCURVE_P384 = 4; // NIST P384, SECG p384r1 curve
+	public const int ECCCURVE_P521 = 5; // NIST P521, SECG p521r1
+	public const int ECCCURVE_LAST = 6; // Last valid ECC curve type
+	
 	//CRYPTLIBCONVERTER - NOT SUPPORTED:
 	//typedef struct {
 	//	/* Status information */
 	//	int isPublicKey;			/* Whether this is a public or private key */
 	//
-	//	/* Curve */
+	//	/* Curve domain parameters.  Either the curveType or the explicit domain
+	//	   parameters must be provided */
+	//	CRYPT_ECCCURVE_TYPE curveType;	/* Named curve */
 	//	unsigned char p[ CRYPT_MAX_PKCSIZE_ECC ];/* Prime defining Fq */
 	//	int pLen;					/* Length of prime in bits */
 	//	unsigned char a[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	//	int aLen;					/* Length of element a in bits */
 	//	unsigned char b[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining curve */
 	//	int bLen;					/* Length of element b in bits */
-	//
-	//	/* Generator */
 	//	unsigned char gx[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	//	int gxLen;					/* Length of element gx in bits */
 	//	unsigned char gy[ CRYPT_MAX_PKCSIZE_ECC ];/* Element in Fq defining point */
 	//	int gyLen;					/* Length of element gy in bits */
-	//	unsigned char r[ CRYPT_MAX_PKCSIZE_ECC ];/* Order of point */
-	//	int rLen;					/* Length of order in bits */
+	//	unsigned char n[ CRYPT_MAX_PKCSIZE_ECC ];/* Order of point */
+	//	int nLen;					/* Length of order in bits */
 	//	unsigned char h[ CRYPT_MAX_PKCSIZE_ECC ];/* Optional cofactor */
 	//	int hLen;					/* Length of cofactor in bits */
 	//
@@ -1064,7 +1087,8 @@ public class crypt
 	
 	public const int OK                                       = 0   ; // No error
 	
-	/* Error in parameters passed to function */
+	/* Error in parameters passed to function.  The parentheses are to catch 
+	   potential erroneous use in an expression */
 	
 	public const int ERROR_PARAM1                             = -1  ; // Bad argument, parameter 1
 	public const int ERROR_PARAM2                             = -2  ; // Bad argument, parameter 2
@@ -2276,10 +2300,14 @@ public class crypt
 		IntPtr bufferPtr = IntPtr.Zero;
 		try
 		{
+			int bytesCopied = 0;
+			int status;
 			checkIndices(buffer, bufferOffset, length);
 			getPointer(buffer, bufferOffset, ref bufferHandle, ref bufferPtr);
-			processStatus(wrapped_PushData(envelope, bufferPtr, length, bytesCopiedPtr));
-			return Marshal.ReadInt32(bytesCopiedPtr);
+			status = wrapped_PushData(envelope, bufferPtr, length, bytesCopiedPtr);
+			bytesCopied = Marshal.ReadInt32(bytesCopiedPtr);
+			processStatus(status, bytesCopied);
+			return bytesCopied;
 		}
 		finally
 		{
@@ -2315,12 +2343,14 @@ public class crypt
 		IntPtr bufferPtr = IntPtr.Zero;
 		try
 		{
-			//CryptPopData is a special case that doesn't have the length querying call
 			int bytesCopied = 0;
+			int status;
 			checkIndices(buffer, bufferOffset, bytesCopied);
 			getPointer(buffer, bufferOffset, ref bufferHandle, ref bufferPtr);
-			processStatus(wrapped_PopData(envelope, bufferPtr, length, bytesCopiedPtr));
-			return Marshal.ReadInt32(bytesCopiedPtr);
+			status = wrapped_PopData(envelope, bufferPtr, length, bytesCopiedPtr);
+			bytesCopied = Marshal.ReadInt32(bytesCopiedPtr);
+			processStatus(status, bytesCopied);
+			return bytesCopied;
 		}
 		finally
 		{
@@ -2453,6 +2483,12 @@ public class crypt
 	{
 		processStatus(wrapped_Logout(user));
 	}
+	
+	/****************************************************************************
+	*																			*
+	*							User Interface Functions						*
+	*																			*
+	****************************************************************************/
 	
 	
 		[DllImport("cl32.dll", EntryPoint="cryptInit")]
@@ -2647,6 +2683,13 @@ public class crypt
             throw new CryptException(status);
     }
 
+
+    private static void processStatus(int status, int extraInfo)
+    {
+        if (status < crypt.OK)
+            throw new CryptException(status, extraInfo);
+    }
+
     private static void checkIndices(byte[] array, int sequenceOffset, int sequenceLength)
     {
         if (array == null)
@@ -2728,113 +2771,62 @@ public class CRYPT_OBJECT_INFO
 
 public class CryptException : ApplicationException
 {
-    private int m_status;
-    private String m_message;
-    public int Status { get {return m_status;} }
-    public override String Message { get {return m_message;} }
+    public int Status { get { return (int)Data["Status"]; } }
+
+    public int ExtraInfo { get { return (int)Data["ExtraInfo"]; } }
 
     public CryptException(int status)
+        : base(convertMessage(status))
     {
-        m_status = status;
-        String prefix = Convert.ToString(status) + ": ";
+        Data.Add("Status", status);
+    }
 
-        if (m_status == crypt.ERROR_PARAM1) {
-            m_message = prefix + "Bad argument, parameter 1";
-            return; }
-        if (m_status == crypt.ERROR_PARAM2) {
-            m_message = prefix + "Bad argument, parameter 2";
-            return; }
-        if (m_status == crypt.ERROR_PARAM3) {
-            m_message = prefix + "Bad argument, parameter 3";
-            return; }
-        if (m_status == crypt.ERROR_PARAM4) {
-            m_message = prefix + "Bad argument, parameter 4";
-            return; }
-        if (m_status == crypt.ERROR_PARAM5) {
-            m_message = prefix + "Bad argument, parameter 5";
-            return; }
-        if (m_status == crypt.ERROR_PARAM6) {
-            m_message = prefix + "Bad argument, parameter 6";
-            return; }
-        if (m_status == crypt.ERROR_PARAM7) {
-            m_message = prefix + "Bad argument, parameter 7";
-            return; }
-        if (m_status == crypt.ERROR_MEMORY) {
-            m_message = prefix + "Out of memory";
-            return; }
-        if (m_status == crypt.ERROR_NOTINITED) {
-            m_message = prefix + "Data has not been initialised";
-            return; }
-        if (m_status == crypt.ERROR_INITED) {
-            m_message = prefix + "Data has already been init'd";
-            return; }
-        if (m_status == crypt.ERROR_NOSECURE) {
-            m_message = prefix + "Opn.not avail.at requested sec.level";
-            return; }
-        if (m_status == crypt.ERROR_RANDOM) {
-            m_message = prefix + "No reliable random data available";
-            return; }
-        if (m_status == crypt.ERROR_FAILED) {
-            m_message = prefix + "Operation failed";
-            return; }
-        if (m_status == crypt.ERROR_INTERNAL) {
-            m_message = prefix + "Internal consistency check failed";
-            return; }
-        if (m_status == crypt.ERROR_NOTAVAIL) {
-            m_message = prefix + "This type of opn.not available";
-            return; }
-        if (m_status == crypt.ERROR_PERMISSION) {
-            m_message = prefix + "No permiss.to perform this operation";
-            return; }
-        if (m_status == crypt.ERROR_WRONGKEY) {
-            m_message = prefix + "Incorrect key used to decrypt data";
-            return; }
-        if (m_status == crypt.ERROR_INCOMPLETE) {
-            m_message = prefix + "Operation incomplete/still in progress";
-            return; }
-        if (m_status == crypt.ERROR_COMPLETE) {
-            m_message = prefix + "Operation complete/can't continue";
-            return; }
-        if (m_status == crypt.ERROR_TIMEOUT) {
-            m_message = prefix + "Operation timed out before completion";
-            return; }
-        if (m_status == crypt.ERROR_INVALID) {
-            m_message = prefix + "Invalid/inconsistent information";
-            return; }
-        if (m_status == crypt.ERROR_SIGNALLED) {
-            m_message = prefix + "Resource destroyed by extnl.event";
-            return; }
-        if (m_status == crypt.ERROR_OVERFLOW) {
-            m_message = prefix + "Resources/space exhausted";
-            return; }
-        if (m_status == crypt.ERROR_UNDERFLOW) {
-            m_message = prefix + "Not enough data available";
-            return; }
-        if (m_status == crypt.ERROR_BADDATA) {
-            m_message = prefix + "Bad/unrecognised data format";
-            return; }
-        if (m_status == crypt.ERROR_SIGNATURE) {
-            m_message = prefix + "Signature/integrity check failed";
-            return; }
-        if (m_status == crypt.ERROR_OPEN) {
-            m_message = prefix + "Cannot open object";
-            return; }
-        if (m_status == crypt.ERROR_READ) {
-            m_message = prefix + "Cannot read item from object";
-            return; }
-        if (m_status == crypt.ERROR_WRITE) {
-            m_message = prefix + "Cannot write item to object";
-            return; }
-        if (m_status == crypt.ERROR_NOTFOUND) {
-            m_message = prefix + "Requested item not found in object";
-            return; }
-        if (m_status == crypt.ERROR_DUPLICATE) {
-            m_message = prefix + "Item already present in object";
-            return; }
-        if (m_status == crypt.ENVELOPE_RESOURCE) {
-            m_message = prefix + "Need resource to proceed";
-            return; }
-        m_message = prefix + "Unknown Exception ?!?!";
+    public CryptException(int status, int extra)
+        : base(convertMessage(status))
+    {
+        Data.Add("Status", status);
+        Data.Add("ExtraInfo", extra);
+    }
+
+    private static string convertMessage(int status)
+    {
+        String prefix = Convert.ToString(status) + ": ";
+        switch (status)
+        {
+		case crypt.ERROR_PARAM1: return prefix + "Bad argument, parameter 1";
+		case crypt.ERROR_PARAM2: return prefix + "Bad argument, parameter 2";
+		case crypt.ERROR_PARAM3: return prefix + "Bad argument, parameter 3";
+		case crypt.ERROR_PARAM4: return prefix + "Bad argument, parameter 4";
+		case crypt.ERROR_PARAM5: return prefix + "Bad argument, parameter 5";
+		case crypt.ERROR_PARAM6: return prefix + "Bad argument, parameter 6";
+		case crypt.ERROR_PARAM7: return prefix + "Bad argument, parameter 7";
+		case crypt.ERROR_MEMORY: return prefix + "Out of memory";
+		case crypt.ERROR_NOTINITED: return prefix + "Data has not been initialised";
+		case crypt.ERROR_INITED: return prefix + "Data has already been init'd";
+		case crypt.ERROR_NOSECURE: return prefix + "Opn.not avail.at requested sec.level";
+		case crypt.ERROR_RANDOM: return prefix + "No reliable random data available";
+		case crypt.ERROR_FAILED: return prefix + "Operation failed";
+		case crypt.ERROR_INTERNAL: return prefix + "Internal consistency check failed";
+		case crypt.ERROR_NOTAVAIL: return prefix + "This type of opn.not available";
+		case crypt.ERROR_PERMISSION: return prefix + "No permiss.to perform this operation";
+		case crypt.ERROR_WRONGKEY: return prefix + "Incorrect key used to decrypt data";
+		case crypt.ERROR_INCOMPLETE: return prefix + "Operation incomplete/still in progress";
+		case crypt.ERROR_COMPLETE: return prefix + "Operation complete/can't continue";
+		case crypt.ERROR_TIMEOUT: return prefix + "Operation timed out before completion";
+		case crypt.ERROR_INVALID: return prefix + "Invalid/inconsistent information";
+		case crypt.ERROR_SIGNALLED: return prefix + "Resource destroyed by extnl.event";
+		case crypt.ERROR_OVERFLOW: return prefix + "Resources/space exhausted";
+		case crypt.ERROR_UNDERFLOW: return prefix + "Not enough data available";
+		case crypt.ERROR_BADDATA: return prefix + "Bad/unrecognised data format";
+		case crypt.ERROR_SIGNATURE: return prefix + "Signature/integrity check failed";
+		case crypt.ERROR_OPEN: return prefix + "Cannot open object";
+		case crypt.ERROR_READ: return prefix + "Cannot read item from object";
+		case crypt.ERROR_WRITE: return prefix + "Cannot write item to object";
+		case crypt.ERROR_NOTFOUND: return prefix + "Requested item not found in object";
+		case crypt.ERROR_DUPLICATE: return prefix + "Item already present in object";
+		case crypt.ENVELOPE_RESOURCE: return prefix + "Need resource to proceed";
+            default: return prefix + "Unknown Exception ?!?!";
+        }
     }
 }
 

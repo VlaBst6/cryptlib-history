@@ -344,7 +344,7 @@ static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 	if( errorInfo->errorCode == LDAP_SUCCESS )
 		{
 		/* In true Microsoft fashion LdapGetLastError() can return
-		   LDAP_SUCCESS with the error string set to "Success.", so if we
+		   LDAP_SUCCESS with the error string set to "Success." so if we
 		   get this we use the status value returned by the original LDAP
 		   function call instead */
 		errorInfo->errorCode = ldapStatus;
@@ -378,7 +378,9 @@ static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 					 &errorMessage );
 #endif /* Different LDAP client types */
 	if( errorMessage != NULL )
+		{
 		setErrorString( errorInfo, errorMessage, strlen( errorMessage ) );
+		}
 	else
 		clearErrorString( errorInfo );
 	}
@@ -466,23 +468,22 @@ static LDAPMod *copyAttribute( const char *attributeName,
 	{
 	LDAPMod *ldapModPtr;
 
-	/* Allocate room for the LDAPMod structure and the data pointers.
-	   mod_values and mod_bvalues members have the same representation so we
-	   can allocate them with the same malloc */
+	/* Allocate room for the LDAPMod structure */
 	if( ( ldapModPtr = ( LDAPMod * ) clAlloc( "copyAttribute", \
 											  sizeof( LDAPMod ) ) ) == NULL )
 		return( NULL );
-	if( ( ldapModPtr->mod_values = clAlloc( "copyAttribute", \
-											2 * sizeof( void * ) ) ) == NULL )
-		{
-		clFree( "copyAttribute", ldapModPtr );
-		return( NULL );
-		}
 
 	/* Set up the pointers to the attribute information.  This differs
 	   slightly depending on whether we're adding text or binary data */
 	if( !attributeLength )
 		{
+		if( ( ldapModPtr->mod_values = \
+					clAlloc( "copyAttribute", \
+							 2 * sizeof( void * ) ) ) == NULL )
+			{
+			clFree( "copyAttribute", ldapModPtr );
+			return( NULL );
+			}
 		ldapModPtr->mod_op = LDAP_MOD_ADD;
 		ldapModPtr->mod_type = ( char * ) attributeName;
 		ldapModPtr->mod_values[ 0 ] = ( char * ) attributeValue;
@@ -490,10 +491,10 @@ static LDAPMod *copyAttribute( const char *attributeName,
 		}
 	else
 		{
-		if( ( ldapModPtr->mod_bvalues[ 0 ] = \
-				clAlloc( "copyAttribute", sizeof( struct berval ) ) ) == NULL )
+		if( ( ldapModPtr->mod_bvalues = \
+					clAlloc( "copyAttribute", \
+							 2 * sizeof( struct berval ) ) ) == NULL )
 			{
-			clFree( "copyAttribute", ldapModPtr->mod_values );
 			clFree( "copyAttribute", ldapModPtr );
 			return( NULL );
 			}
@@ -570,41 +571,6 @@ static int encodeDN( char *dn, const int maxDnLen, char *C, char *SP,
 	return( CRYPT_OK );
 	}
 
-/* Decompose an LDAP URL of the general form ldap://server:port/user into its
-   various components */
-
-static int parseURL( char *ldapServer, char **ldapUser, int *ldapPort )
-	{
-	char *strPtr;
-
-	/* Clear return value */
-	*ldapUser = NULL;
-	*ldapPort = LDAP_PORT;
-
-	/* Handle a leading URL specifier if this is present */
-	if( !strCompare( ldapServer, "ldaps://", 8 ) )
-		/* We can't do LDAP over SSL without a lot of extra work */
-		return( CRYPT_ERROR_BADDATA );
-	if( !strCompare( ldapServer, "ldap://", 7 ) )
-		memmove( ldapServer, ldapServer + 7, strlen( ldapServer ) - 6 );
-
-	/* Decompose what's left into a FQDN, port, and user name */
-	if( ( strPtr = strchr( ldapServer, '/' ) ) != NULL )
-		{
-		*strPtr++ = '\0';
-		*ldapUser = strPtr;
-		}
-	if( ( strPtr = strchr( ldapServer, ':' ) ) != NULL )
-		{
-		*strPtr++ = '\0';
-		*ldapPort = atoi( strPtr );
-		if( *ldapPort < 26 || *ldapPort > 65534L )
-			return( CRYPT_ERROR_BADDATA );
-		}
-
-	return( CRYPT_OK );
-	}
-
 /****************************************************************************
 *																			*
 *						 	Directory Open/Close Routines					*
@@ -640,7 +606,9 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 						 IN_ENUM( CRYPT_KEYOPT ) const CRYPT_KEYOPT_TYPE options )
 	{
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
-	char ldapServer[ MAX_URL_SIZE + 8 ], *ldapUser;
+	URL_INFO urlInfo;
+	const char *ldapUser = NULL;
+	char ldapServer[ MAX_URL_SIZE + 8 ];
 	int maxEntries = 2, timeout, ldapPort, ldapStatus = LDAP_OTHER, status;
 
 	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
@@ -655,11 +623,14 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   rather than just a server name and port */
 	if( nameLength > MAX_URL_SIZE - 1 )
 		return( CRYPT_ARGERROR_STR1 );
-	memcpy( ldapServer, name, nameLength );
-	ldapServer[ nameLength ] = '\0';
-	status = parseURL( ldapServer, &ldapUser, &ldapPort );
+	status = sNetParseURL( &urlInfo, name, nameLength, URL_TYPE_LDAP );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ARGERROR_STR1 );
+	memcpy( ldapServer, urlInfo.host, urlInfo.hostLen );
+	ldapServer[ urlInfo.hostLen ] = '\0';
+	ldapPort = ( urlInfo.port > 0 ) ? urlInfo.port : LDAP_PORT;
+	if( urlInfo.locationLen > 0 )
+		ldapUser = urlInfo.location;
 
 	/* Open the connection to the server */
 	if( ( ldapInfo->ld = ldap_init( ldapServer, ldapPort ) ) == NULL )
@@ -680,9 +651,11 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	krnlSendMessage( keysetInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE,
 					 &timeout, CRYPT_OPTION_NET_READTIMEOUT );
 	if( timeout < 15 )
+		{
 		/* Network I/O may be set to be nonblocking, so we make sure we try
 		   for at least 15s before timing out */
 		timeout = 15;
+		}
 	ldap_set_option( ldapInfo->ld, LDAP_OPT_TIMELIMIT, &timeout );
 	ldap_set_option( ldapInfo->ld, LDAP_OPT_SIZELIMIT, &maxEntries );
 
@@ -733,8 +706,10 @@ static int sendLdapQuery( LDAP_INFO *ldapInfo, LDAPMessage **resultPtr,
 	/* If the LDAP search-by-URL functions are available and the key ID is 
 	   an LDAP URL, perform a search by URL */
 	if( ldap_is_ldap_url != NULL && ldap_is_ldap_url( ( char * ) dn ) )
+		{
 		return( ldap_url_search_st( ldapInfo->ld, ( char * ) dn, FALSE, 
 									&ldapTimeout, resultPtr ) );
+		}
 
 	/* Try and retrieve the entry for this DN from the directory.  We use a 
 	   base specified by the DN, a chop of 0 (to return only the current 
@@ -932,6 +907,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 static int addCert( KEYSET_INFO *keysetInfoPtr, 
 					const CRYPT_HANDLE iCryptHandle )
 	{
+	static const int nameValue = CRYPT_CERTINFO_SUBJECTNAME;
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 	LDAPMod *ldapMod[ MAX_LDAP_ATTRIBUTES + 8 ];
 	MESSAGE_DATA msgData;
@@ -949,8 +925,8 @@ static int addCert( KEYSET_INFO *keysetInfoPtr,
 	   selected DN components, but this is OK since we've got the 
 	   certificate locked and the prior state will be restored when we 
 	   unlock it */
-	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
-					 MESSAGE_VALUE_UNUSED, CRYPT_CERTINFO_SUBJECTNAME );
+	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE, 
+					 ( MESSAGE_CAST ) &nameValue, CRYPT_ATTRIBUTE_CURRENT );
 	setMessageData( &msgData, C, CRYPT_MAX_TEXTSIZE );
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_CERTINFO_COUNTRYNAME );
@@ -1082,7 +1058,9 @@ static int addCert( KEYSET_INFO *keysetInfoPtr,
 		 ldapModIndex++ )
 		{
 		if( ldapMod[ ldapModIndex ]->mod_op & LDAP_MOD_BVALUES )
-			clFree( "addCert", ldapMod[ ldapModIndex ]->mod_bvalues[ 0 ] );
+			clFree( "addCert", ldapMod[ ldapModIndex ]->mod_bvalues );
+		else
+			clFree( "addCert", ldapMod[ ldapModIndex ]->mod_values );
 		clFree( "addCert", ldapMod[ ldapModIndex ]->mod_values );
 		clFree( "addCert", ldapMod[ ldapModIndex ] );
 		}
@@ -1144,8 +1122,10 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		if( status == CRYPT_OK )
 			seenNonDuplicate = TRUE;
 		else
+			{
 			if( status == CRYPT_ERROR_DUPLICATE )
 				status = CRYPT_OK;
+			}
 		}
 	while( cryptStatusOK( status ) && \
 		   krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
@@ -1157,9 +1137,11 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE, 
 					 MESSAGE_VALUE_FALSE, CRYPT_IATTRIBUTE_LOCKED );
 	if( cryptStatusOK( status ) && !seenNonDuplicate )
+		{
 		/* We reached the end of the chain without finding anything we could
 		   add, return a data duplicate error */
 		status = CRYPT_ERROR_DUPLICATE;
+		}
 
 	return( status );
 	}
@@ -1228,9 +1210,9 @@ static int getFirstItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 			  keyIDlength < MAX_ATTRIBUTE_SIZE );
 	REQUIRES( options == KEYMGMT_FLAG_NONE );
 
-	return( getItemFunction( keysetInfoPtr, NULL, KEYMGMT_ITEM_PUBLICKEY,
-							 CRYPT_KEYID_NAME, keyID, keyIDlength, NULL,
-							 0, 0 ) );
+	return( getItemFunction( keysetInfoPtr, iCertificate, 
+							 KEYMGMT_ITEM_PUBLICKEY, CRYPT_KEYID_NAME, 
+							 keyID, keyIDlength, NULL, 0, 0 ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \

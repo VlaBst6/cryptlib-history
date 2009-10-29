@@ -47,22 +47,26 @@ static const OID_INFO FAR_BSS cryptlibDataOIDinfo[] = {
 
 typedef struct {
 	PKCS15_OBJECT_TYPE type;	/* Object type */
-	int subTypes[ 5 ];			/* Subtype tags */
+	int subTypes[ 7 ];			/* Subtype tags */
 	} ALLOWED_ATTRIBUTE_TYPES;
 
 static const ALLOWED_ATTRIBUTE_TYPES allowedTypesTbl[] = {
 	{ PKCS15_OBJECT_PUBKEY,
-	  { BER_SEQUENCE, MAKE_CTAG( CTAG_PK_DH ), MAKE_CTAG( CTAG_PK_DSA ), 
-		MAKE_CTAG( CTAG_PK_KEA ), CRYPT_ERROR } },
+	  { BER_SEQUENCE, MAKE_CTAG( CTAG_PK_ECC ), MAKE_CTAG( CTAG_PK_DH ), 
+	    MAKE_CTAG( CTAG_PK_DSA ), MAKE_CTAG( CTAG_PK_KEA ), 
+		CRYPT_ERROR, CRYPT_ERROR } },
 	{ PKCS15_OBJECT_PRIVKEY,
-	  { BER_SEQUENCE, MAKE_CTAG( CTAG_PK_DH ), MAKE_CTAG( CTAG_PK_DSA ), 
-		MAKE_CTAG( CTAG_PK_KEA ), CRYPT_ERROR } },
+	  { BER_SEQUENCE, MAKE_CTAG( CTAG_PK_ECC ), MAKE_CTAG( CTAG_PK_DH ), 
+	    MAKE_CTAG( CTAG_PK_DSA ), MAKE_CTAG( CTAG_PK_KEA ), 
+		CRYPT_ERROR, CRYPT_ERROR } },
 	{ PKCS15_OBJECT_CERT,
-	  { BER_SEQUENCE, CRYPT_ERROR } },
+	  { BER_SEQUENCE, CRYPT_ERROR, CRYPT_ERROR } },
+	{ PKCS15_OBJECT_SECRETKEY,
+	  { CRYPT_ERROR, CRYPT_ERROR } },
 	{ PKCS15_OBJECT_DATA, 
-	  { MAKE_CTAG( CTAG_DO_OIDDO ), CRYPT_ERROR } },
-	{ PKCS15_OBJECT_NONE, { CRYPT_ERROR } },
-		{ PKCS15_OBJECT_NONE, { CRYPT_ERROR } }
+	  { MAKE_CTAG( CTAG_DO_OIDDO ), CRYPT_ERROR, CRYPT_ERROR } },
+	{ PKCS15_OBJECT_NONE, { CRYPT_ERROR, CRYPT_ERROR } },
+		{ PKCS15_OBJECT_NONE, { CRYPT_ERROR, CRYPT_ERROR } }
 	};
 
 /****************************************************************************
@@ -184,6 +188,8 @@ static int readKeyIdentifiers( INOUT STREAM *stream,
 		/* This could be either an internal error or some seriously 
 		   malformed data, since we can't tell without human intervention
 		   we throw a debug exception but otherwise treat it as bad data */
+		DEBUG_DIAG(( "Encountered more than %d key IDs", 
+					 FAILSAFE_ITERATIONS_MED ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_BADDATA );
 		}
@@ -331,6 +337,7 @@ int readObjectAttributes( INOUT STREAM *stream,
 	/* Find the allowed-subtype information for this object type */
 	for( i = 0; \
 		 allowedTypesTbl[ i ].type != type && \
+			allowedTypesTbl[ i ].type != PKCS15_OBJECT_NONE && \
 			i < FAILSAFE_ARRAYSIZE( allowedTypesTbl, ALLOWED_ATTRIBUTE_TYPES ); 
 		 i++ );
 	ENSURES( i < FAILSAFE_ARRAYSIZE( allowedTypesTbl, ALLOWED_ATTRIBUTE_TYPES ) );
@@ -385,28 +392,10 @@ int readObjectAttributes( INOUT STREAM *stream,
 	endPos = stell( stream ) + length;
 	switch( type )
 		{
-		case PKCS15_OBJECT_DATA:
-			/* If it's a data object then all of the attributes are 
-			   optional.  If it's specifically a cryptlib data object then 
-			   it'll be identified via the cryptlib OID */
-			if( length <= 0 )
-				break;
-			if( peekTag( stream ) == BER_STRING_UTF8 )
-				status = readUniversal( stream );	/* Skip application name */
-			if( canContinue( stream, status, endPos ) && \
-				peekTag( stream ) == BER_OBJECT_IDENTIFIER )
-				{
-				status = readOID( stream, dataObjectOIDinfo, 
-								  FAILSAFE_ARRAYSIZE( dataObjectOIDinfo, \
-													  OID_INFO ), &value );
-				if( cryptStatusOK( status ) && value == TRUE )
-					isCryptlibData = TRUE;
-				}
-			break;
-		
 		case PKCS15_OBJECT_PUBKEY:
 		case PKCS15_OBJECT_PRIVKEY:
-			/* It's a key object, read the ID and assorted flags */
+			/* It's a public/private-key object, read the ID and assorted 
+			   flags */
 			status = readOctetString( stream, pkcs15infoPtr->iD,
 									  &pkcs15infoPtr->iDlength, 
 									  1, CRYPT_MAX_HASHSIZE );
@@ -446,6 +435,30 @@ int readObjectAttributes( INOUT STREAM *stream,
 				}
 			break;
 
+		case PKCS15_OBJECT_SECRETKEY:
+			/* It's a secret-key object, there are no common attributes of interest 
+			   present */
+			break;
+
+		case PKCS15_OBJECT_DATA:
+			/* If it's a data object then all of the attributes are 
+			   optional.  If it's specifically a cryptlib data object then 
+			   it'll be identified via the cryptlib OID */
+			if( length <= 0 )
+				break;
+			if( peekTag( stream ) == BER_STRING_UTF8 )
+				status = readUniversal( stream );	/* Skip application name */
+			if( canContinue( stream, status, endPos ) && \
+				peekTag( stream ) == BER_OBJECT_IDENTIFIER )
+				{
+				status = readOID( stream, dataObjectOIDinfo, 
+								  FAILSAFE_ARRAYSIZE( dataObjectOIDinfo, \
+													  OID_INFO ), &value );
+				if( cryptStatusOK( status ) && value == TRUE )
+					isCryptlibData = TRUE;
+				}
+			break;
+		
 		default:
 			retIntError();
 		}
@@ -512,6 +525,10 @@ int readObjectAttributes( INOUT STREAM *stream,
 
 		case PKCS15_OBJECT_CERT:
 			pkcs15infoPtr->certOffset = stell( stream );
+			break;
+
+		case PKCS15_OBJECT_SECRETKEY:
+			pkcs15infoPtr->secretKeyOffset = stell( stream );
 			break;
 
 		case PKCS15_OBJECT_DATA:

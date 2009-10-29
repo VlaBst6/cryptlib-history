@@ -91,7 +91,8 @@ static int extractCertNameData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 									const CRYPT_CERTTYPE_TYPE certType,
 								OUT CERT_ID_DATA *certIdData )
 	{
-	static const int value = CRYPT_CERTINFO_SUBJECTALTNAME;
+	static const int nameValue = CRYPT_CERTINFO_SUBJECTNAME;
+	static const int altNameValue = CRYPT_CERTINFO_SUBJECTALTNAME;
 	MESSAGE_DATA msgData;
 	int status;
 
@@ -110,8 +111,8 @@ static int extractCertNameData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 	   certificate locked and the prior state will be restored when we 
 	   unlock it */
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
-							  MESSAGE_VALUE_UNUSED, 
-							  CRYPT_CERTINFO_SUBJECTNAME );
+							  ( MESSAGE_CAST ) &nameValue, 
+							  CRYPT_ATTRIBUTE_CURRENT );
 	if( cryptStatusError( status ) )
 		return( status );
 	setMessageData( &msgData, certIdData->C, CRYPT_MAX_TEXTSIZE );
@@ -189,7 +190,8 @@ static int extractCertNameData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 	   occurrence */
 	setMessageData( &msgData, certIdData->uri, CRYPT_MAX_TEXTSIZE );
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &value, CRYPT_ATTRIBUTE_CURRENT );
+					 ( MESSAGE_CAST ) &altNameValue, 
+					 CRYPT_ATTRIBUTE_CURRENT );
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_CERTINFO_RFC822NAME );
 	if( status == CRYPT_ERROR_NOTFOUND )
@@ -214,7 +216,7 @@ static int extractCertNameData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 		   this but this complicates indexing and there's no reason why we 
 		   can't do it here */
 		for( i = 0; i < msgData.length; i++ )
-			certIdData->uri[ i ] = toLower( certIdData->uri[ i ] );
+			certIdData->uri[ i ] = intToByte( toLower( certIdData->uri[ i ] ) );
 		certIdData->uriLength = msgData.length;
 		}
 	
@@ -505,6 +507,7 @@ int addCert( INOUT DBMS_INFO *dbmsInfo,
 							   certDataLength, CRYPT_CERTTYPE_NONE );
 		if( cryptStatusError( status ) )
 			{
+			DEBUG_DIAG(( "Couldn't base64-encode data" ));
 			assert( DEBUG_WARN );
 			retIntError();
 			}
@@ -610,6 +613,7 @@ int addCRL( INOUT DBMS_INFO *dbmsInfo,
 							   certDataLength, CRYPT_CERTTYPE_NONE );
 		if( cryptStatusError( status ) )
 			{
+			DEBUG_DIAG(( "Couldn't base64-encode data" ));
 			assert( DEBUG_WARN );
 			retIntError();
 			}
@@ -649,6 +653,7 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			  itemType == KEYMGMT_ITEM_REVOCATIONINFO || \
 			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_REVREQUEST || \
 			  itemType == KEYMGMT_ITEM_PKIUSER );
 	REQUIRES( password == NULL && passwordLength == 0 );
 	REQUIRES( flags >= KEYMGMT_FLAG_NONE && flags < KEYMGMT_FLAG_MAX );
@@ -677,13 +682,22 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 			}
 
 		if( itemType == KEYMGMT_ITEM_PKIUSER )
+			{
+			REQUIRES( type == CRYPT_CERTTYPE_PKIUSER );
 			return( caAddPKIUser( dbmsInfo, iCryptHandle, KEYSET_ERRINFO ) );
+			}
 
 		/* It's a certificate request being added to a CA certificate 
 		   store */
-		REQUIRES( itemType == KEYMGMT_ITEM_REQUEST );
+		REQUIRES( ( itemType == KEYMGMT_ITEM_REQUEST && \
+					( type == CRYPT_CERTTYPE_CERTREQUEST || \
+					  type == CRYPT_CERTTYPE_REQUEST_CERT ) ) || \
+				  ( itemType == KEYMGMT_ITEM_REVREQUEST && \
+				    type == CRYPT_CERTTYPE_REQUEST_REVOCATION ) );
 		return( caAddCertRequest( dbmsInfo, iCryptHandle, type,
 								  ( flags & KEYMGMT_FLAG_UPDATE ) ? \
+									TRUE : FALSE, 
+								  ( flags & KEYMGMT_FLAG_INITIALOP ) ? \
 									TRUE : FALSE, KEYSET_ERRINFO ) );
 		}
 	if( type != CRYPT_CERTTYPE_CERTIFICATE && \

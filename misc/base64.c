@@ -155,15 +155,15 @@ static BOOLEAN checkBase64( INOUT STREAM *stream )
 	   AA...; for a PGP public key that begins 99 0x it's mQ... 
 
 	   Unfortunately in the case of MIME-encoded data with a MIME header, 
-	   the header is likely to begin with "MIME-Version", which happens to
-	   match the base64-encoded form of 30 8x = "MI", so this quick-reject
+	   the header is likely to begin with "MIME-Version", which happens to 
+	   match the base64-encoded form of 30 8x = "MI", so this quick-reject 
 	   filter won't catch this one particular case */
-	if( strCompare( buffer, "MI", 2 ) && \
-		strCompare( buffer, "AA", 2 ) && \
-		strCompare( buffer, "mQ", 2 ) )
+	if( memcmp( buffer, "MI", 2 ) && \
+		memcmp( buffer, "AA", 2 ) && \
+		memcmp( buffer, "mQ", 2 ) )
 		return( FALSE );
 
-	/* Check that we have at least one minimal-length line of base64-encoded
+	/* Check that we have at least one minimal-length line of base64-encoded 
 	   data */
 	sMemNullOpen( &nullStream );
 	status = fixedBase64decode( &nullStream, buffer, 60 );
@@ -204,8 +204,8 @@ static int checkPEMHeader( INOUT STREAM *stream,
 		   'ABC XYZ' (7) + '-----' (5) */
 		return( CRYPT_ERROR_BADDATA );
 		}
-	if( strCompare( bufPtr, "-----BEGIN ", 11 ) &&	/* PEM/PGP form */
-		strCompare( bufPtr, "---- BEGIN ", 11 ) )	/* SSH form */
+	if( memcmp( bufPtr, "-----BEGIN ", 11 ) &&	/* PEM/PGP form */
+		memcmp( bufPtr, "---- BEGIN ", 11 ) )	/* SSH form */
 		return( CRYPT_ERROR_BADDATA );
 	bufPtr += 11;
 	length -= 11;
@@ -569,7 +569,7 @@ static int decodeBase64chunk( INOUT STREAM *stream,
 							  IN_LENGTH const int srcLeft,
 							  const BOOLEAN fixedLenData )
 	{
-	BYTE c0, c1, c2 = 0, c3 = 0, cx;
+	int c0, c1, c2 = 0, c3 = 0, cx;
 	int srcIndex = 0, outByteCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -583,13 +583,13 @@ static int decodeBase64chunk( INOUT STREAM *stream,
 		return( CRYPT_ERROR_UNDERFLOW );
 
 	/* Decode a block of data from the input buffer */
-	c0 = decode( src[ srcIndex++ ] );
-	c1 = decode( src[ srcIndex++ ] );
+	c0 = byteToInt( decode( src[ srcIndex++ ] ) );
+	c1 = byteToInt( decode( src[ srcIndex++ ] ) );
 	if( srcLeft > 2 )
 		{
-		c2 = decode( src[ srcIndex++ ] );
+		c2 = byteToInt( decode( src[ srcIndex++ ] ) );
 		if( srcLeft > 3 )
-			c3 = decode( src[ srcIndex++ ] );
+			c3 = byteToInt( decode( src[ srcIndex++ ] ) );
 		}
 	cx = c0 | c1 | c2 | c3;
 	if( cx == BERR || cx == BEOF )
@@ -851,7 +851,7 @@ int base64decodeLen( IN_BUFFER( dataLength ) const char *data,
 			/* Don't try and decode out-of-band data */
 			continue;
 			}
-		ch = decode( ch );
+		ch = byteToInt( decode( ch ) );
 		if( ch == BERR || ch == BEOF )
 			break;
 		}

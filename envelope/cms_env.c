@@ -15,15 +15,6 @@
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
-/* Determine the size of the envelope payload after PKCS #5 block padding if
-   necessary.  This isn't just the size rounded up to the nearest multiple of
-   the block size since if the size is already a multiple of the block size,
-   it expands by another block, so we make the payload look one byte longer
-   before rounding to the block size to ensure the one-block expansion */
-
-#define paddedSize( size, blockSize )	\
-		( ( blockSize > 1 ) ? roundUp( size + 1, blockSize ) : size )
-
 #ifdef USE_ENVELOPES
 
 /****************************************************************************
@@ -34,7 +25,7 @@
 
 /* Sanity-check the envelope state */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
@@ -163,6 +154,8 @@ static int copyFromAuxBuffer( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	dataLeft = envelopeInfoPtr->auxBufPos - bytesCopied;
 	if( dataLeft > 0 )
 		{
+		REQUIRES( rangeCheck( bytesCopied, dataLeft, \
+							  envelopeInfoPtr->auxBufPos ) );
 		memmove( envelopeInfoPtr->auxBuffer, \
 				 envelopeInfoPtr->auxBuffer + bytesCopied, dataLeft );
 		}
@@ -299,13 +292,11 @@ static int getBlockedPayloadSize( IN_LENGTH_INDEF const long payloadSize,
 								  IN_LENGTH_IV const int blockSize,
 								  OUT_LENGTH_INDEF long *blockedPayloadSize )
 	{
-	long blockedSize;
-
 	assert( isWritePtr( blockedPayloadSize, sizeof( long ) ) );
 
 	REQUIRES( payloadSize == CRYPT_UNUSED || \
 			  ( payloadSize > 0 && payloadSize < MAX_INTLENGTH ) );
-	REQUIRES( blockSize > 1 && blockSize <= CRYPT_MAX_IVSIZE );
+	REQUIRES( blockSize >= 1 && blockSize <= CRYPT_MAX_IVSIZE );
 
 	/* Clear return value */
 	*blockedPayloadSize = 0;
@@ -318,12 +309,22 @@ static int getBlockedPayloadSize( IN_LENGTH_INDEF const long payloadSize,
 		return( CRYPT_OK );
 		}
 
-	/* Calculate the size of the payload after encryption blocking */
-	blockedSize = paddedSize( payloadSize, blockSize );
-	*blockedPayloadSize = blockedSize;
+	/* If it's a stream cipher there's no encryption blocking */
+	if( blockSize <= 1 )
+		{
+		*blockedPayloadSize = payloadSize;
+		return( CRYPT_OK );
+		}
 
-	ENSURES( blockedSize >= 8 && \
-			 blockedSize <= payloadSize + CRYPT_MAX_IVSIZE );
+	/* Calculate the size of the payload after PKCS #5 block padding.  This 
+	   isn't just the size rounded up to the nearest multiple of the block 
+	   size since if the size is already a multiple of the block size it 
+	   expands by another block, so we make the payload look one byte longer 
+	   before rounding to the block size to ensure the one-block expansion */
+	*blockedPayloadSize = roundUp( payloadSize + 1, blockSize );
+
+	ENSURES( *blockedPayloadSize >= 8 && \
+			 *blockedPayloadSize <= payloadSize + CRYPT_MAX_IVSIZE );
 
 	return( CRYPT_OK );
 	}
@@ -949,10 +950,11 @@ static int writeSignatures( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED; 
 		 actionListPtr = actionListPtr->next, iterationCount++ )
 		{
+		SIGPARAMS sigParams;
 		const int sigBufSize = min( envelopeInfoPtr->bufSize - \
 									envelopeInfoPtr->bufPos, \
 									MAX_INTLENGTH_SHORT - 1 );
-		int sigSize, signingAttributes = actionListPtr->iExtraData;
+		int sigSize;
 
 		REQUIRES( actionListPtr->action == ACTION_SIGN );
 		ENSURES( sigBufSize >= 0 && sigBufSize < MAX_INTLENGTH_SHORT );
@@ -967,31 +969,13 @@ static int writeSignatures( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			break;
 			}
 
-		/* Determine the type of signing attributes to use.  If none are
-		   specified (which can only happen under circumstances controlled
-		   by the pre-envelope signing code) we either get the signing code 
-		   to add the default ones for us or use none at all if the use of
-		   default attributes is disabled */
-		if( signingAttributes == CRYPT_ERROR )
-			{
-			/* If it's a raw signature there are no signing attributes */
-			if( envelopeInfoPtr->type == CRYPT_FORMAT_CRYPTLIB )
-				signingAttributes = CRYPT_UNUSED;
-			else
-				{
-				int useDefaultAttributes;
-
-				/* It's a CMS/SMIME signature, use whatever the default is */
-				status = krnlSendMessage( envelopeInfoPtr->ownerHandle,
-										  IMESSAGE_GETATTRIBUTE, 
-										  &useDefaultAttributes,
-										  CRYPT_OPTION_CMS_DEFAULTATTRIBUTES );
-				if( cryptStatusError( status ) )
-					break;
-				signingAttributes = useDefaultAttributes ? \
-									CRYPT_USE_DEFAULT : CRYPT_UNUSED;
-				}
-			}
+		/* Set up any necessary signature parameters such as signature 
+		   attributes and timestamps if necessary */
+		status = cmsInitSigParams( actionListPtr, envelopeInfoPtr->type, 
+								   envelopeInfoPtr->ownerHandle, 
+								   &sigParams );
+		if( cryptStatusError( status ) )
+			break;
 
 		/* Sign the data */
 		REQUIRES( actionListPtr->associatedAction != NULL );
@@ -1000,9 +984,8 @@ static int writeSignatures( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 							&sigSize, envelopeInfoPtr->type,
 							actionListPtr->iCryptHandle,
 							actionListPtr->associatedAction->iCryptHandle,
-							signingAttributes,
-							( actionListPtr->iTspSession != CRYPT_ERROR ) ? \
-							actionListPtr->iTspSession : CRYPT_UNUSED );
+							( envelopeInfoPtr->type == CRYPT_FORMAT_CRYPTLIB ) ? \
+								NULL : &sigParams );
 		if( cryptStatusError( status ) )
 			break;
 		envelopeInfoPtr->bufPos += sigSize;

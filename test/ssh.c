@@ -8,6 +8,17 @@
 #include "cryptlib.h"
 #include "test/test.h"
 
+/* Various features can be disabled by configuration options, in order to 
+   handle this we need to include the cryptlib config file so that we can 
+   selectively disable some tests */
+
+#ifdef __WINDOWS__
+  /* For checking for debug-only capabilities */
+  #define _OSSPEC_DEFINED
+  #define VC_LT_2005( version )		( version < 1400 )
+#endif /* __WINDOWS__ */
+#include "misc/config.h"
+
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
   #pragma convlit( suspend )
@@ -34,6 +45,7 @@
 typedef enum {
 	SSH_TEST_NORMAL,			/* Standard SSHv2 test */
 	SSH_TEST_SSH1,				/* SSHv1 test */
+	SSH_TEST_DSAKEY,			/* DSA server key instead of RSA */
 	SSH_TEST_CLIENTCERT,		/* Use client public-key for auth */
 	SSH_TEST_SUBSYSTEM,			/* Test SFTP subsystem */
 	SSH_TEST_PORTFORWARDING,	/* Test port forwarding */
@@ -155,10 +167,12 @@ int testSessionUrlParse( void )
 			status = cryptGetAttribute( cryptSession,
 										CRYPT_SESSINFO_SERVER_PORT, &port );
 		if( cryptStatusOK( status ) && urlParseInfo[ i ].userInfo != NULL )
+			{
 			status = cryptGetAttributeString( cryptSession,
 											  CRYPT_SESSINFO_USERNAME,
 											  userInfoBuffer,
 											  &userInfoLength );
+			}
 		if( cryptStatusError( status ) )
 			{
 			printf( "Couldn't get parsed URL info for '%s', line %d.\n",
@@ -305,7 +319,7 @@ int testSessionAttributes( void )
 		status = cryptSetAttributeString( cryptSession,
 								CRYPT_SESSINFO_USERNAME, TEXT( "invalid_name" ),
 								paramStrlen( TEXT( "invalid_name" ) ) );
-	if( status != CRYPT_ERROR_PARAM2 )
+	if( status != CRYPT_ERROR_INITED )
 		{
 		printf( "Addition of username without password wasn't detected, "
 				"line %d.\n", __LINE__ );
@@ -347,9 +361,15 @@ int testSessionAttributes( void )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CONTEXT privateKey;
+	BYTE filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+	void *fileNamePtr = filenameBuffer;
 	int status;
 
-	printf( "Server thread %lX activated.\n", THREAD_SELF() );
+	printf( "Server thread %lX activated.\n", 
+			( unsigned long ) THREAD_SELF() );
 	fflush( stdout );
 
 	/* Create the session and try to activate it.  We don't do anything
@@ -367,8 +387,13 @@ int testSessionAttributes( void )
 		{
 		THREAD_EXIT();
 		}
-	status = getPrivateKey( &privateKey, SSH_PRIVKEY_FILE,
-							USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+	filenameFromTemplate( filenameBuffer, SSH_PRIVKEY_FILE_TEMPLATE, 1 );
+#ifdef UNICODE_STRINGS
+	mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+	fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+	status = getPrivateKey( &privateKey, fileNamePtr, USER_PRIVKEY_LABEL, 
+							TEST_PRIVKEY_PASSWORD );
 	if( cryptStatusOK( status ) )
 		{
 		status = cryptSetAttribute( cryptSession,
@@ -384,7 +409,8 @@ int testSessionAttributes( void )
 				status, __LINE__ );
 		THREAD_EXIT();
 		}
-	printf( "Server for thread %lX activated.\n", THREAD_SELF() );
+	printf( "Server for thread %lX activated.\n", 
+			( unsigned long ) THREAD_SELF() );
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 	printConnectInfo( cryptSession );
 	if( cryptStatusError( status ) )
@@ -392,7 +418,8 @@ int testSessionAttributes( void )
 					   "Attempt to activate SSH server session", status,
 					   __LINE__ );
 	cryptDestroySession( cryptSession );
-	printf( "Server for thread %lX has exited.\n", THREAD_SELF() );
+	printf( "Server for thread %lX has exited.\n", 
+			( unsigned long ) THREAD_SELF() );
 	fflush( stdout );
 
 	THREAD_EXIT();
@@ -407,7 +434,8 @@ int testSessionAttributes( void )
 	CRYPT_SESSION cryptSession;
 	int status;
 
-	printf( "Client thread %lX activated.\n", THREAD_SELF() );
+	printf( "Client thread %lX activated.\n", 
+			( unsigned long ) THREAD_SELF() );
 	fflush( stdout );
 
 	/* Create the session and try to activate it.  We don't do anything
@@ -428,30 +456,38 @@ int testSessionAttributes( void )
 	status = cryptSetAttribute( cryptSession,
 								CRYPT_OPTION_NET_CONNECTTIMEOUT, 10 );
 	if( cryptStatusOK( status ) )
+		{
 		status = cryptSetAttributeString( cryptSession,
 										  CRYPT_SESSINFO_USERNAME,
 										  SSH_USER_NAME,
 										  paramStrlen( SSH_USER_NAME ) );
+		}
 	if( cryptStatusOK( status ) )
+		{
 		status = cryptSetAttributeString( cryptSession,
 										  CRYPT_SESSINFO_PASSWORD,
 										  SSH_PASSWORD,
 										  paramStrlen( SSH_PASSWORD ) );
+		}
 	if( cryptStatusError( status ) )
 		{
 		printf( "cryptSetAttribute/AttributeString() failed with error code "
 				"%d, line %d.\n", status, __LINE__ );
 		THREAD_EXIT();
 		}
-	printf( "Client for thread %lX activated.\n", THREAD_SELF() );
+	printf( "Client for thread %lX activated.\n", 
+			( unsigned long ) THREAD_SELF() );
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 	printConnectInfo( cryptSession );
 	if( cryptStatusError( status ) )
+		{
 		printExtError( cryptSession,
 					   "Attempt to activate SSH client session", status,
 					   __LINE__ );
+		}
 	cryptDestroySession( cryptSession );
-	printf( "Client for thread %lX has exited.\n", THREAD_SELF() );
+	printf( "Client for thread %lX has exited.\n", 
+			( unsigned long ) THREAD_SELF() );
 	fflush( stdout );
 
 	THREAD_EXIT();
@@ -463,6 +499,8 @@ int testSessionSSHClientServerMultiThread( void )
 								 sshServerMultiThread, MAX_NO_THREADS ) );
 	}
 #endif /* OS-specific threading functions */
+
+#ifdef USE_SSH_EXTENDED
 
 /* Create an SSH channel */
 
@@ -554,6 +592,7 @@ static BOOLEAN printChannelInfo( const CRYPT_SESSION cryptSession,
 	fflush( stdout );
 	return( TRUE );
 	}
+#endif /* USE_SSH_EXTENDED */
 
 /* Print information on data sent over an SSH channel */
 
@@ -561,8 +600,20 @@ static BOOLEAN printDataInfo( CRYPT_SESSION cryptSession,
 							  char *buffer, int *bytesCopied,
 							  const BOOLEAN isServer )
 	{
-	int channel, status;
+	int channel = 0, status;
 
+#ifdef USE_SSH_EXTENDED
+	status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_SSH_CHANNEL, 
+								&channel );
+	if( cryptStatusError( status ) )
+		{
+		printExtError( cryptSession, 
+					   isServer ? "SVR: Couldn't get data channel number" : \
+								  "Couldn't get data channel number", 
+					   status, __LINE__ );
+		return( FALSE );
+		}
+#endif /* USE_SSH_EXTENDED */
 	status = cryptPopData( cryptSession, buffer, BUFFER_SIZE, bytesCopied );
 	if( cryptStatusError( status ) )
 		{
@@ -573,8 +624,7 @@ static BOOLEAN printDataInfo( CRYPT_SESSION cryptSession,
 		return( FALSE );
 		}
 	buffer[ *bytesCopied ] = '\0';
-	cryptGetAttribute( cryptSession, CRYPT_SESSINFO_SSH_CHANNEL, &channel );
-	printf( "%s---- %s sent %d bytes on channel %d ----\n",
+	printf( "%s---- %s sent %d bytes on channel #%d ----\n",
 			isServer ? "SVR: " : "", isServer ? "Client" : "Server",
 			*bytesCopied, channel );
 	if( isServer )
@@ -708,7 +758,10 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_SSH_SERVER ) ? \
 							   TRUE : FALSE;
 	char buffer[ BUFFER_SIZE ];
-	int channel, bytesCopied, status;
+#ifdef USE_SSH_EXTENDED
+	int channel;
+#endif /* USE_SSH_EXTENDED */
+	int bytesCopied, status;
 
 	/* If this is a local session, synchronise the client and server */
 	if( localSession )
@@ -742,17 +795,20 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			isServer ? "SVR: " : "",
 			localSession ? "local " : "",
 			( testType == SSH_TEST_SSH1 ) ? "v1" : "v2",
+			( testType == SSH_TEST_DSAKEY ) ? " with DSA server key" : \
 			( testType == SSH_TEST_SUBSYSTEM ) ? " SFTP" : \
-				( testType == SSH_TEST_PORTFORWARDING ) ? " port-forwarding" : \
-				( testType == SSH_TEST_EXEC ) ? " remote exec" : \
-				( testType == SSH_TEST_MULTICHANNEL ) ? " multi-channel" : \
-				( testType == SSH_TEST_CLIENTCERT ) ? " pubkey-auth" : "" );
+			( testType == SSH_TEST_PORTFORWARDING ) ? " port-forwarding" : \
+			( testType == SSH_TEST_EXEC ) ? " remote exec" : \
+			( testType == SSH_TEST_MULTICHANNEL ) ? " multi-channel" : \
+			( testType == SSH_TEST_CLIENTCERT ) ? " pubkey-auth" : "" );
 	if( !isServer && !localSession )
+		{
 #ifdef UNICODE_STRINGS
 		printf( "  Remote host: %S.\n", serverName );
 #else
 		printf( "  Remote host: %s.\n", serverName );
 #endif /* UNICODE_STRINGS */
+		}
 	fflush( stdout );
 
 	/* Create the session */
@@ -770,11 +826,22 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 	if( isServer )
 		{
 		CRYPT_CONTEXT privateKey;
+		BYTE filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+		wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+		void *fileNamePtr = filenameBuffer;
 
 		if( !setLocalConnect( cryptSession, 22 ) )
 			return( FALSE );
-		status = getPrivateKey( &privateKey, SSH_PRIVKEY_FILE,
-								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
+		filenameFromTemplate( filenameBuffer, SSH_PRIVKEY_FILE_TEMPLATE, 
+							  ( testType == SSH_TEST_DSAKEY ) ? 2 : 1 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		status = getPrivateKey( &privateKey, fileNamePtr, USER_PRIVKEY_LABEL, 
+								TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusOK( status ) )
 			{
 			status = cryptSetAttribute( cryptSession,
@@ -796,10 +863,12 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 									serverName, paramStrlen( serverName ) );
 			}
 		if( cryptStatusOK( status ) )
+			{
 			status = cryptSetAttributeString( cryptSession,
 									CRYPT_SESSINFO_USERNAME,
 									SSH_USER_NAME,
 									paramStrlen( SSH_USER_NAME ) );
+			}
 		if( cryptStatusOK( status ) )
 			{
 			if( testType == SSH_TEST_CLIENTCERT )
@@ -834,15 +903,21 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 #endif /* User-supplied password */
 				}
 			}
+#ifdef USE_SSH_EXTENDED
 		if( cryptStatusOK( status ) && \
 			( testType == SSH_TEST_SUBSYSTEM ) )
+			{
 			status = createChannel( cryptSession, TEXT( "subsystem" ),
 									TEXT( "sftp" ) );
+			}
 		if( cryptStatusOK( status ) && \
 			( testType == SSH_TEST_PORTFORWARDING || \
 			  testType == SSH_TEST_MULTICHANNEL ) )
-			createChannel( cryptSession, TEXT( "direct-tcpip" ),
-							TEXT( "localhost:1234" ) );
+			{
+			status = createChannel( cryptSession, TEXT( "direct-tcpip" ),
+									TEXT( "localhost:1234" ) );
+			}
+#endif /* USE_SSH_EXTENDED */
 		if( cryptStatusOK( status ) && \
 			( testType == SSH_TEST_FINGERPRINT ) )
 			{
@@ -855,10 +930,14 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 											  CRYPT_SESSINFO_SERVER_FINGERPRINT,
 											  fingerPrint, 16 );
 			}
+#ifdef USE_SSH_EXTENDED
 		if( cryptStatusOK( status ) && \
 			( testType == SSH_TEST_EXEC ) )
+			{
 			status = createChannel( cryptSession, TEXT( "exec" ),
 									TEXT( "/bin/netstat" ) );
+			}
+#endif /* USE_SSH_EXTENDED */
 		}
 	if( cryptStatusOK( status ) )
 		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_VERSION,
@@ -896,8 +975,10 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 	   timeout for reads */
 	cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 5 );
 	if( localSession && isServer )
+		{
 		/* Tell the client that we're ready to go */
 		releaseMutex();
+		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 	if( isServer )
 		{
@@ -935,21 +1016,29 @@ dualThreadContinue:
 			if( !printAuthInfo( cryptSession ) )
 				return( FALSE );
 
-			/* Deny the auth.and force them to retry */
-			puts( "SVR: Denying authentication to client, who should reauth..." );
-			status = cryptSetAttribute( cryptSession,
-										CRYPT_SESSINFO_AUTHRESPONSE, FALSE );
-			if( cryptStatusOK( status ) )
-				status = cryptSetAttribute( cryptSession,
-											CRYPT_SESSINFO_ACTIVE, TRUE );
-			if( status != CRYPT_ENVELOPE_RESOURCE )
+			/* Deny the auth.and force them to retry, unless it's a loopback
+			   test which is non-interactive and for which the client can't
+			   perform an interactive re-auth */
+			if( !localSession )
 				{
-				printf( "SVR: Attempt to deny auth.to client failed with error "
-						"code %d, line %d.\n", status, __LINE__ );
-				return( FALSE );
+				puts( "SVR: Denying authentication to client, who should "
+					  "reauth..." );
+				status = cryptSetAttribute( cryptSession,
+											CRYPT_SESSINFO_AUTHRESPONSE, 
+											FALSE );
+				if( cryptStatusOK( status ) )
+					status = cryptSetAttribute( cryptSession,
+												CRYPT_SESSINFO_ACTIVE, TRUE );
+				if( status != CRYPT_ENVELOPE_RESOURCE )
+					{
+					printExtError( cryptSession, 
+								   "SVR: Attempt to deny auth.to client", 
+								   status, __LINE__ );
+					return( FALSE );
+					}
+				if( !printAuthInfo( cryptSession ) )
+					return( FALSE );
 				}
-			if( !printAuthInfo( cryptSession ) )
-				return( FALSE );
 
 			/* Allow the auth.and complete the handshake */
 			puts( "SVR: Confirming authentication to client..." );
@@ -984,6 +1073,12 @@ dualThreadContinue:
 					   "Attempt to activate SSH client session", status,
 					   __LINE__ );
 		cryptDestroySession( cryptSession );
+		if( localSession )
+			{
+			/* If it's a local session then none of the following soft-
+			   failure conditions are valid */
+			return( FALSE );
+			}
 		if( status == CRYPT_ERROR_OPEN || status == CRYPT_ERROR_NOTFOUND )
 			{
 			/* These servers are constantly appearing and disappearing so if
@@ -1018,9 +1113,12 @@ dualThreadContinue:
 		return( FALSE );
 		}
 
-	/* Report the session security info */
+	/* Report the session security info.  In standard SSH usage 
+	   channel == session so we only try and report channel details if the
+	   SSH extended capabilities are enabled */
 	if( !printSecurityInfo( cryptSession, isServer, TRUE ) )
 		return( FALSE );
+#ifdef USE_SSH_EXTENDED
 	status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_SSH_CHANNEL,
 								&channel );
 	if( cryptStatusError( status ) )
@@ -1031,14 +1129,19 @@ dualThreadContinue:
 		}
 	printf( "%sCurrent channel is #%d.\n", isServer ? "SVR: " : "",
 			channel );
+#endif /* USE_SSH_EXTENDED */
 	fflush( stdout );
 
 	/* Report additional channel-specific information */
 	if( isServer )
 		{
-		/* Display info on any channels that the client has opened */
+		/* Display info on any channels that the client has opened.  As with
+		   the earlier channel display, we can only do this if SSH extended
+		   capabilities are enabled */
+#ifdef USE_SSH_EXTENDED
 		if( !printChannelInfo( cryptSession, testType, TRUE ) )
 			return( FALSE );
+#endif /* USE_SSH_EXTENDED */
 
 		/* Process any additional information that the client may throw
 		   at us after the user-auth has completed */
@@ -1050,6 +1153,7 @@ dualThreadContinue:
 					"handshake data.\n", bytesCopied );
 			fflush( stdout );
 			}
+#ifdef USE_SSH_EXTENDED
 		else
 			{
 			if( status == CRYPT_ENVELOPE_RESOURCE )
@@ -1061,11 +1165,12 @@ dualThreadContinue:
 					return( FALSE );
 				}
 			}
+#endif /* USE_SSH_EXTENDED */
 		}
 
 	/* If we're using the SFTP subsystem as a server, use the special-case
 	   routines for this */
-#ifdef WINDOWS_THREADS
+#if defined( WINDOWS_THREADS ) && 0
 	if( testType == SSH_TEST_SUBSYSTEM )
 		{
 		if( isServer )
@@ -1101,8 +1206,9 @@ dualThreadContinue:
 			return( TRUE );
 			}
 		}
-#endif /* WINDOWS_THREADS */
+#endif /* WINDOWS_THREADS && 0 */
 
+#ifdef USE_SSH_EXTENDED
 	/* If we're performing a multi-channel test, open a second channel (the
 	   server handles this as part of its general connect-handling) */
 	if( testType == SSH_TEST_MULTICHANNEL && !isServer )
@@ -1126,6 +1232,7 @@ dualThreadContinue:
 		printf( "Opened additional channel #%d to server.\n", channel );
 		fflush( stdout );
 		}
+#endif /* USE_SSH_EXTENDED */
 
 	/* Send data over the SSH link */
 	if( isServer )
@@ -1283,7 +1390,11 @@ dualThreadContinue:
 
 int testSessionSSHv1( void )
 	{
+#ifdef USE_SSH1
 	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_SSH1, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH1 */
 	}
 int testSessionSSH( void )
 	{
@@ -1295,19 +1406,35 @@ int testSessionSSHClientCert( void )
 	}
 int testSessionSSHPortforward( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_PORTFORWARDING, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSHExec( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_EXEC, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSH_SFTP( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( connectSSH( CRYPT_SESSION_SSH, SSH_TEST_SUBSYSTEM, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSHv1Server( void )
 	{
+#ifdef USE_SSH1
 	return( connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SSH1, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH1 */
 	}
 int testSessionSSHServer( void )
 	{
@@ -1315,7 +1442,11 @@ int testSessionSSHServer( void )
 	}
 int testSessionSSH_SFTPServer( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SUBSYSTEM, FALSE ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 
 /* Perform a client/server loopback test */
@@ -1331,6 +1462,12 @@ unsigned __stdcall ssh1ServerThread( void *dummy )
 unsigned __stdcall ssh2ServerThread( void *dummy )
 	{
 	connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_NORMAL, TRUE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+unsigned __stdcall ssh2ServerDsaKeyThread( void *dummy )
+	{
+	connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_DSAKEY, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1378,6 +1515,8 @@ static int sshClientServer( const SSH_TEST_TYPE testType )
 								sftpServerThread : \
 							( testType == SSH_TEST_SSH1 ) ? \
 								ssh1ServerThread : \
+							( testType == SSH_TEST_DSAKEY ) ? \
+								ssh2ServerDsaKeyThread : \
 							( testType == SSH_TEST_FINGERPRINT ) ? \
 								ssh2ServerFingerprintThread : \
 							( testType == SSH_TEST_MULTICHANNEL ) ? \
@@ -1397,11 +1536,19 @@ static int sshClientServer( const SSH_TEST_TYPE testType )
 
 int testSessionSSHv1ClientServer( void )
 	{
+#ifdef USE_SSH1
 	return( sshClientServer( SSH_TEST_SSH1 ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH1 */
 	}
 int testSessionSSHClientServer( void )
 	{
 	return( sshClientServer( SSH_TEST_NORMAL ) );
+	}
+int testSessionSSHClientServerDsaKey( void )
+	{
+	return( sshClientServer( SSH_TEST_DSAKEY ) );
 	}
 int testSessionSSHClientServerFingerprint( void )
 	{
@@ -1416,15 +1563,27 @@ int testSessionSSHClientServerSFTP( void )
 	}
 int testSessionSSHClientServerPortForward( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( sshClientServer( SSH_TEST_PORTFORWARDING ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSHClientServerExec( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( sshClientServer( SSH_TEST_EXEC ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSHClientServerMultichannel( void )
 	{
+#ifdef USE_SSH_EXTENDED
 	return( sshClientServer( SSH_TEST_MULTICHANNEL ) );
+#else
+	return( TRUE );
+#endif /* USE_SSH_EXTENDED */
 	}
 int testSessionSSHClientServerDualThread( void )
 	{
@@ -1443,7 +1602,7 @@ int testSessionSSHClientServerDualThread( void )
    produce link errors when cryptlib is statically linked with the test
    app, we only enable it for the threaded Windows (i.e. DLL) self-test */
 
-#ifdef WINDOWS_THREADS
+#if defined( WINDOWS_THREADS ) && 0
 
 /* The following code is a bare-bones SFTP implementation created purely for
    interop/performance testing of cryptlib's SSH implementation.  It does
@@ -1572,11 +1731,11 @@ int BN_num_bits( const BIGNUM *a ) { return 0; }
 int BN_high_bit( BIGNUM *a ) { return 0; }
 BIGNUM *BN_bin2bn( const unsigned char *s, int len, BIGNUM *ret ) { return NULL; }
 int	BN_bn2bin( const BIGNUM *a, unsigned char *to ) { return 0; }
-int extractBignum( BIGNUM *bn, const void *buffer, const int length,
-				   const int minLength, const int maxLength, 
-				   const BIGNUM *maxRange, const BOOLEAN checkKeysize ) { return -1; }
-int getBignumData( const void *bignumPtr, void *data, const int dataMaxLength, 
-				   int *dataLength ) { return -1; }
+int importBignum( BIGNUM *bn, const void *buffer, const int length,
+				  const int minLength, const int maxLength, 
+				  const BIGNUM *maxRange, const BOOLEAN checkKeysize ) { return -1; }
+int exportBignum( void *data, const int dataMaxLength, int *dataLength,
+				  const void *bignumPtr ) { return -1; }
 
 /* SFTP command types */
 
@@ -2309,6 +2468,6 @@ int sftpClient( const CRYPT_SESSION cryptSession )
 
 	return( CRYPT_OK );
 	}
-#endif /* WINDOWS_THREADS */
+#endif /* WINDOWS_THREADS && 0 */
 
 #endif /* TEST_SESSION || TEST_SESSION_LOOPBACK */

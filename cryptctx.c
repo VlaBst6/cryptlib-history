@@ -501,13 +501,15 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 					return( CRYPT_ERROR_INCOMPLETE );
 				if( contextInfoPtr->type == CONTEXT_HASH && \
 					msgData->length == capabilityInfo->blockSize && \
-					!memcmp( msgData->data, contextInfoPtr->ctxHash->hash,
-							 msgData->length ) )
+					compareDataConstTime( msgData->data, 
+										  contextInfoPtr->ctxHash->hash,
+										  msgData->length ) )
 					return( CRYPT_OK );
 				if( contextInfoPtr->type == CONTEXT_MAC && \
 					msgData->length == capabilityInfo->blockSize && \
-					!memcmp( msgData->data, contextInfoPtr->ctxMAC->mac,
-							 msgData->length ) )
+					compareDataConstTime( msgData->data, 
+										  contextInfoPtr->ctxMAC->mac,
+										  msgData->length ) )
 					return( CRYPT_OK );
 				break;
 
@@ -523,6 +525,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 			case MESSAGE_COMPARE_KEYID_PGP:
 				/* If it's a PKC context, compare the PGP key ID */
 				if( contextInfoPtr->type == CONTEXT_PKC && \
+					( contextInfoPtr->flags & CONTEXT_FLAG_PGPKEYID_SET ) && \
 					msgData->length == PGP_KEYID_SIZE && \
 					!memcmp( msgData->data, contextInfoPtr->ctxPKC->pgp2KeyID,
 							 PGP_KEYID_SIZE ) )
@@ -532,7 +535,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 			case MESSAGE_COMPARE_KEYID_OPENPGP:
 				/* If it's a PKC context, compare the OpenPGP key ID */
 				if( contextInfoPtr->type == CONTEXT_PKC && \
-					contextInfoPtr->ctxPKC->openPgpKeyIDSet && \
+					( contextInfoPtr->flags & CONTEXT_FLAG_OPENPGPKEYID_SET ) && \
 					msgData->length == PGP_KEYID_SIZE && \
 					!memcmp( msgData->data, contextInfoPtr->ctxPKC->openPgpKeyID,
 							 PGP_KEYID_SIZE ) )
@@ -631,7 +634,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 		contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
 		return( krnlSendMessage( contextInfoPtr->objectHandle,
 								 IMESSAGE_SETATTRIBUTE, 
-								 ( void * ) &actionFlags, 
+								 ( MESSAGE_CAST ) &actionFlags, 
 								 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
 		}
 	if( message == MESSAGE_CTX_GENIV )
@@ -741,7 +744,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 			storageSize = sizeof( PKC_INFO );
 			if( isDlpAlgo( cryptAlgo ) || isEccAlgo( cryptAlgo ) )
 				{
-				/* The DLP- and ECC-based PKC's have somewhat specialised 
+				/* The DLP- and ECDLP-based PKC's have somewhat specialised 
 				   usage requirements so we don't allow direct access by 
 				   users */
 				actionPerms = ACTION_PERM_NONE_EXTERNAL;
@@ -781,6 +784,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		{
 		/* There are no actions enabled for this capability, bail out rather 
 		   than creating an unusable context */
+		DEBUG_DIAG(( "No actions available for this capability" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
@@ -818,7 +822,8 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		!( objectFlags & CREATEOBJECT_FLAG_DUMMY ) )
 		{
 		status = initContextBignums( contextInfoPtr->ctxPKC, 
-									 sideChannelProtectionLevel );
+									 sideChannelProtectionLevel,
+									 isEccAlgo( cryptAlgo ) );
 		if( cryptStatusError( status ) )
 			{
 			/* Enqueue a destroy message for the context and tell the kernel 
@@ -891,6 +896,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	if( contextInfoPtr->type == CONTEXT_PKC )
 		{
 		/* Set up the key read/write functions */
+		initKeyID( contextInfoPtr );
 		initKeyRead( contextInfoPtr );
 		initKeyWrite( contextInfoPtr );
 		}

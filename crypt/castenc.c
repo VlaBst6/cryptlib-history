@@ -213,5 +213,4 @@ void CAST_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
 	tin0=tin1=tout0=tout1=xor0=xor1=0;
 	tin[0]=tin[1]=0;
 	}
-
 #endif /* USE_ASM */

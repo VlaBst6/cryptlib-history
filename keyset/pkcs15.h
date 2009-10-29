@@ -223,6 +223,11 @@ typedef struct {
 	BOOLEAN implicitTrust;			/* Whether certificate is implicitly trusted */
 	time_t validFrom, validTo;		/* Key/certificate validity information */
 
+	/* Secret-key object data */
+	BUFFER_OPT_FIXED( secretKeyDataSize ) \
+	void *secretKeyData;			/* Encoded object data */
+	int secretKeyDataSize, secretKeyOffset;
+
 	/* Data object data */
 	CRYPT_ATTRIBUTE_TYPE dataType;	/* Type of the encoded object data */
 	BUFFER_OPT_FIXED( dataDataSize ) \
@@ -317,7 +322,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int addSecretKey( IN_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info, 
 				  IN_LENGTH_SHORT const int noPkcs15objects,
 				  IN_HANDLE const CRYPT_HANDLE iCryptContext );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 10 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 11 ) ) \
 int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 				  IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 				  IN_BUFFER_OPT( passwordLength ) const void *password, 
@@ -325,6 +330,7 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 				  IN_HANDLE const CRYPT_USER iOwnerHandle, 
 				  const BOOLEAN privkeyPresent, const BOOLEAN certPresent, 
 				  const BOOLEAN doAddCert, const BOOLEAN pkcs15keyPresent,
+				  const BOOLEAN isStorageObject, 
 				  INOUT ERROR_INFO *errorInfo );
 
 /* Prototypes for functions in pkcs15_adpb.c */
@@ -342,7 +348,7 @@ int pkcs15AddCertChain( INOUT PKCS15_INFO *pkcs15info,
 						IN_LENGTH_SHORT const int noPkcs15objects,
 						IN_HANDLE const CRYPT_CERTIFICATE iCryptCert, 
 						INOUT ERROR_INFO *errorInfo );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 7 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 8 ) ) \
 int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 						IN_HANDLE const CRYPT_HANDLE iCryptContext, 
 						IN_BUFFER( pubKeyAttributeSize ) \
@@ -350,6 +356,7 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 						IN_LENGTH_SHORT const int pubKeyAttributeSize,
 						IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
 						IN_LENGTH_PKC const int modulusSize, 
+						const BOOLEAN isStorageObject, 
 						INOUT ERROR_INFO *errorInfo );
 
 /* Prototypes for functions in pkcs15_adpr.c.  The private-key attribute 
@@ -374,7 +381,7 @@ int calculatePrivkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
 							 IN_LENGTH_SHORT const int privKeySize,
 							 IN_LENGTH_SHORT const int privKeyAttributeSize,
 							 IN_LENGTH_SHORT const int extraDataSize );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 10 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 11 ) ) \
 int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 						 IN_HANDLE const CRYPT_HANDLE iCryptContext,
 						 IN_HANDLE const CRYPT_HANDLE iCryptOwner,
@@ -387,6 +394,7 @@ int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 						 IN_LENGTH_SHORT const int privKeyAttributeSize,
 						 IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
 						 IN_LENGTH_PKC const int modulusSize, 
+						 const BOOLEAN isStorageObject, 
 						 INOUT ERROR_INFO *errorInfo );
 
 /* Prototypes for functions in pkcs15_atrd.c/pkcs15_atwr.c */
@@ -435,7 +443,7 @@ int pkcs15Flush( INOUT STREAM *stream,
 
 /* Prototypes for functions in pkcs15_rd.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 7, 8, 9, 10, 11 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 8, 9, 10, 11, 12 ) ) \
 int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							 IN_HANDLE const CRYPT_KEYSET iCryptKeysetCallback,
 							 IN_ENUM( CRYPT_KEYID ) \
@@ -443,18 +451,20 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							 IN_BUFFER( keyIDlength ) const void *keyID, 
 							 IN_LENGTH_KEYID const int keyIDlength,
 							 const BOOLEAN publicComponentsOnly,
+							 IN_HANDLE const CRYPT_DEVICE iDeviceObject, 
 							 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContextPtr,
 							 OUT_HANDLE_OPT CRYPT_CERTIFICATE *iDataCertPtr,
 							 OUT_FLAGS_Z( ACTION ) int *pubkeyActionFlags, 
 							 OUT_FLAGS_Z( ACTION ) int *privkeyActionFlags, 
 							 INOUT ERROR_INFO *errorInfo );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 6 ) ) \
 int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 							  IN_BUFFER( passwordLength ) const void *password, 
 							  IN_RANGE( MIN_NAME_LENGTH, \
 											 MAX_ATTRIBUTE_SIZE - 1 ) \
 								const int passwordLength, 
+							  const BOOLEAN isStorageObject, 
 							  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
 int readKeyset( INOUT STREAM *stream, 

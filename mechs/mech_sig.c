@@ -23,7 +23,7 @@
 *																			*
 ****************************************************************************/
 
-/* Unlike PKCS #1 encryption there isn't any minimum-weight requirement for 
+/* Unlike PKCS #1 encryption there isn't any minimum-height requirement for 
    the PKCS #1 signature padding, however we require a set minimum number of 
    bytes of 0xFF padding because if they're not present then there's 
    something funny going on.  For a given key size we require that all but
@@ -125,7 +125,7 @@ static int compareHashInfo( INOUT STREAM *stream,
 
 	/* Compare the two encoded blobs */
 	if( encodedMdLength != recreatedMdLength || \
-		memcmp( encodedMD, recreatedMD, encodedMdLength ) )
+		!compareDataConstTime( encodedMD, recreatedMD, encodedMdLength ) )
 		status = CRYPT_ERROR_SIGNATURE;
 
 	zeroise( encodedMD, 32 + CRYPT_MAX_HASHSIZE );
@@ -134,7 +134,7 @@ static int compareHashInfo( INOUT STREAM *stream,
 	return( status );
 	}
 
-/* Make sure that the recovered signature data matches the data the we 
+/* Make sure that the recovered signature data matches the data that we 
    originally signed.  The rationale behind this operation is covered (in 
    great detail) in ctx_rsa.c */
 
@@ -169,8 +169,9 @@ static int checkRecoveredSignature( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 
 	/* Make sure that recovered data matches the original data */
 	if( sigDataLen != sigLen || \
-		memcmp( sigData, recoveredSignature, sigLen ) )
+		!compareDataConstTime( sigData, recoveredSignature, sigLen ) )
 		{
+		DEBUG_DIAG(( "Signature consistency check failed" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
@@ -414,7 +415,7 @@ static int sigcheck( INOUT MECHANISM_SIGN_INFO *mechanismInfo,
 				break;
 			status = sread( &stream, hash, 16 );
 			if( cryptStatusOK( status ) )
-				status = sread( &stream, hash2, 20);
+				status = sread( &stream, hash2, 20 );
 			if( cryptStatusError( status ) )
 				break;
 

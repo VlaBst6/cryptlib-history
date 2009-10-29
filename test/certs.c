@@ -1,12 +1,23 @@
 /****************************************************************************
 *																			*
 *					cryptlib Certificate Handling Test Routines				*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
 #include "cryptlib.h"
 #include "test/test.h"
+
+/* Various features can be disabled by configuration options, in order to 
+   handle this we need to include the cryptlib config file so that we can 
+   selectively disable some tests */
+
+#ifdef __WINDOWS__
+  /* For checking for debug-only capabilities */
+  #define _OSSPEC_DEFINED
+  #define VC_LT_2005( version )		( version < 1400 )
+#endif /* __WINDOWS__ */
+#include "misc/config.h"
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   /* Suspend conversion of literals to ASCII. */
@@ -20,20 +31,26 @@
    defined by the kernel as MIN_TIME_VALUE, the minimum allowable 
    (backdated) timestamp value.
 
-   Unlike every other system on the planet, the Mac takes the time_t epoch 
-   as 1904 rather than 1970 (even VMS, MVS, VM/CMS, the AS/400, Tandem NSK, 
-   and God knows what other sort of strangeness stick to 1970 as the time_t 
-   epoch).  ANSI and ISO C are very careful to avoid specifying what the 
-   epoch actually is, so it's legal to do this in the same way that it's 
+   Unlike every other system on the planet, the Mac Classic takes the time_t 
+   epoch as 1904 rather than 1970 (even VMS, MVS, VM/CMS, the AS/400, Tandem 
+   NSK, and God knows what other sort of strangeness stick to 1970 as the 
+   time_t epoch).  ANSI and ISO C are very careful to avoid specifying what 
+   the epoch actually is, so it's legal to do this in the same way that it's 
    legal for Microsoft to break Kerberos because the standard doesn't say 
-   they can't */
+   they can't.
+   
+   Note that the Y2K time-test value isn't really used any more because Y2K
+   has long since come and gone, but it's left in here for historical 
+   reasons in case someone has some checkbox requirement for something like
+   this */
 
+#define ONE_YEAR_TIME	( 365 * 86400L )
 #if defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
-  #define CERTTIME_DATETEST	( ( ( 2004 - 1970 ) * 365 * 86400L ) + 2082844800L )
-  #define CERTTIME_Y2KTEST	( ( ( 2010 - 1970 ) * 365 * 86400L ) + 2082844800L )
+  #define CERTTIME_DATETEST	( ( ( 2008 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
+  #define CERTTIME_Y2KTEST	( ( ( 2010 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
 #else
-  #define CERTTIME_DATETEST	( ( 2004 - 1970 ) * 365 * 86400L )
-  #define CERTTIME_Y2KTEST	( ( 2010 - 1970 ) * 365 * 86400L )
+  #define CERTTIME_DATETEST	( ( 2008 - 1970 ) * ONE_YEAR_TIME )
+  #define CERTTIME_Y2KTEST	( ( 2010 - 1970 ) * ONE_YEAR_TIME )
 #endif /* Macintosh-specific weird epoch */
 
 /****************************************************************************
@@ -42,9 +59,9 @@
 *																			*
 ****************************************************************************/
 
-/* Set the trust setting for the root CA in a cert chain.  This is required
-   for the self-test in order to allow signature checks for chains signed by
-   arbitrary CAs to work */
+/* Set the trust setting for the root CA in a certificate chain.  This is 
+   required for the self-test in order to allow signature checks for chains 
+   signed by arbitrary CAs to work */
 
 int setRootTrust( const CRYPT_CERTIFICATE cryptCertChain,
 				  BOOLEAN *oldTrustValue, const BOOLEAN newTrustValue )
@@ -84,13 +101,13 @@ static const CERT_DATA FAR_BSS certData[] = {
 
 	/* Self-signed X.509v3 certificate (technically it'd be an X.509v1, but
 	   cryptlib automatically adds some required standard attributes so it
-	   becomes an X.509v3 cert) */
+	   becomes an X.509v3 certificate) */
 	{ CRYPT_CERTINFO_SELFSIGNED, IS_NUMERIC, TRUE },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
 
-int testCert( void )
+int testBasicCert( void )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
@@ -164,21 +181,21 @@ int testCert( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Set the cert usage to untrusted for any purpose, which should result
-	   in the signature check failing */
+	/* Set the certificate usage to untrusted for any purpose, which should 
+	   result in the signature check failing */
 	cryptSetAttribute( cryptCert, CRYPT_CERTINFO_TRUSTED_USAGE,
 					   CRYPT_KEYUSAGE_NONE );
 	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 	if( cryptStatusOK( status ) )
 		{
-		puts( "Untrusted cert signature check succeeded, should have "
-			  "failed." );
+		puts( "Untrusted certificate signature check succeeded, should "
+			  "have failed." );
 		return( FALSE );
 		}
 	cryptDeleteAttribute( cryptCert, CRYPT_CERTINFO_TRUSTED_USAGE );
 
-	/* Export the cert.  We perform a length check using a null buffer to
-	   make sure that this facility is working as required */
+	/* Export the certificate.  We perform a length check using a null 
+	   buffer to make sure that this facility is working as required */
 	status = cryptExportCert( NULL, 0, &value, CRYPT_CERTFORMAT_CERTIFICATE,
 							  cryptCert );
 	if( cryptStatusOK( status ) )
@@ -283,6 +300,31 @@ int testCACert( void )
 		return( FALSE );
 		}
 
+#if defined( __WINDOWS__ ) && defined( _WIN32 ) && defined( _MSC_VER )
+	/* Test the ability to handle conversion of 32 <-> 64-bit time_t 
+	   values */
+	{
+	const __int64 time64 = CERTTIME_DATETEST;
+	const unsigned int time32 = CERTTIME_DATETEST;
+
+	status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_VALIDFROM,
+									  &time64, sizeof( time64 ) );
+	if( cryptStatusOK( status ) )
+		{
+		cryptDeleteAttribute( cryptCert, CRYPT_CERTINFO_VALIDFROM );
+		status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_VALIDFROM,
+										  &time32, sizeof( time32 ) );
+		cryptDeleteAttribute( cryptCert, CRYPT_CERTINFO_VALIDFROM );
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "Automatic 32 <-> 32-bit time_t correction failed, "
+				"line %d.\n", __LINE__ );
+		return( FALSE );
+		}
+	}
+#endif /* Win32 with VC++ */
+
 	/* Add some certificate components */
 	status = cryptSetAttribute( cryptCert,
 					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, pubKeyContext );
@@ -301,8 +343,8 @@ int testCACert( void )
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
 
-	/* Export the cert, this time with base64 encoding to make sure that
-	   this works.  As before, we perform a length check using a null
+	/* Export the certificate, this time with base64 encoding to make sure 
+	   that this works.  As before, we perform a length check using a null
 	   buffer to make sure that this facility is working as required */
 	status = cryptExportCert( NULL, 0, &value,
 							  CRYPT_CERTFORMAT_TEXT_CERTIFICATE, cryptCert );
@@ -330,11 +372,11 @@ int testCACert( void )
 		}
 
 	/* Make sure that we can read what we created.  We make the second
-	   parameter to the check function the cert (rather than CRYPT_UNUSED as
-	   done for the basic self-signed cert) to check that this option works
-	   as required, and then retry with CRYPT_UNUSED to check the other
-	   possibility (although it's already been checked in the basic cert 
-	   above) */
+	   parameter to the check function the certificate (rather than 
+	   CRYPT_UNUSED as done for the basic self-signed certificate) to check 
+	   that this option works as required, and then retry with CRYPT_UNUSED 
+	   to check the other possibility (although it's already been checked in 
+	   the basic certificate above) */
 	status = cryptImportCert( certBuffer, certificateLength, CRYPT_UNUSED,
 							  &cryptCert );
 	if( cryptStatusError( status ) )
@@ -356,22 +398,24 @@ int testCACert( void )
 										  &endTime, &value );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Cert time read failed with error code %d, line %d.\n",
-				status, __LINE__ );
+		printf( "Certificate time read failed with error code %d, line "
+				"%d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( startTime != CERTTIME_DATETEST )
 		{
-		printf( "Warning: cert start time is wrong, got %lX, should be "
+		printf( "Warning: Certificate start time is wrong, got %lX, should be "
 				"%lX.\n         This is probably due to problems in the "
 				"system time handling routines.\n",
 				startTime, CERTTIME_DATETEST );
 		}
 	if( endTime != CERTTIME_Y2KTEST )
-		printf( "Warning: cert end time is wrong, got %lX, should be "
+		{
+		printf( "Warning: Certificate end time is wrong, got %lX, should be "
 				"%lX.\n         This is probably due to problems in the "
 				"system time handling routines.\n",
 				endTime, CERTTIME_Y2KTEST );
+		}
 	cryptDestroyCert( cryptCert );
 #if defined( __WINDOWS__ ) || defined( __linux__ ) || defined( sun )
 	if( ( startTime != CERTTIME_DATETEST && \
@@ -380,16 +424,18 @@ int testCACert( void )
 		( endTime != CERTTIME_Y2KTEST && \
 		  ( endTime - CERTTIME_Y2KTEST != 3600 && \
 			endTime - CERTTIME_Y2KTEST != -3600 ) ) )
+		{
 		/* If the time is off by exactly one hour this isn't a problem
 		   because the best we can do is get the time adjusted for DST
-		   now rather than DST when the cert was created, a problem that
-		   is more or less undecidable.  In addition we don't automatically
-		   abort for arbitrary systems since date problems usually arise
-		   from incorrectly configured time zone info or bugs in the system
-		   date-handling routines or who knows what, aborting on every
-		   random broken system would lead to a flood of unnecessary "bug"
-		   reports */
+		   now rather than DST when the certificate was created, a problem 
+		   that is more or less undecidable.  In addition we don't 
+		   automatically abort for arbitrary systems since date problems 
+		   usually arise from incorrectly configured time zone info or bugs 
+		   in the system date-handling routines or who knows what, aborting 
+		   on every random broken system would lead to a flood of 
+		   unnecessary "bug" reports */
 		return( FALSE );
+		}
 #endif /* System with known-good time handling */
 
 	/* Clean up */
@@ -454,7 +500,7 @@ int testXyzzyCert( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -498,12 +544,18 @@ static const wchar_t FAR_BSS unicodeStr[] = {
 	0x0414, 0x043E, 0x0432, 0x0435, 0x0440, 0x044F, 0x0439, 0x002C,
 	0x0020, 0x043D, 0x043E, 0x0020, 0x043F, 0x0440, 0x043E, 0x0432,
 	0x0435, 0x0440, 0x044F, 0x0439, 0x0000 };
+static const wchar_t FAR_BSS unicode2Str[] = {
+	0x004D, 0x0061, 0x0072, 0x0074, 0x0069, 0x006E, 0x0061, 0x0020,
+	0x0160, 0x0069, 0x006B, 0x006F, 0x0076, 0x006E, 0x00E1 };
 
 static const CERT_DATA FAR_BSS textStringCertData[] = {
-	/* Identification information: A latin-1 string, a Unicode string,
-	   an ASCII-in-Unicode string, and an ASCII string */
+	/* Identification information: A latin-1 string, an obviously Unicode 
+	   string, a less-obviously Unicode string (only the 0x160 value is 
+	   larger than 8 bits), an ASCII-in-Unicode string, and an ASCII 
+	   string */
 	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Hörr Østerix" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_WCSTRING, 0, unicodeStr },
+	{ CRYPT_CERTINFO_LOCALITYNAME, IS_WCSTRING, 0, unicode2Str },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_WCSTRING, 0, L"Dave's Unicode-aware CA with very long string" },
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "GB" ) },
 
@@ -560,7 +612,7 @@ int testTextStringCert( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -610,7 +662,7 @@ static const CERT_DATA FAR_BSS complexCertData[] = {
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "US" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers and Netscape CA" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "SSL Certificates" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Bob';DROP TABLE certificates;--" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Robert';DROP TABLE certificates;--" ) },
 
 	/* Self-signed X.509v3 certificate */
 	{ CRYPT_CERTINFO_SELFSIGNED, IS_NUMERIC, TRUE },
@@ -626,26 +678,36 @@ static const CERT_DATA FAR_BSS complexCertData[] = {
 	{ CRYPT_CERTINFO_OTHERNAME_TYPEID, IS_STRING, 0, TEXT( "1 3 6 1 4 1 9999 2" ) },
 	{ CRYPT_CERTINFO_OTHERNAME_VALUE, IS_STRING, 10, "\x04\x08" "12345678" },
 
+#ifdef USE_CERTLEVEL_PKIX_FULL
 	/* Path constraint */
 	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_EXCLUDEDSUBTREES },
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "CZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Brother's CA" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "SSL Certificates" ) },
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 
 	/* CRL distribution points */
 	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_CRLDIST_FULLNAME },
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.revocations.com/crls/" ) },
 
+	/* SubjectInfoAccess */
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY },
+	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://192.168.1.1:8080/timesheet.asp?userid=1234;DROP%20TABLE%20USERS" ) },
+
+#ifdef USE_CERT_OBSOLETE
 	/* Add a vendor-specific extension, in this case a Thawte strong extranet
 	   extension */
 	{ CRYPT_CERTINFO_STRONGEXTRANET_ZONE, IS_NUMERIC, 0x99 },
 	{ CRYPT_CERTINFO_STRONGEXTRANET_ID, IS_STRING, 0, TEXT( "EXTRA1" ) },
+#endif /* USE_CERT_OBSOLETE */
 
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	/* Misc funnies */
 	{ CRYPT_CERTINFO_OCSP_NOCHECK, IS_NUMERIC, CRYPT_UNUSED },
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -718,6 +780,33 @@ int testComplexCert( void )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
 
+	/* Add a disabled attribute and make sure that it's detected.  This can 
+	   be done in one of two ways, either directly by the kernel with a 
+	   permission error or by the certificate-processing code with a not-
+	   available error if we go in indirectly, for example using the 
+	   attribute cursor */
+#ifndef USE_CERT_OBSOLETE
+	status = cryptSetAttribute( cryptCert, 
+								CRYPT_CERTINFO_STRONGEXTRANET_ZONE, 1 );
+	if( status != CRYPT_ERROR_PARAM2 )
+		{
+		printf( "Addition of disabled attribute %d wasn't detected, "
+				"line %d.\n", CRYPT_CERTINFO_STRONGEXTRANET_ZONE, __LINE__ );
+		return( FALSE );
+		}
+#endif /* USE_CERT_OBSOLETE */
+#ifndef USE_CERTLEVEL_PKIX_FULL
+	status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT, 
+								CRYPT_CERTINFO_EXCLUDEDSUBTREES );
+	if( status != CRYPT_ERROR_PARAM3 )
+		{
+		printf( "Indirect addition of disabled attribute %d wasn't "
+				"detected, line %d.\n", CRYPT_CERTINFO_EXCLUDEDSUBTREES, 
+				__LINE__ );
+		return( FALSE );
+		}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
+
 	/* Sign the certificate and print information on what we got */
 	status = cryptSignCert( cryptCert, privKeyContext );
 	if( cryptStatusError( status ) )
@@ -759,7 +848,7 @@ int testComplexCert( void )
 		return( FALSE );
 		}
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -855,7 +944,8 @@ int testCertExtension( void )
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
 
-	/* Export the cert and make sure that we can read what we created */
+	/* Export the certificate and make sure that we can read what we 
+	   created */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -873,8 +963,9 @@ int testCertExtension( void )
 		return( FALSE );
 		}
 
-	/* Check the cert.  Since it contains an unrecognised critical extension
-	   it should be rejected, but accepted at a lowered compliance level */
+	/* Check the certificate.  Since it contains an unrecognised critical 
+	   extension it should be rejected, but accepted at a lowered compliance 
+	   level */
 	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 	if( cryptStatusOK( status ) )
 		{
@@ -916,12 +1007,27 @@ int testCertExtension( void )
 
 int testCustomDNCert( void )
 	{
+#ifdef USE_CERT_DNSTRING
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	const C_STR customDN = \
-				TEXT( "cn=Dave Taylor + sn=12345, ou=Org.Unit 2\\=1, ou=Org.Unit 2, ou=Org.Unit 1, o=Dave's Big Organisation, c=PT" );
+				TEXT( "cn=Dave Taylor + sn=12345, ou=Org.Unit 2\\=1, " )
+				TEXT( "ou=Org.Unit 2, ou=Org.Unit 1, " )
+				TEXT( "o=Dave's Big Organisation, c=PT" );
+	const C_STR invalidDnStrings[] = {
+		TEXT( "abc\x01\x64" ) TEXT( "def" ),/* Invalid chars */
+		TEXT( "cn=" ),				/* No value */
+		TEXT( "cn=\\" ),			/* No escaped char */
+		TEXT( "c\\n=x" ),			/* Escape in type */
+		TEXT( "cn+x" ),				/* Spurious '+' */
+		TEXT( "cn,x" ),				/* Spurious ',' */
+		TEXT( "cn=z=y" ),			/* Spurious '=' */
+		TEXT( "cn=x," ),			/* Spurious ',' */
+		TEXT( "xyz=x" ),			/* Unknown type */
+		NULL
+		};
 	char buffer[ BUFFER_SIZE ];
-	int length, status;
+	int length, i, status;
 
 	puts( "Testing certificate with custom DN creation/export..." );
 
@@ -948,6 +1054,20 @@ int testCustomDNCert( void )
 		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
 							   __LINE__ ) );
 
+	/* Make sure that invalid DN strings are detected */
+	for( i = 0; invalidDnStrings[ i ] != NULL; i++ )
+		{
+		status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_DN,
+										  invalidDnStrings[ i ], 
+										  paramStrlen( invalidDnStrings[ i ] ) );
+		if( cryptStatusOK( status ) )
+			{
+			printf( "Addition of invalid DN string '%s' wasn't detected, "
+					"line %d.\n", invalidDnStrings[ i ], __LINE__ );
+			return( FALSE );
+			}
+		}
+
 	/* Add the custom DN in string form */
 	status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_DN,
 									  customDN, paramStrlen( customDN ) );
@@ -964,7 +1084,8 @@ int testCustomDNCert( void )
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
 
-	/* Export the cert and make sure that we can read what we created */
+	/* Export the certificate and make sure that we can read what we 
+	   created */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1004,6 +1125,260 @@ int testCustomDNCert( void )
 	/* Clean up */
 	cryptDestroyCert( cryptCert );
 	puts( "Certificate with custom DN creation succeeded.\n" );
+#else
+	puts( "Skipping custom DN certificate creation/export test because "
+		  "support for\nthis capability has been disabled via the cryptlib "
+		  "config options.\n" );
+#endif /* USE_CERT_DNSTRING */
+	return( TRUE );
+	}
+
+int testCertAttributeHandling( void )
+	{
+#ifdef USE_CERT_DNSTRING
+	CRYPT_CERTIFICATE cryptCert;
+	CRYPT_CONTEXT pubKeyContext, privKeyContext;
+	const C_STR customDN = \
+				TEXT( "cn=Dave Taylor, ou=Org.Unit 3, ou=Org.Unit 2, " )
+				TEXT( "ou=Org.Unit 1, o=Dave's Big Organisation, c=PT" );
+	const C_STR email = TEXT( "dave@example.com" );
+	const char *errorString = "(Generic attribute get/set/select error)";
+	char buffer[ BUFFER_SIZE ];
+	int length, value, status;
+
+	puts( "Testing certificate attribute handling..." );
+
+	/* Create the RSA en/decryption contexts */
+	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
+		return( FALSE );
+
+	/* Create the certificate */
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptCreateCert() failed with error code %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
+		}
+	status = cryptSetAttribute( cryptCert,
+					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, pubKeyContext );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptCert, CRYPT_CERTINFO_SELFSIGNED, TRUE );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
+							   __LINE__ ) );
+
+	/* Add the custom DN in string form and an altName component */
+	status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_DN,
+									  customDN, paramStrlen( customDN ) );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
+										  email, paramStrlen( email ) );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCert, "cryptSetAttributeString()", status,
+							   __LINE__ ) );
+
+	/* Sign the certificate */
+	status = cryptSignCert( cryptCert, privKeyContext );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCert, "cryptSignCert()", status,
+							   __LINE__ ) );
+	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
+
+	/* Make sure that the attribute-manipulation routines work as 
+	   intended */
+	status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+								CRYPT_CERTINFO_SUBJECTALTNAME );
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+									&value );
+		if( cryptStatusError( status ) || \
+			value != CRYPT_CERTINFO_SUBJECTALTNAME )
+			{
+			errorString = "Current attribute != subject altName after "
+						  "subject altName was selected";
+			status = -1;
+			}
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
+										  buffer, &length );
+		if( cryptStatusError( status ) )
+			errorString = "Fetch of email address from altName failed";
+		}
+	if( cryptStatusOK( status ) )
+		{
+		/* Should fail since we've now selected the DN in the altName */
+		status = cryptGetAttributeString( cryptCert, 
+										  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+										  buffer, &length );
+		if( cryptStatusOK( status ) )
+			{
+			errorString = "OU was returned after altName was selected";
+			status = -1;
+			}
+		else
+			status = CRYPT_OK;
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "%s, line %d.\n", errorString, __LINE__ );
+		return( FALSE );
+		}
+	status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+								CRYPT_CERTINFO_SUBJECTNAME );
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+									&value );
+		if( cryptStatusError( status ) || \
+			value != CRYPT_CERTINFO_SUBJECTNAME )
+			{
+			errorString = "Current attribute != subject DN after subject DN "
+						  "was selected";
+			status = -1;
+			}
+		}
+#if 0	/* The following should in theory fail but doesn't because of the 
+		   auto-selection of the subject altName when no other GeneralName 
+		   is selected.  This is required in order for reads of commonly-
+		   used fields like email addresses to work without the user having
+		   to explicitly select the subject altName (which they're likely
+		   unaware of) first.  This result is slightly non-orthogonal, but 
+		   given the choice of enforcing strict orthogonality in a facility
+		   that most users will never use vs. making something that's widely
+		   used work as expected, the latter is the preferable option */
+	if( cryptStatusOK( status ) )
+		{
+		/* Should fail since the subject DN is the currently selected 
+		   attribute */
+		status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
+										  buffer, &length );
+		if( cryptStatusOK( status ) )
+			{
+			errorString = "email from altName was returned after subject DN was selected";
+			status = -1;
+			}
+		else
+			status = CRYPT_OK;
+		}
+#endif /* 0 */
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttributeString( cryptCert, 
+										  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+										  buffer, &length );
+		if( cryptStatusError( status ) )
+			errorString = "Fetch of first OU failed";
+		}
+	if( cryptStatusOK( status ) )
+		{
+		/* Should fail since there's no current attribute */
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+									CRYPT_CURSOR_NEXT );
+		if( cryptStatusOK( status ) )
+			{
+			errorString = "CURSOR_NEXT succeeded when no attribute selected";
+			status = -1;
+			}
+		else
+			status = CRYPT_OK;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		/* Should fail since there's no attribute instance selected */
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+									CRYPT_CURSOR_NEXT );
+		if( cryptStatusOK( status ) )
+			{
+			errorString = "CURSOR_NEXT succeeded when no attribute instance selected";
+			status = -1;
+			}
+		else
+			status = CRYPT_OK;
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "%s, line %d.\n", errorString, __LINE__ );
+		return( FALSE );
+		}
+	status = cryptGetAttributeString( cryptCert, 
+									  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+									  buffer, &length );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+									CRYPT_CERTINFO_ORGANISATIONALUNITNAME );
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+									&value );
+		if( cryptStatusError( status ) || \
+			value != CRYPT_CERTINFO_ORGANISATIONALUNITNAME )
+			{
+			errorString = "Current instance != OU after OU was selected";
+			status = -1;
+			}
+		}
+	if( cryptStatusOK( status ) )
+		{
+		/* Should fail since there's no current attribute */
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
+									CRYPT_CURSOR_NEXT );
+		if( cryptStatusOK( status ) )
+			{
+			errorString = "CURSOR_NEXT succeeded when no attribute selected";
+			status = -1;
+			}
+		else
+			status = CRYPT_OK;
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+									CRYPT_CURSOR_NEXT );
+		if( cryptStatusError( status ) )
+			errorString = "Move to second OU failed";
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttributeString( cryptCert, 
+										  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+										  buffer, &length );
+		if( cryptStatusError( status ) )
+			errorString = "Fetch of second OU failed";
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT_INSTANCE,
+									CRYPT_CURSOR_LAST );
+		if( cryptStatusError( status ) )
+			errorString = "Move to last (third) OU failed";
+		}
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptGetAttributeString( cryptCert, 
+										  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+										  buffer, &length );
+		if( cryptStatusError( status ) )
+			errorString = "Fetch of third OU failed";
+		}
+	if( cryptStatusError( status ) )
+		{
+		printf( "%s, line %d.\n", errorString, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Clean up */
+	cryptDestroyCert( cryptCert );
+	puts( "Certificate attribute handling succeeded.\n" );
+#else
+	puts( "Skipping certificate attribute handling test because support "
+		  "for the\nrequired custom DN creation has been disabled via the "
+		  "cryptlib config\noptions.\n" );
+#endif /* USE_CERT_DNSTRING */
 	return( TRUE );
 	}
 
@@ -1034,6 +1409,7 @@ static const CERT_DATA FAR_BSS setCertData[] = {
 
 int testSETCert( void )
 	{
+#ifdef USE_CERT_OBSOLETE
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	int status;
@@ -1071,7 +1447,7 @@ int testSETCert( void )
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1107,6 +1483,11 @@ int testSETCert( void )
 	/* Clean up */
 	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
 	puts( "SET certificate creation succeeded.\n" );
+#else
+	puts( "Skipping SET certificate creation/export test because support "
+		  "for this\ncertificate type has been disabled via the cryptlib "
+		  "config options.\n" );
+#endif /* USE_CERT_OBSOLETE */
 	return( TRUE );
 	}
 
@@ -1162,7 +1543,7 @@ int testAttributeCert( void )
 	if( !printCertInfo( cryptCert ) )
 		return( FALSE );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1260,7 +1641,7 @@ int testCertRequest( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1314,7 +1695,7 @@ static const CERT_DATA FAR_BSS complexCertRequestData[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	/* SSL server and client authentication */
 	{ CRYPT_CERTINFO_EXTKEY_SERVERAUTH, IS_NUMERIC, CRYPT_UNUSED },
@@ -1369,7 +1750,7 @@ int testComplexCertRequest( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1457,7 +1838,7 @@ int testCRMFRequest( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1543,7 +1924,7 @@ int testComplexCRMFRequest( void )
 		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
 							   __LINE__ ) );
 
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptCert );
 	if( cryptStatusError( status ) )
@@ -1584,10 +1965,10 @@ int testComplexCRMFRequest( void )
 	}
 
 /* Test CRL code.  This one represents a bit of a chicken-and-egg problem
-   since we need a CA cert to create the CRL, but we can't read this until
-   the private key file read has been tested, and that requires testing of
-   the cert management.  At the moment we just assume that private key file
-   reads work for this test */
+   since we need a CA certificate to create the CRL, but we can't read this 
+   until the private key file read has been tested, and that requires 
+   testing of the certificate management.  At the moment we just assume that 
+   private key file reads work for this test */
 
 int testCRL( void )
 	{
@@ -1684,7 +2065,7 @@ int testCRL( void )
 
 static const CERT_DATA FAR_BSS complexCRLData[] = {
 	/* Next update time */
-	{ CRYPT_CERTINFO_NEXTUPDATE, IS_TIME, 0, NULL, 0x42000000L },
+	{ CRYPT_CERTINFO_NEXTUPDATE, IS_TIME, 0, NULL, CERTTIME_DATETEST + ONE_YEAR_TIME },
 
 	/* CRL number and delta CRL indicator */
 	{ CRYPT_CERTINFO_CRLNUMBER, IS_NUMERIC, 1 },
@@ -1734,10 +2115,12 @@ int testComplexCRL( void )
 	status = cryptSetAttribute( cryptCRL, CRYPT_CERTINFO_CERTIFICATE,
 								cryptCAKey );
 	if( cryptStatusOK( status ) )
+		{
 		/* The CA key was compromised */
 		status = cryptSetAttribute( cryptCRL,
 									CRYPT_CERTINFO_CRLREASON,
 									CRYPT_CRLREASON_CACOMPROMISE );
+		}
 	if( cryptStatusOK( status ) )
 		status = importCertFromTemplate( &cryptRevokeCert,
 										 CRLCERT_FILE_TEMPLATE, 1 );
@@ -1749,17 +2132,33 @@ int testComplexCRL( void )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		/* Hold cert, call issuer for details */
+		/* Hold certificate, call issuer for details */
 		status = cryptSetAttribute( cryptCRL,
 									CRYPT_CERTINFO_CRLREASON,
 									CRYPT_CRLREASON_CERTIFICATEHOLD );
 		if( cryptStatusOK( status ) )
+			{
+#ifdef USE_CERTLEVEL_PKIX_FULL
 			status = cryptSetAttribute( cryptCRL,
 										CRYPT_CERTINFO_HOLDINSTRUCTIONCODE,
 										CRYPT_HOLDINSTRUCTION_CALLISSUER );
+#else
+			status = cryptSetAttribute( cryptCRL, 
+										CRYPT_CERTINFO_HOLDINSTRUCTIONCODE, 
+										CRYPT_HOLDINSTRUCTION_CALLISSUER );
+			if( status != CRYPT_ERROR_PARAM2 )
+				{
+				printf( "Addition of disabled attribute %d wasn't "
+						"detected, line %d.\n", 
+						CRYPT_CERTINFO_HOLDINSTRUCTIONCODE, __LINE__ );
+				return( FALSE );
+				}
+			status = CRYPT_OK;
+#endif /* USE_CERTLEVEL_PKIX_FULL */
+			}
 		}
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCRL, "cryptSetAttribute(), cert #1", 
+		return( attrErrorExit( cryptCRL, "cryptSetAttribute(), certificate #1", 
 							   status, __LINE__ ) );
 	status = importCertFromTemplate( &cryptRevokeCert,
 									 CRLCERT_FILE_TEMPLATE, 2 );
@@ -1771,17 +2170,17 @@ int testComplexCRL( void )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		const time_t invalidityDate = CERTTIME_DATETEST - 0x01000000L;
+		const time_t invalidityDate = CERTTIME_DATETEST - ( ONE_YEAR_TIME / 12 );
 
-		/* The private key was invalid quite some time ago (mid-2000).  We
-		   can't go back too far because the cryptlib kernel won't allow
-		   suspiciously old dates */
+		/* The private key was invalid some time ago.  We can't go back too 
+		   far because the cryptlib kernel won't allow suspiciously old 
+		   dates */
 		status = cryptSetAttributeString( cryptCRL,
 					CRYPT_CERTINFO_INVALIDITYDATE, &invalidityDate,
 					sizeof( time_t ) );
 		}
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCRL, "cryptSetAttribute(), cert #2", 
+		return( attrErrorExit( cryptCRL, "cryptSetAttribute(), certificate #2", 
 							   status, __LINE__ ) );
 
 	/* Sign the CRL */
@@ -1837,8 +2236,8 @@ int testComplexCRL( void )
 	status = cryptCheckCert( cryptCAKey, cryptCRL );
 	if( status != CRYPT_ERROR_INVALID )
 		{
-		printf( "Revoked cert wasn't reported as being revoked, line %d.\n",
-				__LINE__ );
+		printf( "Revoked certificate wasn't reported as being revoked, "
+				"line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetAttributeString( cryptCRL, CRYPT_CERTINFO_REVOCATIONDATE,
@@ -1870,7 +2269,7 @@ static const CERT_DATA FAR_BSS revRequestData[] = {
 	{ CRYPT_CERTINFO_CRLREASON, IS_NUMERIC, CRYPT_CRLREASON_SUPERSEDED },
 
 	/* Invalidity date */
-	{ CRYPT_CERTINFO_INVALIDITYDATE, IS_TIME, 0, NULL, 0x42000000L },
+	{ CRYPT_CERTINFO_INVALIDITYDATE, IS_TIME, 0, NULL, CERTTIME_DATETEST - ( ONE_YEAR_TIME / 12 ) },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -1895,7 +2294,8 @@ int testRevRequest( void )
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED, &cryptCert );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Cert import failed, skipping test of revocation request..." );
+		puts( "Certificate import failed, skipping test of revocation "
+			  "request..." );
 		return( TRUE );
 		}
 
@@ -1925,7 +2325,7 @@ int testRevRequest( void )
 #if 0	/* CMP doesn't currently allow revocation requests to be signed, so
 		   it's treated like CMS attributes as a series of uninitialised
 		   attributes */
-	/* Export the cert */
+	/* Export the certificate */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTIFICATE, cryptRequest );
 	if( cryptStatusError( status ) )
@@ -1961,12 +2361,12 @@ int testRevRequest( void )
 	return( TRUE );
 	}
 
-/* Test cert chain creation */
+/* Test certificate chain creation */
 
 static const CERT_DATA FAR_BSS certRequestNoDNData[] = {
 	/* Identification information.  There's no DN, only a subject altName.
-	   This type of identifier is only possible with a CA-signed cert, since
-	   it contains an empty DN */
+	   This type of identifier is only possible with a CA-signed certificate 
+	   since it contains an empty DN */
 	{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
 
 	{ CRYPT_ATTRIBUTE_NONE, 0, 0, NULL }
@@ -1974,12 +2374,12 @@ static const CERT_DATA FAR_BSS certRequestNoDNData[] = {
 
 static int createChain( CRYPT_CERTIFICATE *cryptCertChain,
 						const CRYPT_CONTEXT cryptCAKey,
-						const BOOLEAN useEmptyDN )
+						const BOOLEAN useEmptyDN, const BOOLEAN reportError )
 	{
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	int status;
 
-	/* Create the cert chain */
+	/* Create the certificate chain */
 	status = cryptCreateCert( cryptCertChain, CRYPT_UNUSED,
 							  CRYPT_CERTTYPE_CERTCHAIN );
 	if( cryptStatusError( status ) )
@@ -1989,7 +2389,8 @@ static int createChain( CRYPT_CERTIFICATE *cryptCertChain,
 		return( FALSE );
 		}
 
-	/* Create a simple cert request to turn into the end-user cert */
+	/* Create a simple certificate request to turn into the end-user 
+	   certificate */
 	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
 		return( FALSE );
 	status = cryptSetAttribute( *cryptCertChain,
@@ -2007,12 +2408,12 @@ static int createChain( CRYPT_CERTIFICATE *cryptCertChain,
 		return( FALSE );
 		}
 
-	/* Sign the leaf of the cert chain */
+	/* Sign the leaf of the certificate chain */
 	status = cryptSignCert( *cryptCertChain, cryptCAKey );
 	if( cryptStatusError( status ) )
 		{
 		cryptDestroyCert( *cryptCertChain );
-		if( useEmptyDN )
+		if( !reportError )
 			return( -1 );
 		return( attrErrorExit( *cryptCertChain, "cryptSignCert()", status,
 							   __LINE__ ) );
@@ -2039,18 +2440,18 @@ int testCertChain( void )
 		return( FALSE );
 		}
 
-	/* Create a new cert chain */
-	if( !createChain( &cryptCertChain, cryptCAKey, FALSE ) )
+	/* Create a new certificate chain */
+	if( !createChain( &cryptCertChain, cryptCAKey, FALSE, TRUE ) )
 		return( FALSE );
 
 	/* Check the signature.  Since the chain counts as self-signed, we don't
-	   have to supply a sig.check key.  Since the DIY CA cert isn't trusted,
-	   we have to force cryptlib to treat it as explicitly trusted when we
-	   try to verify the chain */
+	   have to supply a sig.check key.  Since the DIY CA certificate isn't 
+	   trusted we have to force cryptlib to treat it as explicitly trusted 
+	   when we try to verify the chain */
 	status = setRootTrust( cryptCertChain, &value, 1 );
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCertChain, "Setting cert chain trusted",
-							   status, __LINE__ ) );
+		return( attrErrorExit( cryptCertChain, "Setting certificate chain "
+							   "trusted", status, __LINE__ ) );
 	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
 	setRootTrust( cryptCertChain, NULL, value );
 	if( cryptStatusError( status ) )
@@ -2074,21 +2475,22 @@ int testCertChain( void )
 	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
 	if( cryptStatusOK( status ) )
 		{
-		printf( "Cert chain verified OK even though it wasn't trusted, "
-				"line %d.\n", __LINE__ );
+		printf( "Certificate chain verified OK even though it wasn't "
+				"trusted, line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 
-	/* Export the cert chain */
+	/* Export the certificate chain */
 	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
 							  CRYPT_CERTFORMAT_CERTCHAIN, cryptCertChain );
 	if( cryptStatusError( status ) )
 		return( attrErrorExit( cryptCertChain, "cryptExportCert()", status,
 							   __LINE__ ) );
-	printf( "Exported cert chain is %d bytes long.\n", certificateLength );
+	printf( "Exported certificate chain is %d bytes long.\n", 
+			certificateLength );
 	debugDump( "certchn", certBuffer, certificateLength );
 
-	/* Destroy the cert chain */
+	/* Destroy the certificate chain */
 	status = cryptDestroyCert( cryptCertChain );
 	if( cryptStatusError( status ) )
 		{
@@ -2109,8 +2511,8 @@ int testCertChain( void )
 	printf( "Checking signatures... " );
 	status = setRootTrust( cryptCertChain, &value, 1 );
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCertChain, "Setting cert chain trusted",
-							   status, __LINE__ ) );
+		return( attrErrorExit( cryptCertChain, "Setting certificate chain "
+							   "trusted", status, __LINE__ ) );
 	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
 	setRootTrust( cryptCertChain, NULL, value );
 	if( cryptStatusError( status ) )
@@ -2118,16 +2520,18 @@ int testCertChain( void )
 							   __LINE__ ) );
 	puts( "signatures verified." );
 
-	/* Display info on each cert in the chain */
+	/* Display info on each certificate in the chain */
 	if( !printCertChainInfo( cryptCertChain ) )
 		return( FALSE );
 
-	/* Create a second cert chain with a null DN */
+	/* Create a second certificate chain with a null DN.  For this to 
+	   succeed we have to set the compliance level to 
+	   CRYPT_COMPLIANCELEVEL_PKIX_FULL */
 	cryptDestroyCert( cryptCertChain );
-	status = createChain( &cryptCertChain, cryptCAKey, TRUE );
+	status = createChain( &cryptCertChain, cryptCAKey, TRUE, FALSE );
 	if( status != -1 )
 		{
-		printf( "Attempt to create cert with null DN %s, line %d.\n",
+		printf( "Attempt to create certificate with null DN %s, line %d.\n",
 				( status == FALSE ) ? \
 					"failed" : "succeeded when it should have failed",
 				__LINE__ );
@@ -2135,27 +2539,52 @@ int testCertChain( void )
 		}
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &value );
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-					   CRYPT_COMPLIANCELEVEL_PKIX_FULL );
-	status = createChain( &cryptCertChain, cryptCAKey, TRUE );
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-					   value );
-	if( status != TRUE )
-		return( FALSE );
-	status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
-							  CRYPT_CERTFORMAT_CERTCHAIN, cryptCertChain );
-	cryptDestroyCert( cryptCertChain );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCertChain, "cryptExportCert()", status,
-							   __LINE__ ) );
-	debugDump( "certchndn", certBuffer, certificateLength );
-	status = cryptImportCert( certBuffer, certificateLength, CRYPT_UNUSED,
-							  &cryptCertChain );
+	status = cryptSetAttribute( CRYPT_UNUSED, 
+								CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+								CRYPT_COMPLIANCELEVEL_PKIX_FULL );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		/* If the maximum level of PKIX weirdness that cryptlib will allow 
+		   is less than CRYPT_COMPLIANCELEVEL_PKIX_FULL then we can't
+		   perform this test, so we just skip it */
+		if( status != CRYPT_ERROR_PARAM3 )
+			{
+			printf( "Attempt to set compliance level to "
+					"CRYPT_COMPLIANCELEVEL_PKIX_FULL failed with error code "
+					"%d, line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		puts( "(Couldn't set compliance level to "
+			  "CRYPT_COMPLIANCELEVEL_PKIX_FULL, probably\n because cryptlib "
+			  "has been configured not to use this level, skipping final\n"
+			  " tests...)" );
+		}
+	else
+		{
+		status = createChain( &cryptCertChain, cryptCAKey, TRUE, TRUE );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   value );
+		if( status != TRUE )
+			{
+			puts( "  (This may be because the internal compliance-level "
+				  "handling is wrong)." );
+			return( FALSE );
+			}
+		status = cryptExportCert( certBuffer, BUFFER_SIZE, &certificateLength,
+								  CRYPT_CERTFORMAT_CERTCHAIN, cryptCertChain );
+		cryptDestroyCert( cryptCertChain );
+		if( cryptStatusError( status ) )
+			return( attrErrorExit( cryptCertChain, "cryptExportCert()", 
+								   status, __LINE__ ) );
+		debugDump( "certchndn", certBuffer, certificateLength );
+		status = cryptImportCert( certBuffer, certificateLength, CRYPT_UNUSED,
+								  &cryptCertChain );
+		if( cryptStatusError( status ) )
+			{
+			printf( "cryptImportCert() failed with error code %d, line %d.\n",
+					status, __LINE__ );
+			return( FALSE );
+			}
 		}
 
 	/* Clean up */
@@ -2231,8 +2660,9 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 	C_CHR rtcsURL[ 512 ];
 	int count, status;
 
-	/* Select the RTCS responder location from the EE cert and read the URL/
-	   FQDN value (this isn't used but is purely for display to the user) */
+	/* Select the RTCS responder location from the EE certificate and read 
+	   the URL/FQDN value (this isn't used but is purely for display to the 
+	   user) */
 	status = cryptSetAttribute( cryptCert, CRYPT_ATTRIBUTE_CURRENT,
 								CRYPT_CERTINFO_AUTHORITYINFO_RTCS );
 	if( cryptStatusOK( status ) )
@@ -2247,8 +2677,10 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_NOTFOUND )
-			puts( "RTCS responder URL not present in cert, server name must "
-				  "be provided\n  externally." );
+			{
+			puts( "RTCS responder URL not present in certificate, server "
+				  "name must be provided\n  externally." );
+			}
 		else
 			{
 			printf( "Attempt to read RTCS responder URL failed with error "
@@ -2287,10 +2719,10 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 		return( attrErrorExit( cryptErrorObject, "cryptSetAttribute()",
 							   status, __LINE__ ) );
 
-	/* If we're doing a query with multiple certs, add another cert.  To
-	   keep things simple and avoid having to stockpile a whole collection
-	   of certs for each responder we just use a random cert for which we
-	   expect an 'unknown' response */
+	/* If we're doing a query with multiple certs, add another certificate.  
+	   To keep things simple and avoid having to stockpile a whole 
+	   collection of certificates for each responder we just use a random 
+	   certificate for which we expect an 'unknown' response */
 	if( multipleCerts )
 		{
 		CRYPT_CERTIFICATE cryptSecondCert;
@@ -2321,7 +2753,7 @@ int testRTCSReqResp( void )
 
 	puts( "Testing RTCS request creation..." );
 
-	/* Import the EE cert for the RTCS request */
+	/* Import the EE certificate for the RTCS request */
 	status = importCertFromTemplate( &cryptCert, RTCS_FILE_TEMPLATE, 
 									 1 );
 	if( cryptStatusError( status ) )
@@ -2393,8 +2825,9 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 		return( FALSE );
 		}
 
-	/* Select the OCSP responder location from the EE cert and read the URL/
-	   FQDN value (this isn't used but is purely for display to the user) */
+	/* Select the OCSP responder location from the EE certificate and read 
+	   the URL/FQDN value (this isn't used but is purely for display to the 
+	   user) */
 	status = cryptSetAttribute( cryptOCSPEE, CRYPT_ATTRIBUTE_CURRENT,
 								CRYPT_CERTINFO_AUTHORITYINFO_OCSP );
 	if( cryptStatusOK( status ) )
@@ -2409,8 +2842,10 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_NOTFOUND )
-			puts( "OCSP responder URL not present in cert, server name must "
-				  "be provided\n  externally." );
+			{
+			puts( "OCSP responder URL not present in certificate, server "
+				  "name must be provided\n  externally." );
+			}
 		else
 			{
 			printf( "Attempt to read OCSP responder URL failed with error "
@@ -2442,8 +2877,8 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 	cryptErrorObject = *cryptOCSPRequest;
 
 	/* Add the request components.  Note that if we're using v1 we have to
-	   add the CA cert first since it's needed to generate the request ID
-	   for the EE cert */
+	   add the CA certificate first since it's needed to generate the 
+	   request ID for the EE certificate */
 	if( !ocspv2 )
 		{
 		status = cryptSetAttribute( *cryptOCSPRequest,
@@ -2462,10 +2897,10 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 		return( attrErrorExit( cryptErrorObject, "cryptSetAttribute()",
 							   status, __LINE__ ) );
 
-	/* If we're doing a query with multiple certs, add another cert.  To
-	   keep things simple and avoid having to stockpile a whole collection
-	   of certs for each responder we just use a random cert for which we
-	   expect an 'unknown' response */
+	/* If we're doing a query with multiple certs, add another certificate.  
+	   To keep things simple and avoid having to stockpile a whole 
+	   collection of certificates for each responder we just use a random 
+	   certificate for which we expect an 'unknown' response */
 	if( multipleCerts )
 		{
 		cryptDestroyCert( cryptOCSPEE );
@@ -2563,12 +2998,12 @@ int testOCSPReqResp( void )
 				   CRYPT_SIGNATURELEVEL_SIGNERCERT, cryptPrivateKey ) )
 		return( FALSE );
 	cryptDestroyCert( cryptOCSPRequest );
-	puts( "Signed OCSP request with single signing cert succeeded." );
+	puts( "Signed OCSP request with single signing certificate succeeded." );
 	if( !initOCSP( &cryptOCSPRequest, 1, FALSE, FALSE, FALSE,
 				   CRYPT_SIGNATURELEVEL_ALL, cryptPrivateKey ) )
 		return( FALSE );
 	cryptDestroyCert( cryptOCSPRequest );
-	puts( "Signed OCSP request with signing cert chain succeeded." );
+	puts( "Signed OCSP request with signing certificate chain succeeded." );
 	cryptDestroyContext( cryptPrivateKey );
 
 	puts( "OCSP request creation succeeded.\n" );
@@ -2577,7 +3012,7 @@ int testOCSPReqResp( void )
 
 /* Test PKI user information creation.  This doesn't actually test much
    since this object type is just a basic data container used to hold user
-   information in a cert store */
+   information in a certificate store */
 
 static const CERT_DATA FAR_BSS pkiUserData[] = {
 	/* Identification information */

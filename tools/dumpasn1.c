@@ -6,25 +6,33 @@
    <h.b.furuseth@usit.uio.no>, Geoff Thorpe <geoff@raas.co.nz>, David Boyce
    <d.boyce@isode.com>, John Hughes <john.hughes@entegrity.com>, Life is hard,
    and then you die <ronald@trustpoint.com>, Hans-Olof Hermansson
-   <hans-olof.hermansson@postnet.se>, Tor Rustad <Tor.Rustad@bbs.no>,
-   Kjetil Barvik <kjetil.barvik@bbs.no>, James Sweeny <jsweeny@us.ibm.com>,
-   Chris Ridd <chris.ridd@isode.com>, and several other people whose names
-   I've misplaced (a number of those email addresses probably no longer
-   work, since this code has been around for awhile).
+   <hans-olof.hermansson@postnet.se>, Tor Rustad <Tor.Rustad@bbs.no>, Kjetil
+   Barvik <kjetil.barvik@bbs.no>, James Sweeny <jsweeny@us.ibm.com>, Chris
+   Ridd <chris.ridd@isode.com>, David Lemley <dev@ziggurat29.com> and several
+   other people whose names I've misplaced (a number of those email addresses
+   probably no longer work, since this code has been around for awhile).
 
-   Available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.c.
-   Last updated 14 April 2008 (version 20080414, if you prefer it that
-   way).  To build under Windows, use 'cl /MD dumpasn1.c'.  To build on OS390
-   or z/OS, use '/bin/c89 -D OS390 -o dumpasn1 dumpasn1.c'.
+   Available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.c. Last
+   updated 21 July 2009 (version 20090721, if you prefer it that way).  To
+   build under Windows, use 'cl /MD dumpasn1.c'.  To build on OS390 or z/OS,
+   use '/bin/c89 -D OS390 -o dumpasn1 dumpasn1.c'.
 
    This code grew slowly over time without much design or planning, and with
-   extra features being tacked on as required.  It's not representative of
-   my normal coding style.
+   extra features being tacked on as required.  It's not representative of my
+   normal coding style.  cryptlib,
+   http://www.cs.auckland.ac.nz/~pgut001/cryptlib/, does a much better job of
+   checking ASN.1 than this does, since dumpasn1 is a display program written
+   to accept the widest possible range of input and not a compliance checker.
+   In other words it will bend over backwards to accept even invalid data,
+   since a common use for it is to try and locate encoding problems that lead
+   to invalid encoded data.  While it will warn about some types of common
+   errors, the fact that dumpasn1 will display an ASN.1 data item doesn't mean
+   that the item is valid.
 
    This version of dumpasn1 requires a config file dumpasn1.cfg to be present
-   in the same location as the program itself or in a standard directory
-   where binaries live (it will run without it but will display a warning
-   message, you can configure the path either by hardcoding it in or using an
+   in the same location as the program itself or in a standard directory where
+   binaries live (it will run without it but will display a warning message,
+   you can configure the path either by hardcoding it in or using an
    environment variable as explained further down).  The config file is
    available from http://www.cs.auckland.ac.nz/~pgut001/dumpasn1.cfg.
 
@@ -34,8 +42,8 @@
    that you use a utility like uudeview, which will strip virtually any kind
    of encoding (MIME, PEM, PGP, whatever) to recover the binary original.
 
-   You can use this code in whatever way you want, as long as you don't try
-   to claim you wrote it.
+   You can use this code in whatever way you want, as long as you don't try to
+   claim you wrote it.
 
    Editing notes: Tabs to 4, phasers to stun (and in case anyone wants to
    complain about that, see "Program Indentation and Comprehensiblity",
@@ -43,6 +51,7 @@
    Communications of the ACM, Vol.26, No.11 (November 1983), p.861) */
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,7 +61,7 @@
 
 /* The update string, printed as part of the help screen */
 
-#define UPDATE_STRING	"14 April 2008"
+#define UPDATE_STRING	"21 July 2009"
 
 /* Useful defines */
 
@@ -100,6 +109,7 @@
 
 #if ( defined( _WINDOWS ) || defined( WIN32 ) || defined( _WIN32 ) || \
 	  defined( __WIN32__ ) )
+  #include <windows.h>
   #define __WIN32__
 #endif /* Win32 */
 
@@ -144,12 +154,22 @@
   #define min(a,b)		( ( a ) < ( b ) ? ( a ) : ( b ) )
 #endif /* !min */
 
+/* Macros to avoid problems with sign extension */
+
+#define byteToInt( x )	( ( unsigned char ) ( x ) )
+
 /* The level of recursion can get scary for deeply-nested structures so we
    use a larger-than-normal stack under DOS */
 
 #ifdef  __TURBOC__
   extern unsigned _stklen = 16384;
 #endif /* __TURBOC__ */
+
+/* Turn off pointless VC++ warnings */
+
+#ifdef _MSC_VER
+  #pragma warning( disable: 4018 )
+#endif /* VC++ */
 
 /* When we dump a nested data object encapsulated within a larger object, the
    length is initially set to a magic value which is adjusted to the actual
@@ -282,8 +302,9 @@ static FILE *output;				/* Output stream */
 
 typedef struct tagOIDINFO {
 	struct tagOIDINFO *next;		/* Next item in list */
-	char oid[ MAX_OID_SIZE ], *comment, *description;
-	int oidLength;					/* Name, rank, serial number */
+	unsigned char oid[ MAX_OID_SIZE ];
+	int oidLength;
+	char *comment, *description;	/* Name, rank, serial number */
 	int warn;						/* Whether to warn if OID encountered */
 	} OIDINFO;
 
@@ -313,16 +334,19 @@ static const char *configPaths[] = {
 
 static const char *configPaths[] = {
 	/* Windoze absolute paths.  Usually things are on C:, but older NT setups
-	   are easier to do on D: if the initial copy is done to C: */
+	   are easier to do on D: if the initial copy is done to C: (yeah, this
+	   code has been around for awhile, why do you ask?) */
 	"c:\\dos\\", "d:\\dos\\", "c:\\windows\\", "d:\\windows\\",
 	"c:\\winnt\\", "d:\\winnt\\",
 
 	/* It's my program, I'm allowed to hardcode in strange paths that no-one
 	   else uses */
 	"c:\\program files\\bin\\",
+	"c:\\program files (x86)\\bin\\",
 
 	/* This one seems to be popular as well */
 	"c:\\program files\\utilities\\",
+	"c:\\program files (x86)\\utilities\\",
 
 	/* General environment-based paths */
 	"$DUMPASN1_PATH/",
@@ -353,8 +377,10 @@ static const char *configPaths[] = {
 	   else uses */
 	"$HOME/BIN/",
   #else
-	/* Debian has specific places where you're supposed to dump things */
-	"$HOME/", "/etc/dumpasn1/",
+	/* Debian has specific places where you're supposed to dump things.  Note
+	   the dot after $HOME, since config files are supposed to start with a
+	   dot for Debian */
+	"$HOME/.", "/etc/dumpasn1/",
   #endif /* DEBIAN-specific paths */
 
 	/* General environment-based paths */
@@ -445,7 +471,6 @@ static OIDINFO *getOIDinfo( char *oid, const int oidLength )
 	{
 	OIDINFO *oidPtr;
 
-	memset( oid + oidLength, 0, 2 );
 	for( oidPtr = oidList; oidPtr != NULL; oidPtr = oidPtr->next )
 		{
 		if( oidLength == oidPtr->oidLength - 2 && \
@@ -599,7 +624,86 @@ static int readLine( FILE *file, char *buffer )
 	return( ferror( file ) ? FALSE : TRUE );
 	}
 
-/* Process an OID specified as space-separated hex digits */
+/* Process an OID specified as space-separated decimal or hex digits */
+
+static int processOID( OIDINFO *oidInfo, char *string )
+	{
+	unsigned char binaryOID[ MAX_OID_SIZE ];
+	int firstValue, value, valueIndex = 0, oidIndex = 3;
+
+	memset( binaryOID, 0, MAX_OID_SIZE );
+	binaryOID[ 0 ] = OID;
+	while( *string && oidIndex < MAX_OID_SIZE )
+		{
+		if( oidIndex >= MAX_OID_SIZE - 4 )
+			{
+			printf( "Excessively long OID in config file line %d.\n",
+					lineNo );
+			return( FALSE );
+			}
+		if( sscanf( string, "%d", &value ) != 1 || value < 0 )
+			{
+			printf( "Invalid value in config file line %d.\n", lineNo );
+			return( FALSE );
+			}
+		if( valueIndex == 0 )
+			{
+			firstValue = value;
+			valueIndex++;
+			}
+		else
+			{
+			if( valueIndex == 1 )
+				{
+				if( firstValue < 0 || firstValue > 2 || value < 0 || \
+					( ( firstValue < 2 && value > 39 ) || \
+					  ( firstValue == 2 && value > 175 ) ) )
+					{
+					printf( "Invalid value in config file line %d.\n",
+							lineNo );
+					return( FALSE );
+					}
+				binaryOID[ 2 ] = ( firstValue * 40 ) + value;
+				valueIndex++;
+				}
+			else
+				{
+				int hasHighBits = FALSE;
+
+				if( value >= 0x200000L )					/* 2^21 */
+					{
+					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 21 );
+					value %= 0x200000L;
+					hasHighBits = TRUE;
+					}
+				if( ( value >= 0x4000 ) || hasHighBits )	/* 2^14 */
+					{
+					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 14 );
+					value %= 0x4000;
+					hasHighBits = TRUE;
+					}
+				if( ( value >= 0x80 ) || hasHighBits )		/* 2^7 */
+					{
+					binaryOID[ oidIndex++ ] = 0x80 | ( value >> 7 );
+					value %= 128;
+					}
+				binaryOID[ oidIndex++ ] = value;
+				}
+			}
+		while( *string && isdigit( byteToInt( *string ) ) )
+			string++;
+		if( *string && *string++ != ' ' )
+			{
+			printf( "Invalid OID string in config file line %d.\n", lineNo );
+			return( FALSE );
+			}
+		}
+	binaryOID[ 1 ] = oidIndex - 2;
+	memcpy( oidInfo->oid, binaryOID, oidIndex );
+	oidInfo->oidLength = oidIndex;
+
+	return( TRUE );
+	}
 
 static int processHexOID( OIDINFO *oidInfo, char *string )
 	{
@@ -634,8 +738,9 @@ static int processHexOID( OIDINFO *oidInfo, char *string )
 
 static int readConfig( const char *path, const int isDefaultConfig )
 	{
-	OIDINFO dummyOID = { NULL, "Dummy", "Dummy", "Dummy", 1, 1 }, *oidPtr;
+	OIDINFO dummyOID = { NULL, "Dummy", 0, "Dummy", "Dummy", 1 }, *oidPtr;
 	FILE *file;
+	int seenHexOID = FALSE;
 	char buffer[ MAX_LINESIZE ];
 	int status;
 
@@ -703,8 +808,17 @@ static int readConfig( const char *path, const int isDefaultConfig )
 			memset( oidPtr, 0, sizeof( OIDINFO ) );
 
 			/* Add the new OID */
-			if( !processHexOID( oidPtr, buffer + 6 ) )
-				return( FALSE );
+			if( !strncmp( buffer + 6, "06", 2 ) )
+				{
+				seenHexOID = TRUE;
+				if( !processHexOID( oidPtr, buffer + 6 ) )
+					return( FALSE );
+				}
+			else
+				{
+				if( !processOID( oidPtr, buffer + 6 ) )
+					return( FALSE );
+				}
 			}
 		else if( !strncmp( buffer, "Description = ", 14 ) )
 			{
@@ -749,6 +863,15 @@ static int readConfig( const char *path, const int isDefaultConfig )
 		}
 	fclose( file );
 
+	/* If we're processing an old-style config file, tell the user to
+	   upgrade */
+	if( seenHexOID )
+		{
+		puts( "\nWarning: Use of old-style hex OIDs detected in "
+			  "configuration file, please\n         update your dumpasn1 "
+			  "configuration file.\n" );
+		}
+
 	return( status );
 	}
 
@@ -790,8 +913,10 @@ static void buildConfigPath( char *path, const char *pathTemplate )
 		else
 			substringSize = pathLen - pathPos;
 		if( substringSize > 0 )
+			{
 			memcpy( newPath + newPathPos, pathBuffer + pathPos,
 					substringSize );
+			}
 		newPathPos += substringSize;
 		pathPos += substringSize;
 
@@ -837,13 +962,20 @@ static int readGlobalConfig( const char *path )
 #ifdef __UNIX__
 	char *envPath;
 #endif /* __UNIX__ */
+#ifdef __WIN32__
+	char filePath[ _MAX_PATH ];
+	DWORD count;
+#endif /* __WIN32__ */
 	int i;
 
 	/* First, try and find the config file in the same directory as the
 	   executable by walking down the path until we find the last occurrence
 	   of the program name.  This requires that argv[0] be set up properly,
-	   which isn't the case if Unix search paths are being used, and seems
-	   to be pretty broken under Windows */
+	   which isn't the case if Unix search paths are being used and is a
+	   bit hit-and-miss under Windows where the contents of argv[0] depend
+	   on how the program is being executed.  To avoid this we perform some
+	   Windows-specific processing to try and find the path to the
+	   executable if we can't otherwise find it */
 	do
 		{
 		namePos = lastPos;
@@ -907,6 +1039,24 @@ static int readGlobalConfig( const char *path )
 		while( pathPtr != NULL );
 		}
 #endif /* __UNIX__ */
+#ifdef __WIN32__
+	/* Under Windows we can use GetModuleFileName() to find the location of
+	   the program */
+	count = GetModuleFileName ( NULL, filePath, _MAX_PATH );
+	if( count > 0 )
+		{
+		char *progNameStart = strrchr( filePath, '\\' );
+		if( progNameStart != NULL && \
+			( progNameStart - filePath ) < _MAX_PATH - 13 )
+			{
+			/* Replace the program name with the config file name */
+			strcpy( progNameStart + 1, CONFIG_NAME );
+			if( testConfigPath( filePath ) )
+				return( readConfig( filePath, TRUE ) );
+			}
+		}
+#endif /*__WIN32__*/
+
 
 	/* Default to just the config name (which should fail as it was the
 	   first entry in configPaths[]).  readConfig() will display the
@@ -1063,6 +1213,82 @@ static void dumpHex( FILE *inFile, long length, int level, int isInteger )
 		if( warnNegative )
 			complain( "Integer has a negative value", level );
 		}
+	}
+
+/* Convert a binary OID to its string equivalent */
+
+static int oidToString( char *textOID, int *textOIDlength,
+						const unsigned char *oid, const int oidLength )
+	{
+	long value;
+	int i, length, validEncoding = TRUE;
+
+	for( i = 0, value = 0; i < oidLength; i++ )
+		{
+		const unsigned char data = oid[ i ];
+		const long valTmp = value << 7;
+
+		/* Pick apart the encoding.  We keep going after hitting an encoding
+		   error because the overall length is bounded and we may still be
+		   able to recover something worth printing */
+		if( value == 0 && data == 0x80 )
+			{
+			/* Invalid leading zero value, 0x80 & 0x7F == 0 */
+			validEncoding = FALSE;
+			}
+		if( value >= ( LONG_MAX >> 7 ) || \
+			valTmp >= LONG_MAX - ( data & 0x7F ) )
+			validEncoding = FALSE;
+		value = valTmp | ( data & 0x7F );
+		if( value < 0 || value > LONG_MAX / 2 )
+			validEncoding = FALSE;
+		if( !( data & 0x80 ) )
+			{
+			if( i == 0 )
+				{
+				long x, y;
+
+				/* The first two levels are encoded into one byte since the 
+				   root level has only 3 nodes (40*x + y), however if x = 
+				   joint-iso-itu-t(2) then y may be > 39, so we have to add 
+				   special-case handling for this */
+				x = value / 40;
+				y = value % 40;
+				if( x > 2 )
+					{
+					/* Handle special case for large y if x == 2 */
+					y += ( x - 2 ) * 40;
+					x = 2;
+					}
+				if( x < 0 || x > 2 || y < 0 || \
+					( ( x < 2 && y > 39 ) || \
+					  ( x == 2 && ( y > 50 && y != 100 ) ) ) )
+					{
+					/* If x = 0 or 1 then y has to be 0...39, for x = 3
+					   it can take any value but there are no known 
+					   assigned values over 50 except for one contrived
+					   example in X.690 which sets y = 100, so if we see
+					   something outside this range it's most likely an 
+					   encoding error rather than some bizarre new ID 
+					   that's just appeared */
+					validEncoding = FALSE;
+					}
+				length = sprintf( textOID, "%ld %ld", x, y );
+				}
+			else
+				length += sprintf( textOID + length, " %ld", value );
+			value = 0;
+			}
+		}
+	if( value != 0 )
+		{
+		/* We stopped in the middle of a continued value */
+		validEncoding = FALSE;
+		}
+	textOID[ length ] = '\0';
+	*textOIDlength = length;
+
+	return( validEncoding );
 	}
 
 /* Dump a bitstring, reversing the bits into the standard order in the
@@ -1359,6 +1585,7 @@ static void displayString( FILE *inFile, long length, int level,
 			}
 		}
 	else
+		{
 		if( doTimeStr )
 			{
 			const char *timeStrPtr = ( strOption == STR_UTCTIME ) ? \
@@ -1377,6 +1604,7 @@ static void displayString( FILE *inFile, long length, int level,
 			}
 		else
 			fputc( '\'', output );
+		}
 	fputc( '\n', output );
 
 	/* Display any problems we encountered */
@@ -1503,12 +1731,35 @@ static int checkEncapsulate( FILE *inFile, const int length )
 	fPos = currentPos;
 	fseek( inFile, -diffPos, SEEK_CUR );
 
-	/* If it fits exactly within the current item and has a valid-looking
-	   tag, treat it as nested data */
-	if( ( ( nestedItem.id & CLASS_MASK ) == UNIVERSAL || \
-		  ( nestedItem.id & CLASS_MASK ) == CONTEXT ) && \
-		( nestedItem.tag > 0 && nestedItem.tag <= 0x31 ) && \
-		nestedItem.length == length - diffPos )
+	/* If it's not a standard tag class, don't try and dig down into it */
+	if( ( nestedItem.id & CLASS_MASK ) != UNIVERSAL && \
+		( nestedItem.id & CLASS_MASK ) != CONTEXT )
+		return( FALSE );
+
+	/* If it doesn't fit exactly within the current item it's not an
+	   encapsulated object */
+	if( nestedItem.length != length - diffPos )
+		return( FALSE );
+
+	/* If it doesn't have a valid-looking tag, don't try and go any further */
+	if( nestedItem.tag <= 0 || nestedItem.tag > 0x31 )
+		return( FALSE );
+
+	/* Now things get a bit complicated because it's possible to get some
+	   (very rare) false positives, for example if a NUMERICSTRING of
+	   exactly the right length is nested within an OCTET STRING, since
+	   numeric values all look like constructed tags of some kind.  To
+	   handle this we look for nested constructed items that should really
+	   be primitive */
+	if( ( nestedItem.id & FORM_MASK ) == PRIMITIVE )
+		return( TRUE );
+
+	/* It's constructed, make sure that it's something for which it makes
+	   sense as a constructed object.  At worst this will give some false
+	   negatives for really wierd objects (nested constructed strings inside
+	   OCTET STRINGs), but these should probably never occur anyway */
+	if( nestedItem.tag == SEQUENCE || \
+		nestedItem.tag == SET )
 		return( TRUE );
 
 	return( FALSE );
@@ -1588,8 +1839,9 @@ static STR_OPTION checkForText( FILE *inFile, const int length )
 		fseek( inFile, -sampleLength, SEEK_CUR );
 		for( i = 0; i < sampleLength; i++ )
 			{
-			if( !( isalpha( buffer[ i ] ) || isdigit( buffer[ i ] ) || \
-				   isspace( buffer[ i ] ) ) )
+			const int ch = byteToInt( buffer[ i ] );
+
+			if( !( isalpha( ch ) || isdigit( ch ) || isspace( ch ) ) )
 				return( STR_NONE );
 			}
 		return( STR_IA5 );
@@ -1598,13 +1850,14 @@ static STR_OPTION checkForText( FILE *inFile, const int length )
 	/* Check for ASCII-looking text */
 	sampleLength = fread( buffer, 1, sampleLength, inFile );
 	fseek( inFile, -sampleLength, SEEK_CUR );
-	if( isdigit( buffer[ 0 ] ) && ( length == 13 || length == 15 ) && \
+	if( isdigit( byteToInt( buffer[ 0 ] ) ) && \
+		( length == 13 || length == 15 ) && \
 		buffer[ length - 1 ] == 'Z' )
 		{
 		/* It looks like a time string, make sure that it really is one */
 		for( i = 0; i < length - 1; i++ )
 			{
-			if( !isdigit( buffer[ i ] ) )
+			if( !isdigit( byteToInt( buffer[ i ] ) ) )
 				break;
 			}
 		if( i == length - 1 )
@@ -1663,8 +1916,10 @@ static STR_OPTION checkForText( FILE *inFile, const int length )
 				continue;
 				}
 			else
+				{
 				if( isUnicode )
 					return( STR_NONE );
+				}
 			}
 		if( buffer[ i ] < 0x20 || buffer[ i ] > 0x7E )
 			return( STR_NONE );
@@ -1751,9 +2006,8 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 	{
 	OIDINFO *oidInfo;
 	STR_OPTION stringType;
-	char buffer[ MAX_OID_SIZE ];
+	unsigned char buffer[ MAX_OID_SIZE ];
 	long value;
-	int x, y;
 
 	if( ( item->id & CLASS_MASK ) != UNIVERSAL )
 		{
@@ -1769,6 +2023,7 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			{
 			int i;
 
+			fflush( stdout );
 			fprintf( stderr, "\nError: Object has bad length field, tag = %02X, "
 					 "length = %lX, value =", item->tag, item->length );
 			fprintf( stderr, "<%02X", *item->header );
@@ -1816,6 +2071,7 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 		{
 		int i;
 
+		fflush( stdout );
 		fprintf( stderr, "\nError: Object has bad length field, tag = %02X, "
 				 "length = %lX, value =", item->tag, item->length );
 		fprintf( stderr, "<%02X", *item->header );
@@ -1842,12 +2098,16 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 	switch( item->tag )
 		{
 		case BOOLEAN:
-			x = getc( inFile );
-			fprintf( output, " %s\n", x ? "TRUE" : "FALSE" );
-			if( x != 0 && x != 0xFF )
+			{
+			int ch;
+
+			ch = getc( inFile );
+			fprintf( output, " %s\n", ch ? "TRUE" : "FALSE" );
+			if( ch != 0 && ch != 0xFF )
 				complain( "BOOLEAN has non-DER encoding", level );
 			fPos++;
 			break;
+			}
 
 		case INTEGER:
 		case ENUMERATED:
@@ -1863,11 +2123,14 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			break;
 
 		case BITSTRING:
-			if( ( x = getc( inFile ) ) != 0 )
+			{
+			int ch;
+
+			if( ( ch = getc( inFile ) ) != 0 )
 				fprintf( output, " %d unused bit%s",
-						 x, ( x != 1 ) ? "s" : "" );
+						 ch, ( ch != 1 ) ? "s" : "" );
 			fPos++;
-			if( !--item->length && !x )
+			if( !--item->length && !ch )
 				{
 				fputc( '\n', output );
 				complain( "Object has zero length", level );
@@ -1877,10 +2140,11 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 				{
 				/* It's short enough to be a bit flag, dump it as a sequence
 				   of bits */
-				dumpBitString( inFile, ( int ) item->length, x, level );
+				dumpBitString( inFile, ( int ) item->length, ch, level );
 				break;
 				}
 			/* Drop through to dump it as an octet string */
+			}
 
 		case OCTETSTRING:
 			if( checkEncapsulate( inFile, item->length ) )
@@ -1909,12 +2173,14 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			break;
 
 		case OID:
-			/* Hierarchical Object Identifier: The first two levels are
-			   encoded into one byte, since the root level has only 3 nodes
-			   (40*x + y).  However if x = joint-iso-itu-t(2) then y may be
-			   > 39, so we have to add special-case handling for this */
+			{
+			char textOID[ 128 ];
+			int length, isValid;
+
+			/* Hierarchical Object Identifier */
 			if( item->length > MAX_OID_SIZE )
 				{
+				fflush( stdout );
 				fprintf( stderr, "\nError: Object identifier length %ld too "
 						 "large.\n", item->length );
 				exit( EXIT_FAILURE );
@@ -1923,10 +2189,14 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 			fPos += item->length;
 			if( ( oidInfo = getOIDinfo( buffer, ( int ) item->length ) ) != NULL )
 				{
+				/* Convert the binary OID to text form */
+				isValid = oidToString( textOID, &length, buffer,
+									   ( int ) item->length );
+
 				/* Check if LHS status info + indent + "OID " string + oid
-				   name will wrap */
+				   name + "(" + oid value + ")" will wrap */
 				if( ( ( doPure ) ? 0 : INDENT_SIZE ) + ( level * 2 ) + 18 + \
-					strlen( oidInfo->description ) >= outputWidth )
+					strlen( oidInfo->description ) + 2 + length >= outputWidth )
 					{
 					fputc( '\n', output );
 					if( !doPure )
@@ -1935,7 +2205,7 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 					}
 				else
 					fputc( ' ', output );
-				fprintf( output, "%s\n", oidInfo->description );
+				fprintf( output, "%s (%s)\n", oidInfo->description, textOID );
 
 				/* Display extra comments about the OID if required */
 				if( extraOIDinfo && oidInfo->comment != NULL )
@@ -1945,6 +2215,8 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 					doIndent( level + 1 );
 					fprintf( output, "(%s)\n", oidInfo->comment );
 					}
+				if( !isValid )
+					complain( "OID has invalid encoding", level );
 
 				/* If there's a warning associated with this OID, remember
 				   that there was a problem */
@@ -1954,28 +2226,13 @@ static void printASN1object( FILE *inFile, ASN1_ITEM *item, int level )
 				break;
 				}
 
-			/* Pick apart the OID */
-			x = ( unsigned char ) buffer[ 0 ] / 40;
-			y = ( unsigned char ) buffer[ 0 ] % 40;
-			if( x > 2 )
-				{
-				/* Handle special case for large y if x = 2 */
-				y += ( x - 2 ) * 40;
-				x = 2;
-				}
-			fprintf( output, " '%d %d", x, y );
-			value = 0;
-			for( x = 1; x < item->length; x++ )
-				{
-				value = ( value << 7 ) | ( buffer[ x ] & 0x7F );
-				if( !( buffer[ x ] & 0x80 ) )
-					{
-					fprintf( output, " %ld", value );
-					value = 0;
-					}
-				}
-			fprintf( output, "'\n" );
+			/* Print the OID as a text string */
+			isValid = oidToString( textOID, &length, buffer, ( int ) item->length );
+			fprintf( output, " '%s'\n", textOID );
+			if( !isValid )
+				complain( "OID has invalid encoding", level );
 			break;
+			}
 
 		case EOC:
 		case NULLTAG:
@@ -2079,18 +2336,22 @@ static int printAsn1( FILE *inFile, const int level, long length,
 				fprintf( output, ( doHexValues ) ? "%04lX %02X NDEF: " :
 						 "%4ld %02X NDEF: ", lastPos, item.id | item.tag );
 			else
+				{
 				if( !seenEOC )
 					fprintf( output, ( doHexValues ) ? "%04lX %02X %4lX: " :
 							 "%4ld %02X %4ld: ", lastPos, item.id | item.tag,
 							 item.length );
+				}
 #else
 			if( item.indefinite )
 				fprintf( output, ( doHexValues ) ? "%04lX NDEF: " :
 						 "%4ld NDEF: ", lastPos );
 			else
+				{
 				if( !seenEOC )
 					fprintf( output, ( doHexValues ) ? "%04lX %4lX: " :
 							 "%4ld %4ld: ", lastPos, item.length );
+				}
 #endif
 			}
 
@@ -2149,6 +2410,7 @@ static int printAsn1( FILE *inFile, const int level, long length,
 		{
 		int i;
 
+		fflush( stdout );
 		fprintf( stderr, "\nError: Invalid data encountered at position "
 				 "%d:", fPos );
 		for( i = 0; i < item.headerSize; i++ )
@@ -2254,12 +2516,12 @@ int main( int argc, char *argv[] )
 			useStdin = TRUE;
 		while( *argPtr )
 			{
-			if( isdigit( *argPtr ) )
+			if( isdigit( byteToInt( *argPtr ) ) )
 				{
 				offset = atol( argPtr );
 				break;
 				}
-			switch( toupper( *argPtr ) )
+			switch( toupper( byteToInt( *argPtr ) ) )
 				{
 				case '-':
 					moreArgs = FALSE;	/* GNU-style end-of-args flag */
@@ -2469,6 +2731,7 @@ int main( int argc, char *argv[] )
 	/* Print a summary of warnings/errors if it's required or appropriate */
 	if( !doPure )
 		{
+		fflush( stdout );
 		if( !doCheckOnly )
 			fputc( '\n', stderr );
 		fprintf( stderr, "%d warning%s, %d error%s.\n", noWarnings,

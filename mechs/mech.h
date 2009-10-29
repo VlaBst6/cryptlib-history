@@ -188,7 +188,8 @@ int createSignatureCMS( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 						OUT_LENGTH_Z int *signatureLength,
 						IN_HANDLE const CRYPT_CONTEXT signContext,
 						IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						IN_HANDLE_OPT const CRYPT_CERTIFICATE extraData,
+						const BOOLEAN useDefaultAuthAttr,
+						IN_HANDLE_OPT const CRYPT_CERTIFICATE iAuthAttr,
 						IN_HANDLE_OPT const CRYPT_SESSION iTspSession,
 						IN_ENUM( CRYPT_FORMAT ) \
 						const CRYPT_FORMAT_TYPE formatType );
@@ -208,7 +209,9 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 						void *signature, IN_LENGTH_Z const int sigMaxLength, 
 						OUT_LENGTH_Z int *signatureLength, 
 						IN_HANDLE const CRYPT_CONTEXT iSignContext,
-						IN_HANDLE const CRYPT_CONTEXT iHashContext );
+						IN_HANDLE const CRYPT_CONTEXT iHashContext,
+						IN_RANGE( PGP_SIG_NONE, PGP_SIG_LAST - 1 ) \
+							const int sigType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkSignaturePGP( IN_BUFFER( signatureLength ) \
 					   const void *signature, 

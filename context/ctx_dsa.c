@@ -5,7 +5,7 @@
 *																			*
 ****************************************************************************/
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -228,29 +228,29 @@ static int selfTest( void )
 								sizeof( PKC_INFO ), NULL );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_FAILED );
-	status = extractBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
-							dlpTestKey.pLen, DLPPARAM_MIN_P, 
-							DLPPARAM_MAX_P, NULL, TRUE );
+	status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
+						   dlpTestKey.pLen, DLPPARAM_MIN_P, 
+						   DLPPARAM_MAX_P, NULL, SHORTKEY_CHECK_PKC );
 	if( cryptStatusOK( status ) ) 
-		status = extractBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
-								dlpTestKey.qLen, DLPPARAM_MIN_Q, 
-								DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p, 
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
+							   dlpTestKey.qLen, DLPPARAM_MIN_Q, 
+							   DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p, 
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) ) 
-		status = extractBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
-								dlpTestKey.gLen, DLPPARAM_MIN_G, 
-								DLPPARAM_MAX_G, &pkcInfo->dlpParam_p,
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
+							   dlpTestKey.gLen, DLPPARAM_MIN_G, 
+							   DLPPARAM_MAX_G, &pkcInfo->dlpParam_p,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) ) 
-		status = extractBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
-								dlpTestKey.yLen, DLPPARAM_MIN_Y, 
-								DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
-								TRUE );
+		status = importBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
+							   dlpTestKey.yLen, DLPPARAM_MIN_Y, 
+							   DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) ) 
-		status = extractBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
-								dlpTestKey.xLen, DLPPARAM_MIN_X, 
-								DLPPARAM_MAX_X, &pkcInfo->dlpParam_p, 
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
+							   dlpTestKey.xLen, DLPPARAM_MIN_X, 
+							   DLPPARAM_MAX_X, &pkcInfo->dlpParam_p, 
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) ) 
 		retIntError();
 
@@ -275,7 +275,7 @@ static int selfTest( void )
 /* Since DSA signature generation produces two values and the cryptEncrypt()
    model only provides for passing a byte string in and out (or, more
    specifically, the internal bignum data can't be exported to the outside
-   world), we need to encode the resulting data into a flat format.  This is
+   world) we need to encode the resulting data into a flat format.  This is
    done by encoding the output as an X9.31 Dss-Sig record:
 
 	Dss-Sig ::= SEQUENCE {
@@ -302,28 +302,30 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	int bnStatus = BN_STATUS, status;
 
 	assert( noBytes == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && \
-			dlpParams->inLen1 == DSA_SIGPART_SIZE );
+	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
+	assert( dlpParams->inLen1 == DSA_SIGPART_SIZE );
 	assert( dlpParams->inParam2 == NULL && \
 			( dlpParams->inLen2 == 0 || dlpParams->inLen2 == -999 ) );
-	assert( dlpParams->outParam != NULL && \
-			dlpParams->outLen >= ( 2 + DSA_SIGPART_SIZE ) * 2 );
+	assert( isWritePtr( dlpParams->outParam, dlpParams->outLen ) );
+	assert( dlpParams->outLen >= ( 2 + DSA_SIGPART_SIZE ) * 2 );
 
 	/* Generate the secret random value k.  During the initial self-test
 	   the random data pool may not exist yet, and may in fact never exist in
 	   a satisfactory condition if there isn't enough randomness present in
 	   the system to generate cryptographically strong random numbers.  To
 	   bypass this problem, if the caller passes in a second length parameter
-	   of -999, we know that it's an internal self-test call and use a fixed
+	   of -999 we know that it's an internal self-test call and use a fixed
 	   bit pattern for k that avoids having to call generateBignum() (this
-	   also means we can use the FIPS 186 self-test value for k).  This is a
-	   somewhat ugly use of 'magic numbers', but it's safe because this
+	   also means that we can use the FIPS 186 self-test value for k).  This 
+	   is a somewhat ugly use of 'magic numbers', but it's safe because this
 	   function can only be called internally, so all we need to trap is
 	   accidental use of the parameter which is normally unused */
 	if( dlpParams->inLen2 == -999 )
-		status = extractBignum( k, ( BYTE * ) kVal, DSA_SIGPART_SIZE,
-								DSA_SIGPART_SIZE, DSA_SIGPART_SIZE, NULL, 
-								FALSE );
+		{
+		status = importBignum( k, ( BYTE * ) kVal, DSA_SIGPART_SIZE,
+							   DSA_SIGPART_SIZE, DSA_SIGPART_SIZE, NULL, 
+							   SHORTKEY_CHECK_NONE );
+		}
 	else
 		{
 		/* Generate the random value k.  FIPS 186 requires (Appendix 3)
@@ -355,15 +357,21 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
+	/* Make sure that the result isn't zero (or more generally less than 64
+	   bits).  Admittedly the chances of this are infinitesimally small 
+	   (2^-160 or less for a value of zero, 2^-96 for 64 bits) but someone's 
+	   bound to complain if we don't check */
+	ENSURES( BN_num_bytes( k ) > 8 );
+
 	/* Get the hash as a bignum.  The range checking for the resulting value 
 	   is a bit odd, we need to take "the leftmost sizeof( q ) bits of the 
 	   hash" as the input, to handle this we require that the bit size of q 
 	   be at least as large as the (nominal) bit size of the hash */
 	if( dlpParams->inLen1 > BN_num_bytes( q ) )
 		return( CRYPT_ERROR_BADDATA );
-	status = extractBignum( hash, ( BYTE * ) dlpParams->inParam1, 
-							DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
-							DSA_SIGPART_SIZE, NULL, FALSE );
+	status = importBignum( hash, ( BYTE * ) dlpParams->inParam1, 
+						   DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
+						   DSA_SIGPART_SIZE, NULL, SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -371,6 +379,8 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
 						 &pkcInfo->dlpParam_mont_p ) );
 	CK( BN_mod( r, r, q, pkcInfo->bnCTX ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* s = k^-1 * ( hash + x * r ) mod q */
 	CKPTR( BN_mod_inverse( kInv, k, q,	/* temp = k^-1 mod q */
@@ -385,10 +395,25 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
+	/* Check that neither r = 0 or s = 0.  See the earlier comment where k 
+	   is  checked for the real necessity of this check */
+	ENSURES( !BN_is_zero( r ) && !BN_is_zero( s ) );
+
 	/* Encode the result as a DL data block */
-	return( pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
-								dlpParams->outLen, &dlpParams->outLen, 
-								r, s, dlpParams->formatType ) );
+	status = pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
+									dlpParams->outLen, &dlpParams->outLen, 
+									r, s, dlpParams->formatType );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_DSA ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /* Signature check a single block of data */
@@ -404,14 +429,15 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	int bnStatus = BN_STATUS, status;
 
 	assert( noBytes == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && dlpParams->inLen1 == 20 );
-	assert( dlpParams->inParam2 != NULL && \
-			( ( dlpParams->formatType == CRYPT_FORMAT_CRYPTLIB && \
-				( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 128 ) ) || \
-			  ( dlpParams->formatType == CRYPT_FORMAT_PGP && \
-				( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 44 ) ) || \
-			  ( dlpParams->formatType == CRYPT_IFORMAT_SSH && \
-				dlpParams->inLen2 == 40 ) ) );
+	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
+	assert( dlpParams->inLen1 == 20 );
+	assert( isReadPtr( dlpParams->inParam2, dlpParams->inLen2 ) );
+	assert( ( dlpParams->formatType == CRYPT_FORMAT_CRYPTLIB && \
+			  ( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 128 ) ) || \
+			( dlpParams->formatType == CRYPT_FORMAT_PGP && \
+			  ( dlpParams->inLen2 >= 42 && dlpParams->inLen2 <= 44 ) ) || \
+			( dlpParams->formatType == CRYPT_IFORMAT_SSH && \
+			  dlpParams->inLen2 == 40 ) );
 	assert( dlpParams->outParam == NULL && dlpParams->outLen == 0 );
 
 	/* Decode the values from a DL data block and make sure that r and s are
@@ -428,23 +454,29 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   be at least as large as the (nominal) bit size of the hash */
 	if( dlpParams->inLen1 > BN_num_bytes( q ) )
 		return( CRYPT_ERROR_BADDATA );
-	status = extractBignum( u1, ( BYTE * ) dlpParams->inParam1, 
-							DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
-							DSA_SIGPART_SIZE, NULL, FALSE );
+	status = importBignum( u1, ( BYTE * ) dlpParams->inParam1, 
+						   DSA_SIGPART_SIZE, DSA_SIGPART_SIZE / 2, 
+						   DSA_SIGPART_SIZE, NULL, SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* w = s^-1 mod q */
 	CKPTR( BN_mod_inverse( u2, s, q,	/* w = s^-1 mod q */
 						   pkcInfo->bnCTX ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* u1 = ( hash * w ) mod q */
 	CK( BN_mod_mul( u1, u1, u2, q,		/* u1 = ( hash * w ) mod q */
 					pkcInfo->bnCTX ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* u2 = ( r * w ) mod q */
 	CK( BN_mod_mul( u2, r, u2, q,		/* u2 = ( r * w ) mod q */
 					pkcInfo->bnCTX ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* v = ( ( ( g^u1 ) * ( y^u2 ) ) mod p ) mod q */
 	CK( BN_mod_exp2_mont( u2, g, u1, y, u2, p, pkcInfo->bnCTX,
@@ -453,8 +485,18 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	if( bnStatusError( bnStatus ) )
 		return( getBnStatus( bnStatus ) );
 
-	/* if r == s signature is good */
-	return( BN_cmp( r, s ) ? CRYPT_ERROR_SIGNATURE : CRYPT_OK );
+	/* If r == s then the signature is good */
+	if( BN_cmp( r, s ) )
+		return( CRYPT_ERROR_SIGNATURE );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_DSA ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -479,30 +521,35 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		const CRYPT_PKCINFO_DLP *dsaKey = ( CRYPT_PKCINFO_DLP * ) key;
 
 		contextInfoPtr->flags |= ( dsaKey->isPublicKey ) ? \
-							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
-		status = extractBignum( &pkcInfo->dlpParam_p, dsaKey->p, 
-								bitsToBytes( dsaKey->pLen ),
-								DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, TRUE );
+					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
+		status = importBignum( &pkcInfo->dlpParam_p, dsaKey->p, 
+							   bitsToBytes( dsaKey->pLen ),
+							   DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, 
+							   SHORTKEY_CHECK_PKC );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_q, dsaKey->q, 
-									bitsToBytes( dsaKey->qLen ),
-									DLPPARAM_MIN_Q, DLPPARAM_MAX_Q, 
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_q, dsaKey->q, 
+								   bitsToBytes( dsaKey->qLen ),
+								   DLPPARAM_MIN_Q, DLPPARAM_MAX_Q, 
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_g, dsaKey->g, 
-									bitsToBytes( dsaKey->gLen ),
-									DLPPARAM_MIN_G, DLPPARAM_MAX_G,
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_g, dsaKey->g, 
+								   bitsToBytes( dsaKey->gLen ),
+								   DLPPARAM_MIN_G, DLPPARAM_MAX_G,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_y, dsaKey->y, 
-									bitsToBytes( dsaKey->yLen ),
-									DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
-									&pkcInfo->dlpParam_p, TRUE );
+			status = importBignum( &pkcInfo->dlpParam_y, dsaKey->y, 
+								   bitsToBytes( dsaKey->yLen ),
+								   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) && !dsaKey->isPublicKey )
-			status = extractBignum( &pkcInfo->dlpParam_x, dsaKey->x, 
-									bitsToBytes( dsaKey->xLen ),
-									DLPPARAM_MIN_X, DLPPARAM_MAX_X,
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_x, dsaKey->x, 
+								   bitsToBytes( dsaKey->xLen ),
+								   DLPPARAM_MIN_X, DLPPARAM_MAX_X,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
@@ -510,12 +557,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 #endif /* USE_FIPS140 */
 
 	/* Complete the key checking and setup */
-	status = initDLPkey( contextInfoPtr, FALSE );
-	if( cryptStatusOK( status ) )
-		status = checkDLPkey( contextInfoPtr, FALSE );
-	if( cryptStatusOK( status ) )
-		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
-	return( status );
+	return( initCheckDLPkey( contextInfoPtr, FALSE, FALSE ) );
 	}
 
 /* Generate a key into an encryption context */
@@ -531,11 +573,11 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 #endif /* USE_FIPS140 */
 		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
+		DEBUG_DIAG(( "Consistency check of freshly-generated DSA key "
+					 "failed" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
-	if( cryptStatusOK( status ) )
-		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
 	return( status );
 	}
 

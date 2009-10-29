@@ -341,7 +341,7 @@ static void writeNonCMSheader( STREAM *stream, const BYTE *oid,
 					 sizeofObject( attrDataLength ) ) );
 	writeOID( stream, oid );
 	writeConstructed( stream, ( int ) sizeofObject( length ), 0 );
-	writeSequence( stream, length ) );
+	writeSequence( stream, length );
 	}
 
 /* Write a PKCS #12 item ("safeBag").  We can't write this directly to the

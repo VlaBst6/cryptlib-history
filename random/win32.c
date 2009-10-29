@@ -26,7 +26,7 @@
    block, emit the opcode, and then restart the asm block.  In addition
    while the 16-bit versions of BC++ had built-in asm support, the 32-bit
    versions removed it and generate a temporary asm file which is passed
-   to Tasm32.  This is only included with some high-end versions of BC++,
+   to Tasm32.  This is only included with some high-end versions of BC++
    and it's not possible to order it separately, so if you're building with
    BC++ and get error messages about a missing tasm32.exe, add NO_ASM to
    Project Options | Compiler | Defines */
@@ -67,7 +67,7 @@ static HANDLE hAdvAPI32;	/* Handle to misc.library */
 static HANDLE hNetAPI32;	/* Handle to networking library */
 static HANDLE hNTAPI;		/* Handle to NT kernel library */
 static HANDLE hThread;		/* Background polling thread handle */
-static DWORD threadID;		/* Background polling thread ID */
+static unsigned int threadID;	/* Background polling thread ID */
 
 /****************************************************************************
 *																			*
@@ -124,7 +124,48 @@ static RTLGENRANDOM pRtlGenRandom = NULL;
 static BOOLEAN systemRngAvailable;	/* Whether system RNG is available */
 static HCRYPTPROV hProv;			/* Handle to Intel RNG CSP */
 
-/* Try and connect to the system RNG if there's one present */
+/* Try and connect to the system RNG if there's one present.  In theory we 
+   could also try and get data from a TPM if there's one present, but the 
+   TPM functions are only available under Vista (so they'd have to be 
+   dynamically bound), the chances of a TPM being present and accessible 
+   are pretty slim, and since we have to talk to the TPM at the raw APDU 
+   level (not to mention all the horror stories in the MSDN forums about 
+   getting any of this stuff to work) the amount of effort required versus 
+   the potential gain really doesn't make it worthwhile:
+
+	#include <tbs.h>
+
+	TBS_HCONTEXT hTbsContext;
+	TBS_CONTEXT_PARAMS tbsContextParams;
+	HRESULT hResult;
+
+	// Include dynamic-linking management for all functions
+
+	// Get a handle to the TBS interface
+	memset( &tspContextParams, 0, sizeof( TBS_CONTEXT_PARAMS ) );
+	tspContextParams.version = TBS_CONTEXT_VERSION_ONE;
+	result = Tbsi_Context_Create( &tbsContextParams, &hTbsContext );
+	if( SUCCEEDED( hResult ) )
+		{
+		BYTE tpmCommand[] = {
+			0x00, 0xC1,					// WORD: TPM_TAG_RQU_COMMAND
+			0x00, 0x00, 0x00, 0x0E,		// LONG: Total packet length
+			0x00, 0x00, 0x00, 0x46,		// LONG: Command TPM_ORD_GetRandom
+			0x00, 0x00, 0x00, 0x20		// Data: Get 0x20 bytes
+		BYTE buffer[ 14 + 32 + 8 ];
+		int length;
+
+		hResult = Tbsip_Submit_Command( hTbsContext, 
+										TBS_COMMAND_LOCALITY_ZERO,
+										TBS_COMMAND_PRIORITY_NORMAL, 
+										tpmCommand, 14, buffer, &length );
+		if( SUCCEEDED( hResult ) )
+			{
+			// Start of buffer contains the 14 bytes of returned command 
+			// followed by 32 bytes of random data
+			}
+		Tbsip_Context_Close( hTbsContext );
+		} */
 
 static void initSystemRNG( void )
 	{
@@ -234,7 +275,7 @@ static void readSystemRNG( void )
 			{
 			( void ) krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
 									  IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &quality,
+									  ( MESSAGE_CAST ) &quality,
 									  CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 			}
 		zeroise( buffer, SYSTEMRNG_BYTES );
@@ -259,9 +300,9 @@ static void endSystemRNG( void )
 ****************************************************************************/
 
 /* These interfaces currently support data supplied by MBM, Everest, 
-   SysTool, RivaTuner, HMonitor, and ATI Tray Tools.  Two notable omissions
-   are SVPro and HWMonitor, unfortunately the authors haven't responded to 
-   any requests for interfacing information */
+   SysTool, RivaTuner, HMonitor, ATI Tray Tools, CoreTemp, and GPU-Z.  Two 
+   notable omissions are SVPro and HWMonitor, unfortunately the authors 
+   haven't responded to any requests for interfacing information */
 
 /* MBM data structures, originally by Alexander van Kaam, converted to C by
    Anders@Majland.org, finally updated by Chris Zahrt <techn0@iastate.edu>.
@@ -332,12 +373,12 @@ static void readMBMData( void )
 		MESSAGE_DATA msgData;
 		static const int quality = 20;
 
-		setMessageData( &msgData, ( void * ) mbmDataPtr, 
+		setMessageData( &msgData, ( MESSAGE_CAST ) mbmDataPtr, 
 						sizeof( SharedData ) );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
 						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
+						 ( MESSAGE_CAST ) &quality,
 						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 		UnmapViewOfFile( mbmDataPtr );
 		}
@@ -360,19 +401,21 @@ static void readEverestData( void )
 										  "EVEREST_SensorValues" ) ) == NULL )
 		return;
 	if( ( everestDataPtr = MapViewOfFile( hEverestData, 
-										  FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
-		( length = strlen( everestDataPtr ) ) > 128 )
+										  FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		MESSAGE_DATA msgData;
-		static const int quality = 40;
+		if( ( length = strlen( everestDataPtr ) ) > 128 )
+			{
+			MESSAGE_DATA msgData;
+			static const int quality = 40;
 
-		setMessageData( &msgData, ( void * ) everestDataPtr, 
-						min( length, 2048 ) );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
-						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			setMessageData( &msgData, ( MESSAGE_CAST ) everestDataPtr, 
+							min( length, 2048 ) );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( MESSAGE_CAST ) &quality,
+							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
 		UnmapViewOfFile( everestDataPtr );
 		}
 	CloseHandle( hEverestData );
@@ -428,12 +471,12 @@ static void readSysToolData( void )
 		MESSAGE_DATA msgData;
 		static const int quality = 40;
 
-		setMessageData( &msgData, ( void * ) sysToolDataPtr, 
+		setMessageData( &msgData, ( MESSAGE_CAST ) sysToolDataPtr, 
 						sizeof( SYSTOOL_SHMEM ) );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
 						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
+						 ( MESSAGE_CAST ) &quality,
 						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 		UnmapViewOfFile( sysToolDataPtr );
 		}
@@ -477,24 +520,26 @@ static void readRivaTunerData( void )
 											"RTHMSharedMemory" ) ) == NULL )
 		return;
 	if( ( rivaTunerHeaderPtr = ( RTHM_SHARED_MEMORY_HEADER * ) \
-			MapViewOfFile( hRivaTunerData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
-		( rivaTunerHeaderPtr->dwSignature == 'RTHM' ) && \
-		( rivaTunerHeaderPtr->dwVersion >= 0x10001 ) )
+			MapViewOfFile( hRivaTunerData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		MESSAGE_DATA msgData;
-		const BYTE *entryPtr = ( ( BYTE * ) rivaTunerHeaderPtr ) + \
-							  sizeof( RTHM_SHARED_MEMORY_HEADER );
-		const int entryTotalSize = rivaTunerHeaderPtr->dwNumEntries * \
-								   rivaTunerHeaderPtr->dwEntrySize;
-		static const int quality = 5;
+		if( rivaTunerHeaderPtr->dwSignature == 'RTHM' && \
+			rivaTunerHeaderPtr->dwVersion >= 0x10001 )
+			{
+			MESSAGE_DATA msgData;
+			const BYTE *entryPtr = ( ( BYTE * ) rivaTunerHeaderPtr ) + \
+								  sizeof( RTHM_SHARED_MEMORY_HEADER );
+			const int entryTotalSize = rivaTunerHeaderPtr->dwNumEntries * \
+									   rivaTunerHeaderPtr->dwEntrySize;
+			static const int quality = 10;
 
-		setMessageData( &msgData, ( void * ) entryPtr, 
-						min( entryTotalSize, 2048 ) );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
-						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			setMessageData( &msgData, ( MESSAGE_CAST ) entryPtr, 
+							min( entryTotalSize, 2048 ) );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( MESSAGE_CAST ) &quality,
+							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
 		UnmapViewOfFile( rivaTunerHeaderPtr );
 		}
 	CloseHandle( hRivaTunerData );
@@ -523,19 +568,21 @@ static void readHMonitorData( void )
 										   "Hmonitor_Counters_Block" ) ) == NULL )
 		return;
 	if( ( hMonitorDataPtr = ( HMONITOR_DATA * ) \
-			MapViewOfFile( hHMonitorData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
-		( hMonitorDataPtr->version >= 0x4100 ) && \
-		( hMonitorDataPtr->length >= 48 && hMonitorDataPtr->length <= 1024 ) )
+			MapViewOfFile( hHMonitorData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		MESSAGE_DATA msgData;
-		static const int quality = 40;
+		if( hMonitorDataPtr->version >= 0x4100 && \
+			( hMonitorDataPtr->length >= 48 && hMonitorDataPtr->length <= 1024 ) )
+			{
+			MESSAGE_DATA msgData;
+			static const int quality = 40;
 
-		setMessageData( &msgData, hMonitorDataPtr, hMonitorDataPtr->length );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality, 
-						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			setMessageData( &msgData, hMonitorDataPtr, hMonitorDataPtr->length );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( MESSAGE_CAST ) &quality, 
+							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
 		UnmapViewOfFile( hMonitorDataPtr );
 		}
 	CloseHandle( hHMonitorData );
@@ -576,23 +623,132 @@ static void readATITrayToolsData( void )
 											"ATITRAY_SMEM" ) ) == NULL )
 		return;
 	if( ( trayToolsDataPtr = ( TRAY_TOOLS_DATA * ) \
-			MapViewOfFile( hTrayToolsData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL && \
-		( trayToolsDataPtr->CurGPU >= 100 ) && \
-		( trayToolsDataPtr->isTempMonSupported != 0 ) )
+			MapViewOfFile( hTrayToolsData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
 		{
-		MESSAGE_DATA msgData;
-		static const int quality = 8;
+		if( trayToolsDataPtr->CurGPU >= 100 && \
+			trayToolsDataPtr->isTempMonSupported != 0 )
+			{
+			MESSAGE_DATA msgData;
+			static const int quality = 10;
 
-		setMessageData( &msgData, trayToolsDataPtr,
-						sizeof( TRAY_TOOLS_DATA ) );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
-						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			setMessageData( &msgData, trayToolsDataPtr,
+							sizeof( TRAY_TOOLS_DATA ) );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( MESSAGE_CAST ) &quality,
+							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
 		UnmapViewOfFile( trayToolsDataPtr );
 		}
 	CloseHandle( hTrayToolsData );
+	}
+
+/* CoreTemp data structure, from www.alcpu.com/CoreTemp.   The DWORD values 
+   below are actually (32-bit) floats but we overlay them with DWORDs since 
+   we don't care about the values */
+
+typedef struct 
+	{
+	unsigned int uiLoad[ 256 ];
+	unsigned int uiTjMax[ 128 ];
+	unsigned int uiCoreCnt;
+	unsigned int uiCPUCnt;
+	DWORD /*float*/ fTemp[ 256 ];
+	DWORD /*float*/ fVID;
+	DWORD /*float*/ fCPUSpeed;
+	DWORD /*float*/ fFSBSpeed;
+	DWORD /*float*/ fMultipier;	
+	DWORD /*float*/ sCPUName[ 100 ];
+	unsigned char ucFahrenheit;
+	unsigned char ucDeltaToTjMax;
+	} CORE_TEMP_SHARED_DATA;
+
+static void readCoreTempData( void )
+	{
+	HANDLE hCoreTempData;
+	CORE_TEMP_SHARED_DATA *coreTempDataPtr;
+
+	if( ( hCoreTempData = OpenFileMapping( FILE_MAP_READ, FALSE,
+										   "CoreTempMappingObject" ) ) == NULL )
+		return;
+	if( ( coreTempDataPtr = ( CORE_TEMP_SHARED_DATA * ) \
+			MapViewOfFile( hCoreTempData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
+		{
+		MESSAGE_DATA msgData;
+		static const int quality = 15;
+
+		setMessageData( &msgData, coreTempDataPtr,
+						sizeof( CORE_TEMP_SHARED_DATA ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+						 ( MESSAGE_CAST ) &quality,
+						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+		UnmapViewOfFile( coreTempDataPtr );
+		}
+	CloseHandle( hCoreTempData );
+	}
+
+/* GPU-Z data structures, from forums.techpowerup.com.  This uses an 
+   incredibly wasteful memory layout so we end up having to submit around 
+   200kB of data, unfortunately we can't easily pick out the few values of 
+   interest because the 'data' entries push out the values of interest, the 
+   'sensors' entries, to the end of the memory block */
+
+#define MAX_RECORDS		128
+
+#pragma pack(push, 1)
+
+typedef struct {
+	WCHAR key[ 256 ];
+	WCHAR value[ 256 ];
+	} GPUZ_RECORD;
+
+typedef struct {
+	WCHAR name[ 256 ];
+	WCHAR unit[ 8 ];
+	UINT32 digits;
+	double value;
+	} GPUZ_SENSOR_RECORD;
+
+typedef struct {
+	UINT32 version;		/* Version number, should be 1 */
+	volatile LONG busy;	/* Data-update flag */
+	UINT32 lastUpdate;	/* GetTickCount() of last update */
+	GPUZ_RECORD data[ MAX_RECORDS ];
+	GPUZ_SENSOR_RECORD sensors[ MAX_RECORDS ];
+	} GPUZ_SH_MEM;
+
+#pragma pack(pop)
+
+static void readGPUZData( void )
+	{
+	HANDLE hGPUZData;
+	const GPUZ_SH_MEM *gpuzDataPtr;
+
+	if( ( hGPUZData = OpenFileMapping( FILE_MAP_READ, FALSE,
+									   "GPUZShMem" ) ) == NULL )
+		return;
+	if( ( gpuzDataPtr = ( GPUZ_SH_MEM * ) \
+		  MapViewOfFile( hGPUZData, FILE_MAP_READ, 0, 0, 0 ) ) != NULL )
+		{
+		if( gpuzDataPtr->version == 1 )
+			{
+			MESSAGE_DATA msgData;
+			static const int quality = 10;
+
+			setMessageData( &msgData, ( MESSAGE_CAST ) gpuzDataPtr, 
+							sizeof( GPUZ_SH_MEM ) );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+							 ( MESSAGE_CAST ) &quality,
+							 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+			}
+		UnmapViewOfFile( gpuzDataPtr );
+		}
+	CloseHandle( hGPUZData );
 	}
 
 /****************************************************************************
@@ -604,7 +760,7 @@ static void readATITrayToolsData( void )
 /* Read PnP configuration data.  This is mostly static per machine, but
    differs somewhat across machines.  We have to define the values ourselves
    here due to a combination of some of the values and functions not
-   existing at the time VC++ 6.0 was released and */
+   existing at the time VC++ 6.0 was released */
 
 typedef void * HDEVINFO;
 
@@ -642,7 +798,7 @@ static void readPnPData( void )
 	SETUPDIGETCLASSDEVS pSetupDiGetClassDevs = NULL;
 	SETUPDIGETDEVICEREGISTRYPROPERTY pSetupDiGetDeviceRegistryProperty = NULL;
 
-	if( ( hSetupAPI = LoadLibrary( "SetupAPI.dll" ) ) == NULL )
+	if( ( hSetupAPI = DynamicLoad( "SetupAPI.dll" ) ) == NULL )
 		return;
 
 	/* Get pointers to the PnP functions.  Although the get class-devs
@@ -662,7 +818,7 @@ static void readPnPData( void )
 		pSetupDiEnumDeviceInfo == NULL || pSetupDiGetClassDevs == NULL || \
 		pSetupDiGetDeviceRegistryProperty == NULL )
 		{
-		FreeLibrary( hSetupAPI );
+		DynamicUnload( hSetupAPI );
 		return;
 		}
 
@@ -700,7 +856,7 @@ static void readPnPData( void )
 		endRandomData( randomState, 5 );
 		}
 
-	FreeLibrary( hSetupAPI );
+	DynamicUnload( hSetupAPI );
 	}
 
 /****************************************************************************
@@ -715,8 +871,7 @@ void fastPoll( void )
 	{
 	static BOOLEAN addedFixedItems = FALSE;
 	FILETIME  creationTime, exitTime, kernelTime, userTime;
-	DWORD minimumWorkingSetSize, maximumWorkingSetSize;
-	LARGE_INTEGER performanceCount;
+	SIZE_T minimumWorkingSetSize, maximumWorkingSetSize;
 	MEMORYSTATUS memoryStatus;
 	HANDLE handle;
 	POINT point;
@@ -907,7 +1062,16 @@ void fastPoll( void )
 	   To make things unambiguous, we call RDTSC directly if possible and 
 	   fall back to QPC in the highly unlikely situation where this isn't 
 	   present */
-#ifndef NO_ASM
+#if defined( __WIN64__ )
+	{
+	unsigned __int64 value;
+	
+	/* x86-64 always has a TSC, and the read is supported as an intrinsic */
+	value = __rdtsc();
+	addRandomValue( randomState, value );
+	}
+#else
+  #ifndef NO_ASM
 	if( getSysVar( SYSVAR_HWCAP ) & HWCAP_FLAG_RDTSC )
 		{
 		unsigned long value;
@@ -920,9 +1084,11 @@ void fastPoll( void )
 			}
 		addRandomValue( randomState, value );
 		}
-#endif /* NO_ASM */
+  #endif /* NO_ASM */
 	else
 		{
+		LARGE_INTEGER performanceCount;
+
 		if( QueryPerformanceCounter( &performanceCount ) )
 			addRandomData( randomState, &performanceCount,
 						   sizeof( LARGE_INTEGER ) );
@@ -932,6 +1098,7 @@ void fastPoll( void )
 			addRandomValue( randomState, GetTickCount() );
 			}
 		}
+#endif /* Win32 vs. Win64 */
 
 	/* If there's a hardware RNG present, read data from it.  We check that
 	   the RNG is still present/enabled on each fetch since it could (at 
@@ -1003,13 +1170,26 @@ void fastPoll( void )
 *																			*
 ****************************************************************************/
 
+/* If we're running under Win64 there's no need to include Win95/98 
+   backwards-compatibility features */
+
+#ifndef __WIN64__
+
 /* Type definitions for function pointers to call Toolhelp32 functions */
+
+#ifdef _MSC_VER
+  #if VC_GE_2005( _MSC_VER )
+	#define THREAD_ID	ULONG_PTR
+  #else
+	#define THREAD_ID	DWORD
+  #endif /* VC++ < 2005 */
+#endif /* VC++ */
 
 typedef BOOL ( WINAPI *MODULEWALK )( HANDLE hSnapshot, LPMODULEENTRY32 lpme );
 typedef BOOL ( WINAPI *THREADWALK )( HANDLE hSnapshot, LPTHREADENTRY32 lpte );
 typedef BOOL ( WINAPI *PROCESSWALK )( HANDLE hSnapshot, LPPROCESSENTRY32 lppe );
 typedef BOOL ( WINAPI *HEAPLISTWALK )( HANDLE hSnapshot, LPHEAPLIST32 lphl );
-typedef BOOL ( WINAPI *HEAPFIRST )( LPHEAPENTRY32 lphe, DWORD th32ProcessID, DWORD th32HeapID );
+typedef BOOL ( WINAPI *HEAPFIRST )( LPHEAPENTRY32 lphe, DWORD th32ProcessID, THREAD_ID th32HeapID );
 typedef BOOL ( WINAPI *HEAPNEXT )( LPHEAPENTRY32 lphe );
 typedef HANDLE ( WINAPI *CREATESNAPSHOT )( DWORD dwFlags, DWORD th32ProcessID );
 
@@ -1254,6 +1434,7 @@ unsigned __stdcall threadSafeSlowPollWin95( void *dummy )
 	_endthreadex( 0 );
 	return( 0 );
 	}
+#endif /* __WIN64__ */
 
 /* Type definitions for function pointers to call NetAPI32 functions */
 
@@ -1311,7 +1492,7 @@ static void registryPoll( void )
 	   async driver bind is in progress.  The problem occurs in the dynamic 
 	   loading and linking of driver DLL's, which work as follows:
 
-		hDriver = LoadLibrary( DRIVERNAME );
+		hDriver = DynamicLoad( DRIVERNAME );
 		pFunction1 = ( TYPE_FUNC1 ) GetProcAddress( hDriver, NAME_FUNC1 );
 		pFunction2 = ( TYPE_FUNC1 ) GetProcAddress( hDriver, NAME_FUNC2 );
 
@@ -1407,7 +1588,7 @@ static void registryPoll( void )
 				if( cryptStatusOK( status ) )
 					krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 									 IMESSAGE_SETATTRIBUTE,
-									 ( void * ) &quality,
+									 ( MESSAGE_CAST ) &quality,
 									 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 				}
 			clFree( "slowPollWinNT", pPerfData );
@@ -1469,7 +1650,7 @@ static void slowPollWinNT( void )
 			isWorkstation = TRUE;
 			if( RegQueryValueEx( hKey, "ProductType", 0, NULL, szValue,
 								 &dwSize ) == ERROR_SUCCESS && \
-				stricmp( szValue, "WinNT" ) )
+				dwSize >= 5 && strCompare( szValue, "WinNT", 5 ) )
 				{
 				/* Note: There are (at least) three cases for ProductType:
 				   WinNT = NT Workstation, ServerNT = NT Server, LanmanNT =
@@ -1493,7 +1674,7 @@ static void slowPollWinNT( void )
 	if( hNetAPI32 == NULL )
 		{
 		/* Obtain a handle to the module containing the Lan Manager functions */
-		if( ( hNetAPI32 = LoadLibrary( "NetAPI32.dll" ) ) != NULL )
+		if( ( hNetAPI32 = DynamicLoad( "NetAPI32.dll" ) ) != NULL )
 			{
 			/* Now get pointers to the functions */
 			pNetStatisticsGet = ( NETSTATISTICSGET ) GetProcAddress( hNetAPI32,
@@ -1509,7 +1690,7 @@ static void slowPollWinNT( void )
 				pNetApiBufferFree == NULL )
 				{
 				/* Free the library reference and reset the static handle */
-				FreeLibrary( hNetAPI32 );
+				DynamicUnload( hNetAPI32 );
 				hNetAPI32 = NULL;
 				}
 			}
@@ -1787,7 +1968,7 @@ static void slowPollWinNT( void )
 		if( krnlIsExiting() )
 			return;
 		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 ( void * ) &quality,
+						 ( MESSAGE_CAST ) &quality,
 						 CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 		return;
 		}
@@ -1878,6 +2059,8 @@ void slowPoll( void )
 	readRivaTunerData();
 	readHMonitorData();
 	readATITrayToolsData();
+	readCoreTempData();
+	readGPUZData();
 
 	/* Start a threaded slow poll.  If a slow poll is already running, we
 	   just return since there isn't much point in running two of them at the
@@ -1889,10 +2072,14 @@ void slowPoll( void )
 		krnlExitMutex( MUTEX_RANDOM );
 		return;
 		}
+#ifndef __WIN64__
 	if( getSysVar( SYSVAR_ISWIN95 ) == TRUE )
+		{
 		hThread = ( HANDLE ) _beginthreadex( NULL, 0, threadSafeSlowPollWin95,
 											 NULL, 0, &threadID );
+		}
 	else
+#endif /* __WIN64__ */
 		{
 		/* In theory since the thread is gathering info used (eventually)
 		   for crypto keys we could set an ACL on the thread to make it
@@ -1947,10 +2134,11 @@ int waitforRandomCompletion( const BOOLEAN force )
 	   otherwise we hang around for as long as it takes (with a sanity-check
 	   upper limit of 5 minutes) */
 	dwResult = WaitForSingleObject( hThread, timeout );
-	if( dwResult == WAIT_FAILED )
+	if( dwResult != WAIT_OBJECT_0 )
 		{
 		/* Since this is a cleanup function there's not much that we can do 
 		   at this point, although we warn in debug mode */
+		DEBUG_DIAG(( "Error %lX waiting for object", dwResult ));
 		assert( DEBUG_WARN );
 		return( CRYPT_OK );
 		}
@@ -1985,7 +2173,7 @@ void endRandomPolling( void )
 	assert( hThread == NULL );
 	if( hNetAPI32 )
 		{
-		FreeLibrary( hNetAPI32 );
+		DynamicUnload( hNetAPI32 );
 		hNetAPI32 = NULL;
 		}
 	endSystemRNG();

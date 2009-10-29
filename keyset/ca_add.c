@@ -87,9 +87,7 @@ BOOLEAN checkRequest( IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
 				   is an encryption-only key */
 				status = krnlSendMessage( iCertRequest, IMESSAGE_GETATTRIBUTE,
 										  &value, CRYPT_CERTINFO_KEYUSAGE );
-				if( cryptStatusOK( status ) && \
-					( value & ( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-								CRYPT_KEYUSAGE_NONREPUDIATION ) ) )
+				if( cryptStatusOK( status ) && ( value & KEYUSAGE_SIGN ) )
 					return( FALSE );
 				break;
 				}
@@ -333,12 +331,12 @@ int caDeletePKIUser( INOUT DBMS_INFO *dbmsInfo,
 
 /* Add a certificate issue or revocation request to the certificate store */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
 int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo, 
 					  IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
 					  IN_ENUM( CRYPT_CERTTYPE ) \
 						const CRYPT_CERTTYPE_TYPE requestType, 
-					  const BOOLEAN isRenewal, 
+					  const BOOLEAN isRenewal, const BOOLEAN isInitialOp,
 					  INOUT ERROR_INFO *errorInfo )
 	{
 	BYTE certData[ MAX_CERT_SIZE + 8 ];
@@ -465,15 +463,17 @@ int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo,
 	   reqCertID to enforce a single use of issuing authorisation by the
 	   database ifself but have to do a manual check here, checking 
 	   specifically for the case where a PKI user authorises a certificate 
-	   issue */
-#if 0	/* This check is too restrictive because it blocks any further 
-		   certificate issues after the first one.  This is because as soon 
-		   as a single issue has been authorised for a user there'll be a 
-		   request for that user logged so all further attempts to submit a 
-		   request (for example for a renewal, or an encryption certificate 
-		   to go with a signing one) will fail */
-	if( reqCertIDptr != NULL )
+	   issue.  In addition we can't even perform a general-purpose check 
+	   because as soon as a single issue has been authorised for a user 
+	   there'll be a request for that user logged so that all further 
+	   attempts to submit a request (for example for a renewal, or an 
+	   encryption certificate to go with a signing one) will fail.  Because 
+	   of this we only perform a check on the first attempt to issue a 
+	   certificate, indicated by the caller setting the isInitialOp flag */
+	if( isInitialOp && reqCertIDptr != NULL )
 		{
+		BOUND_DATA boundData[ BOUND_DATA_MAXITEMS ], *boundDataPtr = boundData;
+
 		initBoundData( boundDataPtr );
 		setBoundData( boundDataPtr, 0, reqCertID, reqCertIDlength );
 		status = dbmsQuery(
@@ -497,7 +497,6 @@ int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo,
 					  "issued" ) );
 			}
 		}
-#endif /* 0 */
 
 	/* Update the certificate store.  Since a revocation request generally 
 	   won't have any fields of any significance set we have to use a 
@@ -523,6 +522,7 @@ int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo,
 								   certDataLength, CRYPT_CERTTYPE_NONE );
 			if( cryptStatusError( status ) )
 				{
+				DEBUG_DIAG(( "Couldn't base64-encode data" ));
 				assert( DEBUG_WARN );
 				return( status );
 				}

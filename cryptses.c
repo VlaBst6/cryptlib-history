@@ -139,7 +139,7 @@ static int sessionMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 			if( message == MESSAGE_SETATTRIBUTE || \
 				message == MESSAGE_SETATTRIBUTE_S )
 				{
-				assert( sessionInfoPtr->setAttributeFunction != NULL );
+				REQUIRES( sessionInfoPtr->setAttributeFunction != NULL );
 
 				status = sessionInfoPtr->setAttributeFunction( sessionInfoPtr,
 											messageDataPtr, messageValue );
@@ -154,6 +154,7 @@ static int sessionMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				{
 				REQUIRES( message == MESSAGE_GETATTRIBUTE || \
 						  message == MESSAGE_GETATTRIBUTE_S );
+				REQUIRES( sessionInfoPtr->getAttributeFunction != NULL );
 
 				status = sessionInfoPtr->getAttributeFunction( sessionInfoPtr,
 											messageDataPtr, messageValue );
@@ -651,10 +652,10 @@ int sessionManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 		case MANAGEMENT_ACTION_PRE_SHUTDOWN:
 			/* We have to wait for the driver binding to complete before we
 			   can start the shutdown process */
-			status = krnlWaitSemaphore( SEMAPHORE_DRIVERBIND );
-			if( cryptStatusError( status ) )
+			if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
 				{
 				/* The kernel is shutting down, bail out */
+				DEBUG_DIAG(( "Exiting due to kernel shutdown" ));
 				assert( DEBUG_WARN );
 				return( CRYPT_ERROR_PERMISSION );
 				}

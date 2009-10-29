@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *			cryptlib Session-specific Attribute Support Routines			*
-*					  Copyright Peter Gutmann 1998-2005						*
+*					  Copyright Peter Gutmann 1998-2008						*
 *																			*
 ****************************************************************************/
 
@@ -21,6 +21,12 @@
 *																			*
 ****************************************************************************/
 
+/* Helper function used to access internal attributes within an attribute 
+   group */
+
+#if 0	/* Currently unused, may be enabled in 3.4 with the move to 
+		   composite attributes for host/client information */
+
 /* Reset the internal virtual cursor in a attribute-list item after we've 
    moved the attribute cursor */
 
@@ -28,14 +34,9 @@
 		if( attributeListPtr != NULL ) \
 			attributeListPtr->flags |= ATTR_FLAG_CURSORMOVED
 
-/* Helper function used to access internal attributes within an attribute 
-   group */
-
-#if 0	/* Currently unused, will be enabled in 3.3 with the move to 
-		   composite attributes for host/client info */
-
-static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
-						   const ATTR_TYPE attrGetType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int accessFunction( INOUT ATTRIBUTE_LIST *attributeListPtr,
+						   IN_ENUM( ATTR ) const ATTR_TYPE attrGetType )
 	{
 	static const CRYPT_ATTRIBUTE_TYPE attributeOrderList[] = {
 				CRYPT_SESSINFO_NAME, CRYPT_SESSINFO_PASSWORD,
@@ -46,6 +47,10 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 	BOOLEAN doContinue;
 	int iterationCount = 0;
 
+	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	REQUIRES( attrGetType > ATTR_NONE && attrGetType < ATTR_LAST );
+
 	/* If we've just moved the cursor onto this attribute, reset the 
 	   position to the first internal attribute */
 	if( attributeListPtr->flags & ATTR_FLAG_CURSORMOVED )
@@ -55,7 +60,8 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 		attributeListPtr->flags &= ~ATTR_FLAG_CURSORMOVED;
 		}
 
-	/* If it's an info fetch, return the currently-selected attribute */
+	/* If it's an information fetch, return the currently-selected 
+	   attribute */
 	if( attrGetType == ATTR_NONE )
 		return( attributeID );
 
@@ -71,22 +77,28 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 				attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE && \
 				i < FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ); 
 			 i++ );
-		if( i >= FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ) )
-			retIntError_False();
+		ENSURES_B( i < FAILSAFE_ARRAYSIZE( attributeOrderList, \
+										   CRYPT_ATTRIBUTE_TYPE ) );
 		if( attributeOrderList[ i ] == CRYPT_ATTRIBUTE_NONE )
 			attributeID = CRYPT_ATTRIBUTE_NONE;
 		else
+			{
 			if( attrGetType == ATTR_PREV )
+				{
 				attributeID = ( i < 1 ) ? CRYPT_ATTRIBUTE_NONE : \
 										  attributeOrderList[ i - 1 ];
+				}
 			else
 				attributeID = attributeOrderList[ i + 1 ];
+			}
 		if( attributeID == CRYPT_ATTRIBUTE_NONE )
+			{
 			/* We've reached the first/last sub-attribute within the current 
 			   item/group, tell the caller that there are no more sub-
 			   attributes present and they have to move on to the next 
 			   group */
 			return( FALSE );
+			}
 
 		/* Check whether the required sub-attribute is present.  If not, we
 		   continue and try the next one */
@@ -111,28 +123,43 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 			}
 		}
 	while( doContinue && iterationCount++ < FAILSAFE_ITERATIONS_SMALL );
-	if( iterationCount >= FAILSAFE_ITERATIONS_SMALL )
-		retIntError_False();
+	ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_SMALL );
 	attributeListPtr->attributeCursorEntry = attributeID;
 	
 	return( TRUE );
 	}
+#else
+  #define resetVirtualCursor( attributeListPtr )
 #endif /* 0 */
 
 /* Callback function used to provide external access to attribute list-
    internal fields */
 
-static const void *getAttrFunction( const void *attributePtr, 
-									CRYPT_ATTRIBUTE_TYPE *groupID, 
-									CRYPT_ATTRIBUTE_TYPE *attributeID, 
-									CRYPT_ATTRIBUTE_TYPE *instanceID,
-									const ATTR_TYPE attrGetType )
+CHECK_RETVAL_PTR \
+static const void *getAttrFunction( IN_OPT TYPECAST( ATTRIBUTE_LIST * ) \
+										const void *attributePtr, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *groupID, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *attributeID, 
+									OUT_OPT_ATTRIBUTE_Z \
+										CRYPT_ATTRIBUTE_TYPE *instanceID,
+									IN_ENUM( ATTR ) const ATTR_TYPE attrGetType )
 	{
 	ATTRIBUTE_LIST *attributeListPtr = ( ATTRIBUTE_LIST * ) attributePtr;
 	BOOLEAN subGroupMove;
+	int value, status;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( groupID == NULL || \
+			isWritePtr( groupID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( attributeID == NULL || \
+			isWritePtr( attributeID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( instanceID == NULL || \
+			isWritePtr( instanceID, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+
+	REQUIRES_N( attrGetType > ATTR_NONE && attrGetType < ATTR_LAST );
 
 	/* Clear return values */
 	if( groupID != NULL )
@@ -143,12 +170,12 @@ static const void *getAttrFunction( const void *attributePtr,
 		*instanceID = CRYPT_ATTRIBUTE_NONE;
 
 	/* Move to the next or previous attribute if required.  This isn't just a
-	   case of following the prev/next links because some attribute-list 
-	   items contain an entire attribute group, so positioning by attribute 
-	   merely changes the current selection within the group (== attribute-
-	   list item) rather than moving to the previous/next entry.  Because of 
-	   this we have to special-case the code for composite items and allow 
-	   virtual positioning within the item */
+	   case of following the previous/next links because some attribute-list 
+	   items contain an entire attribute group so that positioning by 
+	   attribute merely changes the current selection within the group 
+	   (== attribute-list item) rather than moving to the previous/next 
+	   entry.  Because of this we have to special-case the code for 
+	   composite items and allow virtual positioning within the item */
 	if( attributeListPtr == NULL )
 		return( NULL );
 	subGroupMove = ( attrGetType == ATTR_PREV || \
@@ -156,18 +183,22 @@ static const void *getAttrFunction( const void *attributePtr,
 				   ( attributeListPtr->flags & ATTR_FLAG_COMPOSITE );
 	if( subGroupMove )
 		{
-		assert( attrGetType == ATTR_NEXT || attrGetType == ATTR_PREV );
-		assert( attributeListPtr->flags & ATTR_FLAG_COMPOSITE );
-		assert( attributeListPtr->accessFunction != NULL );
+		REQUIRES_N( attrGetType == ATTR_NEXT || attrGetType == ATTR_PREV );
+		REQUIRES_N( attributeListPtr->flags & ATTR_FLAG_COMPOSITE );
+		REQUIRES_N( attributeListPtr->accessFunction != NULL );
 
-		subGroupMove = attributeListPtr->accessFunction( attributeListPtr, 
-														 attrGetType );
+		status = attributeListPtr->accessFunction( attributeListPtr, 
+												   attrGetType, &value );
+		if( cryptStatusError( status ) )
+			return( NULL );
+		subGroupMove = value;
 		}
 
 	/* If we're moving by group, move to the next/previous attribute list
 	   item and reset the internal virtual cursor.  Note that we always 
-	   advance the cursor to the next/prev attribute, it's up to the calling 
-	   code to manage attribute by attribute vs.group by group moves */
+	   advance the cursor to the next/previous attribute, it's up to the 
+	   calling code to manage attribute-by-attribute vs. group-by-group 
+	   moves */
 	if( !subGroupMove && attrGetType != ATTR_CURRENT )
 		{
 		attributeListPtr = ( attrGetType == ATTR_PREV ) ? \
@@ -180,19 +211,24 @@ static const void *getAttrFunction( const void *attributePtr,
 	/* Return ID information to the caller.  We only return the group ID if
 	   we've moved within the attribute group, if we've moved from one group
 	   to another we leave it cleared because sessions can contain multiple
-	   groups with the same ID, and returning an ID identical to the one from
+	   groups with the same ID and returning an ID identical to the one from
 	   the group that we've moved out of would make it look as if we're still 
-	   within the same group.  Note that this relies on the behaviour of the
-	   attribute-move functions, which first get the current group using 
-	   ATTR_CURRENT and then move to the next or previous using ATTR_NEXT/
-	   PREV */
+	   within the same group.  Note that this relies somewhat on the 
+	   implementation behaviour of the attribute-move functions, which first 
+	   get the current group using ATTR_CURRENT and then move to the next or 
+	   previous using ATTR_NEXT/PREV */
 	if( groupID != NULL && ( attrGetType == ATTR_CURRENT || subGroupMove ) )
 		*groupID = attributeListPtr->groupID;
 	if( attributeID != NULL )
 		{
 		if( attributeListPtr->flags & ATTR_FLAG_COMPOSITE )
-			*attributeID = attributeListPtr->accessFunction( attributeListPtr, 
-															 ATTR_NONE );
+			{
+			status = attributeListPtr->accessFunction( attributeListPtr, 
+													   ATTR_NONE, &value );
+			if( cryptStatusError( status ) )
+				return( NULL );
+			*attributeID = value;
+			}
 		else
 			*attributeID = attributeListPtr->attributeID;
 		}
@@ -204,66 +240,71 @@ static const void *getAttrFunction( const void *attributePtr,
    resetEphemeralAttributes().  This just clears the ephemeral flag so that
    they're treated as normal attributes */
 
-void lockEphemeralAttributes( ATTRIBUTE_LIST *attributeListHead )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void lockEphemeralAttributes( INOUT ATTRIBUTE_LIST *attributeListHead )
 	{
 	ATTRIBUTE_LIST *attributeListCursor;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST * ) ) );
 
 	/* Clear the ATTR_FLAG_EPHEMERAL flag on all attributes */
-	for( attributeListCursor = attributeListHead; 
+	for( attributeListCursor = attributeListHead, iterationCount = 0;
 		 attributeListCursor != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListCursor = attributeListCursor->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListCursor = attributeListCursor->next, iterationCount++ )
+		{
 		attributeListCursor->flags &= ~ATTR_FLAG_EPHEMERAL;
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Void();
+		}
+	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	}
 
 /* Check that a set of attributes is well-formed.  We can perform most of 
-   the checking as the attributes are added, but some checks (for example
+   the checking as the attributes are added but some checks (for example
    whether each username has a corresponding password) aren't possible 
    until all of the attributes are present */
 
-CRYPT_ATTRIBUTE_TYPE checkMissingInfo( const ATTRIBUTE_LIST *attributeListHead,
+CHECK_RETVAL_ENUM( CRYPT_ATTRIBUTE ) \
+CRYPT_ATTRIBUTE_TYPE checkMissingInfo( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
 									   const BOOLEAN isServer )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr = attributeListHead;
+
+	assert( attributeListHead == NULL || \
+			isReadPtr( attributeListHead, sizeof( ATTRIBUTE_LIST * ) ) );
 
 	if( attributeListPtr == NULL )
 		return( CRYPT_ATTRIBUTE_NONE );
 
 	/* Make sure that every username attribute is paired up with a 
 	   corresponding authentication attribute.  This only applies to 
-	   servers, because clients can also use private keys for 
-	   authentication, and the presence of a key or password is checked
-	   elsewhere */
+	   servers because clients use a session-wide private key for 
+	   authentication, the presence of which is checked elsewhere */
 	if( isServer )
 		{
-		int iterationCount = 0;
+		int iterationCount;
 
-		while( ( attributeListPtr = \
+		for( iterationCount = 0;
+			 ( attributeListPtr = \
 					attributeFind( attributeListPtr, getAttrFunction, 
 								   CRYPT_SESSINFO_USERNAME, 
 								   CRYPT_ATTRIBUTE_NONE ) ) != NULL && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+				iterationCount < FAILSAFE_ITERATIONS_MAX;
+			 iterationCount++ )
 			{
-			/* Make sure that there's a matching authentication attribute */
-			if( ( attributeListPtr = attributeListPtr->next ) == NULL )
-				return( CRYPT_SESSINFO_PASSWORD );
-
-			/* The authentication attribute is currently a password, but in
-			   future versions could also be a public key used for 
-			   authentication */
-			if( attributeListPtr->attributeID != CRYPT_SESSINFO_PASSWORD )
+			/* Make sure that there's a matching authentication attribute.  
+			   This is currently a password but in future versions could 
+			   also be a public key */
+			attributeListPtr = attributeListPtr->next;
+			if( attributeListPtr == NULL || \
+				attributeListPtr->attributeID != CRYPT_SESSINFO_PASSWORD )
 				return( CRYPT_SESSINFO_PASSWORD );
 
 			/* Move on to the next attribute */
 			attributeListPtr = attributeListPtr->next;
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-			retIntError_Ext( CRYPT_SESSINFO_ACTIVE );
+		ENSURES_EXT( ( iterationCount < FAILSAFE_ITERATIONS_MAX ), \
+					 CRYPT_SESSINFO_ACTIVE );
 		}
 
 	return( CRYPT_ATTRIBUTE_NONE );
@@ -277,10 +318,11 @@ CRYPT_ATTRIBUTE_TYPE checkMissingInfo( const ATTRIBUTE_LIST *attributeListHead,
 
 /* Get/set the attribute cursor */
 
-int getSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
-							   ATTRIBUTE_LIST *attributeListCursor, 
-							   const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
-							   int *valuePtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4 ) ) \
+int getSessionAttributeCursor( IN_OPT ATTRIBUTE_LIST *attributeListHead,
+							   IN_OPT ATTRIBUTE_LIST *attributeListCursor, 
+							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
+							   OUT_ATTRIBUTE_Z CRYPT_ATTRIBUTE_TYPE *valuePtr )
 	{
 	BOOLEAN initAttributeList = FALSE;
 
@@ -288,11 +330,12 @@ int getSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
 			isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( attributeListCursor == NULL || \
 			isWritePtr( attributeListCursor, sizeof( ATTRIBUTE_LIST ) ) );
-	assert( ( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT ) || \
-			( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP ) || \
-			( sessionInfoType > CRYPT_SESSINFO_FIRST && \
-			  sessionInfoType < CRYPT_SESSINFO_LAST ) );
 	assert( isWritePtr( valuePtr, sizeof( int ) ) );
+
+	REQUIRES( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT || \
+			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
+			  ( sessionInfoType > CRYPT_SESSINFO_FIRST && \
+				sessionInfoType < CRYPT_SESSINFO_LAST ) );
 
 	/* Clear return value */
 	*valuePtr = CRYPT_ATTRIBUTE_NONE;
@@ -313,31 +356,44 @@ int getSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
 	if( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP ) 
 		*valuePtr = attributeListCursor->groupID;
 	else
+		{
 		/* If it's a single-attribute group, return the attribute type */
 		if( !( attributeListCursor->flags & ATTR_FLAG_COMPOSITE ) )
 			*valuePtr = attributeListCursor->groupID;
 		else
+			{
+			int value, status;
+
 			/* It's a composite type, get the currently-selected sub-attribute */
-			*valuePtr = attributeListCursor->accessFunction( attributeListCursor, 
-														 ATTR_NONE );
+			status = attributeListCursor->accessFunction( attributeListCursor, 
+														  ATTR_NONE, &value );
+			if( cryptStatusError( status ) )
+				return( status );
+			*valuePtr = value;
+			}
+		}
 	return( initAttributeList ? OK_SPECIAL : CRYPT_OK );
 	}
 
-int setSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
-							   ATTRIBUTE_LIST **attributeListCursorPtr, 
-							   const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
-							   const int position )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int setSessionAttributeCursor( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
+							   OUT_PTR ATTRIBUTE_LIST **attributeListCursorPtr, 
+							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
+							   IN_RANGE( CRYPT_CURSOR_LAST, \
+										 CRYPT_CURSOR_FIRST ) /* Values are -ve */
+									const int position )
 	{
-	ATTRIBUTE_LIST *attributeListPtr = *attributeListCursorPtr;
+	const ATTRIBUTE_LIST *attributeListPtr = *attributeListCursorPtr;
 
 	assert( attributeListHead == NULL || \
-			isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST ) ) );
+			isReadPtr( attributeListHead, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( attributeListCursorPtr, sizeof( ATTRIBUTE_LIST * ) ) );
-	assert( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
-			sessionInfoType == CRYPT_ATTRIBUTE_CURRENT || \
-			sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
-	assert( position <= CRYPT_CURSOR_FIRST && \
-			position >= CRYPT_CURSOR_LAST );
+	
+	REQUIRES( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
+			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT || \
+			  sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_INSTANCE );
+	REQUIRES( position <= CRYPT_CURSOR_FIRST && \
+			  position >= CRYPT_CURSOR_LAST );
 
 	/* If it's an absolute positioning code, pre-set the attribute cursor if 
 	   required */
@@ -346,9 +402,9 @@ int setSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
 		if( attributeListHead == NULL )
 			return( CRYPT_ERROR_NOTFOUND );
 
-		/* If it's an absolute attribute positioning code, reset the 
+		/* If it's an absolute attribute positioning code reset the 
 		   attribute cursor to the start of the list before we try to move 
-		   it, and if it's an attribute positioning code, initialise the 
+		   it, and if it's an attribute positioning code initialise the 
 		   attribute cursor if necessary */
 		if( sessionInfoType == CRYPT_ATTRIBUTE_CURRENT_GROUP || \
 			attributeListPtr == NULL )
@@ -357,28 +413,32 @@ int setSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
 			resetVirtualCursor( attributeListPtr );
 			}
 
-		/* If there are no attributes present, return the appropriate error 
+		/* If there are no attributes present return the appropriate error 
 		   code */
 		if( attributeListPtr == NULL )
+			{
 			return( ( position == CRYPT_CURSOR_FIRST || \
 					  position == CRYPT_CURSOR_LAST ) ? \
 					 CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_NOTINITED );
+			}
 		}
 	else
+		{
 		/* It's a relative positioning code, return a not-inited error 
 		   rather than a not-found error if the cursor isn't set since there 
 		   may be attributes present but the cursor hasn't been initialised 
 		   yet by selecting the first or last absolute attribute */
 		if( attributeListPtr == NULL )
 			return( CRYPT_ERROR_NOTINITED );
+		}
 
 	/* Move the cursor */
-	attributeListPtr = ( ATTRIBUTE_LIST * ) \
+	attributeListPtr = ( const ATTRIBUTE_LIST * ) \
 					   attributeMoveCursor( attributeListPtr, getAttrFunction, 
 											sessionInfoType, position );
 	if( attributeListPtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
-	*attributeListCursorPtr = attributeListPtr;
+	*attributeListCursorPtr = ( ATTRIBUTE_LIST * ) attributeListPtr;
 	return( CRYPT_OK );
 	}
 
@@ -390,11 +450,16 @@ int setSessionAttributeCursor( ATTRIBUTE_LIST *attributeListHead,
 
 /* Find a session attribute by type */
 
-const ATTRIBUTE_LIST *findSessionInfo( const ATTRIBUTE_LIST *attributeListPtr,
-								const CRYPT_ATTRIBUTE_TYPE attributeID )
+CHECK_RETVAL_PTR \
+const ATTRIBUTE_LIST *findSessionInfo( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+									   IN_ATTRIBUTE \
+											const CRYPT_ATTRIBUTE_TYPE attributeID )
 	{
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	REQUIRES_N( attributeID > CRYPT_SESSINFO_FIRST && \
+				attributeID < CRYPT_SESSINFO_LAST );
 
 	return( attributeFind( attributeListPtr, getAttrFunction, 
 						   attributeID, CRYPT_ATTRIBUTE_NONE ) );
@@ -402,15 +467,23 @@ const ATTRIBUTE_LIST *findSessionInfo( const ATTRIBUTE_LIST *attributeListPtr,
 
 /* Find a session attribute by type and content */
 
-const ATTRIBUTE_LIST *findSessionInfoEx( const ATTRIBUTE_LIST *attributeListPtr,
-								const CRYPT_ATTRIBUTE_TYPE attributeID,
-								const void *value, const int valueLength )
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 3 ) ) \
+const ATTRIBUTE_LIST *findSessionInfoEx( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
+										 IN_ATTRIBUTE \
+											const CRYPT_ATTRIBUTE_TYPE attributeID,
+										 IN_BUFFER( valueLength ) const void *value, 
+										 IN_LENGTH_SHORT const int valueLength )
 	{
 	const ATTRIBUTE_LIST *attributeListCursor;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( attributeListPtr == NULL || \
 			isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isReadPtr( value, valueLength ) );
+
+	REQUIRES_N( attributeID > CRYPT_SESSINFO_FIRST && \
+				attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES_N( valueLength > 0 && valueLength < MAX_INTLENGTH_SHORT );
 
 	/* Find the first attribute of this type */
 	attributeListCursor = attributeFind( attributeListPtr, getAttrFunction, 
@@ -423,8 +496,10 @@ const ATTRIBUTE_LIST *findSessionInfoEx( const ATTRIBUTE_LIST *attributeListPtr,
 	   attributeFindNextInstance() to help us because that finds the next 
 	   instance of the current attribute in an attribute group, not the next 
 	   instance in an interleaved set of attributes */
-	while( attributeListCursor != NULL && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+	for( iterationCount = 0;
+		 attributeListCursor != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 iterationCount++ )
 		{
 		if( attributeListCursor->attributeID == attributeID && \
 			attributeListCursor->valueLength == valueLength && \
@@ -432,8 +507,7 @@ const ATTRIBUTE_LIST *findSessionInfoEx( const ATTRIBUTE_LIST *attributeListPtr,
 			break;
 		attributeListCursor = attributeListCursor->next;
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( attributeListCursor );
 	}
@@ -444,46 +518,55 @@ const ATTRIBUTE_LIST *findSessionInfoEx( const ATTRIBUTE_LIST *attributeListPtr,
 *																			*
 ****************************************************************************/
 
-/* Add a session attribute.  There are two versions of this function, the
-   standard version and an extended version that allows the caller to 
+/* Add a session attribute.  There are three versions of this function, the
+   standard version and two extended versions that allow the caller to 
    specify an access function to access session subtype-specific internal
    attributes when the data being added is structured session-type-specific
-   data, and a set of ATTR_FLAG_xxx flags to provide precise control over
-   the attribute handling */
+   data, and that allow the use of a set of ATTR_FLAG_xxx flags to provide 
+   precise control over the attribute handling */
 
-static int addInfo( ATTRIBUTE_LIST **listHeadPtr,
-					const CRYPT_ATTRIBUTE_TYPE groupID,
-					const CRYPT_ATTRIBUTE_TYPE attributeID,
-					const void *data, const int dataLength, 
-					const int dataMaxLength, 
-					const ATTRACCESSFUNCTION accessFunction, 
-					const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int addInfo( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+					IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE groupID,
+					IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
+					IN_BUFFER_OPT( dataLength ) const void *data, 
+					IN_LENGTH_SHORT const int dataLength, 
+					IN_LENGTH_SHORT const int dataMaxLength, 
+					IN_OPT const ATTRACCESSFUNCTION accessFunction, 
+					IN_FLAGS( ATTR ) const int flags )
 	{
 	ATTRIBUTE_LIST *newElement, *insertPoint = NULL;
 
 	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
-	assert( groupID > CRYPT_SESSINFO_FIRST && \
-			groupID < CRYPT_SESSINFO_LAST );
-	assert( attributeID > CRYPT_SESSINFO_FIRST && \
-			attributeID < CRYPT_SESSINFO_LAST );
 	assert( ( data == NULL ) || \
 			( isReadPtr( data, dataLength ) && \
 			  dataLength <= dataMaxLength ) );
-	assert( dataMaxLength >= 0 );
-	assert( !( flags & ATTR_FLAG_COMPOSITE ) || \
-			accessFunction != NULL );
+
+	REQUIRES( groupID > CRYPT_SESSINFO_FIRST && \
+			  groupID < CRYPT_SESSINFO_LAST );
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( ( data == NULL && dataMaxLength == 0 ) || \
+			  ( data != NULL && \
+				dataLength > 0 && dataLength <= dataMaxLength && \
+				dataMaxLength > 0 && dataMaxLength < MAX_INTLENGTH_SHORT ) );
+			  /* String = { data, dataLength, dataMaxLength }, 
+			     int = dataLength */
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_COMPOSITE ) || \
+			  accessFunction != NULL );
 
 	/* Find the correct insertion point and make sure that the attribute 
 	   isn't already present */
 	if( *listHeadPtr != NULL )
 		{
 		ATTRIBUTE_LIST *prevElement = NULL;
-		int iterationCount = 0;
+		int iterationCount;
 
-		for( insertPoint = *listHeadPtr; 
+		for( insertPoint = *listHeadPtr, iterationCount = 0;
 			 insertPoint != NULL && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-			 insertPoint = insertPoint->next )
+				iterationCount < FAILSAFE_ITERATIONS_MAX;
+			 insertPoint = insertPoint->next, iterationCount++ )
 			{
 			/* If this is a non-multivalued attribute, make sure that it
 			   isn't already present */
@@ -493,8 +576,7 @@ static int addInfo( ATTRIBUTE_LIST **listHeadPtr,
 
 			prevElement = insertPoint;
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-			retIntError();
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
 		insertPoint = prevElement;
 		}
 
@@ -525,33 +607,83 @@ static int addInfo( ATTRIBUTE_LIST **listHeadPtr,
 	return( CRYPT_OK );
 	}
 
-int addSessionInfo( ATTRIBUTE_LIST **listHeadPtr,
-					const CRYPT_ATTRIBUTE_TYPE attributeID,
-					const void *data, const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int addSessionInfo( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+					IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
+					IN_INT_Z const int value )
 	{
+	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( value >= 0 && value < MAX_INTLENGTH );
+
+	/* Pre-3.3 kludge: Set the groupID to the attributeID since groups 
+	   aren't defined yet */
+	return( addInfo( listHeadPtr, attributeID, attributeID, NULL, 
+					 value, 0, NULL, ATTR_FLAG_NONE ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int addSessionInfoS( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+					IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
+					IN_BUFFER( dataLength ) const void *data, 
+					IN_LENGTH_SHORT const int dataLength )
+	{
+	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( data, dataLength ) );
+
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
+
 	/* Pre-3.3 kludge: Set the groupID to the attributeID since groups 
 	   aren't defined yet */
 	return( addInfo( listHeadPtr, attributeID, attributeID, data, 
 					 dataLength, dataLength, NULL, ATTR_FLAG_NONE ) );
 	}
 
-int addSessionInfoEx( ATTRIBUTE_LIST **listHeadPtr,
-					  const CRYPT_ATTRIBUTE_TYPE attributeID,
-					  const void *data, const int dataLength, 
-					  const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int addSessionInfoEx( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+					  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
+					  IN_BUFFER( dataLength ) const void *data, 
+					  IN_LENGTH_SHORT const int dataLength, 
+					  IN_FLAGS( ATTR ) const int flags )
 	{
+	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( data, dataLength ) );
+
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
+assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_ENCODEDVALUE | ATTR_FLAG_MULTIVALUED ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+
 	/* Pre-3.3 kludge: Set the groupID to the attributeID since groups 
 	   aren't defined yet */
 	return( addInfo( listHeadPtr, attributeID, attributeID, data, 
 					 dataLength, dataLength, NULL, flags ) );
 	}
 
-int addSessionInfoComposite( ATTRIBUTE_LIST **listHeadPtr,
-							 const CRYPT_ATTRIBUTE_TYPE attributeID,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int addSessionInfoComposite( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+							 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
 							 const ATTRACCESSFUNCTION accessFunction, 
-							 const void *data, const int dataLength,
-							 const int flags )
+							 IN_BUFFER( dataLength ) const void *data, 
+							 IN_LENGTH_SHORT const int dataLength,
+							 IN_FLAGS( ATTR ) const int flags )
 	{
+	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( data, dataLength ) );
+
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( accessFunction != NULL );
+	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT );
+assert( flags == ATTR_FLAG_MULTIVALUED || flags == ATTR_FLAG_COMPOSITE || \
+		flags == ( ATTR_FLAG_MULTIVALUED | ATTR_FLAG_COMPOSITE ) );
+	REQUIRES( flags > ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+
 	/* For composite attributes the groupID is the attributeID, with the
 	   actual attributeID being returned by the accessFunction */
 	return( addInfo( listHeadPtr, attributeID, attributeID, data, 
@@ -559,16 +691,32 @@ int addSessionInfoComposite( ATTRIBUTE_LIST **listHeadPtr,
 	}
 
 /* Update a session attribute, either by replacing an existing entry if it
-   already exists or by adding a new entry */
+   already exists or by adding a new entry.  Since we can potentially update
+   the entry later we specify two length values, the length of the data 
+   currently being added and the maximum length that this value may take in
+   the future */
 
-int updateSessionInfo( ATTRIBUTE_LIST **listHeadPtr,
-					   const CRYPT_ATTRIBUTE_TYPE attributeID,
-					   const void *data, const int dataLength,
-					   const int dataMaxLength, const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int updateSessionInfo( INOUT_PTR ATTRIBUTE_LIST **listHeadPtr,
+					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
+					   IN_BUFFER( dataLength ) const void *data, 
+					   IN_LENGTH_SHORT const int dataLength,
+					   IN_LENGTH_SHORT const int dataMaxLength, 
+					   IN_FLAGS( ATTR ) const int flags )
 	{
 	ATTRIBUTE_LIST *attributeListPtr = *listHeadPtr;
 
-	assert( !( flags & ATTR_FLAG_MULTIVALUED ) );
+	assert( isWritePtr( listHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( data, dataLength ) );
+
+	REQUIRES( attributeID > CRYPT_SESSINFO_FIRST && \
+			  attributeID < CRYPT_SESSINFO_LAST );
+	REQUIRES( dataLength > 0 && dataLength <= dataMaxLength && \
+			  dataLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( dataMaxLength > 0 && dataMaxLength < MAX_INTLENGTH_SHORT );
+assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_EPHEMERAL | ATTR_FLAG_ENCODEDVALUE ) ) == 0 );
+	REQUIRES( flags >= ATTR_FLAG_NONE && flags <= ATTR_FLAG_MAX );
+	REQUIRES( !( flags & ATTR_FLAG_MULTIVALUED ) );
 
 	/* Find the first attribute of this type */
 	attributeListPtr = attributeFind( attributeListPtr, getAttrFunction, 
@@ -577,14 +725,17 @@ int updateSessionInfo( ATTRIBUTE_LIST **listHeadPtr,
 	/* If the attribute is already present, update the value */
 	if( attributeListPtr != NULL )
 		{
-		assert( attributeListPtr->attributeID == attributeID );
-		assert( ( attributeListPtr->valueLength == 0 && \
-				  !memcmp( attributeListPtr->value, \
-						   "\x00\x00\x00\x00", 4 ) ) || \
-				attributeListPtr->valueLength > 0 );
-		assert( isReadPtr( data, dataLength ) && \
-				dataLength <= dataMaxLength );
+		REQUIRES( attributeListPtr->attributeID == attributeID );
+		REQUIRES( ( attributeListPtr->valueLength == 0 && \
+					!memcmp( attributeListPtr->value, \
+							 "\x00\x00\x00\x00", 4 ) ) || \
+				  ( attributeListPtr->valueLength > 0 ) );
 
+		assert( isReadPtr( data, dataLength ) );
+
+		REQUIRES( dataLength <= sizeofVarStruct( attributeListPtr, \
+												 ATTRIBUTE_LIST ) - \
+								sizeof( ATTRIBUTE_LIST ) );
 		zeroise( attributeListPtr->value, attributeListPtr->valueLength );
 		memcpy( attributeListPtr->value, data, dataLength );
 		attributeListPtr->valueLength = dataLength;
@@ -604,9 +755,10 @@ int updateSessionInfo( ATTRIBUTE_LIST **listHeadPtr,
 
 /* Delete a complete set of session attributes */
 
-void deleteSessionInfo( ATTRIBUTE_LIST **attributeListHead,
-						ATTRIBUTE_LIST **attributeListCurrent,
-						ATTRIBUTE_LIST *attributeListPtr )
+STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int deleteSessionInfo( INOUT ATTRIBUTE_LIST **attributeListHead,
+					   INOUT ATTRIBUTE_LIST **attributeListCurrent,
+					   INOUT ATTRIBUTE_LIST *attributeListPtr )
 	{
 	assert( isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isWritePtr( attributeListCurrent, sizeof( ATTRIBUTE_LIST * ) ) );
@@ -619,9 +771,11 @@ void deleteSessionInfo( ATTRIBUTE_LIST **attributeListHead,
 	   things like deleting an entire attribute list by repeatedly deleting 
 	   a single attribute */
 	if( *attributeListCurrent == attributeListPtr )
+		{
 		*attributeListCurrent = ( attributeListPtr->next != NULL ) ? \
 								attributeListPtr->next : \
 								attributeListPtr->prev;
+		}
 
 	/* Remove the item from the list */
 	deleteDoubleListElement( attributeListHead, attributeListPtr );
@@ -629,13 +783,16 @@ void deleteSessionInfo( ATTRIBUTE_LIST **attributeListHead,
 	/* Clear all data in the list item and free the memory */
 	endVarStruct( attributeListPtr, ATTRIBUTE_LIST );
 	clFree( "deleteSessionInfo", attributeListPtr );
+
+	return( CRYPT_OK );
 	}
 
-void deleteSessionInfoAll( ATTRIBUTE_LIST **attributeListHead,
-						   ATTRIBUTE_LIST **attributeListCurrent )
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void deleteSessionInfoAll( INOUT ATTRIBUTE_LIST **attributeListHead,
+						   INOUT ATTRIBUTE_LIST **attributeListCurrent )
 	{
 	ATTRIBUTE_LIST *attributeListCursor = *attributeListHead;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( isWritePtr( attributeListHead, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isWritePtr( attributeListCurrent, sizeof( ATTRIBUTE_LIST * ) ) );
@@ -643,13 +800,15 @@ void deleteSessionInfoAll( ATTRIBUTE_LIST **attributeListHead,
 	/* If the list was empty, return now */
 	if( attributeListCursor == NULL )
 		{
-		assert( *attributeListCurrent == NULL );
+		REQUIRES_V( *attributeListCurrent == NULL );
 		return;
 		}
 
 	/* Destroy any remaining list items */
-	while( attributeListCursor != NULL && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
+	for( iterationCount = 0;
+		 attributeListCursor != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 iterationCount++ )
 		{
 		ATTRIBUTE_LIST *itemToFree = attributeListCursor;
 
@@ -657,11 +816,9 @@ void deleteSessionInfoAll( ATTRIBUTE_LIST **attributeListHead,
 		deleteSessionInfo( attributeListHead, attributeListCurrent, 
 						   itemToFree );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Void();
+	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	*attributeListCurrent = NULL;
 
-	assert( *attributeListHead == NULL );
+	ENSURES_V( *attributeListHead == NULL );
 	}
-
 #endif /* USE_SESSIONS */

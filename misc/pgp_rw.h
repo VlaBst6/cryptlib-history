@@ -35,9 +35,9 @@
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int pgpReadShortLength( INOUT STREAM *stream, OUT_LENGTH int *length, 
 						IN_BYTE const int ctb );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int pgpReadPartialLength( INOUT STREAM *stream, 
-						  OUT_OPT_LENGTH_Z long *length );
+						  OUT_LENGTH_Z long *length );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int pgpWriteLength( INOUT STREAM *stream, IN_LENGTH const long length );
 

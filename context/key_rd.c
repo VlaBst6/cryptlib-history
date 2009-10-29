@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Public/Private Key Read Routines					*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -54,296 +54,6 @@
 
 /****************************************************************************
 *																			*
-*								KeyID Routines								*
-*																			*
-****************************************************************************/
-
-/* Generate a key ID, which is the SHA-1 hash of the SubjectPublicKeyInfo.
-   There are about half a dozen incompatible ways of generating X.509
-   keyIdentifiers, the following is conformant with the PKIX specification
-   ("use whatever you like as long as it's unique") but differs slightly
-   from one common method that hashes the SubjectPublicKey without the
-   BIT STRING encapsulation.  The problem with that method is that some 
-   DLP-based algorithms use a single integer as the SubjectPublicKey, 
-   leading to potential key ID clashes */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int calculateFlatKeyID( IN_BUFFER( keyInfoSize ) const void *keyInfo, 
-							   IN_LENGTH_SHORT_MIN( 16 ) const int keyInfoSize,
-							   OUT_BUFFER_FIXED( keyIdMaxLen ) BYTE *keyID, 
-							   IN_LENGTH_FIXED( KEYID_SIZE ) const int keyIdMaxLen )
-	{
-	HASHFUNCTION_ATOMIC hashFunctionAtomic;
-
-	assert( isReadPtr( keyInfo, keyInfoSize ) );
-	assert( isWritePtr( keyID, keyIdMaxLen ) );
-
-	REQUIRES( keyInfoSize >= 16 && keyInfoSize < MAX_INTLENGTH_SHORT );
-	REQUIRES( keyIdMaxLen == KEYID_SIZE );
-
-	/* Hash the key info to get the key ID */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
-	hashFunctionAtomic( keyID, keyIdMaxLen, keyInfo, keyInfoSize );
-
-	return( CRYPT_OK );
-	}
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int calculateKeyIDFromEncoded( INOUT CONTEXT_INFO *contextInfoPtr,
-									  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
-	{
-	PKC_INFO *publicKey = contextInfoPtr->ctxPKC;
-	STREAM stream;
-	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 4 ) + 50 + 8 ];
-	int length, status;
-
-	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
-
-	status = calculateFlatKeyID( publicKey->publicKeyInfo, 
-								 publicKey->publicKeyInfoSize, 
-								 publicKey->keyID, KEYID_SIZE );
-	if( cryptStatusError( status ) )
-		retIntError();
-	if( cryptAlgo != CRYPT_ALGO_KEA && cryptAlgo != CRYPT_ALGO_RSA )
-		return( CRYPT_OK );
-
-	/* If it's an RSA context we also need to remember the PGP 2 key ID 
-	   alongside the cryptlib one */
-	if( cryptAlgo == CRYPT_ALGO_RSA )
-		{
-		sMemConnect( &stream, publicKey->publicKeyInfo, 
-					 publicKey->publicKeyInfoSize );
-		readSequence( &stream, NULL );
-		readUniversal( &stream );
-		readBitStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
-		readSequence( &stream, NULL );
-		status = readInteger( &stream, buffer, CRYPT_MAX_PKCSIZE, &length );
-		sMemDisconnect( &stream );
-		if( cryptStatusError( status ) )
-			retIntError();
-
-		if( length > PGP_KEYID_SIZE )
-			{
-			memcpy( publicKey->pgp2KeyID, buffer + length - PGP_KEYID_SIZE, 
-					PGP_KEYID_SIZE );
-			}
-		return( CRYPT_OK );
-		}
-
-#ifdef USE_KEA
-	/* If it's a KEA context we also need to remember the start and length 
-	   of the domain parameters and key agreement public value in the 
-	   encoded key data */
-	sMemConnect( &stream, publicKey->publicKeyInfo, 
-				 publicKey->publicKeyInfoSize );
-	readSequence( &stream, NULL );
-	readSequence( &stream, NULL );
-	readUniversal( &stream );
-	readOctetStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
-	publicKey->domainParamPtr = sMemBufPtr( &stream );
-	publicKey->domainParamSize = ( int ) length;
-	sSkip( &stream, length );
-	readBitStringHole( &stream, &length, MIN_PKCSIZE, DEFAULT_TAG );
-	publicKey->publicValuePtr = sMemBufPtr( &stream );
-	publicKey->publicValueSize = ( int ) length - 1;
-	assert( sSkip( &stream, length ) == CRYPT_OK );
-	sMemDisconnect( &stream );
-#endif /* USE_KEA */
-
-	return( CRYPT_OK );
-	}
-
-#if defined( USE_PGP ) || defined( USE_PGPKEYS )
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int calculateOpenPGPKeyID( INOUT CONTEXT_INFO *contextInfoPtr,
-								  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
-	{
-	PKC_INFO *publicKey = contextInfoPtr->ctxPKC;
-	HASHFUNCTION hashFunction;
-	HASHINFO hashInfo;
-	STREAM stream;
-	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 4 ) + 50 + 8 ];
-	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ], packetHeader[ 64 + 8 ];
-	int hashSize, length, status;
-
-	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
-
-	/* Since calculation of the OpenPGP ID requires the presence of data 
-	   that isn't usually present in a non-PGP key we can't calculate a 
-	   real OpenPGP ID for some keys but have to use the next-best thing, 
-	   the first 64 bits of the key ID.  This shouldn't be a major problem 
-	   because it's really only going to be used with private keys, public 
-	   keys will be in PGP format and selected by user ID (for encryption) 
-	   or PGP 2 ID/genuine OpenPGP ID (signing) */
-	if( ( cryptAlgo != CRYPT_ALGO_RSA && cryptAlgo != CRYPT_ALGO_DSA && \
-		  cryptAlgo != CRYPT_ALGO_ELGAMAL ) || \
-		publicKey->pgpCreationTime <= MIN_TIME_VALUE )
-		{
-		/* No creation time or non-PGP algorithm, fake it */
-		memcpy( publicKey->openPgpKeyID, publicKey->keyID,
-				PGP_KEYID_SIZE );
-		publicKey->openPgpKeyIDSet = TRUE;
-		
-		return( CRYPT_OK );
-		}
-
-	/* There's a creation time present, generate a real OpenPGP key ID:
-
-		byte		ctb = 0x99
-		byte[2]		length
-		-- Key data --
-		byte		version = 4
-		byte[4]		key generation time 
-		byte		algorithm
-		byte[]		key data
-
-	  We do this by writing the public key fields to a buffer and creating a 
-	  separate PGP public key header, then hashing the two */
-	sMemOpen( &stream, buffer, ( CRYPT_MAX_PKCSIZE * 4 ) + 50 );
-	status = publicKey->writePublicKeyFunction( &stream, contextInfoPtr, 
-												KEYFORMAT_PGP, 
-												"public_key", 10 );
-	if( cryptStatusError( status ) )
-		{
-		sMemClose( &stream );
-		return( status );
-		}
-	length = stell( &stream );
-	packetHeader[ 0 ] = 0x99;
-	packetHeader[ 1 ] = ( length >> 8 ) & 0xFF;
-	packetHeader[ 2 ] = length & 0xFF;
-
-	/* Hash the data needed to generate the OpenPGP keyID */
-	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, &hashSize );
-	hashFunction( hashInfo, NULL, 0, packetHeader, 1 + 2, 
-				  HASH_STATE_START );
-	hashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE, buffer, length, 
-				  HASH_STATE_END );
-	memcpy( publicKey->openPgpKeyID, hash + hashSize - PGP_KEYID_SIZE, 
-			PGP_KEYID_SIZE );
-	sMemClose( &stream );
-	publicKey->openPgpKeyIDSet = TRUE;
-
-	return( CRYPT_OK );
-	}
-#endif /* USE_PGP || USE_PGPKEYS */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int writePKCS3Key( INOUT STREAM *stream, 
-						  const PKC_INFO *dlpKey,
-						  IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
-	{
-	const int parameterSize = ( int ) sizeofObject( \
-								sizeofBignum( &dlpKey->dlpParam_p ) + \
-								3 +		/* INTEGER value 0 */
-								sizeofBignum( &dlpKey->dlpParam_g ) );
-	const int componentSize = sizeofBignum( &dlpKey->dlpParam_y );
-	int totalSize;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( dlpKey, sizeof( PKC_INFO ) ) );
-
-	REQUIRES( isDlpAlgo( cryptAlgo ) );
-
-	/* Implement a cut-down version of writeDlpSubjectPublicKey(), writing a 
-	   zero value for q */
-	totalSize = sizeofAlgoIDex( cryptAlgo, CRYPT_ALGO_NONE, parameterSize ) + \
-				( int ) sizeofObject( componentSize + 1 );
-	writeSequence( stream, totalSize );
-	writeAlgoIDex( stream, cryptAlgo, CRYPT_ALGO_NONE, parameterSize );
-	writeBignum( stream, &dlpKey->dlpParam_p );
-	swrite( stream, "\x02\x01\x00", 3 );	/* Integer value 0 */
-	writeBignum( stream, &dlpKey->dlpParam_g );
-	writeBitStringHole( stream, componentSize, DEFAULT_TAG );
-	return( writeBignum( stream, &dlpKey->dlpParam_y ) );
-	}
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int calculateKeyID( INOUT CONTEXT_INFO *contextInfoPtr )
-	{
-	PKC_INFO *publicKey = contextInfoPtr->ctxPKC;
-	STREAM stream;
-	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 4 ) + 50 + 8 ];
-	const CRYPT_ALGO_TYPE cryptAlgo = contextInfoPtr->capabilityInfo->cryptAlgo;
-	int status;
-
-	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
-
-	REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
-
-	/* If the public key info is present in pre-encoded form, calculate the
-	   key ID directly from that */
-	if( publicKey->publicKeyInfo != NULL )
-		return( calculateKeyIDFromEncoded( contextInfoPtr, cryptAlgo ) );
-
-	/* Write the public key fields to a buffer and hash them to get the key
-	   ID */
-	sMemOpen( &stream, buffer, ( CRYPT_MAX_PKCSIZE * 4 ) + 50 );
-	if( isDlpAlgo( cryptAlgo ) && BN_is_zero( &publicKey->dlpParam_q ) )
-		{
-		/* OpenPGP Elgamal keys and SSL/SSH DH keys don't have a q 
-		   parameter, which makes it impossible to write them in the X.509 
-		   format.  If this situation occurs we write them in a cut-down
-		   version of the format, which is OK because the X.509 keyIDs are 
-		   explicit and not implicitly generated from the key data like 
-		   OpenPGP one */
-		status = writePKCS3Key( &stream, publicKey, cryptAlgo );
-		}
-	else
-		{
-		status = publicKey->writePublicKeyFunction( &stream, contextInfoPtr, 
-													KEYFORMAT_CERT, 
-													"public_key", 10 );
-		}
-	if( cryptStatusOK( status ) )
-		status = calculateFlatKeyID( buffer, stell( &stream ), 
-									 publicKey->keyID, KEYID_SIZE );
-	sMemClose( &stream );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* If it's an RSA key, we need to calculate the PGP 2 key ID alongside 
-	   the cryptlib one */
-	if( cryptAlgo == CRYPT_ALGO_RSA )
-		{
-		const PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
-		int length;
-
-		status = getBignumData( &pkcInfo->rsaParam_n, buffer, 
-								CRYPT_MAX_PKCSIZE, &length );
-		if( cryptStatusError( status ) )
-			return( status );
-		if( length > PGP_KEYID_SIZE )
-			{
-			memcpy( publicKey->pgp2KeyID, 
-					buffer + length - PGP_KEYID_SIZE, PGP_KEYID_SIZE );
-			}
-		}
-
-#if defined( USE_PGP ) || defined( USE_PGPKEYS )
-	/* If the OpenPGP ID is already set by having the key loaded from a PGP
-	   keyset, we're done */
-	if( publicKey->openPgpKeyIDSet )
-		return( CRYPT_OK );
-
-	/* Finally, set the OpenPGP key ID */
-	status = calculateOpenPGPKeyID( contextInfoPtr, cryptAlgo );
-	if( cryptStatusError( status ) )
-		return( status );
-#endif /* USE_PGP || USE_PGPKEYS */
-
-	return( CRYPT_OK );
-	}
-
-/****************************************************************************
-*																			*
 *								Read Public Keys							*
 *																			*
 ****************************************************************************/
@@ -374,9 +84,9 @@ static int readRsaSubjectPublicKey( INOUT STREAM *stream,
 	   it may be context-specific-tagged if it's coming from a keyset (RSA
 	   public keys is the one place where PKCS #15 keys differ from X.509
 	   ones) or something odd from CRMF */
-	readGenericHole( stream, NULL, 8 + RSAPARAM_MIN_N + RSAPARAM_MIN_E, 
+	readGenericHole( stream, NULL, 8 + MIN_PKCSIZE_THRESHOLD + RSAPARAM_MIN_E, 
 					 DEFAULT_TAG );
-	status = readAlgoID( stream, &cryptAlgo );
+	status = readAlgoID( stream, &cryptAlgo, ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( cryptAlgo != CRYPT_ALGO_RSA )
@@ -392,8 +102,8 @@ static int readRsaSubjectPublicKey( INOUT STREAM *stream,
 				   MK_ACTION_PERM( MESSAGE_CTX_SIGN, ACTION_PERM_ALL ) | \
 				   MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL );
 
-	/* Read the BITSTRING encapsulation and the public key fields */
-	readBitStringHole( stream, NULL, MIN_PKCSIZE, DEFAULT_TAG );
+	/* Read the BIT STRING encapsulation and the public key fields */
+	readBitStringHole( stream, NULL, MIN_PKCSIZE_THRESHOLD, DEFAULT_TAG );
 	readSequence( stream, NULL );
 	status = readBignumChecked( stream, &rsaKey->rsaParam_n, 
 								RSAPARAM_MIN_N, RSAPARAM_MAX_N, NULL );
@@ -425,47 +135,44 @@ static int readDlpSubjectPublicKey( INOUT STREAM *stream,
 	/* Clear return value */
 	*actionFlags = ACTION_PERM_NONE;
 
-	/* Read the SubjectPublicKeyInfo header field and parameter data if
-	   there's any present */
-	readGenericHole( stream, NULL, 8 + DLPPARAM_MIN_P + DLPPARAM_MIN_G + \
-								   DLPPARAM_MIN_Q, DEFAULT_TAG );
-	status = readAlgoIDparams( stream, &cryptAlgo, &extraLength );
+	/* Read the SubjectPublicKeyInfo header field and make sure that the DLP 
+	   parameter data is present */
+	readGenericHole( stream, NULL, 
+					 8 + MIN_PKCSIZE_THRESHOLD + DLPPARAM_MIN_G + \
+						DLPPARAM_MIN_Q, DEFAULT_TAG );
+	status = readAlgoIDparams( stream, &cryptAlgo, &extraLength, 
+							   ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( extraLength > 0 )
-		{
-		if( contextInfoPtr->capabilityInfo->cryptAlgo != cryptAlgo )
-			return( CRYPT_ERROR_BADDATA );
+	if( extraLength <= 0 )
+		return( CRYPT_ERROR_BADDATA );
+	if( contextInfoPtr->capabilityInfo->cryptAlgo != cryptAlgo )
+		return( CRYPT_ERROR_BADDATA );
 
-		/* Read the header and key parameters */
-		readSequence( stream, NULL );
-		status = readBignumChecked( stream, &dlpKey->dlpParam_p, 
-									DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL );
-		if( cryptStatusError( status ) )
-			return( status );
-		if( hasReversedParams( cryptAlgo ) )
-			{
-			status = readBignum( stream, &dlpKey->dlpParam_g,
-								 DLPPARAM_MIN_G, DLPPARAM_MAX_G,
-								 &dlpKey->dlpParam_p );
-			if( cryptStatusOK( status ) )
-				status = readBignum( stream, &dlpKey->dlpParam_q,
-									 DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
-									 &dlpKey->dlpParam_p );
-			}
-		else
-			{
-			status = readBignum( stream, &dlpKey->dlpParam_q,
-								 DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
-								 &dlpKey->dlpParam_p );
-			if( cryptStatusOK( status ) )
-				status = readBignum( stream, &dlpKey->dlpParam_g,
-									 DLPPARAM_MIN_G, DLPPARAM_MAX_G,
-									 &dlpKey->dlpParam_p );
-			}
-		if( cryptStatusError( status ) )
-			return( status );
+	/* Read the header and key parameters */
+	readSequence( stream, NULL );
+	status = readBignumChecked( stream, &dlpKey->dlpParam_p, 
+								DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( hasReversedParams( cryptAlgo ) )
+		{
+		status = readBignum( stream, &dlpKey->dlpParam_g, DLPPARAM_MIN_G, 
+							 DLPPARAM_MAX_G, &dlpKey->dlpParam_p );
+		if( cryptStatusOK( status ) )
+			status = readBignum( stream, &dlpKey->dlpParam_q, DLPPARAM_MIN_Q, 
+								 DLPPARAM_MAX_Q, &dlpKey->dlpParam_p );
 		}
+	else
+		{
+		status = readBignum( stream, &dlpKey->dlpParam_q, DLPPARAM_MIN_Q, 
+							 DLPPARAM_MAX_Q, &dlpKey->dlpParam_p );
+		if( cryptStatusOK( status ) )
+			status = readBignum( stream, &dlpKey->dlpParam_g, DLPPARAM_MIN_G, 
+								 DLPPARAM_MAX_G, &dlpKey->dlpParam_p );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Set the maximum permitted actions.  Because of the special-case data 
 	   formatting requirements for DLP algorithms we make the usage 
@@ -487,8 +194,8 @@ static int readDlpSubjectPublicKey( INOUT STREAM *stream,
 									   ACTION_PERM_NONE_EXTERNAL );
 		}
 
-	/* Read the BITSTRING encapsulation and the public key fields */
-	readBitStringHole( stream, NULL, MIN_PKCSIZE, DEFAULT_TAG );
+	/* Read the BIT STRING encapsulation and the public key fields */
+	readBitStringHole( stream, NULL, MIN_PKCSIZE_THRESHOLD, DEFAULT_TAG );
 	return( readBignumChecked( stream, &dlpKey->dlpParam_y,
 							   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
 							   &dlpKey->dlpParam_p ) );
@@ -496,11 +203,45 @@ static int readDlpSubjectPublicKey( INOUT STREAM *stream,
 
 #ifdef USE_ECC
 
+static const OID_INFO FAR_BSS eccOIDinfo[] = {
+	/* NIST P-192, X9.62 p192r1, SECG p192r1, 1 2 840 10045 3 1 1 */
+	{ MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x03\x01\x01" ), CRYPT_ECCCURVE_P192 },
+	/* NIST P-224, X9.62 P224r1, SECG p224r1, 1 3 132 0 33 */
+	{ MKOID( "\x06\x05\x2B\x81\x04\x00\x21" ), CRYPT_ECCCURVE_P224 },
+	/* NIST P-256, X9.62 p256r1, SECG p256r1, 1 2 840 10045 3 1 7 */
+	{ MKOID( "\x06\x08\x2A\x86\x48\xCE\x3D\x03\x01\x07" ), CRYPT_ECCCURVE_P256 },
+	/* NIST P-384, SECG p384r1, 1 3 132 0 34 */
+	{ MKOID( "\x06\x05\x2B\x81\x04\x00\x22" ), CRYPT_ECCCURVE_P384 },
+	/* NIST P-521, SECG p521r1, 1 3 132 0 35 */
+	{ MKOID( "\x06\x05\x2B\x81\x04\x00\x23" ), CRYPT_ECCCURVE_P521 },
+	{ NULL, 0 }, { NULL, 0 }
+	};
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int getECCOidTbl( OUT const OID_INFO **oidTblPtr,
+				  OUT_INT_Z int *noOidTblEntries )
+	{
+	assert( isReadPtr( oidTblPtr, sizeof( OID_INFO * ) ) );
+	assert( isWritePtr( noOidTblEntries, sizeof( int ) ) );
+
+	*oidTblPtr = eccOIDinfo;
+	*noOidTblEntries = FAILSAFE_ARRAYSIZE( eccOIDinfo, OID_INFO );
+
+	return( CRYPT_OK );
+	}
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int readEccSubjectPublicKey( INOUT STREAM *stream, 
 									INOUT CONTEXT_INFO *contextInfoPtr,
 									OUT_FLAGS_Z( ACTION_PERM ) int *actionFlags )
 	{
+	PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	CRYPT_ALGO_TYPE cryptAlgo;
+	BYTE buffer[ MAX_PKCSIZE_ECCPOINT + 8 ];
+	const OID_INFO *oidTbl;
+	int oidTblSize, fieldSize = DUMMY_INIT, selectionID = DUMMY_INIT;
+	int length, status;
+
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( actionFlags, sizeof( int ) ) );
@@ -511,17 +252,70 @@ static int readEccSubjectPublicKey( INOUT STREAM *stream,
 	/* Clear return value */
 	*actionFlags = ACTION_PERM_NONE;
 
+	/* Read the SubjectPublicKeyInfo header field and make sure that the ECC 
+	   parameter data is present.  Because of the more or less arbitrary 
+	   manner in which these parameters can be represented we have to be 
+	   fairly open-ended in terms of the data size limits that we use, and 
+	   in particular for named curves the lower bound is the size of a 
+	   single OID that defines the curve */
+	readGenericHole( stream, NULL, 
+					 8 + MIN_OID_SIZE + MIN_PKCSIZE_ECCPOINT_THRESHOLD, 
+					 DEFAULT_TAG );
+	status = readAlgoIDparams( stream, &cryptAlgo, &length, 
+							   ALGOID_CLASS_PKC );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length < MIN_OID_SIZE || \
+		contextInfoPtr->capabilityInfo->cryptAlgo != cryptAlgo )
+		return( CRYPT_ERROR_BADDATA );
+
+	/* Now things get messy, since the ECC standards authors carefully 
+	   sidestepped having to make a decision about anything and instead
+	   just created an open framework into which it's possible to drop
+	   almost anything.  To keep things sane we require the use of named
+	   curves (which most people seem to use) over a prime field */
+	status = getECCOidTbl( &oidTbl, &oidTblSize );
+	if( cryptStatusOK( status ) )
+		status = readOID( stream, oidTbl, oidTblSize, &selectionID );
+	if( cryptStatusOK( status ) )
+		status = getECCFieldSize( selectionID, &fieldSize );
+	if( cryptStatusError( status ) )
+		return( status );
+	eccKey->curveType = selectionID;
+
 	/* Set the maximum permitted actions.  Because of the special-case data 
-	   formatting requirements for DLP algorithms we make the usage 
-	   internal-only.  If the key is a pure public key rather than merely 
-	   the public portions of a private key the actions will be restricted 
-	   by higher-level code to signature-check only */
+	   formatting requirements for ECC algorithms (which are a part of the 
+	   DLP algorithm family) we make the usage internal-only.  If the key is 
+	   a pure public key rather than merely the public portions of a private 
+	   key the actions will be restricted by higher-level code to signature-
+	   check only */
 	*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_SIGN, \
 								   ACTION_PERM_NONE_EXTERNAL ) | \
 				   MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, \
 								   ACTION_PERM_NONE_EXTERNAL );
 
-	return( CRYPT_ERROR_NOTAVAIL );
+	/* Read the BIT STRING encapsulation and the public key fields.  Instead 
+	   of encoding the necessary information as an obvious OID + SEQUENCE 
+	   combination for the parameters it's all stuffed into an ad-hoc BIT 
+	   STRING that we have to pick apart manually.  Note that we can't use 
+	   the ECC p value for a range check because it hasn't been set yet, all 
+	   that we have at this point is a curve ID */
+	status = readBitStringHole( stream, &length, 
+								MIN_PKCSIZE_ECCPOINT_THRESHOLD, DEFAULT_TAG );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length < MIN_PKCSIZE_ECCPOINT_THRESHOLD || \
+		length > MAX_PKCSIZE_ECCPOINT )
+		return( CRYPT_ERROR_BADDATA );
+	status = sread( stream, buffer, length );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = importECCPoint( &eccKey->eccParam_qx, &eccKey->eccParam_qy,
+							 buffer, length, MIN_PKCSIZE_ECC_THRESHOLD, 
+							 CRYPT_MAX_PKCSIZE_ECC, fieldSize, NULL, 
+							 SHORTKEY_CHECK_ECC );
+	zeroise( buffer, length );
+	return( status );
 	}
 #endif /* USE_ECC */
 
@@ -720,16 +514,23 @@ static int readSshDlpPublicKey( INOUT STREAM *stream,
 
 /* Read SSL public keys:
 
-	uint16		dh_pLen
-	byte[]		dh_p
-	uint16		dh_gLen
-	byte[]		dh_g
-  [	uint16		dh_YsLen ]
-  [	byte[]		dh_Ys	 ]
+	DH:
+		uint16		dh_pLen
+		byte[]		dh_p
+		uint16		dh_gLen
+		byte[]		dh_g
+	  [	uint16		dh_YsLen ]
+	  [	byte[]		dh_Ys	 ]
+
+	ECDH:
+		byte		curveType
+		uint16		namedCurve
+	  [	uint8		ecPointLen	-- NB uint8 not uint16 ]
+	  [	byte[]		ecPoint ]
 
    The DH y value is nominally attached to the DH p and g values but isn't 
    processed at this level since this is a pure PKCS #3 DH key and not a 
-   generic DLP key */
+   generic DLP key.  The same holds for the ECDH Q value */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int readSslDlpPublicKey( INOUT STREAM *stream, 
@@ -767,6 +568,83 @@ static int readSslDlpPublicKey( INOUT STREAM *stream,
 									   &dhKey->dlpParam_p );
 	return( status );
 	}
+
+#ifdef USE_ECC
+
+static const MAP_TABLE sslCurveInfo[] = {
+	{ 19, CRYPT_ECCCURVE_P192 },
+	{ 21, CRYPT_ECCCURVE_P224 },
+	{ 23, CRYPT_ECCCURVE_P256 },
+	{ 24, CRYPT_ECCCURVE_P384 },
+	{ 25, CRYPT_ECCCURVE_P521 },
+	{ CRYPT_ERROR, 0 }, 
+		{ CRYPT_ERROR, 0 }
+	};
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getECCSslInfoTbl( OUT const MAP_TABLE **sslInfoTblPtr,
+							 OUT_INT_Z int *noSslInfoTblEntries )
+	{
+	assert( isReadPtr( sslInfoTblPtr, sizeof( MAP_TABLE * ) ) );
+	assert( isWritePtr( noSslInfoTblEntries, sizeof( int ) ) );
+
+	*sslInfoTblPtr = sslCurveInfo;
+	*noSslInfoTblEntries = FAILSAFE_ARRAYSIZE( sslCurveInfo, MAP_TABLE );
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readSslEccPublicKey( INOUT STREAM *stream, 
+								INOUT CONTEXT_INFO *contextInfoPtr,
+								OUT_FLAGS_Z( ACTION_PERM ) int *actionFlags )
+	{
+	PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	const MAP_TABLE *sslCurveInfoPtr;
+	int value, curveID, sslCurveInfoNoEntries, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( actionFlags, sizeof( int ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
+			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH );
+
+	/* Clear return value */
+	*actionFlags = ACTION_PERM_NONE;
+
+	/* Set the maximum permitted actions.  SSL keys are only used 
+	   internally so we restrict the usage to internal-only.  Since DH 
+	   keys can be both public and private keys we allow both usage 
+	   types even though technically it's a public key */
+	*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, \
+								   ACTION_PERM_NONE_EXTERNAL ) | \
+				   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, \
+								   ACTION_PERM_NONE_EXTERNAL );
+
+	/* Read the SSL public key information */
+	status = value = sgetc( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( value != 0x03 )		/* NamedCurve */
+		return( CRYPT_ERROR_BADDATA );
+	status = value = readUint16( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Look up the curve ID based on the SSL NamedCurve ID */
+	status = getECCSslInfoTbl( &sslCurveInfoPtr, &sslCurveInfoNoEntries );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = mapValue( value, &curveID, sslCurveInfoPtr, 
+					   sslCurveInfoNoEntries );
+	if( cryptStatusError( status ) )
+		return( status );
+	eccKey->curveType = curveID;
+	return( CRYPT_OK );
+	}
+#endif /* USE_ECC */
+
 #endif /* USE_SSL */
 
 #ifdef USE_PGP 
@@ -933,6 +811,26 @@ static int readPgpDlpPublicKey( INOUT STREAM *stream,
 
 /* Umbrella public-key read functions */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int completePubkeyRead( INOUT CONTEXT_INFO *contextInfoPtr,
+							   IN_FLAGS( ACTION_PERM ) const int actionFlags )
+	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( actionFlags > ACTION_PERM_FLAG_NONE && \
+			  actionFlags < ACTION_PERM_FLAG_MAX );
+
+	/* If it's statically-initialised context data used in the self-test 
+	   there's no corresponding cryptlib object and we're done */
+	if( contextInfoPtr->flags & CONTEXT_FLAG_STATICCONTEXT )
+		return( CRYPT_OK );
+
+	/* Set the action permissions for the context */
+	return( krnlSendMessage( contextInfoPtr->objectHandle, 
+							 IMESSAGE_SETATTRIBUTE, ( void * ) &actionFlags, 
+							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
+	}
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPublicKeyRsaFunction( INOUT STREAM *stream, 
 									 INOUT CONTEXT_INFO *contextInfoPtr,
@@ -981,9 +879,7 @@ static int readPublicKeyRsaFunction( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	return( krnlSendMessage( contextInfoPtr->objectHandle, 
-							 IMESSAGE_SETATTRIBUTE, &actionFlags, 
-							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
+	return( completePubkeyRead( contextInfoPtr, actionFlags ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -1036,9 +932,7 @@ static int readPublicKeyDlpFunction( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	return( krnlSendMessage( contextInfoPtr->objectHandle,
-							 IMESSAGE_SETATTRIBUTE, &actionFlags, 
-							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
+	return( completePubkeyRead( contextInfoPtr, actionFlags ) );
 	}
 
 #ifdef USE_ECC
@@ -1055,8 +949,9 @@ static int readPublicKeyEccFunction( INOUT STREAM *stream,
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
-			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
-	REQUIRES( formatType == KEYFORMAT_CERT );
+			  ( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA || \
+				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH ) );
+	REQUIRES( formatType == KEYFORMAT_CERT || formatType == KEYFORMAT_SSL );
 
 	switch( formatType )
 		{
@@ -1065,14 +960,19 @@ static int readPublicKeyEccFunction( INOUT STREAM *stream,
 											  &actionFlags );
 			break;
 
+#ifdef USE_SSL
+		case KEYFORMAT_SSL:
+			status = readSslEccPublicKey( stream, contextInfoPtr, 
+										  &actionFlags );
+			break;
+#endif /* USE_SSL */
+
 		default:
 			retIntError();
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	return( krnlSendMessage( contextInfoPtr->objectHandle,
-							 IMESSAGE_SETATTRIBUTE, &actionFlags, 
-							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
+	return( completePubkeyRead( contextInfoPtr, actionFlags ) );
 	}
 #endif /* USE_ECC */
 
@@ -1255,7 +1155,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readEccPrivateKey( INOUT STREAM *stream, 
 							  INOUT CONTEXT_INFO *contextInfoPtr )
 	{
-	PKC_INFO *dlpKey = contextInfoPtr->ctxPKC;
+	PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
@@ -1263,13 +1163,13 @@ static int readEccPrivateKey( INOUT STREAM *stream,
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
 			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
 
-	/* Read the key components */
-	return( readBignum( stream, &dlpKey->dlpParam_x,
-						ECCPARAM_MIN_X, ECCPARAM_MAX_X,
-						&dlpKey->dlpParam_p ) );
+	/* Read the key components.  Note that we can't use the ECC p value for
+	   a range check because it hasn't been set yet, all that we have at 
+	   this point is a curve ID */
+	return( readBignum( stream, &eccKey->eccParam_d,
+						ECCPARAM_MIN_D, ECCPARAM_MAX_D, NULL ) );
 	}
 #endif /* USE_ECC */
-
 
 /* Read PGP private key components.  This function assumes that the public
    portion of the context has already been set up */
@@ -1452,37 +1352,45 @@ static int decodeDLValuesFunction( IN_BUFFER( bufSize ) const BYTE *buffer,
 	sMemConnect( &stream, buffer, bufSize );
 
 	/* Read the DL components from the buffer and make sure that they're 
-	   valid, i.e. that they're in the range [1...maxRange - 1] */
+	   valid, i.e. that they're in the range [1...maxRange - 1] (the lower
+	   bound is actually DLPPARAM_MIN_SIG_x and not 1, which is > 100 bits).  
+	   Although nominally intended for DLP algorithms the DLPPARAM_MIN_SIG_x 
+	   values also work for ECC ones since they're also in the DLP family */
 	switch( formatType )
 		{
 		case CRYPT_FORMAT_CRYPTLIB:
 			readSequence( &stream, NULL );
-			status = readBignum( &stream, value1, DLPPARAM_MIN_R,
+			status = readBignum( &stream, value1, DLPPARAM_MIN_SIG_R,
 								 CRYPT_MAX_PKCSIZE, maxRange );
-			if( cryptStatusOK( status ) )
-				status = readBignum( &stream, value2, DLPPARAM_MIN_S,
-									 CRYPT_MAX_PKCSIZE, maxRange );
+			if( cryptStatusError( status ) )
+				break;
+			status = readBignum( &stream, value2, DLPPARAM_MIN_SIG_S,
+								 CRYPT_MAX_PKCSIZE, maxRange );
 			break;
 
 #ifdef USE_PGP
 		case CRYPT_FORMAT_PGP:
-			status = readBignumInteger16Ubits( &stream, value1, DLPPARAM_MIN_R,
+			status = readBignumInteger16Ubits( &stream, value1, 
+											   DLPPARAM_MIN_SIG_R,
 											   bytesToBits( CRYPT_MAX_PKCSIZE ),
 											   maxRange );
-			if( cryptStatusOK( status ) )
-				status = readBignumInteger16Ubits( &stream, value2, DLPPARAM_MIN_S,
-												   bytesToBits( CRYPT_MAX_PKCSIZE ),
-												   maxRange );
+			if( cryptStatusError( status ) )
+				break;
+			status = readBignumInteger16Ubits( &stream, value2, 
+											   DLPPARAM_MIN_SIG_S,
+											   bytesToBits( CRYPT_MAX_PKCSIZE ),
+											   maxRange );
 			break;
 #endif /* USE_PGP */
 	
 #ifdef USE_SSH
 		case CRYPT_IFORMAT_SSH:
-			status = extractBignum( value1, buffer, 20, DLPPARAM_MIN_R, 
-									20, maxRange, FALSE );
-			if( cryptStatusOK( status ) )
-				status = extractBignum( value2, buffer + 20, 20, DLPPARAM_MIN_S, 
-										20, maxRange, FALSE );
+			status = importBignum( value1, buffer, 20, DLPPARAM_MIN_SIG_R, 
+								   20, maxRange, SHORTKEY_CHECK_NONE );
+			if( cryptStatusError( status ) )
+				break;
+			status = importBignum( value2, buffer + 20, 20, DLPPARAM_MIN_SIG_S, 
+								   20, maxRange, SHORTKEY_CHECK_NONE );
 			break;
 #endif /* USE_SSH */
 
@@ -1512,7 +1420,6 @@ void initKeyRead( INOUT CONTEXT_INFO *contextInfoPtr )
 	REQUIRES_V( contextInfoPtr->type == CONTEXT_PKC );
 
 	/* Set the access method pointers */
-	pkcInfo->calculateKeyIDFunction = calculateKeyID;
 	if( isDlpAlgo( cryptAlgo ) )
 		{
 		pkcInfo->readPublicKeyFunction = readPublicKeyDlpFunction;
@@ -1526,6 +1433,7 @@ void initKeyRead( INOUT CONTEXT_INFO *contextInfoPtr )
 		{
 		pkcInfo->readPublicKeyFunction = readPublicKeyEccFunction;
 		pkcInfo->readPrivateKeyFunction = readPrivateKeyEccFunction;
+		pkcInfo->decodeDLValuesFunction = decodeDLValuesFunction;
 		
 		return;
 		}

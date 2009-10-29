@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2007					*
+*						Copyright Peter Gutmann 1995-2009					*
 *																			*
 ****************************************************************************/
 
@@ -47,71 +47,6 @@
 
 int keyReadOK = TRUE, doubleCertOK = FALSE;
 
-#ifdef TEST_CONFIG
-
-/* The names of the configuration options we check for */
-
-static struct {
-	const CRYPT_ATTRIBUTE_TYPE option;	/* Option */
-	const char FAR_BSS *name;			/* Option name */
-	const BOOLEAN isNumeric;			/* Whether it's a numeric option */
-	} FAR_BSS configOption[] = {
-	{ CRYPT_OPTION_INFO_DESCRIPTION, "CRYPT_OPTION_INFO_DESCRIPTION", FALSE },
-	{ CRYPT_OPTION_INFO_COPYRIGHT, "CRYPT_OPTION_INFO_COPYRIGHT", FALSE },
-	{ CRYPT_OPTION_INFO_MAJORVERSION, "CRYPT_OPTION_INFO_MAJORVERSION", TRUE },
-	{ CRYPT_OPTION_INFO_MINORVERSION, "CRYPT_OPTION_INFO_MINORVERSION", TRUE },
-	{ CRYPT_OPTION_INFO_STEPPING, "CRYPT_OPTION_INFO_STEPPING", TRUE },
-
-	{ CRYPT_OPTION_ENCR_ALGO, "CRYPT_OPTION_ENCR_ALGO", TRUE },
-	{ CRYPT_OPTION_ENCR_HASH, "CRYPT_OPTION_ENCR_HASH", TRUE },
-	{ CRYPT_OPTION_ENCR_MAC, "CRYPT_OPTION_ENCR_MAC", TRUE },
-
-	{ CRYPT_OPTION_PKC_ALGO, "CRYPT_OPTION_PKC_ALGO", TRUE },
-	{ CRYPT_OPTION_PKC_KEYSIZE, "CRYPT_OPTION_PKC_KEYSIZE", TRUE },
-
-	{ CRYPT_OPTION_SIG_ALGO, "CRYPT_OPTION_SIG_ALGO", TRUE },
-	{ CRYPT_OPTION_SIG_KEYSIZE, "CRYPT_OPTION_SIG_KEYSIZE", TRUE },
-
-	{ CRYPT_OPTION_KEYING_ALGO, "CRYPT_OPTION_KEYING_ALGO", TRUE },
-	{ CRYPT_OPTION_KEYING_ITERATIONS, "CRYPT_OPTION_KEYING_ITERATIONS", TRUE },
-
-	{ CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES, "CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES", TRUE },
-	{ CRYPT_OPTION_CERT_VALIDITY, "CRYPT_OPTION_CERT_VALIDITY", TRUE },
-	{ CRYPT_OPTION_CERT_UPDATEINTERVAL, "CRYPT_OPTION_CERT_UPDATEINTERVAL", TRUE },
-	{ CRYPT_OPTION_CERT_COMPLIANCELEVEL, "CRYPT_OPTION_CERT_COMPLIANCELEVEL", TRUE },
-	{ CRYPT_OPTION_CERT_REQUIREPOLICY, "CRYPT_OPTION_CERT_REQUIREPOLICY", TRUE },
-
-	{ CRYPT_OPTION_CMS_DEFAULTATTRIBUTES, "CRYPT_OPTION_CMS_DEFAULTATTRIBUTES", TRUE },
-
-	{ CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS, "CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS", FALSE },
-	{ CRYPT_OPTION_KEYS_LDAP_OBJECTTYPE, "CRYPT_OPTION_KEYS_LDAP_OBJECTTYPE", TRUE },
-	{ CRYPT_OPTION_KEYS_LDAP_FILTER, "CRYPT_OPTION_KEYS_LDAP_FILTER", FALSE },
-	{ CRYPT_OPTION_KEYS_LDAP_CACERTNAME, "CRYPT_OPTION_KEYS_LDAP_CACERTNAME", FALSE },
-	{ CRYPT_OPTION_KEYS_LDAP_CERTNAME, "CRYPT_OPTION_KEYS_LDAP_CERTNAME", FALSE },
-	{ CRYPT_OPTION_KEYS_LDAP_CRLNAME, "CRYPT_OPTION_KEYS_LDAP_CRLNAME", FALSE },
-	{ CRYPT_OPTION_KEYS_LDAP_EMAILNAME, "CRYPT_OPTION_KEYS_LDAP_EMAILNAME", FALSE },
-
-	{ CRYPT_OPTION_DEVICE_PKCS11_DVR01, "CRYPT_OPTION_DEVICE_PKCS11_DVR01", FALSE },
-	{ CRYPT_OPTION_DEVICE_PKCS11_DVR02, "CRYPT_OPTION_DEVICE_PKCS11_DVR02", FALSE },
-	{ CRYPT_OPTION_DEVICE_PKCS11_DVR03, "CRYPT_OPTION_DEVICE_PKCS11_DVR03", FALSE },
-	{ CRYPT_OPTION_DEVICE_PKCS11_DVR04, "CRYPT_OPTION_DEVICE_PKCS11_DVR04", FALSE },
-	{ CRYPT_OPTION_DEVICE_PKCS11_DVR05, "CRYPT_OPTION_DEVICE_PKCS11_DVR05", FALSE },
-	{ CRYPT_OPTION_DEVICE_PKCS11_HARDWAREONLY, "CRYPT_OPTION_DEVICE_PKCS11_HARDWAREONLY", TRUE },
-
-	{ CRYPT_OPTION_NET_SOCKS_SERVER, "CRYPT_OPTION_NET_SOCKS_SERVER", FALSE },
-	{ CRYPT_OPTION_NET_SOCKS_USERNAME, "CRYPT_OPTION_NET_SOCKS_USERNAME", FALSE },
-	{ CRYPT_OPTION_NET_HTTP_PROXY, "CRYPT_OPTION_NET_HTTP_PROXY", FALSE },
-	{ CRYPT_OPTION_NET_CONNECTTIMEOUT, "CRYPT_OPTION_NET_CONNECTTIMEOUT", TRUE },
-	{ CRYPT_OPTION_NET_READTIMEOUT, "CRYPT_OPTION_NET_READTIMEOUT", TRUE },
-	{ CRYPT_OPTION_NET_WRITETIMEOUT, "CRYPT_OPTION_NET_WRITETIMEOUT", TRUE },
-
-	{ CRYPT_OPTION_MISC_ASYNCINIT, "CRYPT_OPTION_MISC_ASYNCINIT", TRUE },
-	{ CRYPT_OPTION_MISC_SIDECHANNELPROTECTION, "CRYPT_OPTION_MISC_SIDECHANNELPROTECTION", TRUE },
-
-	{ CRYPT_ATTRIBUTE_NONE, NULL, 0 }
-	};
-#endif /* TEST_CONFIG */
-
 /* There are some sizeable (for DOS) data structures used, so we increase the
    stack size to allow for them */
 
@@ -143,178 +78,6 @@ void smokeTest( void );
 *																			*
 ****************************************************************************/
 
-/* The tests that use databases and cert stores require that the user set
-   up a suitable ODBC data source (at least when running under Windows), to
-   automate this process we try and create the data source if it isn't 
-   present */
-
-#if defined( _MSC_VER ) && defined( _WIN32 ) && !defined( _WIN32_WCE )
-
-#define DATABASE_AUTOCONFIG
-
-#include <odbcinst.h>
-
-#ifdef USE_SQLSERVER
-  #define DRIVER_NAME			TEXT( "SQL Server" )
-  #define DATABASE_ATTR_NAME	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"Server=localhost#" \
-								"Database="
-  #define DATABASE_ATTR_CREATE	""
-  #define DATABASE_ATTR_TAIL	DATABASE_KEYSET_NAME_ASCII "#"
-  #define CERTSTORE_ATTR_NAME	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"Server=localhost#" \
-								"Database="
-  #define CERTSTORE_ATTR_CREATE	""
-  #define CERTSTORE_ATTR_TAIL	CERTSTORE_KEYSET_NAME_ASCII "#"
-#else
-  #define DRIVER_NAME			TEXT( "Microsoft Access Driver (*.MDB)" )
-  #define DATABASE_ATTR_NAME	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"DBQ="
-  #define DATABASE_ATTR_CREATE	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"CREATE_DB="
-  #define DATABASE_ATTR_TAIL	DATABASE_KEYSET_NAME_ASCII ".mdb#"
-  #define CERTSTORE_ATTR_NAME	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"DBQ="
-  #define CERTSTORE_ATTR_CREATE	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"CREATE_DB="
-  #define CERTSTORE_ATTR_TAIL	CERTSTORE_KEYSET_NAME_ASCII ".mdb#"
-#endif /* USE_SQLSERVER */
-
-static void buildDBString( char *buffer, const char *attrName,
-						   const char *attrTail, const char *path )
-	{
-	const int attrNameSize = strlen( attrName );
-	const int attrTailSize = strlen( attrTail ) + 1;
-	const int pathSize = strlen( path );
-	int dbStringLen, i;
-
-	/* Build up the data-source control string */
-	memcpy( buffer, attrName, attrNameSize + 1 );
-	memcpy( buffer + attrNameSize, path, pathSize );
-	if( attrTailSize > 0 )
-		{
-		memcpy( buffer + attrNameSize + pathSize, attrTail, 
-				attrTailSize );
-		}
-	buffer[ attrNameSize + pathSize + attrTailSize ] = '\0';
-
-	/* Finally, convert the strings to the weird embedded-null strings 
-	   required by SQLConfigDataSource() */
-	dbStringLen = strlen( buffer );
-	for( i = 0; i < dbStringLen; i++ )
-		if( buffer[ i ] == '#' )
-			buffer[ i ] = '\0';
-	}
-
-static BOOLEAN createDatabaseKeyset( const char *keysetName, 
-									 const char *nameString, 
-									 const char *createString, 
-									 const char *trailerString )
-	{
-	char tempPathBuffer[ 512 ];
-	char attrBuffer[ 1024 ];
-#ifdef UNICODE_STRINGS
-	wchar_t wcAttrBuffer[ 1024 ];
-#endif /* UNICODE_STRINGS */
-	int length, status;
-
-	if( !( length = GetTempPath( 512, tempPathBuffer ) ) )
-		{
-		strcpy( tempPathBuffer, "C:\\Temp\\" );
-		length = 8;
-		}
-
-	/* Try and create the DSN.  For the default Access driver his is a two-
-	   step process, first we create the DSN and then the underlying file 
-	   that contains the database.  For SQL Server it's simpler, the database
-	   server already exists so all we have to do is create the database */
-	printf( "Database keyset '%s' not found, attempting to create data "
-			"source...\n", keysetName );
-	buildDBString( attrBuffer, nameString, trailerString, tempPathBuffer );
-#ifdef UNICODE_STRINGS
-	mbstowcs( wcAttrBuffer, attrBuffer, strlen( attrBuffer ) + 1 );
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
-								  wcAttrBuffer );
-#else
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
-								  attrBuffer );
-#endif /* UNICODE_STRINGS */
-	if( status != 1 )
-		return( FALSE );
-#ifndef USE_SQLSERVER
-	buildDBString( attrBuffer, createString, trailerString, tempPathBuffer );
-#ifdef UNICODE_STRINGS
-	mbstowcs( wcAttrBuffer, attrBuffer, strlen( attrBuffer ) + 1 );
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
-								  wcAttrBuffer );
-#else
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
-								  attrBuffer );
-#endif /* UNICODE_STRINGS */
-#endif /* !USE_SQLSERVER */
-
-	return( ( status == 1 ) ? TRUE : FALSE );
-	}
-
-static void checkCreateDatabaseKeysets( void )
-	{
-	CRYPT_KEYSET cryptKeyset;
-	int status;
-
-	/* Try and open the test keyset */
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
-							  CRYPT_KEYSET_ODBC, DATABASE_KEYSET_NAME,
-							  CRYPT_KEYOPT_READONLY );
-	if( cryptStatusOK( status ) )
-		cryptKeysetClose( cryptKeyset );
-	else
-		{
-		if( status == CRYPT_ERROR_OPEN )
-			{
-			status = createDatabaseKeyset( DATABASE_KEYSET_NAME_ASCII,
-										   DATABASE_ATTR_NAME, 
-										   DATABASE_ATTR_CREATE, 
-										   DATABASE_ATTR_TAIL );
-			puts( ( status == TRUE ) ? "Data source creation succeeded." : \
-				  "Data source creation failed.\n\nYou need to create the "
-				  "keyset data source as described in the cryptlib manual\n"
-				  "for the database keyset tests to run." );
-			}
-		}
-
-	/* Try and open the test cert store.  This can return a
-	   CRYPT_ARGERROR_PARAM3 as a normal condition since a freshly-created
-	   database is empty and therefore can't be identified as a cert store
-	   until data is written to it */
-	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
-							  CRYPT_KEYSET_ODBC_STORE, CERTSTORE_KEYSET_NAME,
-							  CRYPT_KEYOPT_READONLY );
-	if( cryptStatusOK( status ) )
-		cryptKeysetClose( cryptKeyset );
-	else
-		{
-		if( status == CRYPT_ERROR_OPEN )
-			{
-			status = createDatabaseKeyset( CERTSTORE_KEYSET_NAME_ASCII,
-										   CERTSTORE_ATTR_NAME, 
-										   CERTSTORE_ATTR_CREATE, 
-										   CERTSTORE_ATTR_TAIL );
-			puts( ( status == TRUE ) ? "Data source creation succeeded.\n" : \
-				  "Data source creation failed.\n\nYou need to create the "
-				  "certificate store data source as described in the\n"
-				  "cryptlib manual for the certificate management tests to "
-				  "run.\n" );
-			}
-		}
-	}
-#endif /* Win32 with VC++ */
-
 /* Update the cryptlib config file.  This code can be used to set the
    information required to load PKCS #11 device drivers:
 
@@ -340,7 +103,7 @@ static void updateConfig( void )
 	const char *driverPath = "c:/winnt/system32/dkck201.dll";	/* Datakey (for Entrust) */
 	const char *driverPath = "c:/winnt/system32/dkck232.dll";	/* Datakey/iKey (NB: buggy, use 201) */
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
-	const char *driverPath = "c:/program files/eracom/cprov runtime/cryptoki.dll";	/* Eracom (new, buggy) */
+	const char *driverPath = "c:/program files/eracom/cprov runtime/cryptoki.dll";	/* Eracom (new, doesn't work) */
 	const char *driverPath = "c:/winnt/system32/sadaptor.dll";	/* Eutron */
 	const char *driverPath = "c:/winnt/system32/pk2priv.dll";	/* Gemplus */
 	const char *driverPath = "c:/program files/gemplus/gclib.dll";	/* Gemplus */
@@ -357,19 +120,38 @@ static void updateConfig( void )
 	const char *driverPath = "c:/winnt/system32/SpyPK11.dll";	/* Spyrus */
 #endif /* 0 */
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
+	int status;
 
 	printf( "Updating cryptlib configuration to load PKCS #11 driver\n  "
 			"'%s'\n  as default driver...", driverPath );
 
 	/* Set the path for a PKCS #11 device driver.  We only enable one of
 	   these at a time to speed the startup time */
-	cryptSetAttributeString( CRYPT_UNUSED, CRYPT_OPTION_DEVICE_PKCS11_DVR01,
-							 driverPath, strlen( driverPath ) );
+	status = cryptSetAttributeString( CRYPT_UNUSED, 
+									  CRYPT_OPTION_DEVICE_PKCS11_DVR01,
+									  driverPath, strlen( driverPath ) );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\n\nError updating PKCS #11 device driver profile, "
+				"status %d.\n", status );
+		return;
+		}
 
-	/* Update the options */
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CONFIGCHANGED, FALSE );
+	/* Flush the updated options to disk */
+	status = cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CONFIGCHANGED, FALSE );
+	if( cryptStatusError( status ) )
+		{
+		printf( "\n\nError comitting device driver profile update to disk, "
+				"status %d.\n", status );
+		return;
+		}
 
-	puts( " done." );
+	puts( " done.\n\nYou'll need to restart cryptlib for the changes to "
+		  "take effect." );
+	cryptEnd();
+	puts( "\nPress a key to exit." );
+	getchar();
+	exit( EXIT_SUCCESS );
 	}
 
 /* Add trusted certs to the config file and make sure that they're
@@ -382,15 +164,15 @@ static void updateConfigCert( void )
 	CRYPT_CERTIFICATE trustedCert;
 	int status;
 
-	/* Import the first cert, make it trusted, and commit the changes */
+	/* Import the first certificate, make it trusted, and commit the changes */
 	importCertFromTemplate( &trustedCert, CERT_FILE_TEMPLATE, 1 );
 	cryptSetAttribute( trustedCert, CRYPT_CERTINFO_TRUSTED_IMPLICIT, TRUE );
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CONFIGCHANGED, FALSE );
 	cryptDestroyCert( trustedCert );
 	cryptEnd();
 
-	/* Do the same with a second cert.  At the conclusion of this, we should
-	   have two trusted certs on disk */
+	/* Do the same with a second certificate.  At the conclusion of this, we 
+	   should have two trusted certificates on disk */
 	status = cryptInit();
 	if( cryptStatusError( status ) )
 		{
@@ -417,19 +199,7 @@ static void updateConfigCert( void )
 void testKludge( void )
 	{
 #if 0
-	/* pscp/psftp client requests a subsystem but cryptlib server doesn't 
-	   report the subsystem request */
-//	testSessionSSH_SFTPServer();
-//	testSessionSSHServer();
-//	checkCreateDatabaseKeysets();
-//	testSessionSCEPCACertClientServer();
-
-	/* Since this is a special-case test we don't want to fall through to 
-	   the main test code so we exit here */
-	cryptEnd();
-	puts( "\nPress a key to exit." );
-	getchar();
-	exit( EXIT_SUCCESS );
+	testReadCorruptedKey();
 #endif /* 0 */
 
 	/* Performance-testing test harness */
@@ -453,6 +223,15 @@ void testKludge( void )
 	while( TRUE )
 		testSessionTSPServer();
 #endif /* 0 */
+
+	/* Shared exit point for the test harnesses above, used when we don't 
+	   want to fall through to the main test code */
+#if 0
+	cryptEnd();
+	puts( "\nPress a key to exit." );
+	getchar();
+	exit( EXIT_SUCCESS );
+#endif /* 0 */
 	}
 
 /****************************************************************************
@@ -469,22 +248,16 @@ void testKludge( void )
 
 int main( int argc, char **argv )
 	{
-#ifdef TEST_LOWLEVEL
-	CRYPT_ALGO_TYPE cryptAlgo;
-	BOOLEAN algosEnabled;
-#endif /* TEST_LOWLEVEL */
-#ifdef TEST_CONFIG
-	int i;
-#endif /* TEST_CONFIG */
-#if defined( TEST_SELFTEST ) || defined( TEST_CONFIG )
-	int value;
-#endif /* TEST_SELFTEST || TEST_CONFIG */
 	int status;
 	void testSystemSpecific1( void );
 	void testSystemSpecific2( void );
 
 	/* Get rid of compiler warnings */
 	if( argc || argv );
+
+	/* Print an initial message in case there's some problem at 
+	   startup */
+	puts( "Starting cryptlib self-tests...\n" );
 
 #ifdef USE_TCHECK
 	THREAD_DEBUG_SUSPEND();
@@ -503,18 +276,20 @@ int main( int argc, char **argv )
 #endif /* VisualAge C++ */
 
 	/* Initialise cryptlib */
+	printf( "Initialising cryptlib..." );
 	status = cryptInit();
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptInit() failed with error code %d, line %d.\n", status, 
-				__LINE__ );
+		printf( "\ncryptInit() failed with error code %d, line %d.\n", 
+				status, __LINE__ );
 		exit( EXIT_FAILURE );
 		}
+	puts( "done." );
 
 #ifndef TEST_RANDOM
 	/* In order to avoid having to do a randomness poll for every test run,
 	   we bypass the randomness-handling by adding some junk.  This is only
-	   enabled when cryptlib is built in debug mode, so it won't work with
+	   enabled when cryptlib is built in debug mode so it won't work with 
 	   any production systems */
   #if defined( __MVS__ ) || defined( __VMCMS__ )
 	#pragma convlit( resume )
@@ -549,591 +324,35 @@ int main( int argc, char **argv )
 	smokeTest();
 #endif /* SMOKE_TEST */
 
-#ifdef TEST_SELFTEST
-	/* Perform the self-test.  First we write the value to true to force a
-	   self-test, then we read it back to see whether it succeeded */
-	status = cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, 
-								TRUE );
-	if( cryptStatusError( status ) )
-		{
-		printf( "Attempt to perform cryptlib algorithm self-test failed "
-				"with error code %d, line %d.\n", status, __LINE__ );
+	/* Test each block of cryptlib functionality */
+	if( !testSelfTest() )
 		goto errorExit;
-		}
-	status = cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_SELFTESTOK, 
-								&value );
-	if( cryptStatusError( status ) || value != TRUE )
-		{
-		/* Unfortunately all that we can report at this point is that the
-		   self-test failed, we can't try each algorithm individually
-		   because the self-test has disabled the failed one(s) */
-		printf( "cryptlib algorithm self-test failed, line %d.\n", 
-				__LINE__ );
+	if( !testLowLevel() )
 		goto errorExit;
-		}
-	puts( "cryptlib algorithm self-test succeeded.\n" );
-#endif /* TEST_SELFTEST */
-
-#ifdef TEST_LOWLEVEL
-	/* Test the conventional encryption routines */
-	algosEnabled = FALSE;
-	for( cryptAlgo = CRYPT_ALGO_FIRST_CONVENTIONAL;
-		 cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL; cryptAlgo++ )
-		{
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
-			{
-			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-				goto errorExit;
-			algosEnabled = TRUE;
-			}
-		}
-	if( !algosEnabled )
-		puts( "(No conventional-encryption algorithms enabled)." );
-
-	/* Test the public-key encryption routines */
-	algosEnabled = FALSE;
-	for( cryptAlgo = CRYPT_ALGO_FIRST_PKC;
-		 cryptAlgo <= CRYPT_ALGO_LAST_PKC; cryptAlgo++ )
-		{
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
-			{
-			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-				goto errorExit;
-			algosEnabled = TRUE;
-			}
-		}
-	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_RSA, NULL ) ) && \
-		!testRSAMinimalKey() )
+	if( !testRandom() )
 		goto errorExit;
-	if( !algosEnabled )
-		puts( "(No public-key algorithms enabled)." );
-
-	/* Test the hash routines */
-	algosEnabled = FALSE;
-	for( cryptAlgo = CRYPT_ALGO_FIRST_HASH;
-		 cryptAlgo <= CRYPT_ALGO_LAST_HASH; cryptAlgo++ )
-		{
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
-			{
-			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-				goto errorExit;
-			algosEnabled = TRUE;
-			}
-		}
-	if( !algosEnabled )
-		puts( "(No hash algorithms enabled)." );
-
-	/* Test the MAC routines */
-	algosEnabled = FALSE;
-	for( cryptAlgo = CRYPT_ALGO_FIRST_MAC;
-		 cryptAlgo <= CRYPT_ALGO_LAST_MAC; cryptAlgo++ )
-		{
-		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, NULL ) ) )
-			{
-			if( !testLowlevel( CRYPT_UNUSED, cryptAlgo, FALSE ) )
-				goto errorExit;
-			algosEnabled = TRUE;
-			}
-		}
-	if( !algosEnabled )
-		puts( "(No MAC algorithms enabled)." );
-
-	printf( "\n" );
-#else
-	puts( "Skipping test of low-level encryption routines...\n" );
-#endif /* TEST_LOWLEVEL */
-
-	/* Test the randomness-gathering routines */
-#ifdef TEST_RANDOM
-	if( !testRandomRoutines() )
-		{
-		puts( "The self-test will proceed without using a strong random "
-			  "number source.\n" );
-
-		/* Kludge the randomness routines so we can continue the self-tests */
-		cryptAddRandom( "xyzzy", 5 );
-		}
-#else
-	puts( "Skipping test of randomness routines...\n" );
-#endif /* TEST_RANDOM */
-
-	/* Test the configuration options routines */
-#ifdef TEST_CONFIG
-	for( i = 0; configOption[ i ].option != CRYPT_ATTRIBUTE_NONE; i++ )
-		{
-		if( configOption[ i ].isNumeric )
-			{
-			cryptGetAttribute( CRYPT_UNUSED, configOption[ i ].option, &value );
-			printf( "%s = %d.\n", configOption[ i ].name, value );
-			}
-		else
-			{
-			C_CHR buffer[ 256 ];
-			int length;
-
-			cryptGetAttributeString( CRYPT_UNUSED, configOption[ i ].option,
-									 buffer, &length );
-			assert( length < 256 );
-#ifdef UNICODE_STRINGS
-			buffer[ length / sizeof( wchar_t ) ] = TEXT( '\0' );
-			printf( "%s = %S.\n", configOption[ i ].name, buffer );
-#else
-			buffer[ length ] = '\0';
-			printf( "%s = %s.\n", configOption[ i ].name, buffer );
-#endif /* UNICODE_STRINGS */
-			}
-		}
-	printf( "\n" );
-#else
-	puts( "Skipping display of config options...\n" );
-#endif /* TEST_CONFIG */
-
-	/* Test the crypto device routines */
-#ifdef TEST_DEVICE
-	status = testDevices();
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		puts( "Handling for crypto devices doesn't appear to be enabled in "
-			  "this build of\ncryptlib.\n" );
-	else
-		if( !status )
-			goto errorExit;
-#else
-	puts( "Skipping test of crypto device routines...\n" );
-#endif /* TEST_DEVICE */
-
-	/* Test the mid-level routines */
-#ifdef TEST_MIDLEVEL
-	if( !testLargeBufferEncrypt() )
+	if( !testConfig() )
 		goto errorExit;
-	if( !testDeriveKey() )
+	if( !testDevice() )
 		goto errorExit;
-	if( !testConventionalExportImport() )
+	if( !testMidLevel() )
 		goto errorExit;
-	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_HMAC_SHA1, NULL ) ) )
-		{
-		/* Only test the MAC functions of HMAC-SHA1 is enabled */
-		if( !testMACExportImport() )
-			goto errorExit;
-		}
-	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_RSA, NULL ) ) )
-		{
-		/* Only test the PKC functions if RSA is enabled */
-		if( !testKeyExportImport() )
-			goto errorExit;
-		if( !testSignData() )
-			goto errorExit;
-		if( !testKeygen() )
-			goto errorExit;
-		if( !testKeygenAsync() )
-			goto errorExit;
-		}
-	/* No need for putchar, mid-level functions leave a blank line at end */
-#else
-	puts( "Skipping test of mid-level encryption routines...\n" );
-#endif /* TEST_MIDLEVEL */
-
-	/* Test the certificate management routines */
-#ifdef TEST_CERT
 	if( !testCert() )
 		goto errorExit;
-	if( !testCACert() )
+	if( !testKeyset() )
 		goto errorExit;
-	if( !testXyzzyCert() )
+	if( !testCertMgmt() )
 		goto errorExit;
-	if( !testTextStringCert() )
+	if( !testHighLevel() )
 		goto errorExit;
-	if( !testComplexCert() )
+	if( !testEnveloping() )
 		goto errorExit;
-	if( !testCertExtension() )
+	if( !testSessions() )
 		goto errorExit;
-	if( !testCustomDNCert() )
+	if( !testSessionsLoopback() )
 		goto errorExit;
-	if( !testSETCert() )
+	if( !testUsers() )
 		goto errorExit;
-	if( !testAttributeCert() )
-		goto errorExit;
-	if( !testCertRequest() )
-		goto errorExit;
-	if( !testComplexCertRequest() )
-		goto errorExit;
-	if( !testCRMFRequest() )
-		goto errorExit;
-	if( !testComplexCRMFRequest() )
-		goto errorExit;
-	if( !testCRL() )
-		goto errorExit;
-	if( !testComplexCRL() )
-		goto errorExit;
-	if( !testRevRequest() )
-		goto errorExit;
-	if( !testCertChain() )
-		goto errorExit;
-	if( !testCMSAttributes() )
-		goto errorExit;
-	if( !testOCSPReqResp() )
-		goto errorExit;
-	if( !testCertImport() )
-		goto errorExit;
-	if( !testCertReqImport() )
-		goto errorExit;
-	if( !testCRLImport() )
-		goto errorExit;
-	if( !testCertChainImport() )
-		goto errorExit;
-	if( !testOCSPImport() )
-		goto errorExit;
-	if( !testBase64CertImport() )
-		goto errorExit;
-	if( !testBase64CertChainImport() )
-		goto errorExit;
-	if( !testMiscImport() )
-		goto errorExit;
-	if( !testNonchainCert() )
-		goto errorExit;
-	if( !testCertComplianceLevel() )
-		goto errorExit;
-	if( !testPKCS1Padding() )
-		goto errorExit;
-#if 0	/* This takes a while to run and produces a lot of output that won't
-		   be meaningful to anyone other than cryptlib developers so it's
-		   disabled by default */
-	if( !testPathProcessing() )
-		goto errorExit;
-#endif /* 0 */
-#else
-	puts( "Skipping test of certificate managment routines...\n" );
-#endif /* TEST_CERT */
-
-	/* Test the keyset read routines */
-#ifdef TEST_KEYSET
-  #ifdef DATABASE_AUTOCONFIG
-	checkCreateDatabaseKeysets();
-  #endif /* DATABASE_AUTOCONFIG */
-	if( !testGetPGPPublicKey() )
-		goto errorExit;
-	if( !testGetPGPPrivateKey() )
-		goto errorExit;
-	if( !testGetBorkenKey() )
-		goto errorExit;
-	if( !testReadWriteFileKey() )
-		goto errorExit;
-	if( !testReadBigFileKey() )
-		goto errorExit;
-	if( !testReadFilePublicKey() )
-		goto errorExit;
-	if( !testDeleteFileKey() )
-		goto errorExit;
-	if( !testUpdateFileCert() )
-		goto errorExit;
-	if( !testReadFileCert() )
-		goto errorExit;
-	if( !testReadFileCertPrivkey() )
-		goto errorExit;
-	if( !testWriteFileCertChain() )
-		goto errorExit;
-	if( !testReadFileCertChain() )
-		goto errorExit;
-	if( !testAddTrustedCert() )
-		goto errorExit;
-#if 0	/* This changes the global config file and is disabled by default */
-	if( !testAddGloballyTrustedCert() )
-		goto errorExit;
-#endif /* 0 */
-	if( !testWriteFileLongCertChain() )
-		goto errorExit;
-	if( !testSingleStepFileCert() )
-		goto errorExit;
-	if( !testDoubleCertFile() )
-		goto errorExit;
-	if( !testRenewedCertFile() )
-		goto errorExit;
-	if( !testReadMiscFile() )
-		goto errorExit;
-	status = testWriteCert();
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Handling for certificate databases doesn't appear to be "
-			  "enabled in this\nbuild of cryptlib, skipping the test of "
-			  "the certificate database routines.\n" );
-		}
-	else
-		{
-		if( status == TRUE )
-			{
-			if( !testReadCert() )
-				goto errorExit;
-			if( !testKeysetQuery() )
-				goto errorExit;
-
-			/* The database plugin test will usually fail unless the user has
-			   set up a plugin, so we don't check the return value */
-			testWriteCertDbx();
-			}
-		}
-	/* For the following tests we may have read access but not write access,
-	   so we test a read of known-present certs before trying a write -
-	   unlike the local keysets we don't need to add a cert before we can try
-	   reading it */
-	status = testReadCertLDAP();
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Handling for LDAP certificate directories doesn't appear to "
-			  "be enabled in\nthis build of cryptlib, skipping the test of "
-			  "the certificate directory\nroutines.\n" );
-		}
-	else
-		{
-		/* LDAP access can fail if the directory doesn't use the standard
-		   du jour, so we don't treat a failure as a fatal error */
-		if( status )
-			{
-			/* LDAP writes are even worse than LDAP reads, so we don't
-			   treat failures here as fatal either */
-			testWriteCertLDAP();
-			}
-		}
-	status = testReadCertURL();
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Handling for fetching certificates from web pages doesn't "
-			  "appear to be\nenabled in this build of cryptlib, skipping "
-			  "the test of the HTTP routines.\n" );
-		}
-	else
-		{
-		/* Being able to read a cert from a web page is rather different from
-		   access to an HTTP cert store, so we don't treat an error here as
-		   fatal */
-		if( status )
-			testReadCertHTTP();
-		}
-#else
-	puts( "Skipping test of keyset read routines...\n" );
-#endif /* TEST_KEYSET */
-
-	/* Test the certificate processing and CA cert management functionality.
-	   A side-effect of the cert-management functionality is that the OCSP
-	   EE test certs are written to the test data directory */
-#ifdef TEST_CERTPROCESS
-	if( !testCertProcess() )
-		goto errorExit;
-	status = testCertManagement();
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Handling for CA certificate stores doesn't appear to be "
-			  "enabled in this\nbuild of cryptlib, skipping the test of "
-			  "the certificate management routines.\n" );
-		}
-	else
-		{
-		if( !status )
-			goto errorExit;
-		}
-#else
-	puts( "Skipping test of certificate handling/CA management...\n" );
-#endif /* TEST_CERTPROCESS */
-
-	/* Test the high-level routines (these are similar to the mid-level
-	   routines but rely on things like certificate management to work) */
-#ifdef TEST_HIGHLEVEL
-	if( !testKeyExportImportCMS() )
-		goto errorExit;
-	if( !testSignDataCMS() )
-		goto errorExit;
-#endif /* TEST_HIGHLEVEL */
-
-	/* Test the enveloping routines */
-#ifdef TEST_ENVELOPE
-	if( !testEnvelopeData() )
-		goto errorExit;
-	if( !testEnvelopeDataLargeBuffer() )
-		goto errorExit;
-	if( !testEnvelopeCompress() )
-		goto errorExit;
-	if( !testPGPEnvelopeCompressedDataImport() )
-		goto errorExit;
-	if( !testEnvelopeSessionCrypt() )
-		goto errorExit;
-	if( !testEnvelopeSessionCryptLargeBuffer() )
-		goto errorExit;
-	if( !testEnvelopeCrypt() )
-		goto errorExit;
-	if( !testEnvelopePasswordCrypt() )
-		goto errorExit;
-	if( !testPGPEnvelopePasswordCryptImport() )
-		goto errorExit;
-	if( !testEnvelopePKCCrypt() )
-		goto errorExit;
-	if( !testPGPEnvelopePKCCryptImport() )
-		goto errorExit;
-	if( !testEnvelopeSign() )
-		goto errorExit;
-	if( !testEnvelopeSignOverflow() )
-		goto errorExit;
-	if( !testPGPEnvelopeSignedDataImport() )
-		goto errorExit;
-	if( !testEnvelopeAuthenticate() )
-		goto errorExit;
-	if( !testEnvelopeAuthEnc() )
-		goto errorExit;
-	if( !testCMSEnvelopePKCCrypt() )
-		goto errorExit;
-	if( !testCMSEnvelopePKCCryptDoubleCert() )
-		goto errorExit;
-	if( !testCMSEnvelopePKCCryptImport() )
-		goto errorExit;
-	if( !testCMSEnvelopeSign() )
-		goto errorExit;
-	if( !testCMSEnvelopeDualSign() )
-		goto errorExit;
-	if( !testCMSEnvelopeDetachedSig() )
-		goto errorExit;
-	if( !testCMSEnvelopeSignedDataImport() )
-		goto errorExit;
-#else
-	puts( "Skipping test of enveloping routines...\n" );
-#endif /* TEST_ENVELOPE */
-
-	/* Test the session routines */
-#ifdef TEST_SESSION
-	status = testSessionUrlParse();
-	if( !status )
-		goto errorExit;
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		puts( "Network access doesn't appear to be enabled in this build of "
-			  "cryptlib,\nskipping the test of the secure session routines.\n" );
-		}
-	else
-		{
-		if( !checkNetworkAccess() )
-			{
-			puts( "Couldn't perform a test connect to a well-known site "
-				  "(Amazon.com) which\nindicates that external network "
-				  "access isn't available.  Is this machine\nsituated "
-				  "behind a firewall?\n" );
-			goto errorExit;
-			}
-		if( !testSessionAttributes() )
-			goto errorExit;
-		if( !testSessionSSHv1() )
-			goto errorExit;
-		if( !testSessionSSH() )
-			goto errorExit;
-		if( !testSessionSSHClientCert() )
-			goto errorExit;
-		if( !testSessionSSHPortforward() )
-			goto errorExit;
-		if( !testSessionSSHExec() )
-			goto errorExit;
-		if( !testSessionSSL() )
-			goto errorExit;
-		if( !testSessionSSLLocalSocket() )
-			goto errorExit;
-		if( !testSessionTLS() )
-			goto errorExit;
-		if( !testSessionTLS11() )
-			goto errorExit;
-#if 0	/* Nothing to test against yet */
-		if( !testSessionTLS12() )
-			goto errorExit;
-#endif /* 0 */
-		if( !testSessionOCSP() )
-			goto errorExit;
-		if( !testSessionTSP() )
-			goto errorExit;
-		if( !testSessionEnvTSP() )
-			goto errorExit;
-		if( !testSessionCMP() )
-			goto errorExit;
-		}
-#endif /* TEST_SESSION */
-
-	/* Test loopback client/server sessions.  These require a threaded OS 
-	   and are aliased to no-ops on non-threaded systems.  In addition there 
-	   can be synchronisation problems between the two threads if the server 
-	   is delayed for some reason, resulting in the client waiting for a 
-	   socket that isn't opened yet.  This isn't easy to fix without a lot 
-	   of explicit intra-thread synchronisation, if there's a problem it's 
-	   easier to just re-run the tests */
-#ifdef TEST_SESSION_LOOPBACK
-	if( !testSessionSSHv1ClientServer() )
-		goto errorExit;
-	if( !testSessionSSHClientServer() )
-		goto errorExit;
-	if( !testSessionSSHClientServerFingerprint() )
-		goto errorExit;
-	if( !testSessionSSHClientServerPortForward() )
-		goto errorExit;
-	if( !testSessionSSHClientServerExec() )
-		goto errorExit;
-	if( !testSessionSSHClientServerMultichannel() )
-		goto errorExit;
-	if( !testSessionSSLClientServer() )
-		goto errorExit;
-	if( !testSessionSSLClientCertClientServer() )
-		goto errorExit;
-	if( !testSessionTLSClientServer() )
-		goto errorExit;
-	if( !testSessionTLSSharedKeyClientServer() )
-		goto errorExit;
-	if( !testSessionTLSNoSharedKeyClientServer() )
-		goto errorExit;
-	if( !testSessionTLSBulkTransferClientServer() )
-		goto errorExit;
-	if( !testSessionTLS11ClientServer() )
-		goto errorExit;
-	if( !testSessionHTTPCertstoreClientServer() )
-		goto errorExit;
-	if( !testSessionRTCSClientServer() )
-		goto errorExit;
-	if( !testSessionOCSPClientServer() )
-		goto errorExit;
-	if( !testSessionTSPClientServer() )
-		goto errorExit;
-	if( !testSessionTSPClientServerPersistent() )
-		goto errorExit;
-	if( !testSessionSCEPClientServer() )
-		goto errorExit;
-	if( !testSessionSCEPCACertClientServer() )
-		goto errorExit;
-	if( !testSessionCMPClientServer() )
-		goto errorExit;
-	if( !testSessionCMPPKIBootClientServer() )
-		goto errorExit;
-	if( !testSessionPNPPKIClientServer() )
-		goto errorExit;
-	if( !testSessionPNPPKICAClientServer() )
-		goto errorExit;
-
-	/* The final set of loopback tests, which spawn a large number of 
-	   threads, can be somewhat alarming due to the amount of message spew 
-	   that they produce so we only run them on one specific development 
-	   test machine */
-#if defined( __WINDOWS__ ) && !defined( _WIN32_WCE )
-	{
-	char name[ MAX_COMPUTERNAME_LENGTH + 1 ];
-	int length = MAX_COMPUTERNAME_LENGTH + 1;
-
-	if( GetComputerName( name, &length ) && length == 9 && \
-		!memcmp( name, "PETRIDISH", length ) )
-		{
-		if( !testSessionSSHClientServerDualThread() )
-			goto errorExit;
-		if( !testSessionSSHClientServerMultiThread() )
-			goto errorExit;
-		if( !testSessionTLSClientServerMultiThread() )
-			goto errorExit;
-		}
-	}
-#endif /* __WINDOWS__ && !WinCE */
-#endif /* TEST_SESSION_LOOPBACK */
-
-	/* Test the user routines */
-#ifdef TEST_USER
-	if( !testUser() )
-		goto errorExit;
-#endif /* TEST_USER */
 
 	/* Shut down cryptlib */
 	status = cryptEnd();
@@ -1180,12 +399,12 @@ errorExit1:
 		  "type of error is non-fatal, and should disappear if the test is "
 		  "re-run." );
 #endif /* WINDOWS_THREADS */
-#ifdef __WINDOWS__
+#if defined( __WINDOWS__ ) && !defined( NDEBUG )
 	/* The pseudo-CLI VC++ output windows are closed when the program exits
 	   so we have to explicitly wait to allow the user to read them */
 	puts( "\nHit a key..." );
 	getchar();
-#endif /* __WINDOWS__ */
+#endif /* __WINDOWS__ && !NDEBUG */
 	return( EXIT_FAILURE );
 	}
 
@@ -1294,6 +513,9 @@ static time_t testTime( const int year )
 
 void testSystemSpecific1( void )
 	{
+#if 0	/* See comment below */
+	const CRYPT_ATTRIBUTE_TYPE testType = -1;
+#endif /* 0 */
 	int bigEndian;
 #ifndef _WIN32_WCE
 	int i;
@@ -1323,7 +545,9 @@ void testSystemSpecific1( void )
 		}
 #endif /* DATA_LITTLEENDIAN */
 
-	/* Make sure that the compiler doesn't use variable-size enums */
+	/* Make sure that the compiler doesn't use variable-size enums (done by, 
+	   for example, the PalmOS SDK for backwards compatibility with 
+	   architectural decisions made for 68K-based PalmPilots) */
 	if( sizeof( CRYPT_ALGO_TYPE ) != sizeof( int ) || \
 		sizeof( CRYPT_MODE_TYPE ) != sizeof( int ) ||
 		sizeof( CRYPT_ATTRIBUTE_TYPE ) != sizeof( int ) )
@@ -1331,11 +555,29 @@ void testSystemSpecific1( void )
 		puts( "The compiler you are using treats enumerated types as "
 			  "variable-length non-\ninteger values, making it impossible "
 			  "to reliably pass the address of an\nenum as a function "
-			  "parameter.  To fix this, you need to rebuild cryptlib\nwith "
+			  "parameter.  To fix this you need to rebuild cryptlib\nwith "
 			  "the appropriate compiler option or pragma to ensure that\n"
 			  "sizeof( enum ) == sizeof( int )." );
 		exit( EXIT_FAILURE );
 		}
+
+#if 0	/* The ANSI C default is 'int' with signedness being unimportant, 
+		   MSVC defaults to signed, gcc defaults to unsigned, and cryptlib
+		   works with either, so whatever the CodeSourcery build of gcc is
+		   doing it's more serious than a simple signedness issue */
+	/* Make sure that the compiler doesn't use unsigned enums (for example a 
+	   mutant CodeSourcery build of gcc for eCos does this) */
+	if( testType >= 0 )
+		{
+		puts( "The compiler you are using treats enumerated types as "
+			  "unsigned values,\nmaking it impossible to reliably use enums "
+			  "in conjunction with standard\n(signed) integers.  To fix this "
+			  "you need to rebuild cryptlib with the\nappropriate compiler "
+			  "option or pragma to ensure that enumerated types\nare signed "
+			  "like standard data types." );
+		exit( EXIT_FAILURE );
+		}
+#endif /* 0 */
 
 	/* Make sure that mktime() works properly (there are some systems on
 	   which it fails well before 2038) */
@@ -1376,10 +618,10 @@ void testSystemSpecific1( void )
 	if( stackSize < 32768 )
   #endif /* Slowaris special-case handling */
 		{
-		printf( "The pthread stack size is defaulting to %d bytes, which is "
+		printf( "The pthread stack size is defaulting to %ld bytes, which is "
 				"too small for\ncryptlib to run in.  To fix this, edit the "
 				"thread-creation function macro in\ncryptos.h and recompile "
-				"cryptlib.\n", stackSize );
+				"cryptlib.\n", ( long ) stackSize );
 		exit( EXIT_FAILURE );
 		}
 	}
@@ -1410,7 +652,7 @@ void testSystemSpecific2( void )
 	cryptDestroyCert( cryptCert );
 	if( status == CRYPT_ERROR_PARAM4 )
 		{
-		printf( "Warning: This compiler is using a %d-bit time_t data type, "
+		printf( "Warning: This compiler is using a %ld-bit time_t data type, "
 				"which appears to be\n         different to the one that "
 				"was used when cryptlib was built.  This\n         situation "
 				"usually occurs when the compiler allows the use of both\n"
@@ -1418,7 +660,8 @@ void testSystemSpecific2( void )
 				"options were\n         selected for building cryptlib and "
 				"the test app.  To resolve this,\n         ensure that both "
 				"cryptlib and the code that calls it use the same\n"
-				"         time_t data type.\n", sizeof( time_t ) * 8 );
+				"         time_t data type.\n", 
+				( long ) sizeof( time_t ) * 8 );
 		exit( EXIT_FAILURE );
 		}
 	}

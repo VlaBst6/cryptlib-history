@@ -99,7 +99,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int performUpdate( INOUT DBMS_INFO *dbmsInfo, 
 						  IN_STRING_OPT const char *command,
 						  IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
-							const BOUND_DATA *boundData,
+							TYPECAST( BOUND_DATA ) const void *boundData,
 						  IN_ENUM( DBMS_UPDATE ) \
 							const DBMS_UPDATE_TYPE updateType )
 	{
@@ -156,11 +156,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int performQuery( INOUT DBMS_INFO *dbmsInfo, 
 						 IN_STRING_OPT const char *command,
 						 OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
-							char *data, 
+							void *data, 
 						 IN_LENGTH_SHORT_Z const int dataMaxLength, 
-						 OUT_LENGTH_SHORT_Z int *dataLength, 
+						 OUT_OPT_LENGTH_SHORT_Z int *dataLength, 
 						 IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
-							const BOUND_DATA *boundData,
+							TYPECAST( BOUND_DATA ) const void *boundData,
 						 IN_ENUM_OPT( DBMS_CACHEDQUERY ) \
 							const DBMS_CACHEDQUERY_TYPE queryEntry,
 						 IN_ENUM( DBMS_QUERY ) const DBMS_QUERY_TYPE queryType )
@@ -229,6 +229,7 @@ static int performQuery( INOUT DBMS_INFO *dbmsInfo,
 	if( dataLength != NULL && \
 		( *dataLength <= 0 || *dataLength > MAX_QUERY_RESULT_SIZE ) )
 		{
+		DEBUG_DIAG(( "Database backend return invalid data size" ));
 		assert( DEBUG_WARN );
 		memset( data, 0, min( 16, dataMaxLength ) );
 		*dataLength = 0;
@@ -327,13 +328,14 @@ static int copyChar( OUT_BUFFER( bufMaxLen, *bufPos ) char *buffer,
 			return( CRYPT_ERROR_OVERFLOW );
 		}
 
-	/* Bypass various dangerous SQL "enhancements".  For Windows ODBC the 
-	   driver will execute anything delimited by '|'s as an expression (an 
-	   example being '|shell("cmd /c echo " & chr(124) & " format c:")|'), 
-	   because of this we strip gazintas.  Since ODBC uses '{' and '}' as 
-	   escape delimiters we also strip these */
+	/* Bypass various dangerous SQL "enhancements".  For Windows ODBC (at
+	   least for MS Jet 3.x, but not 4.x any more) the driver will execute 
+	   anything delimited by '|'s as an expression (an example being 
+	   '|shell("cmd /c echo " & chr(124) & " format c:")|'), because of this 
+	   we strip gazintas.  Since ODBC uses '{' and '}' as escape delimiters 
+	   we also strip these */
 	if( ch != '|' && ch != '{' && ch != '}' )
-		buffer[ position++ ] = ch;
+		buffer[ position++ ] = intToByte( ch );
 
 	/* Make sure that we haven't overflowed the output buffer.  This 
 	   overflowing can be done deliberately, for example by using large 

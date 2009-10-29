@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Request/Response Session Test Routines				*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -35,9 +35,9 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 *																			*
 ****************************************************************************/
 
-/* This isn't really a proper session but just an HTTP cert store interface,
-   but the semantics for the server side fit the session interface better
-   than the keyset interface */
+/* This isn't really a proper session but just an HTTP certificate store 
+   interface, but the semantics for the server side fit the session 
+   interface better than the keyset interface */
 
 static int connectCertstoreServer( void )
 	{
@@ -61,9 +61,9 @@ static int connectCertstoreServer( void )
 	if( !setLocalConnect( cryptSession, 80 ) )
 		return( FALSE );
 
-	/* Add the cert store that we'll be using to provide certs (it's
-	   actually just the generic database keyset and not the full cert
-	   store, because this contains more test certs) */
+	/* Add the certificate store that we'll be using to provide certs (it's
+	   actually just the generic database keyset and not the full 
+	   certificate store, because this contains more test certs) */
 	status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
 							  DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME,
 							  CRYPT_KEYOPT_READONLY );
@@ -171,7 +171,7 @@ static int connectCertstoreClient( void )
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status,
 							  __LINE__ ) );
-	printf( "Successfully read cert for '%s'.\n", cert1ID );
+	printf( "Successfully read certificate for '%s'.\n", cert1ID );
 	cryptDestroyCert( cryptCert );
 
 	/* Read a non-present certificate from the keyset */
@@ -197,7 +197,7 @@ static int connectCertstoreClient( void )
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptKeyset, "cryptGetPublicKey()", status,
 							  __LINE__ ) );
-	printf( "Successfully read cert for '%s'.\n", cert1ID );
+	printf( "Successfully read certificate for '%s'.\n", cert1ID );
 	cryptDestroyCert( cryptCert );
 
 	/* Clean up */
@@ -312,8 +312,8 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
 
-		/* Add the cert store that we'll be using to provide revocation
-		   information */
+		/* Add the certificate store that we'll be using to provide 
+		   revocation information */
 		status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
 								  DATABASE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
 								  CRYPT_KEYOPT_READONLY );
@@ -355,7 +355,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 		CRYPT_KEYSET cryptKeyset;
 		CRYPT_CERTIFICATE cryptCert;
 
-		/* Get the cert whose status we're checking */
+		/* Get the certificate whose status we're checking */
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
 								  DATABASE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
 								  CRYPT_KEYOPT_READONLY );
@@ -368,7 +368,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			}
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't read cert for RTCS status check, error "
+			printf( "Couldn't read certificate for RTCS status check, error "
 					"code %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
@@ -384,7 +384,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 		   for the session so there'd be nothing else to add before we
 		   activate it, however many certs contain incorrect server URLs so
 		   we set the server name manually if necessary, overriding the
-		   value present in the RTCS request (via the cert) */
+		   value present in the RTCS request (via the certificate) */
 		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_REQUEST,
 									cryptRTCSRequest );
 		if( cryptStatusError( status ) )
@@ -479,7 +479,7 @@ static int connectRTCSDirect( void )
 
 	printf( "Testing direct RTCS query...\n" );
 
-	/* Get the EE cert */
+	/* Get the EE certificate */
 	status = importCertFromTemplate( &cryptCert, RTCS_FILE_TEMPLATE,
 									 RTCS_SERVER_NO );
 	if( cryptStatusError( status ) )
@@ -503,7 +503,7 @@ static int connectRTCSDirect( void )
 							   status, __LINE__ ) );
 #endif /* Kludges for incorrect/missing authorityInfoAccess values */
 
-	/* Check the cert directly against the server */
+	/* Check the certificate directly against the server */
 	status = cryptCheckCert( cryptCert, cryptSession );
 	printf( "Certificate status check returned %d.\n", status );
 
@@ -525,7 +525,7 @@ int testSessionRTCS( void )
 	return( connectRTCS( CRYPT_SESSION_RTCS, TRUE, FALSE ) );
 #else
 	return( TRUE );
-#endif /* Server that has a revoked cert */
+#endif /* Server that has a revoked certificate */
 	}
 int testSessionRTCSServer( void )
 	{
@@ -669,8 +669,8 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			return( attrErrorExit( cryptSession, "SVR: cryptSetAttribute()",
 								   status, __LINE__ ) );
 
-		/* Add the cert store that we'll be using to provide revocation
-		   information */
+		/* Add the certificate store that we'll be using to provide 
+		   revocation information */
 		status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
 								  DATABASE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
 								  CRYPT_KEYOPT_READONLY );
@@ -711,7 +711,7 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 		   for the session so there'd be nothing else to add before we
 		   activate it, however many certs contain incorrect server URLs so
 		   we set the server name manually if necessary, overriding the
-		   value present in the OCSP request (via the cert) */
+		   value present in the OCSP request (via the certificate) */
 		status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_REQUEST,
 									cryptOCSPRequest );
 		if( cryptStatusError( status ) )
@@ -828,7 +828,7 @@ static int connectOCSPDirect( void )
 
 	printf( "Testing direct OCSP query...\n" );
 
-	/* Get the EE cert */
+	/* Get the EE certificate */
 	status = importCertFromTemplate( &cryptCert, OCSP_EEOK_FILE_TEMPLATE,
 									 OCSP_SERVER_NO );
 	if( cryptStatusError( status ) )
@@ -852,9 +852,9 @@ static int connectOCSPDirect( void )
 							   status, __LINE__ ) );
 #endif /* Kludges for incorrect/missing authorityInfoAccess values */
 
-	/* Check the cert directly against the server.  This check quantises the
-	   result into a basic pass/fail that doesn't provide as much detail as
-	   the low-level OCSP check, so it's not unusual to get
+	/* Check the certificate directly against the server.  This check 
+	   quantises the result into a basic pass/fail that doesn't provide as 
+	   much detail as the low-level OCSP check, so it's not unusual to get
 	   CRYPT_ERROR_INVALID whent he low-level check returns
 	   CRYPT_OCSPSTATUS_UNKNOWN */
 	status = cryptCheckCert( cryptCert, cryptSession );
@@ -880,7 +880,7 @@ int testSessionOCSP( void )
 	return( connectOCSP( CRYPT_SESSION_OCSP, FALSE, TRUE, FALSE ) );
 #else
 	return( TRUE );
-#endif /* Server that has a revoked cert */
+#endif /* Server that has a revoked certificate */
 	}
 int testSessionOCSPServer( void )
 	{

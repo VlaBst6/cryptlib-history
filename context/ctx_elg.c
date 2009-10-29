@@ -5,7 +5,7 @@
 *																			*
 ****************************************************************************/
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -179,29 +179,29 @@ static int selfTest( void )
 								sizeof( PKC_INFO ), NULL );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_FAILED );
-	status = extractBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
-							dlpTestKey.pLen, DLPPARAM_MIN_P, 
-							DLPPARAM_MAX_P, NULL, TRUE );
+	status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
+						   dlpTestKey.pLen, DLPPARAM_MIN_P, 
+						   DLPPARAM_MAX_P, NULL, SHORTKEY_CHECK_PKC );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
-								dlpTestKey.gLen, DLPPARAM_MIN_G, 
-								DLPPARAM_MAX_G, &pkcInfo->dlpParam_p, 
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
+							   dlpTestKey.gLen, DLPPARAM_MIN_G, 
+							   DLPPARAM_MAX_G, &pkcInfo->dlpParam_p, 
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
-								dlpTestKey.qLen, DLPPARAM_MIN_Q, 
-								DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p,
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
+							   dlpTestKey.qLen, DLPPARAM_MIN_Q, 
+							   DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
-								dlpTestKey.yLen, DLPPARAM_MIN_Y, 
-								DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
-								TRUE );
+		status = importBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
+							   dlpTestKey.yLen, DLPPARAM_MIN_Y, 
+							   DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
-								dlpTestKey.xLen, DLPPARAM_MIN_X, 
-								DLPPARAM_MAX_X, &pkcInfo->dlpParam_p,
-								FALSE );
+		status = importBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
+							   dlpTestKey.xLen, DLPPARAM_MIN_X, 
+							   DLPPARAM_MAX_X, &pkcInfo->dlpParam_p,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		{
 		staticDestroyContext( &contextInfo );
@@ -293,13 +293,15 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   in a value like this */
 	if( noBytes == -1 )
 		{
-		status = extractBignum( k, ( BYTE * ) kVal, ELGAMAL_SIGPART_SIZE, 
-								ELGAMAL_SIGPART_SIZE, ELGAMAL_SIGPART_SIZE, 
-								q, FALSE );
+		status = importBignum( k, ( BYTE * ) kVal, ELGAMAL_SIGPART_SIZE, 
+							   ELGAMAL_SIGPART_SIZE, ELGAMAL_SIGPART_SIZE, 
+							   q, SHORTKEY_CHECK_NONE );
 		}
 	else
+		{
 		status = generateBignum( k, bytesToBits( ELGAMAL_SIGPART_SIZE ) + 32,
 								 0x80, 0, FALSE );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -322,7 +324,8 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		}
 
 	/* Move the data from the buffer into a bignum */
-	status = extractBignum( s, bufPtr, ELGAMAL_SIGPART_SIZE, q, FALSE );
+	status = importBignum( s, bufPtr, ELGAMAL_SIGPART_SIZE, q, 
+						   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -375,8 +378,8 @@ static int sigCheck( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		u1 = BN_new();
 		u2 = BN_new();
 
-		status = extractBignum( hash, buffer, ELGAMAL_SIGPART_SIZE, 
-								&pkcInfo->dlpParam_p, FALSE );
+		status = importBignum( hash, buffer, ELGAMAL_SIGPART_SIZE, 
+							   &pkcInfo->dlpParam_p, SHORTKEY_CHECK_NONE );
 		if( cryptStatusError( status ) )
 			return( status );
 
@@ -428,19 +431,22 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	int i, bnStatus = BN_STATUS, status;
 
 	assert( noBytes == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && dlpParams->inLen1 == length );
+	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
+	assert( dlpParams->inLen1 == length );
 	assert( dlpParams->inParam2 == NULL && \
 			( dlpParams->inLen2 == 0 || dlpParams->inLen2 == -999 ) );
-	assert( dlpParams->outParam != NULL && \
-			dlpParams->outLen >= ( 2 + length ) * 2 );
+	assert( isWritePtr( dlpParams->outParam, dlpParams->outLen ) );
+	assert( dlpParams->outLen >= ( 2 + length ) * 2 );
 
 	/* Make sure that we're not being fed suspiciously short data 
-	   quantities.  extractBignum() performs a more rigorous check, but we
+	   quantities.  importBignum() performs a more rigorous check, but we
 	   use this as a lint filter before performing the relatively expensive
 	   random bignum generation and preprocessing */
 	for( i = 0; i < length; i++ )
+		{
 		if( buffer[ i ] != 0 )
 			break;
+		}
 	if( length - i < MIN_PKCSIZE - 8 )
 		return( CRYPT_ERROR_BADDATA );
 
@@ -455,8 +461,10 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   function can only be called internally, so all we need to trap is
 	   accidental use of the parameter which is normally unused */
 	if( dlpParams->inLen2 == -999 )
-		status = extractBignum( k, ( BYTE * ) kRandomVal, length, 
-								length, length, NULL, FALSE );
+		{
+		status = importBignum( k, ( BYTE * ) kRandomVal, length, 
+							   length, length, NULL, SHORTKEY_CHECK_NONE );
+		}
 	else
 		{
 		/* Generate the random value k, with the same 32-bit adjustment used
@@ -489,8 +497,9 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		return( getBnStatus( bnStatus ) );
 
 	/* Move the input data into a bignum */
-	status = extractBignum( tmp, ( BYTE * ) dlpParams->inParam1, length,
-							MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, p, FALSE );
+	status = importBignum( tmp, ( BYTE * ) dlpParams->inParam1, length,
+						   MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, p, 
+						   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -499,6 +508,8 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 						 pkcInfo->bnCTX, &pkcInfo->dlpParam_mont_p ) );
 	CK( BN_mod_mul( s, r, tmp, p,		/* s = y'M mod p */
 					pkcInfo->bnCTX ) );
+	if( bnStatusError( bnStatus ) )
+		return( getBnStatus( bnStatus ) );
 
 	/* r = g^k mod p */
 	CK( BN_mod_exp_mont( r, g, k, p, pkcInfo->bnCTX,
@@ -507,9 +518,20 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		return( getBnStatus( bnStatus ) );
 
 	/* Encode the result as a DL data block */
-	return( pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
-							dlpParams->outLen, &dlpParams->outLen, r, s,
-							dlpParams->formatType ) );
+	status = pkcInfo->encodeDLValuesFunction( dlpParams->outParam, 
+								dlpParams->outLen, &dlpParams->outLen, 
+								r, s, dlpParams->formatType );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_ELGAMAL ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /* Decrypt a single block of data */
@@ -524,10 +546,11 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	int offset, dummy, bnStatus = BN_STATUS, status;
 
 	assert( noBytes == sizeof( DLP_PARAMS ) );
-	assert( dlpParams->inParam1 != NULL && \
-			dlpParams->inLen1 >= ( 2 + ( length - 2 ) ) * 2 );
+	assert( isReadPtr( dlpParams->inParam1, dlpParams->inLen1 ) );
+	assert( dlpParams->inLen1 >= ( 2 + ( length - 2 ) ) * 2 );
 	assert( dlpParams->inParam2 == NULL && dlpParams->inLen2 == 0 );
-	assert( dlpParams->outParam != NULL && dlpParams->outLen >= length );
+	assert( isWritePtr( dlpParams->outParam, dlpParams->outLen ) );
+	assert( dlpParams->outLen >= length );
 
 	/* Decode the values from a DL data block and make sure that r and s are
 	   valid, i.e. r, s = [1...p-1] */
@@ -551,14 +574,25 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   leading-zero truncation, we have to adjust where we copy the
 	   result to in the buffer to take into account extra zero bytes
 	   that aren't extracted from the bignum.  In addition we can't use
-	   the length returned from getBignumData() because this is the 
-	   length of the zero-truncated result, not the full length */
+	   the length returned from exportBignum() because this is the length 
+	   of the zero-truncated result, not the full length */
 	offset = length - BN_num_bytes( s );
 	if( offset > 0 )
 		memset( dlpParams->outParam, 0, offset );
 	dlpParams->outLen = length;
-	return( getBignumData( s, dlpParams->outParam + offset, 
-						   dlpParams->outLen - offset, &dummy ) );
+	status = exportBignum( dlpParams->outParam + offset, 
+						   dlpParams->outLen - offset, &dummy, s );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_ELGAMAL ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -584,50 +618,55 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 		/* Load the key components into the bignums */
 		contextInfoPtr->flags |= ( egKey->isPublicKey ) ? \
-							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
-		status = extractBignum( &pkcInfo->dlpParam_p, egKey->p, 
-								bitsToBytes( egKey->pLen ),
-								DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, TRUE );
+					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
+		status = importBignum( &pkcInfo->dlpParam_p, egKey->p, 
+							   bitsToBytes( egKey->pLen ),
+							   DLPPARAM_MIN_P, DLPPARAM_MAX_P, NULL, 
+							   SHORTKEY_CHECK_PKC );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_g, egKey->g, 
-									bitsToBytes( egKey->gLen ),
-									DLPPARAM_MIN_G, DLPPARAM_MAX_G,
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_g, egKey->g, 
+								   bitsToBytes( egKey->gLen ),
+								   DLPPARAM_MIN_G, DLPPARAM_MAX_G,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_q, egKey->q, 
-									bitsToBytes( egKey->qLen ),
-									DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_q, egKey->q, 
+								   bitsToBytes( egKey->qLen ),
+								   DLPPARAM_MIN_Q, DLPPARAM_MAX_Q,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->dlpParam_y, egKey->y, 
-									bitsToBytes( egKey->yLen ),
-									DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
-									&pkcInfo->dlpParam_p, TRUE );
+			status = importBignum( &pkcInfo->dlpParam_y, egKey->y, 
+								   bitsToBytes( egKey->yLen ),
+								   DLPPARAM_MIN_Y, DLPPARAM_MAX_Y,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		if( cryptStatusOK( status ) && !egKey->isPublicKey )
-			status = extractBignum( &pkcInfo->dlpParam_x, egKey->x, 
-									bitsToBytes( egKey->xLen ),
-									DLPPARAM_MIN_X, DLPPARAM_MAX_X,
-									&pkcInfo->dlpParam_p, FALSE );
+			status = importBignum( &pkcInfo->dlpParam_x, egKey->x, 
+								   bitsToBytes( egKey->xLen ),
+								   DLPPARAM_MIN_X, DLPPARAM_MAX_X,
+								   &pkcInfo->dlpParam_p, 
+								   SHORTKEY_CHECK_NONE );
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 #endif /* USE_FIPS140 */
 
-	/* Complete the key checking and setup */
-	status = initDLPkey( contextInfoPtr, FALSE );
-	if( cryptStatusOK( status ) )
-		/* PGP Elgamal keys don't follow X9.42 and are effectively PKCS #3
-		   keys, so if the key is being instantiated from PGP key data and
-		   doesn't have a q parameter, we mark it as a PKCS #3 key to
-		   ensure that it doesn't fail the validity check for q != 0 */
-		status = checkDLPkey( contextInfoPtr,
-					( key == NULL && pkcInfo->openPgpKeyIDSet && \
-					  BN_is_zero( &pkcInfo->dlpParam_q ) ) ? \
-					TRUE : FALSE );
-	if( cryptStatusOK( status ) )
-		status = pkcInfo->calculateKeyIDFunction( contextInfoPtr );
-	return( status );
+	/* Complete the key checking and setup.  PGP Elgamal keys don't follow 
+	   X9.42 and are effectively PKCS #3 keys so if the key is being 
+	   instantiated from PGP key data and doesn't have a q parameter we mark 
+	   it as a PKCS #3 key to ensure that it doesn't fail the validity check 
+	   for q != 0 */
+	if( key == NULL && \
+		( contextInfoPtr->flags & CONTEXT_FLAG_OPENPGPKEYID_SET ) && \
+		BN_is_zero( &pkcInfo->dlpParam_q ) )
+		{
+		/* It's a PGP Elgamal key, treat it as a PKCS #3 key for checking
+		   purposes */
+		return( initCheckDLPkey( contextInfoPtr, FALSE, TRUE ) );
+		}
+	return( initCheckDLPkey( contextInfoPtr, FALSE, FALSE ) );
 	}
 
 /* Generate a key into an encryption context */
@@ -643,11 +682,11 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 #endif /* USE_FIPS140 */
 		!pairwiseConsistencyTest( contextInfoPtr, TRUE ) )
 		{
+		DEBUG_DIAG(( "Consistency check of freshly-generated Elgamal key "
+					 "failed" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
-	if( cryptStatusOK( status ) )
-		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
 	return( status );
 	}
 

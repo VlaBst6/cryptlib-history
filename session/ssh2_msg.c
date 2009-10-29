@@ -20,1078 +20,127 @@
 
 #ifdef USE_SSH
 
+/* Forward declaration for channel-close function */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int sendChannelClose( INOUT SESSION_INFO *sessionInfoPtr,
+							 IN const long channelNo,
+							 IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType,
+							 const BOOLEAN closeLastChannel );
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
 
-/* Read host name/address and port information and format it into string
-   form for the caller */
+/* Implement the SSH performance handbrake unless we've managed to disable
+   it during the channel-open */
 
-static int readAddressAndPort( SESSION_INFO *sessionInfoPtr, STREAM *stream,
-							   char *hostInfo, const int hostInfoMaxLen, 
-							   int *hostInfoLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int handleWindowAdjust( INOUT SESSION_INFO *sessionInfoPtr,
+							   IN const long channelNo,
+							   IN_LENGTH_Z const int length )
 	{
-	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	char portBuffer[ 16 + 8 ];
-	int stringLength, port, portLength, status;
-
-	/* Clear return value */
-	*hostInfo = '\0';
-	*hostInfoLen = 0;
-
-	/* Get the host and port:
-
-		string	host
-		uint32	port */
-	status = readString32( stream, stringBuffer, CRYPT_MAX_TEXTSIZE - 4,
-						   &stringLength );
-	if( cryptStatusError( status ) || \
-		stringLength <= 0 || stringLength > CRYPT_MAX_TEXTSIZE - 4 )
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid host name value" ) );
-	status = port = readUint32( stream );
-	if( cryptStatusError( status ) || port <= 0 || port >= 65535L )
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid port number value" ) );
-
-	/* Convert the info into string form for the caller to process */
-	portLength = sprintf_s( portBuffer, 8, ":%d", port );
-	memcpy( hostInfo, stringBuffer, stringLength );
-	if( stringLength + portLength <= hostInfoMaxLen )
-		{
-		memcpy( hostInfo + stringLength, portBuffer, portLength );
-		stringLength += portLength;
-		}
-	*hostInfoLen = stringLength;
-
-	return( CRYPT_OK );
-	}
-
-/* Add or clear host name/address and port information */
-
-static int getAddressAndPort( SESSION_INFO *sessionInfoPtr, STREAM *stream,
-							  char *hostInfo, const int hostInfoMaxLen,
-							  int *hostInfoLen )
-	{
-	int status;
-
-	/* Read the address and port info */
-	status = readAddressAndPort( sessionInfoPtr, stream, hostInfo,
-								 hostInfoMaxLen, hostInfoLen );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( getChannelStatusAddr( sessionInfoPtr, hostInfo, \
-							  *hostInfoLen ) != CHANNEL_NONE )
-		{
-		/* We're adding new forwarding info, if it already exists this is
-		   an error */
-		retExt( CRYPT_ERROR_DUPLICATE,
-				( CRYPT_ERROR_DUPLICATE, SESSION_ERRINFO, 
-				  "Received duplicate request for existing host/port %s",
-				  sanitiseString( hostInfo, *hostInfoLen, *hostInfoLen ) ) );
-		}
-
-	return( CRYPT_OK );
-	}
-
-static int clearAddressAndPort( SESSION_INFO *sessionInfoPtr, STREAM *stream )
-	{
-#if 0	/* This is a somewhat special-case function in that it does't apply
-		   to an open channel but to a past request for forwarding that
-		   exists outside of the normal attribute space.  Until this type of
-		   functionality is explicitly requested by users, we don't handle
-		   this special-case non-attribute data setting */
-	SSH_CHANNEL_INFO *channelInfoPtr;
-	char hostInfo[ CRYPT_MAX_TEXTSIZE + 8 ];
-	int hostInfoLen, status;
-
-	/* Read the address and port info */
-	status = readAddressAndPort( sessionInfoPtr, stream, hostInfo, 
-								 hostInfoMaxLen, &hostInfoLen );
-	if( cryptStatusError( status ) )
-		return( status );
-	return( deleteChannelAddr( sessionInfoPtr, addrInfo, addrInfoLen ) );
-#else
-	return( CRYPT_OK );
-#endif /* 0 */
-	}
-
-/****************************************************************************
-*																			*
-*							Client-side Channel Management					*
-*																			*
-****************************************************************************/
-
-/* Create a request for the appropriate type of service, either encrypted-
-   telnet, SFTP (or more generically a subsystem), or port forwarding.
-   There are several different port-forwarding mechanisms that we can use.
-   A global request of type "tcpip-forward" requests forwarding of a remote
-   port to the local system, specifying the remote port to be forwarded but
-   without actually opening a session/channel, it's merely q request for
-   future forwarding.  When a connection arrives on the remote port for
-   which forwarding has been requested, the remote system opens a channel of
-   type "forwarded-tcpip" to the local system.  To open a connection from a
-   locally-forwarded port to a port on the remote system, the local system
-   opens a channel of type "direct-tcpip" to the remote system:
-
-	Pkt		Name			Arg1			Arg2		Comment
-	---		----			----			----		-------
-	open	"session"									Followed by pty-req
-														or subsys
-	open	"fded-tcpip"	remote_info (in)			Server -> client in
-														response.to tcpip-fd
-	open	"direct-tcpip"	remote_info		local_info	Client -> server, currently
-														local_info = 127.0.0.1
-	global	"tcpip-fd"		remote_info (out)			Request for remote
-														forwarding
-
-   Once we've opened a standard session, we need to follow it with either a
-   pty-request + shell request or a subsystem request:
-
-	Pkt		Name			Arg1			Arg2		Comment
-	---		----			----			----		-------
-	channel	"pty-req"
-	channel "subsystem"		name
-
-   In theory we could bundle the channel open + pty-request + shell request
-   into a single packet group to save round-trips, but the packets sent after
-   the channel open require the use of the receive-channel number supplied by
-   the remote system.  This is usually the same as the send channel that we
-   specify, but for some unknown reason Cisco use different send and receive
-   channel numbers, requiring that we wait for the response to the channel-
-   open before we send any subsequent packets, adding another RTT to the
-   exchange */
-
-typedef enum { OPENREQUEST_NONE, OPENREQUEST_STANDALONE,
-			   OPENREQUEST_CHANNELONLY, OPENREQUEST_SESSION } OPENREQUEST_TYPE;
-
-static int createOpenRequest( SESSION_INFO *sessionInfoPtr, STREAM *stream,
-							  OPENREQUEST_TYPE *requestType )
-	{
-	const long channelNo = getCurrentChannelNo( sessionInfoPtr,
-												CHANNEL_WRITE );
-	const int maxPacketSize = sessionInfoPtr->sendBufSize - \
-							  EXTRA_PACKET_SIZE;
-	URL_INFO urlInfo = { DUMMY_INIT };
-	BYTE typeString[ CRYPT_MAX_TEXTSIZE + 8 ];
-	BYTE arg1String[ CRYPT_MAX_TEXTSIZE + 8 ];
-	BOOLEAN isPortForward = FALSE, isSubsystem = FALSE, isExec = FALSE;
-	int typeLen, arg1Len = DUMMY_INIT, status;
-
-	/* Clear return value */
-	*requestType = OPENREQUEST_NONE;
-
-	/* Get the information that's needed for the channel we're about to
-	   create */
-	status = getChannelAttributeString( sessionInfoPtr,
-										CRYPT_SESSINFO_SSH_CHANNEL_TYPE,
-										typeString, CRYPT_MAX_TEXTSIZE, 
-										&typeLen );
-	if( cryptStatusError( status ) )
-		{
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Missing channel type for channel activation" ) );
-		}
-	if( !strCompare( typeString, "subsystem", 9 ) )
-		isSubsystem = TRUE;
-	if( !strCompare( typeString, "direct-tcpip", 12 ) || \
-		!strCompare( typeString, "forwarded-tcpip", 15 ) )
-		isPortForward = TRUE;
-	if( !strCompare( typeString, "exec", 4 ) )
-		isExec = TRUE;
-	if( isPortForward || isSubsystem || isExec )
-		{
-		status = getChannelAttributeString( sessionInfoPtr,
-											CRYPT_SESSINFO_SSH_CHANNEL_ARG1,
-											arg1String, CRYPT_MAX_TEXTSIZE, 
-											&arg1Len );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status,
-					( status, SESSION_ERRINFO, 
-					  "Missing channel argument (%s) for channel "
-					  "activation", isPortForward ? "host name/port" : \
-								  isExec ? "command" : "subsystem name" ) );
-			}
-		}
-
-	/* If we know that the argument is a URL (rather than a subsystem name 
-	   or command), check its validity */
-	if( isPortForward )
-		{
-		status = sNetParseURL( &urlInfo, arg1String, arg1Len, URL_TYPE_SSH );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status,
-					( status, SESSION_ERRINFO, 
-					  "Invalid channel argument (host name/port) for "
-					  "channel activation" ) );
-			}
-		}
-
-	/* Set the request type to tell the caller what to do after they've
-	   sent the initial channel open */
-	*requestType = isPortForward ? OPENREQUEST_CHANNELONLY : \
-								   OPENREQUEST_SESSION;
-
-#if 0	/* Request forwarding of a port from the remote system to the local
-		   one.  Once a connection arrives on the remote port it'll open a
-		   channel to the local system of type "forwarded-tcpip".  Since
-		   this isn't a normal channel open, we return a special status to
-		   let the caller know that there's nothing further to do */
-	if( "tcpip-forward" )
-		{
-		URL_INFO urlInfo;
-
-		*requestType = OPENREQUEST_STANDALONE;
-
-		/*	...
-			byte	type = SSH_MSG_GLOBAL_REQUEST
-			string	request_name = "tcpip-forward"
-			boolean	want_reply = FALSE
-			string	remote_address_to_bind (e.g. "0.0.0.0")
-			uint32	remote_port_to_bind
-
-		   Since this is a special-case request-only message, we let the
-		   caller know that they don't have to proceed further with the
-		   channel-open */
-		status = continuePacketStreamSSH( stream, SSH2_MSG_GLOBAL_REQUEST,
-										  &packetOffset );
-		if( cryptStatusError( status ) )
-			return( status );
-		writeString32( stream, "tcpip-forward", 13 );
-		sputc( stream, 0 );
-		writeString32( stream, urlInfo.host, urlInfo.hostLen );
-		writeUint32( stream, urlInfo.port );
-		return( wrapPacketSSH2( sessionInfoPtr, stream, packetOffset ) );
-		}
-#endif /* 0 */
-
-	/* Send a channel open:
-
-		byte	type = SSH2_MSG_CHANNEL_OPEN
-		string	channel_type
-		uint32	sender_channel
-		uint32	initial_window_size = MAX_WINDOW_SIZE
-		uint32	max_packet_size = bufSize
-		...
-
-	   The use of security protocol-level flow control when there's already
-	   a far better, heavily analysed and field-tested network protocol-
-	   level flow control mechanism is just stupid.  All it does is create
-	   a performance handbrake where throughput can be reduced by as much as
-	   an order of magnitude due to SSH's "flow-control" getting in the way
-	   (Putty even has an FAQ entry "Why is SFTP so much slower than scp?",
-	   for which the correct answer should be "It's the SSH-level flow-
-	   control braindamage").  For this reason cryptlib always advertises a
-	   maximum window size (effectively disabling the SSH-level flow
-	   control) and lets the network stack and network hardware take care of
-	   flow control, as they should */
-	status = openPacketStreamSSH( stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-								  SSH2_MSG_CHANNEL_OPEN );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( isSubsystem || isExec )
-		{
-		/* A subsystem is an additional layer on top of the standard
-		   channel, so we have to open the channel first and then add the
-		   subsystem later via a channel request rather than opening it
-		   directly.  An exec is a special case that works like the default
-		   type of operation, "shell", but doesn't go via a pty */
-		writeString32( stream, "session", 7 );
-		}
-	else
-		writeString32( stream, typeString, typeLen );
-	writeUint32( stream, channelNo );
-	writeUint32( stream, MAX_WINDOW_SIZE );
-	status = writeUint32( stream, maxPacketSize );
-	if( isPortForward )
-		{
-		/* The caller has requested a port-forwarding channel open, continue
-		   the basic channel-open packet with port-forwarding info:
-
-			...
-			string	remote_host_to_connect
-			uint32	rempte_port_to_connect
-			string	local_originator_IP_address
-			uint32	local_originator_port */
-		writeString32( stream, urlInfo.host, urlInfo.hostLen );
-		writeUint32( stream, urlInfo.port );
-		writeString32( stream, "127.0.0.1", 9 );
-		status = writeUint32( stream, 22 );
-		}
-	if( cryptStatusOK( status ) )
-		status = wrapPacketSSH2( sessionInfoPtr, stream, 0, FALSE, TRUE );
-	return( status );
-	}
-
-static int createSessionOpenRequest( SESSION_INFO *sessionInfoPtr,
-									 STREAM *stream )
-	{
-	const long channelNo = getCurrentChannelNo( sessionInfoPtr,
-												CHANNEL_WRITE );
-	BYTE typeString[ CRYPT_MAX_TEXTSIZE + 8 ];
-	int typeLen, packetOffset, status;
-
-	/* If the caller has requested the use of a custom subsystem (and at the
-	   moment the only one that's likely to be used is SFTP), request this
-	   from the server by modifying the channel that we've just opened to
-	   run the subsystem */
-	status = getChannelAttributeString( sessionInfoPtr, 
-										CRYPT_SESSINFO_SSH_CHANNEL_TYPE,
-										typeString, CRYPT_MAX_TEXTSIZE, 
-										&typeLen );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( !strCompare( typeString, "subsystem", 9 ) )
-		{
-		BYTE arg1String[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int arg1Len;
-
-		/* Get the subsystem type */
-		status = getChannelAttributeString( sessionInfoPtr, 
-											CRYPT_SESSINFO_SSH_CHANNEL_ARG1,
-											arg1String, CRYPT_MAX_TEXTSIZE, 
-											&arg1Len );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		/*	byte	type = SSH2_MSG_CHANNEL_REQUEST
-			uint32	recipient_channel
-			string	request_name = "subsystem"
-			boolean	want_reply = FALSE
-			string	subsystem_name */
-		status = openPacketStreamSSH( stream, sessionInfoPtr, 
-									  CRYPT_USE_DEFAULT,
-									  SSH2_MSG_CHANNEL_REQUEST );
-		if( cryptStatusError( status ) )
-			return( status );
-		writeUint32( stream, channelNo );
-		writeString32( stream, "subsystem", 9 );
-		sputc( stream, 0 );
-		status = writeString32( stream, arg1String, arg1Len );
-		if( cryptStatusOK( status ) )
-			status = wrapPacketSSH2( sessionInfoPtr, stream, 0, FALSE, TRUE );
-		return( status );
-		}
-
-	/* If the caller has requested the use of remote command execution (i.e. 
-	   an rexec rather than the usual SSH rsh), run the command directly
-	   without going via a pty */
-	if( !strCompare( typeString, "exec", 4 ) )
-		{
-		BYTE arg1String[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int arg1Len;
-
-		/* Get the command to execute */
-		status = getChannelAttributeString( sessionInfoPtr, 
-											CRYPT_SESSINFO_SSH_CHANNEL_ARG1,
-											arg1String, CRYPT_MAX_TEXTSIZE, 
-											&arg1Len );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		/*	byte	type = SSH2_MSG_CHANNEL_REQUEST
-			uint32	recipient_channel
-			string	request_name = "exec"
-			boolean	want_reply = FALSE
-			string	command */
-		status = openPacketStreamSSH( stream, sessionInfoPtr, 
-									  CRYPT_USE_DEFAULT,
-									  SSH2_MSG_CHANNEL_REQUEST );
-		if( cryptStatusError( status ) )
-			return( status );
-		writeUint32( stream, channelNo );
-		writeString32( stream, "exec", 4 );
-		sputc( stream, 0 );
-		status = writeString32( stream, arg1String, arg1Len );
-		if( cryptStatusOK( status ) )
-			status = wrapPacketSSH2( sessionInfoPtr, stream, 0, FALSE, TRUE );
-		return( status );
-		}
-
-	/* It's a standard channel open:
-
-		byte	type = SSH2_MSG_CHANNEL_REQUEST
-		uint32	recipient_channel
-		string	request_name = "pty-req"
-		boolean	want_reply = FALSE
-		string	TERM_environment_variable = "xterm"
-		uint32	cols = 80
-		uint32	rows = 48
-		uint32	pixel_width = 0
-		uint32	pixel_height = 0
-		string	tty_mode_info = ""
-		... */
-	status = openPacketStreamSSH( stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-								  SSH2_MSG_CHANNEL_REQUEST );
-	if( cryptStatusError( status ) )
-		return( status );
-	writeUint32( stream, channelNo );
-	writeString32( stream, "pty-req", 7 );
-	sputc( stream, 0 );					/* No reply */
-	writeString32( stream, "xterm", 5 );/* Generic */
-	writeUint32( stream, 80 );
-	writeUint32( stream, 48 );			/* 48 x 80 (we're past 24 x 80) */
-	writeUint32( stream, 0 );
-	writeUint32( stream, 0 );			/* No graphics capabilities */
-	status = writeUint32( stream, 0 );	/* No special TTY modes */
-	if( cryptStatusOK( status ) )
-		status = wrapPacketSSH2( sessionInfoPtr, stream, 0, FALSE, TRUE );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/*	...
-		byte	type = SSH2_MSG_CHANNEL_REQUEST
-		uint32	recipient_channel
-		string	request_name = "shell"
-		boolean	want_reply = FALSE
-
-	   This final request, once sent, moves the server into interactive
-	   session mode */
-	status = continuePacketStreamSSH( stream, SSH2_MSG_CHANNEL_REQUEST,
-									  &packetOffset );
-	if( cryptStatusError( status ) )
-		return( status );
-	writeUint32( stream, channelNo );
-	writeString32( stream, "shell", 5 );
-	status = sputc( stream, 0 );			/* No reply */
-	if( cryptStatusOK( status ) )
-		status = wrapPacketSSH2( sessionInfoPtr, stream, packetOffset, 
-								 FALSE, TRUE );
-	return( status );
-	}
-
-/* Send a channel open */
-
-int sendChannelOpen( SESSION_INFO *sessionInfoPtr )
-	{
-	STREAM stream;
-	OPENREQUEST_TYPE requestType;
-	const long channelNo = getCurrentChannelNo( sessionInfoPtr,
-												CHANNEL_READ );
-	long currentChannelNo;
-	int length, value, status;
-
-	/* Make sure that there's channel data available to activate and
-	   that it doesn't correspond to an already-active channel */
-	if( channelNo == UNUSED_CHANNEL_NO )
-		{
-		retExt( CRYPT_ERROR_NOTINITED,
-				( CRYPT_ERROR_NOTINITED, SESSION_ERRINFO, 
-				  "No current channel information available to activate "
-				  "channel" ) );
-		}
-	status = getChannelAttribute( sessionInfoPtr,
-								  CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE,
-								  &value );
-	if( cryptStatusError( status ) || value )
-		{
-		retExt( CRYPT_ERROR_INITED,
-				( CRYPT_ERROR_INITED, SESSION_ERRINFO, 
-				  "Current channel has already been activated" ) );
-		}
-
-	/* Create a request for the appropriate type of service */
-	status = createOpenRequest( sessionInfoPtr, &stream, &requestType );
-	if( cryptStatusError( status ) )
-		{
-		sMemDisconnect( &stream );
-		return( status );
-		}
-
-	/* If it's a request-only message that doesn't open a channel,send it
-	   and exit */
-	if( requestType == OPENREQUEST_STANDALONE )
-		{
-		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
-		sMemDisconnect( &stream );
-		return( status );
-		}
-
-	/* Send the open request to the server.  The SSHv2 spec doesn't really
-	   explain the semantics of the server's response to the channel open
-	   command, in particular whether the returned data size parameters are
-	   merely a confirmation of the client's requested values or whether the
-	   server is allowed to further modify them to suit its own requirements
-	   (or perhaps one is for send and the other for receive?).  In the
-	   absence of any further guidance, we just ignore the returned values,
-	   which seems to work for all deployed servers */
-	status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
-	sMemDisconnect( &stream );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Wait for the server's ack of the channel open request:
-
-		byte	SSH_MSG_CHANNEL_OPEN_CONFIRMATION
-		uint32	recipient_channel
-		uint32	sender_channel
-		uint32	initial_window_size
-		uint32	maximum_packet_size
-		... */
-	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_CHANNEL,
-						  ID_SIZE + UINT32_SIZE + UINT32_SIZE + \
-							UINT32_SIZE + UINT32_SIZE );
-	if( cryptStatusError( status ) )
-		return( status );
-	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
-	if( sgetc( &stream ) == SSH2_MSG_CHANNEL_OPEN_FAILURE )
-		{
-		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-		BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int stringLen;
-
-		/* The channel open failed, tell the caller why:
-
-			byte	SSH_MSG_CHANNEL_OPEN_FAILURE
-			uint32	recipient_channel
-			uint32	reason_code
-			string	additional_text */
-		readUint32( &stream );		/* Skip channel number */
-		errorInfo->errorCode = readUint32( &stream );
-		status = readString32( &stream, stringBuffer, CRYPT_MAX_TEXTSIZE, 
-							   &stringLen );
-		if( cryptStatusError( status ) || \
-			stringLen <= 0 || stringLen > CRYPT_MAX_TEXTSIZE )
-			{
-			/* No error message, the best that we can do is give the reason
-			   code as part of the message */
-			retExt( CRYPT_ERROR_OPEN,
-					( CRYPT_ERROR_OPEN, SESSION_ERRINFO, 
-					  "Channel open failed, reason code %d",
-					  errorInfo->errorCode ) );
-			}
-		retExt( CRYPT_ERROR_OPEN,
-				( CRYPT_ERROR_OPEN, SESSION_ERRINFO, 
-				  "Channel open failed, error message '%s'",
-				  sanitiseString( stringBuffer, CRYPT_MAX_TEXTSIZE, 
-								  stringLen ) ) );
-		}
-	currentChannelNo = readUint32( &stream );
-	if( currentChannelNo != channelNo )
-		{
-		sMemDisconnect( &stream );
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid channel number %ld in channel open confirmation, "
-				  "should be %ld", currentChannelNo, channelNo ) );
-		}
-	currentChannelNo = readUint32( &stream );
-	sMemDisconnect( &stream );
-
-	/* The channel has been successfully created, mark it as active and
-	   select it for future exchanges */
-	status = setChannelExtAttribute( sessionInfoPtr, SSH_ATTRIBUTE_ACTIVE,
-									 NULL, TRUE );
-	if( cryptStatusOK( status ) && currentChannelNo != channelNo )
-		{
-		/* It's unclear why anyone would want to use different channel
-		   numbers for different directions since it's the same channel that 
-		   the data is moving across, but Cisco do it anyway */
-		status = setChannelExtAttribute( sessionInfoPtr, 
-										 SSH_ATTRIBUTE_ALTCHANNELNO,
-										 NULL, currentChannelNo );
-		}
-	if( cryptStatusOK( status ) )
-		status = selectChannel( sessionInfoPtr, channelNo, CHANNEL_BOTH );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( requestType == OPENREQUEST_CHANNELONLY )
-		{
-		/* If we're just opening a new channel in an existing session, we're 
-		   done */
-		return( CRYPT_OK );
-		}
-	assert( requestType == OPENREQUEST_SESSION );
-
-	/* It's a session open request that requires additional messages to do
-	   anything useful, create and send the extra packets */
-	status = createSessionOpenRequest( sessionInfoPtr, &stream );
-	if( cryptStatusOK( status ) )
-		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
-	sMemDisconnect( &stream );
-	return( status );
-	}
-
-/****************************************************************************
-*																			*
-*							Server-side Channel Management					*
-*																			*
-****************************************************************************/
-
-/* SSH identifies channel requests using awkward string-based identifiers,
-   to make these easier to work with we map them to integer values */
-
-typedef enum { REQUEST_NONE, REQUEST_SUBSYSTEM, REQUEST_SHELL, REQUEST_EXEC,
-			   REQUEST_PORTFORWARD, REQUEST_PORTFORWARD_CANCEL, REQUEST_PTY,
-			   REQUEST_NOOP, REQUEST_DISALLOWED } REQUEST_TYPE;
-
-#define REQUEST_FLAG_NONE		0x00/* No request flag */
-#define REQUEST_FLAG_TERMINAL	0x01/* Request ends negotiation */
-
-typedef struct {
-	const char FAR_BSS *requestName;/* String form of request type */
-	const REQUEST_TYPE requestType;	/* Integer form of request type */
-	const int flags;				/* Request flags */
-	} REQUEST_TYPE_INFO;
-
-/* Process a global or channel request */
-
-static int sendRequestResponse( SESSION_INFO *sessionInfoPtr,
-								const long channelNo,
-								const BOOLEAN isChannelRequest,
-								const BOOLEAN isSuccessful )
-	{
-	int status;
-
-	/* Indicate that the request succeeded/was denied:
-
-		byte	type = SSH2_MSG_CHANNEL/GLOBAL_SUCCESS/FAILURE
-	  [	uint32	channel_no		- For channel reqs ] */
-	if( isChannelRequest )
-		status = enqueueResponse( sessionInfoPtr,
-					isSuccessful ? SSH2_MSG_CHANNEL_SUCCESS : \
-								   SSH2_MSG_CHANNEL_FAILURE, 1,
-					( channelNo == CRYPT_USE_DEFAULT ) ? \
-						getCurrentChannelNo( sessionInfoPtr, CHANNEL_READ ) : \
-						channelNo,
-					CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_UNUSED );
-	else
-		status = enqueueResponse( sessionInfoPtr,
-					isSuccessful ? SSH2_MSG_GLOBAL_SUCCESS : \
-								   SSH2_MSG_GLOBAL_FAILURE, 0,
-					CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_UNUSED,
-					CRYPT_UNUSED );
-	return( cryptStatusOK( status ) ? \
-			sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED ) : status );
-	}
-
-static int processChannelRequest( SESSION_INFO *sessionInfoPtr,
-								  STREAM *stream, const long prevChannelNo )
-	{
-	static const REQUEST_TYPE_INFO FAR_BSS requestInfo[] = {
-		/* Channel/session-creation requests, only permitted on the server-
-		   side */
-		{ "subsystem", REQUEST_SUBSYSTEM, REQUEST_FLAG_TERMINAL },
-		{ "tcpip-forward", REQUEST_PORTFORWARD, REQUEST_FLAG_NONE },
-		{ "cancel-tcpip-forward", REQUEST_PORTFORWARD_CANCEL, REQUEST_FLAG_NONE },
-		{ "shell", REQUEST_SHELL, REQUEST_FLAG_TERMINAL },
-		{ "exec", REQUEST_EXEC, REQUEST_FLAG_TERMINAL },
-		{ "pty-req", REQUEST_PTY, REQUEST_FLAG_NONE },
-
-		/* No-op requests */
-		{ "env", REQUEST_NOOP, REQUEST_FLAG_NONE },
-		{ "exit-signal", REQUEST_NOOP, REQUEST_FLAG_NONE },
-		{ "exit-status", REQUEST_NOOP, REQUEST_FLAG_NONE },
-		{ "signal", REQUEST_NOOP, REQUEST_FLAG_NONE },
-		{ "xon-xoff", REQUEST_NOOP, REQUEST_FLAG_NONE },
-		{ "window-change", REQUEST_NOOP, REQUEST_FLAG_NONE },
-
-		/* Disallowed requests */
-		{ "x11-req", REQUEST_DISALLOWED, REQUEST_FLAG_NONE },
-		{ NULL, REQUEST_NONE, REQUEST_FLAG_NONE },
-		{ NULL, REQUEST_NONE, REQUEST_FLAG_NONE }
-		};
-	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
-	const BOOLEAN isChannelRequest = \
-			( sshInfo->packetType == SSH2_MSG_CHANNEL_REQUEST );
-	REQUEST_TYPE requestType = REQUEST_DISALLOWED;
-	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	BOOLEAN wantReply, requestOK = FALSE, requestIsTerminal = FALSE;
-	int stringLength, i, status;
+	int windowCount, windowSize = DUMMY_INIT, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	/* Process the channel/global request (the type and channel number
-	   have already been read by the caller):
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+	REQUIRES( length >= 0 && length < MAX_INTLENGTH );
 
-	  [	byte	type = SSH2_MSG_CHANNEL_REQUEST / SSH2_MSG_GLOBAL_REQUEST ]
-	  [	uint32	recipient_channel	- For channel reqs ]
-		string	request_type
-		boolean	want_reply
-		[...]
-
-	   If there's an error at this point we can't send back a response
-	   because one or both of the channel number and the want_reply flag
-	   aren't available yet.  The consensus among SSH implementors was that
-	   not doing anything if the request packet is invalid is preferable to
-	   sending back a response with a placeholder channel number, or a
-	   response when want_reply could have been false had it been able to
-	   be decoded */
-	status = readString32( stream, stringBuffer, CRYPT_MAX_TEXTSIZE, 
-						   &stringLength );
-	if( cryptStatusError( status ) || \
-		stringLength <= 0 || stringLength > CRYPT_MAX_TEXTSIZE  || \
-		cryptStatusError( wantReply = sgetc( stream ) ) )
-		{
-		retExt( CRYPT_ERROR_BADDATA, 
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid %s request packet type",
-				  isChannelRequest ? "channel" : "global" ) );
-		}
-
-	/* Try and identify the request type */
-	for( i = 0; requestInfo[ i ].requestName != NULL && \
-				i < FAILSAFE_ARRAYSIZE( requestInfo, REQUEST_TYPE_INFO ); 
-		 i++ )
-		{
-		if( stringLength == strlen( requestInfo[ i ].requestName ) && \
-			!memcmp( stringBuffer, requestInfo[ i ].requestName,
-					 stringLength ) )
-			{
-			requestType = requestInfo[ i ].requestType;
-			requestOK = ( requestType != REQUEST_DISALLOWED ) ? \
-						TRUE : FALSE;
-			requestIsTerminal = \
-					( requestInfo[ i ].flags & REQUEST_FLAG_TERMINAL ) ? \
-					TRUE : FALSE;
-			break;
-			}
-		}
-	if( i >= FAILSAFE_ARRAYSIZE( requestInfo, REQUEST_TYPE_INFO ) )
-		retIntError();
-
-	/* If it's an explicitly disallowed request type or if we're the client
-	   and it's anything other than a no-op request (for example a request
-	   to execute a command or perform port forwarding), it isn't
-	   permitted */
-	if( !requestOK || \
-		( !isServer( sessionInfoPtr ) && ( requestType != REQUEST_NOOP ) ) )
-		{
-		/* If the other side doesn't want a response to their request, we're 
-		   done */
-		if( !wantReply )
-			return( CRYPT_OK );
-
-		/* Send a request-denied response to the other side's request */
-		status = sendRequestResponse( sessionInfoPtr, prevChannelNo,
-									  isChannelRequest, FALSE );
-		if( isChannelRequest )
-			{
-			int localStatus;
-
-			/* The request failed, go back to the previous channel */
-			localStatus = selectChannel( sessionInfoPtr, prevChannelNo, 
-										 CHANNEL_READ );
-			if( cryptStatusOK( status ) )
-				status = localStatus;
-			}
-		return( status );
-		}
-
-	assert( requestOK && \
-			( isServer( sessionInfoPtr ) || \
-			  ( requestType == REQUEST_NOOP ) ) );
-
-	/* Process the request.  Since these are administrative messages that
-	   aren't visible to the caller, we don't bail out if we encounter a
-	   problem, we just deny the request */
-	switch( requestType )
-		{
-		case REQUEST_SUBSYSTEM:
-			/* We're being asked for a subsystem, record the type:
-
-				[...]
-				string	subsystem_name */
-			status = readString32( stream, stringBuffer, CRYPT_MAX_TEXTSIZE,
-								   &stringLength );
-			if( cryptStatusError( status ) || \
-				stringLength <= 0 || stringLength > CRYPT_MAX_TEXTSIZE )
-				requestOK = FALSE;
-			else
-				{
-				/* The handling of subsystems is somewhat awkward, instead
-				   of opening a subsystem channel SSH first opens a standard
-				   session channel and then layers a subsystem on top of it.
-				   Because of this we have to replace the standard channel
-				   type with a new subsystem channel-type as well as recording
-				   the subsystem type */
-				status = setChannelAttributeString( sessionInfoPtr,
-													CRYPT_SESSINFO_SSH_CHANNEL_TYPE,
-													"subsystem", 9 );
-				if( cryptStatusOK( status ) )
-					{
-					status = \
-						setChannelAttributeString( sessionInfoPtr,
-												   CRYPT_SESSINFO_SSH_CHANNEL_ARG1,
-												   stringBuffer, 
-												   stringLength );
-					}
-				if( cryptStatusError( status ) )
-					retIntError();
-				}
-			break;
-
-		case REQUEST_SHELL:
-		case REQUEST_EXEC:
-		case REQUEST_PTY:
-		case REQUEST_NOOP:
-			/* Generic requests containing extra information that we're not
-			   interested in */
-			break;
-
-		case REQUEST_PORTFORWARD:
-			/* We're being asked for port forwarding, get the address and
-			   port information:
-
-				[...]
-				string	local_address_to_bind (e.g. "0.0.0.0")
-				uint32	local_port_to_bind */
-			status = getAddressAndPort( sessionInfoPtr, stream, stringBuffer,
-										CRYPT_MAX_TEXTSIZE, &stringLength );
-			if( cryptStatusError( status ) )
-				requestOK = FALSE;
-			else
-				{
-#if 0			/* This is a global request that doesn't apply to any
-				   channel, which makes it rather hard to deal with since
-				   we can't associate it with anything that the user can
-				   work with.  For now we leave it until there's actual
-				   user demand for it */
-				setChannelAttribute( sessionInfoPtr,
-									 CRYPT_SESSINFO_SSH_CHANNEL_ARG1,
-									 stringBuffer, stringLength );
-#endif /* 0 */
-				}
-			break;
-
-		case REQUEST_PORTFORWARD_CANCEL:
-			{
-			const int offset = stell( stream );
-			int iterationCount = 0;
-
-			/* Check that this is a request to close a port for which
-			   forwarding was actually requested.  Since there could be
-			   multiple channels open on the forwarded port, we keep looking
-			   for other channels open on this port until we've cleared them
-			   all.  The spec is silent about what happens to open channels
-			   when the forwarding is cancelled, but from reading between
-			   the lines (new channel-open requests can be received until
-			   the forwarding is cancelled) it appears that the channels
-			   remain active until the channel itself is closed */
-			requestOK = FALSE;
-			do
-				{
-				sseek( stream, offset );
-				status = clearAddressAndPort( sessionInfoPtr, stream );
-				if( cryptStatusOK( status ) )
-					requestOK = TRUE;
-				}
-			while( cryptStatusOK( status ) && \
-				   iterationCount++ < FAILSAFE_ITERATIONS_MED );
-			if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-				retIntError();
-			break;
-			}
-
-		case REQUEST_DISALLOWED:
-		default:
-			/* Anything else we don't allow.  This should already be handled
-			   via the default status setting of FALSE, but we make it
-			   explicit here */
-			requestOK = FALSE;
-			break;
-		}
-
-	/* Acknowledge the request if necessary */
-	if( wantReply )
-		{
-		status = sendRequestResponse( sessionInfoPtr, prevChannelNo,
-									  isChannelRequest, requestOK );
-		if( isChannelRequest && \
-			( cryptStatusError( status ) || !requestOK ) )
-			{
-			/* The request failed, go back to the previous channel */
-			status = selectChannel( sessionInfoPtr, prevChannelNo,
-									CHANNEL_READ );
-			}
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-	return( requestIsTerminal ? OK_SPECIAL : CRYPT_OK );
-	}
-
-/* Process a channel open.  Since these are administrative messages that
-   aren't visible to the caller, we don't bail out if we encounter a
-   problem, we just deny the request */
-
-static int sendOpenResponseFailed( SESSION_INFO *sessionInfoPtr,
-								   const long channelNo )
-	{
-	int status;
-
-	/* Indicate that the request was denied:
-
-		byte	SSH2_MSG_CHANNEL_OPEN_FAILURE
-		uint32	recipient_channel
-		uint32	reason_code = SSH_OPEN_ADMINISTRATIVELY_PROHIBITED
-		string	additional_text = ""
-		string	language_tag = ""
-
-	   We always send the same reason code to avoid giving away anything
-	   to an attacker */
-	status = enqueueResponse( sessionInfoPtr,
-							  SSH2_MSG_CHANNEL_OPEN_FAILURE, 4,
-							  channelNo,
-							  SSH_OPEN_ADMINISTRATIVELY_PROHIBITED,
-							  0, 0 );
+	/* Get the window parameters */
+	status = getChannelExtAttribute( sessionInfoPtr, 
+									 SSH_ATTRIBUTE_WINDOWCOUNT, 
+									 &windowCount );
 	if( cryptStatusOK( status ) )
-		status = sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED );
-	return( status );
-	}
+		status = getChannelExtAttribute( sessionInfoPtr,
+										 SSH_ATTRIBUTE_WINDOWSIZE,
+										 &windowSize );
+	ENSURES( cryptStatusOK( status ) );
 
-int processChannelOpen( SESSION_INFO *sessionInfoPtr, STREAM *stream )
-	{
-	BYTE typeString[ CRYPT_MAX_TEXTSIZE + 8 ];
-	BYTE arg1String[ CRYPT_MAX_TEXTSIZE + 8 ], *arg1Ptr = NULL;
-	BOOLEAN isPortForwarding = FALSE;
-	long channelNo, maxPacketSize;
-	int typeLen, arg1Len = 0, status;
+	/* Adjust the data window and communicate changes to the other side if 
+	   necessary.  This can get quite complicated because for those 
+	   implementations where we can't disable the SSH handbrake we have to 
+	   send a constant stream of 1977-vintage XMODEM XON/XOFF messages, but 
+	   since there may be a half-assembled packet in the send buffer we
+	   can't just dispatch it immediately but have to enqueue it pending
+	   availability of the send machinery (it also leads to strange error
+	   messages returned to the caller when they get a write failure in
+	   response to a read).  Fortunately only a few old buggy 
+	   implementations actually reject our disabling of the handbrake so 
+	   it's usually disabled (at least for the receive side, which we 
+	   control) and in the rare cases where it's present it's being used
+	   for things like network router console interfaces for which the
+	   traffic is highly interactive so there's a constant flow of packets
+	   written to piggyback the XONs onto.
 
-	/* Read the channel open request (the type has already been read by the
-	   caller):
-
-	  [	byte	type = SSH2_MSG_CHANNEL_OPEN ]
-		string	channel_type = "session" | "direct-tcpip"
-		uint32	sender_channel
-		uint32	initial_window_size
-		uint32	max_packet_size
-	  [ string	host_to_connect		- For port-forwarding
-		uint32	port_to_connect
-		string	originator_IP_address
-		uint32	originator_port ]
-
-	   As for global/channel requests in processChannelOpen(), we can't
-	   return an error indication if we encounter a problem too early in the
-	   packet, see the comment for that function for further details */
-	status = readString32( stream, typeString, CRYPT_MAX_TEXTSIZE, 
-						   &typeLen );
-	if( cryptStatusError( status ) || \
-		typeLen <= 0 || typeLen > CRYPT_MAX_TEXTSIZE )
+	   The exact strategy for window handling is a bit complex (mostly
+	   because this isn't a good way to do things in the first place so it
+	   would require horribly complex processing to really handle properly),
+	   to keep things simple we just wait until the window size has fallen
+	   to half its initial value and then reset it back to the initial
+	   value again.  Since this is rarely used except where we can't disable
+	   the handbrake it's not really worth introducing a huge amount of 
+	   extra complexity to manage it */
+	REQUIRES( windowCount > 0 && windowCount <= windowSize );
+	windowCount -= length;
+	if( windowCount < windowSize / 2 )
 		{
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid channel open channel type" ) );
-		}
-	if( typeLen != 7 || strCompare( typeString, "session", 7 ) )
-		{
-		/* It's not a normal channel open, see if the caller is trying to
-		   do port forwarding */
-		if( typeLen != 12 || strCompare( typeString, "direct-tcpip", 12 ) )
+		int adjustCount;
+
+		/* Send the window adjust to the remote system:
+
+			byte	SSH2_MSG_CHANNEL_WINDOW_ADJUST
+			uint32	channel
+			uint32	bytes_to_add
+
+		   Unfortunately the error status that we return from a failed 
+		   window adjust is going to come as a complete surprise to the 
+		   caller because we're supposed to be processing a read and not a 
+		   write at this point, the write is only required by SSH's 
+		   braindamaged flow-control handling */
+		if( windowCount < 0 || windowCount >= windowSize )
 			{
-			/* It's something else, report it as an error */
-			retExt( CRYPT_ERROR_BADDATA,
-					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid channel open channel type '%s'", 
-					  sanitiseString( typeString, CRYPT_MAX_TEXTSIZE, 
-									  typeLen ) ) );
+			/* We've consumed the remaining window and then some, reset it
+			   to it's full size */
+			adjustCount = windowSize;
 			}
-		isPortForwarding = TRUE;
-		}
-	channelNo = readUint32( stream );
-	readUint32( stream );			/* Skip window size */
-	status = maxPacketSize = readUint32( stream );
-	if( cryptStatusError( status ) )
-		retExt( status, 
-				( status, SESSION_ERRINFO, "Invalid channel open packet" ) );
-	if( maxPacketSize < 1024 || maxPacketSize > 0x100000L )
-		{
-		/* General sanity check to make sure that the packet size is in the
-		   range 1K ... 16MB.  We've finally got valid packet data so we can
-		   send error responses from now on */
-		sendOpenResponseFailed( sessionInfoPtr, channelNo );
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid channel open maximum packet size %ld",
-				  maxPacketSize ) );
-		}
-	if( isPortForwarding )
-		{
-		/* Get the source and destination host information */
-		status = getAddressAndPort( sessionInfoPtr, stream,
-									arg1String, CRYPT_MAX_TEXTSIZE, 
-									&arg1Len );
+		else
+			{
+			/* Adjust the window back up to it's full size */
+			adjustCount = windowSize - windowCount;
+			}
+		ENSURES( adjustCount > windowSize / 2 && \
+				 adjustCount <= windowSize );
+		status = enqueueChannelData( sessionInfoPtr,
+									 SSH2_MSG_CHANNEL_WINDOW_ADJUST,
+									 channelNo, adjustCount );
 		if( cryptStatusError( status ) )
 			{
-			sendOpenResponseFailed( sessionInfoPtr, channelNo );
-			return( status );
+			retExt( status,
+					( status, SESSION_ERRINFO, 
+					  "Error sending SSH window adjust for data flow "
+					  "control" ) );
 			}
-		arg1Ptr = arg1String;
+
+		/* We've reset the window, start again from zero */
+		windowCount += adjustCount;
+		if( windowCount < windowSize / 2 || windowCount > windowSize )
+			{
+			retExt( CRYPT_ERROR_INVALID,
+					( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+					  "Invalid SSH flow control window count %d, should be "
+					  "%d ... %d", windowCount, windowSize / 2, 
+					  windowSize ) );
+			}
 		}
-	maxPacketSize = min( maxPacketSize, \
-						 sessionInfoPtr->receiveBufSize - EXTRA_PACKET_SIZE );
+	status = setChannelExtAttribute( sessionInfoPtr,
+									 SSH_ATTRIBUTE_WINDOWCOUNT,
+									 windowCount );
+	ENSURES( cryptStatusOK( status ) );
 
-	/* If this is the client, opening a new channel by the server isn't
-	   permitted */
-	if( !isServer( sessionInfoPtr ) )
-		{
-		sendOpenResponseFailed( sessionInfoPtr, channelNo );
-		retExt( CRYPT_ERROR_PERMISSION,
-				( CRYPT_ERROR_PERMISSION, SESSION_ERRINFO, 
-				  "Server attempted to a open channel to the client" ) );
-		}
-
-	/* Add the new channel */
-	status = addChannel( sessionInfoPtr, channelNo, maxPacketSize,
-						 typeString, typeLen, arg1Ptr, arg1Len );
-	if( cryptStatusError( status ) )
-		{
-		sendOpenResponseFailed( sessionInfoPtr, channelNo );
-		retExt( status,
-				( status, SESSION_ERRINFO, 
-				  "Couldn't add new channel %ld", channelNo ) );
-		}
-
-	/* Send back the open confirmation:
-
-		byte	type = SSH2_MSG_CHANNEL_OPEN_CONFIRMATION
-		uint32	recipient_channel = prev. sender_channel
-		uint32	sender_channel
-		uint32	initial_window_size = MAX_WINDOW_SIZE
-		uint32	max_packet_size = bufSize
-
-	   The SSHv2 spec doesn't really explain the semantics of the server's
-	   response to the channel open command, in particular whether the
-	   returned data size parameters are merely a confirmation of the
-	   client's requested values or whether the server is allowed to further
-	   modify them to suit its own requirements (or perhaps one is for send
-	   and the other for receive?).  In the absence of any further guidance,
-	   we try and comply with a client's request for smaller data
-	   quantities, but also return a smaller-than-requested data size value
-	   if they ask for too much data.
-
-	   See the comments in the client-side channel-open code for the reason
-	   for the window size */
-	status = enqueueResponse( sessionInfoPtr,
-							  SSH2_MSG_CHANNEL_OPEN_CONFIRMATION, 4,
-							  channelNo, channelNo,
-							  MAX_WINDOW_SIZE, maxPacketSize );
-	if( cryptStatusOK( status ) )
-		status = sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		{
-		/* Since we're already in an error state, we can't do much more if 
-		   the cleanup from the failed operation fails */
-		( void ) deleteChannel( sessionInfoPtr, channelNo, CHANNEL_BOTH, 
-								TRUE );
-		return( status );
-		}
-
-	/* The channel has been successfully created, mark it as active and
-	   select it for future exchanges */
-	status = setChannelExtAttribute( sessionInfoPtr, SSH_ATTRIBUTE_ACTIVE,
-									 NULL, TRUE );
-	if( cryptStatusOK( status ) )
-		status = selectChannel( sessionInfoPtr, channelNo, CHANNEL_BOTH );
-	return( status );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -1100,56 +149,34 @@ int processChannelOpen( SESSION_INFO *sessionInfoPtr, STREAM *stream )
 *																			*
 ****************************************************************************/
 
-/* Send a channel close notification.  Returns OK_SPECIAL if the last
-   channel is being closed */
+/* Get the data window size for a new channel.  Some buggy implementations 
+   break when sent a window size over a certain limit in which case we have 
+   to limit the window size.  Typically for these implementations for any 
+   size over about 8M the server gets slower and slower, eventually more or 
+   less grinding to halt at about 64MB (presumably some O(n^2) algorithm, 
+   although how you manage to do this for a window-size notification is a 
+   mystery).  Some variants of this buggy server reportedly require a window 
+   adjust for every 32K or so sent no matter what the actual window size is, 
+   but this may be just a variant of the general mis-handling of large 
+   window sizes so we treat it as the same thing and advertise a smaller-
+   than-optimal 16MB window which, as a side-effect, results in a constant 
+   flow of window adjusts */
 
-static int sendChannelClose( SESSION_INFO *sessionInfoPtr,
-							 const long channelNo,
-							 const CHANNEL_TYPE channelType,
-							 const BOOLEAN closeLastChannel )
+CHECK_RETVAL_RANGE( 10000, MAX_WINDOW_SIZE ) STDC_NONNULL_ARG( ( 1 ) ) \
+int getWindowSize( const SESSION_INFO *sessionInfoPtr )
 	{
-	BOOLEAN lastChannel = FALSE;
-	int status;
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	/* Delete the channel.  If we've deleted the last active channel,
-	   deleteChannel() will return OK_SPECIAL to let us know that there are
-	   no more channels left to close */
-	status = deleteChannel( sessionInfoPtr, channelNo, channelType,
-							closeLastChannel  );
-	if( status == OK_SPECIAL )
-		lastChannel = TRUE;
-
-	/* Prepare the channel-close notification:
-
-		byte		SSH2_MSG_CHANNEL_CLOSE
-		uint32		channel_no */
-	status = enqueueResponse( sessionInfoPtr, SSH2_MSG_CHANNEL_CLOSE, 1,
-							  channelNo, CRYPT_UNUSED, CRYPT_UNUSED,
-							  CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* We can't safely use anything that ends up at sendPacketSSH2() at this
-	   point since we may be closing the connection in response to a link
-	   error, in which case the error returned from the packet send would
-	   overwrite the actual error information.  Because of this we send the
-	   response with the no-report-error flag set to suppress reporting of
-	   network errors during the send */
-	disableErrorReporting( sessionInfoPtr );
-	status = sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED );
-	enableErrorReporting( sessionInfoPtr );
-
-	/* If it's the last channel, let the caller know (this overrides any
-	   possible error return status, since we're about to close the 
-	   connection there's not much that we can do with an error anyway) */
-	return( lastChannel ? OK_SPECIAL : status );
+	return( ( sessionInfoPtr->protocolFlags & SSH_PFLAG_WINDOWSIZE ) ? \
+			0x1000000 : MAX_WINDOW_SIZE );
 	}
 
 /* Process a channel control message.  Returns OK_SPECIAL to tell the caller
    to try again with the next packet */
 
-int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
-								  STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
+								  INOUT STREAM *stream )
 	{
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	const long prevChannelNo = \
@@ -1157,10 +184,13 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 	long channelNo;
 	int status;
 
-	/* See what we've got.  SSHv2 has a pile of noop-equivalents that we
-	   have to handle as well as the obvious no-ops.  We can also get global
-	   and channel requests for assorted reasons and a constant stream of
-	   window adjust messages to implement the SSH performance handbrake */
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	/* See what we've got.  SSH has a whole pile of no-op equivalents that 
+	   we have to handle as well as the obvious no-ops.  We can also get 
+	   global and channel requests for assorted reasons and a constant 
+	   stream of window adjusts to implement the SSH performance handbrake */
 	switch( sshInfo->packetType )
 		{
 		case SSH2_MSG_GLOBAL_REQUEST:
@@ -1171,12 +201,18 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 			return( OK_SPECIAL );
 
 		case SSH2_MSG_CHANNEL_OPEN:
+			/* Process the channel-open request.  In theory we could 
+			   immediately reject any attempts by the server to open a
+			   channel to the client at this point, but unfortunately we
+			   have to process a considerable portion of the channel-open
+			   request in order to use the information in it to send a
+			   request-denied response back to the server */
 			status = processChannelOpen( sessionInfoPtr, stream );
 			if( cryptStatusError( status ) )
 				return( status );
 
 			/* Tell the caller that they have to process the new channel
-			   info before they can continue */
+			   information before they can continue */
 			return( CRYPT_ENVELOPE_RESOURCE );
 
 		case SSH2_MSG_IGNORE:
@@ -1196,30 +232,29 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 			/* This only really seems to be used during the handshake phase,
 			   once a channel is open it (and the session as a whole) is
 			   disconnected with a channel EOF/close, but we handle it here
-			   just in case */
+			   anyway just in case */
 			return( getDisconnectInfo( sessionInfoPtr, stream ) );
 
 		case SSH2_MSG_KEXINIT:
 			/* The SSH spec is extremely vague about the sequencing of
-			   operations during a rehandshake.  Unlike SSL, there is no
-			   real indication of what happens to the connection-layer
-			   transfers while a transport-layer rehandshake is in progress.
-			   Also unlike SSL, we can't refuse a rehandshake by ignoring
-			   the request, so once we've fallen we can't get up any more.
-			   This is most obvious with ssh.com's server, which starting
-			   with version 2.3.0 would do a rehandshake every hour (for a
-			   basic encrypted telnet session, while a high-volume IPsec
-			   link can run for hours before it feels the need to do this).
-			   To make things even messier, neither side can block for too
-			   long waiting for the rehandshake to complete before sending
-			   new data because the lack of WINDOW_ADJUSTs (in an
-			   implementation that sends these with almost every packet, as
-			   most do) will screw up flow control and lead to deadlock.
-			   This problem got so bad that as of 2.4.0 the ssh.com
-			   implementation would detect OpenSSH (the other main
-			   implementation at the time) and disable the rehandshake when
-			   it was talking to it, but it may not do this for other
-			   implementations.
+			   operations during a rehandshake.  Unlike SSL there's no real 
+			   indication of what happens to the connection-layer transfers 
+			   while a transport-layer rehandshake is in progress.  Also 
+			   unlike SSL we can't refuse a rehandshake by ignoring the 
+			   request, so once we've fallen we can't get up any more.  This 
+			   is most obvious with ssh.com's server, which starting with 
+			   version 2.3.0 would do a rehandshake every hour (for a basic 
+			   encrypted telnet session, while a high-volume IPsec link can 
+			   run for hours before it feels the need to do this).  To make 
+			   things even messier, neither side can block for too long 
+			   waiting for the rehandshake to complete before sending new 
+			   data because the lack of WINDOW_ADJUSTs (in an implementation 
+			   that sends these with almost every packet, as most do) will 
+			   screw up flow control and lead to deadlock.  This problem got 
+			   so bad that as of 2.4.0 the ssh.com implementation would 
+			   detect OpenSSH (the other main implementation at the time) 
+			   and disable the rehandshake when it was talking to it, but it 
+			   may not do this for other implementations.
 
 			   To avoid falling into this hole, or at least to fail
 			   obviously when the two sides can't agree on how to handle the
@@ -1229,8 +264,8 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 			   the time of the problem), typically some bad-packet error
 			   when the other side tries to interpret a connection-layer
 			   packet as part of the rehandshake, or when the two sides
-			   disagree on when to switch keys and it decrypts with the
-			   wrong keys and gets a garbled packet type */
+			   disagree on when to switch keys and one of the two decrypts 
+			   with the wrong keys and gets a garbled packet type */
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 					  "Unexpected KEXINIT request received" ) );
@@ -1253,8 +288,8 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 				   to quietly ignore the packet */
 				retExt( CRYPT_ERROR_BADDATA,
 						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-						  "Invalid channel-specific packet type %d",
-						  sshInfo->packetType ) );
+						  "Invalid channel number in channel-specific packet "
+						  "type %d", sshInfo->packetType ) );
 				}
 			if( channelNo != getCurrentChannelNo( sessionInfoPtr, \
 												  CHANNEL_READ ) )
@@ -1268,9 +303,9 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 					/* As before for error handling */
 					retExt( CRYPT_ERROR_BADDATA,
 							( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-							  "Invalid channel number %ld in "
+							  "Invalid channel number %lX in "
 							  "channel-specific packet type %d, current "
-							  "channel is %ld", channelNo,
+							  "channel is %lX", channelNo,
 							  sshInfo->packetType, prevChannelNo ) );
 					}
 				}
@@ -1279,12 +314,15 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 		default:
 			{
 			BYTE buffer[ 16 + 8 ];
+			int length;
 
 			/* We got something unexpected, throw an exception in the debug
 			   version and let the caller know the details */
+			DEBUG_DIAG(( "Unexpected control packet %d", 
+						 sshInfo->packetType ));
 			assert( DEBUG_WARN );
-			status = sread( stream, buffer, 8 );
-			if( cryptStatusError( status ) )
+			status = length = sread( stream, buffer, 8 );
+			if( cryptStatusError( status ) || length < 8 )
 				{
 				/* There's not enough data present to dump the start of the
 				   packet, provide a more generic response */
@@ -1310,75 +348,23 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 		case SSH2_MSG_CHANNEL_DATA:
 		case SSH2_MSG_CHANNEL_EXTENDED_DATA:
 			{
-			const int streamPos = stell( stream );
-			const BOOLEAN hasWindowBug = \
-				( sessionInfoPtr->protocolFlags & SSH_PFLAG_WINDOWBUG );
-			long length;
-			int windowCount;
+			int length;
 
 			/* Get the payload length and make sure that it's
-			   (approximately) valid.  More exact checking will be done
-			   by the caller (which is why we reset the stream position
-			   to allow it to be re-read), all that we're really interested
-			   in here is that the length is approximately valid for window-
-			   adjust calculation purposes */
-			length = readUint32( stream );
-			sseek( stream, streamPos );
-			if( length < 0 || length > sessionInfoPtr->receiveBufSize )
-				{
-				retExt( CRYPT_ERROR_BADDATA,
-						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-						  "Invalid data packet payload length %ld, should "
-						  "be 0...%d", length, 
-						  sessionInfoPtr->receiveBufSize ) );
-				}
+			   (approximately) valid, more exact checking has already been
+			   done by the caller so we don't need to return extended error
+			   information as this is just a backup check */
+			status = length = readUint32( stream );
+			if( cryptStatusError( status ) || \
+				length < 0 || length > sessionInfoPtr->receiveBufSize )
+				return( CRYPT_ERROR_BADDATA );
 
-			/* These are messages that consume window space, adjust the data
-			   window and communicate changes to the other side if necessary.
-			   See the comment in sendChannelOpen() for the reason for the
-			   window size handling */
-			status = getChannelExtAttribute( sessionInfoPtr,
-											 SSH_ATTRIBUTE_WINDOWCOUNT,
-											 NULL, 0, &windowCount );
+			/* These are messages that consume window space, adjust the data 
+			   window and communicate changes to the other side if 
+			   necessary */
+			status = handleWindowAdjust( sessionInfoPtr, channelNo, length );
 			if( cryptStatusError( status ) )
-				retIntError();
-			windowCount += length;
-			if( windowCount < 0 || \
-				windowCount > MAX_WINDOW_SIZE - \
-							  sessionInfoPtr->sendBufSize || \
-				hasWindowBug )
-				{
-				/* Send the window adjust to the remote system:
-
-					byte	SSH2_MSG_CHANNEL_WINDOW_ADJUST
-					uint32	channel
-					uint32	bytes_to_add
-
-				   Unfortunately the error status we return from a failed
-				   window adjust is going to come as a complete surprise to
-				   the caller because we're supposed to be processing a read 
-				   and not a write at this point, the write is only required 
-				   by SSH's braindamaged flow-control handling */
-				status = enqueueChannelData( sessionInfoPtr,
-									SSH2_MSG_CHANNEL_WINDOW_ADJUST,
-									channelNo, hasWindowBug ? \
-										length : MAX_WINDOW_SIZE );
-				if( cryptStatusError( status ) )
-					{
-					retExt( status,
-							( status, SESSION_ERRINFO, 
-							  "Error sending SSH window adjust for data "
-							  "flow control" ) );
-					}
-
-				/* We've reset the window, start again from zero */
-				windowCount = 0;
-				}
-			status = setChannelExtAttribute( sessionInfoPtr,
-											 SSH_ATTRIBUTE_WINDOWCOUNT,
-											 NULL, windowCount );
-			if( cryptStatusError( status ) )
-				retIntError();
+				return( status );
 
 			/* If it's a standard data packet, we're done */
 			if( sshInfo->packetType == SSH2_MSG_CHANNEL_DATA )
@@ -1392,7 +378,7 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 			   something running a shell command may not expect to get
 			   anything returned in this manner (see the comment for the
 			   port-forwarding channel open in the client-side channel-open
-			   code for more on this), so for now we just ignore it and
+			   code for more on this) so for now we just ignore it and 
 			   assume that the user will rely on results sent as in-band
 			   data.  This should be fairly safe since this message type
 			   seems to be rarely (if ever) used, so apps will function
@@ -1423,9 +409,12 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 			/* The peer has closed their side of the channel, if our side
 			   isn't already closed (in other words if this message isn't
 			   a response to a close that we sent), close our side as well */
-			if( getChannelStatus( sessionInfoPtr, channelNo ) == CHANNEL_BOTH )
+			if( getChannelStatusByChannelNo( sessionInfoPtr, 
+											 channelNo ) == CHANNEL_BOTH )
+				{
 				status = sendChannelClose( sessionInfoPtr, channelNo,
 										   CHANNEL_BOTH, TRUE );
+				}
 			else
 				{
 				/* We've already closed our side of the channel, delete it */
@@ -1439,7 +428,7 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 
 			/* We've closed the last channel, indicate that the overall
 			   connection is now closed.  This behaviour isn't mentioned in
-			   the spec, but it seems to be the standard way of handling
+			   the spec but it seems to be the standard way of handling 
 			   things, particularly for the most common case where
 			   channel == session */
 			sessionInfoPtr->flags |= SESSION_SENDCLOSED;
@@ -1451,19 +440,85 @@ int processChannelControlMessage( SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
+/****************************************************************************
+*																			*
+*							Channel Close Handling							*
+*																			*
+****************************************************************************/
+
+/* Send a channel close notification.  Returns OK_SPECIAL if the last
+   channel is being closed */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int sendChannelClose( INOUT SESSION_INFO *sessionInfoPtr,
+							 IN const long channelNo,
+							 IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType,
+							 const BOOLEAN closeLastChannel )
+	{
+	BOOLEAN lastChannel = FALSE;
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+	REQUIRES( channelType > CHANNEL_NONE && channelType < CHANNEL_LAST );
+
+	/* Delete the channel.  If we've deleted the last active channel
+	   deleteChannel() will return OK_SPECIAL to let us know that there are
+	   no more channels left to close */
+	status = deleteChannel( sessionInfoPtr, channelNo, channelType,
+							closeLastChannel  );
+	if( cryptStatusError( status ) )
+		{
+		if( status != OK_SPECIAL )
+			return( status );
+		
+		/* We're closing the last remaining channel */
+		lastChannel = TRUE;
+		}
+
+	/* Prepare the channel-close notification:
+
+		byte		SSH2_MSG_CHANNEL_CLOSE
+		uint32		channel_no */
+	status = enqueueResponse( sessionInfoPtr, SSH2_MSG_CHANNEL_CLOSE, 1,
+							  channelNo, CRYPT_UNUSED, CRYPT_UNUSED,
+							  CRYPT_UNUSED );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* We can't safely use anything that ends up at sendPacketSSH2() at this
+	   point since we may be closing the connection in response to a link
+	   error, in which case the error returned from the packet send would
+	   overwrite the actual error information.  Because of this we send the
+	   response with the no-report-error flag set to suppress reporting of
+	   network errors during the send */
+	disableErrorReporting( sessionInfoPtr );
+	status = sendEnqueuedResponse( sessionInfoPtr );
+	enableErrorReporting( sessionInfoPtr );
+
+	/* If it's the last channel, let the caller know (this overrides any
+	   possible error return status, since we're about to close the 
+	   connection there's not much that we can do with an error anyway) */
+	return( lastChannel ? OK_SPECIAL : status );
+	}
+
 /* Close a channel */
 
-int closeChannel( SESSION_INFO *sessionInfoPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int closeChannel( INOUT SESSION_INFO *sessionInfoPtr,
 				  const BOOLEAN closeAllChannels )
 	{
 	READSTATE_INFO readInfo;
 	const int currWriteChannelNo = \
 				getCurrentChannelNo( sessionInfoPtr, CHANNEL_WRITE );
-	int noChannels = 1, status;
+	int noChannels = 1, iterationCount, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* If we've already sent the final channel-close message in response to
-	   getting a final close notification from the peer, all that's left
-	   to do is to disconnect the session */
+	   getting a final close notification from the peer all that's left to 
+	   do is to disconnect the session */
 	if( sessionInfoPtr->flags & SESSION_SENDCLOSED )
 		{
 		sNetDisconnect( &sessionInfoPtr->stream );
@@ -1478,8 +533,8 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 		{
 		retExt( CRYPT_ERROR_NOTINITED,
 				( CRYPT_ERROR_NOTINITED, SESSION_ERRINFO, 
-				  "No channel information available to close the current "
-				  "channel" ) );
+				  "No channel information available to identify the "
+				  "channel to close" ) );
 		}
 
 	/* If there's no channel open, close the session with a session
@@ -1490,12 +545,12 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 		string		description = ""
 		string		language_tag = ""
 
-	   The spec doesn't explain what the reason codes actually mean, but
+	   The spec doesn't explain what the reason codes actually mean but
 	   SSH2_DISCONNECT_CONNECTION_LOST seems to be the least inappropriate
 	   disconnect reason at this point */
 	if( currWriteChannelNo == UNUSED_CHANNEL_NO )
 		{
-		/* Since we're closing the session, there's not much that we can do
+		/* Since we're closing the session there's not much that we can do
 		   in the case of an error because the very next operation is to 
 		   shut down the network session, so we don't do anything if the 
 		   send fails */
@@ -1503,7 +558,7 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 								  SSH2_DISCONNECT_CONNECTION_LOST, 0, 0,
 								  CRYPT_UNUSED );
 		if( cryptStatusOK( status ) )
-			( void ) sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED );
+			( void ) sendEnqueuedResponse( sessionInfoPtr );
 		sessionInfoPtr->flags |= SESSION_SENDCLOSED;
 		sNetDisconnect( &sessionInfoPtr->stream );
 		return( CRYPT_OK );
@@ -1512,33 +567,30 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 	/* Close one or all channels */
 	if( closeAllChannels )
 		{
-		int iterationCount = 0;
-
 		/* Get the first available channel (which must succeed, since we
 		   just checked it above) and close each successive channel in
 		   turn */
 		status = selectChannel( sessionInfoPtr, CRYPT_USE_DEFAULT,
 								CHANNEL_WRITE );
-		for( noChannels = 0; 
+		for( noChannels = 0, iterationCount = 0;
 			 cryptStatusOK( status ) && \
 				cryptStatusOK( selectChannel( sessionInfoPtr, CRYPT_USE_DEFAULT,
 											  CHANNEL_WRITE ) ) && \
-				iterationCount++ < FAILSAFE_ITERATIONS_MED; 
-			 noChannels++ )
+				iterationCount < FAILSAFE_ITERATIONS_MED; 
+			 noChannels++, iterationCount++ )
 			{
 			status = sendChannelClose( sessionInfoPtr,
 						getCurrentChannelNo( sessionInfoPtr, CHANNEL_WRITE ),
 						CHANNEL_WRITE, TRUE );
 			}
-		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError();
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 		}
 	else
 		{
 		/* We're just closing one channel, close the write side.  The
 		   complete close will be done when the other side acknowledges our
-		   close.  If this isn't the last open channel, the response to our
-		   close will be handled as part of normal packet processing and
+		   close.  If this isn't the last open channel then the response to 
+		   our close will be handled as part of normal packet processing and 
 		   we're done */
 		status = sendChannelClose( sessionInfoPtr, currWriteChannelNo,
 								   CHANNEL_WRITE, FALSE );
@@ -1547,10 +599,12 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 			/* If this is the last remaining channel, we similarly can't
 			   close it */
 			if( status == CRYPT_ERROR_PERMISSION )
+				{
 				retExt( CRYPT_ERROR_PERMISSION,
 						( CRYPT_ERROR_PERMISSION, SESSION_ERRINFO, 
 						  "Cannot close last remaining channel without "
 						  "closing the overall session" ) );
+				}
 
 			return( CRYPT_OK );
 			}
@@ -1568,9 +622,21 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* If there's not enough room in the receive buffer to read at least 1K
-	   of packet data, we can't try anything further */
+	   of packet data we can't try anything further */
 	if( sessionInfoPtr->receiveBufSize - sessionInfoPtr->receiveBufEnd < \
 		min( sessionInfoPtr->pendingPacketRemaining, 1024 ) )
+		{
+		sNetDisconnect( &sessionInfoPtr->stream );
+		return( CRYPT_OK );
+		}
+
+	/* If we're in the middle of reading other data then there's no hope of
+	   reading back the other side's channel close without first clearing all
+	   of the other data, which is unlikely to happen because the channel 
+	   has been closed (this can happen when the caller requests a shutdown
+	   of the session in the middle of a data transfer), in which case we
+	   just exit */
+	if( sessionInfoPtr->receiveBufPos != sessionInfoPtr->receiveBufEnd )
 		{
 		sNetDisconnect( &sessionInfoPtr->stream );
 		return( CRYPT_OK );
@@ -1580,9 +646,9 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 	   since the other side could decide that it still wants to send us
 	   arbitrary amounts of data (the spec is rather vague about how urgent
 	   a channel close is, the general idea among implementors seems to be
-	   that you should let output drain before you close your side, but
-	   if you're in the middle of sending a 2GB file that's a lot of output
-	   to drain).  This can also be complicated by implementation-specific
+	   that you should let output drain before you close your side but if 
+	   you're in the middle of sending a 2GB file that's a lot of output to 
+	   drain).  This can also be complicated by implementation-specific 
 	   quirks, for example OpenSSH may hang more or less indefinitely if
 	   there's output coming from a background process on the server.  This
 	   is because of a rather obscure race condition that would occur if it
@@ -1594,26 +660,26 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 	   (remote) SSH connection until it's certain that the (local) process
 	   has written all of its data, and it'll never get the EOF over the
 	   pipe, it hangs forever.  This is a piece of Unix plumbing arcana that
-	   doesn't really concern us, so again just exiting after a short wait
-	   is the best response.
+	   doesn't really concern us so again just exiting after a short wait 
+	   seems to be the best response.
 
-	   Since we're about to shut down the session anyway, we try
-	   to read a basic channel close ack from the other side, if there's
-	   anything more than that we drop it.  This is complicated somewhat by
-	   the fact that what we're doing here is something that's normally
-	   handled by the high-level read code in sess_rw.c.  What we implement
-	   here is the absolute minimum needed to clear the stream
-	   (sendCloseNotification() has set the necessary (small) nonzero
-	   timeout for us) */
-	while( noChannels-- > 0 )	/* Range-checked earlier */
+	   Since we're about to shut down the session anyway we try to read a 
+	   basic channel close ack from the other side, if there's anything more 
+	   than that we drop it.  This is complicated somewhat by the fact that 
+	   what we're doing here is something that's normally handled by the 
+	   high-level read code in sess_rw.c.  What we implement here is the 
+	   absolute minimum needed to clear the stream (sendCloseNotification() 
+	   has already set the necessary (small) nonzero timeout for us) */
+	for( iterationCount = 0;
+		 noChannels > 0 && iterationCount < FAILSAFE_ITERATIONS_SMALL;
+		 noChannels--, iterationCount++ )
 		{
 		status = sessionInfoPtr->readHeaderFunction( sessionInfoPtr, &readInfo );
 		if( !cryptStatusError( status ) )
 			{
-			/* Adjust the packet info for the packet header data that was
-			   just read */
+			/* Adjust the packet information for the packet header data that 
+			   was just read */
 			sessionInfoPtr->receiveBufEnd += status;
-			sessionInfoPtr->pendingPacketPartialLength = status;
 			sessionInfoPtr->pendingPacketRemaining -= status;
 			if( sessionInfoPtr->pendingPacketRemaining <= 512 )
 				{
@@ -1630,6 +696,7 @@ int closeChannel( SESSION_INFO *sessionInfoPtr,
 				}
 			}
 		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_SMALL );
 	sNetDisconnect( &sessionInfoPtr->stream );
 	return( CRYPT_OK );
 	}

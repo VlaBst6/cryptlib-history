@@ -220,5 +220,4 @@ void RC5_32_decrypt(unsigned long *d, RC5_32_KEY *key)
 	d[0]=a-s[0];
 	d[1]=b-s[1];
 	}
-
 #endif /* USE_ASM */

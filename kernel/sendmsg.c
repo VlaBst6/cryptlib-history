@@ -37,6 +37,7 @@ static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
 					 ST_KEYSET_DBMS,
 		ST_SESS_RTCS | ST_SESS_OCSP } },
 
+	/* End-of-ACL marker */
 	{ MESSAGE_NONE, { ST_NONE, ST_NONE } },
 	{ MESSAGE_NONE, { ST_NONE, ST_NONE } }
 	};
@@ -51,7 +52,8 @@ static const MESSAGE_ACL FAR_BSS messageParamACLTbl[] = {
    directly to the appropriate target object).  The following function checks
    that the target object is one of the required types */
 
-int checkTargetType( const int objectHandle, const long targets )
+CHECK_RETVAL \
+int checkTargetType( IN_HANDLE const int objectHandle, const long targets )
 	{
 	const OBJECT_TYPE target = targets & 0xFF;
 	const OBJECT_TYPE altTarget = targets >> 8;
@@ -80,8 +82,8 @@ int checkTargetType( const int objectHandle, const long targets )
 
 /* Find the ACL for a parameter object */
 
-CHECK_RETVAL \
-static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
+CHECK_RETVAL_PTR \
+static const MESSAGE_ACL *findParamACL( IN_MESSAGE const MESSAGE_TYPE message )
 	{
 	int i;
 
@@ -105,23 +107,23 @@ static const MESSAGE_ACL *findParamACL( const MESSAGE_TYPE message )
 	retIntError_Null();
 	}
 
-/* Wait for an object to become available so that we can use it, with a
-   timeout for blocked objects.  This is an internal function which is used
-   when mapping an object handle to object data, and is never called
-   directly.  As an aid in identifying objects acting as bottlenecks, we
-   provide a function to warn about excessive waiting, along with information
-   on the object that was waited on, in debug mode.  A wait count threshold
-   of 100 is generally high enough to avoid false positives caused by (for
-   example) network subsystem delays */
+/* Wait for an object to become available so that we can use it, with a 
+   timeout for blocked objects (dulcis et alta quies placidaeque similima 
+   morti).  This is an internal function which is used when mapping an 
+   object handle to object data, and is never called directly.  As an aid in 
+   identifying objects acting as bottlenecks, we provide a function to warn 
+   about excessive waiting, along with information on the object that was 
+   waited on, in debug mode.  A wait count threshold of 100 is generally 
+   high enough to avoid false positives caused by (for example) network 
+   subsystem delays */
 
 #define MAX_WAITCOUNT				10000
 #define WAITCOUNT_WARN_THRESHOLD	100
 
 #if !defined( NDEBUG ) && !defined( __WIN16__ )
 
-#include <stdio.h>
-
-static void waitWarn( const int objectHandle, const int waitCount )
+static void waitWarn( IN_HANDLE const int objectHandle, 
+					  IN_INT const int waitCount )
 	{
 	static const char *objectTypeNames[] = {
 		"None", "Context", "Keyset", "Envelope", "Certificate", "Device",
@@ -135,6 +137,7 @@ static void waitWarn( const int objectHandle, const int waitCount )
 			waitCount <= MAX_WAITCOUNT );
 
 	REQUIRES_V( isValidType( objectInfoPtr->type ) );
+
 	if( objectHandle == SYSTEM_OBJECT_HANDLE )
 		strlcpy_s( buffer, 128, "system object" );
 	else
@@ -143,18 +146,20 @@ static void waitWarn( const int objectHandle, const int waitCount )
 			strlcpy_s( buffer, 128, "default user object" );
 		else
 			{
-			sprintf_s( buffer, 128, "object %d (%s, subtype %lX)",
+			sprintf_s( buffer, 128, "object %d (%s, subtype %X)",
 					   objectHandle, objectTypeNames[ objectInfoPtr->type ],
 					   objectInfoPtr->subType );
 			}
 		}
-	fprintf( stderr, "\nWarning: Thread %X waited %d iteration%s for %s.\n",
-			 THREAD_SELF(), waitCount, ( waitCount == 1 ) ? "" : "s",
-			 buffer );
+	DEBUG_PRINT(( "\nWarning: Thread %lX waited %d iteration%s for %s.\n",
+				  ( unsigned long ) THREAD_SELF(), waitCount, 
+				  ( waitCount == 1 ) ? "" : "s", buffer ));
 	}
 #endif /* Debug mode only */
 
-int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int waitForObject( IN_HANDLE const int objectHandle, 
+				   OUT_PTR OBJECT_INFO **objectInfoPtrPtr )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	const int uniqueID = objectTable[ objectHandle ].uniqueID;
@@ -169,8 +174,8 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 			  objectHandle == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( objectHandle ) );
 
-	/* While the object is busy, put the thread to sleep ("Pauzele lungi si
-	   dese; Cheia marilor succese").  This is the only really portable way
+	/* While the object is busy, put the thread to sleep (Pauzele lungi si
+	   dese; Cheia marilor succese).  This is the only really portable way
 	   to wait on the resource, which gives up this thread's timeslice to
 	   allow other threads (including the one using the object) to run.
 	   Somewhat better methods methods such as mutexes with timers are
@@ -205,6 +210,7 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
 	/* If we timed out waiting for the object, return a timeout error */
 	if( waitCount >= MAX_WAITCOUNT )
 		{
+		DEBUG_DIAG(( "Object wait exceeded %d iterations", MAX_WAITCOUNT ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
@@ -239,7 +245,9 @@ int waitForObject( const int objectHandle, OBJECT_INFO **objectInfoPtrPtr )
    The device message targeted at the context would in turn be routed to the
    context's dependent device, which is its final destination */
 
-int findTargetType( const int originalObjectHandle, const long targets )
+CHECK_RETVAL \
+int findTargetType( IN_HANDLE const int originalObjectHandle, 
+					const long targets )
 	{
 	const OBJECT_TYPE target = targets & 0xFF;
 	const OBJECT_TYPE altTarget1 = ( targets >> 8 ) & 0xFF;
@@ -323,8 +331,9 @@ int findTargetType( const int originalObjectHandle, const long targets )
    is its final destination */
 
 CHECK_RETVAL \
-static int routeCompareMessageTarget( const int originalObjectHandle,
-									  const long messageValue )
+static int routeCompareMessageTarget( IN_HANDLE const int originalObjectHandle,
+									  IN_ENUM( MESSAGE_COMPARE ) \
+											const long messageValue )
 	{
 	OBJECT_TYPE targetType = OBJECT_TYPE_NONE;
 	int objectHandle = originalObjectHandle;
@@ -337,7 +346,9 @@ static int routeCompareMessageTarget( const int originalObjectHandle,
 		 messageValue == MESSAGE_COMPARE_KEYID_OPENPGP || \
 		 messageValue == MESSAGE_COMPARE_SUBJECT || \
 		 messageValue == MESSAGE_COMPARE_ISSUERANDSERIALNUMBER || \
-		 messageValue == MESSAGE_COMPARE_FINGERPRINT || \
+		 messageValue == MESSAGE_COMPARE_FINGERPRINT_SHA1 || \
+		 messageValue == MESSAGE_COMPARE_FINGERPRINT_SHA2 || \
+		 messageValue == MESSAGE_COMPARE_FINGERPRINT_SHAng || \
 		 messageValue == MESSAGE_COMPARE_CERTOBJ );
 
 	/* Determine the ultimate target type for the message.  We don't check for
@@ -354,7 +365,9 @@ static int routeCompareMessageTarget( const int originalObjectHandle,
 
 		case MESSAGE_COMPARE_SUBJECT:
 		case MESSAGE_COMPARE_ISSUERANDSERIALNUMBER:
-		case MESSAGE_COMPARE_FINGERPRINT:
+		case MESSAGE_COMPARE_FINGERPRINT_SHA1:
+		case MESSAGE_COMPARE_FINGERPRINT_SHA2:
+		case MESSAGE_COMPARE_FINGERPRINT_SHAng:
 		case MESSAGE_COMPARE_CERTOBJ:
 			targetType = OBJECT_TYPE_CERTIFICATE;
 			break;
@@ -697,7 +710,11 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 	{ MESSAGE_USER_TRUSTMGMT,		/* User: Trust management */
 	  ROUTE_FIXED( OBJECT_TYPE_USER ), ST_NONE, ST_USER_SO, 
 	  PARAMTYPE_ANY_TRUSTMGMTTYPE,
-	  PRE_DISPATCH( CheckTrustMgmtAccess ) }
+	  PRE_DISPATCH( CheckTrustMgmtAccess ) },
+
+	/* End-of-ACL marker */
+	{ MESSAGE_NONE, ROUTE_NONE, 0, PARAMTYPE_NONE_NONE },
+	{ MESSAGE_NONE, ROUTE_NONE, 0, PARAMTYPE_NONE_NONE }
 	};
 
 /****************************************************************************
@@ -706,7 +723,8 @@ static const MESSAGE_HANDLING_INFO FAR_BSS messageHandlingInfo[] = {
 *																			*
 ****************************************************************************/
 
-int initSendMessage( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSendMessage( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
@@ -799,9 +817,9 @@ void endSendMessage( void )
 /* Enqueue a message */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-static int enqueueMessage( const int objectHandle,
+static int enqueueMessage( IN_HANDLE const int objectHandle,
 						   const MESSAGE_HANDLING_INFO *handlingInfoPtr,
-						   const MESSAGE_TYPE message,
+						   IN_MESSAGE const MESSAGE_TYPE message,
 						   IN_OPT const void *messageDataPtr,
 						   const int messageValue )
 	{
@@ -822,6 +840,7 @@ static int enqueueMessage( const int objectHandle,
 		krnlData->queueEnd >= MESSAGE_QUEUE_SIZE - 1 )
 		{
 		ENSURES( krnlData->queueEnd >= 0 );
+		DEBUG_DIAG(( "Invalid kernel message queue state" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
@@ -886,7 +905,8 @@ static int enqueueMessage( const int objectHandle,
 /* Dequeue a message */
 
 CHECK_RETVAL \
-static int dequeueMessage( const int messagePosition )
+static int dequeueMessage( IN_RANGE( 0, MESSAGE_QUEUE_SIZE ) \
+								const int messagePosition )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
 	int i, iterationCount;
@@ -927,7 +947,7 @@ static int dequeueMessage( const int messagePosition )
 /* Get the next message in the queue */
 
 CHECK_RETVAL \
-static BOOLEAN getNextMessage( const int objectHandle,
+static BOOLEAN getNextMessage( IN_HANDLE const int objectHandle,
 							   OUT_OPT MESSAGE_QUEUE_DATA *messageQueueInfo )
 	{
 	MESSAGE_QUEUE_DATA *messageQueue = krnlData->messageQueue;
@@ -947,8 +967,8 @@ static BOOLEAN getNextMessage( const int objectHandle,
 		memset( messageQueueInfo, 0, sizeof( MESSAGE_QUEUE_DATA ) );
 
 	/* Sanity-check the state */
-	ENSURES( krnlData->queueEnd >= 0 && \
-			 krnlData->queueEnd < MESSAGE_QUEUE_SIZE );
+	ENSURES_B( krnlData->queueEnd >= 0 && \
+			   krnlData->queueEnd < MESSAGE_QUEUE_SIZE );
 
 	/* Find the next message for this object.  Since other messages can have
 	   come and gone in the meantime, we have to scan from the start each
@@ -968,7 +988,7 @@ static BOOLEAN getNextMessage( const int objectHandle,
 			return( TRUE );
 			}
 		}
-	ENSURES( i < MESSAGE_QUEUE_SIZE );
+	ENSURES_B( i < MESSAGE_QUEUE_SIZE );
 
 	/* Postcondition: There are no more messages for this object present in
 	   the queue */
@@ -980,9 +1000,9 @@ static BOOLEAN getNextMessage( const int objectHandle,
 
 /* Dequeue all messages for an object in the queue */
 
-static void dequeueAllMessages( const int objectHandle )
+static void dequeueAllMessages( IN_HANDLE const int objectHandle )
 	{
-	int iterationCount = 0;
+	int iterationCount;
 
 	/* Preconditions: It's a valid object table entry.  It's not necessarily
 	   a valid object since we may be de-queueing messages for it because 
@@ -992,8 +1012,10 @@ static void dequeueAllMessages( const int objectHandle )
 		 isHandleRangeValid( objectHandle ) );
 	
 	/* Dequeue all messages for a given object */
-	while( getNextMessage( objectHandle, NULL ) && \
-		   iterationCount++ < MESSAGE_QUEUE_SIZE );
+	for( iterationCount = 0;
+		 getNextMessage( objectHandle, NULL ) && \
+			iterationCount < MESSAGE_QUEUE_SIZE;
+		 iterationCount++ );
 	ENSURES_V( iterationCount < MESSAGE_QUEUE_SIZE );
 
 	/* Postcondition: There are no more messages for this object present in
@@ -1012,12 +1034,12 @@ static void dequeueAllMessages( const int objectHandle )
    one that accesses an object's kernel attributes */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-static int processInternalMessage( const int localObjectHandle,
+static int processInternalMessage( IN_HANDLE const int localObjectHandle,
 								   const MESSAGE_HANDLING_INFO *handlingInfoPtr,
-								   const MESSAGE_TYPE message,
+								   IN_MESSAGE const MESSAGE_TYPE message,
 								   IN_OPT void *messageDataPtr,
 								   const int messageValue,
-								   const void *aclPtr )
+								   IN_OPT const void *aclPtr )
 	{
 	int status;
 
@@ -1089,11 +1111,11 @@ static int processInternalMessage( const int localObjectHandle,
 
 /* Dispatch a message to an object */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
-static int dispatchMessage( const int localObjectHandle,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+static int dispatchMessage( IN_HANDLE const int localObjectHandle,
 							const MESSAGE_QUEUE_DATA *messageQueueData,
 							INOUT OBJECT_INFO *objectInfoPtr,
-							const void *aclPtr )
+							IN_OPT const void *aclPtr )
 	{
 	const MESSAGE_HANDLING_INFO *handlingInfoPtr = \
 									messageQueueData->handlingInfoPtr;
@@ -1147,7 +1169,7 @@ static int dispatchMessage( const int localObjectHandle,
 #endif /* USE_THREADS */
 	MUTEX_UNLOCK( objectTable );
 	status = messageFunction( objectPtr, localMessage,
-							  ( void * ) messageQueueData->messageDataPtr,
+							  ( MESSAGE_CAST ) messageQueueData->messageDataPtr,
 							  messageQueueData->messageValue );
 	MUTEX_LOCK( objectTable );
 	objectInfoPtr = &krnlData->objectTable[ localObjectHandle ];
@@ -1180,7 +1202,8 @@ static int dispatchMessage( const int localObjectHandle,
 
 /* Send a message to an object */
 
-int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
+int krnlSendMessage( IN_HANDLE const int objectHandle, 
+					 IN_MESSAGE const MESSAGE_TYPE message,
 					 void *messageDataPtr, const int messageValue )
 	{
 	const ATTRIBUTE_ACL *attributeACL = NULL;
@@ -1191,7 +1214,7 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 									  TRUE : FALSE;
 	const void *aclPtr = NULL;
 	MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
-	int localObjectHandle = objectHandle, iterationCount = 0;
+	int localObjectHandle = objectHandle, iterationCount;
 	int status = CRYPT_OK;
 
 	/* Preconditions.  For external messages we don't provide any assertions
@@ -1289,6 +1312,22 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		if( attributeACL == NULL )
 			return( CRYPT_ARGERROR_VALUE );
 		aclPtr = attributeACL;
+
+		/* Because cryptlib can be called through a variety of different 
+		   language bindings it's not guaranteed that the values of TRUE and 
+		   FALSE (as supplied by the caller) will always be 1 and 0.  For
+		   example Visual Basic uses the value -1 for TRUE because of 
+		   obscure backwards-compatibility and implementation issues with 
+		   16-bit versions of VB.  In order to avoid complaints from various
+		   checks at lower levels of cryptlib, we replace any boolean values
+		   with a setting other than FALSE with the explicit boolean value 
+		   TRUE.  This is a bit of an ugly kludge but it avoids having to
+		   special-case these values at all sorts of other locations in the
+		   code */
+		if( localMessage == MESSAGE_SETATTRIBUTE && \
+			( ( ATTRIBUTE_ACL * ) aclPtr )->valueType == ATTRIBUTE_VALUE_BOOLEAN && \
+			*( ( BOOLEAN * ) messageDataPtr ) )
+			messageDataPtr = MESSAGE_VALUE_TRUE;
 		}
 	if( isParamMessage( localMessage ) )
 		{
@@ -1376,6 +1415,8 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 		/* If it's implicitly routed, route it based on the attribute type */
 		if( isImplicitRouting( handlingInfoPtr->routingTarget ) )
 			{
+			REQUIRES( attributeACL != NULL );
+
 			if( attributeACL->routingFunction != NULL )
 				localObjectHandle = attributeACL->routingFunction( objectHandle,
 											attributeACL->routingTarget );
@@ -1520,6 +1561,7 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	if( objectInfoPtr->lockCount > MESSAGE_QUEUE_SIZE / 2 )
 		{
 		MUTEX_UNLOCK( objectTable );
+		DEBUG_DIAG(( "Invalid kernel message queue state" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_TIMEOUT );
 		}
@@ -1581,13 +1623,15 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
 	   the current object in this loop.  Queued messages for other objects
 	   will be handled at a different level of recursion.
 	   
-	   Bounding this loop is a bit tricky, since new messages can arrive as
+	   Bounding this loop is a bit tricky because new messages can arrive as
 	   the existing ones are dequeued, so that in theory the arrival rate
 	   could match the dispatch rate.  However in practice a situation like
 	   this would be extremely unusual, so we bound the loop at
 	   FAILSAFE_ITERATIONS_LARGE */
-	while( getNextMessage( localObjectHandle, &enqueuedMessageData ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_LARGE )
+	for( iterationCount = 0;
+		 getNextMessage( localObjectHandle, &enqueuedMessageData ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 iterationCount++ )
 		{
 		const BOOLEAN isDestroy = \
 			( enqueuedMessageData.message & MESSAGE_MASK ) == MESSAGE_DESTROY;

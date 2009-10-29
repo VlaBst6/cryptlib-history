@@ -25,7 +25,7 @@
 
 /* DBMS back-ends that require special handling */
 
-enum { DBMS_NONE, DBMS_ACCESS, DBMS_INTERBASE, DBMS_POSTGRES };
+enum { DBMS_NONE, DBMS_ACCESS, DBMS_INTERBASE, DBMS_MYSQL, DBMS_POSTGRES };
 
 /* The level at which we want SQLDiagRec() to return error information to 
    us */
@@ -337,11 +337,13 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 						 const SQLHSTMT hStmt, 
 						 IN_ERROR const int defaultStatus )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
+#endif /* USE_ERRMSGS */
 	char szSqlState[ SQL_SQLSTATE_SIZE + 8 ];
 	char errorString[ MAX_ERRMSG_SIZE + 8 ];
 	SQLHANDLE handle;
-	SQLUINTEGER dwNativeError = 0;
+	SQLINTEGER dwNativeError = 0;
 	SQLSMALLINT handleType, errorStringLength;
 	SQLRETURN sqlStatus;
 
@@ -391,6 +393,8 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 		}
 	if( !sqlStatusOK( sqlStatus ) )
 		{
+		DEBUG_DIAG(( "Couldn't read error information from database "
+					 "backend" ));
 		assert( DEBUG_WARN );	/* Catch this if it ever occurs */
 		setErrorString( errorInfo, 
 						"Couldn't get error information from database "
@@ -401,16 +405,18 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	/* In some (rare) cases SQLGetDiagRec() can return an empty error string
 	   with only szSqlState set, in which case we clear the error string */
 	if( errorStringLength > 0 )
+		{
 		setErrorString( errorInfo, errorString, errorStringLength );
+		}
 	else
 		clearErrorString( errorInfo );
 
 	/* Check for a not-found error status.  We can also get an sqlStatus of
 	   SQL_NO_DATA with SQLSTATE set to "00000" and the error message string
 	   empty in some cases, in which case we provide our own error string */
-	if( !strCompare( szSqlState, "S0002", 5 ) ||	/* ODBC 2.x */
-		!strCompare( szSqlState, "42S02", 5 ) ||	/* ODBC 3.x */
-		( !strCompare( szSqlState, "00000", 5 ) && \
+	if( !memcmp( szSqlState, "S0002", 5 ) ||	/* ODBC 2.x */
+		!memcmp( szSqlState, "42S02", 5 ) ||	/* ODBC 3.x */
+		( !memcmp( szSqlState, "00000", 5 ) && \
 		  sqlStatus == SQL_NO_DATA ) )
 		{
 		/* Make sure that the caller gets a sensible error message if they
@@ -427,10 +433,10 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	   a dummy read, but it's easier to just try the update anyway and 
 	   convert the error code to the correct value here if there's a 
 	   problem */
-	if( !strCompare( szSqlState, "S0001", 5 ) ||
-		!strCompare( szSqlState, "S0011", 5 ) ||	/* ODBC 2.x */
-		!strCompare( szSqlState, "42S01", 5 ) ||
-		!strCompare( szSqlState, "42S11", 5 ) )		/* ODBX 3.x */
+	if( !memcmp( szSqlState, "S0001", 5 ) ||
+		!memcmp( szSqlState, "S0011", 5 ) ||	/* ODBC 2.x */
+		!memcmp( szSqlState, "42S01", 5 ) ||
+		!memcmp( szSqlState, "42S11", 5 ) )		/* ODBX 3.x */
 		return( CRYPT_ERROR_DUPLICATE );
 
 	/* This one is a bit odd: An integrity constraint violation occurred,
@@ -439,7 +445,7 @@ static int getErrorInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	   can also include things like writing a NULL value to a column
 	   constrained to be NOT NULL, but this wouldn't normally happen so we
 	   can convert this one to a duplicate data error */
-	if( !strCompare( szSqlState, "23000", 5 ) )
+	if( !memcmp( szSqlState, "23000", 5 ) )
 		return( CRYPT_ERROR_DUPLICATE );
 
 	return( defaultStatus );
@@ -457,7 +463,7 @@ static int rewriteString( OUT_BUFFER( stringMaxLength, \
 						  IN_LENGTH_SHORT const int subStringLength, 
 						  IN_LENGTH_SHORT const int origStringLength, 
 						  IN_BUFFER( newSubStringLength ) \
-							const char *newSubString, 
+								const char *newSubString, 
 						  IN_LENGTH_SHORT const int newSubStringLength )
 	{
 	const int remainder = origStringLength - subStringLength;
@@ -473,6 +479,8 @@ static int rewriteString( OUT_BUFFER( stringMaxLength, \
 	REQUIRES( origStringLength > 0 && \
 			  origStringLength <= stringMaxLength && \
 			  origStringLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( newSubStringLength > 0 && \
+			  newSubStringLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
 	*stringLength = 0;
@@ -492,6 +500,7 @@ static int rewriteString( OUT_BUFFER( stringMaxLength, \
 		+---------------+-------------------+-----------+
 		|<- subString ->|								|
 												stringMaxLength */
+	REQUIRES( rangeCheck( newSubStringLength, remainder, stringMaxLength ) );
 	memmove( string + newSubStringLength, string + subStringLength, 
 			 remainder );
 	memcpy( string, newSubString, newSubStringLength );
@@ -686,12 +695,12 @@ static int bindParameters( const SQLHSTMT hStmt,
 			   length value as a hint to the driver, see the comment in 
 			   getDatatypeInfo() for how this is obtained */
 			memset( timestampStorage, 0, sizeof( SQL_TIMESTAMP_STRUCT ) );
-			timestampStorage->year = timeInfoPtr->tm_year + 1900;
-			timestampStorage->month = timeInfoPtr->tm_mon + 1;
-			timestampStorage->day = timeInfoPtr->tm_mday;
-			timestampStorage->hour = timeInfoPtr->tm_hour;
-			timestampStorage->minute = timeInfoPtr->tm_min;
-			timestampStorage->second = timeInfoPtr->tm_sec;
+			timestampStorage->year = ( SQLSMALLINT ) ( timeInfoPtr->tm_year + 1900 );
+			timestampStorage->month = ( SQLUSMALLINT ) ( timeInfoPtr->tm_mon + 1 );
+			timestampStorage->day = ( SQLUSMALLINT ) timeInfoPtr->tm_mday;
+			timestampStorage->hour = ( SQLUSMALLINT ) timeInfoPtr->tm_hour;
+			timestampStorage->minute = ( SQLUSMALLINT ) timeInfoPtr->tm_min;
+			timestampStorage->second = ( SQLUSMALLINT ) timeInfoPtr->tm_sec;
 			sqlStatus = SQLBindParameter( hStmt, paramNo++, SQL_PARAM_INPUT,
 										  SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP,
 										  dbmsInfo->dateTimeNameColSize, 0,
@@ -777,8 +786,7 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	{
 	const SQLHSTMT hStmt = dbmsInfo->hStmt[ DBMS_CACHEDQUERY_NONE ];
 	SQLRETURN sqlStatus;
-	SQLUINTEGER blobNameLength, dummy;
-	SQLINTEGER count;
+	SQLINTEGER blobNameLength, count, dummy;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
 
@@ -804,12 +812,20 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 	SQLCloseCursor( hStmt );
 	if( !sqlStatusOK( sqlStatus ) )
 		return( CRYPT_ERROR );
+	if( dbmsInfo->backendType == DBMS_MYSQL && blobNameLength == 0 )
+		{
+		/* Some older versions of the MySQL ODBC driver don't return a 
+		   length value so we have to set it ourselves by taking the length 
+		   of the returned string.  The null-termination occurs as a side-
+		   effect of the buffer being initialised to zeroes */
+		blobNameLength = strlen( dbmsInfo->blobName );
+		}
 	dbmsInfo->blobNameLength = ( int ) blobNameLength;
 #ifdef __UNIX__
 	if( dummy != sizeof( SQLINTEGER ) )
 		{
 		fprintf( stderr, "\ncryptlib: The ODBC driver is erroneously "
-				 "returning a %d-byte integer value\n          when a "
+				 "returning a %ld-byte integer value\n          when a "
 				 "%d-byte SQLINTEGER value is requested, which will "
 				 "overwrite\n          adjacent memory locations.  To fix "
 				 "this you need to recompile\n          with whatever "
@@ -817,7 +833,7 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 				 "          to force the use of 64-bit ODBC data types (and "
 				 "report this issue\n          to the ODBC driver vendor so "
 				 "that they can sync the driver and\n          headers)."
-				 "\n\n", dummy, sizeof( SQLINTEGER ) );
+				 "\n\n", dummy, ( long ) sizeof( SQLINTEGER ) );
 		}
 #endif /* __UNIX__ */
 	*maxFieldSize = count;
@@ -843,8 +859,7 @@ static int getDateTimeInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 	{
 	const SQLHSTMT hStmt = dbmsInfo->hStmt[ DBMS_CACHEDQUERY_NONE ];
 	SQLRETURN sqlStatus;
-	SQLUINTEGER dateTimeNameLength, dummy;
-	SQLINTEGER columnSize;
+	SQLINTEGER dateTimeNameLength, columnSize, dummy;
 
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
 
@@ -866,6 +881,7 @@ static int getDateTimeInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 	sqlStatus = SQLGetTypeInfo( hStmt, SQL_TYPE_TIMESTAMP );
 	if( !sqlStatusOK( sqlStatus ) )
 		{
+		DEBUG_DIAG(( "Database backend uses pre-ODBC 3.0 data types" ));
 		assert( DEBUG_WARN );	/* Warn of absenceof ODBC 3.0 types */
 		sqlStatus = SQLGetTypeInfo( hStmt, SQL_TIMESTAMP );
 		}
@@ -890,6 +906,14 @@ static int getDateTimeInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 		{
 		SQLCloseCursor( hStmt );
 		return( CRYPT_ERROR );
+		}
+	if( dbmsInfo->backendType == DBMS_MYSQL && dateTimeNameLength == 0 )
+		{
+		/* Some older versions of the MySQL ODBC driver don't return a 
+		   length value so we have to set it ourselves by taking the length 
+		   of the returned string.  The null-termination occurs as a side-
+		   effect of the buffer being initialised to zeroes */
+		dateTimeNameLength = strlen( dbmsInfo->dateTimeName );
 		}
 	dbmsInfo->dateTimeNameLength = ( int ) dateTimeNameLength;
 
@@ -936,7 +960,9 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getDatatypeInfo( INOUT DBMS_STATE_INFO *dbmsInfo, 
 							OUT_FLAGS_Z( DBMS ) int *featureFlags )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
+#endif /* USE_ERRMSGS */
 	const SQLHSTMT hStmt = dbmsInfo->hStmt[ DBMS_CACHEDQUERY_NONE ];
 	SQLRETURN sqlStatus;
 	SQLSMALLINT bufLen;
@@ -1056,6 +1082,7 @@ static int getDatatypeInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 							&bufLen );
 	if( sqlStatusOK( sqlStatus ) && transactBehaviour == SQL_CB_DELETE )
 		{
+		DEBUG_DIAG(( "Database uses destructive transactions" ));
 		assert( DEBUG_WARN );
 		dbmsInfo->transactIsDestructive = TRUE;
 		}
@@ -1064,6 +1091,7 @@ static int getDatatypeInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 							&bufLen );
 	if( sqlStatusOK( sqlStatus ) && transactBehaviour == SQL_CB_DELETE )
 		{
+		DEBUG_DIAG(( "Database uses destructive transactions" ));
 		assert( DEBUG_WARN );
 		dbmsInfo->transactIsDestructive = TRUE;
 		}
@@ -1092,6 +1120,8 @@ static int getBackendInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 			dbmsInfo->backendType = DBMS_ACCESS;
 		if( bufLen >= 9 && !strCompare( buffer, "Interbase", 9 ) )
 			dbmsInfo->backendType = DBMS_INTERBASE;
+		if( bufLen >= 5 && !strCompare( buffer, "MySQL", 5 ) )
+			dbmsInfo->backendType = DBMS_MYSQL;
 		if( bufLen >= 12 && !strCompare( buffer, "PostgreSQL", 10 ) )
 			dbmsInfo->backendType = DBMS_POSTGRES;
 		}
@@ -1163,7 +1193,9 @@ static int openDatabase( INOUT DBMS_STATE_INFO *dbmsInfo,
 							const CRYPT_KEYOPT_TYPE options, 
 						 OUT_FLAGS_Z( DBMS ) int *featureFlags )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
+#endif /* USE_ERRMSGS */
 	DBMS_NAME_INFO nameInfo;
 	SQLRETURN sqlStatus;
 	int i, status;
@@ -1324,11 +1356,14 @@ static int fetchData( const SQLHSTMT hStmt,
 					  IN_ENUM( DBMS_QUERY ) const DBMS_QUERY_TYPE queryType,
 					  INOUT DBMS_STATE_INFO *dbmsInfo )
 	{
+#ifdef USE_ERRMSGS
 	ERROR_INFO *errorInfo = &dbmsInfo->errorInfo;
-	const SQLSMALLINT dataType = ( dbmsInfo->hasBinaryBlobs ) ? \
-								 SQL_C_BINARY : SQL_C_CHAR;
+#endif /* USE_ERRMSGS */
+	const SQLSMALLINT dataType = ( SQLSMALLINT  ) \
+								 ( ( dbmsInfo->hasBinaryBlobs ) ? \
+								   SQL_C_BINARY : SQL_C_CHAR );
 	SQLRETURN sqlStatus;
-	SQLUINTEGER length;
+	SQLINTEGER length;
 
 	assert( ( queryType == DBMS_QUERY_CHECK && \
 			  data == NULL && dataMaxLength == 0 && dataLength == NULL ) || \
@@ -1365,9 +1400,13 @@ static int fetchData( const SQLHSTMT hStmt,
 		if( sqlStatus == SQL_NO_DATA )
 			{
 			if( queryType == DBMS_QUERY_CONTINUE )
+				{ 
 				setErrorString( errorInfo, "No more data found", 18 );
+				}
 			else
+				{
 				setErrorString( errorInfo, "No data found", 13 );
+				}
 			return( CRYPT_ERROR_NOTFOUND );
 			}
 		return( getErrorInfo( dbmsInfo, SQL_ERRLVL_STMT, hStmt,
@@ -1399,7 +1438,7 @@ static int performQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 						 IN_LENGTH_SHORT_Z const int dataMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *dataLength, 
 						 IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
-							const BOUND_DATA *boundData,
+							TYPECAST( BOUND_DATA ) const void *boundData,
 						 IN_ENUM_OPT( DBMS_CACHEDQUERY ) \
 							const DBMS_CACHEDQUERY_TYPE queryEntry,
 						 IN_ENUM( DBMS_QUERY ) const DBMS_QUERY_TYPE queryType )
@@ -1565,7 +1604,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 						  IN_BUFFER_OPT( commandLength ) const char *command,
 						  IN_LENGTH_SHORT_Z const int commandLength, 
 						  IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
-							const BOUND_DATA *boundData,
+							TYPECAST( BOUND_DATA ) const void *boundData,
 						  IN_ENUM( DBMS_UPDATE ) \
 							const DBMS_UPDATE_TYPE updateType )
 	{
@@ -1667,7 +1706,7 @@ static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo,
 		if( command != NULL && commandLength >= 6 && \
 			!strCompare( command, "DELETE", 6 ) )
 			{
-			SQLUINTEGER rowCount;
+			SQLINTEGER rowCount;
 
 			sqlStatus = SQLRowCount( hStmt, &rowCount );
 			if( !sqlStatusOK( sqlStatus ) || rowCount <= 0 )

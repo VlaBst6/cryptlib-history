@@ -194,7 +194,7 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 				   IN_RANGE( 0, 100 ) const int minValue, 
 				   IN_RANGE( minValue, MAX_INTLENGTH ) const int maxValue )
 	{
-	int i, value = 0;
+	int i, value;
 
 	assert( isReadPtr( str, strLen ) );
 	assert( isWritePtr( numericValue, sizeof( int ) ) );
@@ -211,16 +211,23 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 		return( CRYPT_ERROR_BADDATA );
 
 	/* Process the numeric string */
-	for( i = 0; i < strLen; i++ )
+	for( value = 0, i = 0; i < strLen; i++ )
 		{
-		const int ch = str[ i ] - '0';
+		const int valTmp = value * 10;
+		const int ch = byteToInt( str[ i ] ) - '0';
 
 		if( ch < 0 || ch > 9 )
 			return( CRYPT_ERROR_BADDATA );
-		value = ( value * 10 ) + ch;
+		if( value >= ( MAX_INTLENGTH / 10 ) || \
+			valTmp >= MAX_INTLENGTH - ch )
+			return( CRYPT_ERROR_BADDATA );
+		value = valTmp + ch;
+		if( value < 0 || value > MAX_INTLENGTH )
+			return( CRYPT_ERROR_BADDATA );
 		}
-	if( value < 0 || value < minValue || \
-		value > MAX_INTLENGTH || value > maxValue )
+
+	/* Make sure that the final value is within the specified range */
+	if( value < minValue || value > maxValue )
 		return( CRYPT_ERROR_BADDATA );
 
 	*numericValue = value;
@@ -229,7 +236,8 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 
 /* Sanitise a string before passing it back to the user.  This is used to
    clear potential problem characters (for example control characters)
-   from strings passed back from untrusted sources.  The function returns a 
+   from strings passed back from untrusted sources (nec verbum verbo 
+   curabis reddere fidus interpres - Horace).  The function returns a 
    pointer to the string to allow it to be used in the form 
    printf( "..%s..", sanitiseString( string, strLen ) ).  In addition it
    formats the data to fit a fixed-length buffer, if the string is longer 
@@ -272,7 +280,7 @@ char *sanitiseString( INOUT_BUFFER_FIXED( strMaxLen ) BYTE *string,
 	   converting it from a 'BYTE *' to a 'char *' */
 	for( i = 0; i < strDataLen; i++ )
 		{
-		const int ch = string[ i ];
+		const int ch = byteToInt( string[ i ] );
 
 		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
 			string[ i ] = '.';

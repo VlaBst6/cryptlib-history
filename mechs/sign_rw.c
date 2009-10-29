@@ -41,6 +41,8 @@ static int readRawSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the start of the signature */
 	status = readBitStringHole( stream, &queryInfo->dataLength, 18 + 18,
 								DEFAULT_TAG );
@@ -84,10 +86,12 @@ static int readX509Signature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the signature/hash algorithm information followed by the start
 	   of the signature */
 	status = readAlgoIDext( stream, &queryInfo->cryptAlgo,
-							&queryInfo->hashAlgo );
+							&queryInfo->hashAlgo, ALGOID_CLASS_PKCSIG );
 	if( cryptStatusOK( status ) )
 		{
 		status = readBitStringHole( stream, &queryInfo->dataLength, 18 + 18,
@@ -145,6 +149,8 @@ static int readCmsSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	status = getStreamObjectLength( stream, &length );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -167,7 +173,7 @@ static int readCmsSignature( INOUT STREAM *stream,
 	queryInfo->iAndSStart = stell( stream ) - startPos;
 	queryInfo->iAndSLength = length;
 	sSkip( stream, length );
-	status = readAlgoID( stream, &queryInfo->hashAlgo );
+	status = readAlgoID( stream, &queryInfo->hashAlgo, ALGOID_CLASS_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -185,8 +191,15 @@ static int readCmsSignature( INOUT STREAM *stream,
 		}
 
 	/* Read the CMS/cryptlib signature algorithm and the start of the 
-	   signature */
-	status = readAlgoID( stream, &queryInfo->cryptAlgo );
+	   signature.  CMS separates the signature algorithm from the hash 
+	   algorithm so we read it as ALGOID_CLASS_PKC and not 
+	   ALGOID_CLASS_PKCSIG.  Unfortunately some buggy implementations get 
+	   this wrong and write an algorithm+hash algoID, to get around this the
+	   decoding table contains an alternative interpretation of the
+	   ALGOID_CLASS_PKCSIG information pretending to be an 
+	   ALGOID_CLASS_PKC */
+	status = readAlgoID( stream, &queryInfo->cryptAlgo, 
+						 ALGOID_CLASS_PKC );
 	if( cryptStatusOK( status ) )
 		{
 		status = readOctetStringHole( stream, &queryInfo->dataLength, 
@@ -254,6 +267,8 @@ static int readCryptlibSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the header */
 	readSequence( stream, NULL );
 	status = readShortInteger( stream, &value );
@@ -265,13 +280,15 @@ static int readCryptlibSignature( INOUT STREAM *stream,
 	/* Read the key ID and hash algorithm identifier */
 	readOctetStringTag( stream, queryInfo->keyID, &queryInfo->keyIDlength,
 						8, CRYPT_MAX_HASHSIZE, CTAG_SI_SKI );
-	status = readAlgoID( stream, &queryInfo->hashAlgo );
+	status = readAlgoID( stream, &queryInfo->hashAlgo, ALGOID_CLASS_HASH );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Read the CMS/cryptlib signature algorithm and the start of the 
-	   signature */
-	status = readAlgoID( stream, &queryInfo->cryptAlgo );
+	   signature.  CMS separates the signature algorithm from the hash
+	   algorithm so we we use ALGOID_CLASS_PKC rather than 
+	   ALGOID_CLASS_PKCSIG */
+	status = readAlgoID( stream, &queryInfo->cryptAlgo, ALGOID_CLASS_PKC );
 	if( cryptStatusOK( status ) )
 		{
 		status = readOctetStringHole( stream, &queryInfo->dataLength, 
@@ -404,7 +421,7 @@ static int readSignatureSubpackets( INOUT STREAM *stream,
 									const BOOLEAN isAuthenticated )
 	{
 	const int endPos = stell( stream ) + length;
-	int iterationCount = 0;
+	int iterationCount;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
@@ -412,9 +429,12 @@ static int readSignatureSubpackets( INOUT STREAM *stream,
 	REQUIRES( length > 0 && length < MAX_INTLENGTH_SHORT );
 	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
 	REQUIRES( startPos < stell( stream ) );
+	REQUIRES( endPos > 0 && endPos < MAX_INTLENGTH );
 
-	while( stell( stream ) < endPos && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	for( iterationCount = 0;
+		 stell( stream ) < endPos && \
+			iterationCount < FAILSAFE_ITERATIONS_MED; 
+		 iterationCount++ )
 		{
 		int subpacketLength, type = DUMMY_INIT, status;
 
@@ -652,6 +672,8 @@ static int readPgpSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Make sure that the packet header is in order and check the packet
 	   version.  For this packet type a version number of 3 denotes PGP 2.x
 	   whereas for key transport it denotes OpenPGP */
@@ -701,6 +723,7 @@ static int readPgpSignature( INOUT STREAM *stream,
 		const int dataStartPos = stell( stream );
 		int dummy;
 
+		REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_INTLENGTH );
 		REQUIRES( queryInfo->cryptAlgo == CRYPT_ALGO_DSA );
 
 		/* Read the DSA signature, recording the position and combined 
@@ -737,12 +760,13 @@ static int writePgpSignature( INOUT STREAM *stream,
 	REQUIRES( signatureLength > ( 18 + 18 ) && \
 			  signatureLength < MAX_INTLENGTH_SHORT );
 
-	/* If it's a DLP algorithm we've already specified the DLP output format 
-	   as PGP so there's no need for further processing.  The handling of 
-	   PGP signatures is non-orthogonal to readPgpSignature() because 
-	   creating a PGP signature involves adding assorted additional data 
-	   like key IDs and authenticated attributes, which present too much 
-	   information to pass into a basic writeSignature() call */
+	/* If it's a DLP/ECDLP algorithm then we've already specified the low-
+	   level signature routines' output format as PGP so there's no need for 
+	   further processing.  The handling of PGP signatures is non-orthogonal 
+	   to readPgpSignature() because creating a PGP signature involves 
+	   adding assorted additional data like key IDs and authenticated 
+	   attributes, which present too much information to pass into a basic 
+	   writeSignature() call */
 	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		return( swrite( stream, signature, signatureLength ) );
 
@@ -773,6 +797,8 @@ static int readSshSignature( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
 
 	/* Read the signature record size and algorithm information */
 	readUint32( stream );
@@ -851,9 +877,12 @@ static int readSslSignature( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the start of the signature */
 	length = readUint16( stream );
-	if( length < MIN_PKCSIZE || length > CRYPT_MAX_PKCSIZE )
+	if( length < min( MIN_PKCSIZE, MIN_PKCSIZE_ECCPOINT ) || \
+		length > CRYPT_MAX_PKCSIZE )
 		return( CRYPT_ERROR_BADDATA );
 	queryInfo->dataStart = stell( stream ) - startPos;
 	queryInfo->dataLength = length;

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Plug-and-play PKI Routines					*
-*						 Copyright Peter Gutmann 1999-2007					*
+*						 Copyright Peter Gutmann 1999-2008					*
 *																			*
 ****************************************************************************/
 
@@ -17,10 +17,10 @@
 
 #if defined( USE_CMP ) || defined( USE_SCEP )
 
-/* When we generate a new key, there are a variety of different key types
+/* When we generate a new key there are a variety of different key types
    (meaning key usages) that we can generate it for, constrained to some
-   extent by what the underlying cert management protocol supports.  The
-   following values identify the key type that we need to generate */
+   extent by what the underlying certificate management protocol supports.  
+   The following values identify the key type that we need to generate */
 
 typedef enum {
 	KEY_TYPE_NONE,			/* No key type */
@@ -35,25 +35,27 @@ typedef enum {
 
 static const struct {
 	const char *label;		/* Label for private key */
+	const int labelLength;
 	const int actionPerms;	/* Context action perms */
-	const int keyUsage;		/* Cert key usage */
+	const int keyUsage;		/* Certificate key usage */
 	} keyInfo[] = {
-	{ NULL, 0, 0 },
-	{ "Encryption key", 
+	{ NULL, 0,				/* KEY_TYPE_NONE */
+		0, CRYPT_KEYUSAGE_NONE },
+	{ "Encryption key", 14,	/* KEY_TYPE_ENCRYPTION */
 		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_NONE_EXTERNAL ),
 		CRYPT_KEYUSAGE_KEYENCIPHERMENT },
-	{ "Signature key", 
+	{ "Signature key", 13,	/* KEY_TYPE_SIGNATURE */
 		MK_ACTION_PERM( MESSAGE_CTX_SIGN, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_NONE_EXTERNAL ),
 		CRYPT_KEYUSAGE_DIGITALSIGNATURE },
-	{ "Private key",
+	{ "Private key", 11,	/* KEY_TYPE_BOTH */
 		MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_SIGN, ACTION_PERM_NONE_EXTERNAL ) | \
 		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_NONE_EXTERNAL ),
 		CRYPT_KEYUSAGE_KEYENCIPHERMENT | CRYPT_KEYUSAGE_DIGITALSIGNATURE },
-	{ NULL, 0, 0 }
+	{ NULL, 0, 0, CRYPT_KEYUSAGE_NONE }, { NULL, 0, 0, CRYPT_KEYUSAGE_NONE }
 	};
 
 /****************************************************************************
@@ -77,21 +79,23 @@ static void cleanupObject( IN_HANDLE const CRYPT_CONTEXT iPrivateKey,
 	REQUIRES_V( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	/* Delete the cryptlib object.  If it's a native object, we're done */
-	krnlSendNotifier( iPrivateKey, IMESSAGE_DECREFCOUNT );
 	status = krnlSendMessage( iPrivateKey, IMESSAGE_GETDEPENDENT,
 							  &iCryptDevice, OBJECT_TYPE_DEVICE );
+	krnlSendNotifier( iPrivateKey, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		return;
 
 	/* Delete the key from the device.  We set the item type to delete to
 	   public key since the device object will interpret this correctly
-	   to mean that it should also delete the associated private key */
+	   to mean that it should also delete the associated private key.  We
+	   don't bother checking the return code since there's not much that
+	   we can do to recover if this fails */
 	setMessageKeymgmtInfo( &deletekeyInfo, CRYPT_KEYID_NAME, 
 						   keyInfo[ keyType ].label,
-						   strlen( keyInfo[ keyType ].label ), NULL, 0, 
+						   keyInfo[ keyType ].labelLength, NULL, 0, 
 						   KEYMGMT_FLAG_NONE );
-	krnlSendMessage( iCryptDevice, IMESSAGE_KEY_DELETEKEY,
-					 &deletekeyInfo, KEYMGMT_ITEM_PUBLICKEY );
+	( void ) krnlSendMessage( iCryptDevice, IMESSAGE_KEY_DELETEKEY,
+							  &deletekeyInfo, KEYMGMT_ITEM_PUBLICKEY );
 	}
 
 /* Check whether a network connection is still open, used when performing
@@ -117,20 +121,21 @@ static BOOLEAN isNamedObjectPresent( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	{
 	MESSAGE_KEYMGMT_INFO getkeyInfo;
 	const char *keyLabel = keyInfo[ keyType ].label;
+	const int keyLabelLength = keyInfo[ keyType ].labelLength;
 	int status;
 
-	REQUIRES( isHandleRangeValid( iCryptHandle ) );
-	REQUIRES( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
+	REQUIRES_B( isHandleRangeValid( iCryptHandle ) );
+	REQUIRES_B( keyType > KEY_TYPE_NONE && keyType < KEY_TYPE_LAST );
 
 	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, keyLabel, 
-						   strlen( keyLabel ), NULL, 0,
+						   keyLabelLength, NULL, 0, 
 						   KEYMGMT_FLAG_CHECK_ONLY );
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_KEY_GETKEY, 
 							  &getkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
 	if( cryptStatusError( status ) )
 		{
 		setMessageKeymgmtInfo( &getkeyInfo, CRYPT_KEYID_NAME, keyLabel, 
-							   strlen( keyLabel ), NULL, 0,
+							   keyLabelLength, NULL, 0,
 							   KEYMGMT_FLAG_CHECK_ONLY );
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_KEY_GETKEY, 
 								  &getkeyInfo, KEYMGMT_ITEM_PRIVATEKEY );
@@ -138,7 +143,7 @@ static BOOLEAN isNamedObjectPresent( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	return( cryptStatusOK( status ) ? TRUE : FALSE );
 	}
 
-/* Get the identified CA/RA cert from a CTL */
+/* Get the identified CA/RA certificate from a CTL */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int getCACert( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iNewCert, 
@@ -159,10 +164,16 @@ static int getCACert( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iNewCert,
 	/* Clear return value */
 	*iNewCert = CRYPT_ERROR;
 
-	/* Step through the cert trust list checking each cert in turn to see
-	   if it's the identified CA/RA cert.  Some CAs may only send a single 
-	   cert in the CTL and not explicitly identify it, so if there's no cert
-	   ID present we just use the first cert */
+	/* Step through the certificate trust list checking each certificate in 
+	   turn to see if it's the identified CA/RA certificate.  Some CAs may 
+	   only send a single certificate in the CTL and not explicitly identify 
+	   it so if there's no certificate ID present we just use the first 
+	   one.  Note that the limit is given as FAILSAFE_ITERATIONS_MED since 
+	   we're using it as a fallback check on the maximum chain length allowed
+	   by the certificate-import code.  In other words anything over the
+	   certificate-handling code's maximum chain length is handled as a 
+	   normal error and it's only if we exceed this that we have an internal 
+	   error */
 	status = krnlSendMessage( iCTL, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_CURSORFIRST,
 							  CRYPT_CERTINFO_CURRENT_CERTIFICATE );
@@ -171,40 +182,51 @@ static int getCACert( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iNewCert,
 	if( certIDlength > 0 )
 		{
 		MESSAGE_DATA msgData;
-		int iterationCount = 0;
+		int iterationCount;
 
-		setMessageData( &msgData, ( void * ) certID, KEYID_SIZE );
-		do
+		setMessageData( &msgData, ( MESSAGE_CAST ) certID, KEYID_SIZE );
+		for( iterationCount = 0; iterationCount < FAILSAFE_ITERATIONS_MED; 
+			 iterationCount++ )
 			{
 			status = krnlSendMessage( iCTL, IMESSAGE_COMPARE, &msgData, 
-									  MESSAGE_COMPARE_FINGERPRINT );
+									  MESSAGE_COMPARE_FINGERPRINT_SHA1 );
+			if( cryptStatusOK( status ) )
+				{
+				/* We've found the identified certificate, we're done */
+				break;
+				}
+			status = krnlSendMessage( iCTL, IMESSAGE_SETATTRIBUTE,
+									  MESSAGE_VALUE_CURSORNEXT,
+									  CRYPT_CERTINFO_CURRENT_CERTIFICATE );
+			if( cryptStatusError( status ) )
+				{
+				/* We've run out of certificates without finding a match, 
+				   exit */
+				return( CRYPT_ERROR_NOTFOUND );
+				}
 			}
-		while( cryptStatusError( status ) && \
-			   krnlSendMessage( iCTL, IMESSAGE_SETATTRIBUTE,
-								MESSAGE_VALUE_CURSORNEXT,
-								CRYPT_CERTINFO_CURRENT_CERTIFICATE ) == CRYPT_OK && \
-			   iterationCount++ < FAILSAFE_ITERATIONS_MED );
-		if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-			retIntError();
-		if( cryptStatusError( status ) )
-			return( CRYPT_ERROR_NOTFOUND );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 		}
 
-	/* We've found the identified cert, convert it from the data-only form
-	   in the CTL to a full cert that can be used to verify returned data.  
-	   This is easier than trying to disconnect and re-connect certificate 
-	   and context objects directly */
+	/* We've found the identified certificate, convert it from the data-only 
+	   form in the CTL to a full certificate that can be used to verify 
+	   returned data.  This is easier than trying to disconnect and re-
+	   connect certificate and context objects directly (ex duobus malis 
+	   minimum eligendum est) */
 	return( krnlSendMessage( iCTL, IMESSAGE_GETATTRIBUTE, iNewCert, 
 							 CRYPT_IATTRIBUTE_CERTCOPY ) );
 	}
 
 /****************************************************************************
 *																			*
-*						Cert Creation/Update Routines						*
+*					Certificate Creation/Update Routines					*
 *																			*
 ****************************************************************************/
 
-/* Generate a new key of the appropriate type */
+/* Generate a new key of the appropriate type.  For CMP we typically 
+   generate first a signature key and then an encryption key (unless it's
+   a CA key, for which we only generate a certificate-signing key), for
+   SCEP we generate a dual encryption/signature key */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
@@ -215,6 +237,7 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 	CRYPT_QUERY_INFO queryInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	BOOLEAN substitutedAlgorithm = FALSE;
 	int value, status;
 
 	assert( isWritePtr( iPrivateKey, sizeof( CRYPT_CONTEXT ) ) );
@@ -230,8 +253,8 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 
 	/* Get the algorithm to use for the key.  We try and use the given 
 	   default PKC algorithm, however some devices don't support all 
-	   algorithm types so if this isn't available we fall back to other 
-	   choices */
+	   algorithm types so if this isn't available we try and fall back to 
+	   other choices */
 	krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
 					 CRYPT_OPTION_PKC_ALGO );
 	if( cryptStatusError( \
@@ -257,15 +280,41 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 				krnlSendMessage( iCryptDevice, IMESSAGE_DEV_QUERYCAPABILITY, 
 								 &queryInfo, value ) ) )
 			return( CRYPT_ERROR_NOTAVAIL );
+
+		/* Remember that we've switched to a fallback algorithm */
+		substitutedAlgorithm = TRUE;
 		}
-	if( keyType == KEY_TYPE_ENCRYPTION && value == CRYPT_ALGO_DSA )
+
+	/* Make sure that the chosen algorithm is compatible with what we're 
+	   trying to do */
+	switch( keyType )
 		{
-		/* If we're being asked for an encryption key (which implies that 
-		   we've already successfully completed the process of acquiring a 
-		   signature key) and only a non-encryption algorithm is available, 
-		   we return OK_SPECIAL to tell the caller that the failure is non-
-		   fatal */
-		return( OK_SPECIAL );
+		case KEY_TYPE_ENCRYPTION:
+			/* If we're being asked for an encryption key, which in normal 
+			   operation implies that we've already successfully completed 
+			   the process of acquiring a signature key, and only a non-
+			   encryption algorithm is available, we return OK_SPECIAL to 
+			   tell the caller that the failure is non-fatal.  However if 
+			   we've substituted an algorithm (for example DSA when RSA was 
+			   requested) then we genuinely can't go any further and exit
+			   with an error */
+			if( !isCryptAlgo( value ) )
+				return( substitutedAlgorithm ? \
+						CRYPT_ERROR_NOTAVAIL : OK_SPECIAL );
+			break;
+
+		case KEY_TYPE_SIGNATURE:
+			if( !isSigAlgo( value ) )
+				return( CRYPT_ERROR_NOTAVAIL );
+			break;
+
+		case KEY_TYPE_BOTH:
+			if( !isCryptAlgo( value ) || !isSigAlgo( value ) )
+				return( CRYPT_ERROR_NOTAVAIL );
+			break;
+
+		default:
+			retIntError();
 		}
 
 	/* Create a new key using the given PKC algorithm and of the default 
@@ -275,15 +324,18 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
-					 CRYPT_OPTION_PKC_KEYSIZE );
-	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
-							  ( int * ) &value, CRYPT_CTXINFO_KEYSIZE );
+	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_OPTION_PKC_KEYSIZE );
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) keyInfo[ keyType ].label, 
-						min( strlen( keyInfo[ keyType ].label ),
-							 CRYPT_MAX_TEXTSIZE ) );
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, &value, 
+								  CRYPT_CTXINFO_KEYSIZE );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, ( MESSAGE_CAST ) keyInfo[ keyType ].label, 
+						keyInfo[ keyType ].labelLength );
 		status = krnlSendMessage( createInfo.cryptHandle, 
 								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
 								  CRYPT_CTXINFO_LABEL );
@@ -313,9 +365,9 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 	return( CRYPT_OK );
 	}
 
-/* Create a cert request for a key.  If a cert with a subject DN template is
-   provided, we copy this into the request, otherwise we create a minimal 
-   key-only request */
+/* Create a certificate request for a key.  If a certificate with a subject 
+   DN template is provided we copy this into the request, otherwise we 
+   create a minimal key-only request */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq, 
@@ -324,7 +376,7 @@ static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq,
 							  IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	const BOOLEAN isPKCS10 = ( keyType == KEY_TYPE_BOTH );
+	const BOOLEAN isPKCS10 = ( keyType == KEY_TYPE_BOTH ) ? TRUE : FALSE;
 	int status;
 
 	assert( isWritePtr( iCertReq, sizeof( CRYPT_CONTEXT ) ) );
@@ -337,7 +389,7 @@ static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq,
 	/* Clear return value */
 	*iCertReq = CRYPT_ERROR;
 
-	/* Create the signing key cert request */
+	/* Create the signing key certificate request */
 	setMessageCreateObjectInfo( &createInfo, isPKCS10 ? \
 								CRYPT_CERTTYPE_CERTREQUEST : \
 								CRYPT_CERTTYPE_REQUEST_CERT );
@@ -349,8 +401,8 @@ static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq,
 
 	/* Add the key information to the request and sign it if it's a CMP
 	   request.  We can't sign PKCS #10 requests (for SCEP) because the 
-	   client session has to add further information which is required by 
-	   the server to the request before it submits it */
+	   client session has to add further information required by the server 
+	   to the request before it submits it */
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 							  ( int * ) &iPrivateKey,
 							  CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO );
@@ -375,7 +427,7 @@ static int createCertRequest( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertReq,
 	return( CRYPT_OK );
 	}
 
-/* Update a keyset/device with a newly-created key and cert */
+/* Update a keyset/device with a newly-created key and certificate */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 4 ) ) \
 static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
@@ -407,7 +459,7 @@ static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	if( value == OBJECT_TYPE_KEYSET )
 		{
 		setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0,
-							   ( void * ) password, passwordLength,
+							   ( MESSAGE_CAST ) password, passwordLength,
 							   KEYMGMT_FLAG_NONE );
 		setkeyInfo.cryptHandle = iPrivateKey;
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_KEY_SETKEY,
@@ -422,41 +474,38 @@ static int updateKeys( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 							 &setkeyInfo, KEYMGMT_ITEM_PUBLICKEY ) );
 	}
 
-/* Update the keyset/device with any required trusted certs up to the root.  
-   This ensures that we can still build a full cert chain even if the 
-   PKIBoot trusted certs aren't preserved */
+/* Update the keyset/device with any required trusted certificates up to the 
+   root.  This ensures that we can still build a full certificate chain even 
+   if the PKIBoot trusted certificates aren't preserved */
 
-CHECK_RETVAL \
 static int updateTrustedCerts( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 							   IN_HANDLE const CRYPT_HANDLE iLeafCert )
 	{
 	CRYPT_CERTIFICATE iCertCursor = iLeafCert;
-	int iterationCount = 0, status;
+	int iterationCount, status;
 
 	REQUIRES( isHandleRangeValid( iCryptHandle ) );
 	REQUIRES( isHandleRangeValid( iLeafCert ) );
 
-	do
+	for( status = CRYPT_OK, iterationCount = 0; 
+		 cryptStatusOK( status ) && iterationCount < FAILSAFE_ITERATIONS_MED; 
+		 iterationCount++ )
 		{
-		/* Get the trusted issuer cert for the current cert and send it to
-		   the keyset/device */
+		MESSAGE_KEYMGMT_INFO setkeyInfo;
+
+		/* Get the trusted issuer certificate for the current certificate 
+		   and send it to the keyset/device */
 		status = krnlSendMessage( iCertCursor, IMESSAGE_USER_TRUSTMGMT, 
 								  &iCertCursor, MESSAGE_TRUSTMGMT_GETISSUER );
-		if( cryptStatusOK( status ) )
-			{
-			MESSAGE_KEYMGMT_INFO setkeyInfo;
-
-			setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0,
-								   NULL, 0, KEYMGMT_FLAG_NONE );
-			setkeyInfo.cryptHandle = iCertCursor;
-			status = krnlSendMessage( iCryptHandle, IMESSAGE_KEY_SETKEY, 
-									  &setkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
-			}
+		if( cryptStatusError( status ) )
+			break;
+		setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0,
+							   NULL, 0, KEYMGMT_FLAG_NONE );
+		setkeyInfo.cryptHandle = iCertCursor;
+		status = krnlSendMessage( iCryptHandle, IMESSAGE_KEY_SETKEY, 
+								  &setkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
 		}
-	while( cryptStatusOK( status ) && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	return( CRYPT_OK );
 	}
@@ -469,7 +518,8 @@ static int updateTrustedCerts( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 
 /* Run a plug-and-play PKI session */
 
-int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+int pnpPkiSession( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CRYPT_DEVICE iCryptDevice = SYSTEM_OBJECT_HANDLE;
 	CRYPT_CONTEXT iPrivateKey1, iPrivateKey2 ;
@@ -483,6 +533,10 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 	const char *storageObjectName = "keyset";
 	BOOLEAN isCAcert;
 	int value, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( passwordPtr != NULL );
 
 	/* If we've been passed a device as the private-key storage location,
 	   create the key in the device instead of as a local object */
@@ -519,12 +573,14 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 			}
 		}
 
-	/* Perform the PKIBoot exchange to get the initial trusted cert set.  We 
-	   also set the retain-connection flag since we're going to follow this 
-	   with another transaction */
+	/* Perform the PKIBoot exchange (done as part of an ir) to get the 
+	   initial trusted certificate set.  We also set the retain-connection 
+	   flag since we're going to follow this with another transaction */
 	if( sessionInfoPtr->type == CRYPT_SESSION_CMP )
+		{
 		sessionInfoPtr->sessionCMP->requestType = CRYPT_REQUESTTYPE_PKIBOOT;
-	sessionInfoPtr->protocolFlags |= CMP_PFLAG_RETAINCONNECTION;
+		sessionInfoPtr->protocolFlags |= CMP_PFLAG_RETAINCONNECTION;
+		}
 	status = sessionInfoPtr->transactFunction( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -537,14 +593,15 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		   remain open simplifies the implementation */
 		krnlSendNotifier( sessionInfoPtr->iCertResponse, 
 						  IMESSAGE_DECREFCOUNT );
+		sessionInfoPtr->iCertResponse = CRYPT_ERROR;
 		retExt( CRYPT_ERROR_READ,
 				( CRYPT_ERROR_READ, SESSION_ERRINFO, 
 				  "Server closed connection after PKIBoot phase before any "
 				  "certificates could be issued" ) );
 		}
 
-	/* Get the CA/RA cert from the returned CTL and set it as the cert to 
-	   use for authenticating server responses */
+	/* Get the CA/RA certificate from the returned CTL and set it as the 
+	   certificate to use for authenticating server responses */
 	attributeListPtr = findSessionInfo( sessionInfoPtr->attributeList,
 										CRYPT_SESSINFO_SERVER_FINGERPRINT );
 	if( attributeListPtr != NULL )
@@ -554,7 +611,10 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 							attributeListPtr->valueLength );
 		}
 	else
-		status = CRYPT_ERROR_NOTFOUND;
+		{
+		status = getCACert( &iCACert, sessionInfoPtr->iCertResponse, 
+							NULL, 0 );
+		}
 	krnlSendNotifier( sessionInfoPtr->iCertResponse, IMESSAGE_DECREFCOUNT );
 	sessionInfoPtr->iCertResponse = CRYPT_ERROR;
 	if( cryptStatusError( status ) )
@@ -566,11 +626,12 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		}
 	sessionInfoPtr->iAuthInContext = iCACert;
 
-	/* Create a private key and a cert request for it */
+	/* Create a private key and a certificate request for it */
 	status = generateKey( &iPrivateKey1, sessionInfoPtr->ownerHandle,
 						  iCryptDevice, keyType );
 	if( cryptStatusError( status ) )
 		{
+		ENSURES( status != OK_SPECIAL );
 		retExt( status, 
 				( status, SESSION_ERRINFO, "Couldn't create %s key",
 				  ( keyType == KEY_TYPE_SIGNATURE ) ? \
@@ -583,16 +644,16 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		cleanupObject( iPrivateKey1, keyType );
 		retExt( status,
 				( status, SESSION_ERRINFO, 
-				  "Couldn't create %skey cert request",
+				  "Couldn't create %skey certificate request",
 				  ( keyType == KEY_TYPE_SIGNATURE ) ? \
 					"signature " : "" ) );
 		}
 
-	/* Set up the request info and activate the session */
+	/* Set up the request information and activate the session */
 	if( sessionInfoPtr->type == CRYPT_SESSION_CMP )
 		{
-		/* If it's CMP, start with an ir.  The second cert will be fetched 
-		   with a cr */
+		/* If it's CMP, start with an ir.  The second certificate will be 
+		   fetched with a cr */
 		sessionInfoPtr->sessionCMP->requestType = \
 										CRYPT_REQUESTTYPE_INITIALISATION;
 		}
@@ -606,8 +667,9 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		return( status );
 		}
 
-	/* Check whether we've been issued a standalone CA cert rather than a 
-	   standard signature cert to be followed by an encryption cert */
+	/* Check whether we've been issued a standalone CA certificate rather 
+	   than a standard signature certificate to be followed by an encryption 
+	   certificate or a standard signature + encryption certificate */
 	status = krnlSendMessage( sessionInfoPtr->iCertResponse, 
 							  IMESSAGE_GETATTRIBUTE, &isCAcert,
 							  CRYPT_CERTINFO_CA );
@@ -633,7 +695,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 				  "certificate could be issued" ) );
 		}
 
-	/* We've got the first cert, update the keyset/device */
+	/* We've got the first certificate, update the keyset/device */
 	status = updateKeys( sessionInfoPtr->privKeyset, iPrivateKey1,
 						 sessionInfoPtr->iCertResponse, 
 						 passwordPtr->value, passwordPtr->valueLength );
@@ -641,15 +703,16 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		{
 		CRYPT_CERTIFICATE iNewCert;
 
-		/* Recreate the cert as a data-only cert and attach it to the 
-		   signing key so that we can use it to authenticate a request for 
-		   an encryption key.  We need to recreate the cert because we're 
-		   about to attach it to the private-key context for further 
-		   operations, and attaching a cert with a public-key context 
-		   already attached isn't possible.  Even if we're not getting a
-		   second cert, we still need the current cert attached so that we 
-		   can use it as the base cert for the trusted cert update that
-		   we perform before we exit */
+		/* Recreate the certificate as a data-only certificate and attach it 
+		   to the signing key so that we can use it to authenticate a 
+		   request for an encryption key.  We need to recreate the 
+		   certificate because we're about to attach it to the private-key 
+		   context for further operations, and attaching a certificate with 
+		   a public-key context already attached isn't possible.  Even if 
+		   we're not getting a second certificate, we still need the current 
+		   certificate attached so that we can use it as the base 
+		   certificate for the trusted certificate update that we perform 
+		   before we exit */
 		status = krnlSendMessage( sessionInfoPtr->iCertResponse, 
 								  IMESSAGE_GETATTRIBUTE, &iNewCert, 
 								  CRYPT_IATTRIBUTE_CERTCOPY_DATAONLY );
@@ -672,8 +735,8 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		}
 
 	/* If it's a combined encryption/signature key or a standalone CA key, 
-	   we're done.  See the comment at the end for the trusted-certs update
-	   process */
+	   we're done.  See the comment at the end of this function for the 
+	   details of the trusted-certificates update process */
 	if( keyType == KEY_TYPE_BOTH || isCAcert )
 		{
 		updateTrustedCerts( sessionInfoPtr->privKeyset, iPrivateKey1 );
@@ -681,15 +744,18 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		return( CRYPT_OK );
 		}
 
-	/* We're running a CMP session from this point on.  Create the second, 
-	   encryption private key and a cert request for it */
+	/* We're running a CMP session from this point on */
+	ENSURES( sessionInfoPtr->type == CRYPT_SESSION_CMP );
+
+	/* Create the second, encryption private key and a certificate request 
+	   for it */
 	status = generateKey( &iPrivateKey2, sessionInfoPtr->ownerHandle,
 						  iCryptDevice, KEY_TYPE_ENCRYPTION );
 	if( status == OK_SPECIAL )
 		{
 		/* Encryption isn't available via this device, exit without going
 		   through the second phase of the exchange, leaving only the
-		   signature key and certs set up */
+		   signature key and certificates set up */
 		updateTrustedCerts( sessionInfoPtr->privKeyset, iPrivateKey1 );
 		krnlSendNotifier( iPrivateKey1, IMESSAGE_DECREFCOUNT );
 		return( CRYPT_OK );
@@ -709,15 +775,15 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		cleanupObject( iPrivateKey2, KEY_TYPE_ENCRYPTION );
 		retExt( status,
 				( status, SESSION_ERRINFO, 
-				  "Couldn't create encryption key cert request" ) );
+				  "Couldn't create encryption key certificate request" ) );
 		}
 
-	/* Set up the request info and activate the session.  This request is 
-	   slightly different to the previous one since we now have a signature 
-	   cert that we can use to authenticate the request (in fact we have to
-	   use this since we can't authenticate the message with an encryption-
-	   only key).  In addition since this is the last transaction we turn 
-	   off the retain-connection flag */
+	/* Set up the request information and activate the session.  This 
+	   request is slightly different to the previous one since we now have a 
+	   signature certificate that we can use to authenticate the request (in 
+	   fact we have to use this since we can't authenticate the message with 
+	   an encryption-only key).  In addition since this is the last 
+	   transaction we turn off the retain-connection flag */
 	sessionInfoPtr->protocolFlags &= ~CMP_PFLAG_RETAINCONNECTION;
 	sessionInfoPtr->sessionCMP->requestType = CRYPT_REQUESTTYPE_CERTIFICATE;
 	sessionInfoPtr->iCertRequest = iCertReq;
@@ -735,7 +801,7 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 		return( status );
 		}
 
-	/* We've got the second cert, update the keyset/device */
+	/* We've got the second certificate, update the keyset/device */
 	status = updateKeys( sessionInfoPtr->privKeyset, iPrivateKey2,
 						 sessionInfoPtr->iCertResponse, 
 						 passwordPtr->value, passwordPtr->valueLength );
@@ -751,16 +817,17 @@ int pnpPkiSession( SESSION_INFO *sessionInfoPtr )
 				  storageObjectName ) );
 		}
 
-	/* Finally, update the keyset/device with any required trusted certs up 
-	   to the root.  This ensures that we can still build a full cert chain 
-	   even if the PKIBoot trusted certs aren't preserved.  We don't check 
-	   for errors from this function since it's not worth aborting the 
-	   process for some minor CA cert update problem, the user keys and certs
-	   will still function without them */
+	/* Finally, update the keyset/device with any required trusted 
+	   certificates up to the root.  This ensures that we can still build a 
+	   full certificate chain even if the PKIBoot trusted certificates 
+	   aren't preserved.  We don't check for errors from this function since 
+	   it's not worth aborting the process for some minor CA certificate 
+	   update problem, the user keys and certificates will still function 
+	   without them */
 	updateTrustedCerts( sessionInfoPtr->privKeyset, iPrivateKey1 );
 
-	/* Both keys were certified and the keys and certs sent to the keyset/
-	   device, we're done */
+	/* Both keys were certified and the keys and certificates sent to the 
+	   keyset/device, we're done */
 	krnlSendNotifier( iPrivateKey1, IMESSAGE_DECREFCOUNT );
 	krnlSendNotifier( iPrivateKey2, IMESSAGE_DECREFCOUNT );
 	return( CRYPT_OK );

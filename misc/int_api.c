@@ -11,9 +11,13 @@
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "stream.h"
+  #include "asn1.h"
+  #include "asn1_ext.h"
 #else
   #include "crypt.h"
   #include "io/stream.h"
+  #include "misc/asn1.h"
+  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Perform the FIPS-140 statistical checks that are feasible on a byte
@@ -77,12 +81,12 @@ BOOLEAN checkEntropy( IN_BUFFER( dataLength ) const BYTE *data,
    levels of function call beyond the point where they were in a 
    MESSAGE_DATA */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int attributeCopyParams( OUT_BUFFER_OPT( destMaxLength, \
 										 *destLength ) void *dest, 
 						 IN_LENGTH_SHORT_Z const int destMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *destLength, 
-						 IN_BUFFER( sourceLength ) const void *source, 
+						 IN_BUFFER_OPT( sourceLength ) const void *source, 
 						 IN_LENGTH_SHORT_Z const int sourceLength )
 	{
 	assert( ( dest == NULL && destMaxLength == 0 ) || \
@@ -161,8 +165,8 @@ BOOLEAN isStrongerHash( IN_ALGO const CRYPT_ALGO_TYPE algorithm1,
 						IN_ALGO const CRYPT_ALGO_TYPE algorithm2 )
 	{
 	static const CRYPT_ALGO_TYPE algoPrecedence[] = {
-		CRYPT_ALGO_SHA2, CRYPT_ALGO_RIPEMD160, CRYPT_ALGO_SHA1,
-		CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
+		CRYPT_ALGO_SHAng, CRYPT_ALGO_SHA2, CRYPT_ALGO_RIPEMD160, 
+		CRYPT_ALGO_SHA1, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 	int algo1index, algo2index;
 
 	REQUIRES_B( algorithm1 >= CRYPT_ALGO_FIRST_HASH && \
@@ -218,12 +222,14 @@ int mapValue( IN_INT_SHORT_Z const int srcValue,
 
 	REQUIRES( srcValue >= 0 && srcValue < MAX_INTLENGTH_SHORT );
 	REQUIRES( mapTblSize > 0 && mapTblSize < 100 );
+	REQUIRES( mapTbl[ mapTblSize ].source == CRYPT_ERROR );
 
 	/* Clear return value */
 	*destValue = 0;
 
 	/* Convert the hash algorithm into the equivalent HMAC algorithm */
-	for( i = 0; mapTbl[ i ].source != CRYPT_ERROR && i < mapTblSize; i++ )
+	for( i = 0; mapTbl[ i ].source != CRYPT_ERROR && \
+				i < mapTblSize && i < FAILSAFE_ITERATIONS_LARGE; i++ )
 		{
 		if( mapTbl[ i ].source == srcValue )
 			{
@@ -323,6 +329,30 @@ void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash,
 	hashFunctionAtomic( hashBuffer, 20, data, dataLength );
 	memcpy( hash, hashBuffer, hashMaxLength );
 	zeroise( hashBuffer, 20 );
+	}
+
+/* Compare two blocks of memory in a time-independent manner.  This is used 
+   to avoid potential timing attacks on memcmp(), which bails out as soon as
+   it finds a mismatch */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+BOOLEAN compareDataConstTime( IN_BUFFER( length ) const void *src,
+							  IN_BUFFER( length ) const void *dest,
+							  IN_LENGTH_SHORT const int length )
+	{
+	const BYTE *srcPtr = src, *destPtr = dest;
+	int value = 0, i;
+
+	assert( isReadPtr( src, length ) );
+	assert( isReadPtr( dest, length ) );
+
+	REQUIRES_B( length > 0 && length < MAX_INTLENGTH_SHORT );
+
+	/* Compare the two values in a time-independent manner */
+	for( i = 0; i < length; i++ )
+		value |= srcPtr[ i ] ^ destPtr[ i ];
+
+	return( !value );
 	}
 
 /****************************************************************************
@@ -464,6 +494,7 @@ int exportCertToStream( INOUT TYPECAST( STREAM * ) void *streamPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int importCertFromStream( INOUT void *streamPtr,
 						  OUT_HANDLE_OPT CRYPT_CERTIFICATE *cryptCertificate,
+						  IN_HANDLE const CRYPT_USER iCryptOwner,
 						  IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType, 
 						  IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
@@ -478,6 +509,8 @@ int importCertFromStream( INOUT void *streamPtr,
 	assert( sStatusOK( stream ) );
 	assert( isWritePtr( cryptCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 
+	REQUIRES( iCryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( iCryptOwner ) );
 	REQUIRES( certType > CRYPT_CERTTYPE_NONE && \
 			  certType < CRYPT_CERTTYPE_LAST );
 	REQUIRES( certDataLength >= MIN_CRYPT_OBJECTSIZE && \
@@ -496,12 +529,182 @@ int importCertFromStream( INOUT void *streamPtr,
 	/* Import the cert directly from the stream buffer */
 	setMessageCreateObjectIndirectInfo( &createInfo, dataPtr, 
 										certDataLength, certType );
+	createInfo.cryptOwner = iCryptOwner;
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT_INDIRECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		return( status );
 	*cryptCertificate = createInfo.cryptHandle;
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Public-key Import Routines						*
+*																			*
+****************************************************************************/
+
+/* Read a public key from an X.509 SubjectPublicKeyInfo record, creating the
+   context necessary to contain it in the process.  This is used by a variety
+   of modules including certificate-management, keyset, and crypto device. 
+   
+   The use of the void * instead of STREAM * is necessary because the STREAM
+   type isn't visible at the global level */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkKeyLength( INOUT STREAM *stream,
+						   const CRYPT_ALGO_TYPE cryptAlgo,
+						   const BOOLEAN hasAlgoParameters )
+	{
+	const long startPos = stell( stream );
+	int keyLength, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+
+	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  cryptAlgo < CRYPT_ALGO_LAST_PKC );
+
+	/* ECC algorithms are a complete mess to handle because of the arbitrary
+	   manner in which the algorithm parameters can be represented.  To deal
+	   with this we skip the parameters and read the public key value, which 
+	   is a point on a curve stuffed in a variety of creative ways into an 
+	   BIT STRING.  Since this contains two values (the x and y coordinates) 
+	   we divide the lengths used by two to get an approximation of the 
+	   nominal key size */
+	if( isEccAlgo( cryptAlgo ) )
+		{
+		readUniversal( stream );	/* Skip algorithm parameters */
+		status = readBitStringHole( stream, &keyLength, 
+									MIN_PKCSIZE_ECCPOINT_THRESHOLD, 
+									DEFAULT_TAG );
+		if( cryptStatusOK( status ) && isShortECCKey( keyLength / 2 ) )
+			status = CRYPT_ERROR_NOSECURE;
+		if( cryptStatusError( status ) )
+			return( status );
+
+		return( sseek( stream, startPos ) );
+		}
+
+	/* Read the key component that defines the nominal key size, either the 
+	   first algorithm parameter or the first public-key component */
+	if( hasAlgoParameters )
+		{
+		readSequence( stream, NULL );
+		status = readGenericHole( stream, &keyLength, MIN_PKCSIZE_THRESHOLD, 
+								  BER_INTEGER );
+		}
+	else
+		{
+		readBitStringHole( stream, NULL, MIN_PKCSIZE_THRESHOLD, DEFAULT_TAG );
+		readSequence( stream, NULL );
+		status = readGenericHole( stream, &keyLength, MIN_PKCSIZE_THRESHOLD, 
+								  BER_INTEGER );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Check whether the nominal keysize is within the range defined as 
+	   being a weak key */
+	if( isShortPKCKey( keyLength ) )
+		return( CRYPT_ERROR_NOSECURE );
+
+	return( sseek( stream, startPos ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int iCryptReadSubjectPublicKey( INOUT TYPECAST( STREAM * ) void *streamPtr, 
+								OUT_HANDLE_OPT CRYPT_CONTEXT *iPubkeyContext,
+								IN_HANDLE const CRYPT_DEVICE iCreatorHandle, 
+								const BOOLEAN deferredLoad )
+	{
+	CRYPT_ALGO_TYPE cryptAlgo;
+	CRYPT_CONTEXT iCryptContext;
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	MESSAGE_DATA msgData;
+	STREAM *stream = streamPtr;
+	void *spkiPtr = DUMMY_INIT_PTR;
+	int spkiLength, length, status;
+
+	assert( isReadPtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( iPubkeyContext, sizeof( CRYPT_CONTEXT ) ) );
+
+	REQUIRES( iCreatorHandle == SYSTEM_OBJECT_HANDLE || \
+			  isHandleRangeValid( iCreatorHandle ) );
+
+	/* Clear return value */
+	*iPubkeyContext = CRYPT_ERROR;
+
+	/* Pre-parse the SubjectPublicKeyInfo, both to ensure that it's (at 
+	   least generally) valid before we go to the extent of creating an 
+	   encryption context to contain it and to get access to the 
+	   SubjectPublicKeyInfo data and algorithm information.  Because all 
+	   sorts of bizarre tagging exists due to things like CRMF we read the 
+	   wrapper as a generic hole rather than the more obvious SEQUENCE */
+	status = getStreamObjectLength( stream, &spkiLength );
+	if( cryptStatusOK( status ) )
+		status = sMemGetDataBlock( stream, &spkiPtr, spkiLength );
+	if( cryptStatusOK( status ) )
+		{
+		status = readGenericHole( stream, NULL, 
+								  MIN_PKCSIZE_ECCPOINT_THRESHOLD, 
+								  DEFAULT_TAG );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+	status = readAlgoIDparams( stream, &cryptAlgo, &length, 
+							   ALGOID_CLASS_PKC );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform minimal key-length checking.  We need to do this at this 
+	   point (rather than having it done implicitly in the 
+	   SubjectPublicKeyInfo read code) because a too-short key (or at least 
+	   too-short key data) will result in the kernel rejecting the 
+	   SubjectPublicKeyInfo before it can be processed, leading to a rather 
+	   misleading CRYPT_ERROR_BADDATA return status rather the correct 
+	   CRYPT_ERROR_NOSECURE */
+	status = checkKeyLength( stream, cryptAlgo,
+							 ( length > 0 ) ? TRUE : FALSE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Skip the remainder of the key components in the stream, first the
+	   algorithm parameters (if there are any) and then the public-key 
+	   data */
+	if( length > 0 )
+		readUniversal( stream );
+	status = readUniversal( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Create the public-key context and send the public-key data to it */
+	setMessageCreateObjectInfo( &createInfo, cryptAlgo );
+	status = krnlSendMessage( iCreatorHandle, IMESSAGE_DEV_CREATEOBJECT, 
+							  &createInfo, OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		return( status );
+	iCryptContext = createInfo.cryptHandle;
+	setMessageData( &msgData, spkiPtr, spkiLength );
+	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+							  &msgData, deferredLoad ? \
+								CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL : \
+								CRYPT_IATTRIBUTE_KEY_SPKI );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
+		if( cryptArgError( status ) )
+			{
+			DEBUG_DIAG(( "Public-key load returned argError status" ));
+			assert( DEBUG_WARN );
+			return( CRYPT_ERROR_BADDATA );
+			}
+		return( status );
+		}
+	*iPubkeyContext = iCryptContext;
+	assert( cryptStatusError( \
+				krnlSendMessage( iCryptContext, IMESSAGE_CHECK, 
+								 NULL, MESSAGE_CHECK_PKC_PRIVATE ) ) );
 	return( CRYPT_OK );
 	}
 
@@ -638,6 +841,7 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 				formatTextLineError( &errorInfo, "Invalid character 0x%02X "
 									 "at position %d", ch, totalChars );
 				sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+
 				return( CRYPT_ERROR_BADDATA );
 				}
 			continue;
@@ -666,9 +870,10 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 			formatTextLineError( streamPtr, "Invalid character 0x%02X at "
 								 "position %d", ch, totalChars );
 			sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+
 			return( CRYPT_ERROR_BADDATA );
 			}
-		lineBuffer[ bufPos++ ] = ch;
+		lineBuffer[ bufPos++ ] = intToByte( ch );
 		ENSURES( bufPos > 0 && bufPos <= totalChars + 1 );
 				 /* The 'totalChars + 1' is because totalChars is the loop
 				    iterator and won't have been incremented yet at this 
@@ -692,6 +897,7 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 			*localError = TRUE;
 		formatTextLineError( streamPtr, "Text line too long", 0, 0 );
 		sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+
 		return( CRYPT_ERROR_OVERFLOW );
 		}
 	*lineBufferSize = bufPos;

@@ -56,8 +56,9 @@
 
 /* If we don't have a defined randomness interface, complain */
 
-#if !( defined( __BEOS__ ) || defined( __IBM4758__ ) || \
-	   defined( __MAC__ ) || defined( __MSDOS__ ) || defined( __MVS__ ) || \
+#if !( defined( __BEOS__ ) || defined( __ECOS__ ) || \
+	   defined( __IBM4758__ ) || defined( __MAC__ ) || \
+	   defined( __MSDOS__ ) || defined( __MVS__ ) || \
 	   defined( __OS2__ ) || defined( __PALMOS__ ) || \
 	   defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
 	   defined( __UNIX__ ) || defined( __VMCMS__ ) || \
@@ -77,6 +78,10 @@
   #if ( CONFIG_RANDSEED_QUALITY < 10 ) || ( CONFIG_RANDSEED_QUALITY > 100 )
 	#error CONFIG_RANDSEED_QUALITY must be between 10 and 100
   #endif /* CONFIG_RANDSEED_QUALITY check */
+
+  /* Forward declaration for the add-data function */
+  STDC_NONNULL_ARG( ( 1 ) ) \
+  static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo );
 #endif /* CONFIG_RANDSEED */
 
 /* A custom form of REQUIRES()/ENSURES() that takes care of unlocking the
@@ -636,6 +641,7 @@ int getRandomData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 	if( randomInfo->randomQuality < 100 )
 		{
 		krnlExitMutex( MUTEX_RANDOM );
+		DEBUG_DIAG(( "No random data available" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_RANDOM );
 		}
@@ -1082,38 +1088,48 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 	STREAM stream;
 	BYTE streamBuffer[ STREAM_BUFSIZE + 8 ], seedBuffer[ 1024 + 8 ];
 	char seedFilePath[ MAX_PATH_LENGTH + 8 ];
-	int poolCount, length, status;
+	int seedFilePathLen, poolCount, length, status;
 
 	assert( isWritePtr( randomInfo, sizeof( RANDOM_INFO ) ) );
 
 	/* Try and access the stored seed data */
-	status = fileBuildCryptlibPath( seedFilePath, MAX_PATH_LENGTH, NULL, 
+	status = fileBuildCryptlibPath( seedFilePath, MAX_PATH_LENGTH, 
+									&seedFilePathLen, NULL, 0,
 									BUILDPATH_RNDSEEDFILE );
 	if( cryptStatusOK( status ) )
-		status = sFileOpen( &stream, seedFilePath, FILE_READ );
+		{
+		/* The file path functions are normally used with krnlSendMessage()
+		   which takes { data, length } parameters, since we've calling
+		   the low-level function sFileOpen() directly we have to null-
+		   terminate the string */
+		seedFilePath[ seedFilePathLen ] = '\0';
+		status = sFileOpen( &stream, seedFilePath, FILE_FLAG_READ );
+		}
 	if( cryptStatusError( status ) )
 		{
 		/* The seed data isn't present, don't try and access it again */
 		randomInfo->seedProcessed = TRUE;
+		DEBUG_DIAG(( "Error opening random seed file" ));
 		assert( DEBUG_WARN );
 		return;
 		}
 
 	/* Read up to 1K of data from the stored seed */
 	sioctl( &stream, STREAM_IOCTL_IOBUFFER, streamBuffer, STREAM_BUFSIZE );
-	sioctl( &stream, STREAM_IOCTL_PARTIALREAD, NULL, 0 );
+	sioctl( &stream, STREAM_IOCTL_PARTIALREAD, NULL, 1 );
 	status = length = sread( &stream, seedBuffer, 1024 );
 	sFileClose( &stream );
 	zeroise( streamBuffer, STREAM_BUFSIZE );
-	if( cryptStatusError( status ) || length <= 0 )
+	if( cryptStatusError( status ) || length <= 16 )
 		{
-		/* The seed data is present but we can't read it, don't try and
-		   access it again */
+		/* The seed data is present but we can't read it or there's not 
+		   enough present to use, don't try and access it again */
 		randomInfo->seedProcessed = TRUE;
+		DEBUG_DIAG(( "Error reading random seed file" ));
 		assert( DEBUG_WARN );
 		return;
 		}
-	ENSURES_V( length > 0 && length <= 1024 );
+	ENSURES_V( length >= 16 && length <= 1024 );
 	randomInfo->seedSize = length;
 
 	/* Precondition: We got at least some non-zero data */
@@ -1132,13 +1148,10 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 		assert( cryptStatusOK( status ) );
 		}
 
-	/* If there were at least 128 bits of entropy present in the seed, set
-	   the entropy quality to the user-provided value */
-	if( length >= 16 )
-		{
-		status = addEntropyQuality( randomInfo, CONFIG_RANDSEED_QUALITY );
-		assert( cryptStatusOK( status ) );
-		}
+	/* There were at least 128 bits of entropy present in the seed, set the 
+	   entropy quality to the user-provided value */
+	status = addEntropyQuality( randomInfo, CONFIG_RANDSEED_QUALITY );
+	assert( cryptStatusOK( status ) );
 
 	zeroise( seedBuffer, 1024 );
 
@@ -1308,8 +1321,8 @@ int endRandomData( INOUT void *statePtr, \
 	   we've added */
 	if( cryptStatusOK( status ) && quality > 0 )
 		{
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_SETATTRIBUTE, ( void * ) &quality,
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &quality,
 								  CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 		}
 	assert( cryptStatusOK( status ) || ( status == CRYPT_ERROR_PERMISSION ) );

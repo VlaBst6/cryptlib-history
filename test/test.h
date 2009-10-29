@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2007					*
+*						Copyright Peter Gutmann 1995-2009					*
 *																			*
 ****************************************************************************/
 
@@ -363,6 +363,13 @@
   #define convertFileName( fileName )	fileName
 #endif /* Unicode vs. ASCII */
 
+/* Helper functions for limited environments that are missing full stdlib
+   support */
+
+#if defined( _WIN32_WCE ) && _WIN32_WCE < 500
+  int remove( const char *pathname );
+#endif /* WinCE < 5.x */
+
 /* A structure that allows us to specify a collection of extension
    components.  This is used when adding a collection of extensions to a
    cert */
@@ -397,8 +404,8 @@ typedef struct {
    different key files to use.  The following types are handled in the test
    code */
 
-typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_OPENPGP,
-			   KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES,
+typedef enum { KEYFILE_NONE, KEYFILE_X509, KEYFILE_PGP, KEYFILE_PGP_SPECIAL,
+			   KEYFILE_OPENPGP, KEYFILE_OPENPGP_HASH, KEYFILE_OPENPGP_AES,
 			   KEYFILE_OPENPGP_RSA, KEYFILE_NAIPGP,
 			   KEYFILE_OPENPGP_PARTIAL } KEYFILE_TYPE;
 
@@ -621,10 +628,12 @@ int testSessionTSPServerEx( const CRYPT_CONTEXT privKeyContext );
 
 /* Prototypes for functions in s_scep.c */
 
-int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, C_STR userName );
+int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, 
+					const C_STR userName );
 int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey, 
 				   CRYPT_KEYSET *cryptCertStore, const C_STR keyFileName,
 				   const C_STR keyLabel, const CERT_DATA *pkiUserData,
+				   const CERT_DATA *pkiUserAltData, 
 				   const CERT_DATA *pkiUserCAData, const char *protocolName );
 
 /****************************************************************************
@@ -671,6 +680,7 @@ int testWriteFileLongCertChain( void );
 int testReadFileCert( void );
 int testReadFileCertPrivkey( void );
 int testReadFileCertChain( void );
+int testReadCorruptedKey( void );
 int testSingleStepFileCert( void );
 int testSingleStepAltFileCert( void );
 int testDoubleCertFile( void );
@@ -700,8 +710,10 @@ int testEnvelopeCrypt( void );
 int testEnvelopePasswordCrypt( void );
 int testPGPEnvelopePasswordCryptImport( void );
 int testEnvelopePKCCrypt( void );
+int testEnvelopePKCCryptAlgo( void );
 int testPGPEnvelopePKCCryptImport( void );
 int testEnvelopeSign( void );
+int testEnvelopeSignAlgo( void );
 int testEnvelopeSignOverflow( void );
 int testPGPEnvelopeSignedDataImport( void );
 int testEnvelopeAuthenticate( void );
@@ -716,13 +728,14 @@ int testCMSEnvelopeSignedDataImport( void );
 
 /* Prototypes for functions in certs.c */
 
-int testCert( void );
+int testBasicCert( void );
 int testCACert( void );
 int testXyzzyCert( void );
 int testTextStringCert( void );
 int testComplexCert( void );
 int testCertExtension( void );
 int testCustomDNCert( void );
+int testCertAttributeHandling( void );
 int testSETCert( void );
 int testAttributeCert( void );
 int testCRL( void );
@@ -738,6 +751,7 @@ int testRTCSReqResp( void );
 int testOCSPReqResp( void );
 int testPKIUser( void );
 int testCertImport( void );
+int testCertImportECC( void );
 int testCertReqImport( void );
 int testCRLImport( void );
 int testCertChainImport( void );
@@ -810,6 +824,7 @@ int testSessionTLS12( void );
 #ifdef TEST_SESSION_LOOPBACK
   int testSessionSSHv1ClientServer( void );
   int testSessionSSHClientServer( void );
+  int testSessionSSHClientServerDsaKey( void );
   int testSessionSSHClientServerFingerprint( void );
   int testSessionSSHClientServerSFTP( void );
   int testSessionSSHClientServerPortForward( void );
@@ -832,14 +847,34 @@ int testSessionTLS12( void );
   int testSessionTSPClientServer( void );
   int testSessionTSPClientServerPersistent( void );
   int testSessionSCEPClientServer( void );
+  int testSessionSCEPSHA2ClientServer( void );
   int testSessionSCEPCACertClientServer( void );
   int testSessionCMPClientServer( void );
+  int testSessionCMPSHA2ClientServer( void );
   int testSessionCMPPKIBootClientServer( void );
+  int testSessionCMPFailClientServer( void );
   int testSessionPNPPKIClientServer( void );
   int testSessionPNPPKIDeviceClientServer( void );
   int testSessionPNPPKICAClientServer( void );
   int testSessionPNPPKIIntermedCAClientServer( void );
 #endif /* TEST_SESSION_LOOPBACK */
+
+/* Umbrella tests for the above functions */
+
+BOOLEAN testSelfTest( void );
+BOOLEAN testLowLevel( void );
+BOOLEAN testRandom( void );
+BOOLEAN testConfig( void );
+BOOLEAN testDevice( void );
+BOOLEAN testMidLevel( void );
+BOOLEAN testHighLevel( void );
+BOOLEAN testCert( void );
+BOOLEAN testCertMgmt( void );
+BOOLEAN testKeyset( void );
+BOOLEAN testEnveloping( void );
+BOOLEAN testSessions( void );
+BOOLEAN testSessionsLoopback( void );
+BOOLEAN testUsers( void );
 
 #if defined( __MVS__ ) || defined( __VMCMS__ )
   #pragma convlit( resume )

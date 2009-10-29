@@ -1077,11 +1077,11 @@ static int cmdSetAttribute( void *stateInfo, COMMAND_INFO *cmd )
 			{
 			return( krnlSendMessage( DEFAULTUSER_OBJECT_HANDLE,
 									 IMESSAGE_SETATTRIBUTE,
-									 ( void * ) &cmd->arg[ 2 ],
+									 ( MESSAGE_CAST ) &cmd->arg[ 2 ],
 									 cmd->arg[ 1 ] ) );
 			}
 		return( krnlSendMessage( cmd->arg[ 0 ], MESSAGE_SETATTRIBUTE,
-								 ( void * ) &cmd->arg[ 2 ], cmd->arg[ 1 ] ) );
+								 ( MESSAGE_CAST ) &cmd->arg[ 2 ], cmd->arg[ 1 ] ) );
 		}
 	setMessageData( &msgData, cmd->strArg[ 0 ], cmd->strArgLen[ 0 ] );
 	if( cmd->arg[ 0 ] == DEFAULTUSER_OBJECT_HANDLE )
@@ -1781,9 +1781,9 @@ static BOOLEAN needsTranslation( const CRYPT_ATTRIBUTE_TYPE attribute )
 #ifdef EBCDIC_CHARS
   #define nativeStrlen( string )	strlen( string )
   #define nativeToCryptlibString( dest, destMaxLen, src, length ) \
-		  ebcdicToAscii( dest, destMaxLen, src, length )
+		  ebcdicToAscii( dest, src, length )
   #define cryptlibToNativeString( dest, destMaxLen, src, length ) \
-		  asciiToEbcdic( dest, destMaxLen, src, length )
+		  asciiToEbcdic( dest, src, length )
 #else
   #define nativeStrlen( string )	wcslen( string )
   #define nativeToCryptlibString( dest, destMaxLen, src, length ) \
@@ -1824,10 +1824,11 @@ typedef enum {
 	ARG_V,			/* Value (attribute) */
 	ARG_N,			/* Numeric arg */
 	ARG_S,			/* String arg */
-	ARG_LAST,
+	ARG_LAST
 	} ERRORMAP;
 
-static int mapError( const ERRORMAP *errorMap, const int status )
+static int mapError( const ERRORMAP *errorMap, const int errorMapSize, 
+					 const int status )
 	{
 	ERRORMAP type;
 	int count = 0, i;
@@ -1862,12 +1863,12 @@ static int mapError( const ERRORMAP *errorMap, const int status )
 			retIntError();
 		}
 	for( i = 0; errorMap[ i ] != ARG_LAST && \
-				i < FAILSAFE_ITERATIONS_SMALL; i++ )
+				i < errorMapSize; i++ )
 		{
 		if( errorMap[ i ] == type && !count-- )
 			return( CRYPT_ERROR_PARAM1 - i );
 		}
-	if( i >= FAILSAFE_ITERATIONS_SMALL )
+	if( i >= errorMapSize )
 		retIntError();
 	retIntError();
 	}
@@ -1918,12 +1919,12 @@ C_RET cryptCreateContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 0,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_CONTEXT } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic client-side error checking */
-	if( !isWritePtr( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
+	if( !isWritePtrConst( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*cryptContext = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
@@ -1947,7 +1948,8 @@ C_RET cryptCreateContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 		*cryptContext = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Create an encryption context via the device */
@@ -1960,14 +1962,14 @@ C_RET cryptDeviceCreateContext( C_IN CRYPT_DEVICE device,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 0,
 		  { 0, OBJECT_TYPE_CONTEXT } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_D, ARG_N, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_D, ARG_N, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( device ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
+	if( !isWritePtrConst( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*cryptContext = CRYPT_ERROR;
 	if( ( cryptAlgo <= CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST ) && \
@@ -1988,7 +1990,8 @@ C_RET cryptDeviceCreateContext( C_IN CRYPT_DEVICE device,
 		*cryptContext = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Create a certificate */
@@ -2001,12 +2004,12 @@ C_RET cryptCreateCert( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 0,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_CERTIFICATE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic client-side error checking */
-	if( !isWritePtr( certificate, sizeof( CRYPT_CERTIFICATE ) ) )
+	if( !isWritePtrConst( certificate, sizeof( CRYPT_CERTIFICATE ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*certificate = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
@@ -2030,7 +2033,8 @@ C_RET cryptCreateCert( C_OUT CRYPT_CERTIFICATE C_PTR certificate,
 		*certificate = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Open a device */
@@ -2044,7 +2048,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 1,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_DEVICE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE nameBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *namePtr = NULL;
@@ -2054,7 +2058,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 	int status;
 
 	/* Perform basic error checking */
-	if( !isReadPtr( device, sizeof( CRYPT_DEVICE ) ) )
+	if( !isReadPtrConst( device, sizeof( CRYPT_DEVICE ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*device = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
@@ -2063,7 +2067,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		return( CRYPT_ERROR_PARAM3 );
 	if( ( deviceType == CRYPT_DEVICE_PKCS11 || \
 		  deviceType == CRYPT_DEVICE_CRYPTOAPI ) && \
-		( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+		( !isReadPtrConst( name, MIN_NAME_LENGTH ) || \
 		  strParamLen( name ) < MIN_NAME_LENGTH || \
 		  strParamLen( name ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM4 );
@@ -2096,7 +2100,8 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		*device = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Create an envelope */
@@ -2109,12 +2114,12 @@ C_RET cryptCreateEnvelope( C_OUT CRYPT_ENVELOPE C_PTR envelope,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 0,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_ENVELOPE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic error checking */
-	if( !isWritePtr( envelope, sizeof( CRYPT_ENVELOPE ) ) )
+	if( !isWritePtrConst( envelope, sizeof( CRYPT_ENVELOPE ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*envelope = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
@@ -2138,7 +2143,8 @@ C_RET cryptCreateEnvelope( C_OUT CRYPT_ENVELOPE C_PTR envelope,
 		*envelope = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Open/create a keyset */
@@ -2152,7 +2158,7 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 4, 1,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_KEYSET } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_S, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_S, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE nameBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *namePtr = nameBuffer;
@@ -2162,14 +2168,14 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 	int status;
 
 	/* Perform basic error checking */
-	if( !isReadPtr( keyset, sizeof( CRYPT_KEYSET ) ) )
+	if( !isReadPtrConst( keyset, sizeof( CRYPT_KEYSET ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*keyset = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
 		return( CRYPT_ERROR_PARAM2 );
 	if( keysetType <= CRYPT_KEYSET_NONE || keysetType >= CRYPT_KEYSET_LAST )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( name, MIN_NAME_LENGTH ) || \
 		strParamLen( name ) < MIN_NAME_LENGTH || \
 		strParamLen( name ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
@@ -2204,7 +2210,8 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 		*keyset = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Create a session */
@@ -2217,12 +2224,12 @@ C_RET cryptCreateSession( C_OUT CRYPT_SESSION C_PTR session,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 3, 0,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_SESSION } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_O, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_O, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic error checking */
-	if( !isWritePtr( session, sizeof( CRYPT_SESSION ) ) )
+	if( !isWritePtrConst( session, sizeof( CRYPT_SESSION ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*session = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
@@ -2246,7 +2253,8 @@ C_RET cryptCreateSession( C_OUT CRYPT_SESSION C_PTR session,
 		*session = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Log on/create a user object */
@@ -2258,7 +2266,7 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 		{ COMMAND_CREATEOBJECT, COMMAND_FLAG_NONE, 2, 2,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_USER } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_S, ARG_S, ARG_LAST };
+		{ ARG_D, ARG_S, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE nameBuffer[ CRYPT_MAX_TEXTSIZE + 1 ], *namePtr = nameBuffer;
@@ -2269,14 +2277,14 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 	int status;
 
 	/* Perform basic error checking */
-	if( !isReadPtr( user, sizeof( CRYPT_USER ) ) )
+	if( !isReadPtrConst( user, sizeof( CRYPT_USER ) ) )
 		return( CRYPT_ERROR_PARAM1 );
 	*user = CRYPT_ERROR;
-	if( !isReadPtr( name, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( name, MIN_NAME_LENGTH ) || \
 		strParamLen( name ) < MIN_NAME_LENGTH || \
 		strParamLen( name ) > CRYPT_MAX_TEXTSIZE )
 		return( CRYPT_ERROR_PARAM2 );
-	if( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( password, MIN_NAME_LENGTH ) || \
 		strParamLen( password ) < MIN_NAME_LENGTH || \
 		strParamLen( password ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM3 );
@@ -2307,7 +2315,8 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 		*user = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Destroy object functions */
@@ -2317,7 +2326,7 @@ C_RET cryptDestroyObject( C_IN CRYPT_HANDLE cryptHandle )
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_DESTROYOBJECT, COMMAND_FLAG_NONE, 1, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
+		{ ARG_O, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2335,7 +2344,8 @@ C_RET cryptDestroyObject( C_IN CRYPT_HANDLE cryptHandle )
 	status = DISPATCH_COMMAND( cmdDestroyObject, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptDestroyCert( C_IN CRYPT_CERTIFICATE certificate )
@@ -2383,7 +2393,7 @@ C_RET cryptGetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		{ COMMAND_GETATTRIBUTE, COMMAND_FLAG_NONE, 2, 0,
 		  { DEFAULTUSER_OBJECT_HANDLE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2392,7 +2402,7 @@ C_RET cryptGetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		return( CRYPT_ERROR_PARAM1 );
 	if( attributeType <= CRYPT_ATTRIBUTE_NONE || attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
-	if( !isWritePtr( value, sizeof( int ) ) )
+	if( !isWritePtrConst( value, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	*value = CRYPT_ERROR;
 
@@ -2407,7 +2417,8 @@ C_RET cryptGetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		*value = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
@@ -2419,7 +2430,7 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		{ COMMAND_GETATTRIBUTE, COMMAND_FLAG_NONE, 3, RETURN_VALUE( 1 ),
 		  { DEFAULTUSER_OBJECT_HANDLE, 0, TRUE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_S, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_S, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2429,7 +2440,7 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
 		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
-	if( !isWritePtr( valueLength, sizeof( int ) ) )
+	if( !isWritePtrConst( valueLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM4 );
 	*valueLength = CRYPT_ERROR;
 	if( value != NULL )
@@ -2469,7 +2480,8 @@ C_RET cryptGetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Set an attribute */
@@ -2482,7 +2494,7 @@ C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		{ COMMAND_SETATTRIBUTE, COMMAND_FLAG_NONE, 3, 0,
 		  { DEFAULTUSER_OBJECT_HANDLE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2499,10 +2511,21 @@ C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		cmd.arg[ 0 ] = cryptHandle;
 	cmd.arg[ 1 ] = attributeType;
 	cmd.arg[ 2 ] = value;
+#if !defined( NDEBUG )	/* Don't transparently rewrite in debug mode */
+	if( ( attributeType == CRYPT_CERTINFO_SUBJECTNAME || \
+		  attributeType == CRYPT_CERTINFO_ISSUERNAME ) && \
+		value == CRYPT_UNUSED )
+		{
+		/* Rewrite the pre-3.3.3 DN-selection method to the current form */
+		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
+		cmd.arg[ 2 ] = attributeType;
+		}
+#endif /* Debug mode */
 	status = DISPATCH_COMMAND( cmdSetAttribute, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
@@ -2513,7 +2536,7 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		{ COMMAND_SETATTRIBUTE, COMMAND_FLAG_NONE, 2, 1,
 		  { DEFAULTUSER_OBJECT_HANDLE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_S, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_S, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE valueBuffer[ MAX_ATTRIBUTE_SIZE ];
@@ -2526,7 +2549,7 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	if( attributeType <= CRYPT_ATTRIBUTE_NONE || \
 		attributeType >= CRYPT_ATTRIBUTE_LAST )
 		return( CRYPT_ERROR_PARAM2 );
-	if( !isReadPtr( value, 1 ) )
+	if( !isReadPtrConst( value, 1 ) )
 		return( CRYPT_ERROR_PARAM3 );
 	if( attributeType == CRYPT_CTXINFO_KEY_COMPONENTS )
 		{
@@ -2559,6 +2582,73 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+#if defined( __WINDOWS__ ) && defined( __WIN32__ )
+	/* In Vista/VS 2008 Microsoft switched time_t from 32 to 64 bits, a
+	   theoretically commendable move but one that makes it impossible to
+	   create a single DLL that works with code compiled with different
+	   versions of Visual Studio or with different languages.  To get 
+	   around this we try and detect a mismatch of time_t types and 
+	   transparently convert them.  We first check that it's within the 
+	   range where it could be a time attribute to avoid having to iterate 
+	   through the whole list on every attribute-set operation, and only 
+	   then check for an exact match */
+	if( attributeType >= CRYPT_CERTINFO_VALIDFROM && \
+		attributeType <= CRYPT_CERTINFO_CMS_MLEXP_TIME )
+		{
+		if( ( attributeType == CRYPT_CERTINFO_VALIDFROM || \
+			  attributeType == CRYPT_CERTINFO_VALIDTO || \
+			  attributeType == CRYPT_CERTINFO_THISUPDATE || \
+			  attributeType == CRYPT_CERTINFO_NEXTUPDATE || \
+			  attributeType == CRYPT_CERTINFO_REVOCATIONDATE || \
+			  attributeType == CRYPT_CERTINFO_OCSP_ARCHIVECUTOFF || \
+			  attributeType == CRYPT_CERTINFO_SIGG_DATEOFCERTGEN || \
+			  attributeType == CRYPT_CERTINFO_PRIVATEKEY_NOTBEFORE || \
+			  attributeType == CRYPT_CERTINFO_PRIVATEKEY_NOTAFTER || \
+			  attributeType == CRYPT_CERTINFO_INVALIDITYDATE || \
+			  attributeType == CRYPT_CERTINFO_CMS_SIGNINGTIME || \
+			  attributeType == CRYPT_CERTINFO_CMS_MLEXP_TIME ) && \
+			length != sizeof( time_t ) )
+			{
+			void *timeValuePtr;
+
+			/* It looks like we have a time_t size mismatch, try and correct 
+			   it */
+			if( length != 4 && length != 8 )
+				{
+				/* A time_t can only be 32 or 64 bits */
+				return( CRYPT_ERROR_PARAM4 );
+				}
+			if( length == 4 )
+				{
+				/* time_t is 64 bits and we've been given 32, convert to a 
+				   64-bit value */
+				time_t time64 = *( ( unsigned int * ) value );
+				timeValuePtr = &time64;
+				}
+			else
+				{
+				/* time_t is 32 bits and we've been given 64, convert to a
+				   32-bit value */
+				time_t time32 = *( ( time_t * ) value );
+				__int64 timeValue = *( ( __int64 * ) value );
+				if( timeValue < MIN_TIME_VALUE || timeValue >= ULONG_MAX )
+					return( CRYPT_ERROR_PARAM3 );
+				timeValuePtr = &time32;
+				}
+			memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
+			cmd.arg[ 0 ] = cryptHandle;
+			cmd.arg[ 1 ] = attributeType;
+			cmd.strArg[ 0 ] = ( void * ) timeValuePtr;
+			cmd.strArgLen[ 0 ] = sizeof( time_t );
+			status = DISPATCH_COMMAND( cmdSetAttribute, cmd );
+			if( cryptStatusOK( status ) )
+				return( CRYPT_OK );
+			return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+							  status ) );
+			}
+		}
+#endif /* Win32 */
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	if( cryptHandle != CRYPT_UNUSED )
@@ -2569,7 +2659,8 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 	status = DISPATCH_COMMAND( cmdSetAttribute, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Delete an attribute */
@@ -2581,7 +2672,7 @@ C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		{ COMMAND_DELETEATTRIBUTE, COMMAND_FLAG_NONE, 2, 0,
 		  { DEFAULTUSER_OBJECT_HANDLE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2600,7 +2691,8 @@ C_RET cryptDeleteAttribute( C_IN CRYPT_HANDLE cryptHandle,
 	status = DISPATCH_COMMAND( cmdDeleteAttribute, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /****************************************************************************
@@ -2616,7 +2708,7 @@ C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext )
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GENKEY, COMMAND_FLAG_NONE, 1, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
+		{ ARG_O, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2630,7 +2722,8 @@ C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext )
 	status = DISPATCH_COMMAND( cmdGenKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Asynchronous key generate operations (deprecated September 2007) */
@@ -2681,7 +2774,7 @@ C_RET cryptEncrypt( C_IN CRYPT_CONTEXT cryptContext,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_ENCRYPT, COMMAND_FLAG_NONE, 1, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_S, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_S, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2706,7 +2799,8 @@ C_RET cryptEncrypt( C_IN CRYPT_CONTEXT cryptContext,
 	status = DISPATCH_COMMAND( cmdEncrypt, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptDecrypt( C_IN CRYPT_CONTEXT cryptContext,
@@ -2716,7 +2810,7 @@ C_RET cryptDecrypt( C_IN CRYPT_CONTEXT cryptContext,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_DECRYPT, COMMAND_FLAG_NONE, 1, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_S, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_S, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2736,7 +2830,8 @@ C_RET cryptDecrypt( C_IN CRYPT_CONTEXT cryptContext,
 	status = DISPATCH_COMMAND( cmdDecrypt, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /****************************************************************************
@@ -2765,7 +2860,7 @@ C_RET cryptSignCert( C_IN CRYPT_CERTIFICATE certificate,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_CERTSIGN, COMMAND_FLAG_NONE, 2, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2782,7 +2877,8 @@ C_RET cryptSignCert( C_IN CRYPT_CERTIFICATE certificate,
 	status = DISPATCH_COMMAND( cmdCertSign, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptCheckCert( C_IN CRYPT_HANDLE certificate,
@@ -2791,7 +2887,7 @@ C_RET cryptCheckCert( C_IN CRYPT_HANDLE certificate,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_CERTCHECK, COMMAND_FLAG_NONE, 2, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_V, ARG_LAST };
+		{ ARG_O, ARG_V, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2809,7 +2905,8 @@ C_RET cryptCheckCert( C_IN CRYPT_HANDLE certificate,
 	status = DISPATCH_COMMAND( cmdCertCheck, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Import/export a certificate, CRL, certification request, or cert chain.
@@ -2834,7 +2931,7 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 		{ COMMAND_CREATEOBJECT_INDIRECT, COMMAND_FLAG_NONE, 2, 1,
 		  { SYSTEM_OBJECT_HANDLE, OBJECT_TYPE_CERTIFICATE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_S, ARG_N, ARG_N, ARG_O, ARG_LAST };
+		{ ARG_S, ARG_N, ARG_N, ARG_O, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2846,7 +2943,7 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 		return( CRYPT_ERROR_PARAM1 );
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isWritePtr( certificate, sizeof( CRYPT_CERTIFICATE ) ) )
+	if( !isWritePtrConst( certificate, sizeof( CRYPT_CERTIFICATE ) ) )
 		return( CRYPT_ERROR_PARAM4 );
 	*certificate = CRYPT_ERROR;
 
@@ -2866,7 +2963,8 @@ C_RET cryptImportCert( C_IN void C_PTR certObject,
 		*certificate = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
@@ -2878,7 +2976,7 @@ C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_EXPORTOBJECT, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ) };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_S, ARG_D, ARG_N, ARG_V, ARG_O, ARG_LAST };
+		{ ARG_S, ARG_D, ARG_N, ARG_V, ARG_O, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2892,7 +2990,7 @@ C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
 			return( CRYPT_ERROR_PARAM1 );
 		memset( certObject, 0, MIN_CERTSIZE );
 		}
-	if( !isWritePtr( certObjectLength, sizeof( int ) ) )
+	if( !isWritePtrConst( certObjectLength, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM3 );
 	*certObjectLength = CRYPT_ERROR;
 	if( certFormatType <= CRYPT_CERTFORMAT_NONE || \
@@ -2932,7 +3030,8 @@ C_RET cryptExportCert( C_OUT_OPT void C_PTR certObject,
 #endif /* EBCDIC_CHARS */
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* CA management functions */
@@ -2943,7 +3042,7 @@ C_RET cryptCAAddItem( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_SETKEY, COMMAND_FLAG_NONE, 3, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -2961,7 +3060,8 @@ C_RET cryptCAAddItem( C_IN CRYPT_KEYSET keyset,
 	status = DISPATCH_COMMAND( cmdSetKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
@@ -2973,7 +3073,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_D, ARG_N, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_D, ARG_N, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = NULL;
@@ -2988,7 +3088,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 	   obviously valid key ID's */
 	if( !isHandleRangeValid( keyset ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( certificate, sizeof( CRYPT_HANDLE ) ) )
+	if( !isWritePtrConst( certificate, sizeof( CRYPT_HANDLE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*certificate = CRYPT_ERROR;
 	if( certType == CRYPT_CERTTYPE_CERTIFICATE || \
@@ -3013,7 +3113,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		}
 	else
 		{
-		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM5 );
@@ -3060,7 +3160,8 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		*certificate = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
@@ -3071,7 +3172,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_DELETEKEY, COMMAND_FLAG_NONE, 3, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = keyIDBuffer;
@@ -3092,7 +3193,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 	if( keyIDtype <= CRYPT_KEYID_NONE || \
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
@@ -3124,7 +3225,8 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 	status = DISPATCH_COMMAND( cmdDeleteKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptCACertManagement( C_OUT_OPT CRYPT_CERTIFICATE C_PTR certificate,
@@ -3136,14 +3238,14 @@ C_RET cryptCACertManagement( C_OUT_OPT CRYPT_CERTIFICATE C_PTR certificate,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_CERTMGMT, COMMAND_FLAG_NONE, 4, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_D, ARG_V, ARG_O, ARG_N, ARG_N, ARG_LAST };
+		{ ARG_D, ARG_V, ARG_O, ARG_N, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
 	/* Perform basic client-side error checking */
 	if( certificate != NULL )
 		{
-		if( !isWritePtr( certificate, sizeof( CRYPT_HANDLE ) ) )
+		if( !isWritePtrConst( certificate, sizeof( CRYPT_HANDLE ) ) )
 			return( CRYPT_ERROR_PARAM1 );
 		*certificate = CRYPT_ERROR;
 		}
@@ -3177,7 +3279,8 @@ C_RET cryptCACertManagement( C_OUT_OPT CRYPT_CERTIFICATE C_PTR certificate,
 		*certificate = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /****************************************************************************
@@ -3194,7 +3297,7 @@ C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_PUSHDATA, COMMAND_FLAG_NONE, 1, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_S, ARG_N, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_S, ARG_N, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int dummy, status;
 
@@ -3222,7 +3325,8 @@ C_RET cryptPushData( C_IN CRYPT_HANDLE envelope, C_IN void C_PTR buffer,
 	*bytesCopied = cmd.arg[ 0 ];
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Pop data from an envelope/session object */
@@ -3233,7 +3337,7 @@ C_RET cryptPopData( C_IN CRYPT_ENVELOPE envelope, C_OUT void C_PTR buffer,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_POPDATA, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ) };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_S, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_S, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -3245,7 +3349,7 @@ C_RET cryptPopData( C_IN CRYPT_ENVELOPE envelope, C_OUT void C_PTR buffer,
 	if( length <= 0 || length >= MAX_INTLENGTH )
 		return( CRYPT_ERROR_PARAM3 );
 	memset( buffer, 0, min( length, 16 ) );
-	if( !isWritePtr( bytesCopied, sizeof( int ) ) )
+	if( !isWritePtrConst( bytesCopied, sizeof( int ) ) )
 		return( CRYPT_ERROR_PARAM4 );
 	*bytesCopied = 0;
 
@@ -3259,7 +3363,8 @@ C_RET cryptPopData( C_IN CRYPT_ENVELOPE envelope, C_OUT void C_PTR buffer,
 	*bytesCopied = cmd.strArgLen[ 0 ];
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Flush data through an envelope/session object */
@@ -3269,7 +3374,7 @@ C_RET cryptFlushData( C_IN CRYPT_HANDLE envelope )
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_FLUSHDATA, COMMAND_FLAG_NONE, 1, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_LAST };
+		{ ARG_O, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -3283,7 +3388,8 @@ C_RET cryptFlushData( C_IN CRYPT_HANDLE envelope )
 	status = DISPATCH_COMMAND( cmdFlushData, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /****************************************************************************
@@ -3302,7 +3408,7 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = NULL;
@@ -3316,7 +3422,7 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 	   obviously valid key ID's */
 	if( !isHandleRangeValid( keyset ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( cryptKey, sizeof( CRYPT_HANDLE ) ) )
+	if( !isWritePtrConst( cryptKey, sizeof( CRYPT_HANDLE ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*cryptKey = CRYPT_ERROR;
 	if( keyIDtype < CRYPT_KEYID_NONE || \
@@ -3329,7 +3435,7 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 		}
 	else
 		{
-		if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+		if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 			strParamLen( keyID ) < MIN_NAME_LENGTH || \
 			strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 			return( CRYPT_ERROR_PARAM4 );
@@ -3360,7 +3466,8 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 		*cryptKey = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
@@ -3371,7 +3478,7 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 2 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = keyIDBuffer;
@@ -3384,18 +3491,18 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
+	if( !isWritePtrConst( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*cryptContext = CRYPT_ERROR;
 	if( keyIDtype <= CRYPT_KEYID_NONE || \
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 	if( password != NULL && \
-		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		( !isReadPtrConst( password, MIN_NAME_LENGTH ) || \
 		  strParamLen( password ) < MIN_NAME_LENGTH || \
 		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM5 );
@@ -3434,7 +3541,8 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 		*cryptContext = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
@@ -3445,7 +3553,7 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_GETKEY, COMMAND_FLAG_NONE, 3, 2 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_D, ARG_N, ARG_S, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = keyIDBuffer;
@@ -3458,18 +3566,18 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( !isWritePtr( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
+	if( !isWritePtrConst( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*cryptContext = CRYPT_ERROR;
 	if( keyIDtype <= CRYPT_KEYID_NONE || \
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM3 );
-	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM4 );
 	if( password != NULL && \
-		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		( !isReadPtrConst( password, MIN_NAME_LENGTH ) || \
 		  strParamLen( password ) < MIN_NAME_LENGTH || \
 		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
 		return( CRYPT_ERROR_PARAM5 );
@@ -3508,7 +3616,8 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 		*cryptContext = cmd.arg[ 0 ];
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Add a key from a keyset or equivalent object */
@@ -3519,7 +3628,7 @@ C_RET cryptAddPublicKey( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_SETKEY, COMMAND_FLAG_NONE, 2, 0 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -3536,7 +3645,8 @@ C_RET cryptAddPublicKey( C_IN CRYPT_KEYSET keyset,
 	status = DISPATCH_COMMAND( cmdSetKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
@@ -3546,7 +3656,7 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_SETKEY, COMMAND_FLAG_NONE, 2, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE passwordBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *passwordPtr = NULL;
@@ -3561,7 +3671,7 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 	if( !isHandleRangeValid( cryptKey ) )
 		return( CRYPT_ERROR_PARAM2 );
 	if( password != NULL && \
-		( !isReadPtr( password, MIN_NAME_LENGTH ) || \
+		( !isReadPtrConst( password, MIN_NAME_LENGTH ) || \
 		  isBadPassword( password ) || \
 		  strParamLen( password ) < MIN_NAME_LENGTH || \
 		  strParamLen( password ) >= MAX_ATTRIBUTE_SIZE ) )
@@ -3591,7 +3701,8 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Delete a key from a keyset or equivalent object */
@@ -3603,7 +3714,7 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_DELETEKEY, COMMAND_FLAG_NONE, 2, 1 };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	BYTE keyIDBuffer[ MAX_ATTRIBUTE_SIZE + 1 ], *keyIDPtr = keyIDBuffer;
@@ -3618,7 +3729,7 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 	if( keyIDtype <= CRYPT_KEYID_NONE || \
 		keyIDtype >= CRYPT_KEYID_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM2 );
-	if( !isReadPtr( keyID, MIN_NAME_LENGTH ) || \
+	if( !isReadPtrConst( keyID, MIN_NAME_LENGTH ) || \
 		strParamLen( keyID ) < MIN_NAME_LENGTH || \
 		strParamLen( keyID ) >= MAX_ATTRIBUTE_SIZE )
 		return( CRYPT_ERROR_PARAM3 );
@@ -3639,7 +3750,8 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 	status = DISPATCH_COMMAND( cmdDeleteKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /****************************************************************************
@@ -3663,7 +3775,7 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 		{ COMMAND_QUERYCAPABILITY, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ),
 		  { SYSTEM_OBJECT_HANDLE } };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_N, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_N, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -3672,7 +3784,7 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 		return( CRYPT_ERROR_PARAM1 );
 	if( cryptQueryInfo != NULL )
 		{
-		if( !isWritePtr( cryptQueryInfo, sizeof( CRYPT_QUERY_INFO ) ) )
+		if( !isWritePtrConst( cryptQueryInfo, sizeof( CRYPT_QUERY_INFO ) ) )
 			return( CRYPT_ERROR_PARAM3 );
 		memset( cryptQueryInfo, 0, sizeof( CRYPT_QUERY_INFO ) );
 		}
@@ -3710,7 +3822,8 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
@@ -3720,7 +3833,7 @@ C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 	static const COMMAND_INFO FAR_BSS cmdTemplate = \
 		{ COMMAND_QUERYCAPABILITY, COMMAND_FLAG_NONE, 2, RETURN_VALUE( 1 ) };
 	static const ERRORMAP FAR_BSS errorMap[] = \
-		{ ARG_O, ARG_N, ARG_N, ARG_S, ARG_LAST };
+		{ ARG_O, ARG_N, ARG_N, ARG_S, ARG_LAST, ARG_LAST };
 	COMMAND_INFO cmd;
 	int status;
 
@@ -3731,7 +3844,7 @@ C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 		return( CRYPT_ERROR_PARAM2 );
 	if( cryptQueryInfo != NULL )
 		{
-		if( !isWritePtr( cryptQueryInfo, sizeof( CRYPT_QUERY_INFO ) ) )
+		if( !isWritePtrConst( cryptQueryInfo, sizeof( CRYPT_QUERY_INFO ) ) )
 			return( CRYPT_ERROR_PARAM4 );
 		memset( cryptQueryInfo, 0, sizeof( CRYPT_QUERY_INFO ) );
 		}
@@ -3765,7 +3878,8 @@ C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 		return( CRYPT_OK );
 		}
-	return( mapError( errorMap, status ) );
+	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
+					  status ) );
 	}
 
 /* Add random data to the random pool.  This should eventually be replaced
@@ -3811,7 +3925,8 @@ krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
 }
 #endif /* Windows debug */
 
-		setMessageData( &msgData, ( void * ) randomData, randomDataLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) randomData, \
+						randomDataLength );
 		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								 IMESSAGE_SETATTRIBUTE_S, &msgData,
 								 CRYPT_IATTRIBUTE_ENTROPY ) );

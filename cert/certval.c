@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Validity Routines						*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -15,18 +15,22 @@
   #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_CERTVAL
+
 /****************************************************************************
 *																			*
 *					Add/Delete/Check Validity Information					*
 *																			*
 ****************************************************************************/
 
-/* Find an entry in a validity info list */
+/* Find an entry in a validity information list */
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static VALIDITY_INFO *findValidityEntry( const VALIDITY_INFO *listPtr,
-										 IN_BUFFER( valueLength ) const void *value,
-										 IN_LENGTH_SHORT const int valueLength )
+static const VALIDITY_INFO *findValidityEntry( const VALIDITY_INFO *listPtr,
+											   IN_BUFFER( valueLength ) \
+													const void *value,
+											   IN_LENGTH_FIXED( KEYID_SIZE ) \
+													const int valueLength )
 	{
 	const int vCheck = checksumData( value, valueLength );
 	int iterationCount;
@@ -34,17 +38,16 @@ static VALIDITY_INFO *findValidityEntry( const VALIDITY_INFO *listPtr,
 	assert( isReadPtr( listPtr, sizeof( VALIDITY_INFO ) ) );
 	assert( isReadPtr( value, valueLength ) );
 
-	REQUIRES_N( valueLength > 0 && valueLength < MAX_INTLENGTH_SHORT );
+	REQUIRES_N( valueLength == KEYID_SIZE );
 
 	/* Check whether this entry is present in the list */
 	for( iterationCount = 0;
 		 listPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_LARGE;
-		 iterationCount++ )
+		 listPtr = listPtr->next, iterationCount++ )
 		{
 		if( listPtr->dCheck == vCheck && \
 			!memcmp( listPtr->data, value, valueLength ) )
-			return( CRYPT_OK );
-		listPtr = listPtr->next;
+			return( listPtr );
 		}
 	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
@@ -88,8 +91,8 @@ static int checkValidity( const CERT_INFO *certInfoPtr,
 	if( validityEntry == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 
-	/* Select the entry that contains the validity info and return the
-	   certificate's status */
+	/* Select the entry that contains the validity information and return 
+	   the certificate's status */
 	certValInfo->currentValidity = validityEntry;
 	return( ( validityEntry->status == TRUE ) ? \
 			CRYPT_OK : CRYPT_ERROR_INVALID );
@@ -102,7 +105,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
 					  OUT_OPT_PTR VALIDITY_INFO **newEntryPosition,
 					  IN_BUFFER( valueLength ) const void *value, 
-					  IN_LENGTH_SHORT const int valueLength )
+					  IN_LENGTH_FIXED( KEYID_SIZE ) const int valueLength )
 	{
 	VALIDITY_INFO *newElement;
 
@@ -111,7 +114,7 @@ int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
 			isWritePtr( newEntryPosition, sizeof( VALIDITY_INFO * ) ) );
 	assert( isReadPtr( value, valueLength ) );
 
-	REQUIRES( valueLength > 0 && valueLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( valueLength == KEYID_SIZE );
 
 	/* Clear return value */
 	if( newEntryPosition != NULL )
@@ -141,7 +144,7 @@ int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
 	return( CRYPT_OK );
 	}
 
-/* Delete a validity info list */
+/* Delete a validity information list */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
 void deleteValidityEntries( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr )
@@ -169,7 +172,7 @@ void deleteValidityEntries( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr )
 	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	}
 
-/* Copy a validity info list */
+/* Copy a validity information list */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int copyValidityEntries( INOUT_PTR VALIDITY_INFO **destListHeadPtrPtr,
@@ -212,13 +215,9 @@ int copyValidityEntries( INOUT_PTR VALIDITY_INFO **destListHeadPtrPtr,
 		newElement->extStatus = CRYPT_CERTSTATUS_UNKNOWN;
 
 		/* Link the new element into the list */
-		if( *destListHeadPtrPtr == NULL )
-			*destListHeadPtrPtr = destListCursor = newElement;
-		else
-			{
-			destListCursor->next = newElement;
-			destListCursor = newElement;
-			}
+		insertSingleListElement( destListHeadPtrPtr, destListCursor, 
+								 newElement );
+		destListCursor = newElement;
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
@@ -229,14 +228,14 @@ int copyValidityEntries( INOUT_PTR VALIDITY_INFO **destListHeadPtrPtr,
    them */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
-int prepareValidityEntries( INOUT_OPT VALIDITY_INFO *listPtr, 
+int prepareValidityEntries( IN_OPT const VALIDITY_INFO *listPtr, 
 							OUT_PTR VALIDITY_INFO **errorEntry,
 							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
 							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
 								CRYPT_ERRTYPE_TYPE *errorType )
 	{
-	VALIDITY_INFO *validityEntry;
+	const VALIDITY_INFO *validityEntry;
 	int iterationCount;
 
 	assert( listPtr == NULL || \
@@ -269,13 +268,72 @@ int prepareValidityEntries( INOUT_OPT VALIDITY_INFO *listPtr,
 		if( cryptStatusError( status ) )
 			{
 			/* Remember the entry that caused the problem */
-			*errorEntry = validityEntry;
+			*errorEntry = ( VALIDITY_INFO * ) validityEntry;
 			return( status );
 			}
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( CRYPT_OK );
+	}
+
+/* Check the entries in an RTCS response object against a certificate store.  
+   The semantics for this one are a bit odd, the source information for the 
+   check is from a request but the destination information is in a response.  
+   Since we don't have a copy-and-verify function we do the checking from 
+   the response even though technically it's the request data that's being 
+   checked */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkRTCSResponse( INOUT CERT_INFO *certInfoPtr,
+					   IN_HANDLE const CRYPT_KEYSET iCryptKeyset )
+	{
+	VALIDITY_INFO *validityInfo;
+	BOOLEAN isInvalid = FALSE;
+	int iterationCount;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptKeyset ) );
+
+	/* Walk down the list of validity entries fetching status information
+	   on each one from the certificate store */
+	for( validityInfo = certInfoPtr->cCertVal->validityInfo, 
+			iterationCount = 0;
+		 validityInfo != NULL && iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 validityInfo = validityInfo->next, iterationCount++ )
+		{
+		MESSAGE_KEYMGMT_INFO getkeyInfo;
+		int status;
+
+		/* Determine the validity of the object */
+		setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID,
+							   validityInfo->data, KEYID_SIZE, NULL, 0,
+							   KEYMGMT_FLAG_CHECK_ONLY );
+		status = krnlSendMessage( iCryptKeyset, IMESSAGE_KEY_GETKEY,
+								  &getkeyInfo, KEYMGMT_ITEM_PUBLICKEY );
+		if( cryptStatusOK( status ) )
+			{
+			/* The certificate is present and OK */
+			validityInfo->status = TRUE;
+			validityInfo->extStatus = CRYPT_CERTSTATUS_VALID;
+			}
+		else
+			{
+			/* The certificate isn't present/OK, record the fact that we've 
+			   seen at least one invalid certificate */
+			validityInfo->status = FALSE;
+			validityInfo->extStatus = CRYPT_CERTSTATUS_NOTVALID;
+			isInvalid = TRUE;
+			}
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	/* If at least one certificate was invalid indicate this to the caller.  
+	   Note that if there are multiple certificates present in the query 
+	   it's up to the caller to step through the list to find out which ones 
+	   were invalid */
+	return( isInvalid ? CRYPT_ERROR_INVALID : CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -347,7 +405,7 @@ int writeRtcsRequestEntry( INOUT STREAM *stream,
 
 /* Read/write an RTCS response entry:
 
-	Entry ::= SEQUENCE {				-- basic response
+	Entry ::= SEQUENCE {				-- Basic response
 		certHash		OCTET STRING SIZE(20),
 		status			BOOLEAN
 		}
@@ -363,16 +421,23 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sizeofRtcsResponseEntry( INOUT VALIDITY_INFO *rtcsEntry,
 							 const BOOLEAN isFullResponse )
 	{
+	int status;
+
 	assert( isWritePtr( rtcsEntry, sizeof( VALIDITY_INFO ) ) );
 
 	/* If it's a basic response the size is fairly easy to calculate */
 	if( !isFullResponse )
+		{
 		return( ( int ) sizeofObject( sizeofObject( KEYID_SIZE ) + \
 									  sizeofBoolean() ) );
+		}
 
 	/* Remember the encoded attribute size for later when we write the
 	   attributes */
-	rtcsEntry->attributeSize = sizeofAttributes( rtcsEntry->attributes );
+	status = \
+		rtcsEntry->attributeSize = sizeofAttributes( rtcsEntry->attributes );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	return( ( int ) \
 			sizeofObject( sizeofObject( KEYID_SIZE ) + sizeofEnumerated( 1 ) + \
@@ -485,3 +550,4 @@ int writeRtcsResponseEntry( INOUT STREAM *stream,
 	return( writeAttributes( stream, rtcsEntry->attributes,
 							 CRYPT_CERTTYPE_NONE, rtcsEntry->attributeSize ) );
 	}
+#endif /* USE_CERTVAL */

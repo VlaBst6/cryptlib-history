@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
-*				cryptlib Cert Management Session Test Routines				*
-*						Copyright Peter Gutmann 1998-2005					*
+*					cryptlib SCEP Session Test Routines						*
+*					Copyright Peter Gutmann 1998-2008						*
 *																			*
 ****************************************************************************/
 
@@ -36,7 +36,10 @@
 	#4 - Entrust (freecerts.entrust.com/vpncerts/cep.htm): Only seems to be
 			set up to handle Cisco gear.
 
-	#5 - EJBCA: */
+	#5 - EJBCA: 
+	
+	#6 - Insta-Certifier: Information at 
+		 http://www.certificate.fi/resources/demos/demo.htm */
 
 #define SCEP_NO		1
 
@@ -55,13 +58,14 @@ static const SCEP_INFO FAR_BSS scepInfo[] = {
 	{ /*5*/ "EJBCA", TEXT( "http://q-rl-xp:8080/ejbca/publicweb/apply/scep/pkiclient.exe" ),
 			TEXT("test2"), TEXT("test2"),
 			TEXT( "http://q-rl-xp:8080/ejbca/publicweb/webdist/certdist?cmd=nscacert&issuer=O=Test&+level=1" ) },
+	{ /*6*/ "SSH", TEXT( "http://pki.certificate.fi:8082/scep/" ), NULL, TEXT( "scep" ), NULL },
 	};
 
-/* Cert request data for the cert from the SCEP server.  Note that we have
-   to set the CN to the PKI user CN, for CMP ir's we just omit the DN
-   entirely and have the server provide it for us but since SCEP uses PKCS
-   #10 requests we need to provide a DN, and since we provide it it has to
-   match the PKI user DN */
+/* Certificate request data for the certificate from the SCEP server.  Note 
+   that we have to set the CN to the PKI user CN, for CMP ir's we just omit 
+   the DN entirely and have the server provide it for us but since SCEP uses 
+   PKCS #10 requests we need to provide a DN, and since we provide it it has 
+   to match the PKI user DN */
 
 static const CERT_DATA FAR_BSS scepRequestData[] = {
 	/* Identification information */
@@ -95,16 +99,19 @@ static const CERT_DATA FAR_BSS scepPkiUserData[] = {
 *																			*
 ****************************************************************************/
 
-/* Add a PKI user to the cert store */
+/* Add a PKI user to the certificate store */
 
 static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 					   const CERT_DATA *pkiUserData,
-					   const BOOLEAN isSCEP )
+					   const BOOLEAN isSCEP, 
+					   const BOOLEAN testErrorChecking )
 	{
 	CRYPT_CERTIFICATE cryptPKIUser;
 	CRYPT_SESSION cryptSession;
 	C_CHR userID[ CRYPT_MAX_TEXTSIZE + 1 ], issuePW[ CRYPT_MAX_TEXTSIZE + 1 ];
 	int length, status;
+
+	puts( "-- Adding new PKI user information --" );
 
 	/* Create the PKI user object and add the user's identification
 	   information */
@@ -119,28 +126,38 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 	if( !addCertFields( cryptPKIUser, pkiUserData, __LINE__ ) )
 		return( FALSE );
 
-	/* Add the user info to the cert store */
+	/* Add the user info to the certificate store */
 	status = cryptCAAddItem( cryptCertStore, cryptPKIUser );
 	if( status == CRYPT_ERROR_DUPLICATE )
 		{
-		C_CHR userCN[ CRYPT_MAX_TEXTSIZE + 1 ];
+		C_CHR userIdentifier[ CRYPT_MAX_TEXTSIZE + 1 ];
 
-		/* Get the name of the duplicate user */
+		/* Get the name of the duplicate user.  Since this may be just a
+		   template we fall back to higher-level DN components if there's
+		   no CN present */
 		status = cryptGetAttributeString( cryptPKIUser,
 										  CRYPT_CERTINFO_COMMONNAME,
-										  userCN, &length );
+										  userIdentifier, &length );
+		if( status == CRYPT_ERROR_NOTFOUND )
+			status = cryptGetAttributeString( cryptPKIUser,
+											  CRYPT_CERTINFO_ORGANISATIONALUNITNAME,
+											  userIdentifier, &length );
+		if( status == CRYPT_ERROR_NOTFOUND )
+			status = cryptGetAttributeString( cryptPKIUser,
+											  CRYPT_CERTINFO_ORGANISATIONNAME,
+											  userIdentifier, &length );
 		if( cryptStatusError( status ) )
 			return( attrErrorExit( cryptPKIUser, "cryptGetAttribute()",
 								   status, __LINE__ ) );
 #ifdef UNICODE_STRINGS
 		length /= sizeof( wchar_t );
 #endif /* UNICODE_STRINGS */
-		userCN[ length ] = TEXT( '\0' );
+		userIdentifier[ length ] = TEXT( '\0' );
 
 		/* The PKI user info was already present, for SCEP this isn't a
 		   problem since we can just re-use the existing info, but for CMP
-		   we can only authorise a single cert issue per user so we have
-		   to delete the existing user info and try again */
+		   we can only authorise a single certificate issue per user so we 
+		   have to delete the existing user info and try again */
 		if( isSCEP )
 			{
 			/* The PKI user info is already present from a previous run, get
@@ -150,14 +167,14 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 			cryptDestroyCert( cryptPKIUser );
 			status = cryptCAGetItem( cryptCertStore, &cryptPKIUser,
 									 CRYPT_CERTTYPE_PKIUSER, CRYPT_KEYID_NAME,
-									 userCN );
+									 userIdentifier );
 			}
 		else
 			{
 			puts( "PKI user information is already present from a previous "
 				  "run, deleting existing\n  PKI user data..." );
 			status = cryptCADeleteItem( cryptCertStore, CRYPT_CERTTYPE_PKIUSER,
-										CRYPT_KEYID_NAME, userCN );
+										CRYPT_KEYID_NAME, userIdentifier );
 			if( cryptStatusError( status ) )
 				return( extErrorExit( cryptCertStore, "cryptCADeleteItem()",
 									  status, __LINE__ ) );
@@ -168,11 +185,7 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 		return( extErrorExit( cryptCertStore, "cryptCAAdd/GetItem()", status,
 							  __LINE__ ) );
 
-	/* Display the information for the new user and make sure that the 
-	   error-checking in the user information works.  We have to check both 
-	   passwords to reduce false positives since it's just a simple 
-	   integrity check meant to catch typing errors rather than a 
-	   cryptographically strong check */
+	/* Display the information for the new user */
 	if( !printCertInfo( cryptPKIUser ) )
 		return( FALSE );
 	status = cryptGetAttributeString( cryptPKIUser,
@@ -196,8 +209,24 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 		issuePW[ length ] = '\0';
 		}
 	else
+		{
 		return( attrErrorExit( cryptPKIUser, "cryptGetAttribute()", status,
 							   __LINE__ ) );
+		}
+	puts( "-- New PKI user information ends --\n" );
+
+	/* If we're not testing the error-checking capability of the user
+	   identifiers, we're done */
+	if( !testErrorChecking )
+		{
+		cryptDestroyCert( cryptPKIUser );
+		return( TRUE );
+		}
+
+	/* Make sure that the error-checking in the user information works via a
+	   dummy CMP client session.  We have to check both passwords to reduce 
+	   false positives since it's just a simple integrity check meant to 
+	   catch typing errors rather than a cryptographically strong check */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED, 
 								 CRYPT_SESSION_CMP );
 	if( cryptStatusError( status ) )
@@ -233,7 +262,8 @@ static int addPKIUser( const CRYPT_KEYSET cryptCertStore,
 
 /* Get information on a PKI user */
 
-int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, C_STR userName )
+int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, 
+					const C_STR userName )
 	{
 	CRYPT_KEYSET cryptCertStore;
 	CRYPT_CERTIFICATE cryptPKIUser;
@@ -318,12 +348,14 @@ int pkiGetUserInfo( C_STR userID, C_STR issuePW, C_STR revPW, C_STR userName )
 int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey, 
 				   CRYPT_KEYSET *cryptCertStore, const C_STR keyFileName,
 				   const C_STR keyLabel, const CERT_DATA *pkiUserData,
+				   const CERT_DATA *pkiUserAltData, 
 				   const CERT_DATA *pkiUserCAData, const char *protocolName )
 	{
+	const BOOLEAN isSCEP = !strcmp( protocolName, "SCEP" ) ? TRUE : FALSE;
 	int status;
 
-	/* Get the cert store to use with the session.  Before we use the store
-	   we perform a cleanup action to remove any leftover requests from
+	/* Get the certificate store to use with the session.  Before we use the 
+	   store we perform a cleanup action to remove any leftover requests from
 	   previous runs */
 	status = cryptKeysetOpen( cryptCertStore, CRYPT_UNUSED,
 							  CERTSTORE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
@@ -352,19 +384,20 @@ int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey,
 									CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
 		{
-		printf( "SVR: CA cert store cleanup failed with error code %d, "
+		printf( "SVR: CA certificate store cleanup failed with error code %d, "
 				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
 	/* Create the EE and CA PKI users */
 	puts( "Creating PKI user..." );
-	if( !addPKIUser( *cryptCertStore, pkiUserData,
-					 !strcmp( protocolName, "SCEP" ) ? TRUE : FALSE ) )
+	if( !addPKIUser( *cryptCertStore, pkiUserData, isSCEP, !isSCEP ) )
+		return( FALSE );
+	if( pkiUserAltData != NULL && \
+		!addPKIUser( *cryptCertStore, pkiUserAltData, isSCEP, FALSE ) )
 		return( FALSE );
 	if( pkiUserCAData != NULL && \
-		!addPKIUser( *cryptCertStore, pkiUserCAData,
-					 !strcmp( protocolName, "SCEP" ) ? TRUE : FALSE ) )
+		!addPKIUser( *cryptCertStore, pkiUserCAData, isSCEP, FALSE ) )
 		return( FALSE );
 
 	/* Get the CA's private key */
@@ -386,7 +419,7 @@ int pkiServerInit( CRYPT_CONTEXT *cryptPrivateKey,
 *																			*
 ****************************************************************************/
 
-/* Get an SCEP CA cert */
+/* Get an SCEP CA certificate */
 
 static int getScepCACert( const C_STR caCertUrl,
 						  CRYPT_CERTIFICATE *cryptCACert )
@@ -425,7 +458,7 @@ static int connectSCEP( const BOOLEAN localSession,
 	int status;
 
 	printf( "Testing %s SCEP session%s...\n", scepInfo[ SCEP_NO ].name,
-			userSuppliesCACert ? "" : " with CA cert read" );
+			userSuppliesCACert ? "" : " with CA certificate read" );
 
 	/* Wait for the server to finish initialising */
 	if( localSession && waitMutex() == CRYPT_ERROR_TIMEOUT )
@@ -448,7 +481,7 @@ static int connectSCEP( const BOOLEAN localSession,
 		}
 #endif /* cryptlib SCEP_NO == 1 */
 
-	/* Get the issuing CA's cert if required */
+	/* Get the issuing CA's certificate if required */
 	if( userSuppliesCACert )
 		{
 		if( scepInfo[ SCEP_NO ].caCertUrl != NULL )
@@ -481,8 +514,8 @@ static int connectSCEP( const BOOLEAN localSession,
 		if( userSuppliesCACert )
 			cryptDestroyCert( cryptCACert );
 
-		/* If cert store operations aren't available, exit but continue with
-		   other tests, otherwise abort the tests */
+		/* If certificate store operations aren't available, exit but 
+		   continue with other tests, otherwise abort the tests */
 		return( ( status == CRYPT_ERROR_NOTAVAIL ) ? TRUE : FALSE );
 		}
 	userPtr = userID;
@@ -498,6 +531,20 @@ static int connectSCEP( const BOOLEAN localSession,
 		{
 		printf( "cryptCreateSession() failed with error code %d, line %d.\n",
 				status, __LINE__ );
+		return( FALSE );
+		}
+
+	/* Make sure that the SCEP client's checking for invalid transactionIDs
+	   works (this is an obscure problem caused by the SCEP protocol, see 
+	   the SCEP client code comments for more information */
+	status = cryptSetAttributeString( cryptSession,
+									  CRYPT_SESSINFO_USERNAME,
+									  TEXT( "abc@def" ), 
+									  paramStrlen( TEXT( "abc@def" ) ) );
+	if( cryptStatusOK( status ) )
+		{
+		printf( "Addition of invalid SCEP user information wasn't detected, "
+				"line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 
@@ -662,10 +709,11 @@ int testSessionSCEPServer( void )
 
 	/* Set up the server-side objects */
 	if( !pkiServerInit( &cryptCAKey, &cryptCertStore, SCEPCA_PRIVKEY_FILE,
-						USER_PRIVKEY_LABEL, scepPkiUserData, NULL, "SCEP" ) )
+						USER_PRIVKEY_LABEL, scepPkiUserData, NULL, NULL, 
+						"SCEP" ) )
 		return( FALSE );
 
-	/* Create the SCEP session and add the CA key and cert store */
+	/* Create the SCEP session and add the CA key and certificate store */
 	status = cryptCreateSession( &cryptSession, CRYPT_UNUSED,
 								 CRYPT_SESSION_SCEP_SERVER );
 	if( cryptStatusError( status ) )
@@ -741,6 +789,40 @@ int testSessionSCEPClientServer( void )
 	status = connectSCEP( TRUE, TRUE );
 	waitForThread( hThread );
 	destroyMutex();
+	return( status );
+	}
+
+int testSessionSCEPSHA2ClientServer( void )
+	{
+	HANDLE hThread;
+	unsigned threadID;
+	int value, status;
+
+#if ( SCEP_NO != 1 )
+	/* Because the code has to handle so many CA-specific peculiarities, we
+	   can only perform this test when the CA being used is the cryptlib
+	   CA */
+	puts( "Error: The local SCEP session test only works with SCEP_NO == 1." );
+	return( FALSE );
+#endif /* cryptlib CA */
+
+	/* Switch the hash algorithm to SHA-2 */
+	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, &value );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH,
+					   CRYPT_ALGO_SHA2 );
+
+	/* Start the server and wait for it to initialise */
+	createMutex();
+	hThread = ( HANDLE ) _beginthreadex( NULL, 0, scepServerThread,
+										 NULL, 0, &threadID );
+	Sleep( 1000 );
+
+	/* Connect to the local server */
+	status = connectSCEP( TRUE, TRUE );
+	waitForThread( hThread );
+	destroyMutex();
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, value );
+
 	return( status );
 	}
 

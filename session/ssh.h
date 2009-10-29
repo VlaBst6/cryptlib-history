@@ -56,17 +56,20 @@
 /* SSH protocol-specific flags that encode details of implementation bugs 
    that we need to work around */
 
-#define SSH_PFLAG_NONE			0x000/* No protocol-specific flags */
-#define SSH_PFLAG_HMACKEYSIZE	0x001/* Peer is using short HMAC keys */
-#define SSH_PFLAG_SIGFORMAT		0x002/* Peer omits sig.algo name */
-#define SSH_PFLAG_NOHASHSECRET	0x004/* Peer omits secret in key derive */
-#define SSH_PFLAG_NOHASHLENGTH	0x008/* Peer omits length in exchge.hash */
-#define SSH_PFLAG_WINDOWBUG		0x010/* Peer requires unnec.window-adjusts */
-#define SSH_PFLAG_TEXTDIAGS		0x020/* Peer dumps text diagnostics on error */
-#define SSH_PFLAG_PAMPW			0x040/* Peer chokes on "password" as PAM submethod */
-#define SSH_PFLAG_DUMMYUSERAUTH	0x080/* Peer requires dummy userAuth msg.*/
-#define SSH_PFLAG_ZEROLENIGNORE	0x100/* Peer sends zero-length SSH_IGNORE */
-#define SSH_PFLAG_CUTEFTP		0x200/* CuteFTP, drops conn.during handshake */
+#define SSH_PFLAG_NONE			0x0000/* No protocol-specific flags */
+#define SSH_PFLAG_HMACKEYSIZE	0x0001/* Peer is using short HMAC keys */
+#define SSH_PFLAG_SIGFORMAT		0x0002/* Peer omits sig.algo name */
+#define SSH_PFLAG_NOHASHSECRET	0x0004/* Peer omits secret in key derive */
+#define SSH_PFLAG_NOHASHLENGTH	0x0008/* Peer omits length in exchge.hash */
+#define SSH_PFLAG_RSASIGPAD		0x0010/* Peer requires zero-padded RSA sig.*/
+#define SSH_PFLAG_WINDOWSIZE	0x0020/* Peer mishandles large window sizes */
+#define SSH_PFLAG_TEXTDIAGS		0x0040/* Peer dumps text diagnostics on error */
+#define SSH_PFLAG_PAMPW			0x0080/* Peer chokes on "password" as PAM submethod */
+#define SSH_PFLAG_DUMMYUSERAUTH	0x0100/* Peer requires dummy userAuth msg.*/
+#define SSH_PFLAG_EMPTYUSERAUTH	0x0200/* Peer sends empty userauth-failure resp.*/
+#define SSH_PFLAG_ZEROLENIGNORE	0x0400/* Peer sends zero-length SSH_IGNORE */
+#define SSH_PFLAG_CUTEFTP		0x0800/* CuteFTP, drops conn.during handshake */
+#define SSH_PFLAG_EMPTYSVCACCEPT 0x1000/* Peer sends empty SSH_SERVICE_ACCEPT */
 
 /* Various data sizes used for read-ahead and buffering.  The minimum SSH
    packet size is used to determine how much data we can read when reading
@@ -125,6 +128,27 @@
 #define SSH1_CMSG_X11_REQUEST_FORWARDING	34
 #define SSH1_CMSG_REQUEST_COMPRESSION		37
 
+/* SSHv1 cipher types */
+
+#define SSH1_CIPHER_NONE		0	/* No encryption */
+#define SSH1_CIPHER_IDEA		1	/* IDEA/CFB */
+#define SSH1_CIPHER_DES			2	/* DES/CBC */
+#define SSH1_CIPHER_3DES		3	/* 3DES/inner-CBC (nonstandard) */
+#define SSH1_CIPHER_TSS			4	/* Deprecated */
+#define SSH1_CIPHER_RC4			5	/* RC4 */
+#define SSH1_CIPHER_BLOWFISH	6	/* Blowfish */
+#define SSH1_CIPHER_CRIPPLED	7	/* Reserved, from ssh 1.2.x source */
+
+/* SSHv1 authentication types */
+
+#define SSH1_AUTH_RHOSTS		1	/* .rhosts or /etc/hosts.equiv */
+#define SSH1_AUTH_RSA			2	/* RSA challenge-response */
+#define SSH1_AUTH_PASSWORD		3	/* Password */
+#define SSH1_AUTH_RHOSTS_RSA	4	/* .rhosts with RSA challenge-response */
+#define SSH1_AUTH_TIS			5	/* TIS authsrv */
+#define SSH1_AUTH_KERBEROS		6	/* Kerberos */
+#define SSH1_PASS_KERBEROS_TGT	7	/* Kerberos TGT-passing */
+
 /* SSHv2 packet types.  There is some overlap with SSHv1, but an annoying
    number of messages have the same name but different values.  Note also
    that the keyex (static DH keys) and keyex_gex (ephemeral DH keys) message
@@ -173,7 +197,7 @@
    sending a password, and MSG_USERAUTH_REQUEST can similarly return a
    failure or success response.
 
-   In addition to these types there's a "any" type which is used during the
+   In addition to these types there's an "any" type which is used during the
    setup negotiation which will accept any (non-error) packet type and return
    the type as the return code */
 
@@ -181,31 +205,13 @@
 #define SSH1_MSG_SPECIAL_PWOPT		501	/* Value to handle SSHv1 password */
 #define SSH1_MSG_SPECIAL_RSAOPT		502	/* Value to handle SSHv1 RSA challenge */
 #define SSH1_MSG_SPECIAL_ANY		503	/* Any SSHv1 packet type */
-#define SSH2_MSG_SPECIAL_USERAUTH	504	/* Value to handle SSHv2 combined auth.*/
-#define SSH2_MSG_SPECIAL_USERAUTH_PAM 505	/* Value to handle SSHv2 PAM auth.*/
-#define SSH2_MSG_SPECIAL_CHANNEL	506	/* Value to handle channel open */
-#define SSH2_MSG_SPECIAL_REQUEST	507	/* Value to handle SSHv2 global/channel req.*/
 
-/* SSHv1 cipher types */
-
-#define SSH1_CIPHER_NONE		0	/* No encryption */
-#define SSH1_CIPHER_IDEA		1	/* IDEA/CFB */
-#define SSH1_CIPHER_DES			2	/* DES/CBC */
-#define SSH1_CIPHER_3DES		3	/* 3DES/inner-CBC (nonstandard) */
-#define SSH1_CIPHER_TSS			4	/* Deprecated */
-#define SSH1_CIPHER_RC4			5	/* RC4 */
-#define SSH1_CIPHER_BLOWFISH	6	/* Blowfish */
-#define SSH1_CIPHER_CRIPPLED	7	/* Reserved, from ssh 1.2.x source */
-
-/* SSHv1 authentication types */
-
-#define SSH1_AUTH_RHOSTS		1	/* .rhosts or /etc/hosts.equiv */
-#define SSH1_AUTH_RSA			2	/* RSA challenge-response */
-#define SSH1_AUTH_PASSWORD		3	/* Password */
-#define SSH1_AUTH_RHOSTS_RSA	4	/* .rhosts with RSA challenge-response */
-#define SSH1_AUTH_TIS			5	/* TIS authsrv */
-#define SSH1_AUTH_KERBEROS		6	/* Kerberos */
-#define SSH1_PASS_KERBEROS_TGT	7	/* Kerberos TGT-passing */
+#define SSH2_MSG_SPECIAL_FIRST		500	/* Boundary for _SPECIAL types */
+#define SSH2_MSG_SPECIAL_USERAUTH	501	/* Value to handle SSHv2 combined auth.*/
+#define SSH2_MSG_SPECIAL_USERAUTH_PAM 502	/* Value to handle SSHv2 PAM auth.*/
+#define SSH2_MSG_SPECIAL_CHANNEL	503	/* Value to handle channel open */
+#define SSH2_MSG_SPECIAL_REQUEST	504	/* Value to handle SSHv2 global/channel req.*/
+#define SSH2_MSG_SPECIAL_LAST		505	/* Last valid _SPECIAL type */
 
 /* SSHv2 disconnection codes */
 
@@ -235,12 +241,32 @@
 /* SSHv2 requires the use of a number of additional (pseudo)-algorithm
    types that don't correspond to normal cryptlib algorithms.  To handle
    these, we define pseudo-algoID values that fall within the range of
-   the normal algorithm ID types but that aren't normal algorithm IDs */
+   the normal algorithm ID types but that aren't normal algorithm IDs.
+   The difference between CRYPT_PSEUDOALGO_DHE and CRYPT_PSEUDOALGO_ALTDHE
+   is that the former uses SHA-1 and the latter uses a hastily-kludged-
+   on SHA-256 that was added shortly before the RFC was published, so
+   that the PRF uses SHA-256 but all other portions of the protocol still
+   use SHA-1 */
 
-#define CRYPT_PSEUDOALGO_DHE		( CRYPT_ALGO_LAST_CONVENTIONAL - 4 )
+#define CRYPT_PSEUDOALGO_DHE		( CRYPT_ALGO_LAST_CONVENTIONAL - 5 )
+#define CRYPT_PSEUDOALGO_DHE_ALT	( CRYPT_ALGO_LAST_CONVENTIONAL - 4 )
 #define CRYPT_PSEUDOALGO_COPR		( CRYPT_ALGO_LAST_CONVENTIONAL - 3 )
 #define CRYPT_PSEUDOALGO_PASSWORD	( CRYPT_ALGO_LAST_CONVENTIONAL - 2 )
 #define CRYPT_PSEUDOALGO_PAM		( CRYPT_ALGO_LAST_CONVENTIONAL - 1 )
+
+/* The size of the encoded DH keyex value and the requested DHE key size, 
+   which we have to store in encoded form so that we can hash them later in 
+   the handshake */
+
+#define MAX_ENCODED_KEYEXSIZE		( CRYPT_MAX_PKCSIZE + 16 ) 
+#define ENCODED_REQKEYSIZE			( UINT_SIZE * 3 )
+
+/* Check whether an algorithm ID is one of the above pseudo-algorithm
+   types */
+
+#define isPseudoAlgo( algorithm ) \
+		( algorithm >= CRYPT_PSEUDOALGO_DHE && \
+		  algorithm <= CRYPT_PSEUDOALGO_PAM )
 
 /* When working with SSH channels there are a number of SSH-internal
    attributes that aren't exposed as cryptlib-wide attribute types.  The
@@ -250,16 +276,10 @@ typedef enum {
 	SSH_ATTRIBUTE_NONE,						/* No channel attribute */
 	SSH_ATTRIBUTE_ACTIVE,					/* Channel is active */
 	SSH_ATTRIBUTE_WINDOWCOUNT,				/* Data window count */
+	SSH_ATTRIBUTE_WINDOWSIZE,				/* Data window size */
 	SSH_ATTRIBUTE_ALTCHANNELNO,				/* Secondary channel no. */
 	SSH_ATRIBUTE_LAST						/* Last channel attribute */
 	} SSH_ATTRIBUTE_TYPE;
-
-/* Check whether an algorithm ID is one of the above pseudo-algorithm
-   types */
-
-#define isPseudoAlgo( algorithm ) \
-		( algorithm >= CRYPT_PSEUDOALGO_DHE && \
-		  algorithm <= CRYPT_PSEUDOALGO_PAM )
 
 /* Check whether a DH value is valid for a given server key size */
 
@@ -293,19 +313,20 @@ typedef struct SH {
 	BUFFER_FIXED( CRYPT_MAX_HASHSIZE ) \
 	BYTE sessionID[ CRYPT_MAX_HASHSIZE + 8 ];/* Session ID/exchange hash */
 	int sessionIDlength;
-	CRYPT_CONTEXT iExchangeHashcontext;		/* Hash of exchanged info */
+	CRYPT_CONTEXT iExchangeHashcontext;		/* Hash of exchanged information */
 
 	/* Information needed to compute the session ID.  SSHv1 requires the
 	   host and server key modulus, SSHv2 requires the client and server DH
 	   values (along with various other things, but these are hashed
-	   inline).  The SSHv2 values are in MPI-encoded form, so we need to
+	   inline).  The SSHv2 values are in MPI-encoded form so we need to
 	   reserve a little extra room for the length and leading zero-padding.
-	   Since the data fields are rather large and also disjoint, we alias
-	   one to the other to save space */
-	BUFFER( CRYPT_MAX_PKCSIZE + 16, clientKeyexValueLength ) \
-	BYTE clientKeyexValue[ ( CRYPT_MAX_PKCSIZE + 16 ) + 8 ];
-	BUFFER( CRYPT_MAX_PKCSIZE + 16, serverKeyexValueLength ) \
-	BYTE serverKeyexValue[ ( CRYPT_MAX_PKCSIZE + 16 ) + 8 ];
+	   Since the data fields are rather large and also disjoint, and since
+	   SSHv1 is pretty much dead and therefore not worth going out of our 
+	   way to accomodate) we alias one to the other to save space */
+	BUFFER( MAX_ENCODED_KEYEXSIZE, clientKeyexValueLength ) \
+	BYTE clientKeyexValue[ MAX_ENCODED_KEYEXSIZE + 8 ];
+	BUFFER( MAX_ENCODED_KEYEXSIZE, serverKeyexValueLength ) \
+	BYTE serverKeyexValue[ MAX_ENCODED_KEYEXSIZE + 8 ];
 	int clientKeyexValueLength, serverKeyexValueLength;
 	#define hostModulus				clientKeyexValue
 	#define serverModulus			serverKeyexValue
@@ -322,12 +343,12 @@ typedef struct SH {
 	   and the client requested DH key size for the SSHv2 key exchange.
 	   Alongside the actual key size, we also store the original encoded
 	   form, which has to be hashed as part of the exchange hash.  The
-	   long-term host key is stored as the session info iKeyexCryptContext
-	   for the client and privateKey for the server */
+	   long-term host key is stored as the session information 
+	   iKeyexCryptContext for the client and privateKey for the server */
 	CRYPT_CONTEXT iServerCryptContext;
 	int serverKeySize, requestedServerKeySize;
-	BUFFER( UINT_SIZE * 3, encodedReqKeySizesLength ) \
-	BYTE encodedReqKeySizes[ ( UINT_SIZE * 3 ) + 8 ];
+	BUFFER( ENCODED_REQKEYSIZE, encodedReqKeySizesLength ) \
+	BYTE encodedReqKeySizes[ ENCODED_REQKEYSIZE + 8 ];
 	int encodedReqKeySizesLength;
 
 	/* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs.
@@ -340,18 +361,15 @@ typedef struct SH {
 	/* Function pointers to handshaking functions.  These are set up as
 	   required depending on whether the protocol being used is v1 or v2,
 	   and the session is client or server */
-	CHECK_RETVAL \
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *beginHandshake )( INOUT SESSION_INFO *sessionInfoPtr,
-							 INOUT struct SH *handshakeInfo ) \
-							 STDC_NONNULL_ARG( ( 1, 2 ) );
-	CHECK_RETVAL \
+							 INOUT struct SH *handshakeInfo );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *exchangeKeys )( INOUT SESSION_INFO *sessionInfoPtr,
-						   INOUT struct SH *handshakeInfo ) \
-						   STDC_NONNULL_ARG( ( 1, 2 ) );
-	CHECK_RETVAL \
+						   INOUT struct SH *handshakeInfo );
+	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *completeHandshake )( INOUT SESSION_INFO *sessionInfoPtr,
-								INOUT struct SH *handshakeInfo ) \
-								STDC_NONNULL_ARG( ( 1, 2 ) );
+								INOUT struct SH *handshakeInfo );
 	} SSH_HANDSHAKE_INFO;
 
 /* Channel number and ID used to mark an unused channel */
@@ -380,228 +398,252 @@ typedef struct SH {
 		offset = stell( stream )
 #define streamBookmarkSetFullPacket( stream, offset ) \
 		offset = stell( stream ) - ID_SIZE
-CHECK_RETVAL \
-int streamBookmarkComplete( INOUT STREAM *stream, OUT_PTR void **dataPtrPtr,
-							OUT int *length, const int position ) \
-							STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int streamBookmarkComplete( INOUT STREAM *stream, 
+							OUT_PTR void **dataPtrPtr, 
+							OUT_LENGTH_Z int *length, 
+							IN_LENGTH const int position );
 
 /* Prototypes for functions in ssh2.c */
 
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 6 ) ) \
 int readAlgoString( INOUT STREAM *stream, 
 					IN_ARRAY( noAlgoStringEntries ) \
-					const ALGO_STRING_INFO *algoInfo, 
-					const int noAlgoStringEntries,
-					OUT CRYPT_ALGO_TYPE *algo, const BOOLEAN useFirstMatch,
-					INOUT ERROR_INFO *errorInfo ) \
-					STDC_NONNULL_ARG( ( 1, 2, 4, 6 ) );
-int writeAlgoString( INOUT STREAM *stream, const CRYPT_ALGO_TYPE algo ) \
-					 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
-				   INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
-				   const BOOLEAN isServer ) \
-				   STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int openPacketStreamSSH( INOUT STREAM *stream, 
-						 const SESSION_INFO *sessionInfoPtr,
-						 const int bufferSize, const int packetType ) \
-						 STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int continuePacketStreamSSH( INOUT STREAM *stream, const int packetType,
-							 int *packetOffset ) \
-							 STDC_NONNULL_ARG( ( 1, 3 ) );
-CHECK_RETVAL \
+						const ALGO_STRING_INFO *algoInfo,
+					IN_RANGE( 1, 100 ) const int noAlgoStringEntries, 
+					OUT_ALGO_Z CRYPT_ALGO_TYPE *algo, 
+					const BOOLEAN useFirstMatch, 
+					INOUT ERROR_INFO *errorInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int writeAlgoString( INOUT STREAM *stream, 
+					 IN_ALGO const CRYPT_ALGO_TYPE algo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int processHelloSSH( INOUT SESSION_INFO *sessionInfoPtr,
 					 INOUT SSH_HANDSHAKE_INFO *handshakeInfo, 
-					 OUT int *keyexLength,
-					 const BOOLEAN isServer ) \
-					 STDC_NONNULL_ARG( ( 1, 2, 3 ) );
+					 OUT_LENGTH_SHORT_Z int *keyexLength,
+					 const BOOLEAN isServer );
+
+/* Prototypes for functions in ssh2_authc.c/ssh2_auths.c  */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int processClientAuth( INOUT SESSION_INFO *sessionInfoPtr,
+					   INOUT SSH_HANDSHAKE_INFO *handshakeInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int processServerAuth( INOUT SESSION_INFO *sessionInfoPtr,
+					   const BOOLEAN userInfoPresent );
 
 /* Prototypes for functions in ssh2_chn.c */
 
 typedef enum { CHANNEL_NONE, CHANNEL_READ, CHANNEL_WRITE,
 			   CHANNEL_BOTH, CHANNEL_LAST } CHANNEL_TYPE;
 
-CHECK_RETVAL \
-int createChannel( INOUT SESSION_INFO *sessionInfoPtr ) \
-				   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int addChannel( INOUT SESSION_INFO *sessionInfoPtr, const long channelNo,
-				const int maxPacketSize, 
-				IN_BUFFER( typeLen ) \
-				const void *type, const int typeLen, 
-				IN_BUFFER_OPT( arg1Len ) \
-				const void *arg1, const int arg1Len ) \
-				STDC_NONNULL_ARG( ( 1, 4 ) );
-CHECK_RETVAL \
-int deleteChannel( INOUT SESSION_INFO *sessionInfoPtr, const long channelNo,
-				   const CHANNEL_TYPE channelType,
-				   const BOOLEAN closeLastChannel ) \
-				   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int deleteChannelAddr( INOUT SESSION_INFO *sessionInfoPtr, 
-					   IN_BUFFER( addrInfoLen ) \
-					   const char *addrInfo, const int addrInfoLen ) \
-					   STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int selectChannel( INOUT SESSION_INFO *sessionInfoPtr, const long channelNo,
-				   const CHANNEL_TYPE channelType ) \
-				   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int getCurrentChannelNo( const SESSION_INFO *sessionInfoPtr,
-						 const CHANNEL_TYPE channelType ) \
-						 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-CHANNEL_TYPE getChannelStatus( const SESSION_INFO *sessionInfoPtr,
-							   const long channelNo ) \
-							   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-CHANNEL_TYPE getChannelStatusAddr( const SESSION_INFO *sessionInfoPtr,
-								   IN_BUFFER( addrInfoLen ) \
-								   const char *addrInfo, 
-								   const int addrInfoLen ) \
-								   STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int createChannel( INOUT SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int addChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				IN const long channelNo,
+				IN_LENGTH_MIN( 1024 ) const int maxPacketSize, 
+				IN_BUFFER( typeLen ) const void *type,
+				IN_LENGTH_SHORT const int typeLen, 
+				IN_BUFFER_OPT( arg1Len ) const void *arg1, 
+				IN_LENGTH_SHORT const int arg1Len );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int deleteChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				   IN const long channelNo,
+				   IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType,
+				   const BOOLEAN deleteLastChannel );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int selectChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				   IN const long channelNo,
+				   IN_ENUM_OPT( CHANNEL ) const CHANNEL_TYPE channelType );
+CHECK_RETVAL_RANGE( 1, LONG_MAX ) STDC_NONNULL_ARG( ( 1 ) ) \
+long getCurrentChannelNo( const SESSION_INFO *sessionInfoPtr,
+						  IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType );
+CHECK_RETVAL_ENUM( CHANNEL ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHANNEL_TYPE getChannelStatusByChannelNo( const SESSION_INFO *sessionInfoPtr,
+										  IN const long channelNo );
+CHECK_RETVAL_ENUM( CHANNEL ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHANNEL_TYPE getChannelStatusByAddr( const SESSION_INFO *sessionInfoPtr,
+									 IN_BUFFER( addrInfoLen ) const char *addrInfo,
+									 IN_LENGTH_SHORT const int addrInfoLen );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getChannelAttribute( const SESSION_INFO *sessionInfoPtr,
-						 const CRYPT_ATTRIBUTE_TYPE attribute,
-						 int *value ) \
-						 STDC_NONNULL_ARG( ( 1, 3 ) );
-CHECK_RETVAL \
-int getChannelAttributeString( const SESSION_INFO *sessionInfoPtr,
-						 const CRYPT_ATTRIBUTE_TYPE attribute,
-						 OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
-						 void *data, const int dataMaxLength, 
-						 OUT int *dataLength ) \
-						 STDC_NONNULL_ARG( ( 1, 5 ) );
-CHECK_RETVAL \
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 OUT_INT_Z int *value );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getChannelAttributeS( const SESSION_INFO *sessionInfoPtr,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
+								void *data, 
+						  IN_LENGTH_SHORT_Z const int dataMaxLength, 
+						  OUT_LENGTH_SHORT_Z int *dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
-							const SSH_ATTRIBUTE_TYPE attribute,
-							OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
-							void *data, const int dataMaxLength, 
-							int *dataLength ) \
-							STDC_NONNULL_ARG( ( 1, 5 ) );
-CHECK_RETVAL \
+							IN_ENUM( SSH_ATTRIBUTE ) \
+								const SSH_ATTRIBUTE_TYPE attribute,
+							OUT_INT_Z int *value );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setChannelAttribute( INOUT SESSION_INFO *sessionInfoPtr,
-						 const CRYPT_ATTRIBUTE_TYPE attribute,
-						 const int value ) \
-						 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int setChannelAttributeString( INOUT SESSION_INFO *sessionInfoPtr,
-							   const CRYPT_ATTRIBUTE_TYPE attribute,
-							  IN_BUFFER( dataLength ) \
-							  const void *data, const int dataLength ) \
-							  STDC_NONNULL_ARG( ( 1, 3 ) );
-CHECK_RETVAL \
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 IN_INT_SHORT const int value );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int setChannelAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  IN_BUFFER( dataLength ) const void *data, 
+						  IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
-							const SSH_ATTRIBUTE_TYPE attribute,
-							IN_BUFFER_OPT( dataLength ) \
-							const void *data, const int dataLength ) \
-							STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int enqueueResponse( INOUT SESSION_INFO *sessionInfoPtr, const int type,
-					 const int noParams, const long channelNo,
-					 const int param1, const int param2, const int param3 ) \
-					 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int sendEnqueuedResponse( INOUT SESSION_INFO *sessionInfoPtr, 
-						  const int offset ) \
-						  STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int enqueueChannelData( INOUT SESSION_INFO *sessionInfoPtr, const int type,
-						const long channelNo, const int param ) \
-						STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
+							IN_ATTRIBUTE const SSH_ATTRIBUTE_TYPE attribute,
+							IN_INT_Z const int value );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int enqueueResponse( INOUT SESSION_INFO *sessionInfoPtr, 
+					 IN_RANGE( 1, 255 ) const int type,
+					 IN_RANGE( 0, 3 ) const int noParams, 
+					 IN const long channelNo,
+					 const int param1, const int param2, const int param3 );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sendEnqueuedResponse( INOUT SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int enqueueChannelData( INOUT SESSION_INFO *sessionInfoPtr, 
+						IN_RANGE( 1, 255 ) const int type,
+						IN const long channelNo, 
+						const int param );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int appendChannelData( INOUT SESSION_INFO *sessionInfoPtr, 
-					   const int offset ) \
-					   STDC_NONNULL_ARG( ( 1 ) );
+					   IN_LENGTH_SHORT_Z const int offset );
 
 /* Prototypes for functions in ssh2_msg.c */
 
-CHECK_RETVAL \
-int sendChannelOpen( INOUT SESSION_INFO *sessionInfoPtr ) \
-					 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int processChannelOpen( INOUT SESSION_INFO *sessionInfoPtr, 
-						INOUT STREAM *stream ) \
-						STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
-								  INOUT STREAM *stream ) \
-								  STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
+CHECK_RETVAL_RANGE( 10000, MAX_WINDOW_SIZE ) STDC_NONNULL_ARG( ( 1 ) ) \
+int getWindowSize( const SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int closeChannel( INOUT SESSION_INFO *sessionInfoPtr,
-				  const BOOLEAN closeLastChannel ) \
-				  STDC_NONNULL_ARG( ( 1 ) );
+				  const BOOLEAN closeAllChannels );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
+								  INOUT STREAM *stream );
+
+/* Prototypes for functions in ssh2_msgc.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sendChannelOpen( INOUT SESSION_INFO *sessionInfoPtr );
+
+/* Prototypes for functions in ssh2_msgs.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int processChannelOpen( INOUT SESSION_INFO *sessionInfoPtr, 
+						INOUT STREAM *stream );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int processChannelRequest( INOUT SESSION_INFO *sessionInfoPtr,
+						   INOUT STREAM *stream, 
+						   IN const long prevChannelNo );
 
 /* Prototypes for functions in ssh2_cry.c */
 
-typedef enum { MAC_NONE, MAC_START, MAC_END, MAC_ALL, MAC_LAST } MAC_TYPE;
+typedef enum { MAC_NONE, MAC_START, MAC_END, MAC_LAST } MAC_TYPE;
 
-CHECK_RETVAL \
-int initDHcontextSSH( OUT CRYPT_CONTEXT *iCryptContext, OUT int *keySize,
-					  IN_BUFFER_OPT( keyDataLength ) \
-					  const void *keyData, const int keyDataLength,
-					  const int requestedKeySize ) \
-					  STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
-					  INOUT SSH_HANDSHAKE_INFO *handshakeInfo ) \
-					  STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int initSecurityContextsSSH( INOUT SESSION_INFO *sessionInfoPtr ) \
-							 STDC_NONNULL_ARG( ( 1 ) );
-void destroySecurityContextsSSH( INOUT SESSION_INFO *sessionInfoPtr ) \
-								 STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int hashAsString( const CRYPT_CONTEXT iHashContext,
-				  IN_BUFFER( dataLength ) \
-				  const BYTE *data, const int dataLength ) \
-				  STDC_NONNULL_ARG( ( 2 ) );
-CHECK_RETVAL \
-int hashAsMPI( const CRYPT_CONTEXT iHashContext, 
-			   IN_BUFFER( dataLength ) \
-			   const BYTE *data, const int dataLength ) \
-			   STDC_NONNULL_ARG( ( 2 ) );
-CHECK_RETVAL \
-int checkMacSSH( const CRYPT_CONTEXT iMacContext, const long seqNo,
-				 IN_BUFFER( dataMaxLength ) \
-				 const BYTE *data, const int dataMaxLength, 
-				 const int dataLength, const int packetDataLength, 
-				 const MAC_TYPE macType, const int macLength ) \
-				 STDC_NONNULL_ARG( ( 3 ) );
-CHECK_RETVAL \
-int createMacSSH( const CRYPT_CONTEXT iMacContext, const long seqNo,
-				  INOUT_BUFFER_FIXED( dataMaxLength ) \
-				  BYTE *data, const int dataMaxLength, 
-				  const int dataLength ) \
-				  STDC_NONNULL_ARG( ( 3 ) );
+					  INOUT SSH_HANDSHAKE_INFO *handshakeInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initSecurityContextsSSH( INOUT SESSION_INFO *sessionInfoPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void destroySecurityContextsSSH( INOUT SESSION_INFO *sessionInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext, 
+					  OUT_LENGTH_SHORT_Z int *keySize,
+					  IN_BUFFER_OPT( keyDataLength ) const void *keyData, 
+					  IN_LENGTH_SHORT_Z const int keyDataLength,
+					  IN_LENGTH_SHORT_OPT const int requestedKeySize );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
+				   INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
+				   const BOOLEAN isServer );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int hashAsString( IN_HANDLE const CRYPT_CONTEXT iHashContext,
+				  IN_BUFFER( dataLength ) const BYTE *data, 
+				  IN_LENGTH_SHORT const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int hashAsMPI( IN_HANDLE const CRYPT_CONTEXT iHashContext, 
+			   IN_BUFFER( dataLength ) const BYTE *data, 
+			   IN_LENGTH_SHORT const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int checkMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
+				 IN_INT const long seqNo,
+				 IN_BUFFER( dataMaxLength ) const BYTE *data, 
+				 IN_LENGTH const int dataMaxLength, 
+				 IN_LENGTH_Z const int dataLength, 
+				 IN_RANGE( 16, CRYPT_MAX_HASHSIZE ) const int macLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int checkMacSSHIncremental( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
+							IN_INT const long seqNo,
+							IN_BUFFER( dataMaxLength ) const BYTE *data, 
+							IN_LENGTH const int dataMaxLength, 
+							IN_LENGTH_Z const int dataLength, 
+							IN_LENGTH const int packetDataLength, 
+							IN_ENUM( MAC ) const MAC_TYPE macType, 
+							IN_RANGE( 16, CRYPT_MAX_HASHSIZE ) const int macLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int createMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
+				  IN_INT const long seqNo,
+				  IN_BUFFER( dataMaxLength ) BYTE *data, 
+				  IN_LENGTH const int dataMaxLength, 
+				  IN_LENGTH const int dataLength );
 
-/* Prototypes for functions in ssh2_rw.c */
+/* Prototypes for functions in ssh2_rd.c */
 
-CHECK_RETVAL \
-int wrapPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, INOUT STREAM *stream, 
-					const int offset, const BOOLEAN useQuantisedPadding,
-					const BOOLEAN isWriteableStream ) \
-					STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
-int sendPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, INOUT STREAM *stream, 
-					const BOOLEAN sendOnly ) \
-					STDC_NONNULL_ARG( ( 1, 2 ) );
-CHECK_RETVAL \
+CHECK_RETVAL_PTR \
+const char *getSSHPacketName( IN_RANGE( 0, 255 ) const int packetType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
-						  const int expectedType, OUT long *packetLength,
-						  OUT int *packetExtraLength,
-						  INOUT_OPT READSTATE_INFO *readInfo ) \
-						  STDC_NONNULL_ARG( ( 1, 3, 4 ) );
-CHECK_RETVAL \
-int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, int expectedType,
-					  const int minPacketSize ) \
-					  STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
+						  IN_RANGE( SSH2_MSG_DISCONNECT, \
+									SSH2_MSG_SPECIAL_REQUEST ) \
+								const int expectedType, 
+						  OUT_LENGTH_Z long *packetLength,
+						  OUT_LENGTH_Z int *packetExtraLength,
+						  INOUT SSH_INFO *sshInfo,
+						  INOUT_OPT READSTATE_INFO *readInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, 
+					  IN_RANGE( SSH2_MSG_DISCONNECT, \
+								SSH2_MSG_SPECIAL_REQUEST ) \
+							int expectedType,
+					  IN_RANGE( 1, 1024 ) const int minPacketSize );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr, 
-					   INOUT STREAM *stream ) \
-					   STDC_NONNULL_ARG( ( 1, 2 ) );
+					   INOUT STREAM *stream );
+
+/* Prototypes for functions in ssh2_wr.c */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int openPacketStreamSSH( INOUT STREAM *stream, 
+						 const SESSION_INFO *sessionInfoPtr,
+						 IN_RANGE( SSH2_MSG_DISCONNECT, \
+								   SSH2_MSG_CHANNEL_FAILURE ) 
+							const int packetType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int openPacketStreamSSHEx( INOUT STREAM *stream, 
+						   const SESSION_INFO *sessionInfoPtr,
+						   IN_LENGTH const int bufferSize, 
+						   IN_RANGE( SSH2_MSG_DISCONNECT, \
+									 SSH2_MSG_CHANNEL_FAILURE ) 
+								const int packetType );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int continuePacketStreamSSH( INOUT STREAM *stream, 
+							 IN_RANGE( SSH2_MSG_DISCONNECT, \
+									   SSH2_MSG_CHANNEL_FAILURE ) \
+								const int packetType,
+							 OUT_LENGTH_Z int *packetOffset );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int wrapPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, 
+					INOUT STREAM *stream,
+					IN_LENGTH_Z const int offset, 
+					const BOOLEAN useQuantisedPadding,
+					const BOOLEAN isWriteableStream );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int sendPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, 
+					INOUT STREAM *stream,
+					const BOOLEAN sendOnly );
 
 /* Prototypes for session mapping functions */
 
@@ -609,20 +651,17 @@ void initSSH1processing( INOUT SESSION_INFO *sessionInfoPtr,
 						 INOUT_OPT SSH_HANDSHAKE_INFO *handshakeInfo,
 						 const BOOLEAN isServer ) \
 						 STDC_NONNULL_ARG( ( 1 ) );
+STDC_NONNULL_ARG( ( 1 ) ) \
 void initSSH2processing( INOUT SESSION_INFO *sessionInfoPtr,
 						 INOUT_OPT SSH_HANDSHAKE_INFO *handshakeInfo,
-						 const BOOLEAN isServer ) \
-						 STDC_NONNULL_ARG( ( 1 ) );
-void initSSH2clientProcessing( INOUT SESSION_INFO *sessionInfoPtr,
-							   INOUT SSH_HANDSHAKE_INFO *handshakeInfo ) \
-							   STDC_NONNULL_ARG( ( 1, 2 ) );
-void initSSH2serverProcessing( INOUT SESSION_INFO *sessionInfoPtr,
-							   INOUT SSH_HANDSHAKE_INFO *handshakeInfo ) \
-							   STDC_NONNULL_ARG( ( 1, 2 ) );
+						 const BOOLEAN isServer );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void initSSH2clientProcessing( STDC_UNUSED SESSION_INFO *sessionInfoPtr,
+							   INOUT SSH_HANDSHAKE_INFO *handshakeInfo );
+STDC_NONNULL_ARG( ( 1, 2 ) ) \
+void initSSH2serverProcessing( STDC_UNUSED SESSION_INFO *sessionInfoPtr,
+							   INOUT SSH_HANDSHAKE_INFO *handshakeInfo );
 
-#ifndef USE_SSH
-  #define initSSH2processing	initSSH1processing
-#endif /* USE_SSH */
 #ifndef USE_SSH1
   #define initSSH1processing	initSSH2processing
 #endif /* USE_SSH1 */

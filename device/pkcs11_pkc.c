@@ -5,7 +5,7 @@
 *																			*
 ****************************************************************************/
 
-#define PKC_CONTEXT		/* Tell context.h that we're working with PKC ctxs */
+#define PKC_CONTEXT		/* Tell context.h that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -171,6 +171,7 @@ static int genericEncrypt( PKCS11_INFO *pkcs11Info,
 		{
 		const int delta = length - resultLen;
 
+		REQUIRES( rangeCheck( delta, resultLen, length ) );
 		memmove( ( BYTE * ) buffer + delta, buffer, resultLen );
 		memset( buffer, 0, delta );
 		}
@@ -249,6 +250,7 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 		{
 		const int delta = length - resultLen;
 
+		REQUIRES( rangeCheck( delta, resultLen, length ) );
 		memmove( ( BYTE * ) buffer + delta, buffer, resultLen );
 		memset( buffer, 0, delta );
 		resultLen = length;
@@ -308,13 +310,13 @@ int dhSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Send the public key data to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
-	   since the latter transitions the context into the high state.  We 
-	   don't want to do this because we're already in the middle of processing
-	   a message that does this on completion, all we're doing here is 
-	   sending in encoded public key data for use by objects such as 
-	   certificates */
+	/* Send the public key data to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
+	   into the high state.  We don't want to do this because we're already 
+	   in the middle of processing a message that does this on completion, 
+	   all that we're doing here is sending in encoded public key data for 
+	   use by objects such as certificates */
 	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
 									  &keyDataSize, CRYPT_ALGO_DH, 
 									  p, pLen, g, gLen, q, qLen, y, yLen );
@@ -324,8 +326,6 @@ int dhSetPublicComponents( PKCS11_INFO *pkcs11Info,
 		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 									   &msgData, 
 										CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
-		krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-						 ( void * ) &pLen, CRYPT_IATTRIBUTE_KEYSIZE );
 		}
 	return( cryptStatus );
 	}
@@ -357,7 +357,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	assert( isReadPtr( key, keyLength ) );
 	assert( keyLength == sizeof( CRYPT_PKCINFO_DLP ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -383,7 +383,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		return( cryptStatus );
 		}
 
-	/* Send the keying info to the context */
+	/* Send the keying information to the context */
 	cryptStatus = dhSetPublicComponents( pkcs11Info, 
 										 contextInfoPtr->objectHandle,
 										 hPublicKey, dhKey->q, 
@@ -396,8 +396,10 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	/* Remember what we've set up */
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &hPrivateKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+					 ( MESSAGE_CAST ) &hPrivateKey, 
+					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 	contextInfoPtr->altDeviceObject = hPublicKey;
+	contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
@@ -409,8 +411,7 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	MESSAGE_DATA msgData;
 	BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
 	STREAM stream;
-	long length;
-	int cryptStatus;
+	int length, cryptStatus;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
@@ -448,29 +449,36 @@ static int dhGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Set up the public key info by extracting the flat values from the
-	   SubjectPublicKeyInfo.  Note that the data used is represented in
+	/* Set up the public key information by extracting the flat values from 
+	   the SubjectPublicKeyInfo.  Note that the data used is represented in
 	   DER-canonical form, there may be PKCS #11 implementations that can't 
 	   handle this (for example they may require p to be zero-padded to make 
 	   it exactly n bytes rather than (say) n - 1 bytes if the high byte is 
 	   zero) */
 	cryptInitComponents( &dhKey, CRYPT_KEYTYPE_PUBLIC );
 	sMemConnect( &stream, pubkeyBuffer, msgData.length );
-	readSequence( &stream, NULL );				/* SEQUENCE */
 	readSequence( &stream, NULL );					/* SEQUENCE */
-	readUniversal( &stream );							/* OID */
 	readSequence( &stream, NULL );						/* SEQUENCE */
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* p */
-	sread( &stream, dhKey.p, length );
-	dhKey.pLen = bytesToBits( length );
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
-	sread( &stream, dhKey.q, length );
-	dhKey.qLen = bytesToBits( length );
-	readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
-	sread( &stream, dhKey.g, length );
-	dhKey.gLen = bytesToBits( length );
-	assert( sStatusOK( &stream ) );
+	readUniversal( &stream );								/* OID */
+	readSequence( &stream, NULL );							/* SEQUENCE */
+	readGenericHole( &stream, &length, 16, BER_INTEGER  );		/* p */
+	cryptStatus = sread( &stream, dhKey.p, length );
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		dhKey.pLen = bytesToBits( length );
+		readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* q */
+		cryptStatus = sread( &stream, dhKey.q, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		{
+		dhKey.qLen = bytesToBits( length );
+		readGenericHole( &stream, &length, 16, BER_INTEGER  );	/* g */
+		cryptStatus = sread( &stream, dhKey.g, length );
+		}
+	if( cryptStatusOK( cryptStatus ) )
+		dhKey.gLen = bytesToBits( length );
 	sMemDisconnect( &stream );
+	REQUIRES( cryptStatusOK( cryptStatus ) );
 
 	/* From here on it's a standard DH key load */
 	return( dhInitKey( contextInfoPtr, &dhKey, sizeof( CRYPT_PKCINFO_DLP  ) ) );
@@ -489,7 +497,7 @@ static int dhEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	assert( isWritePtr( buffer, length ) );
 	assert( length == sizeof( KEYAGREE_PARAMS ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -542,7 +550,7 @@ static int dhDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	assert( keyAgreeParams->publicValue != NULL && \
 			keyAgreeParams->publicValueLen >= MIN_PKCSIZE );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -610,13 +618,13 @@ int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Send the public key data to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
-	   since the latter transitions the context into the high state.  We 
-	   don't want to do this because we're already in the middle of processing
-	   a message that does this on completion, all we're doing here is 
-	   sending in encoded public key data for use by objects such as 
-	   certificates */
+	/* Send the public key data to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
+	   into the high state.  We don't want to do this because we're already 
+	   in the middle of processing a message that does this on completion, 
+	   all that we're doing here is sending in encoded public key data for 
+	   use by objects such as certificates */
 	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
 									  &keyDataSize, CRYPT_ALGO_RSA, 
 									  n, nLen, e, eLen, NULL, 0, NULL, 0 );
@@ -624,15 +632,12 @@ int rsaSetPublicComponents( PKCS11_INFO *pkcs11Info,
 		return( cryptStatus );
 	setMessageData( &msgData, keyDataBuffer, keyDataSize );
 	if( nativeContext )
+		{
 		return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 								 &msgData, CRYPT_IATTRIBUTE_KEY_SPKI ) );
-	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
-								   &msgData, CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
-	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-									   ( void * ) &nLen, 
-									   CRYPT_IATTRIBUTE_KEYSIZE );
-	return( cryptStatus );
+		}
+	return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
+							 &msgData, CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL ) );
 	}
 
 static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
@@ -649,7 +654,9 @@ static int rsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 
 	/* Remember what we've set up */
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &hPrivateKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+					 ( MESSAGE_CAST ) &hPrivateKey, 
+					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
 
 	/* Get the key ID from the context and use it as the object ID.  Since 
 	   some objects won't allow after-the-event ID updates, we don't treat a
@@ -710,7 +717,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	assert( isReadPtr( key, keyLength ) );
 	assert( keyLength == sizeof( CRYPT_PKCINFO_RSA ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -764,7 +771,8 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		return( cryptStatus );
 		}
 
-	/* Send the keying info to the context and set up the key ID info */
+	/* Send the keying information to the context and set up the key ID 
+	   information */
 	cryptStatus = rsaSetPublicComponents( pkcs11Info, 
 										  contextInfoPtr->objectHandle, hRsaKey,
 										  FALSE );
@@ -774,8 +782,10 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hRsaKey );
 	else
+		{
 		/* Remember that this object is backed by a crypto device */
 		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
+		}
 
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
@@ -813,7 +823,7 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
 			keysizeBits <= bytesToBits( CRYPT_MAX_PKCSIZE ) );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -831,7 +841,8 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		return( cryptStatus );
 		}
 
-	/* Send the keying info to the context and set up the key ID info */
+	/* Send the keying information to the context and set up the key ID 
+	   information */
 	cryptStatus = rsaSetPublicComponents( pkcs11Info, 
 										  contextInfoPtr->objectHandle, 
 										  hPublicKey, FALSE );
@@ -844,8 +855,10 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		C_DestroyObject( pkcs11Info->hSession, hPrivateKey );
 		}
 	else
+		{
 		/* Remember that this object is backed by a crypto device */
 		contextInfoPtr->flags |= CONTEXT_FLAG_PERSISTENT;
+		}
 
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
@@ -868,11 +881,13 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   CKM_RSA_X_509 */
 	assert( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 1 && bufPtr[ 2 ] == 0xFF );
 	for( i = 2; i < keySize; i++ )
+		{
 		if( bufPtr[ i ] == 0 )
 			break;
+		}
 	i++;	/* Skip final 0 byte */
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -901,7 +916,7 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -935,12 +950,14 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   CKM_RSA_X_509 */
 	assert( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 2 );
 	for( i = 2; i < keySize; i++ )
+		{
 		if( bufPtr[ i ] == 0 )
 			break;
+		}
 	i++;	/* Skip final 0 byte */
 	memmove( bufPtr, bufPtr + i, keySize - i );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -965,7 +982,7 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	assert( isWritePtr( buffer, length ) );
 	assert( length == keySize );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -995,6 +1012,7 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	   which would require using the non-nonce RNG.  To work around this,
 	   we look for any zeroes in the data and fill them with some other
 	   value */
+	REQUIRES( rangeCheck( keySize - resultLen, resultLen, length ) );
 	memmove( bufPtr + keySize - resultLen, bufPtr, resultLen );
 	bufPtr[ 0 ] = 0;
 	bufPtr[ 1 ] = 2;
@@ -1003,15 +1021,17 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 								   IMESSAGE_GETATTRIBUTE_S, &msgData, 
 								   CRYPT_IATTRIBUTE_RANDOM_NONCE );
 	for( i = 2; i < keySize - resultLen - 1; i++ )
+		{
 		if( bufPtr[ i ] == 0 )
 			{
 			/* Create some sort of non-constant non-zero value to replace 
 			   the zero byte with, since PKCS #1 can't have zero bytes.  
-			   Note again that this doesn't have to be a strong random value,
-			   it just has to vary a bit */
+			   Note again that this doesn't have to be a strong random 
+			   value, it just has to vary a bit */
 			const int pad = 0xAA ^ ( i & 0xFF );
 			bufPtr[ i ] = pad ? pad : 0x21;
 			}
+		}
 	bufPtr[ keySize - resultLen - 1 ] = 0;
 	assert( 2 + ( keySize - resultLen - 3 ) + 1 + resultLen == keySize );
 
@@ -1048,13 +1068,13 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 	assert( isReadPtr( g, gLen ) );
 	assert( isReadPtr( y, yLen ) );
 
-	/* Send the public key data to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
-	   since the latter transitions the context into the high state.  We 
-	   don't want to do this because we're already in the middle of processing
-	   a message that does this on completion, all we're doing here is 
-	   sending in encoded public key data for use by objects such as 
-	   certificates */
+	/* Send the public key data to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
+	   into the high state.  We don't want to do this because we're already 
+	   in the middle of processing a message that does this on completion, 
+	   all that we're doing here is sending in encoded public key data for 
+	   use by objects such as certificates */
 	cryptStatus = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 3,
 									  &keyDataSize, CRYPT_ALGO_DSA, 
 									  p, pLen, q, qLen, g, gLen, y, yLen );
@@ -1070,16 +1090,13 @@ static int dsaSetKeyInfo( PKCS11_INFO *pkcs11Info,
 		}
 	cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 								   &msgData, CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL );
-	if( !cryptStatusError( cryptStatus ) )
-		cryptStatus = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-									   ( void * ) &pLen, 
-									   CRYPT_IATTRIBUTE_KEYSIZE );
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
 	/* Remember what we've set up */
 	krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &hPrivateKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+					 ( MESSAGE_CAST ) &hPrivateKey, 
+					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 
 	/* Get the key ID from the context and use it as the object ID.  Since 
 	   some objects won't allow after-the-even ID updates, we don't treat a
@@ -1159,7 +1176,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	CK_OBJECT_HANDLE hDsaKey;
 	CK_RV status;
 	BYTE yValue[ CRYPT_MAX_PKCSIZE + 8 ];
-	const void *yValuePtr = yValue;
+	const void *yValuePtr;
 	const int templateCount = dsaKey->isPublicKey ? 9 : 10;
 	int yValueLength, cryptStatus;
 
@@ -1182,7 +1199,8 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		MESSAGE_DATA msgData;
 		STREAM stream;
 		BYTE pubkeyBuffer[ ( CRYPT_MAX_PKCSIZE * 3 ) + 8 ], label[ 8 + 8 ];
-		void *yValuePtr = DUMMY_INIT_PTR;
+		void *yValueDataPtr = DUMMY_INIT_PTR;
+		int yValueDataSize;
 
 		/* Create a native private-key DSA context, which generates the y 
 		   value internally */
@@ -1197,7 +1215,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 		krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S, 
 						 &msgData, CRYPT_CTXINFO_LABEL );
-		setMessageData( &msgData, ( void * ) dsaKey, 
+		setMessageData( &msgData, ( MESSAGE_CAST ) dsaKey, 
 						sizeof( CRYPT_PKCINFO_DLP ) );
 		cryptStatus = krnlSendMessage( createInfo.cryptHandle, 
 									   IMESSAGE_SETATTRIBUTE_S, &msgData, 
@@ -1224,14 +1242,20 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		readSequence( &stream, NULL );		/* SEQUENCE { */
 		readUniversal( &stream );				/* AlgoID */
 		readBitStringHole( &stream, NULL, 16, DEFAULT_TAG );/* BIT STRING */
-		status = readGenericHole( &stream, &yValueLength, 16, 
+		status = readGenericHole( &stream, &yValueDataSize, 16, 
 								  BER_INTEGER  );/* INTEGER */
 		if( cryptStatusOK( status ) )
-			status = sMemGetDataBlock( &stream, &yValuePtr, yValueLength );
-		if( cryptStatusError( status ) )
-			retIntError();
-		memcpy( yValue, yValuePtr, yValueLength );
+			status = sMemGetDataBlock( &stream, &yValueDataPtr, 
+									   yValueDataSize );
+		ENSURES( cryptStatusOK( status ) );
+		ENSURES( yValueDataSize >= 16 && \
+				 yValueDataSize <= CRYPT_MAX_PKCSIZE );
+		memcpy( yValue, yValueDataPtr, yValueDataSize );
 		sMemDisconnect( &stream );
+
+		/* The y value is the recovered value from the key data */
+		yValuePtr = yValue;
+		yValueLength = yValueDataSize;
 		}
 	else
 		{
@@ -1240,7 +1264,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		yValueLength = bitsToBytes( dsaKey->yLen );
 		}
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1287,13 +1311,14 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		return( cryptStatus );
 		}
 
-	/* Send the keying info to the context and set up the key ID info */
+	/* Send the keying information to the context and set up the key ID 
+	   information */
 	cryptStatus = dsaSetKeyInfo( pkcs11Info, contextInfoPtr->objectHandle, 
 								 hDsaKey, CK_OBJECT_NONE,
 								 dsaKey->p, bitsToBytes( dsaKey->pLen ), 
 								 dsaKey->q, bitsToBytes( dsaKey->qLen ),
 								 dsaKey->g, bitsToBytes( dsaKey->gLen ),
-								 yValue, yValueLength, FALSE );
+								 yValuePtr, yValueLength, FALSE );
 	if( cryptStatusError( cryptStatus ) )
 		C_DestroyObject( pkcs11Info->hSession, hDsaKey );
 	else
@@ -1333,8 +1358,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	CK_RV status;
 	STREAM stream;
 	void *dataPtr = DUMMY_INIT_PTR;
-	long length;
-	int cryptStatus;
+	int length, cryptStatus;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( keysizeBits >= bytesToBits( MIN_PKCSIZE ) && \
@@ -1376,8 +1400,8 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Set up the public key info by extracting the flat values from the
-	   SubjectPublicKeyInfo.  Note that the data used is represented in
+	/* Set up the public key information by extracting the flat values from 
+	   the SubjectPublicKeyInfo.  Note that the data used is represented in
 	   DER-canonical form, there may be PKCS #11 implementations that
 	   can't handle this (for example they may require q to be zero-padded
 	   to make it exactly 20 bytes rather than (say) 19 bytes if the high
@@ -1412,7 +1436,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	publicKeyTemplate[ 5 ].ulValueLen = length;
 	sMemDisconnect( &stream );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1431,10 +1455,10 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		return( cryptStatus );
 		}
 
-	/* Read back the generated y value, send the public key info to the 
-	   context, and set up the key ID info.  The odd two-phase y value read 
-	   is necessary for buggy implementations that fail if the given size 
-	   isn't exactly the same as the data size */
+	/* Read back the generated y value, send the public key information to 
+	   the context, and set up the key ID information.  The odd two-phase y 
+	   value read is necessary for buggy implementations that fail if the 
+	   given size isn't exactly the same as the data size */
 	status = C_GetAttributeValue( pkcs11Info->hSession, hPublicKey,
 								  &yValueTemplate, 1 );
 	if( status == CKR_OK )
@@ -1484,7 +1508,7 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	assert( dlpParams->outParam != NULL && \
 			dlpParams->outLen >= ( 2 + 20 ) * 2 );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1508,11 +1532,13 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		BN_free( r );
 		return( CRYPT_ERROR_MEMORY );
 		}
-	cryptStatus = extractBignum( r, signature, 20, 
-								 bitsToBytes( 160 - 32 ), 20, NULL, FALSE );
+	cryptStatus = importBignum( r, signature, 20, 
+							    bitsToBytes( 160 - 32 ), 20, NULL, 
+								SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( cryptStatus ) )
-		cryptStatus = extractBignum( r, signature + 20, 20,
-									 bitsToBytes( 160 - 32 ), 20, NULL, FALSE );
+		cryptStatus = importBignum( r, signature + 20, 20,
+								    bitsToBytes( 160 - 32 ), 20, NULL, 
+									SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( cryptStatus ) )
 		{
 		cryptStatus = \
@@ -1568,7 +1594,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 	retIntError();
 
 #if 0
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	cryptStatus = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 										&iCryptDevice, &pkcs11Info );
 	if( cryptStatusError( cryptStatus ) )
@@ -1586,7 +1612,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 *																			*
 ****************************************************************************/
 
-/* PKC mechanism info */
+/* PKC mechanism information */
 
 static const PKCS11_MECHANISM_INFO mechanismInfoPKC[] = {
 	/* The handling of the RSA mechanism is a bit odd.  Almost everyone 

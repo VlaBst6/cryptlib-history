@@ -103,6 +103,8 @@ int calculatePrivkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
 										sizeofObject( \
 											sizeofObject( privKeySize ) + \
 											extraDataSize ) );
+	ENSURES( *newPrivKeyDataSize > 0 && \
+			 *newPrivKeyDataSize < MAX_INTLENGTH );
 
 	/* If the new data will fit into the existing storage, we're done */
 	if( *newPrivKeyDataSize <= pkcs15infoPtr->privKeyDataSize )
@@ -274,7 +276,8 @@ static int writeWrappedSessionKey( INOUT STREAM *stream,
 		{
 		MESSAGE_DATA msgData;
 
-		setMessageData( &msgData, ( void * ) password, passwordLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) password, 
+						passwordLength );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 								  &msgData, CRYPT_CTXINFO_KEYING_VALUE );
 		}
@@ -400,6 +403,7 @@ static int writeWrappedPrivateKey( OUT_BUFFER( wrappedKeyMaxLength, \
 	/* We appear to have plaintext data still present in the buffer, clear 
 	   it and warn the user */
 	zeroise( wrappedKey, wrappedKeyMaxLength );
+	DEBUG_DIAG(( "Private key data wasn't encrypted" ));
 	assert( DEBUG_WARN );
 	return( CRYPT_ERROR_FAILED );
 	}
@@ -410,9 +414,117 @@ static int writeWrappedPrivateKey( OUT_BUFFER( wrappedKeyMaxLength, \
 *																			*
 ****************************************************************************/
 
+/* Add private-key metadata to a PKCS #15 storage object using a simplified 
+   version if the code in the standard pkcs15AddPrivateKey() to store just 
+   the attributes and the external storage reference.  Unfortunately this 
+   leads to some code duplication but there isn't any easy way to break the
+   two down into common sub-functions because of the large amount of state
+   that has to be carried across the resulting function calls, which makes
+   the result more complex than simply having two different overall 
+   functions */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int addPrivateKeyMetadata( INOUT PKCS15_INFO *pkcs15infoPtr, 
+								  IN_HANDLE const CRYPT_HANDLE iCryptContext,
+								  IN_BUFFER( privKeyAttributeSize ) \
+										const void *privKeyAttributes, 
+								  IN_LENGTH_SHORT const int privKeyAttributeSize,
+								  IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
+								  IN_LENGTH_PKC const int modulusSize,
+								  IN_TAG const int keyTypeTag )
+	{
+	STREAM stream;
+	MESSAGE_DATA msgData;
+	BYTE storageID[ KEYID_SIZE + 8 ];
+	void *newPrivKeyData = pkcs15infoPtr->privKeyData;
+	const int privKeySize = sizeofObject( KEYID_SIZE );
+	int newPrivKeyDataSize, newPrivKeyOffset = DUMMY_INIT;
+	int extraDataSize = 0;
+	int status;
+
+	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
+	assert( isReadPtr( privKeyAttributes, privKeyAttributeSize ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( privKeyAttributeSize > 0 && \
+			  privKeyAttributeSize < MAX_INTLENGTH_SHORT );
+	REQUIRES( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
+			  pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( modulusSize >= MIN_PKCSIZE && \
+			  modulusSize <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( keyTypeTag == DEFAULT_TAG || \
+			  ( keyTypeTag >= 0 && keyTypeTag < MAX_TAG_VALUE ) );
+
+	/* Get the storage ID used to link the metadata to the actual keying 
+	   data held in external hardware */
+	setMessageData( &msgData, storageID, KEYID_SIZE );
+	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_IATTRIBUTE_DEVICESTORAGEID );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Calculate the private-key storage size */
+	if( pkcCryptAlgo == CRYPT_ALGO_RSA )
+		{
+		/* RSA keys have an extra element for PKCS #11 compatibility */
+		extraDataSize = sizeofShortInteger( modulusSize );
+		}
+	status = calculatePrivkeyStorage( pkcs15infoPtr, &newPrivKeyData,
+									  &newPrivKeyDataSize, 
+									  sizeofObject( privKeySize ),
+									  privKeyAttributeSize, 
+									  extraDataSize );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	sMemOpen( &stream, newPrivKeyData, newPrivKeyDataSize );
+
+	/* Write the outer header, attributes, and storage reference */
+	writeConstructed( &stream, privKeyAttributeSize + \
+							   sizeofObject( \
+									sizeofObject( \
+										sizeofObject( privKeySize ) + \
+										extraDataSize ) ),
+					  keyTypeTag );
+	swrite( &stream, privKeyAttributes, privKeyAttributeSize );
+	writeConstructed( &stream, 
+					  sizeofObject( \
+							sizeofObject( privKeySize + extraDataSize ) ), 
+					  CTAG_OB_TYPEATTR );
+	status = writeSequence( &stream, 
+							sizeofObject( privKeySize + extraDataSize ) );
+	if( cryptStatusOK( status ) )
+		newPrivKeyOffset = stell( &stream );
+	if( cryptStatusOK( status ) )
+		{
+		writeSequence( &stream, privKeySize );
+		writeOctetString( &stream, storageID, KEYID_SIZE, DEFAULT_TAG );
+		if( cryptStatusOK( status ) && pkcCryptAlgo == CRYPT_ALGO_RSA )
+			{
+			/* RSA keys have an extra element for PKCS #11 compability that 
+			   we need to kludge onto the end of the private-key data */
+			status = writeShortInteger( &stream, modulusSize, DEFAULT_TAG );
+			}
+		}
+	if( cryptStatusError( status ) )
+		{
+		sMemClose( &stream );
+		return( status );
+		}
+	assert( newPrivKeyDataSize == stell( &stream ) );
+	sMemDisconnect( &stream );
+	ENSURES( !cryptStatusError( checkObjectEncoding( newPrivKeyData, \
+													 newPrivKeyDataSize ) ) );
+
+	/* Replace the old data with the newly-written data */
+	replacePrivkeyData( pkcs15infoPtr, newPrivKeyData, 
+						newPrivKeyDataSize, newPrivKeyOffset );
+	return( CRYPT_OK );
+	}
+
 /* Add a private key to a PKCS #15 collection */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 10 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 11 ) ) \
 int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 						 IN_HANDLE const CRYPT_HANDLE iCryptContext,
 						 IN_HANDLE const CRYPT_HANDLE iCryptOwner,
@@ -423,6 +535,7 @@ int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 						 IN_LENGTH_SHORT const int privKeyAttributeSize,
 						 IN_ALGO const CRYPT_ALGO_TYPE pkcCryptAlgo, 
 						 IN_LENGTH_PKC const int modulusSize, 
+						 const BOOLEAN isStorageObject, 
 						 INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_CONTEXT iSessionKeyContext;
@@ -435,26 +548,53 @@ int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	int envelopeHeaderSize, envelopeContentSize, keyTypeTag, status;
 
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
-	assert( isReadPtr( password, passwordLength ) );
+	assert( ( isStorageObject && password == NULL && passwordLength == 0 ) || \
+			( !isStorageObject && isReadPtr( password, passwordLength ) ) );
 	assert( isReadPtr( privKeyAttributes, privKeyAttributeSize ) );
 
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
 	REQUIRES( iCryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( iCryptOwner ) );
-	REQUIRES( passwordLength >= MIN_NAME_LENGTH && \
-			  passwordLength < MAX_ATTRIBUTE_SIZE );
+	REQUIRES( ( isStorageObject && password == NULL && \
+				passwordLength == 0 ) || \
+			  ( !isStorageObject && \
+				passwordLength >= MIN_NAME_LENGTH && \
+				passwordLength < MAX_ATTRIBUTE_SIZE ) );
 	REQUIRES( privKeyAttributeSize > 0 && \
 			  privKeyAttributeSize < MAX_INTLENGTH_SHORT );
 	REQUIRES( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
 			  pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
-	REQUIRES( modulusSize >= MIN_PKCSIZE && \
-			  modulusSize <= CRYPT_MAX_PKCSIZE );
+	REQUIRES( ( isEccAlgo( pkcCryptAlgo ) && \
+				modulusSize >= MIN_PKCSIZE_ECC && \
+				modulusSize <= CRYPT_MAX_PKCSIZE_ECC ) || \
+			  ( !isEccAlgo( pkcCryptAlgo ) && \
+				modulusSize >= MIN_PKCSIZE && \
+				modulusSize <= CRYPT_MAX_PKCSIZE ) );
 	REQUIRES( errorInfo != NULL );
 
 	/* Get the tag for encoding the key data */
 	status = getKeyTypeTag( CRYPT_UNUSED, pkcCryptAlgo, &keyTypeTag );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* If this is a dummy object (in other words object metadata) being 
+	   stored in a PKCS #15 object store then there's nothing present except
+	   key attributes and a reference to the key held in external hardware,
+	   in which case we use a simplified version if the code that follows */
+	if( isStorageObject )
+		{
+		status = addPrivateKeyMetadata( pkcs15infoPtr, iCryptContext, 
+										privKeyAttributes, privKeyAttributeSize,
+										pkcCryptAlgo, modulusSize, keyTypeTag );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status, 
+					( status, errorInfo, 
+					  "Couldn't write private key metadata" ) );
+			}
+
+		return( CRYPT_OK );
+		}
 
 	/* Create a session key context and generate a key and IV into it.  The 
 	   IV would be generated automatically later on when we encrypt data for 

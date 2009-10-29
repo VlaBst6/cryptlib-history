@@ -165,8 +165,8 @@ static BOOLEAN sanityCheck( const MEMPOOL_INFO *state )
 	return( TRUE );
 	}
 
-STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void initMemPool( OUT void *statePtr, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initMemPool( OUT void *statePtr, 
 				  IN_BUFFER( memPoolSize ) void *memPool, 
 				  IN_LENGTH_SHORT_MIN( 64 ) const int memPoolSize )
 	{
@@ -175,12 +175,20 @@ void initMemPool( OUT void *statePtr,
 	assert( isWritePtr( state, sizeof( MEMPOOL_INFO ) ) );
 	assert( isWritePtr( memPool, memPoolSize ) );
 
-	REQUIRES_V( sizeof( MEMPOOL_STATE ) >= sizeof( MEMPOOL_INFO ) );
-	REQUIRES_V( memPoolSize >= 64 && memPoolSize < MAX_INTLENGTH_SHORT );
+#if defined( __WIN32__ ) && defined( _MSC_VER )
+	#pragma warning( disable: 4127 )	/* Needed for sizeof() in check */
+#endif /* VC++ */
+	REQUIRES( sizeof( MEMPOOL_STATE ) >= sizeof( MEMPOOL_INFO ) );
+	REQUIRES( memPoolSize >= 64 && memPoolSize < MAX_INTLENGTH_SHORT );
+#if defined( __WIN32__ ) && defined( _MSC_VER )
+	#pragma warning( 4: 4127 )
+#endif /* VC++ */
 
 	memset( state, 0, sizeof( MEMPOOL_INFO ) );
 	state->storage = memPool;
 	state->storageSize = memPoolSize;
+
+	return( CRYPT_OK );
 	}
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
@@ -315,13 +323,13 @@ void *clAllocFn( const char *fileName, const char *fnName,
 		}
 #endif /* __WIN32__ || __UNIX__ */
 
-	length = printf( "ALLOC: %s:%s:%d", fileName, fnName, lineNo );
+	length = DEBUG_PRINT( "ALLOC: %s:%s:%d", fileName, fnName, lineNo );
 	while( length < 46 )
 		{
 		putchar( ' ' );
 		length++;
 		}
-	printf( " %4d - %d bytes.\n", clAllocIndex, size );
+	DEBUG_PRINT( " %4d - %d bytes.\n", clAllocIndex, size );
 #ifdef CONFIG_MALLOCTEST
 	/* If we've exceeded the allocation count, make the next attempt to 
 	   allocate memory fail */
@@ -346,7 +354,7 @@ void clFreeFn( const char *fileName, const char *fnName,
 	{
 	char buffer[ 512 + 8 ];
 	BYTE *memPtr = ( BYTE * ) memblock - sizeof( LONG );
-	int index;
+	int index, length;
 
 	assert( fileName != NULL );
 	assert( fnName != NULL );
@@ -366,13 +374,76 @@ void clFreeFn( const char *fileName, const char *fnName,
 
 	index = mgetLong( memPtr );
 	memPtr -= sizeof( LONG );		/* mgetLong() changes memPtr */
-	length = printf( "FREE : %s:%s:%d", fileName, fnName, lineNo );
+	length = DEBUG_PRINT( "FREE : %s:%s:%d", fileName, fnName, lineNo );
 	while( length < 46 )
 		{
 		putchar( ' ' );
 		length++;
 		}
-	printf( " %4d.\n", index );
+	DEBUG_PRINT( " %4d.\n", index );
 	free( memPtr );
 	}
 #endif /* CONFIG_DEBUG_MALLOC */
+
+/* Fault-testing malloc() that fails after a given number of allocations */
+
+#ifdef CONFIG_FAULT_MALLOC
+
+static int currentAllocCount = 0, failAllocCount = 8;
+static BOOLEAN allocFailed = FALSE;
+
+void clFaultSet( const int number )
+	{
+	currentAllocCount = 0;
+	failAllocCount = number;
+	allocFailed = FALSE;
+	}
+
+void *clFaultAllocFn( const char *fileName, const char *fnName, 
+					  const int lineNo, size_t size )
+	{
+	/* If we've failed an allocation we probably shouldn't get here again,
+	   however if we're running a multithreaded init then the second thread 
+	   could try and allocate memory after the first one has failed */
+	if( allocFailed )
+		{
+#ifdef __WIN32__
+		DEBUG_PRINT( "\n<<< Further allocation call from thread %X after "
+					 "previous call failed, called from %s line %d in "
+					 "%s.>>>\n", GetCurrentThreadId(), fnName, lineNo, 
+					 fileName );
+#else
+		DEBUG_PRINT( "\n<<< Further allocation call after previous call "
+					 "failed, called from %s line %d in %s.>>>\n", fnName, 
+					 lineNo, fileName );
+#endif /* __WIN32__  */
+		if( failAllocCount < 15 )
+			{
+			DEBUG_PRINT( "<<<  (This could be because of a multithreaded "
+						 "init).>>>\n" );
+			DEBUG_PRINT( "\n" );
+			}
+		return( NULL );
+		}
+
+	/* If we haven't reached the failure allocation count, return normally */
+	if( currentAllocCount < failAllocCount )
+		{
+		currentAllocCount++;
+		return( malloc( size ) );
+		}
+
+	/* We've reached the failure count, fail the allocation */
+#ifdef __WIN32__
+	DEBUG_PRINT( "\n<<< Failing allocation call #%d for thread %X, called "
+				 "from %s line %d in %s.>>>\n\n", failAllocCount + 1, 
+				 GetCurrentThreadId(), fnName, lineNo, fileName );
+#else
+	DEBUG_PRINT( "\n<<< Failing at allocation call #%d, called from %s line "
+				 "%d in %s.>>>\n\n", failAllocCount + 1, fnName, lineNo, 
+				 fileName );
+#endif /* __WIN32__  */
+	allocFailed = TRUE;
+	return( NULL );
+	}
+#endif /* CONFIG_FAULT_MALLOC */

@@ -3,7 +3,7 @@
 # Copyright (C) 2007 Alvaro Livraghi
 
 #####
-#       G E N P E R L . P L   Version 0.1 (last changes 2007-06-0)
+#       G E N P E R L . P L   Version 0.2 (last changes 2008-07-03)
 #       --------------------------------------------------------------------
 #       Based upon GenVB.pl by Wolfgang Gothier
 #
@@ -40,7 +40,7 @@ use File::Basename;
 my $inFileName  = shift @ARGV || 'cryptlib.h';	# default filename is "cryptlib.h"
 my %DEFINED = ( 1, 1,                     		# ifdef 1 is to be included
                 "USE_VENDOR_ALGOS", 0 );		# set to 1 to include #IFDEF USE_VENDOR_ALGOS
-my $Startline = qr{^#define C_INOUT};			# ignore all lines before this one
+my $Startline = qr{^#endif\s+\/\*\s+_CRYPTLIB_DEFINED\s+\*\/};	# ignore all lines before this one
 
 my ($inFileBase, $inPath, $inExt) = fileparse($inFileName, qr{\.[^.]*$});
 die("\"usage: $0 cryptlib.h\"\nParameter must be a C header file\nStop") unless ($inExt =~ m/^\.h$/i) && -r $inFileName;
@@ -74,6 +74,10 @@ my $LEVEL = 0;
 my $COMMENT = 0;
 # handle conditionals, include conditional code only if definition agrees with %DEFINED
 while (<INFILE>) { 
+    # remove preprocessor symbols
+    s/C_CHECK_RETVAL//;
+    s/C_NONNULL_ARG\s*\(\s*\([ \t0-9,]+\s*\)\s*\)//;
+
 
 		# remove tabs
 		1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;

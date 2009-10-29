@@ -46,7 +46,8 @@ enum { CTAG_KT_SKI };
 		params SEQUENCE {
 			salt					OCTET STRING,
 			iterationCount			INTEGER (1..MAX),
-			}
+			},
+		prf							AlgorithmIdentifier DEFAULT hmacWithSHA1
 		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -81,7 +82,18 @@ static int readKeyDerivationInfo( INOUT STREAM *stream,
 	queryInfo->keySetupIterations = ( int ) value;
 	queryInfo->keySetupAlgo = CRYPT_ALGO_HMAC_SHA;
 	if( stell( stream ) < endPos )
-		return( sseek( stream, endPos ) );
+		{
+		CRYPT_ALGO_TYPE prfAlgo;
+
+		if( sPeek( stream ) != BER_SEQUENCE )
+			return( sseek( stream, endPos ) );
+		
+		/* There's a non-default hash algorithm ID present, read it */
+		status = readAlgoID( stream, &prfAlgo, ALGOID_CLASS_HASH );
+		if( cryptStatusError( status ) )
+			return( status );
+		queryInfo->keySetupAlgo = prfAlgo;
+		}
 
 	return( CRYPT_OK );
 	}
@@ -92,7 +104,8 @@ static int writeKeyDerivationInfo( INOUT STREAM *stream,
 	{
 	MESSAGE_DATA msgData;
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];
-	int saltLength, keySetupIterations, derivationInfoSize, status;
+	int saltLength, keySetupIterations, prfAlgo = DUMMY_INIT;
+	int derivationInfoSize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
@@ -102,6 +115,9 @@ static int writeKeyDerivationInfo( INOUT STREAM *stream,
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
 							  &keySetupIterations,
 							  CRYPT_CTXINFO_KEYING_ITERATIONS );
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE,
+								  &prfAlgo, CRYPT_CTXINFO_KEYING_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
 	setMessageData( &msgData, salt, CRYPT_MAX_HASHSIZE );
@@ -112,6 +128,8 @@ static int writeKeyDerivationInfo( INOUT STREAM *stream,
 	saltLength = msgData.length;
 	derivationInfoSize = ( int ) sizeofObject( saltLength ) + \
 						 sizeofShortInteger( keySetupIterations );
+	if( prfAlgo != CRYPT_ALGO_HMAC_SHA1 )
+		derivationInfoSize += sizeofAlgoID( prfAlgo );
 
 	/* Write the PBKDF2 information */
 	writeConstructed( stream, sizeofOID( OID_PBKDF2 ) +
@@ -120,6 +138,8 @@ static int writeKeyDerivationInfo( INOUT STREAM *stream,
 	writeSequence( stream, derivationInfoSize );
 	writeOctetString( stream, salt, saltLength, DEFAULT_TAG );
 	status = writeShortInteger( stream, keySetupIterations, DEFAULT_TAG );
+	if( prfAlgo != CRYPT_ALGO_HMAC_SHA1 )
+		status = writeAlgoID( stream, prfAlgo );
 	zeroise( salt, CRYPT_MAX_HASHSIZE );
 	return( status );
 	}
@@ -228,6 +248,8 @@ static int readCryptlibKek( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* If it's a CMS KEK, read it as such */
 	if( peekTag( stream ) == CTAG_RI_KEKRI )
 		return( readCmsKek( stream, queryInfo ) );
@@ -249,7 +271,8 @@ static int readCryptlibKek( INOUT STREAM *stream,
 		}
 	readSequence( stream, NULL );
 	readFixedOID( stream, OID_PWRIKEK, sizeofOID( OID_PWRIKEK ) );
-	status = readContextAlgoID( stream, NULL, queryInfo, DEFAULT_TAG );
+	status = readContextAlgoID( stream, NULL, queryInfo, DEFAULT_TAG,
+								ALGOID_CLASS_CRYPT );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -539,6 +562,8 @@ static int readCmsKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the header and version number */
 	readSequence( stream, NULL );
 	status = readShortInteger( stream, &value );
@@ -556,7 +581,7 @@ static int readCmsKeytrans( INOUT STREAM *stream,
 	queryInfo->iAndSStart = stell( stream ) - startPos;
 	queryInfo->iAndSLength = length;
 	sSkip( stream, length );
-	status = readAlgoID( stream, &queryInfo->cryptAlgo );
+	status = readAlgoID( stream, &queryInfo->cryptAlgo, ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -626,6 +651,8 @@ static int readCryptlibKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Read the header and version number */
 	readSequence( stream, NULL );
 	status = readShortInteger( stream, &value );
@@ -637,7 +664,8 @@ static int readCryptlibKeytrans( INOUT STREAM *stream,
 	/* Read the key ID and PKC algorithm information */
 	readOctetStringTag( stream, queryInfo->keyID, &queryInfo->keyIDlength,
 						8, CRYPT_MAX_HASHSIZE, CTAG_KT_SKI );
-	status = readAlgoID( stream, &queryInfo->cryptAlgo );
+	status = readAlgoID( stream, &queryInfo->cryptAlgo, 
+						 ALGOID_CLASS_PKC );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -716,6 +744,8 @@ static int readPgpKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Make sure that the packet header is in order and check the packet
 	   version.  For this packet type a version number of 3 denotes OpenPGP
 	   whereas for signatures it denotes PGP 2.x, so we translate the value
@@ -765,6 +795,7 @@ static int readPgpKeytrans( INOUT STREAM *stream,
 		const int dataStartPos = stell( stream );
 		int dummy;
 
+		REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_INTLENGTH );
 		REQUIRES( queryInfo->cryptAlgo == CRYPT_ALGO_ELGAMAL );
 
 		/* Read the Elgamal-encrypted key, recording the position and

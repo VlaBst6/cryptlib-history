@@ -113,13 +113,13 @@ void md4_block_data_order (MD4_CTX *c, const void *p,int num);
 #define HASH_UPDATE		MD4_Update
 #define HASH_TRANSFORM		MD4_Transform
 #define HASH_FINAL		MD4_Final
-#define	HASH_MAKE_STRING(c,s)	do {	\
+#define	HASH_MAKE_STRING(c,s)	{	\
 	unsigned long ll;		\
 	ll=(c)->A; HOST_l2c(ll,(s));	\
 	ll=(c)->B; HOST_l2c(ll,(s));	\
 	ll=(c)->C; HOST_l2c(ll,(s));	\
 	ll=(c)->D; HOST_l2c(ll,(s));	\
-	} while (0)
+	}	/* Removed dummy while(0) - pcg */
 #define HASH_BLOCK_HOST_ORDER	md4_block_host_order
 #if !defined(L_ENDIAN) || defined(md4_block_data_order)
 #define	HASH_BLOCK_DATA_ORDER	md4_block_data_order

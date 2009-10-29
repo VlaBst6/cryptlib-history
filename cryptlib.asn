@@ -64,7 +64,7 @@ AuthenticatedData ::= SEQUENCE {			-- PKCS #9 16 1 2
 		}
 	authAttrs		[1]	SET OF Attribute OPTIONAL,
 	mac					OCTET STRING
-	unauthAttrs		[2]	SET OF Attribute OPTIONAL 
+	unauthAttrs		[2]	SET OF Attribute OPTIONAL
 	}
 
 -/ Encrypted data: Raw encrypted, enveloped /-
@@ -101,7 +101,7 @@ EnvelopedData ::= SEQUENCE {				-- PKCS #7 3
 		},
 	authAttrs		[1]	SET OF Attribute OPTIONAL,
 	mac					OCTET STRING
-	unauthAttrs		[2]	SET OF Attribute OPTIONAL 
+	unauthAttrs		[2]	SET OF Attribute OPTIONAL
 	}
 
 ------------------------------------------------------------------------------
@@ -271,7 +271,7 @@ SignerInfo ::= SEQUENCE {					-- CMS - cryptlib
 			...
 			},
 		SEQUENCE {											-- ClassAttr
-			...									
+			...
 			appOID		OBJECT IDENTIFIER (cryptlib),
 			...
 			},
@@ -401,7 +401,26 @@ PKCS15PrivateKey ::= CHOICE {
 		keyAttr			PKCS15CommonKeyAttributes,
 		privKeyAttr		PKCS15CommonPrivateKeyAttributes,
 		keyData		[1]	{ SEQUENCE { [2] IMPLICIT { Enveloped key data } } }
-		} /-
+		}
+
+   Note that when the PKCS #15 keyset is being used as structured storage
+   for a crypto hardware device then the direct-protected option
+   '[2] EnvelopedData' is replaced by an indirect 'Path' reference, where:
+
+	Path ::= SEQUENCE {
+		path			OCTET STRING
+		}
+
+   So the above would become:
+
+	SEQUENCE {
+		keyAttr			PKCS15CommonKeyAttributes,
+		privKeyAttr		PKCS15CommonPrivateKeyAttributes,
+		keyData		[1]	{ SEQUENCE { SEQUENCE { OCTET STRING } } }
+		}
+
+   with the key components stored in the crypto hardware, referenced by the
+   value in the OCTET STRING /-
 
 -/ Public key information (DLP = DSA/DH/KEA/etc) /-
 
@@ -586,7 +605,7 @@ OCSPRequest ::= SEQUENCE {
 		} OPTIONAL
 	}
 
-OCSPResponse ::= {
+OCSPResponse ::= SEQUENCE {
 	respStatus			ENUMERATED,			-- 0 = OK
 	respBytes		[0]	EXPLICIT SEQUENCE {
 		respType		OBJECT IDENTIFIER,	-- id-pkix-ocsp-basic
@@ -613,30 +632,6 @@ OCSPResponse ::= {
 		}
 	}
 
-OCSPCryptlibResponse ::= {
-	respStatus			ENUMERATED,			-- 0 = OK
-	respBytes		[0]	EXPLICIT SEQUENCE {
-		respType		OBJECT IDENTIFIER,	-- cryptlibOcspBasic
-		resp			OCTET STRING {
-						SEQUENCE {			-- rtcsResponse
-						SEQUENCE {			-- tbsRespData
-			responses	SEQUENCE {
-						SEQUENCE {			-- singleResponse
-				certHash
-						OCTET STRING SIZE(20),
-				status	BOOLEAN
-						}
-					},
-			respExts	Extensions OPTIONAL
-				}
-		sigAlgo			AlgorithmIdentifier OPTIONAL,
-		signature		BIT STRING OPTIONAL,
-		certs		[0]	SEQUENCE OF Certificate OPTIONAL
-				}
-			}
-		}
-	}
-
 CertID ::= CHOICE {
 	certID				SEQUENCE {
 		hashAlgo		AlgorithmIdentifier,
@@ -644,10 +639,34 @@ CertID ::= CHOICE {
 		iKeyHash		OCTET STRING,		-- Hash of issuer SPKI w/o tag+len
 		serialNo		INTEGER
 						},
-	issuerAndSerial	[0]	IssuerAndSerialNumber,
-	certificate		[1]	Certificate,
-	certHash		[2] OCTET STRING
+	issuerAndSerial	[0]	IssuerAndSerialNumber,	-- OCSPv2 only
+	certificate		[1]	Certificate,		-- OCSPv2 only
+	certHash		[2] OCTET STRING		-- OCSPv2 only
 	}
+
+-/ RTCS /-
+
+RTCSRequest ::= SEQUENCE {
+						SEQUENCE {			-- requests
+						SEQUENCE {			-- requestTypeInfo
+				certHash
+						OCTET STRING SIZE(20),
+				}
+			attributes	Attributes OPTIONAL,
+			}
+		}
+
+RTCSResponse ::= SEQUENCE {
+						SEQUENCE {			-- responseBasic/Extended
+				certHash
+						OCTET STRING SIZE(20),
+				status	BOOLEAN				-- For basic response
+				status	ENUMERATED,			-- For ext.response
+						[...],				-- For ext.response
+				attributes
+					[0]	Attributes OPTIONAL	-- For ext.response
+				}
+			}
 
 -/ Timestamping /-
 

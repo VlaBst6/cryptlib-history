@@ -60,6 +60,7 @@ static BOOLEAN sanityCheck( const STREAM *stream )
 				return( FALSE );
 			break;
 
+#ifdef USE_TCP
 		case STREAM_TYPE_NETWORK:
 			{
 			NET_STREAM_INFO *netStream = \
@@ -69,6 +70,7 @@ static BOOLEAN sanityCheck( const STREAM *stream )
 				return( FALSE );
 			break;
 			}
+#endif /* USE_TCP */
 
 		default:
 			return( FALSE );
@@ -91,6 +93,7 @@ static BOOLEAN sanityCheck( const STREAM *stream )
 		return( TRUE );
 		}
 
+#ifdef USE_TCP
 	/* Network streams may be buffered, but if they're not then the internal
 	   buffer indicators aren't used */
 	if( stream->type == STREAM_TYPE_NETWORK )
@@ -125,6 +128,7 @@ static BOOLEAN sanityCheck( const STREAM *stream )
 
 		return( TRUE );
 		}
+#endif /* USE_TCP */
 
 	/* Everything else requires a buffer, however file streams have to be 
 	   explicitly connected to a buffer after creation so if it's a 
@@ -340,7 +344,7 @@ static int expandVirtualFileStream( INOUT STREAM *stream,
 
 /* Read data from a stream */
 
-RETVAL_RANGE( MAX_ERROR, 0xFF ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_RANGE( MAX_ERROR, 0xFF ) STDC_NONNULL_ARG( ( 1 ) ) \
 int sgetc( INOUT STREAM *stream )
 	{
 	int ch;
@@ -349,7 +353,7 @@ int sgetc( INOUT STREAM *stream )
 	assert( isReadPtr( stream->buffer, stream->bufSize ) );
 	
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -366,7 +370,7 @@ int sgetc( INOUT STREAM *stream )
 			/* Read the data from the stream buffer */
 			if( stream->bufPos >= stream->bufEnd )
 				return( sSetError( stream, CRYPT_ERROR_UNDERFLOW ) );
-			ch = stream->buffer[ stream->bufPos++ ];
+			ch = byteToInt( stream->buffer[ stream->bufPos++ ] );
 			break;
 
 		case STREAM_TYPE_FILE:
@@ -380,7 +384,7 @@ int sgetc( INOUT STREAM *stream )
 				if( cryptStatusError( status ) )
 					return( ( status == OK_SPECIAL ) ? 0 : status );
 				}
-			ch = stream->buffer[ stream->bufPos++ ];
+			ch = byteToInt( stream->buffer[ stream->bufPos++ ] );
 			break;
 
 		default:
@@ -392,7 +396,7 @@ int sgetc( INOUT STREAM *stream )
 	return( ch );
 	}
 
-RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sread( INOUT STREAM *stream, 
 		   OUT_BUFFER_FIXED( length ) void *buffer, 
 		   IN_LENGTH const int length )
@@ -405,7 +409,7 @@ int sread( INOUT STREAM *stream,
 	assert( isWritePtr( buffer, length ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 	if( !isWritePtr( buffer, length ) )
 		retIntError_Stream( stream );
@@ -444,6 +448,8 @@ int sread( INOUT STREAM *stream,
 				memset( buffer, 0, min( 16, length ) );	/* Clear output buffer */
 				return( sSetError( stream, CRYPT_ERROR_UNDERFLOW ) );
 				}
+			ENSURES_S( rangeCheckZ( stream->bufPos, localLength, 
+									stream->bufEnd ) );
 			memcpy( buffer, stream->buffer + stream->bufPos, localLength );
 			stream->bufPos += localLength;
 
@@ -483,6 +489,8 @@ int sread( INOUT STREAM *stream,
 				/* Copy as much data as we can out of the stream buffer */
 				bytesToCopy = min( dataLength, \
 								   stream->bufEnd - stream->bufPos );
+				ENSURES_S( rangeCheckZ( stream->bufPos, bytesToCopy, 
+										stream->bufEnd ) );
 				memcpy( bufPtr, stream->buffer + stream->bufPos, 
 						bytesToCopy );
 				stream->bufPos += bytesToCopy;
@@ -559,8 +567,10 @@ int sread( INOUT STREAM *stream,
 				   information from that */
 				if( netStream->protocol == STREAM_PROTOCOL_HTTP )
 					{
+#ifdef USE_ERRMSGS
 					const HTTP_DATA_INFO *httpDataInfo = \
 									( HTTP_DATA_INFO * ) buffer;
+#endif /* USE_ERRMSGS */
 
 					retExt( CRYPT_ERROR_TIMEOUT, 
 							( CRYPT_ERROR_TIMEOUT, NETSTREAM_ERRINFO, 
@@ -611,7 +621,7 @@ int sputc( INOUT STREAM *stream, IN_BYTE const int ch )
 			isWritePtr( stream->buffer, stream->bufSize ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -652,7 +662,7 @@ int sputc( INOUT STREAM *stream, IN_BYTE const int ch )
 #endif /* VIRTUAL_FILE_STREAM */
 					return( sSetError( stream, CRYPT_ERROR_OVERFLOW ) );
 				}
-			stream->buffer[ stream->bufPos++ ] = ch;
+			stream->buffer[ stream->bufPos++ ] = intToByte( ch );
 			if( stream->bufEnd < stream->bufPos )
 				stream->bufEnd = stream->bufPos;
 #ifdef VIRTUAL_FILE_STREAM 
@@ -677,7 +687,7 @@ int sputc( INOUT STREAM *stream, IN_BYTE const int ch )
 				if( cryptStatusError( status ) )
 					return( status );
 				}
-			stream->buffer[ stream->bufPos++ ] = ch;
+			stream->buffer[ stream->bufPos++ ] = intToByte( ch );
 			stream->flags |= STREAM_FLAG_DIRTY;
 			break;
 
@@ -704,7 +714,7 @@ int swrite( INOUT STREAM *stream,
 	assert( isReadPtr( buffer, length ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 	if( !isReadPtr( buffer, length ) )
 		retIntError_Stream( stream );
@@ -747,6 +757,8 @@ int swrite( INOUT STREAM *stream,
 #endif /* VIRTUAL_FILE_STREAM */
 					return( sSetError( stream, CRYPT_ERROR_OVERFLOW ) );
 				}
+			ENSURES_S( rangeCheckZ( stream->bufPos, length, 
+									stream->bufSize ) );
 			memcpy( stream->buffer + stream->bufPos, buffer, length );
 			stream->bufPos += length;
 			if( stream->bufEnd < stream->bufPos )
@@ -779,6 +791,8 @@ int swrite( INOUT STREAM *stream,
 
 				if( bytesToCopy > 0 )
 					{
+					ENSURES_S( rangeCheckZ( stream->bufPos, bytesToCopy, 
+											stream->bufSize ) );
 					memcpy( stream->buffer + stream->bufPos, bufPtr, 
 							bytesToCopy );
 					stream->bufPos += bytesToCopy;
@@ -834,8 +848,10 @@ int swrite( INOUT STREAM *stream,
 				   information from that */
 				if( netStream->protocol == STREAM_PROTOCOL_HTTP )
 					{
+#ifdef USE_ERRMSGS
 					const HTTP_DATA_INFO *httpDataInfo = \
 									( HTTP_DATA_INFO * ) buffer;
+#endif /* USE_ERRMSGS */
 
 					retExt( CRYPT_ERROR_TIMEOUT, 
 							( CRYPT_ERROR_TIMEOUT, NETSTREAM_ERRINFO, 
@@ -872,7 +888,7 @@ int sflush( STREAM *stream )
 	assert( isReadPtr( stream->buffer, stream->bufSize ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	if( !isReadPtr( stream->buffer, stream->bufSize ) )
@@ -927,7 +943,7 @@ int sSetError( INOUT STREAM *stream, IN_ERROR const int status )
 	REQUIRES_S( cryptStatusError( status ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	/* If there's already an error status set don't try and override it */
@@ -945,7 +961,7 @@ void sClearError( STREAM *stream )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError_Void();
 
 	stream->status = CRYPT_OK;
@@ -959,7 +975,7 @@ BOOLEAN sIsNullStream( const STREAM *stream )
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isReadPtr( stream, sizeof( STREAM ) ) )
+	if( !isReadPtrConst( stream, sizeof( STREAM ) ) )
 		retIntError_Boolean();
 
 	return( ( stream->type == STREAM_TYPE_NULL ) ? TRUE : FALSE );
@@ -974,7 +990,7 @@ int sseek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -1064,7 +1080,7 @@ int stell( const STREAM *stream )
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isReadPtr( stream, sizeof( STREAM ) ) )
+	if( !isReadPtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	/* We can't use REQUIRE_S( sanityCheck() ) in this case because the 
@@ -1079,6 +1095,7 @@ int stell( const STREAM *stream )
 	/* If there's a problem with the stream don't try to do anything */
 	if( cryptStatusError( stream->status ) )
 		{
+		DEBUG_DIAG(( "Stream is in invalid state" ));
 		assert( DEBUG_WARN );
 		return( 0 );
 		}
@@ -1105,7 +1122,7 @@ int sSkip( INOUT STREAM *stream, IN_LENGTH const long offset )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -1130,7 +1147,7 @@ int sPeek( INOUT STREAM *stream )
 	assert( isReadPtr( stream->buffer, stream->bufSize ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -1184,13 +1201,13 @@ int sioctl( INOUT STREAM *stream, \
 	{
 #ifdef USE_TCP
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
-#endif /* USE_TCP */
 	int status;
+#endif /* USE_TCP */
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( stream, sizeof( STREAM ) ) )
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
 	REQUIRES_S( sanityCheck( stream ) );
@@ -1278,8 +1295,10 @@ int sioctl( INOUT STREAM *stream, \
 			if( stream->type != STREAM_TYPE_NETWORK )
 				return( CRYPT_OK );
 
+#ifdef USE_TCP
 			/* Copy the error information to the stream */
 			copyErrorInfo( NETSTREAM_ERRINFO, data );
+#endif /* USE_TCP */
 
 			return( CRYPT_OK );
 #ifdef USE_TCP
@@ -1476,9 +1495,9 @@ int sFileToMemStream( INOUT STREAM *memStream, INOUT STREAM *fileStream,
 	assert( isWritePtr( bufPtrPtr, sizeof( void * ) ) );
 
 	/* Check that the input parameters are in order */
-	if( !isWritePtr( memStream, sizeof( STREAM ) ) || \
-		!isWritePtr( fileStream, sizeof( STREAM ) ) || \
-		!isWritePtr( bufPtrPtr, sizeof( void * ) ) )
+	if( !isWritePtrConst( memStream, sizeof( STREAM ) ) || \
+		!isWritePtrConst( fileStream, sizeof( STREAM ) ) || \
+		!isWritePtrConst( bufPtrPtr, sizeof( void * ) ) )
 		retIntError_Stream( memStream );
 
 	/* We have to use REQUIRES() here rather than REQUIRES_S() since it's 

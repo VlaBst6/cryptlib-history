@@ -101,9 +101,10 @@ typedef enum {
 		test */
 
 CHECK_RETVAL \
-static int checkAccessValid( const int objectHandle,
-							 const ACCESS_CHECK_TYPE checkType,
-							 const int errorCode )
+static int checkAccessValid( IN_HANDLE const int objectHandle,
+							 IN_ENUM( ACCESS_CHECK ) \
+									const ACCESS_CHECK_TYPE checkType,
+							 IN_ERROR const int errorCode )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable, *objectInfoPtr;
 
@@ -152,7 +153,8 @@ static int checkAccessValid( const int objectHandle,
 				{
 				if( !isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_FORTEZZA ) && \
 					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_PKCS11 ) && \
-					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_CRYPTOAPI ) )
+					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_CRYPTOAPI ) && \
+					!isValidSubtype( objectInfoPtr->subType, SUBTYPE_DEV_HARDWARE ) )
 					return( errorCode );
 				}
 			else
@@ -197,9 +199,13 @@ static int checkAccessValid( const int objectHandle,
 
 /* Get a pointer to an object's data from its handle */
 
-int getObject( const int objectHandle, const OBJECT_TYPE type,
-			   const ACCESS_CHECK_TYPE checkType, void **objectPtr, 
-			   const int refCount, const int errorCode )
+CHECK_RETVAL \
+static int getObject( IN_HANDLE const int objectHandle, 
+					  IN_ENUM( OBJECT ) const OBJECT_TYPE type,
+					  IN_ENUM( ACCESS_CHECK ) const ACCESS_CHECK_TYPE checkType, 
+					  OUT_OPT_PTR void **objectPtr, 
+					  IN_INT_Z const int refCount, 
+					  IN_ERROR const int errorCode )
 	{
 	OBJECT_INFO *objectTable, *objectInfoPtr;
 	int status;
@@ -299,11 +305,12 @@ int getObject( const int objectHandle, const OBJECT_TYPE type,
 /* Release an object that we previously acquired directly.  We don't require 
    that the return value of this function be checked by the caller since the 
    only time that we can get an error is if it's a 'can't-occur' internal 
-   error and it's not obvious what they should do in that case */
+   error and it's not obvious what they should do in that case (omnia iam 
+   fient fieri quae posse negabam) */
 
-static int releaseObject( const int objectHandle,
-						  const ACCESS_CHECK_TYPE checkType,
-						  OUT_OPT int *refCount )
+static int releaseObject( IN_HANDLE const int objectHandle,
+						  IN_ENUM( ACCESS_CHECK ) const ACCESS_CHECK_TYPE checkType,
+						  OUT_OPT_INT_Z int *refCount )
 	{
 	OBJECT_INFO *objectTable, *objectInfoPtr;
 	int status;
@@ -393,7 +400,8 @@ static int releaseObject( const int objectHandle,
 *																			*
 ****************************************************************************/
 
-int initObjectAltAccess( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initObjectAltAccess( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
@@ -416,14 +424,17 @@ void endObjectAltAccess( void )
 
 /* Acquire/release an object */
 
-int krnlAcquireObject( const int objectHandle, const OBJECT_TYPE type,
-					   void **objectPtr, const int errorCode )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int krnlAcquireObject( IN_HANDLE const int objectHandle, 
+					   IN_ENUM( OBJECT ) const OBJECT_TYPE type,
+					   OUT_PTR void **objectPtr, 
+					   IN_ERROR const int errorCode )
 	{
 	return( getObject( objectHandle, type, ACCESS_CHECK_EXTACCESS, 
 					   objectPtr, CRYPT_UNUSED, errorCode ) );
 	}
 
-int krnlReleaseObject( const int objectHandle )
+int krnlReleaseObject( IN_HANDLE const int objectHandle )
 	{
 	return( releaseObject( objectHandle, ACCESS_CHECK_EXTACCESS, NULL ) );
 	}
@@ -431,12 +442,16 @@ int krnlReleaseObject( const int objectHandle )
 /* Temporarily suspend use of an object to allow other threads access, and
    resume object use afterwards */
 
-int krnlSuspendObject( const int objectHandle, int *refCount )
+STDC_NONNULL_ARG( ( 2 ) ) \
+int krnlSuspendObject( IN_HANDLE const int objectHandle, 
+					   OUT_INT_Z int *refCount )
 	{
 	return( releaseObject( objectHandle, ACCESS_CHECK_SUSPEND, refCount ) );
 	}
 
-int krnlResumeObject( const int objectHandle, const int refCount )
+CHECK_RETVAL \
+int krnlResumeObject( IN_HANDLE const int objectHandle, 
+					  IN_INT_Z const int refCount )
 	{
 	return( getObject( objectHandle, 
 					   ( objectHandle == SYSTEM_OBJECT_HANDLE ) ? \
@@ -526,6 +541,7 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 		case CONTEXT_CONV:
 			if( contextInfoPtr->ctxConv->userKeyLength > keyDataLen )
 				{
+				DEBUG_DIAG(( "Key data is too long to export" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
 				}
@@ -539,6 +555,7 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 		case CONTEXT_MAC:
 			if( contextInfoPtr->ctxMAC->userKeyLength > keyDataLen )
 				{
+				DEBUG_DIAG(( "Key data is too long to export" ));
 				assert( DEBUG_WARN );
 				status = CRYPT_ERROR_OVERFLOW;
 				}
@@ -650,9 +667,13 @@ int importPrivateKeyData( INOUT STREAM *stream,
 		else
 			{
 			/* If the problem was indicated as a function argument error, 
-			   map it to a more appropriate code */
+			   map it to a more appropriate code.  The most appropriate code 
+			   at this point is CRYPT_ERROR_INVALID since a bad-data error 
+			   will be returned as an explicit CRYPT_ERROR_BADDATA while a 
+			   parameter error indicates that one or more of the key 
+			   components failed a validity check */
 			if( cryptArgError( status ) )
-				status = CRYPT_ERROR_BADDATA;
+				status = CRYPT_ERROR_INVALID;
 			}
 		}
 	releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );

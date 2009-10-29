@@ -203,7 +203,7 @@ static int getNonce( INOUT SYSTEMDEV_INFO *systemInfo,
 	/* Shuffle the public state and copy it to the output buffer until it's
 	   full */
 	for( nonceLength = dataLength, iterationCount = 0; 
-		 nonceLength > 0 && iterationCount < FAILSAFE_ITERATIONS_MED;
+		 nonceLength > 0 && iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
 		const int bytesToCopy = min( nonceLength, systemInfo->hashSize );
@@ -220,7 +220,7 @@ static int getNonce( INOUT SYSTEMDEV_INFO *systemInfo,
 		noncePtr += bytesToCopy;
 		nonceLength -= bytesToCopy;
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	return( CRYPT_OK );
 	}
@@ -260,6 +260,13 @@ static int algorithmSelfTest( INOUT \
 			deleteSingleListElement( capabilityInfoListPtrPtr, 
 									 capabilityInfoListPrevPtr, 
 									 capabilityInfoListPtr );
+
+			/* Since the algorithm self-test is one of the first things that 
+			   gets called when cryptlib is built on a new system we make it 
+			   easy for developers by printing a diagnostic in the debug 
+			   build */
+			DEBUG_PRINT(( "Algorithm %s failed self-test.\n", 
+						  capabilityInfoPtr->algoName ));
 			}
 		else
 			{
@@ -416,7 +423,7 @@ static int initFunction( INOUT DEVICE_INFO *deviceInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Set up the randomness info */
+	/* Set up the randomness information */
 	status = initRandomInfo( &deviceInfo->randomInfo );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -548,6 +555,7 @@ static int getRandomFunction( INOUT DEVICE_INFO *deviceInfo,
 			/* We couldn't re-lock the system object, let the caller know.
 			   Since this is a shouldn't-occur condition we also warn the 
 			   user in the debug version */
+			DEBUG_DIAG(( "Failed to re-lock system object" ));
 			assert( DEBUG_WARN );
 			if( messageExtInfo != NULL )
 				setMessageObjectUnlocked( messageExtInfo );
@@ -713,6 +721,7 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #endif /* USE_RSA */
 #ifdef USE_ECC
 	getECDSACapability,
+	getECDHCapability,
 #endif /* USE_ECC */
 
 	/* Vendors may want to use their own algorithms, which aren't part of the
@@ -729,7 +738,7 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 
 static CAPABILITY_INFO_LIST FAR_BSS capabilityInfoList[ MAX_NO_CAPABILITIES ];
 
-/* Initialise the capability info */
+/* Initialise the capability information */
 
 CHECK_RETVAL \
 static int initCapabilities( void )

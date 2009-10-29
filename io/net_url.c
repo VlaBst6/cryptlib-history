@@ -84,6 +84,7 @@ static int checkSchema( IN_BUFFER( schemaLen ) const void *schema,
 		{ "sftp://", 7, URL_TYPE_SSH },
 		{ "cmp://", 6, URL_TYPE_CMP },
 		{ "tsp://", 6, URL_TYPE_TSP },
+		{ "ldap://", 7, URL_TYPE_LDAP },
 		{ NULL, 0, URL_TYPE_NONE }, { NULL, 0, URL_TYPE_NONE }
 		};
 	URL_TYPE type;
@@ -153,6 +154,11 @@ static int checkSchema( IN_BUFFER( schemaLen ) const void *schema,
 				return( CRYPT_ERROR_BADDATA );
 			break;
 
+		case URL_TYPE_LDAP:
+			if( type != URL_TYPE_LDAP )
+				return( CRYPT_ERROR_BADDATA );
+			break;
+
 		default:
 			retIntError();
 		}
@@ -198,7 +204,7 @@ int parseURL( INOUT URL_INFO *urlInfo,
 	/* Make sure that the input contains valid characters */
 	for( offset = 0; offset < urlLen; offset++ )
 		{
-		const int ch = url[ offset ];
+		const int ch = byteToInt( url[ offset ] );
 
 		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
 			return( CRYPT_ERROR_BADDATA );

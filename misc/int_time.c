@@ -36,6 +36,7 @@ time_t getTime( void )
 
 	if( ( theTime == ( time_t ) -1 ) || ( theTime <= MIN_TIME_VALUE ) )
 		{
+		DEBUG_DIAG(( "No time source available" ));
 		assert( DEBUG_WARN );
 		return( 0 );
 		}
@@ -48,6 +49,7 @@ time_t getApproxTime( void )
 
 	if( ( theTime == ( time_t ) -1 ) || ( theTime <= MIN_TIME_VALUE ) )
 		{
+		DEBUG_DIAG(( "No time source available" ));
 		assert( DEBUG_WARN );
 		return( CURRENT_TIME_VALUE );
 		}
@@ -85,6 +87,7 @@ time_t getReliableTime( IN_HANDLE const CRYPT_HANDLE cryptHandle )
 	if( cryptStatusError( status ) || \
 		( theTime == ( time_t ) -1 ) || ( theTime <= MIN_TIME_VALUE ) )
 		{
+		DEBUG_DIAG(( "Error: No time source available" ));
 		assert( DEBUG_WARN );
 		return( 0 );
 		}
@@ -151,6 +154,7 @@ static void handleTimeOutOfBounds( INOUT MONOTIMER_INFO *timerInfo )
 	{
 	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
 
+	DEBUG_DIAG(( "time_t underflow/overflow has occurred" ));
 	assert( DEBUG_WARN );
 
 	/* We've run into an overflow condition in the calculations that we've
@@ -179,7 +183,8 @@ static BOOLEAN correctMonoTimer( INOUT MONOTIMER_INFO *timerInfo,
 		}
 
 	/* If the clock has been rolled back to before the start time, we need 
-	   to correct this */
+	   to correct this.  The range check for endTime vs. timeRemaining has
+	   already been done as part of the sanity check */
 	if( currentTime < timerInfo->endTime - timerInfo->timeRemaining )
 		needsCorrection = TRUE;
 	else
@@ -213,6 +218,13 @@ static BOOLEAN correctMonoTimer( INOUT MONOTIMER_INFO *timerInfo,
 
 	/* The time information has been changed, correct the recorded time
 	   information for the new time */
+	if( currentTime >= ( MAX_INTLENGTH - timerInfo->timeRemaining ) )
+		{
+		DEBUG_DIAG(( "Invalid monoTimer time correction period" ));
+		assert( DEBUG_WARN );
+		handleTimeOutOfBounds( timerInfo );
+		return( FALSE );
+		}
 	timerInfo->endTime = currentTime + timerInfo->timeRemaining;
 	if( timerInfo->endTime < currentTime || \
 		timerInfo->endTime < currentTime + max( timerInfo->timeRemaining,
@@ -239,6 +251,13 @@ int setMonoTimer( INOUT MONOTIMER_INFO *timerInfo,
 	REQUIRES( duration >= 0 && duration < MAX_INTLENGTH );
 
 	memset( timerInfo, 0, sizeof( MONOTIMER_INFO ) );
+	if( currentTime >= ( MAX_INTLENGTH - duration ) )
+		{
+		DEBUG_DIAG(( "Invalid monoTimer time period" ));
+		assert( DEBUG_WARN );
+		handleTimeOutOfBounds( timerInfo );
+		return( CRYPT_OK );
+		}
 	timerInfo->endTime = currentTime + duration;
 	timerInfo->timeRemaining = timerInfo->origTimeout = duration;
 	initOK = correctMonoTimer( timerInfo, currentTime );
@@ -263,6 +282,15 @@ void extendMonoTimer( INOUT MONOTIMER_INFO *timerInfo,
 
 	/* Extend the monotonic timer's timeout interval to allow for further
 	   data to be processed */
+	if( timerInfo->origTimeout >= ( MAX_INTLENGTH - duration ) || \
+		timerInfo->endTime >= ( MAX_INTLENGTH - duration ) || \
+		timerInfo->endTime < currentTime )
+		{
+		DEBUG_DIAG(( "Invalid monoTimer time period extension" ));
+		assert( DEBUG_WARN );
+		handleTimeOutOfBounds( timerInfo );
+		return;
+		}
 	timerInfo->origTimeout += duration;
 	timerInfo->endTime += duration;
 	timerInfo->timeRemaining = timerInfo->endTime - currentTime;
@@ -276,11 +304,11 @@ BOOLEAN checkMonoTimerExpiryImminent( INOUT MONOTIMER_INFO *timerInfo,
 									  IN_INT const int timeLeft )
 	{
 	const time_t currentTime = getApproxTime();
-	int timeRemaining;
+	time_t timeRemaining;
 
 	assert( isWritePtr( timerInfo, sizeof( MONOTIMER_INFO ) ) );
 
-	REQUIRES( timeLeft >= 0 && timeLeft < MAX_INTLENGTH );
+	REQUIRES_B( timeLeft >= 0 && timeLeft < MAX_INTLENGTH );
 
 	/* If the timeout has expired, don't try doing anything else */
 	if( timerInfo->timeRemaining <= 0 )
@@ -291,6 +319,13 @@ BOOLEAN checkMonoTimerExpiryImminent( INOUT MONOTIMER_INFO *timerInfo,
 		return( TRUE );
 
 	/* Check whether the time will expire within timeLeft seconds */
+	if( timerInfo->endTime < currentTime )
+		{
+		DEBUG_DIAG(( "Invalid monoTimer expiry time period" ));
+		assert( DEBUG_WARN );
+		handleTimeOutOfBounds( timerInfo );
+		return( TRUE );
+		}
 	timeRemaining = timerInfo->endTime - currentTime;
 	if( timeRemaining > timerInfo->timeRemaining )
 		{

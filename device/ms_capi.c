@@ -97,7 +97,7 @@
   #define CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY	0x80000000
   #define CRYPT_ACQUIRE_CACHE_FLAG					0x00000001
 
-  /* Certificate chain match info */
+  /* Certificate chain match information */
   typedef struct {
 	DWORD dwType;
 	CERT_ENHKEY_USAGE Usage;
@@ -111,7 +111,7 @@
 	DWORD dwRevocationFreshnessTime;
 	} CERT_CHAIN_PARA, *PCERT_CHAIN_PARA;
 
-  /* Certificate chain info */
+  /* Certificate chain information */
   typedef struct {
 	DWORD dwErrorStatus;
 	DWORD dwInfoStatus;
@@ -284,7 +284,7 @@ int deviceInitCryptoAPI( void )
 	/* Obtain handles to the modules containing the CryptoAPI functions */
 	if( ( hAdvAPI32 = GetModuleHandle( "AdvAPI32.DLL" ) ) == NULL )
 		return( CRYPT_ERROR );
-	if( ( hCryptoAPI = LoadLibrary( "Crypt32.dll" ) ) == NULL_HINSTANCE )
+	if( ( hCryptoAPI = DynamicLoad( "Crypt32.dll" ) ) == NULL_HINSTANCE )
 		return( CRYPT_ERROR );
 
 	/* Get pointers to the crypt functions */
@@ -350,7 +350,7 @@ int deviceInitCryptoAPI( void )
 		pCryptSetKeyParam == NULL || pCryptSignHash == NULL )
 		{
 		/* Free the library reference and reset the handle */
-		FreeLibrary( hCryptoAPI );
+		DynamicUnload( hCryptoAPI );
 		hCryptoAPI = NULL_HINSTANCE;
 		return( CRYPT_ERROR );
 		}
@@ -361,7 +361,7 @@ int deviceInitCryptoAPI( void )
 void deviceEndCryptoAPI( void )
 	{
 	if( hCryptoAPI != NULL_HINSTANCE )
-		FreeLibrary( hCryptoAPI );
+		DynamicUnload( hCryptoAPI );
 	hCryptoAPI = NULL_HINSTANCE;
 	}
 
@@ -391,7 +391,7 @@ static int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Get the PKCS #11 info from the device info */
+	/* Get the CryptoAPI information from the device information */
 	cryptStatus = krnlAcquireObject( iLocalDevice, OBJECT_TYPE_DEVICE, 
 									 ( void ** ) &deviceInfo, 
 									 CRYPT_ERROR_SIGNALLED );
@@ -409,7 +409,9 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	{
 	ERROR_INFO *errorInfo = &cryptoapiInfo->errorInfo;
 	const DWORD errorCode = GetLastError();
+#ifdef USE_ERRMSGS
 	int messageLength;
+#endif /* USE_ERRMSGS */
 
 	/* Get the error code and corresponding error message.  FormatMessage()
 	   adds EOL terminators so we have to strip those before we pass the
@@ -421,6 +423,7 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	   way to tell in advance which arguments are required), so this is
 	   more trouble than it's worth */
 	errorInfo->errorCode = ( int ) errorCode;
+#ifdef USE_ERRMSGS
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM, NULL, errorCode, 0,
 				   errorInfo->errorString, MAX_ERRMSG_SIZE - 1, NULL );
 	for( messageLength = strlen( errorInfo->errorString );
@@ -429,6 +432,7 @@ static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 			  errorInfo->errorString[ messageLength - 1 ] == '\r' );
 		 messageLength-- );
 	errorInfo->errorStringLength = messageLength;
+#endif /* USE_ERRMSGS */
 
 	/* Translate the CAPI error code into the cryptlib equivalent */
 	switch( errorCode )
@@ -495,12 +499,7 @@ static int mapDeviceError( CONTEXT_INFO *contextInfoPtr, const int defaultError 
 
 /* Map cryptlib to/from CryptoAPI algorithm IDs */
 
-typedef struct {
-	const CRYPT_ALGO_TYPE cryptAlgo;
-	const ALG_ID algID;
-	} ALGO_MAP_INFO;
-	
-static const ALGO_MAP_INFO algoMap[] = {
+static const MAP_TABLE algoMapTbl[] = {
 	/* PKC algorithms */
 	{ CRYPT_ALGO_RSA, CALG_RSA_SIGN },
 	{ CRYPT_ALGO_RSA, CALG_RSA_KEYX },
@@ -523,36 +522,30 @@ static const ALGO_MAP_INFO algoMap[] = {
 
 static ALG_ID cryptlibToCapiID( const CRYPT_ALGO_TYPE cryptAlgo )
 	{
-	int i;
+	int value, status;
 
-	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
-				i < FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ); i++ )
-		{
-		if( algoMap[ i ].cryptAlgo == cryptAlgo )
-			break;
-		}
-	if( i >= FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ) )
-		retIntError_Ext( 0 );
-	if( algoMap[ i ].cryptAlgo == CRYPT_ALGO_NONE )
-		return( 0 );
-	return( algoMap[ i ].algID );
+	status = mapValue( cryptAlgo, &value, algoMapTbl,
+					   FAILSAFE_ARRAYSIZE( algoMapTbl, MAP_TABLE ) );
+	ENSURES_EXT( cryptStatusOK( status ), CALG_NONE );
+	
+	return( value );
 	}
 
 static CRYPT_ALGO_TYPE capiToCryptlibID( const ALG_ID algID )
 	{
 	int i;
 
-	for( i = 0; algoMap[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
-				i < FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ); i++ )
+	for( i = 0; algoMapTbl[ i ].source != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( algoMapTbl, MAP_TABLE ); i++ )
 		{
-		if( algoMap[ i ].algID == algID )
+		if( ( ALG_ID ) algoMapTbl[ i ].destination == algID )
 			break;
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( algoMap, ALGO_MAP_INFO ) )
+	if( i >= FAILSAFE_ARRAYSIZE( algoMapTbl, MAP_TABLE ) )
 		retIntError_Ext( CRYPT_ALGO_NONE );
-	if( algoMap[ i ].cryptAlgo == CRYPT_ALGO_NONE )
+	if( algoMapTbl[ i ].source == CRYPT_ALGO_NONE )
 		return( CRYPT_ALGO_NONE );
-	return( algoMap[ i ].cryptAlgo );
+	return( algoMapTbl[ i ].source );
 	}
 
 /* Copy an MPI into the little-endian order required by CryptoAPI, returning
@@ -589,8 +582,9 @@ static int createExportKey( const HCRYPTPROV hProv, HCRYPTKEY *hPrivateKey,
 	BLOBHEADER *blobHeaderPtr;
 	RSAPUBKEY *pubKeyPtr;
 	BYTE keyBlob[ 1024 + 8 ], *keyBlobPtr;
+	DWORD keyBlobLen = 1024;
 	BOOL result;
-	int bitLen16, keyBlobLen = 1024;
+	int bitLen16;
 
 	/* Generate a private key and export it as a private key blob:
 
@@ -727,7 +721,8 @@ static int getPubkeyComponents( CRYPTOAPI_INFO *cryptoapiInfo,
 	RSAPUBKEY *pubKeyPtr;
 	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE + 8 ], *nPtr;
 	BYTE buffer[ 16 + 8 ], *bufPtr = buffer;
-	int keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE, exponent, length;
+	DWORD keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE;
+	int exponent, length;
 
 	/* Clear return values */
 	memset( n, 0, 8 );
@@ -812,6 +807,7 @@ static int capiToCryptlibContext( CRYPTOAPI_INFO *cryptoapiInfo,
 	cryptDestroyComponents( &rsaKey );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Failed to load CryptoAPI public key data" ));
 		assert( DEBUG_WARN );
 		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
 		return( status );
@@ -1018,7 +1014,7 @@ static int getCertificateFromKey( CRYPTOAPI_INFO *cryptoapiInfo,
 	PCCERT_CONTEXT pCertContext;
 	CERT_PUBLIC_KEY_INFO pubKeyInfo;
 	BYTE keyBlob[ 1024 + CRYPT_MAX_PKCSIZE + 8 ];
-	int keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE;
+	DWORD keyBlobLen = 1024 + CRYPT_MAX_PKCSIZE;
 
 	/* Clear return value */
 	*pCertContextPtr = NULL;
@@ -1093,7 +1089,7 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 	*cryptAlgo = CRYPT_ALGO_NONE;
 
 	/* Get the algorithm type and look up the corresponding capability 
-	   info */
+	   information */
 	if( !pCryptGetKeyParam( hKey, KP_ALGID, ( BYTE * ) &algID, &dwDataLen, 
 							0 ) || \
 		( *cryptAlgo = capiToCryptlibID( algID ) ) == CRYPT_ALGO_NONE )
@@ -1104,30 +1100,29 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Create a dummy context for the key, remember the device it's 
-	   contained in, the handle for the device-internal key, and the 
-	   object's label, and mark it as initialised (i.e. with a key loaded) */
+	   contained in, the object's label, and the handle for the device-
+	   internal key, and mark it as initialised (i.e. with a key loaded) */
 	status = createContextFromCapability( iCryptContext, 
 								deviceInfo->ownerHandle, capabilityInfoPtr, 
-								CREATEOBJECT_FLAG_DUMMY );
+								CREATEOBJECT_FLAG_DUMMY | \
+								CREATEOBJECT_FLAG_PERSISTENT );
 	if( cryptStatusError( status ) )
 		return( status );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETDEPENDENT,
 					 &deviceInfo->objectHandle, SETDEP_OPTION_INCREF );
 	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
-					 ( void * ) &hKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
-	setMessageData( &msgData, ( void * ) label, 
+					 ( MESSAGE_CAST ) &hKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+	setMessageData( &msgData, ( MESSAGE_CAST ) label, 
 					min( strlen( label ), CRYPT_MAX_TEXTSIZE ) );
-	krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
-					 &msgData, CRYPT_CTXINFO_LABEL );
 #if 0
 	if( cryptAlgo == CRYPT_ALGO_RSA )
-		/* Send the keying info to the context.  This is only possible for
-		   RSA keys since it's not possible to read y from a DSA private
-		   key object (see the comments in the DSA code for more on this), 
-		   however the only time this is necessary is when a certificate is 
-		   being generated for a key that was pre-generated in the device by 
-		   someone else, which is typically done in Europe where DSA isn't 
-		   used so this shouldn't be a problem */
+		/* Send the keying information to the context.  This is only 
+		   possible for RSA keys since it's not possible to read y from a 
+		   DSA private key object (see the comments in the DSA code for more 
+		   on this), however the only time this is necessary is when a 
+		   certificate is being generated for a key that was pre-generated 
+		   in the device by someone else, which is typically done in Europe 
+		   where DSA isn't used so this shouldn't be a problem */
 		// Use getPubkeyComponents()
 		cryptStatus = rsaSetPublicComponents( deviceInfo, *iCryptContext, 
 											  hObject );
@@ -1135,6 +1130,9 @@ static int createPrivkeyContext( DEVICE_INFO *deviceInfo,
 		cryptStatus = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE, 
 									   &keySize, CRYPT_IATTRIBUTE_KEYSIZE );
 #endif
+	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE_S,
+								  &msgData, CRYPT_CTXINFO_LABEL );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( *iCryptContext, IMESSAGE_SETATTRIBUTE,
 								   MESSAGE_VALUE_UNUSED, 
@@ -1160,8 +1158,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo );
 static void freeCapabilities( DEVICE_INFO *deviceInfo );
 
 /* Close a previously-opened session with the device.  We have to have this
-   before the init function since it may be called by it if the init process
-   fails */
+   before the initialisation function since it may be called by it if the 
+   initialisation process fails */
 
 static void shutdownFunction( DEVICE_INFO *deviceInfo )
 	{
@@ -1505,7 +1503,7 @@ BOOLEAN publicComponentsOnly = FALSE;
 
 	if( cryptStatusOK( status ) )
 		{
-		/* If we're getting a public key, the returned info is the 
+		/* If we're getting a public key, the returned information is the 
 		   certificate chain */
 		if( itemType == KEYMGMT_ITEM_PUBLICKEY )
 			*iCryptContext = iCryptCert;
@@ -1883,6 +1881,7 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			itemType == KEYMGMT_ITEM_PRIVATEKEY );
 	assert( keyIDtype == CRYPT_KEYID_NAME );
+	assert( keyIDlength > 0 && keyIDlength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Find the object to delete based on the label.  Since we can have 
 	   multiple related objects (e.g. a key and a certificate) with the same 
@@ -1990,7 +1989,8 @@ static int deleteItemFunction( DEVICE_INFO *deviceInfo,
    we can't really make the certificate chain fetch stateless without re-
    doing the read of the entire chain from the CryptoAPI certificate store 
    for each fetch.  To avoid this performance hit we cache the chain in the 
-   device info and pick out each certificate in turn during the findNext */
+   device information and pick out each certificate in turn during the 
+   findNext */
 
 static int getFirstItemFunction( DEVICE_INFO *deviceInfo, 
 								 CRYPT_CERTIFICATE *iCertificate,
@@ -2008,7 +2008,8 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
 	assert( keyIDtype == CRYPT_IKEYID_KEYID );
-	assert( keyIDlength > 4 && isReadPtr( keyID, keyIDlength ) );
+	assert( isReadPtr( keyID, keyIDlength ) );
+	assert( keyIDlength > 4 && keyIDlength < MAX_INTLENGTH_SHORT );
 	assert( isWritePtr( stateInfo, sizeof( int ) ) );
 	assert( itemType == KEYMGMT_ITEM_PUBLICKEY );
 
@@ -2024,6 +2025,7 @@ static int getFirstItemFunction( DEVICE_INFO *deviceInfo,
 							 &pCertContext );
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Failed to load CryptoAPI certificate data" ));
 		assert( DEBUG_WARN );
 		return( status );
 		}
@@ -2157,20 +2159,16 @@ static int rsaSetKeyInfo( CRYPTOAPI_INFO *cryptoapiInfo,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Send the public key data to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
-	   since the latter transitions the context into the high state.  We 
-	   don't want to do this because we're already in the middle of processing
-	   a message that does this on completion, all we're doing here is 
-	   sending in encoded public key data for use by objects such as 
-	   certificates */
+	/* Send the public key data to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
+	   into the high state.  We don't want to do this because we're already 
+	   in the middle of processing a message that does this on completion, 
+	   all we're doing here is sending in encoded public key data for use by 
+	   objects such as certificates */
 	status = writeFlatPublicKey( keyDataBuffer, CRYPT_MAX_PKCSIZE * 2,
 								 &keyDataSize, CRYPT_ALGO_RSA, 
 								 n, nLen, e, eLen, NULL, 0, NULL, 0 );
-	if( cryptStatusOK( status ) )
-		krnlSendMessage( contextInfoPtr->objectHandle, 
-						 IMESSAGE_SETATTRIBUTE, ( void * ) &nLen, 
-						 CRYPT_IATTRIBUTE_KEYSIZE );
 	if( cryptStatusOK( status ) )
 		{
 		setMessageData( &msgData, keyDataBuffer, keyDataSize );
@@ -2216,7 +2214,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	for( i = 0; i < bitsToBytes( rsaKey->eLen ); i++ )
 		exponent = ( exponent << 8 ) | rsaKey->e[ i ];
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2243,8 +2241,8 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			BYTE privateExponent[ rsapubkey.bitlen / 8 ]; */
 	memset( keyBlob, 0, CRYPT_MAX_PKCSIZE * 8 );
 	blobHeaderPtr = ( BLOBHEADER * ) keyBlob;
-	blobHeaderPtr->bType = ( rsaKey->isPublicKey ) ? \
-						   PUBLICKEYBLOB : PRIVATEKEYBLOB;
+	blobHeaderPtr->bType = intToByte( ( rsaKey->isPublicKey ) ? \
+									  PUBLICKEYBLOB : PRIVATEKEYBLOB );
 	blobHeaderPtr->bVersion = CUR_BLOB_VERSION;
 	blobHeaderPtr->aiKeyAlg = CALG_RSA_KEYX;
 
@@ -2279,12 +2277,19 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	result = pCryptImportKey( cryptoapiInfo->hProv, keyBlob, 
 							  keyBlobPtr - keyBlob, 0, 0, &hKey );
 	if( result )
-		contextInfoPtr->deviceObject = hKey;
+		{
+		/* Note that the following will break under Win64 since the hKey is
+		   a 64-bit pointer while the deviceObject is a 32-bit unsigned 
+		   value, this code is experimental and only enabled for Win32 debug 
+		   so this isn't a problem at the moment */
+		contextInfoPtr->deviceObject = ( long ) hKey;
+		}
 	else
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
 	zeroise( keyBlob, CRYPT_MAX_PKCSIZE * 8 );
 
-	/* Send the keying info to the context and set up the key ID info */
+	/* Send the keying information to the context and set up the key ID 
+	   information */
 	if( cryptStatusOK( status ) )
 		status = rsaSetKeyInfo( cryptoapiInfo, contextInfoPtr );
 
@@ -2300,7 +2305,7 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	BOOL result;
 	int status;
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2314,11 +2319,18 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 						   CRYPT_EXPORTABLE | ( keysizeBits << 16 ), 
 						   &hPrivateKey );
 	if( result )
-		contextInfoPtr->deviceObject = hPrivateKey;
+		{
+		/* Note that the following will break under Win64 since the hKey is
+		   a 64-bit pointer while the deviceObject is a 32-bit unsigned 
+		   value, this code is experimental and only enabled for Win32 debug 
+		   so this isn't a problem at the moment */
+		contextInfoPtr->deviceObject = ( long ) hPrivateKey;
+		}
 	else
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
 
-	/* Send the keying info to the context and set up the key ID info */
+	/* Send the keying information to the context and set up the key ID 
+	   information */
 	if( cryptStatusOK( status ) )
 		status = rsaSetKeyInfo( cryptoapiInfo, contextInfoPtr );
 
@@ -2336,8 +2348,9 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	BYTE tempBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE + 8 ], *bufPtr = buffer;
 	ALG_ID algID;
+	DWORD resultLength = length;
 	BOOL result;
-	int resultLength = length, i, status;
+	int i, status;
 
 	/* CryptoAPI adds its own PKCS #1 padding, so we have to reverse-engineer
 	   the encoding and padding that's already been added */
@@ -2356,7 +2369,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	if( algID == 0 )
 		return( CRYPT_ERROR_NOTAVAIL );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2419,7 +2432,8 @@ static int rsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
 	BYTE tempBuffer[ CRYPT_MAX_PKCSIZE + 8 ], *tempPtr, *bufPtr = buffer;
-	int resultLength, i;
+	DWORD resultLength;
+	int i;
 
 	/* CryptoAPI adds its own PKCS #1 padding, so we have to undo the 
 	   padding that's already been added */
@@ -2456,7 +2470,8 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
 	BYTE tempBuffer[ CRYPT_MAX_PKCSIZE + 8 ], *tempPtr, *bufPtr = buffer;
-	int resultLength = length, i;
+	DWORD resultLength = length;
+	int i;
 
 	/* Change the data into the little-endian order required by CryptoAPI, 
 	   decrypt it, and reverse the order again */
@@ -2499,13 +2514,13 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 	BYTE idBuffer[ KEYID_SIZE + 8 ];
 	int keyDataSize, cryptStatus;
 
-	/* Send the public key data to the context.  We send the keying info as
-	   CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than CRYPT_IATTRIBUTE_KEY_SPKI
-	   since the latter transitions the context into the high state.  We 
-	   don't want to do this because we're already in the middle of processing
-	   a message that does this on completion, all we're doing here is 
-	   sending in encoded public key data for use by objects such as 
-	   certificates */
+	/* Send the public key data to the context.  We send the keying 
+	   information as CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL rather than 
+	   CRYPT_IATTRIBUTE_KEY_SPKI since the latter transitions the context 
+	   into the high state.  We don't want to do this because we're already 
+	   in the middle of processing a message that does this on completion, 
+	   all we're doing here is sending in encoded public key data for use by 
+	   objects such as certificates */
 	cryptStatus = keyDataSize = writeFlatPublicKey( NULL, 0, CRYPT_ALGO_DSA, 
 													p, pLen, q, qLen, 
 													g, gLen, y, yLen );
@@ -2514,10 +2529,6 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 										  CRYPT_ALGO_DSA, p, pLen, q, qLen, 
 										  g, gLen, y, yLen );
 	if( !cryptStatusError( cryptStatus ) )
-		cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
-									   IMESSAGE_SETATTRIBUTE, 
-									   ( void * ) &pLen, CRYPT_IATTRIBUTE_KEYSIZE );
-	if( cryptStatusOK( cryptStatus ) )
 		{
 		setMessageData( &msgData, keyDataBuffer, keyDataSize );
 		cryptStatus = krnlSendMessage( contextInfoPtr->objectHandle, 
@@ -2529,7 +2540,8 @@ static int dsaSetKeyInfo( DEVICE_INFO *deviceInfo, CONTEXT_INFO *contextInfoPtr,
 
 	/* Remember what we've set up */
 	krnlSendMessage( contextInfoPtr->objectHandle, IMESSAGE_SETATTRIBUTE,
-					 ( void * ) &hPrivateKey, CRYPT_IATTRIBUTE_DEVICEOBJECT );
+					 ( MESSAGE_CAST ) &hPrivateKey, 
+					 CRYPT_IATTRIBUTE_DEVICEOBJECT );
 
 	/* Get the key ID from the context and use it as the object ID.  Since 
 	   some objects won't allow after-the-even ID updates, we don't treat a
@@ -2576,7 +2588,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	if( dlpKey->pLen > 1024 )
 		return( CRYPT_ERROR_BADDATA );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2599,8 +2611,8 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 			BYTE y[ 128 ]; */
 	memset( keyBlob, 0, CRYPT_MAX_PKCSIZE * 4 );
 	blobHeaderPtr = ( BLOBHEADER * ) keyBlob;
-	blobHeaderPtr->bType = ( dlpKey->isPublicKey ) ? \
-						   PUBLICKEYBLOB : PRIVATEKEYBLOB;
+	blobHeaderPtr->bType = intToByte( ( dlpKey->isPublicKey ) ? \
+									  PUBLICKEYBLOB : PRIVATEKEYBLOB );
 	blobHeaderPtr->bVersion = CUR_BLOB_VERSION;
 	blobHeaderPtr->aiKeyAlg = CALG_DSS_SIGN;
 
@@ -2628,7 +2640,13 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	result = pCryptImportKey( cryptoapiInfo->hProv, keyBlob, 
 							  keyBlobPtr - keyBlob, 0, 0, &hKey );
 	if( result )
-		contextInfoPtr->deviceObject = hKey;
+		{
+		/* Note that the following will break under Win64 since the hKey is
+		   a 64-bit pointer while the deviceObject is a 32-bit unsigned 
+		   value, this code is experimental and only enabled for Win32 debug 
+		   so this isn't a problem at the moment */
+		contextInfoPtr->deviceObject = ( long ) hKey;
+		}
 	else
 		status = mapDeviceError( contextInfoPtr, CRYPT_ERROR_FAILED );
 	zeroise( keyBlob, CRYPT_MAX_PKCSIZE * 4 );
@@ -2707,8 +2725,8 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	if( cryptStatusError( cryptStatus ) )
 		return( cryptStatus );
 
-	/* Set up the public key info by extracting the flat values from the
-	   SubjectPublicKeyInfo.  Note that the data used is represented in
+	/* Set up the public key information by extracting the flat values from 
+	   the SubjectPublicKeyInfo.  Note that the data used is represented in
 	   DER-canonical form, there may be PKCS #11 implementations that
 	   can't handle this (for example they may require q to be zero-padded
 	   to make it exactly 20 bytes rather than (say) 19 bytes if the high
@@ -2732,7 +2750,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 	assert( sStatusOK( &stream ) );
 	sMemDisconnect( &stream );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2751,10 +2769,10 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		return( cryptStatus );
 		}
 
-	/* Read back the generated y value, send the public key info to the 
-	   context, and set up the key ID info.  The odd two-phase y value read 
-	   is necessary for buggy implementations that fail if the given size 
-	   isn't exactly the same as the data size */
+	/* Read back the generated y value, send the public key information to 
+	   the context, and set up the key ID info.  The odd two-phase y value 
+	   read is necessary for buggy implementations that fail if the given 
+	   size isn't exactly the same as the data size */
 	status = C_GetAttributeValue( cryptoapiInfo->hProv, hPublicKey,
 								  &yValueTemplate, 1 );
 	if( status == CKR_OK )
@@ -2800,7 +2818,7 @@ static int dsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	assert( dlpParams->outParam != NULL && \
 			dlpParams->outLen >= ( 2 + 20 ) * 2 );
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2873,7 +2891,7 @@ static int dsaVerify( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	   always native contexts */
 	retIntError();
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2896,7 +2914,7 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	HCRYPTKEY hSessionKey;
 	int keySize = keyLength, status;
 
-	/* Get the info for the device associated with this context */
+	/* Get the information for the device associated with this context */
 	status = getContextDeviceInfo( contextInfoPtr->objectHandle, 
 								   &iCryptDevice, &cryptoapiInfo );
 	if( cryptStatusError( status ) )
@@ -2928,7 +2946,13 @@ static int cipherInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 							 contextInfoPtr->capabilityInfo->cryptAlgo, 
 							 key, keySize, contextInfoPtr );
 	if( cryptStatusOK( status ) )
-		contextInfoPtr->deviceObject = hSessionKey;
+		{
+		/* Note that the following will break under Win64 since the hKey is
+		   a 64-bit pointer while the deviceObject is a 32-bit unsigned 
+		   value, this code is experimental and only enabled for Win32 debug 
+		   so this isn't a problem at the moment */
+		contextInfoPtr->deviceObject = ( long ) hSessionKey;
+		}
 
 	krnlReleaseObject( iCryptDevice );
 	return( status );
@@ -3008,7 +3032,7 @@ static int initCryptParams( CONTEXT_INFO *contextInfoPtr )
 
 static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
-	int resultLength = length;
+	DWORD resultLength = length;
 
 	/* Finalise the encryption parameters if necessary.  We couldn't do this
 	   earlier because the device-level object isn't instantiated until the 
@@ -3034,7 +3058,7 @@ static int cipherEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length
 
 static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
-	int resultLength = length;
+	DWORD resultLength = length;
 
 	/* Finalise the encryption parameters if necessary.  We couldn't do this
 	   earlier because the device-level object isn't instantiated until the 
@@ -3058,7 +3082,7 @@ static int cipherDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length
 	return( CRYPT_OK );
 	}
 
-#if 0	/* Not used, see the comment in the capability info */
+#if 0	/* Not used, see the comment in the capability information */
 
 static int hashFunction( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	{
@@ -3199,7 +3223,8 @@ static const MECHANISM_INFO mechanismInfo[] = {
 		{ CALG_NONE, CALG_NONE, CRYPT_ALGO_NONE, CRYPT_MODE_NONE }
 	};
 
-/* Fill out a capability info based on CryptoAPI algorithm info */
+/* Fill out a capability information based on CryptoAPI algorithm 
+   information */
 
 static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 									   const PROV_ENUMALGS_EX *capiAlgoInfo,
@@ -3350,7 +3375,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 	CAPABILITY_INFO_LIST *capabilityInfoListTail = \
 				( CAPABILITY_INFO_LIST * ) deviceInfo->capabilityInfoList;
 	PROV_ENUMALGS_EX capiAlgoInfo;
-	int length = sizeof( PROV_ENUMALGS_EX ), iterationCount = 0;
+	DWORD length = sizeof( PROV_ENUMALGS_EX );
+	int iterationCount = 0;
 
 	assert( sizeof( CAPABILITY_INFO ) == sizeof( VARIABLE_CAPABILITY_INFO ) );
 

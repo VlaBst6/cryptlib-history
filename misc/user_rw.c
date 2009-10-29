@@ -48,7 +48,7 @@ static int readConfigOption( INOUT STREAM *stream,
 	status = readShortInteger( stream, &optionCode );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( optionCode < 0 || optionCode > LAST_STORED_OPTION )
+	if( optionCode < 0 || optionCode > LAST_OPTION_INDEX )
 		{
 		/* Unknown option, ignore it */
 		return( readUniversal( stream ) );
@@ -56,7 +56,7 @@ static int readConfigOption( INOUT STREAM *stream,
 	builtinOptionInfoPtr = getBuiltinOptionInfoByCode( optionCode );
 	if( builtinOptionInfoPtr == NULL || \
 		builtinOptionInfoPtr->index < 0 || \
-		builtinOptionInfoPtr->index > LAST_STORED_OPTION || \
+		builtinOptionInfoPtr->index > LAST_OPTION_INDEX || \
 		builtinOptionInfoPtr->index == CRYPT_UNUSED )
 		{
 		/* Unknown option, ignore it */
@@ -112,17 +112,20 @@ static int readConfigOption( INOUT STREAM *stream,
    check the isDirty flag because if a value is reset to its default setting 
    the encoded size will be zero even though the isDirty flag is set */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sizeofConfigData( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-						const OPTION_INFO *optionList, 
-					  OUT_LENGTH_Z int *length )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int sizeofConfigData( IN_ARRAY( configOptionsCount ) \
+								const OPTION_INFO *optionList, 
+							 IN_INT_SHORT const int configOptionsCount,
+							 OUT_LENGTH_Z int *length )
 	{
 	int dataLength = 0, i;
 
 	assert( isReadPtr( optionList, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 	assert( isWritePtr( length, sizeof( int ) ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
 	*length = 0;
@@ -130,8 +133,9 @@ int sizeofConfigData( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 	/* Check each option to see whether it needs to be written to disk.  If 
 	   it does, determine its length */
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
-			i < FAILSAFE_ITERATIONS_MED; i++ )
+		 optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
+			i < configOptionsCount; i++ )
 		{
 		const BUILTIN_OPTION_INFO *builtinOptionInfoPtr = \
 									optionList[ i ].builtinOptionInfo;
@@ -170,7 +174,7 @@ int sizeofConfigData( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 		ENSURES( lengthValue > 0 && lengthValue < MAX_INTLENGTH_SHORT );
 		dataLength += lengthValue;
 		}
-	ENSURES( i < FAILSAFE_ITERATIONS_MED );
+	ENSURES( i < configOptionsCount );
 	ENSURES( dataLength >= 0 && dataLength < MAX_INTLENGTH );
 
 	*length = dataLength;
@@ -180,21 +184,25 @@ int sizeofConfigData( IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
 /* Write the configuration data to a stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int writeConfigData( INOUT STREAM *stream, 
-					 IN_ARRAY( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) \
-						const OPTION_INFO *optionList )
+static int writeConfigData( INOUT STREAM *stream, 
+							IN_ARRAY( configOptionsCount ) \
+								const OPTION_INFO *optionList,
+							IN_INT_SHORT const int configOptionsCount )
 	{
 	int i, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( optionList, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	/* Write each option that needs to be written to the stream */
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
-			i < FAILSAFE_ITERATIONS_MED; i++ )
+		 optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
+			i < configOptionsCount; i++ )
 		{
 		const BUILTIN_OPTION_INFO *builtinOptionInfoPtr = \
 									optionList[ i ].builtinOptionInfo;
@@ -211,11 +219,11 @@ int writeConfigData( INOUT STREAM *stream,
 				continue;
 			writeSequence( stream,
 						   sizeofShortInteger( builtinOptionInfoPtr->index ) + \
-						   sizeofObject( strlen( optionInfoPtr->strValue ) ) );
+						   sizeofObject( optionInfoPtr->intValue ) );
 			writeShortInteger( stream, builtinOptionInfoPtr->index,
 							   DEFAULT_TAG );
 			status = writeCharacterString( stream, optionInfoPtr->strValue,
-										   strlen( optionInfoPtr->strValue ),
+										   optionInfoPtr->intValue,
 										   BER_STRING_UTF8 );
 			if( cryptStatusError( status ) )
 				return( status );
@@ -247,7 +255,7 @@ int writeConfigData( INOUT STREAM *stream,
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-	ENSURES( i < FAILSAFE_ITERATIONS_MED );
+	ENSURES( i < configOptionsCount );
 
 	return( CRYPT_OK );
 	}
@@ -389,8 +397,9 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
    object between the two phases to ensure that the second phase doesn't 
    stall all other operations that require it */
 
-CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 5 ) ) \
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3, 4, 5, 6 ) ) \
 int prepareConfigData( INOUT void *configOptions, 
+					   IN_INT_SHORT const int configOptionsCount, 	
 					   IN_STRING const char *fileName,
 					   INOUT void *trustInfoPtr, 
 					   OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 
@@ -406,12 +415,14 @@ int prepareConfigData( INOUT void *configOptions,
 	int length, status;
 
 	assert( isReadPtr( configOptions, 
-						sizeof( OPTION_INFO ) * \
-							( CRYPT_OPTION_LAST - CRYPT_OPTION_FIRST ) ) );
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
 	assert( fileName != NULL );
 	assert( trustInfoPtr != NULL );
 	assert( isWritePtr( dataPtrPtr, sizeof( void * ) ) );
 	assert( isWritePtr( dataLength, sizeof( int ) ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
 
 	/* Clear return values */
 	*dataPtrPtr = NULL;
@@ -419,11 +430,12 @@ int prepareConfigData( INOUT void *configOptions,
 
 	/* If neither the configuration options nor any cert trust settings have
 	   changed, there's nothing to do */
-	if( !checkConfigChanged( configOptions ) && !trustedCertsPresent )
+	if( !checkConfigChanged( configOptions, configOptionsCount ) && \
+		!trustedCertsPresent )
 		return( CRYPT_OK );
 
 	/* Determine the total encoded length of the configuration options */
-	status = sizeofConfigData( configOptions, &length );
+	status = sizeofConfigData( configOptions, configOptionsCount, &length );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -460,12 +472,14 @@ int prepareConfigData( INOUT void *configOptions,
 
 	/* Write the configuration options */
 	sMemOpen( &stream, dataPtr, length );
-	status = writeConfigData( &stream, configOptions );
+	status = writeConfigData( &stream, configOptions, configOptionsCount );
 	if( cryptStatusOK( status ) )
 		length = stell( &stream );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
+		clFree( "prepareConfigData", dataPtr );
+		DEBUG_DIAG(( "Couldn't prepare config data for write" ));
 		assert( DEBUG_WARN );
 		return( status );
 		}
@@ -489,11 +503,12 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 	char configFilePath[ MAX_PATH_LENGTH + 8 ];
 	int configFilePathLen, status;
 
-	assert( isHandleRangeValid( cryptUser ) );
 	assert( fileName != NULL );
 	assert( ( data == NULL && dataLength == 0 ) || \
 			isReadPtr( data, dataLength ) );
 
+	REQUIRES( cryptUser == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( cryptUser ) );
 	REQUIRES( ( data == NULL && dataLength == 0 ) || \
 			  ( dataLength > 0 && dataLength < MAX_INTLENGTH ) );
 
@@ -526,7 +541,7 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 	   certs to write */
 	if( dataLength > 0 )
 		{
-		setMessageData( &msgData, ( void * ) data, dataLength );
+		setMessageData( &msgData, ( MESSAGE_CAST ) data, dataLength );
 		status = krnlSendMessage( createInfo.cryptHandle,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData,
 								  CRYPT_IATTRIBUTE_CONFIGDATA );

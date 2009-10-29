@@ -85,6 +85,7 @@
 	- Replace OPENSSL_malloc() with clBnAlloc() in bn_ctx.c, bn_exp.c,
 	  bn_lib.c, bn_mont.c, bn_recp.c.
 	- Add BN_high_bit() to the end of bn_lib.c.
+	- Add BN_checksum()	to the end of bn_lib.c
 	- Add BN_CTX_clear() to bn_ctx.c.
 	- Add BN_xyz typedefs, which are normally defined in ossl_typ.h.
 	- Add memory-allocation/free/zeroise macros.
@@ -116,6 +117,7 @@ typedef struct bn_gencb_st BN_GENCB;
 
 int BN_high_bit( BIGNUM *a );
 void BN_CTX_clear( BN_CTX *bnCTX );
+	/* BN_checksum() is declared later since it needs BN_ULONG */
 
 /* End of cryptlib changes - pcg */
 
@@ -438,8 +440,8 @@ BIGNUM *BN_CTX_get(BN_CTX *ctx);
 void	BN_CTX_end(BN_CTX *ctx);
 int     BN_rand(BIGNUM *rnd, int bits, int top,int bottom);
 int     BN_pseudo_rand(BIGNUM *rnd, int bits, int top,int bottom);
-int	BN_rand_range(BIGNUM *rnd, BIGNUM *range);
-int	BN_pseudo_rand_range(BIGNUM *rnd, BIGNUM *range);
+int	BN_rand_range(BIGNUM *rnd, const BIGNUM *range);
+int	BN_pseudo_rand_range(BIGNUM *rnd, const BIGNUM *range);
 int	BN_num_bits(const BIGNUM *a);
 int	BN_num_bits_word(BN_ULONG);
 BIGNUM *BN_new(void);
@@ -605,6 +607,10 @@ int	BN_mod_exp_recp(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
 	const BIGNUM *m, BN_CTX *ctx);
 int	BN_div_recp(BIGNUM *dv, BIGNUM *rem, const BIGNUM *m,
 	BN_RECP_CTX *recp, BN_CTX *ctx);
+
+/* More cryptlib changes - pcg */
+void BN_checksum(BIGNUM *a, BN_ULONG *chk);		/* pcg */
+/* End of cryptlib changes - pcg */
 
 /* Functions for arithmetic over binary polynomials represented by BIGNUMs.
  *

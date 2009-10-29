@@ -391,20 +391,6 @@ int sPrintf_s( char *buffer, const int bufSize, const char *format, ... )
 	return( status );
 	}
 
-/* atio() that takes an ASCII string */
-
-int aToI( const char *str )
-	{
-	BYTE buffer[ 16 + 8 ];
-
-	/* The maximum length of a numeric string value that can be converted
-	   to a 4-byte integer is considered as 10 characters (9,999,999,999) */
-	strlcpy_s( buffer, 10, str );
-	buffer[ 10 ] = '\0';
-	asciiToEbcdic( buffer, buffer, strlen( buffer ) );
-	return( atoi( buffer ) );
-	}
-
 /****************************************************************************
 *																			*
 *									PalmOS									*
@@ -751,12 +737,12 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	   practice bending over backwards to fix search path issues under
 	   Win98, which doesn't have ACLs to protect the files in the system
 	   directory anyway, isn't going to achieve much */
-	if( getSysVar( SYSVAR_OSVERSION ) <= 4 )
+	if( getSysVar( SYSVAR_OSMAJOR ) <= 4 )
 		return( LoadLibrary( lpFileName ) );
 
 	/* If it's already an absolute path, don't try and override it */
 	if( lpFileName[ 0 ] == '/' || \
-		( fileNameLength > 3 && 
+		( fileNameLength > 3 && isAlpha( lpFileName[ 0 ] ) && \
 		  lpFileName[ 1 ] == ':' && lpFileName[ 2 ] == '/' ) )
 		return( LoadLibrary( lpFileName ) );
 
@@ -774,13 +760,16 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	   loaded.  So unfortunately the best that we can do is make the 
 	   attacker work a little harder rather than providing a full fix */
 	hShell32 = LoadLibrary( "Shell32.dll" );
-	pSHGetFolderPath = ( SHGETFOLDERPATH ) \
-					   GetProcAddress( hShell32, "SHGetFolderPathA" );
-	if( pSHGetFolderPath != NULL && \
-		pSHGetFolderPath( NULL, CSIDL_SYSTEM, NULL, SHGFP_TYPE_CURRENT, 
-						  path ) == S_OK )
-		gotPath = TRUE;
-	FreeLibrary( hShell32 );
+	if( hShell32 != NULL )
+		{
+		pSHGetFolderPath = ( SHGETFOLDERPATH ) \
+						   GetProcAddress( hShell32, "SHGetFolderPathA" );
+		if( pSHGetFolderPath != NULL && \
+			pSHGetFolderPath( NULL, CSIDL_SYSTEM, NULL, SHGFP_TYPE_CURRENT, 
+							  path ) == S_OK )
+			gotPath = TRUE;
+		FreeLibrary( hShell32 );
+		}
 	if( !gotPath )
 		{
 		/* If for some reason we couldn't get the path to the Windows system
@@ -955,6 +944,21 @@ void *getACLInfo( INOUT TYPECAST( SECURITY_INFO * ) void *securityInfoPtr )
 	return( ( securityInfo == NULL ) ? NULL : &securityInfo->sa );
 	}
 
+/* The DLL entry point.  In theory we could also call:
+ 
+	HeapSetInformation( GetProcessHeap(), 
+						HeapEnableTerminationOnCorruption, NULL, 0 ); 
+
+   but this would have to be dynamically linked since it's only available 
+   for Vista and newer OSes, and it could also cause problems when cryptlib 
+   is linked with buggy applications that rely on the resilience of the heap 
+   manager in order to function since running the app with cryptlib will 
+   cause it to crash through no fault of cryptlib's.  Since cryptlib is 
+   checked with Bounds Checker, Purify, and Valgrind, which are far more 
+   rigorous than the checking performed by the heap manager, there doesn't 
+   seem to be much advantage in doing this, but significant disadvantages 
+   if users' application bugs are caught by it */
+
 #if !( defined( NT_DRIVER ) || defined( STATIC_LIB ) )
 
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
@@ -1023,6 +1027,34 @@ BOOL WINAPI DllEntryPoint( HINSTANCE hinstDLL, DWORD fdwReason, \
 	return( DllMain( hinstDLL, fdwReason, lpvReserved ) );
 	}
 #endif /* BC++ */
+
+/* When running in debug mode we provide a debugging printf() that sends its 
+   output to the debug console, this is normally done via a macro in a header
+   file that remaps the debug-output macros to the appropriate function but 
+   Windows only provides a puts()-equivalent and not a printf()-equivalent, 
+   so we have to provide our own */
+
+#if !defined( NDEBUG )
+
+int debugPrintf( const char *format, ... )
+	{
+	va_list argPtr;
+	char buffer[ 1024 ];
+	int length;
+
+	va_start( argPtr, format );
+
+#if VC_GE_2005( _MSC_VER )
+	length = vsnprintf_s( buffer, 1024, _TRUNCATE, format, argPtr );
+#else
+	length = vsprintf( buffer, format, argPtr );
+#endif /* VC++ 2005 or newer */
+	va_end( argPtr );
+	OutputDebugString( buffer );
+
+	return( length );
+	}
+#endif /* Debug build */
 
 #elif defined( __WIN16__ )
 
@@ -1259,6 +1291,32 @@ struct tm *gmtime( const time_t *timePtr )
 	return( &tmStruct );
 	}
 
+/* When running in debug mode we provide a debugging printf() that sends its 
+   output to the debug console.  This is normally done via a macro in a 
+   header file that remaps the debug-output macros to the appropriate 
+   function, but WinCE's NKDbgPrintfW() requires widechar strings that 
+   complicate the macros so we provide a function that performs the 
+   conversion before outputting the text */
+
+#if !defined( NDEBUG )
+
+int debugPrintf( const char *format, ... )
+	{
+	va_list argPtr;
+	char buffer[ 1024 ];
+	wchar_t wcBuffer[ 1024 ];
+	int length, status;
+
+	va_start( argPtr, format );
+	length = vsprintf( buffer, format, argPtr );
+	va_end( argPtr );
+	status = asciiToUnicode( wcBuffer, 1024, buffer, length );
+	if( cryptStatusOK( status ) )
+		NKDbgPrintfW( L"%s", wcBuffer );
+	return( length );
+	}
+#endif /* Debug build */
+
 /* Windows CE systems need to convert characters from ASCII <-> Unicode
    before/after they're read/written to external formats, the following
    functions perform the necessary conversion.
@@ -1280,6 +1338,9 @@ int asciiToUnicode( wchar_t *dest, const int destMaxLen,
 	assert( isReadPtr( src, length ) );
 	assert( isWritePtr( dest, destMaxLen ) );
 
+	/* Note that this function doens't terminate the string if the output is 
+	   filled, so it's essential that the caller check the return value to 
+	   ensure that they're getting a well-formed string */
 	status = MultiByteToWideChar( GetACP(), 0, src, destMaxLen, dest, 
 								  length );
 	return( status <= 0 ? CRYPT_ERROR_BADDATA : status * sizeof( wchar_t ) );
@@ -1298,10 +1359,12 @@ int unicodeToAscii( char *dest, const int destMaxLen,
 	   causes problems if the output is used as a filename.  This function
 	   has stupid semantics in that instead of returning the number of bytes
 	   written to the output it returns the number of bytes specified as
-	   available in the output buffer, zero-filling the rest.  Because
-	   there's no way to tell how long the resulting string actually is we
-	   have to use wcstombs() instead, which is unfortunate because there's
-	   nothing that we can do with the maxLength parameter */
+	   available in the output buffer, zero-filling the rest (in addition as 
+	   for MultiByteToWideChar() it won't terminate the string if the output 
+	   is filled).  Because there's no way to tell how long the resulting 
+	   string actually is we have to use wcstombs() instead, which is 
+	   unfortunate because there's nothing that we can do with the maxLength 
+	   parameter */
 #if 0
 	status = WideCharToMultiByte( GetACP(), 0, src, length, dest,
 								  length * sizeof( wchar_t ), "_", NULL );
@@ -1390,6 +1453,7 @@ int strlcat_s( char *dest, const int destLen, const char *src )
 	for( i = 0; i < destLen && dest[ i ] != '\0'; i++ );
 	if( i >= destLen )
 		{
+		DEBUG_DIAG(( "Overflow in strlcat_s" ));
 		assert( DEBUG_WARN );
 		dest[ destLen - 1 ] = '\0';
 
@@ -1412,7 +1476,7 @@ int strlcat_s( char *dest, const int destLen, const char *src )
 *																			*
 ****************************************************************************/
 
-#if defined( __WIN32__ )  && !defined( NO_ASM )
+#if defined( __WIN32__ )  && !defined( _M_X64 ) && !defined( NO_ASM )
 
 CHECK_RETVAL \
 static int getHWInfo( void )
@@ -1551,8 +1615,8 @@ static int getHWInfo( void )
 		"popf\n\t"
 		"xorl %%ecx, %%eax\n\t"
 		"jz noCPUID\n\t"
-		"movl $1, %0\n\t"	/* hasAdvFeatures = TRUE */
-		"movl $1, %1\n\t"	/* sysCaps = HWCAP_FLAG_RDTSC */
+		"movl $1, %[hasAdvFeatures]\n\t"/* hasAdvFeatures = TRUE */
+		"movl %[HW_FLAG_RDTSC], %[sysCaps]\n\t"		/* sysCaps = HWCAP_FLAG_RDTSC */
 		"pushl %%ebx\n\t"	/* Save PIC register */
 		"xorl %%eax, %%eax\n\t"	/* CPUID function 0: Get vendor ID */
 		"cpuid\n\t"
@@ -1574,9 +1638,11 @@ static int getHWInfo( void )
 							   one of these in included asm code doesn't
 							   hurt */
 #endif /* 0 */
-		: "=m"(hasAdvFeatures), "=m"(sysCaps),
-			"=m"(vendorID), "=m"(processorID)	/* Output */
-		: 										/* Input */
+		: [hasAdvFeatures] "=m"(hasAdvFeatures),/* Output */
+			[sysCaps] "=m"(sysCaps),
+			[vendorID] "=m"(vendorID), 
+			[processorID] "=m"(processorID)
+		: [HW_FLAG_RDTSC] "i"(HWCAP_FLAG_RDTSC)/* Input */
 		: "%eax", "%ecx", "%edx"				/* Registers clobbered */
 		);
 
@@ -1592,39 +1658,42 @@ static int getHWInfo( void )
 	asm volatile( "pushl %%ebx\n\t"	/* Save PIC register */
 		"movl $0xC0000000, %%eax\n\t"
 		"cpuid\n\t"
-		"popl %%ebx\n\t"	/* Restore PIC register */
+		"popl %%ebx\n\t"			/* Restore PIC register */
 		"cmpl $0xC0000001, %%eax\n\t"
 		"jb endCheck\n\t"
-		"pushl %%ebx\n\t"	/* Re-save PIC register */
+		"pushl %%ebx\n\t"			/* Re-save PIC register */
 		"movl $0xC0000001, %%eax\n\t"
 		"cpuid\n\t"
-		"popl %%ebx\n\t"	/* Re-restore PIC register */
+		"popl %%ebx\n\t"			/* Re-restore PIC register */
 		"movl %%edx, %%eax\n\t"
 		"andl $0xC, %%edx\n\t"
 		"cmpl $0xC, %%edx\n\t"
 		"jz noRNG\n\t"
-		"orl $2, %0\n"		/* HWCAP_FLAG_XSTORE */
+		"orl %[HW_FLAG_XSTORE], %[sysCaps]\n"	/* HWCAP_FLAG_XSTORE */
 	"noRNG:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0xC0, %%eax\n\t"
 		"cmpl $0xC0, %%eax\n\t"
 		"jz noACE\n\t"
-		"orl $4, %0\n"		/* HWCAP_FLAG_XCRYPT */
+		"orl %[HW_FLAG_XCRYPT], %[sysCaps]\n"	/* HWCAP_FLAG_XCRYPT */
 	"noACE:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0xC00, %%eax\n\t"
 		"cmpl $0xC00, %%eax\n\t"
 		"jz noPHE\n\t"
-		"orl $8, %0\n"		/* HWCAP_FLAG_XSHA */
+		"orl %[HW_FLAG_XSHA], %[sysCaps]\n"		/* HWCAP_FLAG_XSHA */
 	"noPHE:\n\t"
 		"movl %%edx, %%eax\n\t"
 		"andl $0x3000, %%eax\n\t"
 		"cmpl $0x3000, %%eax\n\t"
 		"jz endCheck\n\t"
-		"orl $10, %0\n"		/* HWCAP_FLAG_MONTMUL */
+		"orl %[HW_FLAG_MONTMUL], %[sysCaps]\n"	/* HWCAP_FLAG_MONTMUL */
 	"endCheck:\n\n"
-		 : "=m"(sysCaps)					/* Output */
-		 :
+		 : [sysCaps] "=m"(sysCaps)	/* Output */
+		 : [HW_FLAG_XSTORE] "i"(HWCAP_FLAG_XSTORE),/* Input */
+			[HW_FLAG_XCRYPT] "i"(HWCAP_FLAG_XCRYPT),
+			[HW_FLAG_XSHA] "i"(HWCAP_FLAG_XSHA),
+			[HW_FLAG_MONTMUL] "i"(HWCAP_FLAG_MONTMUL)
 		 : "%eax", "%ecx", "%edx"	/* Registers clobbered */
 		);
 		}
@@ -1636,6 +1705,38 @@ static int getHWInfo( void )
 		}
 
 	return( sysCaps );
+	}
+
+#elif defined( __GNUC__ ) && ( defined( __arm ) || defined( __arm__ ) ) && \
+	  !defined( NO_ASM ) && 0		/* See comment below */
+
+CHECK_RETVAL \
+static int getHWInfo( void )
+	{
+	int processorID;
+
+	/* Get the ARM CPU type information.  Unfortunately this instruction 
+	   (and indeed virtually all of the very useful CP15 registers) are 
+	   inaccessible from user mode so it's not safe to perform any of these 
+	   operations.  If you're running an embedded OS that runs natively in 
+	   supervisor mode then you can try enabling this function to check 
+	   whether you have access to the other CP15 registers and their 
+	   information about hardware capabilities */
+	asm volatile (
+		"mrc p15, 0, r0, c0, c0, 0\n\t"
+		"str r0, %0\n"
+		: "=m"(processorID)
+		:
+		: "cc", "r0");
+
+	return( HWCAP_FLAG_NONE );
+	}
+#else
+
+CHECK_RETVAL \
+static int getHWInfo( void )
+	{
+	return( HWCAP_FLAG_NONE );
 	}
 #endif /* OS-specific support */
 
@@ -1668,7 +1769,8 @@ int initSysVars( void )
 		osvi.dwMajorVersion = 5;	/* Win2K and higher */
 		osvi.dwPlatformId = VER_PLATFORM_WIN32_NT;
 		}
-	sysVars[ SYSVAR_OSVERSION ] = osvi.dwMajorVersion;
+	sysVars[ SYSVAR_OSMAJOR ] = osvi.dwMajorVersion;
+	sysVars[ SYSVAR_OSMINOR ] = osvi.dwMinorVersion;
 	sysVars[ SYSVAR_ISWIN95 ] = \
 					( osvi.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS ) ? \
 					TRUE : FALSE;
@@ -1677,6 +1779,7 @@ int initSysVars( void )
 	   it */
 	if( osvi.dwPlatformId == VER_PLATFORM_WIN32s )
 		{
+		DEBUG_DIAG(( "Win32s detected" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
@@ -1685,10 +1788,8 @@ int initSysVars( void )
 	GetSystemInfo( &systemInfo );
 	sysVars[ SYSVAR_PAGESIZE ] = systemInfo.dwPageSize;
 
-#if defined( __WIN32__ )  && !defined( NO_ASM )
 	/* Get system hardware capabilities */
 	sysVars[ SYSVAR_HWCAP ] = getHWInfo();
-#endif /* __WIN32__ && !NO_ASM */
 
 	return( CRYPT_OK );
 	}
@@ -1719,6 +1820,7 @@ int initSysVars( void )
 #endif /* Unix variant-specific brokenness */
 	if( sysVars[ SYSVAR_PAGESIZE ] < 1024 )
 		{
+		DEBUG_DIAG(( "System reports page size < 1024" ));
 		assert( DEBUG_WARN );
 
 		/* Suspiciously small reported page size, just assume a sensible 
@@ -1726,10 +1828,8 @@ int initSysVars( void )
 		sysVars[ SYSVAR_PAGESIZE ] = 4096;
 		}
 
-#if defined( __GNUC__ ) && defined( __i386__ ) && !defined( NO_ASM )
 	/* Get system hardware capabilities */
 	sysVars[ SYSVAR_HWCAP ] = getHWInfo();
-#endif /* __GNUC__ && __i386__ */
 
 #if defined( __IBMC__ ) || defined( __IBMCPP__ )
 	/* VisualAge C++ doesn't set the TZ correctly */
@@ -1745,6 +1845,9 @@ int initSysVars( void )
 	{
 	/* Reset the system variable information */
 	memset( sysVars, 0, MAX_SYSVARS );
+
+	/* Get system hardware capabilities */
+	sysVars[ SYSVAR_HWCAP ] = getHWInfo();
 
 	return( CRYPT_OK );
 	}

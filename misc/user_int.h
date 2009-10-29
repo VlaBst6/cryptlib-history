@@ -46,10 +46,13 @@ typedef struct {
 	BOOLEAN dirty;					/* Whether option has been changed */
 	} OPTION_INFO;
 
-/* The last option that's written to disk.  Further options beyond this one
-   are ephemeral and are never written to disk */
+/* The attribute ID of the last option that's written to disk, and an upper 
+   bound on the corresponding persistent index value used for range checking.  
+   Further options beyond this one are ephemeral and are never written to 
+   disk */
 
-#define LAST_STORED_OPTION	510
+#define LAST_STORED_OPTION			CRYPT_OPTION_MISC_SIDECHANNELPROTECTION
+#define LAST_OPTION_INDEX			1000
 
 /* Prototypes for functions in user_cfg.c */
 
@@ -57,6 +60,8 @@ CHECK_RETVAL_PTR \
 const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_STORED_OPTION ) \
 														const int optionCode );
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN checkConfigChanged( const OPTION_INFO *optionList );
+BOOLEAN checkConfigChanged( INOUT_ARRAY( configOptionsCount ) \
+								const OPTION_INFO *optionList,
+							IN_INT_SHORT const int configOptionsCount );
 
 #endif /* _USER_INT_DEFINED */

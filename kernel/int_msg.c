@@ -47,9 +47,12 @@ static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
 				  DEP_FLAG_UPDATEDEP ),
 
 	/* Contexts can have crypto devices attached */
-	MK_DEPACL_EX( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, \
-				  OBJECT_TYPE_DEVICE, ST_DEV_ANY_STD, ST_NONE,
-				  DEP_FLAG_MORE ),
+	MK_DEPACL( OBJECT_TYPE_CONTEXT, ST_CTX_ANY, ST_NONE, \
+			   OBJECT_TYPE_DEVICE, ST_DEV_ANY_STD, ST_NONE ),
+
+	/* Hardware crypto devices can have PKCS #15 storage objects attached */
+	MK_DEPACL( OBJECT_TYPE_DEVICE, ST_DEV_HW, ST_NONE, \
+			   OBJECT_TYPE_KEYSET, ST_KEYSET_FILE, ST_NONE ),
 
 	/* Anything can have the system device attached, since all objects not
 	   created via crypto devices are created via the system device */
@@ -68,6 +71,7 @@ static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
 	MK_DEPACL( OBJECT_TYPE_USER, ST_NONE, ST_USER_ANY, \
 			   OBJECT_TYPE_DEVICE, ST_DEV_SYSTEM, ST_NONE ),
 
+	/* End-of-ACL marker */
 	MK_DEPACL_END(), MK_DEPACL_END()
 	};
 
@@ -83,7 +87,8 @@ static const DEPENDENCY_ACL FAR_BSS dependencyACLTbl[] = {
    a less restrictive one (i.e. it's a write-up policy) */
 
 CHECK_RETVAL \
-static int updateActionPerms( int currentPerm, const int newPerm )
+static int updateActionPerms( IN_FLAGS( ACTION_PERM ) int currentPerm, 
+							  IN_FLAGS( ACTION_PERM ) const int newPerm )
 	{
 	int permMask = ACTION_PERM_MASK, i;
 
@@ -127,8 +132,8 @@ static int updateActionPerms( int currentPerm, const int newPerm )
    we re-lock the object table to make sure that it's the same object */
 
 CHECK_RETVAL \
-static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
-									   const CRYPT_HANDLE dependentObject )
+static int updateDependentObjectPerms( IN_HANDLE const CRYPT_HANDLE objectHandle,
+									   IN_HANDLE const CRYPT_HANDLE dependentObject )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	const OBJECT_TYPE objectType = objectTable[ objectHandle ].type;
@@ -136,7 +141,7 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 		( objectType == OBJECT_TYPE_CONTEXT ) ? objectHandle : dependentObject;
 	const CRYPT_CERTIFICATE certHandle = \
 		( objectType == OBJECT_TYPE_CERTIFICATE ) ? objectHandle : dependentObject;
-	const unsigned int uniqueID = objectTable[ objectHandle ].uniqueID;
+	const int uniqueID = objectTable[ objectHandle ].uniqueID;
 	int actionFlags = 0, status;
 	ORIGINAL_INT_VAR( oldPerm, objectTable[ contextHandle ].actionFlags );
 
@@ -247,7 +252,8 @@ static int updateDependentObjectPerms( const CRYPT_HANDLE objectHandle,
 *																			*
 ****************************************************************************/
 
-int initInternalMsgs( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initInternalMsgs( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
@@ -296,9 +302,10 @@ void endInternalMsgs( void )
    a new object owner decrements the forwardcount value) and also unreadable
    by the user */
 
-int getPropertyAttribute( const int objectHandle,
-						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  void *messageDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getPropertyAttribute( IN_HANDLE const int objectHandle,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  OUT_BUFFER_FIXED( sizeof( int ) ) void *messageDataPtr )
 	{
 	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	int *valuePtr = ( int * ) messageDataPtr;
@@ -325,17 +332,17 @@ int getPropertyAttribute( const int objectHandle,
 			if( !( objectInfoPtr->flags & OBJECT_FLAG_OWNED ) )
 				return( CRYPT_ERROR_NOTINITED );
 #ifdef USE_THREADS
-  #ifdef NONSCALAR_THREADS
 			/* A very small number of pthreads implementations use non-
 			   scalar thread IDs, which we can't easily handle when all that 
 			   we have is an integer handle.  However, the need to bind 
 			   threads to objects only exists because of Win32 security 
 			   holes arising from the ability to perform thread injection, 
 			   so this isn't a big issue */
-			return( CRYPT_ERROR_FAILED );
-  #else
+  #ifdef NONSCALAR_THREADS
+			if( sizeof( objectInfoPtr->objectOwner ) > sizeof( int ) )
+				return( CRYPT_ERROR_NOTAVAIL );
+  #endif /* NONSCALAR_THREADS */
 			*valuePtr = ( int ) objectInfoPtr->objectOwner;
-  #endif /* Non-scalar threading environments */
 #else
 			*valuePtr = 0;
 #endif /* USE_THREADS */
@@ -389,9 +396,10 @@ int getPropertyAttribute( const int objectHandle,
 	return( CRYPT_OK );
 	}
 
-int setPropertyAttribute( const int objectHandle,
-						  const CRYPT_ATTRIBUTE_TYPE attribute,
-						  void *messageDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int setPropertyAttribute( IN_HANDLE const int objectHandle,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  IN_BUFFER( sizeof( int ) ) void *messageDataPtr )
 	{
 	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	const int value = *( ( int * ) messageDataPtr );
@@ -440,10 +448,17 @@ int setPropertyAttribute( const int objectHandle,
 				objectInfoPtr->flags &= ~OBJECT_FLAG_OWNED;
 			else
 				{
-#if defined( USE_THREADS ) && !defined( NONSCALAR_THREADS )
-				objectInfoPtr->objectOwner = ( THREAD_HANDLE ) value;
-				objectInfoPtr->flags |= OBJECT_FLAG_OWNED;
-#endif /* USE_THREADS && scalar threading environments */
+#if defined( USE_THREADS ) 
+				/* See the comment in getPropertyAttribute() about the use 
+				   of scalar vs. non-scalar thread types */
+  #ifdef NONSCALAR_THREADS
+				if( sizeof( objectInfoPtr->objectOwner ) <= sizeof( int ) )
+  #endif /* NONSCALAR_THREADS */
+					{
+					objectInfoPtr->objectOwner = ( THREAD_HANDLE ) value;
+					objectInfoPtr->flags |= OBJECT_FLAG_OWNED;
+					}
+#endif /* USE_THREADS */
 				}
 			break;
 
@@ -583,8 +598,11 @@ int setPropertyAttribute( const int objectHandle,
    reference count as appropriate and sends destroy messages if the reference
    count goes negative */
 
-int incRefCount( const int objectHandle, const int dummy1,
-				 const void *dummy2, const BOOLEAN dummy3 )
+CHECK_RETVAL \
+int incRefCount( IN_HANDLE const int objectHandle, 
+				 STDC_UNUSED const int dummy1,
+				 STDC_UNUSED const void *dummy2, 
+				 STDC_UNUSED const BOOLEAN dummy3 )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	ORIGINAL_INT_VAR( refCt, objectTable[ objectHandle ].referenceCount );
@@ -605,8 +623,11 @@ int incRefCount( const int objectHandle, const int dummy1,
 	return( CRYPT_OK );
 	}
 
-int decRefCount( const int objectHandle, const int dummy1,
-				 const void *dummy2, const BOOLEAN isInternal )
+CHECK_RETVAL \
+int decRefCount( IN_HANDLE const int objectHandle, 
+				 STDC_UNUSED const int dummy1,
+				 STDC_UNUSED const void *dummy2, 
+				 const BOOLEAN isInternal )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	int status;
@@ -655,8 +676,12 @@ int decRefCount( const int objectHandle, const int dummy1,
 
 /* Get/set dependent objects for an object */
 
-int getDependentObject( const int objectHandle, const int targetType,
-						const void *messageDataPtr, const BOOLEAN dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getDependentObject( IN_HANDLE const int objectHandle, 
+						const int targetType,
+						OUT_BUFFER_FIXED( sizeof( int ) ) \
+								const void *messageDataPtr,
+						STDC_UNUSED const BOOLEAN dummy )
 	{
 	int *valuePtr = ( int * ) messageDataPtr, localObjectHandle;
 
@@ -680,13 +705,17 @@ int getDependentObject( const int objectHandle, const int targetType,
 
 	/* Postconditions: We found a dependent object */
 	POST( isValidObject( *valuePtr ) && \
-		  isSameOwningObject( objectHandle, *valuePtr ) );
+		  isSameOwningObject( *valuePtr, objectHandle ) );
 
 	return( CRYPT_OK );
 	}
 
-int setDependentObject( const int objectHandle, const int option,
-						const void *messageDataPtr, const BOOLEAN dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int setDependentObject( IN_HANDLE const int objectHandle, 
+						IN_ENUM( SETDEP_OPTION ) const int option,
+						IN_BUFFER( sizeof( int ) ) \
+								const void *messageDataPtr,
+						STDC_UNUSED const BOOLEAN dummy )
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable;
 	OBJECT_INFO *objectInfoPtr = &objectTable[ objectHandle ];
@@ -706,8 +735,10 @@ int setDependentObject( const int objectHandle, const int option,
 	if( !isValidObject( dependentObject ) )
 		return( CRYPT_ERROR_SIGNALLED );
 	dependentObjectInfoPtr = &objectTable[ dependentObject ];
-	objectHandlePtr = ( dependentObjectInfoPtr->type == OBJECT_TYPE_DEVICE ) ? \
-			&objectInfoPtr->dependentDevice : &objectInfoPtr->dependentObject;
+	if( dependentObjectInfoPtr->type == OBJECT_TYPE_DEVICE )
+		objectHandlePtr = &objectInfoPtr->dependentDevice;
+	else
+		objectHandlePtr = &objectInfoPtr->dependentObject;
 
 	/* Basic validity checks: There can't already be a dependent object set */
 	if( *objectHandlePtr != CRYPT_ERROR )
@@ -827,8 +858,11 @@ int setDependentObject( const int objectHandle, const int option,
    tracking instance data we can do a copy immediately to create two
    distinct objects */
 
-int cloneObject( const int objectHandle, const int clonedObject,
-				 const void *dummy1, const BOOLEAN dummy2 )
+CHECK_RETVAL \
+int cloneObject( IN_HANDLE const int objectHandle, 
+				 IN_HANDLE const int clonedObject,
+				 STDC_UNUSED const void *dummy1, 
+				 STDC_UNUSED const BOOLEAN dummy2 )
 	{
 	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	OBJECT_INFO *clonedObjectInfoPtr = &krnlData->objectTable[ clonedObject ];
@@ -898,7 +932,7 @@ int cloneObject( const int objectHandle, const int clonedObject,
 			objectInfoPtr->objectSize );
 	objectInfoPtr->messageFunction( clonedObjectInfoPtr->objectPtr,
 									MESSAGE_CHANGENOTIFY,
-									( void * ) &clonedObject,
+									( MESSAGE_CAST ) &clonedObject,
 									MESSAGE_CHANGENOTIFY_OBJHANDLE );
 	if( objectInfoPtr->owner != clonedObjectInfoPtr->owner )
 		objectInfoPtr->messageFunction( clonedObjectInfoPtr->objectPtr,

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							cryptlib SSL/TLS Routines						*
-*						Copyright Peter Gutmann 1998-2004					*
+*						Copyright Peter Gutmann 1998-2007					*
 *																			*
 ****************************************************************************/
 
@@ -34,7 +34,7 @@
 typedef enum {
 	SSL_TEST_NORMAL,			/* Standard SSL/TLS test */
 	SSL_TEST_BULKTRANSER,		/* Bulk data transfer */
-	SSL_TEST_CLIENTCERT,		/* User auth.with client cert */
+	SSL_TEST_CLIENTCERT,		/* User auth.with client certificate */
 	SSL_TEST_PSK,				/* User auth.with shared key */
 	SSL_TEST_PSK_SVRONLY,		/* Client = no PSK, server = TLS-PSK */
 	SSL_TEST_PSK_CLIONLY,		/* Client = TLS-PSK, server = no PSK */
@@ -103,14 +103,22 @@ typedef enum {
 			   CRYPT_COMPLIANCELEVEL_REDUCED due to b0rken certs.
 	Server 21: Supports TLS-ext, max-fragment-size extension, session 
 			   tickets, TLS 1.2, and assorted other odds and ends (server 
-			   listens on both 443 and 4433).
+			   listens on both 443 and 4433), reports info on connect.
 	Server 22: GnuTLS server supporting all sorts of oddities (PGP certs, 
 			   SRP, compression, TLS-ext, and others, see 
-			   http://www.gnu.org/software/gnutls/server.html for details) */
+			   http://www.gnu.org/software/gnutls/server.html for details),
+			   reports info on connect.
+	Server 23: Supports SNI extension and reports info on connect.
+	Server 24: Certicom server using ECDSA P256.  Returns a server cert with 
+			   a bizarro X9.62 OID with implied sub-parameters that can't be 
+			   handled (at least in a sane manner) by the AlgoID read code.
+	Server 25: RedHat server using NSS for ECC support for ECDSA P256.  This
+			   server doesn't support any non-ECC suites, making it useful 
+			   for testing handling of the ECC-only case */
 
 #define SSL_SERVER_NO	2
 #define TLS_SERVER_NO	2
-#define TLS11_SERVER_NO	2
+#define TLS11_SERVER_NO	25	//25 for ECC, otherwise 2
 #define TLS12_SERVER_NO	21
 
 static const struct {
@@ -140,23 +148,27 @@ static const struct {
 	/* 20 */ { TEXT( "https://mail.maine.edu/" ), "/" },
 	/* 21 */ { TEXT( "https://www.mikestoolbox.net:4433/" ), "/" },
 	/* 22 */ { TEXT( "https://test.gnutls.org:5556/" ), "/" },
+	/* 23 */ { TEXT( "https://sni.velox.ch/" ), "/" },
+	/* 24 */ { TEXT( "https://tls.secg.org:40023/connect.php" ), "/" },
+	/* 25 */ { TEXT( "https://ecc.fedora.redhat.com" ), "/" },
 	{ NULL, NULL }
 	};
 
 /* Various servers used for STARTTLS/STLS/AUTH TLS testing.  Notes:
 
-	Server 1: SMTP: mailbox.ucsd.edu:25 (132.239.1.57) requires a client cert.
+	Server 1: SMTP: mailbox.ucsd.edu:25 (132.239.1.57) requires a client 
+			  certificate.
 	Server 2: POP: pop.cae.wisc.edu:1110 (144.92.240.11) OK.
 	Server 3: SMTP: smtpauth.cae.wisc.edu:25 (144.92.12.93) requires a client
-			  cert.
-	Server 4: SMTP: send.columbia.edu:25 (128.59.59.23) returns invalid cert
-			  (lower compliance level to fix).
+			  certificate.
+	Server 4: SMTP: send.columbia.edu:25 (128.59.59.23) returns invalid 
+			  certificate (lower compliance level to fix).
 	Server 5: POP: pop3.myrealbox.com:110 (192.108.102.201) returns invalid
-			  cert (lower compliance level to fix).
+			  certificate (lower compliance level to fix).
 	Server 6: Encrypted POP: securepop.t-online.de:995 (194.25.134.46) direct
 			  SSL connect.
 	Server 7: FTP: ftp.windsorchapel.net:21 (68.38.166.195) sends redundant
-			  client cert request with invalid length.
+			  client certificate request with invalid length.
 	Server 8: POP: webmail.chm.tu-dresden.de:110 (141.30.198.37), another
 			  GroupWise server (see the server comments above) with b0rken
 			  certs.
@@ -180,15 +192,23 @@ static const struct {
 			  as a discrete packet, providing a nice test of cryptlib's on-
 			  demand buffer refill.
 	Server 10: Encrypted POP: mrdo.vosn.net:995 (209.151.91.6), direct SSL
-			   connect, sends a CA cert which is also used for encryption,
-			   but with no keyUsage flags set.
-	Server 11: POP: pop.gmail.com:110 (64.233.167.111), convenient always-
-			   available server */
+			   connect, sends a CA certificate which is also used for 
+			   encryption, but with no keyUsage flags set.
+	Server 11: POP: pop.gmail.com:110 (64.233.167.111) (moved to 995 as of 
+			   some time in 2008).
+	Server 12: POP: mail.rochester.edu:995 (128.151.224.17), direct SSL
+			   connect (also sends zero-length packets as a kludge for pre-
+			   TLS 1.1 chosen-IV attacks).
+	Server 13: SMTP: smtp.umn.edu:465 (134.84.119.35), direct SSL connect.
+	Server 14: POP3: pop3.live.com:995 (65.55.172.253), direct SSL connect,
+			   returns a malformed certificate.  Can also be accessed via
+			   smtp.live.com, port 25 or 587 */
 
-#define STARTTLS_SERVER_NO	2
+#define STARTTLS_SERVER_NO	12
 
-typedef enum { PROTOCOL_NONE, PROTOCOL_SMTP, PROTOCOL_POP,
-			   PROTOCOL_IMAP, PROTOCOL_POP_DIRECT, PROTOCOL_FTP
+typedef enum { PROTOCOL_NONE, PROTOCOL_SMTP, PROTOCOL_SMTP_DIRECT, 
+			   PROTOCOL_POP, PROTOCOL_IMAP, PROTOCOL_POP_DIRECT, 
+			   PROTOCOL_FTP
 			 } PROTOCOL_TYPE;
 
 static const struct {
@@ -208,6 +228,9 @@ static const struct {
 	/*  9 */ { TEXT( "134.76.10.26" ), 25, PROTOCOL_SMTP },
 	/* 10 */ { TEXT( "209.151.91.6" ), 995, PROTOCOL_POP_DIRECT },
 	/* 11 */ { TEXT( "64.233.167.111" ), 110, PROTOCOL_POP },
+	/* 12 */ { TEXT( "128.151.224.17" ), 995, PROTOCOL_POP_DIRECT },
+	/* 13 */ { TEXT( "134.84.119.35" ), 465, PROTOCOL_SMTP_DIRECT },
+	/* 14 */ { TEXT( "65.55.172.253" ), 995, PROTOCOL_POP_DIRECT },
 	{ NULL, 0 }
 	};
 
@@ -264,8 +287,10 @@ static BOOLEAN handleBulkBuffer( BYTE *buffer, const BOOLEAN isInit )
 
 	/* We're being sent an initialised buffer, make sure that it's OK */
 	for( i = 0; i < BULKDATA_BUFFER_SIZE - 2; i++ )
+		{
 		if( buffer[ i ] != ( i & 0xFF )	)
 			return( FALSE );
+		}
 	checkSum = checksumData( buffer, BULKDATA_BUFFER_SIZE - 2 );
 	if( buffer[ BULKDATA_BUFFER_SIZE - 2 ] != ( ( checkSum >> 8 ) & 0xFF ) || \
 		buffer[ BULKDATA_BUFFER_SIZE - 1 ] != ( checkSum & 0xFF ) )
@@ -334,6 +359,11 @@ static int negotiateSTARTTLS( int *protocol )
 	if( *protocol == PROTOCOL_POP_DIRECT )
 		{
 		*protocol = PROTOCOL_POP;
+		return( netSocket );
+		}
+	if( *protocol == PROTOCOL_SMTP_DIRECT )
+		{
+		*protocol = PROTOCOL_SMTP;
 		return( netSocket );
 		}
 
@@ -473,9 +503,9 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 			( testType == SSL_TEST_CLIENTCERT ) ? " with client certs" : \
 			( testType == SSL_TEST_STARTTLS ) ? " with local socket" : \
 			( testType == SSL_TEST_BULKTRANSER ) ? " for bulk data transfer" : \
-			( testType == SSL_TEST_PSK || \
-			  testType == SSL_TEST_PSK_CLIONLY || \
-			  testType == SSL_TEST_PSK_SVRONLY ) ? " with shared key" : "" );
+			( testType == SSL_TEST_PSK ) ? " with shared key" : \
+			( testType == SSL_TEST_PSK_CLIONLY ) ? " with client-only PSK" : \
+			( testType == SSL_TEST_PSK_SVRONLY ) ? " with server-only PSK" : "" );
 	if( !isServer && !localSession )
 		printf( "  Remote host: %s.\n", serverName );
 
@@ -544,8 +574,8 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 								CRYPT_KEYOPT_READONLY );
 			if( cryptStatusError( status ) )
 				{
-				printf( "SVR: Client cert keyset open failed with error code "
-						"%d, line %d.\n", status, __LINE__ );
+				printf( "SVR: Client certificate keyset open failed with error "
+						"code %d, line %d.\n", status, __LINE__ );
 				return( FALSE );
 				}
 			status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_KEYSET,
@@ -728,8 +758,10 @@ static int connectSSLTLS( const CRYPT_SESSION_TYPE sessionType,
 				versionStr[ version ] );
 		}
 	if( localSession && isServer )
+		{
 		/* Tell the client that we're ready to go */
 		releaseMutex();
+		}
 	status = cryptSetAttribute( cryptSession, CRYPT_SESSINFO_ACTIVE, TRUE );
 #if ( SSL_SERVER_NO == 5 ) || ( STARTTLS_SERVER_NO == 8 )
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
@@ -821,6 +853,7 @@ dualThreadContinue:
 		return( FALSE );
 		}
 	else
+		{
 		/* The CLIONLY/SVRONLY test is supposed to fail, if this doesn't
 		   happen then there's a problem */
 		if( testType == SSL_TEST_PSK_CLIONLY || \
@@ -831,6 +864,7 @@ dualThreadContinue:
 					isServer ? "SVR: " : "", __LINE__  );
 			return( FALSE );
 			}
+		}
 
 	/* Report the session security info */
 	if( testType != SSL_TEST_MULTITHREAD && \
@@ -851,8 +885,8 @@ dualThreadContinue:
 					status, __LINE__ );
 			return( FALSE );
 			}
-		puts( localSession ? "SVR: Client cert details are:" : \
-							 "Server cert details are:" );
+		puts( localSession ? "SVR: Client certificate details are:" : \
+							 "Server certificate details are:" );
 		printCertChainInfo( cryptCertificate );
 		cryptDestroyCert( cryptCertificate );
 		}
@@ -1103,10 +1137,13 @@ dualThreadContinue:
 				cryptDestroySession( cryptSession );
 				return( FALSE );
 				}
-			if( bytesCopied == 0 )
+			if( bytesCopied == 0 && testType != SSL_TEST_STARTTLS )
 				{
 				/* We've set a 5s timeout, we should get at least some
-				   data */
+				   data, however we allow this for the STARTTLS tests since
+				   the servers can exhibit all sorts of odd behaviour that 
+				   we can't do much about with the partial client that we 
+				   have here */
 				puts( "Server returned no data in response to our request." );
 				cryptDestroySession( cryptSession );
 				return( FALSE );
@@ -1133,10 +1170,12 @@ dualThreadContinue:
 			if( cryptStatusError( status ) )
 				{
 				if( status == CRYPT_ERROR_READ )
+					{
 					/* Since this is HTTP, the other side can close the
 					   connection with no further warning, even though SSL
 					   says you shouldn't really do this */
 					puts( "Remote system closed connection." );
+					}
 				else
 					{
 					printExtError( cryptSession, "Attempt to read data from "
@@ -1164,14 +1203,23 @@ dualThreadContinue:
 			/* If it's a chatty protocol, exchange some more pleasantries */
 			if( testType == SSL_TEST_STARTTLS )
 				{
-				if( protocol == PROTOCOL_SMTP )
-					strcpy( fetchString, "QUIT\r\n" );
-				else
-					if( protocol == PROTOCOL_POP )
+				switch( protocol )
+					{
+					case PROTOCOL_SMTP:
+						strcpy( fetchString, "QUIT\r\n" );
+						break;
+
+					case PROTOCOL_POP:
 						strcpy( fetchString, "USER test\r\n" );
-					else
-						if( protocol == PROTOCOL_IMAP )
-							strcpy( fetchString, "a004 LOGIN test\r\n" );
+						break;
+
+					case PROTOCOL_IMAP:
+						strcpy( fetchString, "a004 LOGIN test\r\n" );
+						break;
+
+					default:
+						strcpy( fetchString, "QUIT\r\n" );
+					}
 				fetchStringLen = strlen( fetchString );
 #if defined( __MVS__ ) || defined( __VMCMS__ )
 				ebcdicToAscii( fetchString, fetchStringLen );
@@ -1259,12 +1307,13 @@ int testSessionSSLServerCached( void )
 	{
 	int status;
 
-	/* Run the server twice to check session cacheing.  Testing this requires
-	   manual reconnection with a browser to localhost, since it's too
-	   complex to handle easily via a loopback test.  Note that with MSIE
-	   this will require three lots of connects rather than two, because it
-	   handles an unknown cert by doing a resume, which consumes two lots of
-	   sessions, and then the third one is the actual session resume */
+	/* Run the server twice to check session cacheing.  Testing this 
+	   requires manual reconnection with a browser to localhost, since it's 
+	   too complex to handle easily via a loopback test.  Note that with 
+	   MSIE this will require three lots of connects rather than two, 
+	   because it handles an unknown certificate by doing a resume, which 
+	   consumes two lots of sessions, and then the third one is the actual 
+	   session resume */
 	status = connectSSLTLS( CRYPT_SESSION_SSL_SERVER, SSL_TEST_NORMAL, 0, CRYPT_UNUSED, FALSE );
 	if( status <= 0 )
 		return( status );

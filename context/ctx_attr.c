@@ -237,13 +237,13 @@ int getContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CRYPT_IATTRIBUTE_DEVICEOBJECT:
 #ifdef USE_DEVICES
-			if( !isHandleRangeValid( contextInfoPtr->deviceObject ) )
-				return( CRYPT_ERROR_NOTFOUND );
-			*valuePtr = contextInfoPtr->deviceObject;
-			return( CRYPT_OK );
-#else
-			return( CRYPT_ERROR_NOTFOUND );
+			if( isHandleRangeValid( contextInfoPtr->deviceObject ) )
+				{
+				*valuePtr = contextInfoPtr->deviceObject;
+				return( CRYPT_OK );
+				}
 #endif /* USE_DEVICES */
+			return( CRYPT_ERROR_NOTFOUND );
 		}
 
 	retIntError();
@@ -339,6 +339,8 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CRYPT_IATTRIBUTE_KEYID:
 			REQUIRES( contextType == CONTEXT_PKC );
+			REQUIRES( memcmp( contextInfoPtr->ctxPKC->keyID, 
+							  "\x00\x00\x00\x00\x00\x00\x00\x00", 8 ) );
 
 			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->keyID,
 								   KEYID_SIZE ) );
@@ -346,17 +348,16 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 		case CRYPT_IATTRIBUTE_KEYID_PGP2:
 			REQUIRES( contextType == CONTEXT_PKC );
 
-			if( contextInfoPtr->capabilityInfo->cryptAlgo != CRYPT_ALGO_RSA )
+			if( !( contextInfoPtr->flags & CONTEXT_FLAG_PGPKEYID_SET ) )
 				return( CRYPT_ERROR_NOTFOUND );
 			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->pgp2KeyID,
 								   PGP_KEYID_SIZE ) );
 
 		case CRYPT_IATTRIBUTE_KEYID_OPENPGP:
 			REQUIRES( contextType == CONTEXT_PKC );
-			REQUIRES( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RSA || \
-					  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_DSA || \
-					  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ELGAMAL );
 
+			if( !( contextInfoPtr->flags & CONTEXT_FLAG_OPENPGPKEYID_SET ) )
+				return( CRYPT_ERROR_NOTFOUND );
 			return( attributeCopy( msgData, contextInfoPtr->ctxPKC->openPgpKeyID,
 								   PGP_KEYID_SIZE ) );
 
@@ -379,8 +380,15 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 #endif /* USE_KEA */
 
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
+		case CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL:
+			/* CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL is used to read from dummy
+			   contexts used as placeholders for external crypto hardware
+			   functionality, these aren't necessarily in the high state as
+			   required by a CRYPT_IATTRIBUTE_KEY_SPKI read when they're
+			   accessed because the hardware may not be ready yet but we 
+			   can still fetch the stored public-key data from them */
 			REQUIRES( contextType == CONTEXT_PKC && \
-					  ( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) );
+					  !needsKey( contextInfoPtr ) );
 
 			if( contextInfoPtr->ctxPKC->publicKeyInfo != NULL )
 				{
@@ -389,8 +397,10 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 				return( attributeCopy( msgData, contextInfoPtr->ctxPKC->publicKeyInfo,
 									   contextInfoPtr->ctxPKC->publicKeyInfoSize ) );
 				}
+			ENSURES( attribute == CRYPT_IATTRIBUTE_KEY_SPKI );
 			/* Drop through */
 
+		case CRYPT_IATTRIBUTE_KEY_PGP:
 		case CRYPT_IATTRIBUTE_KEY_SSH:
 		case CRYPT_IATTRIBUTE_KEY_SSH1:
 		case CRYPT_IATTRIBUTE_KEY_SSL:
@@ -399,7 +409,7 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			KEYFORMAT_TYPE formatType;
 
 			REQUIRES( contextType == CONTEXT_PKC && \
-					  ( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) );
+					  !needsKey( contextInfoPtr ) );
 
 			/* Write the appropriately-formatted key data from the context */
 			status = attributeToFormatType( attribute, &formatType );
@@ -421,6 +431,14 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			*( ( time_t * ) msgData->data ) = \
 									contextInfoPtr->ctxPKC->pgpCreationTime;
 			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_DEVICESTORAGEID:
+#ifdef USE_HARDWARE
+			if( contextInfoPtr->deviceStorageIDset )
+				return( attributeCopy( msgData, contextInfoPtr->deviceStorageID, 
+									   KEYID_SIZE ) );
+#endif /* USE_HARDWARE */
+			return( CRYPT_ERROR_NOTFOUND );
 		}
 
 	retIntError();
@@ -518,12 +536,21 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 			REQUIRES( contextType == CONTEXT_CONV || \
 					  contextType == CONTEXT_MAC );
 
+			/* The kernel only allows (potentially) valid values to be set,
+			   but these may be disabled at the algorithm level so we have 
+			   to perform an additional check here */
+			if( !algoAvailable( value ) )
+				{
+				return( exitError( contextInfoPtr, attribute,
+								   CRYPT_ERRTYPE_ATTR_VALUE, 
+								   CRYPT_ERROR_NOTAVAIL ) );
+				}
+
 			algoValuePtr = ( contextType == CONTEXT_CONV ) ? \
 						   &contextInfoPtr->ctxConv->keySetupAlgorithm : \
 						   &contextInfoPtr->ctxMAC->keySetupAlgorithm;
 			if( *algoValuePtr != CRYPT_ALGO_NONE )
-				return( exitErrorInited( contextInfoPtr,
-										 CRYPT_CTXINFO_KEYING_ALGO ) );
+				return( exitErrorInited( contextInfoPtr, attribute ) );
 			*algoValuePtr = value;
 			return( CRYPT_OK );
 			}
@@ -585,10 +612,9 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 				retIntError();
 
 			/* If the key is held outside the context (e.g. in a device) we
-			   need to manually supply the key-related information needed by 
-			   the context, which in this case is the key size.  Once this 
-			   is set there is (effectively) a key loaded, although the 
-			   actual keying values are held anderswhere */
+			   may need to manually supply the key-related information 
+			   needed by the context if it can't be obtained through other
+			   means such as when the SubjectPublicKeyInfo is set */
 			switch( contextType )
 				{
 				case CONTEXT_CONV:
@@ -606,12 +632,28 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 				default:
 					retIntError();
 				}
-			contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
 			return( CRYPT_OK );
 
 		case CRYPT_IATTRIBUTE_DEVICEOBJECT:
 #ifdef USE_DEVICES
+			/* Setting the device object means that the crypto functionality 
+			   for the context is enabled, which means that it's effectively 
+			   in the key-loaded state, however for standard key-loaded
+			   operations to be possible certain other preconditions need to 
+			   be met, which we check for here */
+			REQUIRES( ( contextType == CONTEXT_CONV && \
+						contextInfoPtr->ctxConv->userKeyLength > 0 ) || \
+					  ( contextType == CONTEXT_PKC && \
+						contextInfoPtr->ctxPKC->keySizeBits > 0 && \
+						contextInfoPtr->ctxPKC->publicKeyInfo != NULL ) || \
+					  ( contextType == CONTEXT_MAC && \
+						contextInfoPtr->ctxMAC->userKeyLength > 0 ) || \
+					  ( contextType == CONTEXT_HASH ) );
+
+			/* Remember the reference to the associated crypto functionality
+			   in the device */
 			contextInfoPtr->deviceObject = value;
+			contextInfoPtr->flags |= CONTEXT_FLAG_KEY_SET;
 #endif /* USE_DEVICES */
 			return( CRYPT_OK );
 		}
@@ -800,7 +842,7 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			REQUIRES( dataLength == PGP_KEYID_SIZE );
 
 			memcpy( contextInfoPtr->ctxPKC->openPgpKeyID, data, dataLength );
-			contextInfoPtr->ctxPKC->openPgpKeyIDSet = TRUE;
+			contextInfoPtr->flags |= CONTEXT_FLAG_OPENPGPKEYID_SET;
 
 			/* If it's a non-PGP 2.x key type, set the PGP 2.x keyID to the 
 			   OpenPGP keyID.  This is necessary because non-PGP 2.x keys can
@@ -808,8 +850,11 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			   of a PGP 2.x keyID except that it's not defined for this key 
 			   type */
 			if( contextInfoPtr->capabilityInfo->cryptAlgo != CRYPT_ALGO_RSA )
+				{
 				memcpy( contextInfoPtr->ctxPKC->pgp2KeyID, 
 						contextInfoPtr->ctxPKC->openPgpKeyID, PGP_KEYID_SIZE );
+				contextInfoPtr->flags |= CONTEXT_FLAG_PGPKEYID_SET;
+				}
 			return( CRYPT_OK );
 
 		case CRYPT_IATTRIBUTE_KEY_SPKI:
@@ -828,6 +873,15 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			REQUIRES( contextType == CONTEXT_PKC );
 
 			contextInfoPtr->ctxPKC->pgpCreationTime = *( ( time_t * ) data );
+			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_DEVICESTORAGEID:
+#ifdef USE_HARDWARE
+			REQUIRES( dataLength > 0 && dataLength <= KEYID_SIZE );
+			memset( contextInfoPtr->deviceStorageID, 0, KEYID_SIZE );
+			memcpy( contextInfoPtr->deviceStorageID, data, dataLength );
+			contextInfoPtr->deviceStorageIDset = TRUE;
+#endif /* USE_HARDWARE */
 			return( CRYPT_OK );
 		}
 

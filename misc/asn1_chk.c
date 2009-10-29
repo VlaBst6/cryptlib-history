@@ -1,18 +1,16 @@
 /****************************************************************************
 *																			*
 *						   ASN.1 Checking Routines							*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
 #include <ctype.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "bn.h"
   #include "asn1.h"
 #else
   #include "crypt.h"
-  #include "bn/bn.h"
   #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
@@ -40,20 +38,58 @@
 		OID,			-- STATE_HOLE_OID
 		NULL			-- STATE_NULL
 		},
-	BIT STRING			-- STATE_HOLE_BITSTRING
+						-- STATE_CHECK_HOLE_BITSTRING
+	BIT STRING | ...
 
 	SEQUENCE {			-- STATE_SEQUENCE
 		OID,			-- STATE_HOLE_OID
-		BOOLEAN OPT,	-- STATE_BOOLEAN (following a STATE_HOLE_OID)
-		OCTET STRING	-- STATE_HOLE_OCTETSTRING
+		[ BOOLEAN OPT,	-- STATE_BOOLEAN ]
+						-- STATE_CHECK_HOLE_OCTETSTRING
+		OCTET STRING | ...
 
-   Once we reach any of the STATE_HOLE_* states, if we hit a BIT STRING or
-   OCTET STRING we try and locate encapsulated content within it.  This type 
-   of checking is rather awkward in the (otherwise stateless) code, but is 
-   the only way to be sure that it's safe to try burrowing into an OCTET 
-   STRING or BIT STRING to try to find encapsulated data, since otherwise 
-   even with relatively strict checking there's still a very small chance 
-   that random data will look like a nested object */
+   Once we reach any of the STATE_CHECK_HOLE_* states, if we hit a BIT STRING 
+   or OCTET STRING as the next item then we try and locate encapsulated 
+   content within it.
+   
+   This type of checking is rather awkward in the (otherwise stateless) code 
+   but is the only way to be sure that it's safe to try burrowing into an 
+   OCTET STRING or BIT STRING to try to find encapsulated data, since 
+   otherwise even with relatively strict checking there's still a very small 
+   chance that random data will look like a nested object.
+
+   The handling of BIT STRING encapsulation is complicated by the fact that
+   for crypto use it really only occurs in one of two cases:
+
+	SEQUENCE {
+		OID,
+		NULL
+		},
+	BIT STRING {
+		SEQUENCE {
+			INTEGER
+			...
+
+   for public keys and and:
+
+	SEQUENCE {
+		OID,
+		NULL
+		},
+	BIT STRING ...
+
+   for signatures (with an additional complication for DLP keys that the 
+   NULL for the public-key parameters is replaced by a SEQUENCE { ... }
+   containing the public parameters).  Because of this there's little point
+   in trying to track the state because any occurrence of a potential BIT 
+   STRING hole has a 50:50 chance of actually being one or not.  Because of
+   this we don't bother tracking the state for BIT STRINGs but rely on the
+   encapsulation-check to catch them.  This should be fairly safe because we
+   require that the value be:
+
+	[ SEQUENCE ][ = outerLength - SEQUENCE-hdrSize ]
+		[ INTEGER ][ <= innerlength - INTEGER-hdrSize ]
+
+   which provides at least 26-28 bits of safety */
 
 typedef enum {
 	/* Generic non-state */
@@ -63,8 +99,8 @@ typedef enum {
 	STATE_BOOLEAN, STATE_NULL, STATE_OID, STATE_SEQUENCE,
 
 	/* States corresponding to different parts of a SEQUENCE { OID, optional,
-	   OCTET/BIT STRING } sequence */
-	STATE_HOLE_OID, STATE_HOLE_BITSTRING, STATE_HOLE_OCTETSTRING,
+	   potential OCTET/BIT STRING } sequence */
+	STATE_HOLE_OID, /*STATE_CHECK_HOLE_BITSTRING,*/ STATE_CHECK_HOLE_OCTETSTRING,
 
 	/* Error state */
 	STATE_ERROR,
@@ -92,6 +128,8 @@ static int getItem( INOUT STREAM *stream, INOUT ASN1_ITEM *item )
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( item, sizeof( ASN1_ITEM ) ) );
+
+	REQUIRES_EXT( ( offset >= 0 && offset < MAX_INTLENGTH ), STATE_ERROR );
 
 	/* Clear return value */
 	memset( item, 0, sizeof( ASN1_ITEM ) );
@@ -129,7 +167,19 @@ static int getItem( INOUT STREAM *stream, INOUT ASN1_ITEM *item )
 /* Check whether an ASN.1 object is encapsulated inside an OCTET STRING or
    BIT STRING.  After performing the various checks we have to explicitly
    clear the stream error state since the probing for valid data could have
-   set the error indicator if nothing valid was found */
+   set the error indicator if nothing valid was found.
+
+   Note that this is a no-biased test since the best that we can do is guess 
+   at the presence of encapsulated content and we can't risk rejecting valid
+   content based on a false positive.  This means that unfortunately 
+   maliciously-encoded nested content with (for example) an incorrect inner 
+   length will slip past our checks, and we have to rely on the robustness 
+   of the general ASN1-read code to avoid problems with it.  It's not 
+   obvious whether this is really a serious problem or not though (apart from
+   it being a certificational weakness), a too-short length will result in 
+   whatever additional padding is present being skipped by the general ASN1-
+   read code, a too-long length will result in an immediate error as the 
+   decoder encounters garbage from reading past the TLV that follows */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN checkEncapsulation( INOUT STREAM *stream, 
@@ -147,6 +197,7 @@ static BOOLEAN checkEncapsulation( INOUT STREAM *stream,
 
 	REQUIRES_B( length > 0 && length < MAX_INTLENGTH );
 	REQUIRES_B( state >= STATE_NONE && state < STATE_ERROR );
+	REQUIRES_B( streamPos >= 0 && streamPos < MAX_INTLENGTH );
 
 	/* Make sure that the tag is in order */
 	if( cryptStatusError( tag ) )
@@ -161,8 +212,9 @@ static BOOLEAN checkEncapsulation( INOUT STREAM *stream,
 	   means that it'll reject nested objects with incorrect lengths.  It's 
 	   not really possible to fix this, either there'll be false positives 
 	   due to true OCTET/BIT STRINGs that look like they might contain 
-	   nested data, or there'll be no false positives but nested content 
-	   with slightly incorrect encodings will be missed */
+	   nested data or there'll be no false positives but nested content 
+	   with slightly incorrect encodings will be missed (see the comment at
+	   the start for more on this) */
 	status = readGenericHole( stream, &innerLength, 1, DEFAULT_TAG );
 	if( cryptStatusError( status ) || \
 		( stell( stream ) - streamPos ) + innerLength != length )
@@ -209,10 +261,10 @@ static BOOLEAN checkEncapsulation( INOUT STREAM *stream,
 
 	   Note that we want these checks to be as liberal as possible since 
 	   we're only checking for the *possibility* of encapsulated data at
-	   this point.  Once we're fairly certain that it's encapsulated data
-	   then we recurse down into it with checkASN1().  If we rejected too
-	   many things at this level then it'd never get checked via 
-	   checkASN1() */
+	   this point (again, see the comment at the start).  Once we're fairly 
+	   certain that it's encapsulated data then we recurse down into it with 
+	   checkASN1().  If we rejected too many things at this level then it'd 
+	   never get checked via checkASN1() */
 	switch( tag )
 		{
 		case BER_BITSTRING:
@@ -267,7 +319,7 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 							 IN_LENGTH const long length,
 							 const BOOLEAN isIndefinite, 
 							 IN_RANGE( 1, MAX_NESTING_LEVEL ) const int level,
-							 IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state, 
+							 IN_ENUM_OPT( ASN1_STATE ) ASN1_STATE state, 
 							 const BOOLEAN checkDataElements );
 
 CHECK_RETVAL_ENUM( STATE ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -345,10 +397,16 @@ static ASN1_STATE checkPrimitive( INOUT STREAM *stream, const ASN1_ITEM *item,
 			   { SEQ, OID, NULL }, an OCTET STRING must be preceded by 
 			   { SEQ, OID, {BOOLEAN} }), and if it's something encapsulated 
 			   inside the string, handle it as a constructed item */
-			if( ( ( isBitstring && state == STATE_HOLE_BITSTRING ) || \
+#if 0	/* See comment at start */
+			if( ( ( isBitstring && state == STATE_CHECK_HOLE_BITSTRING ) || \
 				  ( !isBitstring && ( state == STATE_HOLE_OID || \
-									  state == STATE_HOLE_OCTETSTRING ) ) ) && \
+									  state == STATE_CHECK_HOLE_OCTETSTRING ) ) ) && \
 				checkEncapsulation( stream, length, isBitstring, state ) )
+#else
+			if( ( isBitstring || state == STATE_HOLE_OID || \
+								 state == STATE_CHECK_HOLE_OCTETSTRING ) && \
+				checkEncapsulation( stream, length, isBitstring, state ) )
+#endif /* 0 */
 				{
 				ASN1_STATE encapsState;
 
@@ -459,12 +517,20 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 	if( level >= MAX_NESTING_LEVEL )
 		return( STATE_ERROR );
 
-	/* If we're checking data elements, check the contents for validity.  A
-	   straight data-length check doesn't check nested elements since all it
-	   cares about is finding the overall length with as little effort as
-	   possible */
-	if( checkDataElements && ( item->tag & BER_CLASS_MASK ) == BER_UNIVERSAL )
+	/* Check the contents for validity.  A straight data-length check doesn't 
+	   check nested elements since all it cares about is finding the overall 
+	   length with as little effort as possible */
+	if( ( item->tag & BER_CLASS_MASK ) == BER_UNIVERSAL )
 		{
+		/* If we're not interested in the data elements (i.e. if we're just 
+		   doing a length check) and the item has a definite length, just 
+		   skip over it and continue */
+		if( !checkDataElements && item->length > 0 )
+			{
+			if( cryptStatusError( sSkip( stream, item->length ) ) )
+				return( STATE_ERROR );
+			}
+
 		/* If it's constructed, parse the nested object(s) */
 		if( ( item->tag & BER_CONSTRUCTED_MASK ) == BER_CONSTRUCTED )
 			{
@@ -474,7 +540,8 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 
 			return( checkASN1( stream, item->length, item->indefinite,
 							   level + 1, ( item->tag == BER_SEQUENCE ) ? \
-									STATE_SEQUENCE : STATE_NONE, TRUE ) );
+									STATE_SEQUENCE : STATE_NONE,
+									checkDataElements ) );
 			}
 
 		/* It's primitive, check the primitive element with optional state
@@ -487,10 +554,12 @@ static ASN1_STATE checkASN1Object( INOUT STREAM *stream, const ASN1_ITEM *item,
 			return( STATE_HOLE_OID );
 		if( state == STATE_HOLE_OID )
 			{
+#if 0	/* See comment at start */
 			if( newState == STATE_NULL )
-				return( STATE_HOLE_BITSTRING );
+				return( STATE_CHECK_HOLE_BITSTRING );
+#endif /* 0 */
 			if( newState == STATE_BOOLEAN )
-				return( STATE_HOLE_OCTETSTRING );
+				return( STATE_CHECK_HOLE_OCTETSTRING );
 			}
 		return( STATE_NONE );
 		}
@@ -540,7 +609,7 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 							 IN_LENGTH const long length, 
 							 const BOOLEAN isIndefinite, 
 							 IN_RANGE( 0, MAX_NESTING_LEVEL ) const int level, 
-							 IN_ENUM_OPT( ASN1_STATE ) const ASN1_STATE state, 
+							 IN_ENUM_OPT( ASN1_STATE ) ASN1_STATE state, 
 							 const BOOLEAN checkDataElements )
 	{
 	ASN1_ITEM item;
@@ -557,6 +626,7 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 	REQUIRES( state >= STATE_NONE && state < STATE_ERROR );
 	REQUIRES( ( isIndefinite && length == 0 ) || \
 			  ( !isIndefinite && length >= 0 && length < MAX_INTLENGTH ) );
+	REQUIRES( lastPos >= 0 && lastPos < MAX_INTLENGTH );
 
 	/* Make sure that we're not processing suspiciosly deeply nested data */
 	if( level >= MAX_NESTING_LEVEL )
@@ -620,13 +690,18 @@ static ASN1_STATE checkASN1( INOUT STREAM *stream,
 			/* We've reached the end of the object, we're done */
 			return( newState );
 			}
+
+		/* We're reading more data from the current object, propagate any
+		   state updates */
+		state = newState;
 		}
 	ENSURES_S( iterationCount < maxIterationCount );
 
 	return( ( newState == STATE_NONE ) ? STATE_NONE : STATE_ERROR );
 	}
 
-/* Check the encoding of a complete object and determine its length */
+/* Check the encoding of a complete object and determine its length (qui 
+   omnes insidias timet in nullas incidit - Syrus) */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkObjectEncoding( IN_BUFFER( objectLength ) const void *objectPtr, 
@@ -664,19 +739,13 @@ static int findObjectLength( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( length, sizeof( long ) ) );
 
+	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
 	/* Clear return value */
 	*length = 0;
 
-	/* Try for a definite length */
-	if( isLongObject )
-		status = readLongGenericHole( stream, &localLength, DEFAULT_TAG );
-	else
-		{
-		int shortLength;
-
-		status = readGenericHoleI( stream, &shortLength, 0, DEFAULT_TAG );
-		localLength = shortLength;
-		}
+	/* Try for a definite length (quousque tandem?) */
+	status = readGenericObjectHeader( stream, &localLength, isLongObject );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -754,7 +823,7 @@ int getLongStreamObjectLength( INOUT STREAM *stream,
 	/* Clear return value */
 	*length = 0;
 
-	status = findObjectLength( stream, &localLength, FALSE );
+	status = findObjectLength( stream, &localLength, TRUE );
 	if( cryptStatusOK( status ) )
 		*length = localLength;
 	return( status );
@@ -778,25 +847,7 @@ int getObjectLength( IN_BUFFER( objectLength ) const void *objectPtr,
 	*length = 0;
 
 	sMemConnect( &stream, objectPtr, objectLength );
-	if( peekTag( &stream ) == BER_INTEGER )
-		{
-		/* Sometimes we're asked to find the length of non-hole items that 
-		   will be rejected by findObjectLength(), which calls down to 
-		   readGenericHoleI().  Since these items are primitive and non-
-		   constructed (in order to qualify as non-holes), we can process 
-		   the item with readUniversal().
-		   
-		   An alternative processing mechanism would be to use peekTag() and
-		   readGenericHole() in combination with the peekTag() results */
-		status = readUniversal( &stream );
-		if( cryptStatusOK( status ) )
-			localLength = stell( &stream );
-		}
-	else
-		{
-		/* Quousque tandem? */
-		status = findObjectLength( &stream, &localLength, FALSE );
-		}
+	status = findObjectLength( &stream, &localLength, FALSE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );

@@ -237,6 +237,7 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 		{ CRYPT_ALGO_HMAC_SHA1, CRYPT_ALGO_SHA1 },
 		{ CRYPT_ALGO_HMAC_RIPEMD160, CRYPT_ALGO_RIPEMD160 },
 		{ CRYPT_ALGO_HMAC_SHA2, CRYPT_ALGO_SHA2 },
+		{ CRYPT_ALGO_HMAC_SHAng, CRYPT_ALGO_SHAng },
 		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
 		};
 	int hashSize, keyIndex, processedKeyLength, blockCount = 1;
@@ -255,6 +256,8 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 	if( cryptStatusError( status ) )
 		return( status );
 	hashAlgo = value;
+	if( !algoAvailable( hashAlgo ) )
+		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Initialise the HMAC information with the user key.  Although the user
 	   has specified the algorithm in terms of an HMAC we're synthesising it 
@@ -269,7 +272,8 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Produce enough blocks of output to fill the key */
+	/* Produce enough blocks of output to fill the key (nil sine magno 
+	   labore) */
 	for( keyIndex = 0, iterationCount = 0; 
 		 keyIndex < mechanismInfo->dataOutLength && \
 			iterationCount < FAILSAFE_ITERATIONS_MED; 	
@@ -514,7 +518,7 @@ int deriveSSL( STDC_UNUSED void *dummy,
 
 		/* Set up the counter data */
 		for( i = 0; i <= counter && i < 16; i++ )
-			counterData[ i ] = 'A' + counter;
+			counterData[ i ] = intToByte( 'A' + counter );
 		ENSURES( i < 16 );
 		counter++;
 
@@ -846,7 +850,7 @@ int derivePGP( STDC_UNUSED void *dummy,
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
 
 	REQUIRES( mechanismInfo->iterations >= 0 && \
-			  mechanismInfo->iterations < MAX_INTLENGTH >> 6 );
+			  mechanismInfo->iterations < ( MAX_INTLENGTH >> 6 ) );
 	REQUIRES( byteCount >= 0 && byteCount < MAX_INTLENGTH );
 
 	/* Clear return value */

@@ -76,6 +76,8 @@
 #define C_DecryptInit		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_DecryptInit
 #define C_DeriveKey			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_DeriveKey
 #define C_DestroyObject		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_DestroyObject
+#define C_Digest			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_Digest
+#define C_DigestInit		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_DigestInit
 #define C_Encrypt			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_Encrypt
 #define C_EncryptInit		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_EncryptInit
 #define C_Finalize			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_Finalize
@@ -103,9 +105,10 @@
 #define C_SignFinal			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_SignFinal
 #define C_SignInit			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_SignInit
 #define C_SignUpdate		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_SignUpdate
-#define C_UnwrapKey			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_UnwrapKey
 #define C_Verify			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_Verify
 #define C_VerifyInit		( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_VerifyInit
+#define C_WrapKey			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_WrapKey
+#define C_UnwrapKey			( ( CK_FUNCTION_LIST_PTR )( pkcs11Info->functionListPtr ) )->C_UnwrapKey
 
 /* Mapping of PKCS #11 device capabilities to cryptlib capabilities.  We 
    don't use the hash functions because they're always *much* faster in

@@ -296,7 +296,7 @@ int addSecretKey( IN_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info,
 				|			|			| if newer	| if newer	|
 	------------+-----------+-----------+-----------+-----------+ */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 10 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 11 ) ) \
 int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 				  IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 				  IN_BUFFER_OPT( passwordLength ) const void *password, 
@@ -304,6 +304,7 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 				  IN_HANDLE const CRYPT_USER iOwnerHandle, 
 				  const BOOLEAN privkeyPresent, const BOOLEAN certPresent, 
 				  const BOOLEAN doAddCert, const BOOLEAN pkcs15keyPresent,
+				  const BOOLEAN isStorageObject,
 				  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ALGO_TYPE pkcCryptAlgo;
@@ -314,13 +315,14 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
 	assert( ( privkeyPresent && isReadPtr( password, passwordLength ) ) || \
-			( !privkeyPresent && password == NULL && passwordLength == 0 ) );
+			( ( !privkeyPresent || isStorageObject ) && \
+			  password == NULL && passwordLength == 0 ) );
 
 	REQUIRES( ( privkeyPresent && password != NULL && \
 				passwordLength >= MIN_NAME_LENGTH && \
 				passwordLength < MAX_ATTRIBUTE_SIZE ) || \
-			  ( !privkeyPresent && password == NULL && \
-			    passwordLength == 0 ) );
+			  ( ( !privkeyPresent || isStorageObject ) && \
+				password == NULL && passwordLength == 0 ) );
 	REQUIRES( isHandleRangeValid( iCryptHandle ) );
 	REQUIRES( iOwnerHandle == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( iOwnerHandle ) );
@@ -379,7 +381,7 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 		else
 			{
 			status = pkcs15AddCert( pkcs15infoPtr, iCryptHandle, NULL, 0,
-									privkeyPresent ? \
+									( privkeyPresent || isStorageObject ) ? \
 										CERTADD_NORMAL : \
 										CERTADD_STANDALONE_CERT, errorInfo );
 			}
@@ -399,7 +401,8 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 
 		status = pkcs15AddPublicKey( pkcs15infoPtr, iCryptHandle, 
 									 pubKeyAttributes, pubKeyAttributeSize, 
-									 pkcCryptAlgo, modulusSize, errorInfo );
+									 pkcCryptAlgo, modulusSize, isStorageObject,
+									 errorInfo );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -408,6 +411,6 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	return( pkcs15AddPrivateKey( pkcs15infoPtr, iCryptHandle, iOwnerHandle,
 								 password, passwordLength, privKeyAttributes,
 								 privKeyAttributeSize, pkcCryptAlgo,
-								 modulusSize, errorInfo ) );
+								 modulusSize, isStorageObject, errorInfo ) );
 	}
 #endif /* USE_PKCS15 */

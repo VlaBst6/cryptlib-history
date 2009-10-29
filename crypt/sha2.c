@@ -367,7 +367,7 @@ static void sha_end1(unsigned char hval[], sha256_ctx ctx[1], const unsigned int
     /* extract the hash value as bytes in case the hash buffer is   */
     /* mislaigned for 32-bit words                                  */
     for(i = 0; i < hlen; ++i)
-		hval[i] = ((ctx->hash[i >> 2] >> (8 * (~i & 3))) & 0xff);
+		hval[i] = (uint_8t)((ctx->hash[i >> 2] >> (8 * (~i & 3))) & 0xff);
 }
 
 #endif
@@ -758,6 +758,10 @@ VOID_RETURN sha2_end(unsigned char hval[], sha2_ctx ctx[1])
     }
 }
 
+#if 0	/* Can't be enabled because MVS doesn't allow a function name to have
+		   the same name as a module name, this is safe to comment out since we
+		   never use it - pcg */
+
 INT_RETURN sha2(unsigned char hval[], unsigned long size,
                                 const unsigned char data[], unsigned long len)
 {   sha2_ctx    cx[1];
@@ -769,9 +773,11 @@ INT_RETURN sha2(unsigned char hval[], unsigned long size,
     else
         return EXIT_FAILURE;
 }
+#endif /* 0 */
 
 #endif
 
 #if defined(__cplusplus)
 }
 #endif
+

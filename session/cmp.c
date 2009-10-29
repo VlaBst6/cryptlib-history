@@ -1,58 +1,23 @@
 /****************************************************************************
 *																			*
 *						 cryptlib CMP Session Management					*
-*						Copyright Peter Gutmann 1999-2007					*
+*						Copyright Peter Gutmann 1999-2009					*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "asn1.h"
-  #include "asn1_ext.h"
   #include "session.h"
   #include "cmp.h"
 #else
   #include "crypt.h"
   #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
 
-/* CMP requires a variety of authentication contexts, which are mapped to 
-   session info contexts as follows:
-
-			|	iAuthIn		|	iAuthOut
-	--------+---------------+-------------------
-	Client	|	CA cert		|	Client privKey
-			|				|		or MAC
-	Server	|	Client cert	|	CA privKey
-			|		or MAC	|
-
-   In addition general user information on the server side is stored in the 
-   cmpUserInfo object */
-
 #ifdef USE_CMP
-
-/* If we're reading predefined requests/responses from disk instead of 
-   communicating with the client/server, skip the network reads/writes */
-
-#ifdef SKIP_IO
-  #define readPkiDatagram( dummy, type )	CRYPT_OK
-  #define writePkiDatagram( dummy, type )	CRYPT_OK
-#endif /* SKIP_IO */
-
-/* The following macro can be used to enable dumping of PDUs to disk.  As a
-   safeguard, this only works in the Win32 debug version to prevent it from
-   being accidentally enabled in any release version */
-
-#if defined( __WIN32__ ) && !defined( NDEBUG )
-/* #define DUMP_SERVER_MESSAGES */
-  #define DEBUG_DUMP_CMP( type, level, sessionInfo ) \
-		  debugDump( type, level, sessionInfo )
-#else
-  #define DEBUG_DUMP_CMP( type, level, sessionInfo )
-#endif /* Win32 debug */
 
 /****************************************************************************
 *																			*
@@ -67,8 +32,10 @@
    to use a special-purpose function that uses meaningful names for all
    of the files that are created */
 
-static void debugDump( const int type, const int phase,
-					   const SESSION_INFO *sessionInfoPtr )
+STDC_NONNULL_ARG( ( 3 ) ) \
+void debugDumpCMP( IN_ENUM( CTAG_PB ) const CMP_MESSAGE_TYPE type, 
+				   IN_RANGE( 1, 4 ) const int phase,
+				   const SESSION_INFO *sessionInfoPtr )
 	{
 	static const FAR_BSS char *irStrings[] = \
 		{ "cmpi1_ir", "cmpi2_ip", "cmpi3_conf", "cmpi4_confack" };
@@ -95,7 +62,7 @@ static void debugDump( const int type, const int phase,
 	char fileName[ 1024 + 8 ];
 
 #ifndef DUMP_SERVER_MESSAGES
-	/* Server messages have complex names based on the server DN, so we only 
+	/* Server messages have complex names based on the server DN so we only 
 	   dump them if explicitly requested */
 	if( isServer( sessionInfoPtr ) )
 		return;
@@ -103,6 +70,7 @@ static void debugDump( const int type, const int phase,
 
 /*	GetTempPath( 512, fileName ); */
 	strlcpy_s( fileName, 1024, "/tmp/" );
+#ifdef DUMP_SERVER_MESSAGES
 	if( isServer( sessionInfoPtr ) )
 		{
 		MESSAGE_DATA msgData;
@@ -114,7 +82,7 @@ static void debugDump( const int type, const int phase,
 						 &msgData, CRYPT_CERTINFO_DN );
 		for( i = 0; i < msgData.length; i++ )
 			{
-			const int ch = fileName[ pathLength + i ];
+			const int ch = byteToInt( fileName[ pathLength + i ] );
 
 			if( ch == ' ' || ch == '\'' || ch == '"' || ch == '?' || \
 				ch == '*' || ch == '[' || ch == ']' || ch == '`' || \
@@ -123,6 +91,7 @@ static void debugDump( const int type, const int phase,
 			}
 		strlcat_s( fileName, 1024, "_" );
 		}
+#endif /* DUMP_SERVER_MESSAGES */
 	strlcat_s( fileName, 1024, fnStringPtr[ phase - 1 ] );
 	strlcat_s( fileName, 1024, ".der" );
 
@@ -153,133 +122,83 @@ static const MAP_TABLE reqRespMapTbl[] = {
 	{ CTAG_PB_RR, CTAG_PB_RP },
 	{ CTAG_PB_CCR, CTAG_PB_CCP },
 	{ CTAG_PB_GENM, CTAG_PB_GENP },
-	{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
+	{ CRYPT_ERROR, CRYPT_ERROR }, 
+		{ CRYPT_ERROR, CRYPT_ERROR }
 	};
 
-static const MAP_TABLE reqClibReqMapTbl[] = {
-	{ CTAG_PB_IR, CRYPT_REQUESTTYPE_INITIALISATION },
-	{ CTAG_PB_CR, CRYPT_REQUESTTYPE_CERTIFICATE },
-	{ CTAG_PB_P10CR, CRYPT_REQUESTTYPE_CERTIFICATE },
-	{ CTAG_PB_KUR, CRYPT_REQUESTTYPE_KEYUPDATE },
-	{ CTAG_PB_RR, CRYPT_REQUESTTYPE_REVOCATION },
-	{ CTAG_PB_GENM, CRYPT_REQUESTTYPE_PKIBOOT },
-	{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
-	};
-
-static const MAP_TABLE clibReqReqMapTbl[] = {
-	{ CRYPT_REQUESTTYPE_INITIALISATION, CTAG_PB_IR },
-	{ CRYPT_REQUESTTYPE_CERTIFICATE, CTAG_PB_CR },
-	{ CRYPT_REQUESTTYPE_CERTIFICATE, CTAG_PB_P10CR },
-	{ CRYPT_REQUESTTYPE_KEYUPDATE, CTAG_PB_KUR },
-	{ CRYPT_REQUESTTYPE_REVOCATION, CTAG_PB_RR },
-	{ CRYPT_REQUESTTYPE_PKIBOOT, CTAG_PB_GENM },
-	{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
-	};
-
-int reqToResp( const int reqType )
+CHECK_RETVAL_RANGE( MAX_ERROR, CTAG_PB_LAST ) \
+int reqToResp( IN_ENUM_OPT( CTAG_PB ) const CMP_MESSAGE_TYPE reqType )
 	{
 	int value, status;
+
+	REQUIRES( reqType >= CTAG_PB_IR && reqType < CTAG_PB_LAST );
+			  /* CTAG_PB_IR == 0 so this is the same as _NONE */
 
 	status = mapValue( reqType, &value, reqRespMapTbl, 
 					   FAILSAFE_ARRAYSIZE( reqRespMapTbl, MAP_TABLE ) );
 	return( cryptStatusError( status ) ? status : value );
 	}
-static int reqToClibReq( const int reqType )
-	{
-	int value, status;
-
-	status = mapValue( reqType, &value, reqClibReqMapTbl, 
-					   FAILSAFE_ARRAYSIZE( reqClibReqMapTbl, MAP_TABLE ) );
-	return( cryptStatusError( status ) ? status : value );
-	}
-static int clibReqToReq( const int reqType )
-	{
-	int value, status;
-
-	status = mapValue( reqType, &value, clibReqReqMapTbl, 
-					   FAILSAFE_ARRAYSIZE( clibReqReqMapTbl, MAP_TABLE ) );
-	return( cryptStatusError( status ) ? status : value );
-	}
-
-/* Initialise the MAC info used to protect the messages */
-
-int initMacInfo( const CRYPT_CONTEXT iMacContext, const void *userPassword, 
-				 const int userPasswordLength, const void *salt, 
-				 const int saltLength, const int iterations )
-	{
-	MECHANISM_DERIVE_INFO mechanismInfo;
-	MESSAGE_DATA msgData;
-	BYTE macKey[ CRYPT_MAX_HASHSIZE + 8 ];
-	const void *passwordPtr = userPassword;
-	int passwordLength = userPasswordLength, status;
-
-	assert( isHandleRangeValid( iMacContext ) );
-	assert( isReadPtr( userPassword, userPasswordLength ) );
-	assert( isReadPtr( salt, saltLength ) );
-	assert( iterations >= 1 );
-
-	/* Turn the user password into an HMAC key using the CMP/Entrust password
-	   derivation mechanism */
-	setMechanismDeriveInfo( &mechanismInfo, macKey, CMP_HMAC_KEYSIZE,
-							passwordPtr, passwordLength, CRYPT_ALGO_SHA1,
-							( void * ) salt, saltLength, iterations );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE, 
-							  &mechanismInfo, MECHANISM_DERIVE_CMP );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Load the key into the MAC context */
-	setMessageData( &msgData, macKey, CMP_HMAC_KEYSIZE );
-	status = krnlSendMessage( iMacContext, IMESSAGE_SETATTRIBUTE_S,
-							  &msgData, CRYPT_CTXINFO_KEY );
-	zeroise( macKey, CRYPT_MAX_HASHSIZE );
-	return( status );
-	}
 
 /* Initialise and destroy the protocol state information */
 
-#define PROTOCOLINFO_SET_USERID		0x01
-#define PROTOCOLINFO_SET_TRANSID	0x02
-#define PROTOCOLINFO_SET_MACINFO	0x04
-#define PROTOCOLINFO_SET_MACCTX		0x08
-#define PROTOCOLINFO_SET_ALL		( PROTOCOLINFO_SET_USERID | \
-									  PROTOCOLINFO_SET_TRANSID | \
-									  PROTOCOLINFO_SET_MACINFO | \
-									  PROTOCOLINFO_SET_MACCTX )
-
-static void initProtocolInfo( CMP_PROTOCOL_INFO *protocolInfo, 
-							  const BOOLEAN isCryptlib )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void initCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo, 
+						  const BOOLEAN isCryptlib,
+						  const BOOLEAN isServer )
 	{
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
 	memset( protocolInfo, 0, sizeof( CMP_PROTOCOL_INFO ) );
-	protocolInfo->iMacContext = protocolInfo->iAltMacContext = CRYPT_ERROR;
-	protocolInfo->authContext = CRYPT_ERROR;
+	protocolInfo->iMacContext = protocolInfo->authContext = CRYPT_ERROR;
 	if( isCryptlib )
 		protocolInfo->isCryptlib = TRUE;
+	if( isServer )
+		protocolInfo->isServer = TRUE;
 	}
 
-static int setProtocolInfo( CMP_PROTOCOL_INFO *protocolInfo, 
-							const void *userID, const int userIDlength, 
-							const int flags )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo, 
+						IN_BUFFER_OPT( userIDlength ) const void *userID, 
+						IN_LENGTH_SHORT_Z const int userIDlength, 
+						IN_FLAGS_Z( CMP_INIT ) const int flags,
+						const BOOLEAN isCryptlib )
 	{
 	MESSAGE_DATA msgData;
 	int status;
 
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+	assert( ( userID == NULL && userIDlength == 0 ) || \
+			isReadPtr( userID, userIDlength ) );
 
-	/* Set state info */
+	REQUIRES( ( !( flags & CMP_INIT_FLAG_USERID ) && userID == NULL && \
+				userIDlength == 0 ) || \
+			  ( ( flags & CMP_INIT_FLAG_USERID ) && userID != NULL && \
+				userIDlength > 0 && userIDlength < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( flags >= CMP_INIT_FLAG_NONE && \
+			  flags <= CMP_INIT_FLAG_MAX );
+
+	/* Initalise the protocol state information.  The sender nonce is 
+	   refreshed on each message read (i.e. at each round of the protocol),
+	   but its initial value has to be set here at startup */
 	setMessageData( &msgData, protocolInfo->senderNonce, CMP_NONCE_SIZE );
-	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
-					 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+	if( cryptStatusError( status ) )
+		return( status );
 	protocolInfo->senderNonceSize = CMP_NONCE_SIZE;
 
 	/* Set fixed identification information */
-	if( flags & PROTOCOLINFO_SET_USERID )
+	if( flags & CMP_INIT_FLAG_USERID )
 		{
-		assert( isReadPtr( userID, userIDlength ) );
+		REQUIRES( rangeCheckZ( 0, userIDlength, CRYPT_MAX_TEXTSIZE ) );
 		memcpy( protocolInfo->userID, userID, userIDlength );
 		protocolInfo->userIDsize = userIDlength;
+		DEBUG_PRINT(( "%s: Set userID.\n",
+					  protocolInfo->isServer ? "SVR" : "CLI" ));
+		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					   protocolInfo->userID, protocolInfo->userIDsize );
 		}
-	if( flags & PROTOCOLINFO_SET_TRANSID )
+	if( flags & CMP_INIT_FLAG_TRANSID )
 		{
 		setMessageData( &msgData, protocolInfo->transID, CMP_NONCE_SIZE );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
@@ -287,23 +206,33 @@ static int setProtocolInfo( CMP_PROTOCOL_INFO *protocolInfo,
 		if( cryptStatusError( status ) )
 			return( status );
 		protocolInfo->transIDsize = CMP_NONCE_SIZE;
+		DEBUG_PRINT(( "%s: Set new transID.\n",
+					  protocolInfo->isServer ? "SVR" : "CLI" ));
+		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					   protocolInfo->transID, protocolInfo->transIDsize );
 		}
 
-	/* Set the MAC info and context */
-	if( flags & PROTOCOLINFO_SET_MACINFO )
+	/* Set the MAC information and context.  cryptlib uses strong passwords 
+	   (or at least MAC keys) so if we're using a cryptlib-generated key we
+	   apply a smaller number of iterations than what'd be needed for an 
+	   unknown-strength password/MAC key */
+	if( flags & CMP_INIT_FLAG_MACINFO )
 		{
 		setMessageData( &msgData, protocolInfo->salt, CMP_NONCE_SIZE );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
-						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
+								  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+		if( cryptStatusError( status ) )
+			return( status );
 		protocolInfo->saltSize = CMP_NONCE_SIZE;
-		protocolInfo->iterations = CMP_PASSWORD_ITERATIONS;
+		protocolInfo->iterations = isCryptlib ? CMP_PW_ITERATIONS_CLIB : \
+												CMP_PW_ITERATIONS_OTHER;
 		}
-	if( flags & PROTOCOLINFO_SET_MACCTX )
+	if( flags & CMP_INIT_FLAG_MACCTX )
 		{
 		MESSAGE_CREATEOBJECT_INFO createInfo;
 
-		assert( protocolInfo->iMacContext == CRYPT_ERROR && \
-				protocolInfo->iAltMacContext == CRYPT_ERROR );
+		REQUIRES( protocolInfo->iMacContext == CRYPT_ERROR );
 		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_HMAC_SHA );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 								  &createInfo, OBJECT_TYPE_CONTEXT );
@@ -316,456 +245,26 @@ static int setProtocolInfo( CMP_PROTOCOL_INFO *protocolInfo,
 	return( CRYPT_OK );
 	}
 
-static void destroyProtocolInfo( CMP_PROTOCOL_INFO *protocolInfo )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void destroyCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo )
 	{
 	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
 	/* Destroy any active MAC contexts.  The authContext is just a reference 
-	   to the appropriate context in the session info so we don't destroy it 
-	   here */
+	   to the appropriate context in the session information so we don't 
+	   destroy it here.  The reason why we keep a reference to the 
+	   authentication context is because it could be one of several 
+	   different objects associated with the session information, if the
+	   client private key that's being certified is a signing key then the
+	   authentication context is the private key itself, if the private key 
+	   is an encryption-only key then the authentication context is a 
+	   separate signing key that was certified earlier.  Maintaining a
+	   reference in the protocol information avoids having to decide on the 
+	   fly which one to use */
 	if( protocolInfo->iMacContext != CRYPT_ERROR )
 		krnlSendNotifier( protocolInfo->iMacContext, IMESSAGE_DECREFCOUNT );
-	if( protocolInfo->iAltMacContext != CRYPT_ERROR )
-		krnlSendNotifier( protocolInfo->iAltMacContext, IMESSAGE_DECREFCOUNT );
 
 	zeroise( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) );
-	}
-
-/* Set up user authentication information (either a MAC context or a public 
-   key) based on a request submitted by the client.  This is done whenever 
-   the client starts a new transaction with a new user ID or cert ID */
-
-int initServerAuthentMAC( SESSION_INFO *sessionInfoPtr, 
-						  CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	MESSAGE_KEYMGMT_INFO getkeyInfo;
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Set up general authentication information and if there's user info 
-	   still present from a previous transaction, clear it */
-	status = setProtocolInfo( protocolInfo, NULL, 0, 
-							  PROTOCOLINFO_SET_MACCTX );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( cmpInfo->userInfo != CRYPT_ERROR )
-		{
-		krnlSendNotifier( cmpInfo->userInfo, IMESSAGE_DECREFCOUNT );
-		cmpInfo->userInfo = CRYPT_ERROR;
-		}
-
-	/* Get the user info for the user identified by the user ID from the 
-	   cert store.  If we get a not-found error we report it as "signer not 
-	   trusted", which can also mean "signer unknown".
-	   
-	   In theory we could perform a quick-reject check that the userID is 
-	   the correct length for a cryptlib-created ID (9 bytes), but it's 
-	   better to pass it into the system and let the failure come back
-	   through the standard error-handling mechanisms */
-	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_KEYID,
-						   protocolInfo->userID, protocolInfo->userIDsize, 
-						   NULL, 0, KEYMGMT_FLAG_NONE );
-	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
-							  KEYMGMT_ITEM_PKIUSER );
-	if( cryptStatusError( status ) )
-		{
-		const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionInfo( sessionInfoPtr->attributeList,
-									  CRYPT_SESSINFO_USERNAME );
-		char userID[ CRYPT_MAX_TEXTSIZE + 8 ];
-		int userIDlen;
-
-		if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE && \
-			userNamePtr->valueLength > 10 && \
-			userNamePtr->valueLength < CRYPT_MAX_TEXTSIZE )
-			{
-			memcpy( userID, userNamePtr->value, userNamePtr->valueLength );
-			userIDlen = userNamePtr->valueLength;
-			}
-		else
-			{
-			strlcpy_s( userID, CRYPT_MAX_TEXTSIZE, "the requested user" );
-			userIDlen = 18;
-			}
-		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "Couldn't find PKI user information for %s",
-					 sanitiseString( userID, CRYPT_MAX_TEXTSIZE, 
-									 userIDlen ) ) );
-		}
-	cmpInfo->userInfo = getkeyInfo.cryptHandle;
-	protocolInfo->userIDchanged = FALSE;
-
-	/* Get the password from the PKI user object if necessary */
-	if( findSessionInfo( sessionInfoPtr->attributeList,
-						 CRYPT_SESSINFO_PASSWORD ) == NULL )
-		{
-		MESSAGE_DATA msgData;
-		char password[ CRYPT_MAX_TEXTSIZE + 8 ];
-
-		setMessageData( &msgData, password, CRYPT_MAX_TEXTSIZE );
-		status = krnlSendMessage( cmpInfo->userInfo,
-								  IMESSAGE_GETATTRIBUTE_S, &msgData,
-								  CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status, 
-					( status, SESSION_ERRINFO, 
-					  "Couldn't read PKI user data from PKI user object" ) );
-			}
-		status = updateSessionInfo( &sessionInfoPtr->attributeList,
-									CRYPT_SESSINFO_PASSWORD, password, 
-									msgData.length, CRYPT_MAX_TEXTSIZE,
-									ATTR_FLAG_ENCODEDVALUE );
-		zeroise( password, CRYPT_MAX_TEXTSIZE );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status, 
-					( status, SESSION_ERRINFO, 
-					  "Couldn't copy PKI user data from PKI user object to "
-					  "session object" ) );
-			}
-		}
-
-	return( CRYPT_OK );
-	}
-
-int initServerAuthentSign( SESSION_INFO *sessionInfoPtr, 
-						   CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionInfo( sessionInfoPtr->attributeList, 
-								 CRYPT_SESSINFO_USERNAME );
-	MESSAGE_KEYMGMT_INFO getkeyInfo;
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Set up general authentication information and if there's client auth. 
-	   info still present from a previous transaction that used MAC
-	   authentication, clear it */
-	status = setProtocolInfo( protocolInfo, NULL, 0, 0 );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( cmpInfo->userInfo != CRYPT_ERROR )
-		{
-		krnlSendNotifier( cmpInfo->userInfo, IMESSAGE_DECREFCOUNT );
-		cmpInfo->userInfo = CRYPT_ERROR;
-		}
-
-	/* Get the user info for the user that originally authorised the issue
-	   of the cert that signed the request.  This serves two purposes, it 
-	   obtains the user ID if it wasn't supplied in the request (for example 
-	   if the request uses only a cert ID), and it verifies that the 
-	   authorising cert belongs to a valid user */
-	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID,
-						   protocolInfo->certID, protocolInfo->certIDsize, 
-						   NULL, 0, KEYMGMT_FLAG_GETISSUER );
-	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
-							  KEYMGMT_ITEM_PKIUSER );
-	if( cryptStatusError( status ) )
-		{
-		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "Couldn't find PKI user information for owner of "
-					 "requesting cert" ) );
-		}
-
-	/* If there's currently no user ID present or if it's present but it's a
-	   non-userID value such as a cert ID, replace it with the PKI user ID */
-	if( userNamePtr == NULL || \
-		!( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE ) )
-		{
-		MESSAGE_DATA msgData;
-		char userName[ CRYPT_MAX_TEXTSIZE + 8 ];
-
-		setMessageData( &msgData, userName, CRYPT_MAX_TEXTSIZE );
-		status = krnlSendMessage( getkeyInfo.cryptHandle,
-								  IMESSAGE_GETATTRIBUTE_S, &msgData,
-								  CRYPT_CERTINFO_PKIUSER_ID );
-		if( cryptStatusError( status ) )
-			{
-			krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-			retExt( status, 
-					( status, SESSION_ERRINFO, 
-					  "Couldn't read PKI user data from PKI user object" ) );
-			}
-		status = updateSessionInfo( &sessionInfoPtr->attributeList,
-									CRYPT_SESSINFO_USERNAME, userName, 
-									msgData.length, CRYPT_MAX_TEXTSIZE,
-									ATTR_FLAG_ENCODEDVALUE );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status, 
-					( status, SESSION_ERRINFO, 
-					  "Couldn't copy PKI user data from PKI user object to "
-					  "session object" ) );
-			}
-		}
-	krnlSendNotifier( getkeyInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
-
-	/* Get the public key identified by the cert ID from the cert store.  
-	   This assumes that the owner of an existing cert/existing user is 
-	   authorised to request further certs using the existing one.  If we 
-	   get a not found error we report it as "signer not trusted", which 
-	   can also mean "signer unknown" */
-	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID,
-						   protocolInfo->certID, protocolInfo->certIDsize, 
-						   NULL, 0, KEYMGMT_FLAG_USAGE_SIGN );
-	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							  IMESSAGE_KEY_GETKEY, &getkeyInfo, 
-							  KEYMGMT_ITEM_PUBLICKEY );
-	if( cryptStatusError( status ) )
-		{
-		protocolInfo->pkiFailInfo = CMPFAILINFO_SIGNERNOTTRUSTED;
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "Couldn't find certificate for requested user" ) );
-		}
-	sessionInfoPtr->iAuthInContext = getkeyInfo.cryptHandle;
-	protocolInfo->userIDchanged = FALSE;
-
-	return( CRYPT_OK );
-	}
-
-/* Hash/MAC the message header and body */
-
-int hashMessageContents( const CRYPT_CONTEXT iHashContext,
-						 const void *data, const int length )
-	{
-	STREAM stream;
-	BYTE buffer[ 8 + 8 ];
-
-	assert( isHandleRangeValid( iHashContext ) );
-	assert( isReadPtr( data, length ) );
-
-	/* Delete the hash/MAC value, which resets the context */
-	krnlSendMessage( iHashContext, IMESSAGE_DELETEATTRIBUTE, NULL, 
-					 CRYPT_CTXINFO_HASHVALUE );
-
-	/* Write the pseudoheader used for hashing/MACing the header and body and
-	   hash/MAC it */
-	sMemOpen( &stream, buffer, 8 );
-	writeSequence( &stream, length );
-	krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer, 
-					 stell( &stream ) );
-	sMemClose( &stream );
-	krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, ( void * ) data, 
-					 length );
-	return( krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer, 0 ) );
-	}
-
-/* Deliver an Einladung betreff Kehrseite to the client.  We don't bother
-   checking the return value for the write since there's nothing that we can 
-   do in the case of an error except close the connection, which we do 
-   anyway since this is the last message */
-
-static void sendErrorResponse( SESSION_INFO *sessionInfoPtr,
-							   CMP_PROTOCOL_INFO *protocolInfo,
-							   const int errorStatus )
-	{
-	BOOLEAN writeHttpResponseOnly = !protocolInfo->headerRead;
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-	assert( cryptStatusError( errorStatus ) );
-
-	/* If we were going to protect the communication with the client with a
-	   MAC and something failed, make sure that we don't try and MAC the
-	   response since the failure could be a client MAC failure, failure to
-	   locate the MAC key, etc etc */
-	protocolInfo->useMACsend = FALSE;
-	protocolInfo->status = errorStatus;
-
-	/* Write the error response if we can.  We only do this if at least the
-	   header of the client's message was successfully read, otherwise we 
-	   can't create our own header for the response */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL, TRUE );
-	if( !writeHttpResponseOnly )
-		{
-		status = writePkiMessage( sessionInfoPtr, protocolInfo, CMPBODY_ERROR );
-		if( cryptStatusError( status ) )
-			writeHttpResponseOnly = TRUE;
-		}
-	if( writeHttpResponseOnly )
-		{
-		HTTP_DATA_INFO httpDataInfo;
-
-		/* If we encounter an error processing the initial request, there 
-		   won't be enough information available to create an error 
-		   response.  At this point the best that we can do is send an error
-		   at the HTTP level */
-		initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
-						  sessionInfoPtr->receiveBufSize );
-		httpDataInfo.reqStatus = errorStatus;
-		swrite( &sessionInfoPtr->stream, &httpDataInfo, 
-				sizeof( HTTP_DATA_INFO ) );
-		return;
-		}
-	DEBUG_DUMP_CMP( CTAG_PB_ERROR, 1, sessionInfoPtr );
-	( void ) writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE, 
-							   CMP_CONTENT_TYPE_LEN );
-	}
-
-/* Set up information needed to perform a client-side transaction */
-
-static int initClientInfo( SESSION_INFO *sessionInfoPtr,
-						   CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionInfo( sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_USERNAME );
-	const ATTRIBUTE_LIST *passwordPtr = \
-				findSessionInfo( sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_PASSWORD );
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-	assert( !isServer( sessionInfoPtr ) );
-
-	/* Determine what we need to do based on the request type */
-	protocolInfo->operation = clibReqToReq( cmpInfo->requestType );
-	if( cryptStatusError( protocolInfo->operation ) )
-		return( protocolInfo->operation );
-
-	/* If we're using public key-based authentication, set up the key and 
-	   user ID information */
-	if( cmpInfo->requestType != CRYPT_REQUESTTYPE_PKIBOOT && \
-		cmpInfo->requestType != CRYPT_REQUESTTYPE_INITIALISATION && \
-		!( cmpInfo->requestType == CRYPT_REQUESTTYPE_REVOCATION && \
-		   passwordPtr != NULL ) )
-		{
-		/* If it's an encryption-only key, remember this for later when we 
-		   need to authenticate our request messages */
-		status = krnlSendMessage( sessionInfoPtr->privateKey, IMESSAGE_CHECK, 
-								  NULL, MESSAGE_CHECK_PKC_SIGN );
-		if( cryptStatusError( status ) )
-			{
-			/* The private key can't be used for signature creation, use
-			   the alternate authentication key instead */
-			protocolInfo->authContext = sessionInfoPtr->iAuthOutContext;
-			protocolInfo->cryptOnlyKey = TRUE;
-			}
-		else
-			/* The private key that we're using is capable of authenticating 
-			   requests */
-			protocolInfo->authContext = sessionInfoPtr->privateKey;
-
-		/* If we're not talking to a cryptlib peer, get the user ID.  If 
-		   it's a standard signed request the authenticating object will be 
-		   the private key, however if the private key is an encryption-only 
-		   key the message authentication key is a separate object.  To 
-		   handle this we get the user ID from the signing key rather than 
-		   automatically using the private key */
-		if( !protocolInfo->isCryptlib )
-			{
-			MESSAGE_DATA msgData;
-			BYTE userID[ CRYPT_MAX_HASHSIZE + 8 ];
-
-			setMessageData( &msgData, userID, CRYPT_MAX_HASHSIZE );
-			status = krnlSendMessage( protocolInfo->authContext, 
-									  IMESSAGE_GETATTRIBUTE_S, &msgData, 
-									  CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER );
-			if( cryptStatusOK( status ) )
-				status = setProtocolInfo( protocolInfo, userID, 
-										  msgData.length, 
-										  PROTOCOLINFO_SET_USERID | \
-										  PROTOCOLINFO_SET_TRANSID );
-			return( status );
-			}
-
-		/* It's a cryptlib peer, the cert is identified by an unambiguous 
-		   cert ID */
-		return( setProtocolInfo( protocolInfo, NULL, 0, 
-								 PROTOCOLINFO_SET_TRANSID ) );
-		}
-
-	/* If there's a MAC context present from a previous transaction, reuse 
-	   it for the current one */
-	if( cmpInfo->savedMacContext != CRYPT_ERROR )
-		{
-		setProtocolInfo( protocolInfo, NULL, 0, PROTOCOLINFO_SET_TRANSID );
-		protocolInfo->useMACsend = protocolInfo->useMACreceive = TRUE;
-		protocolInfo->iMacContext = cmpInfo->savedMacContext;
-		cmpInfo->savedMacContext = CRYPT_ERROR;
-		return( CRYPT_OK );
-		}
-
-	/* We're using MAC authentication, initialise the protocol info */
-	if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE )
-		{
-		BYTE decodedValue[ 64 + 8 ];
-		int decodedValueLength;
-
-		/* It's a cryptlib-style encoded user ID, decode it into its binary 
-		   value */
-		status = decodePKIUserValue( decodedValue, 64, &decodedValueLength,
-									 userNamePtr->value, 
-									 userNamePtr->valueLength );
-		if( cryptStatusError( status ) )
-			{
-			assert( DEBUG_WARN );
-			retExt( status, 
-					( status, SESSION_ERRINFO, "Invalid PKI user value" ) );
-			}
-		status = setProtocolInfo( protocolInfo, decodedValue,
-								  decodedValueLength, PROTOCOLINFO_SET_ALL );
-		zeroise( decodedValue, CRYPT_MAX_TEXTSIZE );
-		}
-	else
-		{
-		/* It's a standard user ID, use it as is */
-		status = setProtocolInfo( protocolInfo, userNamePtr->value,
-								  userNamePtr->valueLength, 
-								  PROTOCOLINFO_SET_ALL );
-		}
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Set up the MAC context used to authenticate messages */
-	if( passwordPtr->flags & ATTR_FLAG_ENCODEDVALUE )
-		{
-		BYTE decodedValue[ 64 + 8 ];
-		int decodedValueLength;
-
-		/* It's a cryptlib-style encoded password, decode it into its binary 
-		   value */
-		status = decodePKIUserValue( decodedValue, 64, &decodedValueLength,
-									 passwordPtr->value, 
-									 passwordPtr->valueLength );
-		if( cryptStatusError( status ) )
-			{
-			assert( DEBUG_WARN );
-			retExt( status, 
-					( status, SESSION_ERRINFO, "Invalid PKI user value" ) );
-			}
-		status = initMacInfo( protocolInfo->iMacContext, decodedValue, 
-							  decodedValueLength, protocolInfo->salt, 
-							  protocolInfo->saltSize, 
-							  protocolInfo->iterations );
-		zeroise( decodedValue, CRYPT_MAX_TEXTSIZE );
-		}
-	else
-		{
-		/* It's a standard password, use it as is */
-		status = initMacInfo( protocolInfo->iMacContext,
-							  passwordPtr->value, passwordPtr->valueLength,
-							  protocolInfo->salt, protocolInfo->saltSize,
-							  protocolInfo->iterations );
-		}
-	return( status );
 	}
 
 /****************************************************************************
@@ -774,77 +273,10 @@ static int initClientInfo( SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-/* Prepare a CMP session */
-
-static int clientStartup( SESSION_INFO *sessionInfoPtr )
-	{
-	const PROTOCOL_INFO *protocolInfoPtr = sessionInfoPtr->protocolInfo;
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	NET_CONNECT_INFO connectInfo;
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-
-	/* Make sure that we have all the needed information.  Plug-and-play PKI 
-	   uses PKIBoot to get the CA cert and generates the requests internally, 
-	   so we only need to check for these values if we're doing standard 
-	   CMP.  The check for user ID and authentication information has
-	   already been done at the general session level */
-	if( !( cmpInfo->flags & CMP_PFLAG_PNPPKI ) )
-		{
-		if( cmpInfo->requestType == CRYPT_REQUESTTYPE_NONE )
-			{
-			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_CMP_REQUESTTYPE,
-						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			return( CRYPT_ERROR_NOTINITED );
-			}
-		if( sessionInfoPtr->iAuthInContext == CRYPT_ERROR )
-			{
-			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_CACERTIFICATE,
-						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			return( CRYPT_ERROR_NOTINITED );
-			}
-		if( cmpInfo->requestType != CRYPT_REQUESTTYPE_PKIBOOT && \
-			sessionInfoPtr->iCertRequest == CRYPT_ERROR )
-			{
-			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_REQUEST,
-						  CRYPT_ERRTYPE_ATTR_ABSENT );
-			return( CRYPT_ERROR_NOTINITED );
-			}
-		}
-
-/*-----------------------------------------------------------------------*/
-#ifdef SKIP_IO
-goto skipIO;
-#endif /* SKIP_IO */
-/*-----------------------------------------------------------------------*/
-	/* Connect to the remote server */
-	initSessionNetConnectInfo( sessionInfoPtr, &connectInfo );
-	if( sessionInfoPtr->flags & SESSION_ISHTTPTRANSPORT )
-		status = sNetConnect( &sessionInfoPtr->stream, STREAM_PROTOCOL_HTTP, 
-							  &connectInfo, &sessionInfoPtr->errorInfo );
-	else
-		{
-		const ALTPROTOCOL_INFO *altProtocolInfoPtr = \
-									protocolInfoPtr->altProtocolInfo;
-
-		assert( sessionInfoPtr->flags & SESSION_USEALTTRANSPORT );
-
-		/* If we're using the HTTP port for a session-specific protocol, 
-		   change it to the default port for the session-specific protocol 
-		   instead */
-		if( connectInfo.port == 80 )
-			connectInfo.port = altProtocolInfoPtr->port;
-		status = sNetConnect( &sessionInfoPtr->stream, 
-							  altProtocolInfoPtr->type, 
-							  &connectInfo, &sessionInfoPtr->errorInfo );
-		}
-	return( status );
-	}
-
 /* Shut down a CMP session */
 
-static void shutdownFunction( SESSION_INFO *sessionInfoPtr )
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void shutdownFunction( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
 
@@ -859,524 +291,25 @@ static void shutdownFunction( SESSION_INFO *sessionInfoPtr )
 	sNetDisconnect( &sessionInfoPtr->stream );
 	}
 
-/* Exchange data with a CMP client/server.  Since the plug-and-play PKI 
-   client performs multiple transactions, we wrap the basic clientTransact() 
-   in an external function that either calls it indirectly when required 
-   from the PnP code or just passes the call through to the transaction 
-   function */
-
-static int clientTransact( SESSION_INFO *sessionInfoPtr )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	CMP_PROTOCOL_INFO protocolInfo;
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-
-	/* Check that everything we need is present.  If it's a general CMP 
-	   session this will already have been checked in clientStartup(), but
-	   if it's coming from the PnPPKI wrapper it doesn't go through the
-	   startup checks each time so we double-check here.  Since any problem
-	   is just a one-off programming error, we only need a debug assertion
-	   rather than a hardcoded check */
-	assert( cmpInfo->requestType != CRYPT_REQUESTTYPE_NONE );
-	assert( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
-			sessionInfoPtr->iCertRequest != CRYPT_ERROR );
-	assert( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT || \
-			sessionInfoPtr->iAuthInContext != CRYPT_ERROR );
-
-	/* Initialise the client-side protocol state info */
-	initProtocolInfo( &protocolInfo, 
-					  sessionInfoPtr->flags & SESSION_ISCRYPTLIB );
-	status = initClientInfo( sessionInfoPtr, &protocolInfo );
-	if( cryptStatusError( status ) )
-		{
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-
-	/* Write the message into the session buffer and send it to the server */
-	status = writePkiMessage( sessionInfoPtr, &protocolInfo, 
-							  ( cmpInfo->requestType == \
-									CRYPT_REQUESTTYPE_PKIBOOT ) ? \
-							  CMPBODY_GENMSG : CMPBODY_NORMAL );
-	if( cryptStatusOK( status ) )
-		{
-		DEBUG_DUMP_CMP( protocolInfo.operation, 1, sessionInfoPtr );
-		if( ( protocolInfo.operation == CTAG_PB_GENM || \
-			  protocolInfo.operation == CTAG_PB_RR ) && \
-			!( sessionInfoPtr->protocolFlags & CMP_PFLAG_RETAINCONNECTION ) )
-			{
-			/* There's no confirmation handshake for PKIBoot or a revocation 
-			   request so we mark this as the last message if required */
-			sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL,
-					TRUE );
-			}
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
-								   CMP_CONTENT_TYPE_LEN );
-		}
-	if( cryptStatusError( status ) )
-		{
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-
-	/* Read the server response */
-	status = readPkiDatagram( sessionInfoPtr );
-	if( cryptStatusOK( status ) )
-		{
-		const int responseType = reqToResp( protocolInfo.operation );
-
-		DEBUG_DUMP_CMP( protocolInfo.operation, 2, sessionInfoPtr );
-		if( cryptStatusError( responseType ) )
-			status = responseType;
-		else
-			{
-			status = readPkiMessage( sessionInfoPtr, &protocolInfo, 
-									 responseType );
-			}
-		}
-	if( cryptStatusOK( status ) && protocolInfo.operation == CTAG_PB_GENM )
-		{
-		/* It's a PKIBoot, add the trusted certs.  If the user wants the 
-		   setting made permanent, they need to flush the config to disk 
-		   after the session has completed */
-		status = krnlSendMessage( sessionInfoPtr->ownerHandle,
-								  IMESSAGE_SETATTRIBUTE, 
-								  &sessionInfoPtr->iCertResponse,
-								  CRYPT_IATTRIBUTE_CTL );
-		if( status == CRYPT_ERROR_INITED )
-			{
-			/* If the certs are already present, trying to add them again
-			   isn't an error */
-			status = CRYPT_OK;
-			}
-		}
-	if( cryptStatusError( status ) )
-		{
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-
-	/* If it's a transaction type that doesn't need a confirmation, we're 
-	   done */
-	if( protocolInfo.operation == CTAG_PB_GENM || \
-		protocolInfo.operation == CTAG_PB_RR )
-		{
-		if( protocolInfo.iMacContext != CRYPT_ERROR )
-			{
-			/* Remember the authentication context in case we can reuse it 
-			   for another transaction */
-			cmpInfo->savedMacContext = protocolInfo.iMacContext;
-			protocolInfo.iMacContext = CRYPT_ERROR;
-			}
-		destroyProtocolInfo( &protocolInfo );
-		return( CRYPT_OK );
-		}
-
-	/* Exchange confirmation data with the server */
-	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_RETAINCONNECTION ) )
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL, 
-				TRUE );
-	status = writePkiMessage( sessionInfoPtr, &protocolInfo,
-							  CMPBODY_CONFIRMATION );
-	if( cryptStatusOK( status ) )
-		{
-		DEBUG_DUMP_CMP( protocolInfo.operation, 3, sessionInfoPtr );
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
-								   CMP_CONTENT_TYPE_LEN );
-		}
-	if( cryptStatusOK( status ) )
-		status = readPkiDatagram( sessionInfoPtr );
-	if( cryptStatusOK( status ) )
-		{
-		DEBUG_DUMP_CMP( protocolInfo.operation, 4, sessionInfoPtr );
-		status = readPkiMessage( sessionInfoPtr, &protocolInfo, CTAG_PB_PKICONF );
-		}
-	if( cryptStatusOK( status ) && protocolInfo.iMacContext != CRYPT_ERROR )
-		{
-		/* Remember the authentication context in case we can reuse it for 
-		   another transaction */
-		cmpInfo->savedMacContext = protocolInfo.iMacContext;
-		protocolInfo.iMacContext = CRYPT_ERROR;
-		}
-	destroyProtocolInfo( &protocolInfo );
-	return( status );
-	}
-
-static int clientTransactWrapper( SESSION_INFO *sessionInfoPtr )
-	{
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-
-	/* If it's not a plug-and-play PKI session, just pass the call on down
-	   to the client transaction function */
-	if( !( sessionInfoPtr->sessionCMP->flags & CMP_PFLAG_PNPPKI ) )
-		return( clientTransact( sessionInfoPtr ) );
-
-	/* We're doing plug-and-play PKI, point the transaction function at the 
-	   client-transact function to execute the PnP steps, then reset it back 
-	   to the PnP wrapper after we're done */
-	sessionInfoPtr->transactFunction = clientTransact;
-	status = pnpPkiSession( sessionInfoPtr );
-	sessionInfoPtr->transactFunction = clientTransactWrapper;
-	return( status );
-	}
-
-static int serverTransact( SESSION_INFO *sessionInfoPtr )
-	{
-	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	MESSAGE_CERTMGMT_INFO certMgmtInfo;
-	MESSAGE_KEYMGMT_INFO setkeyInfo;
-	CMP_PROTOCOL_INFO protocolInfo;
-	const ATTRIBUTE_LIST *userNamePtr = \
-				findSessionInfo( sessionInfoPtr->attributeList,
-								 CRYPT_SESSINFO_USERNAME );
-	int status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-
-	/* Initialise the server-side protocol state info.  Since the server 
-	   doesn't have a user ID (it uses what the client sends it), we set the
-	   userID-sent flag to indicate that it's been implicitly exchanged */
-	initProtocolInfo( &protocolInfo,
-					  sessionInfoPtr->flags & SESSION_ISCRYPTLIB );
-	protocolInfo.authContext = sessionInfoPtr->privateKey;
-	sessionInfoPtr->protocolFlags |= CMP_PFLAG_USERIDSENT;
-	if( userNamePtr != NULL )
-		{
-		/* There's already user info present from a previous transaction, 
-		   try and re-use the info from it (this can be overridden by the
-		   client sending us new user info) */
-		if( userNamePtr->flags & ATTR_FLAG_ENCODEDVALUE )
-			{
-			/* It's a cryptlib-style encoded user ID, decode it into its 
-			   binary value */
-			status = decodePKIUserValue( protocolInfo.userID,
-										 CRYPT_MAX_TEXTSIZE,
-										 &protocolInfo.userIDsize,
-										 userNamePtr->value,
-										 userNamePtr->valueLength );
-			if( cryptStatusError( status ) )
-				retIntError();
-			}
-		else
-			{
-			/* It's a standard user ID, use it as is */
-			memcpy( protocolInfo.userID, userNamePtr->value, 
-					userNamePtr->valueLength );
-			protocolInfo.userIDsize = userNamePtr->valueLength;
-			}
-		protocolInfo.iMacContext = cmpInfo->savedMacContext;
-		cmpInfo->savedMacContext = CRYPT_ERROR;
-		}
-
-	/* Read the initial message from the client.  We don't write an error
-	   response at the initial read stage to prevent scanning/DOS attacks 
-	   (vir sapit qui pauca loquitur) */
-	status = readPkiDatagram( sessionInfoPtr );
-	if( cryptStatusError( status ) )
-		{
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-	status = readPkiMessage( sessionInfoPtr, &protocolInfo,
-							 CRYPT_UNUSED );
-	if( cryptStatusOK( status ) )
-		{
-		cmpInfo->requestType = reqToClibReq( protocolInfo.operation );
-		if( cryptStatusError( cmpInfo->requestType ) )
-			status = cmpInfo->requestType;
-		}
-	if( cryptStatusError( status ) )
-		{
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-	DEBUG_DUMP_CMP( protocolInfo.operation, 1, sessionInfoPtr );
-
-	/* If it's a PKIBoot request, send the PKIBoot response and retry the 
-	   read unless the client closes the stream.  This assumes that the 
-	   client will generally send a PKIBoot request in conjunction with a 
-	   cert management request (i.e. as part of a PnP PKI transaction), 
-	   which allows us to reuse the user authentication info to process the 
-	   request that follows the PKIBoot */
-	if( cmpInfo->requestType == CRYPT_REQUESTTYPE_PKIBOOT )
-		{
-		int streamState;
-
-		/* Handle the PKIBoot request */
-		status = writePkiMessage( sessionInfoPtr, &protocolInfo, 
-								  CMPBODY_GENMSG );
-		if( cryptStatusOK( status ) )
-			{
-			DEBUG_DUMP_CMP( CTAG_PB_GENM, 2, sessionInfoPtr );
-			status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
-									   CMP_CONTENT_TYPE_LEN );
-			}
-		if( cryptStatusError( status ) )
-			{
-			sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-			destroyProtocolInfo( &protocolInfo );
-			return( status );
-			}
-
-		/* Check whether the client left the stream open.  If they haven't,
-		   it was a standalone PKIBoot request and we're done */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE, 
-				&streamState, 0 );
-		if( !streamState )
-			{
-			destroyProtocolInfo( &protocolInfo );
-			return( CRYPT_OK );
-			}
-
-		/* Process the request that follows the PKIBoot.  If the client
-		   was only performing a standardlone PKIBoot but left the 
-		   connection open in case further transactions were necesary
-		   later, but then shut down the connection without performing
-		   any further transactions, we'll get a read error at this point,
-		   which we convert into a OK status */
-		status = readPkiDatagram( sessionInfoPtr );
-		if( cryptStatusOK( status ) )
-			status = readPkiMessage( sessionInfoPtr, &protocolInfo,
-									 CRYPT_UNUSED );
-		if( cryptStatusError( status ) )
-			{
-			sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE, 
-					&streamState, 0 );
-			if( streamState )
-				/* Only send an error response if the stream is still open */
-				sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-			destroyProtocolInfo( &protocolInfo );
-			return( streamState ? status : CRYPT_OK );
-			}
-		}
-
-	/* Make sure that the signature on the request data is OK (unless it's a 
-	   non-signed revocation request or a request for an encryption-only 
-	   key) */
-	if( protocolInfo.operation != CTAG_PB_RR && !protocolInfo.cryptOnlyKey )
-		status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-								  IMESSAGE_CRT_SIGCHECK, NULL, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		{
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-		retExt( status, 
-				( status, SESSION_ERRINFO, 
-				  "Request signature check failed" ) );
-		}
-
-	/* Add the request to the cert store */
-	setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0, NULL, 0,
-						   ( protocolInfo.operation == CTAG_PB_KUR ) ? \
-								KEYMGMT_FLAG_UPDATE : KEYMGMT_FLAG_NONE );
-	setkeyInfo.cryptHandle = sessionInfoPtr->iCertRequest;
-	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							  IMESSAGE_KEY_SETKEY, &setkeyInfo, 
-							  KEYMGMT_ITEM_REQUEST );
-	if( cryptStatusError( status ) )
-		{
-		/* If the cert store reports that there's a problem with the request,
-		   convert it to an invalid request error */
-		if( status == CRYPT_ARGERROR_NUM1 )
-			status = CRYPT_ERROR_INVALID;
-
-		/* A common error condition at this point arises when the user tries 
-		   to submit a second initialisation request for a PKI user that has 
-		   already had a cert issued for it, so we catch this condition and 
-		   provide a more informative error response than the generic 
-		   message */
-		if( protocolInfo.operation == CTAG_PB_IR && \
-			status == CRYPT_ERROR_DUPLICATE )
-			protocolInfo.pkiFailInfo = CMPFAILINFO_DUPLICATECERTREQ;
-
-		/* Clean up and return the appropriate error information to the
-		   caller */
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-		if( protocolInfo.operation == CTAG_PB_IR && \
-			status == CRYPT_ERROR_DUPLICATE )
-			retExtObj( status, 
-					   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-						 "Initialisation request couldn't be added to the "
-						 "cert store because another initialisation request "
-						 "has already been processed for this user" ) );
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "Request couldn't be added to the cert store" ) );
-		}
-
-	/* Create or revoke a cert from the request */
-	if( protocolInfo.operation != CTAG_PB_RR )
-		{
-		setMessageCertMgmtInfo( &certMgmtInfo, sessionInfoPtr->privateKey,
-								sessionInfoPtr->iCertRequest );
-		status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-								  IMESSAGE_KEY_CERTMGMT, &certMgmtInfo,
-								  CRYPT_CERTACTION_CERT_CREATION );
-		if( cryptStatusOK( status ) )
-			sessionInfoPtr->iCertResponse = certMgmtInfo.cryptCert;
-		}
-	else
-		{
-		setMessageCertMgmtInfo( &certMgmtInfo, CRYPT_UNUSED,
-								sessionInfoPtr->iCertRequest );
-		status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-								  IMESSAGE_KEY_CERTMGMT, &certMgmtInfo,
-								  CRYPT_CERTACTION_REVOKE_CERT );
-		}
-	if( cryptStatusError( status ) )
-		{
-		/* If the cert store reports that there's a problem with the request,
-		   convert it to an invalid request error */
-		if( status == CRYPT_ARGERROR_NUM1 )
-			status = CRYPT_ERROR_INVALID;
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "%s was denied by cert store",
-					 ( protocolInfo.operation != CTAG_PB_RR ) ? \
-						"Cert issue" : "Revocation" ) );
-		}
-
-	/* Send the response to the client */
-	status = writePkiMessage( sessionInfoPtr, &protocolInfo, CMPBODY_NORMAL );
-	if( cryptStatusOK( status ) )
-		{
-		DEBUG_DUMP_CMP( protocolInfo.operation, 2, sessionInfoPtr );
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
-								   CMP_CONTENT_TYPE_LEN );
-		}
-	if( cryptStatusError( status ) )
-		{
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		if( protocolInfo.operation != CTAG_PB_RR )
-			{
-			/* If there was a problem, drop the partially-issued cert.  We
-			   don't have to go all the way and do a full reversal because
-			   it hasn't really been issued yet since we couldn't get it to
-			   the client.  In addition we don't do anything with the return
-			   status since we want to return the status that caused the
-			   problem, not the result of the drop operation */
-			setMessageCertMgmtInfo( &certMgmtInfo, CRYPT_UNUSED,
-									sessionInfoPtr->iCertResponse );
-			krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							 IMESSAGE_KEY_CERTMGMT, &certMgmtInfo,
-							 CRYPT_CERTACTION_CERT_CREATION_DROP );
-			}
-		destroyProtocolInfo( &protocolInfo );
-		return( status );
-		}
-
-	/* If it's a transaction type that doesn't need a confirmation, we're 
-	   done */
-	if( protocolInfo.operation == CTAG_PB_RR )
-		{
-		/* Remember the authentication context in case we can reuse it for 
-		   another transaction */
-		cmpInfo->savedMacContext = protocolInfo.iMacContext;
-		protocolInfo.iMacContext = CRYPT_ERROR;
-		destroyProtocolInfo( &protocolInfo );
-		return( CRYPT_OK );
-		}
-
-	/* Read back the confirmation from the client */
-	status = readPkiDatagram( sessionInfoPtr );
-	if( cryptStatusOK( status ) )
-		status = readPkiMessage( sessionInfoPtr, &protocolInfo,
-								 CTAG_PB_CERTCONF );
-	if( cryptStatusError( status ) || \
-		protocolInfo.status == CRYPT_ERROR )
-		{
-		int localStatus;
-
-		/* If the client rejected the cert this isn't a protocol error so we
-		   send back a standard ack, otherwise we send back an error response */
-		if( protocolInfo.status == CRYPT_ERROR )
-			{
-			localStatus = writePkiMessage( sessionInfoPtr, &protocolInfo, 
-										   CMPBODY_ACK );
-			if( cryptStatusOK( localStatus ) )
-				localStatus = writePkiDatagram( sessionInfoPtr, 
-												CMP_CONTENT_TYPE,
-												CMP_CONTENT_TYPE_LEN );
-			if( cryptStatusOK( status ) )
-				{
-				/* If we haven't already got an error status set from an 
-				   earlier operation, remember the status from sending the 
-				   ack */
-				status = localStatus;
-				}
-			}
-		else
-			sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-
-		/* Reverse the cert issue operation by revoking the incompletely-
-		   issued cert.  We only return the status from this operation if
-		   we're performing the reversal at the request of the user (i.e. if
-		   the earlier operations succeeded), if not we return the status
-		   that caused the failure earlier on */
-		setMessageCertMgmtInfo( &certMgmtInfo, CRYPT_UNUSED,
-								sessionInfoPtr->iCertResponse );
-		localStatus = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-									IMESSAGE_KEY_CERTMGMT, &certMgmtInfo,
-									CRYPT_CERTACTION_CERT_CREATION_REVERSE );
-		return( cryptStatusOK( status ) ? localStatus : status );
-		}
-	DEBUG_DUMP_CMP( protocolInfo.operation, 3, sessionInfoPtr );
-
-	/* The client has confirmed the cert creation, finalise it */
-	setMessageCertMgmtInfo( &certMgmtInfo, CRYPT_UNUSED,
-							sessionInfoPtr->iCertResponse );
-	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
-							  IMESSAGE_KEY_CERTMGMT, &certMgmtInfo,
-							  CRYPT_CERTACTION_CERT_CREATION_COMPLETE );
-	if( cryptStatusError( status ) )
-		{
-		sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
-		destroyProtocolInfo( &protocolInfo );
-		retExtObj( status, 
-				   ( status, SESSION_ERRINFO, sessionInfoPtr->cryptKeyset,
-					 "Cert issue completion failed" ) );
-		}
-
-	/* Send back the final ack and clean up.  We remember the authentication 
-	   context in case we can reuse it for another transaction */
-	status = writePkiMessage( sessionInfoPtr, &protocolInfo, CMPBODY_ACK );
-	if( cryptStatusOK( status ) )
-		{
-		DEBUG_DUMP_CMP( protocolInfo.operation, 4, sessionInfoPtr );
-		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
-								   CMP_CONTENT_TYPE_LEN );
-		}
-	cmpInfo->savedMacContext = protocolInfo.iMacContext;
-	protocolInfo.iMacContext = CRYPT_ERROR;
-	destroyProtocolInfo( &protocolInfo );
-
-	return( status );
-	}
-
 /****************************************************************************
 *																			*
 *						Control Information Management Functions			*
 *																			*
 ****************************************************************************/
 
-static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
-								 void *data, const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+								 OUT void *data, 
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	CRYPT_CERTIFICATE *cmpResponsePtr = ( CRYPT_CERTIFICATE * ) data;
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
-			type == CRYPT_SESSINFO_RESPONSE );
+	assert( isWritePtr( data, sizeof( int ) ) );
+	
+	REQUIRES( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
+			  type == CRYPT_SESSINFO_RESPONSE );
 
 	/* If it's a general protocol-specific attribute read, return the
 	   information and exit */
@@ -1402,22 +335,26 @@ static int getAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	return( CRYPT_OK );
 	}
 
-static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
-								 const void *data,
-								 const CRYPT_ATTRIBUTE_TYPE type )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+								 IN const void *data,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	CRYPT_CERTIFICATE cryptCert = *( ( CRYPT_CERTIFICATE * ) data );
 	CMP_INFO *cmpInfo = sessionInfoPtr->sessionCMP;
-	int value, status;
+	int certReqType, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
-			type == CRYPT_SESSINFO_CMP_PRIVKEYSET || \
-			type == CRYPT_SESSINFO_REQUEST || \
-			type == CRYPT_SESSINFO_CACERTIFICATE );
+	assert( isReadPtr( data, sizeof( int ) ) );
 
-	/* Standard CMP (with user-supplied request info) can't be combined with
-	   plug-and-play CMP (with automatically-generated request info) */
+	REQUIRES( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
+			  type == CRYPT_SESSINFO_CMP_PRIVKEYSET || \
+			  type == CRYPT_SESSINFO_REQUEST || \
+			  type == CRYPT_SESSINFO_CACERTIFICATE );
+
+	/* Standard CMP (with user-supplied request information) can't be 
+	   combined with plug-and-play CMP (with automatically-generated request 
+	   information) */
 	if( ( type == CRYPT_SESSINFO_CMP_REQUESTTYPE || \
 		  type == CRYPT_SESSINFO_REQUEST ) && \
 		sessionInfoPtr->privKeyset != CRYPT_ERROR )
@@ -1439,11 +376,12 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* If it's general protocol-specific information other than a request or 
-	   cert, set it */
+	   certificate, set it */
 	if( type == CRYPT_SESSINFO_CMP_REQUESTTYPE )
 		{
+		const int cmpReqType = *( ( int * ) data );
+
 		/* Make sure that the value hasn't been set yet */
-		value = *( ( int * ) data );
 		if( cmpInfo->requestType != CRYPT_REQUESTTYPE_NONE )
 			{
 			setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_CMP_REQUESTTYPE,
@@ -1457,23 +395,23 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		   set */
 		if( sessionInfoPtr->iCertRequest != CRYPT_ERROR )
 			{
-			int requestType;
-
 			status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-									  IMESSAGE_GETATTRIBUTE, &requestType, 
+									  IMESSAGE_GETATTRIBUTE, &certReqType, 
 									  CRYPT_CERTINFO_CERTTYPE );
 			if( cryptStatusError( status ) )
 				return( status );
-			if( requestType == CRYPT_CERTTYPE_REQUEST_CERT )
+			if( certReqType == CRYPT_CERTTYPE_REQUEST_CERT )
 				{
-				if( value != CRYPT_REQUESTTYPE_INITIALISATION && \
-					value != CRYPT_REQUESTTYPE_CERTIFICATE && \
-					value != CRYPT_REQUESTTYPE_KEYUPDATE )
+				if( cmpReqType != CRYPT_REQUESTTYPE_INITIALISATION && \
+					cmpReqType != CRYPT_REQUESTTYPE_CERTIFICATE && \
+					cmpReqType != CRYPT_REQUESTTYPE_KEYUPDATE )
 					status = CRYPT_ERROR_INVALID;
 				}
 			else
-				if( value != CRYPT_REQUESTTYPE_REVOCATION )
+				{
+				if( cmpReqType != CRYPT_REQUESTTYPE_REVOCATION )
 					status = CRYPT_ERROR_INVALID;
+				}
 			if( cryptStatusError( status ) )
 				{
 				setErrorInfo( sessionInfoPtr, CRYPT_SESSINFO_REQUEST,
@@ -1482,32 +420,40 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 				}
 			}
 
-		/* Set the request type and tell the higher-level code that further
-		   information needs to be provided before we can activate the
-		   session */
-		cmpInfo->requestType = value;
-		if( value == CRYPT_REQUESTTYPE_INITIALISATION || \
-			value == CRYPT_REQUESTTYPE_PKIBOOT )
+		/* Set the CMP request type and tell the higher-level code that 
+		   further information needs to be provided before we can activate 
+		   the session */
+		cmpInfo->requestType = cmpReqType;
+		if( cmpReqType == CRYPT_REQUESTTYPE_INITIALISATION || \
+			cmpReqType == CRYPT_REQUESTTYPE_PKIBOOT )
+			{
 			sessionInfoPtr->clientReqAttrFlags = \
 									SESSION_NEEDS_USERID | \
 									SESSION_NEEDS_PASSWORD;
+			}
 		else
-			if( value == CRYPT_REQUESTTYPE_REVOCATION )
+			{
+			if( cmpReqType == CRYPT_REQUESTTYPE_REVOCATION )
+				{
 				sessionInfoPtr->clientReqAttrFlags = \
 									SESSION_NEEDS_PRIVATEKEY | \
 									SESSION_NEEDS_PRIVKEYSIGN | \
 									SESSION_NEEDS_PRIVKEYCERT | \
 									SESSION_NEEDS_KEYORPASSWORD;
+				}
 			else
+				{
 				sessionInfoPtr->clientReqAttrFlags = \
 									SESSION_NEEDS_PRIVATEKEY | \
 									SESSION_NEEDS_PRIVKEYSIGN | \
 									SESSION_NEEDS_PRIVKEYCERT;
+				}
+			}
 		return( CRYPT_OK );
 		}
 	if( type == CRYPT_SESSINFO_CMP_PRIVKEYSET )
 		{
-		CRYPT_CERTIFICATE privKeyset = *( ( CRYPT_CERTIFICATE * ) data );
+		CRYPT_KEYSET privKeyset = *( ( CRYPT_KEYSET * ) data );
 
 		/* Make sure that the value hasn't been set yet */
 		if( sessionInfoPtr->privKeyset != CRYPT_ERROR )
@@ -1525,56 +471,59 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 		return( CRYPT_OK );
 		}
 
-	/* Make sure that the request/cert type is consistent with the operation
-	   being performed.  The requirements for this are somewhat more complex 
-	   than the basic ACL-based check can manage, so we handle it here with 
-	   custom code */
-	status = krnlSendMessage( cryptCert, IMESSAGE_GETATTRIBUTE, &value, 
+	/* Make sure that the request/certificate type is consistent with the 
+	   operation being performed.  The requirements for this are somewhat 
+	   more complex than the basic ACL-based check can manage, so we handle 
+	   it here with custom code */
+	status = krnlSendMessage( cryptCert, IMESSAGE_GETATTRIBUTE, &certReqType, 
 							  CRYPT_CERTINFO_CERTTYPE );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ARGERROR_NUM1 );
 	switch( type )
 		{
 		case CRYPT_SESSINFO_REQUEST:
-			if( value != CRYPT_CERTTYPE_REQUEST_CERT && \
-				value != CRYPT_CERTTYPE_REQUEST_REVOCATION )
+			{
+			const CRYPT_REQUESTTYPE_TYPE cmpReqType = cmpInfo->requestType;
+
+			if( certReqType != CRYPT_CERTTYPE_REQUEST_CERT && \
+				certReqType != CRYPT_CERTTYPE_REQUEST_REVOCATION )
 				return( CRYPT_ARGERROR_NUM1 );
 
-			/* If the request type is already present, make sure that it 
-			   matches the request object.  We can't do this check 
-			   unconditionally because the request object may be set before 
-			   the request type is set */
-			if( cmpInfo->requestType != CRYPT_REQUESTTYPE_NONE )
-				{
-				const CRYPT_REQUESTTYPE_TYPE requestType = \
-										cmpInfo->requestType;
+			/* If there's no CMP request type already set, we're done.  We 
+			   can't otherwise perform the checks that follow because the 
+			   request object may be set before the request type is set */
+			if( cmpReqType == CRYPT_REQUESTTYPE_NONE )
+				break;
 
-				if( value == CRYPT_CERTTYPE_REQUEST_CERT )
-					{
-					if( requestType != CRYPT_REQUESTTYPE_INITIALISATION && \
-						requestType != CRYPT_REQUESTTYPE_CERTIFICATE && \
-						requestType != CRYPT_REQUESTTYPE_KEYUPDATE )
-						status = CRYPT_ERROR_INVALID;
-					}
-				else
-					if( requestType != CRYPT_REQUESTTYPE_REVOCATION )
-						status = CRYPT_ERROR_INVALID;
-				if( cryptStatusError( status ) )
-					{
-					setErrorInfo( sessionInfoPtr, 
-								  CRYPT_SESSINFO_CMP_REQUESTTYPE,
-								  CRYPT_ERRTYPE_CONSTRAINT );
-					return( status );
-					}
+			/* The request type is already present, make sure that it 
+			   matches the request object */
+			if( certReqType == CRYPT_CERTTYPE_REQUEST_CERT )
+				{
+				if( cmpReqType != CRYPT_REQUESTTYPE_INITIALISATION && \
+					cmpReqType != CRYPT_REQUESTTYPE_CERTIFICATE && \
+					cmpReqType != CRYPT_REQUESTTYPE_KEYUPDATE )
+					status = CRYPT_ERROR_INVALID;
+				}
+			else
+				{
+				if( cmpReqType != CRYPT_REQUESTTYPE_REVOCATION )
+					status = CRYPT_ERROR_INVALID;
+				}
+			if( cryptStatusError( status ) )
+				{
+				setErrorInfo( sessionInfoPtr, 
+							  CRYPT_SESSINFO_CMP_REQUESTTYPE,
+							  CRYPT_ERRTYPE_CONSTRAINT );
+				return( status );
 				}
 
-			/* If it's a non-ir cert request, make sure that there's a 
-			   subject DN present.  We perform this check because subject 
-			   DNs are optional for irs but not for any other request types 
-			   and we want to catch this before we get into the CMP exchange
-			   itself */
-			if( cmpInfo->requestType == CRYPT_REQUESTTYPE_CERTIFICATE || \
-				cmpInfo->requestType == CRYPT_REQUESTTYPE_KEYUPDATE )
+			/* If it's a non-ir certificate request, make sure that there's 
+			   a subject DN present.  We perform this check because subject 
+			   DNs are optional for irs but may be required for some CMP
+			   servers for other request types and we want to catch this 
+			   before we get into the CMP exchange itself */
+			if( cmpReqType == CRYPT_REQUESTTYPE_CERTIFICATE || \
+				cmpReqType == CRYPT_REQUESTTYPE_KEYUPDATE )
 				{
 				MESSAGE_DATA msgData = { NULL, 0 };
 
@@ -1588,47 +537,39 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 					}
 				}
 			break;
+			}
 
 		case CRYPT_SESSINFO_CACERTIFICATE:
-			if( value != CRYPT_CERTTYPE_CERTIFICATE )
+			if( certReqType != CRYPT_CERTTYPE_CERTIFICATE )
 				return( CRYPT_ARGERROR_NUM1 );
 			break;
 
 		default:
 			retIntError();
 		}
-	if( value == CRYPT_CERTTYPE_CERTIFICATE || \
-		value == CRYPT_CERTTYPE_REQUEST_CERT )
+	if( certReqType == CRYPT_CERTTYPE_CERTIFICATE || \
+		certReqType == CRYPT_CERTTYPE_REQUEST_CERT )
 		{
-		/* Make sure that everything is set up ready to go */
-		status = krnlSendMessage( cryptCert, IMESSAGE_GETATTRIBUTE, &value, 
-								  CRYPT_CERTINFO_IMMUTABLE );
-		if( cryptStatusError( status ) || !value )
+		int isImmutable;
+
+		/* Make sure that everything is set up ready to go.  We don't check 
+		   for the object being a CA certificate when certReqType == 
+		   CRYPT_CERTTYPE_CERTIFICATE because we could be dealing with an 
+		   RA, which isn't necessarily a CA */
+		status = krnlSendMessage( cryptCert, IMESSAGE_GETATTRIBUTE, 
+								  &isImmutable, CRYPT_CERTINFO_IMMUTABLE );
+		if( cryptStatusError( status ) || !isImmutable )
 			return( CRYPT_ARGERROR_NUM1 );
-#if 0	/* RA certs aren't necessarily CA certs */
-		if( type == CRYPT_SESSINFO_CACERTIFICATE )
-			{
-			/* Make sure that it really is a CA cert */
-			status = krnlSendMessage( cryptCert, IMESSAGE_CHECK, NULL, 
-									  MESSAGE_CHECK_CA );
-			if( cryptStatusError( status ) )
-				{
-				setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_CA,
-							  CRYPT_ERRTYPE_ATTR_ABSENT );
-				return( CRYPT_ARGERROR_NUM1 );
-				}
-			}
-#endif /* 0 */
 		}
 	else
 		{
 		MESSAGE_DATA msgData = { NULL, 0 };
 
-		/* Make sure that everything is set up ready to go.  Since revocation
-		   requests aren't signed like normal cert objects we can't just
-		   check the immutable attribute but have to perform a dummy export
-		   for which the cert export code will return an error status if
-		   there's a problem with the request */
+		/* Make sure that everything is set up ready to go.  Since 
+		   revocation requests aren't signed like normal certificate objects 
+		   we can't just check the immutable attribute but have to perform a 
+		   dummy export for which the certificate export code will return an 
+		   error status if there's a problem with the request */
 		status = krnlSendMessage( cryptCert, IMESSAGE_CRT_EXPORT, &msgData, 
 								  CRYPT_ICERTFORMAT_DATA );
 		if( cryptStatusError( status ) )
@@ -1651,8 +592,10 @@ static int setAttributeFunction( SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-int setAccessMethodCMP( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodCMP( INOUT SESSION_INFO *sessionInfoPtr )
 	{
+#ifdef USE_CMP_TRANSPORT
 	static const ALTPROTOCOL_INFO altProtocolInfo = {
 		STREAM_PROTOCOL_CMP,		/* Alt.protocol type */
 		"cmp://", 6,				/* Alt.protocol URI type */
@@ -1660,6 +603,7 @@ int setAccessMethodCMP( SESSION_INFO *sessionInfoPtr )
 		SESSION_ISHTTPTRANSPORT,	/* Protocol flags to replace */
 		SESSION_USEALTTRANSPORT		/* Alt.protocol flags */
 		};
+#endif /* USE_CMP_TRANSPORT */
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */
 		TRUE,						/* Request-response protocol */
@@ -1675,8 +619,10 @@ int setAccessMethodCMP( SESSION_INFO *sessionInfoPtr )
 		2, 2, 2,					/* Version 2 */
 	
 		/* Protocol-specific information */
-		BUFFER_SIZE_DEFAULT,		/* Buffer size info */
-		&altProtocolInfo			/* Alt.transport protocol */
+		BUFFER_SIZE_DEFAULT			/* Buffer size information */
+#ifdef USE_CMP_TRANSPORT
+		, &altProtocolInfo			/* Alt.transport protocol */
+#endif /* USE_CMP_TRANSPORT */
 		};
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -1684,12 +630,9 @@ int setAccessMethodCMP( SESSION_INFO *sessionInfoPtr )
 	/* Set the access method pointers */
 	sessionInfoPtr->protocolInfo = &protocolInfo;
 	if( isServer( sessionInfoPtr ) )
-		sessionInfoPtr->transactFunction = serverTransact;
+		initCMPserverProcessing( sessionInfoPtr );
 	else
-		{
-		sessionInfoPtr->connectFunction = clientStartup;
-		sessionInfoPtr->transactFunction = clientTransactWrapper;
-		}
+		initCMPclientProcessing( sessionInfoPtr );
 	sessionInfoPtr->shutdownFunction = shutdownFunction;
 	sessionInfoPtr->getAttributeFunction = getAttributeFunction;
 	sessionInfoPtr->setAttributeFunction = setAttributeFunction;

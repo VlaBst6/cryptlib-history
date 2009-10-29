@@ -105,7 +105,7 @@ typedef struct {
 	ERROR_INFO errorInfo;
 	} PKCS11_INFO;
 
-#ifdef ULONG_PTR
+#if defined( __WIN32__ ) && VC_GE_2005( _MSC_VER )
   #define CAPI_HANDLE ULONG_PTR		/* May be 64 bits on Win64 */
 #else
   #define CAPI_HANDLE unsigned long	/* Always 32 bits on Win32 */
@@ -159,12 +159,26 @@ typedef struct {
 	ERROR_INFO errorInfo;
 	} FORTEZZA_INFO;
 
+typedef struct {
+	/* General device information */
+	BUFFER( CRYPT_MAX_TEXTSIZE, labelLen ) \
+	char label[ CRYPT_MAX_TEXTSIZE + 8 ];	/* Device label */
+	int labelLen;
+
+	/* Device type-specific information */
+	CRYPT_KEYSET iCryptKeyset;			/* Key storage */
+
+	/* Last-error information returned from lower-level code */
+	ERROR_INFO errorInfo;
+	} HARDWARE_INFO;
+
 /* Defines to make access to the union fields less messy */
 
 #define deviceSystem	deviceInfo.systemInfo
 #define devicePKCS11	deviceInfo.pkcs11Info
 #define deviceCryptoAPI	deviceInfo.cryptoapiInfo
 #define deviceFortezza	deviceInfo.fortezzaInfo
+#define deviceHardware	deviceInfo.hardwareInfo
 
 /* The structure which stores information on a device */
 
@@ -194,6 +208,7 @@ typedef struct DI {
 		PKCS11_INFO *pkcs11Info;
 		CRYPTOAPI_INFO *cryptoapiInfo;
 		FORTEZZA_INFO *fortezzaInfo;
+		HARDWARE_INFO *hardwareInfo;
 		} deviceInfo;
 
 	/* Pointers to device access methods */
@@ -341,6 +356,17 @@ int setDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
   #define deviceEndCryptoAPI()
   #define setDeviceCryptoAPI( x )		CRYPT_ARGERROR_NUM1
 #endif /* USE_CRYPTOAPI */
+#ifdef USE_HARDWARE
+  CHECK_RETVAL \
+  int deviceInitHardware( void );
+  void deviceEndHardware( void );
+  CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+  int setDeviceHardware( INOUT DEVICE_INFO *deviceInfo );
+#else
+  #define deviceInitHardware()			CRYPT_OK
+  #define deviceEndHardware()
+  #define setDeviceHardware( x )		CRYPT_ARGERROR_NUM1
+#endif /* USE_HARDWARE */
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setDeviceSystem( INOUT DEVICE_INFO *deviceInfo );
 

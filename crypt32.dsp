@@ -78,7 +78,7 @@ F90=fl32.exe
 # ADD F90 /I "Debug/"
 # ADD BASE CPP /nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /YX /c
 # ADD CPP /nologo /MD /W4 /Gm /Zi /Od /I ".\\" /FD /c
-# SUBTRACT CPP /Fr /YX
+# SUBTRACT CPP /Fr /YX /Yc /Yu
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
 # ADD MTL /nologo /D "_DEBUG" /win32
 # SUBTRACT MTL /mktyplib203
@@ -200,6 +200,34 @@ SOURCE=.\bn\bn_word.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\bn\ec_kron.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ec_lib.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ec_mult.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ec_rand.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ec_sqrt.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ecp_mont.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\bn\ecp_smpl.c
+# End Source File
+# Begin Source File
+
 SOURCE=".\bn\bn-win32.obj"
 
 !IF  "$(CFG)" == "Crypt32 - Win32 Release"
@@ -252,7 +280,23 @@ SOURCE=.\cert\chk_use.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\cert\comp_cert.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\comp_curs.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\comp_del.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\cert\comp_get.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\comp_gets.c
 # End Source File
 # Begin Source File
 
@@ -261,6 +305,10 @@ SOURCE=.\cert\comp_set.c
 # Begin Source File
 
 SOURCE=.\cert\dn.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\dn_rw.c
 # End Source File
 # Begin Source File
 
@@ -296,6 +344,10 @@ SOURCE=.\cert\ext_wr.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\cert\imp_chk.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\cert\imp_exp.c
 # End Source File
 # Begin Source File
@@ -309,6 +361,10 @@ SOURCE=.\cert\trustmgr.c
 # Begin Source File
 
 SOURCE=.\cert\write.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\write_pre.c
 # End Source File
 # End Group
 # Begin Group "Contexts"
@@ -345,6 +401,10 @@ SOURCE=.\context\ctx_dh.c
 # Begin Source File
 
 SOURCE=.\context\ctx_dsa.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\ctx_ecdh.c
 # End Source File
 # Begin Source File
 
@@ -421,6 +481,10 @@ SOURCE=.\context\ctx_sha2.c
 # Begin Source File
 
 SOURCE=.\context\ctx_skip.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\context\key_id.c
 # End Source File
 # Begin Source File
 
@@ -737,6 +801,14 @@ SOURCE=.\device\dev_attr.c
 # Begin Source File
 
 SOURCE=.\device\fortezza.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\hardware.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\hw_dummy.c
 # End Source File
 # Begin Source File
 
@@ -1148,6 +1220,10 @@ SOURCE=.\misc\int_attr.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\misc\int_debug.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\misc\int_env.c
 # End Source File
 # Begin Source File
@@ -1228,11 +1304,35 @@ SOURCE=.\session\cmp.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\cmp_cli.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\cmp_cry.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\cmp_err.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\cmp_rd.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\cmp_rdmsg.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\cmp_svr.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\cmp_wr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\cmp_wrmsg.c
 # End Source File
 # Begin Source File
 
@@ -1292,6 +1392,14 @@ SOURCE=.\session\ssh2.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\ssh2_authc.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh2_auths.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\ssh2_chn.c
 # End Source File
 # Begin Source File
@@ -1308,11 +1416,23 @@ SOURCE=.\session\ssh2_msg.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\session\ssh2_rw.c
+SOURCE=.\session\ssh2_msgc.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh2_msgs.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh2_rd.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\session\ssh2_svr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh2_wr.c
 # End Source File
 # Begin Source File
 
@@ -1328,15 +1448,27 @@ SOURCE=.\session\ssl_cry.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\ssl_hs.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssl_hsc.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\ssl_kmgmt.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\session\ssl_rw.c
+SOURCE=.\session\ssl_rd.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\session\ssl_svr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssl_wr.c
 # End Source File
 # Begin Source File
 
@@ -1470,6 +1602,14 @@ SOURCE=.\misc\asn1_ext.h
 # Begin Source File
 
 SOURCE=.\cert\cert.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\certattr.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\certfn.h
 # End Source File
 # Begin Source File
 

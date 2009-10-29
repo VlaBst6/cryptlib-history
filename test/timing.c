@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Timing Test Routines						*
-*						Copyright Peter Gutmann 1995-2003					*
+*						Copyright Peter Gutmann 2003-2008					*
 *																			*
 ****************************************************************************/
 
@@ -230,7 +230,8 @@ static HIRES_TIME timeDiff( HIRES_TIME startTime )
 /* Check for an algorithm/mode */
 
 static BOOLEAN checkLowlevelInfo( const CRYPT_DEVICE cryptDevice,
-								  const CRYPT_ALGO_TYPE cryptAlgo )
+								  const CRYPT_ALGO_TYPE cryptAlgo,
+								  const CRYPT_MODE_TYPE cryptMode )
 	{
 	CRYPT_QUERY_INFO cryptQueryInfo;
 	const BOOLEAN isDevice = ( cryptDevice != CRYPT_UNUSED ) ? TRUE : FALSE;
@@ -243,12 +244,24 @@ static BOOLEAN checkLowlevelInfo( const CRYPT_DEVICE cryptDevice,
 		status = cryptQueryCapability( cryptAlgo, &cryptQueryInfo );
 	if( cryptStatusError( status ) )
 		{
+		/* RC4 is a legacy algorithm that isn't usually enabled so we 
+		   silently skip this one */
+		if( cryptAlgo == CRYPT_ALGO_RC4 )
+			return( FALSE );
+
 		printf( "crypt%sQueryCapability() reports algorithm %d is not "
 				"available, status = %d.\n", isDevice ? "Device" : "",
 				cryptAlgo, status );
 		return( FALSE );
 		}
-	printf( "%s, block size %d bits, keysize %d bits, ", cryptQueryInfo.algoName,
+	if( cryptAlgo > CRYPT_ALGO_FIRST_HASH )
+		{
+		printf( "%s, ", cryptQueryInfo.algoName );
+		return( TRUE );
+		}
+	printf( "%s/%s, block size %d bits, keysize %d bits, ", 
+			cryptQueryInfo.algoName, 
+			( cryptMode == CRYPT_MODE_ECB ) ? "ECB" : "CBC",
 			cryptQueryInfo.blockSize << 3, cryptQueryInfo.keySize << 3 );
 
 	return( TRUE );
@@ -370,26 +383,27 @@ static BOOLEAN loadContexts( CRYPT_CONTEXT *cryptContext, CRYPT_CONTEXT *decrypt
 *																			*
 ****************************************************************************/
 
-/* Print timing info.  This gets a bit hairy because we're actually counting
-   timer ticks rather than thread times, which means we'll be affected by
-   things like context switches.  There are two approaches to this:
+/* Print timing info.  This gets a bit hairy because we're actually counting 
+   timer ticks rather than thread times which means that we'll be affected 
+   by things like context switches.  There are two approaches to this:
 
-	1. Take the fastest time, which will be the time least affected by system
-	   overhead.
+	1. Take the fastest time, which will be the time least affected by 
+	   system overhead.
 
-	2. Apply standard statistical techniques to weed out anomalies.  Since
-	   this is just for testing purposes all we do is discard any results
-	   out by more than 10%, which is crude but reasonably effective.  A
-	   more rigorous approach is to discards results more than n standard
-	   deviations out, but this gets screwed up by the fact that a single
-	   context switch of 20K ticks can throw out results from an execution
-	   time of only 50 ticks.  In any case (modulo context switches) the
-	   fastest, 10%-out, and 2 SD out times are all within about 1% of each
-	   other, so all methods are roughly equally accurate */
+	2. Apply standard statistical techniques to weed out anomalies.  Since 
+	   this is just for testing purposes all we do is discard any results 
+	   out by more than 10%, which is crude but reasonably effective.  A 
+	   more rigorous approach is to discards results more than n standard 
+	   deviations out, but this gets screwed up by the fact that a single 
+	   context switch of 20K ticks can throw out results from an execution 
+	   time of only 50 ticks.  In any case (modulo context switches) the 
+	   fastest, 10%-out, and 2 SD out times are all within about 1% of each 
+	   other so all methods are roughly equally accurate */
 
 static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
-						const int noTimes )
+						const int noTimes, long ticksPerSec )
 	{
+	long pubTimeMS, privTimeMS, throughput;
 	int i;
 
 	for( i = 0; i < noTimes; i++ )
@@ -397,6 +411,7 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 		HIRES_TIME timeSum = 0, timeAvg, timeDelta;
 		HIRES_TIME timeMin = 1000000L;
 		HIRES_TIME timeCorrSum10 = 0, timeCorrSumSD = 0;
+		HIRES_TIME avgTime;
 #ifdef USE_SD
 		double stdDev;
 #endif /* USE_SD */
@@ -411,40 +426,63 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 			{
 			/* Some ciphers can't provide results for some cases (e.g.
 			   AES for 8-byte blocks) */
-			printf( "      " );
+			printf( "       " );
 			continue;
 			}
 
 		/* Find the fastest overall time */
 		for( j = 1; j < NO_TESTS + 1; j++ )
+			{
 			if( times[ j ][ i ] < timeMin )
 				timeMin = times[ j ][ i ];
+			}
 
 		/* Find the mean time, discarding anomalous results more than 10%
 		   out.  We cast the values to longs in order to (portably) print
 		   them, if we want to print the full 64-bit values we have to
 		   use nonstandard extensions like "%I64d" (for Win32) */
 		for( j = 1; j < NO_TESTS + 1; j++ )
+			{
 			if( times[ j ][ i ] > timeAvg - timeDelta && \
 				times[ j ][ i ] < timeAvg + timeDelta )
 				{
 				timeCorrSum10 += times[ j ][ i ];
 				timesCount10++;
 				}
+			}
 		if( timesCount10 <= 0 )
 			{
 			printf( "Error: No times within +/-%d of %d.\n",
 					timeDelta, timeAvg );
+			continue;
 			}
+		avgTime = timeCorrSum10 / timesCount10;
 		if( noTimes <= 2 && i == 0 )
+			{
 			printf( "Pub: min.= %d, avg.= %d ", ( long ) timeMin,
-					( long ) ( timeCorrSum10 / timesCount10 ) );
+					( long ) avgTime );
+			pubTimeMS = ( avgTime * 1000 ) / ticksPerSec;
+			}
 		else
 		if( noTimes <= 2 && i == 1 )
+			{
 			printf( "Priv: min.= %d, avg.= %d ", ( long ) timeMin,
-					( long ) ( timeCorrSum10 / timesCount10 ) );
+					( long ) avgTime );
+			privTimeMS = ( avgTime * 1000 ) / ticksPerSec;
+			}
 		else
-			printf( "%6d", ( long ) ( timeCorrSum10 / timesCount10 ) );
+			{
+			printf( "%7d", ( long ) avgTime );
+			if( i == 6 )
+				{
+				const long mbTime = ( long ) avgTime * 16;	/* 64kB * 15 = 1MB */
+
+				if( mbTime > ticksPerSec )
+					throughput = 0;
+				else
+					throughput = ticksPerSec / mbTime;	/* In MB/sec */
+				}
+			}
 #if 0	/* Print difference to fastest time, usually only around 1% */
 		printf( "(%4d)", ( timeCorrSum10 / timesCount10 ) - timeMin );
 #endif /* 0 */
@@ -465,12 +503,14 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 		timeCorrSumSD = 0;
 		timeDelta = ( HIRES_TIME ) stdDev * 2;
 		for( j = 1; j < NO_TESTS + 1; j++ )
+			{
 			if( times[ j ][ i ] > timeAvg - timeDelta && \
 				times[ j ][ i ] < timeAvg + timeDelta )
 				{
 				timeCorrSumSD += times[ j ][ i ];
 				timesCountSD++;
 				}
+			}
 		if( timesCountSD == 0 )
 			timesCountSD++;	/* Context switch, fudge it */
 		printf( "%6d", timeCorrSumSD / timesCountSD );
@@ -484,7 +524,23 @@ static void printTimes( HIRES_TIME times[ NO_TESTS + 1 ][ 8 ],
 #endif /* 0 */
 #endif /* USE_SD */
 		}
-	printf( "\n" );
+	/* If it's a PKC operation print the times in ms */
+	if( noTimes <= 2 )
+		{
+		printf( "\n  Public-key op.time = " );
+		if( pubTimeMS <= 0 )
+			printf( "< 1" );
+		else
+			printf( "%ld", pubTimeMS );
+		printf( " ms, private-key op.time = %ld ms.\n", privTimeMS );
+		}
+	else
+		{
+		if( throughput <= 0 )
+			puts( ", throughput < 1 MB/s." );
+		else
+			printf( ", throughput %d MB/s.\n", throughput );
+		}
 	}
 
 static HIRES_TIME encOne( const CRYPT_CONTEXT cryptContext,
@@ -518,7 +574,7 @@ static void encTest( const CRYPT_CONTEXT cryptContext,
 static int encTests( const CRYPT_DEVICE cryptDevice,
 					 const CRYPT_ALGO_TYPE cryptAlgo,
 					 const CRYPT_ALGO_TYPE cryptMode,
-					 BYTE *buffer )
+					 BYTE *buffer, long ticksPerSec )
 	{
 	CRYPT_CONTEXT cryptContext;
 	HIRES_TIME times[ NO_TESTS + 1 ][ 8 ], timeVal, timeSum = 0;
@@ -527,7 +583,7 @@ static int encTests( const CRYPT_DEVICE cryptDevice,
 	memset( buffer, 0, 100000L );
 
 	/* Set up the context for use */
-	if( !checkLowlevelInfo( cryptDevice, cryptAlgo ) )
+	if( !checkLowlevelInfo( cryptDevice, cryptAlgo, cryptMode ) )
 		return( FALSE );
 	for( i = 0; i < 10; i++ )
 		{
@@ -547,34 +603,34 @@ static int encTests( const CRYPT_DEVICE cryptDevice,
 			cryptDestroyContext( cryptContext );
 		}
 	printf( "setup time = %d ticks.\n", timeSum / 10 );
-	puts( "     8    16    64    1K    4K    8K   64K" );
-	puts( "  ----  ----  ----  ----  ----  ----  ----" );
+	puts( "      8     16     64     1K     4K     8K    64K" );
+	puts( "  -----  -----  -----  -----  -----  -----  -----" );
 
 	/* Run the encryption tests NO_TESTS times, discarding the first set
 	   of results since the cache will be empty at that point */
 	for( i = 0; i < NO_TESTS + 1; i++ )
 		encTest( cryptContext, cryptAlgo, buffer, times[ i ] );
-	printTimes( times, 7 );
+	printTimes( times, 7, ticksPerSec );
 
 	/* Re-run the encryption tests with a 1-byte misalignment */
 	for( i = 0; i < NO_TESTS + 1; i++ )
 		encTest( cryptContext, cryptAlgo, buffer + 1, times[ i ] );
-	printTimes( times, 7 );
+	printTimes( times, 7, ticksPerSec );
 
 	/* Re-run the encryption tests with a 4-byte misalignment */
 	for( i = 0; i < NO_TESTS + 1; i++ )
 		encTest( cryptContext, cryptAlgo, buffer + 4, times[ i ] );
-	printTimes( times, 7 );
+	printTimes( times, 7, ticksPerSec );
 
 	/* Re-run the test 1000 times with various buffer alignments */
 	timeVal = 0;
 	for( i = 0; i < 1000; i++ )
 		timeVal += encOne( cryptContext, buffer, 1024 );
-	printf( "Aligned: %d ", timeVal / 1000 );
+	printf( "Aligned: %d, ", timeVal / 1000 );
 	timeVal = 0;
 	for( i = 0; i < 1000; i++ )
 		timeVal += encOne( cryptContext, buffer + 1, 1024 );
-	printf( "misaligned + 1: %d ", timeVal / 1000 );
+	printf( "misaligned + 1: %d, ", timeVal / 1000 );
 	timeVal = 0;
 	for( i = 0; i < 1000; i++ )
 		timeVal += encOne( cryptContext, buffer + 4, 1024 );
@@ -583,7 +639,8 @@ static int encTests( const CRYPT_DEVICE cryptDevice,
 	return( TRUE );
 	}
 
-static void performanceTests( const CRYPT_DEVICE cryptDevice )
+static void performanceTests( const CRYPT_DEVICE cryptDevice, 
+							  long ticksPerSec )
 	{
 	BYTE *buffer;
 
@@ -592,14 +649,18 @@ static void performanceTests( const CRYPT_DEVICE cryptDevice )
 		puts( "Couldn't 100K allocate test buffer." );
 		return;
 		}
-	encTests( cryptDevice, CRYPT_ALGO_DES, CRYPT_MODE_ECB, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_DES, CRYPT_MODE_CBC, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_3DES, CRYPT_MODE_ECB, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_AES, CRYPT_MODE_CBC, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_MD5, CRYPT_MODE_NONE, buffer );
-	encTests( cryptDevice, CRYPT_ALGO_SHA, CRYPT_MODE_NONE, buffer );
+	putchar( '\n' );
+	encTests( cryptDevice, CRYPT_ALGO_DES, CRYPT_MODE_ECB, buffer, ticksPerSec );
+	encTests( cryptDevice, CRYPT_ALGO_DES, CRYPT_MODE_CBC, buffer, ticksPerSec );
+	putchar( '\n' );
+	encTests( cryptDevice, CRYPT_ALGO_3DES, CRYPT_MODE_ECB, buffer, ticksPerSec );
+	encTests( cryptDevice, CRYPT_ALGO_3DES, CRYPT_MODE_CBC, buffer, ticksPerSec );
+	encTests( cryptDevice, CRYPT_ALGO_RC4, CRYPT_MODE_OFB, buffer, ticksPerSec );
+	putchar( '\n' );
+	encTests( cryptDevice, CRYPT_ALGO_AES, CRYPT_MODE_CBC, buffer, ticksPerSec );
+	putchar( '\n' );
+	encTests( cryptDevice, CRYPT_ALGO_MD5, CRYPT_MODE_NONE, buffer, ticksPerSec );
+	encTests( cryptDevice, CRYPT_ALGO_SHA, CRYPT_MODE_NONE, buffer, ticksPerSec );
 	free( buffer );
 	}
 
@@ -622,7 +683,11 @@ static void performanceTests( const CRYPT_DEVICE cryptDevice )
 #undef __WIN32__
 #undef BYTE
 #undef BOOLEAN
-#include "crypt.h"
+#ifdef _MSC_VER
+  #include "../crypt.h"
+#else
+  #include "crypt.h"
+#endif /* Braindamaged VC++ include handling */
 
 #define CRYPT_IATTRIBUTE_KEY_SPKI	8015
 
@@ -690,13 +755,8 @@ static BOOLEAN loadDHKey( CRYPT_CONTEXT *cryptContext )
 
 		setMessageData( &msgData, ( void * ) dh1024SPKI,
 						sizeof( dh1024SPKI ) );
-#if 0
-		status = krnlSendMessage( *cryptContext, IMESSAGE_SETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
-#else
 		status = cryptDeviceQueryCapability( *cryptContext, 1000,
 									( CRYPT_QUERY_INFO * ) &msgData );
-#endif /* 0 */
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -1102,7 +1162,7 @@ static int encRSATest( const CRYPT_CONTEXT cryptContext,
 	return( TRUE );
 	}
 
-static BOOLEAN testRSA( void )
+static BOOLEAN testRSA( long ticksPerSec )
 	{
 	CRYPT_CONTEXT cryptContext, decryptContext;
 	HIRES_TIME times[ NO_TESTS + 1 ][ 8 ];
@@ -1124,7 +1184,7 @@ static BOOLEAN testRSA( void )
 		if( !status )
 			return( FALSE );
 		}
-	printTimes( times, 2 );
+	printTimes( times, 2, ticksPerSec );
 
 	/* Clean up */
 	cryptDestroyContext( cryptContext );
@@ -1135,7 +1195,7 @@ static BOOLEAN testRSA( void )
 
 /* Time the DSA operation speed */
 
-static BOOLEAN testDSA( void )
+static BOOLEAN testDSA( long ticksPerSec )
 	{
 	CRYPT_CONTEXT signContext, sigCheckContext;
 	HIRES_TIME times[ NO_TESTS + 1 ][ 8 ];
@@ -1159,13 +1219,8 @@ static BOOLEAN testDSA( void )
 		/* Perform the test sign/sig.check */
 		setDLPParams( &dlpParams, "********************", 20, buffer, 128 );
 		timeVal = timeDiff( 0 );
-#if 0
-		status = krnlSendMessage( signContext, IMESSAGE_CTX_SIGN,
-								  &dlpParams, sizeof( DLP_PARAMS ) );
-#else
 		status = cryptDeviceQueryCapability( signContext, 1002,
 									( CRYPT_QUERY_INFO * ) &dlpParams );
-#endif /* 0 */
 		times[ i ][ 0 ] = timeDiff( timeVal );
 		if( cryptStatusError( status ) )
 			{
@@ -1179,13 +1234,8 @@ static BOOLEAN testDSA( void )
 		setDLPParams( &dlpParams, "********************", 20, NULL, 0 );
 		dlpParams.inParam2 = buffer;
 		dlpParams.inLen2 = sigSize;
-#if 0
-		status = krnlSendMessage( sigCheckContext, IMESSAGE_CTX_SIGCHECK,
-								  &dlpParams, sizeof( DLP_PARAMS ) );
-#else
 		status = cryptDeviceQueryCapability( sigCheckContext, 1003,
 									( CRYPT_QUERY_INFO * ) &dlpParams );
-#endif /* 0 */
 		times[ i ][ 1 ] = timeDiff( timeVal );
 		if( cryptStatusError( status ) )
 			{
@@ -1194,7 +1244,7 @@ static BOOLEAN testDSA( void )
 			return( FALSE );
 			}
 		}
-	printTimes( times, 2 );
+	printTimes( times, 2, ticksPerSec );
 
 	/* Clean up */
 	cryptDestroyContext( signContext );
@@ -1205,7 +1255,7 @@ static BOOLEAN testDSA( void )
 
 /* Time the DH operation speed */
 
-static BOOLEAN testDH( void )
+static BOOLEAN testDH( long ticksPerSec )
 	{
 	CRYPT_CONTEXT cryptContext;
 	HIRES_TIME times[ NO_TESTS + 1 ][ 8 ];
@@ -1229,13 +1279,8 @@ static BOOLEAN testDH( void )
 		memset( keyAgreeParams.publicValue, '*', 128 );
 		keyAgreeParams.publicValueLen = 128;
 		timeVal = timeDiff( 0 );
-#if 0
-		status = krnlSendMessage( cryptContext, IMESSAGE_CTX_DECRYPT,
-								  &keyAgreeParams, sizeof( KEYAGREE_PARAMS ) );
-#else
 		status = cryptDeviceQueryCapability( cryptContext, 1001,
 									( CRYPT_QUERY_INFO * ) &keyAgreeParams );
-#endif /* 0 */
 		times[ i ][ 0 ] = timeDiff( timeVal );
 		if( cryptStatusError( status ) )
 			{
@@ -1247,7 +1292,7 @@ static BOOLEAN testDH( void )
 		/* Clean up */
 		cryptDestroyContext( cryptContext );
 		}
-	printTimes( times, 1 );
+	printTimes( times, 1, ticksPerSec );
 
 	return( TRUE );
 	}
@@ -1266,6 +1311,7 @@ int main( int argc, char **argv )
 #ifdef __WINDOWS__
 	LARGE_INTEGER performanceCount;
 #endif /* __WINDOWS__ */
+	long ticksPerSec;
 	int status;
 
 	/* Get rid of compiler warnings */
@@ -1291,19 +1337,32 @@ int main( int argc, char **argv )
 	cryptGenerateKey( cryptContext );
 	cryptDestroyContext( cryptContext );
 
+	printf( "Times given in clock ticks of frequency " );
 #ifdef __WINDOWS__
 	QueryPerformanceFrequency( &performanceCount );
-	printf( "Clock ticks %d times per second", performanceCount.LowPart );
+	ticksPerSec = performanceCount.LowPart;
+	printf( "%ld", ticksPerSec );
 #else
-	printf( "Clock ticks ~1000000 times per second" );
+	printf( "~1M" );
+	ticksPerSec = 1000000;
 #endif /* __WINDOWS__ */
-	puts( ", result rows are +0, +1, +4," );
-	printf( "  modes CBC or ECB+CBC, %d tests per result.\n", NO_TESTS );
+	printf( " ticks per second,\nresult rows are alignment offsets +0, "
+			"+1, +4 with %d tests per result.\n\n", NO_TESTS );
 
-	testDH();
-	testRSA();
-	testDSA();
-	performanceTests( CRYPT_UNUSED );
+	status = testDH( ticksPerSec );
+	if( !status )
+		{
+		puts( "  (Did you make the cryptapi.c changes described at the "
+			  "start of timings.c?)" );
+		}
+	testRSA( ticksPerSec );
+	status = testDSA( ticksPerSec );
+	if( !status )
+		{
+		puts( "  (Did you make the cryptapi.c changes described at the "
+			  "start of timings.c?)" );
+		}
+	performanceTests( CRYPT_UNUSED, ticksPerSec );
 
 	/* Clean up */
 	cryptEnd();

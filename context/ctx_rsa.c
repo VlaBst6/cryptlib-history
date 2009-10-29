@@ -9,7 +9,7 @@
    putting a trapdoor into the laws of mathematics.
 														-- Lyle Seaman */
 
-#define PKC_CONTEXT		/* Indicate that we're working with PKC context */
+#define PKC_CONTEXT		/* Indicate that we're working with PKC contexts */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -178,44 +178,44 @@ static int selfTest( void )
 								sizeof( PKC_INFO ), NULL );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_FAILED );
-	status = extractBignum( &pkcInfo->rsaParam_n, rsaTestKey.n, 
-							rsaTestKey.nLen, RSAPARAM_MIN_N, 
-							RSAPARAM_MAX_N, NULL, TRUE );
+	status = importBignum( &pkcInfo->rsaParam_n, rsaTestKey.n, 
+						   rsaTestKey.nLen, RSAPARAM_MIN_N, 
+						   RSAPARAM_MAX_N, NULL, SHORTKEY_CHECK_PKC );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_e, rsaTestKey.e, 
-								rsaTestKey.eLen, RSAPARAM_MIN_E, 
-								RSAPARAM_MAX_E, &pkcInfo->rsaParam_n, 
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_e, rsaTestKey.e, 
+							   rsaTestKey.eLen, RSAPARAM_MIN_E, 
+							   RSAPARAM_MAX_E, &pkcInfo->rsaParam_n, 
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_d, rsaTestKey.d, 
-								rsaTestKey.dLen, RSAPARAM_MIN_D, 
-								RSAPARAM_MAX_D, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_d, rsaTestKey.d, 
+							   rsaTestKey.dLen, RSAPARAM_MIN_D, 
+							   RSAPARAM_MAX_D, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_p, rsaTestKey.p, 
-								rsaTestKey.pLen, RSAPARAM_MIN_P, 
-								RSAPARAM_MAX_P, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_p, rsaTestKey.p, 
+							   rsaTestKey.pLen, RSAPARAM_MIN_P, 
+							   RSAPARAM_MAX_P, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_q, rsaTestKey.q, 
-								rsaTestKey.qLen, RSAPARAM_MIN_Q, 
-								RSAPARAM_MAX_Q, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_q, rsaTestKey.q, 
+							   rsaTestKey.qLen, RSAPARAM_MIN_Q, 
+							   RSAPARAM_MAX_Q, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_u, rsaTestKey.u, 
-								rsaTestKey.uLen, RSAPARAM_MIN_U, 
-								RSAPARAM_MAX_U, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_u, rsaTestKey.u, 
+							   rsaTestKey.uLen, RSAPARAM_MIN_U, 
+							   RSAPARAM_MAX_U, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_exponent1, rsaTestKey.e1, 
-								rsaTestKey.e1Len, RSAPARAM_MIN_EXP1, 
-								RSAPARAM_MAX_EXP1, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_exponent1, rsaTestKey.e1, 
+							   rsaTestKey.e1Len, RSAPARAM_MIN_EXP1, 
+							   RSAPARAM_MAX_EXP1, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusOK( status ) )
-		status = extractBignum( &pkcInfo->rsaParam_exponent2, rsaTestKey.e2, 
-								rsaTestKey.e2Len, RSAPARAM_MIN_EXP2, 
-								RSAPARAM_MAX_EXP2, &pkcInfo->rsaParam_n,
-								FALSE );
+		status = importBignum( &pkcInfo->rsaParam_exponent2, rsaTestKey.e2, 
+							   rsaTestKey.e2Len, RSAPARAM_MIN_EXP2, 
+							   RSAPARAM_MAX_EXP2, &pkcInfo->rsaParam_n,
+							   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		retIntError();
 
@@ -287,8 +287,9 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	assert( noBytes == length );
 
 	/* Move the data from the buffer into a bignum */
-	status = extractBignum( data, buffer, length, 
-							MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, n, FALSE );
+	status = importBignum( data, buffer, length, 
+						   MIN_PKCSIZE - 8, CRYPT_MAX_PKCSIZE, n, 
+						   SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -296,8 +297,8 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   the bignum code performs leading-zero truncation, we have to adjust 
 	   where we copy the result to in the buffer to take into account extra 
 	   zero bytes that aren't extracted from the bignum.  In addition we 
-	   can't use the length returned from getBignumData() because this is 
-	   the length of the zero-truncated result, not the full length */
+	   can't use the length returned from exportBignum() because this is the 
+	   length of the zero-truncated result, not the full length */
 	CK( BN_mod_exp_mont( data, data, e, n, pkcInfo->bnCTX,
 						 &pkcInfo->rsaParam_mont_n ) );
 	if( bnStatusError( bnStatus ) )
@@ -305,7 +306,18 @@ static int encryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	offset = length - BN_num_bytes( data );
 	if( offset > 0 )
 		memset( buffer, 0, offset );
-	return( getBignumData( data, buffer + offset, noBytes - offset, &dummy ) );
+	status = exportBignum( buffer + offset, noBytes - offset, &dummy, data );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_RSA ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /* Use the Chinese Remainder Theorem shortcut for RSA decryption/signature
@@ -372,8 +384,8 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   unfortunate exception to the valid-length check for SSL's weird 
 	   signatures, which sign a raw concatenated MD5 and SHA-1 hash with a 
 	   total length of 36 bytes */
-	status = extractBignum( data, buffer, length, 36, CRYPT_MAX_PKCSIZE, 
-							&pkcInfo->rsaParam_n, FALSE );
+	status = importBignum( data, buffer, length, 36, CRYPT_MAX_PKCSIZE, 
+						   &pkcInfo->rsaParam_n, SHORTKEY_CHECK_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( BN_num_bytes( data ) != 36 && \
@@ -469,12 +481,23 @@ static int decryptFn( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	   leading-zero truncation, we have to adjust where we copy the
 	   result to in the buffer to take into account extra zero bytes
 	   that aren't extracted from the bignum.  In addition we can't use
-	   the length returned from getBignumData() because this is the 
-	   length of the zero-truncated result, not the full length */
+	   the length returned from exportBignum() because this is the length 
+	   of the zero-truncated result, not the full length */
 	offset = length - BN_num_bytes( data );
 	if( offset > 0 )
 		memset( buffer, 0, offset );
-	return( getBignumData( data, buffer + offset, noBytes - offset, &dummy ) );
+	status = exportBignum( buffer + offset, noBytes - offset, &dummy, data );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Perform side-channel attack checks if necessary */
+	if( ( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) && \
+		cryptStatusError( calculateBignumChecksum( pkcInfo, 
+												   CRYPT_ALGO_RSA ) ) )
+		{
+		return( CRYPT_ERROR_FAILED );
+		}
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -499,48 +522,54 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) key;
 
 		contextInfoPtr->flags |= ( rsaKey->isPublicKey ) ? \
-							CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
-		status = extractBignum( &pkcInfo->rsaParam_n, rsaKey->n, 
-								bitsToBytes( rsaKey->nLen ), 
-								RSAPARAM_MIN_N, RSAPARAM_MAX_N, NULL, TRUE );
+					CONTEXT_FLAG_ISPUBLICKEY : CONTEXT_FLAG_ISPRIVATEKEY;
+		status = importBignum( &pkcInfo->rsaParam_n, rsaKey->n, 
+							   bitsToBytes( rsaKey->nLen ), 
+							   RSAPARAM_MIN_N, RSAPARAM_MAX_N, NULL, 
+							   SHORTKEY_CHECK_PKC );
 		if( cryptStatusOK( status ) )
-			status = extractBignum( &pkcInfo->rsaParam_e, rsaKey->e, 
-									bitsToBytes( rsaKey->eLen ),
-									RSAPARAM_MIN_E, RSAPARAM_MAX_E,
-									&pkcInfo->rsaParam_n, FALSE );
-		if( cryptStatusOK( status ) )
-		if( !rsaKey->isPublicKey )
+			status = importBignum( &pkcInfo->rsaParam_e, rsaKey->e, 
+								   bitsToBytes( rsaKey->eLen ),
+								   RSAPARAM_MIN_E, RSAPARAM_MAX_E,
+								   &pkcInfo->rsaParam_n, 
+								   SHORTKEY_CHECK_NONE );
+		if( cryptStatusOK( status ) && !rsaKey->isPublicKey )
 			{
-			if( cryptStatusOK( status ) && rsaKey->dLen > 0 )
-				status = extractBignum( &pkcInfo->rsaParam_d, rsaKey->d, 
-										bitsToBytes( rsaKey->dLen ),
-										RSAPARAM_MIN_D, RSAPARAM_MAX_D,
-										&pkcInfo->rsaParam_n, FALSE );
+			status = importBignum( &pkcInfo->rsaParam_d, rsaKey->d, 
+								   bitsToBytes( rsaKey->dLen ),
+								   RSAPARAM_MIN_D, RSAPARAM_MAX_D,
+								   &pkcInfo->rsaParam_n, 
+								   SHORTKEY_CHECK_NONE );
 			if( cryptStatusOK( status ) )
-				status = extractBignum( &pkcInfo->rsaParam_p, rsaKey->p, 
-										bitsToBytes( rsaKey->pLen ),
-										RSAPARAM_MIN_P, RSAPARAM_MAX_P,
-										&pkcInfo->rsaParam_n, FALSE );
+				status = importBignum( &pkcInfo->rsaParam_p, rsaKey->p, 
+									   bitsToBytes( rsaKey->pLen ),
+									   RSAPARAM_MIN_P, RSAPARAM_MAX_P,
+									   &pkcInfo->rsaParam_n, 
+									   SHORTKEY_CHECK_NONE );
 			if( cryptStatusOK( status ) )
-				status = extractBignum( &pkcInfo->rsaParam_q, rsaKey->q, 
-										bitsToBytes( rsaKey->qLen ),
-										RSAPARAM_MIN_Q, RSAPARAM_MAX_Q,
-										&pkcInfo->rsaParam_n, FALSE );
+				status = importBignum( &pkcInfo->rsaParam_q, rsaKey->q, 
+									   bitsToBytes( rsaKey->qLen ),
+									   RSAPARAM_MIN_Q, RSAPARAM_MAX_Q,
+									   &pkcInfo->rsaParam_n, 
+									   SHORTKEY_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->uLen > 0 )
-				status = extractBignum( &pkcInfo->rsaParam_u, rsaKey->u, 
-										bitsToBytes( rsaKey->uLen ),
-										RSAPARAM_MIN_U, RSAPARAM_MAX_U,
-										&pkcInfo->rsaParam_n, FALSE );
+				status = importBignum( &pkcInfo->rsaParam_u, rsaKey->u, 
+									   bitsToBytes( rsaKey->uLen ),
+									   RSAPARAM_MIN_U, RSAPARAM_MAX_U,
+									   &pkcInfo->rsaParam_n, 
+									   SHORTKEY_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->e1Len > 0 )
-				status = extractBignum( &pkcInfo->rsaParam_exponent1, rsaKey->e1, 
-										bitsToBytes( rsaKey->e1Len ),
-										RSAPARAM_MIN_EXP1, RSAPARAM_MAX_EXP1,
-										&pkcInfo->rsaParam_n, FALSE );
+				status = importBignum( &pkcInfo->rsaParam_exponent1, rsaKey->e1, 
+									   bitsToBytes( rsaKey->e1Len ),
+									   RSAPARAM_MIN_EXP1, RSAPARAM_MAX_EXP1,
+									   &pkcInfo->rsaParam_n, 
+									   SHORTKEY_CHECK_NONE );
 			if( cryptStatusOK( status ) && rsaKey->e2Len > 0 )
-				status = extractBignum( &pkcInfo->rsaParam_exponent2, rsaKey->e2, 
-										bitsToBytes( rsaKey->e2Len ),
-										RSAPARAM_MIN_EXP2, RSAPARAM_MAX_EXP2,
-										&pkcInfo->rsaParam_n, FALSE );
+				status = importBignum( &pkcInfo->rsaParam_exponent2, rsaKey->e2, 
+									   bitsToBytes( rsaKey->e2Len ),
+									   RSAPARAM_MIN_EXP2, RSAPARAM_MAX_EXP2,
+									   &pkcInfo->rsaParam_n, 
+									   SHORTKEY_CHECK_NONE );
 			}
 		contextInfoPtr->flags |= CONTEXT_FLAG_PBO;
 		if( cryptStatusError( status ) )
@@ -549,10 +578,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 #endif /* USE_FIPS140 */
 
 	/* Complete the key checking and setup */
-	status = initCheckRSAkey( contextInfoPtr );
-	if( cryptStatusOK( status ) )
-		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
-	return( status );
+	return( initCheckRSAkey( contextInfoPtr ) );
 	}
 
 /* Generate a key into an encryption context */
@@ -568,11 +594,11 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 #endif /* USE_FIPS140 */
 		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
+		DEBUG_DIAG(( "Consistency check of freshly-generated RSA key "
+					 "failed" ));
 		assert( DEBUG_WARN );
 		status = CRYPT_ERROR_FAILED;
 		}
-	if( cryptStatusOK( status ) )
-		status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
 	return( status );
 	}
 

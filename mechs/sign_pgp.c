@@ -46,6 +46,8 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 									OUT_LENGTH_SHORT_Z int *dataLen,
 									IN_HANDLE const CRYPT_CONTEXT iSignContext,
 									IN_HANDLE const CRYPT_CONTEXT iHashContext,
+									IN_RANGE( PGP_SIG_NONE, PGP_SIG_LAST - 1 ) \
+										const int sigType,
 									IN_LENGTH_SHORT_Z const int iAndSlength )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
@@ -66,6 +68,7 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 				dataMaxLen < MAX_INTLENGTH_SHORT ) );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
+	REQUIRES( sigType >= PGP_SIG_NONE && sigType < PGP_SIG_LAST );
 	REQUIRES( iAndSlength >= 0 && iAndSlength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
@@ -125,7 +128,7 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 	/* Write the general header information */
 	sMemOpenOpt( &stream, data, dataMaxLen );
 	sputc( &stream, PGP_VERSION_OPENPGP );
-	sputc( &stream, PGP_SIG_DATA );
+	sputc( &stream, sigType );
 	sputc( &stream, pgpSignAlgo );
 	status = sputc( &stream, pgpHashAlgo );
 	if( cryptStatusError( status ) )
@@ -193,11 +196,12 @@ static int writePgpSigPacketHeader( OUT_BUFFER_OPT( dataMaxLen, *dataLen ) \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
-							void *signature, 
-						IN_LENGTH_Z const int sigMaxLength, 
+						void *signature, IN_LENGTH_Z const int sigMaxLength, 
 						OUT_LENGTH_Z int *signatureLength, 
 						IN_HANDLE const CRYPT_CONTEXT iSignContext,
-						IN_HANDLE const CRYPT_CONTEXT iHashContext )
+						IN_HANDLE const CRYPT_CONTEXT iHashContext,
+						IN_RANGE( PGP_SIG_NONE, PGP_SIG_LAST - 1 ) \
+							const int sigType )
 	{
 	MESSAGE_DATA msgData;
 	STREAM stream;
@@ -219,6 +223,7 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 				sigMaxLength < MAX_INTLENGTH ) );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
+	REQUIRES( sigType >= PGP_SIG_NONE && sigType < PGP_SIG_LAST );
 
 	/* Check whether there's an issuerAndSerialNumber present */
 	setMessageData( &msgData, NULL, 0 );
@@ -233,7 +238,7 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		{
 		status = writePgpSigPacketHeader( NULL, 0, &extraDataLength, 
 										  iSignContext, iHashContext, 
-										  iAndSlength );
+										  sigType, iAndSlength );
 		if( cryptStatusError( status ) )
 			return( status );
 		status = createSignature( NULL, 0, &signatureDataLength, 
@@ -278,7 +283,7 @@ int createSignaturePGP( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	   from the pre-hashed data and the length, hash check, and signature */
 	status = writePgpSigPacketHeader( extraData, extraDataLength, 
 									  &extraDataLength, iSignContext,
-									  iHashContext, iAndSlength );
+									  iHashContext, sigType, iAndSlength );
 	if( cryptStatusOK( status ) )
 		{
 		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,

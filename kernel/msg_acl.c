@@ -58,10 +58,16 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
 				   2, MAX_ATTRIBUTE_SIZE ) },
 
-	/* Cert SHA-1 fingerprint */
-	{ MESSAGE_COMPARE_FINGERPRINT,
+	/* Cert certificate fingerprint for various hash algorithms */
+	{ MESSAGE_COMPARE_FINGERPRINT_SHA1,
 	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
 				   20, 20 ) },
+	{ MESSAGE_COMPARE_FINGERPRINT_SHA2,
+	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
+				   32, 32 ) },
+	{ MESSAGE_COMPARE_FINGERPRINT_SHAng,
+	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
+				   32, 32 ) },
 
 	/* Certificate object */
 	{ MESSAGE_COMPARE_CERTOBJ,
@@ -83,9 +89,11 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 #define PUBKEY_KEYSET_OBJECT	( ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
 								  ST_KEYSET_DBMS | ST_KEYSET_DBMS_STORE | \
 								  ST_KEYSET_HTTP | ST_KEYSET_LDAP | \
-								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI )
+								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
+								  ST_DEV_HW )
 #define PRIVKEY_KEYSET_OBJECT	( ST_KEYSET_FILE | ST_KEYSET_FILE_PARTIAL | \
-								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI )
+								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
+								  ST_DEV_HW )
 
 static const CHECK_ALT_ACL FAR_BSS checkCAACLTbl[] = {
 	/* The CA capability is spread across certs (the CA flag)
@@ -388,6 +396,7 @@ static const CREATE_ACL FAR_BSS createObjectACL[] = {
 		MKACP_S( MIN_NAME_LENGTH, 
 				 CRYPT_MAX_TEXTSIZE ) } },	/* User password */
 
+	/* End-of-ACL marker */
 	{ OBJECT_TYPE_NONE, { { 0 } } },
 	{ OBJECT_TYPE_NONE, { { 0 } } }
 	};
@@ -431,7 +440,7 @@ static const CREATE_ACL FAR_BSS createObjectIndirectACL[] = {
 
 /* Check whether a numeric value falls within a range */
 
-CHECK_RETVAL \
+CHECK_RETVAL_BOOL \
 static BOOLEAN checkNumericRange( const int value, const int lowRange,
 								  const int highRange )
 	{
@@ -463,8 +472,9 @@ static BOOLEAN checkNumericRange( const int value, const int lowRange,
 
 /* Check whether a numeric value falls within a special-case range type */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-static BOOLEAN checkAttributeRangeSpecial( const RANGEVAL_TYPE rangeType,
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 2 ) ) \
+static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
+												const RANGEVAL_TYPE rangeType,
 										   const void *rangeInfo,
 										   const int value )
 	{
@@ -500,7 +510,7 @@ static BOOLEAN checkAttributeRangeSpecial( const RANGEVAL_TYPE rangeType,
 		for( i = 0; allowedValuesInfo[ i ].lowRange != CRYPT_ERROR && \
 					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
-			INV( i < 5 );
+			INV( i < 10 );
 			if( checkNumericRange( value, allowedValuesInfo[ i ].lowRange,
 								   allowedValuesInfo[ i ].highRange ) )
 				return( TRUE );
@@ -517,11 +527,11 @@ static BOOLEAN checkAttributeRangeSpecial( const RANGEVAL_TYPE rangeType,
    in the kernel, but not having it here makes correct string length range
    checking difficult */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN checkAttributeRangeWidechar( const void *value,
-											const int valueLength,
-											const int minLength,
-											const int maxLength )
+											IN_LENGTH const int valueLength,
+											IN_LENGTH_Z const int minLength,
+											IN_LENGTH const int maxLength )
 	{
 #ifdef USE_WIDECHARS
 	const wchar_t *wcString = value;
@@ -540,8 +550,12 @@ static BOOLEAN checkAttributeRangeWidechar( const void *value,
 		}
 
 	/* If wchar_t is > 16 bits and the bits above 16 are all zero, it's
-	   definitely a widechar string */
-#if INT_MAX > 0xFFFFL
+	   definitely a widechar string.  Note that some compilers will complain 
+	   of unreachable code here, unfortunately we can't easily fix this 
+	   since WCSIZE is usually an expression involving sizeof() which can't 
+	   be handled via the preprocessor so we have to guard it with a 
+	   preprocessor check */
+#ifdef CHECK_WCSIZE
 	if( WCSIZE > 2 && *wcString < 0xFFFF )
 		{
 		return( ( valueLength < ( minLength * WCSIZE ) || \
@@ -571,7 +585,7 @@ static BOOLEAN checkAttributeRangeWidechar( const void *value,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int checkActionPermitted( const OBJECT_INFO *objectInfoPtr,
-								 const MESSAGE_TYPE message )
+								 IN_MESSAGE const MESSAGE_TYPE message )
 	{
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	int requiredLevel, actualLevel;
@@ -612,8 +626,8 @@ static int checkActionPermitted( const OBJECT_INFO *objectInfoPtr,
 /* Find the appropriate check ACL for a given message type */
 
 CHECK_RETVAL \
-static int findCheckACL( const int messageValue,
-						 const OBJECT_TYPE objectType,
+static int findCheckACL( IN_ENUM( MESSAGE_CHECK ) const int messageValue,
+						 IN_ENUM( OBJECT ) const OBJECT_TYPE objectType,
 						 OUT_OPT_PTR const CHECK_ACL **checkACLptr,
 						 OUT_OPT_PTR const CHECK_ALT_ACL **checkAltACLptr )
 	{
@@ -681,7 +695,8 @@ static int findCheckACL( const int messageValue,
 *																			*
 ****************************************************************************/
 
-int initMessageACL( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
@@ -885,11 +900,12 @@ void endMessageACL( void )
    it's rejected immediately rather than being enqueued and then dequeued
    again once the destroy message has been processed */
 
-int preDispatchSignalDependentObjects( const int objectHandle,
-									   const MESSAGE_TYPE message,	/* Unused */
-									   const void *messageDataPtr,	/* Unused */
-									   const int messageValue,		/* Unused */
-									   const void *dummy )
+CHECK_RETVAL \
+int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
+									   STDC_UNUSED const MESSAGE_TYPE dummy1,
+									   STDC_UNUSED const void *dummy2,
+									   STDC_UNUSED const int dummy3,
+									   STDC_UNUSED const void *dummy4 )
 	{
 	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	STDC_UNUSED int status;
@@ -897,7 +913,6 @@ int preDispatchSignalDependentObjects( const int objectHandle,
 	/* Preconditions */
 	PRE( isValidObject( objectHandle ) && \
 		 objectHandle >= NO_SYSTEM_OBJECTS );
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
 
 	/* An inability to change the reference counts of the dependent objects 
 	   doesn't affect the object itself so we can't report it as an error, 
@@ -925,11 +940,13 @@ int preDispatchSignalDependentObjects( const int objectHandle,
 /* If it's an attribute get/set/delete, check the access conditions for the
    object and the message parameters */
 
-int preDispatchCheckAttributeAccess( const int objectHandle,
-									 const MESSAGE_TYPE message,
-									 const void *messageDataPtr,
-									 const int messageValue,
-									 const void *auxInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 5 ) ) \
+int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
+									 IN_MESSAGE const MESSAGE_TYPE message,
+									 IN_OPT const void *messageDataPtr,
+									 IN_ATTRIBUTE const int messageValue,
+									 IN TYPECAST( ATTRIBUTE_ACL * ) \
+										const void *auxInfo )
 	{
 	static const int FAR_BSS accessTypeTbl[ 5 ][ 2 ] = {
 		/* MESSAGE_GETATTRIBUTE */			/* MESSAGE_GETATTRIBUTE_S */
@@ -944,9 +961,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 	const OBJECT_INFO *objectInfo = &objectTable[ objectHandle ];
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	const int subType = objectInfo->subType;
-	int accessType = \
-			accessTypeTbl[ localMessage - MESSAGE_GETATTRIBUTE ]\
-						 [ ( objectInfo->flags & OBJECT_FLAG_HIGH ) ? 1 : 0 ];
+	int accessType;
 	const BOOLEAN isInternalMessage = isInternalMessage( message ) ? \
 									  TRUE : FALSE;
 
@@ -957,6 +972,10 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 	PRE( localMessage == MESSAGE_DELETEATTRIBUTE || messageDataPtr != NULL );
 	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) && \
 		 attributeACL->attribute == messageValue );
+
+	/* Get the access permission for this message */
+	accessType = accessTypeTbl[ localMessage - MESSAGE_GETATTRIBUTE ]\
+							  [ ( objectInfo->flags & OBJECT_FLAG_HIGH ) ? 1 : 0 ];
 
 	/* If it's an internal message, use the internal access permssions */
 	if( isInternalMessage )
@@ -1037,7 +1056,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			   buffer */
 			if( localMessage == MESSAGE_GETATTRIBUTE )
 				{
-				if( !isWritePtr( ( void * ) messageDataPtr, sizeof( int ) ) )
+				if( !isWritePtrConst( ( void * ) messageDataPtr, sizeof( int ) ) )
 					return( CRYPT_ARGERROR_STR1 );
 				}
 			break;
@@ -1063,7 +1082,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			   buffer */
 			if( localMessage == MESSAGE_GETATTRIBUTE )
 				{
-				if( !isWritePtr( ( void * ) messageDataPtr, sizeof( int ) ) )
+				if( !isWritePtrConst( ( void * ) messageDataPtr, sizeof( int ) ) )
 					return( CRYPT_ARGERROR_STR1 );
 				break;
 				}
@@ -1086,11 +1105,6 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			switch( getSpecialRangeType( attributeACL ) )
 				{
 				case RANGEVAL_ANY:
-					break;
-
-				case RANGEVAL_SELECTVALUE:
-					if( *valuePtr != CRYPT_UNUSED )
-						return( CRYPT_ARGERROR_NUM1 );
 					break;
 
 				case RANGEVAL_ALLOWEDVALUES:
@@ -1136,7 +1150,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			   buffer */
 			if( localMessage == MESSAGE_GETATTRIBUTE )
 				{
-				if( !isWritePtr( ( void * ) messageDataPtr, sizeof( int ) ) )
+				if( !isWritePtrConst( ( void * ) messageDataPtr, sizeof( int ) ) )
 					return( CRYPT_ARGERROR_STR1 );
 				break;
 				}
@@ -1200,8 +1214,8 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 						 isWritePtr( msgData->data, msgData->length ) ) ) ) || \
 				   ( localMessage == MESSAGE_SETATTRIBUTE_S && \
 					 isReadPtr( msgData->data, msgData->length ) && \
-					 ( msgData->length > 0 && \
-					   msgData->length < MAX_INTLENGTH_SHORT || \
+					 ( ( msgData->length > 0 && \
+						 msgData->length < MAX_INTLENGTH_SHORT ) || \
 					   messageValue == CRYPT_IATTRIBUTE_ENTROPY ) ) ) );
 
 			/* Must be a string value */
@@ -1300,7 +1314,7 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 			PRE( localMessage == MESSAGE_SETATTRIBUTE_S );
 
 			/* Must contain a time_t in a sensible range */
-			if( !isReadPtr( msgData->data, sizeof( time_t ) ) || \
+			if( !isReadPtrConst( msgData->data, sizeof( time_t ) ) || \
 				*( ( time_t * ) msgData->data ) <= MIN_TIME_VALUE )
 				return( CRYPT_ARGERROR_STR1 );
 			if( msgData->length != sizeof( time_t ) )
@@ -1340,11 +1354,12 @@ int preDispatchCheckAttributeAccess( const int objectHandle,
 
 /* It's a compare message, make sure that the parameters are OK */
 
-int preDispatchCheckCompareParam( const int objectHandle,
-								  const MESSAGE_TYPE message,		/* Unused */
+CHECK_RETVAL \
+int preDispatchCheckCompareParam( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy )
+								  IN_ENUM( MESSAGE_COMPARE ) const int messageValue,
+								  STDC_UNUSED const void *dummy )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	const OBJECT_INFO *objectInfoPtr = &objectTable[ objectHandle ];
@@ -1414,11 +1429,12 @@ int preDispatchCheckCompareParam( const int objectHandle,
 
 /* It's a check message, make sure that the parameters are OK */
 
-int preDispatchCheckCheckParam( const int objectHandle,
-								const MESSAGE_TYPE message,
-								const void *messageDataPtr,			/* Unused */
-								const int messageValue,
-								const void *dummy )
+CHECK_RETVAL \
+int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
+								IN_MESSAGE const MESSAGE_TYPE message,
+								STDC_UNUSED const void *dummy1,
+								IN_ENUM( MESSAGE_CHECK ) const int messageValue,
+								STDC_UNUSED const void *dummy2 )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	const OBJECT_INFO *objectInfoPtr = &objectTable[ objectHandle ];
@@ -1490,11 +1506,12 @@ int preDispatchCheckCheckParam( const int objectHandle,
 
 /* It's a context action message, check the access conditions for the object */
 
-int preDispatchCheckActionAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,
-								  const void *messageDataPtr,		/* Unused */
-								  const int messageValue,			/* Unused */
-								  const void *dummy )
+CHECK_RETVAL \
+int preDispatchCheckActionAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
+								  STDC_UNUSED const void *dummy1,
+								  STDC_UNUSED const int dummy2,
+								  STDC_UNUSED const void *dummy3 )
 	{
 	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
@@ -1543,11 +1560,12 @@ int preDispatchCheckActionAccess( const int objectHandle,
 /* If it's a state change trigger message, make sure that the object isn't
    already in the high state */
 
-int preDispatchCheckState( const int objectHandle,
-						   const MESSAGE_TYPE message,
-						   const void *messageDataPtr,				/* Unused */
-						   const int messageValue,					/* Unused */
-						   const void *dummy )
+CHECK_RETVAL \
+int preDispatchCheckState( IN_HANDLE const int objectHandle,
+						   IN_MESSAGE const MESSAGE_TYPE message,
+						   STDC_UNUSED const void *dummy1,
+						   STDC_UNUSED const int dummy2, 
+						   STDC_UNUSED const void *dummy3 )
 	{
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 
@@ -1581,11 +1599,12 @@ int preDispatchCheckState( const int objectHandle,
 /* Check the access conditions for a message containing an optional handle
    as the message parameter */
 
-int preDispatchCheckParamHandleOpt( const int objectHandle,
-									const MESSAGE_TYPE message,
-									const void *messageDataPtr,		/* Unused */
+CHECK_RETVAL \
+int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
+									IN_MESSAGE const MESSAGE_TYPE message,
+									STDC_UNUSED const void *dummy1,
 									const int messageValue,
-									const void *auxInfo )
+									IN TYPECAST( MESSAGE_ACL * ) const void *auxInfo )
 	{
 	const MESSAGE_ACL *messageACL = ( MESSAGE_ACL * ) auxInfo;
 	const OBJECT_ACL *objectACL = &messageACL->objectACL;
@@ -1627,11 +1646,13 @@ int preDispatchCheckParamHandleOpt( const int objectHandle,
 
 /* Perform a combined check of the object and the handle */
 
-int preDispatchCheckStateParamHandle( const int objectHandle,
-									  const MESSAGE_TYPE message,
-									  const void *messageDataPtr,	/* Unused */
+CHECK_RETVAL \
+int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
+									  IN_MESSAGE const MESSAGE_TYPE message,
+									  STDC_UNUSED const void *dummy1,
 									  const int messageValue,
-									  const void *auxInfo )
+									  IN TYPECAST( MESSAGE_ACL * ) \
+											const void *auxInfo )
 	{
 	const MESSAGE_ACL *messageACL = ( MESSAGE_ACL * ) auxInfo;
 	const OBJECT_ACL *objectACL = &messageACL->objectACL;
@@ -1640,6 +1661,7 @@ int preDispatchCheckStateParamHandle( const int objectHandle,
 
 	/* Preconditions: The access is valid and we've been supplied a valid
 	   check ACL */
+	PRE( isValidMessage( message & MESSAGE_MASK ) );
 	PRE( fullObjectCheck( objectHandle, message ) );
 	PRE( isReadPtr( messageACL, sizeof( MESSAGE_ACL ) ) && \
 		 messageACL->type == ( message & MESSAGE_MASK ) );
@@ -1673,11 +1695,12 @@ int preDispatchCheckStateParamHandle( const int objectHandle,
 /* We're exporting a certificate, make sure that the format is valid for
    this cert type */
 
-int preDispatchCheckExportAccess( const int objectHandle,
-								  const MESSAGE_TYPE message,		/* Unused */
+CHECK_RETVAL \
+int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
+								  IN_MESSAGE const MESSAGE_TYPE message,
 								  const void *messageDataPtr,
-								  const int messageValue,
-								  const void *dummy )
+								  IN_ENUM( CRYPT_CERTFORMAT ) const int messageValue,
+								  STDC_UNUSED const void *dummy2 )
 	{
 	const ATTRIBUTE_ACL *formatACL;
 	int i;
@@ -1716,11 +1739,13 @@ int preDispatchCheckExportAccess( const int objectHandle,
 /* It's data being pushed or popped, make sure that it's a valid data
    quantity */
 
-int preDispatchCheckData( const int objectHandle,
-						  const MESSAGE_TYPE message,
-						  const void *messageDataPtr,
-						  const int messageValue,					/* Unused */
-						  const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckData( IN_HANDLE const int objectHandle,
+						  IN_MESSAGE const MESSAGE_TYPE message,
+						  IN_BUFFER( MESSAGE_DATA ) \
+								const void *messageDataPtr,
+						  STDC_UNUSED const int dummy1,
+						  STDC_UNUSED const void *dummy2 )
 	{
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	const MESSAGE_DATA *msgData = messageDataPtr;
@@ -1729,7 +1754,6 @@ int preDispatchCheckData( const int objectHandle,
 	PRE( isValidObject( objectHandle ) );
 	PRE( isValidMessage( localMessage ) );
 	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
-	PRE( messageValue == 0 );
 
 	/* Make sure that it's either a flush (buffer = NULL, length = 0)
 	   or valid data */
@@ -1760,11 +1784,13 @@ int preDispatchCheckData( const int objectHandle,
    valid and set the new object's owner to the owner of the object that it's 
    being created through */
 
-int preDispatchCheckCreate( const int objectHandle,
-							const MESSAGE_TYPE message,
-							const void *messageDataPtr,
-							const int messageValue,
-							const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
+							IN_MESSAGE const MESSAGE_TYPE message,
+							IN_BUFFER( MESSAGE_CREATEOBJECT_INFO ) \
+								const void *messageDataPtr,
+							IN_ENUM( OBJECT ) const int messageValue,
+							STDC_UNUSED const void *dummy )
 	{
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
@@ -1787,7 +1813,9 @@ int preDispatchCheckCreate( const int objectHandle,
 	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
 	PRE( isValidType( messageValue ) );
 	PRE( createInfo->cryptHandle == CRYPT_ERROR );
-	PRE( createInfo->cryptOwner == CRYPT_ERROR );
+	PRE( createInfo->cryptOwner == CRYPT_ERROR || \
+		 createInfo->cryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+		 isHandleRangeValid( createInfo->cryptOwner ) );
 	
 	/* Find the appropriate ACL for this object create type */
 	for( i = 0; createACL[ i ].type != messageValue && 
@@ -1826,21 +1854,24 @@ int preDispatchCheckCreate( const int objectHandle,
 						   createInfo->strArg2, createInfo->strArgLen2 ) )
 		return( CRYPT_ARGERROR_STR2 );
 
-	/* Set the new object's owner to the owner of the object that it's being
-	   created through.  If it's being created through the system device
-	   object (which has no owner), we set the owner to the default user
-	   object */
-	if( objectHandle == SYSTEM_OBJECT_HANDLE )
-		createInfo->cryptOwner = DEFAULTUSER_OBJECT_HANDLE;
-	else
+	/* If there's no object owner explicitly set, set the new object's owner 
+	   to the owner of the object that it's being created through.  If it's 
+	   being created through the system device object (which has no owner) 
+	   we set the owner to the default user object */
+	if( createInfo->cryptOwner == CRYPT_ERROR )
 		{
-		const int ownerObject = objectTable[ objectHandle ].owner;
+		if( objectHandle == SYSTEM_OBJECT_HANDLE )
+			createInfo->cryptOwner = DEFAULTUSER_OBJECT_HANDLE;
+		else
+			{
+			const int ownerObject = objectTable[ objectHandle ].owner;
 
-		/* Inner precondition: The owner is a valid user object */
-		PRE( isValidObject( ownerObject ) && \
-			 objectTable[ ownerObject ].type == OBJECT_TYPE_USER );
-
-		createInfo->cryptOwner = ownerObject;
+			/* Inner precondition: The owner is a valid user object */
+			PRE( isValidObject( ownerObject ) && \
+				 objectTable[ ownerObject ].type == OBJECT_TYPE_USER );
+	
+			createInfo->cryptOwner = ownerObject;
+			}
 		}
 
 	/* Postcondition: The new object's owner will be the user object it's
@@ -1856,11 +1887,12 @@ int preDispatchCheckCreate( const int objectHandle,
 
 /* It's a user management message, make sure that it's valid */
 
-int preDispatchCheckUserMgmtAccess( const int objectHandle, 
-									const MESSAGE_TYPE message,
-									const void *messageDataPtr,		/* Unused */
-									const int messageValue, 
-									const void *dummy )
+CHECK_RETVAL \
+int preDispatchCheckUserMgmtAccess( IN_HANDLE const int objectHandle, 
+									IN_MESSAGE const MESSAGE_TYPE message,
+									STDC_UNUSED const void *dummy1,
+									IN_ENUM( MESSAGE_USERMGMT ) const int messageValue, 
+									STDC_UNUSED const void *dummy2 )
 	{
 	STDC_UNUSED \
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
@@ -1878,7 +1910,6 @@ int preDispatchCheckUserMgmtAccess( const int objectHandle,
 	switch( messageValue )
 		{
 		case MESSAGE_USERMGMT_ZEROISE:
-			assert( messageDataPtr == NULL );
 			return( CRYPT_OK );
 		}
 
@@ -1887,11 +1918,12 @@ int preDispatchCheckUserMgmtAccess( const int objectHandle,
 
 /* It's a trust management message, make sure that it's valid */
 
-int preDispatchCheckTrustMgmtAccess( const int objectHandle, 
-									 const MESSAGE_TYPE message,
+CHECK_RETVAL \
+int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle, 
+									 IN_MESSAGE const MESSAGE_TYPE message,
 									 const void *messageDataPtr,
-									 const int messageValue,		/* Unused */
-									 const void *dummy )
+									 STDC_UNUSED const int messageValue, 
+									 STDC_UNUSED const void *dummy )
 	{
 	static const OBJECT_ACL FAR_BSS objectTrustedCertificate = {
 			ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, 
@@ -1936,8 +1968,9 @@ int preDispatchCheckTrustMgmtAccess( const int objectHandle,
    outside caller.  If it's an external message, we have to make the object
    externally visible before we return it */
 
-int postDispatchMakeObjectExternal( const int dummy,
-									const MESSAGE_TYPE message,
+CHECK_RETVAL \
+int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
+									IN_MESSAGE const MESSAGE_TYPE message,
 									const void *messageDataPtr,
 									const int messageValue,
 									const void *auxInfo )
@@ -2016,6 +2049,8 @@ int postDispatchMakeObjectExternal( const int dummy,
 			PRE( isReadPtr( getkeyInfo, sizeof( MESSAGE_KEYMGMT_INFO ) ) );
 
 			objectHandle = getkeyInfo->cryptHandle;
+
+			POST( isInHighState( objectHandle ) );
 			break;
 			}
 
@@ -2047,6 +2082,8 @@ int postDispatchMakeObjectExternal( const int dummy,
 			PRE( certMgmtInfo->cryptCert != CRYPT_UNUSED );
 
 			objectHandle = certMgmtInfo->cryptCert;
+
+			POST( isInHighState( objectHandle ) );
 			break;
 			}
 
@@ -2086,11 +2123,12 @@ int postDispatchMakeObjectExternal( const int dummy,
    check message such as "is this suitable for signing?") needs to be
    forwarded to the other */
 
-int postDispatchForwardToDependentObject( const int objectHandle,
-										  const MESSAGE_TYPE message,
-										  const void *dummy1,
-										  const int messageValue,
-										  const void *dummy2 )
+CHECK_RETVAL \
+int postDispatchForwardToDependentObject( IN_HANDLE const int objectHandle,
+										  IN_MESSAGE const MESSAGE_TYPE message,
+										  STDC_UNUSED const void *dummy1,
+										  IN_ENUM( MESSAGE_CHECK ) const int messageValue,
+										  STDC_UNUSED const void *dummy2 )
 	{
 	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	const int dependentObject = objectInfoPtr->dependentObject;
@@ -2155,11 +2193,12 @@ int postDispatchForwardToDependentObject( const int objectHandle,
 /* Some objects can only perform given number of actions before they self-
    destruct, so if there's a usage count set we update it */
 
-int postDispatchUpdateUsageCount( const int objectHandle,
-								  const MESSAGE_TYPE message,		/* Unused */
-								  const void *dummy1,
-								  const int messageValue,			/* Unused */
-								  const void *dummy2 )
+CHECK_RETVAL \
+int postDispatchUpdateUsageCount( IN_HANDLE const int objectHandle,
+								  STDC_UNUSED const MESSAGE_TYPE dummy1,
+								  STDC_UNUSED const void *dummy2,
+								  STDC_UNUSED const int dummy3,
+								  STDC_UNUSED const void *dummy4 )
 	{
 	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
 	ORIGINAL_INT_VAR( usageCt, objectInfoPtr->usageCount );
@@ -2167,7 +2206,6 @@ int postDispatchUpdateUsageCount( const int objectHandle,
 	/* Precondition: It's a context with a nonzero usage count */
 	PRE( isValidObject( objectHandle ) && \
 		 objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
 	PRE( objectInfoPtr->usageCount == CRYPT_UNUSED || \
 		 objectInfoPtr->usageCount > 0 );
 
@@ -2192,17 +2230,17 @@ int postDispatchUpdateUsageCount( const int objectHandle,
    bypass the kernel checks since they won't be processed until the object
    is marked as non-busy later on */
 
-int postDispatchChangeState( const int objectHandle,
-							 const MESSAGE_TYPE message,			/* Unused */
-							 const void *dummy1,
-							 const int messageValue,				/* Unused */
-							 const void *dummy2 )
+CHECK_RETVAL \
+int postDispatchChangeState( IN_HANDLE const int objectHandle,
+							 STDC_UNUSED const MESSAGE_TYPE dummy1,
+							 STDC_UNUSED const void *dummy2,
+							 STDC_UNUSED const int dummy3,
+							 STDC_UNUSED const void *dummy4 )
 	{
 	/* Precondition: Object is in the low state so a state change message is
 	   valid */
 	PRE( isValidObject( objectHandle ) );
 	PRE( !isInHighState( objectHandle ) );
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
 
 	/* The state change message was successfully processed, the object is now
 	   in the high state */
@@ -2213,11 +2251,12 @@ int postDispatchChangeState( const int objectHandle,
 	return( CRYPT_OK );
 	}
 
-int postDispatchChangeStateOpt( const int objectHandle,
-								const MESSAGE_TYPE message,			/* Unused */
-								const void *dummy1,
-								const int messageValue,				/* Unused */
-								const void *auxInfo )
+CHECK_RETVAL \
+int postDispatchChangeStateOpt( IN_HANDLE const int objectHandle,
+								STDC_UNUSED const MESSAGE_TYPE dummy1,
+								STDC_UNUSED const void *dummy2,
+								const int messageValue,
+								IN TYPECAST( ATTRIBUTE_ACL * ) const void *auxInfo )
 	{
 	const ATTRIBUTE_ACL *attributeACL = ( ATTRIBUTE_ACL * ) auxInfo;
 
@@ -2257,11 +2296,12 @@ int postDispatchChangeStateOpt( const int objectHandle,
 /* It's a user management message, if it's a zeroise trigger a shutdown of
    the kernel */
 
-int postDispatchHandleZeroise( const int objectHandle, 
-							   const MESSAGE_TYPE message,			/* Unused */
-							   const void *dummy1,
-							   const int messageValue,
-							   const void *dummy2 )
+CHECK_RETVAL \
+int postDispatchHandleZeroise( IN_HANDLE const int objectHandle, 
+							   IN_MESSAGE const MESSAGE_TYPE message,
+							   STDC_UNUSED const void *dummy2,
+							   IN_ENUM( MESSAGE_USERMGMT ) const int messageValue,
+							   STDC_UNUSED const void *dummy3 )
 	{
 	STDC_UNUSED \
 	const OBJECT_INFO *objectTable = krnlData->objectTable;

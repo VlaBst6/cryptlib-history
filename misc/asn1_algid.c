@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						ASN.1 Algorithm Identifier Routines					*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -31,9 +31,10 @@
    sub-algorithm is expected, but we return an error code if the OID has a
    sub-algorithm type present */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid, 
 						   IN_RANGE( 1, MAX_OID_SIZE ) const int oidLength, 
+						   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type,
 						   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
 						   OUT_OPT_INT_Z int *parameter )
 	{
@@ -45,6 +46,7 @@ static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid,
 	assert( parameter == NULL || isWritePtr( parameter, sizeof( int ) ) );
 
 	REQUIRES( oidLength >= MIN_OID_SIZE && oidLength <= MAX_OID_SIZE );
+	REQUIRES( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 
 	/* Clear return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
@@ -66,7 +68,8 @@ static int oidToAlgorithm( IN_BUFFER( oidLength ) const BYTE *oid,
 		{
 		const ALGOID_INFO *algoIDinfoPtr = &algoIDinfoTbl[ i ];
 
-		if( sizeofOID( algoIDinfoPtr->oid ) == oidLength && \
+		if( algoIDinfoPtr->algoClass == type && \
+			sizeofOID( algoIDinfoPtr->oid ) == oidLength && \
 			algoIDinfoPtr->oid[ 6 ] == oidByte && \
 			!memcmp( algoIDinfoPtr->oid, oid, oidLength ) )
 			{
@@ -165,7 +168,9 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 							 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
 							 OUT_OPT_RANGE( 0, 999 ) int *parameter, 
 							 OUT_OPT_LENGTH_SHORT_Z int *extraLength, 
-							 IN_TAG const int tag )
+							 IN_TAG const int tag,
+							 IN_ENUM( ALGOID_CLASS ) \
+									const ALGOID_CLASS_TYPE type )
 	{
 	CRYPT_ALGO_TYPE localCryptAlgo;
 	BYTE oidBuffer[ MAX_OID_SIZE + 8 ];
@@ -179,6 +184,7 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 			isWritePtr( extraLength, sizeof( int ) ) );
 
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+	REQUIRES_S( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 	
 	/* Clear the return values */
 	*cryptAlgo = CRYPT_ALGO_NONE;
@@ -204,7 +210,7 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 		/* It's a stream-related error, make it persistent */
 		return( sSetError( stream, CRYPT_ERROR_BADDATA ) );
 		}
-	status = oidToAlgorithm( oidBuffer, oidLength, &localCryptAlgo, 
+	status = oidToAlgorithm( oidBuffer, oidLength, type, &localCryptAlgo, 
 							 &algoParam );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -326,7 +332,8 @@ static int readAlgoIDheader( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readAlgoIDInfo( INOUT STREAM *stream, 
 						   INOUT QUERY_INFO *queryInfo,
-						   IN_TAG const int tag )
+						   IN_TAG const int tag,
+						   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	int mode, length, status;	/* 'mode' must be type integer */
 
@@ -334,10 +341,11 @@ static int readAlgoIDInfo( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+	REQUIRES_S( type > ALGOID_CLASS_NONE && type < ALGOID_CLASS_LAST );
 
 	/* Read the AlgorithmIdentifier header and OID */
 	status = readAlgoIDheader( stream, &queryInfo->cryptAlgo, &mode,
-							   &length, tag );
+							   &length, tag, type );
 	if( cryptStatusError( status ) )
 		return( status );
 	queryInfo->cryptMode = mode;	/* CRYPT_MODE_TYPE vs. integer */
@@ -597,6 +605,8 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 		}
 	if( cryptStatusError( status ) )
 		{
+		DEBUG_DIAG(( "Couldn't extract information needed to write "
+					 "AlgoID" ));
 		assert( DEBUG_WARN );
 		return( status );
 		}
@@ -610,6 +620,7 @@ int writeCryptContextAlgoID( INOUT STREAM *stream,
 		/* Some algorithm+mode combinations can't be encoded using the
 		   available PKCS #7 OIDs, the best that we can do in this case is
 		   alert the user in debug mode and return a CRYPT_ERROR_NOTAVAIL */
+		DEBUG_DIAG(( "Tried to write non-PKCS #7 algorithm ID" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_NOTAVAIL );
 		}
@@ -853,18 +864,24 @@ int writeAlgoID( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readAlgoID( INOUT STREAM *stream, 
-				OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo )
+				OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
+				IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 
-	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, DEFAULT_TAG ) );
+	REQUIRES_S( type == ALGOID_CLASS_HASH || type == ALGOID_CLASS_PKC || \
+				type == ALGOID_CLASS_PKCSIG );
+
+	return( readAlgoIDheader( stream, cryptAlgo, NULL, NULL, 
+							  DEFAULT_TAG, type ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDext( INOUT STREAM *stream, 
 				   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo,
-				   OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo )
+				   OUT_ALGO_Z CRYPT_ALGO_TYPE *altCryptAlgo,
+				   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	int altAlgo, status;	/* 'altAlgo' must be type integer */
 
@@ -872,11 +889,13 @@ int readAlgoIDext( INOUT STREAM *stream,
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 	assert( isWritePtr( altCryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 
+	REQUIRES_S( type == ALGOID_CLASS_PKCSIG );
+
 	/* Clear return value (the others are cleared by readAlgoIDheader()) */
 	*altCryptAlgo = CRYPT_ALGO_NONE;
 
 	status = readAlgoIDheader( stream, cryptAlgo, &altAlgo, NULL, 
-							   DEFAULT_TAG );
+							   DEFAULT_TAG, type );
 	if( cryptStatusOK( status ) )
 		*altCryptAlgo = altAlgo;	/* CRYPT_MODE_TYPE vs. integer */
 	return( status );
@@ -885,14 +904,17 @@ int readAlgoIDext( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int readAlgoIDparams( INOUT STREAM *stream, 
 					  OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-					  OUT_LENGTH_SHORT_Z int *extraLength )
+					  OUT_LENGTH_SHORT_Z int *extraLength,
+					  IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( cryptAlgo, sizeof( CRYPT_ALGO_TYPE ) ) );
 	assert( isWritePtr( extraLength, sizeof( int ) ) );
 
+	REQUIRES_S( type == ALGOID_CLASS_PKC );
+
 	return( readAlgoIDheader( stream, cryptAlgo, NULL, extraLength, 
-							  DEFAULT_TAG ) );
+							  DEFAULT_TAG, type ) );
 	}
 
 /* Determine the size of an AlgorithmIdentifier record from a context */
@@ -943,7 +965,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readContextAlgoID( INOUT STREAM *stream, 
 					   OUT_OPT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 					   INOUT_OPT QUERY_INFO *queryInfo, 
-					   IN_TAG const int tag )
+					   IN_TAG const int tag,
+					   IN_ENUM( ALGOID_CLASS ) const ALGOID_CLASS_TYPE type )
 	{
 	QUERY_INFO localQueryInfo, *queryInfoPtr = queryInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -956,6 +979,7 @@ int readContextAlgoID( INOUT STREAM *stream,
 			isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES_S( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+	REQUIRES_S( type == ALGOID_CLASS_CRYPT || type == ALGOID_CLASS_HASH );
 
 	/* Clear return value */
 	if( iCryptContext != NULL )
@@ -971,7 +995,7 @@ int readContextAlgoID( INOUT STREAM *stream,
 
 	/* Read the algorithm info.  If we're not creating a context from the
 	   info, we're done */
-	status = readAlgoIDInfo( stream, queryInfoPtr, tag );
+	status = readAlgoIDInfo( stream, queryInfoPtr, tag, type );
 	if( cryptStatusError( status ) || iCryptContext == NULL )
 		return( status );
 

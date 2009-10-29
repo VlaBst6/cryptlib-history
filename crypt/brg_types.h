@@ -50,6 +50,10 @@ extern "C" {
 #if defined( _MSC_VER ) && ( _MSC_VER >= 1300 )
 #  include <stddef.h>
 #  define ptrint_t intptr_t
+#elif defined( __ECOS__ )
+   /* eCOS uses the GNU toolchain but doesn't necessarily include stdint.h - pcg */
+#  define intptr_t unsigned int
+#  define ptrint_t intptr_t
 #elif defined( __GNUC__ ) && ( __GNUC__ >= 3 )
 #  include <stdint.h>
 #  define ptrint_t intptr_t

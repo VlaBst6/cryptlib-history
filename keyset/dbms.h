@@ -357,12 +357,12 @@ CHECK_RETVAL_BOOL \
 BOOLEAN checkRequest( IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
 					  IN_ENUM( CRYPT_CERTACTION ) \
 						const CRYPT_CERTACTION_TYPE action );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
 int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo, 
 					  IN_HANDLE const CRYPT_CERTIFICATE iCertRequest,
 					  IN_ENUM( CRYPT_CERTTYPE ) \
 						const CRYPT_CERTTYPE_TYPE requestType, 
-					  const BOOLEAN isRenewal, 
+					  const BOOLEAN isRenewal, const BOOLEAN isInitialOp,
 					  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int caAddPKIUser( INOUT DBMS_INFO *dbmsInfo, 

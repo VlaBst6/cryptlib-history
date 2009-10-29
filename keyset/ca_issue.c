@@ -77,7 +77,26 @@ static int getCertIssueType( INOUT DBMS_INFO *dbmsInfo,
 	   some back-ends will return the action as text and some as a binary
 	   numeric value, rather than relying on the back-end glue code to
 	   perform the appropriate conversion we just check for either value
-	   type */
+	   type.
+	   
+	   In addition to performing this basic check in order to figure out how
+	   the replacement process should be handled we could in theory also 
+	   check that an update really is a pure update with all other portions
+	   of the certificate being identical, however there are two problems
+	   with this.  The first is that we don't know when we get the request 
+	   how much of what's in the final certificate will be added by the CA 
+	   (in other words we'd have to check that the request is a proper 
+	   subset of the certificate that it's supposedly updating, which isn't 
+	   easily feasible).  The second, more important one is that if a client 
+	   really wants to change the certificate details then they can just use 
+	   a CRYPT_CERTACTION_REQUEST_CERT in place of a 
+	   CRYPT_CERTACTION_REQUEST_RENEWAL and change whatever details they 
+	   want.  The distinction between the two is really just an artefact of 
+	   CMP's messaging, and as usual the CMP spec confuses the issue 
+	   completely, with varied discussions of updating a key vs. updating a 
+	   certificate vs. obtaining a certificate.  Because of this there 
+	   doesn't seem to be anything to be gained by performing whatever it is 
+	   that we could be checking for here */
 	initBoundData( boundDataPtr );
 	setBoundData( boundDataPtr, 0, certID, certIDlength );
 	status = dbmsQuery(
@@ -100,6 +119,8 @@ static int getCertIssueType( INOUT DBMS_INFO *dbmsInfo,
 			return( CRYPT_OK );
 
 		default:
+			DEBUG_DIAG(( "Unknown certificate action type %d", 
+						 certData[ 0 ] ));
 			assert( DEBUG_WARN );
 		}
 
@@ -116,7 +137,7 @@ static int sanitiseCertAttributes( IN_HANDLE const CRYPT_CERTIFICATE iCertificat
 	{
 	CRYPT_CERTIFICATE iTemplateCertificate;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int value, status;
+	int status;
 
 	REQUIRES( isHandleRangeValid( iCertificate ) );
 
@@ -127,28 +148,49 @@ static int sanitiseCertAttributes( IN_HANDLE const CRYPT_CERTIFICATE iCertificat
 		return( status );
 	iTemplateCertificate = createInfo.cryptHandle;
 
-	/* Add as disallowed values the CA flag, CA-equivalent values (in this 
-	   case the old Netscape usage flags, which (incredibly) are still used 
-	   today by some CAs in place of the X.509 keyUsage extension), and the 
-	   CA keyUsages */
+	/* Add as disallowed values the CA flag and and CA keyUsages, and any 
+	   CA-equivalent values, in this case the old Netscape usage flags which 
+	   (incredibly) are still used today by some CAs in place of the X.509 
+	   keyUsage extension.  We can only do the latter if use of the obsolete 
+	   Netscape extensions is enabled, by default these are disabled so they 
+	   can still be sneaked in as blob attributes, but only if the user has
+	   enabled the (disabled-by-default) 
+	   CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES option.
+	   
+	   The disabling of the CA flag isn't really necessary since the entire
+	   basicConstraints extension is disallowed in certificate requests, 
+	   we only have it here for belt-and-suspenders security.
+	   
+	   Note that the blocked-attributes check currently assumes that the 
+	   value being checked for non-permitted values is a keyUsage-style 
+	   bitflag (since almost no attributes are allowed in certificate
+	   requests for security purposes), if any other data types are blocked 
+	   then the checking will have to be extended to handle these */
 	status = krnlSendMessage( iTemplateCertificate, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_TRUE, CRYPT_CERTINFO_CA );
+#ifdef USE_CERT_OBSOLETE
 	if( cryptStatusOK( status ) )
 		{
-		value = CRYPT_NS_CERTTYPE_SSLCA | CRYPT_NS_CERTTYPE_SMIMECA | \
-				CRYPT_NS_CERTTYPE_OBJECTSIGNINGCA;
+		static const int value = CRYPT_NS_CERTTYPE_SSLCA | \
+								 CRYPT_NS_CERTTYPE_SMIMECA | \
+								 CRYPT_NS_CERTTYPE_OBJECTSIGNINGCA;
+
 		status = krnlSendMessage( iTemplateCertificate, IMESSAGE_SETATTRIBUTE,
-								  &value, CRYPT_CERTINFO_NS_CERTTYPE );
+								  ( MESSAGE_CAST ) &value, 
+								  CRYPT_CERTINFO_NS_CERTTYPE );
 		}
+#endif /* USE_CERT_OBSOLETE */
 	if( cryptStatusOK( status ) )
 		{
-		value = CRYPT_KEYUSAGE_KEYCERTSIGN | CRYPT_KEYUSAGE_CRLSIGN;
+		static const int value = KEYUSAGE_CA;
+
 		status = krnlSendMessage( iTemplateCertificate, IMESSAGE_SETATTRIBUTE,
-								  &value, CRYPT_CERTINFO_KEYUSAGE );
+								  ( MESSAGE_CAST ) &value, 
+								  CRYPT_CERTINFO_KEYUSAGE );
 		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( iCertificate, IMESSAGE_SETATTRIBUTE,
-								  ( void * ) &iTemplateCertificate,
+								  ( MESSAGE_CAST ) &iTemplateCertificate,
 								  CRYPT_IATTRIBUTE_BLOCKEDATTRS );
 	if( status == CRYPT_ERROR_INVALID )
 		{
@@ -431,7 +473,7 @@ int caIssueCert( INOUT DBMS_INFO *dbmsInfo,
 		return( status );
 	iLocalCertificate = createInfo.cryptHandle;
 	status = krnlSendMessage( iLocalCertificate, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &iCertRequest,
+							  ( MESSAGE_CAST ) &iCertRequest,
 							  CRYPT_CERTINFO_CERTREQUEST );
 	if( cryptStatusError( status ) )
 		{

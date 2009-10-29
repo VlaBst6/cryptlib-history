@@ -17,7 +17,8 @@
 
 #ifdef USE_SSH1
 
-#error The SSHv1 protocol is insecure and obsolete, you should only enable this if absolutely necessary.
+#error The SSHv1 protocol is insecure and obsolete, and this code is unsupported.
+#error You should only enable this if absolutely necessary, and you use it at your own risk.
 
 /* Determine the number of padding bytes required to make the packet size a
    multiple of 8 bytes */
@@ -518,7 +519,8 @@ static int initSecurityInfoSSH1( SESSION_INFO *sessionInfoPtr,
 			return( status );
 		}
 
-	/* We've set up the security info, from now on all data is encrypted */
+	/* We've set up the security information, from now on all data is 
+	   encrypted */
 	sessionInfoPtr->flags |= SESSION_ISSECURE_READ | SESSION_ISSECURE_WRITE;
 
 	return( CRYPT_OK );
@@ -831,11 +833,11 @@ static int beginClientHandshake( SESSION_INFO *sessionInfoPtr,
 	BOOLEAN rsaOK, pwOK;
 	int hostKeyLength, serverKeyLength, keyDataLength, length, value, status;
 
-	/* The higher-level code has already read the server session info, send
-	   back our own version info (SSHv1 uses only a LF as terminator).  For
-	   SSHv1 we use the lowest common denominator of our version (1.5,
-	   described in the only existing spec for SSHv1) and whatever the
-	   server can handle */
+	/* The higher-level code has already read the server session information, 
+	   send back our own version information (SSHv1 uses only a LF as 
+	   terminator).  For SSHv1 we use the lowest common denominator of our 
+	   version (1.5, described in the only existing spec for SSHv1) and 
+	   whatever the server can handle */
 	strlcpy_s( sessionInfoPtr->sendBuffer, 128, SSH1_ID_STRING "\n" );
 	if( sessionInfoPtr->receiveBuffer[ 2 ] < \
 							SSH1_ID_STRING[ SSH_ID_SIZE + 2 ] )
@@ -1198,7 +1200,7 @@ static int completeClientHandshake( SESSION_INFO *sessionInfoPtr,
 			BYTE *modulusPtr;
 
 			/* We're using RSA authentication, initially we send just the user's
-			   public-key info:
+			   public-key information:
 
 		        mpint	identity_public_modulus
 
@@ -1468,7 +1470,7 @@ static int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 	BYTE *bufPtr = sessionInfoPtr->receiveBuffer;
 	int length, keyLength, i, status;
 
-	/* Read the client's encrypted session key info:
+	/* Read the client's encrypted session key information:
 
 		byte		cipher_type
 		byte[8]		cookie
@@ -1518,9 +1520,9 @@ static int exchangeServerKeys( SESSION_INFO *sessionInfoPtr,
 		return( status );
 	handshakeInfo->secretValueLength = SSH1_SECRET_SIZE;
 
-	/* Generate the session ID from the handshake info and XOR it with the
-	   recovered secure state information to get the final secure state
-	   data */
+	/* Generate the session ID from the handshake information and XOR it 
+	   with the recovered secure state information to get the final secure 
+	   state data */
 	generateSessionID( handshakeInfo );
 	for( i = 0; i < SSH1_SESSIONID_SIZE; i++ )
 		handshakeInfo->secretValue[ i ] ^= handshakeInfo->sessionID[ i ];

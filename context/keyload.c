@@ -39,7 +39,7 @@ int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 		{ CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL, KEYFORMAT_PGP },
 		{ CRYPT_IATTRIBUTE_KEY_SPKI, KEYFORMAT_CERT },
 		{ CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL, KEYFORMAT_CERT },
-		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
+		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
 	int value, status;
 
@@ -203,7 +203,8 @@ int adjustUserKeySize( const CONTEXT_INFO *contextInfoPtr,
 /* Determine the optimal size for a generated key.  This isn't as easy as
    just taking the default key size since some algorithms have variable key
    sizes (RCx) or alternative key sizes where the default isn't necessarily
-   the best choice (two-key vs.three-key 3DES) */
+   the best choice (two-key vs.three-key 3DES - In virtute sunt multi 
+   ascensus) */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getDefaultKeysize( const CONTEXT_INFO *contextInfoPtr, 
@@ -277,25 +278,54 @@ static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 		   initialised */
 		if( ( eccKey->isPublicKey != TRUE && eccKey->isPublicKey != FALSE ) )
 			return( CRYPT_ARGERROR_STR1 );
-		if( eccKey->pLen <= 0 || eccKey->aLen <= 0 || eccKey->bLen <= 0 || \
-			eccKey->gxLen <= 0 || eccKey->gyLen <= 0 || eccKey->rLen <= 0 || \
-			eccKey->qxLen <= 0 || eccKey->qyLen <= 0 || eccKey->dLen < 0 )
-			return( CRYPT_ARGERROR_STR1 );
+#if 0	/* For now we always require the use of named curves, which means 
+		   that the domain parameters can't be explicitly set */
+		if( eccKey->curveType != CRYPT_ECCCURVE_NONE )
+			{
+			if( eccKey->pLen <= 0 || eccKey->aLen <= 0 || eccKey->bLen <= 0 || \
+				eccKey->gxLen <= 0 || eccKey->gyLen <= 0 || eccKey->nLen <= 0 || \
+				eccKey->qxLen <= 0 || eccKey->qyLen <= 0 || eccKey->dLen < 0 )
+				return( CRYPT_ARGERROR_STR1 );
+			}
+		else
+#endif /* 0 */
+			{
+			if( eccKey->pLen != 0 || eccKey->aLen != 0 || eccKey->bLen != 0 || \
+				eccKey->gxLen != 0 || eccKey->gyLen != 0 || eccKey->nLen != 0 || \
+				eccKey->hLen != 0 || eccKey->qxLen <= 0 || eccKey->qyLen <= 0 || \
+				eccKey->dLen < 0 )
+				return( CRYPT_ARGERROR_STR1 );
+			if( eccKey->curveType <= CRYPT_ECCCURVE_NONE || \
+				eccKey->curveType >= CRYPT_ECCCURVE_LAST )
+				return( CRYPT_ARGERROR_STR1 );
+			}
 
 		/* Check the parameters and public components */
-		if( eccKey->pLen < bytesToBits( ECCPARAM_MIN_P ) || \
-			eccKey->pLen > bytesToBits( ECCPARAM_MAX_P ) || \
-			eccKey->aLen < bytesToBits( ECCPARAM_MIN_A ) || \
-			eccKey->aLen > bytesToBits( ECCPARAM_MAX_A ) || \
-			eccKey->bLen < bytesToBits( ECCPARAM_MIN_B ) || \
-			eccKey->bLen > bytesToBits( ECCPARAM_MAX_B ) || \
-			eccKey->gxLen < bytesToBits( ECCPARAM_MIN_GX ) || \
-			eccKey->gxLen > bytesToBits( ECCPARAM_MAX_GX ) || \
-			eccKey->gyLen < bytesToBits( ECCPARAM_MIN_GY ) || \
-			eccKey->gyLen > bytesToBits( ECCPARAM_MAX_GY ) || \
-			eccKey->rLen < bytesToBits( ECCPARAM_MIN_R ) || \
-			eccKey->rLen > bytesToBits( ECCPARAM_MAX_R ) )
-			return( CRYPT_ARGERROR_STR1 );
+		if( isShortECCKey( eccKey->pLen ) )
+			{
+			/* Special-case handling for insecure-sized public keys */
+			return( CRYPT_ERROR_NOSECURE );
+			}
+#if 0	/* Already checked above */
+		if( eccKey->curveType != CRYPT_ECCCURVE_NONE )
+			{
+			if( eccKey->pLen < bytesToBits( ECCPARAM_MIN_P ) || \
+				eccKey->pLen > bytesToBits( ECCPARAM_MAX_P ) || \
+				eccKey->aLen < bytesToBits( ECCPARAM_MIN_A ) || \
+				eccKey->aLen > bytesToBits( ECCPARAM_MAX_A ) || \
+				eccKey->bLen < bytesToBits( ECCPARAM_MIN_B ) || \
+				eccKey->bLen > bytesToBits( ECCPARAM_MAX_B ) || \
+				eccKey->gxLen < bytesToBits( ECCPARAM_MIN_GX ) || \
+				eccKey->gxLen > bytesToBits( ECCPARAM_MAX_GX ) || \
+				eccKey->gyLen < bytesToBits( ECCPARAM_MIN_GY ) || \
+				eccKey->gyLen > bytesToBits( ECCPARAM_MAX_GY ) || \
+				eccKey->nLen < bytesToBits( ECCPARAM_MIN_N ) || \
+				eccKey->nLen > bytesToBits( ECCPARAM_MAX_N ) || \
+				eccKey->hLen < 1 || \
+				eccKey->hLen > bytesToBits( ECCPARAM_MAX_N ) )
+				return( CRYPT_ARGERROR_STR1 );
+			}
+#endif /* 0 */
 		if( eccKey->qxLen < bytesToBits( ECCPARAM_MIN_QX ) || \
 			eccKey->qxLen > bytesToBits( ECCPARAM_MAX_QX ) || \
 			eccKey->qyLen < bytesToBits( ECCPARAM_MIN_QY ) || \
@@ -347,6 +377,9 @@ static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 			{
 			return( CRYPT_ARGERROR_STR1 );
 			}
+		if( !( dlpKey->p[ bitsToBytes( dlpKey->pLen ) - 1 ] & 0x01 ) || \
+			!( dlpKey->q[ bitsToBytes( dlpKey->qLen ) - 1 ] & 0x01 ) )
+			return( CRYPT_ARGERROR_STR1 );	/* Quick non-prime check */
 		if( dlpKey->isPublicKey )
 			return( CRYPT_OK );
 
@@ -380,6 +413,9 @@ static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 		rsaKey->eLen > bytesToBits( RSAPARAM_MAX_E ) || \
 		rsaKey->eLen > rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
+	if( !( rsaKey->n[ bitsToBytes( rsaKey->nLen ) - 1 ] & 0x01 ) || \
+		!( rsaKey->e[ bitsToBytes( rsaKey->eLen ) - 1 ] & 0x01 ) )
+		return( CRYPT_ARGERROR_STR1 );	/* Quick non-prime check */
 	if( rsaKey->isPublicKey )
 		return( CRYPT_OK );
 
@@ -403,6 +439,9 @@ static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 		rsaKey->qLen > bytesToBits( RSAPARAM_MAX_Q ) || \
 		rsaKey->qLen >= rsaKey->nLen )
 		return( CRYPT_ARGERROR_STR1 );
+	if( !( rsaKey->p[ bitsToBytes( rsaKey->pLen ) - 1 ] & 0x01 ) || \
+		!( rsaKey->q[ bitsToBytes( rsaKey->qLen ) - 1 ] & 0x01 ) )
+		return( CRYPT_ARGERROR_STR1 );	/* Quick non-prime check */
 	if( rsaKey->dLen <= 0 && rsaKey->e1Len <= 0 )
 		{
 		/* Must have either d or e1 et al */
@@ -473,7 +512,7 @@ static int loadKeyPKCFunction( INOUT CONTEXT_INFO *contextInfoPtr,
 			  ( key != NULL && \
 			    keyLength > 16 && keyLength < MAX_INTLENGTH_SHORT ) );
 			  /* The key data for this function may be NULL if the values
-			     have been read from encoded X.509/SSH/SSL/PPG data straight
+			     have been read from encoded X.509/SSH/SSL/PGP data straight
 				 into the context bignums */
 
 #ifndef USE_FIPS140
@@ -543,8 +582,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr, 
 				   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE keyType, 
 				   IN_BUFFER( keyDataLen ) const void *keyData, 
-				   IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
-					const int keyDataLen )
+				   IN_LENGTH_SHORT const int keyDataLen )
 	{
 	static const int actionFlags = \
 		MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_NONE_EXTERNAL ) | \
@@ -571,8 +609,8 @@ int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr,
 			  keyType == CRYPT_IATTRIBUTE_KEY_SSL || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_SPKI_PARTIAL || \
 			  keyType == CRYPT_IATTRIBUTE_KEY_PGP_PARTIAL );
-	REQUIRES( keyDataLen >= MIN_CRYPT_OBJECTSIZE && \
-			  keyDataLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( keyDataLen >= 2 && keyDataLen < MAX_INTLENGTH_SHORT );
+			  /* Can be very short in the case of ECC curve IDs */
 
 	/* If the keys are held externally (e.g. in a crypto device), copy the 
 	   SubjectPublicKeyInfo data in and set up any other information that we 
@@ -633,10 +671,10 @@ int setEncodedKey( INOUT CONTEXT_INFO *contextInfoPtr,
 	status = krnlSendMessage( contextInfoPtr->objectHandle,
 						IMESSAGE_SETATTRIBUTE, 
 						( keyType == CRYPT_IATTRIBUTE_KEY_PGP ) ? \
-							( void * ) &actionFlagsPGP : \
-						( capabilityInfoPtr->cryptAlgo == CRYPT_ALGO_DH ) ? \
-							( void * ) &actionFlagsDH : \
-							( void * ) &actionFlags,
+							( MESSAGE_CAST ) &actionFlagsPGP : \
+						( isKeyxAlgo( capabilityInfoPtr->cryptAlgo ) ) ? \
+							( MESSAGE_CAST ) &actionFlagsDH : \
+							( MESSAGE_CAST ) &actionFlags,
 						CRYPT_IATTRIBUTE_ACTIONPERMS );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -704,13 +742,13 @@ int setKeyComponents( INOUT CONTEXT_INFO *contextInfoPtr,
 		{
 		status = krnlSendMessage( contextInfoPtr->objectHandle,
 								  IMESSAGE_SETATTRIBUTE, 
-								  ( void * ) &actionFlags,
+								  ( MESSAGE_CAST ) &actionFlags,
 								  CRYPT_IATTRIBUTE_ACTIONPERMS );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
-	return( CRYPT_OK );
+	return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
 	}
 #endif /* !USE_FIPS140 */
 
@@ -788,7 +826,9 @@ static int generateKeyPKCFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 												bytesToBits( keyLength ) );
 	if( !( contextInfoPtr->flags & CONTEXT_FLAG_DUMMY ) )
 		clearTempBignums( contextInfoPtr->ctxPKC );
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -847,7 +887,9 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 			   IN_BUFFER( keyValueLen ) const void *keyValue, 
 			   IN_LENGTH_SHORT const int keyValueLen )
 	{
-	CRYPT_ALGO_TYPE hmacAlgo;
+	CRYPT_ALGO_TYPE hmacAlgo = ( contextInfoPtr->type == CONTEXT_CONV ) ? \
+							   contextInfoPtr->ctxConv->keySetupAlgorithm : \
+							   contextInfoPtr->ctxMAC->keySetupAlgorithm;
 	MECHANISM_DERIVE_INFO mechanismInfo;
 	static const MAP_TABLE mapTbl[] = {
 		{ CRYPT_ALGO_MD5, CRYPT_ALGO_HMAC_MD5 },
@@ -873,15 +915,18 @@ int deriveKey( INOUT CONTEXT_INFO *contextInfoPtr,
 		return( CRYPT_ERROR_NOTINITED );
 
 	/* Set up various derivation parameters if they're not already set */
-	status = krnlSendMessage( contextInfoPtr->ownerHandle, 
-							  IMESSAGE_GETATTRIBUTE, &hmacAlgo, 
-							  CRYPT_OPTION_ENCR_HASH );
-	if( cryptStatusOK( status ) )
-		status = mapValue( hmacAlgo, &value, mapTbl, 
-						   FAILSAFE_ARRAYSIZE( mapTbl, MAP_TABLE ) );
-	if( cryptStatusError( status ) )
-		return( status );
-	hmacAlgo = value;
+	if( hmacAlgo == CRYPT_ALGO_NONE )
+		{
+		status = krnlSendMessage( contextInfoPtr->ownerHandle, 
+								  IMESSAGE_GETATTRIBUTE, &hmacAlgo, 
+								  CRYPT_OPTION_ENCR_HASH );
+		if( cryptStatusOK( status ) )
+			status = mapValue( hmacAlgo, &value, mapTbl, 
+							   FAILSAFE_ARRAYSIZE( mapTbl, MAP_TABLE ) );
+		if( cryptStatusError( status ) )
+			return( status );
+		hmacAlgo = value;
+		}
 	if( contextInfoPtr->type == CONTEXT_CONV )
 		{
 		CONV_INFO *convInfo = contextInfoPtr->ctxConv;

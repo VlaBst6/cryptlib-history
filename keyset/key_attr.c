@@ -101,11 +101,7 @@ int getKeysetAttribute( INOUT KEYSET_INFO *keysetInfoPtr,
 			return( CRYPT_OK );
 
 		case CRYPT_ATTRIBUTE_INT_ERRORCODE:	
-#ifdef KEYSET_HAS_ERRORINFO
 			*valuePtr = keysetInfoPtr->errorInfo.errorCode;
-#else
-			*valuePtr = CRYPT_OK;
-#endif /* KEYSET_HAS_ERRORINFO */
 			return( CRYPT_OK );
 		}
 
@@ -129,7 +125,7 @@ int getKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 		{
 		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
 			{
-#ifdef KEYSET_HAS_ERRORINFO
+#ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
 
 			if( errorInfo->errorStringLength > 0 )
@@ -137,7 +133,7 @@ int getKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 				return( attributeCopy( msgData, errorInfo->errorString,
 									   errorInfo->errorStringLength ) );
 				}
-#endif /* KEYSET_HAS_ERRORINFO */
+#endif /* USE_ERRMSGS */
 			return( exitErrorNotFound( keysetInfoPtr,
 									   CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
 			}
@@ -147,7 +143,8 @@ int getKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 		case CRYPT_IATTRIBUTE_USERINFO:
 		case CRYPT_IATTRIBUTE_TRUSTEDCERT:
 		case CRYPT_IATTRIBUTE_TRUSTEDCERT_NEXT:
-			REQUIRES( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
+			REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+					  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
 
 			/* It's encoded cryptlib-specific data, fetch it from to the
 			   keyset */
@@ -178,6 +175,17 @@ int setKeysetAttribute( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( value >= 0 && value < MAX_INTLENGTH );
 	REQUIRES( isAttribute( attribute ) || \
 			  isInternalAttribute( attribute ) );
+
+	switch( attribute )
+		{
+		case CRYPT_IATTRIBUTE_HWSTORAGE:
+			REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+					  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
+
+			return( keysetInfoPtr->setSpecialItemFunction( keysetInfoPtr,
+											CRYPT_IATTRIBUTE_HWSTORAGE, 
+											&value, sizeof( int ) ) );
+		}
 
 	retIntError();
 	}
@@ -224,7 +232,8 @@ int setKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 		case CRYPT_IATTRIBUTE_USERINDEX:
 		case CRYPT_IATTRIBUTE_USERID:
 		case CRYPT_IATTRIBUTE_USERINFO:
-			REQUIRES( keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
+			REQUIRES( keysetInfoPtr->type == KEYSET_FILE && \
+					  keysetInfoPtr->subType == KEYSET_SUBTYPE_PKCS15 );
 
 			/* It's encoded cryptlib-specific data, pass it through to the
 			   keyset */

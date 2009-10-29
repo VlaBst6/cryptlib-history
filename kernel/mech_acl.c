@@ -74,10 +74,10 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Wrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_UNUSED(), 
-		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA2 + 1 ) } },
-			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
-			   for SHA2-512 until its fate/potential future usage becomes a
-			   bit clearer */
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHAng ) } },
+			/* The algoID CRYPT_ALGO_SHA2 + 1 (= CRYPT_ALGO_SHAng) is a 
+			   special-case placeholder for SHA2-512 until its fate/
+			   potential future usage becomes a bit clearer */
 
 	/* CMS key wrap */
 	{ MECHANISM_ENC_CMS,
@@ -126,6 +126,7 @@ static const MECHANISM_ACL FAR_BSS mechanismWrapACL[] = {
 		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
+	/* End-of-ACL marker */
 	{ MECHANISM_NONE,
 	  { MKACP_END() } },
 	{ MECHANISM_NONE,
@@ -178,10 +179,10 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Unwrap PKC context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ),
 		MKACP_UNUSED(), 
-		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA2 + 1 ) } },
-			/* The algoID CRYPT_ALGO_SHA2 + 1 is a special-case placeholder
-			   for SHA2-512 until its fate/potential future usage becomes a
-			   bit clearer */
+		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHAng ) } },
+			/* The algoID CRYPT_ALGO_SHA2 + 1 (= CRYPT_ALGO_SHAng) is a 
+			   special-case placeholder for SHA2-512 until its fate/
+			   potential future usage becomes a bit clearer */
 
 	/* CMS key unwrap */
 	{ MECHANISM_ENC_CMS,
@@ -254,6 +255,7 @@ static const MECHANISM_ACL FAR_BSS mechanismUnwrapACL[] = {
 		MKACP_UNUSED(), 
 		MKACP_UNUSED() } },
 
+	/* End-of-ACL marker */
 	{ MECHANISM_NONE,
 	  { MKACP_END() } },
 	{ MECHANISM_NONE,
@@ -282,6 +284,7 @@ static const MECHANISM_ACL FAR_BSS mechanismSignACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Signing context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
+	/* End-of-ACL marker */
 	{ MECHANISM_NONE,
 	  { MKACP_END() } },
 	{ MECHANISM_NONE,
@@ -310,6 +313,7 @@ static const MECHANISM_ACL FAR_BSS mechanismSigCheckACL[] = {
 		MKACP_O( ST_CTX_PKC,				/* Sig.check context */
 				 ACL_FLAG_HIGH_STATE | ACL_FLAG_ROUTE_TO_CTX ) } },
 
+	/* End-of-ACL marker */
 	{ MECHANISM_NONE,
 	  { MKACP_END() } },
 	{ MECHANISM_NONE,
@@ -321,9 +325,9 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 	{ MECHANISM_DERIVE_PKCS5,
 	  { MKACP_S( 1, CRYPT_MAX_KEYSIZE ),	/* Key data */
 		MKACP_S( 2, MAX_ATTRIBUTE_SIZE ),	/* Keying material */
-		MKACP_N( CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_SHA ),/* Hash algo */
+		MKACP_N( CRYPT_ALGO_HMAC_SHA, CRYPT_ALGO_HMAC_SHAng ),/* Hash algo */
 		MKACP_S( 4, 512 ),					/* Salt */
-		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
+		MKACP_N( 1, MAX_KEYSETUP_ITERATIONS ) } },	/* Iterations */
 
 	/* SSL derive */
 	{ MECHANISM_DERIVE_SSL,
@@ -350,15 +354,21 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 		MKACP_S( 1, 512 ),					/* Key data */
 		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA1 ),/* Hash algo */
 		MKACP_S( 1, 512 ),					/* Salt */
-		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
+		MKACP_N( 1, MAX_KEYSETUP_ITERATIONS ) } },	/* Iterations */
 
-	/* OpenPGP S2K derive */
+	/* OpenPGP S2K derive.  The INT_MAX bound on the iterations instead of 
+	   the more usual MAX_KEYSETUP_ITERATIONS is because of PGP's strange
+	   handling of this value by counting bytes to process through the 
+	   PRF rather than actual PRF iterations.  The value passed in is the
+	   byte count without an additional '* 64' scaling factor which is 
+	   applied by the S2K code so we divide the INT_MAX bound by 64 to
+	   ensure that the scaled result will still fit into an integer */
 	{ MECHANISM_DERIVE_PGP,
 	  { MKACP_S( 16, CRYPT_MAX_KEYSIZE ),	/* Key data */
 		MKACP_S( 2, MAX_ATTRIBUTE_SIZE ),	/* Keying material */
 		MKACP_N( CRYPT_ALGO_MD5, CRYPT_ALGO_RIPEMD160 ),/* Hash algo */
 		MKACP_S( 8, 8 ),					/* Salt */
-		MKACP_N( 0, INT_MAX ) } },			/* Iterations (0 = don't iterate) */
+		MKACP_N( 0, INT_MAX >> 6 ) } },		/* Iterations (0 = don't iterate) */
 
 	/* PKCS #12 derive */
 	{ MECHANISM_DERIVE_PKCS12,
@@ -366,8 +376,9 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 		MKACP_S( 2, CRYPT_MAX_TEXTSIZE ),	/* Keying material */
 		MKACP_N( CRYPT_ALGO_SHA1, CRYPT_ALGO_SHA1 ),/* Hash algo */
 		MKACP_S( 9, 9 ),					/* Salt (+ ID byte) */
-		MKACP_N( 1, INT_MAX ) } },			/* Iterations */
+		MKACP_N( 1, MAX_KEYSETUP_ITERATIONS ) } },	/* Iterations */
 
+	/* End-of-ACL marker */
 	{ MECHANISM_NONE,
 	  { MKACP_END() } },
 	{ MECHANISM_NONE,
@@ -380,7 +391,8 @@ static const MECHANISM_ACL FAR_BSS mechanismDeriveACL[] = {
 *																			*
 ****************************************************************************/
 
-int initMechanismACL( KERNEL_DATA *krnlDataPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initMechanismACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
@@ -403,11 +415,13 @@ void endMechanismACL( void )
 
 /* Functions to implement the checks in the mechanism ACL tables */
 
-int preDispatchCheckMechanismWrapAccess( const int objectHandle,
-										 const MESSAGE_TYPE message,
-										 const void *messageDataPtr,
-										 const int messageValue,
-										 const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismWrapAccess( IN_HANDLE const int objectHandle,
+										 IN_MESSAGE const MESSAGE_TYPE message,
+										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
+											const void *messageDataPtr,
+										 IN_ENUM( MECHANISM ) const int messageValue,
+										 STDC_UNUSED const void *dummy )
 	{
 	const MECHANISM_WRAP_INFO *mechanismInfo = \
 				( MECHANISM_WRAP_INFO * ) messageDataPtr;
@@ -577,11 +591,13 @@ int preDispatchCheckMechanismWrapAccess( const int objectHandle,
 	return( CRYPT_OK );
 	}
 
-int preDispatchCheckMechanismSignAccess( const int objectHandle,
-										 const MESSAGE_TYPE message,
-										 const void *messageDataPtr,
-										 const int messageValue,
-										 const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismSignAccess( IN_HANDLE const int objectHandle,
+										 IN_MESSAGE const MESSAGE_TYPE message,
+										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
+											const void *messageDataPtr,
+										 IN_ENUM( MECHANISM ) const int messageValue,
+										 STDC_UNUSED const void *dummy )
 	{
 	const MECHANISM_SIGN_INFO *mechanismInfo = \
 				( MECHANISM_SIGN_INFO * ) messageDataPtr;
@@ -689,11 +705,13 @@ int preDispatchCheckMechanismSignAccess( const int objectHandle,
 	return( CRYPT_OK );
 	}
 
-int preDispatchCheckMechanismDeriveAccess( const int objectHandle,
-										   const MESSAGE_TYPE message,
-										   const void *messageDataPtr,
-										   const int messageValue,
-										   const void *dummy )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismDeriveAccess( IN_HANDLE const int objectHandle,
+										   IN_MESSAGE const MESSAGE_TYPE message,
+										   IN_BUFFER( MECHANISM_WRAP_INFO ) \
+												const void *messageDataPtr,
+										   IN_ENUM( MECHANISM ) const int messageValue,
+										   STDC_UNUSED const void *dummy )
 	{
 	const MECHANISM_DERIVE_INFO *mechanismInfo = \
 				( MECHANISM_DERIVE_INFO * ) messageDataPtr;

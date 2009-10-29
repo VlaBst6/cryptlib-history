@@ -140,6 +140,8 @@ int connectViaSocksProxy( INOUT STREAM *stream )
 *																			*
 ****************************************************************************/
 
+#ifdef USE_HTTP
+
 /* Open a connection via an HTTP proxy */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -179,6 +181,7 @@ int connectViaHttpProxy( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_HTTP */
 
 /****************************************************************************
 *																			*
@@ -286,7 +289,7 @@ int findProxyUrl( OUT_BUFFER( proxyMaxLen, *proxyLen ) char *proxy,
 	   instead */
 	if( hWinHTTP == NULL )
 		{
-		if( ( hWinHTTP = LoadLibrary( "WinHTTP.dll" ) ) == NULL )
+		if( ( hWinHTTP = DynamicLoad( "WinHTTP.dll" ) ) == NULL )
 			return( CRYPT_ERROR_NOTFOUND );
 
 		pWinHttpOpen = ( WINHTTPOPEN ) \
@@ -302,7 +305,7 @@ int findProxyUrl( OUT_BUFFER( proxyMaxLen, *proxyLen ) char *proxy,
 		if( pWinHttpOpen == NULL || pWinHttpGetProxyForUrl == NULL || \
 			pWinHttpCloseHandle == NULL )
 			{
-			FreeLibrary( hWinHTTP );
+			DynamicUnload( hWinHTTP );
 			return( CRYPT_ERROR_NOTFOUND );
 			}
 		}
@@ -324,7 +327,7 @@ int findProxyUrl( OUT_BUFFER( proxyMaxLen, *proxyLen ) char *proxy,
 								  proxyInfo.lpszProxy, MAX_DNS_SIZE );
 		GlobalFree( proxyInfo.lpszProxy );
 		if( proxyInfo.lpszProxyBypass != NULL )
-			GlobalFree( proxyInfo.lpszProxy );
+			GlobalFree( proxyInfo.lpszProxyBypass );
 		if( proxyStatus == 0 )
 			{
 			*proxyLen = wcsProxyLen;
@@ -412,7 +415,7 @@ int findProxyUrl( OUT_BUFFER( proxyMaxLen, *proxyLen ) char *proxy,
 							  proxyInfo.lpszProxy, MAX_DNS_SIZE );
 	GlobalFree( proxyInfo.lpszProxy );
 	if( proxyInfo.lpszProxyBypass != NULL )
-		GlobalFree( proxyInfo.lpszProxy );
+		GlobalFree( proxyInfo.lpszProxyBypass );
 	pWinHttpCloseHandle( hSession );
 	if( proxyStatus != 0 )
 		return( CRYPT_ERROR_NOTFOUND );
@@ -469,7 +472,7 @@ static int findProxyUrl( char *proxy, const int proxyMaxLen,
 		{
 		HMODULE hModJS;
 
-		if( ( hModJS = LoadLibrary( "JSProxy.dll" ) ) == NULL )
+		if( ( hModJS = DynamicLoad( "JSProxy.dll" ) ) == NULL )
 			return( CRYPT_ERROR_NOTFOUND );
 
 		pInternetGetProxyInfo = ( INTERNETGETPROXYINFO ) \
@@ -479,7 +482,7 @@ static int findProxyUrl( char *proxy, const int proxyMaxLen,
 		if( pInternetGetProxyInfo == NULL || \
 			pInternetInitializeAutoProxyDll == NULL )
 			{
-			FreeLibrary( hModJS );
+			DynamicUnload( hModJS );
 			return( CRYPT_ERROR_NOTFOUND );
 			}
 

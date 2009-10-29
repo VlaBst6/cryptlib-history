@@ -234,7 +234,12 @@ int BN_div(BIGNUM *dv, BIGNUM *rm, const BIGNUM *num, const BIGNUM *divisor,
 	if (dv == NULL)
 		res=BN_CTX_get(ctx);
 	else	res=dv;
+#if 0											/* pcg */
 	if (sdiv == NULL || res == NULL) goto err;
+#else
+	if (sdiv == NULL || res == NULL || \
+		tmp == NULL || snum == NULL) goto err;	/* pcg */
+#endif /* 0 */
 
 	/* First we normalise the numbers */
 	norm_shift=BN_BITS2-((BN_num_bits(divisor))%BN_BITS2);

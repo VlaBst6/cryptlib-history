@@ -107,7 +107,7 @@
 #define SIEVE_SIZE				4096
 
 /* When we're doing a sieve of a singleton candidate we don't run through
-   the whole range of sieve values since we run into the law of diminshing
+   the whole range of sieve values since we run into the law of diminishing
    returns after a certain point.  The following value sieves with every
    prime under 1000 */
 
@@ -191,6 +191,24 @@ BOOLEAN primeSieve( const BIGNUM *candidate )
 	int i;
 
 	assert( isReadPtr( candidate, sizeof( BIGNUM ) ) );
+
+	/* If we're checking a small value then we can use a direct machine
+	   instruction for the check, this is both faster and avoids false 
+	   positives when the value being checked is small enough to be 
+	   present in the sieve */
+	if( BN_num_bytes( candidate ) < sizeof( int ) - 1 )
+		{
+		const BN_ULONG candidateWord = BN_get_word( candidate );
+
+		for( i = 1; primes[ i ] < candidateWord && \
+					i < FAST_SIEVE_NUMPRIMES; i++ )
+			{
+			if( candidateWord % primes[ i ] == 0 )
+				return( FALSE );
+			}
+
+		return( TRUE );
+		}
 
 	for( i = 1; i < FAST_SIEVE_NUMPRIMES; i++ )
 		{
@@ -748,8 +766,8 @@ int generateBignum( INOUT BIGNUM *bn,
 		buffer[ 1 ] |= ( high << ( noBits & 7 ) ) & 0xFF;
 
 	/* Turn the contents of the buffer into a bignum */
-	status = extractBignum( bn, buffer, noBytes, max( noBytes - 8, 1 ),
-							CRYPT_MAX_PKCSIZE, NULL, FALSE );
+	status = importBignum( bn, buffer, noBytes, max( noBytes - 8, 1 ),
+						   CRYPT_MAX_PKCSIZE, NULL, SHORTKEY_CHECK_NONE );
 	zeroise( buffer, noBytes );
 	return( status );
 	}

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Certificate String Routines						*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -9,9 +9,11 @@
 #if defined( INC_ALL )
   #include "cert.h"
   #include "asn1.h"
+  #include "misc_rw.h"
 #else
   #include "cert/cert.h"
   #include "misc/asn1.h"
+  #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 /* The character set (or at least ASN.1 string type) for a string.  Although 
@@ -28,7 +30,11 @@
    them to make them usable.  Although their use was required after the 
    cutover date of December 2003, by unspoken unanimous consensus of 
    implementors everywhere implementations are sticking with the existing 
-   DN encoding to avoid breaking things */
+   DN encoding to avoid breaking things.  Several years after the cutoff 
+   date vendors were slowly starting to introduce UTF-8 support to their
+   applications, although on an ad-hoc basis and sometimes only as a user-
+   configurable option so it's still too risky to rely on this being
+   supported */
 
 typedef enum {
 	STRINGTYPE_NONE,					/* No string type */
@@ -36,14 +42,11 @@ typedef enum {
 	/* 8-bit character types */
 	STRINGTYPE_PRINTABLE,				/* PrintableString */
 	STRINGTYPE_IA5,						/* IA5String */
-		STRINGTYPE_VISIBLE = STRINGTYPE_IA5,	/* VisibleString */
-										/* VisibleString as Unicode */
 	STRINGTYPE_T61,						/* T61 (8859-1) string */
 
 	/* 8-bit types masquerading as Unicode */
 	STRINGTYPE_UNICODE_PRINTABLE,		/* PrintableString as Unicode */
 	STRINGTYPE_UNICODE_IA5,				/* IA5String as Unicode */
-		STRINGTYPE_UNICODE_VISIBLE = STRINGTYPE_UNICODE_IA5,
 	STRINGTYPE_UNICODE_T61,				/* 8859-1 as Unicode */
 
 	/* Unicode/UTF-8 */
@@ -58,12 +61,12 @@ typedef enum {
 
 /* Since wchar_t can be anything from 8 bits (Borland C++ under DOS) to 32 
    bits (some oddball RISC Unixen) we define a bmpchar_t for 
-   Unicode/BMPString chars which is always 16 bits as required for 
+   Unicode/BMPString characters which is always 16 bits as required for 
    BMPStrings, to match wchar_t.  The conversion to and from a BMPString and 
    wchar_t may require narrowing or widening of characters and possibly 
    endianness conversion as well */
 
-typedef unsigned short int bmpchar_t;	/* Unicode data type */
+typedef unsigned short int bmpchar_t;	/* Unicode/BMPString data type */
 #define UCSIZE	2
 
 /****************************************************************************
@@ -102,7 +105,8 @@ static const int FAR_BSS asn1CharFlags[] = {
 	/*	`	a	b	c	d	e	f	g	h	i	j	k	l	m	n	o */
 		I, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI,
 	/*	p	q	r	s	t	u	v	w	x	y	z	{	|	}	~  DL */
-	   PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI,	I,	I,	I,	I,	0
+	   PI, PI, PI, PI, PI, PI, PI, PI, PI, PI, PI,	I,	I,	I,	I,	0,
+		0, 0	/* Catch overflows */
 	};
 
 #define nativeCharFlags	asn1CharFlags
@@ -136,22 +140,13 @@ static wchar_t getWidechar( IN_BUFFER( 2 ) const BYTE *string )
 	return( ch );
 	}
 
-CHECK_RETVAL_RANGE( 0, 0xFFFF ) STDC_NONNULL_ARG( ( 1 ) ) \
-static wchar_t getBmpchar( IN_BUFFER( 2 ) const BYTE *string )
-	{
-	assert( isReadPtr( string, 2 ) );
-
-	return( ( ( ( bmpchar_t ) string[ 0 ] ) << 8 ) | \
-				( bmpchar_t ) string[ 1 ] );
-	}
-
 /* Try and guess whether a native string is a widechar string */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string, 
 									   IN_LENGTH_SHORT const int stringLen )
 	{
-	wchar_t wCh = getWidechar( string );
+	wchar_t wCh;
 	int hiByte = 0, i;
 
 	assert( isReadPtr( string, stringLen ) );
@@ -159,7 +154,7 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 	REQUIRES_B( stringLen > 0 && stringLen < MAX_INTLENGTH_SHORT );
 	REQUIRES_B( !( stringLen % WCSIZE ) );
 
-	/* If it's too short to be a widechar string, it's definitely not 
+	/* If it's too short to be a widechar string it's definitely not 
 	   Unicode */
 	if( stringLen < WCSIZE )
 		{
@@ -167,18 +162,20 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 		    they said" */
 		return( FALSE );
 		}
-
+	wCh = getWidechar( string );
+ 
 	/* If wchar_t is > 16 bits and the bits above 16 are set or all zero,
 	   it's either definitely not Unicode or Unicode.  Note that some
 	   compilers will complain of unreachable code here, unfortunately we
 	   can't easily fix this since WCSIZE is usually an expression involving
-	   sizeof(), which we can't handle via the preprocessor */
-#if INT_MAX > 0xFFFFL
+	   sizeof() which can't be handled via the preprocessor so we have to
+	   guard it with a preprocessor check */
+#ifdef CHECK_WCSIZE
 	if( WCSIZE > 2 )
 		return( ( wCh > 0xFFFF ) ? FALSE : TRUE );
-#endif /* > 16-bit machines */
+#endif /* CHECK_WCSIZE */
 
-	/* If wchar_t is 8 bits, it's never Unicode.  We make this conditional on
+	/* If wchar_t is 8 bits it's never Unicode.  We make this conditional on
 	   the system being 16-bit to avoid compiler warnings about dead code on
 	   the majority of systems, which have > 8-bit wchar_t */
 #if INT_MAX < 0xFFFFL
@@ -187,11 +184,11 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 #endif /* WCSIZE */
 
 	/* wchar_t is 16 bits, make sure that we don't get false positives with 
-	   short strings.  Two-char strings are more likely to be ASCII than a 
-	   single widechar, and repeated alternate chars (e.g. "tanaka") in an 
-	   ASCII string appear to be widechars for the general-purpose check
-	   below so we check for these in strings of 2-3 wide chars before we 
-	   perform the general-purpose check */
+	   short strings.  Two-character strings are more likely to be ASCII 
+	   than a single widechar, and repeated alternate characters (e.g. 
+	   "tanaka") in an ASCII string appear to be widechars for the general-
+	   purpose check below so we check for these in strings of 2-3 wide 
+	   characters before we perform the general-purpose check */
 	if( stringLen <= ( WCSIZE * 3 ) && wCh > 0xFF )
 		{
 		if( stringLen == WCSIZE )
@@ -199,7 +196,8 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 			const int ch1 = string[ 0 ];
 			const int ch2 = string[ 1 ];
 
-			/* Check for a two-char ASCII string, usually a country name */
+			/* Check for a two-character ASCII string, usually a country 
+			   name */
 			if( ch1 > 0 && ch1 <= 0x7F && isPrint( ch1 ) && \
 				ch2 > 0 && ch2 <= 0x7F && isPrint( ch2 ) )
 				return( FALSE );
@@ -214,7 +212,7 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 			ENSURES_B( stringLen == ( WCSIZE * 2 ) || \
 					   stringLen == ( WCSIZE * 3 ) );
 
-			/* Check for alternate chars being ASCII */
+			/* Check for alternate characters being ASCII */
 			if( isAlnum( hi1 ) && isAlnum( hi2 ) && isAlnum( hi3 ) && \
 				hi1 == hi2 && hi2 == hi3 )
 				return( FALSE );
@@ -226,8 +224,8 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 	   below is safe because to get to this point the string has to be some 
 	   multiple of 2 bytes long.  Note that if someone passes in a 1-byte 
 	   string and mistakenly includes the terminator in the length it'll be 
-	   identified as a 16-bit widechar string, but this doesn't really 
-	   matter since it'll get "converted" into a non-widechar string later */
+	   identified as a 16-bit widechar string but this doesn't really matter 
+	   since it'll get "converted" into a non-widechar string later */
 	for( i = 0; i < stringLen && i < FAILSAFE_ITERATIONS_LARGE; i += WCSIZE )
 		{
 		wCh = getWidechar( string );
@@ -244,7 +242,7 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 			else
 				{
 				/* If the current high byte doesn't match the previous one,
-				   it's probably 8-bit chars */
+				   it's probably 8-bit characters */
 				if( wChHi != hiByte )
 					return( FALSE );
 				}
@@ -252,17 +250,18 @@ static BOOLEAN isNativeWidecharString( IN_BUFFER( stringLen ) const BYTE *string
 		}
 	ENSURES_B( i < FAILSAFE_ITERATIONS_LARGE );
 
-	return( TRUE );				/* Probably 16-bit chars */
+	return( TRUE );				/* Probably 16-bit characters */
 	}
 
 /* Try and figure out the true string type for an ASN.1-encoded or native 
    string.  This detects (or at least tries to detect) not only the basic 
-   string type, but also basic string types encoded as widechar strings, and 
+   string type but also basic string types encoded as widechar strings and 
    widechar strings encoded as basic string types */
 
 CHECK_RETVAL_ENUM( ASN1_STRINGTYPE ) STDC_NONNULL_ARG( ( 1 ) ) \
 static ASN1_STRINGTYPE get8bitStringType( IN_BUFFER( stringLen ) const BYTE *string,
-										  IN_LENGTH_SHORT const int stringLen )
+										  IN_LENGTH_SHORT const int stringLen,
+										  IN_TAG_ENCODED const int stringTag )
 	{
 	BOOLEAN notPrintable = FALSE, notIA5 = FALSE;
 	int length;
@@ -270,6 +269,9 @@ static ASN1_STRINGTYPE get8bitStringType( IN_BUFFER( stringLen ) const BYTE *str
 	assert( isReadPtr( string, stringLen ) );
 
 	REQUIRES_EXT( ( stringLen > 0 && stringLen < MAX_INTLENGTH_SHORT ), \
+				  STRINGTYPE_ERROR );
+	REQUIRES_EXT( ( stringTag >= BER_STRING_UTF8 && \
+					stringTag < BER_STRING_BMP ), 
 				  STRINGTYPE_ERROR );
 
 	/* Walk down the string checking each character */
@@ -283,9 +285,10 @@ static ASN1_STRINGTYPE get8bitStringType( IN_BUFFER( stringLen ) const BYTE *str
 			notPrintable = notIA5 = TRUE;
 			if( !asn1CharFlags[ ch & 0x7F ] )
 				{
-				/* It's not 8859-1 either, probably some odd widechar 
-				   type */
-				return( STRINGTYPE_NONE );
+				/* It's not 8859-1 either, assume it's UTF-8 if this is 
+				   permitted, otherwise it's an error */
+				return( ( stringTag == BER_STRING_UTF8 ) ? \
+						STRINGTYPE_UTF8 : STRINGTYPE_ERROR );
 				}
 			}
 		else
@@ -296,11 +299,17 @@ static ASN1_STRINGTYPE get8bitStringType( IN_BUFFER( stringLen ) const BYTE *str
 
 			/* Check whether it's something peculiar */
 			if( !asn1CharFlags[ ch ] )
-				return( STRINGTYPE_NONE );
+				{
+				/* It's not 8859-1 either, assume it's UTF-8 if this is 
+				   permitted, otherwise it's an error */
+				return( ( stringTag == BER_STRING_UTF8 ) ? \
+						STRINGTYPE_UTF8 : STRINGTYPE_ERROR );
+				}
 			}
 		}
 
-	return( notIA5 ? STRINGTYPE_T61 : notPrintable ? STRINGTYPE_IA5 : \
+	return( notIA5 ? STRINGTYPE_T61 : \
+			notPrintable ? STRINGTYPE_IA5 : \
 			STRINGTYPE_PRINTABLE );
 	}
 
@@ -310,6 +319,10 @@ static ASN1_STRINGTYPE getAsn1StringType( IN_BUFFER( stringLen ) \
 										  IN_LENGTH_SHORT const int stringLen, 
 										  IN_TAG_ENCODED const int stringTag )
 	{
+	STREAM stream;
+	BOOLEAN notPrintable = FALSE, notIA5 = FALSE;
+	int length;
+
 	assert( isReadPtr( string, stringLen ) );
 
 	REQUIRES_EXT( ( stringLen > 0 && stringLen < MAX_INTLENGTH_SHORT ), \
@@ -318,61 +331,58 @@ static ASN1_STRINGTYPE getAsn1StringType( IN_BUFFER( stringLen ) \
 					stringTag <= BER_STRING_BMP ), 
 				  STRINGTYPE_ERROR );
 
-	/* If it's a multiple of bmpchar_t in size check whether it's a 
-	   BMPString stuffed into a T61String or an 8-bit string encoded as a 
-	   BMPString.  The following code assumes that anything claiming to be a 
-	   BMPString is always something else, this currently seems to hold true 
-	   for all BMPStrings.  Hopefully by the time anyone gets around to 
-	   using > 8-bit characters everyone will be using UTF8Strings because 
-	   there's no easy way to distinguish between a byte string which is a 
-	   > 8-bit BMPString and a 7/8-bit string */
-	if( !( stringLen % UCSIZE ) && *string == '\0' )
-		{
-		BOOLEAN notPrintable = FALSE, notIA5 = FALSE;
-		int length;
+	/* If it's not a Unicode stirng, determine the 8-bit string type */
+	if( stringTag != BER_STRING_BMP )
+		return( get8bitStringType( string, stringLen, stringTag ) );
 
-		/* The first character is a null, it's an 8-bit string stuffed into 
-		   a BMPString (these are always big-endian, even coming from 
-		   Microsoft software, so we don't have to check for a null as the
-		   second character) */
-		for( length = stringLen; length > 0; length -= UCSIZE )
-			{
-			/* Since we're reading bmpchar_t-sized values from a char-
-			   aligned source we have to assemble the data a byte at a time 
-			   to handle systems where non-char values can only be accessed 
-			   on word-aligned boundaries */
-			const bmpchar_t ch = getBmpchar( string );
-			string += UCSIZE;
+	/* If it's not a multiple of bmpchar_t in size then it can't really be 
+	   Unicode either */
+	if( stringLen % UCSIZE )
+		return( STRINGTYPE_ERROR );
 
-			/* If the high bit is set it's not an ASCII subset */
-			if( ch >= 128 )
-				{
-				notPrintable = notIA5 = TRUE;
-				if( !asn1CharFlags[ ch & 0x7F ] )
-					{
-					/* It's not 8859-1 either */
-					return( STRINGTYPE_UNICODE );
-					}
-				}
-			else
-				{
-				/* Check whether it's a PrintableString */
-				if( !( asn1CharFlags[ ch ] & P ) )
-					notPrintable = TRUE;
-				}
-			}
-
-		return( notIA5 ? STRINGTYPE_UNICODE_T61 : notPrintable ? \
-				STRINGTYPE_UNICODE_IA5 : STRINGTYPE_UNICODE_PRINTABLE );
-		}
-
-	/* If it's supposed to be Unicode and not an 8-bit string encoded as a
-	   Unicode string, it's Unicode */
-	if( stringTag == BER_STRING_BMP && !( stringLen % UCSIZE ) )
+	/* If the first character isn't a null then it's definitely a Unicode
+	   string.  These strings are always big-endian, even coming from 
+	   Microsoft software, so we don't have to check for a null as the 
+	   second character */
+	if( string[ 0 ] != '\0' )
 		return( STRINGTYPE_UNICODE );
 
-	/* Determine the 8-bit string type */
-	return( get8bitStringType( string, stringLen ) );
+	/* Check whether it's an 8-bit string encoded as a BMPString.  Since 
+	   we're reading bmpchar_t-sized values from a char-aligned source we 
+	   have to assemble the data carefully to handle systems where non-char 
+	   values can only be accessed on word-aligned boundaries */
+	sMemConnect( &stream, string, stringLen );
+	for( length = 0; length < stringLen; length += UCSIZE )
+		{
+		const int ch = readUint16( &stream );
+		if( cryptStatusError( ch ) )
+			{
+			sMemDisconnect( &stream );
+			return( STRINGTYPE_ERROR );
+			}
+
+		/* If it's not an 8-bit value then it's a pure Unicode string */
+		if( ch > 0xFF )
+			{
+			sMemDisconnect( &stream );
+			return( STRINGTYPE_UNICODE );
+			}
+
+		/* If the high bit is set it's not an ASCII subset */
+		if( ch >= 0x80 )
+			notPrintable = notIA5 = TRUE;
+		else
+			{
+			/* Check whether it's a PrintableString */
+			if( !( asn1CharFlags[ ch ] & P ) )
+				notPrintable = TRUE;
+			}
+		}
+	sMemDisconnect( &stream );
+
+	return( notIA5 ? STRINGTYPE_UNICODE_T61 : \
+			notPrintable ? STRINGTYPE_UNICODE_IA5 : \
+				STRINGTYPE_UNICODE_PRINTABLE );
 	}
 
 CHECK_RETVAL_ENUM( ASN1_STRINGTYPE ) STDC_NONNULL_ARG( ( 1 ) ) \
@@ -395,22 +405,34 @@ static ASN1_STRINGTYPE getNativeStringType( IN_BUFFER( stringLen ) \
 		{
 		int length;
 
-		for( length = stringLen; length > 0; length -= WCSIZE )
+		for( length = 0; length < stringLen; length += WCSIZE )
 			{
 			const wchar_t ch = getWidechar( string );
 			string += WCSIZE;
 
 			/* Safety check */
 			if( ch & 0xFFFF0000L )
-				return( STRINGTYPE_NONE );
+				return( STRINGTYPE_ERROR );
 
 			/* If the high bit is set it's not an ASCII subset */
-			if( ch >= 128 )
+			if( ch >= 0x80 )
 				{
+				/* If it's larger than 8 bits it's definitely Unicode */
+				if( ch >= 0xFF )
+					return( STRINGTYPE_UNICODE );
+
+				/* Check which (if any) 8-bit type it could be */
 				notPrintable = notIA5 = TRUE;
 				if( !nativeCharFlags[ ch & 0x7F ] )
 					{
-					/* It's not 8859-1 either */
+					/* It's not 8859-1 either, or more specifically it's 
+					   something that ends up looking like a control 
+					   character, what to do at this point is a bit 
+					   uncertain but making it a generic Unicode string
+					   which'll be handled via somewhat more robust
+					   mechanisms than something presumed to be ASCII or
+					   close to it is probably safer than storing it as
+					   a probably control character */
 					return( STRINGTYPE_UNICODE );
 					}
 				}
@@ -426,8 +448,15 @@ static ASN1_STRINGTYPE getNativeStringType( IN_BUFFER( stringLen ) \
 				STRINGTYPE_UNICODE_IA5 : STRINGTYPE_UNICODE_PRINTABLE );
 		}
 
-	/* Determine the 8-bit string type */
-	return( get8bitStringType( string, stringLen ) );
+	/* Determine the 8-bit string type.  We pass in 8859-1 as the most 
+	   permissible allowed string type, making it UTF-8 is rather risky 
+	   because we don't know whether the environment really does support
+	   this natively or whether we'v been passed garbage, and in addition
+	   creation of certificates with UTF8 strings is disabled by default
+	   because of interop problems (see the comment at the start) so even
+	   if it is a legitimate UTF8 string we can't really do much with it
+	   once we have to encode the DN */
+	return( get8bitStringType( string, stringLen, BER_STRING_T61 ) );
 	}
 
 /****************************************************************************
@@ -439,102 +468,93 @@ static ASN1_STRINGTYPE getNativeStringType( IN_BUFFER( stringLen ) \
 /* Parse one character from the string, enforcing the UTF-8 canonical-
    encoding rules:
 
-	  00 -  7F = 0xxxxxxx
-	 80 -  7FF = 110xxxxx 10xxxxxx 
-	800 - FFFF = 1110xxxx 10xxxxxx 10xxxxxx */
+	  00 -  7F = 0xxxxxxx, mask = 0x80
+	 80 -  7FF = 110xxxxx 10xxxxxx, mask = 0xE0
+	800 - FFFF = 1110xxxx 10xxxxxx 10xxxxxx, mask = 0xF0
 
-STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static long getUTF8Char( IN_BUFFER( stringMaxLen ) const BYTE *string, 
-						 IN_LENGTH_SHORT const int stringMaxLen,
-						 OUT_LENGTH_SHORT_Z int *charByteCount )
+   Note that some of the checks applied below are entirely redundant but due 
+   to the powerful nature of UTF-8 string formatting attacks we apply them 
+   anyway to make the different checking actions explicit and to reduce the
+   changes of a coding error allowing something dangerous through */
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+static long getUTF8Char( INOUT STREAM *stream )
 	{
-	const int firstChar = *string;
-	int count = -1;
 	long largeCh;
+	int firstChar, secondChar;
 
-	assert( isReadPtr( string, stringMaxLen ) );
-	assert( isWritePtr( charByteCount, sizeof( int ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	REQUIRES( stringMaxLen > 0 && stringMaxLen < MAX_INTLENGTH_SHORT );
-
-	/* Clear return value */
-	*charByteCount = 0;
-
-	if( firstChar < 0 || firstChar > 255 )
+	/* Process the first character */
+	firstChar = sgetc( stream );
+	if( cryptStatusError( firstChar ) )
 		return( CRYPT_ERROR_BADDATA );
 	if( !( firstChar & 0x80 ) )
 		{
-		/* Simplest case, straight ASCII */
-		*charByteCount = 1;
+		/* 1-byte character, straight ASCII */
 		return( firstChar & 0x7F );
 		}
-	if( ( firstChar & 0xC0 ) == 0x80 )	/* 11xxxxxx != 10xxxxxx */
+	if( ( firstChar & 0xC0 ) == 0x80 )		/* 11xxxxxx -> 10xxxxxx */
 		return( CRYPT_ERROR_BADDATA );
-	if( ( firstChar & 0xE0 ) == 0xC0 )	/* 111xxxxx == 110xxxxx */
-		count = 2;
-	else
+
+	/* Process the second character */
+	secondChar = sgetc( stream );
+	if( cryptStatusError( secondChar ) )
+		return( CRYPT_ERROR_BADDATA );
+	if( ( firstChar & 0xE0 ) == 0xC0 )		/* 111xxxxx -> 110xxxxx */
 		{
-		if( ( firstChar & 0xF0 ) == 0xE0 )	/* 1111xxxx == 1110xxxx */
-			count = 3;
-		else
-			{
-			/* In theory we can also get 4- and 5-byte encodings but this 
-			   is far more likely to be something invalid than a genuine 
-			   attempt to represent something in Tsolyani */
+		/* 2-byte character in the range 0x80...0x7FF */
+		if( ( secondChar & 0xC0 ) != 0x80 )
 			return( CRYPT_ERROR_BADDATA );
-			}
+		largeCh = ( ( firstChar & 0x1F ) << 6 ) | \
+					( secondChar & 0x3F );
+		if( largeCh < 0x80 || largeCh > 0x7FF )
+			return( CRYPT_ERROR_BADDATA );
+		return( largeCh & 0x7FF );
 		}
-	if( count < 2 || count > 3 || count > stringMaxLen )
-		return( CRYPT_ERROR_BADDATA );
-	switch( count )
+
+	/* Process any further characters */
+	if( ( firstChar & 0xF0 ) == 0xE0 )		/* 1111xxxx -> 1110xxxx */
 		{
-		case 2:
-			if( ( string[ 1 ] & 0xC0 ) != 0x80 )
-				return( CRYPT_ERROR_BADDATA );
-			largeCh = ( ( firstChar & 0x1F ) << 6 ) | \
-						( string[ 1 ] & 0x3F );
-			break;
+		const int thirdChar = sgetc( stream );
+		if( cryptStatusError( secondChar ) )
+			return( CRYPT_ERROR_BADDATA );
 
-		case 3:
-			if( ( string[ 1 ] & 0xC0 ) != 0x80 || \
-				( string[ 2 ] & 0xC0 ) != 0x80 )
-				return( CRYPT_ERROR_BADDATA );
-			largeCh = ( ( firstChar & 0x1F ) << 12 ) | \
-					  ( ( string[ 1 ] & 0x3F ) << 6 ) | \
-						( string[ 2 ] & 0x3F );
-			break;
-
-		default:
-			retIntError();
+		/* 3-byte character in the range 0x800...0xFFFF */
+		if( ( secondChar & 0xC0 ) != 0x80 || \
+			( thirdChar & 0xC0 ) != 0x80 )
+			return( CRYPT_ERROR_BADDATA );
+		largeCh = ( ( firstChar & 0x1F ) << 12 ) | \
+				  ( ( secondChar & 0x3F ) << 6 ) | \
+					( thirdChar & 0x3F );
+		if( largeCh < 0x800 || largeCh > 0xFFFF )
+			return( CRYPT_ERROR_BADDATA );
+		return( largeCh & 0xFFFF );
 		}
-	if( largeCh < 0 || largeCh > 0xFFFF )
-		return( CRYPT_ERROR_BADDATA );
 
-	*charByteCount = count;
-	return( largeCh & 0xFFFF );
+	/* In theory we can also get 4- and 5-byte encodings but this is far 
+	   more likely to be something invalid than a genuine attempt to 
+	   represent something in Tsolyani */
+	return( CRYPT_ERROR_BADDATA );
 	}
 
 #if 0	/* Currently unused, see note at start */
 
-static int putUTF8Char( BYTE *string, const long largeCh )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int putUTF8Char( INOUT STREAM *stream, 
+						IN_RANGE( 0, 0xFFFFF ) const long largeCh )
 	{
 	if( largeCh < 0x80 )
-		{
-		*string = ( BYTE ) largeCh;
-		return( 1 );
-		}
+		return( sputc( stream, ( BYTE ) largeCh );
 	if( largeCh < 0x0800 )
 		{
-		*string++ = ( BYTE )( 0xC0 | largeCh >> 6 );
-		*string = ( BYTE )( 0x80 | largeCh & 0x3F );
-		return( 2 );
+		sputc( stream, ( BYTE )( 0xC0 | largeCh >> 6 ) );
+		return( sputc( stream, ( BYTE )( 0x80 | largeCh & 0x3F ) ) );
 		}
-	*string++ = ( BYTE )( 0xE0 | largeCh >> 12 );
-	*string++ = ( BYTE )( 0x80 | ( ( largeCh >> 6 ) & 0x3F ) );
-	*string = ( BYTE )( 0x80 | largeCh & 0x3F );
-	return( 3 );
+	sputc( stream, ( BYTE )( 0xE0 | largeCh >> 12 ) );
+	sputc( stream, ( BYTE )( 0x80 | ( ( largeCh >> 6 ) & 0x3F ) ) );
+	return( sputc( stream, ( BYTE )( 0x80 | largeCh & 0x3F ) ) );
 	}
-#endif /* 0 */
 
 /* Determine the length of a string once it's encoded as UTF-8 */
 
@@ -570,22 +590,121 @@ static int utf8TargetStringLen( IN_BUFFER( stringLen ) const void *string,
 
 	return( CRYPT_OK );
 	}
+#endif /* 0 */
 
 /* Convert a UTF-8 string to ASCII, 8859-1, or Unicode, and vice versa */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 static int copyFromUtf8String( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
 							   IN_LENGTH_SHORT const int destMaxLen, 
 							   OUT_LENGTH_SHORT_Z int *destLen, 
+							   OUT_RANGE( 0, 20 ) int *destStringType,
 							   IN_BUFFER( sourceLen ) const void *source, 
 							   IN_LENGTH_SHORT const int sourceLen )
 	{
+	STREAM stream;
 	ASN1_STRINGTYPE stringType = STRINGTYPE_PRINTABLE;
-	const BYTE *srcPtr = source;
 	wchar_t *wcDestPtr = dest;
 	BYTE *destPtr = dest;
-	int noChars = 0, count, i;
+	int noChars = 0, iterationCount;
 
+	assert( isWritePtr( dest, destMaxLen ) );
+	assert( isWritePtr( destLen, sizeof( int ) ) );
+	assert( isWritePtr( destStringType, sizeof( int ) ) );
+	assert( isReadPtr( source, sourceLen ) );
+
+	REQUIRES( destMaxLen > 0 && destMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( sourceLen > 0 && sourceLen < MAX_INTLENGTH_SHORT );
+
+	/* Clear return value */
+	memset( dest, 0, min( 16, destMaxLen ) );
+	*destLen = 0;
+	*destStringType = STRINGTYPE_NONE;
+
+	/* Scan the string to determine its length and the widest character type 
+	   in it.  We have to process the entire string even if we've already 
+	   identified it as containing the widest string type (Unicode) in order 
+	   to check for malformed characters.  In addition we can't continue
+	   this with the copy loop that follows because until we get to the end
+	   we don't know whether we're copying 8-bit or wide characters */
+	sMemConnect( &stream, source, sourceLen );
+	for( iterationCount = 0; 
+		 stell( &stream ) < sourceLen && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 iterationCount++ )
+		{
+		const long largeCh = getUTF8Char( &stream );
+		if( cryptStatusError( largeCh ) )
+			{
+			sMemDisconnect( &stream );
+			return( largeCh );
+			}
+		noChars++;
+
+		/* If we've already identified the widest character type there's 
+		   nothing more to do */
+		if( stringType == STRINGTYPE_UNICODE )
+			continue;
+
+		/* If it's not an 8-bit value it can only be Unicode */
+		if( largeCh > 0xFF )
+			{
+			stringType = STRINGTYPE_UNICODE;
+			continue;
+			}
+
+		/* If it's not a PrintableString character mark it as T61 if it's 
+		   within range, otherwise it's Unicode */
+		if( largeCh >= 128 )
+			{
+			stringType = ( asn1CharFlags[ largeCh & 0x7F ] & P ) ? \
+						 STRINGTYPE_T61 : STRINGTYPE_UNICODE;
+			}
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	sMemDisconnect( &stream );
+
+	/* Make sure that the translated string will fit into the destination 
+	   buffer */
+	*destLen = noChars * ( ( stringType == STRINGTYPE_UNICODE ) ? \
+						   WCSIZE : 1 );
+	if( *destLen < 0 || *destLen > destMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );
+	*destStringType = stringType;
+
+	/* Perform a second pass copying the string over */
+	sMemConnect( &stream, source, sourceLen );
+	for( iterationCount = 0; 
+		 stell( &stream ) < sourceLen && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 iterationCount++ )
+		{
+		const long largeCh = getUTF8Char( &stream );
+
+		ENSURES( !cryptStatusError( largeCh ) );
+
+		/* Copy the result as a Unicode or ASCII/8859-1 character */
+		if( stringType == STRINGTYPE_UNICODE )
+			*wcDestPtr++ = ( wchar_t ) largeCh;
+		else
+			*destPtr++ = ( BYTE ) largeCh;
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	sMemDisconnect( &stream );
+
+	return( CRYPT_OK );
+	}
+
+#if 0	/* Currently unused, see note at start */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int copyToUtf8String( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
+							 IN_LENGTH_SHORT const int destMaxLen, 
+							 OUT_LENGTH_SHORT_Z int *destLen,
+							 IN_BUFFER( sourceLen ) const void *source, 
+							 IN_LENGTH_SHORT const int sourceLen,
+							 const BOOLEAN isWideChar )
+	{
 	assert( isWritePtr( dest, destMaxLen ) );
 	assert( isWritePtr( destLen, sizeof( int ) ) );
 	assert( isReadPtr( source, sourceLen ) );
@@ -597,93 +716,25 @@ static int copyFromUtf8String( OUT_BUFFER( destMaxLen, *destLen ) void *dest,
 	memset( dest, 0, min( 16, destMaxLen ) );
 	*destLen = 0;
 
-	/* Scan the string to determine its length and the widest character type 
-	   in it.  We have to process the entire string even once we've 
-	   identified it as containing the widest string type (Unicode) in order 
-	   to check for malformed chars */
-	for( i = 0; i < sourceLen && i < FAILSAFE_ITERATIONS_LARGE; i += count )
-		{
-		const long largeCh = getUTF8Char( srcPtr + i, sourceLen - i, &count );
-
-		if( largeCh < 0 || largeCh > 0xFFFFL )
-			return( CRYPT_ERROR_BADDATA );
-		noChars++;
-		if( stringType == STRINGTYPE_UNICODE || largeCh > 0xFF )
-			stringType = STRINGTYPE_UNICODE;
-		else
-			{
-			/* If it's not a PrintableString char mark it as T61 if it's 
-			   within range, otherwise it's Unicode */
-			if( largeCh >= 128 )
-				{
-				stringType = ( asn1CharFlags[ largeCh & 0x7F ] & P ) ? \
-							 STRINGTYPE_T61 : STRINGTYPE_UNICODE;
-				}
-			}
-		}
-	ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-
-	/* Make sure that the translated string will fit into the destination 
-	   buffer */
-	*destLen = noChars * ( ( stringType == STRINGTYPE_UNICODE ) ? \
-						   WCSIZE : 1 );
-	if( *destLen > destMaxLen )
-		return( CRYPT_ERROR_OVERFLOW );
-
-	/* Perform a second pass copying the string over */
-	for( i = 0; i < sourceLen && i < FAILSAFE_ITERATIONS_LARGE; i += count )
-		{
-		const long largeCh = getUTF8Char( srcPtr + i, sourceLen - i, 
-										  &count );
-
-		ENSURES( largeCh >= 0 && largeCh <= 0xFFFFL );
-
-		/* Copy the result as a Unicode or ASCII/8859-1 character */
-		if( stringType == STRINGTYPE_UNICODE )
-			*wcDestPtr++ = ( wchar_t ) largeCh;
-		else
-			*destPtr++ = ( BYTE ) largeCh;
-		}
-	ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-
-	return( stringType );
-	}
-
-#if 0	/* Currently unused, see note at start */
-
-static int copyToUtf8String( OUT_BUFFER( destMaxLen, *destLen ) \
-							 void *dest, const int destMaxLen, int *destLen,
-							 IN_BUFFER( sourceLen ) \
-							 const void *source, const int sourceLen,
-							 const BOOLEAN isWideChar )
-	{
-	assert( isWritePtr( dest, destMaxLen ) );
-	assert( isWritePtr( destLen, sizeof( int ) ) );
-	assert( isReadPtr( source, sourceLen ) );
-
-	/* Clear return value */
-	memset( dest, 0, min( 16, destMaxLen ) );
-	*destLen = 0;
-
 	if( isWideChar )
 		{
+		STREAM stream;
 		const wchar_t *wcStrPtr = source;
-		BYTE *destPtr = dest;
-		int length = 0, i;
+		int length = 0, iterationCount;
 
-		for( i = 0; i < sourceLen && \
-					i < FAILSAFE_ITERATIONS_LARGE; i += WCSIZE )
+		sMemOpen( &stream, dest, destMaxLen );
+		for( iterationCount = 0; 
+			 iterationCount < sourceLen && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 iterationCount += WCSIZE )
 			{
-			const int utf8charLength = putUTF8Char( destPtr, *wcStrPtr++, 
-													destMaxLen - destLen );
-
-			if( utf8charLength < 0 )
-				return( utf8charLength );
-			length += utf8charLength;
-			destPtr += length;
+			const int status = putUTF8Char( &stream, *wcStrPtr++ );
+			if( cryptStatusError( status ) )
+				return( status );
 			}
 		ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-		*destLen = length;
+		*destLen = stell( &stream );
+		sMemDisconnect( &stream );
 
 		return( CRYPT_OK );
 		}
@@ -719,7 +770,7 @@ BOOLEAN checkTextStringData( IN_BUFFER( stringLen ) const char *string,
 
 	for( i = 0; i < stringLen && i < FAILSAFE_ITERATIONS_LARGE; i++ )
 		{
-		const int ch = string[ i ];
+		const int ch = byteToInt( string[ i ] );
 
 		if( ch <= 0 || ch > 0x7F || !isPrint( ch ) )
 			return( FALSE );
@@ -734,79 +785,117 @@ BOOLEAN checkTextStringData( IN_BUFFER( stringLen ) const char *string,
 /* Convert a character string from the format used in the certificate into 
    the native format */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest, 
 						IN_LENGTH_SHORT const int destMaxLen, 
 						OUT_LENGTH_SHORT_Z int *destLen, 
+						OUT_RANGE( 0, 20 ) int *destStringType,
 						IN_BUFFER( sourceLen ) const void *source, 
 						IN_LENGTH_SHORT const int sourceLen,
 						IN_TAG_ENCODED const int stringTag )
 	{
+	STREAM stream;
 	const ASN1_STRINGTYPE stringType = getAsn1StringType( source, sourceLen, 
 														  stringTag );
+	int iterationCount;
 
 	assert( isWritePtr( dest, destMaxLen ) );
 	assert( isWritePtr( destLen, sizeof( int ) ) );
+	assert( isWritePtr( destStringType, sizeof( int ) ) );
 	assert( isReadPtr( source, sourceLen ) );
 
 	REQUIRES( destMaxLen > 0 && destMaxLen < MAX_INTLENGTH_SHORT );
 	REQUIRES( sourceLen > 0 && sourceLen < MAX_INTLENGTH_SHORT );
 	REQUIRES( stringTag >= BER_STRING_UTF8 && stringTag <= BER_STRING_BMP );
-	REQUIRES( stringType != STRINGTYPE_ERROR );
 
-	/* Clear return value */
+	/* Clear return values */
 	memset( dest, 0, min( 16, destMaxLen ) );
 	*destLen = 0;
+	*destStringType = STRINGTYPE_NONE;
+
+	/* Make sure that the string type can be determined */
+	if( stringType <= STRINGTYPE_NONE || stringType >= STRINGTYPE_ERROR )
+		return( CRYPT_ERROR_BADDATA );
 
 	/* If it's a BMP or UTF-8 string convert it to the native format */
 	if( stringType == STRINGTYPE_UNICODE )
 		{
-		const BYTE *string = source;
 		wchar_t *wcDestPtr = ( wchar_t * ) dest;
 		const int newLen = ( sourceLen / UCSIZE ) * WCSIZE;
-		int i;
 
-		if( newLen > destMaxLen )
+		if( newLen <= 0 || newLen > destMaxLen )
 			return( CRYPT_ERROR_OVERFLOW );
 		
 		/* Since we're reading bmpchar_t-sized values from a char-aligned
-		   source we have to assemble the data a byte at a time to handle
-		   systems where non-char values can only be accessed on word-
-		   aligned boundaries */
-		for( i = 0; i < sourceLen / UCSIZE && \
-					i < FAILSAFE_ITERATIONS_LARGE; i++ )
+		   source we have to assemble the data carefully to handle systems 
+		   where non-char values can only be accessed on word-aligned 
+		   boundaries */
+		sMemConnect( &stream, source, sourceLen );
+		for( iterationCount = 0; 
+			 stell( &stream ) < sourceLen && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 iterationCount++ )
 			{
-			*wcDestPtr++ = getBmpchar( string );
-			string += UCSIZE;
+			const int ch = readUint16( &stream );
+			if( cryptStatusError( ch ) )
+				{
+				sMemDisconnect( &stream );
+				return( ch );
+				}
+			*wcDestPtr++ = ( wchar_t ) ch;
 			}
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+		sMemDisconnect( &stream );
 		*destLen = newLen;
+		*destStringType = STRINGTYPE_UNICODE;
 
 		return( CRYPT_OK );
 		}
 	if( stringTag == BER_STRING_UTF8 )
 		{
-		return( copyFromUtf8String( dest, destMaxLen, destLen, source, 
-									sourceLen ) );
+		return( copyFromUtf8String( dest, destMaxLen, destLen, 
+									destStringType, source, sourceLen ) );
 		}
 
 	/* If it's something masquerading as Unicode convert it to the narrower
-	   format.  Note that STRINGTYPE_UNICODE_VISIBLE is already covered by 
-	   STRINGTYPE_UNICODE_IA5 so we don't need to check for this separately */
+	   format */
 	if( stringType == STRINGTYPE_UNICODE_PRINTABLE || \
 		stringType == STRINGTYPE_UNICODE_IA5 || \
 		stringType == STRINGTYPE_UNICODE_T61 )
 		{
-		const BYTE *srcPtr = source;
 		BYTE *destPtr = dest;
-		int i;
+		const int newLen = sourceLen / UCSIZE;
 
-		if( sourceLen / UCSIZE > destMaxLen )
+		if( newLen <= 0 || newLen > destMaxLen )
 			return( CRYPT_ERROR_OVERFLOW );
-		for( i = 1; i < sourceLen && \
-					i < FAILSAFE_ITERATIONS_LARGE; i += UCSIZE )
-			*destPtr++ = ( BYTE ) srcPtr[ i ];
-		ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-		*destLen = sourceLen / UCSIZE;
+
+		sMemConnect( &stream, source, sourceLen );
+		for( iterationCount = 0; 
+			 stell( &stream ) < sourceLen && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 iterationCount++ )
+			{
+			int ch = readUint16( &stream );
+			if( !cryptStatusError( ch ) && ch > 0xFF )
+				{
+				/* Should never happen because of the pre-scan that we've 
+				   done earlier */
+				ch = CRYPT_ERROR_BADDATA;
+				}
+			if( cryptStatusError( ch ) )
+				{
+				sMemDisconnect( &stream );
+				return( ch );
+				}
+			*destPtr++ = intToByte( ch );
+			}
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+		sMemDisconnect( &stream );
+		*destLen = newLen;
+		*destStringType = ( stringType == STRINGTYPE_UNICODE_PRINTABLE ) ? \
+							STRINGTYPE_PRINTABLE : \
+						  ( stringType == STRINGTYPE_UNICODE_IA5 ) ? \
+							STRINGTYPE_IA5 : STRINGTYPE_UNICODE_T61;
 
 		return( CRYPT_OK );
 		}
@@ -816,7 +905,11 @@ int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 		return( CRYPT_ERROR_OVERFLOW );
 	memcpy( dest, source, sourceLen );
 	*destLen = sourceLen;
+	*destStringType = stringType;
 
+#if 0	/* 18/7/08 Removed for attack surface reduction, there's really no 
+		   need to have this here just to support some long-expired broken
+		   Deutsche Telekom certificates */
 	/* If it's a T61String try and guess whether it's using floating 
 	   diacritics and convert them to the correct latin-1 representation.  
 	   This is mostly guesswork since some implementations use floating 
@@ -832,7 +925,7 @@ int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 			{
 			if( destPtr[ i ] == 0xC8 )
 				{
-				int ch = destPtr[ i + 1 ];
+				int ch = byteToInt( destPtr[ i + 1 ] );
 
 				/* If it's an umlautable character convert the following
 				   ASCII value to the equivalent latin-1 form and move the
@@ -846,7 +939,7 @@ int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 						{ 0x61, 0xE4 }, { 0x41, 0xC4 },	/* a, A */
 						{ 0x6F, 0xF6 }, { 0x4F, 0xD6 },	/* o, O */
 						{ 0x75, 0xFC }, { 0x55, 0xDC },	/* u, U */
-						{ 0x00, '?' }
+						{ 0x00, '?' }, { 0x00, '?' }
 						};
 					int charIndex;
 
@@ -867,6 +960,7 @@ int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 		ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
 		*destLen = length;
 		}
+#endif /* 0 */
 
 	return( CRYPT_OK );
 	}
@@ -880,11 +974,11 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string, 
 					   IN_LENGTH_SHORT const int stringLen,
 					   OUT_RANGE( 0, 20 ) int *stringType, 
-					   int *asn1StringType,
+					   OUT_TAG_ENCODED_Z int *asn1StringType,
 					   OUT_LENGTH_SHORT_Z int *asn1StringLen )
 	{
-	const ASN1_STRINGTYPE localStringType = getNativeStringType( string, 
-																 stringLen );
+	const ASN1_STRINGTYPE localStringType = \
+							getNativeStringType( string, stringLen );
 
 	assert( isReadPtr( string, stringLen ) );
 	assert( isWritePtr( stringType, sizeof( int ) ) );
@@ -896,6 +990,12 @@ int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string,
 
 	/* Clear return value */
 	*asn1StringLen = 0;
+	*asn1StringType = 0;
+
+	/* Make sure that the string type can be determined */
+	if( localStringType <= STRINGTYPE_NONE || \
+		localStringType >= STRINGTYPE_ERROR )
+		return( CRYPT_ERROR_BADDATA );
 
 	*stringType = localStringType;
 	switch( localStringType )
@@ -912,39 +1012,40 @@ int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string,
 			/* It's an ASCII string masquerading as Unicode, output is an 
 			   8-bit string type */
 			*asn1StringLen = stringLen / WCSIZE;
-			*asn1StringType = ( *stringType == STRINGTYPE_UNICODE_PRINTABLE ) ? \
-								BER_STRING_PRINTABLE : \
-							  ( *stringType == STRINGTYPE_UNICODE_IA5 ) ? \
-								BER_STRING_IA5 : BER_STRING_T61;
+			*asn1StringType = \
+					( localStringType == STRINGTYPE_UNICODE_PRINTABLE ) ? \
+						BER_STRING_PRINTABLE : \
+					( localStringType == STRINGTYPE_UNICODE_IA5 ) ? \
+						BER_STRING_IA5 : BER_STRING_T61;
 			return( CRYPT_OK );
 
+#if 0	/* Currently unused, see note at start */
 		case STRINGTYPE_UTF8:
 			{
 			int status;
 
 			/* It's a widechar string encoded as UTF-8, output is a 
-			   variable-length UTF-8 string.  This isn't currently used
-			   but is only present as a placeholder, see the comment at the 
-			   start of this module for details */
+			   variable-length UTF-8 string */
 			status = utf8TargetStringLen( string, stringLen, asn1StringLen,
-						( *stringType == STRINGTYPE_UNICODE || \
-						  *stringType == STRINGTYPE_UNICODE_PRINTABLE || \
-						  *stringType == STRINGTYPE_UNICODE_IA5 || \
-							  *stringType == STRINGTYPE_UNICODE_T61 ) ? \
+						( localStringType == STRINGTYPE_UNICODE || \
+						  localStringType == STRINGTYPE_UNICODE_PRINTABLE || \
+						  localStringType == STRINGTYPE_UNICODE_IA5 || \
+						  localStringType == STRINGTYPE_UNICODE_T61 ) ? \
 						TRUE : FALSE );
 			if( cryptStatusError( status ) )
 				return( status );
 			*asn1StringType = BER_STRING_UTF8;
 			return( CRYPT_OK );
 			}
+#endif /* 0 */
 		}
 
 	/* If nothing specialised matches then the default string type is an 
 	   ASCII string */
 	*asn1StringLen = stringLen;
-	*asn1StringType = ( *stringType == STRINGTYPE_PRINTABLE ) ? \
+	*asn1StringType = ( localStringType == STRINGTYPE_PRINTABLE ) ? \
 						BER_STRING_PRINTABLE : \
-					  ( *stringType == STRINGTYPE_IA5 ) ? \
+					  ( localStringType == STRINGTYPE_IA5 ) ? \
 						BER_STRING_IA5 : BER_STRING_T61;
 	return( CRYPT_OK );
 	}
@@ -955,15 +1056,18 @@ int copyToAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 					  OUT_LENGTH_SHORT_Z int *destLen, 
 					  IN_BUFFER( sourceLen ) const void *source, 
 					  IN_LENGTH_SHORT const int sourceLen,
-					  IN_RANGE( 0, 20 ) const int stringType )
+					  IN_RANGE( 1, 20 ) const int stringType )
 	{
+	STREAM stream;
+	int iterationCount, status;
+
 	assert( isWritePtr( dest, destMaxLen ) );
 	assert( isWritePtr( destLen, sizeof( int ) ) );
 	assert( isReadPtr( source, sourceLen ) );
 
 	REQUIRES( destMaxLen > 0 && destMaxLen < MAX_INTLENGTH_SHORT );
 	REQUIRES( sourceLen > 0 && sourceLen < MAX_INTLENGTH_SHORT );
-	REQUIRES( stringType >= STRINGTYPE_NONE && \
+	REQUIRES( stringType > STRINGTYPE_NONE && \
 			  stringType < STRINGTYPE_LAST && \
 			  stringType != STRINGTYPE_ERROR );
 
@@ -971,65 +1075,44 @@ int copyToAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest,
 	memset( dest, 0, min( 16, destMaxLen ) );
 	*destLen = 0;
 
-	switch( stringType )
+	if( stringType == STRINGTYPE_UNICODE || \
+		stringType == STRINGTYPE_UNICODE_PRINTABLE || \
+		stringType == STRINGTYPE_UNICODE_IA5 || \
+		stringType == STRINGTYPE_UNICODE_T61 )
 		{
-		case STRINGTYPE_UNICODE:
+		const BYTE *srcPtr = source;
+		const BOOLEAN unicodeTarget = \
+			( stringType == STRINGTYPE_UNICODE ) ? TRUE : FALSE;
+
+		/* Copy the string across, converting from wchar_t to bmpchar_t/char
+		   as required as we go */
+		sMemOpen( &stream, dest, destMaxLen );
+		for( status = CRYPT_OK, iterationCount = 0; 
+			 iterationCount < sourceLen && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 iterationCount += WCSIZE )
 			{
-			const BYTE *srcPtr = source;
-			BYTE *destPtr = dest;
-			const int newLen = ( sourceLen / WCSIZE ) * UCSIZE;
-			int length = sourceLen, i;
-
-			/* It's a widechar, convert it to Unicode */
-			*destLen = newLen;
-			if( newLen > destMaxLen )
-				return( CRYPT_ERROR_OVERFLOW );
-
-			/* Copy the string across, converting from wchar_t to bmpchar_t 
-			   as we go, with endianness conversion if necessary */
-			for( i = 0; i < length && \
-						i < FAILSAFE_ITERATIONS_LARGE; i += WCSIZE )
-				{
-				const wchar_t wCh = getWidechar( srcPtr );
-				srcPtr += WCSIZE;
-
-				*destPtr++ = ( BYTE ) ( ( wCh >> 8 ) & 0xFF );
-				*destPtr++ = ( BYTE ) ( wCh & 0xFF );
-				}
-			ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-
-			return( CRYPT_OK );
+			const wchar_t wCh = getWidechar( srcPtr );
+			srcPtr += WCSIZE;
+			if( unicodeTarget )
+				status = writeUint16( &stream, wCh );
+			else
+				status = sputc( &stream, wCh );
 			}
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+		if( cryptStatusOK( status ) )
+			*destLen = stell( &stream );
+		sMemDisconnect( &stream );
 
-		case STRINGTYPE_UNICODE_PRINTABLE:
-		case STRINGTYPE_UNICODE_IA5:
-		case STRINGTYPE_UNICODE_T61:
-			{
-			const wchar_t *srcPtr = ( wchar_t * ) source;
-			BYTE *destPtr = dest;
-			int i;
-
-			/* It's something masquerading as Unicode, convert it to the 
-			   narrower format.  Note that STRINGTYPE_UNICODE_VISIBLE is 
-			   already covered by STRINGTYPE_UNICODE_IA5, so we don't need 
-			   to check for this separately */
-			*destLen = sourceLen / WCSIZE;
-			if( sourceLen / WCSIZE > destMaxLen )
-				return( CRYPT_ERROR_OVERFLOW );
-			for( i = 0; i < sourceLen && \
-						i < FAILSAFE_ITERATIONS_LARGE; i += WCSIZE )
-				*destPtr++ = ( BYTE ) *srcPtr++;
-			ENSURES( i < FAILSAFE_ITERATIONS_LARGE );
-			return( CRYPT_OK );
-			}
+		return( status );
 		}
 
 	/* If nothing specialised matches then the default string type is an 
 	   ASCII string */
-	*destLen = sourceLen;
 	if( sourceLen > destMaxLen )
 		return( CRYPT_ERROR_OVERFLOW );
 	memcpy( dest, source, sourceLen );
+	*destLen = sourceLen;
 
 	return( CRYPT_OK );
 	}

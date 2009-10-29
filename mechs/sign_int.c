@@ -26,13 +26,15 @@
 /* Create a DLP signature */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
-int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
-							void *buffer, 
-						IN_RANGE( 0, CRYPT_MAX_PKCSIZE ) const int bufSize, 
-						OUT_LENGTH_Z int *length, 
-						IN_HANDLE const CRYPT_CONTEXT iSignContext,
-						IN_HANDLE const CRYPT_CONTEXT iHashContext,
-						IN_ENUM( SIGNATURE ) const SIGNATURE_TYPE signatureType )
+static int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
+									void *buffer, 
+							   IN_RANGE( 0, CRYPT_MAX_PKCSIZE ) const int bufSize, 
+							   OUT_LENGTH_Z int *length, 
+							   IN_HANDLE const CRYPT_CONTEXT iSignContext,
+							   IN_HANDLE const CRYPT_CONTEXT iHashContext,
+							   IN_ENUM( SIGNATURE ) \
+									const SIGNATURE_TYPE signatureType,
+							   const BOOLEAN isECC )
 	{
 	DLP_PARAMS dlpParams;
 	MESSAGE_DATA msgData;
@@ -76,10 +78,10 @@ int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	hashSize = msgData.length;
 
 	/* Standard DSA is only defined for hash algorithms with a block size of 
-	   160 bits, FIPS 186-3 extends this to allow use with larger hashes so 
-	   all we do is require at least 160 bits, which also works for ECC 
-	   algorithms */
-	if( hashSize < 20 )
+	   160 bits, FIPS 186-3 extends this to allow use with larger hashes but 
+	   the use with algorithms other than SHA-1 is a bit unclear so we always
+	   require 160 bits */
+	if( !isECC && hashSize != 20 )
 		{
 		/* The error reporting here is a bit complex, see the comment in 
 		   createSignature() for how this works */
@@ -88,17 +90,32 @@ int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 
 	/* If we're doing a length check and the signature is being written in 
 	   cryptlib format the length is just an estimate since it can change by 
-	   up to two bytes depending on whether the signature values have the 
-	   high bit set or not, which requires zero-padding of the ASN.1-encoded 
-	   integers (we use a worst-case estimate here and assume that both 
-	   integers will be of the maximum size and need padding).  This is 
-	   rather nasty because it means that we can't tell how large a 
-	   signature will be without actually creating it */
+	   several bytes depending on whether the signature values have the high 
+	   bit set or not (which requires zero-padding of the ASN.1-encoded 
+	   integers) or have the high bytes set to zero(es).  We use a worst-
+	   case estimate here and assume that both integers will be of the 
+	   maximum size and need padding, which is rather nasty because it means 
+	   that we can't tell how large a signature will be without actually 
+	   creating it */
 	if( buffer == NULL )
 		{
+		int sigComponentSize = hashSize;
+
+		if( isECC )
+			{
+			/* For ECC signatures the reduction is done mod n, which is
+			   variable-length, but for standard curves is the same as the
+			   key size */
+			status = krnlSendMessage( iSignContext, IMESSAGE_GETATTRIBUTE,
+									  &sigComponentSize, 
+									  CRYPT_CTXINFO_KEYSIZE );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
 		*length = ( signatureType == SIGNATURE_PGP ) ? \
-					2 * ( 2 + hashSize ) : \
-					sizeofObject( ( 2 * sizeofObject( hashSize + 1 ) ) );
+					2 * ( 2 + sigComponentSize ) : \
+					sizeofObject( ( 2 * sizeofObject( \
+											sigComponentSize + 1 ) ) );
 		return( CRYPT_OK );
 		}
 
@@ -118,19 +135,24 @@ int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 /* Check a DLP signature */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int checkDlpSignature( IN_BUFFER( signatureDataLength ) const void *signatureData, 
-					   IN_LENGTH_SHORT const int signatureDataLength,
-					   IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
-					   IN_HANDLE const CRYPT_CONTEXT iHashContext,
-					   IN_ENUM( SIGNATURE ) const SIGNATURE_TYPE signatureType )
+static int checkDlpSignature( IN_BUFFER( signatureDataLength ) \
+									const void *signatureData, 
+							  IN_LENGTH_SHORT const int signatureDataLength,
+							  IN_HANDLE const CRYPT_CONTEXT iSigCheckContext,
+							  IN_HANDLE const CRYPT_CONTEXT iHashContext,
+							  IN_ENUM( SIGNATURE ) \
+									const SIGNATURE_TYPE signatureType,
+							  const BOOLEAN isECC )
 	{
 	DLP_PARAMS dlpParams;
 	MESSAGE_DATA msgData;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize, status;
 
-	REQUIRES( signatureDataLength > 40 && \
-			  signatureDataLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( ( signatureType == SIGNATURE_SSH && \
+				signatureDataLength == 40 ) || \
+			  ( signatureDataLength > 40 && \
+				signatureDataLength < MAX_INTLENGTH_SHORT ) );
 	REQUIRES( isHandleRangeValid( iSigCheckContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 	REQUIRES( signatureType > SIGNATURE_NONE && \
@@ -145,10 +167,10 @@ int checkDlpSignature( IN_BUFFER( signatureDataLength ) const void *signatureDat
 	hashSize = msgData.length;
 
 	/* Standard DSA is only defined for hash algorithms with a block size of 
-	   160 bits, FIPS 186-3 extends this to allow use with larger hashes so 
-	   all we do is require at least 160 bits, which also works for ECC 
-	   algorithms */
-	if( hashSize < 20 )
+	   160 bits, FIPS 186-3 extends this to allow use with larger hashes but 
+	   the use with algorithms other than SHA-1 is a bit unclear so we always
+	   require 160 bits */
+	if( !isECC && hashSize != 20 )
 		{
 		/* The error reporting here is a bit complex, see the comment in 
 		   createSignature() for how this works */
@@ -232,7 +254,8 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		{
 		status = createDlpSignature( bufPtr, bufSize, &length, iSignContext, 
-									 iHashContext, signatureType );
+									 iHashContext, signatureType,
+									 isEccAlgo( signAlgo ) ? TRUE : FALSE );
 		}
 	else
 		{
@@ -397,12 +420,17 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 	signatureDataLength = queryInfo.dataLength;
 	zeroise( &queryInfo, sizeof( QUERY_INFO ) );
 
-	/* DLP and ECC signatures are handled somewhat specially */
+	/* DLP and ECC signatures are handled somewhat specially.  In addition
+	   if it's an SSL signature then the dual-hash signature used for RSA
+	   is just a single-hash signature for a DLP/ECC algorithm */
 	if( isDlpAlgo( signAlgo ) || isEccAlgo( signAlgo ) )
 		{
 		return( checkDlpSignature( signatureData, signatureDataLength, 
-								   iSigCheckContext, iHashContext,
-								   signatureType ) );
+								   iSigCheckContext, 
+								   ( signatureType == SIGNATURE_SSL ) ? \
+									iHashContext2 : iHashContext,
+								   signatureType, 
+								   isEccAlgo( signAlgo ) ? TRUE : FALSE ) );
 		}
 
 	/* It's a standard signature, process it as normal */

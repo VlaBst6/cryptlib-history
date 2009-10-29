@@ -290,6 +290,59 @@ int cmsPreEnvelopeEncrypt( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 *																			*
 ****************************************************************************/
 
+/* Set up any necessary signature parameters such as signature attributes 
+   and timestamps if necessary */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int cmsInitSigParams( const ACTION_LIST *actionListPtr,
+					  IN_ENUM( CRYPT_FORMAT ) const CRYPT_FORMAT_TYPE formatType,
+					  IN_HANDLE const CRYPT_USER iCryptOwner,
+					  OUT SIGPARAMS *sigParams )
+	{
+	const CRYPT_CERTIFICATE signingAttributes = actionListPtr->iExtraData;
+	int useDefaultAttributes, status;
+
+	REQUIRES( formatType == CRYPT_FORMAT_CRYPTLIB || \
+			  formatType == CRYPT_FORMAT_CMS || \
+			  formatType == CRYPT_FORMAT_SMIME );
+	REQUIRES( iCryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( iCryptOwner ) );
+
+	assert( isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
+	assert( isWritePtr( sigParams, sizeof( SIGPARAMS ) ) );
+
+	initSigParams( sigParams );
+
+	/* If it's a raw signature there are no additional signing parameters */
+	if( formatType == CRYPT_FORMAT_CRYPTLIB )
+		return( CRYPT_OK );
+
+	/* Add the timestamping session if there's one present */
+	if( actionListPtr->iTspSession != CRYPT_ERROR )
+		sigParams->iTspSession = actionListPtr->iTspSession;
+
+	/* If the caller has specified signing attributes, use those */
+	if( signingAttributes != CRYPT_ERROR )
+		{
+		sigParams->iAuthAttr = signingAttributes;
+		return( CRYPT_OK );
+		}
+
+	/* There are no siging attributes specified (which can only happen under 
+	   circumstances controlled by the pre-envelope signing code) we either 
+	   get the signing code to add the default ones for us or use none at 
+	   all if the use of default attributes is disabled */
+	status = krnlSendMessage( iCryptOwner, IMESSAGE_GETATTRIBUTE,  
+							  &useDefaultAttributes,
+							  CRYPT_OPTION_CMS_DEFAULTATTRIBUTES );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( useDefaultAttributes )
+		sigParams->useDefaultAuthAttr = TRUE;
+
+	return( CRYPT_OK );
+	}
+
 /* Process signing certificates and match the content-type in the 
    authenticated attributes with the signed content type if it's anything 
    other than 'data' (the data content-type is added automatically) */
@@ -343,7 +396,8 @@ static int processSigningCerts( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Make sure that the content-type in the attributes matches the actual 
 	   content type by deleting any existing content-type if necessary and 
 	   adding our one (quietly fixing things is easier than trying to report 
-	   this error back to the caller) */
+	   this error back to the caller - ex duobus malis minimum eligendum 
+	   est) */
 	if( krnlSendMessage( actionListPtr->iExtraData, IMESSAGE_GETATTRIBUTE, 
 						 &value, CRYPT_CERTINFO_CMS_CONTENTTYPE ) != CRYPT_ERROR_NOTFOUND )
 		{
@@ -366,7 +420,8 @@ static int processSignatureAction( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 								   INOUT ACTION_LIST *actionListPtr )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo = DUMMY_INIT;
-	int signatureSize, signingAttributes, status;
+	SIGPARAMS sigParams;
+	int signatureSize, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( actionListPtr, sizeof( ACTION_LIST ) ) );
@@ -384,39 +439,20 @@ static int processSignatureAction( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( status );
 		}
 
-	/* Determine the type of signing attributes to use.  If none are
-	   specified (which can only happen if the signed content is data),
-	   either get the signing code to add the default ones for us or use
-	   none at all if the use of default attributes is disabled */
-	signingAttributes = actionListPtr->iExtraData;
-	if( signingAttributes == CRYPT_ERROR )
-		{
-		/* If it's a raw signature there are no signing attributes */
-		if( envelopeInfoPtr->type == CRYPT_FORMAT_CRYPTLIB )
-			signingAttributes = CRYPT_UNUSED;
-		else
-			{
-			int useDefaultAttributes;
-
-			/* It's a CMS/SMIME signature, use whatever the default is */
-			status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
-									  IMESSAGE_GETATTRIBUTE,
-									  &useDefaultAttributes,
-									  CRYPT_OPTION_CMS_DEFAULTATTRIBUTES );
-			if( cryptStatusError( status ) )
-				return( status );
-			signingAttributes = useDefaultAttributes ? \
-								CRYPT_USE_DEFAULT : CRYPT_UNUSED;
-			}
-		}
+	/* Set up any necessary signature parameters such as signature 
+	  attributes and timestamps if necessary */
+	status = cmsInitSigParams( actionListPtr, envelopeInfoPtr->type, 
+							   envelopeInfoPtr->ownerHandle, 
+							   &sigParams );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Evaluate the size of the exported action */
 	status = iCryptCreateSignature( NULL, 0, &signatureSize, 
 						envelopeInfoPtr->type, actionListPtr->iCryptHandle,
 						actionListPtr->associatedAction->iCryptHandle,
-						signingAttributes,
-						( actionListPtr->iTspSession != CRYPT_ERROR ) ? \
-							actionListPtr->iTspSession : CRYPT_UNUSED );
+						( envelopeInfoPtr->type == CRYPT_FORMAT_CRYPTLIB ) ? \
+							NULL : &sigParams );
 	if( cryptStatusOK( status ) )
 		{
 		status = krnlSendMessage( actionListPtr->iCryptHandle,
@@ -425,11 +461,12 @@ static int processSignatureAction( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	if( isDlpAlgo( cryptAlgo ) || actionListPtr->iTspSession != CRYPT_ERROR )
+	if( isDlpAlgo( cryptAlgo ) || isEccAlgo( cryptAlgo ) || \
+		actionListPtr->iTspSession != CRYPT_ERROR )
 		{
 		/* If there are any signature actions that will result in indefinite-
-		   length encodings present we can't use a definite-length encoding
-		   for the signature */
+		   length encodings present then we can't use a definite-length 
+		   encoding for the signature */
 		envelopeInfoPtr->dataFlags |= ENVDATA_HASINDEFTRAILER;
 		actionListPtr->encodedSize = CRYPT_UNUSED;
 		}

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Database Keyset Test Routines					*
-*						Copyright Peter Gutmann 1995-2005					*
+*						Copyright Peter Gutmann 1995-2009					*
 *																			*
 ****************************************************************************/
 
@@ -36,11 +36,12 @@
 static const struct {
 	const C_STR url;			/* LDAP URL for keyset */
 	const char FAR_BSS *asciiURL;/* URL in ASCII */
-	const C_STR certName;		/* DN for cert and CRL */
+	const C_STR certName;		/* DN for certificate and CRL */
 	const C_STR crlName;
 	} FAR_BSS ldapUrlInfo[] = {
 	{ 0 },
-	{ TEXT( "ldap.diginotar.nl" ), "ldap.diginotar.nl",
+	{ TEXT( "ldap://ldap.diginotar.nl:389" ), "ldap.diginotar.nl",
+			/* Long URL form also test LDAP URL-parsing code */
 	  TEXT( "cn=Root Certificaat Productie, o=DigiNotar Root,c=NL" ),
 	  TEXT( "CN=CRL Productie,O=DigiNotar CRL,C=NL" ) },
 	{ TEXT( "ds.katalog.posten.se" ), "ds.katalog.posten.se",
@@ -58,6 +59,21 @@ static const struct {
 *					Database Keyset Read/Write Tests						*
 *																			*
 ****************************************************************************/
+
+/* Certificate with fields designed to cause problems for some keysets */
+
+static const CERT_DATA FAR_BSS sqlCertData[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "x'); DROP TABLE certificates; --" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "x' OR 1=1; DROP TABLE certificates; --" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "x'; DROP TABLE certificates; --" ) },
+
+	/* Other information */
+	{ CRYPT_CERTINFO_SELFSIGNED, IS_NUMERIC, TRUE },
+
+	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
+	};
 
 /* Read/write a certificate from a public-key keyset.  Returns
    CRYPT_ERROR_NOTAVAIL if this keyset type isn't available from this
@@ -137,12 +153,12 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 		while( cryptSetAttribute( cryptCert,
 								  CRYPT_CERTINFO_CURRENT_CERTIFICATE,
 								  CRYPT_CURSOR_NEXT ) == CRYPT_OK );
-		printf( isCertChain ? "Cert chain length = %d.\n" : \
+		printf( isCertChain ? "Certificate chain length = %d.\n" : \
 							  "CRL has %d entries.\n", value );
 		}
 
-	/* Check the cert against the CRL.  Any kind of error is a failure since
-	   the cert isn't in the CRL */
+	/* Check the certificate against the CRL.  Any kind of error is a 
+	   failure since the certificate isn't in the CRL */
 	if( keysetType != CRYPT_KEYSET_LDAP && \
 		keysetType != CRYPT_KEYSET_HTTP )
 		{
@@ -155,7 +171,7 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	cryptDestroyCert( cryptCert );
 
 	/* If we're reading multiple certs using the same (cached) query type,
-	   try re-reading the cert.  This can't be easily tested from the
+	   try re-reading the certificate.  This can't be easily tested from the
 	   outside because it's database back-end specific, so it'll require
 	   attaching a debugger to the read code to make sure that the cacheing
 	   is working as required */
@@ -194,12 +210,13 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cryptCert;
+	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	C_CHR filenameBuffer[ FILENAME_BUFFER_SIZE ];
 	C_CHR name[ CRYPT_MAX_TEXTSIZE + 1 ];
 	int length, status;
 
 	/* Import the certificate from a file - this is easier than creating one
-	   from scratch.  We use one of the later certs in the text set, since
+	   from scratch.  We use one of the later certs in the test set, since
 	   this contains an email address, which the earlier ones don't */
 	status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 
 									 EMAIL_ADDR_CERT );
@@ -210,7 +227,8 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 		return( FALSE );
 		}
 
-	/* Make sure that the cert does actually contain an email address */
+	/* Make sure that the certificate does actually contain an email 
+	   address */
 	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_EMAIL,
 									  name, &length );
 	if( cryptStatusError( status ) )
@@ -284,10 +302,10 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 		}
 	cryptDestroyCert( cryptCert );
 
-	/* Add a second cert with C=US so that we've got enough certs to properly
-	   exercise the query code.  This cert is highly unusual in that it
-	   doesn't have a DN, so we have to move up the DN looking for higher-up
-	   values, in this case the OU */
+	/* Add a second certificate with C=US so that we've got enough certs to 
+	   properly exercise the query code.  This certificate is highly unusual 
+	   in that it doesn't have a DN, so we have to move up the DN looking 
+	   for higher-up values, in this case the OU */
 	if( keysetType != CRYPT_KEYSET_LDAP )
 		{
 		status = importCertFromTemplate( &cryptCert, CERT_FILE_TEMPLATE, 2 );
@@ -322,6 +340,56 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 		cryptDestroyCert( cryptCert );
 		}
 
+	/* Add a third certificate with a DN that'll cause problems for some 
+	   storage technologies */
+	if( !loadRSAContexts( CRYPT_UNUSED, &pubKeyContext, &privKeyContext ) )
+		return( FALSE );
+	status = cryptCreateCert( &cryptCert, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		{
+		printf( "cryptCreateCert() failed with error code %d, line %d.\n",
+				status, __LINE__ );
+		return( FALSE );
+		}
+	status = cryptSetAttribute( cryptCert,
+					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, pubKeyContext );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCert, "cryptSetAttribute()", status,
+							   __LINE__ ) );
+	if( !addCertFields( cryptCert, sqlCertData, __LINE__ ) )
+		return( FALSE );
+	status = cryptSignCert( cryptCert, privKeyContext );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCert, "cryptSignCert()", status,
+							   __LINE__ ) );
+	destroyContexts( CRYPT_UNUSED, pubKeyContext, privKeyContext );
+	status = cryptAddPublicKey( cryptKeyset, cryptCert );
+	if( cryptStatusError( status ) )
+		{
+		/* The key is already present, delete it and retry the write */
+		status = cryptGetAttributeString( cryptCert,
+								CRYPT_CERTINFO_COMMONNAME, name, &length );
+		if( cryptStatusOK( status ) )
+			{
+#ifdef UNICODE_STRINGS
+			length /= sizeof( wchar_t );
+#endif /* UNICODE_STRINGS */
+			name[ length ] = TEXT( '\0' );
+			status = cryptDeleteKey( cryptKeyset, CRYPT_KEYID_NAME, name );
+			}
+		if( cryptStatusError( status ) )
+			return( extErrorExit( cryptKeyset, "cryptDeleteKey()", status,
+								  __LINE__ ) );
+		status = cryptAddPublicKey( cryptKeyset, cryptCert );
+		}
+	if( cryptStatusError( status ) )
+		{
+		return( extErrorExit( cryptKeyset, "cryptAddPublicKey()",
+							  status, __LINE__ ) );
+		}
+	cryptDestroyCert( cryptCert );
+
 	/* Now try the same thing with a CRL.  This code also tests the
 	   duplicate-detection mechanism, if we don't get a duplicate error
 	   there's a problem */
@@ -347,14 +415,14 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 		}
 	cryptDestroyCert( cryptCert );
 
-	/* Finally, try it with a cert chain */
-	puts( "Adding cert chain." );
+	/* Finally, try it with a certificate chain */
+	puts( "Adding certificate chain." );
 	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't read cert chain from file, status %d, line %d.\n", 
-				status, __LINE__ );
+		printf( "Couldn't read certificate chain from file, status %d, "
+				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
@@ -363,17 +431,17 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 							  __LINE__ ) );
 	cryptDestroyCert( cryptCert );
 
-	/* In addition to the other certs we also add the generic user cert,
-	   which is used later in other tests.  Since it may have been added
-	   earlier, we try and delete it first (we can't use the existing
-	   version since the issuerAndSerialNumber won't match the one in the
-	   private-key keyset) */
+	/* In addition to the other certs we also add the generic user 
+	   certificate, which is used later in other tests.  Since it may have 
+	   been added earlier we try and delete it first (we can't use the 
+	   existing version since the issuerAndSerialNumber won't match the one 
+	   in the private-key keyset) */
 	status = getPublicKey( &cryptCert, USER_PRIVKEY_FILE,
 						   USER_PRIVKEY_LABEL );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't read user cert from file, status %d, line %d.\n", 
-				status, __LINE__ );
+		printf( "Couldn't read user certificate from file, status %d, line "
+				"%d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,
@@ -387,12 +455,14 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	while( cryptStatusOK( status ) );
 	status = cryptAddPublicKey( cryptKeyset, cryptCert );
 	if( status == CRYPT_ERROR_NOTFOUND )
+		{
 		/* This can occur if a database keyset is defined but hasn't been
 		   initialised yet so the necessary tables don't exist, it can be
 		   opened but an attempt to add a key will return a not found error
 		   since it's the table itself rather than any item within it that
 		   isn't being found */
 		status = CRYPT_OK;
+		}
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptKeyset, "cryptAddPublicKey()", status,
 							  __LINE__ ) );
@@ -534,8 +604,10 @@ int testReadCert( void )
 			}
 		}
 	else
+		{
 		return( extErrorExit( cryptCert, "cryptGetAttributeString()", status,
 							  __LINE__ ) );
+		}
 	cryptDestroyCert( cryptCert );
 
 	puts( "Testing certificate database read..." );
@@ -544,8 +616,10 @@ int testReadCert( void )
 							 CRYPT_CERTTYPE_CERTIFICATE,
 							 READ_OPTION_NORMAL );
 	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* Database keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_FAILED )
 		{
 		puts( "This is probably because you haven't set up a database or "
@@ -564,13 +638,13 @@ int testReadCert( void )
 	if( !status )
 		return( FALSE );
 
-	/* Get the DN from one of the test cert chains */
+	/* Get the DN from one of the test certificate chains */
 	filenameParamFromTemplate( filenameBuffer, CERTCHAIN_FILE_TEMPLATE, 2 );
 	status = importCertFile( &cryptCert, filenameBuffer );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't read cert.chain from file, status %d, line %d.\n",
-				status, __LINE__ );
+		printf( "Couldn't read certificate chain from file, status %d, "
+				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetAttributeString( cryptCert, CRYPT_CERTINFO_COMMONNAME,
@@ -584,8 +658,8 @@ int testReadCert( void )
 		}
 	cryptDestroyCert( cryptCert );
 
-	/* Now read the complete cert chain */
-	puts( "Reading complete cert chain." );
+	/* Now read the complete certificate chain */
+	puts( "Reading complete certificate chain." );
 	status = testKeysetRead( DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME,
 	 						 CRYPT_KEYID_NAME, name,
 							 CRYPT_CERTTYPE_CERTCHAIN, READ_OPTION_NORMAL );
@@ -602,8 +676,10 @@ int testWriteCert( void )
 	puts( "Testing certificate database write..." );
 	status = testKeysetWrite( DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME );
 	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* Database keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_FAILED )
 		{
 		printf( "This may be because you haven't set up a data source "
@@ -627,8 +703,10 @@ int testKeysetQuery( void )
 	puts( "Testing general certificate database query..." );
 	status = testQuery( DATABASE_KEYSET_TYPE, DATABASE_KEYSET_NAME );
 	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* Database keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_FAILED )
 		{
 		puts( "This is probably because you haven't set up a database or "
@@ -654,8 +732,10 @@ int testWriteCertDbx( void )
 	status = testKeysetWrite( CRYPT_KEYSET_PLUGIN,
 							  DATABASE_PLUGIN_KEYSET_NAME );
 	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* Database plugin keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_FAILED )
 		{
 		puts( "This may be because you haven't set up a database plugin "
@@ -697,8 +777,10 @@ int testReadCertLDAP( void )
 	status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED, CRYPT_KEYSET_LDAP,
 							  ldapKeysetName, CRYPT_KEYOPT_READONLY );
 	if( status == CRYPT_ERROR_PARAM3 )
+		{
 		/* LDAP keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_OPEN )
 		{
 		printf( "%s not available, trying alternative directory...\n",
@@ -866,8 +948,10 @@ int testWriteCertLDAP( void )
 	status = testKeysetWrite( CRYPT_KEYSET_LDAP,
 							  ldapUrlInfo[ LDAP_SERVER_NO ].url );
 	if( status == CRYPT_ERROR_NOTAVAIL )
+		{
 		/* LDAP keyset access not available */
 		return( CRYPT_ERROR_NOTAVAIL );
+		}
 	if( status == CRYPT_ERROR_FAILED )
 		{
 		printf( "This is probably because you haven't set up an LDAP "
@@ -896,9 +980,9 @@ int testReadCertURL( void )
 	{
 	int status;
 
-	/* Test fetching a cert from a URL via an HTTP proxy.  This requires
-	   a random open proxy for testing (unless the site happens to be running
-	   an HTTP proxy), www.openproxies.com will provide this.
+	/* Test fetching a certificate from a URL via an HTTP proxy.  This 
+	   requires a random open proxy for testing (unless the site happens to 
+	   be running an HTTP proxy), www.openproxies.com will provide this.
 	   
 	   Alternatively, for testing from a NZ-local ISP, proxy.xtra.co.nz:8080
 	   can also be used */
@@ -917,7 +1001,7 @@ int testReadCertURL( void )
 		return( FALSE );
 #endif /* 0 */
 
-	/* Test fetching a cert from a URL */
+	/* Test fetching a certificate from a URL */
 	puts( "Testing HTTP certificate read from URL..." );
 	status = testKeysetRead( CRYPT_KEYSET_HTTP, HTTP_KEYSET_CERT_NAME,
 							 CRYPT_KEYID_NAME, TEXT( "[none]" ),

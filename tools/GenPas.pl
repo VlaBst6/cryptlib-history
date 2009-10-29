@@ -3,8 +3,8 @@
 # Copyright (C) 2003-2004 Wolfgang Gothier
 
 #####
-#       G E N P A S . P L   Version 3.2 (last changes 2005-09-07)
-#       --------------------------------------------------------------------
+#       G E N P A S . P L   $Id: GenPas.pl,v 1.3 2009/07/13 20:27:20 wogo Exp $
+#       -----------------------------------------------------------------------
 #
 #       PERL script for translation of the cryptlib header file
 #            into a Delphi (R) interface file for Cryptlib (CL32.DLL).
@@ -35,7 +35,7 @@ use File::Basename;
 my $FileName = shift @ARGV || 'cryptlib.h';		# default filename is "cryptlib.h"
 my %DEFINED = ( 1, 1,                         # ifdef 1 is to be included
                 "USE_VENDOR_ALGOS", 0 );			# set to 1 to include #IFDEF USE_VENDOR_ALGOS
-my $Startline = qr{^#define C_INOUT};					# ignore all lines before this one
+my $Startline = qr{^#endif\s+\/\*\s+_CRYPTLIB_DEFINED\s+\*\/};	# ignore all lines before this one
 
 my ($FileBase, $Path, $Ext) = fileparse($FileName, qr{\.[^.]*$});
 die("\"usage: $0 cryptlib.h\"\nParameter must be a C header file\nStop") unless ($Ext =~ m/^\.h$/i) && -r $FileName;
@@ -63,9 +63,12 @@ my $INACTIVE = 0;
 my $LEVEL = 0;
 # handle conditionals, include conditional code only if definition agrees with %DEFINED
 while (<INFILE>) { 
+    # remove preprocessor symbols
+    s/C_CHECK_RETVAL//;
+    s/C_NONNULL_ARG\s*\(\s*\([ \t0-9,]+\s*\)\s*\)//;
 
-		# remove tabs
-		1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;
+    # remove tabs
+    1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;
 
     if (/^\s*#if(\s|def\s)(\w+)/) {		
         $LEVEL += 1;
@@ -91,6 +94,7 @@ while (<INFILE>) {
         $INACTIVE = 0;
         next;
     }
+
     push @source, $_ unless $INACTIVE;
 }
 
@@ -127,6 +131,12 @@ while ($_ = shift @source) {
 
 		# constant definitions
     if (s/^\s*#define\s+(\w+)\s+(\w+|[+\-0-9]+)/$const  $1 = $2;/) {
+        $const="";
+        $type="\ntype\n";
+    }
+    
+		# constant definitions with parenthesis
+    if (s/^\s*#define\s+(\w+)\s+\(\s*(\w+|[+\-0-9]+)\s*\)/$const  $1 = $2;/) {
         $const="";
         $type="\ntype\n";
     }
@@ -253,11 +263,11 @@ interface
 
  Please check twice that the file matches the version of $filename
  in your cryptlib source! If this is not the right version, try to download an
- update from "http://www.sogot.de/cryptlib/". If the filesize or file creation
+ update from "http://cryptlib.sogot.de/". If the filesize or file creation
  date do not match, then please do not complain about problems.
 
  Published by W. Gothier, 
- mailto: cryptlib\@gothier.net if you find errors in this file.
+ mailto: problems\@cryptlib.sogot.de if you find errors in this file.
 
 -------------------------------------------------------------------------------}
 
@@ -379,19 +389,22 @@ sub typelist {
     my $tmp = "";
     foreach  (@_) {
     		# handle comment at start of splitted line
-        while (s!^(\s*)/\*(.+)\*/!!) {
+        while ($_ =~ s!^(\s*)/\*(.+)\*/!!) {
             $tmp .= $1.'{'.$2.'}';
         }
         # translate fields into arrays 
-        if (s!^(\s*)(.*)\s(\w+)\s*\[\s*(\w+)\s*\]\s*$!!) {
+        if (s!^(\s*)(.*)\s+(\w+)\s*\[\s*(\w+)\s*\]\s*$!!) {
             $tmp .= "$1$3: array[0 .. $4-1] of ".&typeconv($2).";";
         }
         # translate normal elements
-        elsif (s!^(\s*)(.*)\s(\w+)\s*$!!) {
+        elsif (s!^(\s*)(\w+)\s+(\w+)\s*$!!) {
             $tmp .= "$1$3: ".&typeconv($2).";";
         }
         # copy line, if nothing matched
-        else {$tmp .= $_}
+        else {
+			$tmp .= $_;
+			$tmp .= ";" unless $_;
+		}
     }
     return $tmp;
 }
@@ -403,9 +416,9 @@ sub typeconv {
     return $param if $param =~ s/\bunsigned char\b/byte/;		# unsigned char	-> byte
     return $param if $param =~ s/\bvoid\s+C_PTR\b/Pointer/;	# void C_PTR		-> Pointer
     return $param if $param =~ s/\bvoid\b/Pointer/;					# void					-> Pointer
-    return $param if $param =~ s/\bchar\s+C_PTR\b/PChar/;		# char C_PTR		-> PChar
-    return $param if $param =~ s/\bC_STR\b/PChar/;					# char C_PTR		-> PChar
-    return $param if $param =~ s/\bC_CHR\b/char/;						# char C_PTR		-> PChar
+    return $param if $param =~ s/\bchar\s+C_PTR\b/PAnsiChar/;		# char C_PTR		-> PAnsiChar
+    return $param if $param =~ s/\bC_STR\b/PAnsiChar/;					# char C_PTR		-> PAnsiChar
+    return $param if $param =~ s/\bC_CHR\b/char/;						# char C_PTR		-> PAnsiChar
     return $param;
 }
 
@@ -422,9 +435,9 @@ sub convpar {
 # subroutine to translate C params to Delphi params
 sub convpar1 {
     my $par = shift;
-    return "const $2: $par" if ($par =~ s/^\s*C_IN\s+(.+)\s+(\w+)\s*/&typeconv($1)/e);
+    return "const $3: $par" if ($par =~ s/^\s*(C_IN\s+|C_IN_OPT\s+)(.+)\s+(\w+)\s*/&typeconv($2)/e);
     return "$2: $par"       if ($par =~ s/^\s*C_INOUT\s+(.+)\s+(\w+)\s*/&typeconv($1)/e);
-    return "$par"           if ($par =~ s/^\s*C_OUT\s+void\s+C_PTR\s+(\w+)\s*/$1: Pointer/);
-    return "var $2: $par"   if ($par =~ s/^\s*C_OUT\s+(.+)\s+(?:C_PTR)?\s+(\w+)\s*/&typeconv($1)/e);
+    return "$par"           if ($par =~ s/^\s*(C_OUT\s+|C_OUT_OPT\s+)void\s+C_PTR\s+(\w+)\s*/$2: Pointer/);
+    return "var $3: $par"   if ($par =~ s/^\s*(C_OUT\s+|C_OUT_OPT\s+)(.+)\s+(?:C_PTR)?\s+(\w+)\s*/&typeconv($2)/e);
     return $par;
 }

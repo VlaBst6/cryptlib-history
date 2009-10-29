@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib HTTP Certstore Session Management				*
-*						Copyright Peter Gutmann 1998-2006					*
+*						Copyright Peter Gutmann 1998-2008					*
 *																			*
 ****************************************************************************/
 
@@ -37,8 +37,8 @@ static const CERTSTORE_READ_INFO certstoreReadInfo[] = {
 	{ "iHash", 5, CRYPT_IKEYID_ISSUERID, CERTSTORE_FLAG_BASE64 },
 	{ "iAndSHash", 9, CRYPT_IKEYID_ISSUERANDSERIALNUMBER, CERTSTORE_FLAG_BASE64 },
 	{ "sKIDHash", 8, CRYPT_IKEYID_KEYID, CERTSTORE_FLAG_BASE64 },
-	{ NULL, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE },
-	{ NULL, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE }
+	{ NULL, 0, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE },
+		{ NULL, 0, CRYPT_KEYID_NONE, CERTSTORE_FLAG_NONE }
 	};
 
 /****************************************************************************
@@ -47,39 +47,46 @@ static const CERTSTORE_READ_INFO certstoreReadInfo[] = {
 *																			*
 ****************************************************************************/
 
-/* Convert a query attribute into a string suitable for use with retExt() */
+/* Convert a query attribute into a text string suitable for use with 
+   retExt() */
 
-STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static void queryAttributeToString( OUT_BUFFER_FIXED( textBufMaxLen ) \
-									char *textBuffer, 
-									IN_LENGTH_SHORT const int textBufMaxLen,
-									IN_BUFFER( attributeLen ) const BYTE *attribute, 
-									IN_LENGTH_SHORT const int attributeLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int queryAttributeToString( OUT_BUFFER_FIXED( textBufMaxLen ) char *textBuffer, 
+								   IN_LENGTH_SHORT_MIN( 16 ) const int textBufMaxLen,
+								   IN_BUFFER( attributeLen ) const BYTE *attribute, 
+								   IN_LENGTH_SHORT const int attributeLen )
 	{
 	assert( isWritePtr( textBuffer, textBufMaxLen ) );
 	assert( isReadPtr( attribute, attributeLen ) );
 
-	REQUIRES_V( textBufMaxLen > 0 && textBufMaxLen < MAX_INTLENGTH_SHORT );
-	REQUIRES_V( attributeLen > 0 && attributeLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( textBufMaxLen >= 16 && textBufMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( attributeLen > 0 && attributeLen < MAX_INTLENGTH_SHORT );
 
 	/* Copy as much of the attribute as will fit across and clean it up so
 	   that it can be returned to the user */
 	memcpy( textBuffer, attribute, min( attributeLen, textBufMaxLen ) );
 	sanitiseString( textBuffer, textBufMaxLen, attributeLen );
+
+	return( CRYPT_OK );
 	}
 
-/* Process a cert query and return the requested certificate.  See the 
-   comment above for why this is declared non-static */
+/* Process a certificate query and return the requested certificate.  See 
+   the comment above for why this is declared non-static */
 
-int processCertQuery( SESSION_INFO *sessionInfoPtr,	
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
+int processCertQuery( INOUT SESSION_INFO *sessionInfoPtr,	
 					  const HTTP_URI_INFO *httpReqInfo,
-					  const CERTSTORE_READ_INFO *queryReqInfo,
-					  const int queryReqInfoSize,
-					  int *attributeID, void *attribute, 
-					  const int attributeMaxLen, int *attributeLen )
+					  IN_ARRAY( queryReqInfoSize ) \
+							const CERTSTORE_READ_INFO *queryReqInfo,
+					  IN_RANGE( 1, 64 ) const int queryReqInfoSize,
+					  OUT_ATTRIBUTE_Z int *attributeID, 
+					  OUT_BUFFER_OPT( attributeMaxLen, *attributeLen ) \
+							void *attribute, 
+					  IN_LENGTH_SHORT_Z const int attributeMaxLen, 
+					  OUT_OPT_LENGTH_SHORT_Z int *attributeLen )
 	{
 	const CERTSTORE_READ_INFO *queryInfoPtr = NULL;
-	const char firstChar = toLower( httpReqInfo->attribute[ 0 ] );
+	const int firstChar = toLower( httpReqInfo->attribute[ 0 ] );
 	int i, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -92,11 +99,19 @@ int processCertQuery( SESSION_INFO *sessionInfoPtr,
 			( isWritePtr( attribute, attributeMaxLen ) && \
 			  isWritePtr( attributeLen, sizeof( int ) ) ) );
 
+	REQUIRES( queryReqInfoSize > 0 && queryReqInfoSize <= 64 );
+	REQUIRES( ( attribute == NULL && attributeMaxLen == 0 && \
+				attributeLen == NULL ) || \
+			  ( attribute != NULL && \
+				attributeMaxLen > 0 && \
+				attributeMaxLen < MAX_INTLENGTH_SHORT && \
+				attributeLen != NULL ) );
+
 	/* Clear return values */
-	*attributeID = CRYPT_ERROR;
+	*attributeID = CRYPT_ATTRIBUTE_NONE;
 	if( attribute != NULL )
 		{
-		memset( attribute, 0, attributeMaxLen );
+		memset( attribute, 0, min( 16, attributeMaxLen ) );
 		*attributeLen = 0;
 		}
 
@@ -114,15 +129,15 @@ int processCertQuery( SESSION_INFO *sessionInfoPtr,
 			break;
 			}
 		}
-	if( i >= queryReqInfoSize )
-		retIntError();
+	ENSURES( i < queryReqInfoSize );
 	if( queryInfoPtr == NULL )
 		{
 		char queryText[ CRYPT_MAX_TEXTSIZE + 8 ];
 
-		queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
-								httpReqInfo->attribute, 
-								httpReqInfo->attributeLen );
+		status = queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
+										 httpReqInfo->attribute, 
+										 httpReqInfo->attributeLen );
+		ENSURES( cryptStatusOK( status ) );
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 				  "Invalid certificate query attribute '%s'", queryText ) );
@@ -137,10 +152,9 @@ int processCertQuery( SESSION_INFO *sessionInfoPtr,
 	/* If the query data wasn't encoded in any way, we're done */
 	if( !( queryInfoPtr->flags & CERTSTORE_FLAG_BASE64 ) )
 		{
-		memcpy( attribute, httpReqInfo->value, httpReqInfo->valueLen );
-		*attributeLen = httpReqInfo->valueLen;
-
-		return( CRYPT_OK );
+		return( attributeCopyParams( attribute, attributeMaxLen, 
+									 attributeLen, httpReqInfo->value, 
+									 httpReqInfo->valueLen ) );
 		}
 
 	/* The value was base64-encoded in transit, decode it to get the actual 
@@ -152,8 +166,10 @@ int processCertQuery( SESSION_INFO *sessionInfoPtr,
 		{
 		char queryText[ CRYPT_MAX_TEXTSIZE + 8 ];
 
-		queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
-								httpReqInfo->value, httpReqInfo->valueLen );
+		status = queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
+										 httpReqInfo->value, 
+										 httpReqInfo->valueLen );
+		ENSURES( cryptStatusOK( status ) );
 		retExt( CRYPT_ERROR_BADDATA, 
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 				  "Invalid base64-encoded query value '%s'", queryText ) );
@@ -162,23 +178,26 @@ int processCertQuery( SESSION_INFO *sessionInfoPtr,
 	return( CRYPT_OK );
 	}
 
-/* Send an HTTP error response to the client (the status value is mapped at 
-   the HTTP layer to an appropriate HTTP response).  We don't return a 
-   status from this since the caller already has an error status available */
+/* Send an HTTP error response to the client (the error status value is 
+   mapped at the HTTP layer to an appropriate HTTP response).  We don't 
+   return a status from this since the caller already has an error status 
+   available */
 
-void sendCertErrorResponse( SESSION_INFO *sessionInfoPtr, 
-							const int errorStatus )
+STDC_NONNULL_ARG( ( 1 ) ) \
+void sendCertErrorResponse( INOUT SESSION_INFO *sessionInfoPtr, 
+							IN_ERROR const int errorStatus )
 	{
 	HTTP_DATA_INFO httpDataInfo;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( cryptStatusError( errorStatus ) );
+	
+	REQUIRES_V( cryptStatusError( errorStatus ) );
 
 	initHttpDataInfo( &httpDataInfo, sessionInfoPtr->receiveBuffer,
 					  sessionInfoPtr->receiveBufSize );
 	httpDataInfo.reqStatus = errorStatus;
-	swrite( &sessionInfoPtr->stream, &httpDataInfo, 
-			sizeof( HTTP_DATA_INFO ) );
+	( void ) swrite( &sessionInfoPtr->stream, &httpDataInfo, 
+					 sizeof( HTTP_DATA_INFO ) );
 	}
 
 /****************************************************************************
@@ -189,7 +208,8 @@ void sendCertErrorResponse( SESSION_INFO *sessionInfoPtr,
 
 /* Exchange data with an HTTP client */
 
-static int serverTransact( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	HTTP_DATA_INFO httpDataInfo;
 	HTTP_URI_INFO httpReqInfo;
@@ -217,7 +237,7 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		return( status );
 		}
 
-	/* Convert the cert query into a certstore search key */
+	/* Convert the certificate query into a certstore search key */
 	status = processCertQuery( sessionInfoPtr, &httpReqInfo, 
 							   certstoreReadInfo,
 							   FAILSAFE_ARRAYSIZE( certstoreReadInfo, \
@@ -230,12 +250,12 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		return( status );
 		}
 
-	/* Try and fetch the requested cert.  Note that this is somewhat 
-	   suboptimal since we have to instantiate the cert only to destroy it
-	   again immediately afterwards as soon as we've exported the cert data,
-	   for a proper high-performance implementation the server would query
-	   the cert database directly and send the stored encoded value to the
-	   client */
+	/* Try and fetch the requested certificate.  Note that this is somewhat 
+	   suboptimal since we have to instantiate the certificate only to 
+	   destroy it again as soon as we've exported the certificate data, for 
+	   a proper high-performance implementation the server would query the 
+	   certificate database directly and send the stored encoded value to 
+	   the client */
 	setMessageKeymgmtInfo( &getkeyInfo, keyIDtype, keyID, keyIDLen, 
 						   NULL, 0, KEYMGMT_FLAG_NONE );
 	status = krnlSendMessage( sessionInfoPtr->cryptKeyset,
@@ -245,21 +265,26 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 		{
 		char queryText[ CRYPT_MAX_TEXTSIZE + 8 ];
 		char textBuffer[ 64 + CRYPT_MAX_TEXTSIZE + 8 ];
+		int textLength;
 
-		/* Not finding a cert in response to a request isn't a real error so
-		   all we do is return a warning to the caller */
+		/* Not finding a certificate in response to a request isn't a real 
+		   error so all we do is return a warning to the caller.  
+		   Unfortunately since we're not using retExt() we have to assemble
+		   the message string ourselves */
 		sendCertErrorResponse( sessionInfoPtr, status );
-		queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
-								httpReqInfo.value, httpReqInfo.valueLen );
-		memcpy( textBuffer, "Warning: Couldn't find certificate for '", 40 );
-		memcpy( textBuffer + 40, keyID, keyIDLen );
-		memcpy( textBuffer + 40 + keyIDLen, "'", 2 );
-		setErrorString( SESSION_ERRINFO, textBuffer, 40 + keyIDLen + 2 );
+		status = queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
+										 httpReqInfo.value, 
+										 httpReqInfo.valueLen );
+		ENSURES( cryptStatusOK( status ) );
+		textLength = sprintf_s( textBuffer, 64 + CRYPT_MAX_TEXTSIZE,
+								"Warning: Couldn't find certificate for '%s'", 
+								queryText );
+		setErrorString( SESSION_ERRINFO, textBuffer, textLength );
 
 		return( CRYPT_OK );
 		}
 
-	/* Write the cert to the session buffer */
+	/* Write the certificate to the session buffer */
 	setMessageData( &msgData, sessionInfoPtr->receiveBuffer,
 					sessionInfoPtr->receiveBufSize );
 	status = krnlSendMessage( getkeyInfo.cryptHandle, IMESSAGE_CRT_EXPORT, 
@@ -268,10 +293,13 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		char queryText[ CRYPT_MAX_TEXTSIZE + 8 ];
+		int altStatus;
 
 		sendCertErrorResponse( sessionInfoPtr, status );
-		queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
-								httpReqInfo.value, httpReqInfo.valueLen );
+		altStatus = queryAttributeToString( queryText, CRYPT_MAX_TEXTSIZE,
+											httpReqInfo.value, 
+											httpReqInfo.valueLen );
+		ENSURES( cryptStatusOK( altStatus ) );
 		retExt( status, 
 				( status, SESSION_ERRINFO, 
 				  "Couldn't export requested certificate for '%s'", 
@@ -290,7 +318,8 @@ static int serverTransact( SESSION_INFO *sessionInfoPtr )
 *																			*
 ****************************************************************************/
 
-int setAccessMethodCertstore( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setAccessMethodCertstore( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	static const PROTOCOL_INFO protocolInfo = {
 		/* General session information */

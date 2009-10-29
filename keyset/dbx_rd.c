@@ -38,6 +38,7 @@ static DBMS_CACHEDQUERY_TYPE getCachedQueryType( IN_ENUM_OPT( KEYMGMT_ITEM ) \
 	{
 	REQUIRES_EXT( ( itemType == KEYMGMT_ITEM_NONE || \
 					itemType == KEYMGMT_ITEM_REQUEST || \
+					itemType == KEYMGMT_ITEM_REVREQUEST || \
 					itemType == KEYMGMT_ITEM_PKIUSER || \
 					itemType == KEYMGMT_ITEM_PUBLICKEY || \
 					itemType == KEYMGMT_ITEM_REVOCATIONINFO ), 
@@ -85,6 +86,7 @@ static char *getSelectString( IN_ENUM( KEYMGMT_ITEM ) \
 								const KEYMGMT_ITEM_TYPE itemType )
 	{
 	REQUIRES_N( itemType == KEYMGMT_ITEM_REQUEST || \
+				itemType == KEYMGMT_ITEM_REVREQUEST || \
 				itemType == KEYMGMT_ITEM_PKIUSER || \
 				itemType == KEYMGMT_ITEM_PUBLICKEY || \
 				itemType == KEYMGMT_ITEM_REVOCATIONINFO );
@@ -92,6 +94,7 @@ static char *getSelectString( IN_ENUM( KEYMGMT_ITEM ) \
 	switch( itemType )
 		{
 		case KEYMGMT_ITEM_REQUEST:
+		case KEYMGMT_ITEM_REVREQUEST:
 			return( "SELECT certData FROM certRequests WHERE " );
 
 		case KEYMGMT_ITEM_PKIUSER:
@@ -138,9 +141,7 @@ static BOOLEAN checkCertUsage( IN_BUFFER( certLength ) const BYTE *certificate,
 							   IN_FLAGS( KEYMGMT ) const int requestedUsage )
 	{
 	const int keyUsageMask = ( requestedUsage & KEYMGMT_FLAG_USAGE_CRYPT ) ? \
-								CRYPT_KEYUSAGE_KEYENCIPHERMENT : \
-								CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
-								CRYPT_KEYUSAGE_NONREPUDIATION;
+							 CRYPT_KEYUSAGE_KEYENCIPHERMENT : KEYUSAGE_SIGN;
 	int i;
 
 	assert( isReadPtr( certificate, certLength ) );
@@ -273,6 +274,7 @@ int getItemData( INOUT DBMS_INFO *dbmsInfo,
 	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
 			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_REVREQUEST || \
 			  itemType == KEYMGMT_ITEM_PKIUSER || \
 			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
 	REQUIRES( options >= KEYMGMT_FLAG_NONE && options < KEYMGMT_FLAG_MAX );
@@ -414,14 +416,15 @@ int getItemData( INOUT DBMS_INFO *dbmsInfo,
 	/* Create a certificate object from the encoded certificate data.  If 
 	   we're reading revocation information the data is a single CRL entry 
 	   so we have to tell the certificate import code to treat it as a 
-	   special case of a CRL.  If we're reading a request it could be one 
-	   of several types so we have to use auto-detection rather than 
-	   specifying an exact format */
+	   special case of a CRL.  If we're reading a certificate request it 
+	   could be either a PKCS #10 or CRMF request so we have to use auto-
+	   detection rather than specifying an exact format */
 	setMessageCreateObjectIndirectInfo( &createInfo, certificate, 
 										certDataLength,
 		( itemType == KEYMGMT_ITEM_PUBLICKEY || \
 		  itemType == KEYMGMT_ITEM_NONE ) ? CRYPT_CERTTYPE_CERTIFICATE : \
 		( itemType == KEYMGMT_ITEM_REQUEST ) ? CRYPT_CERTTYPE_NONE : \
+		( itemType == KEYMGMT_ITEM_REVREQUEST ) ? CRYPT_CERTTYPE_REQUEST_REVOCATION : \
 		( itemType == KEYMGMT_ITEM_PKIUSER ) ? CRYPT_CERTTYPE_PKIUSER : \
 		( itemType == KEYMGMT_ITEM_REVOCATIONINFO ) ? CRYPT_ICERTTYPE_REVINFO : \
 		CRYPT_CERTTYPE_NONE );
@@ -469,6 +472,7 @@ static int getFirstItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
 			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_REVREQUEST || \
 			  itemType == KEYMGMT_ITEM_PKIUSER || \
 			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
 	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && \
@@ -561,6 +565,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	REQUIRES( itemType == KEYMGMT_ITEM_NONE || \
 			  itemType == KEYMGMT_ITEM_PUBLICKEY || \
 			  itemType == KEYMGMT_ITEM_REQUEST || \
+			  itemType == KEYMGMT_ITEM_REVREQUEST || \
 			  itemType == KEYMGMT_ITEM_PKIUSER || \
 			  itemType == KEYMGMT_ITEM_REVOCATIONINFO );
 	REQUIRES( keyIDtype > CRYPT_KEYID_NONE && \
@@ -595,6 +600,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	/* If this is a CA management item fetch, fetch the data from the CA 
 	   certificate store */
 	if( itemType == KEYMGMT_ITEM_REQUEST || \
+		itemType == KEYMGMT_ITEM_REVREQUEST || \
 		itemType == KEYMGMT_ITEM_PKIUSER || \
 		( itemType == KEYMGMT_ITEM_REVOCATIONINFO && \
 		  !( flags & KEYMGMT_FLAG_CHECK_ONLY ) ) )

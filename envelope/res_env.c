@@ -208,7 +208,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			{
 			MESSAGE_DATA msgData;
 
-			setMessageData( &msgData, ( void * ) iv, ivLength );
+			setMessageData( &msgData, ( MESSAGE_CAST ) iv, ivLength );
 			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 									  &msgData, CRYPT_CTXINFO_IV );
 			}
@@ -272,6 +272,7 @@ static int checkMissingInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			break;
 
 		case ACTION_HASH:
+			DEBUG_DIAG(( "Hashed (rather than MAC'd) enveloping isn't supported" ));
 			assert( DEBUG_WARN );
 			break;
 
@@ -463,7 +464,7 @@ static int addPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	iCryptContext = createInfo.cryptHandle;
 
 	/* Derive the key into the context */
-	setMessageData( &msgData, ( void * ) password, passwordLength );
+	setMessageData( &msgData, ( MESSAGE_CAST ) password, passwordLength );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 							  &msgData, CRYPT_CTXINFO_KEYING_VALUE );
 	if( cryptStatusError( status ) )
@@ -549,7 +550,7 @@ static int addPgpPasswordInfo( ENVELOPE_INFO *envelopeInfoPtr,
 	/* PGP uses CFB mode for everything so we change the mode from the 
 	   default of CBC to CFB */
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 
-							  ( void * ) &mode, CRYPT_CTXINFO_MODE );
+							  ( MESSAGE_CAST ) &mode, CRYPT_CTXINFO_MODE );
 	if( cryptStatusError( status ) )
 		return( status );
 

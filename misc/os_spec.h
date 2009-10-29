@@ -51,6 +51,9 @@
   #else
 	#define __WIN32__
   #endif /* WinCE vs. Win32 */
+  #if defined( _M_X64 )
+	#define __WIN64__
+  #endif /* Win64 */
 #endif /* Win32 or WinCE */
 #if defined( __WINDOWS__ ) && \
 	!( defined( __WIN32__ ) || defined( __WINCE__ ) )
@@ -154,40 +157,64 @@
 	#pragma warning( disable: 4761 )/* Integral size mismatch in argument */
   #endif /* 16-bit VC++ */
 
-  /* Warning level 3 */
-  // Note: 4018 means the compiler has to convert the signed value to 
-  // unsigned to perform the comparison, should make this explicit with a
-  // cast.
+  /* Warning level 3:
+  
+	 4017: Comparing signed <-> unsigned value.  The compiler has to convert 
+		   the signed value to unsigned to perform the comparison.  This 
+		   leads to around 25 false-positive warnings.  Note that this is
+		   a variant of the VC++ 2005-only warning 4267, this one warns
+		   about comparing the result of a sizeof() operation to an int and
+		   4267 warns about size_t types in general */
   #pragma warning( disable: 4018 )	/* Comparing signed <-> unsigned value */
-  #pragma warning( disable: 4127 )	/* Conditional is constant: while( TRUE ) */
 
-  /* Warning level 4.  The function <-> data pointer cast warnings are
-	 orthogonal and impossible to disable (they override the universal
-	 'void *' pointer type), the signed/unsigned and size warnings are
-	 more compiler peeves as for the level 3 warnings (in particular the
-	 int <-> unsigned char/short warning isn't caused by dangerous 
-	 trunctions but by things like depositing a small value contained in
-	 an int into a byte array), and the struct initialisation warnings are 
-	 standards extensions that the struct STATIC_INIT macros manage for us */
-  // Note: Should remove 4244 (warn about truncation/data loss) and possibly
-  // 4389 (variant on 4018).
+  /* Warning level 4:
+
+	 4054, 4055: Cast from function pointer -> generic (data) pointer, cast 
+		   from generic (data) pointer -> function pointer.  These are 
+		   orthogonal and impossible to disable as they override the 
+		   universal 'void *' pointer type.
+
+	 4057: Different types via indirection.  An annoying dual-purpose 
+		   warning that leads to huge numbers of false positives for 
+		   'char *' vs. 'unsigned char *' (for example due to a PKCS #11 
+		   token label, declared as 'unsigned char *', being passed to a 
+		   string function, these are pretty much un-fixable as 'char'
+		   vs. 'unsigned char's percolate up and down the code tree), 
+		   but that also provides useful warnings of potential problems 
+		   (for example 'int *' passed to function expecting 'long *').
+
+	 4204, 4221: Struct initialised with non-const value, struct initialised 
+		   with address of automatic variable.  Standards extensions that 
+		   the struct STATIC_INIT macros manage for us.
+
+	 4206: Empty C module due to #ifdef'd out code.  Annoying noise caused 
+		   by empty modules due to disabled functionality.
+
+	 4244: int <-> unsigned char/short.  This leads to lots of false-
+		   positive warnings due to automatic promotion of expressions 
+		   involving chars to ints, e.g. 'ch x = ch y & 0x0F' produces a 
+		   warning because it's promoted to an int.  Currently these are
+		   all suppressed using casts.
+
+	 The only useful ones are 4057 and 4244, which can be turned off on a
+	 off-off basis to identify new true-positive issues before being 
+	 disabled again to avoid all of the false-positives, currently 100 for 
+	 4057 and 35 for 4244, of which 25-odd are in the AES code */
   #pragma warning( disable: 4054 )	/* Cast from fn.ptr -> generic (data) ptr.*/
   #pragma warning( disable: 4055 )	/* Cast from generic (data) ptr. -> fn.ptr.*/
-  #pragma warning( disable: 4057 )	/* char vs.unsigned char use */
+  #pragma warning( disable: 4057 )	/* Different types via indirection */
   #pragma warning( disable: 4204 )	/* Struct initialised with non-const value */
+  #pragma warning( disable: 4206 )	/* Empty C module due to #ifdef'd out code */
   #pragma warning( disable: 4221 )	/* Struct initialised with addr.of auto.var */
-  #pragma warning( disable: 4244 )	/* int <-> unsigned char/short */
-  #pragma warning( disable: 4267 )	/* int <-> size_t */
-  #pragma warning( disable: 4305 )	/* long <-> size_t */
-  #pragma warning( disable: 4389 )	/* signed ==/!= unsigned compare */
+//  #pragma warning( disable: 4244 )	/* int <-> unsigned char/short */
+  #if VC_GE_2005( _MSC_VER )
+	#pragma warning( disable: 4267 )/* int <-> size_t */
+  #endif /* VC++ 2005 or newer */
 
   /* Different versions of VC++ generates extra warnings at level 4 due to 
 	 problems in VC++/Platform SDK headers */
-  #if VC_LT_2005( _MSC_VER )
-	#pragma warning( disable: 4201 )/* Nameless struct/union in SQL/networking hdrs*/
-  #endif /* VC++ 6.0 and 2003 */
+  #pragma warning( disable: 4201 )/* Nameless struct/union in SQL/networking hdrs*/
   #if VC_GE_2005( _MSC_VER )
-	#pragma warning( disable: 4201 )/* Nameless struct/union */
 	#pragma warning( disable: 4214 )/* bit field types other than int */
   #endif /* VC++ 2005 or newer */
 
@@ -300,19 +327,19 @@
 #endif /* 16- vs.32- vs.64-bit system */
 
 /* Useful data types.  Newer compilers provide a 'bool' datatype via 
-   stdbool.h, but in a fit of braindamage generally make this a char instead
-   of an int.  While Microsoft's use of char for BOOLEAN in the early 1980s
-   with 8/16-bit 8086s and 129K of RAM makes sense, it's a pretty stupid
-   choice for 32- or 64-bit CPUs because alignment issues mean that it'll
+   stdbool.h, but in a fit of braindamage generally make this a char instead 
+   of an int.  While Microsoft's use of char for BOOLEAN in the early 1980s 
+   with 8/16-bit 8086s and 129K of RAM makes sense, it's a pretty stupid 
+   choice for 32- or 64-bit CPUs because alignment issues mean that it'll 
    generally still require 32 or 64 bits of storage (except for special 
-   cases like an array of bool), but then the difficulty or even inability
-   of many CPUs and/or architectures in performing byte-level accesses means
-   that in order to update a boolean the system has to fetch a full machine
+   cases like an array of bool), but then the difficulty or even inability 
+   of many CPUs and/or architectures in performing byte-level accesses means 
+   that in order to update a boolean the system has to fetch a full machine 
    word, mask out the byte data, or/and in the value, and write the word 
-   back out.  So 'bool' = 'char' combines most of the worst features of both
-   char and int.  It also leads to really hard-to-find implementation bugs
-   due to the fact that '(bool) int = true' produces different results to
-   '*(bool *) intptr = true', something that was resolved years ago in enums
+   back out.  So 'bool' = 'char' combines most of the worst features of both 
+   char and int.  It also leads to really hard-to-find implementation bugs 
+   due to the fact that '(bool) int = true' produces different results to 
+   '*(bool *) intptr = true', something that was resolved years ago in enums 
    without causing such breakage.
 
    Because of this we avoid the use of bool and just define it to int */
@@ -335,9 +362,9 @@ typedef unsigned char		BYTE;
   #include <ntddk.h>
 #endif /* NT kernel driver */
 
-/* In 16-bit environments the BSS data is large enough that it overflows the
-   (64K) BSS segment.  Because of this we move as much of it as possible into
-   its own segment with the following define */
+/* In 16-bit environments the BSS data is large enough that it overflows the 
+   (64K) BSS segment.  Because of this we move as much of it as possible 
+   into its own segment with the following define */
 
 #if defined( __WIN16__ )
   #ifdef _MSC_VER
@@ -349,10 +376,17 @@ typedef unsigned char		BYTE;
   #define FAR_BSS
 #endif /* 16-bit systems */
 
-/* If we're using DOS or Windows as a cross-development platform, we need
-   the OS-specific values defined initially to get the types right but don't
-   want it defined later on since the target platform won't really be
-   running DOS or Windows, so we undefine them after the types have been
+/* If we're using eCOS, include the system config file that tells us which 
+   parts of the eCOS kernel are available */
+
+#ifdef __ECOS__
+  #include <pkgconf/system.h>
+#endif /* __ECOS__ */
+
+/* If we're using DOS or Windows as a cross-development platform, we need 
+   the OS-specific values defined initially to get the types right but don't 
+   want it defined later on since the target platform won't really be 
+   running DOS or Windows, so we undefine them after the types have been 
    sorted out */
 
 #ifdef __IBM4758__
@@ -360,6 +394,16 @@ typedef unsigned char		BYTE;
   #undef __WINDOWS__
   #undef __WIN32__
 #endif /* IBM 4758 */
+
+/* Some versions of the WinCE SDK define 'interface' as part of a complex 
+   series of kludges for OLE support (made even more amusing by the fact 
+   that 'interface' is an optional keyword in eVC++ which may or may not 
+   be recognised as such by the compiler), to avoid conflicts we undefine 
+   it if it's defined since we're not using any OLE functionality */
+
+#if defined( __WINCE__ ) && defined( interface )
+  #undef interface
+#endif /* WinCE SDK */
 
 /* Some systems (typically 16-bit or embedded ones) have rather limited
    amounts of memory available, if we're building on one of these we limit
@@ -422,12 +466,18 @@ typedef unsigned char		BYTE;
    of structs.  At the moment the only use for the array-init is for the
    situation where the array represents a sequence of search options with
    the last one being a terminator entry, so we provide a simplified form
-   that only sets the required fields */
+   that only sets the required fields.
+   
+   The value of __SUNPRO_C bears no relation whatsoever to the actual 
+   version number of the compiler and even Sun's docs give different values 
+   in different places for the same compiler version, but 0x570 seems to 
+   work */
 
 #if ( defined( __BORLANDC__ ) && ( __BORLANDC__ < 0x550 ) ) || \
 	( defined( __hpux ) && !defined( __GNUC__ ) ) || \
 	( defined( __QNX__ ) && ( OSVERSION <= 4 ) ) || \
-	defined( __SUNPRO_C ) || defined( __SCO_VERSION__ ) || \
+	( defined( __SUNPRO_C ) && ( __SUNPRO_C >= 0x570 ) ) || \
+	defined( __SCO_VERSION__ ) || \
 	defined( _CRAY )
   #define CONST_INIT
   #define CONST_INIT_STRUCT_3( decl, init1, init2, init3 ) \
@@ -471,7 +521,7 @@ typedef unsigned char		BYTE;
    changes made here need to be reflected in osconfig.h */
 
 #if defined( __WIN32__ ) && \
-	!( defined( _M_X64 ) || defined( __BORLANDC__ ) || defined( NO_ASM ) )
+	!( defined( __WIN64__ ) || defined( __BORLANDC__ ) || defined( NO_ASM ) )
   /* Unlike the equivalent crypto code, the MD5, RIPEMD-160, and SHA-1
 	 hashing code needs special defines set to enable the use of asm
 	 alternatives.  Since this works by triggering redefines of function
@@ -486,7 +536,7 @@ typedef unsigned char		BYTE;
 
   /* Turn on bignum asm as well.  By default this is done anyway, but the
      x86 asm code contains some additional routines not present in the
-     asm modules for other CPUs, so we have to define this to disable the
+     asm modules for other CPUs so we have to define this to disable the
      equivalent C code, which must be present for non-x86 asm modules */
   #define BN_ASM
 
@@ -498,6 +548,14 @@ typedef unsigned char		BYTE;
   #define ASMV
   #define ASMINF
 #endif /* Win32 */
+
+/* Alongside the general crypto asm code there's also inline asm to handle 
+   things like CPU hardware features, if we're running under Win64 we have 
+   to disable this as well */
+
+#if defined( __WIN64__ )
+  #define NO_ASM
+#endif /* Win64 */
 
 /****************************************************************************
 *																			*
@@ -518,11 +576,15 @@ typedef unsigned char		BYTE;
 
   /* Macros to map OS-specific dynamic-load values to generic ones */
   #if defined( __WINDOWS__ )
-	HMODULE WINAPI SafeLoadLibrary( LPCSTR lpFileName );
+	HMODULE WINAPI SafeLoadLibrary( LPCTSTR lpFileName );
 
 	#define INSTANCE_HANDLE		HINSTANCE
 	#define NULL_INSTANCE		( HINSTANCE ) NULL
-	#define DynamicLoad( name )	SafeLoadLibrary( name )
+	#ifdef __WINCE__
+	  #define DynamicLoad( name ) LoadLibrary( name )
+	#else
+	  #define DynamicLoad( name ) SafeLoadLibrary( name )
+	#endif /* Win32 vs. WinCE */
 	#define DynamicUnload		FreeLibrary
 	#define DynamicBind			GetProcAddress
   #elif defined( __UNIX__ )
@@ -709,7 +771,8 @@ typedef unsigned char		BYTE;
 #endif /* Compiler-specific includes */
 
 #ifdef USE_WIDECHARS
-  #if !( ( defined( __QNX__ ) && ( OSVERSION <= 4 ) ) || \
+  #if !( defined( __ECOS__ ) || \
+		 ( defined( __QNX__ ) && ( OSVERSION <= 4 ) ) || \
 		 ( defined( __WIN32__ ) && defined( __BORLANDC__ ) ) || \
 		 ( defined( __WINCE__ ) && _WIN32_WCE < 400 ) || \
 		 defined( __XMK__ ) )
@@ -736,6 +799,21 @@ typedef unsigned char		BYTE;
   #define WCSIZE	( sizeof( wchar_t ) )
 #endif /* USE_WIDECHARS */
 
+/* It's theoretically possible that an implementation uses widechars larger
+   than 16-bit Unicode values, however if we check for this at runtime then
+   some compilers will warn about unreachable code or always-true/false 
+   conditions.  To handle this we make the check conditional on whether it's 
+   strictly necessary */
+
+#if ( INT_MAX > 0xFFFFL )
+  #if defined( __WIN32__ ) || defined( __WINCE__ )
+	/* Windows always has 16-bit Unicode wchars */
+  #else
+	#define CHECK_WCSIZE
+  #endif /* Compiler-specific checks */
+#endif /* > 16-bit OSes */
+
+
 /* The EOL convention used when outputting text.  Technically speaking
    XMK doesn't use any particular EOL convention, but since the
    typical development environment is debug output sent to a Windows
@@ -756,6 +834,14 @@ typedef unsigned char		BYTE;
 #elif defined( __MAC__ )
   #define EOL		"\r"
   #define EOL_LEN	1
+#elif defined( USE_EMBEDDED_OS )
+  /* For embedded OSes we assume a generic Unix-like text environment, these 
+	 aren't exactly used for interactive operations like text editing so 
+	 there's usually no fixed text format, and many will handle both CRLF 
+	 and LF-only text, with the lowest common denominator being the Unix-
+	 style LF-only */
+  #define EOL "\n"
+  #define EOL_LEN 1
 #else
   #error "You need to add the OS-specific define to enable end-of-line handling"
 #endif /* OS-specific EOL markers */
@@ -800,34 +886,35 @@ typedef unsigned char		BYTE;
   extern const BYTE asciiCtypeTbl[];
 
   #define isAlnum( ch ) \
-		  ( asciiCtypeTbl[ ch ] & ( ASCII_ALPHA | ASCII_NUMERIC ) )
+		  ( asciiCtypeTbl[ byteToInt( ch ) ] & ( ASCII_ALPHA | ASCII_NUMERIC ) )
   #define isAlpha( ch ) \
-		  ( asciiCtypeTbl[ ch ] & ASCII_ALPHA )
+		  ( asciiCtypeTbl[ byteToInt( ch ) ] & ASCII_ALPHA )
   #define isDigit( ch ) \
-		  ( asciiCtypeTbl[ ch ] & ASCII_NUMERIC )
+		  ( asciiCtypeTbl[ byteToInt( ch ) ] & ASCII_NUMERIC )
   #define isPrint( ch ) \
-		  ( ( ch ) >= 0x20 && ( ch ) <= 0x7E )
+		  ( ( byteToInt( ch ) ) >= 0x20 && ( byteToInt( ch ) ) <= 0x7E )
   #define isXDigit( ch ) \
-		  ( asciiCtypeTbl[ ch ] & ASCII_HEX )
+		  ( asciiCtypeTbl[ byteToInt( ch ) ] & ASCII_HEX )
   #define toLower( ch ) \
-		  ( ( asciiCtypeTbl[ ch ] & ASCII_UPPER ) ? ( ch ) + 32 : ( ch ) )
+		  ( ( asciiCtypeTbl[ byteToInt( ch ) ] & ASCII_UPPER ) ? \
+			( byteToInt( ch ) ) + 32 : ( byteToInt( ch ) ) )
   #define toUpper( ch ) \
-		  ( ( asciiCtypeTbl[ ch ] & ASCII_LOWER ) ? ( ch ) - 32 : ( ch ) )
+		  ( ( asciiCtypeTbl[ byteToInt( ch ) ] & ASCII_LOWER ) ? \
+			( byteToInt( ch ) ) - 32 : ( byteToInt( ch ) ) )
   int strCompareZ( const char *src, const char *dest );
   int strCompare( const char *src, const char *dest, int length );
-  #define atoi				aToI
   #define sprintf_s			sPrintf_s
   #define vsprintf_s		sPrintf_s
 #else
   #include <ctype.h>
 
-  #define isAlnum( ch )		isalnum( ch )
-  #define isAlpha( ch )		isalpha( ch )
-  #define isDigit( ch )		isdigit( ch )
-  #define isPrint( ch )		isprint( ch )
-  #define isXDigit( ch )	isxdigit( ch )
-  #define toLower( ch )		tolower( ch )
-  #define toUpper( ch )		toupper( ch )
+  #define isAlnum( ch )		isalnum( byteToInt( ch ) )
+  #define isAlpha( ch )		isalpha( byteToInt( ch ) )
+  #define isDigit( ch )		isdigit( byteToInt( ch ) )
+  #define isPrint( ch )		isprint( byteToInt( ch ) )
+  #define isXDigit( ch )	isxdigit( byteToInt( ch ) )
+  #define toLower( ch )		tolower( byteToInt( ch ) )
+  #define toUpper( ch )		toupper( byteToInt( ch ) )
   #define strCompareZ( str1, str2 )	\
 							stricmp( str1, str2 )
   #define strCompare( str1, str2, len )	\
@@ -948,6 +1035,8 @@ typedef unsigned char		BYTE;
 	/* We provide our own replacements for these functions which handle 
 	   output in ASCII (rather than EBCDIC) form */
   #else
+    #include <stdio.h>
+
 	#define sprintf_s					snprintf
 	#define vsprintf_s					vsnprintf
   #endif /* VC++ 6 or below */

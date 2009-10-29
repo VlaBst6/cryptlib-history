@@ -17,6 +17,7 @@
 #if defined( __OS400__ )
 
 #define TEST_PRIVKEY_FILE			"testlib/zkeytest"
+#define TEST_PRIVKEY_TMP_FILE		"testlib/zkeytstt"
 #define TEST_PRIVKEY_ALT_FILE		"testlib/zkeytsta"
 #define CA_PRIVKEY_FILE				"testlib/zkeyca"
 #define ICA_PRIVKEY_FILE			"testlib/zkeycai"
@@ -29,7 +30,7 @@
 #define PNP_PRIVKEY_FILE			"testlib/zkeypnpu"
 #define PNPCA_PRIVKEY_FILE			"testlib/zkeypnpc"
 #define SERVER_PRIVKEY_FILE			"testlib/zkeyserv"
-#define SSH_PRIVKEY_FILE			"testlib/zkeyssh"
+#define SSH_PRIVKEY_FILE_TEMPLATE	"testlib/zkeyssh%d"
 #define TSA_PRIVKEY_FILE			"testlib/zkeytsa"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"testlib/zkeymis%d"
 #define PKCS12_FILE					"testlib/zkey"
@@ -50,6 +51,7 @@
 
 #define CERT_FILE_TEMPLATE			"testlib/zcert%d"
 #define BASE64CERT_FILE_TEMPLATE	"testlib/zcerta%d"
+#define ECC_CERT_FILE_TEMPLATE		"testlib/zeccert%d"
 #define BROKEN_CERT_FILE			"testlib/zcertb"
 #define BROKEN_USER_CERT_FILE		"testlib/zcertbus"
 #define BROKEN_CA_CERT_FILE			"testlib/zcertbca"
@@ -61,6 +63,7 @@
 #define PADTEST_FILE_TEMPLATE		"testlib/zbadsig%d"
 #define SSHKEY_FILE_TEMPLATE		"testlib/zsshkey%d"
 #define PGPKEY_FILE_TEMPLATE		"testlib/zpgpkey%d"
+#define PGPASCKEY_FILE_TEMPLATE		"testlib/zpgpkea%d"
 #define NOCHAIN_EE_FILE				"testlib/znochn_ee"
 #define NOCHAIN_CA_FILE				"testlib/znochn_ca"
 #define RTCS_OK_FILE				"testlib/zrtcsok"
@@ -95,6 +98,7 @@
 #elif defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
 
 #define TEST_PRIVKEY_FILE			":test:keys:test.p15"
+#define TEST_PRIVKEY_TMP_FILE		":test:keys:test_tmp.p15"
 #define TEST_PRIVKEY_ALT_FILE		":test:keys:test.p12"
 #define CA_PRIVKEY_FILE				":test:keys:ca.p15"
 #define ICA_PRIVKEY_FILE			":test:keys:ca_int.p15"
@@ -107,7 +111,7 @@
 #define PNP_PRIVKEY_FILE			":test:keys:pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			":test:keys:pnp_ca.p15"
 #define SERVER_PRIVKEY_FILE			":test:keys:server.p15"
-#define SSH_PRIVKEY_FILE			":test:keys:ssh.p15"
+#define SSH_PRIVKEY_FILE_TEMPLATE	":test:keys:ssh%d.p15"
 #define TSA_PRIVKEY_FILE			":test:keys:tsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	":test:keys:misc%d.p15"
 #define PKCS12_FILE					":test:keys:key.p12"
@@ -128,6 +132,7 @@
 
 #define CERT_FILE_TEMPLATE			":test:certs:cert%d.der"
 #define BASE64CERT_FILE_TEMPLATE	":test:certs:cert%d.asc"
+#define ECC_CERT_FILE_TEMPLATE		":test:certs:eccert%d.der"
 #define BROKEN_CERT_FILE			":test:certs:broken.der"
 #define BROKEN_USER_CERT_FILE		":test:certs:broken_ee.der"
 #define BROKEN_CA_CERT_FILE			":test:certs:broken_ca.der"
@@ -138,7 +143,8 @@
 #define PATHTEST_FILE_TEMPLATE		":test:nist:ntest%d.p7s"
 #define PADTEST_FILE_TEMPLATE		":test:certs:badsig%d.der"
 #define SSHKEY_FILE_TEMPLATE		":test:misc:sshkey%d.asc"
-#define PGPKEY_FILE_TEMPLATE		":test:pgp:pubkey%d.asc"
+#define PGPKEY_FILE_TEMPLATE		":test:pgp:pubkey%d.pgp"
+#define PGPASCKEY_FILE_TEMPLATE		":test:pgp:pubkey%d.asc"
 #define NOCHAIN_EE_FILE				":test:misc:nochn_ee.der"
 #define NOCHAIN_CA_FILE				":test:misc:nochn_ca.der"
 #define RTCS_OK_FILE				":test:misc:rtcsrok.der"
@@ -174,6 +180,7 @@
 #elif defined( DDNAME_IO )
 
 #define TEST_PRIVKEY_FILE			"DD:CLBTEST"
+#define TEST_PRIVKEY_TMP_FILE		"DD:CLBTESTT"
 #define TEST_PRIVKEY_ALT_FILE		"DD:CLBTESTA"
 #define CA_PRIVKEY_FILE				"DD:CLBP15(KEYCA)"
 #define ICA_PRIVKEY_FILE			"DD:CLBP15(KEYCAI)"
@@ -186,7 +193,7 @@
 #define PNP_PRIVKEY_FILE			"DD:CLBP15(KEYPNPU)"
 #define PNPCA_PRIVKEY_FILE			"DD:CLBP15(KEYPNPC)"
 #define SERVER_PRIVKEY_FILE			"DD:CLBP15(KEYSERV)"
-#define SSH_PRIVKEY_FILE			"DD:CLBP15(KEYSSH)"
+#define SSH_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYSSH%d)"
 #define TSA_PRIVKEY_FILE			"DD:CLBP15(KEYTSA)"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYMIS%d)"
 #define PKCS12_FILE					"DD:CLBP12(KEY)"
@@ -207,6 +214,7 @@
 
 #define CERT_FILE_TEMPLATE			"DD:CLBDER(CERT%d)"
 #define BASE64CERT_FILE_TEMPLATE	"DD:CLBDER(CERT%d)"
+#define ECC_CERT_FILE_TEMPLATE		"DD:CLBDER(ECCERT%d)"
 #define BROKEN_CERT_FILE			"DD:CLBDER(CERTB)"
 #define BROKEN_USER_CERT_FILE		"DD:CLBDER(CERTBUS)"
 #define BROKEN_CA_CERT_FILE			"DD:CLBDER(CERTBCA)"
@@ -218,6 +226,7 @@
 #define PADTEST_FILE_TEMPLATE		"DD:CLBDER(BADSIG%d)"
 #define SSHKEY_FILE_TEMPLATE		"DD:CLBDER(SSHKEY%d)"
 #define PGPKEY_FILE_TEMPLATE		"DD:CLBDER(PGPKEY%d)"
+#define PGPASCKEY_FILE_TEMPLATE		"DD:CLBDER(PGPKEA%d)"
 #define NOCHAIN_EE_FILE				"DD:CLBDER(NOCHNEE)"
 #define NOCHAIN_CA_FILE				"DD:CLBDER(NOCHNCA)"
 #define RTCS_OK_FILE				"DD:CLBDER(RTCSROK)"
@@ -252,6 +261,7 @@
 #elif defined( __VMCMS__ )
 
 #define TEST_PRIVKEY_FILE			"zkeytest.p15"
+#define TEST_PRIVKEY_TMP_FILE		"zkeytstt.p15"
 #define TEST_PRIVKEY_ALT_FILE		"zkeytest.p12"
 #define CA_PRIVKEY_FILE				"zkeyca.p15"
 #define ICA_PRIVKEY_FILE			"zkeycai.p15"
@@ -264,7 +274,7 @@
 #define PNP_PRIVKEY_FILE			"zkeypnpu.p15"
 #define PNPCA_PRIVKEY_FILE			"zkeypnpc.p15"
 #define SERVER_PRIVKEY_FILE			"zkeyserv.p15"
-#define SSH_PRIVKEY_FILE			"zkeyssh.p15"
+#define SSH_PRIVKEY_FILE_TEMPLATE	"zkeyssh%d.p15"
 #define TSA_PRIVKEY_FILE			"zkeytsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"zkeymis%d.p15"
 #define PKCS12_FILE					"zkey.p12"
@@ -285,6 +295,7 @@
 
 #define CERT_FILE_TEMPLATE			"zcert%d.der"
 #define BASE64CERT_FILE_TEMPLATE	"zcert%d.asc"
+#define ECC_CERT_FILE_TEMPLATE		"zeccert%d.der"
 #define BROKEN_CERT_FILE			"zcertb.der"
 #define BROKEN_USER_CERT_FILE		"zcertbus.der"
 #define BROKEN_CA_CERT_FILE			"zcertbca.der"
@@ -295,7 +306,8 @@
 #define PATHTEST_FILE_TEMPLATE		"zntest%d.p7s"
 #define PADTEST_FILE_TEMPLATE		"zbadsig%d.der"
 #define SSHKEY_FILE_TEMPLATE		"zsshkey%d.asc"
-#define PGPKEY_FILE_TEMPLATE		"zpgpkey%d.asc"
+#define PGPKEY_FILE_TEMPLATE		"zpgpkey%d.pgp"
+#define PGPASCKEY_FILE_TEMPLATE		"zpgpkey%d.asc"
 #define NOCHAIN_EE_FILE				"znochn_ee.der"
 #define NOCHAIN_CA_FILE				"znochn_ca.der"
 #define RTCS_OK_FILE				"zrtcsrok.der"
@@ -331,6 +343,7 @@
 #elif defined( _WIN32_WCE )
 
 #define TEST_PRIVKEY_FILE			L"\\Storage Card\\keys\\test.p15"
+#define TEST_PRIVKEY_TMP_FILE		L"\\Storage Card\\keys\\test_tmp.p15"
 #define TEST_PRIVKEY_ALT_FILE		L"\\Storage Card\\keys\\test.p12"
 #define CA_PRIVKEY_FILE				L"\\Storage Card\\keys\\ca.p15"
 #define ICA_PRIVKEY_FILE			L"\\Storage Card\\keys\\ca_int.p15"
@@ -343,7 +356,7 @@
 #define PNP_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_ca.p15"
 #define SERVER_PRIVKEY_FILE			L"\\Storage Card\\keys\\server.p15"
-#define SSH_PRIVKEY_FILE			L"\\Storage Card\\keys\\ssh.p15"
+#define SSH_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\ssh%d.p15"
 #define TSA_PRIVKEY_FILE			L"\\Storage Card\\keys\\tsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\misc%d.p15"
 #define PKCS12_FILE					L"\\Storage Card\\keys\\key.p12"
@@ -364,6 +377,7 @@
 
 #define CERT_FILE_TEMPLATE			L"\\Storage Card\\certs\\cert%d.der"
 #define BASE64CERT_FILE_TEMPLATE	L"\\Storage Card\\certs\\cert%d.asc"
+#define ECC_CERT_FILE_TEMPLATE		L"\\Storage Card\\certs\\eccert%d.der"
 #define BROKEN_CERT_FILE			L"\\Storage Card\\certs\\broken.der"
 #define BROKEN_USER_CERT_FILE		L"\\Storage Card\\certs\\broken_ee.der"
 #define BROKEN_CA_CERT_FILE			L"\\Storage Card\\certs\\broken_ca.der"
@@ -374,7 +388,8 @@
 #define PATHTEST_FILE_TEMPLATE		L"\\Storage Card\\nist\\test%d.p7s"
 #define PADTEST_FILE_TEMPLATE		L"\\Storage Card\\certs\\badsig%d.der"
 #define SSHKEY_FILE_TEMPLATE		L"\\Storage Card\\misc\\sshkey%d.asc"
-#define PGPKEY_FILE_TEMPLATE		L"\\Storage Card\\pgp\\pubkey%d.asc"
+#define PGPKEY_FILE_TEMPLATE		L"\\Storage Card\\pgp\\pubkey%d.pgp"
+#define PGPASCKEY_FILE_TEMPLATE		L"\\Storage Card\\pgp\\pubkey%d.asc"
 #define NOCHAIN_EE_FILE				L"\\Storage Card\\misc\\nochn_ee.der"
 #define NOCHAIN_CA_FILE				L"\\Storage Card\\misc\\nochn_ca.der"
 #define RTCS_OK_FILE				L"\\Storage Card\\misc\\rtcsrok.der"
@@ -410,6 +425,7 @@
 #else
 
 #define TEST_PRIVKEY_FILE			TEXT( "test/keys/test.p15" )
+#define TEST_PRIVKEY_TMP_FILE		TEXT( "test/keys/test_tmp.p15" )
 #define TEST_PRIVKEY_ALT_FILE		TEXT( "test/keys/test.p12" )
 #define CA_PRIVKEY_FILE				TEXT( "test/keys/ca.p15" )
 #define ICA_PRIVKEY_FILE			TEXT( "test/keys/ca_int.p15" )
@@ -422,7 +438,7 @@
 #define PNP_PRIVKEY_FILE			TEXT( "test/keys/pnp_user.p15" )
 #define PNPCA_PRIVKEY_FILE			TEXT( "test/keys/pnp_ca.p15" )
 #define SERVER_PRIVKEY_FILE			TEXT( "test/keys/server.p15" )
-#define SSH_PRIVKEY_FILE			TEXT( "test/keys/ssh.p15" )
+#define SSH_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/ssh%d.p15" )
 #define TSA_PRIVKEY_FILE			TEXT( "test/keys/tsa.p15" )
 #define MISC_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/misc%d.p15" )
 #define PKCS12_FILE					TEXT( "test/keys/key.p12" )
@@ -443,6 +459,7 @@
 
 #define CERT_FILE_TEMPLATE			TEXT( "test/certs/cert%d.der" )
 #define BASE64CERT_FILE_TEMPLATE	TEXT( "test/certs/cert%d.asc" )
+#define ECC_CERT_FILE_TEMPLATE		TEXT( "test/certs/eccert%d.der" )
 #define BROKEN_CERT_FILE			TEXT( "test/certs/broken.der" )
 #define BROKEN_USER_CERT_FILE		TEXT( "test/certs/broken_ee.der" )
 #define BROKEN_CA_CERT_FILE			TEXT( "test/certs/broken_ca.der" )
@@ -453,7 +470,8 @@
 #define PATHTEST_FILE_TEMPLATE		TEXT( "test/nist/test%d.p7s" )
 #define PADTEST_FILE_TEMPLATE		TEXT( "test/certs/bad_sig%d.der" )
 #define SSHKEY_FILE_TEMPLATE		TEXT( "test/misc/sshkey%d.asc" )
-#define PGPKEY_FILE_TEMPLATE		TEXT( "test/pgp/pubkey%d.asc" )
+#define PGPKEY_FILE_TEMPLATE		TEXT( "test/pgp/pubkey%d.pgp" )
+#define PGPASCKEY_FILE_TEMPLATE		TEXT( "test/pgp/pubkey%d.asc" )
 #define NOCHAIN_EE_FILE				TEXT( "test/misc/nochn_ee.der" )
 #define NOCHAIN_CA_FILE				TEXT( "test/misc/nochn_ca.der" )
 #define RTCS_OK_FILE				TEXT( "test/misc/rtcsrok.der" )

@@ -18,7 +18,22 @@
 
 /****************************************************************************
 *																			*
-*							Certificate Import Routines Test				*
+*								Utility Routines							*
+*																			*
+****************************************************************************/
+
+/* Handle various types of certificate-processing errors */
+
+static BOOLEAN handleCertImportError( const int errorCode, const int lineNo )
+	{
+	printf( "cryptImportCert() failed with error code %d, line %d.\n",
+			errorCode, lineNo );
+	return( FALSE );
+	}
+
+/****************************************************************************
+*																			*
+*						Certificate Import Routines Test					*
 *																			*
 ****************************************************************************/
 
@@ -45,12 +60,12 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 		{
 		puts( "Warning: The hash/signature algorithm required to verify "
 			  "this certificate\n         isn't enabled in this build of "
-			  "cryptlib, can't verify the cert\n         signature." );
+			  "cryptlib, can't verify the certificate\n         signature." );
 		return( TRUE );
 		}
 
-	/* Make sure that we don't fail just because the cert that we're using 
-	   as a test has expired */
+	/* Make sure that we don't fail just because the certificate that we're 
+	   using as a test has expired */
 	if( errorLocus == CRYPT_CERTINFO_VALIDTO )
 		{
 		puts( "Warning: Validity check failed because the certificate has "
@@ -67,9 +82,9 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 		return( TRUE );
 		}
 
-	/* Cert #26 is a special-case test cert used to check the ability to 
-	   detect invalid PKCS #1 padding */
-	if( certNo == 26 )
+	/* Certificate #25 is a special-case test certificate used to check the 
+	   ability to detect invalid PKCS #1 padding */
+	if( certNo == 25 )
 		{
 		puts( "Warning: Certificate contains invalid PKCS #1 padding for "
 			  "exponent-3 RSA\n         key, the certificate signature is "
@@ -88,7 +103,8 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 	return( FALSE );
 	}
 
-static int certImport( const int certNo, const BOOLEAN isBase64 )
+static int certImport( const int certNo, const BOOLEAN isECC, 
+					   const BOOLEAN isBase64 )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	FILE *filePtr;
@@ -96,8 +112,9 @@ static int certImport( const int certNo, const BOOLEAN isBase64 )
 	int count, value, status;
 
 	printf( "Testing %scertificate #%d import...\n",
-			isBase64 ? "base64 " : "", certNo );
-	filenameFromTemplate( buffer, isBase64 ? BASE64CERT_FILE_TEMPLATE : \
+			isECC ? "ECC " : isBase64 ? "base64 " : "", certNo );
+	filenameFromTemplate( buffer, isECC ? ECC_CERT_FILE_TEMPLATE : \
+								  isBase64 ? BASE64CERT_FILE_TEMPLATE : \
 											 CERT_FILE_TEMPLATE, certNo );
 	if( ( filePtr = fopen( buffer, "rb" ) ) == NULL )
 		{
@@ -110,45 +127,51 @@ static int certImport( const int certNo, const BOOLEAN isBase64 )
 	/* Import the certificate */
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
-#ifdef __UNIX__
-	if( status == CRYPT_ERROR_NOTAVAIL || status == CRYPT_ERROR_BADDATA )
-		{
-		puts( "The certificate import failed, possibly because you're "
-			  "using an\nolder version of unzip that corrupts "
-			  "certain types of files when it\nextracts them.  To fix this, "
-			  "you need to re-extract test/*.der without\nusing the -a "
-			  "option to convert text files.\n" );
-		return( TRUE );		/* Skip this test and continue */
-		}
-#endif /* __UNIX__ */
-	if( status == CRYPT_ERROR_NOSECURE && \
+	if( status == CRYPT_ERROR_NOSECURE && !isECC && \
 		( certNo == 5 || certNo == 12 || certNo == 13 || certNo == 20 || \
 		  certNo == 25 ) )
 		{
 		/* Some older certs use totally insecure 512-bit keys and can't be
 		   processed unless we deliberately allow insecure keys.  
-		   Unfortunately this also blocks out the cert that's used to check
-		   the ability to handle invalid PKCS #1 padding, since this only
-		   uses a 512-bit key, but if necessary it can be tested by lowering 
-		   MIN_PKCSIZE when building cryptlib */
+		   Unfortunately this also blocks out the certificate that's used to 
+		   check the ability to handle invalid PKCS #1 padding, since this 
+		   only uses a 512-bit key, but if necessary it can be tested by 
+		   lowering MIN_PKCSIZE when building cryptlib */
 		puts( "Warning: Certificate import failed because the certificate "
-			  "uses a very short\n         (insecure) key." );
+			  "uses a very short\n         (insecure) key.\n" );
+		return( TRUE );
+		}
+	if( status == CRYPT_ERROR_BADDATA && !isECC && \
+		( certNo == 4 || certNo == 7 ) )
+		{
+		puts( "Warning: Certificate import failed for RegTP/Deutsche "
+			  "Telekom CA\n         certificate with negative public-key "
+			  "values.\n" );
+		return( TRUE );
+		}
+	if( status == CRYPT_ERROR_NOTAVAIL && !isECC && certNo == 26 )
+		{
+		/* This is an ECDSA certificate, the algorithm isn't enabled by 
+		   default */
+		puts( "Warning: Certificate import failed because the certificate "
+			  "uses an\n         algorithm that isn't enabled in this build "
+			  "of cryptlib.\n" );
 		return( TRUE );
 		}
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptImportCert() for cert #%d failed with error code %d, "
-				"line %d.\n", certNo, status, __LINE__ );
+		printf( "cryptImportCert() for certificate #%d failed with error "
+				"code %d, line %d.\n", certNo, status, __LINE__ );
 		return( FALSE );
 		}
 	status = cryptGetAttribute( cryptCert, CRYPT_CERTINFO_SELFSIGNED,
 								&value );
 	if( cryptStatusError( status ) )
 		{
-		/* Sanity check to make sure that the cert internal state is
+		/* Sanity check to make sure that the certificate internal state is
 		   consistent - this should never happen */
-		printf( "Couldn't get cert.self-signed status, status %d, line "
-				"%d.\n", status, __LINE__ );
+		printf( "Couldn't get certificate self-signed status, status %d, "
+				"line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 	if( value )
@@ -177,7 +200,7 @@ static int certImport( const int certNo, const BOOLEAN isBase64 )
 	return( TRUE );
 	}
 
-#if 0	/* Test rig for NISCC cert data */
+#if 0	/* Test rig for NISCC certificate data */
 
 static void importTestData( void )
 	{
@@ -211,9 +234,28 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 25; i++ )
+	for( i = 1; i <= 29; i++ )
 		{
-		if( !certImport( i, FALSE ) )
+		if( !certImport( i, FALSE, FALSE ) )
+			return( FALSE );
+		}
+	return( TRUE );
+	}
+
+int testCertImportECC( void )
+	{
+	int i;
+
+	if( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) == CRYPT_ERROR_NOTAVAIL )
+		{
+		puts( "ECC algorithm support appears to be disabled, skipping "
+			  "processing of ECDSA\ncertificates.\n" );
+		return( TRUE );
+		}
+
+	for( i = 1; i <= 10; i++ )
+		{
+		if( !certImport( i, TRUE, FALSE ) )
 			return( FALSE );
 		}
 	return( TRUE );
@@ -249,8 +291,10 @@ static int certReqImport( const int certNo )
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
 	if( certNo == 3 )
+		{
 		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 						   complianceValue );
+		}
 #ifdef __UNIX__
 	if( status == CRYPT_ERROR_NOTAVAIL || status == CRYPT_ERROR_BADDATA )
 		{
@@ -264,22 +308,23 @@ static int certReqImport( const int certNo )
 #endif /* __UNIX__ */
 	if( status == CRYPT_ERROR_NOSECURE && certNo == 1 )
 		{
-		puts( "Warning: Cert.request import failed because the request "
-			  "uses a very short\n         (insecure) key." );
+		puts( "Warning: Certificate request import failed because the "
+			  "request uses a very short\n         (insecure) key." );
 		return( TRUE );
 		}
 	if( cryptStatusError( status ) )
+		return( handleCertImportError( status, __LINE__ ) );
+	if( certNo == 5 )
+		puts( "  (Skipping signature check because CRMF data is unsigned)." );
+	else
 		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		printf( "Checking signature... " );
+		status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
+		if( cryptStatusError( status ) )
+			return( attrErrorExit( cryptCert, "cryptCheckCert()", status, 
+								   __LINE__ ) );
+		puts( "signature verified." );
 		}
-	printf( "Checking signature... " );
-	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
-	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptCheckCert()", status, 
-							   __LINE__ ) );
-	puts( "signature verified." );
 
 	/* Print information on what we've got */
 	if( !printCertInfo( cryptCert ) )
@@ -295,9 +340,11 @@ int testCertReqImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 3; i++ )
+	for( i = 1; i <= 5; i++ )
+		{
 		if( !certReqImport( i ) )
 			return( FALSE );
+		}
 	return( TRUE );
 	}
 
@@ -319,16 +366,12 @@ static int crlImport( const int crlNo, BYTE *buffer )
 	fclose( filePtr );
 	printf( "CRL #%d has size %d bytes.\n", crlNo, count );
 
-	/* Import the CRL.  Since CRL's don't include the signing cert, we can't
-	   (easily) check the signature on it */
+	/* Import the CRL.  Since CRL's don't include the signing certificate, 
+	   we can't (easily) check the signature on it */
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
 	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
+		return( handleCertImportError( status, __LINE__ ) );
 
 	/* Print information on what we've got and clean up */
 	if( !printCertInfo( cryptCert ) )
@@ -345,16 +388,18 @@ int testCRLImport( void )
 
 	puts( "Testing CRL import..." );
 
-	/* Since we're working with an unusually large cert object we have to
-	   dynamically allocate the buffer for it */
+	/* Since we're working with an unusually large certificate object we 
+	   have to dynamically allocate the buffer for it */
 	if( ( bufPtr = malloc( LARGE_CRL_SIZE ) ) == NULL )
 		{
 		puts( "Out of memory." );
 		return( FALSE );
 		}
 	for( i = 1; i <= 3; i++ )
+		{
 		if( !crlImport( i, bufPtr ) )
 			return( FALSE );
+		}
 
 	/* Clean up */
 	free( bufPtr );
@@ -368,8 +413,8 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 	int trustValue = CRYPT_UNUSED, complianceValue = CRYPT_UNUSED;
 	int errorLocus, status;
 
-	/* If the chain contains a single non-CA cert, we'll get a parameter 
-	   error since we haven't supplied a signing cert */
+	/* If the chain contains a single non-CA certificate, we'll get a 
+	   parameter error since we haven't supplied a signing certificate */
 	if( errorCode == CRYPT_ERROR_PARAM2 )
 		{
 		cryptSetAttribute( cryptCertChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
@@ -378,18 +423,20 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 							   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
 							   CRYPT_CURSOR_NEXT ) == CRYPT_ERROR_NOTFOUND )
 			{
-			/* There's only a single cert present, we can't do much with 
-			   it */
+			/* There's only a single certificate present, we can't do much 
+			   with it */
 			puts( "\nCertificate chain contains only a single standalone "
-				  "cert, skipping\nsignature check..." );
+				  "certificate, skipping\nsignature check..." );
 			return( TRUE );
 			}
 		}
 
 	/* If it's not a problem with validity, we can't go any further */
 	if( errorCode != CRYPT_ERROR_INVALID )
+		{
 		return( attrErrorExit( cryptCertChain, "cryptCheckCert()", 
 							   errorCode, __LINE__ ) );
+		}
 
 	/* Check the nature of the problem */
 	status = cryptGetAttribute( cryptCertChain, CRYPT_ATTRIBUTE_ERRORLOCUS,
@@ -405,18 +452,22 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 	if( errorLocus == CRYPT_CERTINFO_TRUSTED_IMPLICIT || \
 		errorLocus == CRYPT_CERTINFO_TRUSTED_USAGE )
 		{
-		/* The error occured because of a problem with the root cert, try 
-		   again with an implicitly-trusted root */
+		/* The error occured because of a problem with the root certificate, 
+		   try again with an implicitly-trusted root */
 		if( errorLocus == CRYPT_CERTINFO_TRUSTED_IMPLICIT )
+			{
 			printf( "\nWarning: The certificate chain didn't verify "
 					"because it didn't end in a\n         trusted root "
 					"certificate.  Checking again using an "
 					"implicitly\n         trusted root..." );
+			}
 		else
+			{
 			printf( "\nWarning: The certificate chain didn't verify "
 					"because the root certificate's\n         key isn't "
 					"enabled for this usage.  Checking again using "
 					"an\n         implicitly trusted root..." );
+			}
 		if( cryptStatusError( \
 				setRootTrust( cryptCertChain, &trustValue, 1 ) ) )
 			{
@@ -450,6 +501,32 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 						   complianceValue );
 
+	/* If we've got a long-enough chain, try again with the next-to-last 
+	   certificate marked as trusted */
+	if( cryptStatusOK( status ) && certNo == 5 )
+		{
+		status = cryptSetAttribute( cryptCertChain,
+									CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+									CRYPT_CURSOR_LAST );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttribute( cryptCertChain,
+										CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+										CRYPT_CURSOR_PREVIOUS );
+		if( cryptStatusOK( status ) )
+			status = cryptSetAttribute( cryptCertChain,
+										CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
+		if( status == CRYPT_ERROR_INVALID )
+			cryptGetAttribute( cryptCertChain, CRYPT_ATTRIBUTE_ERRORLOCUS,
+							   &errorLocus );
+		if( trustValue != CRYPT_UNUSED )
+			cryptSetAttribute( cryptCertChain,
+							   CRYPT_CERTINFO_TRUSTED_IMPLICIT, 
+							   trustValue );
+		}
+
 	/* Some old certs use deprecated or now-broken algorithms which will 
 	   produce a CRYPT_ERROR_NOTAVAIL if we try and verify the signature, 
 	   treat this as a special case */
@@ -457,7 +534,7 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 		{
 		puts( "\nWarning: The hash/signature algorithm required to verify "
 			  "this certificate\n         isn't enabled in this build of "
-			  "cryptlib, can't verify the cert\n         signature." );
+			  "cryptlib, can't verify the certificate\n         signature." );
 		return( TRUE );
 		}
 
@@ -478,7 +555,7 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 	CRYPT_CERTIFICATE cryptCertChain;
 	FILE *filePtr;
 	BYTE buffer[ BUFFER_SIZE ];
-	int count, status;
+	int count, value, status;
 
 	printf( "Testing %scert chain #%d import...\n",
 			isBase64 ? "base64 " : "", certNo );
@@ -506,7 +583,7 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 							  &cryptCertChain );
 	if( cryptStatusError( status ) )
 		{
-		/* If we failed on the RSA e=3 cert, this is a valid result */
+		/* If we failed on the RSA e=3 certificate, this is a valid result */
 		if( certNo == 3 && status == CRYPT_ERROR_BADDATA )
 			{
 			printf( "Import of certificate with invalid e=3 key failed, "
@@ -514,9 +591,7 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 			puts( "  (This is the correct result for this test).\n" );
 			return( TRUE );
 			}
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		return( handleCertImportError( status, __LINE__ ) );
 		}
 	if( certNo == 3 )
 		{
@@ -524,14 +599,42 @@ static int certChainImport( const int certNo, const BOOLEAN isBase64 )
 				"it should have\n  failed, line %d.\n", __LINE__ );
 		return( FALSE );
 		}
+	status = cryptGetAttribute( cryptCertChain, CRYPT_CERTINFO_CERTTYPE, 
+								&value );
+	if( cryptStatusError( status ) )
+		return( attrErrorExit( cryptCertChain, "cryptGetAttribute()", 
+							   status, __LINE__ ) );
+	if( certNo == 1 )
+		{
+		/* The first chain has length 1 so it should be imported as a 
+		   standard certificate */
+		if( value != CRYPT_CERTTYPE_CERTIFICATE )
+			{
+			printf( "Imported object isn't a certificate, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		}
+	else
+		{
+		if( value != CRYPT_CERTTYPE_CERTCHAIN )
+			{
+			printf( "Imported object isn't a certificate chain, line %d.\n", 
+					__LINE__ );
+			return( FALSE );
+			}
+		}
 	printf( "Checking signatures... " );
 	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
-	if( cryptStatusError( status ) && \
-		!handleCertChainError( cryptCertChain, certNo, status ) )
-		return( FALSE );	
-	puts( "signatures verified." );
+	if( cryptStatusError( status ) )
+		{
+		if( !handleCertChainError( cryptCertChain, certNo, status ) )
+			return( FALSE );
+		}
+	else
+		puts( "signatures verified." );
 
-	/* Display info on each cert in the chain */
+	/* Display info on each certificate in the chain */
 	if( !printCertChainInfo( cryptCertChain ) )
 		return( FALSE );
 
@@ -545,7 +648,7 @@ int testCertChainImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 3; i++ )
+	for( i = 1; i <= 5; i++ )
 		{
 		if( !certChainImport( i, FALSE ) )
 			return( FALSE );
@@ -572,15 +675,11 @@ int testOCSPImport( void )
 
 	/* Import the OCSP OK response.  Because of the choose-your-own-trust-
 	   model status of the OCSP RFC we have to supply our own signature
-	   check cert to verify the response */
+	   check certificate to verify the response */
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
 	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
+		return( handleCertImportError( status, __LINE__ ) );
 	printf( "Checking signature... " );
 	status = importCertFile( &cryptResponderCert, OCSP_CA_FILE );
 	if( cryptStatusOK( status ) )
@@ -598,9 +697,9 @@ int testOCSPImport( void )
 		return( FALSE );
 	cryptDestroyCert( cryptCert );
 
-	/* Now import the OCSP revoked response.  This has a different CA cert
-	   than the OK response, to keep things simple we don't bother with a
-	   sig check for this one */
+	/* Now import the OCSP revoked response.  This has a different CA 
+	   certificate than the OK response, to keep things simple we don't 
+	   bother with a sig check for this one */
 	puts( "Testing OCSP revoked response import..." );
 	if( ( filePtr = fopen( convertFileName( OCSP_REV_FILE ), "rb" ) ) == NULL )
 		{
@@ -613,11 +712,7 @@ int testOCSPImport( void )
 	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
 							  &cryptCert );
 	if( cryptStatusError( status ) )
-		{
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
+		return( handleCertImportError( status, __LINE__ ) );
 
 	/* Print information on what we've got */
 	if( !printCertInfo( cryptCert ) )
@@ -634,15 +729,15 @@ int testBase64CertImport( void )
 	int i;
 
 	/* If this is an EBCDIC system, we can't (easily) import the base64-
-	   encoded cert without complex calisthenics to handle the different
-	   character sets */
+	   encoded certificate without complex calisthenics to handle the 
+	   different character sets */
 #if 'A' == 0xC1
 	puts( "Skipping import of base64-encoded data on EBCDIC system.\n" );
 	return( TRUE );
 #endif /* EBCDIC system */
 
 	for( i = 1; i <= 1; i++ )
-		if( !certImport( i, TRUE ) )
+		if( !certImport( i, FALSE, TRUE ) )
 			return( FALSE );
 	return( TRUE );
 	}
@@ -652,8 +747,8 @@ int testBase64CertChainImport( void )
 	int i;
 
 	/* If this is an EBCDIC system, we can't (easily) import the base64-
-	   encoded cert without complex calisthenics to handle the different
-	   character sets */
+	   encoded certificate without complex calisthenics to handle the 
+	   different character sets */
 #if 'A' == 0xC1
 	puts( "Skipping import of base64-encoded data on EBCDIC system.\n" );
 	return( TRUE );
@@ -713,7 +808,7 @@ int testMiscImport( void )
 		}
 	for( i = 1; i <= 3; i++ )
 		{
-		filenameFromTemplate( buffer, PGPKEY_FILE_TEMPLATE, i );
+		filenameFromTemplate( buffer, PGPASCKEY_FILE_TEMPLATE, i );
 		if( !miscImport( buffer, "PGP" ) )
 			return( FALSE );
 		}
@@ -725,7 +820,7 @@ int testMiscImport( void )
 
 int testNonchainCert( void )
 	{
-	/* The EE cert expired in November 2007 so unfortunately we can't 
+	/* The EE certificate expired in November 2007 so unfortunately we can't 
 	   perform this test any more until we can obtain further broken
 	   certs from DigiCert */
 #if 0
@@ -736,7 +831,8 @@ int testNonchainCert( void )
 
 	/* Since this test requires the use of attributes that aren't decoded at
 	   the default compliance level, we have to raise it a notch to make sure
-	   that we get the cert attributes necessary to sort out the mess */
+	   that we get the certificate attributes necessary to sort out the 
+	   mess */
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &value );
 	if( value < CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL )
@@ -753,14 +849,15 @@ int testNonchainCert( void )
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   value );
 
-	/* Check the EE cert using the apparently-correct but actually incorrect
-	   CA cert and make sure that we get the correct error message */
+	/* Check the EE certificate using the apparently-correct but actually 
+	   incorrect CA certificate and make sure that we get the correct error 
+	   message */
 	status = cryptCheckCert( cryptLeafCert, cryptCACert );
 	if( status != CRYPT_ERROR_SIGNATURE )
 		{
-		printf( "Sig.check of incorrectly chained cert returned %d, should "
-				"have been %d, line %d.\n", status, CRYPT_ERROR_SIGNATURE, 
-				__LINE__ );
+		printf( "Sig.check of incorrectly chained certificate returned %d, "
+				"should have been %d, line %d.\n", status, 
+				CRYPT_ERROR_SIGNATURE, __LINE__ );
 		return( FALSE );
 		}
 
@@ -773,7 +870,7 @@ int testNonchainCert( void )
 	return( TRUE );
 	}
 
-/* Test cert handling at various levels of compliance */
+/* Test certificate handling at various levels of compliance */
 
 int testCertComplianceLevel( void )
 	{
@@ -785,9 +882,12 @@ int testCertComplianceLevel( void )
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &value );
 
-	/* Test import of a broken cert.  First we try it in normal mode, then
-	   again in oblivious mode */
-	printf( "Testing cert handling at various compliance levels "
+	/* Test import of a broken certificate.  The brokenness is an invalid 
+	   authorityKeyIdentifier which is processed at level
+	   CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL and above, so first we try it in 
+	   CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL mode, which should fail, and then
+	   again in oblivious mode, which should succeed */
+	printf( "Testing certificate handling at various compliance levels "
 			"(current = %d)...\n", value );
 	if( ( filePtr = fopen( convertFileName( BROKEN_CERT_FILE ), "rb" ) ) == NULL )
 		{
@@ -796,19 +896,33 @@ int testCertComplianceLevel( void )
 		}
 	count = fread( buffer, 1, BUFFER_SIZE, filePtr );
 	fclose( filePtr );
-	if( value < CRYPT_COMPLIANCELEVEL_PKIX_FULL )
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   CRYPT_COMPLIANCELEVEL_PKIX_FULL );
-	status = cryptImportCert( buffer, count, CRYPT_UNUSED,
-							  &cryptCert );
-	if( cryptStatusOK( status ) )
+	if( value < CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL )
 		{
-		/* Import in normal mode should fail */
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   value );
-		printf( "cryptImportCert() of broken cert succeeded when it should "
-				"have failed, line %d.\n", __LINE__ );
-		return( FALSE );
+		status = cryptSetAttribute( CRYPT_UNUSED, 
+									CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+									CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL );
+		if( status == CRYPT_ERROR_PARAM3 )
+			{
+			puts( "(Couldn't set compliance level to "
+				  "CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL, probably\n because "
+				  "cryptlib has been configured to not use this level, "
+				  "skipping this\n test...)" );
+			}
+		else
+			{
+			status = cryptImportCert( buffer, count, CRYPT_UNUSED,
+								  &cryptCert );
+			}
+		if( cryptStatusOK( status ) )
+			{
+			/* Import in CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL mode should 
+			   fail */
+			cryptSetAttribute( CRYPT_UNUSED, 
+							   CRYPT_OPTION_CERT_COMPLIANCELEVEL, value );
+			printf( "cryptImportCert() of broken certificate succeeded when "
+					"it should have failed, line %d.\n", __LINE__ );
+			return( FALSE );
+			}
 		}
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   CRYPT_COMPLIANCELEVEL_STANDARD );
@@ -818,10 +932,8 @@ int testCertComplianceLevel( void )
 					   value );
 	if( cryptStatusError( status ) )
 		{
-		/* Import in reduced-compliance mode should succeed */
-		printf( "cryptImportCert() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
+		/* Import in standard mode should succeed */
+		return( handleCertImportError( status, __LINE__ ) );
 		}
 
 	/* Print information on what we've got.  This should only print info for
@@ -830,23 +942,20 @@ int testCertComplianceLevel( void )
 		return( FALSE );
 	cryptDestroyCert( cryptCert );
 
-	/* Test checking of an expired cert using a broken CA cert in oblivious
-	   mode (this checks chaining and the signature, but little else) */
+	/* Test checking of an expired certificate using a broken CA certificate 
+	   in oblivious mode (this checks chaining and the signature, but little 
+	   else) */
 	status = importCertFile( &cryptCert, BROKEN_USER_CERT_FILE );
 	if( cryptStatusOK( status ) )
 		status = importCertFile( &cryptCaCert, BROKEN_CA_CERT_FILE );
 	if( cryptStatusError( status ) )
-		{
-		printf( "Cert import failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		return( FALSE );
-		}
+		return( handleCertImportError( status, __LINE__ ) );
 	status = cryptCheckCert( cryptCert, cryptCaCert );
 	if( cryptStatusOK( status ) )
 		{
 		/* Checking in normal mode should fail */
-		printf( "cryptCheckCert() of broken cert succeeded when it should "
-				"have failed, line %d.\n", __LINE__ );
+		printf( "cryptCheckCert() of broken certificate succeeded when it "
+				"should have failed, line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
@@ -857,8 +966,8 @@ int testCertComplianceLevel( void )
 	if( cryptStatusError( status ) )
 		{
 		/* Checking in oblivious mode should succeed */
-		printf( "cryptCheckCert() of broken cert failed when it should "
-				"have succeeded, line %d.\n", __LINE__ );
+		printf( "cryptCheckCert() of broken certificate failed when it "
+				"should have succeeded, line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 	cryptDestroyCert( cryptCaCert );
@@ -871,8 +980,8 @@ int testCertComplianceLevel( void )
 
 /* Test path processing using the NIST PKI test suite.  This doesn't run all
    of the tests since some are somewhat redundant (e.g. path length 
-   constraints ending at cert n in a chain vs.cert n+1 in a chain where
-   both are well short of the constraint length) or require complex
+   constraints ending at certificate n in a chain vs.cert n+1 in a chain 
+   where both are well short of the constraint length) or require complex
    additional processing (e.g. CRL fetches) which it's difficult to
    automate */
 
@@ -893,11 +1002,11 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	/* Validity periods */
 	/*  5 */ { 2, 1, FALSE },
 	/*  6 */ { 2, 2, FALSE },
-	/* The second cert in test 4.2.3 has a validFrom date of 1950 which
-	   cryptlib rejects on import as being not even remotely valid (it can't
-	   even be represented in the ANSI/ISO C date format).  Supposedly half-
-	   century-old certs are symptomatic of severely broken software so
-	   rejecting this cert is justified */
+	/* The second certificate in test 4.2.3 has a validFrom date of 1950 
+	   which cryptlib rejects on import as being not even remotely valid (it 
+	   can't even be represented in the ANSI/ISO C date format).  Supposedly 
+	   half-century-old certs are symptomatic of severely broken software so
+	   rejecting this certificate is justified */
 /*	{ 2, 3, TRUE }, */
 	/*  7 */ { 2, 4, TRUE },
 	/*  8 */ { 2, 5, FALSE },
@@ -923,10 +1032,10 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	/* 20 */ { 6, 5, FALSE },
 	/* 21 */ { 6, 6, FALSE },
 	/* 22 */ { 6, 7, TRUE },
-	/* The second-to-last cert in the path sets a pathLenConstraint of zero
-	   with the next cert being a CA cert (there's no EE cert present).
-	   cryptlib treats this as invalid since it can never lead to a valid
-	   path once the EE cert is added */
+	/* The second-to-last certificate in the path sets a pathLenConstraint of 
+	   zero with the next certificate being a CA certificate (there's no EE 
+	   certificate present).  cryptlib treats this as invalid since it can 
+	   never lead to a valid path once the EE certificate is added */
 	/* 23 */ { 6, 8, FALSE /* TRUE */ },
 	/* 24 */ { 6, 9, FALSE },
 	/* 25 */ { 6, 11, FALSE },
@@ -945,10 +1054,10 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	/* 33 */ { 7, 2, FALSE },
 
 	/* Policies */
-	/* The first cert asserts a policy that differs from that of all other
-	   certs in the path.  If no explicit policy is required (by setting
-	   CRYPT_OPTION_REQUIREPOLICY to FALSE) it will verify, otherwise it
-	   won't */
+	/* The first certificate asserts a policy that differs from that of all 
+	   other certificates in the path.  If no explicit policy is required 
+	   (by setting CRYPT_OPTION_REQUIREPOLICY to FALSE) it will verify, 
+	   otherwise it won't */
 	/* 34 */ { 8, 3, TRUE, TRUE },	/* Policy optional */
 	/* 35 */ { 8, 3, FALSE },
 	/* 36 */ { 8, 4, FALSE },
@@ -1059,7 +1168,7 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 
 	/* 14, 15 = CRLs */
 
-	/* Private cert extensions */
+	/* Private certificate extensions */
 	/* 95 */ { 16, 1, TRUE },
 	/* 96 */ { 16, 2, FALSE },
 	{ 0, 0 }
@@ -1084,7 +1193,7 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 									 PATHTEST_FILE_TEMPLATE, pathNo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Cert import for test path %s failed, line %d.\n",
+		printf( "Certificate import for test path %s failed, line %d.\n",
 				pathName, __LINE__ );
 		return( FALSE );
 		}
@@ -1112,11 +1221,13 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 			}
 		}
 	else
+		{
 		if( cryptStatusOK( status ) )
 			{
 			puts( " verified even though it should have failed." );
 			return( FALSE );
 			}
+		}
 	puts( " succeeded." );
 	cryptDestroyCert( cryptCertPath );
 
@@ -1130,7 +1241,7 @@ int testPathProcessing( void )
 
 	puts( "Testing path processing..." );
 
-	/* Get the root cert and make it implicitly trusted and crank the
+	/* Get the root certificate and make it implicitly trusted and crank the
 	   compliance level up to maximum, since we're going to be testing some
 	   pretty obscure extensions */
 	status = importCertFromTemplate( &cryptRootCert,
@@ -1139,17 +1250,26 @@ int testPathProcessing( void )
 		status = setRootTrust( cryptRootCert, &certTrust, 1 );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't create trusted root cert for path processing, "
-				"line %d.\n", __LINE__ );
+		printf( "Couldn't create trusted root certificate for path "
+				"processing, line %d.\n", __LINE__ );
 		return( FALSE );
 		}
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &complianceLevel );
-	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-					   CRYPT_COMPLIANCELEVEL_PKIX_FULL );
+	status = cryptSetAttribute( CRYPT_UNUSED, 
+								CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+								CRYPT_COMPLIANCELEVEL_PKIX_FULL );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Couldn't set compliance level to "
+				"CRYPT_COMPLIANCELEVEL_PKIX_FULL, line %d.\nThis may be "
+				"because cryptlib has been configured not to run at this "
+				"level.\n", __LINE__ );
+		return( FALSE );
+		}
 
-	/* Process each cert path and make sure that it succeeds or fails as
-	   required */
+	/* Process each certificate path and make sure that it succeeds or fails 
+	   as required */
 	for( i = 0; pathTestInfo[ i ].fileMajor; i++ )
 		{
 		if( !testPath( &pathTestInfo[ i ] ) )
@@ -1166,11 +1286,11 @@ int testPathProcessing( void )
 	return( TRUE );
 	}
 
-/* Test handling of invalid PKCS #1 padding in cert signatures.  Note that
-   running this test properly requires disabling the PKCS#1 padding format 
-   check in decodePKCS1() in mechs/mech_sig.c since the signatures have such 
-   an obviously dodgy format that they don't even make it past the basic 
-   padding sanity check */
+/* Test handling of invalid PKCS #1 padding in certificate signatures.  Note 
+   that running this test properly requires disabling the PKCS#1 padding 
+   format check in decodePKCS1() in mechs/mech_sig.c since the signatures 
+   have such an obviously dodgy format that they don't even make it past the 
+   basic padding sanity check */
 
 int testPKCS1Padding( void )
 	{
@@ -1179,9 +1299,9 @@ int testPKCS1Padding( void )
 
 	puts( "Testing invalid PKCS #1 padding handling..." );
 
-	/* The test certs don't have a keyUsage present in a CA cert so we have 
-	   to lower the compliance level to be able to get past this check tot he
-	   signatures */
+	/* The test certs don't have a keyUsage present in a CA certificate so 
+	   we have to lower the compliance level to be able to get past this 
+	   check to the signatures */
 	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
 					   &complianceValue );
 	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
@@ -1192,15 +1312,15 @@ int testPKCS1Padding( void )
 										 i );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't import cert for PKCS #1 padding check, status "
-					"%d, line %d.\n", status, __LINE__ );
+			printf( "Couldn't import certificate for PKCS #1 padding check, "
+					"status %d, line %d.\n", status, __LINE__ );
 			return( FALSE );
 			}
 		status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 		if( cryptStatusOK( status ) )
 			{
-			printf( "Cert with bad PKSC #1 padding verified, should have "
-					"failed, line %d.\n", __LINE__ );
+			printf( "Certificate with bad PKSC #1 padding verified, should "
+					"have failed, line %d.\n", __LINE__ );
 			return( FALSE );
 			}
 		cryptDestroyCert( cryptCert );

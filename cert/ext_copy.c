@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						Certificate Attribute Copy Routines					*
-*						Copyright Peter Gutmann 1996-2007					*
+*						Copyright Peter Gutmann 1996-2008					*
 *																			*
 ****************************************************************************/
 
@@ -17,14 +17,14 @@
 
 /* When replicating attributes from one type of certificate object to 
    another (for example from an issuer certificate to a subject certificate 
-   when issuing a new certificate) we may have to adjust the attribute info 
-   based on the source and destination object roles.  The following values 
-   denote the different copy types that we have to handle.  Usually this is 
-   a direct copy, however if we're copying from subject to issuer we have to 
-   adjust attribute IDs such as the altName (subjectAltName -> issuerAltName), 
-   if we're copying from issuer to subject we have to adjust path 
-   length-based contraints since the new subject is one further down the 
-   chain */
+   when issuing a new certificate) we may have to adjust the attribute 
+   information based on the source and destination object roles.  The 
+   following values denote the different copy types that we have to handle.  
+   Usually this is a direct copy, however if we're copying from subject to 
+   issuer we have to adjust attribute IDs such as the altName 
+   (subjectAltName -> issuerAltName), if we're copying from issuer to 
+   subject we have to adjust path length-based contraints since the new 
+   subject is one further down the chain than the issuer */
 
 typedef enum {
 	COPY_NONE,				/* No copy type */
@@ -62,8 +62,8 @@ static int copyAttributeField( OUT_PTR ATTRIBUTE_LIST **destAttributeField,
 	copyVarStruct( newElement, srcAttributeField, ATTRIBUTE_LIST );
 	if( srcAttributeField->fieldType == FIELDTYPE_DN )
 		{
-		/* If the field contains a DN, copy the DN across */
-		status = copyDN( ( void ** ) &newElement->value,
+		/* If the field contains a DN, copy that across as well */
+		status = copyDN( ( DN_PTR ** ) &newElement->value,
 						 srcAttributeField->value );
 		if( cryptStatusError( status ) )
 			{
@@ -78,9 +78,7 @@ static int copyAttributeField( OUT_PTR ATTRIBUTE_LIST **destAttributeField,
 	return( CRYPT_OK );
 	}
 
-/* Copy an attribute from one attribute list to another.  This is an all-or-
-   nothing copy in that it either copies a complete attribute or nothing at
-   all */
+/* Copy an attribute from one attribute list to another */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
@@ -102,7 +100,10 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 	/* If we're re-mapping the destination attribute ID (see the comment
 	   further down) we have to insert it at a point corresponding to the 
 	   re-mapped ID, not the original ID, to maintain the list's sorted
-	   property */
+	   property.  The CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER is only
+	   copied at CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL or above so we'll never
+	   see this attribute copied at lower compliance levels (this is 
+	   enforced in the caller) */
 	if( copyType == COPY_SUBJECT_TO_ISSUER )
 		{
 		if( attributeID == CRYPT_CERTINFO_SUBJECTALTNAME )
@@ -113,14 +114,16 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 
 	/* Find the location at which to insert this attribute (this assumes 
 	   that the fieldIDs are defined in sorted order) */
-	for( insertPoint = *destListHeadPtr;
+	for( insertPoint = *destListHeadPtr, iterationCount = 0;
 		 insertPoint != NULL && \
 			insertPoint->attributeID < newAttributeID && \
-			insertPoint->fieldID != CRYPT_ATTRIBUTE_NONE;
-		 insertPoint = insertPoint->next )
+			insertPoint->fieldID != CRYPT_ATTRIBUTE_NONE && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 insertPoint = insertPoint->next, iterationCount++ )
 		{
 		prevElement = insertPoint;
 		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	insertPoint = prevElement;
 
 	/* Build a new attribute list containing the attribute fields */
@@ -136,7 +139,7 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 		status = copyAttributeField( &newAttributeField, srcListPtr );
 		if( cryptStatusError( status ) )
 			{
-			deleteAttributes( &newAttributeListHead );
+			deleteAttributes( ( ATTRIBUTE_PTR ** ) &newAttributeListHead );
 			return( status );
 			}
 
@@ -147,9 +150,11 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 		if( copyType == COPY_SUBJECT_TO_ISSUER )
 			{
 			if( attributeID == CRYPT_CERTINFO_SUBJECTALTNAME )
+				{
 				newAttributeField->attributeID = \
 					newAttributeField->fieldID = \
 						CRYPT_CERTINFO_ISSUERALTNAME;
+				}
 			if( attributeID == CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER )
 				{
 				newAttributeField->attributeID = \
@@ -171,29 +176,21 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 							CRYPT_CERTINFO_INHIBITPOLICYMAPPING ) )
 			{
 			/* If we're already at a path length of zero we can't reduce it
-			   any further the best that we can do is to not copy the
+			   any further, the best that we can do is to not copy the
 			   attribute */
 			if( newAttributeField->intValue <= 0 )
 				{
-				deleteAttributeField( &newAttributeField, NULL, 
-									  newAttributeField, NULL );
+				deleteAttributeField( ( ATTRIBUTE_PTR ** ) &newAttributeField, 
+									  NULL, newAttributeField, NULL );
 				}
 			else
 				newAttributeField->intValue--;
 			}
 
-		/* Append the new field to the new attribute list.  We can't use 
-		   insertDoubleListElement() for this because we're appending the 
-		   element to the list rather than inserting it at a given 
-		   position */
-		if( newAttributeListHead == NULL )
-			newAttributeListHead = newAttributeListTail = newAttributeField;
-		else
-			{
-			newAttributeListTail->next = newAttributeField;
-			newAttributeField->prev = newAttributeListTail;
-			newAttributeListTail = newAttributeField;
-			}
+		/* Append the new field to the new attribute list */
+		insertDoubleListElement( &newAttributeListHead, newAttributeListTail, 
+								 newAttributeField );
+		newAttributeListTail = newAttributeField;
 
 		/* Move on to the next field */
 		srcListPtr = srcListPtr->next;
@@ -208,17 +205,23 @@ static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 	return( CRYPT_OK );
 	}
 
-/* Copy a length constraint, adjusting the value by one */
+/* Copy a length constraint from an issuer CA certificate to a subject CA
+   certificate, decrementing the value by one */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int copyLengthConstraint( /*?*/ ATTRIBUTE_LIST **destListHeadPtr,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+static int copyLengthConstraint( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 								 const ATTRIBUTE_LIST *srcListPtr,
-								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID )
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE fieldID,
+								 OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus )
+
 	{
 	ATTRIBUTE_LIST *destListPtr;
+	int status;
 
 	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	
 	REQUIRES( fieldID > CRYPT_ATTRIBUTE_NONE && \
 			  fieldID < CRYPT_ATTRIBUTE_LAST );
@@ -229,17 +232,37 @@ static int copyLengthConstraint( /*?*/ ATTRIBUTE_LIST **destListHeadPtr,
 	if( srcListPtr == NULL )
 		return( CRYPT_OK );
 
+	/* There's a length constraint present, if the value is already at zero 
+	   then the next certificate must be an EE certificate rather than a
+	   CA certificate */
+	if( srcListPtr->intValue <= 0 )
+		{
+		*errorLocus = fieldID;
+		return( CRYPT_ERROR_INVALID );
+		}
+
 	/* There's something to copy, if it's not already present in the 
-	   destination, just copy it across */
+	   destination just copy it across */
 	destListPtr = findAttributeField( *destListHeadPtr, fieldID, 
 									  CRYPT_ATTRIBUTE_NONE );
 	if( destListPtr == NULL )
-		return( copyAttributeField( destListHeadPtr, srcListPtr ) );
+		{
+		status = copyAttributeField( destListHeadPtr, srcListPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		destListPtr = findAttributeField( *destListHeadPtr, fieldID, 
+										  CRYPT_ATTRIBUTE_NONE );
+		ENSURES( destListPtr != NULL && destListPtr->intValue > 0 );
+		destListPtr->intValue--;
+
+		return( CRYPT_OK );
+		}
 
 	/* The same constraint exists in source and destination, set the result
-	   value to the lesser of the two */
-	if( srcListPtr->intValue < destListPtr->intValue )
-		destListPtr->intValue = srcListPtr->intValue;
+	   value to the lesser of the two, with the necessary decrement applied */
+	if( srcListPtr->intValue <= destListPtr->intValue )
+		destListPtr->intValue = srcListPtr->intValue - 1;
+	ENSURES( destListPtr->intValue >= 0 );
 
 	return( CRYPT_OK );
 	}					
@@ -253,26 +276,27 @@ static int copyLengthConstraint( /*?*/ ATTRIBUTE_LIST **destListHeadPtr,
 /* Copy a complete attribute list */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-					const ATTRIBUTE_LIST *srcListPtr,
+int copyAttributes( INOUT ATTRIBUTE_PTR **destHeadPtr,
+					const ATTRIBUTE_PTR *srcPtr,
 					OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 						CRYPT_ATTRIBUTE_TYPE *errorLocus,
 					OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
 						CRYPT_ERRTYPE_TYPE *errorType )
 	{
+	const ATTRIBUTE_LIST *srcListPtr = ( ATTRIBUTE_LIST * ) srcPtr;
 	int iterationCount;
 
-	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isWritePtr( destHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 
 	/* If there are destination attributes present make a first pass down 
-	   the list checking that the attribute to copy isn't already in the
-	   destination attributes, first for recognised attributes and then for
-	   unrecognised ones.  We have to do this separately since once we begin
-	   the copy process it's rather hard to undo it.  There are two special 
-	   cases that we could in theory allow:
+	   the list checking that the attribute to copy isn't already present in 
+	   the destination attributes, first for recognised attributes and then 
+	   for unrecognised ones.  We have to do this separately since once we 
+	   begin the copy process it's rather hard to undo it.  There are two 
+	   special cases that we could in theory allow:
 
 		1. Some composite attributes could have non-overlapping fields in 
 		   the source and destination.
@@ -281,23 +305,25 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 
 	   This means that we could allow them to appear in both the source and 
 	   destination lists, however if this occurs it's more likely to be an 
-	   error than a desire to merge two disparate collections of fields or
-	   attributes */
-	if( *destListHeadPtr != NULL )
+	   error than a desire to merge two disparate collections of fields or 
+	   attributes so we report them as (disallowed) duplicates */
+	if( *destHeadPtr != NULL )
 		{
 		const ATTRIBUTE_LIST *attributeListCursor;
 
+		/* Check the non-blob attributes */
 		for( attributeListCursor = srcListPtr, iterationCount = 0;
 			 attributeListCursor != NULL && \
-				!isBlobAttribute( attributeListCursor ) && \
-				iterationCount < FAILSAFE_ITERATIONS_MAX; 
+				!checkAttributeProperty( attributeListCursor,
+										 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
 			 attributeListCursor = attributeListCursor->next, iterationCount++ )
 			{
 			ENSURES( attributeListCursor->next == NULL || \
 					 !isValidAttributeField( attributeListCursor->next ) || \
 					 attributeListCursor->attributeID <= \
 							attributeListCursor->next->attributeID );
-			if( findAttributeField( *destListHeadPtr,
+			if( findAttributeField( *destHeadPtr,
 									attributeListCursor->fieldID, 
 									CRYPT_ATTRIBUTE_NONE ) != NULL )
 				{
@@ -306,13 +332,16 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 				return( CRYPT_ERROR_DUPLICATE );
 				}
 			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+		/* Check the blob attributes */
 		for( ; attributeListCursor != NULL && \
-			   iterationCount < FAILSAFE_ITERATIONS_MAX;
+			   iterationCount < FAILSAFE_ITERATIONS_LARGE;
 			 attributeListCursor = attributeListCursor->next, iterationCount++ )
 			{
-			ENSURES( isBlobAttribute( attributeListCursor ) );
-			if( findAttributeByOID( *destListHeadPtr, 
+			ENSURES( checkAttributeProperty( attributeListCursor,
+											 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) );
+			if( findAttributeByOID( *destHeadPtr, 
 									attributeListCursor->oid,
 									sizeofOID( attributeListCursor->oid ) ) != NULL )
 				{
@@ -323,43 +352,55 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 				return( CRYPT_ERROR_DUPLICATE );
 				}
 			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 		}
 
-	/* Make a second pass copying everything across */
+	/* Make a second pass copying everything across, first the non-blob 
+	   attributes */
 	for( iterationCount = 0;
-		 srcListPtr != NULL && !isBlobAttribute( srcListPtr ) && \
-			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 srcListPtr != NULL && \
+			!checkAttributeProperty( srcListPtr, 
+									 ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
 		CRYPT_ATTRIBUTE_TYPE attributeID = srcListPtr->attributeID;
-		const ATTRIBUTE_INFO *attributeInfoPtr = \
-				( srcListPtr->attributeInfoPtr != NULL ) ? \
-				srcListPtr->attributeInfoPtr : \
+		const ATTRIBUTE_INFO *attributeInfoPtr;
+		int status;
+
+		/* Get the attribute information for the attribute to be copied */
+		if( srcListPtr->attributeInfoPtr != NULL )
+			attributeInfoPtr = srcListPtr->attributeInfoPtr;
+		else
+			{
+			attributeInfoPtr = \
 				fieldIDToAttribute( ( attributeID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
 										ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE,
 									attributeID, CRYPT_ATTRIBUTE_NONE, NULL );
-		int status;
+			}
+		ENSURES( attributeInfoPtr != NULL );
 
 		assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 
 		/* Copy the complete attribute across unless it's one that we 
 		   explicitly don't propagate from source to destination */
-		if( !( attributeInfoPtr->flags & FL_NOCOPY ) )
+		if( !( attributeInfoPtr->typeInfoFlags & FL_ATTR_NOCOPY ) )
 			{
-			status = copyAttribute( destListHeadPtr, srcListPtr, 
-									COPY_DIRECT );
+			status = copyAttribute( ( ATTRIBUTE_LIST ** ) destHeadPtr, 
+									srcListPtr, COPY_DIRECT );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
 
-		/* Move on to the next attribute */
-		while( srcListPtr != NULL && \
-			   srcListPtr->attributeID == attributeID && \
-			   iterationCount++ < FAILSAFE_ITERATIONS_MAX )
-			srcListPtr = srcListPtr->next;
+		/* Move on to the next attribute.  We retain the loop bounds-check
+		   value from the outer loop to bound it at n rather than 2*n */
+		for( ;
+			 srcListPtr != NULL && \
+				srcListPtr->attributeID == attributeID && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			 srcListPtr = srcListPtr->next, iterationCount++ );
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 	/* If there are blob-type attributes left at the end of the list, copy
 	   them across last */
@@ -368,15 +409,15 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 		ATTRIBUTE_LIST *insertPoint;
 
 		/* Find the end of the destination list */
-		for( insertPoint = *destListHeadPtr, iterationCount = 0;
+		for( insertPoint = *destHeadPtr, iterationCount = 0;
 			 insertPoint != NULL && insertPoint->next != NULL && \
-				iterationCount < FAILSAFE_ITERATIONS_MAX;
+				iterationCount < FAILSAFE_ITERATIONS_LARGE;
 			 insertPoint = insertPoint->next, iterationCount++ );
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 
 		/* Copy all remaining attributes across */
 		for( ; srcListPtr != NULL && \
-			   iterationCount < FAILSAFE_ITERATIONS_MAX;
+			   iterationCount < FAILSAFE_ITERATIONS_LARGE;
 			srcListPtr = srcListPtr->next, iterationCount++ )
 			{
 			ATTRIBUTE_LIST *newAttribute;
@@ -385,11 +426,11 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 			status = copyAttributeField( &newAttribute, srcListPtr );
 			if( cryptStatusError( status ) )
 				return( status );
-			insertDoubleListElement( destListHeadPtr, insertPoint, 
-									 newAttribute );
+			insertDoubleListElement( ( ATTRIBUTE_LIST ** ) destHeadPtr, 
+									 insertPoint, newAttribute );
 			
 			}
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 		}
 
 	return( CRYPT_OK );
@@ -403,11 +444,11 @@ int copyAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 
 /* Copy attributes that are propagated down certificate chains from an 
    issuer to a subject certificate, changing the field types from subject 
-   to issuer and adjust constraint values at the same time if required */
+   to issuer and adjusting constraint values at the same time if required */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-						  const ATTRIBUTE_LIST *srcListPtr,
+int copyIssuerAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
+						  const ATTRIBUTE_PTR *srcListPtr,
 						  const CRYPT_CERTTYPE_TYPE type,
 						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 							CRYPT_ATTRIBUTE_TYPE *errorLocus,
@@ -437,6 +478,7 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 										   CRYPT_ATTRIBUTE_NONE );
 	if( attributeListPtr != NULL && attributeListPtr->intValue > 0 )
 		{
+#ifdef USE_CERTLEVEL_PKIX_FULL
 		ATTRIBUTE_LIST *srcPermittedSubtrees, *srcExcludedSubtrees;
 
 		srcPermittedSubtrees = findAttributeField( srcListPtr,
@@ -475,14 +517,16 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 		/* Copy the fields across */
 		if( srcPermittedSubtrees != NULL )
 			{
-			status = copyAttribute( destListHeadPtr, srcPermittedSubtrees, 
+			status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+									srcPermittedSubtrees, 
 									COPY_SUBJECT_TO_ISSUER );
 			if( cryptStatusError( status ) )
 				return( status );
 			}
 		if( srcExcludedSubtrees != NULL )
 			{
-			status = copyAttribute( destListHeadPtr, srcExcludedSubtrees, 
+			status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+									srcExcludedSubtrees, 
 									COPY_SUBJECT_TO_ISSUER );
 			if( cryptStatusError( status ) )
 				return( status );
@@ -490,18 +534,31 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 
 		/* The path-length constraints are a bit easier to handle, if 
 		   they're already present we just use the smaller of the two */
-		if( srcPermittedSubtrees != NULL )
+		status = copyLengthConstraint( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+									   srcListPtr, 
+									   CRYPT_CERTINFO_REQUIREEXPLICITPOLICY,
+									   errorLocus );
+		if( cryptStatusOK( status ) )
+			status = copyLengthConstraint( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+										   srcListPtr, 
+										   CRYPT_CERTINFO_INHIBITPOLICYMAPPING,
+										   errorLocus );
+		if( cryptStatusError( status ) )
 			{
-			status = copyLengthConstraint( destListHeadPtr, srcPermittedSubtrees, 
-										   CRYPT_CERTINFO_PATHLENCONSTRAINT );
-			if( cryptStatusOK( status ) )
-				status = copyLengthConstraint( destListHeadPtr, srcPermittedSubtrees, 
-											   CRYPT_CERTINFO_REQUIREEXPLICITPOLICY );
-			if( cryptStatusOK( status ) )
-				status = copyLengthConstraint( destListHeadPtr, srcPermittedSubtrees, 
-											   CRYPT_CERTINFO_INHIBITPOLICYMAPPING );
-			if( cryptStatusError( status ) )
-				return( status );
+			*errorType = CRYPT_ERRTYPE_ISSUERCONSTRAINT;
+			return( status );
+			}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
+
+		/* Finally, copy the CA basic constraints across */
+		status = copyLengthConstraint( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+									   srcListPtr, 
+									   CRYPT_CERTINFO_PATHLENCONSTRAINT,
+									   errorLocus );
+		if( cryptStatusError( status ) )
+			{
+			*errorType = CRYPT_ERRTYPE_ISSUERCONSTRAINT;
+			return( status );
 			}
 		}
 
@@ -511,27 +568,34 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 
 	/* Copy the altName and keyIdentifier if these are present.  We don't
 	   have to check for their presence in the destination certificate since 
-	   they're read-only fields and can't be added by the user */
+	   they're read-only fields and can't be added by the user.  The
+	   CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER becomes the 
+	   CRYPT_CERTINFO_AUTHORITYKEYIDENTIFIER when copied from the issuer to 
+	   the subject so we only copy it at a compliance level of 
+	   CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL or above, since it's not enforced 
+	   below that level */
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_SUBJECTALTNAME, 
 									  TRUE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_SUBJECT_TO_ISSUER );
+		status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+								attributeListPtr, COPY_SUBJECT_TO_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER, 
 									  TRUE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_SUBJECT_TO_ISSUER );
+		status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+								attributeListPtr, COPY_SUBJECT_TO_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
 
 	/* Copy the authorityInfoAccess if it's present.  This one is a bit 
 	   tricky both because it's a multi-valued attribute and some values 
@@ -539,8 +603,8 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 	   it's not certain that the issuer certificate's AIA should be the same 
 	   as the subject certificate's AIA.  At the moment with monolithic CAs 
 	   (i.e. ones that control all the certificates down to the EE) this is 
-	   always the case and if it isn't it's assumed that the CA will set the 
-	   EE's AIA to the appropriate value before trying to sign the 
+	   always the case and if it isn't then it's assumed that the CA will 
+	   set the EE's AIA to the appropriate value before trying to sign the 
 	   certificate.  Because of this we copy the issuer AIA if there's no 
 	   subject AIA present, otherwise we assume that the CA has set the 
 	   subject AIA to its own choice of value and don't try and copy 
@@ -551,8 +615,8 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 		findAttribute( *destListHeadPtr, 
 					   CRYPT_CERTINFO_AUTHORITYINFOACCESS, FALSE ) == NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_SUBJECT_TO_ISSUER );
+		status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+								attributeListPtr, COPY_SUBJECT_TO_ISSUER );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -560,12 +624,14 @@ int copyIssuerAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 	return( CRYPT_OK );
 	}
 
+#ifdef USE_CERTREQ
+
 /* Copy attributes that are propagated from a CRMF certificate request 
    template to the issued certificate */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyCRMFRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							   const ATTRIBUTE_LIST *srcListPtr )
+int copyCRMFRequestAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
+							   const ATTRIBUTE_PTR *srcListPtr )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
 	int status;
@@ -573,29 +639,32 @@ int copyCRMFRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
 	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 
-	/* Copy the altName across.  This is needed because it contains 
-	   additional identification information (in fact probably the only 
-	   identification information of any value) like the email address and 
-	   server URL */
+	/* Copy the altName across, needed for the additional identification 
+	   that it provides */
 	attributeListPtr = findAttribute( srcListPtr,
 									  CRYPT_CERTINFO_SUBJECTALTNAME, 
 									  TRUE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_DIRECT );
+		status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+								attributeListPtr, COPY_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTREQ */
 
-/* Copy attributes that are propagated from an OCSP request to a response */
+#if defined( USE_CERTVAL ) || defined( USE_CERTREV )
+
+/* Copy attributes that are propagated from an RTCS or OCSP request to a 
+   response.  Since only one attribute, the nonce, is copied across we can
+   use the same function for both operations */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyOCSPRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							   const ATTRIBUTE_LIST *srcListPtr )
+int copyRTCSRequestAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
+							   const ATTRIBUTE_PTR *srcListPtr )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
 
@@ -617,18 +686,31 @@ int copyOCSPRequestAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 							CRYPT_CERTINFO_OCSP_NONCE, CRYPT_ATTRIBUTE_NONE );
 	if( attributeListPtr != NULL )
 		{
-		return( copyAttribute( destListHeadPtr, attributeListPtr, 
-							   COPY_DIRECT ) );
+		return( copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+							   attributeListPtr, COPY_DIRECT ) );
 		}
 
 	return( CRYPT_OK );
+	}
+#endif /* USE_CERTVAL || USE_CERTREV */
+
+#ifdef USE_CERTREV
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int copyOCSPRequestAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
+							   const ATTRIBUTE_PTR *srcListPtr )
+	{
+	assert( isWritePtr( destListHeadPtr, sizeof( ATTRIBUTE_LIST * ) ) );
+	assert( isReadPtr( srcListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+
+	return( copyRTCSRequestAttributes( destListHeadPtr, srcListPtr ) );
 	}
 
 /* Copy attributes that are propagated from a revocation request to a CRL */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int copyRevocationAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
-							  const ATTRIBUTE_LIST *srcListPtr )
+int copyRevocationAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
+							  const ATTRIBUTE_PTR *srcListPtr )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
 	int status;
@@ -644,8 +726,8 @@ int copyRevocationAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 									  CRYPT_CERTINFO_CRLREASON, FALSE );
 	if( attributeListPtr != NULL )
 		{
-		status = copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_DIRECT );
+		status = copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+								attributeListPtr, COPY_DIRECT );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -653,9 +735,10 @@ int copyRevocationAttributes( INOUT ATTRIBUTE_LIST **destListHeadPtr,
 									  CRYPT_CERTINFO_INVALIDITYDATE, FALSE );
 	if( attributeListPtr != NULL )
 		{
-		return( copyAttribute( destListHeadPtr, attributeListPtr, 
-								COPY_DIRECT ) );
+		return( copyAttribute( ( ATTRIBUTE_LIST ** ) destListHeadPtr, 
+							   attributeListPtr, COPY_DIRECT ) );
 		}
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTREV */

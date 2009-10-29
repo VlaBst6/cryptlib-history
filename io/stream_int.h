@@ -32,14 +32,22 @@ typedef enum {
 	STREAM_TYPE_LAST					/* Last possible stream type */
 	} STREAM_TYPE;
 
-/* General-purpose stream flags.  The PARTIALREAD flag is used for network 
-   reads to handle timeouts and for file streams when we don't know the full 
-   extent of a file stream, when it's set and we ask for a read of n bytes 
-   and there isn't sufficient data present in the file to satisfy the 
-   request the stream code returns 0...n bytes rather than an underflow error.
-   The PARTIALWRITE flag is used for network streams when performing bulk 
-   data transfers, in this case the write may time out and can be restarted
-   later rather than returning a timeout error */
+/* General-purpose stream flags.  These are:
+
+	FLAG_DIRTY: Stream buffer contains data that needs to be committed to
+		backing store.
+
+	FLAG_PARTIALREAD: Used for network reads to handle timeouts and for file 
+		streams when we don't know the full extent of a file stream.  When 
+		this is set and we ask for a read of n bytes and there isn't 
+		sufficient data present in the file to satisfy the request the 
+		stream code returns 0...n bytes rather than an underflow error.
+
+	FLAG_PARTIALWRITE: Used for network streams when performing bulk data 
+		transfers, in this case the write may time out and can be restarted
+		later rather than returning a timeout error
+
+	FLAG_READONLY: Stream is read-only */
 
 #define STREAM_FLAG_READONLY	0x0001	/* Read-only stream */
 #define STREAM_FLAG_PARTIALREAD 0x0002	/* Allow read of less than req.amount */
@@ -47,12 +55,33 @@ typedef enum {
 #define STREAM_FLAG_DIRTY		0x0008	/* Stream contains un-committed data */
 #define STREAM_FLAG_MASK		0x000F	/* Mask for general-purpose flags */
 
-/* Memory stream flags */
+/* Memory stream flags.  These are:
+
+	MFLAG_VFILE: The underlying OS doesn't support conventional file I/O (it
+		may only support, for example, access to fixed blocks of flash 
+		memory) so this is a memory stream emulating a file stream */
 
 #define STREAM_MFLAG_VFILE		0x0010	/* File stream emulated via mem.stream */
 #define STREAM_MFLAG_MASK		( 0x0010 | STREAM_FLAG_MASK )	
 										/* Mask for memory-only flags */
-/* File stream flags */
+/* File stream flags.  These are:
+
+	FFLAG_BUFFERSET: Used to indicate that the stream has an I/O buffer 
+		associated with it.  A stream can be opened without a buffer, but to
+		read/write data it needs to have a buffer associated with it.  Since
+		this can be of variable size and sometimes isn't required at all, 
+		it's created on-demand rather than always being present, and its 
+		presence is indicated by this flag.
+	
+	FFLAG_EOF: The underlying file has reached EOF, no further data can be 
+		read once the current buffer is emptied.
+	
+	FFLAG_MMAPPED: This is a memory-mapped file stream, used in conjunction
+		with MFLAG_VFILE virtual file streams.
+
+	FFLAG_POSCHANGED: The position in the underlying file has changed, 
+		requiring the file buffer to be refilled from the new position 
+		before data can be read from it */
 
 #define STREAM_FFLAG_BUFFERSET	0x0080	/* Stream has associated buffer */
 #define STREAM_FFLAG_EOF		0x0100	/* EOF reached on stream */
@@ -64,15 +93,36 @@ typedef enum {
 
 /* Network stream flags.  Since there are quite a number of these and they're
    only required for the network-specific stream functionality, we give them
-   their own flags variable instead of using the overall stream flags.
+   their own flags variable instead of using the overall stream flags.  These
+   are:
 
-   The ENCAPS flag indicates that the protocol is running over a lower 
-   encapsulation layer that provides additional packet control information, 
-   typically packet size and flow control information.  If this flag is set, 
-   the lower-level read code overrides some error handling that normally 
-   takes place at a higher level.  For example if a read of n bytes is 
-   requested and the encapsulation layer reports that only m bytes, m < n is 
-   present, this isn't treated as a read/timeout error */
+	NFLAG_ENCAPS: The protocol is running over a lower encapsulation layer 
+		that provides additional packet control information, typically 
+		packet size and flow control information.  If this flag is set then
+		the lower-level read code overrides some error handling that 
+		normally takes place at a higher level.  For example if a read of n 
+		bytes is requested and the encapsulation layer reports that only m 
+		bytes, m < n is present, this isn't treated as a read/timeout error.
+
+	NFLAG_FIRSTREADOK: The first data read from the stream succeeded.  This
+		is used to detect problems due to buggy firewall software, see the
+		comments in io/tcp.c for details.
+
+	NFLAG_HTTP10: This is an HTTP 1.0 (rather than 1.1) HTTP stream.
+
+	NFLAG_HTTPPROXY/NFLAG_HTTPTUNNEL: HTTP proxy control flags.
+
+	NFLAG_HTTPGET/NFLAG_HTTPPOST: HTTP allowed-actions flags.
+
+	NFLAG_ISSERVER: The stream is a server stream (default is client).
+
+	NFLAG_LASTMSG: This is the last message in the exchange, after which any
+		high-level shutdown (for example at the HTTP level) can be 
+		performed.
+
+	NFLAG_USERSOCKET: The network socket was supplied by the user rather 
+		than being created by cryptlib, so some actions such as socket
+		shutdown should be skipped */
 
 #define STREAM_NFLAG_ISSERVER	0x0001	/* Stream is server rather than client */
 #define STREAM_NFLAG_USERSOCKET	0x0002	/* Network socket was supplied by user */
@@ -83,13 +133,17 @@ typedef enum {
 #define STREAM_NFLAG_HTTPPOST	0x0040	/* Allow HTTP POST */
 #define STREAM_NFLAG_LASTMSG	0x0080	/* Last message in exchange */
 #define STREAM_NFLAG_ENCAPS		0x0100	/* Network transport is encapsulated */
+#define STREAM_NFLAG_FIRSTREADOK 0x0200	/* First data read succeeded */
 #define STREAM_NFLAG_HTTPREQMASK ( STREAM_NFLAG_HTTPGET | STREAM_NFLAG_HTTPPOST )
 										/* Mask for permitted HTTP req.types */
 
-/* Network transport-specific flags.  The flush flag is used in writes to
-   buffered streams to flush data in the stream buffers, the blocking/
-   nonblocking flags are used to override the stream default behaviour on 
-   reads and writes */
+/* Network transport-specific flags.  These are:
+
+	FLAG_FLUSH: Used in writes to buffered streams to force a flush of data in 
+		the stream buffers.
+	
+	FLAG_BLOCKING/FLAG_NONBLOCKING: Used to override the stream default 
+		behaviour on reads and writes and force blocking/nonblocking I/O */
 
 #define TRANSPORT_FLAG_NONE		0x00	/* No transport flag */
 #define TRANSPORT_FLAG_FLUSH	0x01	/* Flush data on write */
@@ -231,6 +285,9 @@ typedef struct NS {
 	/* Variable-length storage for the stream buffers */
 	DECLARE_VARSTRUCT_VARS;
 	} NET_STREAM_INFO;
+#else
+
+typedef void *NET_STREAM_INFO;	/* Dummy for function prototypes */
 
 #endif /* USE_TCP */
 

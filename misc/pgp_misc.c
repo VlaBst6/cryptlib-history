@@ -232,7 +232,7 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			return( status );
 
 		/* Save the derivation info with the context */
-		setMessageData( &msgData, ( void * ) salt, saltSize );
+		setMessageData( &msgData, ( MESSAGE_CAST ) salt, saltSize );
 		status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, 
 								  &msgData, CRYPT_CTXINFO_KEYING_SALT );
 		if( cryptStatusOK( status ) && iterations > 0 )
@@ -240,12 +240,12 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			/* The number of key setup iterations may be zero for non-
 			   iterated hashing */
 			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &iterations, 
+									  ( MESSAGE_CAST ) &iterations, 
 									  CRYPT_CTXINFO_KEYING_ITERATIONS );
 			}
 		if( cryptStatusOK( status ) )
 			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-									  ( void * ) &hashAlgo, 
+									  ( MESSAGE_CAST ) &hashAlgo, 
 									  CRYPT_CTXINFO_KEYING_ALGO );
 		if( cryptStatusError( status ) )
 			{
@@ -307,7 +307,7 @@ int pgpProcessIV( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	   encapsulated data packet will be corrupted).
 	   
 	   First, we load the all-zero IV */
-	setMessageData( &msgData, ( void * ) zeroIV, ivDataSize );
+	setMessageData( &msgData, ( MESSAGE_CAST ) zeroIV, ivDataSize );
 	status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
 							  &msgData, CRYPT_CTXINFO_IV );
 	if( cryptStatusError( status ) )

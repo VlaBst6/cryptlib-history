@@ -26,15 +26,15 @@
 /* Per-channel information.  SSH channel IDs are 32-bit/4 byte data values
    and can be reused during sessions so we provide our own guaranteed-unique
    short int ID for users to identify a particular channel.  Since each
-   channel can have its own distinct characteristics, we have to record
-   information like the window size and count and packet size info on a per-
-   channel basis.  In addition if the channel is tied to a forwarded port
-   we also record port-forwarding information (recorded in the generic
-   channel-type and channel-type-argument strings) */
+   channel can have its own distinct characteristics we have to record
+   information like the window size and count and packet size information on 
+   a per-channel basis.  In addition if the channel is tied to a forwarded 
+   port we also record port-forwarding information in the generic channel-
+   type and channel-type-argument strings */
 
 typedef struct {
-	/* General channel info.  The read and write channel numbers are the
-	   same for everything but Cisco software */
+	/* General channel information.  The read and write channel numbers are 
+	   the same for everything but Cisco software */
 	int channelID;						/* cryptlib-level channel ID */
 	long readChannelNo, writeChannelNo;	/* SSH-level channel ID */
 	int flags;							/* Channel flags */
@@ -43,16 +43,21 @@ typedef struct {
 	CRYPT_ATTRIBUTE_TYPE cursorPos;		/* Virtual cursor position */
 
 	/* Channel parameters */
-	long windowCount;					/* Current window usage */
+	int windowCount, windowSize;		/* Current window usage and tot.size */
 	int maxPacketSize;					/* Max allowed packet size */
 
 	/* Channel naming information */
-	char type[ CRYPT_MAX_TEXTSIZE + 8 ], arg1[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BUFFER( CRYPT_MAX_TEXTSIZE, typeLen ) \
+	char type[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BUFFER( CRYPT_MAX_TEXTSIZE, arg1Len ) \
+	char arg1[ CRYPT_MAX_TEXTSIZE + 8 ];
+	BUFFER( CRYPT_MAX_TEXTSIZE, arg2Len ) \
 	char arg2[ CRYPT_MAX_TEXTSIZE + 8 ];
 	int typeLen, arg1Len, arg2Len;
 
 	/* Channel extra data.  This contains encoded oddball protocol-specific
 	   SSH packets to be sent or having been received */
+	BUFFER_FIXED( UINT_SIZE + CRYPT_MAX_TEXTSIZE + ( UINT_SIZE * 4 ) ) \
 	BYTE extraData[ ( UINT_SIZE + CRYPT_MAX_TEXTSIZE ) + \
 					( UINT_SIZE * 4 ) + 8 ];
 	} SSH_CHANNEL_INFO;
@@ -68,7 +73,11 @@ typedef struct {
 
 /* The maximum allowed number of channels */
 
-#define SSH_MAX_CHANNELS	4
+#ifdef USE_SSH_EXTENDED
+  #define SSH_MAX_CHANNELS		4
+#else
+  #define SSH_MAX_CHANNELS		1
+#endif /* USE_SSH_EXTENDED */
 
 #ifdef USE_SSH
 
@@ -80,55 +89,61 @@ typedef struct {
 
 /* Check whether there are any active channels still present.  Since a
    channel can be half-closed (we've closed it for write but the other
-   side hasn't acknowledged the close yet), we allow the caller to specify
+   side hasn't acknowledged the close yet) we allow the caller to specify
    an excluded channel ID that's treated as logically closed for active
    channel-check purposes even if a channel entry is still present for it.
-   In addition we allow a count parameter to allow checking for whether
-   a set of channels is still open */
+   This can also be used when closing channels to check whether this is the 
+   last channel open, since closing the last channel also shuts down the 
+   entire session */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN isChannelActive( const SESSION_INFO *sessionInfoPtr,
-								const int excludedChannelID,
-								const int channelCount )
+								IN_INT_SHORT_Z const int excludedChannelID )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	int count = channelCount, iterationCount = 0;
+	int iterationCount;
 
-	for( attributeListPtr = sessionInfoPtr->attributeList;
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES_B( ( excludedChannelID == UNUSED_CHANNEL_ID ) || \
+				( excludedChannelID > 0 && \
+				  excludedChannelID < MAX_INTLENGTH_SHORT ) );
+
+	for( attributeListPtr = sessionInfoPtr->attributeList, \
+			iterationCount = 0;
 		 attributeListPtr != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListPtr = attributeListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
-		/* If it's not an SSH channel. continue */
+		/* If it's not an SSH channel, continue */
 		if( attributeListPtr->attributeID != CRYPT_SESSINFO_SSH_CHANNEL )
 			continue;
 
 		/* It's an SSH channel, check whether it's the one that we're
 		   after */
-		assert( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
+		ENSURES( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
 		channelInfoPtr = attributeListPtr->value;
 		if( isActiveChannel( channelInfoPtr ) && \
 			channelInfoPtr->channelID != excludedChannelID )
-			{
-			/* It's the one that we're after, if a sufficient number of
-			   matches have been found, we're done */
-			count--;
-			if( count <= 0 )
-				return( TRUE );
-			}
+			return( TRUE );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Boolean();
+	ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( FALSE );
 	}
 
 /* Helper function used to access SSH-specific internal attributes within
-   an attribute group */
+   an attribute group (== single attribute-list item containing multiple
+   sub-items).  Returns the attribute ID of the currently selected attribute
+   when attrGetType == ATTR_CURRENT, otherwise a boolean indicating whether
+   ATTR_PREV/ATTR_NEXT is still within the current subgroup */
 
-static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
-						   const ATTR_TYPE attrGetType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int accessFunction( INOUT ATTRIBUTE_LIST *attributeListPtr,
+						   IN_ENUM_OPT( ATTR ) const ATTR_TYPE attrGetType,
+						   OUT_INT_Z int *value )
 	{
 	static const CRYPT_ATTRIBUTE_TYPE attributeOrderList[] = {
 			CRYPT_SESSINFO_SSH_CHANNEL, CRYPT_SESSINFO_SSH_CHANNEL_TYPE,
@@ -138,7 +153,15 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 	SSH_CHANNEL_INFO *channelInfoPtr = attributeListPtr->value;
 	CRYPT_ATTRIBUTE_TYPE attributeType = channelInfoPtr->cursorPos;
 	BOOLEAN doContinue;
-	int iterationCount = 0;
+	int iterationCount;
+
+	assert( isWritePtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
+	assert( isWritePtr( value, sizeof( int ) ) );
+
+	REQUIRES( attrGetType >= ATTR_NONE && attrGetType < ATTR_LAST );
+
+	/* Clear return value */
+	*value = 0;
 
 	/* If we've just moved the cursor onto this attribute, reset the
 	   position to the first internal attribute */
@@ -149,74 +172,85 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 		attributeListPtr->flags &= ~ATTR_FLAG_CURSORMOVED;
 		}
 
-	/* If it's an info fetch, return the currently-selected attribute */
+	/* If it's an information fetch, return the currently-selected 
+	   attribute */
 	if( attrGetType == ATTR_NONE )
-		return( attributeType );
-
-	do
 		{
-		int i;
+		*value = attributeType;
+		return( CRYPT_OK );
+		}
+
+	for( doContinue = TRUE, iterationCount = 0; 
+		 doContinue && iterationCount < FAILSAFE_ITERATIONS_MED; 
+		 iterationCount++ )
+		{
+		int orderIndex;
 
 		/* Find the position of the current sub-attribute in the attribute
 		   order list and use that to get its successor/predecessor sub-
 		   attribute */
-		for( i = 0; 
-			 attributeOrderList[ i ] != attributeType && \
-				attributeOrderList[ i ] != CRYPT_ATTRIBUTE_NONE && \
-				i < FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ); 
-			 i++ );
-		if( i >= FAILSAFE_ARRAYSIZE( attributeOrderList, CRYPT_ATTRIBUTE_TYPE ) )
-			retIntError_Boolean();
-		if( attributeOrderList[ i ] == CRYPT_ATTRIBUTE_NONE )
+		for( orderIndex = 0; 
+			 attributeOrderList[ orderIndex ] != attributeType && \
+				attributeOrderList[ orderIndex ] != CRYPT_ATTRIBUTE_NONE && \
+				orderIndex < FAILSAFE_ARRAYSIZE( attributeOrderList, \
+												 CRYPT_ATTRIBUTE_TYPE ); 
+			 orderIndex++ );
+		ENSURES( orderIndex < FAILSAFE_ARRAYSIZE( attributeOrderList, \
+										 CRYPT_ATTRIBUTE_TYPE ) );
+		if( attributeOrderList[ orderIndex ] == CRYPT_ATTRIBUTE_NONE )
 			{
 			/* We've reached the first/last sub-attribute within the current
 			   item/group, tell the caller that there are no more sub-
-			   attributes present and they have to move on to the next
+			   attributes present and they have to move on to the next item/
 			   group */
-			return( FALSE );
+			*value = FALSE;
+			return( CRYPT_OK );
 			}
 		if( attrGetType == ATTR_PREV )
-			attributeType = ( i < 1 ) ? CRYPT_ATTRIBUTE_NONE : \
-										attributeOrderList[ i - 1 ];
+			{
+			attributeType = ( orderIndex <= 0 ) ? \
+								CRYPT_ATTRIBUTE_NONE : \
+								attributeOrderList[ orderIndex - 1 ];
+			}
 		else
-			attributeType = attributeOrderList[ i + 1 ];
+			attributeType = attributeOrderList[ orderIndex + 1 ];
 		if( attributeType == CRYPT_ATTRIBUTE_NONE )
 			{
 			/* We've reached the first/last sub-attribute within the current
 			   item/group, exit as before */
-			return( FALSE );
+			*value = FALSE;
+			return( CRYPT_OK );
 			}
 
 		/* Check whether the required sub-attribute is present.  If not, we
 		   continue and try the next one */
-		doContinue = FALSE;
 		switch( attributeType )
 			{
 			case CRYPT_SESSINFO_SSH_CHANNEL:
 			case CRYPT_SESSINFO_SSH_CHANNEL_TYPE:
 			case CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE:
-				break;	/* Always present */
+				doContinue = FALSE;	/* Always present */
+				break;
 
 			case CRYPT_SESSINFO_SSH_CHANNEL_ARG1:
-				if( channelInfoPtr->arg1Len <= 0 )
-					doContinue = TRUE;
+				if( channelInfoPtr->arg1Len > 0 )
+					doContinue = FALSE;
 				break;
 
 			case CRYPT_SESSINFO_SSH_CHANNEL_ARG2:
-				if( channelInfoPtr->arg2Len <= 0 )
-					doContinue = TRUE;
+				if( channelInfoPtr->arg2Len > 0 )
+					doContinue = FALSE;
 				break;
 
 			default:
-				retIntError_Boolean();
+				retIntError();
 			}
 		}
-	while( doContinue && iterationCount++ < FAILSAFE_ITERATIONS_MED );
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError_Boolean();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	channelInfoPtr->cursorPos = attributeType;
 
-	return( TRUE );
+	*value = TRUE;
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -227,26 +261,33 @@ static int accessFunction( ATTRIBUTE_LIST *attributeListPtr,
 
 /* Find the attribute entry for a channel */
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
 static ATTRIBUTE_LIST *findChannelAttr( const SESSION_INFO *sessionInfoPtr,
-										const long channelNo )
+										IN const long channelNo )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	int iterationCount = 0;
+	int iterationCount;
 
-	for( attributeListPtr = sessionInfoPtr->attributeList;
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES_N( ( channelNo == CRYPT_USE_DEFAULT ) || \
+				( channelNo >= 0 && channelNo <= LONG_MAX ) );
+
+	for( attributeListPtr = sessionInfoPtr->attributeList, \
+			iterationCount = 0;
 		 attributeListPtr != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListPtr = attributeListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
-		/* If it's not an SSH channel. continue */
+		/* If it's not an SSH channel, continue */
 		if( attributeListPtr->attributeID != CRYPT_SESSINFO_SSH_CHANNEL )
 			continue;
 
 		/* It's an SSH channel, check whether it's the one that we're
 		   after */
-		assert( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
+		ENSURES_N( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
 		channelInfoPtr = attributeListPtr->value;
 		if( channelNo == CRYPT_USE_DEFAULT )
 			{
@@ -260,146 +301,175 @@ static ATTRIBUTE_LIST *findChannelAttr( const SESSION_INFO *sessionInfoPtr,
 			channelInfoPtr->writeChannelNo == channelNo )
 			return( attributeListPtr );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( NULL );
 	}
 
-/* Find the channel info for a channel, matching by channel number, channel
-   ID, and channel host + port information */
+/* Find the SSH channel information for a channel, matching by channel 
+   number, channel ID, and channel host + port information */
 
-static SSH_CHANNEL_INFO *findChannelInfo( const SESSION_INFO *sessionInfoPtr,
-										  const long channelNo )
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+static SSH_CHANNEL_INFO *findChannelByChannelNo( const SESSION_INFO *sessionInfoPtr,
+												 IN const long channelNo )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr = \
 							findChannelAttr( sessionInfoPtr, channelNo );
 
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES_N( ( channelNo == CRYPT_USE_DEFAULT ) || \
+				( channelNo >= 0 && channelNo <= LONG_MAX ) );
+
 	return( ( attributeListPtr == NULL ) ? NULL : attributeListPtr->value );
 	}
 
-static SSH_CHANNEL_INFO *findChannelInfoID( const SESSION_INFO *sessionInfoPtr,
-											const int channelID )
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
+static SSH_CHANNEL_INFO *findChannelByID( const SESSION_INFO *sessionInfoPtr,
+											IN_INT_SHORT const int channelID )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	int iterationCount = 0;
+	int iterationCount;
 
-	assert( channelID != UNUSED_CHANNEL_ID );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	for( attributeListPtr = sessionInfoPtr->attributeList;
+	REQUIRES_N( channelID > 0 && channelID < MAX_INTLENGTH_SHORT );
+
+	for( attributeListPtr = sessionInfoPtr->attributeList, \
+			iterationCount = 0;
 		 attributeListPtr != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListPtr = attributeListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
-		/* If it's not an SSH channel. continue */
+		/* If it's not an SSH channel, continue */
 		if( attributeListPtr->attributeID != CRYPT_SESSINFO_SSH_CHANNEL )
 			continue;
 
 		/* It's an SSH channel, check whether it's the that one we're
 		   after */
-		assert( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
+		ENSURES_N( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
 		channelInfoPtr = attributeListPtr->value;
 		if( channelInfoPtr->channelID == channelID )
 			return( ( SSH_CHANNEL_INFO * ) channelInfoPtr );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( NULL );
 	}
 
-static SSH_CHANNEL_INFO *findChannelInfoAddr( const SESSION_INFO *sessionInfoPtr,
-											  const char *addrInfo,
-											  const int addrInfoLen )
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static SSH_CHANNEL_INFO *findChannelByAddr( const SESSION_INFO *sessionInfoPtr,
+											IN_BUFFER( addrInfoLen ) \
+												const char *addrInfo,
+											IN_LENGTH_SHORT \
+												const int addrInfoLen )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
-	int iterationCount = 0;
+	int iterationCount;
 
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( addrInfo, addrInfoLen ) );
 
-	for( attributeListPtr = sessionInfoPtr->attributeList;
+	REQUIRES_N( addrInfoLen > 0 && addrInfoLen < MAX_INTLENGTH_SHORT );
+
+	for( attributeListPtr = sessionInfoPtr->attributeList, \
+			iterationCount = 0;
 		 attributeListPtr != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListPtr = attributeListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		const SSH_CHANNEL_INFO *channelInfoPtr;
 
-		/* If it's not an SSH channel. continue */
+		/* If it's not an SSH channel, continue */
 		if( attributeListPtr->attributeID != CRYPT_SESSINFO_SSH_CHANNEL )
 			continue;
 
 		/* It's an SSH channel, check whether it's the one that we're
 		   after */
-		assert( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
+		ENSURES_N( attributeListPtr->valueLength == sizeof( SSH_CHANNEL_INFO ) );
 		channelInfoPtr = attributeListPtr->value;
 		if( channelInfoPtr->arg1Len == addrInfoLen && \
 			!memcmp( channelInfoPtr->arg1, addrInfo, addrInfoLen ) )
 			return( ( SSH_CHANNEL_INFO * ) channelInfoPtr );
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError_Null();
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
 
 	return( NULL );
 	}
 
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
 static const SSH_CHANNEL_INFO *getCurrentChannelInfo( const SESSION_INFO *sessionInfoPtr,
-													  const CHANNEL_TYPE channelType )
+													  IN_ENUM( CHANNEL ) \
+														const CHANNEL_TYPE channelType )
 	{
 	static const SSH_CHANNEL_INFO nullChannel = \
-			{ UNUSED_CHANNEL_ID, UNUSED_CHANNEL_NO, CHANNEL_FLAG_NONE, \
-			  0, 0 /*...*/ };
+			{ UNUSED_CHANNEL_ID, UNUSED_CHANNEL_NO, UNUSED_CHANNEL_NO, 
+			  CHANNEL_FLAG_NONE, CRYPT_ATTRIBUTE_NONE, 0 /*...*/ };
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	const SSH_CHANNEL_INFO *channelInfoPtr;
 	const int channelID = ( channelType == CHANNEL_READ ) ? \
 							sshInfo->currReadChannel : \
 							sshInfo->currWriteChannel;
 
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES_N( channelType > CHANNEL_NONE && \
+				channelType < CHANNEL_LAST );
+
 	/* If there's no channel open yet, return the null channel */
 	if( channelID == UNUSED_CHANNEL_ID )
 		return( ( SSH_CHANNEL_INFO * ) &nullChannel );
 
-	channelInfoPtr = findChannelInfoID( sessionInfoPtr,
-										( channelType == CHANNEL_READ ) ? \
-											sshInfo->currReadChannel : \
-											sshInfo->currWriteChannel );
+	channelInfoPtr = findChannelByID( sessionInfoPtr,
+									  ( channelType == CHANNEL_READ ) ? \
+										sshInfo->currReadChannel : \
+										sshInfo->currWriteChannel );
 	return( ( channelInfoPtr == NULL ) ? \
 			( SSH_CHANNEL_INFO * ) &nullChannel : channelInfoPtr );
 	}
 
 /****************************************************************************
 *																			*
-*								Get/Set Channel Info						*
+*							Get/Set Channel Information						*
 *																			*
 ****************************************************************************/
 
 /* Get the currently active channel */
 
-int getCurrentChannelNo( const SESSION_INFO *sessionInfoPtr,
-						 const CHANNEL_TYPE channelType )
+CHECK_RETVAL_RANGE( 1, LONG_MAX ) STDC_NONNULL_ARG( ( 1 ) ) \
+long getCurrentChannelNo( const SESSION_INFO *sessionInfoPtr,
+						  IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr = \
 				getCurrentChannelInfo( sessionInfoPtr, channelType );
 
-	assert( channelType == CHANNEL_READ || channelType == CHANNEL_WRITE );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( channelType == CHANNEL_READ || channelType == CHANNEL_WRITE );
+	REQUIRES( channelInfoPtr != NULL );
 
 	return( ( channelType == CHANNEL_READ ) ? \
 			channelInfoPtr->readChannelNo : channelInfoPtr->writeChannelNo );
 	}
 
-/* Get/set an attribute or SSH-specific internal attribute from the current
-   channel */
+/* Get/set an attribute or SSH-specific internal attribute from/for the 
+   current channel */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getChannelAttribute( const SESSION_INFO *sessionInfoPtr,
-						 const CRYPT_ATTRIBUTE_TYPE attribute,
-						 int *value )
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 OUT_INT_Z int *value )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr = \
 				getCurrentChannelInfo( sessionInfoPtr, CHANNEL_READ );
 
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( value, sizeof( int ) ) );
+
+	REQUIRES( isAttribute( attribute ) );
+	REQUIRES( channelInfoPtr != NULL );
 
 	/* Clear return values */
 	*value = 0;
@@ -421,10 +491,13 @@ int getChannelAttribute( const SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
-int getChannelAttributeString( const SESSION_INFO *sessionInfoPtr,
-							   const CRYPT_ATTRIBUTE_TYPE attribute,
-							   void *data, const int dataMaxLength, 
-							   int *dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int getChannelAttributeS( const SESSION_INFO *sessionInfoPtr,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
+								void *data, 
+						  IN_LENGTH_SHORT_Z const int dataMaxLength, 
+						  OUT_LENGTH_SHORT_Z int *dataLength )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr = \
 				getCurrentChannelInfo( sessionInfoPtr, CHANNEL_READ );
@@ -434,9 +507,16 @@ int getChannelAttributeString( const SESSION_INFO *sessionInfoPtr,
 			isWritePtr( data, dataMaxLength ) );
 	assert( isWritePtr( dataLength, sizeof( int ) ) );
 
+	REQUIRES( isAttribute( attribute ) );
+	REQUIRES( ( data == NULL && dataMaxLength == 0 ) || \
+			  ( data != NULL && \
+				dataMaxLength > 0 && \
+				dataMaxLength < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( channelInfoPtr != NULL );
+
 	/* Clear return values */
 	if( data != NULL )
-		memset( data, 0, min( 8, dataMaxLength ) );
+		memset( data, 0, min( 16, dataMaxLength ) );
 	*dataLength = 0;
 
 	if( isNullChannel( channelInfoPtr ) )
@@ -463,17 +543,23 @@ int getChannelAttributeString( const SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int getChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
-							const SSH_ATTRIBUTE_TYPE attribute,
-							void *data, const int dataMaxLength, 
-							int *dataLength )
+							IN_ENUM( SSH_ATTRIBUTE ) \
+								const SSH_ATTRIBUTE_TYPE attribute,
+							OUT_INT_Z int *value )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr = \
 				getCurrentChannelInfo( sessionInfoPtr, CHANNEL_READ );
 
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( data == NULL && dataMaxLength == 0 );
-	assert( isWritePtr( dataLength, sizeof( int ) ) );
+	assert( isWritePtr( value, sizeof( int ) ) );
+
+	REQUIRES( isAttribute( attribute ) );
+	REQUIRES( channelInfoPtr != NULL );
+
+	/* Clear return value */
+	*value = 0;
 
 	if( isNullChannel( channelInfoPtr ) )
 		return( CRYPT_ERROR_NOTFOUND );
@@ -481,26 +567,34 @@ int getChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
 	switch( attribute )
 		{
 		case SSH_ATTRIBUTE_WINDOWCOUNT:
-			*dataLength = channelInfoPtr->windowCount;
+			*value = channelInfoPtr->windowCount;
+			return( CRYPT_OK );
+
+		case SSH_ATTRIBUTE_WINDOWSIZE:
+			*value = channelInfoPtr->windowSize;
 			return( CRYPT_OK );
 		}
 
 	retIntError();
 	}
 
-int setChannelAttribute( SESSION_INFO *sessionInfoPtr,
-						 const CRYPT_ATTRIBUTE_TYPE attribute,
-						 const int value )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int setChannelAttribute( INOUT SESSION_INFO *sessionInfoPtr,
+						 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						 IN_INT_SHORT const int value )
 	{
 	SSH_CHANNEL_INFO *channelInfoPtr;
 
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( isAttribute( attribute ) );
+	REQUIRES( value > 0 && value < MAX_INTLENGTH_SHORT );
 
 	/* If we're setting the channel ID this doesn't change any channel
 	   attribute but selects the one with the given ID */
 	if( attribute == CRYPT_SESSINFO_SSH_CHANNEL )
 		{
-		channelInfoPtr = findChannelInfoID( sessionInfoPtr, value );
+		channelInfoPtr = findChannelByID( sessionInfoPtr, value );
 		if( channelInfoPtr == NULL )
 			return( CRYPT_ERROR_NOTFOUND );
 		return( selectChannel( sessionInfoPtr, channelInfoPtr->writeChannelNo,
@@ -510,19 +604,24 @@ int setChannelAttribute( SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
-int setChannelAttributeString( SESSION_INFO *sessionInfoPtr,
-							   const CRYPT_ATTRIBUTE_TYPE attribute,
-							   const void *data, const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+int setChannelAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
+						  IN_BUFFER( dataLength ) const void *data, 
+						  IN_RANGE( 1, CRYPT_MAX_TEXTSIZE ) const int dataLength )
 	{
 	SSH_CHANNEL_INFO *channelInfoPtr;
 
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isReadPtr( data, dataLength ) && \
-			dataLength <= CRYPT_MAX_TEXTSIZE );
+	assert( isReadPtr( data, dataLength ) );
+
+	REQUIRES( isAttribute( attribute ) );
+	REQUIRES( dataLength > 0 && dataLength <= CRYPT_MAX_TEXTSIZE );
 
 	/* Set the attribute for the currently-active channel */
 	channelInfoPtr = ( SSH_CHANNEL_INFO * ) \
 				getCurrentChannelInfo( sessionInfoPtr, CHANNEL_READ );
+	REQUIRES( channelInfoPtr != NULL );
 	if( isNullChannel( channelInfoPtr ) )
 		return( CRYPT_ERROR_NOTFOUND );
 	switch( attribute )
@@ -549,17 +648,20 @@ int setChannelAttributeString( SESSION_INFO *sessionInfoPtr,
 	retIntError();
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
-							const SSH_ATTRIBUTE_TYPE attribute,
-							const void *data, const int dataLength )
+							IN_ATTRIBUTE const SSH_ATTRIBUTE_TYPE attribute,
+							IN_INT_Z const int value )
 	{
 	SSH_CHANNEL_INFO *channelInfoPtr = ( SSH_CHANNEL_INFO * ) \
 				getCurrentChannelInfo( sessionInfoPtr, CHANNEL_READ );
 
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( data == NULL );
-	assert( ( attribute == SSH_ATTRIBUTE_ACTIVE && dataLength == TRUE ) || \
-			( attribute != SSH_ATTRIBUTE_ACTIVE && dataLength >= 0 ) );
+	
+	REQUIRES( ( attribute == SSH_ATTRIBUTE_ACTIVE && value == TRUE ) || \
+			  ( attribute != SSH_ATTRIBUTE_ACTIVE && \
+				value >= 0 && value < INT_MAX ) );
+	REQUIRES( channelInfoPtr != NULL );
 
 	if( isNullChannel( channelInfoPtr ) )
 		return( CRYPT_ERROR_NOTFOUND );
@@ -571,38 +673,56 @@ int setChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
 			return( CRYPT_OK );
 
 		case SSH_ATTRIBUTE_WINDOWCOUNT:
-			channelInfoPtr->windowCount = dataLength;
+			channelInfoPtr->windowCount = value;
+			return( CRYPT_OK );
+
+		case SSH_ATTRIBUTE_WINDOWSIZE:
+			channelInfoPtr->windowSize = value;
 			return( CRYPT_OK );
 
 		case SSH_ATTRIBUTE_ALTCHANNELNO:
-			channelInfoPtr->writeChannelNo = dataLength;
+			channelInfoPtr->writeChannelNo = value;
 			return( CRYPT_OK );
 		}
 
 	retIntError();
 	}
 
-/* Get the status of a channel: Not open, write-side closed, open */
+/* Get the status of a channel: Not open, read-side open/write-side closed, 
+   open */
 
-CHANNEL_TYPE getChannelStatus( const SESSION_INFO *sessionInfoPtr,
-							   const long channelNo )
+CHECK_RETVAL_ENUM( CHANNEL ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHANNEL_TYPE getChannelStatusByChannelNo( const SESSION_INFO *sessionInfoPtr,
+										  IN const long channelNo )
 	{
 	SSH_CHANNEL_INFO *channelInfoPtr;
 
-	channelInfoPtr = findChannelInfo( sessionInfoPtr, channelNo );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES_EXT( ( channelNo >= 0 && channelNo <= LONG_MAX ), \
+				  CHANNEL_NONE );
+
+	channelInfoPtr = findChannelByChannelNo( sessionInfoPtr, channelNo );
 	return( ( channelInfoPtr == NULL ) ? CHANNEL_NONE : \
 			( channelInfoPtr->flags & CHANNEL_FLAG_WRITECLOSED ) ? \
 				CHANNEL_READ : CHANNEL_BOTH );
 	}
 
-CHANNEL_TYPE getChannelStatusAddr( const SESSION_INFO *sessionInfoPtr,
-								   const char *addrInfo,
-								   const int addrInfoLen )
+CHECK_RETVAL_ENUM( CHANNEL ) STDC_NONNULL_ARG( ( 1 ) ) \
+CHANNEL_TYPE getChannelStatusByAddr( const SESSION_INFO *sessionInfoPtr,
+									 IN_BUFFER( addrInfoLen ) const char *addrInfo,
+									 IN_LENGTH_SHORT const int addrInfoLen )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr;
 
-	channelInfoPtr = findChannelInfoAddr( sessionInfoPtr, addrInfo,
-										  addrInfoLen );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( addrInfo, addrInfoLen ) );
+
+	REQUIRES_EXT( ( addrInfoLen > 0 && addrInfoLen < MAX_INTLENGTH_SHORT ), \
+				  CHANNEL_NONE );
+
+	channelInfoPtr = findChannelByAddr( sessionInfoPtr, addrInfo,
+										addrInfoLen );
 	return( ( channelInfoPtr == NULL ) ? CHANNEL_NONE : \
 			( channelInfoPtr->flags & CHANNEL_FLAG_WRITECLOSED ) ? \
 				CHANNEL_READ : CHANNEL_BOTH );
@@ -616,17 +736,31 @@ CHANNEL_TYPE getChannelStatusAddr( const SESSION_INFO *sessionInfoPtr,
 
 /* Select a channel */
 
-int selectChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
-				   const CHANNEL_TYPE channelType )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int selectChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				   IN const long channelNo,
+				   IN_ENUM_OPT( CHANNEL ) const CHANNEL_TYPE channelType )
 	{
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	SSH_CHANNEL_INFO *channelInfoPtr;
 
-	/* Locate the channel and update the current channel info.  We allow a
-	   special channel-type indicator of CHANNEL_NONE to allow the selection
-	   of not-yet-activated channels.  Since it's possible to have per-
-	   channel packet sizes, we also update the overall packet size value */
-	channelInfoPtr = findChannelInfo( sessionInfoPtr, channelNo );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( ( channelNo == CRYPT_USE_DEFAULT ) || \
+			  ( channelNo >= 0 && channelNo <= LONG_MAX ) );
+			  /* CRYPT_USE_DEFAULT is used to select the first available 
+			     channel, used when closing all channels in a loop */
+	REQUIRES( ( channelType == CHANNEL_NONE ) || \
+			  ( channelType > CHANNEL_NONE && channelType < CHANNEL_LAST ) );
+			  /* We allow CHANNEL_NONE to allow selection of created-but-not-
+			     yet-active channels */
+
+	/* Locate the channel and update the current channel information.  We 
+	   allow a special channel-type indicator of CHANNEL_NONE to specify the 
+	   selection of not-yet-activated channels.  Since it's possible to have 
+	   per-channel packet sizes we also update the overall packet size 
+	   value */
+	channelInfoPtr = findChannelByChannelNo( sessionInfoPtr, channelNo );
 	if( channelInfoPtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 	if( !isActiveChannel( channelInfoPtr ) && channelType != CHANNEL_NONE )
@@ -657,48 +791,60 @@ int selectChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 
 /* Add/create/delete a channel */
 
-int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
-				const int maxPacketSize, const void *type,
-				const int typeLen, const void *arg1, const int arg1Len )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int addChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				IN const long channelNo,
+				IN_LENGTH_MIN( 1024 ) const int maxPacketSize, 
+				IN_BUFFER( typeLen ) const void *type,
+				IN_LENGTH_SHORT const int typeLen, 
+				IN_BUFFER_OPT( arg1Len ) const void *arg1, 
+				IN_LENGTH_SHORT const int arg1Len )
 	{
 	ATTRIBUTE_LIST *attributeListPtr;
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	SSH_CHANNEL_INFO channelInfo;
-	int channelCount = 0, iterationCount = 0, status;
+	int channelCount, iterationCount, status;
 
-	assert( channelNo >= 0 );
-	assert( maxPacketSize >= 1024 && maxPacketSize <= 0x100000L );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( type, typeLen ) );
 	assert( ( arg1 == NULL && arg1Len == 0 ) || 
 			isReadPtr( arg1, arg1Len ) );
 
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+	REQUIRES( maxPacketSize >= 1024 && maxPacketSize < MAX_INTLENGTH );
+	REQUIRES( typeLen > 0 && typeLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( ( arg1 == NULL && arg1Len == 0 ) || \
+			  ( arg1 != NULL && \
+				arg1Len > 0 && arg1Len < MAX_INTLENGTH_SHORT ) );
+
 	/* Make sure that this channel doesn't already exist */
-	if( findChannelInfo( sessionInfoPtr, channelNo ) != NULL )
+	if( findChannelByChannelNo( sessionInfoPtr, channelNo ) != NULL )
 		{
 		retExt( CRYPT_ERROR_DUPLICATE,
 				( CRYPT_ERROR_DUPLICATE, SESSION_ERRINFO, 
-				  "Attempt to add duplicate channel %ld", channelNo ) );
+				  "Attempt to add duplicate channel %lX", channelNo ) );
 		}
 
 	/* SSH channels are allocated unique IDs for tracking by cryptlib,
 	   since (at least in theory) the SSH-level channel IDs may repeat.
 	   If the initial (not-yet-initialised) channel ID matches the
-	   UNUSED_CHANNEL_ID magic value, we initialise it to one past that
+	   UNUSED_CHANNEL_ID magic value we initialise it to one past that
 	   value */
 	if( sshInfo->channelIndex <= UNUSED_CHANNEL_ID )
 		sshInfo->channelIndex = UNUSED_CHANNEL_ID + 1;
 
 	/* Make sure that we haven't exceeded the maximum number of channels */
-	for( attributeListPtr = sessionInfoPtr->attributeList;
+	for( channelCount = 0, \
+			attributeListPtr = sessionInfoPtr->attributeList, \
+			iterationCount = 0;
 		 attributeListPtr != NULL && \
-			iterationCount++ < FAILSAFE_ITERATIONS_MAX;
-		 attributeListPtr = attributeListPtr->next )
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		if( attributeListPtr->attributeID == CRYPT_SESSINFO_SSH_CHANNEL )
 			channelCount++;
 		}
-	if( iterationCount >= FAILSAFE_ITERATIONS_MAX )
-		retIntError();
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	if( channelCount > SSH_MAX_CHANNELS )
 		{
 		retExt( CRYPT_ERROR_OVERFLOW,
@@ -707,7 +853,7 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 				  SSH_MAX_CHANNELS ) );
 		}
 
-	/* Initialise the info for the new channel and create it */
+	/* Initialise the information for the new channel and create it */
 	memset( &channelInfo, 0, sizeof( SSH_CHANNEL_INFO ) );
 	channelInfo.channelID = sshInfo->channelIndex++;
 	channelInfo.readChannelNo = channelInfo.writeChannelNo = channelNo;
@@ -718,10 +864,14 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 		status = attributeCopyParams( channelInfo.arg1, CRYPT_MAX_TEXTSIZE, 
 									  &channelInfo.arg1Len, arg1, arg1Len );
 	if( cryptStatusOK( status ) )
+		{
 		status = addSessionInfoComposite( &sessionInfoPtr->attributeList,
-							CRYPT_SESSINFO_SSH_CHANNEL, accessFunction,
-							&channelInfo, sizeof( SSH_CHANNEL_INFO ),
-							ATTR_FLAG_MULTIVALUED | ATTR_FLAG_COMPOSITE );
+										  CRYPT_SESSINFO_SSH_CHANNEL, 
+										  accessFunction, &channelInfo, 
+										  sizeof( SSH_CHANNEL_INFO ),
+										  ATTR_FLAG_MULTIVALUED | \
+										  ATTR_FLAG_COMPOSITE );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -731,21 +881,28 @@ int addChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 	return( selectChannel( sessionInfoPtr, channelNo, CHANNEL_NONE ) );
 	}
 
-int createChannel( SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int createChannel( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
-	int iterationCount = 0;
+	int iterationCount;
+
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	/* Find an unused channel number.  Since the peer can request the
-	   creation of arbitrary-numbered channels, we have to be careful to
+	   creation of arbitrary-numbered channels we have to be careful to
 	   ensure that we don't clash with any existing peer-requested channel
-	   numbers when we create our own channel */
-	while( findChannelInfo( sessionInfoPtr, \
-							sshInfo->nextChannelNo ) != NULL && \
-		   iterationCount++ < FAILSAFE_ITERATIONS_MED )
+	   numbers when we create our own one */
+	for( iterationCount = 0;
+		 findChannelByChannelNo( sessionInfoPtr, \
+								 sshInfo->nextChannelNo ) != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
+		{
+		/* This channel number is already in use, move on to the next one */
 		sshInfo->nextChannelNo++;
-	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
-		retIntError();
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	/* Create a channel with the new channel number */
 	return( addChannel( sessionInfoPtr, sshInfo->nextChannelNo++,
@@ -753,8 +910,10 @@ int createChannel( SESSION_INFO *sessionInfoPtr )
 						"session", 7, NULL, 0 ) );
 	}
 
-int deleteChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
-				   const CHANNEL_TYPE channelType,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int deleteChannel( INOUT SESSION_INFO *sessionInfoPtr, 
+				   IN const long channelNo,
+				   IN_ENUM( CHANNEL ) const CHANNEL_TYPE channelType,
 				   const BOOLEAN deleteLastChannel )
 	{
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
@@ -762,32 +921,37 @@ int deleteChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 	ATTRIBUTE_LIST *attributeListPtr;
 	int channelID;
 
-	/* If we can't delete the last remaining channel (it has to be done
-	   explicitly via a session close) and there are less than two active
-	   channels left, we can't do anything */
-	if( !deleteLastChannel && \
-		!isChannelActive( sessionInfoPtr, UNUSED_CHANNEL_ID, 2 ) )
-		return( CRYPT_ERROR_PERMISSION );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	/* Locate the channel info */
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+	REQUIRES( channelType > CHANNEL_NONE && channelType < CHANNEL_LAST );
+
+	/* Locate the channel information */
 	attributeListPtr = findChannelAttr( sessionInfoPtr, channelNo );
 	if( attributeListPtr == NULL )
-		return( isChannelActive( sessionInfoPtr, UNUSED_CHANNEL_ID, 1 ) ? \
+		return( isChannelActive( sessionInfoPtr, UNUSED_CHANNEL_ID ) ? \
 				CRYPT_ERROR_NOTFOUND : OK_SPECIAL );
 	channelInfoPtr = attributeListPtr->value;
 	channelID = channelInfoPtr->channelID;
+
+	/* If we can't delete the last remaining channel (it has to be done
+	   explicitly via a session close) and there are no active channels
+	   left besides the current one then we can't do anything */
+	if( !deleteLastChannel && \
+		!isChannelActive( sessionInfoPtr, channelID ) )
+		return( CRYPT_ERROR_PERMISSION );
 
 	/* Delete the channel entry.  If we're only closing the write side we
 	   mark the channel as closed for write but leave the overall channel
 	   open */
 	if( channelType == CHANNEL_WRITE )
 		{
-		assert( !( channelInfoPtr->flags & CHANNEL_FLAG_WRITECLOSED ) );
+		REQUIRES( !( channelInfoPtr->flags & CHANNEL_FLAG_WRITECLOSED ) );
 		channelInfoPtr->flags |= CHANNEL_FLAG_WRITECLOSED;
 		if( channelID == sshInfo->currWriteChannel )
 			sshInfo->currWriteChannel = UNUSED_CHANNEL_ID;
 		return( isChannelActive( sessionInfoPtr, \
-								 channelInfoPtr->channelID, 1 ) ? \
+								 channelInfoPtr->channelID ) ? \
 				CRYPT_OK : OK_SPECIAL );
 		}
 	deleteSessionInfo( &sessionInfoPtr->attributeList,
@@ -803,24 +967,31 @@ int deleteChannel( SESSION_INFO *sessionInfoPtr, const long channelNo,
 
 	/* We've deleted an open channel, check if there are any channels left
 	   and if not let the caller know */
-	return( isChannelActive( sessionInfoPtr, UNUSED_CHANNEL_ID, 1 ) ? \
+	return( isChannelActive( sessionInfoPtr, UNUSED_CHANNEL_ID ) ? \
 			CRYPT_OK : OK_SPECIAL );
 	}
 
 #if 0
 
-int deleteChannelAddr( SESSION_INFO *sessionInfoPtr, const char *addrInfo,
-					   const int addrInfoLen )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int deleteChannelByAddr( INOUT SESSION_INFO *sessionInfoPtr, 
+						 IN_BUFFER( addrInfoLen ) const char *addrInfo,
+						 IN_LENGTH_SHORT const int addrInfoLen )
 	{
 	const SSH_CHANNEL_INFO *channelInfoPtr;
 
-	channelInfoPtr = findChannelInfoAddr( sessionInfoPtr, addrInfo,
-										  addrInfoLen );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( addrInfo, addrInfoLen ) );
+
+	REQUIRES( addrInfoLen > 0 && addrInfoLen < MAX_INTLENGTH_SHORT );
+
+	channelInfoPtr = findChannelByAddr( sessionInfoPtr, addrInfo,
+										addrInfoLen );
 	if( channelInfoPtr == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
 
 	/* We've found the entry that it corresponds to, clear it.  This doesn't
-	   actually delete the entire channel, but merely deletes the forwarding.
+	   actually delete the entire channel but merely deletes the forwarding.
 	   See the note in ssh2_msg.c for why this is currently unused */
 	memset( channelInfoPtr->arg1, 0, CRYPT_MAX_TEXTSIZE );
 	channelInfoPtr->arg1Len = 0;
@@ -836,22 +1007,31 @@ int deleteChannelAddr( SESSION_INFO *sessionInfoPtr, const char *addrInfo,
 
 /* Enqueue a response to a request, to be sent at the next available
    opportunity.  This is required because we may be in the middle of
-   assembling or sending a data packet when we need to send the response,
+   assembling or sending a data packet when we need to send the response
    so the response has to be deferred until after the data packet has been
    completed and sent */
 
-int enqueueResponse( SESSION_INFO *sessionInfoPtr, const int type,
-					 const int noParams, const long channelNo,
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int enqueueResponse( INOUT SESSION_INFO *sessionInfoPtr, 
+					 IN_RANGE( 1, 255 ) const int type,
+					 IN_RANGE( 0, 4 ) const int noParams, 
+					 IN const long channelNo,
 					 const int param1, const int param2, const int param3 )
 	{
 	SSH_RESPONSE_INFO *respPtr = &sessionInfoPtr->sessionSSH->response;
 	STREAM stream;
 	int status = CRYPT_OK;
 
-	/* If there's already a response enqueued, we can't enqueue another one
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( type > 0 && type <= 0xFF );
+	REQUIRES( noParams >= 0 && noParams <= 4 );
+			  /* channelNo is the first parameter */
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+
+	/* If there's already a response enqueued we can't enqueue another one
 	   until it's been sent */
-	if( respPtr->type != 0 )
-		retIntError();
+	REQUIRES( respPtr->type == 0 );
 
 	respPtr->type = type;
 	sMemOpen( &stream, respPtr->data, SSH_MAX_RESPONSESIZE );
@@ -870,45 +1050,92 @@ int enqueueResponse( SESSION_INFO *sessionInfoPtr, const int type,
 	return( CRYPT_OK );
 	}
 
-/* Assemble a packet for and send a previously enqueued response */
+/* Assemble a packet for and send a previously enqueued response.  This 
+   potentially appends a control packet after the end of an existing payload
+   packet so the buffer indicator used is sendBufSize rather than 
+   maxPacketSize, since we may already have maxPacketSize bytes worth of
+   payload data present.
 
-int sendEnqueuedResponse( SESSION_INFO *sessionInfoPtr, const int offset )
+   This can be called in one of two ways, if called as appendChannelData()
+   then it's being piggybacked onto the end of existing data at a location
+   specified by the 'offset' parameter and we assemble the packet at that 
+   point but it'll be sent as part of the main packet send.  If called as 
+   enqueueChannelData() or sendEnqueuedResponse() then we have the send 
+   buffer to ourselves (offset == CRYPT_UNUSED) and can assemble and send it 
+   immediately */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int encodeSendResponse( INOUT SESSION_INFO *sessionInfoPtr, 
+							   IN_LENGTH_OPT const int offset,
+							   OUT_OPT_LENGTH_Z int *responseSize )
 	{
 	SSH_RESPONSE_INFO *respPtr = &sessionInfoPtr->sessionSSH->response;
 	STREAM stream;
-	int sendBufOffset = ( offset == CRYPT_UNUSED ) ? \
-						sessionInfoPtr->sendBufPos : offset;
-	int status;
+	const BOOLEAN assembleOnly = ( offset != CRYPT_UNUSED ) ? TRUE : FALSE;
+	BOOLEAN adjustedStartOffset = FALSE;
+	int sendBufOffset = assembleOnly ? offset : sessionInfoPtr->sendBufPos;
+	int encodedResponseSize = DUMMY_INIT, dummy, status;
 
-	assert( sendBufOffset >= 0 );
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( responseSize == NULL || \
+			isWritePtr( responseSize, sizeof( int ) ) );
+
+	REQUIRES( ( offset == CRYPT_UNUSED && responseSize == NULL ) || \
+			  ( offset >= 0 && offset < sessionInfoPtr->sendBufSize && \
+			    responseSize != NULL ) );
+	REQUIRES( sendBufOffset >= 0 && offset < sessionInfoPtr->sendBufSize );
+
+	/* Make sure that there's room for at least two packets worth of 
+	   wrappers plus a short control packet, needed to handle a control 
+	   packet piggybacked onto the end of a data packet.  The reason for the
+	   doubling of the IV count is because the minimum padding length 
+	   requirement can result in an expansion by two encrypted blocks rather
+	   than one */
+	assert( EXTRA_PACKET_SIZE > ( 2 * ( SSH2_HEADER_SIZE + \
+										CRYPT_MAX_HASHSIZE + \
+										( 2 * CRYPT_MAX_IVSIZE ) ) ) + 32 );
+
+	/* Clear return value */
+	if( responseSize != NULL )
+		*responseSize = 0;
 
 	/* If there's an incomplete packet in the process of being assembled in
-	   the send buffer, we can't do anything */
-	if( !sessionInfoPtr->partialWrite && \
+	   the send buffer then we can't do anything.  If we're just assembling
+	   a response to append to a completed packet then we know that the 
+	   packet that's present is a complete one so we skip this check */
+	if( assembleOnly && !sessionInfoPtr->partialWrite && \
 		( sendBufOffset > sessionInfoPtr->sendBufStartOfs ) )
 		return( CRYPT_OK );
 
-	/* Either the send buffer's empty or it contains a completed packet in
-	   the process of being written, if there's not enough room for the
-	   enqueued response we can't do anything */
-	if( sendBufOffset + ( 32 + CRYPT_MAX_HASHSIZE + CRYPT_MAX_IVSIZE ) > \
-		sessionInfoPtr->sendBufSize )
-		return( CRYPT_OK );
+	/* The send buffer is allocated to always allow the piggybacking of one
+	   packet of control data */
+	ENSURES( sendBufOffset + ( SSH2_HEADER_SIZE + 16 + respPtr->dataLen + \
+							   CRYPT_MAX_HASHSIZE + CRYPT_MAX_IVSIZE ) <= \
+			 sessionInfoPtr->sendBufSize );
 
-	assert( ( sendBufOffset <= sessionInfoPtr->sendBufStartOfs ) || \
-			( sessionInfoPtr->partialWrite && \
-			  sendBufOffset + ( 32 + CRYPT_MAX_HASHSIZE + CRYPT_MAX_IVSIZE ) < \
+	ENSURES( ( sendBufOffset <= sessionInfoPtr->sendBufStartOfs ) || \
+			 ( sessionInfoPtr->partialWrite && \
+			   sendBufOffset + ( SSH2_HEADER_SIZE + 16 + respPtr->dataLen + \
+								 CRYPT_MAX_HASHSIZE + CRYPT_MAX_IVSIZE ) < \
 			  sessionInfoPtr->sendBufSize ) );
 
-	/* If there's nothing in the send buffer, set the start offset to zero.
-	   We have to do this because it's pre-adjusted to accomodate the header
-	   for a payload data packet, since we're assembling our own packet in
-	   the buffer there's no need for this additional header room */
-	if( sendBufOffset == sessionInfoPtr->sendBufStartOfs )
-		sessionInfoPtr->sendBufPos = sendBufOffset = 0;
+	/* If we're in the data transfer phase and there's nothing in the send 
+	   buffer, set the packet start offset to zero.  We have to do this 
+	   because it's pre-adjusted to accomodate the header for a payload data 
+	   packet, since we're assembling our own packet in the buffer there's 
+	   no need for this additional header room */
+	if( ( sessionInfoPtr->flags & SESSION_ISOPEN ) && \
+		sendBufOffset == sessionInfoPtr->sendBufStartOfs )
+		{
+		sendBufOffset = 0;
+		adjustedStartOffset = TRUE;
+		}
 
 	/* Assemble the response as a new packet at the end of any existing
 	   data */
+	REQUIRES( rangeCheckZ( sendBufOffset, 
+						   sessionInfoPtr->sendBufSize - sendBufOffset,
+						   sessionInfoPtr->sendBufSize ) );
 	sMemOpen( &stream, sessionInfoPtr->sendBuffer + sendBufOffset,
 			  sessionInfoPtr->sendBufSize - sendBufOffset );
 	swrite( &stream, "\x00\x00\x00\x00\x00", SSH2_HEADER_SIZE );
@@ -920,68 +1147,120 @@ int sendEnqueuedResponse( SESSION_INFO *sessionInfoPtr, const int offset )
 		}
 	if( cryptStatusOK( status ) )
 		status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, FALSE, TRUE );
+	if( cryptStatusOK( status ) )
+		encodedResponseSize = stell( &stream );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
 		return( status );
 		}
 
-	/* If we're only assembling the data and the caller is taking care of
-	   sending the assembled packet, we're done */
-	if( offset != CRYPT_UNUSED )
-		return( CRYPT_OK );
-
 	/* We've sent (or at least assembled) the response, clear the enqueued
 	   data */
 	memset( respPtr, 0, sizeof( SSH_RESPONSE_INFO ) );
 
-	/* Try and write the response */
-	if( sessionInfoPtr->flags & SESSION_ISOPEN )
+	/* If we're only assembling the data and the caller is taking care of
+	   sending the assembled packet, we're done */
+	if( assembleOnly )
 		{
-		int dummy;
+		sMemDisconnect( &stream );
+		*responseSize = encodedResponseSize;
+		return( CRYPT_OK );
+		}
 
-		/* We're in the data transfer phase, use the standard data-flush
-		   mechanism to try and get the data out.  We set the partial-write
-		   flag because what we've just added is pre-packaged data that
-		   doesn't have to go through the data-payload encoding process */
-		sessionInfoPtr->sendBufPos += stell( &stream );
-		sessionInfoPtr->partialWrite = TRUE;
-		status = putSessionData( sessionInfoPtr, NULL, 0, &dummy );
+	/* If we're still in the handshake phase (so this is part of the initial
+	   session negotiation, for example a response to a global or channel
+	   request) then we need to send the packet directly to avoid messing
+	   up the send buffering */
+	if( !( sessionInfoPtr->flags & SESSION_ISOPEN ) )
+		{
+		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
+		sMemDisconnect( &stream );
+		return( status );
+		}
+
+	/* Write the response, using the standard data-flush mechanism to try 
+	   and get the data out.  We set the partial-write flag because what 
+	   we've just added is pre-packaged data that doesn't have to go through 
+	   the data-payload encoding process */
+	sMemDisconnect( &stream );
+	if( adjustedStartOffset )
+		{
+		/* We're in the data transfer phase, in which case the buffer 
+		   position is offset into the send buffer to leave room for the 
+		   packet header.  Since we're adding our own header we've started 
+		   the packet at the start of the send buffer, i.e. with 
+		   sendBufPos = 0 rather than sendBufPos = sendBufStartOffset, so we 
+		   set the new position to the total size of the data written rather 
+		   than adding it to the existing value */
+		sessionInfoPtr->sendBufPos = encodedResponseSize;
 		}
 	else
 		{
-		/* We're still in the handshake phase, we can send the packet
-		   directly */
-		status = sendPacketSSH2( sessionInfoPtr, &stream, TRUE );
+		assert( 0 );	/* When does this occur? */
+		sessionInfoPtr->sendBufPos += encodedResponseSize;
 		}
-	sMemDisconnect( &stream );
+	sessionInfoPtr->partialWrite = TRUE;
+	return( putSessionData( sessionInfoPtr, NULL, 0, &dummy ) );
+	}
 
-	return( status );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sendEnqueuedResponse( INOUT SESSION_INFO *sessionInfoPtr )
+	{
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	return( encodeSendResponse( sessionInfoPtr, CRYPT_UNUSED, NULL ) );
 	}
 
 /* Enqueue channel control data ready to be sent, and try and send it if
-   possible */
+   possible.  This is used to send window-adjust messages for the SSH
+   performance handbrake by first enqueueing the window adjust and then,
+   if the send buffer is available, sending it.  If it's not available
+   then it'll be piggybacked onto the channel payload data later on when 
+   it's being sent via appendChannelData() below */
 
-int enqueueChannelData( SESSION_INFO *sessionInfoPtr, const int type,
-						const long channelNo, const int param )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int enqueueChannelData( INOUT SESSION_INFO *sessionInfoPtr, 
+						IN_RANGE( 1, 255 ) const int type,
+						IN const long channelNo, 
+						const int param )
 	{
 	int status;
 
+	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( type > 0 && type <= 0xFF );
+	REQUIRES( channelNo >= 0 && channelNo <= LONG_MAX );
+
 	status = enqueueResponse( sessionInfoPtr, type, 2, channelNo, param,
 							  CRYPT_UNUSED, CRYPT_UNUSED );
-	return( cryptStatusOK( status ) ? \
-			sendEnqueuedResponse( sessionInfoPtr, CRYPT_UNUSED ) : status );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( encodeSendResponse( sessionInfoPtr, CRYPT_UNUSED, NULL ) );
 	}
 
 /* Append enqueued channel control data to existing channel payload data
-   without trying to send it (the data send is being piggybacked on a
-   payload data send and will be handled by the caller) */
+   without trying to send it.  In this case the control data send is being 
+   piggybacked on a payload data send and will be handled by the caller,
+   with the control flow on the caller side being:
 
-int appendChannelData( SESSION_INFO *sessionInfoPtr, const int offset )
+	preparepacketFunction:
+		wrap channel data;
+		if( enqueued control data present )
+			appendChannelData();
+	send wrapped channel data and wrapped control data */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int appendChannelData( INOUT SESSION_INFO *sessionInfoPtr, 
+					   IN_LENGTH_SHORT_Z const int offset )
 	{
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( offset >= 0 && offset < sessionInfoPtr->sendBufSize );
+	int channelDataSize, status;
 
-	return( sendEnqueuedResponse( sessionInfoPtr, offset ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( offset >= 0 && offset < sessionInfoPtr->sendBufSize );
+
+	status = encodeSendResponse( sessionInfoPtr, offset, &channelDataSize );
+	return( cryptStatusError( status ) ? status : channelDataSize );
 	}
 #endif /* USE_SSH */

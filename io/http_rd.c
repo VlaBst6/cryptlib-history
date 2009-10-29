@@ -458,6 +458,9 @@ static int readFunction( INOUT STREAM *stream,
 			{
 			void *newBuffer;
 
+			REQUIRES( httpDataInfo->bytesAvail > 0 && \
+					  httpDataInfo->bytesAvail < MAX_INTLENGTH );
+
 			/* readResponseHeader() will only allow content larger than the 
 			   buffer size if it's marked as a resizeable buffer */
 			REQUIRES( httpDataInfo->bufferResize );

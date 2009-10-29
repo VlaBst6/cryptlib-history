@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *								Write CMP Messages							*
-*						Copyright Peter Gutmann 1999-2007					*
+*						Copyright Peter Gutmann 1999-2009					*
 *																			*
 ****************************************************************************/
 
@@ -19,85 +19,7 @@
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
 
-/* The CMP message header includes a large amount of ambiguous, confusing, 
-   and redundant information, we remove all the unnecessary junk required by 
-   CMP by only sending the fields that are actually useful.  Fields that are 
-   completely pointless or can't be provided (sender and recipient DN, 
-   nonces) are omitted entirely, fields that remain static throughout an 
-   exchange (user ID info) are only sent in the first message and are 
-   assumed to be the same as for the previous message if absent.  The 
-   general schema for message fields during various sample exchanges is:
-
-	ir:		transID	userID-user	mac-param	clibID
-	ip:		transID				mac			clibID
-
-	cr:		transID				sig			clibID	certID-user
-	cp:		transID				sig			clibID	certID-CA
-
-	ir:		transID	userID-user	mac-param	clibID
-	ip:		transID				mac			clibID
-	ir:		transID				mac
-	ip:		transID				mac
-
-	ir:		transID	userID-user	mac-param	clibID
-	ip:		transID				mac			clibID
-	cr:		transID				sig					certID-user
-	cp:		transID				sig					certID-CA
-
-	genm:	transID	userID-user	mac-param	clibID
-	genp:	transID				mac			clibID	certID-CA
-	ir:		transID				mac
-	ip:		transID				mac
-	cr:		transID				sig					certID-user
-	cp:		transID				sig
-
-   The transID (= nonce) is sent in all messages.  The user ID, cert ID, 
-   and MAC parameters are sent once, if absent they're assumed to be "same 
-   as previous" (in the case of the MAC parameters we simply send the MAC
-   OID with NULL parameters to indicate no change).  The cryptlib ID is sent 
-   in the first message only.
-
-   The sending of the CA cert ID in the PKIBoot response even though the 
-   response is MAC'd is necessary because we need this value to identify 
-   which of the certs in the CTL is the CA/RA cert to be used for further 
-   exchanges.  There are actually several ways in which we can identify 
-   the cert:
-
-	1. PKIBoot response is a CTL, CA cert is implicitly trusted (via the CTL).
-
-		Issues: Mostly an implementation issue, we need to provide a CA cert 
-		when we activate the session, not having this requires special-case 
-		handling in the CMP startup code to check for an implicitly-trusted
-		cert if a CA cert isn't explicitly provided.  In addition there 
-		currently isn't a means of fetching a trusted cert based on its cert 
-		ID, only of querying whether a cert is trusted or fetching a trusted 
-		issuer cert for an existing cert.
-
-	2. PKIBoot response is a CTL, userID identifies the CA cert.
-
-		Issues: The userID is probably only meant to identify the 
-		authenticator of the message (the spec is, as usual, unclear on 
-		this), not a random cert located elsewhere.
-
-	3. PKIBoot response is a CTL, certID identifies the CA cert.
-
-		Issues: A less serious version of (2) above, we're overloading the 
-		certID to some extent but since it doesn't affect CMP messages as a
-		whole (as overloading the userID would) this is probably OK.	
-
-	4. PKIBoot response is SignedData, signer is CA cert.
-
-		Issues: Mostly nitpicks, we should probably only be sending a pure 
-		CTL rather than signed data, and the means of identifying the CA 
-		cert seems a bit clunky.  On one hand it provides POP of the CA key 
-		at the PKIBoot stage, but on the other it requires a signing 
-		operation for every PKIBoot exchange, which can get rather 
-		heavyweight if clients use it in a DHCP-like manner every time they
-		start up.  In addition it requires a general-purpose signature-
-		capable CA key, which often isn't the case if it's reserved 
-		specifically for cert and CRL signing.
-
-   Enabling the following define forces the use of full headers at all times.
+/* Enabling the following define forces the use of full headers at all times.
    cryptlib always sends minimal headers once it detects that the other side 
    is using cryptlib, ommitting as much of the unnecessary junk as possible, 
    which significantly reduces the overall message size */
@@ -112,15 +34,15 @@
 *																			*
 ****************************************************************************/
 
-/* Write full cert ID info.  This is written as an attribute in the
-   generalInfo field of the message header to allow unambiguous
-   identification of the signing cert, which the standard CMP format can't
-   do.  Although CMP uses a gratuitously incompatible definition of the
-   standard attribute type (calling it InfoTypeAndValue), it's possible to
-   shoehorn a standard attribute type in by taking the "ANY" in "ANY DEFINED
-   BY x" to mean "SET OF AttributeValue" (for once the use of obsolete ASN.1
-   is a help, since it's so imprecise that we can shovel in anything and it's
-   still valid):
+/* Write full certificate ID information.  This is written as an attribute 
+   in the generalInfo field of the message header to allow unambiguous
+   identification of the signing certificate, which the standard CMP format 
+   can't do.  Although CMP uses a gratuitously incompatible definition of 
+   the standard attribute type (calling it InfoTypeAndValue), it's possible 
+   to shoehorn a standard attribute type in by taking the "ANY" in "ANY 
+   DEFINED BY x" to mean "SET OF AttributeValue" (for once the use of 
+   obsolete ASN.1 is a help, since it's so imprecise that we can shovel in 
+   anything and it's still valid):
 
 	SigningCertificate ::=  SEQUENCE {
 		certs			SEQUENCE OF ESSCertID	-- Size (1)
@@ -130,10 +52,11 @@
 		certID			OCTET STRING
 		}
 
-   All we really need is the cert ID, so instead of writing a full ESSCertID
-   (which also contains an optional incompatible reinvention of the CMS
-   IssuerAndSerialNumber) we write the sole mandatory field, the cert hash,
-   which also keeps the overall size down.
+   All that we really need to identify certificates is the certificate ID, 
+   so instead of writing a full ESSCertID (which also contains an optional 
+   incompatible reinvention of the CMS IssuerAndSerialNumber) we write the 
+   sole mandatory field, the certificate hash, which also keeps the overall 
+   size down.
    
    This is further complicated though by the fact that certificate attributes
    are defined as SET OF while CMS attributes are defined as SEQUENCE (and of 
@@ -144,11 +67,29 @@
    all attributes are certificate attributes (since this is a PKIX protocol)
    and encode them as a uniform SET OF */
 
-static int writeCertID( STREAM *stream, const CRYPT_CONTEXT iCryptCert )
+CHECK_RETVAL \
+static int sizeofCertID( IN_HANDLE const CRYPT_CONTEXT iCryptCert )
+	{
+	const int essCertIDSize = objSize( objSize( objSize( objSize( 20 ) ) ) );
+					/* Infinitely-nested SHA-1 hash */
+
+	REQUIRES( isHandleRangeValid( iCryptCert ) );
+
+	return( objSize( sizeofOID( OID_ESS_CERTID ) + \
+					 sizeofObject( essCertIDSize ) ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int writeCertID( INOUT STREAM *stream, 
+						IN_HANDLE const CRYPT_CONTEXT iCryptCert )
 	{
 	MESSAGE_DATA msgData;
 	BYTE certHash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int essCertIDSize, payloadSize, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	
+	REQUIRES( isHandleRangeValid( iCryptCert ) );
 
 	/* Find out how big the payload will be */
 	setMessageData( &msgData, certHash, CRYPT_MAX_HASHSIZE );
@@ -159,12 +100,7 @@ static int writeCertID( STREAM *stream, const CRYPT_CONTEXT iCryptCert )
 	essCertIDSize = ( int ) sizeofObject( msgData.length );
 	payloadSize = objSize( objSize( objSize( essCertIDSize ) ) );
 
-	/* If we've been passed a null stream, it's a size request only */
-	if( stream == NULL )
-		return( objSize( sizeofOID( OID_ESS_CERTID ) + \
-						 sizeofObject( payloadSize ) ) );
-
-	/* Write the signing cert ID info */
+	/* Write the signing certificate ID information */
 	writeSequence( stream, sizeofOID( OID_ESS_CERTID ) + \
 						   ( int ) sizeofObject( payloadSize ) );
 	writeOID( stream, OID_ESS_CERTID );
@@ -176,476 +112,103 @@ static int writeCertID( STREAM *stream, const CRYPT_CONTEXT iCryptCert )
 							  DEFAULT_TAG ) );
 	}
 
-/* Write PKIStatus information:
+/* Initialise the information needed to send client/server DNs in the PKI 
+   header */
 
-	PKIStatusInfo ::= SEQUENCE {
-		status			INTEGER,
-		statusString	SEQUENCE OF UTF8String OPTIONAL,
-		failInfo		BIT STRING OPTIONAL
-		} */
-
-static int writePkiStatusInfo( STREAM *stream, const int pkiStatus,
-							   const long pkiFailureInfo )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4, 5 ) ) \
+static int initDNInfo( INOUT SESSION_INFO *sessionInfoPtr,
+					   OUT_HANDLE_OPT CRYPT_HANDLE *senderNameObject,
+					   OUT_HANDLE_OPT CRYPT_HANDLE *recipNameObject,
+					   OUT_LENGTH_SHORT_Z int *senderNameLength,
+					   OUT_LENGTH_SHORT_Z int *recipNameLength,
+					   const BOOLEAN isInitialClientMessage,
+					   const BOOLEAN isClientCryptOnlyKey )
 	{
-	const long localPKIFailureInfo = \
-		( pkiFailureInfo != CMPFAILINFO_OK ) ? pkiFailureInfo : \
-		( pkiStatus == CRYPT_ERROR_NOTAVAIL ) ? CMPFAILINFO_BADALG : \
-		( pkiStatus == CRYPT_ERROR_SIGNATURE ) ? CMPFAILINFO_BADMESSAGECHECK :	\
-		( pkiStatus == CRYPT_ERROR_PERMISSION ) ? CMPFAILINFO_BADREQUEST :	\
-		( pkiStatus == CRYPT_ERROR_BADDATA ) ? CMPFAILINFO_BADDATAFORMAT :	\
-		( pkiStatus == CRYPT_ERROR_INVALID ) ? CMPFAILINFO_BADCERTTEMPLATE : \
-		( pkiStatus == CRYPT_ERROR_DUPLICATE ) ? CMPFAILINFO_DUPLICATECERTREQ : \
-		( pkiStatus == CRYPT_ERROR_WRONGKEY ) ? CMPFAILINFO_SIGNERNOTTRUSTED : \
-		0;
-	const int length = \
-			sizeofShortInteger( PKISTATUS_REJECTED ) + \
-			( localPKIFailureInfo ? sizeofBitString( localPKIFailureInfo ) : 0 );
+	MESSAGE_DATA msgData;
 	int status;
 
-	/* If we've been passed a null stream, it's a size request only */
-	if( stream == NULL )
-		return( objSize( length ) );
-
-	/* Write the error status info.  If there's a specific failure info code
-	   set by the caller we use that, otherwise we try and convert the
-	   cryptlib status into an appropriate failure info value */
-	writeSequence( stream, length );
-	status = writeShortInteger( stream, PKISTATUS_REJECTED, DEFAULT_TAG );
-	if( localPKIFailureInfo )
-		status = writeBitString( stream, localPKIFailureInfo, DEFAULT_TAG );
-	return( status );
-	}
-
-/* Write the CMP/Entrust MAC information:
-
-	macInfo ::= SEQUENCE {
-		algoID			OBJECT IDENTIFIER (entrustMAC),
-		algoParams		SEQUENCE {
-			salt		OCTET STRING,
-			pwHashAlgo	AlgorithmIdentifier (SHA-1)
-			iterations	INTEGER,
-			macAlgo		AlgorithmIdentifier (HMAC-SHA1)
-			} OPTIONAL
-		} */
-
-static int writeMacInfo( STREAM *stream,
-						 const CMP_PROTOCOL_INFO *protocolInfo,
-						 const BOOLEAN parametersSent )
-	{
-	int paramSize;
-
-	/* If we've already sent the MAC parameters in an earlier transaction,
-	   just send an indication that we're using MAC protection */
-	if( parametersSent )
-		{
-		writeSequence( stream, sizeofOID( OID_ENTRUST_MAC ) + sizeofNull() );
-		writeOID( stream, OID_ENTRUST_MAC );
-		return( writeNull( stream, DEFAULT_TAG ) );
-		}
-
-	/* Determine how big the payload will be */
-	paramSize = ( int ) sizeofObject( protocolInfo->saltSize ) + \
-				sizeofAlgoID( CRYPT_ALGO_SHA1 ) + \
-				sizeofShortInteger( CMP_PASSWORD_ITERATIONS ) + \
-				sizeofAlgoID( CRYPT_ALGO_HMAC_SHA );
-
-	/* Write the wrapper */
-	writeSequence( stream, sizeofOID( OID_ENTRUST_MAC ) + \
-						   ( int ) sizeofObject( paramSize ) );
-	writeOID( stream, OID_ENTRUST_MAC );
-
-	/* Write the payload */
-	writeSequence( stream, paramSize );
-	writeOctetString( stream, protocolInfo->salt, protocolInfo->saltSize,
-					  DEFAULT_TAG );
-	writeAlgoID( stream, CRYPT_ALGO_SHA1 );
-	writeShortInteger( stream, CMP_PASSWORD_ITERATIONS, DEFAULT_TAG );
-	return( writeAlgoID( stream, CRYPT_ALGO_HMAC_SHA ) );
-	}
-
-/* Write MACd/signed message protection information */
-
-static int writeMacProtinfo( const CRYPT_CONTEXT iMacContext,
-							 const void *message, const int messageLength,
-							 void *protInfo, const int protInfoMaxLength,
-							 int *protInfoLength )
-	{
-	STREAM macStream;
-	MESSAGE_DATA msgData;
-	BYTE macValue[ CRYPT_MAX_HASHSIZE + 8 ];
-	int macLength, status;
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( senderNameObject, sizeof( CRYPT_HANDLE ) ) );
+	assert( isWritePtr( recipNameObject, sizeof( CRYPT_HANDLE ) ) );
+	assert( isWritePtr( senderNameLength, sizeof( int ) ) );
+	assert( isWritePtr( recipNameLength, sizeof( int ) ) );
 
 	/* Clear return values */
-	memset( protInfo, 0, min( 16, protInfoMaxLength ) );
-	*protInfoLength = 0;
+	*senderNameObject = *recipNameObject = CRYPT_ERROR;
+	*senderNameLength = *recipNameLength = 0;
 
-	/* MAC the message and get the MAC value */
-	status = hashMessageContents( iMacContext, message, messageLength );
-	if( cryptStatusError( status ) )
-		return( status );
-	setMessageData( &msgData, macValue, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( iMacContext, IMESSAGE_GETATTRIBUTE_S, 
-							  &msgData, CRYPT_CTXINFO_HASHVALUE );
-	if( cryptStatusError( status ) )
-		return( status );
-	macLength = msgData.length;
-
-	/* Write the MAC value with BIT STRING encapsulation */
-	sMemOpen( &macStream, protInfo, protInfoMaxLength );
-	writeBitStringHole( &macStream, macLength, DEFAULT_TAG );
-	status = swrite( &macStream, macValue, macLength );
-	if( cryptStatusOK( status ) )
-		*protInfoLength = stell( &macStream );
-	sMemDisconnect( &macStream );
-
-	return( status );
-	}
-
-static int writeSignedProtinfo( const CRYPT_CONTEXT iSignContext,
-								const CRYPT_ALGO_TYPE hashAlgo,
-								const void *message, const int messageLength,
-								void *protInfo, const int protInfoMaxLength,
-								int *protInfoLength )
-	{
-	CRYPT_CONTEXT iHashContext;
-	MESSAGE_CREATEOBJECT_INFO createInfo;
-	int status;
-
-	/* Hash the data */
-	setMessageCreateObjectInfo( &createInfo, hashAlgo );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT, 
-							  &createInfo, OBJECT_TYPE_CONTEXT );
-	if( cryptStatusError( status ) )
-		return( status );
-	iHashContext = createInfo.cryptHandle;
-	status = hashMessageContents( iHashContext, message, messageLength );
-	if( cryptStatusError( status ) )
+	/* Get the objects that we'll be using for our source of DN 
+	   information */
+	if( isServer( sessionInfoPtr ) )
 		{
-		krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
-		return( status );
+		*senderNameObject = sessionInfoPtr->privateKey;
+		*recipNameObject = sessionInfoPtr->iCertResponse;
+		}
+	else
+		{
+		*senderNameObject = isClientCryptOnlyKey ? \
+							sessionInfoPtr->iAuthOutContext : \
+							sessionInfoPtr->iCertRequest;
+		*recipNameObject = sessionInfoPtr->iAuthInContext;
 		}
 
-	/* Create the signature */
-	status = createRawSignature( protInfo, protInfoMaxLength, 
-								 protInfoLength, iSignContext, 
-								 iHashContext );
-	krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
-
-	return( status );
-	}
-
-/****************************************************************************
-*																			*
-*								PKI Body Functions							*
-*																			*
-****************************************************************************/
-
-/* Write request body */
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int writeRequestBody( INOUT STREAM *stream,
-							 const SESSION_INFO *sessionInfoPtr,
-							 const CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	const CRYPT_CERTFORMAT_TYPE certType = \
-				( protocolInfo->operation == CTAG_PB_RR ) ? \
-				CRYPT_ICERTFORMAT_DATA : CRYPT_CERTFORMAT_CERTIFICATE;
-	MESSAGE_DATA msgData;
-	int status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Find out how big the payload will be.  Since revocation requests are
-	   unsigned entities we have to vary the attribute type that we're 
-	   reading based on whether we're submitting a signed or unsigned object 
-	   in the request */
+	/* Get the sender DN information */
 	setMessageData( &msgData, NULL, 0 );
-	status = krnlSendMessage( sessionInfoPtr->iCertRequest,
-							  IMESSAGE_CRT_EXPORT, &msgData, certType );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Write the request body */
-	writeConstructed( stream, objSize( msgData.length ),
-					  protocolInfo->operation );
-	writeSequence( stream, msgData.length );
-	return( exportCertToStream( stream, sessionInfoPtr->iCertRequest, 
-								certType ) );
-	}
-
-/* Write response body.  If we're returning an encryption-only cert we send 
-   it as standard CMS data under a new tag to avoid having to hand-assemble 
-   the garbled mess that CMP uses for this */
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-static int writeResponseBodyHeader( INOUT STREAM *stream, 
-									IN_RANGE( CTAG_PB_IR, CTAG_PB_CERTCONF ) \
-										const int operationType,
-									IN_LENGTH_SHORT_Z const int payloadSize )
-	{
-	int totalPayloadSize;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-
-	REQUIRES( operationType >= CTAG_PB_IR && operationType < CTAG_PB_LAST );
-	REQUIRES( payloadSize >= 0 && payloadSize < MAX_INTLENGTH_SHORT );
-	
-	/* Calculate the overall size of the header and payload.  For an empty
-	   response there's only an integer status, for a nonempty response
-	   there's also an integer ID */
-	totalPayloadSize = payloadSize + sizeofShortInteger( 0 );
-	if( operationType != CTAG_PB_RR )
-		totalPayloadSize += objSize( sizeofShortInteger( 0 ) );
-
-	/* Write the response body wrapper */
-	writeConstructed( stream, objSize( objSize( objSize( totalPayloadSize ) ) ),
-					  reqToResp( operationType ) );
-	writeSequence( stream, objSize( objSize( totalPayloadSize ) ) );
-
-	/* Write the response.  We always write an OK status here because an 
-	   error will have been communicated by sending an explicit error 
-	   response */
-	writeSequence( stream, objSize( totalPayloadSize ) );
-	writeSequence( stream, totalPayloadSize );
-	if( operationType != CTAG_PB_RR )
+	status = krnlSendMessage( *senderNameObject, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_IATTRIBUTE_SUBJECT );
+	if( status == CRYPT_ERROR_NOTFOUND && isInitialClientMessage )
 		{
-		writeShortInteger( stream, 0, DEFAULT_TAG );
-		writeSequence( stream, sizeofShortInteger( 0 ) );
-		}
-	return( writeShortInteger( stream, PKISTATUS_OK, DEFAULT_TAG ) );
-	}
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int writeEncryptedResponseBody( INOUT INOUT STREAM *stream,
-									   const SESSION_INFO *sessionInfoPtr,
-									   const CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	MESSAGE_DATA msgData;
-	void *srcPtr, *destPtr;
-	int dataLength, destLength, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Get a pointer into the stream buffer.  To avoid having to juggle two
-	   buffers we use the stream buffer some distance ahead of the write
-	   position as a temporary location to store the encoded certificate for
-	   encryption */
-	status = sMemGetDataBlockRemaining( stream, &srcPtr, &dataLength );
-	if( cryptStatusError( status ) )
-		return( status );
-	srcPtr = ( BYTE * ) srcPtr + 100;
-	dataLength -= 100;
-	ENSURES( dataLength >= 1024 && dataLength < sMemDataLeft( stream ) );
-
-	/* Extract the response data into the session buffer and wrap it in the 
-	   standard format using the client's cert.  Since the client doesn't 
-	   actually have the cert yet (only we have it, since it's only just 
-	   been issued), we have to use the S/MIME v3 format (keys identified by 
-	   key ID rather than issuerAndSerialNumber) because the client won't 
-	   know its iAndS until it decrypts the cert */
-	setMessageData( &msgData, srcPtr, dataLength );
-	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
-							  IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_CERTFORMAT_CERTIFICATE );
-	if( cryptStatusError( status ) )
-		return( status );
-	status = envelopeWrap( srcPtr, msgData.length, srcPtr, dataLength, 
-						   &dataLength, CRYPT_FORMAT_CRYPTLIB, 
-						   CRYPT_CONTENT_NONE, 
-						   sessionInfoPtr->iCertResponse );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Write the response body header */
-	status = writeResponseBodyHeader( stream, protocolInfo->operation, 
-									  objSize( objSize( dataLength ) ) );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Write the encrypted certificate.  In theory we could use an swrite()
-	   to move the data rather than an memcpy() directly into the buffer but 
-	   this is a bit risky because the read position is only about 30-40 
-	   bytes ahead of the write position and it's not guaranteed that the 
-	   two won't interfere */
-	writeSequence( stream, objSize( dataLength ) );
-	writeConstructed( stream, dataLength, CTAG_CK_NEWENCRYPTEDCERT );
-	status = sMemGetDataBlockRemaining( stream, &destPtr, &destLength );
-	if( cryptStatusOK( status ) && dataLength > destLength )
-		status = CRYPT_ERROR_OVERFLOW;
-	if( cryptStatusError( status ) )
-		return( status );
-	memmove( destPtr, srcPtr, dataLength );
-	return( sSkip( stream, dataLength ) );
-	}
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int writeResponseBody( INOUT STREAM *stream,
-							  const SESSION_INFO *sessionInfoPtr,
-							  const CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	MESSAGE_DATA msgData;
-	int dataLength = DUMMY_INIT, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Revocation request responses have no body */
-	if( protocolInfo->operation == CTAG_PB_RR )
-		return( writeResponseBodyHeader( stream, protocolInfo->operation, 
-										 0 ) );
-
-	/* If it's an encryption-only key we return the certificate in encrypted
-	   form, the client performs POP by decrypting the returned cert */
-	if( protocolInfo->cryptOnlyKey )
-		return( writeEncryptedResponseBody( stream, sessionInfoPtr, 
-											protocolInfo ) );
-
-	/* Write the response body header */
-	setMessageData( &msgData, NULL, 0 );
-	status = krnlSendMessage( sessionInfoPtr->iCertResponse, 
-							  IMESSAGE_CRT_EXPORT, &msgData,
-							  CRYPT_CERTFORMAT_CERTIFICATE );
-	if( cryptStatusOK( status ) )
-		{
-		dataLength = msgData.length;
-		status = writeResponseBodyHeader( stream, protocolInfo->operation, 
-										  objSize( objSize( dataLength ) ) );
-		}
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Write the certificate data */
-	writeSequence( stream, objSize( dataLength ) );
-	writeConstructed( stream, dataLength, CTAG_CK_CERT );
-	return( exportCertToStream( stream, sessionInfoPtr->iCertResponse, 
-								CRYPT_CERTFORMAT_CERTIFICATE ) );
-	}
-
-/* Write conf body */
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int writeConfBody( INOUT STREAM *stream,
-						  const SESSION_INFO *sessionInfoPtr,
-						  const CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	MESSAGE_DATA msgData;
-	BYTE hashBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
-	int length, status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Get the certificate hash */
-	setMessageData( &msgData, hashBuffer, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( sessionInfoPtr->iCertResponse,
-						IMESSAGE_GETATTRIBUTE_S, &msgData,
-						( protocolInfo->confHashAlgo == CRYPT_ALGO_SHA1 ) ? \
-							CRYPT_CERTINFO_FINGERPRINT_SHA : \
-							CRYPT_CERTINFO_FINGERPRINT_MD5 );
-	if( cryptStatusError( status ) )
-		return( status );
-	length = ( int ) objSize( msgData.length ) + sizeofShortInteger( 0 );
-
-	/* Write the confirmation body */
-	writeConstructed( stream, objSize( objSize( length ) ),
-					  CTAG_PB_CERTCONF );
-	writeSequence( stream, objSize( length ) );
-	writeSequence( stream, length );
-	writeOctetString( stream, hashBuffer, msgData.length, DEFAULT_TAG );
-	return( writeShortInteger( stream, 0, DEFAULT_TAG ) );
-	}
-
-/* Write genMsg body */
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int writeGenMsgBody( INOUT STREAM *stream,
-							const SESSION_INFO *sessionInfoPtr )
-	{
-	CRYPT_CERTIFICATE iCTL;
-	MESSAGE_DATA msgData;
-	int status;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-
-	/* Get the CTL from the CA object.  We recreate this each time rather 
-	   than cacheing it in the session to ensure that changes in the trusted
-	   cert set while the session is active get reflected back to the 
-	   caller.
-	   
-	   In addition to the explicitly trusted certs, we also include the CA 
-	   cert(s) in the CTL as implicitly-trusted certs.  This is done both
-	   because users often forget to mark them as trusted on the server and 
-	   then wonder where their CA certs are on the client, and because these 
-	   should inherently be trusted, since the user is about to get their 
-	   certs issued by them */
-	status = krnlSendMessage( sessionInfoPtr->ownerHandle,
-							  IMESSAGE_GETATTRIBUTE, &iCTL,
-							  CRYPT_IATTRIBUTE_CTL );
-	if( cryptStatusError( status ) )
-		return( status );
-	status = krnlSendMessage( iCTL, IMESSAGE_SETATTRIBUTE,
-							  ( void * ) &sessionInfoPtr->privateKey,
-							  CRYPT_IATTRIBUTE_CERTCOLLECTION );
-	if( cryptStatusError( status ) )
-		return( status );
-	setMessageData( &msgData, NULL, 0 );
-	status = krnlSendMessage( iCTL, IMESSAGE_CRT_EXPORT, &msgData, 
-							  CRYPT_CERTFORMAT_CERTCHAIN );
-	if( cryptStatusError( status ) )
-		{
-		krnlSendNotifier( iCTL, IMESSAGE_DECREFCOUNT );
-		return( status );
-		}
-
-	/* Write the response body wrapper.  As with the cert ID, we can use the
-	   imprecision of the ASN.1 that CMP is specified in to interpret the
-	   InfoTypeAndValue:
-
-		InfoTypeAndValue ::= SEQUENCE {
-			infoType	OBJECT IDENTIFIER,
-			infoValue	ANY DEFINED BY infoType OPTIONAL
+		/* If there's no subject DN present and it's the first message in a 
+		   client's ir exchange, this isn't an error because the subject 
+		   usually won't know their DN yet.  That's the theory anyway, 
+		   some X.500-obsessive servers will reject a message with no 
+		   sender name but there isn't really anything that we can do about 
+		   this, particularly since we can't tell in advance what beaviour 
+		   the server will exhibit */
+		if( sessionInfoPtr->iCertResponse == CRYPT_ERROR )
+			{
+			*senderNameObject = CRYPT_ERROR;
+			msgData.length = ( int ) sizeofObject( 0 );
+			status = CRYPT_OK;
 			}
+		else
+			{
+			/* Try again with the response from the server, which contains 
+			   our newly-allocated DN */
+			*senderNameObject = sessionInfoPtr->iCertResponse;
+			status = krnlSendMessage( *senderNameObject,
+									  IMESSAGE_GETATTRIBUTE_S, &msgData,
+									  CRYPT_IATTRIBUTE_SUBJECT );
+			}
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+	*senderNameLength = msgData.length;
 
-	   as:
+	/* Get the recipient DN information */
+	setMessageData( &msgData, NULL, 0 );
+	if( *recipNameObject != CRYPT_ERROR )
+		{
+		status = krnlSendMessage( *recipNameObject, IMESSAGE_GETATTRIBUTE_S, 
+								  &msgData, CRYPT_IATTRIBUTE_SUBJECT );
+		}
+	else
+		{
+		/* If we're sending an error response there may not be any recipient 
+		   name information present yet if the error occurred before the 
+		   recipient information could be established, and if this is a MAC-
+		   authenticated PKIBoot we don't have the CA's certificate yet so 
+		   we don't know its DN.  To work around this we send a zero-length 
+		   DN (this is one of those places where an optional field is 
+		   specified as being mandatory, to lend balance to the places where 
+		   mandatory fields are specified as optional) */
+		msgData.length = ( int ) sizeofObject( 0 );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+	*recipNameLength = msgData.length;
 
-		infoType ::= id-signedData
-		infoValue ::= [0] EXPLICIT SignedData
-
-	   which makes it standard CMS data that can be passed directly to the 
-	   CMS code */
-	writeConstructed( stream, objSize( msgData.length ), CTAG_PB_GENP );
-	writeSequence( stream, msgData.length );
-	status = exportCertToStream( stream, iCTL, CRYPT_CERTFORMAT_CERTCHAIN );
-	krnlSendNotifier( iCTL, IMESSAGE_DECREFCOUNT );
-	return( status );
-	}
-
-/* Write error body */
-
-CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int writeErrorBody( INOUT STREAM *stream,
-						   const CMP_PROTOCOL_INFO *protocolInfo )
-	{
-	const int length = writePkiStatusInfo( NULL, protocolInfo->status,
-										   protocolInfo->pkiFailInfo );
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isReadPtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
-
-	/* Write the error body.  We don't write the error text string because
-	   it reveals too much about the internal operation of the CA, some of 
-	   which may aid an attacker */
-	writeConstructed( stream, objSize( length ), CTAG_PB_ERROR );
-	writeSequence( stream, length );
-	return( writePkiStatusInfo( stream, protocolInfo->status,
-								protocolInfo->pkiFailInfo ) );
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -654,7 +217,7 @@ static int writeErrorBody( INOUT STREAM *stream,
 *																			*
 ****************************************************************************/
 
-/* Write a PKI header.  Fields marked with a * are redundant and are only 
+/* Write a PKI header.  Fields marked with a * are unnecessary and are only 
    sent when we're not sending minimal headers.  Fields marked with a + are
    only sent in the first message or when not sending minimal headers:
 
@@ -671,111 +234,113 @@ static int writeErrorBody( INOUT STREAM *stream,
 		} 
 
    The handling can get a bit complex if we're writing a header in response
-   to an error in reading the other side's header.  Since CMP includes such a
-   large amount of unnecessary or redundant information, it's not really 
+   to an error in reading the other side's header.  Since CMP includes such 
+   a large amount of unnecessary or redundant information, it's not really 
    possible to detect in advance if we've got enough information to send a
-   header or not, the best we can do is to require that enough of the header
-   fields have been read (indicated by the 'headerRead' flag in the protocol
-   info) before we try and create our own header in response */
+   header or not, the best that we can do is to require that enough of the 
+   header fields have been read (indicated by the 'headerRead' flag in the 
+   protocol information) before we try and create our own header in 
+   response */
 
-static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
-						   CMP_PROTOCOL_INFO *protocolInfo )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int writePkiHeader( INOUT STREAM *stream, 
+						   INOUT SESSION_INFO *sessionInfoPtr,
+						   INOUT CMP_PROTOCOL_INFO *protocolInfo )
 	{
-	CRYPT_HANDLE senderNameObject = isServer( sessionInfoPtr ) ? \
-				sessionInfoPtr->privateKey : \
-									protocolInfo->cryptOnlyKey ? \
-				sessionInfoPtr->iAuthOutContext : \
-				sessionInfoPtr->iCertRequest;
-	const CRYPT_HANDLE recipNameObject = isServer( sessionInfoPtr ) ? \
-			sessionInfoPtr->iCertResponse : sessionInfoPtr->iAuthInContext;
+	CRYPT_HANDLE senderNameObject = DUMMY_INIT, recipNameObject = DUMMY_INIT;
 	STREAM nullStream;
 	MESSAGE_DATA msgData;
 #ifdef USE_FULL_HEADERS
-	const BOOLEAN useFullHeader = TRUE;
+	const BOOLEAN sendFullHeader = TRUE;
 #else
-	const BOOLEAN useFullHeader = !( protocolInfo->isCryptlib || \
-									 protocolInfo->operation == CTAG_PB_GENM );
-			/* Send a minimal header if the other side is cryptlib or if 
-			   we're doing PKIBoot, for which we couldn't send full headers 
-			   if we wanted to */
-#endif /* USE_MINIMAL_HEADERS */
-	BOOLEAN sendClibID = FALSE, sendCertID = FALSE;
+	BOOLEAN sendFullHeader = FALSE;
+#endif /* USE_FULL_HEADERS */
+	BOOLEAN sendClibID = FALSE, sendCertID = FALSE, sendMacInfo = FALSE;
+	BOOLEAN sendUserID = FALSE;
 	int senderNameLength, recipNameLength, attributeLength = 0;
-	int protInfoLength, totalLength, status;
+	int protInfoLength = DUMMY_INIT, totalLength, status;
 
-	assert( !useFullHeader || !protocolInfo->headerRead || \
-			( protocolInfo->userIDsize > 0 ) );
-	assert( protocolInfo->transIDsize > 0 );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
 
-	krnlSendMessage( sessionInfoPtr->ownerHandle, IMESSAGE_GETATTRIBUTE, 
-					 &protocolInfo->hashAlgo, CRYPT_OPTION_ENCR_HASH );
+	/* Determine which of the many unnecessary and inexplicable bits of the 
+	   CMP header we actually have to send:
 
-	/* Determine how big the sender and recipient info will be.  We 
+		sendCertID: Sent on the first message where it's required (which 
+			isn't necessarily the first message in an exchange, for example 
+			it's not used in an ir/ip), either to identify the CA's cert in 
+			a CTL sent in a PKIBoot response or to identify the signing 
+			certificate when we're using signature-based message 
+			authentication.
+
+		sendClibID: Sent on the first message to tell the other side that 
+			this is a cryptlib client/server.
+
+		sendFullHeader: Sent if the other side isn't running cryptlib, unless
+			we're doing PKIBoot, for which we couldn't send full headers even 
+			if we wanted to 
+	
+		sendMacInfo: Sent if we're using MAC integrity protection and the
+			the other side isn't running cryptlib, or if this is the first 
+			message.
+
+		sendUserID: Sent on the first message or if we're sending full 
+			headers, provided that it's actually available to send */
+	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_CERTIDSENT ) && \
+		( ( isServer( sessionInfoPtr ) && \
+			protocolInfo->operation == CTAG_PB_GENM ) || \
+		  !protocolInfo->useMACsend ) )
+		sendCertID = TRUE;
+	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_CLIBIDSENT ) )
+		sendClibID = TRUE;
+#ifndef USE_FULL_HEADERS
+	if( !protocolInfo->isCryptlib && \
+		protocolInfo->operation != CTAG_PB_GENM )
+		sendFullHeader = TRUE;
+#endif /* !USE_FULL_HEADERS */
+	if( protocolInfo->useMACsend && \
+		!( protocolInfo->isCryptlib && \
+		   ( sessionInfoPtr->protocolFlags & CMP_PFLAG_MACINFOSENT ) ) )
+		sendMacInfo = TRUE;
+	if( ( sendFullHeader || \
+		  !( sessionInfoPtr->protocolFlags & CMP_PFLAG_USERIDSENT ) ) && \
+		( protocolInfo->userIDsize > 0 ) )
+		sendUserID = TRUE;
+
+	REQUIRES( !sendFullHeader || !protocolInfo->headerRead || \
+			  ( protocolInfo->userIDsize > 0 && \
+				protocolInfo->userIDsize < MAX_INTLENGTH_SHORT ) );
+	REQUIRES( protocolInfo->transIDsize > 0 && \
+			  protocolInfo->transIDsize < MAX_INTLENGTH_SHORT );
+
+	/* Get any other state information that we may need */
+	status = krnlSendMessage( sessionInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, &protocolInfo->hashAlgo, 
+							  CRYPT_OPTION_ENCR_HASH );
+	ENSURES( cryptStatusOK( status ) );
+
+	/* Determine how big the sender and recipient information will be.  We 
 	   shouldn't need to send a recipient name for an ir because it won't
-	   usually be known yet, but various implementations can't handle a zero-
-	   length GeneralName, so we supply it if it's available even though it's 
-	   redundant */
-	if( useFullHeader )
+	   usually be known yet, but various implementations can't handle a 
+	   zero-length GeneralName so we supply it if it's available even though 
+	   it's redundant */
+	if( sendFullHeader )
 		{
-		/* Get the sender DN info */
-		setMessageData( &msgData, NULL, 0 );
-		status = krnlSendMessage( senderNameObject, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_IATTRIBUTE_SUBJECT );
-		if( status == CRYPT_ERROR_NOTFOUND && !isServer( sessionInfoPtr ) && \
-			protocolInfo->operation == CTAG_PB_IR )
-			{
-			/* If there's no subject DN present and it's the first message 
-			   in a client's ir exchange, this isn't an error because the 
-			   subject may not know their DN yet (at least that's the 
-			   theory, most servers will reject a message with no sender 
-			   name) */
-			if( sessionInfoPtr->iCertResponse == CRYPT_ERROR )
-				{
-				senderNameObject = CRYPT_ERROR;
-				msgData.length = ( int ) sizeofObject( 0 );
-				status = CRYPT_OK;
-				}
-			else
-				{
-				/* Try again with the response from the server, which 
-				   contains our newly-allocated DN */
-				senderNameObject = sessionInfoPtr->iCertResponse;
-				status = krnlSendMessage( senderNameObject,
-										  IMESSAGE_GETATTRIBUTE_S, &msgData,
-										  CRYPT_IATTRIBUTE_SUBJECT );
-				}
-			}
+		status = initDNInfo( sessionInfoPtr, &senderNameObject, 
+							 &recipNameObject, &senderNameLength, 
+							 &recipNameLength, 
+							 ( protocolInfo->operation == CTAG_PB_IR ) ? \
+								TRUE : FALSE,
+							 protocolInfo->cryptOnlyKey );
 		if( cryptStatusError( status ) )
 			return( status );
-		senderNameLength = msgData.length;
-
-		/* Get the recipient DN info */
-		setMessageData( &msgData, NULL, 0 );
-		if( recipNameObject != CRYPT_ERROR )
-			status = krnlSendMessage( recipNameObject,
-									  IMESSAGE_GETATTRIBUTE_S, &msgData,
-									  CRYPT_IATTRIBUTE_SUBJECT );
-		else
-			{
-			/* If we're sending an error response there may not be any 
-			   recipient name information present yet if the error occurred 
-			   before the recipient information could be established, and if 
-			   this is a MAC-authenticated PKIBoot we don't have the CA's 
-			   cert yet so we don't know its DN.  To work around this we 
-			   send a zero-length DN (this is one of those places where an 
-			   optional field is specified as being mandatory, to lend 
-			   balance to the places where mandatory fields are specified as 
-			   optional) */
-			msgData.length = ( int ) sizeofObject( 0 );
-			}
-		if( cryptStatusError( status ) )
-			return( status );
-		recipNameLength = msgData.length;
 		}
 	else
 		{
-		/* We're not using sender or recipient info since it doesn't serve 
-		   any useful purpose, just set the fields to an empty SEQUENCE */
+		/* We're not using sender or recipient information since it doesn't 
+		   serve any useful purpose, just set the fields to an empty 
+		   SEQUENCE */
 		senderNameLength = recipNameLength = sizeofObject( 0 );
 		}
 
@@ -783,54 +348,61 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 	sMemNullOpen( &nullStream );
 	if( protocolInfo->useMACsend )
 		{
-		writeMacInfo( &nullStream, protocolInfo, 
-					  sessionInfoPtr->protocolFlags & CMP_PFLAG_MACINFOSENT );
+		status = writeMacInfo( &nullStream, protocolInfo, sendMacInfo );
 		}
 	else
 		{
-		writeContextAlgoID( &nullStream, protocolInfo->authContext, 
-							protocolInfo->hashAlgo );
+		status = writeContextAlgoID( &nullStream, protocolInfo->authContext, 
+									 protocolInfo->hashAlgo );
 		}
-	protInfoLength = stell( &nullStream );
+	if( cryptStatusOK( status ) )
+		protInfoLength = stell( &nullStream );
 	sMemClose( &nullStream );
-	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_CLIBIDSENT ) )
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sendClibID )
 		{
 		attributeLength += sizeofObject( \
 								sizeofOID( OID_CRYPTLIB_PRESENCECHECK ) + \
 								sizeofObject( 0 ) );
-		sendClibID = TRUE;
 		}
-	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_CERTIDSENT ) && \
-		( ( isServer( sessionInfoPtr ) && \
-			protocolInfo->operation == CTAG_PB_GENM ) || \
-		  !protocolInfo->useMACsend ) )
+	if( sendCertID )
 		{
-		attributeLength += writeCertID( NULL, protocolInfo->authContext );
-		sendCertID = TRUE;
+		const int certIDsize = sizeofCertID( protocolInfo->authContext );
+
+		ENSURES( certIDsize > 0 && certIDsize < MAX_INTLENGTH_SHORT );
+
+		attributeLength += certIDsize;
 		}
 	totalLength = sizeofShortInteger( CMP_VERSION ) + \
 				  objSize( senderNameLength ) + objSize( recipNameLength ) + \
 				  objSize( protInfoLength ) + \
 				  objSize( sizeofObject( protocolInfo->transIDsize ) );
-	if( ( useFullHeader || \
-		  !( sessionInfoPtr->protocolFlags & CMP_PFLAG_USERIDSENT ) ) && \
-		( protocolInfo->userIDsize > 0 ) )
+	if( sendUserID )
 		totalLength += objSize( sizeofObject( protocolInfo->userIDsize ) );
-	if( useFullHeader )
-		totalLength += ( protocolInfo->senderNonceSize > 0 ? \
-						 objSize( sizeofObject( protocolInfo->senderNonceSize ) ) : 0 ) + \
-					   ( protocolInfo->recipNonceSize > 0 ? \
-						 objSize( sizeofObject( protocolInfo->recipNonceSize ) ) : 0 );
+	if( sendFullHeader )
+		{
+		if( protocolInfo->senderNonceSize > 0 )
+			totalLength += objSize( \
+								sizeofObject( protocolInfo->senderNonceSize ) );
+		if( protocolInfo->recipNonceSize > 0 )
+			totalLength += objSize( \
+								sizeofObject( protocolInfo->recipNonceSize ) );
+		}
 	if( attributeLength > 0 )
 		totalLength += objSize( objSize( attributeLength ) );
-	if( sizeofObject( totalLength ) > sMemDataLeft( stream ) )
+
+	/* Perform an early check for data-size problems before we go through 
+	   all of the following code */
+	if( sizeofObject( totalLength ) <= 0 || \
+		sizeofObject( totalLength ) > sMemDataLeft( stream ) )
 		return( CRYPT_ERROR_OVERFLOW );
 
-	/* Write the PKI header wrapper, version info, and sender and recipient
-	   names if there's name information present */
+	/* Write the PKI header wrapper, version information, and sender and 
+	   recipient names if there's name information present */
 	writeSequence( stream, totalLength );
 	writeShortInteger( stream, CMP_VERSION, DEFAULT_TAG );
-	if( useFullHeader )
+	if( sendFullHeader )
 		{
 		writeConstructed( stream, senderNameLength, 4 );
 		if( senderNameObject != CRYPT_ERROR )
@@ -847,61 +419,70 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 			{
 			status = exportAttributeToStream( stream, recipNameObject, 
 											  CRYPT_IATTRIBUTE_SUBJECT );
-			if( cryptStatusError( status ) )
-				return( status );
 			}
 		else
-			writeSequence( stream, 0 );
+			status = writeSequence( stream, 0 );
 		}
 	else
 		{
 		/* This is one of the portions of CMP where an optional field is 
 		   marked as mandatory, to balance out the mandatory fields that are 
-		   marked as optional.  To work around this, we write the names as 
+		   marked as optional.  To work around this we write the names as 
 		   zero-length DNs */
 		writeConstructed( stream, senderNameLength, 4 );
 		writeSequence( stream, 0 );
 		writeConstructed( stream, recipNameLength, 4 );
-		writeSequence( stream, 0 );
+		status = writeSequence( stream, 0 );
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 
-	/* Write the protection info, assorted nonces and IDs, and extra
+	/* Write the protection information, assorted nonces and IDs, and extra
 	   information that the other side may be able to make use of */
 	writeConstructed( stream, protInfoLength, CTAG_PH_PROTECTIONALGO );
 	if( protocolInfo->useMACsend )
 		{
-		writeMacInfo( stream, protocolInfo, 
-					  sessionInfoPtr->protocolFlags & CMP_PFLAG_MACINFOSENT );
+		status = writeMacInfo( stream, protocolInfo, sendMacInfo );
 		sessionInfoPtr->protocolFlags |= CMP_PFLAG_MACINFOSENT;
 		}
 	else
 		{
-		writeContextAlgoID( stream, protocolInfo->authContext, 
-							protocolInfo->hashAlgo );
+		status = writeContextAlgoID( stream, protocolInfo->authContext, 
+									 protocolInfo->hashAlgo );
 		}
-	if( ( useFullHeader || \
-		  !( sessionInfoPtr->protocolFlags & CMP_PFLAG_USERIDSENT ) ) && \
-		( protocolInfo->userIDsize > 0 ) )
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sendUserID )
 		{
 		/* We're using full headers or we're the client sending our first
-		   message, identify the sender key.  If we're sending an error 
-		   response to an initial message that we couldn't even start to 
-		   parse, the transaction ID won't be present yet so we only send 
-		   this if it's present */
+		   message, identify the sender key */
 		writeConstructed( stream, objSize( protocolInfo->userIDsize ),
 						  CTAG_PH_SENDERKID );
 		writeOctetString( stream, protocolInfo->userID,
 						  protocolInfo->userIDsize, DEFAULT_TAG );
+		DEBUG_PRINT(( "%s: Writing userID.\n",
+					  protocolInfo->isServer ? "SVR" : "CLI" ));
+		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					   protocolInfo->userID, protocolInfo->userIDsize );
 		sessionInfoPtr->protocolFlags |= CMP_PFLAG_USERIDSENT;
 		}
 	writeConstructed( stream, objSize( protocolInfo->transIDsize ),
 					  CTAG_PH_TRANSACTIONID );
 	status = writeOctetString( stream, protocolInfo->transID,
 							   protocolInfo->transIDsize, DEFAULT_TAG );
-	if( useFullHeader )
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sendFullHeader )
 		{
 		if( protocolInfo->senderNonceSize > 0 )
 			{
+			/* We're using nonces, generate a new sender nonce (the initial 
+			   nonce will have been set when the protocol state was 
+			   initialised) */
+			setMessageData( &msgData, protocolInfo->senderNonce,
+							protocolInfo->senderNonceSize );
+			krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 			writeConstructed( stream, 
 							  objSize( protocolInfo->senderNonceSize ),
 							  CTAG_PH_SENDERNONCE );
@@ -919,27 +500,30 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 									   DEFAULT_TAG );
 			}
 		}
+	if( cryptStatusError( status ) )
+		return( status );
 	if( attributeLength > 0 )
 		{
-		assert( sendClibID || sendCertID );
+		ENSURES( sendClibID || sendCertID );
 
 		/* We haven't sent any messages yet, let the other side know that 
-		   we're running cryptlib and identify our signing cert */
+		   we're running cryptlib and identify our signing certificate as
+		   required */
 		writeConstructed( stream, objSize( attributeLength ),
 						  CTAG_PH_GENERALINFO );
-		status = writeSequence( stream, attributeLength );
+		writeSequence( stream, attributeLength );
 		if( sendClibID )
 			{
+			sessionInfoPtr->protocolFlags |= CMP_PFLAG_CLIBIDSENT;
 			writeSequence( stream, sizeofOID( OID_CRYPTLIB_PRESENCECHECK ) + \
 								   sizeofObject( 0 ) );
 			writeOID( stream, OID_CRYPTLIB_PRESENCECHECK );
 			status = writeSet( stream, 0 );
-			sessionInfoPtr->protocolFlags |= CMP_PFLAG_CLIBIDSENT;
 			}
 		if( sendCertID )
 			{
-			status = writeCertID( stream, protocolInfo->authContext );
 			sessionInfoPtr->protocolFlags |= CMP_PFLAG_CERTIDSENT;
+			status = writeCertID( stream, protocolInfo->authContext );
 			}
 		}
 	return( status );
@@ -959,64 +543,39 @@ static int writePkiHeader( STREAM *stream, SESSION_INFO *sessionInfoPtr,
 		protection	[0]	BIT STRING
 		} */
 
-int writePkiMessage( SESSION_INFO *sessionInfoPtr,
-					 CMP_PROTOCOL_INFO *protocolInfo,
-					 const CMPBODY_TYPE bodyType )
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int writePkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
+					 INOUT CMP_PROTOCOL_INFO *protocolInfo,
+					 IN_ENUM( CMPBODY ) const CMPBODY_TYPE bodyType )
 	{
+	WRITEMESSAGE_FUNCTION writeMessageFunction;
 	BYTE protInfo[ 64 + MAX_PKCENCRYPTED_SIZE + 8 ], headerBuffer[ 8 + 8 ];
 	STREAM stream;
-	int headerSize, protInfoSize, status;
+	int headerSize = DUMMY_INIT, protInfoSize, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( protocolInfo, sizeof( CMP_PROTOCOL_INFO ) ) );
+
+	REQUIRES( bodyType > CMPBODY_NONE && bodyType < CMPBODY_LAST );
+
+	DEBUG_PRINT(( "%s: Writing message body type %d.\n",
+				  protocolInfo->isServer ? "SVR" : "CLI", bodyType ));
 
 	/* Write the header and payload so that we can MAC/sign it */
 	sMemOpen( &stream, sessionInfoPtr->receiveBuffer,
 			  sessionInfoPtr->receiveBufSize );
 	status = writePkiHeader( &stream, sessionInfoPtr, protocolInfo );
-	if( cryptStatusOK( status ) )
+	if( cryptStatusError( status ) )
 		{
-		switch( bodyType )
-			{
-			case CMPBODY_NORMAL:
-				if( isServer( sessionInfoPtr ) )
-					status = writeResponseBody( &stream, sessionInfoPtr,
-												protocolInfo );
-				else
-					status = writeRequestBody( &stream, sessionInfoPtr,
-											   protocolInfo );
-				break;
-
-			case CMPBODY_CONFIRMATION:
-				status = writeConfBody( &stream, sessionInfoPtr,
-										protocolInfo );
-				break;
-
-			case CMPBODY_ACK:
-				writeConstructed( &stream, sizeofNull(), CTAG_PB_PKICONF );
-				status = writeNull( &stream, DEFAULT_TAG );
-				break;
-
-			case CMPBODY_GENMSG:
-				if( isServer( sessionInfoPtr ) )
-					status = writeGenMsgBody( &stream, sessionInfoPtr );
-				else
-					{
-					writeConstructed( &stream,
-							objSize( objSize( sizeofOID( OID_PKIBOOT ) ) ),
-							CTAG_PB_GENM );
-					writeSequence( &stream,
-								   objSize( sizeofOID( OID_PKIBOOT ) ) );
-					writeSequence( &stream, sizeofOID( OID_PKIBOOT ) );
-					status = writeOID( &stream, OID_PKIBOOT );
-					}
-				break;
-
-			case CMPBODY_ERROR:
-				status = writeErrorBody( &stream, protocolInfo );
-				break;
-
-			default:
-				retIntError();
-			}
+		sMemClose( &stream );
+		return( status );
 		}
+
+	/* Write the message data */
+	writeMessageFunction = getMessageWriteFunction( bodyType, 
+										isServer( sessionInfoPtr ) );
+	ENSURES( writeMessageFunction != NULL );
+	status = writeMessageFunction( &stream, sessionInfoPtr, protocolInfo );
 	if( cryptStatusError( status ) )
 		{
 		sMemClose( &stream );
@@ -1046,16 +605,35 @@ int writePkiMessage( SESSION_INFO *sessionInfoPtr,
 	/* Attach the MAC/signature to the payload */
 	writeConstructed( &stream, protInfoSize, CTAG_PM_PROTECTION );
 	status = swrite( &stream, protInfo, protInfoSize );
-	sessionInfoPtr->receiveBufEnd = stell( &stream );
+	if( cryptStatusOK( status ) )
+		sessionInfoPtr->receiveBufEnd = stell( &stream );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Write the wrapper and move it onto the front of the message */
+	/* Write the wrapper and move it onto the front of the message:
+
+		receiveBuffer								  receiveBufSize
+			|												|
+			v												v
+			+-------+-----------------------+---------------+
+			|		|						|				|
+			+-------+-----------------------+---------------+
+			|<--+-->|<--- receiveBufend --->|
+				|
+			headerSize
+
+	   Unfortunately we can't just assume a fixed-length header because a 
+	   few messages (conf and pkiConf) will be short, leading to a 1-byte 
+	   length rather than the more typical 2-byte length */
 	sMemOpen( &stream, headerBuffer, 8 );
-	writeSequence( &stream, sessionInfoPtr->receiveBufEnd );
-	headerSize = stell( &stream );
+	status = writeSequence( &stream, sessionInfoPtr->receiveBufEnd );
+	if( cryptStatusOK( status ) )
+		headerSize = stell( &stream );
 	sMemDisconnect( &stream );
+	ENSURES( cryptStatusOK( status ) );
+	REQUIRES( rangeCheck( headerSize, sessionInfoPtr->receiveBufEnd,
+						  sessionInfoPtr->receiveBufSize ) );
 	memmove( sessionInfoPtr->receiveBuffer + headerSize,
 			 sessionInfoPtr->receiveBuffer,
 			 sessionInfoPtr->receiveBufEnd );

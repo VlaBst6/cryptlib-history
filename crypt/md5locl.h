@@ -59,10 +59,10 @@
 #include <stdlib.h>
 #include <string.h>
 #if defined( INC_ALL )
-  #include "crypt.h"
+  #include "osconfig.h"
   #include "md5.h"
 #else
-  #include "crypt.h"
+  #include "crypt/osconfig.h"
   #include "crypt/md5.h"
 #endif /* Compiler-specific includes */
 
@@ -117,13 +117,13 @@ void md5_block_data_order (MD5_CTX *c, const void *p,int num);
 #define HASH_UPDATE		MD5_Update
 #define HASH_TRANSFORM		MD5_Transform
 #define HASH_FINAL		MD5_Final
-#define	HASH_MAKE_STRING(c,s)	do {	\
+#define	HASH_MAKE_STRING(c,s)	{	\
 	unsigned long ll;		\
 	ll=(c)->A; HOST_l2c(ll,(s));	\
 	ll=(c)->B; HOST_l2c(ll,(s));	\
 	ll=(c)->C; HOST_l2c(ll,(s));	\
 	ll=(c)->D; HOST_l2c(ll,(s));	\
-	} while (0)
+	} 	/* Removed dummy while(0) - pcg */
 #define HASH_BLOCK_HOST_ORDER	md5_block_host_order
 #if !defined(L_ENDIAN) || defined(md5_block_data_order)
 #define	HASH_BLOCK_DATA_ORDER	md5_block_data_order

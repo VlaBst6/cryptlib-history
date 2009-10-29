@@ -186,6 +186,7 @@ typedef enum {
 #define SUBTYPE_DEV_FORTEZZA		0x21000000L
 #define SUBTYPE_DEV_PKCS11			0x22000000L
 #define SUBTYPE_DEV_CRYPTOAPI		0x24000000L
+#define SUBTYPE_DEV_HARDWARE		0x28000000L
 
 #define SUBTYPE_ENV_ENV				0x40000001L
 #define SUBTYPE_ENV_ENV_PGP			0x40000002L
@@ -214,9 +215,9 @@ typedef enum {
 /* The data type used to store subtype values */
 
 #ifdef SYSTEM_16BIT
-  typedef unsigned long OBJECT_SUBTYPE;
+  typedef long OBJECT_SUBTYPE;
 #else
-  typedef unsigned int OBJECT_SUBTYPE;
+  typedef int OBJECT_SUBTYPE;
 #endif /* 16- vs.32-bit systems */
 
 /* Message flags.  Normally messages can only be sent to external objects,
@@ -413,7 +414,9 @@ typedef enum {
 	MESSAGE_COMPARE_KEYID_OPENPGP,	/* Compare OpenPGP key IDs */
 	MESSAGE_COMPARE_SUBJECT,		/* Compare subject */
 	MESSAGE_COMPARE_ISSUERANDSERIALNUMBER,	/* Compare iAndS */
-	MESSAGE_COMPARE_FINGERPRINT,	/* Compare cert.fingerprint */
+	MESSAGE_COMPARE_FINGERPRINT_SHA1,/* Compare cert.fingerprint */
+	MESSAGE_COMPARE_FINGERPRINT_SHA2,/* Compare fingerprint, SHA2 */
+	MESSAGE_COMPARE_FINGERPRINT_SHAng,/* Compare fingerprint, SHAng */
 	MESSAGE_COMPARE_CERTOBJ,		/* Compare cert objects */
 	MESSAGE_COMPARE_LAST			/* Last possible compare type */
 	} MESSAGE_COMPARE_TYPE;
@@ -525,19 +528,25 @@ typedef struct {
 	( msgDataPtr )->length = ( dataLength ); \
 	}
 
+/* When passing constant data to krnlSendMessage() we get compiler warnings
+   because the function is prototyped as taking a 'void *'.  The following
+   symbolic value for use in casts corrects the parameter mismatch */
+
+typedef void *MESSAGE_CAST;
+
 /* Some messages communicate standard data values that are used again and
    again, so we predefine values for these that can be used globally */
 
-#define MESSAGE_VALUE_TRUE			( ( void * ) &messageValueTrue )
-#define MESSAGE_VALUE_FALSE			( ( void * ) &messageValueFalse )
-#define MESSAGE_VALUE_OK			( ( void * ) &messageValueCryptOK )
-#define MESSAGE_VALUE_ERROR			( ( void * ) &messageValueCryptError )
-#define MESSAGE_VALUE_UNUSED		( ( void * ) &messageValueCryptUnused )
-#define MESSAGE_VALUE_DEFAULT		( ( void * ) &messageValueCryptUseDefault )
-#define MESSAGE_VALUE_CURSORFIRST	( ( void * ) &messageValueCursorFirst )
-#define MESSAGE_VALUE_CURSORNEXT	( ( void * ) &messageValueCursorNext )
-#define MESSAGE_VALUE_CURSORPREVIOUS ( ( void * ) &messageValueCursorPrevious )
-#define MESSAGE_VALUE_CURSORLAST	( ( void * ) &messageValueCursorLast )
+#define MESSAGE_VALUE_TRUE			( ( MESSAGE_CAST ) &messageValueTrue )
+#define MESSAGE_VALUE_FALSE			( ( MESSAGE_CAST ) &messageValueFalse )
+#define MESSAGE_VALUE_OK			( ( MESSAGE_CAST ) &messageValueCryptOK )
+#define MESSAGE_VALUE_ERROR			( ( MESSAGE_CAST ) &messageValueCryptError )
+#define MESSAGE_VALUE_UNUSED		( ( MESSAGE_CAST ) &messageValueCryptUnused )
+#define MESSAGE_VALUE_DEFAULT		( ( MESSAGE_CAST ) &messageValueCryptUseDefault )
+#define MESSAGE_VALUE_CURSORFIRST	( ( MESSAGE_CAST ) &messageValueCursorFirst )
+#define MESSAGE_VALUE_CURSORNEXT	( ( MESSAGE_CAST ) &messageValueCursorNext )
+#define MESSAGE_VALUE_CURSORPREVIOUS ( ( MESSAGE_CAST ) &messageValueCursorPrevious )
+#define MESSAGE_VALUE_CURSORLAST	( ( MESSAGE_CAST ) &messageValueCursorLast )
 
 extern const int messageValueTrue, messageValueFalse;
 extern const int messageValueCryptOK, messageValueCryptError;
@@ -905,6 +914,27 @@ typedef struct {
    delete a KEYMGMT_ITEM_PUBLICKEY since the two items are (implicitly)
    connected.
 
+   An itemType of KEYMGMT_ITEM_REQUEST is distinct from the subtype 
+   KEYMGMT_ITEM_REVREQUEST because the former is for certification requests
+   while the latter is for revocation requests, the distinction is made 
+   because some protocols only allow certification but not revocation
+   requests and we want to trap these as soon as possible rather than some
+   way down the road when error reporting becomes a lot more nonspecific.
+
+   An itemType of KEYMGMT_ITEM_KEYMETADATA is a KEYMGMT_ITEM_PRIVATEKEY with
+   the context passed in being a dummy context with actual keying data held
+   in a crypto device.  What's stored in the keyset is purely the surrounding
+   metadata like labels, dates, and ID information.  This is distinct from a
+   KEYMGMT_ITEM_PRIVATEKEY both to allow for better checking by the kernel,
+   since a KEYMGMT_ITEM_KEYMETADATA object may not be in the high state yet
+   when it's used and doens't need a password like a KEYMGMT_ITEM_PRIVATEKEY 
+   does.  In addition keeping the types distinct is a safety feature since 
+   otherwise we'd need to allow a special-case KEYMGMT_ITEM_PRIVATEKEY store 
+   without a password, which is just asking for trouble.  Note that 
+   KEYMGMT_ITEM_PRIVATEKEY items are write-only, for reads they're treated 
+   the same as KEYMGMT_ITEM_PRIVATEKEY except that a dummy context is 
+   created.
+
    In addition to the flags that are used to handle various special-case
    read accesses, we can also specify a usage preference (e.g.
    confidentiality vs.signature) for cases where we may have multiple keys
@@ -916,8 +946,10 @@ typedef enum {
 	KEYMGMT_ITEM_PRIVATEKEY,	/* Access private key */
 	KEYMGMT_ITEM_SECRETKEY,		/* Access secret key */
 	KEYMGMT_ITEM_REQUEST,		/* Access cert request */
+	KEYMGMT_ITEM_REVREQUEST,	/* Access cert revocation request */
 	KEYMGMT_ITEM_PKIUSER,		/* Access PKI user info */
 	KEYMGMT_ITEM_REVOCATIONINFO,/* Access revocation info/CRL */
+	KEYMGMT_ITEM_KEYMETADATA,	/* Access key metadata for dummy ctx.*/
 	KEYMGMT_ITEM_DATA,			/* Other data (for PKCS #15 tokens) */
 	KEYMGMT_ITEM_LAST			/* Last item type */
 	} KEYMGMT_ITEM_TYPE;
@@ -930,8 +962,8 @@ typedef enum {
 #define KEYMGMT_FLAG_USAGE_CRYPT	0x0010	/* Prefer encryption key */
 #define KEYMGMT_FLAG_USAGE_SIGN		0x0020	/* Prefer signature key */
 #define KEYMGMT_FLAG_GETISSUER		0x0040	/* Get issuing PKI user for cert */
-#define KEYMGMT_FLAG_LAST			0x0080	/* Last valid flag */
-#define KEYMGMT_FLAG_MAX			0x008F	/* Maximum possible flag value */
+#define KEYMGMT_FLAG_INITIALOP		0x0080	/* Initial cert issue operation */
+#define KEYMGMT_FLAG_MAX			0x00FF	/* Maximum possible flag value */
 
 #define KEYMGMT_MASK_USAGEOPTIONS	( KEYMGMT_FLAG_USAGE_CRYPT | \
 									  KEYMGMT_FLAG_USAGE_SIGN )
@@ -1037,15 +1069,18 @@ typedef struct {
 #define CREATEOBJECT_FLAG_PERSISTENT 0x04	/* Obj.backed by key in device */
 #define CREATEOBJECT_FLAG_MAX		0x0F	/* Maximum possible flag value */
 
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 9 ) ) \
 int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
-					  OUT_PTR void **objectDataPtr, const int objectDataSize,
-					  const OBJECT_TYPE type, const OBJECT_SUBTYPE subType,
-					  const int createObjectFlags, const CRYPT_USER owner,
-					  const int actionFlags,
-					  CALLBACK_FUNCTION MESSAGE_FUNCTION messageFunction ) \
-					  STDC_NONNULL_ARG( ( 1, 2, 9 ) );
-int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
+					  OUT_PTR void **objectDataPtr, 
+					  IN_LENGTH_SHORT const int objectDataSize,
+					  IN_ENUM( OBJECT ) const OBJECT_TYPE type, 
+					  IN_ENUM( OBJECT_SUB ) const OBJECT_SUBTYPE subType,
+					  IN_FLAGS( CREATEOBJECT ) const int createObjectFlags, 
+					  IN_HANDLE const CRYPT_USER owner,
+					  IN_FLAGS( ACTION ) const int actionFlags,
+					  IN CALLBACK_FUNCTION MESSAGE_FUNCTION messageFunction );
+int krnlSendMessage( IN_HANDLE const int objectHandle, 
+					 IN_MESSAGE const MESSAGE_TYPE message,
 					 void *messageDataPtr, const int messageValue );
 
 /* Since some messages contain no data but act only as notifiers, we define
@@ -1063,11 +1098,12 @@ int krnlSendMessage( const int objectHandle, const MESSAGE_TYPE message,
    access is handled by the following function, which also explicitly
    disallows any access types apart from the three described here */
 
-CHECK_RETVAL \
-int krnlAcquireObject( const int objectHandle, const OBJECT_TYPE type,
-					   OUT_PTR void **objectPtr, const int errorCode ) \
-					   STDC_NONNULL_ARG( ( 3 ) );
-int krnlReleaseObject( const int objectHandle );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int krnlAcquireObject( IN_HANDLE const int objectHandle, 
+					   IN_ENUM( OBJECT ) const OBJECT_TYPE type,
+					   OUT_PTR void **objectPtr, 
+					   IN_ERROR const int errorCode );
+int krnlReleaseObject( IN_HANDLE const int objectHandle );
 
 /* In even rarer cases, we have to allow a second thread access to an object
    when another thread has it locked, providing a (somewhat crude) mechanism
@@ -1078,10 +1114,12 @@ int krnlReleaseObject( const int objectHandle );
    to allow other threads access, since the act of writing the marshalled
    data to storage doesn't require the user object) */
 
-int krnlSuspendObject( const int objectHandle, OUT int *refCount ) \
-					   STDC_NONNULL_ARG( ( 2 ) );
+STDC_NONNULL_ARG( ( 2 ) ) \
+int krnlSuspendObject( IN_HANDLE const int objectHandle, 
+					   OUT_INT_Z int *refCount );
 CHECK_RETVAL \
-int krnlResumeObject( const int objectHandle, const int refCount );
+int krnlResumeObject( IN_HANDLE const int objectHandle, 
+					  IN_INT_Z const int refCount );
 
 /* When the kernel is closing down, any cryptlib-internal threads should exit
    as quickly as possible.  For threads coming in from the outside this
@@ -1092,7 +1130,7 @@ int krnlResumeObject( const int objectHandle, const int refCount );
    following function is used to indicate whether the kernel is shutting
    down */
 
-CHECK_RETVAL \
+CHECK_RETVAL_BOOL \
 BOOLEAN krnlIsExiting( void );
 
 /* Semaphores and mutexes */
@@ -1139,27 +1177,25 @@ typedef struct TF {
 	int intParam;					/* Integer parameter */
 	} THREAD_PARAMS;
 
-CHECK_RETVAL \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 						THREAD_STATE threadState, void *ptrParam, 
-						const int intParam, const SEMAPHORE_TYPE semaphore ) \
-						STDC_NONNULL_ARG( ( 1 ) );
+						const int intParam, const SEMAPHORE_TYPE semaphore );
 
 /* Wait on a semaphore, enter and exit a mutex */
 
+CHECK_RETVAL_BOOL \
+BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore );
 CHECK_RETVAL \
-BOOLEAN krnlWaitSemaphore( const SEMAPHORE_TYPE semaphore );
-CHECK_RETVAL \
-int krnlEnterMutex( const MUTEX_TYPE mutex );
-void krnlExitMutex( const MUTEX_TYPE mutex );
+int krnlEnterMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex );
+void krnlExitMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex );
 
 /* Secure memory handling functions */
 
-CHECK_RETVAL \
-int krnlMemalloc( OUT_PTR void **pointer, int size ) \
-				  STDC_NONNULL_ARG( ( 1 ) );
-void krnlMemfree( OUT_PTR void **pointer ) \
-				  STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size );
+STDC_NONNULL_ARG( ( 1 ) ) \
+void krnlMemfree( OUT_PTR void **pointer );
 
 #ifdef NEED_ENUMFIX
   #undef OBJECT_TYPE_LAST

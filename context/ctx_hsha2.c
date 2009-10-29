@@ -242,7 +242,8 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	else
 		{
 		/* Copy the key to internal storage */
-		memcpy( macInfo->userKey, key, keyLength );
+		if( macInfo->userKey != key )
+			memcpy( macInfo->userKey, key, keyLength );
 		macInfo->userKeyLength = keyLength;
 		}
 

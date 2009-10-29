@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Certificate Handling Test Routines				*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
@@ -50,7 +50,7 @@ static const CERT_DATA FAR_BSS certProcessData[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -94,7 +94,7 @@ static int createCertRequest( void *certRequest,
 		const time_t endTime = time( NULL ) + 86400;
 
 		/* Since we're using a CRMF request, set some fields that can't
-		   be specified in the standard cert request */
+		   be specified in the standard certificate request */
 		status = cryptSetAttributeString( cryptCert,
 					CRYPT_CERTINFO_VALIDFROM, &startTime, sizeof( time_t ) );
 		if( cryptStatusOK( status ) )
@@ -117,7 +117,7 @@ static int createCertRequest( void *certRequest,
 	return( length );
 	}
 
-/* Create a certificate from a cert request */
+/* Create a certificate from a certificate request */
 
 static int createCertificate( void *certificate, const void *certRequest,
 							  const int certReqLength,
@@ -155,7 +155,7 @@ static int createCertificate( void *certificate, const void *certRequest,
 	}
 
 /* Create a certificate directly, used for algorithms that don't support
-   self-signed cert requests */
+   self-signed certificate requests */
 
 static int createCertDirect( void *certificate,
 							 const CRYPT_ALGO_TYPE cryptAlgo,
@@ -212,22 +212,24 @@ static int certProcess( const CRYPT_ALGO_TYPE cryptAlgo,
 				( useCRMF ? "prcrtrsa_c" : "prcrtrsa" ) : \
 			( cryptAlgo == CRYPT_ALGO_DSA ) ? "prcrtdsa" : \
 			( cryptAlgo == CRYPT_ALGO_DH ) ? "prcrtdh" : \
-			( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? "prcrtelg" : "prcrtxxx";
+			( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? "prcrtelg" : \
+			( cryptAlgo == CRYPT_ALGO_ECDSA ) ? "prcrtecdsa" : \
+			( cryptAlgo == CRYPT_ALGO_ECDH ) ? "prcrtecdh" : "prcrtxxx";
 	int length, status;
 
 	printf( "Testing %s certificate processing%s...\n", algoName,
 			useCRMF ? " from CRMF request" : "" );
 
-	/* Some algorithms can't create self-signed cert requests so we have to
-	   create the cert directly */
-	if( cryptAlgo != CRYPT_ALGO_ELGAMAL && cryptAlgo != CRYPT_ALGO_DH )
+	/* Some algorithms can't create self-signed certificate requests so we 
+	   have to create the certificate directly */
+	if( cryptAlgo != CRYPT_ALGO_ELGAMAL && cryptAlgo != CRYPT_ALGO_DH && \
+		cryptAlgo != CRYPT_ALGO_ECDH )
 		{
 		const char *reqName = \
 			( cryptAlgo == CRYPT_ALGO_RSA ) ? \
 				( useCRMF ? "prreqrsa_c" : "prreqrsa" ) : \
 			( cryptAlgo == CRYPT_ALGO_DSA ) ? "prreqdsa" : \
-			( cryptAlgo == CRYPT_ALGO_DH ) ? "prreqdh" : \
-			( cryptAlgo == CRYPT_ALGO_ELGAMAL ) ? "prreqelg" : "prreqxxx";
+			( cryptAlgo == CRYPT_ALGO_ECDSA ) ? "prreqecdsa" : "prreqxxx";
 
 		/* Create the certification request */
 		status = length = createCertRequest( certBuffer, cryptAlgo, useCRMF );
@@ -277,7 +279,7 @@ static int certProcess( const CRYPT_ALGO_TYPE cryptAlgo,
 int testCertProcess( void )
 	{
 	CRYPT_CONTEXT cryptCAKey;
-	int status;
+	int value, status;
 
 	/* Get the CA's private key */
 	status = getPrivateKey( &cryptCAKey, CA_PRIVKEY_FILE,
@@ -294,13 +296,37 @@ int testCertProcess( void )
 		return( FALSE );
 	if( !certProcess( CRYPT_ALGO_DSA, "DSA", cryptCAKey, FALSE ) )
 		return( FALSE );
-	if( !certProcess( CRYPT_ALGO_ELGAMAL, "Elgamal", cryptCAKey, FALSE ) )
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
+		!certProcess( CRYPT_ALGO_ELGAMAL, "Elgamal", cryptCAKey, FALSE ) )
 		return( FALSE );
 	if( !certProcess( CRYPT_ALGO_DH, "Diffie-Hellman", cryptCAKey, FALSE ) )
 		return( FALSE );
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
+		!certProcess( CRYPT_ALGO_ECDSA, "ECDSA", cryptCAKey, FALSE ) )
+		return( FALSE );
+#if 0
+	/* We can't perform the test for ECDH because there's only one algorithm
+	   type available for public keys, "ECC", and that doesn't distinguish
+	   between an ECDH ECC key and an ECDSA ECC key.  Because of this the 
+	   code assumes that any ECC key is an ECDSA key, so that while we can
+	   create an ECDH certificate, we can't read it back because it'll be
+	   read as an ECDSA certificate */
+	if( !certProcess( CRYPT_ALGO_ECDH, "ECDH", cryptCAKey, FALSE ) )
+		return( FALSE );
+#endif /* 0 */
 
 	/* Run the test again with a CRMF instead of PKCS #10 request */
 	if( !certProcess( CRYPT_ALGO_RSA, "RSA", cryptCAKey, TRUE ) )
+		return( FALSE );
+
+	/* Now try a different hash algorithm */
+	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, &value );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH,
+					   CRYPT_ALGO_SHA2 );
+	status = certProcess( CRYPT_ALGO_RSA, "RSA with SHA-256", cryptCAKey, 
+						  FALSE );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_ENCR_HASH, value );
+	if( !status )
 		return( FALSE );
 
 	/* Clean up */
@@ -314,9 +340,9 @@ int testCertProcess( void )
 *																			*
 ****************************************************************************/
 
-/* Since opening the cert store for update creates a log entry each time,
-   we open it once at the start and then call a series of sub-tests with
-   the store open throughout the tests.  This also allows us to keep the
+/* Since opening the certificate store for update creates a log entry each 
+   time, we open it once at the start and then call a series of sub-tests 
+   with the store open throughout the tests.  This also allows us to keep the
    CA key active througout */
 
 static const CERT_DATA FAR_BSS cert1Data[] = {
@@ -331,7 +357,7 @@ static const CERT_DATA FAR_BSS cert1Data[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -347,7 +373,7 @@ static const CERT_DATA FAR_BSS revokableCert1Data[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -363,7 +389,7 @@ static const CERT_DATA FAR_BSS revokableCert2Data[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -379,7 +405,7 @@ static const CERT_DATA FAR_BSS expiredCert1Data[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
@@ -395,18 +421,22 @@ static const CERT_DATA FAR_BSS expiredCert2Data[] = {
 	{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 	/* Re-select the subject name after poking around in the altName */
-	{ CRYPT_CERTINFO_SUBJECTNAME, IS_NUMERIC, CRYPT_UNUSED },
+	{ CRYPT_ATTRIBUTE_CURRENT, IS_NUMERIC, CRYPT_CERTINFO_SUBJECTNAME },
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
-static const CERT_DATA FAR_BSS certCAData[] = {
+
+/* Certificate requests for which the issue should fail, for various 
+   reasons */
+
+static const CERT_DATA FAR_BSS certCA1Data[] = {
 	/* Identification information */
 	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
 	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
-	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Test CA user" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Test CA user 1" ) },
 
-	/* CA extensions.  These should be rejected/stripped by the cert
+	/* CA extensions.  These should be rejected/stripped by the certificate
 	   management code, since new CAs can only be created by the issuing CA
 	   specifying it in the PKI user info */
 	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC,
@@ -415,8 +445,32 @@ static const CERT_DATA FAR_BSS certCAData[] = {
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
+static const CERT_DATA FAR_BSS certCA2Data[] = {
+	/* Identification information */
+	{ CRYPT_CERTINFO_COUNTRYNAME, IS_STRING, 0, TEXT( "NZ" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONNAME, IS_STRING, 0, TEXT( "Dave's Wetaburgers" ) },
+	{ CRYPT_CERTINFO_ORGANIZATIONALUNITNAME, IS_STRING, 0, TEXT( "Procurement" ) },
+	{ CRYPT_CERTINFO_COMMONNAME, IS_STRING, 0, TEXT( "Test CA user 2" ) },
 
-/* Add a certification request to the cert store */
+	/* CA extensions.  A variant of the above with no basicConstraints but a 
+	   CA-only key usage */
+	{ CRYPT_CERTINFO_KEYUSAGE, IS_NUMERIC,
+	  CRYPT_KEYUSAGE_DIGITALSIGNATURE | CRYPT_KEYUSAGE_KEYCERTSIGN | \
+	  CRYPT_KEYUSAGE_CRLSIGN },
+
+	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
+	};
+#ifdef USE_CERT_DNSTRING
+static const CERT_DATA FAR_BSS certDodgyDNData[] = {
+	/* Identification information.  The multi-AVA RDN should be rejected */
+	{ CRYPT_CERTINFO_DN, IS_STRING, 0, 
+	  TEXT( "cn=www.example.com + cn=www.wetaburgers.com, ou=Procurement, o=Wetaburgers, c=NZ" ) },
+
+	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
+	};
+#endif /* USE_CERT_DNSTRING */
+
+/* Add a certification request to the certificate store */
 
 static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 						   const CERT_DATA *certReqData,
@@ -437,8 +491,8 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 	status = cryptGenerateKey( cryptContext );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Creation of private key for cert failed with error code %d, "
-				"line %d.\n", status, __LINE__ );
+		printf( "Creation of private key for certificate failed with error "
+				"code %d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
@@ -461,12 +515,12 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 		const time_t theTime = time( NULL ) + 5;
 
 		/* Set the expiry time to a few seconds after the current time to
-		   ensure that the cert has expired by the time we need it.  This
-		   is a tiny bit risky since it requires that the interval between
-		   setting this attribute and the creation of the cert below is
-		   less than five seconds, however there's no easy way to guarantee
-		   the creation of a pre-expired cert since if we set the time too
-		   far back it won't be created */
+		   ensure that the certificate has expired by the time we need it.  
+		   This is a tiny bit risky since it requires that the interval 
+		   between setting this attribute and the creation of the certificate 
+		   below is less than five seconds, however there's no easy way to 
+		   guarantee the creation of a pre-expired certificate since if we 
+		   set the time too far back it won't be created */
 		status = cryptSetAttributeString( cryptCertRequest,
 					CRYPT_CERTINFO_VALIDTO, &theTime, sizeof( time_t ) );
 		}
@@ -475,7 +529,14 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 		return( attrErrorExit( cryptCertRequest, "cryptSetAttribute()",
 							   status, __LINE__ ) );
 	if( !addCertFields( cryptCertRequest, certReqData, __LINE__ ) )
+		{
+		/* We have to make sure that we exit cleanly here since some of the 
+		   tests verify the rejection of invalid request data, so a failure
+		   at this point isn't a true error for these tests */
+		cryptDestroyCert( cryptCertRequest );
+		cryptDestroyContext( cryptContext );
 		return( FALSE );
+		}
 	status = cryptSignCert( cryptCertRequest, cryptContext );
 	cryptDestroyContext( cryptContext );
 	if( cryptStatusError( status ) )
@@ -494,12 +555,12 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 								  &cryptCertRequest );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Couldn't export/re-import cert request, status = %d, "
-				"line %d.\n", status, __LINE__ );
+		printf( "Couldn't export/re-import certificate request, status = "
+				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
 
-	/* Add the request to the cert store */
+	/* Add the request to the certificate store */
 	status = cryptCAAddItem( cryptCertStore, cryptCertRequest );
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptCertStore, "cryptCAAddItem()", status,
@@ -508,10 +569,10 @@ static int addCertRequest( const CRYPT_KEYSET cryptCertStore,
 	return( cryptCertRequest );
 	}
 
-/* Add a revocation request to the cert store.  This code isn't currently
-   used because CMP doesn't allow revocation requests to be signed, so we
-   can't create a signed object to add directly but have to come in via
-   CMP */
+/* Add a revocation request to the certificate store.  This code isn't 
+   currently used because CMP doesn't allow revocation requests to be 
+   signed so we can't create a signed object to add directly but have to 
+   come in via CMP */
 
 #if 0
 
@@ -521,7 +582,8 @@ static int addRevRequest( const CRYPT_KEYSET cryptCertStore,
 	CRYPT_CERTIFICATE cryptCert, cryptCertRequest;
 	int i, status;
 
-	/* Find the CN of the cert we're revoking and use it to fetch the cert */
+	/* Find the CN of the certificate we're revoking and use it to fetch the 
+	   certificate */
 	for( i = 0; certReqData[ i ].componentType != CRYPT_ATTRIBUTE_NONE; i++ )
 		if( certReqData[ i ].type == CRYPT_CERTINFO_COMMONNAME )
 			printf( "Revoking certificate for '%s'.\n",
@@ -549,7 +611,7 @@ static int addRevRequest( const CRYPT_KEYSET cryptCertStore,
 	if( !addCertFields( cryptCertRequest, revRequestData, __LINE__ ) )
 		return( FALSE );
 
-	/* Add the request to the cert store */
+	/* Add the request to the certificate store */
 	status = cryptCAAddItem( cryptCertStore, cryptCertRequest );
 	if( cryptStatusError( status ) )
 		return( extErrorExit( cryptCertStore, "cryptCAAddItem()", status,
@@ -559,23 +621,30 @@ static int addRevRequest( const CRYPT_KEYSET cryptCertStore,
 	}
 #endif /* 0 */
 
-/* Issue a certificate from a cert request */
+/* Issue a certificate from a certificate request, and try and issue an
+   invalid certificate from a request, for which the issue process should 
+   fail */
 
 static int issueCert( const CRYPT_KEYSET cryptCertStore,
 					  const CRYPT_CONTEXT cryptCAKey,
-					  const CERT_DATA *certReqData, const BOOLEAN isExpired,
-					  const BOOLEAN issueShouldFail )
+					  const CERT_DATA *certReqData, 
+					  const BOOLEAN isExpired )
 	{
 	CRYPT_CERTIFICATE cryptCertRequest;
 	int i, status;
 
 	/* Provide some feedback on what we're doing */
 	for( i = 0; certReqData[ i ].componentType != CRYPT_ATTRIBUTE_NONE; i++ )
+		{
 		if( certReqData[ i ].type == CRYPT_CERTINFO_COMMONNAME )
+			{
 			printf( "Issuing certificate for '%s'.\n",
 					( char * ) certReqData[ i ].stringValue );
+			break;
+			}
+		}
 
-	/* Issue the cert via the cert store */
+	/* Issue the certificate via the certificate store */
 	cryptCertRequest = addCertRequest( cryptCertStore, certReqData, isExpired );
 	if( !cryptCertRequest )
 		return( FALSE );
@@ -585,10 +654,6 @@ static int issueCert( const CRYPT_KEYSET cryptCertStore,
 	cryptDestroyCert( cryptCertRequest );
 	if( cryptStatusError( status ) )
 		{
-		if( issueShouldFail )
-			/* If this is a check of the request validity-checking system,
-			   the issue is supposed to fail */
-			return( TRUE );
 		if( isExpired && status == CRYPT_ERROR_INVALID )
 			{
 			puts( "The short-expiry-time certificate has already expired at "
@@ -603,7 +668,64 @@ static int issueCert( const CRYPT_KEYSET cryptCertStore,
 							  status, __LINE__ ) );
 		}
 
-	return( issueShouldFail ? FALSE : TRUE );
+	return( TRUE );
+	}
+
+static int checkInvalidIssueRejected( const CRYPT_KEYSET cryptCertStore,
+									  const CRYPT_CONTEXT cryptCAKey,
+									  const CERT_DATA *certReqData,
+									  const BOOLEAN requestCreationShouldFail )
+	{
+	CRYPT_CERTIFICATE cryptCertRequest;
+	int i, status;
+
+	/* Provide some feedback on what we're doing */
+	for( i = 0; certReqData[ i ].componentType != CRYPT_ATTRIBUTE_NONE; i++ )
+		{
+		if( certReqData[ i ].type == CRYPT_CERTINFO_COMMONNAME )
+			{
+			printf( "Issuing certificate for '%s'.\n",
+					( char * ) certReqData[ i ].stringValue );
+			break;
+			}
+		}
+	if( certReqData[ i ].componentType == CRYPT_ATTRIBUTE_NONE )
+		{
+		/* If the certificate doesn't have a CN attribute then it's one with
+		   a synthetic DN created to test the DN-validity checks */
+		puts( "Issuing certificate for synthetic invalid DN." );
+		}
+
+	/* Issue the certificate via the certificate store */
+	cryptCertRequest = addCertRequest( cryptCertStore, certReqData, FALSE );
+	if( !cryptCertRequest )
+		{
+		/* In some cases the invalid request will be caught as soon as it's 
+		   created (this is a bit unfortunate because we really want to 
+		   check whether an import of someone else's invalid request will
+		   fail, however this is checked indirectly because it demonstrates
+		   that the certificate code won't allow the use of such a value in
+		   a certificate */
+		if( requestCreationShouldFail )
+			{
+			puts( "  (This is an expected result since this test verifies "
+				  "handling of\n   invalid request data)." );
+			return( TRUE );
+			}
+		return( FALSE );
+		}
+	status = cryptCACertManagement( NULL, CRYPT_CERTACTION_ISSUE_CERT,
+									cryptCertStore, cryptCAKey,
+									cryptCertRequest );
+	cryptDestroyCert( cryptCertRequest );
+	if( cryptStatusError( status ) )
+		{
+		/* This is a check of the request validity-checking system so the 
+		   issue is supposed to fail */
+		return( TRUE );
+		}
+
+	return( FALSE );
 	}
 
 /* Issue a CRL.  Although we can't do this directly (see the comment above
@@ -617,7 +739,7 @@ static int issueCRL( const CRYPT_KEYSET cryptCertStore,
 	CRYPT_CERTIFICATE cryptCRL;
 	int noEntries = 0, status;
 
-	/* Issue the CRL via the cert store */
+	/* Issue the CRL via the certificate store */
 	status = cryptCACertManagement( &cryptCRL, CRYPT_CERTACTION_ISSUE_CRL,
 									cryptCertStore, cryptCAKey,
 									CRYPT_UNUSED );
@@ -645,7 +767,7 @@ static int issueCRL( const CRYPT_KEYSET cryptCertStore,
 	return( TRUE );
 	}
 
-/* Fetch the issued cert that was created from a given cert template */
+/* Fetch the issued certificate that was created from a given cert template */
 
 static CRYPT_CERTIFICATE getCertFromTemplate( const CRYPT_KEYSET cryptCertStore,
 											  const CERT_DATA *certReqData )
@@ -669,7 +791,7 @@ int testCertManagement( void )
 	time_t certTime;
 	int dummy, status;
 
-	puts( "Testing certificate management using cert store..." );
+	puts( "Testing certificate management using certificate store..." );
 
 	/* Get the CA's private key */
 	status = getPrivateKey( &cryptCAKey, CA_PRIVKEY_FILE,
@@ -681,11 +803,11 @@ int testCertManagement( void )
 		return( FALSE );
 		}
 
-	/* Create the cert store keyset with a check to make sure that this
-	   access method exists so we can return an appropriate error message.
-	   If the database table already exists, this will return a duplicate
-	   data error so we retry the open with no flags to open the existing
-	   database keyset for write access */
+	/* Create the certificate store keyset with a check to make sure that 
+	   this access method exists so we can return an appropriate error 
+	   message.  If the database table already exists, this will return a 
+	   duplicate data error so we retry the open with no flags to open the 
+	   existing database keyset for write access */
 	status = cryptKeysetOpen( &cryptCertStore, CRYPT_UNUSED,
 							  CERTSTORE_KEYSET_TYPE, CERTSTORE_KEYSET_NAME,
 							  CRYPT_KEYOPT_CREATE );
@@ -716,10 +838,10 @@ int testCertManagement( void )
 		return( FALSE );
 		}
 
-	/* Create a cert request, add it to the store, and destroy it, simulating
-	   a delayed cert issue in which the request can't immediately be
-	   converted into a cert.  Then read the request back from the store and
-	   issue a certificate based on it */
+	/* Create a certificate request, add it to the store, and destroy it, 
+	   simulating a delayed certificate issue in which the request can't 
+	   immediately be converted into a certificate.  Then read the request 
+	   back from the store and issue a certificate based on it */
 	puts( "Issuing certificate for 'Test user 1'..." );
 	cryptCertRequest = addCertRequest( cryptCertStore, cert1Data, FALSE );
 	if( !cryptCertRequest )
@@ -741,37 +863,54 @@ int testCertManagement( void )
 	cryptDestroyCert( cryptCert );
 
 	/* Issue some more certs, this time directly from the request and without
-	   bothering to obtain the resulting cert.  The first two have a validity
-	   time that expires in a few seconds so that we can use them to test
-	   cert expiry processing, we issue these first to ensure that as much
-	   time as possible passes due to other operations occurring before we
-	   run the expiry.  The second two are for revocation and CRL testing */
-	if( !issueCert( cryptCertStore, cryptCAKey, expiredCert1Data, TRUE, FALSE ) )
+	   bothering to obtain the resulting certificate.  The first two have a 
+	   validity time that expires in a few seconds so that we can use them 
+	   to test certificate expiry processing, we issue these first to ensure 
+	   that as much time as possible passes due to other operations occurring 
+	   before we run the expiry.  The second two are for revocation and CRL 
+	   testing */
+	if( !issueCert( cryptCertStore, cryptCAKey, expiredCert1Data, TRUE ) )
 		return( FALSE );
-	if( !issueCert( cryptCertStore, cryptCAKey, expiredCert2Data, TRUE, FALSE ) )
+	if( !issueCert( cryptCertStore, cryptCAKey, expiredCert2Data, TRUE ) )
 		return( FALSE );
-	if( !issueCert( cryptCertStore, cryptCAKey, revokableCert1Data, FALSE, FALSE ) )
+	if( !issueCert( cryptCertStore, cryptCAKey, revokableCert1Data, FALSE ) )
 		return( FALSE );
-	if( !issueCert( cryptCertStore, cryptCAKey, revokableCert2Data, FALSE, FALSE ) )
+	if( !issueCert( cryptCertStore, cryptCAKey, revokableCert2Data, FALSE ) )
 		return( FALSE );
 
 	/* The following tests are specifically inserted at this point (rather
 	   than at some other point in the test run) because they'll add some
 	   further delay before the expiry operation */
 
-	/* Try and get a CA cert issued.  This should fail, since new CAs can
-	   only be created if the issuing CA specifies it (either directly when
-	   it creates the cert manually or via the PKI user info), but never at
-	   the request of the user */
-	if( !issueCert( cryptCertStore, cryptCAKey, certCAData, FALSE, TRUE ) )
+	/* Try and get a CA certificate issued.  This should fail, since new CAs 
+	   can only be created if the issuing CA specifies it (either directly 
+	   when it creates the certificate manually or via the PKI user info), 
+	   but never at the request of the user */
+	if( !checkInvalidIssueRejected( cryptCertStore, cryptCAKey, 
+									certCA1Data, TRUE ) || \
+		!checkInvalidIssueRejected( cryptCertStore, cryptCAKey, 
+									certCA2Data, FALSE ) )
 		{
-		printf( "Issue of cert from invalid request succeeded when it "
-				"should have failed,\nline %d.\n", __LINE__ );
+		printf( "Issue of certificate from invalid request succeeded when "
+				"it should have failed,\nline %d.\n", __LINE__ );
 		return( FALSE );
 		}
 
-	/* Get a cert and (to-be-)revoked cert from the store and save them to
-	   disk for later tests */
+#ifdef USE_CERT_DNSTRING
+	/* Try and get a certificate with a multi-AVA RDN issued.  This should
+	   fail, since such DN shenanigans can only be performed if the CA 
+	   creates the required DN directly */
+	if( !checkInvalidIssueRejected( cryptCertStore, cryptCAKey, 
+									certDodgyDNData, FALSE ) )
+		{
+		printf( "Issue of certificate from invalid request succeeded when "
+				"it should have failed,\nline %d.\n", __LINE__ );
+		return( FALSE );
+		}
+#endif /* USE_CERT_DNSTRING */
+
+	/* Get a certificate and (to-be-)revoked certificate from the store and 
+	   save them to disk for later tests */
 	status = cryptCert = getCertFromTemplate( cryptCertStore, cert1Data );
 	if( !cryptStatusError( status ) )
 		{
@@ -779,7 +918,7 @@ int testCertManagement( void )
 		FILE *filePtr;
 		int length;
 
-		/* First save the CA cert */
+		/* First save the CA certificate */
 		filenameFromTemplate( fileName, OCSP_CA_FILE_TEMPLATE, 1 );
 		status = cryptExportCert( certBuffer, BUFFER_SIZE, &length,
 								  CRYPT_CERTFORMAT_CERTIFICATE, 
@@ -787,11 +926,21 @@ int testCertManagement( void )
 		if( cryptStatusOK( status ) && \
 			( filePtr = fopen( fileName, "wb" ) ) != NULL )
 			{
-			fwrite( certBuffer, length, 1, filePtr );
+			int count;
+
+			count = fwrite( certBuffer, 1, length, filePtr );
 			fclose( filePtr );
+			if( count < length )
+				{
+				remove( fileName );
+				puts( "Warning: Couldn't save OCSP CA certificate to disk, "
+					  "this will cause later\n         OCSP server tests to "
+					  "fail.  Press a key to continue." );
+				getchar();
+				}
 			}
 
-		/* Then the EE cert */
+		/* Then the EE certificate */
 		filenameFromTemplate( fileName, OCSP_EEOK_FILE_TEMPLATE, 1 );
 		status = cryptExportCert( certBuffer, BUFFER_SIZE, &length,
 								  CRYPT_CERTFORMAT_CERTIFICATE, 
@@ -799,8 +948,18 @@ int testCertManagement( void )
 		if( cryptStatusOK( status ) && \
 			( filePtr = fopen( fileName, "wb" ) ) != NULL )
 			{
-			fwrite( certBuffer, length, 1, filePtr );
+			int count;
+
+			count = fwrite( certBuffer, 1, length, filePtr );
 			fclose( filePtr );
+			if( count < length )
+				{
+				remove( fileName );
+				puts( "Warning: Couldn't save OCSP non-revoked certificate "
+					  "to disk, this will cause later\n         OCSP server "
+					  "tests to fail.  Press a key to continue." );
+				getchar();
+				}
 			}
 		cryptDestroyCert( cryptCert );
 		}
@@ -820,21 +979,31 @@ int testCertManagement( void )
 		if( cryptStatusOK( status ) && \
 			( filePtr = fopen( fileName, "wb" ) ) != NULL )
 			{
-			fwrite( certBuffer, length, 1, filePtr );
+			int count;
+
+			count = fwrite( certBuffer, 1, length, filePtr );
 			fclose( filePtr );
+			if( count < length )
+				{
+				remove( fileName );
+				puts( "Warning: Couldn't save OCSP revoked certificate "
+					  "to disk, this will cause later\n         OCSP server "
+					  "tests to fail.  Press a key to continue." );
+				getchar();
+				}
 			}
 		cryptDestroyCert( cryptCert );
 		}
 	if( cryptStatusError( status ) )
 		{
-		puts( "Issued certificates couldn't be fetched from the cert store "
-			  "and written to\ndisk, the OCSP server test will abort when it "
-			  "fails to find these\ncertificates." );
+		puts( "Issued certificates couldn't be fetched from the certificate "
+			  "store and written\nto disk, the OCSP server test will abort "
+			  "when it fails to find\nthese certificates." );
 		}
 
 	/* Issue a CRL.  This will probably be a zero-length CRL unless we've run
-	   the CMP tests because we can't directly revoke a cert.  Again, we
-	   perform it before the expiry test because it'll add some further
+	   the CMP tests because we can't directly revoke a certificate.  Again, 
+	   we perform it before the expiry test because it'll add some further
 	   delay */
 	if( !issueCRL( cryptCertStore, cryptCAKey ) )
 		return( FALSE );
@@ -848,7 +1017,7 @@ int testCertManagement( void )
 										  &certTime, &dummy );
 	if( cryptStatusError( status ) )
 		{
-		puts( "Couldn't get expiry information for expired cert." );
+		puts( "Couldn't get expiry information for expired certificate." );
 		return( FALSE );
 		}
 #ifndef _WIN32_WCE
@@ -877,6 +1046,6 @@ int testCertManagement( void )
 	/* Clean up */
 	cryptDestroyContext( cryptCAKey );
 	cryptKeysetClose( cryptCertStore );
-	puts( "Certificate management using cert store succeeded.\n" );
+	puts( "Certificate management using certificate store succeeded.\n" );
 	return( TRUE );
 	}

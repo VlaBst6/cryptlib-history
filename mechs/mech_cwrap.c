@@ -132,15 +132,15 @@ int exportCMS( STDC_UNUSED void *dummy,
 	   then copy the payload in at the last possible moment and perform two 
 	   passes of encryption, retaining the IV from the first pass for the 
 	   second pass */
-	keyBlockPtr[ 0 ] = keySize;
+	keyBlockPtr[ 0 ] = intToByte( keySize );
 	status = extractKeyData( mechanismInfo->keyContext,
 							 keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE,
 							 mechanismInfo->wrappedDataLength - \
 								( CMS_KEYBLOCK_HEADERSIZE + padSize ),
 							 "keydata", 7 );
-	keyBlockPtr[ 1 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF;
-	keyBlockPtr[ 2 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF;
-	keyBlockPtr[ 3 ] = keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF;
+	keyBlockPtr[ 1 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF );
+	keyBlockPtr[ 2 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF );
+	keyBlockPtr[ 3 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF );
 	memcpy( dataSample, keyBlockPtr, 16 );
 	if( cryptStatusOK( status ) )
 		{
@@ -190,7 +190,7 @@ int importCMS( STDC_UNUSED void *dummy,
 	BYTE buffer[ CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE + 8 ];
 	BYTE ivBuffer[ CRYPT_MAX_IVSIZE + 8 ];
 	BYTE *dataEndPtr = buffer + mechanismInfo->wrappedDataLength;
-	int blockSize, status;
+	int blockSize, value, status;
 
 	UNUSED_ARG( dummy );
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_WRAP_INFO ) ) );
@@ -277,20 +277,30 @@ int importCMS( STDC_UNUSED void *dummy,
 		}
 
 	/* Make sure that everything is in order and load the decrypted keying 
-	   information into the session key context */
-	if( buffer[ 0 ] < MIN_KEYSIZE || \
-		buffer[ 0 ] > MAX_WORKING_KEYSIZE || \
-		buffer[ 0 ] > mechanismInfo->wrappedDataLength - \
-					  CMS_KEYBLOCK_HEADERSIZE )
-		status = CRYPT_ERROR_BADDATA;
-	if( buffer[ 1 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF ) || \
-		buffer[ 2 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF ) || \
-		buffer[ 3 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF ) )
-		status = CRYPT_ERROR_BADDATA;
-	if( cryptStatusError( status ) )
+	   information into the session key context.  This uses a somewhat
+	   odd checking mechanism in order to avoid timing attacks (although it's
+	   not really certain what an attacker would gain by an ability to do 
+	   this).  The checks being performed are:
+
+		if( buffer[ 0 ] < MIN_KEYSIZE || \
+			buffer[ 0 ] > MAX_WORKING_KEYSIZE || \
+			buffer[ 0 ] > mechanismInfo->wrappedDataLength - \
+						  CMS_KEYBLOCK_HEADERSIZE || \
+			buffer[ 1 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF ) || \
+			buffer[ 2 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF ) || \
+			buffer[ 3 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF ) )
+			error; */
+	value = ( buffer[ 0 ] < MIN_KEYSIZE ) | \
+			( buffer[ 0 ] > MAX_WORKING_KEYSIZE ) | \
+			( buffer[ 0 ] > mechanismInfo->wrappedDataLength - \
+							CMS_KEYBLOCK_HEADERSIZE );
+	value |= buffer[ 1 ] ^ ( buffer[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF );
+	value |= buffer[ 2 ] ^ ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF );
+	value |= buffer[ 3 ] ^ ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF );
+	if( value != 0 )
 		{
 		zeroise( buffer, CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE );
-		return( status );
+		return( CRYPT_ERROR_BADDATA );
 		}
 
 	/* Load the recovered key into the session key context */

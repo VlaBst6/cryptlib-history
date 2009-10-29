@@ -105,8 +105,8 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iKeyset,
 	/* Open the given keyset */
 	status = fileBuildCryptlibPath( userFilePath, MAX_PATH_LENGTH, 
 									&userFilePathLen, fileName, fileNameLen, 
-									( options == CRYPT_KEYOPT_READONLY ) ? \
-									BUILDPATH_GETPATH : BUILDPATH_CREATEPATH );
+									( options == CRYPT_KEYOPT_CREATE ) ? \
+									BUILDPATH_CREATEPATH : BUILDPATH_GETPATH );
 	if( cryptStatusError( status ) )
 		{
 		/* Map the lower-level filesystem-specific error into a more 
@@ -177,14 +177,14 @@ static int addKey( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 	REQUIRES( userIdLength > 0 && userIdLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( passwordLength > 0 && passwordLength < MAX_INTLENGTH_SHORT );
 
-	setMessageData( &msgData, ( void * ) userID, userIdLength );
+	setMessageData( &msgData, ( MESSAGE_CAST ) userID, userIdLength );
 	status = krnlSendMessage( iUserKeyset, IMESSAGE_SETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_USERID );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	setMessageKeymgmtInfo( &setkeyInfo, CRYPT_KEYID_NONE, NULL, 0,
-						   ( void * ) password, passwordLength,
+						   ( MESSAGE_CAST ) password, passwordLength,
 						   KEYMGMT_FLAG_NONE );
 	setkeyInfo.cryptHandle = iCryptContext;
 	status = krnlSendMessage( iUserKeyset, IMESSAGE_KEY_SETKEY,
@@ -379,7 +379,7 @@ static int createUserEntry( OUT_PTR USER_FILE_INFO **userIndexPtrPtr,
 			{
 			MESSAGE_DATA msgData;
 
-			setMessageData( &msgData, ( void * ) userFileInfo->userID, 
+			setMessageData( &msgData, ( MESSAGE_CAST ) userFileInfo->userID, 
 							KEYID_SIZE );
 			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 									  IMESSAGE_GETATTRIBUTE_S, &msgData,
@@ -650,12 +650,13 @@ static int commitUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 	REQUIRES( userDataLength > 0 && userDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Add the user ID and SO-signed user info to the keyset */
-	setMessageData( &msgData, ( void * ) userData, userDataLength );
+	setMessageData( &msgData, ( MESSAGE_CAST ) userData, userDataLength );
 	status = krnlSendMessage( iUserKeyset, IMESSAGE_SETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_USERINFO );
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, ( void * ) userInfoPtr->userFileInfo.userID,
+		setMessageData( &msgData, 
+						( MESSAGE_CAST ) userInfoPtr->userFileInfo.userID,
 						KEYID_SIZE );
 		status = krnlSendMessage( iUserKeyset, IMESSAGE_SETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_USERID );
@@ -837,6 +838,10 @@ static int signUserData( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 	REQUIRES( isHandleRangeValid( iUserKeyset ) );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 
+	/* Set dummy user data */
+	memset( userInfoBuffer, '*', 16 );
+	userInfoLength = 16;
+
 	/* Sign the data via an envelope.  This is kind of heavyweight, but it's 
 	   OK because we rarely create new users and it saves having to hand-
 	   assemble the data like the PKCS #15 code does */
@@ -885,7 +890,7 @@ static int createSOKey( IN_HANDLE const CRYPT_KEYSET iUserKeyset,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	setMessageData( &msgData, ( void * ) userFileInfo->userName,
+	setMessageData( &msgData, ( MESSAGE_CAST ) userFileInfo->userName,
 					min( userFileInfo->userNameLength, CRYPT_MAX_TEXTSIZE ) );
 	krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE_S,
 					 &msgData, CRYPT_CTXINFO_LABEL );

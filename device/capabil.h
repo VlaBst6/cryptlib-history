@@ -275,6 +275,7 @@ const CAPABILITY_INFO *getDSACapability( void );
 const CAPABILITY_INFO *getElgamalCapability( void );
 const CAPABILITY_INFO *getRSACapability( void );
 const CAPABILITY_INFO *getECDSACapability( void );
+const CAPABILITY_INFO *getECDHCapability( void );
 
 /* Prototypes for functions in cryptctx.c, used by devices to create native 
    contexts */

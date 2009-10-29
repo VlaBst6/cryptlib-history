@@ -237,7 +237,8 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 					messageValue == MESSAGE_CHECK_PKC_SIGN_AVAIL ) && \
 				  ( deviceInfoPtr->type == CRYPT_DEVICE_FORTEZZA || \
 					deviceInfoPtr->type == CRYPT_DEVICE_PKCS11 || \
-					deviceInfoPtr->type == CRYPT_DEVICE_CRYPTOAPI ) );
+					deviceInfoPtr->type == CRYPT_DEVICE_CRYPTOAPI || \
+					deviceInfoPtr->type == CRYPT_DEVICE_HARDWARE ) );
 
 		return( CRYPT_OK );
 		}
@@ -403,13 +404,14 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		/* Make the newly-created object a dependent object of the device */
 		return( krnlSendMessage( \
 					( ( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr )->cryptHandle,
-					IMESSAGE_SETDEPENDENT, ( void * ) &iCryptDevice,
+					IMESSAGE_SETDEPENDENT, ( MESSAGE_CAST ) &iCryptDevice,
 					SETDEP_OPTION_INCREF ) );
 		}
 	if( message == MESSAGE_DEV_CREATEOBJECT_INDIRECT )
 		{
-		CRYPT_DEVICE iCryptDevice = deviceInfoPtr->objectHandle;
-		int refCount;
+		CRYPT_HANDLE iCryptHandle;
+		const CRYPT_DEVICE iCryptDevice = deviceInfoPtr->objectHandle;
+		int value, refCount;
 
 		/* At the moment the only objects where can be created in this manner
 		   are certificates */
@@ -425,12 +427,32 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 		status = createCertificateIndirect( messageDataPtr, NULL, 0 );
 		if( cryptStatusError( status ) )
 			return( status );
+		iCryptHandle = \
+			( ( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr )->cryptHandle;
 
-		/* Make the newly-created object a dependent object of the device */
-		return( krnlSendMessage( \
-					( ( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr )->cryptHandle,
-					IMESSAGE_SETDEPENDENT, ( void * ) &iCryptDevice,
-					SETDEP_OPTION_INCREF ) );
+		/* Make the newly-created object a dependent object of the device.  
+		   There's one special-case situation where we don't do this and 
+		   that's when we're importing a certificate chain, which is a 
+		   collection of individual certificate objects each of which have
+		   already been made dependent on the device.  We could detect this
+		   in one of two ways, either implicitly by reading the 
+		   CRYPT_IATTRIBUTE_SUBTYPE attribute and assuming that if it's a
+		   SUBTYPE_CERT_CERTCHAIN that the owner will have been set, or 
+		   simply by reading the depending user object.  Explcitly checking
+		   for ownership seems to be the best approach, although it may
+		   pass through a case in which we've inadvertently set the owner
+		   without intending do, in which case a backup check of the
+		   subtype could be used to catch this */
+		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETDEPENDENT,
+								  &value, OBJECT_TYPE_USER );
+		if( cryptStatusOK( status ) )
+			{
+			/* The object is already owned, don't try and set an owner */
+			return( CRYPT_OK );
+			}
+		return( krnlSendMessage( iCryptHandle, IMESSAGE_SETDEPENDENT, 
+								 ( MESSAGE_CAST ) &iCryptDevice, 
+								 SETDEP_OPTION_INCREF ) );
 		}
 
 	retIntError();
@@ -454,6 +476,7 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 		{ CRYPT_DEVICE_FORTEZZA, SUBTYPE_DEV_FORTEZZA },
 		{ CRYPT_DEVICE_PKCS11, SUBTYPE_DEV_PKCS11 },
 		{ CRYPT_DEVICE_CRYPTOAPI, SUBTYPE_DEV_CRYPTOAPI },
+		{ CRYPT_DEVICE_HARDWARE, SUBTYPE_DEV_HARDWARE },
 		{ CRYPT_ERROR, CRYPT_ERROR }, { CRYPT_ERROR, CRYPT_ERROR }
 		};
 	int value, storageSize, status;
@@ -501,6 +524,10 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 			storageSize = sizeof( CRYPTOAPI_INFO );
 			break;
 
+		case CRYPT_DEVICE_HARDWARE:
+			storageSize = sizeof( HARDWARE_INFO );
+			break;
+
 		default:
 			retIntError();
 		}
@@ -539,6 +566,11 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 							( CRYPTOAPI_INFO * ) deviceInfoPtr->storage;
 			break;
 
+		case CRYPT_DEVICE_HARDWARE:
+			deviceInfoPtr->deviceHardware = \
+							( HARDWARE_INFO * ) deviceInfoPtr->storage;
+			break;
+
 		default:
 			retIntError();
 		}
@@ -561,6 +593,10 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 
 		case CRYPT_DEVICE_CRYPTOAPI:
 			status = setDeviceCryptoAPI( deviceInfoPtr );
+			break;
+
+		case CRYPT_DEVICE_HARDWARE:
+			status = setDeviceHardware( deviceInfoPtr );
 			break;
 
 		default:
@@ -607,6 +643,7 @@ int createDevice( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 	if( !krnlWaitSemaphore( SEMAPHORE_DRIVERBIND ) )
 		{
 		/* The kernel is shutting down, bail out */
+		DEBUG_DIAG(( "Exiting due to kernel shutdown" ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_PERMISSION );
 		}
@@ -720,19 +757,44 @@ static int createSystemDeviceObject( void )
 /* Generic management function for this class of object.  Unlike the usual
    multilevel init process which is followed for other objects, the devices
    have an OR rather than an AND relationship since the devices are
-   logically independent, so we set a flag for each device type that is
+   logically independent so we set a flag for each device type that's
    successfully initialised rather than recording an init level */
 
+typedef CHECK_RETVAL int ( *DEVICEINIT_FUNCTION )( void );
+typedef void ( *DEVICEND_FUNCTION )( void );
+typedef struct {
+	DEVICEINIT_FUNCTION deviceInitFunction;
+	DEVICEND_FUNCTION deviceEndFunction;
+	const int initFlag;
+	} DEVICEINIT_INFO;
+		
 #define DEV_NONE_INITED			0x00
 #define DEV_FORTEZZA_INITED		0x01
 #define DEV_PKCS11_INITED		0x02
 #define DEV_CRYPTOAPI_INITED	0x04
+#define DEV_HARDWARE_INITED		0x08
 
 CHECK_RETVAL \
 int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 								const MANAGEMENT_ACTION_TYPE action )
 	{
+	DEVICEINIT_INFO deviceInitTbl[] = {
+#ifdef USE_FORTEZZA
+		{ deviceInitFortezza, deviceEndFortezza, DEV_FORTEZZA_INITED },
+#endif /* USE_FORTEZZA */
+#ifdef USE_PKCS11
+		{ deviceInitPKCS11, deviceEndPKCS11, DEV_PKCS11_INITED },
+#endif /* USE_PKCS11 */
+#ifdef USE_CRYPTOAPI
+		{ deviceInitCryptoAPI, deviceEndCryptoAPI, DEV_CRYPTOAPI_INITED },
+#endif /* USE_CRYPTOAPI */
+#ifdef USE_HARDWARE
+		{ deviceInitHardware, deviceEndHardware, DEV_HARDWARE_INITED },
+#endif /* USE_HARDWARE */
+		{ NULL, 0 }, { NULL, 0 }
+		};
 	static int initFlags = DEV_NONE_INITED;
+	int i, status;
 
 	REQUIRES( action == MANAGEMENT_ACTION_PRE_INIT || \
 			  action == MANAGEMENT_ACTION_INIT || \
@@ -745,22 +807,22 @@ int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 			return( createSystemDeviceObject() );
 
 		case MANAGEMENT_ACTION_INIT:
-			if( cryptStatusOK( deviceInitFortezza() ) )
-				initFlags |= DEV_FORTEZZA_INITED;
-			if( krnlIsExiting() )
+			for( i = 0; deviceInitTbl[ i ].deviceInitFunction != NULL && \
+						i < FAILSAFE_ARRAYSIZE( deviceInitTbl, \
+												DEVICEINIT_FUNCTION );
+				 i++ )
 				{
-				/* The kernel is shutting down, exit */
-				return( CRYPT_ERROR_PERMISSION );
+				if( krnlIsExiting() )
+					{
+					/* The kernel is shutting down, exit */
+					return( CRYPT_ERROR_PERMISSION );
+					}
+				status = deviceInitTbl[ i ].deviceInitFunction();
+				if( cryptStatusOK( status ) )
+					initFlags |= deviceInitTbl[ i ].initFlag;
 				}
-			if( cryptStatusOK( deviceInitPKCS11() ) )
-				initFlags |= DEV_PKCS11_INITED;
-			if( krnlIsExiting() )
-				{
-				/* The kernel is shutting down, exit */
-				return( CRYPT_ERROR_PERMISSION );
-				}
-			if( cryptStatusOK( deviceInitCryptoAPI() ) )
-				initFlags |= DEV_CRYPTOAPI_INITED;
+			ENSURES( i < FAILSAFE_ARRAYSIZE( deviceInitTbl, \
+											 DEVICEINIT_FUNCTION ) );
 			return( CRYPT_OK );
 
 		case MANAGEMENT_ACTION_PRE_SHUTDOWN:
@@ -776,13 +838,16 @@ int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 			return( CRYPT_OK );
 
 		case MANAGEMENT_ACTION_SHUTDOWN:
-			if( initFlags & DEV_FORTEZZA_INITED )
-				deviceEndFortezza();
-			if( initFlags & DEV_PKCS11_INITED )
-				deviceEndPKCS11();
-			if( initFlags & DEV_CRYPTOAPI_INITED )
-				deviceEndCryptoAPI();
-			initFlags = DEV_NONE_INITED;
+			for( i = 0; deviceInitTbl[ i ].deviceEndFunction != NULL && \
+						i < FAILSAFE_ARRAYSIZE( deviceInitTbl, \
+												DEVICEINIT_FUNCTION );
+				 i++ )
+				{
+				if( initFlags & deviceInitTbl[ i ].initFlag )
+					deviceInitTbl[ i ].deviceEndFunction();
+				}
+			ENSURES( i < FAILSAFE_ARRAYSIZE( deviceInitTbl, \
+											 DEVICEINIT_FUNCTION ) );
 			return( CRYPT_OK );
 		}
 
