@@ -30,6 +30,8 @@ void *findTrustEntry( INOUT void *trustInfoPtr,
 					  const BOOLEAN getIssuerEntry );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 CRYPT_CERTIFICATE getTrustedCert( INOUT void *trustInfoPtr );
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN trustedCertsPresent( TYPECAST( TRUST_INFO ** ) const void *trustInfoPtrPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int enumTrustedCerts( INOUT void *trustInfoPtr, 
 					  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCryptCtl,

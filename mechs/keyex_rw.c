@@ -6,17 +6,17 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "mech.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /* Context-specific tags for the KEK record */
@@ -46,19 +46,23 @@ enum { CTAG_KT_SKI };
 		params SEQUENCE {
 			salt					OCTET STRING,
 			iterationCount			INTEGER (1..MAX),
+			keyLength				INTEGER OPTIONAL,
+			prf						AlgorithmIdentifier DEFAULT hmacWithSHA1
 			},
-		prf							AlgorithmIdentifier DEFAULT hmacWithSHA1
 		} */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readKeyDerivationInfo( INOUT STREAM *stream, 
-								  INOUT QUERY_INFO *queryInfo )
+								  OUT QUERY_INFO *queryInfo )
 	{
 	long endPos, value;
 	int length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Read the outer wrapper and key derivation algorithm OID */
 	readConstructed( stream, NULL, CTAG_KK_DA );
@@ -81,13 +85,26 @@ static int readKeyDerivationInfo( INOUT STREAM *stream,
 		return( CRYPT_ERROR_BADDATA );
 	queryInfo->keySetupIterations = ( int ) value;
 	queryInfo->keySetupAlgo = CRYPT_ALGO_HMAC_SHA;
+	if( stell( stream ) < endPos && \
+		sPeek( stream ) == BER_INTEGER )
+		{
+		/* There's an optional key length that may override the default 
+		   key size present, read it.  Note that we compare the upper
+		   bound to MAX_WORKING_KEYSIZE rather than CRYPT_MAX_KEYSIZE,
+		   since this is a key used directly with an encryption algorithm
+		   rather than a generic keying value that may be hashed down to 
+		   size */
+		status = readShortInteger( stream, &value );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( value < MIN_KEYSIZE || value > MAX_WORKING_KEYSIZE )
+			return( CRYPT_ERROR_BADDATA );
+		queryInfo->keySize = ( int ) value;
+		}
 	if( stell( stream ) < endPos )
 		{
 		CRYPT_ALGO_TYPE prfAlgo;
-
-		if( sPeek( stream ) != BER_SEQUENCE )
-			return( sseek( stream, endPos ) );
-		
+	
 		/* There's a non-default hash algorithm ID present, read it */
 		status = readAlgoID( stream, &prfAlgo, ALGOID_CLASS_HASH );
 		if( cryptStatusError( status ) )
@@ -148,13 +165,17 @@ static int writeKeyDerivationInfo( INOUT STREAM *stream,
    slipped into CMS, nothing seems to support this so we don't either */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int readCmsKek( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
+static int readCmsKek( INOUT STREAM *stream, 
+					   OUT QUERY_INFO *queryInfo )
 	{
 	long value;
 	int status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Read the header */
 	readConstructed( stream, NULL, CTAG_RI_KEKRI );
@@ -239,9 +260,11 @@ static int writeCmsKek( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readCryptlibKek( INOUT STREAM *stream, 
-							INOUT QUERY_INFO *queryInfo )
+							OUT QUERY_INFO *queryInfo )
 	{
+	QUERY_INFO keyDerivationQueryInfo = DUMMY_INIT_STRUCT;
 	const int startPos = stell( stream );
+	BOOLEAN hasDerivationInfo = FALSE;
 	long value;
 	int status;
 
@@ -249,6 +272,9 @@ static int readCryptlibKek( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* If it's a CMS KEK, read it as such */
 	if( peekTag( stream ) == CTAG_RI_KEKRI )
@@ -265,9 +291,10 @@ static int readCryptlibKek( INOUT STREAM *stream,
 	/* Read the optional KEK derivation info and KEK algorithm info */
 	if( peekTag( stream ) == MAKE_CTAG( CTAG_KK_DA ) )
 		{
-		status = readKeyDerivationInfo( stream, queryInfo );
+		status = readKeyDerivationInfo( stream, &keyDerivationQueryInfo );
 		if( cryptStatusError( status ) )
 			return( status );
+		hasDerivationInfo = TRUE;
 		}
 	readSequence( stream, NULL );
 	readFixedOID( stream, OID_PWRIKEK, sizeofOID( OID_PWRIKEK ) );
@@ -275,6 +302,18 @@ static int readCryptlibKek( INOUT STREAM *stream,
 								ALGOID_CLASS_CRYPT );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* If there's key-derivation information available, copy it across to 
+	   the overall query information */
+	if( hasDerivationInfo )
+		{
+		memcpy( queryInfo->salt, keyDerivationQueryInfo.salt,
+				keyDerivationQueryInfo.saltLength );
+		queryInfo->saltLength = keyDerivationQueryInfo.saltLength;
+		queryInfo->keySetupIterations = keyDerivationQueryInfo.keySetupIterations;
+		queryInfo->keySetupAlgo = keyDerivationQueryInfo.keySetupAlgo;
+		queryInfo->keySize = keyDerivationQueryInfo.keySize;
+		}
 
 	/* Finally, read the start of the encrypted key */
 	status = readOctetStringHole( stream, &queryInfo->dataLength, 
@@ -389,12 +428,16 @@ static int writeCryptlibKek( STREAM *stream,
 				0x03: byte		iterations */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int readPgpKek( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
+static int readPgpKek( INOUT STREAM *stream, 
+					   OUT QUERY_INFO *queryInfo )
 	{
 	int value, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Make sure that the packet header is in order and check the packet
 	   version.  This is an OpenPGP-only packet */
@@ -553,7 +596,7 @@ static int writePgpKek( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readCmsKeytrans( INOUT STREAM *stream, 
-							INOUT QUERY_INFO *queryInfo )
+							OUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	long value;
@@ -563,6 +606,9 @@ static int readCmsKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Read the header and version number */
 	readSequence( stream, NULL );
@@ -642,7 +688,7 @@ static int writeCmsKeytrans( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readCryptlibKeytrans( INOUT STREAM *stream, 
-								 INOUT QUERY_INFO *queryInfo )
+								 OUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	long value;
@@ -652,6 +698,9 @@ static int readCryptlibKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Read the header and version number */
 	readSequence( stream, NULL );
@@ -736,7 +785,7 @@ static int writeCryptlibKeytrans( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPgpKeytrans( INOUT STREAM *stream, 
-							INOUT QUERY_INFO *queryInfo )
+							OUT QUERY_INFO *queryInfo )
 	{
 	const int startPos = stell( stream );
 	int value, status;
@@ -745,6 +794,9 @@ static int readPgpKeytrans( INOUT STREAM *stream,
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
 	REQUIRES( startPos >= 0 && startPos < MAX_INTLENGTH );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Make sure that the packet header is in order and check the packet
 	   version.  For this packet type a version number of 3 denotes OpenPGP

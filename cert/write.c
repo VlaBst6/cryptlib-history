@@ -11,19 +11,24 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* The X.509 version numbers */
 
 enum { X509VERSION_1, X509VERSION_2, X509VERSION_3 };
+enum { X509ACVERSION_1, X509ACVERSION_2 }; 
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
+
+#if defined( USE_CERTREV ) || defined( USE_CERTVAL )
 
 /* Set/refresh a nonce in an RTCS/OCSP request (difficile est tenere quae 
    acceperis nisi exerceas) */
@@ -72,6 +77,7 @@ static int setNonce( INOUT ATTRIBUTE_PTR **attributePtrPtr,
 	return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
 							 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE ) );
 	}
+#endif /* USE_CERTREV || USE_CERTVAL */
 
 /****************************************************************************
 *																			*
@@ -207,10 +213,15 @@ static int writeCertInfo( INOUT STREAM *stream,
 							 CRYPT_CERTTYPE_CERTIFICATE, extensionSize ) );
 	}
 
-/* Write attribute certificate information:
+/* Write attribute certificate information.  There are two variants of this, 
+   v1 attributes certificates that were pretty much never used (the fact 
+   that no-one had bothered to define any attributes to be used with them
+   didn't help here) and v2 attribute certificates that are also almost
+   never used but are newer, we write v2 certificates.  The original v1
+   attribute certificate format was:
 
 	AttributeCertificateInfo ::= SEQUENCE {
-		version					INTEGER DEFAULT(1),
+		version					INTEGER DEFAULT(0),
 		owner			  [ 1 ]	Name,
 		issuer					Name,
 		signature				AlgorithmIdentifier,
@@ -218,7 +229,36 @@ static int writeCertInfo( INOUT STREAM *stream,
 		validity				Validity,
 		attributes				SEQUENCE OF Attribute,
 		extensions				Extensions OPTIONAL
-		} */
+		} 
+
+   In v2 this changed to:
+
+	AttributeCertificateInfo ::= SEQUENCE {
+		version					INTEGER (1),
+		holder					SEQUENCE {
+			entityNames	  [ 1 ]	SEQUENCE OF {
+				entityName[ 4 ]	EXPLICIT Name
+								},
+							}
+		issuer			  [ 0 ]	SEQUENCE {
+			issuerNames			SEQUENCE OF {
+				issuerName[ 4 ]	EXPLICIT Name
+								},
+							}
+		signature				AlgorithmIdentifier,
+		serialNumber			INTEGER,
+		validity				SEQUENCE {
+			notBefore			GeneralizedTime,
+			notAfter			GeneralizedTime
+								},
+		attributes				SEQUENCE OF Attribute,
+		extensions				Extensions OPTIONAL
+		} 
+
+   In order to write the issuer and owner/holder DN as GeneralName we encode
+   it using the DN choice of a GeneralName with explicit tag 4, see the 
+   comments on GeneralName encoding in ext_def.c for an explanation of the
+   tagging */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int writeAttributeCertInfo( INOUT STREAM *stream,
@@ -227,7 +267,8 @@ static int writeAttributeCertInfo( INOUT STREAM *stream,
 								   IN_HANDLE const CRYPT_CONTEXT iIssuerCryptContext )
 	{
 	const CERT_CERT_INFO *certCertInfo = subjectCertInfoPtr->cCertCert;
-	int algoIdInfoSize, length, extensionSize, issuerNameSize, status;
+	int algoIdInfoSize, length, extensionSize;
+	int issuerNameSize, holderNameSize, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -259,6 +300,7 @@ static int writeAttributeCertInfo( INOUT STREAM *stream,
 	issuerNameSize = ( issuerCertInfoPtr->subjectDNptr != NULL ) ? \
 					 issuerCertInfoPtr->subjectDNsize : \
 					 sizeofDN( subjectCertInfoPtr->issuerName );
+	holderNameSize = sizeofDN( subjectCertInfoPtr->subjectName );
 
 	/* Determine the size of the certificate information */
 	algoIdInfoSize = sizeofContextAlgoID( iIssuerCryptContext, 
@@ -268,25 +310,33 @@ static int writeAttributeCertInfo( INOUT STREAM *stream,
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
 	if( cryptStatusError( extensionSize ) )
 		return( extensionSize );
-	length = ( int ) sizeofObject( sizeofDN( subjectCertInfoPtr->subjectName ) ) + \
-			 issuerNameSize + \
+	length = ( int ) sizeofShortInteger( X509ACVERSION_2 ) + \
+			 sizeofObject( sizeofObject( sizeofObject( holderNameSize ) ) ) + \
+			 sizeofObject( sizeofObject( sizeofObject( issuerNameSize ) ) ) + \
 			 algoIdInfoSize + \
 			 sizeofInteger( certCertInfo->serialNumber,
 							certCertInfo->serialNumberLength ) + \
-			 sizeofObject( sizeofUTCTime() * 2 ) + \
+			 sizeofObject( sizeofGeneralizedTime() * 2 ) + \
 			 sizeofObject( 0 );
 	if( extensionSize > 0 )
 		length += ( int ) sizeofObject( extensionSize );
 
-	/* Write the outer SEQUENCE wrapper */
+	/* Write the outer SEQUENCE wrapper and version */
 	writeSequence( stream, length );
+	writeShortInteger( stream, X509ACVERSION_2, DEFAULT_TAG );
 
 	/* Write the owner and issuer name */
-	writeConstructed( stream, sizeofDN( subjectCertInfoPtr->subjectName ),
-					  CTAG_AC_ENTITYNAME );
+	writeSequence( stream, sizeofObject( sizeofObject( holderNameSize ) ) );
+	writeConstructed( stream, sizeofObject( holderNameSize ), 
+					  CTAG_AC_HOLDER_ENTITYNAME );
+	writeConstructed( stream, holderNameSize, 4 );
 	status = writeDN( stream, subjectCertInfoPtr->subjectName, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
 		{
+		writeConstructed( stream, 
+						  sizeofObject( sizeofObject( issuerNameSize ) ), 0 );
+		writeSequence( stream, sizeofObject( issuerNameSize ) );
+		writeConstructed( stream, issuerNameSize, 4 );
 		if( issuerCertInfoPtr->subjectDNptr != NULL )
 			status = swrite( stream, issuerCertInfoPtr->subjectDNptr,
 							 issuerCertInfoPtr->subjectDNsize );
@@ -301,9 +351,11 @@ static int writeAttributeCertInfo( INOUT STREAM *stream,
 	writeContextAlgoID( stream, iIssuerCryptContext, certCertInfo->hashAlgo );
 	writeInteger( stream, certCertInfo->serialNumber,
 				  certCertInfo->serialNumberLength, DEFAULT_TAG );
-	writeSequence( stream, sizeofUTCTime() * 2 );
-	writeUTCTime( stream, subjectCertInfoPtr->startTime, DEFAULT_TAG );
-	status = writeUTCTime( stream, subjectCertInfoPtr->endTime, DEFAULT_TAG );
+	writeSequence( stream, sizeofGeneralizedTime() * 2 );
+	writeGeneralizedTime( stream, subjectCertInfoPtr->startTime, 
+						  DEFAULT_TAG );
+	status = writeGeneralizedTime( stream, subjectCertInfoPtr->endTime, 
+								   DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -468,6 +520,7 @@ static int writeCRLInfo( INOUT STREAM *stream,
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MAX );
 	if( cryptStatusError( status ) || extensionSize <= 0 )
 		return( status );
+	ANALYSER_HINT( subjectCertInfoPtr->attributes != NULL );
 
 	/* Write the extensions */
 	return( writeAttributes( stream, subjectCertInfoPtr->attributes,
@@ -843,7 +896,7 @@ static int writeRtcsResponseInfo( INOUT STREAM *stream,
 	{
 	CERT_VAL_INFO *certValInfo = subjectCertInfoPtr->cCertVal;
 	VALIDITY_INFO *validityInfo;
-	int length, extensionSize, validityInfoLength = 0, iterationCount, status;
+	int extensionSize, validityInfoLength = 0, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -882,8 +935,6 @@ static int writeRtcsResponseInfo( INOUT STREAM *stream,
 	extensionSize = sizeofAttributes( subjectCertInfoPtr->attributes );
 	if( cryptStatusError( extensionSize ) )
 		return( extensionSize );
-	length = sizeofObject( validityInfoLength ) + \
-			 ( ( extensionSize > 0 ) ? sizeofObject( extensionSize ) : 0 );
 
 	/* Write the SEQUENCE OF status information wrapper and the certificate 
 	   status information */
@@ -1577,3 +1628,4 @@ WRITECERT_FUNCTION getCertWriteFunction( IN_ENUM( CRYPT_CERTTYPE ) \
 
 	return( NULL );
 	}
+#endif /* USE_CERTIFICATES */

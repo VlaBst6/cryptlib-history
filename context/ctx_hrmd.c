@@ -15,6 +15,8 @@
   #include "crypt/ripemd.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_RIPEMD160
+
 /* A structure to hold the initial and current MAC state info.  Rather than
    redoing the key processing each time when we're calculating multiple MACs
    with the same key, we just copy the initial state into the current state */
@@ -30,6 +32,8 @@ typedef struct {
 *						HMAC-RIPEMD-160 Self-test Routines					*
 *																			*
 ****************************************************************************/
+
+#ifndef CONFIG_NO_SELFTEST
 
 /* Test the HMAC-RIPEMD-160 output against the test vectors given in ???? */
 
@@ -62,6 +66,9 @@ static int selfTest( void )
 
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -71,17 +78,29 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = MAC_STATE_SIZE;
+		int *valuePtr = ( int * ) data;
+
+		*valuePtr = MAC_STATE_SIZE;
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -210,3 +229,5 @@ const CAPABILITY_INFO *getHmacRipemd160Capability( void )
 	{
 	return( &capabilityInfo );
 	}
+
+#endif /* USE_RIPEMD160 */

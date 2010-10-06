@@ -1,16 +1,16 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Datagram Encoding Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2009					*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/asn1.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 /*			 .... NO! ...				   ... MNO! ...
@@ -128,26 +128,31 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
    shared with decode.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int hashEnvelopeData( const ACTION_LIST *hashActionPtr,
+int hashEnvelopeData( const ACTION_LIST *actionListPtr,
 					  IN_BUFFER( dataLength ) const void *data, 
 					  IN_LENGTH const int dataLength )
 	{
 	int iterationCount, status;
 
-	assert( isReadPtr( hashActionPtr, sizeof( ACTION_LIST ) ) );
+	assert( isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 	assert( dataLength == 0 || isReadPtr( data, dataLength ) );
 
 	REQUIRES( data != NULL );
 	REQUIRES( dataLength >= 0 && dataLength < MAX_INTLENGTH );
 
 	for( iterationCount = 0;
-		 hashActionPtr != NULL && \
-			( hashActionPtr->action == ACTION_HASH || \
-			  hashActionPtr->action == ACTION_MAC ) && \
+		 actionListPtr != NULL && \
 			iterationCount < FAILSAFE_ITERATIONS_MED;
-		 hashActionPtr = hashActionPtr->next, iterationCount++ )
+		 actionListPtr = actionListPtr->next, iterationCount++ )
 		{
-		status = krnlSendMessage( hashActionPtr->iCryptHandle,
+		/* If we're using authenticated encryption there may be other 
+		   actions present in the action list so we only hash/MAC where
+		   required */
+		if( actionListPtr->action != ACTION_HASH && \
+			actionListPtr->action != ACTION_MAC )
+			continue;
+
+		status = krnlSendMessage( actionListPtr->iCryptHandle,
 								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data, 
 								  dataLength );
 		if( cryptStatusError( status ) )
@@ -513,14 +518,24 @@ static int completeSegment( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		}
 	if( envelopeInfoPtr->iCryptContext != CRYPT_ERROR )
 		{
+		void *dataPtr = envelopeInfoPtr->buffer + \
+						envelopeInfoPtr->segmentDataStart;
+		const int dataLen = envelopeInfoPtr->bufPos - \
+							envelopeInfoPtr->segmentDataStart;
+
 		status = krnlSendMessage( envelopeInfoPtr->iCryptContext,
-						IMESSAGE_CTX_ENCRYPT,
-						envelopeInfoPtr->buffer + \
-								envelopeInfoPtr->segmentDataStart,
-						envelopeInfoPtr->bufPos - \
-								envelopeInfoPtr->segmentDataStart );
+								  IMESSAGE_CTX_ENCRYPT, dataPtr, dataLen );
 		if( cryptStatusError( status ) )
 			return( status );
+		if( envelopeInfoPtr->dataFlags & ENVDATA_AUTHENCACTIONSACTIVE )
+			{
+			/* We're performing authenticated encryotion, hash the 
+			   ciphertext now that it's available */
+			status = hashEnvelopeData( envelopeInfoPtr->actionList, dataPtr,
+									   dataLen );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
 		}
 
 	/* Remember how much data is now available to be read out */
@@ -665,7 +680,8 @@ static int flushEnvelopeData( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   attributes by extending the hashing of the payload data to cover the 
 	   additional attributes, so if we're using the PGP format we can't wrap 
 	   up the hashing yet */
-	if( !( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE ) || \
+	if( !( envelopeInfoPtr->dataFlags & ( ENVDATA_HASHACTIONSACTIVE | \
+										  ENVDATA_AUTHENCACTIONSACTIVE ) ) || \
 		envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
 		return( CRYPT_OK );
 
@@ -691,7 +707,8 @@ static int copyToEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( length == 0 || isReadPtr( buffer, length ) );
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
-	REQUIRES( length >= 0 && length < MAX_INTLENGTH );
+	REQUIRES( ( buffer == NULL && length == 0 ) || \
+			  ( buffer != NULL && length >= 0 && length < MAX_INTLENGTH ) );
 
 	/* If we're trying to copy into a full buffer, return a count of 0 bytes
 	   unless we're trying to flush the buffer (the calling routine may
@@ -709,8 +726,10 @@ static int copyToEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		if( length <= 0 && envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
 			return( 0 );
 
-		status = hashEnvelopeData( envelopeInfoPtr->actionList, buffer, 
-								   length );
+		status = hashEnvelopeData( envelopeInfoPtr->actionList, 
+								   ( length > 0 ) ? \
+										buffer : ( const void * ) "", length );
+										/* Cast needed for gcc */
 		return( cryptStatusError( status ) ? status : length );
 		}
 
@@ -829,7 +848,7 @@ static int copyToEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int copyFromEnvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
-							 OUT_BUFFER( maxLength, length ) BYTE *buffer, 
+							 OUT_BUFFER( maxLength, *length ) BYTE *buffer, 
 							 IN_LENGTH const int maxLength, 
 							 OUT_LENGTH_Z int *length, 
 							 IN_FLAGS( ENVCOPY ) const int flags )

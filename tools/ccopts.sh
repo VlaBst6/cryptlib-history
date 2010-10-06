@@ -54,6 +54,29 @@ fi
 
 CCARGS="`./tools/endian`"
 
+# Check whether we're building on one of the development clusters, which
+# allows enabling various unsafe test-only options.  We have to be a bit
+# careful with the Gnu compile farm because it doesn't use FQDNs for the
+# machines, so we check as much as we can and only allow machines on a
+# whitelist to narrow down false positives.
+
+ISDEVELOPMENT=0
+if [ `uname -n | grep -c wintermute0[0-9].cs.auckland.ac.nz` -gt 0 -o \
+	 `uname -n | grep -c login0[0-9].fos.auckland.ac.nz` -gt 0 ] ; then
+	ISDEVELOPMENT=1 ;
+fi
+if [ `uname -s` = "Linux" -a \
+	 `uname -n | grep -c gcc[0-9][0-9]` -gt 0 ] ; then
+	case `uname -n` in
+		'gcc10'|'gcc33'|'gcc40'|'gcc51'|'gcc54'|'gcc55'|'gcc61')
+			ISDEVELOPMENT=1 ;;
+	esac ;
+fi
+
+# Check whether we're running using the clang static analyser
+
+ISCLANG=`echo $CC | grep -c "ccc-analyzer"`
+
 # Determine whether various optional system features are installed and
 # enable their use if they're present.  Since these additional libs are
 # dynamically loaded, we only check for them on systems with dynamic
@@ -64,6 +87,8 @@ CCARGS="`./tools/endian`"
 # When indicating the presence of a subsystem, we set the HAS_xxx flag to
 # indicate its presence rather than unconditionally setting the USE_xxx
 # flag.  This allows the facility to be disabled in config.h if required.
+# An exception to this is if we're building on a development system in
+# which case we always enable it unconditionally.
 
 HASDYNLOAD=0
 case $OSNAME in
@@ -84,6 +109,9 @@ if [ $HASDYNLOAD -gt 0 ] ; then
 	if [ -f /usr/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
 		CCARGS="$CCARGS -DHAS_ODBC" ;
+		if [ $ISDEVELOPMENT -gt 0 ] ; then
+			CCARGS="$CCARGS -DUSE_ODBC" ;
+		fi ;
 	elif [ -f /usr/local/include/sql.h ] ; then
 		echo "ODBC interface detected, enabling ODBC support." >&2 ;
 		CCARGS="$CCARGS -DHAS_ODBC -I/usr/local/include" ;
@@ -94,11 +122,17 @@ if [ $HASDYNLOAD -gt 0 ] ; then
 	if [ -f /usr/include/ldap.h ] ; then
 		echo "LDAP interface detected, enabling LDAP support" >&2 ;
 		CCARGS="$CCARGS -DHAS_LDAP" ;
+		if [ $ISDEVELOPMENT -gt 0 ] ; then
+			CCARGS="$CCARGS -DUSE_LDAP" ;
+		fi ;
 	fi
 	if [ -f /usr/include/pkcs11.h -o -f /usr/include/security/pkcs11.h -o \
 		 -f /usr/include/opensc/pkcs11.h -o -f /usr/local/include/pkcs11.h ] ; then
 		echo "PKCS #11 interface detected, enabling PKCS #11 support." >&2 ;
 		CCARGS="$CCARGS -DHAS_PKCS11" ;
+		if [ $ISDEVELOPMENT -gt 0 ] ; then
+			CCARGS="$CCARGS -DUSE_PKCS11" ;
+		fi ;
 	fi
 	if [ -f /opt/nfast/toolkits/pkcs11/libcknfast.so -o \
 		 -f /usr/lib/libcknfast.so ] ; then
@@ -110,9 +144,21 @@ fi
 # If we're building on the usual development box, enable various unsafe
 # options that are normally disabled by default
 
-if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then
-	echo "(Enabling unsafe options for development version)." >&2 ;
-	CCARGS="$CCARGS -DHAS_DNSSRV -DHAS_CERT_DNSTRING -DHAS_LDAP" ;
+if [ $ISDEVELOPMENT -gt 0 ] ; then
+	echo "  (Enabling unsafe options for development version)." >&2 ;
+	CCARGS="$CCARGS -DUSE_CERT_DNSTRING -DUSE_DNSSRV -DUSE_ECC" ;
+fi
+
+# If we're building with the clang static analyser, set options specific to
+# that.  clang uses gcc as a front-end with -Wall enabled so we have to
+# disable the false-positive-inducing options for that as per the long
+# comment at the end of this file for the -Wall debug build.  We also turn
+# off tautological-comparison warnings because the use of range checking
+# in REQUIRES() predicates gives nothing but false positives.
+
+if [ $ISCLANG -gt 0 ] ; then
+	echo "  (Enabling options for clang)." >&2 ;
+	CCARGS="$CCARGS -Wno-switch-enum -Wno-tautological-compare" ;
 fi
 
 # If we're building a shared lib, set up the necessary additional cc args.
@@ -277,7 +323,7 @@ fi
 # information is passed by the compiler driver to the compiler back-end.
 # Sometimes it works, sometimes it produces a "bad value (native) for
 # -march= switch; bad value (native) for -mtune= switch" error, and
-# sometimes it just bails out and falls back to "-march= generic" which
+# sometimes it just bails out and falls back to "-march=generic" which
 # often produces very poor code.  As a result it's not safe to enable the
 # use of this option.
 #
@@ -288,12 +334,18 @@ fi
 #	elif [ "$GCC_VER" -ge 30 ] ; then
 #
 # (or whatever version gcc starts handling it properly at).
+#
+# For x86-64 we have to enable the use of PIC because of obscure linker
+# errors ("relocation R_X86_64_32S can not be used when making a shared
+# object") that crop up when the static-lib version of cryptlib is used
+# in situations that also use shared libs, in the case of x86-64 the use
+# of PIC should have minimum overhead so it shouldn't be a big deal.
 
 if [ "$ARCH" = "i586" -o "$ARCH" = "i686" -o "$ARCH" = "x86_64" ] ; then
 	if [ "$GCC_VER" -ge 30 ] ; then
 		case $ARCH in
 			'x86_64')
-				CCARGS="$CCARGS -march=opteron" ;;
+				CCARGS="$CCARGS -march=opteron -fPIC" ;;
 
 			'i686')
 				CCARGS="$CCARGS -march=pentiumpro" ;;
@@ -336,7 +388,7 @@ fi
 # cache localisation properties.  In addition it enhances the triggering of
 # gcc optimiser bugs, something that seems to be particularly bad in 4.x.
 # While cryptlib contains numerous code-generation bug workarounds for gcc 4.x
-# (and 3.x, and 2.x),the potential performance problems with -O3 means that
+# (and 3.x, and 2.x), the potential performance problems with -O3 means that
 # it's better to just turn it off.
 
 if [ "$OSNAME" = "Linux" -o "$OSNAME" = "FreeBSD" -o \
@@ -521,15 +573,24 @@ fi
 # brokenness we undefine NDEBUG to enable the use of assertion checks that
 # will catch the problem.
 
-if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then
+if [ $ISDEVELOPMENT -gt 0 ] ; then
+	echo "  (Enabling unsafe compiler options for development version)." >&2 ;
 	CCARGS="$CCARGS -Wall -Wno-switch -Waggregate-return -Wcast-align \
 					-Wformat-nonliteral -Wformat-security -Wpointer-arith \
 					-Wredundant-decls -Wshadow -Wstrict-prototypes -Wundef" ;
 	CCARGS="$CCARGS -DUSE_GCC_ATTRIBUTES" ;
 	CCARGS="$CCARGS -UNDEBUG" ;
+	if [ "$GCC_VER" -ge 43 ] ; then
+		echo "  (Enabling additional compiler options for gcc 4.3.x)." >&2 ;
+		CCARGS="$CCARGS -Wparentheses" ;
+	fi ;
+	if [ "$GCC_VER" -ge 45 ] ; then
+		echo "  (Enabling additional compiler options for gcc 4.5.x)." >&2 ;
+		CCARGS="$CCARGS -Wlogical-op -Wjump-misses-init" ;
+	fi ;
 fi
 
-# if [ `uname -n` = "wintermute01.cs.auckland.ac.nz" ] ; then
+# if [ $ISDEVELOPMENT -gt 0 ] ; then
 #	CCARGS="$CCARGS -Wcast-align -Wendif-labels -Wformat -Wformat-nonliteral \
 #					-Wformat-security -Wimplicit-int -Wmissing-braces \
 #					-Wnonnull -Wparentheses -Wpointer-arith -Wredundant-decls \

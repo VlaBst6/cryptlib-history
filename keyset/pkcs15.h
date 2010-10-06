@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						PKCS #15 Definitions Header File					*
-*						Copyright Peter Gutmann 1996-2006					*
+*						Copyright Peter Gutmann 1996-2009					*
 *																			*
 ****************************************************************************/
 
@@ -31,6 +31,30 @@
 
    For these reasons the PKCS #15 modules include the code to process minimal
    (password-encrypted data) envelopes */
+
+/* Alongside per-key protection, PKCS #15 also allows for an entire keyset 
+   to be integrity-protected, but the key management makes this more or less 
+   impossible to deploy using a general-purpose API.  If only a single key 
+   is present in the file then it's partly feasible, except that once a 
+   keyset is cast in stone no further updates can be made without requiring 
+   passwords at odd times.  For example a certificate update would require a 
+   (private-key) password in order to recalculate the integrity-check value 
+   once the certificate has been added.  In addition the password would need 
+   to be supplied at file open, when the whole file is parsed, and then 
+   again when the private key is read, which leads to a rather puzzling API 
+   for anyone not in the know.
+
+   In the presence of multiple keys this becomes even more awkward since the 
+   per-key password isn't necessarily the same as the per-file password, so 
+   you'd need to provide a password to open the file and then possibly 
+   another one to get the key, unless it was the same as the per-file 
+   password.  If there was one per-file password and multiple per-key 
+   passwords then you would't know which key or keys used the per-file 
+   password unless you opportunistically tried on each per-key access, and 
+   the chances of that successfully making it up into any UI that people 
+   create seem slim.  In addition updates are even more problematic than for 
+   the one file, one key case because whoever last added a key would end up 
+   with their per-key password authenticating the whole file */
 
 /****************************************************************************
 *																			*
@@ -162,10 +186,11 @@ typedef enum {
    the following value defines the maximum size of the attribute data that
    we can write (that is, the I/O stream is opened with this size and
    generates a CRYPT_ERROR_OVERFLOW if we go beyond this).  The maximum-
-   length buffer contents are two CRYPT_MAX_TEXTSIZE strings and a few odd
-   bits and pieces so this is plenty */
+   length buffer contents are two CRYPT_MAX_TEXTSIZE strings, about half a
+   dozen hashes (as IDs for subject, issuer, and so on), and a few odd bits 
+   and pieces so this is plenty */
 
-#define KEYATTR_BUFFER_SIZE	256
+#define KEYATTR_BUFFER_SIZE	512
 
 /****************************************************************************
 *																			*
@@ -258,7 +283,7 @@ enum { CTAG_OB_SUBCLASSATTR, CTAG_OB_TYPEATTR };
 /* Context-specific tags for the object value record */
 
 enum { CTAG_OV_DIRECT, CTAG_OV_DUMMY, CTAG_OV_DIRECTPROTECTED, 
-	   CTAG_OV_FUTUREUSE };
+	   CTAG_OV_DUMMY_DIRECTPROTECTED_EXT, CTAG_OV_DIRECTPROTECTED_EXT };
 
 /* Context-specific tags for the class attributes record */
 
@@ -326,7 +351,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 11 ) ) \
 int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
 				  IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 				  IN_BUFFER_OPT( passwordLength ) const void *password, 
-				  IN_LENGTH_SHORT_Z const int passwordLength,
+				  IN_LENGTH_NAME_Z const int passwordLength,
 				  IN_HANDLE const CRYPT_USER iOwnerHandle, 
 				  const BOOLEAN privkeyPresent, const BOOLEAN certPresent, 
 				  const BOOLEAN doAddCert, const BOOLEAN pkcs15keyPresent,
@@ -374,21 +399,22 @@ void updatePrivKeyAttributes( INOUT PKCS15_INFO *pkcs15infoPtr,
 							  IN_LENGTH_SHORT const int privKeyAttributeSize, 
 							  IN_LENGTH_SHORT const int privKeyInfoSize, 
 							  IN_TAG const int keyTypeTag );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int calculatePrivkeyStorage( const PKCS15_INFO *pkcs15infoPtr,
-							 OUT_PTR void **newPrivKeyDataPtr, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int calculatePrivkeyStorage( OUT_BUFFER_ALLOC_OPT( *newPrivKeyDataSize ) \
+								void **newPrivKeyDataPtr, 
 							 OUT_LENGTH_SHORT_Z int *newPrivKeyDataSize, 
+							 IN_BUFFER_OPT( origPrivKeyDataSize ) \
+								const void *origPrivKeyData,
+							 IN_LENGTH_SHORT_Z const int origPrivKeyDataSize,
 							 IN_LENGTH_SHORT const int privKeySize,
 							 IN_LENGTH_SHORT const int privKeyAttributeSize,
 							 IN_LENGTH_SHORT const int extraDataSize );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 6, 11 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6, 11 ) ) \
 int pkcs15AddPrivateKey( INOUT PKCS15_INFO *pkcs15infoPtr, 
-						 IN_HANDLE const CRYPT_HANDLE iCryptContext,
+						 IN_HANDLE const CRYPT_HANDLE iPrivKeyContext,
 						 IN_HANDLE const CRYPT_HANDLE iCryptOwner,
-						 IN_BUFFER( passwordLength ) const char *password, 
-						 IN_RANGE( MIN_NAME_LENGTH, \
-											 MAX_ATTRIBUTE_SIZE - 1 ) \
-							const int passwordLength,
+						 IN_BUFFER_OPT( passwordLength ) const char *password, 
+						 IN_LENGTH_NAME_Z const int passwordLength,
 						 IN_BUFFER( privKeyAttributeSize ) \
 							const void *privKeyAttributes, 
 						 IN_LENGTH_SHORT const int privKeyAttributeSize,
@@ -457,20 +483,19 @@ int readPublicKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
 							 OUT_FLAGS_Z( ACTION ) int *pubkeyActionFlags, 
 							 OUT_FLAGS_Z( ACTION ) int *privkeyActionFlags, 
 							 INOUT ERROR_INFO *errorInfo );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 6 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
 int readPrivateKeyComponents( const PKCS15_INFO *pkcs15infoPtr,
-							  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
-							  IN_BUFFER( passwordLength ) const void *password, 
-							  IN_RANGE( MIN_NAME_LENGTH, \
-											 MAX_ATTRIBUTE_SIZE - 1 ) \
-								const int passwordLength, 
+							  IN_HANDLE const CRYPT_CONTEXT iPrivKeyContext,
+							  IN_BUFFER_OPT( passwordLength ) \
+									const void *password, 
+							  IN_LENGTH_NAME_Z const int passwordLength, 
 							  const BOOLEAN isStorageObject, 
 							  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
-int readKeyset( INOUT STREAM *stream, 
-				OUT_ARRAY( maxNoPkcs15objects ) PKCS15_INFO *pkcs15info, 
-				IN_LENGTH_SHORT const int maxNoPkcs15objects, 
-				IN_LENGTH const long endPos,
-				INOUT ERROR_INFO *errorInfo );
+int readPkcs15Keyset( INOUT STREAM *stream, 
+					  OUT_ARRAY( maxNoPkcs15objects ) PKCS15_INFO *pkcs15info, 
+					  IN_LENGTH_SHORT const int maxNoPkcs15objects, 
+					  IN_LENGTH const long endPos,
+					  INOUT ERROR_INFO *errorInfo );
 
 #endif /* _PKCS15_DEFINED */

@@ -13,8 +13,8 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -220,8 +220,8 @@ int readMacInfo( INOUT STREAM *stream,
 		DEBUG_PRINT(( "%s: Read initial MAC params with salt, %d iterations.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI", 
 					  protocolInfo->iterations ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->salt, protocolInfo->saltSize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->salt, protocolInfo->saltSize );
 		return( CRYPT_OK );
 		}
 
@@ -240,8 +240,8 @@ int readMacInfo( INOUT STREAM *stream,
 					  "%d iterations.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI", 
 					  protocolInfo->iterations ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->salt, protocolInfo->saltSize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->salt, protocolInfo->saltSize );
 		return( CRYPT_OK );
 		}
 
@@ -273,8 +273,8 @@ int readMacInfo( INOUT STREAM *stream,
 	DEBUG_PRINT(( "%s: Read new MAC params with salt, %d iterations.\n",
 				  protocolInfo->isServer ? "SVR" : "CLI", 
 				  protocolInfo->iterations ));
-	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-				   protocolInfo->salt, protocolInfo->saltSize );
+	DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					protocolInfo->salt, protocolInfo->saltSize );
 
 	return( CRYPT_OK );
 	}
@@ -313,8 +313,8 @@ int writeMacInfo( INOUT STREAM *stream,
 	DEBUG_PRINT(( "%s: Writing MAC params with salt, %d iterations.\n",
 				  protocolInfo->isServer ? "SVR" : "CLI", 
 				  protocolInfo->iterations ));
-	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-				   protocolInfo->salt, protocolInfo->saltSize );
+	DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					protocolInfo->salt, protocolInfo->saltSize );
 	writeSequence( stream, paramSize );
 	writeOctetString( stream, protocolInfo->salt, protocolInfo->saltSize,
 					  DEFAULT_TAG );
@@ -512,8 +512,7 @@ int writeSignedProtinfo( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 	assert( isWritePtr( protInfoLength, sizeof( int ) ) );
 
 	REQUIRES( isHandleRangeValid( iSignContext ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo < CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( messageLength > 0 && messageLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( protInfoMaxLength >= 32 && \
 			  protInfoMaxLength < MAX_INTLENGTH_SHORT );

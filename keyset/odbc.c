@@ -78,10 +78,10 @@ typedef struct {
 
 static INSTANCE_HANDLE hODBC = NULL_INSTANCE;
 
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLALLOCHANDLE )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLALLOCHANDLE ) \
 					( SQLSMALLINT HandleType, IN SQLHANDLE InputHandle, 
 					OUT_PTR SQLHANDLE *OutputHandlePtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLBINDPARAMETER )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLBINDPARAMETER ) \
 					( IN SQLHSTMT StatementHandle, 
 					SQLUSMALLINT ParameterNumber, SQLSMALLINT InputOutputType,
 					SQLSMALLINT ValueType, SQLSMALLINT ParameterType,
@@ -90,7 +90,7 @@ typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLBINDPARAMETER )\
 					SQLINTEGER BufferLength, 
 					INOUT_OPT SQLINTEGER *StrLen_or_IndPtr );
 typedef SQLRETURN ( SQL_API *SQLCLOSECURSOR )( IN SQLHSTMT StatementHandle );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLCONNECT )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLCONNECT ) \
 					( IN SQLHDBC ConnectionHandle,
 					IN_BUFFER( NameLength1 ) SQLCHAR *ServerName, 
 					SQLSMALLINT NameLength1,
@@ -101,23 +101,23 @@ typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLCONNECT )\
 typedef SQLRETURN ( SQL_API *SQLDISCONNECT )( IN SQLHDBC ConnectionHandle );
 typedef SQLRETURN ( SQL_API *SQLENDTRAN )( SQLSMALLINT HandleType,
 					IN SQLHANDLE Handle, SQLSMALLINT CompletionType );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLEXECDIRECT )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLEXECDIRECT ) \
 					( SQLHSTMT StatementHandle,
 					IN_BUFFER( TextLength ) SQLCHAR *StatementText, 
 					SQLINTEGER TextLength );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLEXECUTE )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLEXECUTE ) \
 					( IN SQLHSTMT StatementHandle );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLFETCH )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLFETCH ) \
 					( IN SQLHSTMT StatementHandle );
 typedef SQLRETURN ( SQL_API *SQLFREEHANDLE )( SQLSMALLINT HandleType,
 					IN SQLHANDLE Handle );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETDATA )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLGETDATA ) \
 					( SQLHSTMT StatementHandle, SQLUSMALLINT ColumnNumber, 
 					SQLSMALLINT TargetType, 
 					OUT_BUFFER( BufferLength, *StrLen_or_IndPtr ) \
 						SQLPOINTER TargetValuePtr, 
 					SQLINTEGER BufferLength, SQLINTEGER *StrLen_or_IndPtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETDIAGREC )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLGETDIAGREC ) \
 					( SQLSMALLINT HandleType,
 					IN SQLHANDLE Handle, SQLSMALLINT RecNumber,
 					OUT_BUFFER_FIXED( SQL_SQLSTATE_SIZE ) SQLCHAR *Sqlstate, 
@@ -125,36 +125,36 @@ typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETDIAGREC )\
 					OUT_BUFFER( BufferLength, *TextLengthPtr ) \
 						SQLCHAR *MessageText, 
 					SQLSMALLINT BufferLength, SQLSMALLINT *TextLengthPtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETINFO )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLGETINFO ) \
 					( IN SQLHDBC ConnectionHandle,
 					SQLUSMALLINT InfoType, 
 					OUT_BUFFER( BufferLength, *StringLengthPtr ) \
 						SQLPOINTER InfoValuePtr, 
 					SQLSMALLINT BufferLength, SQLSMALLINT *StringLengthPtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETSTMTATTR )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLGETSTMTATTR ) \
 					( IN SQLHSTMT StatementHandle,
 					SQLINTEGER Attribute, OUT SQLPOINTER ValuePtr,
 					SQLINTEGER BufferLength, 
 					STDC_UNUSED SQLINTEGER *StringLengthPtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLGETTYPEINFO )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLGETTYPEINFO ) \
 					( IN SQLHSTMT StatementHandle,
 					SQLSMALLINT DataType );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLPREPARE )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLPREPARE ) \
 					( IN SQLHSTMT StatementHandle,
 					IN_BUFFER( TextLength ) SQLCHAR *StatementText, 
 					SQLINTEGER TextLength );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLROWCOUNT_FN )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLROWCOUNT_FN ) \
 					( IN SQLHSTMT StatementHandle,
 					OUT SQLINTEGER *RowCountPtr );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLSETCONNECTATTR )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLSETCONNECTATTR ) \
 					( IN SQLHDBC ConnectionHandle,
 					SQLINTEGER Attribute, SQLPOINTER ValuePtr,
 					SQLINTEGER StringLength );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLSETENVATTR )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLSETENVATTR ) \
 					( IN SQLHENV EnvironmentHandle,
 					SQLINTEGER Attribute, SQLPOINTER ValuePtr,
 					SQLINTEGER StringLength );
-typedef CHECK_RETVAL SQLRETURN ( SQL_API *SQLSETSTMTATTR )\
+typedef CHECK_RETVAL_FNPTR SQLRETURN ( SQL_API *SQLSETSTMTATTR ) \
 					( IN SQLHSTMT StatementHandle,
 					SQLINTEGER Attribute, SQLPOINTER ValuePtr,
 					SQLINTEGER StringLength );
@@ -511,7 +511,7 @@ static int rewriteString( OUT_BUFFER( stringMaxLength, \
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 static int convertQuery( INOUT DBMS_STATE_INFO *dbmsInfo, 
-						 OUT_BUFFER( queryMaxLen, queryLength ) char *query, 
+						 OUT_BUFFER( queryMaxLen, *queryLength ) char *query,
 						 IN_LENGTH_SHORT_MIN( 16 ) const int queryMaxLen, 
 						 OUT_LENGTH_SHORT_Z int *queryLength,
 						 IN_BUFFER( commandLength ) const char *command,
@@ -651,7 +651,7 @@ static int convertQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 static int bindParameters( const SQLHSTMT hStmt, 
-						   IN_ARRAY( BOUND_DATA_MAXITEMS ) \
+						   IN_ARRAY_C( BOUND_DATA_MAXITEMS ) \
 							const BOUND_DATA *boundData,
 						   INOUT BOUND_DATA_STATE *boundDataState,
 						   INOUT DBMS_STATE_INFO *dbmsInfo )
@@ -665,8 +665,8 @@ static int bindParameters( const SQLHSTMT hStmt,
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
 
 	/* Bind in any necessary parameters to the hStmt */
-	for( i = 0; boundData[ i ].type != BOUND_DATA_NONE && \
-				i < BOUND_DATA_MAXITEMS; i++ )
+	for( i = 0; i < BOUND_DATA_MAXITEMS && \
+				boundData[ i ].type != BOUND_DATA_NONE; i++ )
 		{
 		const BOUND_DATA *boundDataPtr = &boundData[ i ];
 		SQLSMALLINT valueType, parameterType;
@@ -833,7 +833,7 @@ static int getBlobInfo( INOUT DBMS_STATE_INFO *dbmsInfo,
 				 "          to force the use of 64-bit ODBC data types (and "
 				 "report this issue\n          to the ODBC driver vendor so "
 				 "that they can sync the driver and\n          headers)."
-				 "\n\n", dummy, ( long ) sizeof( SQLINTEGER ) );
+				 "\n\n", ( long ) dummy, sizeof( SQLINTEGER ) );
 		}
 #endif /* __UNIX__ */
 	*maxFieldSize = count;
@@ -1112,10 +1112,11 @@ static int getBackendInfo( INOUT DBMS_STATE_INFO *dbmsInfo )
 	assert( isWritePtr( dbmsInfo, sizeof( DBMS_STATE_INFO ) ) );
 
 	/* Check for various back-ends that require special-case handling */
-	sqlStatus = SQLGetInfo( dbmsInfo->hDbc, SQL_DBMS_NAME, buffer, 128,
+	sqlStatus = SQLGetInfo( dbmsInfo->hDbc, SQL_DBMS_NAME, buffer, 128 - 1,
 							&bufLen );
 	if( sqlStatusOK( sqlStatus ) )
 		{
+		buffer[ bufLen ] = '\0';	/* Keep static source anal.tools happy */
 		if( bufLen >= 6 && !strCompare( buffer, "Access", 6 ) )
 			dbmsInfo->backendType = DBMS_ACCESS;
 		if( bufLen >= 9 && !strCompare( buffer, "Interbase", 9 ) )
@@ -1437,7 +1438,7 @@ static int performQuery( INOUT DBMS_STATE_INFO *dbmsInfo,
 							void *data, 
 						 IN_LENGTH_SHORT_Z const int dataMaxLength, 
 						 OUT_LENGTH_SHORT_Z int *dataLength, 
-						 IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
+						 IN_ARRAY_OPT_C( BOUND_DATA_MAXITEMS ) \
 							TYPECAST( BOUND_DATA ) const void *boundData,
 						 IN_ENUM_OPT( DBMS_CACHEDQUERY ) \
 							const DBMS_CACHEDQUERY_TYPE queryEntry,
@@ -1603,7 +1604,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int performUpdate( INOUT DBMS_STATE_INFO *dbmsInfo, 
 						  IN_BUFFER_OPT( commandLength ) const char *command,
 						  IN_LENGTH_SHORT_Z const int commandLength, 
-						  IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
+						  IN_ARRAY_OPT_C( BOUND_DATA_MAXITEMS ) \
 							TYPECAST( BOUND_DATA ) const void *boundData,
 						  IN_ENUM( DBMS_UPDATE ) \
 							const DBMS_UPDATE_TYPE updateType )

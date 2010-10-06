@@ -335,7 +335,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 		return( CRYPT_OK );
 		}
 	if( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL && \
-		( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC ) )
+		( cryptMode == CRYPT_MODE_ECB || cryptMode == CRYPT_MODE_CBC || \
+		  cryptMode == CRYPT_MODE_GCM ) )
 		{
 		/* Encrypt the buffer in two odd-sized chunks */
 		status = cryptEncrypt( cryptContext, buffer, 80 );
@@ -548,7 +549,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			status = cryptEncrypt( cryptContext, buffer + TESTBUFFER_SIZE, 0 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't hash data, status = %d, line %d.\n", 
+			printf( "Couldn't %s data, status = %d, line %d.\n", 
+					( cryptAlgo >= CRYPT_ALGO_FIRST_MAC ) ? "MAC" : "hash",
 					status, __LINE__ );
 			return( status );
 			}
@@ -568,7 +570,8 @@ int testCrypt( CRYPT_CONTEXT cryptContext, CRYPT_CONTEXT decryptContext,
 			status = cryptEncrypt( decryptContext, buffer + TESTBUFFER_SIZE, 0 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't hash data, status = %d, line %d.\n", 
+			printf( "Couldn't %s data, status = %d, line %d.\n", 
+					( cryptAlgo >= CRYPT_ALGO_FIRST_MAC ) ? "MAC" : "hash",
 					status, __LINE__ );
 			return( status );
 			}
@@ -866,6 +869,8 @@ int testLowlevel( const CRYPT_DEVICE cryptDevice,
 			printf( " CFB" );
 		if( modesTested[ CRYPT_MODE_OFB ] )
 			printf( " OFB" );
+		if( modesTested[ CRYPT_MODE_GCM ] )
+			printf( " GCM" );
 		puts( "." );
 		}
 

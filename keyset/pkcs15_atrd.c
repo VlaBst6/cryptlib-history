@@ -7,16 +7,16 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
-  #include "pkcs15.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "keyset.h"
+  #include "pkcs15.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS15
@@ -26,7 +26,7 @@
 #define canContinue( stream, status, endPos ) \
 		( cryptStatusOK( status ) && stell( stream ) < endPos )
 
-/* OID information used to read a PKCS #15 file */
+/* OID information used to read a PKCS #15 keyset */
 
 static const OID_INFO FAR_BSS dataObjectOIDinfo[] = {
 	{ OID_CRYPTLIB_CONTENTTYPE, TRUE },
@@ -120,7 +120,7 @@ static int readKeyIdentifiers( INOUT STREAM *stream,
 					}
 
 				/* Hash the full issuerAndSerialNumber to get an iAndSID */
-				getHashAtomicParameters( CRYPT_ALGO_SHA1, 
+				getHashAtomicParameters( CRYPT_ALGO_SHA1, 0,
 										 &hashFunctionAtomic, &hashSize );
 				status = getStreamObjectLength( stream, &iAndSLength );
 				if( cryptStatusOK( status ) )
@@ -323,7 +323,7 @@ int readObjectAttributes( INOUT STREAM *stream,
 	{
 	const ALLOWED_ATTRIBUTE_TYPES *allowedTypeInfo;
 	BOOLEAN skipDataRead = TRUE, isCryptlibData = FALSE;
-	int length, endPos, value, tag, i, status;
+	int length, outerLength, endPos, value, tag, i, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( pkcs15infoPtr, sizeof( PKCS15_INFO ) ) );
@@ -347,7 +347,8 @@ int readObjectAttributes( INOUT STREAM *stream,
 	tag = peekTag( stream );
 	if( cryptStatusError( tag ) )
 		return( tag );
-	status = readGenericHole( stream, NULL, MIN_OBJECT_SIZE, DEFAULT_TAG );
+	status = readGenericHole( stream, &outerLength, MIN_OBJECT_SIZE, 
+							  DEFAULT_TAG );
 	if( cryptStatusError( status ) )
 		return( status );
 	for( i = 0; allowedTypeInfo->subTypes[ i ] != CRYPT_ERROR && \
@@ -364,6 +365,19 @@ int readObjectAttributes( INOUT STREAM *stream,
 
 	/* Process the PKCS15CommonObjectAttributes */
 	status = readSequence( stream, &length );
+#if 0	/* 12/8/10 Only ever present in one pre-release product, now fixed */
+	if( cryptStatusOK( status ) && outerLength == sizeofObject( length ) )
+		{
+		/* Due to a disagreement over IMPLICIT vs. EXPLICIT tagging for the 
+		   parameterised types used in PKCS #15 based on an error that was 
+		   in the specification up until version 1.2 (see section F.2 of the 
+		   specification) some implementations have an extra layer of 
+		   encapsulation after the type tag.  If the inner SEQUENCE fits 
+		   exactly into the outer wrapper then the tagging used was EXPLICIT 
+		   and we need to dig down another level */
+		status = readSequence( stream, &length );
+		}
+#endif /* 0 */
 	if( cryptStatusOK( status ) && length > 0 )
 		{
 		endPos = stell( stream ) + length;
@@ -511,12 +525,33 @@ int readObjectAttributes( INOUT STREAM *stream,
 		return( ( stell( stream ) < endPos ) ? \
 				sseek( stream, endPos ) : CRYPT_OK );
 		}
+	if( peekTag( stream ) == MAKE_CTAG( CTAG_OV_DIRECT ) )
+		{
+		/* Parameterised types have special tagging requirements when using 
+		   context-specific tags and the declaration is a "Tag Type" (for 
+		   example for the "direct" choice for the ObjectValue type) and the 
+		   "Type" in the "Tag Type" is a "DummyReference".  In this case the 
+		   context tag is encoded as an EXPLICIT rather than IMPLCIIT tag 
+		   (see section F.2 of PKCS #15 v1.2 and newer).  The only case where
+		   this occurs is for the ObjectValue.direct option.
+		   
+		   This is complicated by the fact that versions of PKCS #15 before 
+		   v1.2 erroneously stated that all context-specific tags in 
+		   parameterised types should use EXPLICIT tagging, however no 
+		   (known) implementation ever did this.
+		   
+		   What this double error means is that existing implementations get 
+		   things almost right, the exception being ObjectValue.direct, which
+		   does require an EXPLICIT tag.  To deal with this, we check for the
+		   presence of the optional tag and skip it if it's present */
+		status = readConstructed( stream, &length, CTAG_OV_DIRECT );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	switch( type )
 		{
 		case PKCS15_OBJECT_PUBKEY:
-			status = readConstructed( stream, NULL, CTAG_OV_DIRECT );
-			if( cryptStatusOK( status ) )
-				pkcs15infoPtr->pubKeyOffset = stell( stream );
+			pkcs15infoPtr->pubKeyOffset = stell( stream );
 			break;
 
 		case PKCS15_OBJECT_PRIVKEY:

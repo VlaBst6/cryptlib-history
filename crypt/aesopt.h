@@ -115,7 +115,7 @@
      define the values to enable various asm options */
   #if defined( _M_X64 )
 	#ifndef ASM_AMD64_C
-	  #define ASM_AMD64_C
+/*	  #define ASM_AMD64_C	- Currently not used */
 	#endif /* ASM_AMD64_C */
   #elif defined( _M_IX86 )
 	#ifndef ASM_X86_V2C

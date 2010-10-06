@@ -7,8 +7,10 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "stream.h"
 #else
   #include "crypt.h"
+  #include "io/stream.h"
 #endif /* Compiler-specific includes */
 
 /* The following functions are intended purely for diagnostic purposes 
@@ -35,6 +37,69 @@ int remove( const char *pathname )
 	return( 0 );
 	}
 #endif /* WinCE < 5.x doesn't have remove() */
+
+/* Output text to the debug console or whatever the OS'es nearest equivalent
+   is.  If possible this is normally done via a macro in a header file that 
+   remaps the debug-output macros to the appropriate function but Windows 
+   only provides a puts()-equivalent and not a printf()-equivalent and under 
+   Unix we need to send the output to stderr which can't easily be done in a 
+   macro.  In addition OutputDebugString() under Windows isn't very reliable,
+   it's implemented using a 4kB chunk of shared memory DBWIN_BUFFER 
+   controlled by a mutex DBWinMutex and two events DBWIN_BUFFER_READY and
+   DBWIN_DATA_READY.  OutputDebugString() waits for exclusive access to 
+   DBWinMutex, maps in DBWIN_BUFFER, waits for DBWIN_BUFFER_READY to be 
+   signalled, copies in up to 4K of data, fires DBWIN_DATA_READY, and
+   releases the mutex.  If any of these operations fail, the call to
+   OutputDebugString() is treated as a no-op and we never see the output.  
+   On the receiving side the debugger performs the obvious actions to 
+   receive the data.  Beyond this Rube-Goldberg message-passing mechanism
+   there are also problems with permissions on the mutex and the way the
+   DACL for it has been tweaked in almost every OS release.  The end result
+   of this is that data sent to OutputDebugString() may be randomly lost
+   if other threads are also sending data to it (e.g. Visual Studio as part
+   of its normal chattiness about modules and threads being loaded/started/
+   unloaded/stopped/etc).  The only way to avoid this is to step through
+   the code using OutputDebugString() so that enough delay is inserted to
+   allow other callers and the code being debugged to get out of each
+   others' hair */
+
+#if defined( __WIN32__ )
+
+int debugPrintf( const char *format, ... )
+	{
+	va_list argPtr;
+	char buffer[ 1024 ];
+	int length;
+
+	va_start( argPtr, format );
+
+#if VC_GE_2005( _MSC_VER )
+	length = vsnprintf_s( buffer, 1024, _TRUNCATE, format, argPtr );
+#else
+	length = vsprintf( buffer, format, argPtr );
+#endif /* VC++ 2005 or newer */
+	va_end( argPtr );
+	OutputDebugString( buffer );
+
+	return( length );
+	}
+
+#elif defined( __UNIX__ )
+
+#include <stdarg.h>			/* Needed for va_list */
+
+int debugPrintf( const char *format, ... )
+	{
+	va_list argPtr;
+	int length;
+
+	va_start( argPtr, format );
+	length = vfprintf( stderr, format, argPtr );
+	va_end( argPtr );
+
+	return( length );
+	}
+#endif /* OS-specific debug output functions */
 
 /* Dump a PDU to disk */
 
@@ -74,7 +139,7 @@ void debugDumpFile( IN_STRING const char *fileName,
 		}
 	fclose( filePtr );
 	if( dataLength > 0 && count < dataLength )
-		remove( filenameBuffer );
+		( void ) remove( filenameBuffer );
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -117,7 +182,7 @@ void debugDumpFileCert( IN_STRING const char *fileName,
 		}
 	fclose( filePtr );
 	if( cryptStatusError( status ) || count < msgData.length )
-		remove( filenameBuffer );
+		( void ) remove( filenameBuffer );
 	}
 
 /* Create a hex dump of the first n bytes of a buffer along with the length 
@@ -142,11 +207,15 @@ void debugDumpHex( IN_STRING const char *prefixString,
 		const int innerLen = min( dataLength - i, 16 );
 
 		if( i > 0 )
+			{
 			offset = sprintf_s( dumpBuffer, 128, "%3s           ",
 								prefixString );
+			}
 		for( j = 0; j < innerLen; j++ )
+			{
 			offset += sprintf_s( dumpBuffer + offset, 128 - offset, "%02X ",
 								 ( ( BYTE * ) data )[ i + j ] );
+			}
 		for( ; j < 16; j++ )
 			offset += sprintf_s( dumpBuffer + offset, 128 - offset, "   " );
 		for( j = 0; j < innerLen; j++ )
@@ -165,8 +234,8 @@ void debugDumpHex( IN_STRING const char *prefixString,
 #endif /* Systems where output doesn't to go stdout */
 	}
 
-/* A variant of debugDumpHex() that only outputs the raw hex data, to be 
-   used in conjunction with PRINT() to output other information about the
+/* Variants of debugDumpHex() that only output the raw hex data, for use in
+   conjunction with DEBUG_PRINT() to output other information about the 
    data */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -182,8 +251,10 @@ void debugDumpData( IN_BUFFER( dataLength ) const void *data,
 
 		offset = sprintf_s( dumpBuffer, 128, "%04d: ", i );
 		for( j = 0; j < innerLen; j++ )
+			{
 			offset += sprintf_s( dumpBuffer + offset, 128 - offset, "%02X ",
 								 ( ( BYTE * ) data )[ i + j ] );
+			}
 		for( ; j < 16; j++ )
 			offset += sprintf_s( dumpBuffer + offset, 128 - offset, "   " );
 		for( j = 0; j < innerLen; j++ )
@@ -200,5 +271,45 @@ void debugDumpData( IN_BUFFER( dataLength ) const void *data,
 #if !defined( __WIN32__ ) || defined( __WINCE__ ) || defined( __ECOS__ )
 	fflush( stdout );
 #endif /* Systems where output doesn't to go stdout */
+	}
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+void debugDumpStream( INOUT /*STREAM*/ void *streamPtr, 
+					  IN_LENGTH const int position,
+					  IN_LENGTH const int length )
+	{
+	STREAM *stream = streamPtr;
+	BYTE *dataPtr; 
+	int status; 
+
+	/* In some cases we may be asked to dump zero-length packets, since 
+	   we're being called unconditionally (the caller can't put conditional
+	   code into a debug macro) we just turn the call into a no-op */
+	if( length <= 0 )
+		return;
+
+	status = sMemGetDataBlockAbs( stream, position, ( void ** ) &dataPtr, 
+								  length );
+	if( cryptStatusError( status ) )
+		return;
+	ANALYSER_HINT( dataPtr != NULL );
+	debugDumpData( dataPtr, length );
+	}
+
+/* Support function used with streams to pull data bytes out of the stream,
+   allowing type and content data to be dumped with DEBUG_PRINT() */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int debugGetStreamByte( INOUT /*STREAM*/ void *streamPtr, 
+						IN_LENGTH const int position )
+	{
+	STREAM *stream = streamPtr;
+	BYTE *dataPtr; 
+	int status; 
+
+	status = sMemGetDataBlockAbs( stream, position, ( void ** ) &dataPtr, 1 );
+	if( cryptStatusError( status ) )
+		return( 0 );
+	return( byteToInt( *dataPtr ) );
 	}
 #endif /* !NDEBUG */

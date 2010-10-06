@@ -22,6 +22,46 @@
 *																			*
 ****************************************************************************/
 
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
+										const BOOLEAN isGeneratedKey )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	DLP_PARAMS dlpParams;
+	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 32 + 8 ];
+	int encrSize, status;
+
+	/* Encrypt with the public key.  We  */
+	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
+	memcpy( buffer + 1/*2*/, "abcde", 5 );
+	setDLPParams( &dlpParams, buffer,
+				  bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ),
+				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
+	if( !isGeneratedKey )
+		{
+		/* Force the use of a fixed k value for the encryption test to
+		   avoid having to go via the RNG */
+		dlpParams.inLen2 = -999;
+		}
+	status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Decrypt with the private key */
+	encrSize = dlpParams.outLen;
+	setDLPParams( &dlpParams, buffer, encrSize,
+				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
+	status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	return( !memcmp( buffer + 1, "abcde", 5 ) );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
+
 /* Test the Elgamal implementation using a sample key.  Because a lot of the 
    high-level encryption routines don't exist yet, we cheat a bit and set up 
    a dummy encryption context with just enough information for the following 
@@ -131,42 +171,6 @@ static const BYTE FAR_BSS kRandomVal[] = {
 	0x17, 0x03, 0x95, 0x50, 0xB7, 0xA1, 0x11, 0xBA,
 	};
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
-										const BOOLEAN isGeneratedKey )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	DLP_PARAMS dlpParams;
-	BYTE buffer[ ( CRYPT_MAX_PKCSIZE * 2 ) + 32 + 8 ];
-	int encrSize, status;
-
-	/* Encrypt with the public key.  We  */
-	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
-	memcpy( buffer + 1/*2*/, "abcde", 5 );
-	setDLPParams( &dlpParams, buffer,
-				  bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ),
-				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
-	if( !isGeneratedKey )
-		{
-		/* Force the use of a fixed k value for the encryption test to
-		   avoid having to go via the RNG */
-		dlpParams.inLen2 = -999;
-		}
-	status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-
-	/* Decrypt with the private key */
-	encrSize = dlpParams.outLen;
-	setDLPParams( &dlpParams, buffer, encrSize,
-				  buffer, ( CRYPT_MAX_PKCSIZE * 2 ) + 32 );
-	status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-	return( !memcmp( buffer + 1, "abcde", 5 ) );
-	}
-
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -232,6 +236,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*

@@ -13,8 +13,8 @@
   #include "session.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
 #endif /* Compiler-specific includes */
 
@@ -172,8 +172,8 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 				  "object" ) );
 		}
 	sessionInfoPtr->receiveBufEnd = msgData.length;
-	DEBUG_DUMP( "ocsp_req", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "ocsp_req", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Send the request to the responder */
 	return( writePkiDatagram( sessionInfoPtr, OCSP_CONTENT_TYPE_REQ,
@@ -190,7 +190,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	STREAM stream;
 	BYTE nonceBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	const char *errorString = NULL;
-	int value, responseType, length, status;
+	int errorCode, responseType, length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
@@ -198,8 +198,8 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	status = readPkiDatagram( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
-	DEBUG_DUMP( "ocsp_resp", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "ocsp_resp", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Try and extract an OCSP status code from the returned object:
 
@@ -210,7 +210,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer,
 				 sessionInfoPtr->receiveBufEnd );
 	readSequence( &stream, NULL );
-	status = readEnumerated( &stream, &value );
+	status = readEnumerated( &stream, &errorCode );
 	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
@@ -223,8 +223,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	   more meaningful.  Some of the translations are a bit questionable, 
 	   but it's better than the generic no va response (which should 
 	   actually be "no marcha" in any case) */
-	sessionInfoPtr->errorInfo.errorCode = value;
-	switch( value )
+	switch( errorCode )
 		{
 		case OCSP_RESP_SUCCESSFUL:
 			status = CRYPT_OK;
@@ -256,7 +255,7 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 		retExt( status,
 				( status, SESSION_ERRINFO, 
 				   "OCSP server returned status %d: %s",
-				   value, errorString ) );
+				   errorCode, errorString ) );
 		}
 
 	/* We've got a valid response, read the [0] EXPLICIT SEQUENCE { OID,
@@ -352,8 +351,8 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	status = readPkiDatagram( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
-	DEBUG_DUMP( "ocsp_sreq", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "ocsp_sreq", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Basic lint filter to check for approximately-OK requests before we
 	   try creating a certificate object from the data:
@@ -490,8 +489,8 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 		sendErrorResponse( sessionInfoPtr, respIntError, RESPONSE_SIZE );
 		return( status );
 		}
-	DEBUG_DUMP( "ocsp_sresp", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "ocsp_sresp", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Send the response to the client */
 	return( writePkiDatagram( sessionInfoPtr, OCSP_CONTENT_TYPE_RESP,

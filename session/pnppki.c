@@ -104,13 +104,13 @@ static void cleanupObject( IN_HANDLE const CRYPT_CONTEXT iPrivateKey,
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
 static BOOLEAN isConnectionOpen( INOUT SESSION_INFO *sessionInfoPtr )
 	{
-	int streamState;
+	int streamState, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE, 
-			&streamState, 0 );
-	return( streamState );
+	status = sioctlGet( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE, 
+						&streamState, sizeof( int ) );
+	return( cryptStatusError( status ) ? FALSE : streamState );
 	}
 
 /* Check for the presence of a named object in a keyset/device */
@@ -234,7 +234,6 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 						IN_HANDLE const CRYPT_DEVICE iCryptDevice,
 						IN_ENUM( KEY_TYPE ) const KEY_TYPE keyType )
 	{
-	CRYPT_QUERY_INFO queryInfo;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
 	BOOLEAN substitutedAlgorithm = FALSE;
@@ -255,11 +254,11 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 	   default PKC algorithm, however some devices don't support all 
 	   algorithm types so if this isn't available we try and fall back to 
 	   other choices */
-	krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
-					 CRYPT_OPTION_PKC_ALGO );
-	if( cryptStatusError( \
-			krnlSendMessage( iCryptDevice, IMESSAGE_DEV_QUERYCAPABILITY, 
-							 &queryInfo, value ) ) )
+	status = krnlSendMessage( iCryptUser, IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_OPTION_PKC_ALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( !algoAvailable( value ) )
 		{
 		/* The default algorithm type isn't available for this device, try 
 		   and fall back to an alternative */
@@ -276,9 +275,7 @@ static int generateKey( OUT_HANDLE_OPT CRYPT_CONTEXT *iPrivateKey,
 			default:
 				return( CRYPT_ERROR_NOTAVAIL );
 			}
-		if( cryptStatusError( \
-				krnlSendMessage( iCryptDevice, IMESSAGE_DEV_QUERYCAPABILITY, 
-								 &queryInfo, value ) ) )
+		if( !algoAvailable( value ) )
 			return( CRYPT_ERROR_NOTAVAIL );
 
 		/* Remember that we've switched to a fallback algorithm */

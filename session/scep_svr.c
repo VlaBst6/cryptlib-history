@@ -13,7 +13,7 @@
   #include "scep.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/certstore.h"
   #include "session/scep.h"
@@ -92,15 +92,15 @@ static void sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				sizeof( HTTP_DATA_INFO ) );
 		return;
 		}
-	DEBUG_DUMP( "scep_srespx", sessionInfoPtr->receiveBuffer, 
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "scep_srespx", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Return the response to the client, discarding any error indication 
 	   from the write.  Since we're already in an error state there's not 
 	   much that we can do in terms of alerting the user if a further error 
 	   occurs when writing the error response, so we ignore any potential 
 	   write errors that occur at this point */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL, TRUE );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, TRUE );
 	( void ) writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE, 
 							   SCEP_CONTENT_TYPE_LEN );
 	}
@@ -294,13 +294,15 @@ static int processAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		STREAM stream;
 
 		sMemOpen( &stream, sessionInfoPtr->receiveBuffer, 1024 );
-		swrite( &stream, "POSTPKIOperation\n", 17 );
-		swrite( &stream, "SHA-1\n", 6 );
+		status = swrite( &stream, "POSTPKIOperation\n", 17 );
+		if( algoAvailable( CRYPT_ALGO_SHA1 ) )
+			status = swrite( &stream, "SHA-1\n", 6 );
 		if( algoAvailable( CRYPT_ALGO_SHA2 ) )
-			swrite( &stream, "SHA-256\n", 8 );
+			status = swrite( &stream, "SHA-256\n", 8 );
 		if( algoAvailable( CRYPT_ALGO_SHAng ) )
-			swrite( &stream, "SHAng\n", 6 );
-		status = swrite( &stream, "DES3\n", 5 );
+			status = swrite( &stream, "SHAng\n", 6 );
+		if( algoAvailable( CRYPT_ALGO_3DES ) )
+			status = swrite( &stream, "DES3\n", 5 );
 		if( algoAvailable( CRYPT_ALGO_AES ) )
 			status = swrite( &stream, "AES\n", 4 );
 		if( cryptStatusOK( status ) )
@@ -351,7 +353,8 @@ static int processAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
-							 INOUT SCEP_PROTOCOL_INFO *protocolInfo )
+							 INOUT SCEP_PROTOCOL_INFO *protocolInfo, 
+							 OUT BOOLEAN *requestDataAvailable )
 	{
 	CRYPT_CERTIFICATE iCmsAttributes;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -360,10 +363,14 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
+	assert( isWritePtr( requestDataAvailable, sizeof( BOOLEAN ) ) );
+
+	/* Clear return value */
+	*requestDataAvailable = FALSE;
 
 	/* Phase 1: Sig-check the self-signed data */
-	DEBUG_DUMP( "scep_sreq2", sessionInfoPtr->receiveBuffer, 
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "scep_sreq2", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 	status = envelopeSigCheck( sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufEnd,
 							   sessionInfoPtr->receiveBuffer, 
@@ -376,7 +383,8 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Invalid CMS signed data in client request" ) );
 		}
-	DEBUG_DUMP( "scep_sreq1", sessionInfoPtr->receiveBuffer, dataLength );
+	DEBUG_DUMP_FILE( "scep_sreq1", sessionInfoPtr->receiveBuffer, 
+					 dataLength );
 	if( cryptStatusError( sigResult ) )
 		{
 		/* The signed data was valid but the signature on it wasn't, this is
@@ -425,6 +433,14 @@ static int checkScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Request is missing a nonce/transaction ID" ) );
 		}
 	protocolInfo->transIDsize = msgData.length;
+
+	/* We've now got enough request data available to construct a SCEP-level 
+	   response to an error instead of an HTTP-level one, let the caller 
+	   know.  Note that this lets an attacker know that they've made it this
+	   far in the checking, but it's not obvious that this is a security
+	   problem, especially since they can get a good idea of how far they 
+	   got from the different error conditions that will be returned */
+	*requestDataAvailable = TRUE;
 
 	/* Since the request is for a cryptlib server it'll have a transaction 
 	   ID that's a cryptlib-encoded PKI user ID.  If we don't get this then 
@@ -568,7 +584,8 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Couldn't get PKCS #7 certificate chain from SCEP "
 				  "response object" ) );
 		}
-	DEBUG_DUMP( "scep_sresp0", sessionInfoPtr->receiveBuffer, msgData.length );
+	DEBUG_DUMP_FILE( "scep_sresp0", sessionInfoPtr->receiveBuffer, 
+					 msgData.length );
 
 	/* Phase 1: Encrypt the data using the client's key */
 	status = envelopeWrap( sessionInfoPtr->receiveBuffer, msgData.length,
@@ -582,7 +599,8 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Couldn't encrypt response data with client key" ) );
 		}
-	DEBUG_DUMP( "scep_sresp1", sessionInfoPtr->receiveBuffer, dataLength );
+	DEBUG_DUMP_FILE( "scep_sresp1", sessionInfoPtr->receiveBuffer, 
+					 dataLength );
 
 	/* Create the SCEP signing attributes */
 	status = createScepAttributes( sessionInfoPtr, protocolInfo,  
@@ -608,8 +626,8 @@ static int createScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Couldn't sign response data with CA key" ) );
 		}
-	DEBUG_DUMP( "scep_sresp2", sessionInfoPtr->receiveBuffer, 
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "scep_sresp2", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 
 	return( CRYPT_OK );
 	}
@@ -628,7 +646,8 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	SCEP_PROTOCOL_INFO protocolInfo;
 	HTTP_DATA_INFO httpDataInfo;
 	HTTP_URI_INFO httpReqInfo;
-	int status;
+	BOOLEAN requestDataOK;
+	int requestCount, length = DUMMY_INIT, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
@@ -641,73 +660,85 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	   requests for additional information that the original protocol didn't 
 	   accomodate */
 	sessionInfoPtr->receiveBufEnd = 0;
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-			STREAM_HTTPREQTYPE_ANY );
-	initHttpDataInfoEx( &httpDataInfo, sessionInfoPtr->receiveBuffer,
-						sessionInfoPtr->receiveBufSize, &httpReqInfo );
-	status = sread( &sessionInfoPtr->stream, &httpDataInfo,
-					sizeof( HTTP_DATA_INFO ) );
-	if( cryptStatusError( status ) )
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_ANY );
+	for( requestCount = 0; requestCount < 5; requestCount++ )
 		{
-		sNetGetErrorInfo( &sessionInfoPtr->stream, 
-						  &sessionInfoPtr->errorInfo );
-		return( status );
-		}
+		initHttpDataInfoEx( &httpDataInfo, sessionInfoPtr->receiveBuffer,
+							sessionInfoPtr->receiveBufSize, &httpReqInfo );
+		status = sread( &sessionInfoPtr->stream, &httpDataInfo,
+						sizeof( HTTP_DATA_INFO ) );
+		if( cryptStatusError( status ) )
+			{
+			sNetGetErrorInfo( &sessionInfoPtr->stream, 
+							  &sessionInfoPtr->errorInfo );
+			return( status );
+			}
 
-	/* If it's one of the bolted-on additions to the basic SCEP protocol, 
-	   handle it separately */
-	if( httpDataInfo.reqType == STREAM_HTTPREQTYPE_GET )
-		{
+		/* If it's a proper SCEP protocol message, switch back to handling 
+		   the main protocol */
+		if( httpDataInfo.reqType != STREAM_HTTPREQTYPE_GET )
+			{
+			sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+					   STREAM_HTTPREQTYPE_POST );
+			length = httpDataInfo.bytesAvail;
+			break;
+			}
+
+		/* It's one of the bolted-on additions to the basic SCEP protocol,
+		   handle it specially */
 		status = processAdditionalScepRequest( sessionInfoPtr, 
 											   &httpReqInfo );
 		if( cryptStatusError( status ) )
 			return( status );
-
-		/* We've processed the bolted-on portion of the exhange, now go back 
-		   to handling the main protocol.  In theory the user could submit 
-		   further bolted-on add-on requests but there's no good reason for
-		   them doing this so for now we limit the number of additional
-		   requests to one */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-				STREAM_HTTPREQTYPE_POST );
-		status = readPkiDatagram( sessionInfoPtr );
-		if( cryptStatusError( status ) )
-			return( status );
 		}
-	else
+	if( requestCount >= 5 )
 		{
-		int length = httpDataInfo.bytesAvail;
-
-		/* Unfortunately we can't use readPkiDatagram() because of the weird 
-		   dual-purpose HTTP transport used in SCEP so we have to duplicate 
-		   portions of readPkiDatagram() here.  See the readPkiDatagram() 
-		   function for code comments explaining the following operations */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-				STREAM_HTTPREQTYPE_POST );
-		if( length < 4 || length >= MAX_INTLENGTH )
-			{
-			retExt( CRYPT_ERROR_UNDERFLOW,
-					( CRYPT_ERROR_UNDERFLOW, SESSION_ERRINFO, 
-					  "Invalid PKI message length %d", length ) );
-			}
-		status = length = \
-			checkObjectEncoding( sessionInfoPtr->receiveBuffer, length );
-		if( cryptStatusError( status ) )
-			{
-			retExt( status, 
-					( status, SESSION_ERRINFO, 
-					  "Invalid PKI message encoding" ) );
-			}
-		sessionInfoPtr->receiveBufEnd = length;
+		/* The exact type of error response to send at this point is a bit
+		   tricky, the least inappropriate one is probably 
+		   CRYPT_ERROR_DUPLICATE to indicate that too many duplicate 
+		   requests were sent, since to get here the client would have had 
+		   to send repeated identical bolt-on requests */
+		sendCertErrorResponse( sessionInfoPtr, CRYPT_ERROR_DUPLICATE );
+		return( CRYPT_ERROR_OVERFLOW );
 		}
 
-	/* Read the initial message from the client.  We don't write an error
-	   response at the initial read stage to prevent scanning/DOS attacks 
-	   (vir sapit qui pauca loquitur) */
-	initSCEPprotocolInfo( &protocolInfo );
-	status = checkScepRequest( sessionInfoPtr, &protocolInfo );
+	/* Unfortunately we can't use readPkiDatagram() because of the weird 
+	   dual-purpose HTTP transport used in SCEP so we have to duplicate 
+	   portions of readPkiDatagram() here.  See the readPkiDatagram() 
+	   function for code comments explaining the following operations */
+	if( length < 4 || length >= MAX_INTLENGTH )
+		{
+		sendCertErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
+		retExt( CRYPT_ERROR_UNDERFLOW,
+				( CRYPT_ERROR_UNDERFLOW, SESSION_ERRINFO, 
+				  "Invalid PKI message length %d", length ) );
+		}
+	status = length = \
+				checkObjectEncoding( sessionInfoPtr->receiveBuffer, length );
 	if( cryptStatusError( status ) )
+		{
+		sendCertErrorResponse( sessionInfoPtr, CRYPT_ERROR_BADDATA );
+		retExt( status, 
+				( status, SESSION_ERRINFO, "Invalid PKI message encoding" ) );
+		}
+	sessionInfoPtr->receiveBufEnd = length;
+
+	/* Process the initial message from the client */
+	initSCEPprotocolInfo( &protocolInfo );
+	status = checkScepRequest( sessionInfoPtr, &protocolInfo, 
+							   &requestDataOK );
+	if( cryptStatusError( status ) )
+		{
+		/* If we got far enough into the request data to be able to send a 
+		   SCEP-level response, send that, otherwise just send an HTTP-level
+		   response */
+		if( requestDataOK )
+			sendErrorResponse( sessionInfoPtr, &protocolInfo, status );
+		else
+			sendCertErrorResponse( sessionInfoPtr, status );
 		return( status );
+		}
 
 	/* Issue a certificate from the request */
 	status = issueCertFromRequest( sessionInfoPtr, &protocolInfo );

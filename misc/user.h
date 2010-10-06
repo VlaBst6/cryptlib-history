@@ -27,6 +27,18 @@ typedef enum {
 #define USER_FLAG_NONE			0x00	/* No flag */
 #define USER_FLAG_ZEROISE		0x01	/* Zeroise in progress */
 
+/* Content disposition when writing configuration data */
+
+typedef enum {
+	CONFIG_DISPOSITION_NONE,		/* No disposition type */
+	CONFIG_DISPOSITION_NO_CHANGE,	/* No change in data and certificates */
+	CONFIG_DISPOSITION_EMPTY_CONFIG_FILE,	/* No data/certs present, empty file */
+	CONFIG_DISPOSITION_TRUSTED_CERTS_ONLY,	/* Only trusted certs present */
+	CONFIG_DISPOSITION_DATA_ONLY,	/* Only configuratin data present */
+	CONFIG_DISPOSITION_BOTH,		/* Both data and certificates present */
+	CONFIG_DISPOSITION_LAST			/* Last possible disposition type */
+	} CONFIG_DISPOSITION_TYPE;
+
 /****************************************************************************
 *																			*
 *								Data Structures								*
@@ -121,81 +133,93 @@ int deleteUserAttribute( INOUT USER_INFO *userInfoPtr,
 
 CHECK_RETVAL \
 const USER_FILE_INFO *getPrimarySoUserInfo( void );
-CHECK_RETVAL \
-BOOLEAN isZeroisePassword( IN_BUFFER( passwordLen ) \
-						   const char *password, const int passwordLen ) \
-						   STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int zeroiseUsers( INOUT USER_INFO *userInfoPtr ) \
-				  STDC_NONNULL_ARG( ( 1 ) );
-CHECK_RETVAL \
-int setUserPassword( INOUT USER_INFO *userInfoPtr, 
-					 IN_BUFFER( passwordLen ) \
-					 const char *password, const int passwordLength ) \
-					 STDC_NONNULL_ARG( ( 1, 2 ) );
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN isZeroisePassword( IN_BUFFER( passwordLen ) const char *password,
+						   IN_LENGTH_SHORT const int passwordLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initUserIndex( OUT_PTR void **userIndexPtrPtr );
+int zeroiseUsers( INOUT USER_INFO *userInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setUserPassword( INOUT USER_INFO *userInfoPtr,
+					 IN_BUFFER( passwordLength ) const char *password, 
+					 IN_LENGTH_SHORT const int passwordLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int initUserIndex( OUT_OPT_PTR void **userIndexPtrPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void endUserIndex( INOUT void *userIndexPtr );
 
 /* Prototypes for functions in user_cfg.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int initOptions( OUT_PTR void **configOptionsPtr, 
+int initOptions( OUT_OPT_PTR void **configOptionsPtr, 
 				 OUT_INT_SHORT_Z int *configOptionsCount );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void endOptions( INOUT void *configOptions, 
+void endOptions( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					void *configOptions, 
 				 IN_INT_SHORT const int configOptionsCount );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int setOption( INOUT void *configOptions, 
+int setOption( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					void *configOptions, 
 			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   IN_INT const int value );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int setOptionSpecial( INOUT void *configOptions, 
+int setOptionSpecial( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
 					  IN_INT_SHORT const int configOptionsCount, 
-					  IN_RANGE( CRYPT_OPTION_SELFTESTOK, CRYPT_OPTION_SELFTESTOK ) \
-					  const CRYPT_ATTRIBUTE_TYPE option,
+					  IN_RANGE_FIXED( CRYPT_OPTION_SELFTESTOK ) \
+							const CRYPT_ATTRIBUTE_TYPE option,
 					  IN_INT const int value );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
-int setOptionString( void *configOptions, 
+int setOptionString( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						void *configOptions, 
 					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
-					 IN_BUFFER( valueLength ) \
-					 const char *value, 
+					 IN_BUFFER( valueLength ) const char *value, 
 					 IN_LENGTH_SHORT const int valueLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
-int getOption( const void *configOptions, 
+int getOption( IN_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+					const void *configOptions, 
 			   IN_INT_SHORT const int configOptionsCount, 
 			   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
 			   OUT_INT_Z int *value );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
-int getOptionString( const void *configOptions,
+int getOptionString( IN_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						const void *configOptions,
 					 IN_INT_SHORT const int configOptionsCount, 
 					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option,
-					 OUT_PTR const void **strPtrPtr, 
+					 OUT_OPT_PTR const void **strPtrPtr, 
 					 OUT_LENGTH_SHORT_Z int *strLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int deleteOption( INOUT void *configOptions, 
-				  IN_INT_SHORT const int configOptionsCount,
+int deleteOption( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+						void *configOptions, 
+				  IN_INT_SHORT const int configOptionsCount, 
 				  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE option );
 
 /* Prototypes for functions in user_rw.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int readConfig( IN_HANDLE const CRYPT_USER iCryptUser, 
-				IN_STRING const char *fileName, INOUT void *trustInfoPtr );
-CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3, 4, 5, 6 ) ) \
-int prepareConfigData( INOUT void *configOptions, 
+				IN_STRING const char *fileName, 
+				INOUT_OPT void *trustInfoPtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int getConfigDisposition( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
+						  IN_INT_SHORT const int configOptionsCount, 	
+						  const void *trustInfoPtr, 
+						  OUT_ENUM( CONFIG_DISPOSITION ) \
+							CONFIG_DISPOSITION_TYPE *disposition );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int prepareConfigData( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
 					   IN_INT_SHORT const int configOptionsCount, 	
-					   IN_STRING const char *fileName,
-					   INOUT void *trustInfoPtr, 
-					   OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 
+					   OUT_BUFFER_ALLOC_OPT( *dataLength ) void **dataPtrPtr, 
 					   OUT_LENGTH_Z int *dataLength );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
-int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser, 
-					  IN_STRING const char *fileName,
-					  IN_BUFFER_OPT( dataLength ) \
-					  const void *data, IN_LENGTH_Z const int dataLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int commitConfigData( IN_STRING const char *fileName,
+					  IN_BUFFER_OPT( dataLength ) const void *data, 
+					  IN_LENGTH_Z const int dataLength,
+					  IN_HANDLE_OPT const CRYPT_USER iTrustedCertUserObject );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int deleteConfig( IN_STRING const char *fileName );
 
 #endif /* _USER_DEFINED */

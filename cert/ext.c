@@ -12,8 +12,10 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -315,8 +317,10 @@ ATTRIBUTE_PTR *findAttributeField( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 				( subFieldID >= CRYPT_CERTINFO_FIRST_NAME && \
 				  subFieldID <= CRYPT_CERTINFO_LAST_GENERALNAME ) );
 
-	return( attributeFind( attributePtr, getAttrFunction,
-						   fieldID, subFieldID ) );
+	if( subFieldID == CRYPT_ATTRIBUTE_NONE )
+		return( attributeFind( attributePtr, getAttrFunction, fieldID ) );
+	return( attributeFindEx( attributePtr, getAttrFunction, 
+							 CRYPT_ATTRIBUTE_NONE, fieldID, subFieldID ) );
 	}
 
 /* Find an attribute in a list of certificate attributes by field ID, with
@@ -347,7 +351,6 @@ ATTRIBUTE_PTR *findAttributeFieldEx( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 							( fieldID >= CRYPT_CERTINFO_FIRST_CMS ) ? \
 							ATTRIBUTE_CMS : ATTRIBUTE_CERTIFICATE;
 	CRYPT_ATTRIBUTE_TYPE attributeID;
-	int iterationCount;
 
 	assert( attributePtr == NULL || \
 			isReadPtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
@@ -360,8 +363,7 @@ ATTRIBUTE_PTR *findAttributeFieldEx( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 
 	/* Find the position of this attribute component in the list */
 	attributeListCursor = attributeFind( attributePtr, 
-										 getAttrFunction, fieldID, 
-										 CRYPT_ATTRIBUTE_NONE );
+										 getAttrFunction, fieldID );
 	if( attributeListCursor != NULL )
 		return( ( ATTRIBUTE_PTR * ) attributeListCursor );
 
@@ -390,6 +392,7 @@ ATTRIBUTE_PTR *findAttributeFieldEx( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 	   CRYPT_CERTINFO_AUTHORITYINFO_CRLS we'd get a match if e.g. 
 	   CRYPT_CERTINFO_AUTHORITYINFO_OCSP was present since they're both in 
 	   the same attribute CRYPT_CERTINFO_AUTHORITYINFOACCESS */
+#if 0	/* 18/05/10 Changed to use attributeFindEx() */
 	for( attributeListCursor = attributePtr, iterationCount = 0;
 		 attributeListCursor != NULL && \
 			isValidAttributeField( attributeListCursor ) && \
@@ -397,6 +400,11 @@ ATTRIBUTE_PTR *findAttributeFieldEx( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
 		 attributeListCursor = attributeListCursor->next, iterationCount++ );
 	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+#else
+	attributeListCursor = attributeFindEx( attributePtr, getAttrFunction, 
+										   attributeID, CRYPT_ATTRIBUTE_NONE, 
+										   CRYPT_ATTRIBUTE_NONE );
+#endif /* 0 */
 	if( attributeListCursor == NULL || \
 		!isValidAttributeField( attributeListCursor ) )
 		return( NULL );
@@ -471,8 +479,6 @@ ATTRIBUTE_PTR *findAttribute( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 							  const BOOLEAN isFieldID )
 	{
 	CRYPT_ATTRIBUTE_TYPE localAttributeID = attributeID;
-	const ATTRIBUTE_LIST *attributeListPtr;
-	int iterationCount;
 
 	assert( attributePtr == NULL || \
 			isReadPtr( attributePtr, sizeof( ATTRIBUTE_LIST ) ) );
@@ -510,18 +516,23 @@ ATTRIBUTE_PTR *findAttribute( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 
 	/* Check whether this attribute is present in the list of attribute 
 	   fields */
+#if 0	/* 18/05/10 Changed to use attributeFindEx() */
 	for( attributeListPtr = attributePtr, iterationCount = 0;
 		 attributeListPtr != NULL && \
 			isValidAttributeField( attributeListPtr ) && \
-			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			iterationCount < FAILSAFE_ITERATIONS_LARGE * 10;
 		 attributeListPtr = attributeListPtr->next, iterationCount++ )
 		{
 		if( attributeListPtr->attributeID == localAttributeID )
 			return( ( ATTRIBUTE_PTR * ) attributeListPtr );
 		}
-	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_LARGE * 10 );
 
 	return( NULL );
+#else
+	return( attributeFindEx( attributePtr, getAttrFunction, localAttributeID, 
+							 CRYPT_ATTRIBUTE_NONE, CRYPT_ATTRIBUTE_NONE ) );
+#endif
 	}
 
 CHECK_RETVAL_BOOL \
@@ -711,7 +722,7 @@ int getAttributeIdInfo( const ATTRIBUTE_PTR *attributePtr,
    getNext()'s */
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-const ATTRIBUTE_PTR *getFirstAttribute( INOUT ATTRIBUTE_ENUM_INFO *attrEnumInfo,
+const ATTRIBUTE_PTR *getFirstAttribute( OUT ATTRIBUTE_ENUM_INFO *attrEnumInfo,
 										IN_OPT const ATTRIBUTE_PTR *attributePtr,
 										IN_ENUM( ATTRIBUTE_ENUM ) \
 											const ATTRIBUTE_ENUM_TYPE enumType )
@@ -872,7 +883,7 @@ int getAttributeDataDN( IN const ATTRIBUTE_PTR *attributePtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int getAttributeDataPtr( IN const ATTRIBUTE_PTR *attributePtr,
-						 OUT_BUFFER_ALLOC( *Length ) void **dataPtrPtr, 
+						 OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 
 						 OUT_LENGTH_SHORT_Z int *dataLength )
 	{
 	const ATTRIBUTE_LIST *attributeListPtr = attributePtr;
@@ -1095,7 +1106,10 @@ BOOLEAN compareAttribute( const ATTRIBUTE_PTR *attribute1,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int fixAttributes( INOUT CERT_INFO *certInfoPtr )
 	{
-	int complianceLevel, status;
+#ifdef USE_CERTLEVEL_PKIX_PARTIAL
+	int complianceLevel;
+#endif /* USE_CERTLEVEL_PKIX_PARTIAL */
+	int status;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -1150,3 +1164,4 @@ int fixAttributes( INOUT CERT_INFO *certInfoPtr )
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTIFICATES */

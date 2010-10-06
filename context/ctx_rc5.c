@@ -33,6 +33,8 @@
 *																			*
 ****************************************************************************/
 
+#ifndef CONFIG_NO_SELFTEST
+
 /* RC5 test vectors from RC5 specification */
 
 static const struct RC5_TEST {
@@ -81,6 +83,9 @@ static int selfTest( void )
 
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -90,17 +95,29 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = RC5_EXPANDED_KEYSIZE;
+		int *valuePtr = ( int * ) data;
+
+		*valuePtr = RC5_EXPANDED_KEYSIZE;
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -431,7 +448,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RC5, bitsToBytes( 64 ), "RC5", 3,
 	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 832 ),
-	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
+	selfTest, getInfo, NULL, initGenericParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB
 	};

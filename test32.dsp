@@ -37,8 +37,8 @@ RSC=rc.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 0
-# PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\binaries"
+# PROP Output_Dir ".\binaries32_vc6"
+# PROP Intermediate_Dir ".\binaries32_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -66,8 +66,8 @@ LINK32=link.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\binaries"
+# PROP Output_Dir ".\binaries32_vc6"
+# PROP Intermediate_Dir ".\binaries32_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -161,6 +161,10 @@ SOURCE=.\test\stress.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\test\suiteb.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\test\testfunc.c
 # End Source File
 # Begin Source File
@@ -194,7 +198,7 @@ SOURCE=.\test\test.h
 # End Group
 # Begin Source File
 
-SOURCE=.\binaries\cl32.lib
+SOURCE=.\binaries32_vc6\cl32.lib
 # End Source File
 # End Target
 # End Project

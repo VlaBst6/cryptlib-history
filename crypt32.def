@@ -22,8 +22,6 @@ EXPORTS		cryptAddCertExtension
 			cryptAddPrivateKey
 			cryptAddPublicKey
 			cryptAddRandom
-			cryptAsyncCancel
-			cryptAsyncQuery
 			cryptCAAddItem
 			cryptCACertManagement
 			cryptCADeleteItem
@@ -57,7 +55,6 @@ EXPORTS		cryptAddCertExtension
 			cryptExportKeyEx
 			cryptFlushData
 			cryptGenerateKey
-			cryptGenerateKeyAsync
 			cryptGetAttribute
 			cryptGetAttributeString
 			cryptGetCertExtension

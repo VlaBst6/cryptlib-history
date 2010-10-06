@@ -9,15 +9,15 @@
 #include <stdarg.h>
 #include "crypt.h"
 #ifdef INC_ALL
-  #include "keyset.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "pgp_rw.h"
+  #include "keyset.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/pgp_rw.h"
   #include "keyset/keyset.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_KEYSETS
@@ -87,7 +87,7 @@ static int initKeysetUpdate( INOUT KEYSET_INFO *keysetInfoPtr,
 		int hashSize;
 
 		/* Get the hash algorithm information */
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
 								 &hashSize );
 
 		/* Hash the full iAndS to get an issuerID and use that for the keyID */
@@ -118,6 +118,18 @@ static int initKeysetUpdate( INOUT KEYSET_INFO *keysetInfoPtr,
 *							Flat-file Keyset Functions						*
 *																			*
 ****************************************************************************/
+
+/* OID information used to read the header of a PKCS #15 file.  Since the 
+   PKCS #15 content can be further wrapped in CMS AuthData we have to check
+   for both types of content */
+
+static const CMS_CONTENT_INFO FAR_BSS oidInfoPkcs15Data = { 0, 0 };
+
+static const OID_INFO FAR_BSS keyFileOIDinfo[] = {
+	{ OID_PKCS15_CONTENTTYPE, TRUE, &oidInfoPkcs15Data },
+	{ OID_CMS_AUTHDATA, FALSE, &oidInfoPkcs15Data },
+	{ NULL, 0 }, { NULL, 0 }
+	};
 
 /* Identify a flat-file keyset type */
 
@@ -172,9 +184,11 @@ static int getKeysetType( INOUT STREAM *stream,
 			return( CRYPT_OK );
 			}
 
-		/* Check for a PKCS #15 OID */
-		status = readFixedOID( stream, OID_PKCS15_CONTENTTYPE, 
-							   sizeofOID( OID_PKCS15_CONTENTTYPE ) );
+		/* Check for a PKCS #15 file type, either direct PKCS #15 content 
+		   or PKCS #15 wrapped in CMS AuthData */
+		status = readOID( stream, keyFileOIDinfo, 
+						  FAILSAFE_ARRAYSIZE( keyFileOIDinfo, OID_INFO ),
+						  &value );
 		if( cryptStatusError( status ) )
 			return( status );
 		*subType = KEYSET_SUBTYPE_PKCS15;
@@ -336,7 +350,7 @@ static int openKeysetStream( INOUT STREAM *stream,
 			{
 			BYTE buffer[ 512 + 8 ];
 
-			sioctl( stream, STREAM_IOCTL_IOBUFFER, buffer, 512 );
+			sioctlSetString( stream, STREAM_IOCTL_IOBUFFER, buffer, 512 );
 			status = getKeysetType( stream, &subType );
 			if( cryptStatusError( status ) )
 				{
@@ -345,7 +359,7 @@ static int openKeysetStream( INOUT STREAM *stream,
 				return( CRYPT_ERROR_BADDATA );
 				}
 			sseek( stream, 0 );
-			sioctl( stream, STREAM_IOCTL_IOBUFFER, NULL, 0 );
+			sioctlSet( stream, STREAM_IOCTL_IOBUFFER, 0 );
 			}
 
 		/* If it's a cryptlib keyset we can open it in any mode */
@@ -462,11 +476,11 @@ static int completeKeysetFileOpen( INOUT KEYSET_INFO *keysetInfoPtr,
 			   keysetInfoPtr->getNextItemFunction != NULL ) );
 
 	/* Read the keyset contents into memory */
-	sioctl( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, buffer, 
-			STREAM_BUFSIZE );
+	sioctlSetString( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, buffer, 
+					 STREAM_BUFSIZE );
 	status = keysetInfoPtr->initFunction( keysetInfoPtr, NULL, 0,
 										  keysetInfoPtr->options );
-	sioctl( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, NULL, 0 );
+	sioctlSet( &fileInfo->stream, STREAM_IOCTL_IOBUFFER, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -981,14 +995,12 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 
 		case CRYPT_KEYSET_ODBC:
 		case CRYPT_KEYSET_DATABASE:
-		case CRYPT_KEYSET_PLUGIN:
 			subType = SUBTYPE_KEYSET_DBMS;
 			storageSize = sizeof( DBMS_INFO );
 			break;
 
 		case CRYPT_KEYSET_ODBC_STORE:
 		case CRYPT_KEYSET_DATABASE_STORE:
-		case CRYPT_KEYSET_PLUGIN_STORE:
 			subType = SUBTYPE_KEYSET_DBMS_STORE;
 			storageSize = sizeof( DBMS_INFO );
 			break;
@@ -1040,6 +1052,7 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 			sFileClose( &stream );
 		return( status );
 		}
+	ANALYSER_HINT( keysetInfoPtr != NULL );
 	*keysetInfoPtrPtr = keysetInfoPtr;
 	keysetInfoPtr->objectHandle = *iCryptKeyset;
 	keysetInfoPtr->ownerHandle = iCryptOwner;
@@ -1113,10 +1126,8 @@ static int openKeyset( OUT_HANDLE_OPT CRYPT_KEYSET *iCryptKeyset,
 		{
 		case CRYPT_KEYSET_ODBC:
 		case CRYPT_KEYSET_DATABASE:
-		case CRYPT_KEYSET_PLUGIN:
 		case CRYPT_KEYSET_ODBC_STORE:
 		case CRYPT_KEYSET_DATABASE_STORE:
-		case CRYPT_KEYSET_PLUGIN_STORE:
 			status = setAccessMethodDBMS( keysetInfoPtr, keysetType );
 			break;
 

@@ -226,7 +226,7 @@ extern "C" {
 #define BN_BITS2	32
 #define BN_BITS4	16
 #ifdef OPENSSL_SYS_WIN32
-/* VC++ doesn't like the LL suffix */
+/* VC++ 6.0 doesn't like the LL suffix */
 #define BN_MASK		(0xffffffffffffffffL)
 #else
 #define BN_MASK		(0xffffffffffffffffLL)

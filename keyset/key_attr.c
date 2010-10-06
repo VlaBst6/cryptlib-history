@@ -99,10 +99,6 @@ int getKeysetAttribute( INOUT KEYSET_INFO *keysetInfoPtr,
 		case CRYPT_ATTRIBUTE_ERRORLOCUS:
 			*valuePtr = keysetInfoPtr->errorLocus;
 			return( CRYPT_OK );
-
-		case CRYPT_ATTRIBUTE_INT_ERRORCODE:	
-			*valuePtr = keysetInfoPtr->errorInfo.errorCode;
-			return( CRYPT_OK );
 		}
 
 	retIntError();
@@ -123,7 +119,7 @@ int getKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 
 	switch( attribute )
 		{
-		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
+		case CRYPT_ATTRIBUTE_ERRORMESSAGE:
 			{
 #ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo = &keysetInfoPtr->errorInfo;
@@ -135,7 +131,7 @@ int getKeysetAttributeS( INOUT KEYSET_INFO *keysetInfoPtr,
 				}
 #endif /* USE_ERRMSGS */
 			return( exitErrorNotFound( keysetInfoPtr,
-									   CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
+									   CRYPT_ATTRIBUTE_ERRORMESSAGE ) );
 			}
 
 		case CRYPT_IATTRIBUTE_CONFIGDATA:

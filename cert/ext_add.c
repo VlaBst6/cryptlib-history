@@ -12,8 +12,19 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
+
+/* Normally we use FAILSAFE_ITERATIONS_LARGE as the upper bound on loop
+   iterations, however RPKI certificates, which are general-purpose 
+   certificates turned into pseudo-attribute certificates with monstrous 
+   lists of capabilities, can have much larger upper bounds.  To handle 
+   these we have to make a special exception for the upper bound of the 
+   loop sanity check */
+
+#define FAILSAFE_ITERATIONS_LARGE_SPECIAL	( FAILSAFE_ITERATIONS_LARGE * 10 )
 
 /****************************************************************************
 *																			*
@@ -158,9 +169,9 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 		}
 
 	/* If it's a blob field, don't do any type checking.  This is a special 
-	   case that differs from FIELDTYPE_BLOB in that it corresponds to an 
-	   ASN.1 value that's mis-encoded by one or more implementations, so we 
-	   have to accept absolutely anything at this point */
+	   case that differs from FIELDTYPE_BLOB_xxx in that it corresponds to 
+	   an ASN.1 value that's mis-encoded by one or more implementations, so 
+	   we have to accept absolutely anything at this point */
 	if( flags & ATTR_FLAG_BLOB )
 		return( CRYPT_OK );
 
@@ -218,13 +229,13 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 	   any old rubbish into the fields exit now unless it's a blob field, 
 	   for which we need to find at least valid ASN.1 data */
 	if( ( flags & ATTR_FLAG_BLOB_PAYLOAD ) && \
-		( attributeInfoPtr->fieldType != FIELDTYPE_BLOB ) )
+		!isBlobField( attributeInfoPtr->fieldType ) )
 		return( CRYPT_OK );
 
 	/* Perform any special-case checking that may be required */
 	switch( attributeInfoPtr->fieldType )
 		{
-		case FIELDTYPE_BLOB:
+		case FIELDTYPE_BLOB_ANY:
 			/* It's a blob field, make sure that it's a valid ASN.1 object */
 			status = checkObjectEncoding( data, dataLength );
 			if( cryptStatusError( status ) )
@@ -233,6 +244,40 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 				return( CRYPT_ARGERROR_STR1 );
 				}
 			return( CRYPT_OK );
+
+		case FIELDTYPE_BLOB_BITSTRING:
+		case FIELDTYPE_BLOB_SEQUENCE:
+			{
+			const int firstByte = ( ( BYTE * ) data )[ 0 ];
+
+			/* Typed blobs have a bit more information available than just 
+			   "it must be a valid ASN.1 object" so we can check that it's 
+			   the correct type of object as well as the ASN.1 validity 
+			   check */
+			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB_BITSTRING )
+				{
+				if( firstByte != BER_BITSTRING )
+					{
+					*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
+					return( CRYPT_ARGERROR_STR1 );
+					}
+				}
+			else
+				{
+				if( firstByte != BER_SEQUENCE )
+					{
+					*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
+					return( CRYPT_ARGERROR_STR1 );
+					}
+				}
+			status = checkObjectEncoding( data, dataLength );
+			if( cryptStatusError( status ) )
+				{
+				*errorType = CRYPT_ERRTYPE_ATTR_VALUE;
+				return( CRYPT_ARGERROR_STR1 );
+				}
+			return( CRYPT_OK );
+			}
 
 		case BER_STRING_NUMERIC:
 			{
@@ -273,7 +318,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_BLOB_PAYLOAD | ATTR_FLAG_CRITICA
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
 static int findFieldInsertLocation( IN_OPT const ATTRIBUTE_LIST *attributeListPtr,
-									OUT_PTR ATTRIBUTE_LIST **insertPointPtrPtr,
+									OUT_OPT_PTR ATTRIBUTE_LIST **insertPointPtrPtr,
 									IN_ATTRIBUTE \
 										const CRYPT_ATTRIBUTE_TYPE fieldID,
 									IN_ATTRIBUTE_OPT \
@@ -301,7 +346,7 @@ static int findFieldInsertLocation( IN_OPT const ATTRIBUTE_LIST *attributeListPt
 		 insertPoint != NULL && \
 			insertPoint->fieldID != CRYPT_ATTRIBUTE_NONE && \
 			insertPoint->fieldID <= fieldID && \
-			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			iterationCount < FAILSAFE_ITERATIONS_LARGE_SPECIAL;
 		 iterationCount++ )
 		{
 		ENSURES( insertPoint->next == NULL || \
@@ -322,7 +367,7 @@ static int findFieldInsertLocation( IN_OPT const ATTRIBUTE_LIST *attributeListPt
 		prevElement = insertPoint;
 		insertPoint = insertPoint->next;
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE_SPECIAL );
 	*insertPointPtrPtr = ( ATTRIBUTE_LIST * ) prevElement;
 	
 	return( CRYPT_OK );
@@ -340,7 +385,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 6 ) ) \
 int addAttribute( IN_ATTRIBUTE const ATTRIBUTE_TYPE attributeType,
 				  INOUT ATTRIBUTE_PTR **listHeadPtr, 
 				  IN_BUFFER( oidLength ) const BYTE *oid, 
-				  IN_RANGE( MIN_OID_SIZE, MAX_OID_SIZE ) const int oidLength,
+				  IN_LENGTH_OID const int oidLength,
 				  const BOOLEAN critical, 
 				  IN_BUFFER( dataLength ) const void *data, 
 				  IN_LENGTH_SHORT const int dataLength, 
@@ -876,7 +921,7 @@ void deleteAttributes( INOUT ATTRIBUTE_PTR **attributeListPtr )
 	/* Destroy any remaining list items */
 	for( iterationCount = 0;
 		 attributeListCursor != NULL && \
-			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+			iterationCount < FAILSAFE_ITERATIONS_LARGE_SPECIAL;
 		 iterationCount++ )
 		{
 		ATTRIBUTE_LIST *itemToFree = attributeListCursor;
@@ -884,6 +929,7 @@ void deleteAttributes( INOUT ATTRIBUTE_PTR **attributeListPtr )
 		attributeListCursor = attributeListCursor->next;
 		deleteAttributeField( attributeListPtr, NULL, itemToFree, NULL );
 		}
-	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_LARGE_SPECIAL );
 	ENSURES_V( *attributeListPtr == NULL );
 	}
+#endif /* USE_CERTIFICATES */

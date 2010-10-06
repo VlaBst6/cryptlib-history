@@ -13,8 +13,8 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -94,7 +94,7 @@ static int writeCertID( INOUT STREAM *stream,
 	/* Find out how big the payload will be */
 	setMessageData( &msgData, certHash, CRYPT_MAX_HASHSIZE );
 	status = krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
-							  &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA );
+							  &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( status );
 	essCertIDSize = ( int ) sizeofObject( msgData.length );
@@ -462,8 +462,8 @@ static int writePkiHeader( INOUT STREAM *stream,
 						  protocolInfo->userIDsize, DEFAULT_TAG );
 		DEBUG_PRINT(( "%s: Writing userID.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI" ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->userID, protocolInfo->userIDsize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->userID, protocolInfo->userIDsize );
 		sessionInfoPtr->protocolFlags |= CMP_PFLAG_USERIDSENT;
 		}
 	writeConstructed( stream, objSize( protocolInfo->transIDsize ),

@@ -7,14 +7,14 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "keyset.h"
   #include "dbms.h"
-  #include "asn1.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
   #include "keyset/dbms.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 /* When we iterate through the entries in the certificate store we have to 

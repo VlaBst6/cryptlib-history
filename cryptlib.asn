@@ -701,21 +701,18 @@ TSTInfo ::= SEQUENCE {
 	nonce				INTEGER OPTIONAL	-- From input if present
 	}
 
--/ PKCS #12 /-
+-/ PKCS #12.  Note that what's deployed (and documented here) bears very
+   little resemblance to what's given in the specification /-
 
 PFX ::= SEQUENCE {
 	version				INTEGER (3),
-	authSafe			SEQUENCE {
+	authSafe			SEQUENCE {			-- ContentInfo
 		contentType		OBJECT IDENTIFIER id-Data,
 		content		[0]	EXPLICIT OCTET STRING {
-			safeConts	SEQUENCE {
-						SEQUENCE {
-				contentType
-						OBJECT IDENTIFIER id-Data,
-				content
-					[0]	EXPLICIT OCTET STRING {
-					safeContents
-						SEQUENCE OF PKCS12Bag
+			safeConts	SEQUENCE OF {
+						CHOICE {			-- Effectively a CHOICE
+				p12Data	PKCS12Data,			-- Data for encrypted keys
+				p12Encr	PKCS12Encr			-- EncrData for public keys
 						}
 					}
 				}
@@ -727,32 +724,67 @@ PFX ::= SEQUENCE {
 			mac			OCTET STRING
 			}
 		macSalt			OCTET STRING,
-		iterations		INTEGER DEFAULT 1
+		iterations		INTEGER DEFAULT 1	-- Usually set to 2,000
 		}
 	}
 
-PKCS12CertBag ::= SEQUENCE {
-	bagId				OBJECT IDENTIFIER certBag,
-	bagValue		[0]	EXPLICIT SEQUENCE {
-		certId			OBJECT IDENTIFIER x509Certificate,
-		certValue	[0]	EXPLICIT OCTET STRING {
-			cert		Certificate
-			}
+PKCS12Data ::= SEQUENCE {					-- For encrypted private keys
+	contentType			OBJECT IDENTIFIER id-Data,
+	content			[0]	EXPLICIT OCTET STRING {
+		safeContents	SEQUENCE OF PKCS12Bag -- SIZE(1)
 		}
-	bagAttributes		SET OF Attribute
 	}
 
-PKCS12KeyBag ::= SEQUENCE {
+PKCS12Bag ::= SEQUENCE {
 	bagId				OBJECT IDENTIFIER pkcs8ShroudedKeyBag,
 	bagValue		[0]	EXPLICIT SEQUENCE {
 		encryptionAlgo	SEQUENCE {
 			algo		OBJECT IDENTIFIER pbeWithSHAAnd2-KeyTripleDES-CBC,
 			pbeParams	SEQUENCE {
-				salt	OCTET STRING SIZE 16),
-				iters	INTEGER (1000)
+				salt	OCTET STRING,
+				iters	INTEGER
 				}
 			}
-		encryptedData	OCTET STRING
+		encryptedData	OCTET STRING		-- Encrypted PKCS #8
+		}
+	bagAttributes		SET OF Attribute
+	}
+
+PKCS8 ::= SEQUENCE {						-- Within PKCS12Bag above
+	version				INTEGER (0),
+	algorithm			AlgorithmIdentifier,
+	key					SEQUENCE {
+		version			INTEGER (0),
+		keyValues		...
+						}
+	attributes		[0]	SET OF Attribute OPTIONAL
+	}
+
+PKCS12Encr ::= SEQUENCE {					-- For public certificates
+	contentType			OBJECT IDENTIFIER id-EncryptedData,
+	content			[0]	EXPLICIT SEQUENCE {
+		version			INTEGER (0),
+		encContentInfo	SEQUENCE {
+			contentType	OBJECT IDENTIFIER id-Data,
+			contentEncAlgo SEQUENCE {
+				algo	OBJECT IDENTIFIER pbeWithSHAAnd40BitRC2-CBC,
+				pbeParams SEQUENCE {
+					salt OCTET STRING,
+					iters INTEGER
+					}
+				}
+			encryptedData OCTET STRING		-- Encrypted PKCS12CertBag
+			}
+		}
+	}
+
+PKCS12CertBag ::= SEQUENCE OF SEQUENCE {	-- Within PKCS12Enc above
+	bagId				OBJECT IDENTIFIER pkcs12CertBag,
+	bagValue		[0]	EXPLICIT SEQUENCE {
+		certId			OBJECT IDENTIFIER x509Certificate,
+		certValue	[0]	EXPLICIT OCTET STRING {
+			cert		Certificate
+			}
 		}
 	bagAttributes		SET OF Attribute
 	}

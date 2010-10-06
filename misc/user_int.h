@@ -57,10 +57,10 @@ typedef struct {
 /* Prototypes for functions in user_cfg.c */
 
 CHECK_RETVAL_PTR \
-const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_STORED_OPTION ) \
+const BUILTIN_OPTION_INFO *getBuiltinOptionInfoByCode( IN_RANGE( 0, LAST_OPTION_INDEX ) \
 														const int optionCode );
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-BOOLEAN checkConfigChanged( INOUT_ARRAY( configOptionsCount ) \
+BOOLEAN checkConfigChanged( IN_ARRAY( configOptionsCount ) \
 								const OPTION_INFO *optionList,
 							IN_INT_SHORT const int configOptionsCount );
 

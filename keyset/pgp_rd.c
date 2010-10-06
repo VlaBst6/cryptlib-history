@@ -7,15 +7,15 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "keyset.h"
   #include "pgp_key.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "keyset/keyset.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
   #include "keyset/pgp_key.h"
 #endif /* Compiler-specific includes */
 
@@ -495,10 +495,6 @@ static int readUserID( INOUT STREAM *stream,
 									  getMinPacketSize( packetType ) );
 		if( cryptStatusError( status ) )
 			break;
-		if( packetType == PGP_PACKET_SIGNATURE )
-			{
-			status = CRYPT_OK;
-			}
 		status = sSkip( stream, packetLength );
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
@@ -791,7 +787,7 @@ static int readKey( INOUT STREAM *stream,
 	packetHeader[ 2 ] = intToByte( ( 1 + 4 + length ) & 0xFF );
 
 	/* Hash the data needed to generate the OpenPGP keyID */
-	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, &hashSize );
+	getHashParameters( CRYPT_ALGO_SHA1, 0, &hashFunction, &hashSize );
 	hashFunction( hashInfo, NULL, 0, packetHeader, 1 + 2 + 1 + 4, 
 				  HASH_STATE_START );
 	hashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE, 
@@ -997,13 +993,14 @@ static int processKeyringPackets( INOUT STREAM *stream,
 	/* Clear return value */
 	*unhandledDataPresent = FALSE;
 
-	/* Scan all the objects in the file.  This is implemented as a sliding
-	   window that reads a certain amount of data into a lookahead buffer
-	   and then tries to identify a packet group in the buffer.  If we need
-	   to skip packets (for example due to unknown algorithms) we mark the
-	   keyset as read-only since it's no longer safe for us to write the
-	   incompletely-processed data to disk */
-	sioctl( stream, STREAM_IOCTL_IOBUFFER, streamBuffer, STREAM_BUFSIZE );
+	/* Scan all of the objects in the keyset.  This is implemented as a 
+	   sliding window that reads a certain amount of data into a lookahead 
+	   buffer and then tries to identify a packet group in the buffer.  If 
+	   we need to skip packets (for example due to unknown algorithms) we 
+	   mark the keyset as read-only since it's no longer safe for us to 
+	   write the incompletely-processed data to disk */
+	sioctlSetString( stream, STREAM_IOCTL_IOBUFFER, streamBuffer, 
+					 STREAM_BUFSIZE );
 	for( moreData = TRUE, bufEnd = 0, iterationCount = 0;
 		 ( moreData || bufEnd > 0 ) && \
 			iterationCount < FAILSAFE_ITERATIONS_MAX;
@@ -1215,12 +1212,12 @@ int pgpReadKeyring( INOUT STREAM *stream,
 	   allow partial reads without returning a read error */
 	if( ( buffer = clAlloc( "readKeyring", KEYRING_BUFSIZE ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
-	sioctl( stream, STREAM_IOCTL_PARTIALREAD, NULL, TRUE );
+	sioctlSet( stream, STREAM_IOCTL_PARTIALREAD, TRUE );
 	status = processKeyringPackets( stream, pgpInfo, maxNoPgpObjects, 
 									buffer, KEYRING_BUFSIZE, 
 									keyMatchInfo, matchedKeyInfoPtrPtr, 
 									&unhandledDataPresent, errorInfo );
-	sioctl( stream, STREAM_IOCTL_IOBUFFER, NULL, 0 );
+	sioctlSet( stream, STREAM_IOCTL_IOBUFFER, 0 );
 	clFree( "readKeyring", buffer );
 	if( cryptStatusError( status ) )
 		return( status );

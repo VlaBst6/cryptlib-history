@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							Kernel Object Management						*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
@@ -99,7 +99,7 @@ int initObjects( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i, status;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Perform a consistency check on various things that need to be set
 	   up in a certain way for things to work properly */
@@ -149,15 +149,15 @@ int initObjects( INOUT KERNEL_DATA *krnlDataPtr )
 		}
 
 	/* Postconditions */
-	POST( krnlData->objectTable != NULL );
-	POST( krnlData->objectTableSize == OBJECT_TABLE_ALLOCSIZE );
+	ENSURES( krnlData->objectTable != NULL );
+	ENSURES( krnlData->objectTableSize == OBJECT_TABLE_ALLOCSIZE );
 	FORALL( i, 0, OBJECT_TABLE_ALLOCSIZE, \
 			!memcmp( &krnlData->objectTable[ i ], \
 					 &OBJECT_INFO_TEMPLATE, sizeof( OBJECT_INFO ) ) );
-	POST( krnlData->objectStateInfo.lfsrMask == OBJECT_TABLE_ALLOCSIZE && \
-		  krnlData->objectStateInfo.lfsrPoly == INITIAL_LFSRPOLY && \
-		  krnlData->objectStateInfo.objectHandle == SYSTEM_OBJECT_HANDLE - 1 );
-	POST( krnlData->objectUniqueID == 0 );
+	ENSURES( krnlData->objectStateInfo.lfsrMask == OBJECT_TABLE_ALLOCSIZE && \
+			 krnlData->objectStateInfo.lfsrPoly == INITIAL_LFSRPOLY && \
+			 krnlData->objectStateInfo.objectHandle == SYSTEM_OBJECT_HANDLE - 1 );
+	ENSURES( krnlData->objectUniqueID == 0 );
 
 	return( CRYPT_OK );
 	}
@@ -187,10 +187,17 @@ void endObjects( void )
 
 void destroyObjectData( IN_HANDLE const int objectHandle )
 	{
-	OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
+	OBJECT_INFO *objectInfoPtr;
 
-	PRE( isValidObject( objectHandle ) );
-	PRE( isWritePtr( objectInfoPtr->objectPtr, objectInfoPtr->objectSize ) );
+	/* Precondition: It's a valid object */
+	REQUIRES_V( isValidObject( objectHandle ) );
+
+	objectInfoPtr = &krnlData->objectTable[ objectHandle ];
+
+	/* Inner precondition: There's valid object data present */
+	REQUIRES_V( objectInfoPtr->objectPtr != NULL && \
+				objectInfoPtr->objectSize > 0 && \
+				objectInfoPtr->objectSize < MAX_INTLENGTH );
 
 	/* Destroy the object's data and clear the object table entry */
 	if( objectInfoPtr->flags & OBJECT_FLAG_SECUREMALLOC )
@@ -207,12 +214,16 @@ void destroyObjectData( IN_HANDLE const int objectHandle )
 /* Destroy an object.  This is only called when cryptlib is shutting down,
    normally objects are destroyed directly in response to messages */
 
-static void destroyObject( const int objectHandle )
+static void destroyObject( IN_HANDLE const int objectHandle )
 	{
-	const OBJECT_INFO *objectInfoPtr = &krnlData->objectTable[ objectHandle ];
-	const MESSAGE_FUNCTION messageFunction = objectInfoPtr->messageFunction;
+	const OBJECT_INFO *objectInfoPtr;
+	MESSAGE_FUNCTION messageFunction;
 
-	PRE( isValidObject( objectHandle ) );
+	/* Precondition: It's a valid object */
+	REQUIRES_V( isValidObject( objectHandle ) );
+
+	objectInfoPtr = &krnlData->objectTable[ objectHandle ];
+	messageFunction = objectInfoPtr->messageFunction;
 
 	/* If there's no object present at this position, just clear the entry 
 	   (it should be cleared anyway) */
@@ -248,7 +259,7 @@ static int destroySelectedObjects( IN_RANGE( 1, 3 ) const int currentDepth )
 	int objectHandle, status = CRYPT_OK;
 
 	/* Preconditions: We're destroying objects at a fixed depth */
-	PRE( currentDepth >= 1 && currentDepth <= 3 );
+	REQUIRES( currentDepth >= 1 && currentDepth <= 3 );
 
 	for( objectHandle = NO_SYSTEM_OBJECTS; \
 		 objectHandle < krnlData->objectTableSize && \
@@ -316,10 +327,10 @@ int destroyObjects( void )
 	/* Preconditions: We either didn't complete the initialisation and are 
 	   shutting down during a krnlBeginInit(), or we've completed 
 	   initialisation and are shutting down after a krnlBeginShutdown() */
-	PRE( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
-		 ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_THREADS ) );
+	REQUIRES( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
+			  ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				krnlData->shutdownLevel == SHUTDOWN_LEVEL_THREADS ) );
 
 	/* Indicate that we're shutting down the object handling.  From now on
 	   all messages other than object-destruction ones will be rejected by
@@ -459,8 +470,8 @@ static int findFreeResource( int value )
 
 	/* Preconditions: We're starting with a valid object handle, and it's not
 	   a system object */
-	PRE( isValidHandle( value ) );
-	PRE( value >= NO_SYSTEM_OBJECTS );
+	REQUIRES( isValidHandle( value ) );
+	REQUIRES( value >= NO_SYSTEM_OBJECTS );
 
 	/* Step through the entire table looking for a free entry */
 	for( iterations = 0; isValidHandle( value ) && \
@@ -468,14 +479,16 @@ static int findFreeResource( int value )
 						 iterations < MAX_OBJECTS; 
 		 iterations++ )
 		{
-		INV( iterations < krnlData->objectTableSize );
+		/* Invariant: We're not stuck in an endless loop */
+		ENSURES( iterations < krnlData->objectTableSize );
 
 		/* Get the next value: Multiply by x and reduce by the polynomial */
 		value <<= 1;
 		if( value & krnlData->objectStateInfo.lfsrMask )
 			value ^= krnlData->objectStateInfo.lfsrPoly;
 
-		INV( isValidHandle( value ) );
+		/* Invariant: We're still within the object table */
+		ENSURES( isValidHandle( value ) );
 
 		/* If we've found a free object or we've covered the entire table,
 		   exit.  We do this check after we update the value rather than as
@@ -494,7 +507,7 @@ static int findFreeResource( int value )
 		/* Postcondition: We tried all locations and there are no free slots
 		   available (or, vastly less likely, an internal error has
 		   occurred) */
-		POST( iterations == krnlData->objectTableSize - 2 );
+		ENSURES( iterations == krnlData->objectTableSize - 2 );
 		FORALL( i, 0, krnlData->objectTableSize,
 				krnlData->objectTable[ i ].objectPtr != NULL );
 
@@ -502,8 +515,8 @@ static int findFreeResource( int value )
 		}
 
 	/* Postconditions: We found a handle to a free slot */
-	POST( isValidHandle( value ) );
-	POST( isFreeObject( value ) );
+	ENSURES( isValidHandle( value ) );
+	ENSURES( isFreeObject( value ) );
 
 	return( value );
 	}
@@ -524,11 +537,13 @@ static int expandObjectTable( void )
 	/* If we're already at the maximum number of allowed objects, don't
 	   create any more.  This prevents both accidental runaway code that
 	   creates huge numbers of objects and DoS attacks */
-	if( krnlData->objectTableSize >= MAX_OBJECTS )
-		return( CRYPT_ERROR_MEMORY );
+	if( krnlData->objectTableSize <= 0 || \
+		krnlData->objectTableSize >= MAX_OBJECTS / 2 )
+		return( CRYPT_ERROR_OVERFLOW );
 
 	/* Precondition: We haven't exceeded the maximum number of objects */
-	PRE( krnlData->objectTableSize < MAX_OBJECTS );
+	REQUIRES( krnlData->objectTableSize > 0 && \
+			  krnlData->objectTableSize < MAX_OBJECTS / 2 );
 
 	/* Expand the table */
 	newTable = clDynAlloc( "krnlCreateObject", \
@@ -541,8 +556,8 @@ static int expandObjectTable( void )
 	   allocated entries, and clear the old table */
 	memcpy( newTable, krnlData->objectTable,
 			krnlData->objectTableSize * sizeof( OBJECT_INFO ) );
-	for( i = krnlData->objectTableSize; i < krnlData->objectTableSize * 2 && \
-										i < MAX_OBJECTS; i++ )
+	for( i = krnlData->objectTableSize; 
+		 i < krnlData->objectTableSize * 2 && i < MAX_OBJECTS; i++ )
 		newTable[ i ] = OBJECT_INFO_TEMPLATE;
 	ENSURES( i < MAX_OBJECTS );
 	zeroise( krnlData->objectTable, \
@@ -565,19 +580,20 @@ static int expandObjectTable( void )
 	/* Postcondition: We've moved on to the next LFSR polynomial value,
 	   the LFSR output covers the entire table, and we now have roonm for
 	   the new object */
-	POST( ( krnlData->objectStateInfo.lfsrPoly & ~0x7F ) == \
-		  ( ( ORIGINAL_VALUE( oldLfsrPoly ) & ~0xFF ) << 1 ) );
-	POST( krnlData->objectStateInfo.lfsrMask == \
-		  ( krnlData->objectStateInfo.lfsrPoly & ~0x7F ) );
-	POST( krnlData->objectTableSize == krnlData->objectStateInfo.lfsrMask );
-	POST( isValidHandle( objectHandle ) );
+	ENSURES( ( krnlData->objectStateInfo.lfsrPoly & ~0x7F ) == \
+			 ( ( ORIGINAL_VALUE( oldLfsrPoly ) & ~0xFF ) << 1 ) );
+	ENSURES( krnlData->objectStateInfo.lfsrMask == \
+			 ( krnlData->objectStateInfo.lfsrPoly & ~0x7F ) );
+	ENSURES( krnlData->objectTableSize == \
+							krnlData->objectStateInfo.lfsrMask );
+	ENSURES( isValidHandle( objectHandle ) );
 
 	return( objectHandle );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 9 ) ) \
 int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
-					  OUT_PTR void **objectDataPtr, 
+					  OUT_BUFFER_ALLOC_OPT( objectDataSize ) void **objectDataPtr, 
 					  IN_LENGTH_SHORT const int objectDataSize,
 					  IN_ENUM( OBJECT ) const OBJECT_TYPE type, 
 					  IN_ENUM( OBJECT_SUB ) const OBJECT_SUBTYPE subType,
@@ -591,42 +607,26 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	OBJECT_SUBTYPE bitCount;
 	int localObjectHandle;
 
+	assert( isWritePtr( krnlData, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtrConst( objectDataPtr, sizeof( void * ) ) );
+
 	/* Preconditions (the subType check is just the standard hakmem bitcount
 	   which ensures that we don't try and create multi-typed objects, the
 	   sole exception to this rule is the default user object, which acts as
 	   both a user and an SO object) */
-	PRE( isWritePtr( krnlData, sizeof( KERNEL_DATA ) ) );
-	PRE( isWritePtr( objectDataPtr, sizeof( void * ) ) );
-	PRE( objectDataSize > 16 && objectDataSize < 16384 );
-	PRE( isValidType( type ) );
-	PRE( ( bitCount = ( subType & ~SUBTYPE_CLASS_MASK ) - \
-						( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 1 ) & 033333333333L ) - \
-						( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 2 ) & 011111111111L ) ) != 0 );
-	PRE( ( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 == 1 );
-	PRE( !( createObjectFlags & \
-			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY | \
-			   CREATEOBJECT_FLAG_PERSISTENT ) ) );
-	PRE( owner == CRYPT_UNUSED || isValidHandle( owner ) );
-	PRE( actionFlags >= 0 && actionFlags < ACTION_PERM_LAST );
-	PRE( messageFunction != NULL );
-
-	/* Enforce the parameter check explicitly at runtime as well */
-	bitCount = ( subType & ~SUBTYPE_CLASS_MASK ) - \
-			   ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 1 ) & 033333333333L ) - \
-			   ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 2 ) & 011111111111L );
-	if( !isWritePtrConst( objectDataPtr, sizeof( void * ) ) || \
-		objectDataSize <= 16 || objectDataSize >= 16384 || \
-		!isValidType( type ) || \
-		( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 != 1 || \
-		( createObjectFlags & \
-			~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY | \
-			   CREATEOBJECT_FLAG_PERSISTENT ) ) || \
-		( owner != CRYPT_UNUSED && !isValidHandle( owner ) ) || \
-		actionFlags < 0 || actionFlags >= ACTION_PERM_LAST || \
-		messageFunction == NULL )
-		{
-		retIntError();
-		}
+	REQUIRES( objectDataSize > 16 && objectDataSize < 16384 );
+	REQUIRES( isValidType( type ) );
+	REQUIRES( \
+		( bitCount = ( subType & ~SUBTYPE_CLASS_MASK ) - \
+					 ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 1 ) & 033333333333L ) - \
+					 ( ( ( subType & ~SUBTYPE_CLASS_MASK ) >> 2 ) & 011111111111L ) ) != 0 );
+	REQUIRES( ( ( bitCount + ( bitCount >> 3 ) ) & 030707070707L ) % 63 == 1 );
+	REQUIRES( !( createObjectFlags & \
+				 ~( CREATEOBJECT_FLAG_SECUREMALLOC | CREATEOBJECT_FLAG_DUMMY | \
+					CREATEOBJECT_FLAG_PERSISTENT ) ) );
+	REQUIRES( owner == CRYPT_UNUSED || isValidHandle( owner ) );
+	REQUIRES( actionFlags >= 0 && actionFlags < ACTION_PERM_LAST );
+	REQUIRES( messageFunction != NULL );
 
 	/* Clear return values */
 	*objectHandle = CRYPT_ERROR;
@@ -688,22 +688,22 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 	localObjectHandle = objectStateInfo->objectHandle;
 	if( localObjectHandle < NO_SYSTEM_OBJECTS - 1 )
 		{
-		PRE( ( localObjectHandle == SYSTEM_OBJECT_HANDLE - 1 && \
-			   owner == CRYPT_UNUSED && \
-			   type == OBJECT_TYPE_DEVICE && \
-			   subType == SUBTYPE_DEV_SYSTEM ) || \
-			 ( localObjectHandle == DEFAULTUSER_OBJECT_HANDLE - 1 && \
-			   owner == SYSTEM_OBJECT_HANDLE && \
-			   type == OBJECT_TYPE_USER && \
-			   subType == SUBTYPE_USER_SO ) );
+		REQUIRES( ( localObjectHandle == SYSTEM_OBJECT_HANDLE - 1 && \
+					owner == CRYPT_UNUSED && \
+					type == OBJECT_TYPE_DEVICE && \
+					subType == SUBTYPE_DEV_SYSTEM ) || \
+				  ( localObjectHandle == DEFAULTUSER_OBJECT_HANDLE - 1 && \
+					owner == SYSTEM_OBJECT_HANDLE && \
+					type == OBJECT_TYPE_USER && \
+					subType == SUBTYPE_USER_SO ) );
 		localObjectHandle++;
-		POST( isValidHandle( localObjectHandle ) && \
-			  localObjectHandle < NO_SYSTEM_OBJECTS && \
-			  localObjectHandle == objectStateInfo->objectHandle + 1 );
+		ENSURES( isValidHandle( localObjectHandle ) && \
+				 localObjectHandle < NO_SYSTEM_OBJECTS && \
+				 localObjectHandle == objectStateInfo->objectHandle + 1 );
 		}
 	else
 		{
-		PRE( isValidHandle( owner ) );
+		REQUIRES( isValidHandle( owner ) );
 
 		/* Search the table for a free entry */
 		localObjectHandle = findFreeResource( localObjectHandle );
@@ -731,7 +731,7 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 		}
 
 	/* Inner precondition: This object table slot is free */
-	PRE( isFreeObject( localObjectHandle ) );
+	REQUIRES( isFreeObject( localObjectHandle ) );
 
 	/* Set up the new object entry in the table and update the object table
 	   state */
@@ -770,17 +770,17 @@ int krnlCreateObject( OUT_HANDLE_OPT int *objectHandle,
 		krnlData->objectUniqueID = NO_SYSTEM_OBJECTS;
 	else
 		krnlData->objectUniqueID++;
-	POST( krnlData->objectUniqueID > 0 && \
-		  krnlData->objectUniqueID < INT_MAX );
+	ENSURES( krnlData->objectUniqueID > 0 && \
+			 krnlData->objectUniqueID < INT_MAX );
 
 	/* Postconditions: It's a valid object that's been set up as required */
-	POST( isValidObject( localObjectHandle ) );
-	POST( objectInfo.objectPtr == *objectDataPtr );
-	POST( objectInfo.owner == owner );
-	POST( objectInfo.type == type );
-	POST( objectInfo.subType == subType );
-	POST( objectInfo.actionFlags == actionFlags );
-	POST( objectInfo.messageFunction == messageFunction );
+	ENSURES( isValidObject( localObjectHandle ) );
+	ENSURES( objectInfo.objectPtr == *objectDataPtr );
+	ENSURES( objectInfo.owner == owner );
+	ENSURES( objectInfo.type == type );
+	ENSURES( objectInfo.subType == subType );
+	ENSURES( objectInfo.actionFlags == actionFlags );
+	ENSURES( objectInfo.messageFunction == messageFunction );
 
 	MUTEX_UNLOCK( objectTable );
 

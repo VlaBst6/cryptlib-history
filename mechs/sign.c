@@ -7,18 +7,18 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "mech.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -443,7 +443,8 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 	REQUIRES( isHandleRangeValid( iSignContext ) );
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 	REQUIRES( ( ( formatType == CRYPT_FORMAT_CRYPTLIB || \
-				  formatType == CRYPT_IFORMAT_SSH ) && \
+				  formatType == CRYPT_IFORMAT_SSH || \
+				  formatType == CRYPT_IFORMAT_TLS12 ) && \
 				sigParams == NULL ) || 
 			  ( ( formatType == CRYPT_FORMAT_CMS || \
 				  formatType == CRYPT_FORMAT_SMIME || \
@@ -452,6 +453,8 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 				sigParams != NULL ) );
 			  /* The sigParams structure is too complex to check fully here
 			     so we check it in the switch statement below */
+
+	ANALYSER_HINT( signatureLength != NULL );
 
 	/* Clear return value */
 	*signatureLength = 0;
@@ -559,6 +562,15 @@ int iCryptCreateSignature( OUT_BUFFER_OPT( signatureMaxLength, *signatureLength 
 									  iHashContext, sigParams->iSecondHash,
 									  SIGNATURE_SSL );
 			break;
+
+		case CRYPT_IFORMAT_TLS12:
+			REQUIRES( sigParams == NULL );
+
+			status = createSignature( signature, signatureMaxLength, 
+									  signatureLength, iSignContext,
+									  iHashContext, CRYPT_UNUSED,
+									  SIGNATURE_TLS12 );
+			break;
 #endif /* USE_SSL */
 
 #ifdef USE_SSH
@@ -618,10 +630,12 @@ int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature,
 	REQUIRES( ( formatType == CRYPT_IFORMAT_SSL && \
 				isHandleRangeValid( iHash2Context ) && extraData == NULL ) || \
 			  ( ( formatType == CRYPT_FORMAT_CMS || \
-				  formatType == CRYPT_FORMAT_SMIME ) && \
+				  formatType == CRYPT_FORMAT_SMIME || \
+				  formatType == CRYPT_IFORMAT_TLS12 ) && \
 				iHash2Context == CRYPT_UNUSED ) || \
 			  ( ( formatType == CRYPT_FORMAT_CRYPTLIB || \
 				  formatType == CRYPT_FORMAT_PGP || \
+				  formatType == CRYPT_IFORMAT_TLS12 || \
 				  formatType == CRYPT_IFORMAT_SSH ) && \
 				iHash2Context == CRYPT_UNUSED && extraData == NULL ) );
 
@@ -652,6 +666,12 @@ int iCryptCheckSignature( IN_BUFFER( signatureLength ) const void *signature,
 			status = checkSignature( signature, signatureLength,
 									 sigCheckContext, iHashContext,
 									 iHash2Context, SIGNATURE_SSL );
+			break;
+
+		case CRYPT_IFORMAT_TLS12:
+			status = checkSignature( signature, signatureLength,
+									 sigCheckContext, iHashContext,
+									 CRYPT_UNUSED, SIGNATURE_TLS12 );
 			break;
 #endif /* USE_SSL */
 

@@ -12,7 +12,7 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"		/* For sizeofOID() */
+  #include "enc_dec/asn1.h"		/* For sizeofOID() */
 #endif /* Compiler-specific includes */
 
 /* When replicating attributes from one type of certificate object to 
@@ -34,6 +34,8 @@ typedef enum {
 	COPY_LAST				/* Last valid copy type */
 	} COPY_TYPE;
 
+#ifdef USE_CERTIFICATES
+
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -43,7 +45,7 @@ typedef enum {
 /* Copy an attribute field */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int copyAttributeField( OUT_PTR ATTRIBUTE_LIST **destAttributeField,
+static int copyAttributeField( OUT_OPT_PTR ATTRIBUTE_LIST **destAttributeField,
 							   const ATTRIBUTE_LIST *srcAttributeField )
 	{
 	ATTRIBUTE_LIST *newElement;
@@ -81,7 +83,7 @@ static int copyAttributeField( OUT_PTR ATTRIBUTE_LIST **destAttributeField,
 /* Copy an attribute from one attribute list to another */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int copyAttribute( OUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
+static int copyAttribute( INOUT_PTR ATTRIBUTE_LIST **destListHeadPtr,
 						  const ATTRIBUTE_LIST *srcListPtr,
 						  IN_ENUM( COPY ) const COPY_TYPE copyType )
 	{
@@ -742,3 +744,4 @@ int copyRevocationAttributes( INOUT ATTRIBUTE_PTR **destListHeadPtr,
 	return( CRYPT_OK );
 	}
 #endif /* USE_CERTREV */
+#endif /* USE_CERTIFICATES */

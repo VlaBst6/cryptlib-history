@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -34,8 +34,10 @@ static int initHandshakeInfo( OUT SSH_HANDSHAKE_INFO *handshakeInfo )
 
 	/* Initialise the handshake state information values */
 	memset( handshakeInfo, 0, sizeof( SSH_HANDSHAKE_INFO ) );
-	handshakeInfo->iExchangeHashcontext = \
-		handshakeInfo->iServerCryptContext = CRYPT_ERROR;
+	handshakeInfo->iExchangeHashContext = \
+		handshakeInfo->iExchangeHashAltContext = \
+			handshakeInfo->iServerCryptContext = CRYPT_ERROR;
+	handshakeInfo->exchangeHashAlgo = CRYPT_ALGO_SHA1;
 	
 	return( CRYPT_OK );
 	}
@@ -49,8 +51,11 @@ static void destroyHandshakeInfo( INOUT SSH_HANDSHAKE_INFO *handshakeInfo )
 	   it's also done in the general session code) to provide a clean exit in
 	   case the session activation fails, so that a second activation attempt
 	   doesn't overwrite still-active contexts */
-	if( handshakeInfo->iExchangeHashcontext != CRYPT_ERROR )
-		krnlSendNotifier( handshakeInfo->iExchangeHashcontext,
+	if( handshakeInfo->iExchangeHashContext != CRYPT_ERROR )
+		krnlSendNotifier( handshakeInfo->iExchangeHashContext,
+						  IMESSAGE_DECREFCOUNT );
+	if( handshakeInfo->iExchangeHashAltContext != CRYPT_ERROR )
+		krnlSendNotifier( handshakeInfo->iExchangeHashAltContext,
 						  IMESSAGE_DECREFCOUNT );
 	if( handshakeInfo->iServerCryptContext != CRYPT_ERROR )
 		krnlSendNotifier( handshakeInfo->iServerCryptContext,
@@ -238,6 +243,25 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 	/* Check for various servers that require special-case bug workarounds.  
 	   The versions that we check for are:
 
+		BitVise WinSSHD:
+			This one is a bit hard to identify because it's built on top of 
+			their SSH library which changes names from time to time, so for 
+			WinSSHD 4.x it was identified via the vendor ID string
+			"sshlib: WinSSHD 4.yy" while for WinSSHD 5.x it was identified 
+			via the vendor ID string "FlowSsh: WinSSHD 5.xx".  In theory we 
+			could handle this by skipping the library name and looking 
+			further inside the string for the "WinSSHD" identifier, but then 
+			there's another version that uses "SrSshServer" instead of 
+			"WinSSHD", and there's also a "GlobalScape" ID used by CuteFTP 
+			(which means that CuteFTP might have finally fixed their buggy 
+			implementation of SSH by using someone else's).  As a result we 
+			can see any of "sshlib: <vendor>" or "FlowSsh: <vendor>", which 
+			we use as the identifier.
+			
+			Sends mismatched compression algorithm IDs, no compression 
+			client -> server, zlib server -> client, but works fine if no 
+			compression is selected, for versions 4.x and up.
+
 		CuteFTP:
 			Drops the connection after seeing the server hello with no
 			(usable) error indication.  This implementation is somewhat
@@ -245,10 +269,14 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 			vendor ID string "1.0" (see the ssh.com note below), this
 			problem still hasn't been fixed several years after the vendor 
 			was notified of it, indicating that it's unlikely to ever be 
-			fixed.  CuteFTP also uses the SSHv1 backwards-compatible version 
-			string "1.99" even though it can't actually do SSHv1, which 
-			means that it'll fail if it ever tries to connect to an SSHv1 
-			peer.
+			fixed.  This runs into problems with other implementations like 
+			BitVise WinSSHD 5.x, which has an ID string beginning with "1.0" 
+			(see the comment for WinSSHD above) so when trying to identify 
+			CuteFTP we check for an exact match for "1.0" as the ID string.
+			
+			CuteFTP also uses the SSHv1 backwards-compatible version string 
+			"1.99" even though it can't actually do SSHv1, which means that 
+			it'll fail if it ever tries to connect to an SSHv1 peer.
 
 		OpenSSH:
 			Omits hashing the exchange hash length when creating the hash
@@ -265,7 +293,7 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 			until further notice).
 
 		Putty:
-			Sends zero-length SSH2_MSG_IGNORE messages for version 0.59.
+			Sends zero-length SSH_MSG_IGNORE messages for version 0.59.
 
 		ssh.com:
 			This implementation puts the version number first so if we find
@@ -324,6 +352,10 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 			be signed for client auth for version 3.0 (SecureCRT = SSH) and
 			1.7 (SecureFX = SFTP).
 
+		WeOnlyDo:
+			Has the same mismatched compression algorithm ID bug as BitVise 
+			WinSSHD (see comment above) for unknown versions above about 2.x.
+
 	   Further quirks and peculiarities abound, some are handled automatically 
 	   by workarounds in the code and for the rest they're fortunately rare 
 	   enough (mostly for long-obsolete SSHv1 versions) that we don't have to 
@@ -359,13 +391,24 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 
 		return( CRYPT_OK );
 		}
+	if( versionStringLength >= 9 && \
+		!memcmp( versionStringPtr, "WeOnlyDo ", 9 ) )
+		{
+		const BYTE *subVersionStringPtr = versionStringPtr + 9;
+
+		if( subVersionStringPtr[ 0 ] >= '2' )
+			sessionInfoPtr->protocolFlags |= SSH_PFLAG_ASYMMCOPR;
+		return( CRYPT_OK );
+		}
 	if( isDigit( *versionStringPtr ) )
 		{
 		const BYTE *vendorIDString;
 		const int versionDigit = byteToInt( *versionStringPtr );
 		int vendorIDStringLength;
 
-		/* Look for a vendor ID after the version information */
+		/* Look for a vendor ID after the version information.  This breaks 
+		   down the string "[SSH-x.y-]x.yy vendor-text" to 
+		   'versionStringPtr = "x.yy"' and 'vendorIDString = "vendor-text"' */
 		for( vendorIDStringLength = versionStringLength, \
 				vendorIDString = versionStringPtr;
 			 vendorIDStringLength > 0 && *vendorIDString != ' ';
@@ -383,8 +426,14 @@ static int readVersionString( INOUT SESSION_INFO *sessionInfoPtr )
 				if( versionStringLength >= 12 && \
 					!memcmp( versionStringPtr, "1.7 SecureFX", 12 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_NOHASHLENGTH;
-				if( !memcmp( versionStringPtr, "1.0", 3 ) )
+				if( versionStringLength == 3 && \
+					!memcmp( versionStringPtr, "1.0", 3 ) )
 					sessionInfoPtr->protocolFlags |= SSH_PFLAG_CUTEFTP;
+				if( ( vendorIDStringLength > 8 && \
+					!memcmp( vendorIDString, "sshlib: ", 8 ) > 0 ) || \
+					( vendorIDStringLength > 9 && \
+					!memcmp( vendorIDString, "FlowSsh: ", 9 ) > 0 ) )
+					sessionInfoPtr->protocolFlags |= SSH_PFLAG_ASYMMCOPR;
 				break;
 
 			case '2':
@@ -477,13 +526,32 @@ static int initVersion( INOUT SESSION_INFO *sessionInfoPtr,
 						isServer( sessionInfoPtr ) ? TRUE : FALSE );
 
 	/* SSHv2 hashes parts of the handshake messages for integrity-protection
-	   purposes so we create a context for the hash */
+	   purposes so we create a context for the hash.  In addition since the 
+	   handshake can retroactively switch to a different hash algorithm mid-
+	   exchange we have to speculatively hash the messages with SHA2 as well
+	   as SHA1 in case the other side decides to switch */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
-	if( cryptStatusOK( status ) )
-		handshakeInfo->iExchangeHashcontext = createInfo.cryptHandle;
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+	handshakeInfo->iExchangeHashContext = createInfo.cryptHandle;
+	if( algoAvailable( CRYPT_ALGO_SHA2 ) )
+		{
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA2 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
+								  &createInfo, OBJECT_TYPE_CONTEXT );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( handshakeInfo->iExchangeHashContext, 
+							  IMESSAGE_DECREFCOUNT );
+			handshakeInfo->iExchangeHashContext = CRYPT_ERROR;
+			return( status );
+			}
+		handshakeInfo->iExchangeHashAltContext = createInfo.cryptHandle;
+		}
+
+	return( CRYPT_OK );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -722,7 +790,7 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	BYTE buffer[ 128 + ( CRYPT_MAX_PKCSIZE * 4 ) + 8 ];
 	BYTE fingerPrint[ CRYPT_MAX_HASHSIZE + 8 ];
 	void *blobData = DUMMY_INIT_PTR;
-	int blobDataLength = DUMMY_INIT, hashSize, status;
+	int blobDataLength = DUMMY_INIT, hashSize, value, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
@@ -731,11 +799,34 @@ static int checkAttributeFunction( SESSION_INFO *sessionInfoPtr,
 	if( type != CRYPT_SESSINFO_PRIVATEKEY )
 		return( CRYPT_OK );
 
+	/* If it's an ECC key then it has to be one of NIST { P256, P384, P521 }.
+	   Unfortunately there's no easy way to determine whether the curve 
+	   being used is an SSH-compatible one or not since the user could load
+	   their own custom 256-bit curve, or conversely load a known NIST curve 
+	   as a series of discrete key parameters, for now we just assume that a 
+	   curve of the given size is the correct one */
+	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_CTXINFO_ALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( isEccAlgo( value ) )
+		{
+		status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE, 
+								  &value, CRYPT_CTXINFO_KEYSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		if( value != bitsToBytes( 256 ) && \
+			value != bitsToBytes( 384 ) && \
+			value != bitsToBytes( 521 ) )
+			return( CRYPT_ARGERROR_NUM1 );
+		}
+
 	/* Only the server key has a fingerprint */
 	if( !isServer( sessionInfoPtr ) )
 		return( CRYPT_OK );
 
-	getHashAtomicParameters( CRYPT_ALGO_MD5, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_MD5, 0, &hashFunctionAtomic, 
+							 &hashSize );
 
 	/* The fingerprint is computed from the "key blob", which is different
 	   from the server key.  The server key is the full key while the "key

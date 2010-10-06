@@ -1,20 +1,20 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Datagram Decoding Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2009					*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /*			 .... NO! ...				   ... MNO! ...
@@ -516,6 +516,15 @@ static int copyEncryptedDataBlocks( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   doing a copy within the buffer rather than copying in data from
 	   an external source */
 	memmove( bufPtr + bytesFromBB, buffer, quantizedBytesToCopy );
+	if( envelopeInfoPtr->dataFlags & ENVDATA_AUTHENCACTIONSACTIVE )
+		{
+		/* We're performing authenticated encryotion, hash the ciphertext
+		   before decrypting it */
+		status = hashEnvelopeData( envelopeInfoPtr->actionList, bufPtr,
+								   bytesFromBB + quantizedBytesToCopy );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	status = krnlSendMessage( envelopeInfoPtr->iCryptContext,
 							  IMESSAGE_CTX_DECRYPT, bufPtr,
 							  bytesFromBB + quantizedBytesToCopy );
@@ -672,6 +681,15 @@ static int copyData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	memmove( bufPtr, buffer, bytesToCopy );
 	if( envelopeInfoPtr->iCryptContext != CRYPT_ERROR )
 		{
+		if( envelopeInfoPtr->dataFlags & ENVDATA_AUTHENCACTIONSACTIVE )
+			{
+			/* We're performing authenticated encryotion, hash the 
+			   ciphertext before decrypting it */
+			status = hashEnvelopeData( envelopeInfoPtr->actionList, bufPtr,
+									   bytesToCopy );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
 		status = krnlSendMessage( envelopeInfoPtr->iCryptContext,
 								  IMESSAGE_CTX_DECRYPT, bufPtr,
 								  bytesToCopy );
@@ -712,10 +730,6 @@ static int copyToDeenvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isReadPtr( buffer, length ) );
-
-/*///////////////////////////////////////////////////*/
-assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
-/*///////////////////////////////////////////////////*/
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 	REQUIRES( length > 0 && length < MAX_INTLENGTH );
@@ -923,10 +937,6 @@ static int copyFromDeenvelope( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( buffer, maxLength ) );
 	assert( isWritePtr( length, sizeof( int ) ) );
-
-/*///////////////////////////////////////////////////*/
-assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
-/*///////////////////////////////////////////////////*/
 
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 	REQUIRES( maxLength > 0 && maxLength < MAX_INTLENGTH );
@@ -1193,10 +1203,6 @@ static int syncDeenvelopeData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-/*///////////////////////////////////////////////////*/
-assert( envelopeInfoPtr->segmentSize != CRYPT_UNUSED );
-/*///////////////////////////////////////////////////*/
-
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 	REQUIRES( dataStartPos >= 0 && dataStartPos < MAX_INTLENGTH );
 
@@ -1310,19 +1316,30 @@ static int processExtraData( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* If the hash value was supplied externally (which means that there's
 	   nothing for us to hash since it's already been done by the caller),
 	   there won't be any hash actions active and we can return immediately */
-	if( !( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE ) )
+	if( !( envelopeInfoPtr->dataFlags & ( ENVDATA_HASHACTIONSACTIVE | \
+										  ENVDATA_AUTHENCACTIONSACTIVE ) ) )
 		return( ( length > 0 ) ? CRYPT_ERROR_BADDATA : CRYPT_OK );
 
-	/* Hash the data or wrap up the hashing as appropriate */
-	status = hashEnvelopeData( envelopeInfoPtr->actionList, buffer, length );
-	if( cryptStatusError( status ) )
-		return( status );
+	/* If we're still processing data, hash it.  Since authenticated-
+	   encrypted content hashes the ciphertext before decryption rather than 
+	   the plaintext we only perform hashing of nonzero-length data if we're 
+	   working with straight signed or MACed data */
+	if( length > 0 )
+		{
+		if( !( envelopeInfoPtr->dataFlags & ENVDATA_HASHACTIONSACTIVE ) )
+			return( CRYPT_OK );
+		return( hashEnvelopeData( envelopeInfoPtr->actionList, buffer, 
+								  length ) );
+		}
 
-	/* If we've finished the hashing, clear the hashing-active flag to
+	/* We're finishing up the hashing, clear the hashing-active flag to
 	   prevent data from being hashed again if it's processed by other
 	   code such as copyFromDeenvelope() */
-	if( length <= 0 )
-		envelopeInfoPtr->dataFlags &= ~ENVDATA_HASHACTIONSACTIVE;
+	status = hashEnvelopeData( envelopeInfoPtr->actionList, "", 0 );
+	if( cryptStatusError( status ) )
+		return( status );
+	envelopeInfoPtr->dataFlags &= ~( ENVDATA_HASHACTIONSACTIVE | \
+									 ENVDATA_AUTHENCACTIONSACTIVE );
 
 	return( CRYPT_OK );
 	}

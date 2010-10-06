@@ -40,7 +40,7 @@ int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i, status;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	assert( MUTEX_LAST == 4 );
 
@@ -69,12 +69,12 @@ int initSemaphores( INOUT KERNEL_DATA *krnlDataPtr )
 
 void endSemaphores( void )
 	{
-	PRE( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
-		 ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
-		 ( krnlData->initLevel == INIT_LEVEL_FULL && \
-		   krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
+	REQUIRES_V( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				  krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
+				( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				  krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
+				( krnlData->initLevel == INIT_LEVEL_FULL && \
+				  krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
 
 	/* Signal that kernel mechanisms are no longer available */
 	krnlData->shutdownLevel = SHUTDOWN_LEVEL_MUTEXES;
@@ -134,10 +134,10 @@ void setSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore,
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
 
-	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
-
-	/* Make sure that the selected semaphore is valid */
 	REQUIRES_V( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+
+	/* It's safe to get a pointer to this outside the lock, we just can't
+	   access it yet */
 	semaphoreInfo = &krnlData->semaphoreInfo[ semaphore ];
 
 	/* Lock the semaphore table, set the semaphore, and unlock it again */
@@ -157,19 +157,21 @@ void clearSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 	{
 	SEMAPHORE_INFO *semaphoreInfo;
 
-	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
-
-	/* Make sure that the selected semaphore is valid */
 	REQUIRES_V( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+
+	/* It's safe to get a pointer to this outside the lock, we just can't
+	   access it yet */
 	semaphoreInfo = &krnlData->semaphoreInfo[ semaphore ];
 
 	/* Lock the semaphore table, clear the semaphore, and unlock it again */
 	MUTEX_LOCK( semaphore );
 	if( semaphoreInfo->state == SEMAPHORE_STATE_SET )
 		{
-		/* Precondition: The reference count is valid */
+		/* Precondition: The reference count is valid.  Note that we have to
+		   make this an assert() rather than a REQUIRES() because the latter
+		   would exit with the semaphore still held */
 #if !( defined( __WINCE__ ) && _WIN32_WCE < 400 )
-		PRE( semaphoreInfo[ semaphore ].refCount >= 0 );
+		assert( semaphoreInfo[ semaphore ].refCount >= 0 );
 #endif /* Fix for bug in PocketPC 2002 emulator with eVC++ 3.0 */
 
 		/* If there are threads waiting on this semaphore, tell the last
@@ -205,9 +207,6 @@ BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 	BOOLEAN semaphoreSet = FALSE;
 	int status = CRYPT_OK;
 
-	PRE( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
-
-	/* Make sure that the selected semaphore is valid */
 	REQUIRES_B( semaphore > SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 
 	/* If we're in a shutdown and the semaphores have been destroyed, don't
@@ -223,8 +222,10 @@ BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 	MUTEX_LOCK( semaphore );
 	if( semaphoreInfo->state == SEMAPHORE_STATE_SET )
 		{
-		/* Precondition: The reference count is valid */
-		PRE( semaphoreInfo->refCount >= 0 );
+		/* Precondition: The reference count is valid.  Note that we have to
+		   make this an assert() rather than a REQUIRES() because the latter
+		   would exit with the semaphore still held */
+		assert( semaphoreInfo->refCount >= 0 );
 
 		/* The semaphore is set and not in use, extract the information we
 		   require and mark is as being in use */
@@ -258,8 +259,10 @@ BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 		/* The semaphore is still set, update the reference count */
 		semaphoreInfo->refCount--;
 
-		/* Inner precondition: The reference count is valid */
-		PRE( semaphoreInfo->refCount >= 0 );
+		/* Inner precondition: The reference count is valid.  Note that we 
+		   have to make this an assert() rather than a REQUIRES() because 
+		   the latter would exit with the semaphore still held */
+		assert( semaphoreInfo->refCount >= 0 );
 
 		/* If the object owner has signalled that it's done with the object
 		   and the reference count has reached zero, we can delete it */
@@ -287,9 +290,6 @@ BOOLEAN krnlWaitSemaphore( IN_ENUM( SEMAPHORE ) const SEMAPHORE_TYPE semaphore )
 CHECK_RETVAL \
 int krnlEnterMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex )
 	{
-	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
-
-	/* Make sure that the selected mutex is valid */
 	REQUIRES( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 
 	/* If we're in a shutdown and the mutexes have been destroyed, don't
@@ -322,9 +322,6 @@ int krnlEnterMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex )
 
 void krnlExitMutex( IN_ENUM( MUTEX ) const MUTEX_TYPE mutex )
 	{
-	PRE( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
-
-	/* Make sure that the selected mutex is valid */
 	REQUIRES_V( mutex > MUTEX_NONE && mutex < MUTEX_LAST );
 
 	/* If we're in a shutdown and the mutexes have been destroyed, don't

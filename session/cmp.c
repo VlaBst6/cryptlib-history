@@ -12,7 +12,7 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -142,7 +142,7 @@ int reqToResp( IN_ENUM_OPT( CTAG_PB ) const CMP_MESSAGE_TYPE reqType )
 /* Initialise and destroy the protocol state information */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void initCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo, 
+void initCMPprotocolInfo( OUT CMP_PROTOCOL_INFO *protocolInfo, 
 						  const BOOLEAN isCryptlib,
 						  const BOOLEAN isServer )
 	{
@@ -195,8 +195,8 @@ int setCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 		protocolInfo->userIDsize = userIDlength;
 		DEBUG_PRINT(( "%s: Set userID.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI" ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->userID, protocolInfo->userIDsize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->userID, protocolInfo->userIDsize );
 		}
 	if( flags & CMP_INIT_FLAG_TRANSID )
 		{
@@ -208,8 +208,8 @@ int setCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 		protocolInfo->transIDsize = CMP_NONCE_SIZE;
 		DEBUG_PRINT(( "%s: Set new transID.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI" ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->transID, protocolInfo->transIDsize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->transID, protocolInfo->transIDsize );
 		}
 
 	/* Set the MAC information and context.  cryptlib uses strong passwords 

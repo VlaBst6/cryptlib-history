@@ -11,8 +11,8 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_CERTVAL
@@ -81,7 +81,7 @@ static int checkValidity( const CERT_INFO *certInfoPtr,
 	   indirectly since it's computed on demand and may not have been 
 	   evaluated yet */
 	status = getCertComponent( ( CERT_INFO * ) certInfoPtr,
-							   CRYPT_CERTINFO_FINGERPRINT_SHA,
+							   CRYPT_CERTINFO_FINGERPRINT_SHA1,
 							   certHash, CRYPT_MAX_HASHSIZE, 
 							   &certHashLength );
 	if( cryptStatusError( status ) )
@@ -103,7 +103,7 @@ static int checkValidity( const CERT_INFO *certInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-					  OUT_OPT_PTR VALIDITY_INFO **newEntryPosition,
+					  OUT_OPT_PTR_OPT VALIDITY_INFO **newEntryPosition,
 					  IN_BUFFER( valueLength ) const void *value, 
 					  IN_LENGTH_FIXED( KEYID_SIZE ) const int valueLength )
 	{
@@ -229,7 +229,7 @@ int copyValidityEntries( INOUT_PTR VALIDITY_INFO **destListHeadPtrPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 int prepareValidityEntries( IN_OPT const VALIDITY_INFO *listPtr, 
-							OUT_PTR VALIDITY_INFO **errorEntry,
+							OUT_OPT_PTR VALIDITY_INFO **errorEntry,
 							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
 							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \

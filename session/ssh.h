@@ -9,6 +9,10 @@
 
 #define _SSH_DEFINED
 
+#if defined( USE_SSH_EXTENDED ) && defined( _MSC_VER )
+  #pragma message( "  Building with extended SSH facilities enabled." )
+#endif /* USE_SSH_EXTENDED with VC++ */
+
 /****************************************************************************
 *																			*
 *								SSH Constants								*
@@ -53,23 +57,41 @@
 #define DEFAULT_PACKET_SIZE		16384
 #define MAX_WINDOW_SIZE			( MAX_INTLENGTH - 8192 )
 
+/* By default cryptlib uses DH key agreement, which is supported by all 
+   servers.  It's also possible to use ECDH key agreement, however due to
+   SSH's braindamaged way of choosing algorithms the peer will always go
+   for ECDH if it can handle it (see the comment in sesion/ssh2_svr.c for
+   more on this), so we disable ECDH by default.  To use ECDH key agreement 
+   in preference to DH, uncomment the following */
+
+/* #define PREFER_ECC_SUITES */
+#if defined( PREFER_ECC_SUITES ) && defined( _MSC_VER )
+  #pragma message( "  Building with ECC preferred for SSH." )
+#endif /* PREFER_ECC_SUITES && Visual C++ */
+#if defined( PREFER_ECC_SUITES ) && \
+	!( defined( USE_ECDH ) && defined( USE_ECDSA ) )
+  #error PREFER_ECC_SUITES can only be used with ECDH and ECDSA enabled
+#endif /* PREFER_ECC_SUITES && !( USE_ECDH && USE_ECDSA ) */
+
 /* SSH protocol-specific flags that encode details of implementation bugs 
    that we need to work around */
 
 #define SSH_PFLAG_NONE			0x0000/* No protocol-specific flags */
-#define SSH_PFLAG_HMACKEYSIZE	0x0001/* Peer is using short HMAC keys */
-#define SSH_PFLAG_SIGFORMAT		0x0002/* Peer omits sig.algo name */
+#define SSH_PFLAG_HMACKEYSIZE	0x0001/* Peer uses short HMAC keys */
+#define SSH_PFLAG_SIGFORMAT		0x0002/* Peer omits signature algo name */
 #define SSH_PFLAG_NOHASHSECRET	0x0004/* Peer omits secret in key derive */
-#define SSH_PFLAG_NOHASHLENGTH	0x0008/* Peer omits length in exchge.hash */
+#define SSH_PFLAG_NOHASHLENGTH	0x0008/* Peer omits length in exchange hash */
 #define SSH_PFLAG_RSASIGPAD		0x0010/* Peer requires zero-padded RSA sig.*/
 #define SSH_PFLAG_WINDOWSIZE	0x0020/* Peer mishandles large window sizes */
 #define SSH_PFLAG_TEXTDIAGS		0x0040/* Peer dumps text diagnostics on error */
 #define SSH_PFLAG_PAMPW			0x0080/* Peer chokes on "password" as PAM submethod */
-#define SSH_PFLAG_DUMMYUSERAUTH	0x0100/* Peer requires dummy userAuth msg.*/
-#define SSH_PFLAG_EMPTYUSERAUTH	0x0200/* Peer sends empty userauth-failure resp.*/
+#define SSH_PFLAG_DUMMYUSERAUTH	0x0100/* Peer requires dummy userAuth message */
+#define SSH_PFLAG_EMPTYUSERAUTH	0x0200/* Peer sends empty userauth-failure response */
 #define SSH_PFLAG_ZEROLENIGNORE	0x0400/* Peer sends zero-length SSH_IGNORE */
-#define SSH_PFLAG_CUTEFTP		0x0800/* CuteFTP, drops conn.during handshake */
+#define SSH_PFLAG_ASYMMCOPR		0x0800/* Peer sends asymmetric compression algos */
 #define SSH_PFLAG_EMPTYSVCACCEPT 0x1000/* Peer sends empty SSH_SERVICE_ACCEPT */
+#define SSH_PFLAG_CUTEFTP		0x2000/* CuteFTP, drops conn.during handshake */
+#define SSH_PFLAG_MAX			0x3FFF/* Maximum possible flag value */
 
 /* Various data sizes used for read-ahead and buffering.  The minimum SSH
    packet size is used to determine how much data we can read when reading
@@ -151,43 +173,45 @@
 
 /* SSHv2 packet types.  There is some overlap with SSHv1, but an annoying
    number of messages have the same name but different values.  Note also
-   that the keyex (static DH keys) and keyex_gex (ephemeral DH keys) message
-   types overlap */
+   that the keyex (static DH keys), keyex_gex (ephemeral DH keys), and
+   keyex_ecdh (static ECDH keys) message types overlap */
 
-#define SSH2_MSG_DISCONNECT		1	/* Disconnect session */
-#define SSH2_MSG_IGNORE			2	/* No-op */
-#define SSH2_MSG_DEBUG			4	/* No-op */
-#define SSH2_MSG_SERVICE_REQUEST 5	/* Request authentiction */
-#define SSH2_MSG_SERVICE_ACCEPT	6	/* Acknowledge request */
-#define SSH2_MSG_KEXINIT		20	/* Hello */
-#define SSH2_MSG_NEWKEYS		21	/* Change cipherspec */
-#define SSH2_MSG_KEXDH_INIT		30	/* DH, phase 1 */
-#define SSH2_MSG_KEXDH_REPLY	31	/* DH, phase 2 */
-#define SSH2_MSG_KEXDH_GEX_REQUEST_OLD 30 /* Ephem.DH key request */
-#define SSH2_MSG_KEXDH_GEX_GROUP 31	/* Ephem.DH key response */
-#define SSH2_MSG_KEXDH_GEX_INIT	32	/* Ephem.DH, phase 1 */
-#define SSH2_MSG_KEXDH_GEX_REPLY 33	/* Ephem.DH, phase 2 */
-#define SSH2_MSG_KEXDH_GEX_REQUEST_NEW 34 /* Ephem.DH key request */
-#define SSH2_MSG_USERAUTH_REQUEST 50 /* Request authentication */
-#define SSH2_MSG_USERAUTH_FAILURE 51 /* Authentication failed */
-#define SSH2_MSG_USERAUTH_SUCCESS 52 /* Authentication succeeded */
-#define SSH2_MSG_USERAUTH_BANNER 53	/* No-op */
-#define SSH2_MSG_USERAUTH_INFO_REQUEST 60 /* Generic auth.svr.request */
-#define SSH2_MSG_USERAUTH_INFO_RESPONSE 61 /* Generic auth.cli.response */
-#define SSH2_MSG_GLOBAL_REQUEST	80	/* Perform a global ioctl */
-#define SSH2_MSG_GLOBAL_SUCCESS	81	/* Global request succeeded */
-#define SSH2_MSG_GLOBAL_FAILURE	82	/* Global request failed */
-#define	SSH2_MSG_CHANNEL_OPEN	90	/* Open a channel over an SSH link */
-#define	SSH2_MSG_CHANNEL_OPEN_CONFIRMATION 91	/* Channel open succeeded */
-#define SSH2_MSG_CHANNEL_OPEN_FAILURE 92	/* Channel open failed */
-#define	SSH2_MSG_CHANNEL_WINDOW_ADJUST 93	/* No-op */
-#define SSH2_MSG_CHANNEL_DATA	94	/* Data */
-#define SSH2_MSG_CHANNEL_EXTENDED_DATA 95	/* Out-of-band data */
-#define SSH2_MSG_CHANNEL_EOF	96	/* EOF */
-#define SSH2_MSG_CHANNEL_CLOSE	97	/* Close the channel */
-#define SSH2_MSG_CHANNEL_REQUEST 98	/* Perform a channel ioctl */
-#define SSH2_MSG_CHANNEL_SUCCESS 99	/* Channel request succeeded */
-#define SSH2_MSG_CHANNEL_FAILURE 100/* Channel request failed */
+#define SSH_MSG_DISCONNECT		1	/* Disconnect session */
+#define SSH_MSG_IGNORE			2	/* No-op */
+#define SSH_MSG_DEBUG			4	/* No-op */
+#define SSH_MSG_SERVICE_REQUEST 5	/* Request authentiction */
+#define SSH_MSG_SERVICE_ACCEPT	6	/* Acknowledge request */
+#define SSH_MSG_KEXINIT			20	/* Hello */
+#define SSH_MSG_NEWKEYS			21	/* Change cipherspec */
+#define SSH_MSG_KEXDH_INIT		30	/* DH, phase 1 */
+#define SSH_MSG_KEXDH_REPLY		31	/* DH, phase 2 */
+#define SSH_MSG_KEXDH_GEX_REQUEST_OLD 30 /* Ephem.DH key request */
+#define SSH_MSG_KEXDH_GEX_GROUP 31	/* Ephem.DH key response */
+#define SSH_MSG_KEXDH_GEX_INIT	32	/* Ephem.DH, phase 1 */
+#define SSH_MSG_KEXDH_GEX_REPLY 33	/* Ephem.DH, phase 2 */
+#define SSH_MSG_KEXDH_GEX_REQUEST_NEW 34 /* Ephem.DH key request */
+#define SSH_MSG_KEX_ECDH_INIT	30	/* ECDH, phase 1 */
+#define SSH_MSG_KEX_ECDH_REPLY	31	/* ECDH, phase 2 */
+#define SSH_MSG_USERAUTH_REQUEST 50 /* Request authentication */
+#define SSH_MSG_USERAUTH_FAILURE 51 /* Authentication failed */
+#define SSH_MSG_USERAUTH_SUCCESS 52 /* Authentication succeeded */
+#define SSH_MSG_USERAUTH_BANNER 53	/* No-op */
+#define SSH_MSG_USERAUTH_INFO_REQUEST 60 /* Generic auth.svr.request */
+#define SSH_MSG_USERAUTH_INFO_RESPONSE 61 /* Generic auth.cli.response */
+#define SSH_MSG_GLOBAL_REQUEST	80	/* Perform a global ioctl */
+#define SSH_MSG_GLOBAL_SUCCESS	81	/* Global request succeeded */
+#define SSH_MSG_GLOBAL_FAILURE	82	/* Global request failed */
+#define	SSH_MSG_CHANNEL_OPEN	90	/* Open a channel over an SSH link */
+#define	SSH_MSG_CHANNEL_OPEN_CONFIRMATION 91	/* Channel open succeeded */
+#define SSH_MSG_CHANNEL_OPEN_FAILURE 92	/* Channel open failed */
+#define	SSH_MSG_CHANNEL_WINDOW_ADJUST 93	/* No-op */
+#define SSH_MSG_CHANNEL_DATA	94	/* Data */
+#define SSH_MSG_CHANNEL_EXTENDED_DATA 95	/* Out-of-band data */
+#define SSH_MSG_CHANNEL_EOF		96	/* EOF */
+#define SSH_MSG_CHANNEL_CLOSE	97	/* Close the channel */
+#define SSH_MSG_CHANNEL_REQUEST 98	/* Perform a channel ioctl */
+#define SSH_MSG_CHANNEL_SUCCESS 99	/* Channel request succeeded */
+#define SSH_MSG_CHANNEL_FAILURE 100/* Channel request failed */
 
 /* Special-case expected-packet-type values that are passed to
    readHSPacketSSH() to handle situations where more than one return value is
@@ -206,30 +230,30 @@
 #define SSH1_MSG_SPECIAL_RSAOPT		502	/* Value to handle SSHv1 RSA challenge */
 #define SSH1_MSG_SPECIAL_ANY		503	/* Any SSHv1 packet type */
 
-#define SSH2_MSG_SPECIAL_FIRST		500	/* Boundary for _SPECIAL types */
-#define SSH2_MSG_SPECIAL_USERAUTH	501	/* Value to handle SSHv2 combined auth.*/
-#define SSH2_MSG_SPECIAL_USERAUTH_PAM 502	/* Value to handle SSHv2 PAM auth.*/
-#define SSH2_MSG_SPECIAL_CHANNEL	503	/* Value to handle channel open */
-#define SSH2_MSG_SPECIAL_REQUEST	504	/* Value to handle SSHv2 global/channel req.*/
-#define SSH2_MSG_SPECIAL_LAST		505	/* Last valid _SPECIAL type */
+#define SSH_MSG_SPECIAL_FIRST		500	/* Boundary for _SPECIAL types */
+#define SSH_MSG_SPECIAL_USERAUTH	501	/* Value to handle SSHv2 combined auth.*/
+#define SSH_MSG_SPECIAL_USERAUTH_PAM 502 /* Value to handle SSHv2 PAM auth.*/
+#define SSH_MSG_SPECIAL_CHANNEL		503	/* Value to handle channel open */
+#define SSH_MSG_SPECIAL_REQUEST		504	/* Value to handle SSHv2 global/channel req.*/
+#define SSH_MSG_SPECIAL_LAST		505	/* Last valid _SPECIAL type */
 
 /* SSHv2 disconnection codes */
 
-#define SSH2_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT		1
-#define SSH2_DISCONNECT_PROTOCOL_ERROR					2
-#define SSH2_DISCONNECT_KEY_EXCHANGE_FAILED				3
-#define SSH2_DISCONNECT_RESERVED						4
-#define SSH2_DISCONNECT_MAC_ERROR						5
-#define SSH2_DISCONNECT_COMPRESSION_ERROR				6
-#define SSH2_DISCONNECT_SERVICE_NOT_AVAILABLE			7
-#define SSH2_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED	8
-#define SSH2_DISCONNECT_HOST_KEY_NOT_VERIFIABLE			9
-#define SSH2_DISCONNECT_CONNECTION_LOST					10
-#define SSH2_DISCONNECT_BY_APPLICATION					11
-#define SSH2_DISCONNECT_TOO_MANY_CONNECTIONS			12
-#define SSH2_DISCONNECT_AUTH_CANCELLED_BY_USER			13
-#define SSH2_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE	14
-#define SSH2_DISCONNECT_ILLEGAL_USER_NAME				15
+#define SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT		1
+#define SSH_DISCONNECT_PROTOCOL_ERROR					2
+#define SSH_DISCONNECT_KEY_EXCHANGE_FAILED				3
+#define SSH_DISCONNECT_RESERVED							4
+#define SSH_DISCONNECT_MAC_ERROR						5
+#define SSH_DISCONNECT_COMPRESSION_ERROR				6
+#define SSH_DISCONNECT_SERVICE_NOT_AVAILABLE			7
+#define SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED	8
+#define SSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE			9
+#define SSH_DISCONNECT_CONNECTION_LOST					10
+#define SSH_DISCONNECT_BY_APPLICATION					11
+#define SSH_DISCONNECT_TOO_MANY_CONNECTIONS				12
+#define SSH_DISCONNECT_AUTH_CANCELLED_BY_USER			13
+#define SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE	14
+#define SSH_DISCONNECT_ILLEGAL_USER_NAME				15
 
 /* SSHv2 channel open failure codes */
 
@@ -242,14 +266,29 @@
    types that don't correspond to normal cryptlib algorithms.  To handle
    these, we define pseudo-algoID values that fall within the range of
    the normal algorithm ID types but that aren't normal algorithm IDs.
-   The difference between CRYPT_PSEUDOALGO_DHE and CRYPT_PSEUDOALGO_ALTDHE
+
+   The difference between CRYPT_PSEUDOALGO_DHE and CRYPT_PSEUDOALGO_DHE_ALT
    is that the former uses SHA-1 and the latter uses a hastily-kludged-
    on SHA-256 that was added shortly before the RFC was published, so
    that the PRF uses SHA-256 but all other portions of the protocol still
-   use SHA-1 */
+   use SHA-1.
 
-#define CRYPT_PSEUDOALGO_DHE		( CRYPT_ALGO_LAST_CONVENTIONAL - 5 )
-#define CRYPT_PSEUDOALGO_DHE_ALT	( CRYPT_ALGO_LAST_CONVENTIONAL - 4 )
+   The ECC (pseudo-)algorithm types are even messier since they're not just 
+   algorithm values but a combination of the algorithm, the key size, and 
+   the hash algorithm, with CRYPT_ALGO_ECDH/CRYPT_ALGO_ECDSA being the 
+   default P256 curve with SHA-256 and the others being different curve 
+   types and hashes.  Because the curve types are tied to the oddball SHA-2 
+   hash variants (we can't just use SHA-256 for every curve), we don't 
+   support P384 and P512 because we'd have to support an entirely new (and 
+   64-bit-only) hash algorithm for each of the curves.  Because of this the 
+   values for P384/P512 are defined below, but disabled in the code */
+
+#define CRYPT_PSEUDOALGO_DHE		( CRYPT_ALGO_LAST_CONVENTIONAL - 9 )
+#define CRYPT_PSEUDOALGO_DHE_ALT	( CRYPT_ALGO_LAST_CONVENTIONAL - 8 )
+#define CRYPT_PSEUDOALGO_ECDH_P384	( CRYPT_ALGO_LAST_CONVENTIONAL - 7 )
+#define CRYPT_PSEUDOALGO_ECDH_P521	( CRYPT_ALGO_LAST_CONVENTIONAL - 6 )
+#define CRYPT_PSEUDOALGO_ECDSA_P384	( CRYPT_ALGO_LAST_CONVENTIONAL - 5 )
+#define CRYPT_PSEUDOALGO_ECDSA_P521	( CRYPT_ALGO_LAST_CONVENTIONAL - 4 )
 #define CRYPT_PSEUDOALGO_COPR		( CRYPT_ALGO_LAST_CONVENTIONAL - 3 )
 #define CRYPT_PSEUDOALGO_PASSWORD	( CRYPT_ALGO_LAST_CONVENTIONAL - 2 )
 #define CRYPT_PSEUDOALGO_PAM		( CRYPT_ALGO_LAST_CONVENTIONAL - 1 )
@@ -281,11 +320,17 @@ typedef enum {
 	SSH_ATRIBUTE_LAST						/* Last channel attribute */
 	} SSH_ATTRIBUTE_TYPE;
 
-/* Check whether a DH value is valid for a given server key size */
+/* Check whether a DH/ECDH value is valid for a given server key size.  The 
+   check is slightly different for the ECC version because the value is
+   a composite ECC point with two coordinates, so we have to divide the 
+   length by two to get the size of a single coordinate */
 
 #define isValidDHsize( value, serverKeySize, extraLength ) \
 		( ( value ) > ( ( serverKeySize ) - 8 ) + ( extraLength ) && \
 		  ( value ) < ( ( serverKeySize ) + 2 ) + ( extraLength ) )
+#define isValidECDHsize( value, serverKeySize, extraLength ) \
+		( ( value ) / 2 > ( ( serverKeySize ) - 8 ) + ( extraLength ) && \
+		  ( value ) / 2 < ( ( serverKeySize ) + 2 ) + ( extraLength ) )
 
 /****************************************************************************
 *																			*
@@ -294,13 +339,21 @@ typedef enum {
 ****************************************************************************/
 
 /* Mapping of SSHv2 algorithm names to cryptlib algorithm IDs, in preferred
-   algorithm order */
+   algorithm order.  Some of the algorithms are pure algorithms while others
+   are more like cipher suites, in order to check whether they're available
+   for use we have to map the suite pseudo-value into one or more actual
+   algorithms, which are given via the checkXXXAlgo values */
 
 typedef struct {
+	/* Mapping from algorithm name to cryptlib algorithm ID */
 	BUFFER_FIXED( nameLen ) \
 	const char FAR_BSS *name;				/* Algorithm name */
 	const int nameLen;
 	const CRYPT_ALGO_TYPE algo;				/* Algorithm ID */
+
+	/* Optional parameters needed to check for algorithm availability
+	   when the algorithm actually represents a cipher suite */
+	const CRYPT_ALGO_TYPE checkCryptAlgo, checkHashAlgo;
 	} ALGO_STRING_INFO;
 
 /* SSH handshake state information.  This is passed around various
@@ -313,11 +366,13 @@ typedef struct SH {
 	BUFFER_FIXED( CRYPT_MAX_HASHSIZE ) \
 	BYTE sessionID[ CRYPT_MAX_HASHSIZE + 8 ];/* Session ID/exchange hash */
 	int sessionIDlength;
-	CRYPT_CONTEXT iExchangeHashcontext;		/* Hash of exchanged information */
+	CRYPT_ALGO_TYPE exchangeHashAlgo;		/* Exchange hash algorithm */
+	CRYPT_CONTEXT iExchangeHashContext, iExchangeHashAltContext;
+											/* Hash of exchanged information */
 
 	/* Information needed to compute the session ID.  SSHv1 requires the
-	   host and server key modulus, SSHv2 requires the client and server DH
-	   values (along with various other things, but these are hashed
+	   host and server key modulus, SSHv2 requires the client and server 
+	   DH/ECDH values (along with various other things, but these are hashed
 	   inline).  The SSHv2 values are in MPI-encoded form so we need to
 	   reserve a little extra room for the length and leading zero-padding.
 	   Since the data fields are rather large and also disjoint, and since
@@ -339,17 +394,21 @@ typedef struct SH {
 	BYTE secretValue[ CRYPT_MAX_PKCSIZE + 8 ];	/* Shared secret value */
 	int secretValueLength;
 
-	/* Short-term server key (SSHv1) or DH key agreement context (SSHv2),
-	   and the client requested DH key size for the SSHv2 key exchange.
-	   Alongside the actual key size, we also store the original encoded
-	   form, which has to be hashed as part of the exchange hash.  The
-	   long-term host key is stored as the session information 
-	   iKeyexCryptContext for the client and privateKey for the server */
+	/* Short-term server key (SSHv1) or DH/ECDH key agreement context 
+	   (SSHv2), and the client requested DH key size for the SSHv2 key 
+	   exchange.  Alongside the actual key size we also store the 
+	   original encoded form, which has to be hashed as part of the exchange 
+	   hash.  The long-term host key is stored as the session information 
+	   iKeyexCryptContext for the client and privateKey for the server. 
+	   Since ECDH doesn't just entail a new algorithm but an entire cipher
+	   suite, we provide a flag to make checking for this easier */
+	CRYPT_ALGO_TYPE keyexAlgo;				/* Keyex algo */
 	CRYPT_CONTEXT iServerCryptContext;
 	int serverKeySize, requestedServerKeySize;
 	BUFFER( ENCODED_REQKEYSIZE, encodedReqKeySizesLength ) \
 	BYTE encodedReqKeySizes[ ENCODED_REQKEYSIZE + 8 ];
 	int encodedReqKeySizesLength;
+	BOOLEAN isECDH;							/* Use of ECC cipher suite */
 
 	/* Tables mapping SSHv2 algorithm names to cryptlib algorithm IDs.
 	   These are declared once in ssh2.c and referred to here via pointers
@@ -361,13 +420,13 @@ typedef struct SH {
 	/* Function pointers to handshaking functions.  These are set up as
 	   required depending on whether the protocol being used is v1 or v2,
 	   and the session is client or server */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *beginHandshake )( INOUT SESSION_INFO *sessionInfoPtr,
 							 INOUT struct SH *handshakeInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *exchangeKeys )( INOUT SESSION_INFO *sessionInfoPtr,
 						   INOUT struct SH *handshakeInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *completeHandshake )( INOUT SESSION_INFO *sessionInfoPtr,
 								INOUT struct SH *handshakeInfo );
 	} SSH_HANDSHAKE_INFO;
@@ -400,7 +459,7 @@ typedef struct SH {
 		offset = stell( stream ) - ID_SIZE
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int streamBookmarkComplete( INOUT STREAM *stream, 
-							OUT_PTR void **dataPtrPtr, 
+							OUT_OPT_PTR void **dataPtrPtr, 
 							OUT_LENGTH_Z int *length, 
 							IN_LENGTH const int position );
 
@@ -498,7 +557,7 @@ int setChannelExtAttribute( const SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int enqueueResponse( INOUT SESSION_INFO *sessionInfoPtr, 
 					 IN_RANGE( 1, 255 ) const int type,
-					 IN_RANGE( 0, 3 ) const int noParams, 
+					 IN_RANGE( 0, 4 ) const int noParams, 
 					 IN const long channelNo,
 					 const int param1, const int param2, const int param3 );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -555,6 +614,12 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 					  IN_BUFFER_OPT( keyDataLength ) const void *keyData, 
 					  IN_LENGTH_SHORT_Z const int keyDataLength,
 					  IN_LENGTH_SHORT_OPT const int requestedKeySize );
+#ifdef USE_ECDH
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initECDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext, 
+						OUT_LENGTH_SHORT_Z int *keySize,
+						IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo );
+#endif /* USE_ECDH */
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 				   INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
@@ -596,8 +661,8 @@ CHECK_RETVAL_PTR \
 const char *getSSHPacketName( IN_RANGE( 0, 255 ) const int packetType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
-						  IN_RANGE( SSH2_MSG_DISCONNECT, \
-									SSH2_MSG_SPECIAL_REQUEST ) \
+						  IN_RANGE( SSH_MSG_DISCONNECT, \
+									SSH_MSG_SPECIAL_REQUEST ) \
 								const int expectedType, 
 						  OUT_LENGTH_Z long *packetLength,
 						  OUT_LENGTH_Z int *packetExtraLength,
@@ -605,8 +670,8 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 						  INOUT_OPT READSTATE_INFO *readInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, 
-					  IN_RANGE( SSH2_MSG_DISCONNECT, \
-								SSH2_MSG_SPECIAL_REQUEST ) \
+					  IN_RANGE( SSH_MSG_DISCONNECT, \
+								SSH_MSG_SPECIAL_REQUEST ) \
 							int expectedType,
 					  IN_RANGE( 1, 1024 ) const int minPacketSize );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -616,22 +681,22 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 /* Prototypes for functions in ssh2_wr.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int openPacketStreamSSH( INOUT STREAM *stream, 
+int openPacketStreamSSH( OUT STREAM *stream, 
 						 const SESSION_INFO *sessionInfoPtr,
-						 IN_RANGE( SSH2_MSG_DISCONNECT, \
-								   SSH2_MSG_CHANNEL_FAILURE ) 
+						 IN_RANGE( SSH_MSG_DISCONNECT, \
+								   SSH_MSG_CHANNEL_FAILURE ) 
 							const int packetType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int openPacketStreamSSHEx( INOUT STREAM *stream, 
+int openPacketStreamSSHEx( OUT STREAM *stream, 
 						   const SESSION_INFO *sessionInfoPtr,
 						   IN_LENGTH const int bufferSize, 
-						   IN_RANGE( SSH2_MSG_DISCONNECT, \
-									 SSH2_MSG_CHANNEL_FAILURE ) 
+						   IN_RANGE( SSH_MSG_DISCONNECT, \
+									 SSH_MSG_CHANNEL_FAILURE ) 
 								const int packetType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int continuePacketStreamSSH( INOUT STREAM *stream, 
-							 IN_RANGE( SSH2_MSG_DISCONNECT, \
-									   SSH2_MSG_CHANNEL_FAILURE ) \
+							 IN_RANGE( SSH_MSG_DISCONNECT, \
+									   SSH_MSG_CHANNEL_FAILURE ) \
 								const int packetType,
 							 OUT_LENGTH_Z int *packetOffset );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \

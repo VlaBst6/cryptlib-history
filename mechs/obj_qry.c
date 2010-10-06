@@ -6,17 +6,17 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "mech.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -29,7 +29,7 @@
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getObjectInfo( INOUT STREAM *stream, 
-						  INOUT QUERY_INFO *queryInfo )
+						  OUT QUERY_INFO *queryInfo )
 	{
 	const long startPos = stell( stream );
 	long value;
@@ -37,6 +37,9 @@ static int getObjectInfo( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* We always need at least MIN_CRYPT_OBJECTSIZE more bytes to do
 	   anything */
@@ -122,7 +125,8 @@ static int getObjectInfo( INOUT STREAM *stream,
    can't be read inline like the ASN.1 header */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
+int getPgpPacketInfo( INOUT STREAM *stream, 
+					  OUT QUERY_INFO *queryInfo )
 	{
 	const long startPos = stell( stream );
 	long offset, length;
@@ -130,6 +134,9 @@ int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	/* Clear return value */
+	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
 
 	/* Read the packet header and extract information from the CTB.  Note
 	   that the assignment of version numbers is speculative only because
@@ -188,6 +195,7 @@ int getPgpPacketInfo( INOUT STREAM *stream, INOUT QUERY_INFO *queryInfo )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	{
+	QUERY_INFO basicQueryInfo;
 	STREAM *stream = streamPtr;
 	const long startPos = stell( stream );
 	int status;
@@ -195,15 +203,17 @@ int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	/* Clear the return value and determine basic object information.  This 
-	   also verifies that all of the object data is present in the stream */
+	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
-	status = getObjectInfo( stream, queryInfo );
+
+	/* Determine basic object information.  This also verifies that all of 
+	   the object data is present in the stream */
+	status = getObjectInfo( stream, &basicQueryInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Call the appropriate routine to find out more about the object */
-	switch( queryInfo->type )
+	switch( basicQueryInfo.type )
 		{
 		case CRYPT_OBJECT_ENCRYPTED_KEY:
 			{
@@ -219,7 +229,7 @@ int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 		case CRYPT_OBJECT_PKCENCRYPTED_KEY:
 			{
 			const READKEYTRANS_FUNCTION readKeytransFunction = \
-				getReadKeytransFunction( ( queryInfo->formatType == CRYPT_FORMAT_CMS ) ? \
+				getReadKeytransFunction( ( basicQueryInfo.formatType == CRYPT_FORMAT_CMS ) ? \
 										 KEYEX_CMS : KEYEX_CRYPTLIB );
 
 			if( readKeytransFunction == NULL )
@@ -231,7 +241,7 @@ int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 		case CRYPT_OBJECT_SIGNATURE:
 			{
 			const READSIG_FUNCTION readSigFunction = \
-				getReadSigFunction( ( queryInfo->formatType == CRYPT_FORMAT_CMS ) ? \
+				getReadSigFunction( ( basicQueryInfo.formatType == CRYPT_FORMAT_CMS ) ? \
 									SIGNATURE_CMS : SIGNATURE_CRYPTLIB );
 
 			if( readSigFunction == NULL )
@@ -250,8 +260,19 @@ int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 		}
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
+		{
 		zeroise( queryInfo, sizeof( QUERY_INFO ) );
-	return( status );
+		return( status );
+		}
+
+	/* Augment the per-object query information with the basic query 
+	   information that we got earlier */
+	queryInfo->formatType = basicQueryInfo.formatType;
+	queryInfo->type = basicQueryInfo.type;
+	queryInfo->size = basicQueryInfo.size;
+	queryInfo->version = basicQueryInfo.version;
+
+	return( CRYPT_OK );
 	}
 
 #ifdef USE_PGP
@@ -259,6 +280,7 @@ int queryAsn1Object( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int queryPgpObject( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	{
+	QUERY_INFO basicQueryInfo;
 	STREAM *stream = streamPtr;
 	const long startPos = stell( stream );
 	int status;
@@ -266,16 +288,18 @@ int queryPgpObject( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( queryInfo, sizeof( QUERY_INFO ) ) );
 
-	/* Clear the return value and determine basic object information.  This 
-	   also verifies that all of the object data is present in the stream */
+	/* Clear return value */
 	memset( queryInfo, 0, sizeof( QUERY_INFO ) );
-	status = getPgpPacketInfo( stream, queryInfo );
+
+	/* Determine basic object information.  This also verifies that all of 
+	   the object data is present in the stream */
+	status = getPgpPacketInfo( stream, &basicQueryInfo );
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Call the appropriate routine to find out more about the object */
-	switch( queryInfo->type )
+	switch( basicQueryInfo.type )
 		{
 		case CRYPT_OBJECT_ENCRYPTED_KEY:
 			{
@@ -320,8 +344,33 @@ int queryPgpObject( INOUT void *streamPtr, OUT QUERY_INFO *queryInfo )
 		}
 	sseek( stream, startPos );
 	if( cryptStatusError( status ) )
+		{
 		zeroise( queryInfo, sizeof( QUERY_INFO ) );
-	return( status );
+		return( status );
+		}
+
+	/* Augment the per-object query information with the basic query 
+	   information that we got earlier */
+	queryInfo->formatType = basicQueryInfo.formatType;
+	if( queryInfo->type == CRYPT_OBJECT_NONE )
+		{
+		/* The non-type CRYPT_OBJECT_NONE denotes the first half of a one-
+		   pass signature packet, in which case the actual type is given in
+		   the packet data */
+		queryInfo->type = basicQueryInfo.type;
+		}
+	queryInfo->size = basicQueryInfo.size;
+	if( queryInfo->version == 0 )
+		{
+		/* PGP has multiple packet version numbers sprayed all over the
+		   place, and just because an outer version is X doesn't mean that
+		   a subsequent inner version can't be Y.  The information is really
+		   only used to control the formatting of what gets read, so we
+		   just report the first version that we encounter */
+		queryInfo->version = basicQueryInfo.version;
+		}
+
+	return( CRYPT_OK );
 	}
 #endif /* USE_PGP */
 

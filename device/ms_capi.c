@@ -21,9 +21,9 @@
   #include "crypt.h"
   #include "context/context.h"
   #include "device/device.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "mechs/dev_mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* The size of the (packed) header used for key blobs */
@@ -39,6 +39,10 @@
 #define MAX_BUFFER_SIZE			1024
 
 #ifdef USE_CRYPTOAPI
+
+#if defined( _MSC_VER )
+  #pragma message( "  Building with CAPI device interface enabled." )
+#endif /* Warn with VC++ */
 
 /* The following define is needed to enable crypto functions in the include
    file.  This would probably be defined by the compiler since it's not 
@@ -407,22 +411,21 @@ static int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
 
 static int mapError( CRYPTOAPI_INFO *cryptoapiInfo, const int defaultError )
 	{
-	ERROR_INFO *errorInfo = &cryptoapiInfo->errorInfo;
-	const DWORD errorCode = GetLastError();
 #ifdef USE_ERRMSGS
+	ERROR_INFO *errorInfo = &cryptoapiInfo->errorInfo;
 	int messageLength;
 #endif /* USE_ERRMSGS */
+	const DWORD errorCode = GetLastError();
 
-	/* Get the error code and corresponding error message.  FormatMessage()
-	   adds EOL terminators so we have to strip those before we pass the
-	   string back to the caller.  There's an incredibly arcane way of 
-	   telling FormatMessage() to do this via escape codes passed in as
-	   part of a va_arg argument list, but aside from being complex to set
-	   up this also means that the function will try and insert information
-	   such as filenames from the argument list when required (there's no
-	   way to tell in advance which arguments are required), so this is
-	   more trouble than it's worth */
-	errorInfo->errorCode = ( int ) errorCode;
+	/* Get the error message for this error.  FormatMessage() adds EOL 
+	   terminators so we have to strip those before we pass the string back 
+	   to the caller.  There's an incredibly arcane way of telling 
+	   FormatMessage() to do this via escape codes passed in as part of a 
+	   va_arg argument list, but aside from being complex to set up this 
+	   also means that the function will try and insert information such as 
+	   filenames from the argument list when required (there's no way to 
+	   tell in advance which arguments are required), so this is more 
+	   trouble than it's worth */
 #ifdef USE_ERRMSGS
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM, NULL, errorCode, 0,
 				   errorInfo->errorString, MAX_ERRMSG_SIZE - 1, NULL );
@@ -2356,8 +2359,10 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	   the encoding and padding that's already been added */
 	assert( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 1 );
 	for( i = 2; i < length; i++ )
+		{
 		if( bufPtr[ i ] == 0 )
 			break;
+		}
 	i++;	/* Skip final 0 byte */
 	sMemConnect( &stream, bufPtr + i, length - i );
 	status = readMessageDigest( &stream, &cryptAlgo, hashBuffer, 
@@ -2439,8 +2444,10 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer, int length )
 	   padding that's already been added */
 	assert( bufPtr[ 0 ] == 0 && bufPtr[ 1 ] == 2 );
 	for( i = 2; i < length; i++ )
+		{
 		if( bufPtr[ i ] == 0 )
 			break;
+		}
 	i++;	/* Skip final 0 byte */
 
 	/* Change the data into the little-endian order required by CryptoAPI, 
@@ -3290,7 +3297,7 @@ static CAPABILITY_INFO *addCapability( const DEVICE_INFO *deviceInfo,
 	capabilityInfo->getInfoFunction = getDefaultInfo;
 	if( mechanismInfoPtr->cryptAlgo != CRYPT_ALGO_RSA && \
 		mechanismInfoPtr->cryptAlgo != CRYPT_ALGO_DSA )
-		capabilityInfo->initKeyParamsFunction = initKeyParams;
+		capabilityInfo->initParamsFunction = initGenericParams;
 	capabilityInfo->endFunction = mechanismInfoPtr->endFunction;
 	capabilityInfo->initKeyFunction = mechanismInfoPtr->initKeyFunction;
 	capabilityInfo->generateKeyFunction = mechanismInfoPtr->generateKeyFunction;
@@ -3440,9 +3447,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo )
 		if( newCapability == NULL )
 			break;
 		REQUIRES( sanityCheckCapability( newCapability, 
-					( newCapability->cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-					  newCapability->cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
-					  TRUE : FALSE ) );
+								isPkcAlgo( newCapability->cryptAlgo ) ? \
+								TRUE : FALSE ) );
 		if( ( newCapabilityList = \
 						clAlloc( "getCapabilities", \
 								 sizeof( CAPABILITY_INFO_LIST ) ) ) == NULL )

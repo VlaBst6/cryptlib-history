@@ -61,6 +61,12 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN checkEntropy( IN_BUFFER( dataLength ) const BYTE *data, 
 					  IN_LENGTH_SHORT_MIN( MIN_KEYSIZE ) const int dataLength );
 
+/* Return a random small integer, used to perform lightweight randomisation 
+   of various algorithms in order to make DoS attacks harder */
+
+CHECK_RETVAL_RANGE( 0, 32767 ) \
+int getRandomInteger( void );
+
 /* Map one value to another, used to map values from one representation 
    (e.g. PGP algorithms or HMAC algorithms) to another (cryptlib algorithms
    or the underlying hash used for the HMAC algorithm) */
@@ -87,14 +93,15 @@ int mapValue( IN_INT_SHORT_Z const int srcValue,
    STREAM * but this header gets included long before the stream header does
    so the STREAM structure isn't visible at this point */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-typedef int ( *READCHARFUNCTION )( INOUT void *streamPtr );
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
+		int ( *READCHARFUNCTION )( INOUT void *streamPtr );
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
 int readTextLine( READCHARFUNCTION readCharFunction, 
 				  INOUT void *streamPtr,
-				  OUT_BUFFER( lineBufferMaxLen, lineBufferSize ) char *lineBuffer, 
-				  IN_LENGTH_SHORT_MIN( 10 ) const int lineBufferMaxLen, 
+				  OUT_BUFFER( lineBufferMaxLen, *lineBufferSize ) \
+						char *lineBuffer,
+				  IN_LENGTH_SHORT_MIN( 16 ) const int lineBufferMaxLen, 
 				  OUT_LENGTH_SHORT_Z int *lineBufferSize, 
 				  OUT_OPT_BOOL BOOLEAN *localError );
 
@@ -138,7 +145,9 @@ int getSysVar( const SYSVAR_TYPE type );
 #define HWCAP_FLAG_XCRYPT	0x04	/* VIA XCRYPT instruction support */
 #define HWCAP_FLAG_XSHA		0x08	/* VIA XSHA instruction support */
 #define HWCAP_FLAG_MONTMUL	0x10	/* VIA bignum instruction support */
-#define HWCAP_FLAG_TRNG		0x20	/* Amd Geode LX TRNG MSR support */
+#define HWCAP_FLAG_TRNG		0x20	/* AMD Geode LX TRNG MSR support */
+#define HWCAP_FLAG_AES		0x40	/* Intel AES instruction support */
+#define HWCAP_FLAG_RDRAND	0x80	/* Intel RDRAND instruction support */
 
 /* Windows NT/2000/XP/Vista support ACL-based access control mechanisms for 
    system objects, so when we create objects such as files and threads we 
@@ -208,7 +217,7 @@ int getSysVar( const SYSVAR_TYPE type );
    buffer to indicate that further data was truncated */
 					
 STDC_NONNULL_ARG( ( 1 ) ) \
-char *sanitiseString( INOUT_BUFFER_FIXED( strMaxLen ) BYTE *string, 
+char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) BYTE *string, 
 					  IN_LENGTH_SHORT const int strMaxLen, 
 					  IN_LENGTH_SHORT const int strLen );
 
@@ -230,12 +239,12 @@ CHECK_RETVAL_STRINGOP( strLen ) STDC_NONNULL_ARG( ( 1 ) ) \
 int strSkipNonWhitespace( IN_BUFFER( strLen ) const char *str, 
 						  IN_LENGTH_SHORT const int strLen );
 CHECK_RETVAL_STRINGOP( strLen ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int strStripWhitespace( OUT_PTR char **newStringPtr, 
+int strStripWhitespace( OUT_OPT_PTR const char **newStringPtr, 
 						IN_BUFFER( strLen ) const char *string, 
 						IN_LENGTH_SHORT const int strLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int strExtract( OUT_PTR char **newStringPtr, 
-				IN_BUFFER( srcLen ) const char *string, 
+int strExtract( OUT_OPT_PTR const char **newStringPtr, 
+				IN_BUFFER( strLen ) const char *string, 
 				IN_LENGTH_SHORT const int startOffset,
 				IN_LENGTH_SHORT const int strLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -314,7 +323,6 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
 #ifdef USE_ERRMSGS
 
 typedef struct {
-	int errorCode;					/* Low-level error code */
 	BUFFER( MAX_ERRMSG_SIZE, errorStringLength ) \
 	char errorString[ MAX_ERRMSG_SIZE + 8 ];
 	int errorStringLength;			/* Error message */
@@ -356,9 +364,9 @@ typedef struct {
 #ifdef USE_ERRMSGS
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void clearErrorString( INOUT ERROR_INFO *errorInfoPtr );
+void clearErrorString( OUT ERROR_INFO *errorInfoPtr );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void setErrorString( INOUT ERROR_INFO *errorInfoPtr, 
+void setErrorString( OUT ERROR_INFO *errorInfoPtr, 
 					 IN_BUFFER( stringLength ) const char *string, 
 					 IN_LENGTH_ERRORMESSAGE  const int stringLength );
 #else
@@ -366,30 +374,30 @@ void setErrorString( INOUT ERROR_INFO *errorInfoPtr,
   #define setErrorString( errorInfoPtr, string, stringLength );
 #endif /* USE_ERRMSGS */
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr, 
+void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
 					const ERROR_INFO *srcErrorInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtFn( IN_ERROR const int status, 
-			  INOUT ERROR_INFO *errorInfoPtr, 
+			  OUT ERROR_INFO *errorInfoPtr, 
 			  FORMAT_STRING const char *format, ... );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtArgFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 FORMAT_STRING const char *format, ... );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) STDC_PRINTF_FN( 4, 5 ) \
 int retExtObjFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 IN_HANDLE const CRYPT_HANDLE extErrorObject, 
 				 FORMAT_STRING const char *format, ... );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 5 ) ) STDC_PRINTF_FN( 5, 6 ) \
 int retExtStrFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 IN_BUFFER( extErrorStringLength ) const char *extErrorString, 
 				 IN_LENGTH_ERRORMESSAGE const int extErrorStringLength,
 				 FORMAT_STRING const char *format, ... );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) STDC_PRINTF_FN( 4, 5 ) \
 int retExtErrFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 const ERROR_INFO *existingErrorInfoPtr, 
 				 FORMAT_STRING const char *format, ... );
 
@@ -442,13 +450,14 @@ int retExtErrFn( IN_ERROR const int status,
    the best (meaning least inappropriate) place to put it is with the cert-
    management code */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
-int iCryptImportCertIndirect( OUT CRYPT_CERTIFICATE *iCertificate,
-							  const CRYPT_HANDLE iCertSource,
-							  const CRYPT_KEYID_TYPE keyIDtype,
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int iCryptImportCertIndirect( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
+							  IN_HANDLE const CRYPT_HANDLE iCertSource, 
+							  IN_ENUM( CRYPT_KEYID ) \
+								const CRYPT_KEYID_TYPE keyIDtype,
 							  IN_BUFFER( keyIDlength ) const void *keyID, 
-							  const int keyIDlength,
-							  const int options );
+							  IN_LENGTH_SHORT const int keyIDlength,
+							  IN_FLAGS_Z( KEYMGMT ) const int options );
 
 /* Read a public key from an X.509 SubjectPublicKeyInfo record, creating the
    context necessary to contain it in the process.  This is used by a variety
@@ -511,7 +520,7 @@ int base64checkHeader( IN_BUFFER( dataLength ) const char *data,
 					   CRYPT_CERTFORMAT_TYPE *format,
 					   OUT_LENGTH_Z int *startPos );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-int base64encodeLen( IN_LENGTH const int dataLength,
+int base64encodeLen( IN_LENGTH_MIN( 10 ) const int dataLength,
 					 OUT_LENGTH_Z int *encodedLength,
 					 IN_ENUM_OPT( CRYPT_CERTTYPE ) \
 						const CRYPT_CERTTYPE_TYPE certType );
@@ -630,6 +639,10 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 
 #define deleteSingleListElement( listHead, listPrev, element ) \
 		{ \
+		/* Make sure that the preconditions for safe delection are met */ \
+		REQUIRES( listHead != NULL && element != NULL ); \
+		REQUIRES( element == *( listHead ) || listPrev != NULL ); \
+		\
 		if( element == *( listHead ) ) \
 			{ \
 			/* Special case for first item */ \
@@ -637,6 +650,8 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 			} \
 		else \
 			{ \
+			ANALYSER_HINT( listPrev != NULL ); \
+			\
 			/* Delete from middle or end of the list */ \
 			listPrev->next = element->next; \
 			} \
@@ -644,11 +659,14 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 
 #define deleteDoubleListElement( listHead, element ) \
 		{ \
+		/* Make sure that the preconditions for safe delection are met */ \
+		REQUIRES( listHead != NULL && element != NULL ); \
+		\
 		/* Make sure that the links are consistent */ \
-		ENSURES( ( element )->next == NULL || \
-				 ( element )->next->prev == ( element ) ); \
-		ENSURES( ( element )->prev == NULL || \
-				 ( element )->prev->next == ( element ) ); \
+		REQUIRES( ( element )->next == NULL || \
+				  ( element )->next->prev == ( element ) ); \
+		REQUIRES( ( element )->prev == NULL || \
+				  ( element )->prev->next == ( element ) ); \
 		\
 		/* Unlink the element from the list */ \
 		if( element == *( listHead ) ) \
@@ -658,6 +676,9 @@ int decodePKIUserValue( OUT_BUFFER( valueMaxLen, *valueLen ) BYTE *value,
 			} \
 		else \
 			{ \
+			/* Further consistency check */ \
+			REQUIRES( ( element )->prev != NULL ); \
+			\
 			/* Delete from the middle or the end of the list */ \
 			( element )->prev->next = ( element )->next; \
 			} \
@@ -685,7 +706,7 @@ typedef enum {
 	ATTR_LAST			/* Last valid attribute get type */
 	} ATTR_TYPE;
 
-typedef CHECK_RETVAL_PTR \
+typedef CHECK_RETVAL_PTR_FNPTR \
 		const void * ( *GETATTRFUNCTION )( IN_OPT const void *attributePtr,
 										   OUT_OPT_ATTRIBUTE_Z \
 											CRYPT_ATTRIBUTE_TYPE *groupID,
@@ -705,9 +726,16 @@ void *attributeFindEnd( IN_OPT const void *attributePtr,
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
 void *attributeFind( IN_OPT const void *attributePtr,
 					 IN GETATTRFUNCTION getAttrFunction,
-					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
-					 IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						const CRYPT_ATTRIBUTE_TYPE instanceID );
+					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID );
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
+void *attributeFindEx( IN_OPT const void *attributePtr,
+					   IN GETATTRFUNCTION getAttrFunction,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE groupID,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE attributeID,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE instanceID );
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
 void *attributeFindNextInstance( IN_OPT const void *attributePtr,
 								 IN GETATTRFUNCTION getAttrFunction );
@@ -898,8 +926,8 @@ typedef enum {
    In addition to the hash-step operation, we provide a one-step atomic hash
    function that processes a single data quantity and returns its hash */
 
-#if defined( USE_SHA2_512 )
-  /* SHA2-512: ( 2 + 8 + 16 + 1 ) * sizeof( long long ) */
+#if defined( USE_SHA2_EXT )
+  /* SHA2-384/512: ( 2 + 8 + 16 + 1 ) * sizeof( long long ) */
   typedef BYTE HASHINFO[ ( 27 * 8 ) + 8 ];
 #elif defined( SYSTEM_64BIT )
   /* RIPEMD160: 24 * sizeof( long long ) + 64 */
@@ -924,12 +952,14 @@ typedef STDC_NONNULL_ARG( ( 1, 3 ) ) \
 									   IN_BUFFER( inLength ) const void *inBuffer, 
 									   IN_LENGTH const int inLength );
 
-STDC_NONNULL_ARG( ( 2 ) ) \
+STDC_NONNULL_ARG( ( 3 ) ) \
 void getHashParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
+						IN_INT_SHORT_Z const int hashParams,
 						OUT_PTR HASHFUNCTION *hashFunction, 
 						OUT_OPT_LENGTH_SHORT_Z int *hashOutputSize );
-STDC_NONNULL_ARG( ( 2 ) ) \
+STDC_NONNULL_ARG( ( 3 ) ) \
 void getHashAtomicParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
+							  IN_INT_SHORT_Z const int hashParams,
 							  OUT_PTR HASHFUNCTION_ATOMIC *hashFunctionAtomic, 
 							  OUT_OPT_LENGTH_SHORT_Z int *hashOutputSize );
 
@@ -1047,6 +1077,8 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 *																			*
 ****************************************************************************/
 
+#ifdef USE_ENVELOPES
+
 /* General-purpose enveloping functions, used by various high-level
    protocols */
 
@@ -1085,6 +1117,7 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 					  OUT_STATUS int *sigResult, 
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iSigningCert,
 					  OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCmsAttributes );
+#endif /* USE_ENVELOPES */
 
 /****************************************************************************
 *																			*
@@ -1190,19 +1223,20 @@ typedef enum {
 	} SHORTKEY_CHECK_TYPE;
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int importBignum( INOUT void *bignumPtr, 
+int importBignum( INOUT TYPECAST( BIGNUM * ) void *bignumPtr, 
 				  IN_BUFFER( length ) const void *buffer, 
 				  IN_LENGTH_SHORT const int length,
 				  IN_LENGTH_PKC const int minLength, 
 				  IN_LENGTH_PKC const int maxLength, 
 				  IN_OPT const void *maxRangePtr,
-				  IN_ENUM( SHORTKEY_CHECK ) \
+				  IN_ENUM_OPT( SHORTKEY_CHECK ) \
 					const SHORTKEY_CHECK_TYPE checkType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int exportBignum( OUT_BUFFER( dataMaxLength, *dataLength ) void *data, 
 				  IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength, 
 				  OUT_LENGTH_SHORT_Z int *dataLength,
-				  const void *bignumPtr );
+				  IN TYPECAST( BIGNUM * ) const void *bignumPtr );
+#if defined( USE_ECDH ) || defined( USE_ECDSA ) 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int importECCPoint( INOUT void *bignumPtr1, 
 					INOUT void *bignumPtr2, 
@@ -1220,5 +1254,6 @@ int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data,
 					OUT_LENGTH_SHORT_Z int *dataLength,
 					const void *bignumPtr1, const void *bignumPtr2,
 					IN_LENGTH_SHORT_MIN( 16 ) const int fieldSize );
+#endif /* USE_ECDH || USE_ECDSA */
 
 #endif /* _INTAPI_DEFINED */

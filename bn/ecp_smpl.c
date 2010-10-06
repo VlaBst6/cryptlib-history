@@ -72,7 +72,7 @@
   #pragma warning( disable: 4267 )
 #endif /* _MSC_VER */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /* Normally defined in /crypto/objects/obj_mac.h - pcg */
 
@@ -1724,4 +1724,4 @@ int ec_GFp_simple_field_sqr(const EC_GROUP *group, BIGNUM *r, const BIGNUM *a, B
 	return BN_mod_sqr(r, a, &group->field, ctx);
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

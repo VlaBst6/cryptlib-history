@@ -7,13 +7,13 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
+  #include "mech.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -280,7 +280,6 @@ int importConventionalKey( IN_BUFFER( encryptedKeyLength ) \
 
 	/* Read and check the encrypted key record and make sure that we'll be 
 	   using the correct type of encryption context to decrypt it */
-	memset( &queryInfo, 0, sizeof( QUERY_INFO ) );
 	sMemConnect( &stream, encryptedKey, encryptedKeyLength );
 	status = readKeyexFunction( &stream, &queryInfo );
 	sMemDisconnect( &stream );
@@ -377,7 +376,6 @@ int importPublicKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey,
 		return( CRYPT_ERROR_NOTAVAIL );
 
 	/* Read and check the encrypted key record */
-	memset( &queryInfo, 0, sizeof( QUERY_INFO ) );
 	sMemConnect( &stream, encryptedKey, encryptedKeyLength );
 	status = readKetransFunction( &stream, &queryInfo );
 	sMemDisconnect( &stream );

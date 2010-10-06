@@ -64,6 +64,7 @@ typedef enum {
 #define STREAM_MFLAG_VFILE		0x0010	/* File stream emulated via mem.stream */
 #define STREAM_MFLAG_MASK		( 0x0010 | STREAM_FLAG_MASK )	
 										/* Mask for memory-only flags */
+
 /* File stream flags.  These are:
 
 	FFLAG_BUFFERSET: Used to indicate that the stream has an I/O buffer 
@@ -155,6 +156,11 @@ typedef enum {
    used in CONFIG_NO_STDIO environments to store data before it's committed
    to backing storage */
 
+#if defined( __MVS__ ) || defined( __VMCMS__ ) || \
+	defined( __IBM4758__ ) || defined( __TESTIO__ )
+  #define VIRTUAL_FILE_STREAM
+#endif /* Nonstandard I/O environments */
+
 #define STREAM_VFILE_BUFSIZE	16384
 
 /****************************************************************************
@@ -228,19 +234,19 @@ typedef struct NS {
 	   the transport-level read to improve performance for higher-level 
 	   protocols like HTTP that have to read a byte at a time in some 
 	   places */
-	CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_BOOL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	BOOLEAN ( *sanityCheckFunction )( IN const struct ST *stream );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *readFunction )( INOUT struct ST *stream, 
 						   OUT_BUFFER( maxLength, *length ) void *buffer, 
 						   IN_LENGTH const int maxLength, 
 						   OUT_LENGTH_Z int *length );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *writeFunction )( INOUT struct ST *stream, 
 							IN_BUFFER( length ) const void *buffer, 
 							IN_LENGTH const int maxLength,
 							OUT_LENGTH_Z int *length );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *transportConnectFunction )( INOUT struct NS *netStream, 
 									   IN_BUFFER_OPT( length ) const char *hostName, 
 									   IN_LENGTH_DNS_Z const int hostNameLen, 
@@ -248,25 +254,25 @@ typedef struct NS {
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	void ( *transportDisconnectFunction )( INOUT struct NS *netStream, 
 										   const BOOLEAN fullDisconnect );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *transportReadFunction )( INOUT struct ST *stream, 
 									OUT_BUFFER( maxLength, *length ) BYTE *buffer, 
 									IN_LENGTH const int maxLength, 
 									OUT_LENGTH_Z int *length, 
 									IN_FLAGS_Z( TRANSPORT ) \
 									const int flags );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *transportWriteFunction )( INOUT struct ST *stream, 
 									 IN_BUFFER( length ) const BYTE *buffer, 
 									 IN_LENGTH const int maxLength, 
 									 OUT_LENGTH_Z int *length, 
 									 IN_FLAGS_Z( TRANSPORT ) \
 										const int flags );
-	CHECK_RETVAL_BOOL \
+	CHECK_RETVAL_BOOL_FNPTR \
 	BOOLEAN ( *transportOKFunction )( void );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *transportCheckFunction )( INOUT struct NS *netStream );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *bufferedTransportReadFunction )( INOUT struct ST *stream, 
 											OUT_BUFFER( maxLength, *length ) \
 												BYTE *buffer, 
@@ -274,7 +280,7 @@ typedef struct NS {
 											OUT_LENGTH_Z int *length, 
 											IN_FLAGS_Z( TRANSPORT ) \
 											const int flags );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *bufferedTransportWriteFunction )( INOUT struct ST *stream, 
 											 IN_BUFFER( length ) const BYTE *buffer,
 											 IN_LENGTH const int maxLength, 
@@ -314,11 +320,12 @@ typedef void *NET_STREAM_INFO;	/* Dummy for function prototypes */
 /* Network URL processing functions in net_url.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int parseURL( INOUT URL_INFO *urlInfo, 
+int parseURL( OUT URL_INFO *urlInfo, 
 			  IN_BUFFER( urlLen ) const char *url, 
 			  IN_LENGTH_SHORT const int urlLen,
 			  IN_PORT_OPT const int defaultPort, 
-			  IN_ENUM( URL_TYPE ) const URL_TYPE urlTypeHint );
+			  IN_ENUM( URL_TYPE ) const URL_TYPE urlTypeHint,
+			  const BOOLEAN preParseOnly );
 
 /* Network proxy functions in net_proxy.c */
 

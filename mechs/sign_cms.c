@@ -7,16 +7,16 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
+  #include "mech.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 /* CMS version */
@@ -106,8 +106,7 @@ static int writeCmsSignerInfo( INOUT STREAM *stream,
 	assert( isReadPtr( signature, signatureSize ) );
 
 	REQUIRES( isHandleRangeValid( certificate ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( ( attributes == NULL && attributeSize == 0 ) || \
 			  ( attributes != NULL && \
 				attributeSize > 0 && attributeSize < MAX_INTLENGTH ) );
@@ -192,8 +191,7 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 
 	REQUIRES( dataSignatureSize > MIN_CRYPT_OBJECTSIZE && \
 			  dataSignatureSize < MAX_INTLENGTH_SHORT );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( isHandleRangeValid( iTspSession ) );
 
 	/* Hash the signature data to create the hash value to countersign.
@@ -249,27 +247,73 @@ static int createCmsCountersignature( IN_BUFFER( dataSignatureSize ) \
 static void addSmimeCapabilities( IN_HANDLE const CRYPT_CERTIFICATE iCmsAttributes )
 	{
 	typedef struct { 
-		CRYPT_ALGO_TYPE cryptAlgo;
+		CRYPT_ALGO_TYPE algorithm;
+		CRYPT_ALGO_TYPE secondaryAlgorithm;
 		CRYPT_ATTRIBUTE_TYPE smimeCapability;
 		} SMIMECAP_INFO;
 	static const SMIMECAP_INFO smimeCapInfo[] = {
-		{ CRYPT_ALGO_3DES, CRYPT_CERTINFO_CMS_SMIMECAP_3DES },
-		{ CRYPT_ALGO_AES, CRYPT_CERTINFO_CMS_SMIMECAP_AES },
+		{ CRYPT_ALGO_3DES, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_3DES },
+		{ CRYPT_ALGO_AES, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_AES },
 #ifdef USE_CAST
-		{ CRYPT_ALGO_CAST, CRYPT_CERTINFO_CMS_SMIMECAP_CAST128 },
+		{ CRYPT_ALGO_CAST, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_CAST128 },
 #endif /* USE_CAST */
 #ifdef USE_IDEA
-		{ CRYPT_ALGO_IDEA, CRYPT_CERTINFO_CMS_SMIMECAP_IDEA },
+		{ CRYPT_ALGO_IDEA, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_IDEA },
 #endif /* USE_IDEA */
 #ifdef USE_RC2
-		{ CRYPT_ALGO_RC2, CRYPT_CERTINFO_CMS_SMIMECAP_RC2 },
+		{ CRYPT_ALGO_RC2, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_RC2 },
 #endif /* USE_RC2 */
 #ifdef USE_SKIPJACK
-		{ CRYPT_ALGO_SKIPJACK, CRYPT_CERTINFO_CMS_SMIMECAP_SKIPJACK },
+		{ CRYPT_ALGO_SKIPJACK, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_SKIPJACK },
 #endif /* USE_SKIPJACK */
-		{ CRYPT_ALGO_NONE, CRYPT_ATTRIBUTE_NONE },
-		{ CRYPT_ALGO_NONE, CRYPT_ATTRIBUTE_NONE },
+#ifdef USE_SHAng
+		{ CRYPT_ALGO_SHAng, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_SHAng },
+#endif /* USE_SHAng */
+#ifdef USE_SHA2
+		{ CRYPT_ALGO_SHA2, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_SHA2 },
+#endif /* USE_SHA2 */
+		{ CRYPT_ALGO_SHA1, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_SHA1 },
+#ifdef USE_SHAng
+		{ CRYPT_ALGO_HMAC_SHAng, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHAng },
+#endif /* USE_SHAng */
+#ifdef USE_SHA2
+		{ CRYPT_ALGO_HMAC_SHA2, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA2 },
+#endif /* USE_SHA2 */
+		{ CRYPT_ALGO_HMAC_SHA1, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA1 },
+		{ CRYPT_IALGO_GENERIC_SECRET, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC256 },
+		{ CRYPT_IALGO_GENERIC_SECRET, CRYPT_ALGO_NONE, 
+		  CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC128 },
+		{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHAng,
+		  CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHAng },
+		{ CRYPT_ALGO_RSA, CRYPT_ALGO_SHA2,
+		  CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA2 },
+		{ CRYPT_ALGO_RSA, CRYPT_ALGO_NONE,	/* 'None' since always avail. */
+		  CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA1 },
+		{ CRYPT_ALGO_DSA, CRYPT_ALGO_NONE,	/* 'None' since always avail. */
+		  CRYPT_CERTINFO_CMS_SMIMECAP_DSA_SHA1 },
+		{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHAng,
+		  CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHAng },
+		{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_SHA2,
+		  CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA2 },
+		{ CRYPT_ALGO_ECDSA, CRYPT_ALGO_NONE,	/* 'None' since always avail. */
+		  CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA1 },
+		{ CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ATTRIBUTE_NONE },
+		{ CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ATTRIBUTE_NONE },
 		};
+	CRYPT_ALGO_TYPE prevAlgo = CRYPT_ALGO_NONE;
 	int value, i, status;
 
 	REQUIRES_V( isHandleRangeValid( iCmsAttributes ) );
@@ -281,22 +325,41 @@ static void addSmimeCapabilities( IN_HANDLE const CRYPT_CERTIFICATE iCmsAttribut
 	if( cryptStatusOK( status ) )
 		return;
 
-	/* Add an sMIMECapability for each supported algorithm.  Since these are 
-	   no-value attributes it's not worth aborting the signature generation 
-	   if the attempt to add them fails so we don't bother checking the
-	   return value */
-	for( i = 0; smimeCapInfo[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+	/* Add an sMIMECapability for each supported algorithm or algorithm 
+	   combination.  Since these are no-value attributes it's not worth 
+	   aborting the signature generation if the attempt to add them fails 
+	   so we don't bother checking the return value */
+	for( i = 0; smimeCapInfo[ i ].algorithm != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( smimeCapInfo, SMIMECAP_INFO );
 		 i++ )
 		{
-		if( smimeCapInfo[ i ].cryptAlgo )
+		const CRYPT_ALGO_TYPE algorithm = smimeCapInfo[ i ].algorithm;
+
+		/* Make sure that the primary algorithm is available */
+		if( prevAlgo != algorithm && !algoAvailable( algorithm ) )
 			{
-			( void ) krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE, 
-									  MESSAGE_VALUE_UNUSED, 
-									  smimeCapInfo[ i ].smimeCapability );
+			prevAlgo = algorithm;
+			continue;
 			}
+		prevAlgo = algorithm;
+
+		/* If there's a secondary algorithm, make sure that it's available */
+		if( smimeCapInfo[ i ].secondaryAlgorithm != CRYPT_ALGO_NONE && \
+			!algoAvailable( smimeCapInfo[ i ].secondaryAlgorithm ) )
+			continue;
+
+		/* List this algorithm or algorithm combination as an available 
+		   capability */
+		( void ) krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE, 
+								  MESSAGE_VALUE_UNUSED, 
+								  smimeCapInfo[ i ].smimeCapability );
 		}
 	ENSURES_V( i < FAILSAFE_ARRAYSIZE( smimeCapInfo, SMIMECAP_INFO ) );
+
+	/* Add any futher non-algorithm-related sMIMECapabilities */
+	( void ) krnlSendMessage( iCmsAttributes, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_UNUSED,
+							  CRYPT_CERTINFO_CMS_SMIMECAP_PREFERBINARYINSIDE );
 	}
 
 /****************************************************************************
@@ -446,8 +509,7 @@ static int createCmsAttributes( INOUT CMS_ATTRIBUTE_INFO *cmsAttributeInfo,
 			  isHandleRangeValid( cmsAttributeInfo->iTspSession ) );
 	REQUIRES( cmsAttributeInfo->encodedAttributes == NULL && \
 			  cmsAttributeInfo->encodedAttributeSize == 0 );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 
 	/* Clear return value */
 	*iCmsHashContext = CRYPT_ERROR;

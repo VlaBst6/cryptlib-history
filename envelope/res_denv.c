@@ -6,14 +6,14 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "envelope.h"
   #include "pgp.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -55,11 +55,11 @@ BOOLEAN moreContentItemsPossible( IN_OPT const CONTENT_LIST *contentListPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 						   INOUT MEMPOOL_STATE memPoolState, 
+						   IN_ENUM( CONTENT ) const CONTENT_TYPE type,
 						   IN_ENUM( CRYPT_FORMAT ) \
-							const CRYPT_FORMAT_TYPE formatType,
+								const CRYPT_FORMAT_TYPE formatType,
 						   IN_BUFFER_OPT( objectSize ) const void *object, 
-						   IN_LENGTH_Z const int objectSize,
-							const BOOLEAN isSigObject )
+						   IN_LENGTH_Z const int objectSize )
 	{
 	CONTENT_LIST *newItem;
 
@@ -68,6 +68,7 @@ int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
 	assert( objectSize == 0 || isReadPtr( object, objectSize ) );
 
+	REQUIRES( type > CONTENT_NONE && type < CONTENT_LAST );
 	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
 			  formatType < CRYPT_FORMAT_LAST );
 	REQUIRES( ( object == NULL && objectSize == 0 ) || \
@@ -78,12 +79,12 @@ int createContentListItem( OUT_PTR CONTENT_LIST **newContentListItemPtrPtr,
 								sizeof( CONTENT_LIST ) ) ) == NULL )
 		return( CRYPT_ERROR_MEMORY );
 	memset( newItem, 0, sizeof( CONTENT_LIST ) );
+	newItem->type = type;
 	newItem->formatType = formatType;
 	newItem->object = object;
 	newItem->objectSize = objectSize;
-	if( isSigObject )
+	if( type == CONTENT_SIGNATURE )
 		{
-		newItem->flags = CONTENTLIST_ISSIGOBJ;
 		newItem->clSigInfo.iSigCheckKey = CRYPT_ERROR;
 		newItem->clSigInfo.iExtraData = CRYPT_ERROR;
 		newItem->clSigInfo.iTimestamp = CRYPT_ERROR;
@@ -145,7 +146,7 @@ int deleteContentList( INOUT MEMPOOL_STATE memPoolState,
 		contentListCursor = contentListCursor->next;
 
 		/* Destroy any attached objects if necessary */
-		if( contentListItem->flags & CONTENTLIST_ISSIGOBJ )
+		if( contentListItem->type == CONTENT_SIGNATURE )
 			{
 			CONTENT_SIG_INFO *sigInfo = &contentListItem->clSigInfo;
 
@@ -161,13 +162,13 @@ int deleteContentList( INOUT MEMPOOL_STATE memPoolState,
 		deleteDoubleListElement( contentListHeadPtrPtr, contentListItem );
 		if( contentListItem->object != NULL )
 			{
-			/* Clear the object.  We have to cheat a bit here with pointer
-			   casting, the 'const' indicates that the object data is never 
-			   modified while it's in the content list but it has to be
-			   modified in a manner of speaking when we delete it */
-			zeroise( ( void * ) contentListItem->object, 
-					 contentListItem->objectSize );
-			clFree( "deleteContentList", ( void * ) contentListItem->object );
+			void *contentPtr = ( void * ) contentListItem->object;
+				 /* Although the data is declared 'const' since it can't be 
+					modified, we still have to be able to zeroise it on free 
+					so we override the const for this */
+
+			zeroise( contentPtr, contentListItem->objectSize );
+			clFree( "deleteContentList", contentPtr );
 			}
 		zeroise( contentListItem, sizeof( CONTENT_LIST ) );
 		freeMemPool( memPoolState, contentListItem );
@@ -369,9 +370,8 @@ static int checkCmsSignatureInfo( INOUT CONTENT_LIST *contentListPtr,
 								   &sigInfo->iExtraData );
 	if( cryptStatusError( status ) )
 		{
-		retExt( CRYPT_ERROR_SIGNATURE,
-				( CRYPT_ERROR_SIGNATURE, errorInfo, 
-				  "Signature verification failed" ) );
+		retExt( status,
+				( status, errorInfo, "Signature verification failed" ) );
 		}
 
 	/* If there are authenticated attributes present we have to perform an 
@@ -420,7 +420,283 @@ static int checkCmsSignatureInfo( INOUT CONTENT_LIST *contentListPtr,
 *																			*
 ****************************************************************************/
 
-/* Import a wrapped session key */
+/* Add a new encryption or MAC action to the envelope's action list */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int addActionToList( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+							IN_ENUM( ACTION ) const ACTION_TYPE action )
+	{
+	ACTION_RESULT actionResult;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( action == ACTION_CRYPT || action == ACTION_MAC );
+
+	/* Add the action to the envelope action list */
+	actionResult = checkAction( envelopeInfoPtr->actionList, action,
+								iCryptContext );
+	if( actionResult == ACTION_RESULT_ERROR || \
+		actionResult == ACTION_RESULT_INITED )
+		return( CRYPT_ERROR_INITED );
+	return( addAction( &envelopeInfoPtr->actionList,
+					   envelopeInfoPtr->memPoolState, action,
+					   iCryptContext ) );
+	}
+
+/* Initialise a recovered encryption key, either directly if it's a session 
+   key or indirectly if it's a generic-secret key used to derive encryption
+   and MAC contexts and keys */
+
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int initKeys( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+					 IN_HANDLE const CRYPT_CONTEXT iSessionKeyContext,
+					 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
+					 OUT_HANDLE_OPT CRYPT_CONTEXT *iMacContext )
+	{
+	CRYPT_CONTEXT iAuthEncCryptContext, iAuthEncMacContext;
+	const CONTENT_LIST *contentListPtr;
+	const CONTENT_ENCR_INFO *encrInfo;
+	const CONTENT_AUTHENC_INFO *authEncInfo;
+	MECHANISM_KDF_INFO mechanismInfo;
+	CONTENT_ENCR_INFO localEncrInfo;
+	STREAM stream;
+	int value, iterationCount, status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isWritePtr( iMacContext, sizeof( CRYPT_CONTEXT ) ) );
+
+	REQUIRES( isHandleRangeValid( iSessionKeyContext ) );
+
+	/* Clear return values.  Note that we set the returned context to the
+	   passed-in context since this is the default (identity) transformation,
+	   it's only when using authenticated encryption that it gets set to a
+	   new context */
+	*iCryptContext = iSessionKeyContext;
+	*iMacContext = CRYPT_ERROR;
+
+	/* Check whether we got as far as the encrypted data, which will be 
+	   indicated by the fact that there's content information present from 
+	   which we can set up the decryption */
+	for( contentListPtr = envelopeInfoPtr->contentList, iterationCount = 0;
+		 contentListPtr != NULL && \
+			contentListPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 contentListPtr = contentListPtr->next, iterationCount++ );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	if( contentListPtr == NULL )
+		{
+		/* We didn't get to the encrypted data, the decryption will be set 
+		   up by the de-enveloping code when we reach the data */
+		return( CRYPT_OK );
+		}
+
+	/* If we're using standard (non-authenticated) encryption, the 
+	   encryption parameters have been provided directly as part of the 
+	   content information so we can set up the decryption and exit */
+	if( contentListPtr->type != CONTENT_AUTHENC )
+		{
+		encrInfo = &contentListPtr->clEncrInfo;
+		return( initEnvelopeEncryption( envelopeInfoPtr, iSessionKeyContext, 
+								encrInfo->cryptAlgo, encrInfo->cryptMode, 
+								encrInfo->saltOrIV, encrInfo->saltOrIVsize, 
+								FALSE ) );
+		}
+
+	/* We're using authenticated encryption, in which case the "session key" 
+	   that we've been given is actually a generic-secret context from which 
+	   the encryption and MAC contexts and keys have to be derived */
+	authEncInfo = &contentListPtr->clAuthEncInfo;
+
+	/* Recreate the encryption and MAC contexts used for the authenticated 
+	   encryption from the algorithm parameter data stored with the generic-
+	   secret context */
+	sMemConnect( &stream, authEncInfo->encParamData, 
+				 authEncInfo->encParamDataLength );
+	status = readContextAlgoID( &stream, &iAuthEncCryptContext, NULL, 
+								DEFAULT_TAG, ALGOID_CLASS_CRYPT );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	sMemConnect( &stream, authEncInfo->macParamData, 
+				 authEncInfo->macParamDataLength );
+	status = readContextAlgoID( &stream, &iAuthEncMacContext, NULL, 
+								DEFAULT_TAG, ALGOID_CLASS_HASH );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* Set up the encryption parameters using the parameter data recovered
+	   from the generic-secret context */
+	memset( &localEncrInfo, 0, sizeof( CONTENT_ENCR_INFO ) );
+	status = krnlSendMessage( iAuthEncCryptContext, IMESSAGE_GETATTRIBUTE, 
+							  &value, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) )
+		{
+		localEncrInfo.cryptAlgo = value;	/* int vs.enum */
+		status = krnlSendMessage( iAuthEncCryptContext, IMESSAGE_GETATTRIBUTE, 
+								  &value, CRYPT_CTXINFO_MODE );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		MESSAGE_DATA msgData;
+
+		localEncrInfo.cryptMode = value;	/* int vs.enum */
+		setMessageData( &msgData, localEncrInfo.saltOrIV, 
+						CRYPT_MAX_HASHSIZE );
+		status = krnlSendMessage( iAuthEncCryptContext, IMESSAGE_GETATTRIBUTE_S, 
+								  &msgData, CRYPT_CTXINFO_IV );
+		if( cryptStatusOK( status ) )
+			localEncrInfo.saltOrIVsize = msgData.length;
+		}
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	encrInfo = &localEncrInfo;
+
+	/* Derive the encryption and MAC keys from the generic-secret key */
+	setMechanismKDFInfo( &mechanismInfo, iAuthEncCryptContext, 
+						 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA, 
+						 "encryption", 10 );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
+							  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
+	if( cryptStatusOK( status ) )
+		{
+		setMechanismKDFInfo( &mechanismInfo, iAuthEncMacContext, 
+							 iSessionKeyContext, CRYPT_ALGO_HMAC_SHA, 
+							 "authentication", 14 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_KDF,
+								  &mechanismInfo, MECHANISM_DERIVE_PKCS5 );
+		}
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* We've got the encryption context and information ready, set up the 
+	   decryption */
+	status = initEnvelopeEncryption( envelopeInfoPtr, 
+							iAuthEncCryptContext, encrInfo->cryptAlgo, 
+							encrInfo->cryptMode, encrInfo->saltOrIV, 
+							encrInfo->saltOrIVsize, FALSE );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* MAC the EncryptedContentInfo.ContentEncryptionAlgorithmIdentifier 
+	   information alongside the payload data to prevent an attacker from 
+	   manipulating the algorithm parameters to cause corruption that won't 
+	   be detected by the MAC on the payload data */
+	status = krnlSendMessage( iAuthEncMacContext, IMESSAGE_CTX_HASH,
+							  ( MESSAGE_CAST ) authEncInfo->authEncParamData,
+							  authEncInfo->authEncParamLength );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iAuthEncCryptContext, IMESSAGE_DECREFCOUNT );
+		krnlSendNotifier( iAuthEncMacContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	*iCryptContext = iAuthEncCryptContext;
+	*iMacContext = iAuthEncMacContext;
+
+	/* We're now MACing the data via a level of indirection (in other words
+	   we haven't gone directly via a MACAlgorithmIdentifier in the envelope
+	   header) so we need to explicitly turn on hashing */
+	envelopeInfoPtr->dataFlags |= ENVDATA_AUTHENCACTIONSACTIVE;
+
+	/* Let the caller know that the contexts have been switched */
+	return( OK_SPECIAL );
+	}
+
+/* Set up the envelope decryption using an added or recovered session key */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initSessionKeyDecryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+									 IN_HANDLE \
+										const CRYPT_CONTEXT iSessionKeyContext,
+									 const BOOLEAN isRecoveredSessionKey )
+	{
+	CRYPT_CONTEXT iCryptContext = iSessionKeyContext;
+	CRYPT_CONTEXT iMacContext = CRYPT_ERROR;
+	BOOLEAN isAuthEnc = FALSE;
+	int status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( isHandleRangeValid( iSessionKeyContext ) );
+
+	/* If we recovered the session key from a key exchange action rather 
+	   than having it passed directly to us by the user, try and set up the 
+	   decryption */
+	if( isRecoveredSessionKey )
+		{
+		status = initKeys( envelopeInfoPtr, iSessionKeyContext,
+						   &iCryptContext, &iMacContext );
+		if( cryptStatusError( status ) )
+			{
+			if( status != OK_SPECIAL )
+				return( status );
+
+			/* A return status of OK_SPECIAL means that the context has
+			   changed from a single 'session-key' context containing a
+			   generic secret to two new contexts, one for encryption and
+			   the other for authentication */
+			isAuthEnc = TRUE;
+			}
+		}
+
+	/* Add the recovered session encryption action to the action list */
+	status = addActionToList( envelopeInfoPtr, iCryptContext, ACTION_CRYPT );
+	if( cryptStatusOK( status ) && isAuthEnc )
+		status = addActionToList( envelopeInfoPtr, iMacContext, ACTION_MAC );
+	if( cryptStatusError( status ) )
+		{
+		if( isAuthEnc )
+			{
+			krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
+			krnlSendNotifier( iMacContext, IMESSAGE_DECREFCOUNT );
+			}
+		return( status );
+		}
+
+	/* If we're using authenticated encryption then the generic-secret
+	   context that was recovered as the 'session-key' has been turned into
+	   two new contexts, one for encryption and the other for 
+	   authentication, and we can destroy it */
+	if( envelopeInfoPtr->usage == ACTION_CRYPT && \
+		( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) )
+		{
+		REQUIRES( iSessionKeyContext != iCryptContext );
+
+		krnlSendNotifier( iSessionKeyContext, IMESSAGE_DECREFCOUNT );
+		}
+
+	/* Notify the kernel that the encryption/MAC context is attached to the 
+	   envelope.  This is an internal object used only by the envelope so we 
+	   tell the kernel not to increment its reference count when it attaches 
+	   it */
+	return( krnlSendMessage( envelopeInfoPtr->objectHandle, 
+							 IMESSAGE_SETDEPENDENT, 
+							 ( MESSAGE_CAST ) &iCryptContext, 
+							 SETDEP_OPTION_NOINCREF ) );
+	}
+
+/* Import a wrapped session key (optionally a generic-secret key if we're
+   going via an intermediate step for authenticated encryption) */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 static int importSessionKey( const CONTENT_LIST *contentListPtr,
@@ -455,7 +731,8 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 		}
 #endif /* USE_PGP */
 
-	/* Look for the information required to recreate the session key context */
+	/* Look for the information required to recreate the session key (or
+	   generic-secret) context */
 	for( sessionKeyInfoPtr = contentListPtr, iterationCount = 0;
 		 sessionKeyInfoPtr != NULL && \
 			sessionKeyInfoPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY && \
@@ -468,101 +745,58 @@ static int importSessionKey( const CONTENT_LIST *contentListPtr,
 		return( CRYPT_ERROR_UNDERFLOW );
 		}
 
-	/* Create the session key context and import the encrypted session key */
-	setMessageCreateObjectInfo( &createInfo,
-								sessionKeyInfoPtr->clEncrInfo.cryptAlgo );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-							  OBJECT_TYPE_CONTEXT );
-	if( cryptStatusError( status ) )
-		return( status );
-	iSessionKey = createInfo.cryptHandle;
-	status = krnlSendMessage( iSessionKey, IMESSAGE_SETATTRIBUTE,
-							  ( MESSAGE_CAST ) &sessionKeyInfoPtr->clEncrInfo.cryptMode,
-							  CRYPT_CTXINFO_MODE );
-	if( cryptStatusOK( status ) )
+	/* Create the session/generic-secret key context */
+	if( sessionKeyInfoPtr->type == CONTENT_CRYPT )
 		{
-		status = iCryptImportKey( contentListPtr->object,
-								  contentListPtr->objectSize,
-								  contentListPtr->formatType, iImportContext, 
-								  iSessionKey, NULL );
+		const CONTENT_ENCR_INFO *encrInfo = &sessionKeyInfoPtr->clEncrInfo;
+
+		/* It's conventional encrypted data, import the session key and
+		   set the encryption mode */
+		setMessageCreateObjectInfo( &createInfo, encrInfo->cryptAlgo );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+								  OBJECT_TYPE_CONTEXT );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE,
+								  ( MESSAGE_CAST ) &encrInfo->cryptMode,
+								  CRYPT_CTXINFO_MODE );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
 		}
+	else
+		{
+		const CONTENT_AUTHENC_INFO *authEncInfo = \
+							&sessionKeyInfoPtr->clAuthEncInfo;
+
+		/* It's authenticated-encrypted data, import the generic-secret
+		   context used to create the encryption and MAC contexts */
+		setMessageCreateObjectInfo( &createInfo, authEncInfo->authEncAlgo );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+								  OBJECT_TYPE_CONTEXT );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	iSessionKey = createInfo.cryptHandle;
+
+	/* Import the wrapped session/generic-secret key */
+	status = iCryptImportKey( contentListPtr->object,
+							  contentListPtr->objectSize,
+							  contentListPtr->formatType, iImportContext, 
+							  iSessionKey, NULL );
 	if( cryptStatusError( status ) )
 		{
 		krnlSendNotifier( iSessionKey, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
 	*iSessionKeyContext = iSessionKey;
+
 	return( CRYPT_OK );
-	}
-
-/* Set up the envelope decryption using an added or recovered session key */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int initSessionKeyDecryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
-									 IN_HANDLE \
-										const CRYPT_CONTEXT iSessionKeyContext,
-									 const BOOLEAN isRecoveredSessionKey )
-	{
-	ACTION_RESULT actionResult;
-	int status;
-
-	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-
-	REQUIRES( isHandleRangeValid( iSessionKeyContext ) );
-
-	/* If we recovered the session key from a key exchange action rather 
-	   than having it passed directly to us by the user, try and set up the 
-	   decryption */
-	if( isRecoveredSessionKey )
-		{
-		const CONTENT_LIST *contentListPtr;
-		int iterationCount;
-		
-		/* If we got as far as the encrypted data (indicated by the fact 
-		   that there's content info present) we can set up the decryption.  
-		   If we didn't get this far it'll be set up by the de-enveloping 
-		   code when we reach it */
-		for( contentListPtr = envelopeInfoPtr->contentList, iterationCount = 0;
-			 contentListPtr != NULL && \
-				contentListPtr->envInfo != CRYPT_ENVINFO_SESSIONKEY && \
-				iterationCount < FAILSAFE_ITERATIONS_LARGE;
-			 contentListPtr = contentListPtr->next, iterationCount++ );
-		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
-		if( contentListPtr != NULL )
-			{
-			const CONTENT_ENCR_INFO *encrInfo = &contentListPtr->clEncrInfo;
-
-			/* We've got to the encrypted data, set up the decryption */
-			status = initEnvelopeEncryption( envelopeInfoPtr, 
-							iSessionKeyContext, encrInfo->cryptAlgo, 
-							encrInfo->cryptMode, encrInfo->saltOrIV, 
-							encrInfo->saltOrIVsize, FALSE );
-			if( cryptStatusError( status ) )
-				return( status );
-			}
-		}
-
-	/* Add the recovered session encryption action to the action list */
-	actionResult = checkAction( envelopeInfoPtr->actionList, ACTION_CRYPT,
-								iSessionKeyContext );
-	if( actionResult == ACTION_RESULT_ERROR || \
-		actionResult == ACTION_RESULT_INITED )
-		return( CRYPT_ERROR_INITED );
-	status = addAction( &envelopeInfoPtr->actionList,
-						envelopeInfoPtr->memPoolState, ACTION_CRYPT,
-						iSessionKeyContext );
-	if( cryptStatusError( status ) )
-		return( status );
-
-	/* Notify the kernel that the session key context is attached to the
-	   envelope.  This is an internal object used only by the envelope so we
-	   tell the kernel not to increment its reference count when it attaches
-	   it */
-	return( krnlSendMessage( envelopeInfoPtr->objectHandle, 
-							 IMESSAGE_SETDEPENDENT, 
-							 ( MESSAGE_CAST ) &iSessionKeyContext, 
-							 SETDEP_OPTION_NOINCREF ) );
 	}
 
 /****************************************************************************
@@ -582,13 +816,14 @@ static int findHashActionFunction( const ACTION_LIST *actionListPtr,
 
 	assert( isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 
 	/* Check to see if it's the action that we want */
 	status = krnlSendMessage( actionListPtr->iCryptHandle,
 							  IMESSAGE_GETATTRIBUTE, &actionCryptAlgo,
 							  CRYPT_CTXINFO_ALGO );
+	if( cryptStatusError( status ) )
+		return( CRYPT_ERROR );
 	return( ( actionCryptAlgo == hashAlgo ) ? CRYPT_OK : CRYPT_ERROR );
 	}
 
@@ -628,7 +863,23 @@ static int addSignatureInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 				  "applied to enveloped data" ) );
 		}
 
-	/* Check the signature */
+	/* Check the signature.  In theory there's an additional check that we 
+	   need to apply at this point that defends against a (hypothesised) 
+	   attack in which, if there are multiple signatures present and they 
+	   use different-strength hash algorithms and an attacker manages to 
+	   break one of them, the attacker can strip the stronger-algorithm 
+	   signature(s) and leave only the weaker-algorithm one(s), allowing 
+	   them to modify the signed data.  The way to handle this is to include 
+	   a reference to every other signature in the current signature.  
+	   However there are (currently) no known implementations of this, which 
+	   makes testing somewhat difficult.  In addition the handling gets very 
+	   tricky, for example if the recipient supports only the weak algorithm 
+	   should they reject the message or accept it?  (The RFC that covers 
+	   this, RFC 5750, says that no matter what occurs in terms of absent or 
+	   present strong or weak-algorithm signatures, the recipient MAY 
+	   consider them valid).  Until both implementations, and more 
+	   importantly users who can specify how they want this handled, appear, 
+	   we leave it for future implementation */
 	if( contentListPtr->formatType == CRYPT_FORMAT_CMS )
 		{
 		status = checkCmsSignatureInfo( contentListPtr, 
@@ -646,13 +897,15 @@ static int addSignatureInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 								NULL );
 		if( cryptStatusError( status ) )
 			{
+			/* We need to do this explicitly here since it's not set by
+			   iCryptCheckSignature() as it is for checkCmsSignatureInfo() */
 			setErrorString( ENVELOPE_ERRINFO, 
 							"Signature verification failed", 29 );
 			}
 
-		/* If it's a format that includes signing key info remember the key 
-		   that was used to check the signature in case the user wants to 
-		   query it later */
+		/* If it's a format that includes signing key information remember 
+		   the key that was used to check the signature in case the user 
+		   wants to query it later */
 		if( contentListPtr->formatType != CRYPT_FORMAT_PGP )
 			{
 			krnlSendNotifier( sigCheckContext, IMESSAGE_INCREFCOUNT );
@@ -664,7 +917,19 @@ static int addSignatureInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Remember the processing result so that we don't have to repeat the 
 	   processing if queried again.  Since we don't need the encoded 
-	   signature data any more after this point we can free it */
+	   signature data any more after this point we can free it.
+
+	   There are a few special-case situations in which a failure at this
+	   point isn't necessarily fatal, but it's hard to predict in advance 
+	   exactly what all of these could be.  The one obvious one is with a
+	   CRYPT_ERROR_WRONGKEY, which means that the caller can simply retry 
+	   with a different key, so we make this error non-persistent */
+	if( status == CRYPT_ERROR_WRONGKEY )
+		{
+		setErrorString( ENVELOPE_ERRINFO, 
+						"Incorrect key used to verify signature", 38 );
+		return( status );
+		}
 	clFree( "addSignatureInfo", ( void * ) contentListPtr->object );
 	contentListPtr->object = NULL;
 	contentListPtr->objectSize = 0;
@@ -823,9 +1088,18 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
 			MESSAGE_DATA msgData;
 
 			/* Load the derivation information into the context */
-			status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
-									  ( MESSAGE_CAST ) &encrInfo->keySetupIterations,
-									  CRYPT_CTXINFO_KEYING_ITERATIONS );
+			if( encrInfo->keySetupAlgo != CRYPT_ALGO_NONE )
+				status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+										  ( MESSAGE_CAST ) &encrInfo->keySetupAlgo,
+										  CRYPT_CTXINFO_KEYING_ALGO );
+			if( cryptStatusOK( status ) )
+				status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+										  ( MESSAGE_CAST ) &encrInfo->keySetupIterations,
+										  CRYPT_CTXINFO_KEYING_ITERATIONS );
+			if( cryptStatusOK( status ) && encrInfo->keySize > 0 )
+				status = krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE,
+										  ( MESSAGE_CAST ) &encrInfo->keySize,
+										  CRYPT_CTXINFO_KEYSIZE );
 			if( cryptStatusOK( status ) )
 				{
 				setMessageData( &msgData, ( MESSAGE_CAST ) encrInfo->saltOrIV,
@@ -900,7 +1174,7 @@ static int addPasswordInfo( const CONTENT_LIST *contentListPtr,
    list */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int matchInfoObject( OUT_PTR CONTENT_LIST **contentListPtrPtr,
+static int matchInfoObject( OUT_OPT_PTR CONTENT_LIST **contentListPtrPtr,
 							const ENVELOPE_INFO *envelopeInfoPtr,
 							IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE envInfo )
 	{

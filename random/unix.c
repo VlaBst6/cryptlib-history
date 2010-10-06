@@ -585,18 +585,18 @@ static FILE *my_popen( INOUT DATA_SOURCE_INFO *entry )
 			if( gathererUID != ( uid_t ) -1 )
 				{
 #if 0			/* Not available on some OSes */
-				setuid( gathererUID );
-				seteuid( gathererUID );
-				setgid( gathererGID );
-				setegid( gathererGID );
+				( void ) setuid( gathererUID );
+				( void ) seteuid( gathererUID );
+				( void ) setgid( gathererGID );
+				( void ) setegid( gathererGID );
 #else
   #if( defined( __linux__ ) || ( defined( __FreeBSD__ ) && OSVERSION >= 5 ) || \
 	   ( defined( __hpux ) && OSVERSION >= 11 ) )
-				setresuid( gathererUID, gathererUID, gathererUID );
-				setresgid( gathererGID, gathererGID, gathererGID );
+				( void ) setresuid( gathererUID, gathererUID, gathererUID );
+				( void ) setresgid( gathererGID, gathererGID, gathererGID );
   #else
-				setreuid( gathererUID, gathererUID );
-				setregid( gathererGID, gathererGID );
+				( void ) setreuid( gathererUID, gathererUID );
+				( void ) setregid( gathererGID, gathererGID );
   #endif /* OSses with setresXid() */
 #endif /* 0 */
 				}

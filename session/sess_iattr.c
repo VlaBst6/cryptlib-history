@@ -287,8 +287,7 @@ CRYPT_ATTRIBUTE_TYPE checkMissingInfo( IN_OPT const ATTRIBUTE_LIST *attributeLis
 		for( iterationCount = 0;
 			 ( attributeListPtr = \
 					attributeFind( attributeListPtr, getAttrFunction, 
-								   CRYPT_SESSINFO_USERNAME, 
-								   CRYPT_ATTRIBUTE_NONE ) ) != NULL && \
+								   CRYPT_SESSINFO_USERNAME ) ) != NULL && \
 				iterationCount < FAILSAFE_ITERATIONS_MAX;
 			 iterationCount++ )
 			{
@@ -377,7 +376,7 @@ int getSessionAttributeCursor( IN_OPT ATTRIBUTE_LIST *attributeListHead,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int setSessionAttributeCursor( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
-							   OUT_PTR ATTRIBUTE_LIST **attributeListCursorPtr, 
+							   INOUT_PTR ATTRIBUTE_LIST **attributeListCursorPtr, 
 							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
 							   IN_RANGE( CRYPT_CURSOR_LAST, \
 										 CRYPT_CURSOR_FIRST ) /* Values are -ve */
@@ -461,8 +460,7 @@ const ATTRIBUTE_LIST *findSessionInfo( IN_OPT const ATTRIBUTE_LIST *attributeLis
 	REQUIRES_N( attributeID > CRYPT_SESSINFO_FIRST && \
 				attributeID < CRYPT_SESSINFO_LAST );
 
-	return( attributeFind( attributeListPtr, getAttrFunction, 
-						   attributeID, CRYPT_ATTRIBUTE_NONE ) );
+	return( attributeFind( attributeListPtr, getAttrFunction, attributeID ) );
 	}
 
 /* Find a session attribute by type and content */
@@ -487,7 +485,7 @@ const ATTRIBUTE_LIST *findSessionInfoEx( IN_OPT const ATTRIBUTE_LIST *attributeL
 
 	/* Find the first attribute of this type */
 	attributeListCursor = attributeFind( attributeListPtr, getAttrFunction, 
-										 attributeID, CRYPT_ATTRIBUTE_NONE );
+										 attributeID );
 	if( attributeListCursor == NULL )
 		return( NULL );
 
@@ -720,7 +718,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_EPHEMERAL | ATTR_FLAG_ENCODEDVAL
 
 	/* Find the first attribute of this type */
 	attributeListPtr = attributeFind( attributeListPtr, getAttrFunction, 
-									  attributeID, CRYPT_ATTRIBUTE_NONE );
+									  attributeID );
 
 	/* If the attribute is already present, update the value */
 	if( attributeListPtr != NULL )

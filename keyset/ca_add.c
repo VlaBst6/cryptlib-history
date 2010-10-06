@@ -186,7 +186,7 @@ static int checkRevRequest( INOUT DBMS_INFO *dbmsInfo,
 	   (either that or something really obscure which is best reported as a 
 	   non-present certificate problem) */
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		{
 		initBoundData( boundDataPtr );
@@ -234,7 +234,7 @@ int caAddPKIUser( INOUT DBMS_INFO *dbmsInfo,
 							  certData, MAX_CERT_SIZE, &certDataLength );
 	if( cryptStatusOK( status ) )
 		status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA );
+						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		{
 		retExt( status, 
@@ -296,7 +296,7 @@ int caDeletePKIUser( INOUT DBMS_INFO *dbmsInfo,
 	if( cryptStatusOK( status ) )
 		{
 		status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA );
+						   iPkiUser, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 		krnlSendNotifier( iPkiUser, IMESSAGE_DECREFCOUNT );
 		}
 	if( cryptStatusError( status ) )
@@ -375,7 +375,7 @@ int caAddCertRequest( INOUT DBMS_INFO *dbmsInfo,
 
 	/* Extract the information that we need from the certificate request */
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		{
 		status = extractCertData( iCertRequest, 

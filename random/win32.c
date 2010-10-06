@@ -897,7 +897,16 @@ void fastPoll( void )
 	   events in input queue, and milliseconds since Windows was started.
 	   Since a HWND/HANDLE can be a 64-bit value on a 64-bit platform, we 
 	   have to use a mapping macro that discards the high 32 bits (which
-	   presumably won't be of much interest anyway) */
+	   presumably won't be of much interest anyway).
+	   
+	   Note that there's another call that does almost the same thing as 
+	   GetTickCount(), timeGetTime() from the multimedia API, however this 
+	   has a fairly constant delta between ticks while GetTickCount() 
+	   wanders all over the place (while still averaging a fixed value).  So 
+	   timeGetTime() (which uses KeQueryInterruptTime()) isn't necessarily 
+	   more accurate than GetTickCount() (which uses KeQueryTickCount()), 
+	   just more regular.  Since we're interested in unpredictability, we 
+	   use GetTickCount() and not timeGetTime() */
 	addRandomHandle( randomState, GetActiveWindow() );
 	addRandomHandle( randomState, GetCapture() );
 	addRandomHandle( randomState, GetClipboardOwner() );
@@ -1068,7 +1077,7 @@ void fastPoll( void )
 	
 	/* x86-64 always has a TSC, and the read is supported as an intrinsic */
 	value = __rdtsc();
-	addRandomValue( randomState, value );
+	addRandomData( randomState, &value, sizeof( __int64 ) );
 	}
 #else
   #ifndef NO_ASM

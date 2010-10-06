@@ -30,8 +30,8 @@ shift
 # Additional constants from the makefile.
 
 MAJ="3"
-MIN="3"
-PLV="3"
+MIN="4"
+PLV="0"
 PROJ="cl"
 SHARED_OBJ_PATH="./shared-obj/"
 if [ $OSNAME = "Darwin" ] ; then
@@ -192,7 +192,10 @@ buildWithNativeToolsShared()
 		 CC=$CC CFLAGS="$* $CFLAGS -DOSVERSION=$OSVERSION" $OSNAME
 	}
 
-# Build cryptlib, taking into account OS-specific quirks.
+# Build cryptlib, taking into account OS-specific quirks.  Note that we
+# don't provide a gcc option for AIX because mixing gcc-created and
+# IBM-sourced components isn't a good idea, and it seems that anyone who's
+# using AIX also has the IBM tools installed with it.
 
 buildStatic()
 	{
@@ -201,13 +204,20 @@ buildStatic()
 
 	case $OSNAME in
 
+		'HP-UX')
+			if [ $BUILDWITHGCC ] ; then
+				buildWithGcc "HP-UX" $* ;
+			else
+				buildWithNativeTools "HP-UX" $CC $* ;
+			fi ;;
+
 		'SunOS')
 			if [ -x /opt/SUNWspro/bin/cc ] ; then
-				buildWithNativeTools SunOS /opt/SUNWspro/bin/cc $* ;
+				buildWithNativeTools "SunOS" /opt/SUNWspro/bin/cc $* ;
 			elif [ $BUILDWITHGCC ] ; then
-				buildWithGcc SunOS $* ;
+				buildWithGcc "SunOS" $* ;
 			else
-				buildWithNativeTools SunOS $CC $* ;
+				buildWithNativeTools "SunOS" $CC $* ;
 			fi ;;
 
 		*)
@@ -221,6 +231,13 @@ buildShared()
 	shift
 
 	case $OSNAME in
+
+		'HP-UX')
+			if [ $BUILDWITHGCC ] ; then
+				buildWithGccShared "HP-UX" $SLIBNAME $* ;
+			else
+				buildWithNativeToolsShared "HP-UX" $SLIBNAME $CC $* ;
+			fi ;;
 
 		'SunOS')
 			if [ -x /opt/SUNWspro/bin/cc ] ; then

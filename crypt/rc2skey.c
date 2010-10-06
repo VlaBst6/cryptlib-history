@@ -97,6 +97,11 @@ static unsigned char key_table[256]={
  * BSAFE uses the 'retarded' version.  What I previously shipped is
  * the same as specifying 1024 for the 'bits' parameter.  Bsafe uses
  * a version where the bits parameter is the same as len*8 */
+
+#if defined( _WIN32_WCE ) && defined( ARMV4 ) && defined( NDEBUG )
+  #pragma optimize( "g", off )
+#endif /* pcg - eVC++ 4.0 ARMv4 optimiser bug */
+
 void RC2_set_key(RC2_KEY *key, int len, const unsigned char *data, int bits)
 	{
 	int i,j;
@@ -143,3 +148,6 @@ void RC2_set_key(RC2_KEY *key, int len, const unsigned char *data, int bits)
 		*(ki--)=((k[i]<<8)|k[i-1])&0xffff;
 	}
 
+#if defined( _WIN32_WCE ) && defined( ARMV4 ) && defined( NDEBUG )
+  #pragma optimize( "g", on )
+#endif /* pcg - eVC++ 4.0 ARMv4 optimiser bug */

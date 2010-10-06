@@ -336,8 +336,8 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 			{
 			/* There's no confirmation handshake for PKIBoot or a revocation 
 			   request so we mark this as the last message if required */
-			sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL,
-					TRUE );
+			sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, 
+					   TRUE );
 			}
 		status = writePkiDatagram( sessionInfoPtr, CMP_CONTENT_TYPE,
 								   CMP_CONTENT_TYPE_LEN );
@@ -404,8 +404,7 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 
 	/* Exchange confirmation data with the server */
 	if( !( sessionInfoPtr->protocolFlags & CMP_PFLAG_RETAINCONNECTION ) )
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL, 
-				TRUE );
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, TRUE );
 	status = writePkiMessage( sessionInfoPtr, &protocolInfo,
 							  CMPBODY_CONFIRMATION );
 	if( cryptStatusOK( status ) )

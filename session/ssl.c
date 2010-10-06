@@ -12,7 +12,7 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
@@ -54,7 +54,10 @@ static int initHandshakeInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		initSSLserverProcessing( handshakeInfo );
 	else
 		initSSLclientProcessing( handshakeInfo );
-	return( initHandshakeCryptInfo( handshakeInfo ) );
+	handshakeInfo->originalVersion = sessionInfoPtr->version;
+	return( initHandshakeCryptInfo( handshakeInfo,
+				( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 ) ? \
+					TRUE : FALSE ) );
 	}
 
 /* SSL uses 24-bit lengths in some places even though the maximum packet 
@@ -83,20 +86,58 @@ int writeUint24( INOUT STREAM *stream, IN_LENGTH const int length )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
 	REQUIRES_S( length >= 0 && \
-				length < CRYPT_MAX_IVSIZE + MAX_PACKET_SIZE + \
-						 CRYPT_MAX_HASHSIZE + CRYPT_MAX_IVSIZE );
+				length < MAX_PACKET_SIZE + EXTRA_PACKET_SIZE );
 
 	sputc( stream, 0 );
 	return( writeUint16( stream, length ) );
 	}
 
+/* The ECDH public value is a bit complex to process because it's the usual 
+   X9.62 stuff-point-data-into-a-byte-string value, and to make things even 
+   messier it's stored with an 8-bit length instead of a 16-bit one so we 
+   can't even read it as an integer16U().  To work around this we have to 
+   duplicate a certain amount of the integer-read code here */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+int readEcdhValue( INOUT STREAM *stream,
+				   OUT_BUFFER( *valueLen, valueMaxLen ) void *value,
+				   IN_LENGTH_SHORT_MIN( 64 ) const int valueMaxLen,
+				   OUT_LENGTH_PKC_Z int *valueLen )
+	{
+	int length, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( value, valueMaxLen ) );
+	assert( isWritePtr( valueLen, sizeof( int ) ) );
+
+	REQUIRES( valueMaxLen >= 64 && valueMaxLen < MAX_INTLENGTH_SHORT );
+
+	/* Clear return value */
+	memset( value, 0, min( 16, valueMaxLen ) );
+	*valueLen = 0;
+
+
+	/* Get the length (as a byte) and make sure that it's valid */
+	status = length = sgetc( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( isShortECCKey( length / 2 ) )
+		return( CRYPT_ERROR_NOSECURE );
+	if( length < MIN_PKCSIZE_ECCPOINT || length > MAX_PKCSIZE_ECCPOINT )
+		return( CRYPT_ERROR_BADDATA );
+	*valueLen = length;
+
+	/* Read the X9.62 point value */
+	return( sread( stream, value, length ) );
+	}
+
 /****************************************************************************
 *																			*
-*						Read/Write SSL Certificate Chains					*
+*						Read/Write SSL/TLS Certificate Chains				*
 *																			*
 ****************************************************************************/
 
-/* Read/write an SSL certificate chain:
+/* Read/write an SSL/TLS certificate chain:
 
 	byte		ID = SSL_HAND_CERTIFICATE
 	uint24		len
@@ -121,6 +162,9 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 #ifdef USE_ERRMSGS
 	const char *peerTypeName = isServer ? "Client" : "Server";
 #endif /* USE_ERRMSGS */
+#ifdef CONFIG_SUITEB
+	const char *requiredLengthString = NULL;
+#endif /* CONFIG_SUITEB */
 	int certFingerprintLength, chainLength, length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -139,9 +183,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 	if( isServer && ( length == 0 || length == LENGTH_SIZE ) )
 		{
-		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-
-		/* There is a special case in which a too-short certificate packet 
+		/* There is one special case in which a too-short certificate packet 
 		   is valid and that's where it constitutes the TLS equivalent of an 
 		   SSL no-certificates alert.  SSLv3 sent an 
 		   SSL_ALERT_NO_CERTIFICATE alert to indicate that the client 
@@ -157,7 +199,6 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 		   certListLen entry has a length of zero.  To report this condition 
 		   we fake the error indicators for consistency with the status 
 		   obtained from an SSLv3 no-certificate alert */
-		errorInfo->errorCode = SSL_ALERT_NO_CERTIFICATE;
 		retExt( CRYPT_ERROR_PERMISSION,
 				( CRYPT_ERROR_PERMISSION, SESSION_ERRINFO, 
 				  "Received TLS alert message: No certificate" ) );
@@ -179,7 +220,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Import the certificate chain.  This isn't a true certificate chain (in 
 	   the sense of being degenerate PKCS #7 SignedData) but a special-case 
-	   SSL-encoded certificate chain */
+	   SSL/TLS-encoded certificate chain */
 	status = importCertFromStream( stream, &iLocalCertChain, 
 								   DEFAULTUSER_OBJECT_HANDLE,
 								   CRYPT_ICERTTYPE_SSL_CERTCHAIN,
@@ -217,8 +258,8 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 							( fingerprintPtr->valueLength == 16 ) ? \
 								CRYPT_CERTINFO_FINGERPRINT_MD5 : \
 							( fingerprintPtr->valueLength == 32 ) ? \
-								CRYPT_IATTRIBUTE_FINGERPRINT_SHA2 : \
-							CRYPT_CERTINFO_FINGERPRINT_SHA;
+								CRYPT_CERTINFO_FINGERPRINT_SHA2 : \
+							CRYPT_CERTINFO_FINGERPRINT_SHA1;
 
 		/* Use the hint provided by the fingerprint size to select the
 		   appropriate algorithm to generate the fingerprint that we want
@@ -230,7 +271,7 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		/* There's no algorithm hint available, use the default of SHA-1 */
 		status = krnlSendMessage( iLocalCertChain, IMESSAGE_GETATTRIBUTE_S,
-								  &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA );
+								  &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -298,6 +339,47 @@ int readSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 				  isKeyxAlgo( algorithm ) ? "key exchange authentication" : \
 										    "encryption" ) );
 		}
+
+	/* For ECC with Suite B there are additional constraints on the key
+	   size to ensure that fashion dictums aren't violated */
+#ifdef CONFIG_SUITEB
+	status = krnlSendMessage( iLocalCertChain, IMESSAGE_GETATTRIBUTE,
+							  &length, CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	switch( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB )
+		{
+		case 0:
+		case SSL_PFLAG_SUITEB:
+			if( length != bitsToBytes( 256 ) && \
+				length != bitsToBytes( 384 ) )
+				requiredLengthString = "256- or 384";
+			break;
+
+		case SSL_PFLAG_SUITEB_128:
+			if( length != bitsToBytes( 256 ) )
+				requiredLengthString = "256";
+			break;
+
+		case SSL_PFLAG_SUITEB_256:
+			if( length != bitsToBytes( 384 ) )
+				requiredLengthString = "384";
+			break;
+
+		default:
+			retIntError();
+		}
+	if( requiredLengthString != NULL )	
+		{
+		krnlSendNotifier( iLocalCertChain, IMESSAGE_DECREFCOUNT );
+		retExt( CRYPT_ERROR_WRONGKEY,
+				( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
+				  "%s provided a %d-bit Suite B key, should have been a "
+				  "%s-bit key", peerTypeName, bytesToBits( length ),
+				  requiredLengthString ) );
+		}
+#endif /* CONFIG_SUITEB */
+
 	*iCertChain = iLocalCertChain;
 
 	return( CRYPT_OK );
@@ -353,7 +435,7 @@ int writeSSLCertChain( INOUT SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-/* Close a previously-opened SSL session */
+/* Close a previously-opened SSL/TLS session */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
 static void shutdownFunction( INOUT SESSION_INFO *sessionInfoPtr )
@@ -364,7 +446,7 @@ static void shutdownFunction( INOUT SESSION_INFO *sessionInfoPtr )
 	sNetDisconnect( &sessionInfoPtr->stream );
 	}
 
-/* Connect to an SSL server/client */
+/* Connect to an SSL/TLS server/client */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int abortStartup( INOUT SESSION_INFO *sessionInfoPtr,
@@ -396,6 +478,18 @@ static int commonStartup( INOUT SESSION_INFO *sessionInfoPtr,
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	/* TLS 1.2 switched from the MD5+SHA-1 dual hash/MACs to SHA-2 so if the
+	   user has requesetd TLS 1.2 or newer we need to make sure that SHA-2
+	   is available */
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 && \
+		!algoAvailable( CRYPT_ALGO_SHA2 ) )
+		{
+		retExt( CRYPT_ERROR_NOTAVAIL,
+				( CRYPT_ERROR_NOTAVAIL, SESSION_ERRINFO, 
+				  "TLS 1.2 and newer require the SHA-2 hash algorithms which "
+				  "aren't available in this build of cryptlib" ) );
+		}
 
 	/* Initialise the handshake information and begin the handshake */
 	status = initHandshakeInfo( sessionInfoPtr, &handshakeInfo, isServer );
@@ -468,9 +562,21 @@ static int getAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	REQUIRES( type == CRYPT_SESSINFO_RESPONSE );
+	REQUIRES( type == CRYPT_SESSINFO_RESPONSE || \
+			  type == CRYPT_SESSINFO_SSL_OPTIONS );
 
-	/* If we didn't get a client/server certificate there's nothing to 
+	/* If the caller is after the current SSL option settings, return them */
+	if( type == CRYPT_SESSINFO_SSL_OPTIONS )
+		{
+		int *valuePtr = ( int * ) data;
+
+		/* SSL options are always set to the default for now */
+		*valuePtr = 0;
+
+		return( CRYPT_OK );
+		}
+
+	/* If we didn't get a client/server certificate then there's nothing to 
 	   return */
 	if( iCryptCert == CRYPT_ERROR )
 		return( CRYPT_ERROR_NOTFOUND );
@@ -478,7 +584,126 @@ static int getAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Return the information to the caller */
 	krnlSendNotifier( iCryptCert, IMESSAGE_INCREFCOUNT );
 	*certPtr = iCryptCert;
+
 	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int setAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+								 IN const void *data,
+								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
+	{
+	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
+	const int value = *( ( int * ) data );
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+
+	REQUIRES( type == CRYPT_SESSINFO_SSL_OPTIONS );
+
+	/* Set SSL/TLS protocol options based on the user-supplied flags */
+	if( value & CRYPT_SSLOPTION_SUITEB_128 )
+		sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_128;
+	if( value & CRYPT_SSLOPTION_SUITEB_256 )
+		sessionInfoPtr->protocolFlags |= SSL_PFLAG_SUITEB_256;
+	if( value & ( CRYPT_SSLOPTION_MINVER_TLS10 | \
+				  CRYPT_SSLOPTION_MINVER_TLS11 | \
+				  CRYPT_SSLOPTION_MINVER_TLS12 ) )
+		{
+		/* This is a two-bit field that contains the minimum protocol 
+		   version that we're prepared to accept, extract it and save
+		   it */
+		sslInfo->minVersion = value & ( CRYPT_SSLOPTION_MINVER_TLS10 | \
+										CRYPT_SSLOPTION_MINVER_TLS11 | \
+										CRYPT_SSLOPTION_MINVER_TLS12 );
+		}
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
+								   IN const void *data,
+								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
+	{
+	const CRYPT_CONTEXT cryptContext = *( ( CRYPT_CONTEXT * ) data );
+#ifdef CONFIG_SUITEB
+	int keySize;
+#endif /* CONFIG_SUITEB */
+	int cryptAlgo, status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isReadPtr( data, sizeof( int ) ) );
+
+	REQUIRES( type > CRYPT_ATTRIBUTE_NONE && type < CRYPT_ATTRIBUTE_LAST );
+
+	if( type != CRYPT_SESSINFO_PRIVATEKEY || !isServer( sessionInfoPtr ) )
+		return( CRYPT_OK );
+
+	/* Check that the server key that we've been passed is usable.  For an 
+	   RSA key we can have either encryption (for RSA keyex) or signing (for 
+	   DH keyex) or both, for a DSA or ECDSA key we need signing (for DH/ECDH 
+	   keyex) */
+	status = krnlSendMessage( cryptContext, IMESSAGE_GETATTRIBUTE,
+							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+	switch( cryptAlgo )
+		{
+		case CRYPT_ALGO_RSA:
+			status = krnlSendMessage( cryptContext, IMESSAGE_CHECK, NULL,
+									  MESSAGE_CHECK_PKC_DECRYPT );
+			if( cryptStatusError( status ) )
+				status = krnlSendMessage( cryptContext, IMESSAGE_CHECK, NULL,
+										  MESSAGE_CHECK_PKC_SIGN );
+			if( cryptStatusError( status ) )
+				{
+				setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_KEYUSAGE, 
+							  CRYPT_ERRTYPE_ATTR_VALUE );
+				return( CRYPT_ARGERROR_NUM1 );
+				}
+
+			return( CRYPT_OK );
+
+		case CRYPT_ALGO_DSA:
+		case CRYPT_ALGO_ECDSA:
+			status = krnlSendMessage( cryptContext, IMESSAGE_CHECK, NULL,
+									  MESSAGE_CHECK_PKC_SIGN );
+			if( cryptStatusError( status ) )
+				{
+				setErrorInfo( sessionInfoPtr, CRYPT_CERTINFO_KEYUSAGE, 
+							  CRYPT_ERRTYPE_ATTR_VALUE );
+				return( CRYPT_ARGERROR_NUM1 );
+				}
+
+			return( CRYPT_OK );
+
+		default:
+			return( CRYPT_ARGERROR_NUM1 );
+		}
+
+	/* Suite B only allows P256 and P384 keys so we need to make sure that
+	   the server key is of the appropriate type and size */
+#ifdef CONFIG_SUITEB
+	if( cryptAlgo != CRYPT_ALGO_ECDSA )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_ALGO, 
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ARGERROR_NUM1 );
+		}
+	status = krnlSendMessage( sessionInfoPtr->privateKey, 
+							  IMESSAGE_GETATTRIBUTE, &keySize,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( keySize != bitsToBytes( 256 ) && keySize != bitsToBytes( 384 ) )
+		{
+		setErrorInfo( sessionInfoPtr, CRYPT_CTXINFO_KEYSIZE, 
+					  CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ARGERROR_NUM1 );
+		}
+#endif /* CONFIG_SUITEB */
+
+	retIntError();
 	}
 
 /****************************************************************************
@@ -487,7 +712,7 @@ static int getAttributeFunction( INOUT SESSION_INFO *sessionInfoPtr,
 *																			*
 ****************************************************************************/
 
-/* Read/write data over the SSL link */
+/* Read/write data over the SSL/TLS link */
 
 CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readHeaderFunction( INOUT SESSION_INFO *sessionInfoPtr,
@@ -503,13 +728,14 @@ static int readHeaderFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Clear return value */
 	*readInfo = READINFO_NONE;
 
-	/* Read the SSL packet header data */
+	/* Read the SSL/TLS packet header data */
 	status = readFixedHeader( sessionInfoPtr, sslInfo->headerBuffer, 
 							  sessionInfoPtr->receiveBufStartOfs );
 	if( cryptStatusError( status ) )
 		{
 		/* OK_SPECIAL means that we got a soft timeout before the entire 
-		   header was read */
+		   header was read, so we return zero bytes read to tell the 
+		   calling code that there's nothing more to do */
 		return( ( status == OK_SPECIAL ) ? 0 : status );
 		}
 
@@ -517,7 +743,7 @@ static int readHeaderFunction( INOUT SESSION_INFO *sessionInfoPtr,
 	   we've finished handling the header */
 	*readInfo = READINFO_FATAL;
 
-	/* Check for an SSL alert message */
+	/* Check for an SSL/TLS alert message */
 	if( sslInfo->headerBuffer[ 0 ] == SSL_MSG_ALERT )
 		return( processAlert( sessionInfoPtr, sslInfo->headerBuffer, 
 							  sessionInfoPtr->receiveBufStartOfs ) );
@@ -550,6 +776,30 @@ static int processBodyFunction( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* All errors processing the payload are fatal */
 	*readInfo = READINFO_FATAL;
+
+	/* If we're potentially performing a rehandshake, process the packet
+	   as a handshake message and treat it as a no-op.  What the server
+	   does in response to this is implementation-specific, the spec says
+	   that a client can ignore this (as we do) at which point the server
+	   can close the connection or hang waiting for a rehandshake that'll
+	   never come (as IIS does) */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_CHECKREHANDSHAKE )
+		{
+		sessionInfoPtr->protocolFlags &= ~SSL_PFLAG_CHECKREHANDSHAKE;
+		status = unwrapPacketSSL( sessionInfoPtr, 
+								  sessionInfoPtr->receiveBuffer + \
+									sessionInfoPtr->receiveBufPos, 
+								  sessionInfoPtr->pendingPacketLength, 
+								  &length, SSL_MSG_HANDSHAKE );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* Discard the read packet */
+		sessionInfoPtr->receiveBufEnd = sessionInfoPtr->receiveBufPos;
+		sessionInfoPtr->pendingPacketLength = 0;
+		*readInfo = READINFO_NOOP;
+		return( OK_SPECIAL );
+		}
 
 	/* Unwrap the payload */
 	status = unwrapPacketSSL( sessionInfoPtr, 
@@ -613,8 +863,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 	{
 	static const ALTPROTOCOL_INFO altProtocolInfo = {
-		/* SSL tunnelled via an HTTP proxy.  This is a special case in that
-		   the initial connection is made using HTTP, but subsequent
+		/* SSL/TLS tunnelled via an HTTP proxy.  This is a special case in 
+		   that the initial connection is made using HTTP but subsequent
 		   communications are via a direct TCP/IP connection that goes
 		   through the proxy */
 		STREAM_PROTOCOL_TCPIP,		/* Alt.protocol type */
@@ -627,33 +877,37 @@ int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 		/* General session information */
 		FALSE,						/* Request-response protocol */
 		SESSION_NONE,				/* Flags */
-		SSL_PORT,					/* SSL port */
+		SSL_PORT,					/* SSL/TLS port */
 		SESSION_NEEDS_PRIVKEYSIGN,	/* Client attributes */
-			/* The client private key is optional but if present, it has to
+			/* The client private key is optional, but if present it has to
 			   be signature-capable */
 		SESSION_NEEDS_PRIVATEKEY |	/* Server attributes */
-			SESSION_NEEDS_PRIVKEYCRYPT | \
 			SESSION_NEEDS_PRIVKEYCERT | \
 			SESSION_NEEDS_KEYORPASSWORD,
-			/* In theory we need neither a private key nor a password 
+			/* The server key capabilities are complex enough that they
+			   need to be checked specially via checkAttributeFunction(),
+			   for an RSA key we can have either encryption (for RSA keyex)
+			   or signing (for DH keyex) or both, for a DSA or ECDSA key
+			   we need signing (for DH/ECDH keyex).
+
+			   In theory we need neither a private key nor a password 
 			   because the caller can provide the password during the
 			   handshake in response to a CRYPT_ENVELOPE_RESOURCE
 			   notification, however this facility is likely to be 
 			   barely-used in comparison to users forgetting to add server
 			   certificates and the like, so we require some sort of 
 			   server-side key set in advance */
-		SSL_MINOR_VERSION_TLS,		/* TLS 1.0 */
-			SSL_MINOR_VERSION_SSL, SSL_MINOR_VERSION_TLS11,
-			/* We default to TLS 1.0 rather than TLS 1.1 because it's likely 
-			   that support for the latter will be hit-and-miss for some 
-			   time */
+		SSL_MINOR_VERSION_TLS11,	/* TLS 1.1 */
+			SSL_MINOR_VERSION_SSL, SSL_MINOR_VERSION_TLS12,
+			/* We default to TLS 1.1 rather than TLS 1.2 because support for 
+			   the latter will be minimal for quite some time */
 
 		/* Protocol-specific information */
 		EXTRA_PACKET_SIZE + \
 			MAX_PACKET_SIZE,		/* Send/receive buffer size */
 		SSL_HEADER_SIZE,			/* Payload data start */
 			/* This may be adjusted during the handshake if we're talking
-			   TLS 1.1, which prepends extra data in the form of an IV to
+			   TLS 1.1+, which prepends extra data in the form of an IV to
 			   the payload */
 		MAX_PACKET_SIZE,			/* (Default) maximum packet size */
 		&altProtocolInfo			/* Alt.transport protocol */
@@ -667,6 +921,8 @@ int setAccessMethodSSL( INOUT SESSION_INFO *sessionInfoPtr )
 	sessionInfoPtr->transactFunction = isServer( sessionInfoPtr ) ? \
 									   serverStartup : clientStartup;
 	sessionInfoPtr->getAttributeFunction = getAttributeFunction;
+	sessionInfoPtr->setAttributeFunction = setAttributeFunction;
+	sessionInfoPtr->checkAttributeFunction = checkAttributeFunction;
 	sessionInfoPtr->readHeaderFunction = readHeaderFunction;
 	sessionInfoPtr->processBodyFunction = processBodyFunction;
 	sessionInfoPtr->preparePacketFunction = preparePacketFunction;

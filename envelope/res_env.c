@@ -6,14 +6,14 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "envelope.h"
   #include "pgp.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -143,8 +143,7 @@ int initEnvelopeEncryption( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	REQUIRES( isHandleRangeValid( cryptContext ) );
 	REQUIRES( ( algorithm == CRYPT_ALGO_NONE && mode == CRYPT_MODE_NONE ) || \
-			  ( algorithm >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-				algorithm <= CRYPT_ALGO_LAST_CONVENTIONAL ) );
+			  ( isConvAlgo( algorithm ) ) );
 	REQUIRES( ( algorithm == CRYPT_ALGO_NONE && mode == CRYPT_MODE_NONE ) || \
 			  ( mode > CRYPT_MODE_NONE && mode < CRYPT_MODE_LAST ) );
 	REQUIRES( ( iv == NULL && ivLength == 0 ) || \
@@ -614,9 +613,7 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	   a convenient centralised location for it */
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE,
 							  &cryptAlgo, CRYPT_CTXINFO_ALGO );
-	if( cryptStatusOK( status ) && \
-		( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-		  cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL ) )
+	if( cryptStatusOK( status ) && isConvAlgo( cryptAlgo ) )
 		{
 		status = krnlSendMessage( iCryptHandle, IMESSAGE_GETATTRIBUTE,
 								  &cryptMode, CRYPT_CTXINFO_MODE );
@@ -741,8 +738,11 @@ static int addContextInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			}
 
 		/* Remember that the action was added invisibly to the caller so that
-		   we don't return an error if they add it explicitly later on */
-		hashActionPtr->flags |= ACTION_ADDEDAUTOMATICALLY;
+		   we don't return an error if they add it explicitly later on, and 
+		   that it needs to be attached to a controlling action before it 
+		   can be used */
+		hashActionPtr->flags |= ACTION_ADDEDAUTOMATICALLY | \
+								ACTION_NEEDSCONTROLLER;
 		}
 	else
 		{
@@ -865,6 +865,25 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 					return( CRYPT_OK );
 
 				case CRYPT_INTEGRITY_FULL:
+					/* If we're using authenticated encryption in the form
+					   of crypt + MAC (rather than a combined auth-enc 
+					   encryption mode) then we can't use a raw session key 
+					   because there are effectively two keys present, one 
+					   for the encryption and one for the MACing.  We 
+					   generalise the check here to make sure that there are
+					   no main envelope actions set, in practice this can't
+					   happen because setting e.g. a hash action will set
+					   the envelope usage to USAGE_SIGN which precludes then
+					   setting CRYPT_ENVINFO_INTEGRITY, but the more general
+					   check here can't hurt */
+					if( envelopeInfoPtr->actionList != NULL )
+						{
+						setErrorInfo( envelopeInfoPtr, 
+									  CRYPT_ENVINFO_SESSIONKEY,
+									  CRYPT_ERRTYPE_ATTR_PRESENT );
+						return( CRYPT_ERROR_INITED );
+						}
+
 					envelopeInfoPtr->usage = ACTION_CRYPT;
 					envelopeInfoPtr->flags |= ENVELOPE_AUTHENC;
 					return( CRYPT_OK );
@@ -981,6 +1000,17 @@ static int addEnvelopeInfo( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			if( envelopeInfoPtr->actionList != NULL )
 				{
 				setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_SESSIONKEY,
+							  CRYPT_ERRTYPE_ATTR_PRESENT );
+				return( CRYPT_ERROR_INITED );
+				}
+
+			/* If we're using authenticated encryption in the form of crypt + 
+			   MAC (rather than a combined auth-enc encryption mode) then we 
+			   can't use a raw session key because there are effectively two 
+			   keys present, one for the encryption and one for the MACing */
+			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+				{
+				setErrorInfo( envelopeInfoPtr, CRYPT_ENVINFO_INTEGRITY,
 							  CRYPT_ERRTYPE_ATTR_PRESENT );
 				return( CRYPT_ERROR_INITED );
 				}

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *							File Stream I/O Functions						*
-*						Copyright Peter Gutmann 1993-2007					*
+*						Copyright Peter Gutmann 1993-2008					*
 *																			*
 ****************************************************************************/
 
@@ -66,27 +66,33 @@
    retirement recovery of the data, presumably if it contains valuable data
    it'll be disposed of appropriately */
 
+/* If we're using DDNAME I/O under MVS we can't use the Posix I/O APIs but
+   have to use stdio stream I/O functions, enabled via CONFIG_NO_STDIO since
+   we have to use RECFM=x specifiers and other oddities */
+
+#if defined( __MVS__ ) && defined( DDNAME_IO )
+  #define CONFIG_NO_STDIO
+#endif /* __MVS__ && DDNAME_IO */
+
 /* Symbolic defines for stdio-style file access modes */
 
-#if defined( DDNAME_IO )
+#if defined( __MVS__ ) && defined( DDNAME_IO )
   #pragma convlit( suspend )
   #define MODE_READ			"rb,byteseek"
   #define MODE_WRITE		"wb,byteseek,recfm=*"
   #define MODE_READWRITE	"rb+,byteseek,recfm=*"
   #pragma convlit( resume )
+#elif defined( EBCDIC_CHARS )
+  #pragma convlit( suspend )
+  #define MODE_READ			"rb"
+  #define MODE_WRITE		"wb"
+  #define MODE_READWRITE	"rb+"
+  #pragma convlit( resume )
 #else
-  #if defined( EBCDIC_CHARS )
-	#pragma convlit( suspend )
-	#define MODE_READ		"rb"
-	#define MODE_WRITE		"wb"
-	#define MODE_READWRITE	"rb+"
-	#pragma convlit( resume )
-  #else
-	#define MODE_READ		"rb"
-	#define MODE_WRITE		"wb"
-	#define MODE_READWRITE	"rb+"
-  #endif /* EBCDIC_CHARS */
-#endif /* Standard vs. DDNAME I/O */
+  #define MODE_READ			"rb"
+  #define MODE_WRITE		"wb"
+  #define MODE_READWRITE	"rb+"
+#endif /* Different types of I/O and character sets */
 
 /****************************************************************************
 *																			*
@@ -94,10 +100,13 @@
 *																			*
 ****************************************************************************/
 
-/* Append a filename to a path and add the suffix */
+/* Append a filename to a path and add the suffix.  If we're on an EBCDIC 
+   system we need two versions of this function, a standard ASCII one for
+   internal-use paths and an EBCDIC one for use with path components coming
+   from the OS like the location of $HOME */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-static int appendFilename( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
+static int appendFilename( INOUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -123,9 +132,59 @@ static int appendFilename( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 	/* Clear return value */
 	*pathLen = 0;
 
+	/* If we're using a fixed filename it's quite simple, just append it
+	   and we're done */
+	if( option == BUILDPATH_RNDSEEDFILE )
+		{
+		if( partialPathLen + 12 > pathMaxLen )
+			return( CRYPT_ERROR_OVERFLOW );
+		memcpy( path + partialPathLen, "randseed.dat", 12 );
+		*pathLen = partialPathLen + 12;
+
+		return( CRYPT_OK );
+		}
+
+	/* User-defined filenames are a bit more complex because we have to
+	   safely append a variable-length quantity to the path */
+	if( partialPathLen + fileNameLen + 4 > pathMaxLen )
+		return( CRYPT_ERROR_OVERFLOW );
+	memcpy( path + partialPathLen, fileName, fileNameLen );
+	memcpy( path + partialPathLen + fileNameLen, ".p15", 4 );
+	*pathLen = partialPathLen + fileNameLen + 4;
+
+	return( CRYPT_OK );
+	}
+
 #ifdef EBCDIC_CHARS
-	#pragma convlit( suspend )
-#endif /* EBCDIC_CHARS */
+
+#pragma convlit( suspend )
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+static int appendFilenameEBCDIC( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
+								 IN_LENGTH_SHORT const int pathMaxLen, 
+								 OUT_LENGTH_SHORT_Z int *pathLen,
+								 IN_BUFFER( fileNameLen ) const char *fileName, 
+								 IN_LENGTH_SHORT const int fileNameLen, 
+								 IN_ENUM( BUILDPATH_OPTION ) \
+								 const BUILDPATH_OPTION_TYPE option )
+	{
+	const int partialPathLen = strlen( path );
+
+	assert( isWritePtr( path, pathMaxLen ) );
+	assert( isWritePtr( pathLen, sizeof( int ) ) );
+	assert( ( option == BUILDPATH_RNDSEEDFILE ) || \
+			isReadPtr( fileName, fileNameLen ) );
+
+	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
+				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
+				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
+			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
+			    fileNameLen == 0 ) );
+	REQUIRES( option > BUILDPATH_NONE && option < BUILDPATH_LAST );
+
+	/* Clear return value */
+	*pathLen = 0;
 
 	/* If we're using a fixed filename it's quite simple, just append it
 	   and we're done */
@@ -147,12 +206,12 @@ static int appendFilename( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 	memcpy( path + partialPathLen + fileNameLen, ".p15", 4 );
 	*pathLen = partialPathLen + fileNameLen + 4;
 
-#ifdef EBCDIC_CHARS
-	#pragma convlit( resume )
-#endif /* EBCDIC_CHARS */
-
 	return( CRYPT_OK );
 	}
+
+#pragma convlit( resume )
+
+#endif /* EBCDIC_CHARS */
 
 /****************************************************************************
 *																			*
@@ -165,7 +224,7 @@ static int appendFilename( OUT_BUFFER( pathMaxLen, *pathLen ) char *path,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const int modes[] = {
@@ -403,7 +462,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -454,7 +513,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const char *modes[] = { MODE_READ, MODE_READ,
@@ -694,7 +753,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -754,7 +813,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -959,7 +1018,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -1007,7 +1066,7 @@ static void CStringToPString( const char *cstring, StringPtr pstring )
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	Str255 pFileName;
@@ -1270,7 +1329,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -1307,7 +1366,8 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 
 #elif defined( CONFIG_NO_STDIO )
 
-#if defined( __VMCMS__ ) || defined( __IBM4758__ ) || defined( __TESTIO__ )
+#if defined( __MVS__ ) || defined( __VMCMS__ ) || \
+	defined( __IBM4758__ ) || defined( __TESTIO__ )
 
 /* Some environments place severe restrictions on what can be done with file
    I/O, either having no filesystem at all or having one with characteristics
@@ -1323,17 +1383,29 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
    one that isn't too big.  16K is about right, since typical private key
    files with cert chains are 2K */
 
-#endif /* __VMCMS__ || __IBM4758__ || __TESTIO__ */
+#endif /* __MVS__ || __VMCMS__ || __IBM4758__ || __TESTIO__ */
 
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 #ifdef __IBM4758__
 	const BOOLEAN useBBRAM = ( mode & FILE_FLAG_SENSITIVE ) ? TRUE : FALSE;
+#elif defined( EBCDIC_CHARS )
+  #pragma convlit( suspend )
+	static const char *modes[] = { MODE_READ, MODE_READ,
+								   MODE_WRITE, MODE_READWRITE };
+  #pragma convlit( resume )
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
+#else
+	static const char *modes[] = { MODE_READ, MODE_READ,
+								   MODE_WRITE, MODE_READWRITE };
 #endif /* __IBM4758__ */
+#if defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
+	const char *openMode;
+#endif /* __MVS__ || __VMCMS__ || __TESTIO__ */
 	long length;
 	int status;
 
@@ -1398,27 +1470,52 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 	stream->isSensitive = useBBRAM;
 
 	return( CRYPT_OK );
-#elif defined( __VMCMS__ )
+#elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* If we're going to be doing a write either now or later, we can't open
 	   the file until we have all of the data that we want to write to it
 	   available since the open arg has to include the file format
 	   information, so all we can do at this point is remember the name for
 	   later use */
+	openMode = modes[ mode & FILE_FLAG_RW_MASK ];
 	strlcpy_s( stream->name, MAX_PATH_LENGTH, fileName );
-	asciiToEbcdic( stream->name, strlen( stream->name ) );
+  #ifdef EBCDIC_CHARS
+	fileName = bufferToEbcdic( fileNameBuffer, fileName );
+  #endif /* EBCDIC_CHARS */
 
 	/* If we're doing a read, fetch the data into memory */
 	if( mode & FILE_FLAG_READ )
 		{
 		FILE *filePtr;
+  #if defined( __MVS__ ) || defined( __VMCMS__ ) 
 		fldata_t fileData;
 		char fileBuffer[ MAX_PATH_LENGTH + 8 ];
+  #endif /* __MVS__ || __VMCMS__ */
 		int allocSize = STREAM_VFILE_BUFSIZE;
 
 		/* Open the file and determine how large it is */
-		filePtr = fopen( fileName, "rb" );
+		filePtr = fopen( fileName, openMode );
 		if( filePtr == NULL )
-			return( CRYPT_ERROR_OPEN );
+			{
+			/* The open failed, determine whether it was because the file 
+			   doesn't exist or because we can't use that access mode.  We
+			   need to distinguish between not-found and failed-to-open
+			   status values because not-found is an allowable condition
+			   but (presumably found but) failed to open isn't */
+  #if defined( __MVS__ ) || defined( __VMCMS__ ) 
+			/* An errno value of ENOENT results from a DDNAME not found, 67 
+			   (no mnemonic name defined by IBM for DYNALLOC return codes) 
+			   is member not found and 49 is data set not found */
+			return( ( errno == ENOENT || errno == 67 || errno == 49 ) ? \
+					CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
+  #elif defined( __WIN32__ )
+			return( ( GetLastError() == ERROR_FILE_NOT_FOUND ) ? \
+					CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
+  #else
+			return( errno == ENOENT ) ? \
+					CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
+  #endif /* Nonstandard I/O environments */
+			}
+  #if defined( __MVS__ ) || defined( __VMCMS__ ) 
 		status = fldata( filePtr, fileBuffer, &fileData );
 		if( status )
 			{
@@ -1426,56 +1523,12 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 			return( CRYPT_ERROR_OPEN );
 			}
 		length = fileData.__maxreclen;
-		if( stream->flags & STREAM_FLAG_READONLY )
-			{
-			/* If it's a read-only file we only need to allocate a buffer
-			   large enough to hold the existing data */
-			allocSize = length;
-			}
-
-		/* Fetch the data into a buffer large enough to contain the entire
-		   stream */
-		if( ( stream->buffer = clAlloc( "sFileOpen", allocSize ) ) == NULL )
-			return( CRYPT_ERROR_MEMORY );
-		stream->bufSize = allocSize;
-		stream->bufEnd = length;
-		status = fread( stream->buffer, length, 1, filePtr );
-		fclose( filePtr );
-		if( status != 1 )
-			{
-			clFree( "sFileOpen", stream->buffer );
-			return( CRYPT_ERROR_READ );
-			}
-		return( CRYPT_OK );
-		}
-
-	/* Allocate the initial I/O buffer for the data */
-	if( ( stream->buffer = clAlloc( "sFileOpen", 
-									STREAM_VFILE_BUFSIZE ) ) == NULL )
-		return( CRYPT_ERROR_MEMORY );
-	stream->bufSize = STREAM_VFILE_BUFSIZE;
-
-	return( CRYPT_OK );
-#elif defined( __TESTIO__ )
-	/* Remember the filename.  The __TESTIO__ pseudo-system allows emulation
-	   of a non-stdio system for test purposes, so this acts like one that
-	   that doesn't have file I/O */
-	strlcpy_s( stream->name, MAX_PATH_LENGTH, fileName );
-
-	/* If we're doing a read, fetch the data into memory */
-	if( mode & FILE_FLAG_READ )
-		{
-		FILE *filePtr;
-		int allocSize = STREAM_VFILE_BUFSIZE;
-
-		/* Open the file and determine how large it is */
-		filePtr = fopen( fileName, "rb" );
-		if( filePtr == NULL )
-			return( CRYPT_ERROR_OPEN );
+  #else
 		fseek( filePtr, 0L, SEEK_END );
 		length = ftell( filePtr );
 		fseek( filePtr, 0L, SEEK_SET );
-		if( length < 0 )
+  #endif /* Nonstandard I/O environments */
+		if( length <= 0 )
 			{
 			fclose( filePtr );
 			return( CRYPT_ERROR_OPEN );
@@ -1516,7 +1569,7 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 #else
 	#error Need to add mechanism to connect stream to backing store
 	return( CRYPT_ERROR_OPEN );
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -1524,23 +1577,10 @@ int sFileClose( INOUT STREAM *stream )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( sIsVirtualFileStream( stream ) );
 
-#if defined( __IBM4758__ )
-	/* Close the file and clear the stream structure */
-	zeroise( stream->buffer, stream->bufSize );
-	clFree( "sFileClose", stream->buffer );
-	zeroise( stream, sizeof( STREAM ) );
-
-	return( CRYPT_OK );
-#elif defined( __VMCMS__ )
-	/* Close the file and clear the stream structure */
-	zeroise( stream->buffer, stream->bufSize );
-	clFree( "sFileClose", stream->buffer );
-	zeroise( stream, sizeof( STREAM ) );
-
-	return( CRYPT_OK );
-#elif defined( __TESTIO__ )
+#if defined( __IBM4758__ ) || defined( __MVS__ ) || \
+	defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* Close the file and clear the stream structure */
 	zeroise( stream->buffer, stream->bufSize );
 	clFree( "sFileClose", stream->buffer );
@@ -1552,7 +1592,7 @@ int sFileClose( INOUT STREAM *stream )
 	zeroise( stream, sizeof( STREAM ) );
 
 	return( CRYPT_OK );
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 /* Read/write a block of data from/to a file stream */
@@ -1567,7 +1607,7 @@ int fileRead( INOUT STREAM *stream,
 	assert( isWritePtr( buffer, length ) );
 	assert( isWritePtr( bytesRead, sizeof( int ) ) );
 
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( sIsVirtualFileStream( stream ) );
 	REQUIRES( length > 0 && length < MAX_INTLENGTH );
 
 	/* Clear return value */
@@ -1587,7 +1627,7 @@ int fileWrite( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( buffer, length ) );
 
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( sIsVirtualFileStream( stream ) );
 	REQUIRES( length > 0 && length < MAX_INTLENGTH );
 
 	/* These environments keep all data in an in-memory buffer that's 
@@ -1601,45 +1641,34 @@ int fileWrite( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int fileFlush( INOUT STREAM *stream )
 	{
-#if defined( __IBM4758__ )
+#if defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
+	FILE *filePtr;
+	int count;
+#endif /* __MVS__ || __VMCMS__ || __TESTIO__ */
+
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
+	REQUIRES( sIsVirtualFileStream( stream ) );
 
+#if defined( __IBM4758__ )
 	/* Write the data to flash or BB memory as appropriate */
 	if( sccSavePPD( stream->name, stream->buffer, stream->bufEnd,
 			( stream->isSensitive ? PPD_BBRAM : PPD_FLASH ) | PPD_TRIPLE ) != PPDGood )
 		return( sSetError( stream, CRYPT_ERROR_WRITE ) );
 	return( CRYPT_OK );
-#elif defined( __VMCMS__ )
+#elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* Under CMS, MVS, TSO, etc the only consistent way to handle writes is
 	   to write a fixed-length single-record file containing all the data in
 	   one record, so we can't really do anything until the data is flushed */
-	FILE *filePtr;
+  #if 0
+	/* No need to go to this level, a RECFM=* binary file will do just as
+	   well */
 	char formatBuffer[ 64 + 8 ];
-	int count;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
-
-	sprintf_s( formatBuffer, 64, "wb, recfm=F, lrecl=%d, noseek", 
+	sprintf_s( formatBuffer, 64, "wb,recfm=F,lrecl=%d,noseek", 
 			   stream->bufPos );
 	filePtr = fopen( stream->name, formatBuffer );
-	if( filePtr == NULL )
-		return( CRYPT_ERROR_WRITE );
-	count = fwrite( stream->buffer, stream->bufEnd, 1, filePtr );
-	fclose( filePtr );
-	return( ( count != 1 ) ? CRYPT_ERROR_WRITE : CRYPT_OK );
-#elif defined( __TESTIO__ )
-	FILE *filePtr;
-	int count;
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
-
-	filePtr = fopen( stream->name, "wb" );
+  #endif /* 0 */
+	filePtr = fopen( stream->name, MODE_WRITE );
 	if( filePtr == NULL )
 		return( CRYPT_ERROR_WRITE );
 	count = fwrite( stream->buffer, stream->bufEnd, 1, filePtr );
@@ -1648,7 +1677,7 @@ int fileFlush( INOUT STREAM *stream )
 #else
 	#error Need to add mechanism to commit data to backing store
 	return( CRYPT_ERROR_WRITE );
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 /* Change the read/write position in a file */
@@ -1658,18 +1687,18 @@ int fileSeek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	
-	REQUIRES( stream->type == STREAM_TYPE_FILE );
-	REQUIRES( position >= 0 && position < MAX_INTLENGTH );
+	REQUIRES( sIsVirtualFileStream( stream ) );
 
-#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
+#if defined( __IBM4758__ ) || defined( __MVS__ ) || \
+	defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* These environments move all data into an in-memory buffer when the
 	   file is opened, so there's never any need to move around in the
 	   stream */
-	return( sSetError( stream, CRYPT_ERROR_READ ) );
+	retIntError();
 #else
 	#error Need to add mechanism to perform virtual seek on backing store
 	return( sSetError( stream, CRYPT_ERROR_READ ) );
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 /* Check whether a file is writeable */
@@ -1679,14 +1708,17 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 	{
 	assert( fileName != NULL );
 
-#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
-	/* Since there's no filesystem, there's no concept of a read-only
-	   file - all data items are always accessible */
+#if defined( __IBM4758__ ) || defined( __MVS__ ) || \
+	defined( __VMCMS__ ) || defined( __TESTIO__ )
+	/* Since there's no filesystem or no real access control (even under MVS 
+	   et al it'll be handled at a much higher level like RACF or a SAF-
+	   compatable product), there's no concept of a read-only file, at least 
+	   at a level that we can easily determine programmatically */
 	return( FALSE );
 #else
 	#error Need to add mechanism to determine readability of data in backing store
 	return( FALSE );
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 /* File deletion functions: Wipe a file from the current position to EOF,
@@ -1698,15 +1730,16 @@ void fileClearToEOF( const STREAM *stream )
 	{
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	
-	REQUIRES_V( stream->type == STREAM_TYPE_FILE );
+	REQUIRES_V( sIsVirtualFileStream( stream ) );
 
-#if defined( __IBM4758__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
+#if defined( __IBM4758__ ) || defined( __MVS__ ) || \
+	defined( __VMCMS__ ) || defined( __TESTIO__ )
 	/* Data updates on these systems are atomic so there's no remaining data
 	   left to clear */
 	UNUSED_ARG( stream );
 #else
   #error Need to add clear-to-EOF function for data in backing store
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -1714,14 +1747,29 @@ void fileErase( IN_STRING const char *fileName )
 	{
 #if defined( __IBM4758__ )
 	sccDeletePPD( ( char * ) fileName );
-#elif defined( __VMCMS__ )
+#elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	FILE *filePtr;
+  #ifdef EBCDIC_CHARS
+	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
+  #endif /* EBCDIC_CHARS */
 	int length = CRYPT_ERROR;
 
 	assert( fileName != NULL );
 
+  #if defined( __MVS__ ) && defined( DDNAME_IO )
+	/* If we're using DDNAME I/O under MVS we can't perform standard
+	   random-access file operations, the best that we can do is just 
+	   delete the dataset entry */
+	fileName = bufferToEbcdic( fileNameBuffer, fileName );
+	remove( fileName );
+	return;
+  #elif defined( __MVS__ ) || defined( __VMCMS__ ) 
 	/* Determine how large the file is */
-	filePtr = fopen( fileName, "rb+" );
+	#ifdef EBCDIC_CHARS
+	fileName = bufferToEbcdic( fileNameBuffer, fileName );
+	#pragma convlit( suspend )
+	#endif /* EBCDIC_CHARS */
+	filePtr = fopen( fileName, MODE_READWRITE );
 	if( filePtr != NULL )
 		{
 		fldata_t fileData;
@@ -1730,42 +1778,19 @@ void fileErase( IN_STRING const char *fileName )
 		if( fldata( filePtr, fileBuffer, &fileData ) == 0 )
 			length = fileData.__maxreclen;
 		}
-
-	/* If we got a length, overwrite the data.  Since the file contains a
-	   single record we can't perform the write-until-done overwrite used
-	   on other OS'es, however since we're only going to be deleting short
-	   private key files using the default stream buffer is OK for this */
-	if( length > 0 )
-		{
-		MESSAGE_DATA msgData;
-		BYTE buffer[ STREAM_VFILE_BUFSIZE + 8 ];
-
-		length = max( length, STREAM_VFILE_BUFSIZE );
-		setMessageData( &msgData, buffer, length );
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
-						 &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
-		fwrite( buffer, 1, length, filePtr );
-		}
-	if( filePtr != NULL )
-		{
-		fflush( filePtr );
-		fclose( filePtr );
-		}
-	remove( fileName );
-#elif defined( __TESTIO__ )
-	FILE *filePtr;
-	int length = CRYPT_ERROR;
-
-	assert( fileName != NULL );
-
+	#ifdef EBCDIC_CHARS
+	#pragma convlit( resume )
+	#endif /* EBCDIC_CHARS */
+  #else
 	/* Determine how large the file is */
-	filePtr = fopen( fileName, "rb+" );
+	filePtr = fopen( fileName, MODE_READWRITE );
 	if( filePtr != NULL )
 		{
 		fseek( filePtr, 0, SEEK_END );
 		length = ( int ) ftell( filePtr );
 		fseek( filePtr, 0, SEEK_SET );
 		}
+  #endif /* OS environment-specific file handling */
 
 	/* If we got a length, overwrite the data.  Since the file contains a
 	   single record we can't perform the write-until-done overwrite used
@@ -1790,13 +1815,13 @@ void fileErase( IN_STRING const char *fileName )
 	remove( fileName );
 #else
   #error Need to add erase function for data in backing store
-#endif /* Nonstandard I/O enviroments */
+#endif /* Nonstandard I/O environments */
 	}
 
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -1828,12 +1853,23 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	else
 		strlcpy_s( path, pathMaxLen, fileName );
 	return( CRYPT_OK );
-#elif defined( __VMCMS__ )
+#elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
+  #if defined( DDNAME_IO )
+	/* MVS dataset name userid.CRYPTLIB.filename.  We can't use a PDS since
+	   multiple members have to be opened in write mode simultaneously */
+	if( option == BUILDPATH_RNDSEEDFILE )
+		strlcpy_s( path, pathMaxLen, "//RANDSEED" );
+	else
+		{
+		strlcpy_s( path, pathMaxLen, "//CRYPTLIB." );
+		strlcat_s( path, pathMaxLen, fileName );
+		}
+
+	return( CRYPT_OK );
+  #else
 	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
 							fileNameLen, option ) );
-#elif defined( __TESTIO__ )
-	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
-							fileNameLen, option ) );
+  #endif /* DDNAME_IO */
 #else
   #error Need to add function to build path to config data in backing store
 
@@ -1866,7 +1902,7 @@ static BOOLEAN checkVFSMgr( void )
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const int modes[] = {
@@ -2132,7 +2168,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -2219,7 +2255,7 @@ int setMedia( FX_MEDIA *mediaPtr )
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const int modes[] = { FX_OPEN_FOR_READ, FX_OPEN_FOR_READ,
@@ -2488,7 +2524,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -2553,58 +2589,6 @@ int ftruncate( int fd, off_t length )
 	return( 0 );
 	}
 #endif /* Tandem */
-
-#ifdef DDNAME_IO
-
-/* DDNAME I/O can be used under MVS.  Low-level POSIX I/O APIs can't be
-   used at this level, only stream I/O functions can be used.  For
-   sFileOpen:
-
-	- File permissions are controlled by RACF (or SAF compatable product)
-	  and should not be set by the program.
-
-	- No locking mechanism is implemented */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
-			   IN_FLAGS( FILE ) const int mode )
-	{
-#pragma convlit( suspend )
-	static const char *modes[] = { MODE_READ, MODE_READ,
-								   MODE_WRITE, MODE_READWRITE };
-#pragma convlit( resume )
-	const char *openMode;
-	char fileNameBuffer[ MAX_PATH_LENGTH + 8 ];
-
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( fileName != NULL );
-
-	REQUIRES( mode != 0 );
-
-	/* Initialise the stream structure */
-	memset( stream, 0, sizeof( STREAM ) );
-	stream->type = STREAM_TYPE_FILE;
-	if( ( mode & FILE_FLAG_RW_MASK ) == FILE_FLAG_READ )
-		stream->flags = STREAM_FLAG_READONLY;
-	openMode = modes[ mode & FILE_FLAG_RW_MASK ];
-
-	/* Try and open the file */
-	fileName = bufferToEbcdic( fileNameBuffer, fileName );
-	stream->filePtr = fopen( fileName, openMode );
-	if( stream->filePtr == NULL )
-		{
-		/* The open failed, determine whether it was because the file doesn't
-		   exist or because we can't use that access mode.  An errno value
-		   of ENOENT results from a ddname not found, and 67 (no mnemonic
-		   name defined by IBM for DYNALLOC return codes) is member not
-		   found, and 49 is data set not found */
-		return( ( errno == ENOENT || errno == 67 || errno == 49 ) ? \
-				CRYPT_ERROR_NOTFOUND : CRYPT_ERROR_OPEN );
-		}
-
-    return( CRYPT_OK );
-	}
-#else
 
 /* Safe file-open function */
 
@@ -2926,7 +2910,6 @@ int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName,
 
 	return( CRYPT_OK );
 	}
-#endif /* MVS USS special-case handling */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sFileClose( INOUT STREAM *stream )
@@ -3072,13 +3055,6 @@ int fileSeek( INOUT STREAM *stream, IN_LENGTH_Z const long position )
 	REQUIRES( stream->type == STREAM_TYPE_FILE );
 	REQUIRES( position >= 0 && position < MAX_INTLENGTH );
 
-#if defined( DDNAME_IO )
-	/* If we're using ddnames, we only seek if we're not already at the
-	   start of the file to prevent postioning to 0 in a new empty PDS
-	   member, which fails */
-	if( ( stream->bufCount > 0 || stream->bufPos > 0 || position > 0 ) )
-		/* Drop through */
-#endif /* MVS USS special-case */
 	if( lseek( stream->fd, position, SEEK_SET ) == ( off_t ) -1 )
 		return( sSetError( stream, CRYPT_ERROR_READ ) );
 	return( CRYPT_OK );
@@ -3096,17 +3072,10 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 
 	fileName = bufferToEbcdic( fileNameBuffer, fileName );
 #endif /* EBCDIC_CHARS */
-#if defined( DDNAME_IO )
-	assert( fileName != NULL );
-
-	/* Requires a RACF check to determine this */
-	return( FALSE );
-#else
 	assert( fileName != NULL );
 
 	if( access( fileName, W_OK ) < 0 && errno != ENOENT )
 		return( TRUE );
-#endif /* OS-specific file accessibility check */
 
 	return( FALSE );
 	}
@@ -3149,7 +3118,12 @@ static void eraseFile( const STREAM *stream, long position, long length )
 		length -= bytesToWrite;
 		}
 	fsync( stream->fd );
+#ifdef __GNUC__
+	/* Work around a persistent bogus warning in gcc */
+	{ int x = ftruncate( stream->fd, position ); }
+#else
 	( void ) ftruncate( stream->fd, position );
+#endif /* gcc with clang bug */
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -3246,10 +3220,11 @@ void fileErase( IN_STRING const char *fileName )
 	sFileClose( &stream );
 	utimes( fileName, NULL );	/* uClibc doesn't have futimes() */
   #elif defined( __linux__ )
+	status = 0;
 	if( futimes( stream.fd, NULL ) < 0 )
 		status = errno;			/* futimes() isn't available on all platforms */
 	sFileClose( &stream );
-	if( errno == ENOSYS )		/* futimes() failed, fall back to utimes() */
+	if( status == ENOSYS )		/* futimes() failed, fall back to utimes() */
 		utimes( fileName, NULL );
   #else
 	sFileClose( &stream );
@@ -3267,7 +3242,7 @@ void fileErase( IN_STRING const char *fileName )
 #if defined( USE_EMBEDDED_OS )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -3296,48 +3271,12 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
 							fileNameLen, option ) );
 	}
-
-#elif defined( DDNAME_IO )
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
-						   IN_LENGTH_SHORT const int pathMaxLen, 
-						   OUT_LENGTH_SHORT_Z int *pathLen,
-						   IN_BUFFER( fileNameLen ) const char *fileName, 
-						   IN_LENGTH_SHORT const int fileNameLen,
-						   IN_ENUM( BUILDPATH_OPTION ) \
-						   const BUILDPATH_OPTION_TYPE option )
-	{
-	assert( isWritePtr( path, pathMaxLen ) );
-	assert( isWritePtr( pathLen, sizeof( int ) ) );
-	assert( isReadPtr( fileName, fileNameLen ) );
-
-	REQUIRES( pathMaxLen > 32 && pathMaxLen < MAX_INTLENGTH );
-	REQUIRES( ( ( option == BUILDPATH_CREATEPATH || \
-				  option == BUILDPATH_GETPATH ) && fileName != NULL && \
-				  fileNameLen > 0 && fileNameLen < MAX_INTLENGTH ) || \
-			  ( option == BUILDPATH_RNDSEEDFILE && fileName == NULL && \
-			    fileNameLen == 0 ) );
-
-	/* Make sure that the open fails if we can't build the path */
-	*path = '\0';
-
-	/* MVS dataset name userid.CRYPTLIB.filename.  We can't use a PDS since
-	   multiple members have to be opened in write mode simultaneously */
-	if( option == BUILDPATH_RNDSEEDFILE )
-		strlcpy_s( path, pathMaxLen, "//RANDSEED" );
-	else
-		{
-		strlcpy_s( path, pathMaxLen, "//CRYPTLIB." );
-		strlcat_s( path, pathMaxLen, fileName );
-		}
-	}
 #else
 
 #include <pwd.h>
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -3433,12 +3372,12 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 	return( appendFilename( path, pathMaxLen, pathLen, fileName, 
 							fileNameLen, option ) );
 #else
-	#pragma convlit( resume )
-	status = appendFilename( path, pathMaxLen, pathLen, fileName, 
-							 fileNameLen, option );
+	status = appendFilenameEBCDIC( path, pathMaxLen, pathLen, fileName, 
+								   fileNameLen, option );
 	if( cryptStatusError( status ) )
 		return( status );
 	ebcdicToAscii( path, path, pathLen );
+	#pragma convlit( resume )
 
 	return( CRYPT_OK );
 #endif /* EBCDIC_CHARS */
@@ -3526,7 +3465,7 @@ static int getErrorCode( const int defaultErrorCode )
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -3799,7 +3738,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -3936,7 +3875,10 @@ static BOOLEAN isSpecialSID( INOUT SID *pUserSid )
 	/* Create a SID for each special-case account and check whether it
 	   matches the current user's SID.  It would be easier to use
 	   IsWellKnownSid() for this check, but this only appeared in Windows
-	   XP */
+	   XP.  In addition IsWellKnowSID() contains a large (and ever-growing) 
+	   number of SIDs that aren't appropriate here, it's main use is to work 
+	   in conjunction with CreateWellKnownSID() to allow creation of a known 
+	   SID without having to jump through the usual SID-creation hoops */
 	InitializeSid( pSid, &identifierAuthority, 1 );
 	*( GetSidSubAuthority( pSid, 0 ) ) = SECURITY_LOCAL_SYSTEM_RID;
 	if( EqualSid( pSid, pUserSid ) )
@@ -3951,9 +3893,9 @@ static BOOLEAN isSpecialSID( INOUT SID *pUserSid )
 	return( FALSE );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
-						   OUT_PTR const char **fileName )
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static const char *getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
+							   const char *fileName )
 	{
 	typedef DWORD ( WINAPI *WNETGETUNIVERSALNAMEA )( LPCSTR lpLocalPath,
 										DWORD dwInfoLevel, LPVOID lpBuffer,
@@ -3966,6 +3908,9 @@ static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
 	assert( isWritePtr( nameInfo, sizeof( UNIVERSAL_NAME_INFO ) ) );
 	assert( isReadPtr( fileName, sizeof( char * ) ) );
 
+	/* Clear return value */
+	memset( nameInfo, 0, sizeof( UNIVERSAL_NAME_INFO ) );
+
 	/* Load the MPR library.  We can't (safely) use an opportunistic
 	   GetModuleHandle() before the DynamicLoad() for this because the code
 	   that originally loaded the DLL might do a DynamicUnload() in another
@@ -3977,7 +3922,7 @@ static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
 		{
 		/* Should never happen, we can't have a mapped network drive if no
 		   network is available */
-		return( FALSE );
+		return( NULL );
 		}
 
 	/* Get the translated UNC name.  The UNIVERSAL_NAME_INFO struct is one
@@ -3987,15 +3932,12 @@ static BOOLEAN getUncName( OUT UNIVERSAL_NAME_INFO *nameInfo,
 	pWNetGetUniversalNameA = ( WNETGETUNIVERSALNAMEA ) \
 							 GetProcAddress( hMPR, "WNetGetUniversalNameA" );
 	if( pWNetGetUniversalNameA != NULL && \
-		pWNetGetUniversalNameA( *fileName, UNIVERSAL_NAME_INFO_LEVEL,
+		pWNetGetUniversalNameA( fileName, UNIVERSAL_NAME_INFO_LEVEL,
 								nameInfo, &uniBufSize ) == NO_ERROR )
-		{
-		*fileName = nameInfo->lpUniversalName;
 		gotUNC = TRUE;
-		}
 	DynamicUnload( hMPR );
 
-	return( gotUNC );
+	return( gotUNC ? nameInfo->lpUniversalName : NULL );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -4008,7 +3950,7 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 	char pathBuffer[ PATH_BUFFER_SIZE + 8 ];
 	char nameBuffer[ PATH_BUFFER_SIZE + 8 ];
 	char domainBuffer[ PATH_BUFFER_SIZE + 8 ];
-	char *fileNamePtr = ( char * ) fileName;
+	const char *fileNamePtr = ( char * ) fileName;
 	UNIVERSAL_NAME_INFO *nameInfo = ( UNIVERSAL_NAME_INFO * ) uniBuffer;
 	TOKEN_USER *pTokenUser = ( TOKEN_USER * ) tokenBuffer;
 	SID_NAME_USE eUse;
@@ -4082,8 +4024,12 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 	   usual reason for this will be that there's a problem with the network
 	   and the share is a cached remnant of a persistent connection), all we
 	   can do is fail safe and hope that the user is known */
-	if( isMappedDrive && !getUncName( nameInfo, &fileNamePtr ) )
-		return( TRUE );
+	if( isMappedDrive )
+		{
+		fileNamePtr = getUncName( nameInfo, fileNamePtr );
+		if( fileNamePtr == NULL )
+			return( TRUE );
+		}
 
 	assert( !memcmp( fileNamePtr, "\\\\", 2 ) );
 
@@ -4148,7 +4094,7 @@ static BOOLEAN checkUserKnown( IN_BUFFER( fileNameLength ) const char *fileName,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 #ifndef __WINCE__
@@ -4515,7 +4461,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
    and wipe and delete a file (although it's not terribly rigorous).
    Vestigia nulla retrorsum */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+STDC_NONNULL_ARG( ( 1 ) ) \
 static void eraseFile( const STREAM *stream, long position, long length )
 	{
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
@@ -4620,7 +4566,7 @@ void fileErase( IN_STRING const char *fileName )
 #if defined( __WIN32__ )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int getFolderPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+static int getFolderPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						  IN_LENGTH_SHORT const int pathMaxLen, 
 						  OUT_LENGTH_SHORT_Z int *pathLen )
 	{
@@ -4786,7 +4732,7 @@ static int getFolderPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 #endif /* __WIN32__ */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -4893,7 +4839,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const int modes[] = { MFS_MODE_READ, MFS_MODE_READ,
@@ -5062,7 +5008,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 
@@ -5154,7 +5100,7 @@ int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path,
 /* Open/close a file stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode )
 	{
 	static const char *modes[] = { MODE_READ, MODE_READ,
@@ -5300,7 +5246,7 @@ BOOLEAN fileReadonly( IN_STRING const char *fileName )
 
 	assert( fileName != NULL );
 
-	if( ( filePtr = fopen( fileName, "rb+" ) ) == NULL )
+	if( ( filePtr = fopen( fileName, MODE_READWRITE ) ) == NULL )
 		{
 		if( errno == EACCES )
 			return( TRUE );
@@ -5461,7 +5407,7 @@ void fileErase( IN_STRING const char *fileName )
 /* Build the path to a file in the cryptlib directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 

@@ -25,15 +25,16 @@
 #define USER_PRIVKEY_FILE			"testlib/zkeyuser"
 #define DUAL_PRIVKEY_FILE			"testlib/zkeydual"
 #define RENEW_PRIVKEY_FILE			"testlib/zkeyrene"
-#define BIG_PRIVKEY_FILE			"testlib/zkeybig"
+#define P15_FILE_TEMPLATE			"testlib/zkeyp15%d"
 #define CMP_PRIVKEY_FILE_TEMPLATE	"testlib/zkeycmp"
 #define PNP_PRIVKEY_FILE			"testlib/zkeypnpu"
 #define PNPCA_PRIVKEY_FILE			"testlib/zkeypnpc"
-#define SERVER_PRIVKEY_FILE			"testlib/zkeyserv"
+#define SERVER_PRIVKEY_FILE_TEMPLATE "testlib/zkeysrv%d"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"testlib/zkeyssh%d"
+#define SSL_CLI_PRIVKEY_FILE		"testlib/zkeysslc"
 #define TSA_PRIVKEY_FILE			"testlib/zkeytsa"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"testlib/zkeymis%d"
-#define PKCS12_FILE					"testlib/zkey"
+#define PKCS12_FILE_TEMPLATE		"testlib/zkeyp12%d"
 
 #define PGP_PUBKEY_FILE				"testlib/zpubring"
 #define PGP_PRIVKEY_FILE			"testlib/zsecring"
@@ -78,6 +79,7 @@
 #define CMP_CA_FILE_TEMPLATE		"testlib/zcmpca%d"
 #define SCEP_CA_FILE_TEMPLATE		"testlib/zscepca%d"
 
+#define CMS_ENC_FILE_TEMPLATE		"testlib/zspwenc%d"
 #define SMIME_SIG_FILE_TEMPLATE		"testlib/zsigned%d"
 #define SMIME_ENV_FILE_TEMPLATE		"testlib/zsenvel%d"
 #define PGP_ENC_FILE_TEMPLATE		"testlib/zconven%d"
@@ -106,15 +108,16 @@
 #define USER_PRIVKEY_FILE			":test:keys:user.p15"
 #define DUAL_PRIVKEY_FILE			":test:keys:dual.p15"
 #define RENEW_PRIVKEY_FILE			":test:keys:renewed.p15"
-#define BIG_PRIVKEY_FILE			":test:keys:big.p15"
+#define P15_FILE_TEMPLATE			":test:keys:pkcs15_%d.p15"
 #define CMP_PRIVKEY_FILE_TEMPLATE	":test:keys:cmp%d.p15"
 #define PNP_PRIVKEY_FILE			":test:keys:pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			":test:keys:pnp_ca.p15"
-#define SERVER_PRIVKEY_FILE			":test:keys:server.p15"
+#define SERVER_PRIVKEY_FILE_TEMPLATE ":test:keys:server%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	":test:keys:ssh%d.p15"
+#define SSL_CLI_PRIVKEY_FILE		":test:keys:ssl_cli.p15"
 #define TSA_PRIVKEY_FILE			":test:keys:tsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	":test:keys:misc%d.p15"
-#define PKCS12_FILE					":test:keys:key.p12"
+#define PKCS12_FILE_TEMPLATE		":test:keys:pkcs12_%d.p12"
 
 #define PGP_PUBKEY_FILE				":test:pgp:pubring.pgp"
 #define PGP_PRIVKEY_FILE			":test:pgp:secring.pgp"
@@ -159,9 +162,9 @@
 #define CMP_CA_FILE_TEMPLATE		":test:session:cmp_ca%d.der"
 #define SCEP_CA_FILE_TEMPLATE		":test:session:scep_ca%d.der"
 
+#define CMS_ENC_FILE_TEMPLATE		":test:smime:pwenc%d.p7m"
 #define SMIME_SIG_FILE_TEMPLATE		":test:smime:signed%d.p7s"
 #define SMIME_ENV_FILE_TEMPLATE		":test:smime:envel%d.p7m"
-
 #define PGP_ENC_FILE_TEMPLATE		":test:pgp:conv_enc%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		":test:pgp:pgp_enc%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	":test:pgp:gpg_enc%d.gpg"
@@ -188,15 +191,16 @@
 #define USER_PRIVKEY_FILE			"DD:CLBP15(KEYUSER)"
 #define DUAL_PRIVKEY_FILE			"DD:CLBP15(KEYDUAL)"
 #define RENEW_PRIVKEY_FILE			"DD:CLBP15(KEYRENE)"
-#define BIG_PRIVKEY_FILE			"DD:CLBP15(KEYBIG)"
+#define P15_FILE_TEMPLATE			"DD:CLBP15(KEYP15%d)"
 #define CMP_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYCMP%d)"
 #define PNP_PRIVKEY_FILE			"DD:CLBP15(KEYPNPU)"
 #define PNPCA_PRIVKEY_FILE			"DD:CLBP15(KEYPNPC)"
-#define SERVER_PRIVKEY_FILE			"DD:CLBP15(KEYSERV)"
+#define SERVER_PRIVKEY_FILE_TEMPLATE "DD:CLBP15(KEYSRV%d)"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYSSH%d)"
+#define SSL_CLI_PRIVKEY_FILE		"DD:CLBP15(KEYSSLC)"
 #define TSA_PRIVKEY_FILE			"DD:CLBP15(KEYTSA)"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"DD:CLBP15(KEYMIS%d)"
-#define PKCS12_FILE					"DD:CLBP12(KEY)"
+#define PKCS12_FILE_TEMPLATE		"DD:CLBP12(KEYP12%d)"
 
 #define PGP_PUBKEY_FILE				"DD:CLBPGP(PUBRING)"
 #define PGP_PRIVKEY_FILE			"DD:CLBPGP(SECRING)"
@@ -241,6 +245,7 @@
 #define CMP_CA_FILE_TEMPLATE		"DD:CLBDER(CMPCA%d)"
 #define SCEP_CA_FILE_TEMPLATE		"DD:CLBDER(SCEPCA%d)"
 
+#define CMS_ENC_FILE_TEMPLATE		"DD:CLBP7M(PWENC%d)"
 #define SMIME_SIG_FILE_TEMPLATE		"DD:CLBP7S(SIGNED%d)"
 #define SMIME_ENV_FILE_TEMPLATE		"DD:CLBP7M(ENVEL%d)"
 #define PGP_ENC_FILE_TEMPLATE		"DD:CLBPGP(CONVEN%d)"
@@ -269,15 +274,16 @@
 #define USER_PRIVKEY_FILE			"zkeyuser.p15"
 #define DUAL_PRIVKEY_FILE			"zkeydual.p15"
 #define RENEW_PRIVKEY_FILE			"zkeyren.p15"
-#define BIG_PRIVKEY_FILE			"zkeybig.p15"
+#define P15_FILE_TEMPLATE			"zkeyp15%d.p15"
 #define CMP_PRIVKEY_FILE_TEMPLATE	"zkeycmp.p15"
 #define PNP_PRIVKEY_FILE			"zkeypnpu.p15"
 #define PNPCA_PRIVKEY_FILE			"zkeypnpc.p15"
-#define SERVER_PRIVKEY_FILE			"zkeyserv.p15"
+#define SERVER_PRIVKEY_FILE_TEMPLATE "zkeysrv%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	"zkeyssh%d.p15"
+#define SSL_CLI_PRIVKEY_FILE		"zkeysslc.p15"
 #define TSA_PRIVKEY_FILE			"zkeytsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	"zkeymis%d.p15"
-#define PKCS12_FILE					"zkey.p12"
+#define PKCS12_FILE_TEMPLATE		"zkeyp12%d.p12"
 
 #define PGP_PUBKEY_FILE				"zpubring.pgp"
 #define PGP_PRIVKEY_FILE			"zsecring.pgp"
@@ -322,9 +328,9 @@
 #define CMP_CA_FILE_TEMPLATE		"zcmpca%d.der"
 #define SCEP_CA_FILE_TEMPLATE		"zscepca%d.der"
 
+#define CMS_ENC_FILE_TEMPLATE		"zpwenc%d.p7m"
 #define SMIME_SIG_FILE_TEMPLATE		"zsigned%d.p7s"
 #define SMIME_ENV_FILE_TEMPLATE		"zenvel%d.p7m"
-
 #define PGP_ENC_FILE_TEMPLATE		"zconven%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		"zpgpenc%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	"zgpgenc%d.gpg"
@@ -351,15 +357,16 @@
 #define USER_PRIVKEY_FILE			L"\\Storage Card\\keys\\user.p15"
 #define DUAL_PRIVKEY_FILE			L"\\Storage Card\\keys\\dual.p15"
 #define RENEW_PRIVKEY_FILE			L"\\Storage Card\\keys\\renewed.p15"
-#define BIG_PRIVKEY_FILE			L"\\Storage Card\\keys\\big.p15"
+#define P15_FILE_TEMPLATE			L"\\Storage Card\\keys\\pkcs15_%d.p15"
 #define CMP_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\cmp%d.p15"
 #define PNP_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_user.p15"
 #define PNPCA_PRIVKEY_FILE			L"\\Storage Card\\keys\\pnp_ca.p15"
-#define SERVER_PRIVKEY_FILE			L"\\Storage Card\\keys\\server.p15"
+#define SERVER_PRIVKEY_FILE_TEMPLATE L"\\Storage Card\\keys\\server%d.p15"
 #define SSH_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\ssh%d.p15"
+#define SSL_CLI_PRIVKEY_FILE		L"\\Storage Card\\keys\\ssl_cli.p15"
 #define TSA_PRIVKEY_FILE			L"\\Storage Card\\keys\\tsa.p15"
 #define MISC_PRIVKEY_FILE_TEMPLATE	L"\\Storage Card\\keys\\misc%d.p15"
-#define PKCS12_FILE					L"\\Storage Card\\keys\\key.p12"
+#define PKCS12_FILE_TEMPLATE		L"\\Storage Card\\keys\\pkcs12_%d.p12"
 
 #define PGP_PUBKEY_FILE				L"\\Storage Card\\pgp\\pubring.pgp"
 #define PGP_PRIVKEY_FILE			L"\\Storage Card\\pgp\\secring.pgp"
@@ -404,9 +411,9 @@
 #define CMP_CA_FILE_TEMPLATE		L"\\Storage Card\\session\\cmp_ca%d.der"
 #define SCEP_CA_FILE_TEMPLATE		L"\\Storage Card\\session\\scep_ca%d.der"
 
+#define CMS_ENC_FILE_TEMPLATE		L"\\Storage Card\\smime\\pw_enc%d.p7m"
 #define SMIME_SIG_FILE_TEMPLATE		L"\\Storage Card\\smime\\signed%d.p7s"
 #define SMIME_ENV_FILE_TEMPLATE		L"\\Storage Card\\smime\\envel%d.p7m"
-
 #define PGP_ENC_FILE_TEMPLATE		L"\\Storage Card\\pgp\\conv_enc%d.pgp"
 #define PGP_PKE_FILE_TEMPLATE		L"\\Storage Card\\pgp\\pgp_enc%d.pgp"
 #define OPENPGP_PKE_FILE_TEMPLATE	L"\\Storage Card\\pgp\\gpg_enc%d.gpg"
@@ -433,15 +440,16 @@
 #define USER_PRIVKEY_FILE			TEXT( "test/keys/user.p15" )
 #define DUAL_PRIVKEY_FILE			TEXT( "test/keys/dual.p15" )
 #define RENEW_PRIVKEY_FILE			TEXT( "test/keys/renewed.p15" )
-#define BIG_PRIVKEY_FILE			TEXT( "test/keys/big.p15" )
+#define P15_FILE_TEMPLATE			TEXT( "test/keys/pkcs15_%d.p15" )
 #define CMP_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/cmp%d.p15" )
 #define PNP_PRIVKEY_FILE			TEXT( "test/keys/pnp_user.p15" )
 #define PNPCA_PRIVKEY_FILE			TEXT( "test/keys/pnp_ca.p15" )
-#define SERVER_PRIVKEY_FILE			TEXT( "test/keys/server.p15" )
+#define SERVER_PRIVKEY_FILE_TEMPLATE TEXT( "test/keys/server%d.p15" )
 #define SSH_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/ssh%d.p15" )
+#define SSL_CLI_PRIVKEY_FILE		TEXT( "test/keys/ssl_cli.p15" )
 #define TSA_PRIVKEY_FILE			TEXT( "test/keys/tsa.p15" )
 #define MISC_PRIVKEY_FILE_TEMPLATE	TEXT( "test/keys/misc%d.p15" )
-#define PKCS12_FILE					TEXT( "test/keys/key.p12" )
+#define PKCS12_FILE_TEMPLATE		TEXT( "test/keys/pkcs12_%d.p12" )
 
 #define PGP_PUBKEY_FILE				TEXT( "test/pgp/pubring.pgp" )
 #define PGP_PRIVKEY_FILE			TEXT( "test/pgp/secring.pgp" )
@@ -486,9 +494,9 @@
 #define CMP_CA_FILE_TEMPLATE		TEXT( "test/session/cmp_ca%d.der" )
 #define SCEP_CA_FILE_TEMPLATE		TEXT( "test/session/scep_ca%d.der" )
 
+#define CMS_ENC_FILE_TEMPLATE		TEXT( "test/smime/pw_enc%d.p7m" )
 #define SMIME_SIG_FILE_TEMPLATE		TEXT( "test/smime/signed%d.p7s" )
 #define SMIME_ENV_FILE_TEMPLATE		TEXT( "test/smime/envel%d.p7m" )
-
 #define PGP_ENC_FILE_TEMPLATE		TEXT( "test/pgp/conv_enc%d.pgp" )
 #define PGP_PKE_FILE_TEMPLATE		TEXT( "test/pgp/pgp_enc%d.pgp" )
 #define OPENPGP_PKE_FILE_TEMPLATE	TEXT( "test/pgp/gpg_enc%d.gpg" )

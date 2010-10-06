@@ -9,12 +9,12 @@
 #include <stdio.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "http.h"
   #include "misc_rw.h"
+  #include "http.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/misc_rw.h"
   #include "io/http.h"
-  #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_HTTP
@@ -52,11 +52,20 @@ static const HTTP_HEADER_PARSE_INFO FAR_BSS httpHeaderParseInfo[] = {
 	{ "Connection:", 11, HTTP_HEADER_CONNECTION },
 	{ "NnCoection:", 11, HTTP_HEADER_CONNECTION },
 	{ "Cneonction:", 11, HTTP_HEADER_CONNECTION },
-		/* The bizarre spellings are for buggy NetApp NetCache servers,
-		   which unfortunately are widespread enough that we need to provide
+		/* The bizarre spellings are for NetApp NetCache servers, which 
+		   unfortunately are widespread enough that we need to provide 
 		   special-case handling for them.  For the second mis-spelling we
 		   have to capitalise the first letter for our use since we compare
-		   the uppercase form for a quick match */
+		   the uppercase form for a quick match.
+
+		   The reason why NetApp devices do this is because they think that 
+		   they can manage connections better than the application that's 
+		   creating them, so they rewrite "Connection: close" into something
+		   that won't be recognised in order to avoid the connection 
+		   actually being closed.  The reason for the 16-bit swap is because
+		   the Fletcher checksum used in TCP/IP doesn't detect 16-bit word
+		   swaps, so this allows the connection-control to be invalidated
+		   without requiring a recalculation of the TCP checksum */
 	{ "Warning:", 8, HTTP_HEADER_WARNING },
 	{ "Location:", 9, HTTP_HEADER_LOCATION },
 	{ "Expect:", 7, HTTP_HEADER_EXPECT },
@@ -482,8 +491,7 @@ typedef struct {
 /* Get the length of a sub-segment of a URI */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-static int getUriSegmentLength( OUT_BUFFER( dataMaxLength, *dataLength ) \
-									const char *data, 
+static int getUriSegmentLength( IN_BUFFER( dataMaxLength ) const char *data, 
 								IN_LENGTH_SHORT const int dataMaxLength, 
 								OUT_LENGTH_SHORT_Z int *dataLength, 
 								const URI_PARSE_INFO *uriParseInfo,
@@ -554,7 +562,7 @@ static int getUriSegmentLength( OUT_BUFFER( dataMaxLength, *dataLength ) \
    new length of the input as a by-reference parameter */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int parseUriInfo( OUT_BUFFER( dataInLength, *dataOutLength ) char *data, 
+int parseUriInfo( INOUT_BUFFER( dataInLength, *dataOutLength ) char *data, 
 				  IN_LENGTH_SHORT const int dataInLength, 
 				  OUT_LENGTH_SHORT_Z int *dataOutLength, 
 				  INOUT HTTP_URI_INFO *uriInfo )
@@ -998,9 +1006,11 @@ int readHeaderLines( INOUT STREAM *stream,
 		status = readTextLine( readCharFunction, stream, lineBuffer,
 							   lineBufMaxLen, &lineLength, &textDataError );
 		if( cryptStatusError( status ) )
+			{
 			return( retTextLineError( stream, status, textDataError, 
 									  "Invalid HTTP header line %d: ", 
 									  lineCount + 2 ) );
+			}
 		if( lineLength <= 0 )
 			{
 			/* End of input, exit */
@@ -1209,7 +1219,7 @@ int readHeaderLines( INOUT STREAM *stream,
 				   usable */
 				if( lineLength >= 5 && \
 					!strCompare( lineBufPtr, "Close", 5 ) )
-					sioctl( stream, STREAM_IOCTL_CONNSTATE, NULL, FALSE );
+					sioctlSet( stream, STREAM_IOCTL_CONNSTATE, FALSE );
 				break;
 
 			case HTTP_HEADER_WARNING:

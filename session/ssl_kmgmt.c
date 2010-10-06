@@ -12,7 +12,7 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
@@ -29,7 +29,8 @@
    information */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
+int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+							const BOOLEAN isTLS12 )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	int status;
@@ -37,11 +38,14 @@ int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 
 	/* Clear the handshake information contexts */
-	handshakeInfo->clientMD5context = \
-		handshakeInfo->serverMD5context = \
-			handshakeInfo->clientSHA1context = \
-				handshakeInfo->serverSHA1context = \
-					handshakeInfo->dhContext = CRYPT_ERROR;
+	handshakeInfo->md5context = \
+		handshakeInfo->sha1context = \
+			handshakeInfo->sha2context = CRYPT_ERROR;
+#ifdef CONFIG_SUITEB
+	handshakeInfo->sha384context = CRYPT_ERROR;
+#endif /* CONFIG_SUITEB */
+	handshakeInfo->dhContext = \
+		handshakeInfo->certVerifyContext = CRYPT_ERROR;
 
 	/* Create the MAC/dual-hash contexts for incoming and outgoing data.
 	   SSL uses a pre-HMAC variant for which we can't use real HMAC but have
@@ -54,15 +58,7 @@ int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusOK( status ) )
 		{
-		handshakeInfo->clientMD5context = createInfo.cryptHandle;
-		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_MD5 );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-								  OBJECT_TYPE_CONTEXT );
-		}
-	if( cryptStatusOK( status ) )
-		{
-		handshakeInfo->serverMD5context = createInfo.cryptHandle;
+		handshakeInfo->md5context = createInfo.cryptHandle;
 		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
@@ -70,15 +66,42 @@ int initHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 		}
 	if( cryptStatusOK( status ) )
 		{
-		handshakeInfo->clientSHA1context = createInfo.cryptHandle;
-		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
+		handshakeInfo->sha1context = createInfo.cryptHandle;
+		if( !isTLS12 )
+			return( CRYPT_OK );
+		}
+#ifdef CONFIG_SUITEB
+	if( cryptStatusOK( status ) )
+		{
+		/* Create the additional SHA2-384 context that's needed for Suite 
+		   B use */
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA2 );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+								  OBJECT_TYPE_CONTEXT );
+		if( cryptStatusOK( status ) )
+			{
+			static const int blockSize = bitsToBytes( 384 );
+
+			handshakeInfo->sha384context = createInfo.cryptHandle;
+			status = krnlSendMessage( handshakeInfo->sha384context, 
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &blockSize,
+									  CRYPT_CTXINFO_BLOCKSIZE );
+			}
+		}
+#endif /* CONFIG_SUITEB */
+	if( cryptStatusOK( status ) )
+		{
+		/* Create additional contexts that may be needed for TLS 1.2 */
+		setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA2 );
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  OBJECT_TYPE_CONTEXT );
 		}
 	if( cryptStatusOK( status ) )
 		{
-		handshakeInfo->serverSHA1context = createInfo.cryptHandle;
+		handshakeInfo->sha2context = createInfo.cryptHandle;
 		return( CRYPT_OK );
 		}
 
@@ -97,67 +120,112 @@ void destroyHandshakeCryptInfo( INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	   it's also done in the general session code) to provide a clean exit in
 	   case the session activation fails, so that a second activation attempt
 	   doesn't overwrite still-active contexts */
-	if( handshakeInfo->clientMD5context != CRYPT_ERROR )
+	if( handshakeInfo->md5context != CRYPT_ERROR )
 		{
-		krnlSendNotifier( handshakeInfo->clientMD5context,
+		krnlSendNotifier( handshakeInfo->md5context,
 						  IMESSAGE_DECREFCOUNT );
-		handshakeInfo->clientMD5context = CRYPT_ERROR;
+		handshakeInfo->md5context = CRYPT_ERROR;
 		}
-	if( handshakeInfo->serverMD5context != CRYPT_ERROR )
+	if( handshakeInfo->sha1context != CRYPT_ERROR )
 		{
-		krnlSendNotifier( handshakeInfo->serverMD5context,
+		krnlSendNotifier( handshakeInfo->sha1context,
 						  IMESSAGE_DECREFCOUNT );
-		handshakeInfo->serverMD5context = CRYPT_ERROR;
+		handshakeInfo->sha1context = CRYPT_ERROR;
 		}
-	if( handshakeInfo->clientSHA1context != CRYPT_ERROR )
+	if( handshakeInfo->sha2context != CRYPT_ERROR )
 		{
-		krnlSendNotifier( handshakeInfo->clientSHA1context,
+		krnlSendNotifier( handshakeInfo->sha2context,
 						  IMESSAGE_DECREFCOUNT );
-		handshakeInfo->clientSHA1context = CRYPT_ERROR;
+		handshakeInfo->sha2context = CRYPT_ERROR;
 		}
-	if( handshakeInfo->serverSHA1context != CRYPT_ERROR )
+#ifdef CONFIG_SUITEB
+	if( handshakeInfo->sha384context != CRYPT_ERROR )
 		{
-		krnlSendNotifier( handshakeInfo->serverSHA1context,
+		krnlSendNotifier( handshakeInfo->sha384context,
 						  IMESSAGE_DECREFCOUNT );
-		handshakeInfo->serverSHA1context = CRYPT_ERROR;
+		handshakeInfo->sha384context = CRYPT_ERROR;
 		}
+#endif /* CONFIG_SUITEB */
 	if( handshakeInfo->dhContext != CRYPT_ERROR )
 		{
 		krnlSendNotifier( handshakeInfo->dhContext, IMESSAGE_DECREFCOUNT );
 		handshakeInfo->dhContext = CRYPT_ERROR;
 		}
+	if( handshakeInfo->certVerifyContext != CRYPT_ERROR )
+		{
+		krnlSendNotifier( handshakeInfo->certVerifyContext, 
+						  IMESSAGE_DECREFCOUNT );
+		handshakeInfo->certVerifyContext = CRYPT_ERROR;
+		}
 	}
 
 /* Initialise and destroy the session security contexts */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initSecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int initSecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr,
+									INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 
-	setMessageCreateObjectInfo( &createInfo, sessionInfoPtr->integrityAlgo );
+	/* Create the authentication contexts, unless we're using a combined
+	   encryption+authentication mode */
+	if( !( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) )
+		{
+		const CRYPT_ALGO_TYPE integrityAlgo = sessionInfoPtr->integrityAlgo;
+
+		setMessageCreateObjectInfo( &createInfo, integrityAlgo );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+								  OBJECT_TYPE_CONTEXT );
+		if( cryptStatusOK( status ) )
+			{
+			sessionInfoPtr->iAuthInContext = createInfo.cryptHandle;
+			setMessageCreateObjectInfo( &createInfo, integrityAlgo );
+			status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+									  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+									  OBJECT_TYPE_CONTEXT );
+			}
+		if( cryptStatusError( status ) )
+			{
+			destroySecurityContextsSSL( sessionInfoPtr );
+			return( status );
+			}
+		sessionInfoPtr->iAuthOutContext = createInfo.cryptHandle;
+#ifdef CONFIG_SUITEB
+		if( cryptStatusOK( status ) && \
+			handshakeInfo->integrityAlgoParam == bitsToBytes( 384 ) )
+			{
+			static const int blockSize = bitsToBytes( 384 );
+
+			status = krnlSendMessage( sessionInfoPtr->iAuthInContext, 
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &blockSize,
+									  CRYPT_CTXINFO_BLOCKSIZE );
+			if( cryptStatusOK( status ) )
+				{
+				status = krnlSendMessage( sessionInfoPtr->iAuthOutContext, 
+										  IMESSAGE_SETATTRIBUTE, 
+										  ( MESSAGE_CAST ) &blockSize,
+										  CRYPT_CTXINFO_BLOCKSIZE );
+				}
+			if( cryptStatusError( status ) )
+				{
+				destroySecurityContextsSSL( sessionInfoPtr );
+				return( status );
+				}
+			}
+#endif /* CONFIG_SUITEB */
+		}
+
+	/* Create the encryption contexts */
+	setMessageCreateObjectInfo( &createInfo, sessionInfoPtr->cryptAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 							  OBJECT_TYPE_CONTEXT );
-	if( cryptStatusOK( status ) )
-		{
-		sessionInfoPtr->iAuthInContext = createInfo.cryptHandle;
-		setMessageCreateObjectInfo( &createInfo, sessionInfoPtr->integrityAlgo );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-								  OBJECT_TYPE_CONTEXT );
-		}
-	if( cryptStatusOK( status ) )
-		{
-		sessionInfoPtr->iAuthOutContext = createInfo.cryptHandle;
-		setMessageCreateObjectInfo( &createInfo, sessionInfoPtr->cryptAlgo );
-		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-								  OBJECT_TYPE_CONTEXT );
-		}
 	if( cryptStatusOK( status ) )
 		{
 		sessionInfoPtr->iCryptInContext = createInfo.cryptHandle;
@@ -166,17 +234,38 @@ int initSecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr )
 								  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 								  OBJECT_TYPE_CONTEXT );
 		}
-	if( cryptStatusOK( status ) )
+	if( cryptStatusError( status ) )
 		{
-		sessionInfoPtr->iCryptOutContext = createInfo.cryptHandle;
+		destroySecurityContextsSSL( sessionInfoPtr );
+		return( status );
+		}
+	sessionInfoPtr->iCryptOutContext = createInfo.cryptHandle;
 
-		return( CRYPT_OK );
+	/* If we're using GCM we also need to change the encryption mode from 
+	   the default CBC */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) 
+		{
+		static const int cryptMode = CRYPT_MODE_GCM;
+
+		status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &cryptMode,
+								  CRYPT_CTXINFO_MODE );
+		if( cryptStatusOK( status ) )
+			{
+			status = krnlSendMessage( sessionInfoPtr->iCryptOutContext,
+									  IMESSAGE_SETATTRIBUTE, 
+									  ( MESSAGE_CAST ) &cryptMode,
+									  CRYPT_CTXINFO_MODE );
+			}
+		if( cryptStatusError( status ) )
+			{
+			destroySecurityContextsSSL( sessionInfoPtr );
+			return( status );
+			}
 		}
 
-	/* One or more of the contexts couldn't be created, destroy all of the 
-	   contexts that have been created so far */
-	destroySecurityContextsSSL( sessionInfoPtr );
-	return( status );
+	return( CRYPT_OK );
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -217,9 +306,53 @@ void destroySecurityContextsSSL( INOUT SESSION_INFO *sessionInfoPtr )
 		}
 	}
 
+/* Clone a hash context so that we can continue using the original to hash 
+   further messages */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int cloneHashContext( IN_HANDLE const CRYPT_CONTEXT hashContext,
+					  OUT_HANDLE_OPT CRYPT_CONTEXT *clonedHashContext )
+	{
+	CRYPT_ALGO_TYPE hashAlgo;
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	int status;
+
+	assert( isWritePtr( clonedHashContext, sizeof( CRYPT_CONTEXT * ) ) );
+
+	REQUIRES( isHandleRangeValid( hashContext ) );
+
+	/* Clear return value */
+	*clonedHashContext = CRYPT_ERROR;
+
+	/* Determine the type of context that we have to clone */
+	status = krnlSendMessage( hashContext, IMESSAGE_GETATTRIBUTE,
+							  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Create a new hash context and clone the existing one's state into 
+	   it */
+	setMessageCreateObjectInfo( &createInfo, hashAlgo );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
+							  OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( hashContext, IMESSAGE_CLONE, NULL, 
+							  createInfo.cryptHandle );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( createInfo.cryptHandle, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	*clonedHashContext = createInfo.cryptHandle;
+	
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
-*								Keying Functions							*
+*								Keyex Functions								*
 *																			*
 ****************************************************************************/
 
@@ -350,13 +483,14 @@ int initDHcontextSSL( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	/* Clear return value */
 	*iCryptContext = CRYPT_ERROR;
 
-	/* If we're loading a built-in key, match the DH key size to the server 
+	/* If we're loading a built-in DH key, match the key size to the server 
 	   authentication key size.  If there's no server key present, we 
 	   default to the 1024-bit key because we don't know how much processing
 	   power the client has, and if we're using anon-DH anyway (implied by 
 	   the lack of server authentication key) then 1024 vs. 2048 bits isn't 
 	   a big loss */
-	if( keyData == NULL && iServerKeyTemplate != CRYPT_UNUSED )
+	if( keyData == NULL && iServerKeyTemplate != CRYPT_UNUSED && \
+		eccParams == CRYPT_ECCCURVE_NONE )
 		{
 		status = krnlSendMessage( iServerKeyTemplate, IMESSAGE_GETATTRIBUTE,
 								  &keySize, CRYPT_CTXINFO_KEYSIZE );
@@ -646,14 +780,16 @@ int unwrapPremasterSecret( INOUT SESSION_INFO *sessionInfoPtr,
 	if( handshakeInfo->premasterSecret[ 0 ] != SSL_MAJOR_VERSION || \
 		handshakeInfo->premasterSecret[ 1 ] != handshakeInfo->clientOfferedVersion )
 		{
-		/* Microsoft braindamage, even recent versions of MSIE still send 
-		   the wrong version number for the premaster secret (making it look 
-		   like a rollback attack), so if we're expecting 3.1 and get 3.0, 
-		   it's MSIE screwing up */
-		if( handshakeInfo->premasterSecret[ 0 ] == SSL_MAJOR_VERSION && \
-			handshakeInfo->premasterSecret[ 1 ] == SSL_MINOR_VERSION_SSL && \
-			sessionInfoPtr->version == SSL_MINOR_VERSION_SSL && \
-			handshakeInfo->clientOfferedVersion == SSL_MINOR_VERSION_TLS )
+		/* Microsoft braindamage, older versions of MSIE send the wrong 
+		   version number for the premaster secret (making it look like a 
+		   rollback attack) so if we're expecting 3.1 from the client and 
+		   get 3.0 in the premaster secret then it's MSIE screwing up.  Note 
+		   that this bug-check is only applied for SSL and TLS 1.0, for TLS 
+		   1.1 and later the check of the version is mandatory */
+		if( handshakeInfo->originalVersion <= SSL_MINOR_VERSION_TLS && \
+			handshakeInfo->clientOfferedVersion == SSL_MINOR_VERSION_TLS && \
+			handshakeInfo->premasterSecret[ 0 ] == SSL_MAJOR_VERSION && \
+			handshakeInfo->premasterSecret[ 1 ] == SSL_MINOR_VERSION_SSL )
 			{
 			setErrorString( ( ERROR_INFO * ) &sessionInfoPtr->errorInfo, 
 							"Warning: Accepting invalid premaster secret "
@@ -674,14 +810,21 @@ int unwrapPremasterSecret( INOUT SESSION_INFO *sessionInfoPtr,
 	return( CRYPT_OK );
 	}
 
+/****************************************************************************
+*																			*
+*				Premaster -> Master -> Key Material Functions				*
+*																			*
+****************************************************************************/
+
 /* Convert a pre-master secret to a master secret, and a master secret to
    keying material */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int premasterToMaster( const SESSION_INFO *sessionInfoPtr, 
-					   const SSL_HANDSHAKE_INFO *handshakeInfo, 
-					   OUT_BUFFER_FIXED( masterSecretLength ) void *masterSecret, 
-					   IN_LENGTH_SHORT const int masterSecretLength )
+static int premasterToMaster( const SESSION_INFO *sessionInfoPtr, 
+							  const SSL_HANDSHAKE_INFO *handshakeInfo, 
+							  OUT_BUFFER_FIXED( masterSecretLength ) \
+									void *masterSecret, 
+							  IN_LENGTH_SHORT const int masterSecretLength )
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
 	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
@@ -693,13 +836,16 @@ int premasterToMaster( const SESSION_INFO *sessionInfoPtr,
 	REQUIRES( masterSecretLength > 0 && \
 			  masterSecretLength < MAX_INTLENGTH_SHORT );
 
+	DEBUG_PRINT(( "Premaster secret:\n" ));
+	DEBUG_DUMP_DATA( handshakeInfo->premasterSecret, 
+					 handshakeInfo->premasterSecretSize );
 	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
 		{
 		memcpy( nonceBuffer, handshakeInfo->clientNonce, SSL_NONCE_SIZE );
 		memcpy( nonceBuffer + SSL_NONCE_SIZE, handshakeInfo->serverNonce,
 				SSL_NONCE_SIZE );
 		setMechanismDeriveInfo( &mechanismInfo, masterSecret,
-								masterSecretLength,
+								masterSecretLength, 
 								handshakeInfo->premasterSecret,
 								handshakeInfo->premasterSecretSize,
 								CRYPT_USE_DEFAULT, nonceBuffer,
@@ -712,6 +858,19 @@ int premasterToMaster( const SESSION_INFO *sessionInfoPtr,
 	memcpy( nonceBuffer + 13, handshakeInfo->clientNonce, SSL_NONCE_SIZE );
 	memcpy( nonceBuffer + 13 + SSL_NONCE_SIZE, handshakeInfo->serverNonce,
 			SSL_NONCE_SIZE );
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+		{
+		setMechanismDeriveInfo( &mechanismInfo, masterSecret, 
+								masterSecretLength, 
+								handshakeInfo->premasterSecret,
+								handshakeInfo->premasterSecretSize,
+								CRYPT_ALGO_SHA2, nonceBuffer,
+								13 + SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
+		if( handshakeInfo->integrityAlgoParam != 0 )
+			mechanismInfo.hashParam = handshakeInfo->integrityAlgoParam;
+		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
+								 &mechanismInfo, MECHANISM_DERIVE_TLS12 ) );
+		}
 	setMechanismDeriveInfo( &mechanismInfo, masterSecret, masterSecretLength,
 							handshakeInfo->premasterSecret,
 							handshakeInfo->premasterSecretSize,
@@ -722,12 +881,13 @@ int premasterToMaster( const SESSION_INFO *sessionInfoPtr,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
-int masterToKeys( const SESSION_INFO *sessionInfoPtr, 
-				  const SSL_HANDSHAKE_INFO *handshakeInfo, 
-				  IN_BUFFER( masterSecretLength ) const void *masterSecret, 
-				  IN_LENGTH_SHORT const int masterSecretLength,
-				  OUT_BUFFER_FIXED( keyBlockLength ) void *keyBlock, 
-				  IN_LENGTH_SHORT const int keyBlockLength )
+static int masterToKeys( const SESSION_INFO *sessionInfoPtr, 
+						 const SSL_HANDSHAKE_INFO *handshakeInfo, 
+						 IN_BUFFER( masterSecretLength ) \
+								const void *masterSecret, 
+						 IN_LENGTH_SHORT const int masterSecretLength,
+						 OUT_BUFFER_FIXED( keyBlockLength ) void *keyBlock, 
+						 IN_LENGTH_SHORT const int keyBlockLength )
 	{
 	MECHANISM_DERIVE_INFO mechanismInfo;
 	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
@@ -742,14 +902,17 @@ int masterToKeys( const SESSION_INFO *sessionInfoPtr,
 	REQUIRES( keyBlockLength > 0 && \
 			  keyBlockLength < MAX_INTLENGTH_SHORT );
 
+	DEBUG_PRINT(( "Master secret:\n" ));
+	DEBUG_DUMP_DATA( masterSecret, masterSecretLength );
 	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
 		{
 		memcpy( nonceBuffer, handshakeInfo->serverNonce, SSL_NONCE_SIZE );
 		memcpy( nonceBuffer + SSL_NONCE_SIZE, handshakeInfo->clientNonce,
 				SSL_NONCE_SIZE );
 		setMechanismDeriveInfo( &mechanismInfo, keyBlock, keyBlockLength,
-								masterSecret, masterSecretLength, CRYPT_USE_DEFAULT,
-								nonceBuffer, SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
+								masterSecret, masterSecretLength, 
+								CRYPT_USE_DEFAULT, nonceBuffer, 
+								SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
 		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 								 &mechanismInfo, MECHANISM_DERIVE_SSL ) );
 		}
@@ -758,21 +921,39 @@ int masterToKeys( const SESSION_INFO *sessionInfoPtr,
 	memcpy( nonceBuffer + 13, handshakeInfo->serverNonce, SSL_NONCE_SIZE );
 	memcpy( nonceBuffer + 13 + SSL_NONCE_SIZE, handshakeInfo->clientNonce,
 			SSL_NONCE_SIZE );
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+		{
+		setMechanismDeriveInfo( &mechanismInfo, keyBlock, keyBlockLength,
+								masterSecret, masterSecretLength, 
+								CRYPT_ALGO_SHA2, nonceBuffer, 
+								13 + SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
+		if( handshakeInfo->integrityAlgoParam != 0 )
+			mechanismInfo.hashParam = handshakeInfo->integrityAlgoParam;
+		return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
+								 &mechanismInfo, MECHANISM_DERIVE_TLS12 ) );
+		}
 	setMechanismDeriveInfo( &mechanismInfo, keyBlock, keyBlockLength,
-							masterSecret, masterSecretLength, CRYPT_USE_DEFAULT,
-							nonceBuffer, 13 + SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
+							masterSecret, masterSecretLength, 
+							CRYPT_USE_DEFAULT, nonceBuffer, 
+							13 + SSL_NONCE_SIZE + SSL_NONCE_SIZE, 1 );
 	return( krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 							 &mechanismInfo, MECHANISM_DERIVE_TLS ) );
 	}
 
+/****************************************************************************
+*																			*
+*								Key-load Functions							*
+*																			*
+****************************************************************************/
+
 /* Load the SSL/TLS cryptovariables */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
-			  const SSL_HANDSHAKE_INFO *handshakeInfo,
-			  IN_BUFFER( keyBlockLength ) const void *keyBlock, 
-			  IN_LENGTH_SHORT_MIN( 16 ) const int keyBlockLength,
-			  const BOOLEAN isClient )
+static int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
+					 const SSL_HANDSHAKE_INFO *handshakeInfo,
+					 IN_BUFFER( keyBlockLength ) const void *keyBlock, 
+					 IN_LENGTH_SHORT_MIN( 16 ) const int keyBlockLength,
+					 const BOOLEAN isClient )
 	{
 	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
 	MESSAGE_DATA msgData;
@@ -797,38 +978,44 @@ int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	   First we load the MAC keys.  For TLS these are proper MAC keys, for
 	   SSL we have to build the proto-HMAC ourselves from a straight hash
 	   context so we store the raw cryptovariables rather than loading them
-	   into a context */
-	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
+	   into a context, and if we're using GCM we skip them since the 
+	   encryption key also functions as the authentication key */
+	if( !( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) )
 		{
-		ENSURES( rangeCheckZ( 0, sessionInfoPtr->authBlocksize, 
-							  CRYPT_MAX_HASHSIZE ) );
-		memcpy( isClient ? sslInfo->macWriteSecret : sslInfo->macReadSecret,
-				keyBlockPtr, sessionInfoPtr->authBlocksize );
-		memcpy( isClient ? sslInfo->macReadSecret : sslInfo->macWriteSecret,
-				keyBlockPtr + sessionInfoPtr->authBlocksize,
-				sessionInfoPtr->authBlocksize );
+		if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
+			{
+			ENSURES( rangeCheckZ( 0, sessionInfoPtr->authBlocksize, 
+								  CRYPT_MAX_HASHSIZE ) );
+			memcpy( isClient ? sslInfo->macWriteSecret : sslInfo->macReadSecret,
+					keyBlockPtr, sessionInfoPtr->authBlocksize );
+			memcpy( isClient ? sslInfo->macReadSecret : sslInfo->macWriteSecret,
+					keyBlockPtr + sessionInfoPtr->authBlocksize,
+					sessionInfoPtr->authBlocksize );
+			}
+		else
+			{
+			setMessageData( &msgData, keyBlockPtr, 
+							sessionInfoPtr->authBlocksize );
+			status = krnlSendMessage( isClient ? \
+											sessionInfoPtr->iAuthOutContext : \
+											sessionInfoPtr->iAuthInContext,
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_CTXINFO_KEY );
+			if( cryptStatusError( status ) )
+				return( status );
+			setMessageData( &msgData, 
+							keyBlockPtr + sessionInfoPtr->authBlocksize,
+							sessionInfoPtr->authBlocksize );
+			status = krnlSendMessage( isClient ? \
+											sessionInfoPtr->iAuthInContext: \
+											sessionInfoPtr->iAuthOutContext,
+									  IMESSAGE_SETATTRIBUTE_S, &msgData,
+									  CRYPT_CTXINFO_KEY );
+			if( cryptStatusError( status ) )
+				return( status );
+			}
+		keyBlockPtr += sessionInfoPtr->authBlocksize * 2;
 		}
-	else
-		{
-		setMessageData( &msgData, keyBlockPtr, sessionInfoPtr->authBlocksize );
-		status = krnlSendMessage( isClient ? \
-										sessionInfoPtr->iAuthOutContext : \
-										sessionInfoPtr->iAuthInContext,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData,
-								  CRYPT_CTXINFO_KEY );
-		if( cryptStatusError( status ) )
-			return( status );
-		setMessageData( &msgData, keyBlockPtr + sessionInfoPtr->authBlocksize,
-						sessionInfoPtr->authBlocksize );
-		status = krnlSendMessage( isClient ? \
-										sessionInfoPtr->iAuthInContext: \
-										sessionInfoPtr->iAuthOutContext,
-								  IMESSAGE_SETATTRIBUTE_S, &msgData,
-								  CRYPT_CTXINFO_KEY );
-		if( cryptStatusError( status ) )
-			return( status );
-		}
-	keyBlockPtr += sessionInfoPtr->authBlocksize * 2;
 
 	/* Then we load the encryption keys */
 	setMessageData( &msgData, keyBlockPtr, handshakeInfo->cryptKeysize );
@@ -850,11 +1037,29 @@ int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Finally we load the IVs if required.  This load is actually redundant
-	   for TLS 1.1 since it uses explicit IVs, but it's easier to just do it
-	   anyway */
+	/* If we're using a stream cipher, there are no IVs */
 	if( isStreamCipher( sessionInfoPtr->cryptAlgo ) )
 		return( CRYPT_OK );	/* No IV, we're done */
+
+	/* If we're using GCM then the IV is composed of two parts, an explicit 
+	   portion that's sent with every packet and an implicit portion that's 
+	   derived from the master secret */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		memcpy( isClient ? sessionInfoPtr->sessionSSL->gcmWriteSalt : \
+						   sessionInfoPtr->sessionSSL->gcmReadSalt, 
+				keyBlockPtr, GCM_SALT_SIZE );
+		memcpy( isClient ? sessionInfoPtr->sessionSSL->gcmReadSalt : \
+						   sessionInfoPtr->sessionSSL->gcmWriteSalt, 
+				keyBlockPtr + GCM_SALT_SIZE, GCM_SALT_SIZE );
+		sessionInfoPtr->sessionSSL->gcmSaltSize = GCM_SALT_SIZE;
+
+		return( CRYPT_OK );
+		}
+
+	/* It's a standard block cipher, load the IVs.  This load is actually 
+	   redundant for TLS 1.1+ since it uses explicit IVs, but it's easier to 
+	   just do it anyway */
 	setMessageData( &msgData, keyBlockPtr,
 					sessionInfoPtr->cryptBlocksize );
 	krnlSendMessage( isClient ? sessionInfoPtr->iCryptOutContext : \
@@ -870,6 +1075,91 @@ int loadKeys( INOUT SESSION_INFO *sessionInfoPtr,
 							 CRYPT_CTXINFO_IV ) );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int initCryptoSSL( INOUT SESSION_INFO *sessionInfoPtr,
+				   INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+				   OUT_BUFFER_FIXED( masterSecretSize ) void *masterSecret,
+				   IN_LENGTH_SHORT const int masterSecretSize,
+				   const BOOLEAN isClient,
+				   const BOOLEAN isResumedSession )
+	{
+	BYTE keyBlock[ MAX_KEYBLOCK_SIZE + 8 ];
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( masterSecret, masterSecretSize ) );
+
+	REQUIRES( masterSecretSize > 0 && \
+			  masterSecretSize < MAX_INTLENGTH_SHORT );
+
+	/* Create the security contexts required for the session */
+	status = initSecurityContextsSSL( sessionInfoPtr, handshakeInfo );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If it's a fresh (i.e. non-cached) session, convert the premaster 
+	   secret into the master secret */
+	if( !isResumedSession )
+		{
+		status = premasterToMaster( sessionInfoPtr, handshakeInfo,
+									masterSecret, masterSecretSize );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* Everything is OK so far, if we're the server (which caches 
+		   sessions) add the master secret to the session cache */
+		if( !isClient )
+			{
+			int cachedID;
+
+			status = cachedID = \
+				addScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
+									handshakeInfo->sessionID,
+									handshakeInfo->sessionIDlength,
+									masterSecret, masterSecretSize );
+			if( cryptStatusError( status ) )
+				{
+				zeroise( masterSecret, masterSecretSize );
+				return( status );
+				}
+			sessionInfoPtr->sessionSSL->sessionCacheID = cachedID;
+			}
+		}
+	else
+		{
+		/* We've already got the master secret present from the session that
+		   we're resuming from, reuse that */
+		ENSURES( rangeCheckZ( 0, handshakeInfo->premasterSecretSize, 
+							  masterSecretSize ) );
+		memcpy( masterSecret, handshakeInfo->premasterSecret,
+				handshakeInfo->premasterSecretSize );
+		}
+
+	/* Convert the master secret into keying material.  Unfortunately we
+	   can't delete the master secret at this point because it's still 
+	   needed to calculate the MAC for the handshake messages */
+	status = masterToKeys( sessionInfoPtr, handshakeInfo, masterSecret,
+						   masterSecretSize, keyBlock, MAX_KEYBLOCK_SIZE );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( masterSecret, masterSecretSize );
+		return( status );
+		}
+
+	/* Load the keys and secrets */
+	status = loadKeys( sessionInfoPtr, handshakeInfo, keyBlock, 
+					   MAX_KEYBLOCK_SIZE, isClient );
+	zeroise( keyBlock, MAX_KEYBLOCK_SIZE );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( masterSecret, masterSecretSize );
+		return( status );
+		}
+
+	return( CRYPT_OK );
+	}
+
 /* TLS versions greater than 1.0 prepend an explicit IV to the data, the
    following function loads this from the packet data stream */
 
@@ -878,9 +1168,10 @@ int loadExplicitIV( INOUT SESSION_INFO *sessionInfoPtr,
 					INOUT STREAM *stream, 
 					OUT_INT_SHORT_Z int *ivLength )
 	{
+	SSL_INFO *sslInfo = sessionInfoPtr->sessionSSL;
 	MESSAGE_DATA msgData;
 	BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
-	int status;
+	int ivSize = sslInfo->ivSize, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -890,10 +1181,21 @@ int loadExplicitIV( INOUT SESSION_INFO *sessionInfoPtr,
 	*ivLength = 0;
 
 	/* Read and load the IV */
-	status = sread( stream, iv, sessionInfoPtr->cryptBlocksize );
+	status = sread( stream, iv, sslInfo->ivSize );
+	if( cryptStatusOK( status ) && \
+		( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) )
+		{
+		/* If we're using GCM then the IV has to be assembled from the 
+		   implicit and explicit portions */
+		ENSURES( rangeCheck( sslInfo->gcmSaltSize, sslInfo->ivSize,
+							 CRYPT_MAX_IVSIZE ) );
+		memmove( iv + sslInfo->gcmSaltSize, iv, sslInfo->ivSize );
+		memcpy( iv, sslInfo->gcmReadSalt, sslInfo->gcmSaltSize );
+		ivSize += sslInfo->gcmSaltSize;
+		}
 	if( cryptStatusOK( status ) )
 		{
-		setMessageData( &msgData, iv, sessionInfoPtr->cryptBlocksize );
+		setMessageData( &msgData, iv, ivSize );
 		status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData,
 								  CRYPT_CTXINFO_IV );
@@ -906,16 +1208,7 @@ int loadExplicitIV( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Tell the caller how much data we've consumed */
-	*ivLength = sessionInfoPtr->cryptBlocksize;
-
-	/* The following alternate code, which decrypts and discards the first
-	   block, can be used when we're using hardware cryptologic that doesn't
-	   allow a reaload of the IV during decryption */
-#if 0
-	status = krnlSendMessage( sessionInfoPtr->iCryptInContext,
-							  IMESSAGE_CTX_DECRYPT, iv,
-							  sessionInfoPtr->cryptBlocksize );
-#endif /* 0 */
+	*ivLength = sslInfo->ivSize;
 
 	return( CRYPT_OK );
 	}

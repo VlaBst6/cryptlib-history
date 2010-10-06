@@ -74,6 +74,7 @@
 #define ACCESS_INT_Rxx_Rxx	0x4400	/* Internal: Read-only, read-only */
 #define ACCESS_INT_Rxx_RWx	0x4600	/* Internal: Read-only, read/write */
 #define ACCESS_INT_RWx_xxx	0x6000	/* Internal: Read/write, none */
+#define ACCESS_INT_RWx_xWx	0x6200	/* Internal: Read/write, write-only */
 #define ACCESS_INT_RWx_RWx	0x6600	/* Internal: Read/write, read/write */
 
 #define ACCESS_SPECIAL_Rxx_RWx_Rxx_Rxx \
@@ -83,6 +84,7 @@
 							0x4744	/* Internal = Read-only, all access,
 									   External = Read-only, read-only */
 
+#define ACCESS_FLAG_x		0x0000	/* No access permitted */
 #define ACCESS_FLAG_R		0x0004	/* Read access permitted */
 #define ACCESS_FLAG_W		0x0002	/* Write access permitted */
 #define ACCESS_FLAG_D		0x0001	/* Delete access permitted */
@@ -251,6 +253,11 @@
 #else
   #define MKPERM_CERTREV_PKIX_PARTIAL( perm )	ACCESS_xxx_xxx
 #endif /* USE_CERTLEVEL_PKIX_PARTIAL && USE_CERTREV */
+#if defined( USE_CERTLEVEL_PKIX_FULL ) && defined( USE_CERTREV )
+  #define MKPERM_CERTREV_PKIX_FULL( perm )		ACCESS_##perm
+#else
+  #define MKPERM_CERTREV_PKIX_FULL( perm )		ACCESS_xxx_xxx
+#endif /* USE_CERTLEVEL_PKIX_FULL && USE_CERTREV */
 
 #if defined( USE_CERTLEVEL_PKIX_PARTIAL ) && defined( USE_CERT_OBSCURE )
   #define MKPERM_PKIX_PARTIAL_OBSCURE( perm )	ACCESS_##perm

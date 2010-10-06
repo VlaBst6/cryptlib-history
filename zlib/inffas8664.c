@@ -33,20 +33,10 @@
  */
 
 #include <stdio.h>
-
-#if defined( INC_ALL )
-  #include "crypt.h"	/* For ASM override of longest-match */
-  #include "zutil.h"
-  #include "inftrees.h"
-  #include "inflate.h"
-  #include "inffast.h"
-#else
-  #include "crypt.h"	/* For ASM override of longest-match */
-  #include "zlib/zutil.h"
-  #include "zlib/inftrees.h"
-  #include "zlib/inflate.h"
-  #include "zlib/inffast.h"
-#endif /* Compiler-specific includes */
+#include "zutil.h"
+#include "inftrees.h"
+#include "inflate.h"
+#include "inffast.h"
 
 /* Mark Adler's comments from inffast.c: */
 
@@ -121,11 +111,11 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
     type_ar ar;
     void inffas8664fnc(struct inffast_ar * par);
 
-    
+
 
 #if (defined( __GNUC__ ) && defined( __amd64__ ) && ! defined( __i386 )) || (defined(_MSC_VER) && defined(_M_AMD64))
 #define PAD_AVAIL_IN 6
-#define PAD_AVAIL_OUT 258    
+#define PAD_AVAIL_OUT 258
 #else
 #define PAD_AVAIL_IN 5
 #define PAD_AVAIL_OUT 257
@@ -140,7 +130,7 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
     ar.beg = ar.out - (start - strm->avail_out);
     ar.end = ar.out + (strm->avail_out - PAD_AVAIL_OUT);
     ar.wsize = state->wsize;
-    ar.write = state->write;
+    ar.write = state->wnext;
     ar.window = state->window;
     ar.hold = state->hold;
     ar.bits = state->bits;

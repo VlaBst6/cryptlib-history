@@ -154,6 +154,7 @@ int connectViaHttpProxy( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
 
 	/* Open the connection via the proxy.  To do this we temporarily layer
@@ -179,7 +180,7 @@ int connectViaHttpProxy( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
 		netStream->transportDisconnectFunction( netStream, TRUE );
 		}
 
-	return( CRYPT_OK );
+	return( status );
 	}
 #endif /* USE_HTTP */
 

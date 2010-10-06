@@ -15,19 +15,6 @@
 
 #ifdef USE_ERRMSGS
 
-/* When we return from an error handler, returning an error status means 
-   that the function succeeded, since it's forwarding a status that it was
-   given rather than reporting its own status.  In this case returning an
-   error code indicates success */
-
-#if defined( _MSC_VER ) && defined( _PREFAST_ ) 
-  #define CHECK_RETVAL_ERROR	__checkReturn \
-								__success( result < CRYPT_OK - 1 ) \
-								__range( MAX_ERROR, CRYPT_OK - 1 )
-#else
-  #define CHECK_RETVAL_ERROR	CHECK_RETVAL
-#endif /* Source code analysis enabled */
-
 /****************************************************************************
 *																			*
 *								Utility Functions							*
@@ -54,18 +41,23 @@ static int convertErrorStatus( IN_ERROR const int status )
 	return( status );
 	}
 
-/* Format a printf-style error string */
+/* Format a printf-style error string.
 
-RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static BOOLEAN formatErrorString( INOUT ERROR_INFO *errorInfoPtr, 
+   In the following we can't make the third arg a NONNULL_ARG because in the 
+   Arm ABI it's a scalar value */
+
+RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static BOOLEAN formatErrorString( OUT ERROR_INFO *errorInfoPtr, 
 								  IN_STRING const char *format, 
 								  IN va_list argPtr )
 	{
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
 
-	REQUIRES_B( argPtr != NULL );
+	REQUIRES_B( verifyVAList( argPtr ) );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	/* This function is a bit tricky to deal with because of the 
 	   braindamaged behaviour of some of the underlying functions that it 
@@ -108,8 +100,7 @@ static void appendErrorString( INOUT ERROR_INFO *errorInfoPtr,
 							   IN_LENGTH_ERRORMESSAGE \
 								const int extErrorStringLength )
 	{
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( extErrorString, extErrorStringLength ) );
 
 	REQUIRES_V( errorInfoPtr->errorStringLength > 0 && \
@@ -138,24 +129,24 @@ static void appendErrorString( INOUT ERROR_INFO *errorInfoPtr,
    predefined error string from something like a table of error messages */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void clearErrorString( INOUT ERROR_INFO *errorInfoPtr )
+void clearErrorString( OUT ERROR_INFO *errorInfoPtr )
 	{
 	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
-	assert( isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
 
-	memset( errorInfoPtr->errorString, 0, min( 16, MAX_ERRMSG_SIZE ) );
-	errorInfoPtr->errorStringLength = 0;
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 	}
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void setErrorString( INOUT ERROR_INFO *errorInfoPtr, 
+void setErrorString( OUT ERROR_INFO *errorInfoPtr, 
 					 IN_BUFFER( stringLength ) const char *string, 
 					 IN_LENGTH_ERRORMESSAGE const int stringLength )
 	{
 	int length = stringLength;
 
 	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
-	assert( isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	/* Since we're already in an error-handling function we don't use the 
 	   REQUIRES() predicate (which would result in an infinite page fault)
@@ -176,16 +167,13 @@ void setErrorString( INOUT ERROR_INFO *errorInfoPtr,
    stream) to a high-level one (for example a session or envelope) */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr, 
+void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
 					const ERROR_INFO *srcErrorInfoPtr )
 	{
 	assert( isWritePtr( destErrorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( srcErrorInfoPtr, sizeof( ERROR_INFO ) ) );
-	assert( isWritePtr( destErrorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
-	assert( isReadPtr( srcErrorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
 
 	memset( destErrorInfoPtr, 0, sizeof( ERROR_INFO ) );
-	destErrorInfoPtr->errorCode = srcErrorInfoPtr->errorCode;
 	if( srcErrorInfoPtr->errorStringLength > 0 )
 		{
 		setErrorString( destErrorInfoPtr, srcErrorInfoPtr->errorString, 
@@ -210,17 +198,19 @@ void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtFn( IN_ERROR const int status, 
-			  INOUT ERROR_INFO *errorInfoPtr, 
+			  OUT ERROR_INFO *errorInfoPtr, 
 			  FORMAT_STRING const char *format, ... )
 	{
 	va_list argPtr;
 	const int localStatus = convertErrorStatus( status );
 
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
 
 	REQUIRES( cryptStatusError( status ) );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	va_start( argPtr, format );
 	formatErrorString( errorInfoPtr, format, argPtr );
@@ -231,7 +221,7 @@ int retExtFn( IN_ERROR const int status,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) STDC_PRINTF_FN( 3, 4 ) \
 int retExtArgFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 FORMAT_STRING const char *format, ... )
 	{
 	va_list argPtr;
@@ -240,11 +230,13 @@ int retExtArgFn( IN_ERROR const int status,
 	   CRYPT_ARGERROR_xxx values, since they're valid return values in some
 	   cases */
 
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
 
 	REQUIRES( cryptStatusError( status ) );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	va_start( argPtr, format );
 	formatErrorString( errorInfoPtr, format, argPtr );
@@ -255,7 +247,7 @@ int retExtArgFn( IN_ERROR const int status,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) STDC_PRINTF_FN( 4, 5 ) \
 int retExtObjFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 IN_HANDLE const CRYPT_HANDLE extErrorObject, 
 				 FORMAT_STRING const char *format, ... )
 	{
@@ -266,13 +258,15 @@ int retExtObjFn( IN_ERROR const int status,
 	BOOLEAN errorStringOK;
 	int errorStringLength, extErrorStatus, extErrorStringLength;
 
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( format, 4 ) );
 
 	REQUIRES( cryptStatusError( status ) );
 	REQUIRES( extErrorObject == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( extErrorObject ) );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	/* Format the basic error string */
 	va_start( argPtr, format );
@@ -289,9 +283,9 @@ int retExtObjFn( IN_ERROR const int status,
 
 	/* Check whether there's any additional error information available */
 	setMessageData( &msgData, extraErrorString, MAX_ERRMSG_SIZE );
-	extErrorStatus = krnlSendMessage( extErrorObject, MESSAGE_GETATTRIBUTE_S,
+	extErrorStatus = krnlSendMessage( extErrorObject, IMESSAGE_GETATTRIBUTE_S,
 									  &msgData, 
-									  CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
+									  CRYPT_ATTRIBUTE_ERRORMESSAGE );
 	if( cryptStatusError( extErrorStatus ) )
 		{
 		/* Nothing further to report, exit */
@@ -319,7 +313,7 @@ int retExtObjFn( IN_ERROR const int status,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 5 ) ) STDC_PRINTF_FN( 5, 6 ) \
 int retExtStrFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 IN_BUFFER( extErrorStringLength ) const char *extErrorString, 
 				 IN_LENGTH_ERRORMESSAGE const int extErrorStringLength,
 				 FORMAT_STRING const char *format, ... )
@@ -328,14 +322,16 @@ int retExtStrFn( IN_ERROR const int status,
 	const int localStatus = convertErrorStatus( status );
 	BOOLEAN errorStringOK;
 
-	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) && \
-			isWritePtr( errorInfoPtr->errorString, MAX_ERRMSG_SIZE ) );
+	assert( isWritePtr( errorInfoPtr, sizeof( ERROR_INFO ) ) );
 	assert( isReadPtr( extErrorString, extErrorStringLength ) );
 	assert( isReadPtr( format, 4 ) );
 
 	REQUIRES( cryptStatusError( status ) );
 	REQUIRES( extErrorStringLength > 0 && \
 			  extErrorStringLength < MAX_ERRMSG_SIZE );
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	/* Format the basic error string */
 	va_start( argPtr, format );
@@ -355,7 +351,7 @@ int retExtStrFn( IN_ERROR const int status,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) STDC_PRINTF_FN( 4, 5 ) \
 int retExtErrFn( IN_ERROR const int status, 
-				 INOUT ERROR_INFO *errorInfoPtr, 
+				 OUT ERROR_INFO *errorInfoPtr, 
 				 const ERROR_INFO *existingErrorInfoPtr, 
 				 FORMAT_STRING const char *format, ... )
 	{
@@ -364,6 +360,9 @@ int retExtErrFn( IN_ERROR const int status,
 	char extErrorString[ MAX_ERRMSG_SIZE + 8 ];
 	BOOLEAN errorStringOK;
 	int extErrorStringLength;
+
+	/* Clear return value */
+	memset( errorInfoPtr, 0, sizeof( ERROR_INFO ) );
 
 	/* This function is typically used when the caller wants to convert 
 	   something like "Low-level error string" into "High-level error 
@@ -415,7 +414,7 @@ int retExtErrFn( IN_ERROR const int status,
    code from source to destination */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void copyErrorInfo( INOUT ERROR_INFO *destErrorInfoPtr, 
+void copyErrorInfo( OUT ERROR_INFO *destErrorInfoPtr, 
 					const ERROR_INFO *srcErrorInfoPtr )
 	{
 	assert( isWritePtr( destErrorInfoPtr, sizeof( ERROR_INFO ) ) );

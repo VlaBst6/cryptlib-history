@@ -95,9 +95,9 @@ static BOOLEAN sanityCheck( const RANDOM_INFO *randomInfo )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int setKeyX917( INOUT RANDOM_INFO *randomInfo, 
-				IN_BUFFER( X917_KEYSIZE ) const BYTE *key,
-				IN_BUFFER( X917_POOLSIZE ) const BYTE *state, 
-				IN_BUFFER_OPT( X917_POOLSIZE ) const BYTE *dateTime )
+				IN_BUFFER_C( X917_KEYSIZE ) const BYTE *key,
+				IN_BUFFER_C( X917_POOLSIZE ) const BYTE *state,
+				IN_BUFFER_OPT_C( X917_POOLSIZE ) const BYTE *dateTime )
 	{
 	X917_3DES_KEY *des3Key = &randomInfo->x917Key;
 	int desStatus;
@@ -160,7 +160,7 @@ int setKeyX917( INOUT RANDOM_INFO *randomInfo,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int generateX917( INOUT RANDOM_INFO *randomInfo, 
-				  OUT_BUFFER_FIXED( length ) BYTE *data, 
+				  INOUT_BUFFER_FIXED( length ) BYTE *data, 
 				  IN_RANGE( 1, MAX_RANDOM_BYTES ) const int length )
 	{
 	BYTE encTime[ X917_POOLSIZE + 8 ], *dataPtr = data;
@@ -254,15 +254,15 @@ int generateX917( INOUT RANDOM_INFO *randomInfo,
 				}
 
 			/* Postcondition: The value has been incremented by one */
-			POST( ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == \
-					ORIGINAL_VALUE( lsb1 ) + 1 ) || \
-				  ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == 0 && \
-					randomInfo->x917DT[ X917_POOLSIZE - 2 ] == \
-					ORIGINAL_VALUE( lsb2 ) + 1 ) || \
-				  ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == 0 && \
-					randomInfo->x917DT[ X917_POOLSIZE - 2 ] == 0 && \
-					randomInfo->x917DT[ X917_POOLSIZE - 3 ] == \
-					ORIGINAL_VALUE( lsb3 ) + 1 ) );
+			ENSURES( ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == \
+							ORIGINAL_VALUE( lsb1 ) + 1 ) || \
+					 ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == 0 && \
+					   randomInfo->x917DT[ X917_POOLSIZE - 2 ] == \
+							ORIGINAL_VALUE( lsb2 ) + 1 ) || \
+					 ( randomInfo->x917DT[ X917_POOLSIZE - 1 ] == 0 && \
+					   randomInfo->x917DT[ X917_POOLSIZE - 2 ] == 0 && \
+					   randomInfo->x917DT[ X917_POOLSIZE - 3 ] == \
+							ORIGINAL_VALUE( lsb3 ) + 1 ) );
 			}
 
 		/* Move on to the next block */
@@ -271,7 +271,7 @@ int generateX917( INOUT RANDOM_INFO *randomInfo,
 
 		/* Postcondition: We've processed one more block of data */
 		ENSURES( dataPtr == data + dataBlockPos + bytesToCopy );
-		POST( randomInfo->x917Count == ORIGINAL_VALUE( x917Count ) + 1 );
+		ENSURES( randomInfo->x917Count == ORIGINAL_VALUE( x917Count ) + 1 );
 		}
 
 	/* Postcondition: We processed all of the data */
@@ -598,7 +598,7 @@ int randomAlgorithmSelfTest( void )
 
 CHECK_RETVAL \
 int selfTestX917( INOUT RANDOM_INFO *testRandomInfo, 
-				  IN_BUFFER( X917_KEYSIZE ) const BYTE *key )
+				  IN_BUFFER_C( X917_KEYSIZE ) const BYTE *key )
 	{
 	BYTE buffer[ X917_BLOCKSIZE + 8 ];
 	int status;

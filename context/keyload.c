@@ -65,15 +65,15 @@ int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 *																			*
 ****************************************************************************/
 
-/* Initialise key parameters such as the IV and encryption mode, shared by
-   most capabilities.  This is never called directly, but is accessed
+/* Initialise crypto parameters such as the IV and encryption mode, shared 
+   by most capabilities.  This is never called directly, but is accessed
    through function pointers in the capability lists */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initKeyParams( INOUT CONTEXT_INFO *contextInfoPtr, 
-				   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
-				   IN_OPT const void *data, 
-				   IN_INT const int dataLength )
+int initGenericParams( INOUT CONTEXT_INFO *contextInfoPtr, 
+					   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
+					   IN_OPT const void *data, 
+					   IN_INT const int dataLength )
 	{
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 
@@ -119,6 +119,12 @@ int initKeyParams( INOUT CONTEXT_INFO *contextInfoPtr,
 							capabilityInfoPtr->encryptOFBFunction;
 					contextInfoPtr->decryptFunction = \
 							capabilityInfoPtr->decryptOFBFunction;
+					break;
+				case CRYPT_MODE_GCM:
+					contextInfoPtr->encryptFunction = \
+							capabilityInfoPtr->encryptGCMFunction;
+					contextInfoPtr->decryptFunction = \
+							capabilityInfoPtr->decryptGCMFunction;
 					break;
 				default:
 					retIntError();
@@ -181,8 +187,6 @@ int adjustUserKeySize( const CONTEXT_INFO *contextInfoPtr,
 	if( requestedKeySize < capabilityInfoPtr->minKeySize || \
 		requestedKeySize > capabilityInfoPtr->maxKeySize )
 		return( CRYPT_ARGERROR_NUM1 );
-	ENSURES( requestedKeySize > MIN_KEYSIZE && \
-			 requestedKeySize <= CRYPT_MAX_PKCSIZE );
 
 	/* If it's a PKC key we're done */
 	if( contextInfoPtr->type == CONTEXT_PKC )
@@ -219,12 +223,14 @@ static int getDefaultKeysize( const CONTEXT_INFO *contextInfoPtr,
 	/* Clear return value */
 	*keyLength = 0;
 
-	/* For PKC contexts where we're generating a new key we want to use the 
-	   recommended (rather than the longest possible) key size whereas for 
-	   conventional contexts we want to use the longest possible size (this 
-	   will be adjusted further down if necessary for those algorithms where 
-	   it's excessively long) */
-	if( contextInfoPtr->type == CONTEXT_PKC )
+	/* For PKC contexts and generic-secret objects where we're generating a 
+	   new key we want to use the recommended (rather than the longest 
+	   possible) key size whereas for conventional contexts and MAC objects 
+	   we want to use the longest possible size (this will be adjusted 
+	   further down if necessary for those algorithms where it's excessively 
+	   long) */
+	if( contextInfoPtr->type == CONTEXT_PKC || \
+		contextInfoPtr->type == CONTEXT_GENERIC )
 		localKeyLength = capabilityInfoPtr->keySize;
 	else
 		localKeyLength = capabilityInfoPtr->maxKeySize;
@@ -239,7 +245,7 @@ static int getDefaultKeysize( const CONTEXT_INFO *contextInfoPtr,
 		localKeyLength = capabilityInfoPtr->keySize;
 #endif /* USE_RC2 || USE_RC4 */
 
-	ENSURES( localKeyLength > MIN_KEYSIZE && \
+	ENSURES( localKeyLength >= MIN_KEYSIZE && \
 			 localKeyLength <= CRYPT_MAX_PKCSIZE );
 
 	/* Trim the key size to fit */
@@ -262,8 +268,7 @@ static int checkPKCparams( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 	{
 	const CRYPT_PKCINFO_RSA *rsaKey = ( CRYPT_PKCINFO_RSA * ) keyInfo;
 
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
 	REQUIRES( keyInfo != NULL );
 
 	/* The ECC check is somewhat different to the others because ECC key
@@ -550,6 +555,22 @@ static int loadKeyMacFunction( INOUT CONTEXT_INFO *contextInfoPtr,
 															 key, keyLength ) );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int loadKeyGenericFunction( INOUT CONTEXT_INFO *contextInfoPtr, 
+								   IN_BUFFER( keyLength ) const void *key, 
+								   IN_LENGTH_KEY const int keyLength )
+	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isReadPtr( key, keyLength ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_GENERIC );
+	REQUIRES( keyLength >= bitsToBytes( 128 ) && \
+			  keyLength <= CRYPT_MAX_KEYSIZE );
+
+	return( contextInfoPtr->capabilityInfo->initKeyFunction( contextInfoPtr, 
+															 key, keyLength ) );
+	}
+
 /****************************************************************************
 *																			*
 *							Key Component Load Functions					*
@@ -785,8 +806,10 @@ static int generateKeyConvFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 	   export this key we'll need to use an exporting context which is also
 	   located in the device, since we can't access it externally */
 	if( capabilityInfoPtr->generateKeyFunction != NULL )
+		{
 		return( capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
 												bytesToBits( keyLength ) ) );
+		}
 
 	/* Generate a random session key into the context.  We load the random 
 	   data directly into the pagelocked encryption context and pass that in 
@@ -872,6 +895,49 @@ static int generateKeyMacFunction( INOUT CONTEXT_INFO *contextInfoPtr )
 		return( status );
 	return( contextInfoPtr->loadKeyFunction( contextInfoPtr, 
 								contextInfoPtr->ctxMAC->userKey, keyLength ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int generateKeyGenericFunction( INOUT CONTEXT_INFO *contextInfoPtr )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	MESSAGE_DATA msgData;
+	int keyLength = contextInfoPtr->ctxGeneric->genericSecretLength, status;
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	
+	REQUIRES( contextInfoPtr->type == CONTEXT_GENERIC );
+
+	/* If there's no key size specified, use the default length */
+	if( keyLength <= 0 )
+		{
+		status = getDefaultKeysize( contextInfoPtr, &keyLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* If the context is implemented in a crypto device it may have the
+	   capability to generate the key itself so if there's a keygen function
+	   present we call this to generate the key directly into the context
+	   rather than generating it ourselves and loading it in.  Note that to
+	   export this key we'll need to use an exporting context which is also
+	   located in the device, since we can't access it externally */
+	if( capabilityInfoPtr->generateKeyFunction != NULL )
+		{
+		return( capabilityInfoPtr->generateKeyFunction( contextInfoPtr,
+												bytesToBits( keyLength ) ) );
+		}
+
+	/* Generate a random session key into the context.  We load the random 
+	   data directly into the pagelocked encryption context and pass that in 
+	   as the key buffer, loadKey() won't copy the data if src == dest */
+	setMessageData( &msgData, contextInfoPtr->ctxGeneric->genericSecret, keyLength );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S, 
+							  &msgData, CRYPT_IATTRIBUTE_RANDOM );
+	if( cryptStatusError( status ) )
+		return( status );
+	return( contextInfoPtr->loadKeyFunction( contextInfoPtr, 
+								contextInfoPtr->ctxGeneric->genericSecret, keyLength ) );
 	}
 
 /****************************************************************************
@@ -1052,6 +1118,11 @@ void initKeyHandling( INOUT CONTEXT_INFO *contextInfoPtr )
 		case CONTEXT_MAC:
 			contextInfoPtr->loadKeyFunction = loadKeyMacFunction;
 			contextInfoPtr->generateKeyFunction = generateKeyMacFunction;
+			break;
+
+		case CONTEXT_GENERIC:
+			contextInfoPtr->loadKeyFunction = loadKeyGenericFunction;
+			contextInfoPtr->generateKeyFunction = generateKeyGenericFunction;
 			break;
 
 		default:

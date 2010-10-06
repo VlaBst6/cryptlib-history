@@ -7,25 +7,25 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "keyset.h"
   #include "pkcs15.h"
-  #include "asn1.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS15
 
-/* Define the following to use the post-PKCS #15 draft encapsulation for
-   certificates.  Note that this will break backwards compatibility for
-   cryptlib versions before 3.3.0 (which dates from late 2006) because 
-   earlier versions (likewise for backwards compatibility) still read and 
-   wrote the original form */
+/* Define the following to use the corrected PKCS #15 v1.2 form for 
+   ObjectValue.direct tagging rather than the original erroneous v1.1
+   form.  Note that this will break backwards compatibility for cryptlib 
+   versions before 3.4.0, however 3.4.0 also introduces AuthEncData so this 
+   seems like a good time to make the changeover for the tagging as well */
 
-/* #define POST_DRAFT_ENCAPSULATION */
+#define USE_PKCS15V12_FORM
 
 /****************************************************************************
 *																			*
@@ -95,9 +95,16 @@ static int calculateCertStorage( const PKCS15_INFO *pkcs15infoPtr,
 	REQUIRES( certSize > 0 && certSize < MAX_INTLENGTH_SHORT );
 
 	/* Calculate the new certificate data size */
+#ifdef USE_PKCS15V12_FORM
 	*newCertDataSize = sizeofObject( certAttributeSize + \
 									 sizeofObject( \
-										sizeofObject( certSize ) ) );
+									   sizeofObject( \
+										 sizeofObject( certSize ) ) ) );
+#else
+	*newCertDataSize = sizeofObject( certAttributeSize + \
+									 sizeofObject( \
+									   sizeofObject( certSize ) ) );
+#endif /* USE_PKCS15V12_FORM */
 	ENSURES( *newCertDataSize > 0 && *newCertDataSize < MAX_INTLENGTH );
 
 	/* If the new data will fit into the existing storage, we're done */
@@ -296,8 +303,9 @@ int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr,
 		   extraDataSize parameter to zero */
 		privKeyInfoSize = pkcs15infoPtr->privKeyDataSize - \
 						  pkcs15infoPtr->privKeyOffset;
-		status = calculatePrivkeyStorage( pkcs15infoPtr, &newPrivKeyData,
-										  &newPrivKeyDataSize, 
+		status = calculatePrivkeyStorage( &newPrivKeyData, &newPrivKeyDataSize, 
+										  pkcs15infoPtr->privKeyData,
+										  pkcs15infoPtr->privKeyDataSize,
 										  privKeyInfoSize,
 										  privKeyAttributeSize, 0 );
 		if( cryptStatusError( status ) )
@@ -319,15 +327,29 @@ int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr,
 			clFree( "addCert", newPrivKeyData );
 		return( status );
 		}
+	ANALYSER_HINT( newPrivKeyData != NULL );
 
 	/* Write the PKCS #15 certificate data */
 	sMemOpen( &stream, newCertData, newCertDataSize );
+#ifdef USE_PKCS15V12_FORM
+	writeSequence( &stream, certAttributeSize + \
+							sizeofObject( \
+							  sizeofObject( \
+								sizeofObject( certInfoSize ) ) ) );
+	swrite( &stream, certAttributes, certAttributeSize );
+	writeConstructed( &stream, sizeofObject( \
+								 sizeofObject( certInfoSize ) ), 
+					  CTAG_OB_TYPEATTR );
+	writeSequence( &stream, sizeofObject( certInfoSize ) );
+	status = writeConstructed( &stream, certInfoSize, CTAG_OV_DIRECT );
+#else
 	writeSequence( &stream, certAttributeSize + \
 							sizeofObject( sizeofObject( certInfoSize ) ) );
 	swrite( &stream, certAttributes, certAttributeSize );
 	writeConstructed( &stream, sizeofObject( certInfoSize ), 
 					  CTAG_OB_TYPEATTR );
 	status = writeSequence( &stream, certInfoSize );
+#endif /* USE_PKCS15V12_FORM */
 	if( cryptStatusOK( status ) )
 		{
 		newCertOffset = stell( &stream );
@@ -351,17 +373,6 @@ int pkcs15AddCert( INOUT PKCS15_INFO *pkcs15infoPtr,
 		}
 	ENSURES( !cryptStatusError( checkObjectEncoding( newCertData, \
 													 newCertDataSize ) ) );
-
-#ifdef POST_DRAFT_ENCAPSULATION
-	/* Certificates require an awkward CTAG_OV_DIRECT (= [0] IMPLICIT) tag, 
-	   this is simple to handle when we're encoding the data ourselves (as 
-	   we do for public and private keys) but a serious pain if we're simply 
-	   exporting pre-encoded data like a certificate.  In order to handle 
-	   this we modify the exported encoded data, which is easier than 
-	   passing the tag requirement down through the kernel call to the 
-	   certificate export code */
-	( ( BYTE * ) newCertData )[ newCertOffset ] = MAKE_CTAG( CTAG_OV_DIRECT );
-#endif /* POST_DRAFT_ENCAPSULATION */
 
 	/* Replace the old certificate (if there is one) with the new one.  If 
 	   it's a certificate associated with a private key we also have to 
@@ -508,8 +519,7 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	REQUIRES( isHandleRangeValid( iCryptContext ) );
 	REQUIRES( pubKeyAttributeSize > 0 && \
 			  pubKeyAttributeSize < MAX_INTLENGTH_SHORT );
-	REQUIRES( pkcCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  pkcCryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( pkcCryptAlgo ) );
 	REQUIRES( ( isEccAlgo( pkcCryptAlgo ) && \
 				modulusSize >= MIN_PKCSIZE_ECC && \
 				modulusSize <= CRYPT_MAX_PKCSIZE_ECC ) || \
@@ -550,9 +560,9 @@ int pkcs15AddPublicKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 	sMemOpen( &stream, newPubKeyData, newPubKeyDataSize );
 	writeConstructed( &stream, pubKeyAttributeSize + \
 							   sizeofObject( \
-								sizeofObject( \
-								  sizeofObject( pubKeySize ) + \
-								  extraDataSize ) ),
+								 sizeofObject( \
+								   sizeofObject( pubKeySize ) + \
+								   extraDataSize ) ),
 					  keyTypeTag );
 	swrite( &stream, pubKeyAttributes, pubKeyAttributeSize );
 	writeConstructed( &stream, sizeofObject( \

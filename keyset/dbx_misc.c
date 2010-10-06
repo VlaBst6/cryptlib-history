@@ -275,7 +275,8 @@ int makeKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 
 		/* Get the hash algorithm information and hash the keyID to get
 		   the fixed-length keyID */
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+								 NULL );
 		hashFunctionAtomic( hashBuffer, CRYPT_MAX_HASHSIZE,
 							idValue, idValueLength );
 		idValue = hashBuffer;
@@ -313,7 +314,7 @@ int getKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 
 	REQUIRES( keyIdMaxLen >= 16 && keyIdMaxLen < MAX_INTLENGTH_SHORT );
 	REQUIRES( isHandleRangeValid( iCryptHandle ) );
-	REQUIRES( ( keyIDtype == CRYPT_CERTINFO_FINGERPRINT_SHA || \
+	REQUIRES( ( keyIDtype == CRYPT_CERTINFO_FINGERPRINT_SHA1 || \
 				keyIDtype == CRYPT_IATTRIBUTE_AUTHCERTID ) || \
 			  ( keyIDtype == CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER || \
 				keyIDtype == CRYPT_IATTRIBUTE_ISSUER || \
@@ -327,7 +328,7 @@ int getKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 
 	/* Get the attribute from the certificate and hash it, unless it's 
 	   already a hash */
-	if( keyIDtype == CRYPT_CERTINFO_FINGERPRINT_SHA || \
+	if( keyIDtype == CRYPT_CERTINFO_FINGERPRINT_SHA1 || \
 		keyIDtype == CRYPT_IATTRIBUTE_AUTHCERTID )
 		{
 		MESSAGE_DATA msgData;
@@ -349,7 +350,7 @@ int getKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID,
 		status = dynCreate( &idDB, iCryptHandle, keyIDtype );
 		if( cryptStatusError( status ) )
 			return( status );
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
 								 &hashSize );
 		hashFunctionAtomic( hashBuffer, CRYPT_MAX_HASHSIZE,
 							dynData( idDB ), dynLength( idDB ) );
@@ -1005,8 +1006,7 @@ int setAccessMethodDBMS( INOUT KEYSET_INFO *keysetInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( type == CRYPT_KEYSET_ODBC_STORE || \
-		type == CRYPT_KEYSET_DATABASE_STORE || \
-		type == CRYPT_KEYSET_PLUGIN_STORE )
+		type == CRYPT_KEYSET_DATABASE_STORE )
 		{
 		status = initDBMSCA( keysetInfoPtr );
 		if( cryptStatusError( status ) )

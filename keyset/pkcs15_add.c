@@ -7,14 +7,14 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "keyset.h"
   #include "pkcs15.h"
-  #include "asn1.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS15
@@ -50,8 +50,7 @@ int getKeyTypeTag( IN_HANDLE_OPT const CRYPT_CONTEXT cryptContext,
 	REQUIRES( ( isHandleRangeValid( cryptContext ) && \
 				cryptAlgo == CRYPT_ALGO_NONE ) || \
 			  ( cryptContext == CRYPT_UNUSED && \
-				( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-				  cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ) );
+				isPkcAlgo( cryptAlgo ) ) );
 
 	/* Clear return value */
 	*tag = 0;
@@ -102,11 +101,11 @@ int getKeyTypeTag( IN_HANDLE_OPT const CRYPT_CONTEXT cryptContext,
 		role, ID, name information, and any additional required information.
 
    The lookup process for a given user's information is to read the 
-   IATTRIBUTE_USERINDEX from the user index file (typically index.p15) to
+   IATTRIBUTE_USERINDEX from the user index keyset (typically index.p15) to 
    find the user's index value, and then use that to read the 
-   IATTRIBUTE_USERINFO from the user file (typically u<index>.p15).  The
+   IATTRIBUTE_USERINFO from the user keyset (typically u<index>.p15).  The 
    cryptlib-wide IATTRIBUTE_CONFIGDATA is stored in the cryptlib default 
-   initialisation file, typically cryptlib.p15.
+   initialisation keyset, typically cryptlib.p15.
 
    If we're being sent empty data (corresponding to an empty SEQUENCE, so 
    dataLength < 8), it means that the caller wants to clear this entry */
@@ -304,7 +303,7 @@ int pkcs15AddKey( INOUT PKCS15_INFO *pkcs15infoPtr,
 				  IN_HANDLE const CRYPT_USER iOwnerHandle, 
 				  const BOOLEAN privkeyPresent, const BOOLEAN certPresent, 
 				  const BOOLEAN doAddCert, const BOOLEAN pkcs15keyPresent,
-				  const BOOLEAN isStorageObject,
+				  const BOOLEAN isStorageObject, 
 				  INOUT ERROR_INFO *errorInfo )
 	{
 	CRYPT_ALGO_TYPE pkcCryptAlgo;

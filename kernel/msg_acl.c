@@ -33,6 +33,11 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 	  MK_CMPACL_S( ST_CTX_HASH | ST_CTX_MAC,
 				   16, CRYPT_MAX_HASHSIZE ) },
 
+	/* ICV value */
+	{ MESSAGE_COMPARE_ICV,
+	  MK_CMPACL_S( ST_CTX_CONV,
+				   12, CRYPT_MAX_HASHSIZE ) },
+
 	/* PKC keyID */
 	{ MESSAGE_COMPARE_KEYID,
 	  MK_CMPACL_S( ST_CTX_PKC,
@@ -58,7 +63,7 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
 				   2, MAX_ATTRIBUTE_SIZE ) },
 
-	/* Cert certificate fingerprint for various hash algorithms */
+	/* Certificate fingerprint for various hash algorithms */
 	{ MESSAGE_COMPARE_FINGERPRINT_SHA1,
 	  MK_CMPACL_S( ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
 				   20, 20 ) },
@@ -95,28 +100,52 @@ static const COMPARE_ACL FAR_BSS compareACLTbl[] = {
 								  ST_DEV_FORT | ST_DEV_P11 | ST_DEV_CAPI | \
 								  ST_DEV_HW )
 
+/* The certificate and CA capabilities are spread across certificates (the 
+   certificate or certificate with CA flag set) and contexts (the PKC 
+   capability), which requires a two-phase check.  First we check the 
+   primary object and then we check the secondary one.  For a private key
+   the primary object is the private-key context and the secondary is the 
+   certificate, for a public key the primary object is the certificate and
+   the secondary is the public-key context.
+   
+   Since the primary object has a dependent object but the secondary one 
+   doesn't we have to change the check type that we perform on the secondary 
+   to reflect this.  The checking performed is therefore:
+
+	Type				Target	Object	Action		Dep.Obj.	Fded chk
+	----				------	------	------		-------		--------
+	Privkey + cert		Context	PKC		PKC			Cert		CERTxx
+	Cert + pubkey		Cert	Cert	PKC			PKC			PKC
+
+	Type				Target	Object	Action		Dep.Obj.	Fded chk
+	----				------	------	------		-------		--------
+	Privkey + CA cert	Context	PKC		SIGN		Cert		CACERT
+	CA cert + pubkey	Cert	Cert	SIGCHECK	PKC			SIGCHECK
+
+   In theory for CA certificates we'd need to perform some sort of generic 
+   sign-or-sigcheck check for the case where the certificate is the primary 
+   object, but since the certificate + context combination can only occur 
+   for public-key contexts it's safe to check for a SIGCHECK capability.  
+   Similarly, when the context is the primary object it's always a private 
+   key, so we can check for a SIGN capability */
+
+static const CHECK_ALT_ACL FAR_BSS checkCertACLTbl[] = {
+	{ OBJECT_TYPE_CONTEXT, MESSAGE_CHECK_PKC,
+	  MK_CHKACL_ALT( OBJECT_TYPE_CERTIFICATE, ST_CERT_CERT | ST_CERT_CERTCHAIN,
+					 MESSAGE_CHECK_CERTxx ) },
+	{ OBJECT_TYPE_CERTIFICATE, MESSAGE_CHECK_CERT,
+	  MK_CHKACL_ALT( OBJECT_TYPE_CONTEXT, ST_CTX_PKC,
+					 MESSAGE_CHECK_PKC ) },
+
+	/* End-of-ACL marker */
+	{ OBJECT_TYPE_NONE,
+	  MK_CHKACL_ALT_END() },
+	{ OBJECT_TYPE_NONE,
+	  MK_CHKACL_ALT_END() }
+	};
 static const CHECK_ALT_ACL FAR_BSS checkCAACLTbl[] = {
-	/* The CA capability is spread across certs (the CA flag)
-	   and contexts (the signing capability), which requires a two-phase
-	   check.  First we check the primary object, and then we check the
-	   secondary one.  Since the primary object has a dependent object but
-	   the secondary one doesn't, we have to change the check type that we
-	   perform on the secondary to reflect this.  The checking performed is
-	   therefore:
-
-		Type				Target	Object	Action		Dep.Obj.	Fded chk
-		----				------	------	------		-------		--------
-		Privkey + CA cert	Context	PKC		SIGN		Cert		CACERT
-		Cert + pubkey		Cert	Cert	SIGCHECK	PKC			SIGCHECK
-
-	   In theory we'd need to perform some sort of generic sign-or-sigcheck
-	   check for the case where the cert is the primary object, but since the
-	   cert + context combination can only occur for public-key contexts it's
-	   safe to check for a SIGCHECK capability.  Similarly, when the context
-	   is the primary object it's always a private key, so we can check for a
-	   SIGN capability */
 	{ OBJECT_TYPE_CONTEXT, MESSAGE_CHECK_PKC_SIGN,
-	  MK_CHKACL_ALT( OBJECT_TYPE_CERTIFICATE, ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN,
+	  MK_CHKACL_ALT( OBJECT_TYPE_CERTIFICATE, ST_CERT_CERT | ST_CERT_CERTCHAIN,
 					 MESSAGE_CHECK_CACERT ) },
 	{ OBJECT_TYPE_CERTIFICATE, MESSAGE_CHECK_PKC_SIGCHECK,
 	  MK_CHKACL_ALT( OBJECT_TYPE_CONTEXT, ST_CTX_PKC,
@@ -131,8 +160,8 @@ static const CHECK_ALT_ACL FAR_BSS checkCAACLTbl[] = {
 
 static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 	/* PKC actions.  These get somewhat complex to check because the primary
-	   message target may be a context or cert object with an associated
-	   public key, so we have to allow both object types */
+	   message target may be a context or certificate object with an 
+	   associated public key so we have to allow both object types */
 	{ MESSAGE_CHECK_PKC,			/* Public or private key context */
 	  MK_CHKACL( MESSAGE_NONE,
 				 ST_CTX_PKC | PUBKEY_CERT_OBJECT ) },
@@ -193,14 +222,15 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 					ST_CTX_CONV | ST_CTX_PKC | ST_CTX_MAC, ACL_FLAG_LOW_STATE ) },
 
 	/* Checks on purely passive container objects that constrain action
-	   objects (for example a cert being attached to a context) for which
-	   the state isn't important in this instance.  Usually we check to make
-	   sure that the cert is in the high state, but when a cert is being
-	   created/imported it may not be in the high state yet at the time the
-	   check is being carried out.
+	   objects (for example a certificate being attached to a context) for 
+	   which the state isn't important in this instance.  Usually we check 
+	   to make sure that the certificate is in the high state, but when a 
+	   certificate is being created/imported it may not be in the high state 
+	   yet at the time the check is being carried out.
 
-	   In addition to certs the message can be sent to a keyset to check
-	   whether it contains keys capable of performing the required action */
+	   In addition to certificates the message can be sent to a keyset to 
+	   check whether it contains keys capable of performing the required 
+	   action */
 	{ MESSAGE_CHECK_PKC_ENCRYPT_AVAIL,	/* Encryption available */
 	  MK_CHKACL_EX( MESSAGE_CTX_ENCRYPT,
 					PUBKEY_CERT_OBJECT | PUBKEY_KEYSET_OBJECT,
@@ -229,16 +259,37 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 	  MK_CHKACL_EX( MESSAGE_NONE,
 					PUBKEY_CERT_OBJECT, ACL_FLAG_ANY_STATE ) },
 
-	/* Misc.actions.  The CA capability is spread across certs (the CA flag)
-	   and contexts (the signing capability), which requires a two-phase
-	   check specified in a sub-ACL.  The CA-cert check is never applied
-	   directly, but is the second part of the two-phase check performed for
-	   the CA capability */
+	/* Misc.actions.  The certificate check is used to verify that a 
+	   certificate is generally valid (for example not expired) without 
+	   having to performing a full signature verification up to a trusted 
+	   root, this is used to verify certificates passed in as parameters 
+	   (for example server certificates) to ensure that the client doesn't 
+	   get invalid data back when it tries to connect to the server.  
+	   Because the certificate could be used for either signing or 
+	   encryption we don't perform any additional context-based checks but
+	   just perform a check of the certificate object.
+
+	   The certificate/CA certificate capability is spread across 
+	   certificates and contexts, which requires a two-phase check specified 
+	   in a sub-ACL.  The second phase (MESSAGE_CHECK_CERTxx/
+	   MESSAGE_CHECK_CACERT) check is never applied directly but is the 
+	   second part of the two-phase check performed for the certificate/CA 
+	   capability, so that first the entry for MESSAGE_CHECK_CERT/
+	   MESSAGE_CHECK_CA is used and then for the dependent object the 
+	   sub-ACL sets the check type to MESSAGE_CHECK_CERTxx/
+	   MESSAGE_CHECK_CACERT, which applies the second entry in the main 
+	   ACL */
+	{ MESSAGE_CHECK_CERT,			/* Generic certificate */
+	  MK_CHKACL_EXT( MESSAGE_NONE, ST_NONE, checkCertACLTbl ) },
+	{ MESSAGE_CHECK_CERTxx,			/* xx cert, part two of CHECK_CERT */
+	  MK_CHKACL( MESSAGE_CHECK_NONE,
+				 ST_CERT_CERT | ST_CERT_CERTCHAIN ) },
+
 	{ MESSAGE_CHECK_CA,				/* Cert signing capability */
 	  MK_CHKACL_EXT( MESSAGE_NONE, ST_NONE, checkCAACLTbl ) },
 	{ MESSAGE_CHECK_CACERT,			/* CA cert, part two of CHECK_CA */
 	  MK_CHKACL( MESSAGE_CHECK_NONE,
-				 ST_CERT_CERT | ST_CERT_ATTRCERT | ST_CERT_CERTCHAIN ) },
+				 ST_CERT_CERT | ST_CERT_CERTCHAIN ) },
 
 	/* End-of-ACL marker */
 	{ MESSAGE_CHECK_NONE,
@@ -247,19 +298,19 @@ static const CHECK_ACL FAR_BSS checkACLTbl[] = {
 	  MK_CHKACL_END() }
 	};
 
-/* When we export a cert the easiest way to handle the export check is via
-   a pseudo-ACL that's checked via the standard attribute ACL-checking
-   function.  The following ACL handles cert exports */
+/* When we export a certificate the easiest way to handle the export check 
+   is via a pseudo-ACL that's checked via the standard attribute ACL-
+   checking function.  The following ACL handles certificate exports */
 
 static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
-	/* Encoded cert data */
+	/* Encoded certificate data */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_CERTIFICATE,
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL | \
 			ST_CERT_OCSP_RESP, ST_NONE, ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
-	/* Encoded cert.chain */
+	/* Encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_CERTCHAIN,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
@@ -271,7 +322,7 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
-	/* Base64-encoded cert.chain */
+	/* Base64-encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_TEXT_CERTCHAIN,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
@@ -283,19 +334,19 @@ static const ATTRIBUTE_ACL_ALT FAR_BSS formatPseudoACL[] = {
 		ST_CERT_ANY_CERT | ST_CERT_ATTRCERT | ST_CERT_CRL, ST_NONE, ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
-	/* XML-encoded cert.chain */
+	/* XML-encoded certificate chain */
 	MKACL_S_ALT(
 		CRYPT_CERTFORMAT_XML_CERTCHAIN,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 64, 8192 ) ),
 
-	/* SET OF cert in chain */
+	/* SET OF certificate in chain */
 	MKACL_S_ALT(
 		CRYPT_ICERTFORMAT_CERTSET,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
 		ROUTE( OBJECT_TYPE_CERTIFICATE ), RANGE( 16, 8192 ) ),
 
-	/* SEQUENCE OF cert in chain */
+	/* SEQUENCE OF certificate in chain */
 	MKACL_S_ALT(
 		CRYPT_ICERTFORMAT_CERTSEQUENCE,
 		ST_CERT_CERT | ST_CERT_CERTCHAIN, ST_NONE, ACCESS_INT_Rxx_xxx,
@@ -406,8 +457,9 @@ static const CREATE_ACL FAR_BSS createObjectACL[] = {
 static const CREATE_ACL FAR_BSS certSpecialACL = {
 	OBJECT_TYPE_CERTIFICATE,
 		/* PKCS #7/CMS certificate collections must include a identifier for 
-		   the leaf certificate in the collection, to allow the cert-import 
-		   code to pick and assemble the required certs into a chain */
+		   the leaf certificate in the collection, to allow the certificate-
+		   import code to pick and assemble the required certificates into a 
+		   chain */
 	{ MKACP_N( CRYPT_ICERTTYPE_CMS_CERTSET, 
 			   CRYPT_ICERTTYPE_CMS_CERTSET ),/* Cert.type hint */
 	  MKACP_N( CRYPT_IKEYID_KEYID, 
@@ -446,8 +498,9 @@ static BOOLEAN checkNumericRange( const int value, const int lowRange,
 	{
 	/* Precondition: The range values are either both negative or both
 	   positive.  This is needed for the range comparison to work */
-	PRE( ( lowRange < 0 && highRange < 0 ) || \
-		 ( lowRange >= 0 && highRange >= 0 && lowRange <= highRange ) );
+	REQUIRES_B( ( lowRange < 0 && highRange < 0 ) || \
+				( lowRange >= 0 && highRange >= 0 && \
+				  lowRange <= highRange ) );
 
 	/* Check whether the value is within the allowed range.  Since some
 	   values can be negative (e.g. cursor movement codes) we have to
@@ -460,7 +513,7 @@ static BOOLEAN checkNumericRange( const int value, const int lowRange,
 		}
 	else
 		{
-		PRE( highRange <= lowRange );
+		REQUIRES_B( highRange <= lowRange );
 
 		/* Negative, reverse the comparison */
 		if( value >= highRange && value <= lowRange )
@@ -479,8 +532,8 @@ static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
 										   const int value )
 	{
 	/* Precondition: The range checking information is valid */
-	PRE( rangeType > RANGEVAL_NONE && rangeType < RANGEVAL_LAST );
-	PRE( rangeInfo != NULL );
+	REQUIRES_B( rangeType > RANGEVAL_NONE && rangeType < RANGEVAL_LAST );
+	REQUIRES_B( rangeInfo != NULL );
 
 	/* RANGEVAL_ALLOWEDVALUES contains an int [] of permitted values,
 	   terminated by CRYPT_ERROR */
@@ -492,7 +545,9 @@ static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
 		for( i = 0; allowedValuesInfo[ i ] != CRYPT_ERROR && \
 					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
-			INV( i < 5 );
+			/* Invariant: The allow-values list has a sensible size */
+			ENSURES( i < 5 );
+
 			if( value == allowedValuesInfo[ i ] )
 				return( TRUE );
 			}
@@ -510,7 +565,9 @@ static BOOLEAN checkAttributeRangeSpecial( IN_ENUM( RANGEVAL ) \
 		for( i = 0; allowedValuesInfo[ i ].lowRange != CRYPT_ERROR && \
 					i < FAILSAFE_ITERATIONS_SMALL; i++ )
 			{
-			INV( i < 10 );
+			/* Invariant: The subranges list has a sensible size */
+			ENSURES( i < 10 );
+
 			if( checkNumericRange( value, allowedValuesInfo[ i ].lowRange,
 								   allowedValuesInfo[ i ].highRange ) )
 				return( TRUE );
@@ -537,8 +594,10 @@ static BOOLEAN checkAttributeRangeWidechar( const void *value,
 	const wchar_t *wcString = value;
 #endif /* USE_WIDECHARS */
 
-	PRE( isReadPtr( value, valueLength ) );
-	PRE( minLength >= 0 && maxLength >= 0 && minLength <= maxLength );
+	assert( isReadPtr( value, valueLength ) );
+
+	REQUIRES_B( minLength >= 0 && maxLength >= 0 && \
+				minLength <= maxLength );
 
 #ifdef USE_WIDECHARS
 	/* If it's not a multiple of wchar_t in size or smaller than a
@@ -590,8 +649,9 @@ static int checkActionPermitted( const OBJECT_INFO *objectInfoPtr,
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	int requiredLevel, actualLevel;
 
-	PRE( isReadPtr( objectInfoPtr, sizeof( OBJECT_INFO ) ) );
-	PRE( isValidMessage( localMessage ) );
+	assert( isReadPtr( objectInfoPtr, sizeof( OBJECT_INFO ) ) );
+
+	REQUIRES( isValidMessage( localMessage ) );
 
 	/* Determine the required level for access.  Like protection rings, the
 	   lower the value, the higher the privilege level.  Level 3 is all-access,
@@ -628,19 +688,20 @@ static int checkActionPermitted( const OBJECT_INFO *objectInfoPtr,
 CHECK_RETVAL \
 static int findCheckACL( IN_ENUM( MESSAGE_CHECK ) const int messageValue,
 						 IN_ENUM( OBJECT ) const OBJECT_TYPE objectType,
-						 OUT_OPT_PTR const CHECK_ACL **checkACLptr,
-						 OUT_OPT_PTR const CHECK_ALT_ACL **checkAltACLptr )
+						 OUT_OPT_PTR_OPT const CHECK_ACL **checkACLptr,
+						 OUT_OPT_PTR_OPT const CHECK_ALT_ACL **checkAltACLptr )
 	{
 	const CHECK_ACL *checkACL = NULL;
 	const CHECK_ALT_ACL *checkAltACL;
 
+	assert( checkACLptr == NULL || \
+			isReadPtr( checkACLptr, sizeof( CHECK_ACL * ) ) );
+	assert( checkAltACLptr == NULL || \
+			isReadPtr( checkAltACLptr, sizeof( CHECK_ALT_ACL * ) ) );
+
 	/* Precondition: It's a valid check message type */
-	PRE( messageValue > MESSAGE_CHECK_NONE && \
-		 messageValue < MESSAGE_CHECK_LAST );
-	PRE( checkACLptr == NULL || \
-		 isReadPtr( checkACLptr, sizeof( CHECK_ACL * ) ) );
-	PRE( checkAltACLptr == NULL || \
-		 isReadPtr( checkAltACLptr, sizeof( CHECK_ALT_ACL * ) ) );
+	REQUIRES( messageValue > MESSAGE_CHECK_NONE && \
+			  messageValue < MESSAGE_CHECK_LAST );
 
 	/* Clear return values */
 	if( checkACLptr != NULL )
@@ -655,7 +716,7 @@ static int findCheckACL( IN_ENUM( MESSAGE_CHECK ) const int messageValue,
 	ENSURES( checkACL != NULL );
 
 	/* Inner precondition: We have the correct ACL */
-	PRE( checkACL->checkType == messageValue );
+	REQUIRES( checkACL->checkType == messageValue );
 
 	/* If there's a sub-ACL present, find the correct ACL for this object
 	   type */
@@ -677,9 +738,9 @@ static int findCheckACL( IN_ENUM( MESSAGE_CHECK ) const int messageValue,
 		}
 
 	/* Postcondition: There's a valid ACL present */
-	POST( isReadPtr( checkACL, sizeof( CHECK_ACL ) ) );
-	POST( checkACL->altACL == NULL || \
-		  isReadPtr( checkAltACL, sizeof( CHECK_ALT_ACL ) ) );
+	assert( isReadPtr( checkACL, sizeof( CHECK_ACL ) ) );
+	assert( checkACL->altACL == NULL || \
+			isReadPtr( checkAltACL, sizeof( CHECK_ALT_ACL ) ) );
 
 	if( checkACLptr != NULL )
 		*checkACLptr = checkACL;
@@ -700,7 +761,7 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Perform a consistency check on the compare ACL */
 	for( i = 0; compareACLTbl[ i ].compareType != MESSAGE_COMPARE_NONE && \
@@ -714,7 +775,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 		if( ( compareACL->objectACL.subTypeA & ~( SUBTYPE_CLASS_A | \
 												  ST_CTX_ANY | ST_CERT_ANY ) ) || \
 			compareACL->objectACL.subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Message ACLs inconsistent" ));
 			retIntError();
+			}
 		ENSURES( ( compareACL->objectACL.flags == 0 ) || \
 				 ( compareACL->objectACL.flags == ACL_FLAG_HIGH_STATE ) );
 		if( paramInfo( compareACL, 0 ).valueType == PARAM_VALUE_STRING )
@@ -730,7 +794,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			if( ( paramInfo( compareACL, 0 ).subTypeA & ~( SUBTYPE_CLASS_A | \
 														   ST_CERT_ANY ) ) || \
 				paramInfo( compareACL, 0 ).subTypeB != ST_NONE )
+				{
+				DEBUG_DIAG(( "Message ACLs inconsistent" ));
 				retIntError();
+				}
 			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( compareACLTbl, COMPARE_ACL ) );
@@ -752,7 +819,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 					~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY | \
 										 ST_KEYSET_ANY | ST_DEV_ANY ) ) || \
 			checkACL->objectACL.subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Check ACLs inconsistent" ));
 			retIntError();
+			}
 		ENSURES( !( checkACL->objectACL.flags & ~ACL_FLAG_ANY_STATE ) )
 		if( checkACL->altACL == NULL )
 			continue;
@@ -770,7 +840,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			if( ( checkAltACL->depObjectACL.subTypeA & \
 						~( SUBTYPE_CLASS_A | ST_CTX_ANY | ST_CERT_ANY ) ) || \
 				checkAltACL->depObjectACL.subTypeB != ST_NONE )
+				{
+				DEBUG_DIAG(( "Check ACLs inconsistent" ));
 				retIntError();
+				}
 			ENSURES( !( checkAltACL->depObjectACL.flags & ~ACL_FLAG_ANY_STATE ) )
 			ENSURES( checkAltACL->fdCheckType > MESSAGE_CHECK_NONE && \
 					 checkAltACL->fdCheckType < MESSAGE_CHECK_LAST );
@@ -779,7 +852,7 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( checkACLTbl, CHECK_ACL ) );
 
-	/* Perform a consistency check on the cert export pseudo-ACL */
+	/* Perform a consistency check on the certificate export pseudo-ACL */
 	for( i = 0; formatPseudoACL[ i ].attribute != CRYPT_CERTFORMAT_NONE && \
 				i < FAILSAFE_ARRAYSIZE( formatPseudoACL, ATTRIBUTE_ACL_ALT ); 
 		 i++ )
@@ -790,7 +863,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				 formatACL->attribute < CRYPT_CERTTYPE_LAST );
 		if( ( formatACL->subTypeA & ~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) || \
 			formatACL->subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Certificate export ACLs inconsistent" ));
 			retIntError();
+			}
 		if( formatACL->attribute < CRYPT_CERTFORMAT_LAST_EXTERNAL )
 			{
 			ENSURES( formatACL->access == ACCESS_Rxx_xxx );
@@ -837,11 +913,17 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			}
 		if( createACL->exceptions[ 0 ] == 0 && \
 			createACL->exceptions[ 1 ] != 0 )
+			{
+			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
 			retIntError();
+			}
 		if( ( createACL->exceptions[ 0 ] != 0 || \
 			  createACL->exceptions[ 1 ] != 0 ) && \
 			createACL->exceptionACL == NULL )
+			{
+			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
 			retIntError();
+			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( createObjectACL, CREATE_ACL ) );
 
@@ -858,7 +940,10 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 			paramInfo( createACL, 2 ).valueType != PARAM_VALUE_STRING || \
 			( paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING_NONE && \
 			  paramInfo( createACL, 3 ).valueType != PARAM_VALUE_STRING ) )
+			{
+			DEBUG_DIAG(( "Create-object indirect ACLs inconsistent" ));
 			retIntError();
+			}
 		ENSURES( paramInfo( createACL, 0 ).lowRange >= 0 && \
 				 paramInfo( createACL, 0 ).highRange < CRYPT_CERTTYPE_LAST );
 				/* The low-range may be 0, which indicates that we're using 
@@ -867,11 +952,17 @@ int initMessageACL( INOUT KERNEL_DATA *krnlDataPtr )
 				 paramInfo( createACL, 2 ).highRange < MAX_INTLENGTH );
 		if( createACL->exceptions[ 0 ] == 0 && \
 			createACL->exceptions[ 1 ] != 0 )
+			{
+			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
 			retIntError();
+			}
 		if( ( createACL->exceptions[ 0 ] != 0 || \
 			  createACL->exceptions[ 1 ] != 0 ) && \
 			createACL->exceptionACL == NULL )
+			{
+			DEBUG_DIAG(( "Create-object ACLs inconsistent" ));
 			retIntError();
+			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( createObjectIndirectACL, CREATE_ACL ) );
 
@@ -911,8 +1002,8 @@ int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
 	STDC_UNUSED int status;
 
 	/* Preconditions */
-	PRE( isValidObject( objectHandle ) && \
-		 objectHandle >= NO_SYSTEM_OBJECTS );
+	REQUIRES( isValidObject( objectHandle ) && \
+			  objectHandle >= NO_SYSTEM_OBJECTS );
 
 	/* An inability to change the reference counts of the dependent objects 
 	   doesn't affect the object itself so we can't report it as an error, 
@@ -932,7 +1023,7 @@ int preDispatchSignalDependentObjects( IN_HANDLE const int objectHandle,
 
 	/* Postcondition: The object is now in the destroyed state as far as
 	   other objects are concerned */
-	POST( isInvalidObjectState( objectHandle ) );
+	ENSURES( isInvalidObjectState( objectHandle ) );
 
 	return( CRYPT_OK );
 	}
@@ -948,13 +1039,15 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 									 IN TYPECAST( ATTRIBUTE_ACL * ) \
 										const void *auxInfo )
 	{
-	static const int FAR_BSS accessTypeTbl[ 5 ][ 2 ] = {
+	static const int FAR_BSS accessTypeTbl[ 7 ][ 2 ] = {
 		/* MESSAGE_GETATTRIBUTE */			/* MESSAGE_GETATTRIBUTE_S */
 		{ ACCESS_FLAG_R, ACCESS_FLAG_H_R }, { ACCESS_FLAG_R, ACCESS_FLAG_H_R },
 		/* MESSAGE_SETATTRIBUTE */			/* MESSAGE_SETATTRIBUTE_S */
 		{ ACCESS_FLAG_W, ACCESS_FLAG_H_W }, { ACCESS_FLAG_W, ACCESS_FLAG_H_W },
 		/* MESSAGE_DELETEATTRIBUTE */
-		{ ACCESS_FLAG_D, ACCESS_FLAG_H_D }
+		{ ACCESS_FLAG_D, ACCESS_FLAG_H_D }, 
+		{ ACCESS_FLAG_x, ACCESS_FLAG_x },
+			{ ACCESS_FLAG_x, ACCESS_FLAG_x }
 		};
 	const ATTRIBUTE_ACL *attributeACL = ( ATTRIBUTE_ACL * ) auxInfo;
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
@@ -965,13 +1058,19 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 	const BOOLEAN isInternalMessage = isInternalMessage( message ) ? \
 									  TRUE : FALSE;
 
+	assert( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+	assert( attributeACL->attribute == messageValue );
+			/* Only in debug build, see comment in attr_acl.c */
+
 	/* Preconditions */
-	PRE( isValidType( objectInfo->type ) );
-	PRE( isAttributeMessage( localMessage ) );
-	PRE( isAttribute( messageValue ) || isInternalAttribute( messageValue ) );
-	PRE( localMessage == MESSAGE_DELETEATTRIBUTE || messageDataPtr != NULL );
-	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) && \
-		 attributeACL->attribute == messageValue );
+	REQUIRES( isValidType( objectInfo->type ) );
+	REQUIRES( isAttributeMessage( localMessage ) );
+	REQUIRES( isAttribute( messageValue ) || \
+			  isInternalAttribute( messageValue ) );
+	REQUIRES( localMessage == MESSAGE_DELETEATTRIBUTE || \
+			  messageDataPtr != NULL );
+	REQUIRES( localMessage - MESSAGE_GETATTRIBUTE >= 0 && \
+			  localMessage - MESSAGE_GETATTRIBUTE < 5 );
 
 	/* Get the access permission for this message */
 	accessType = accessTypeTbl[ localMessage - MESSAGE_GETATTRIBUTE ]\
@@ -989,8 +1088,8 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 	/* Make sure that this type of access is valid for this attribute */
 	if( !( attributeACL->access & accessType ) )
 		{
-		/* If it's an internal-only attribute being accessed through an
-		   external message, it isn't visible to the user so we return
+		/* If it's an internal-only attribute being accessed through an 
+		   external message then it isn't visible to the user so we return 
 		   an attribute value error */
 		if( !( attributeACL->access & ACCESS_MASK_EXTERNAL ) && \
 			!isInternalMessage )
@@ -1000,17 +1099,17 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 		return( CRYPT_ERROR_PERMISSION );
 		}
 
-	/* Inner precondition: The attribute is valid for this subtype and is
-	   externally visible or it's an internal message, and this type of
+	/* Inner precondition: The attribute is valid for this subtype and is 
+	   externally visible or it's an internal message, and this type of 
 	   access is allowed */
-	PRE( isValidSubtype( attributeACL->subTypeA, subType ) || \
-		 isValidSubtype( attributeACL->subTypeB, subType ) );
-	PRE( ( attributeACL->access & ACCESS_MASK_EXTERNAL ) || \
-		 isInternalMessage );
-	PRE( attributeACL->access & accessType );
+	REQUIRES( isValidSubtype( attributeACL->subTypeA, subType ) || \
+			  isValidSubtype( attributeACL->subTypeB, subType ) );
+	REQUIRES( ( attributeACL->access & ACCESS_MASK_EXTERNAL ) || \
+			  isInternalMessage );
+	REQUIRES( attributeACL->access & accessType );
 
-	/* If it's a delete attribute message, there's no attribute data being
-	   communicated so we can exit now */
+	/* If it's a delete attribute message then there's no attribute data 
+	   being communicated, so we can exit now */
 	if( localMessage == MESSAGE_DELETEATTRIBUTE )
 		{
 		assert( messageDataPtr == NULL );
@@ -1018,10 +1117,10 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 		}
 
 	/* Inner precondition: We're getting or setting the value of an attribute */
-	PRE( localMessage == MESSAGE_GETATTRIBUTE || \
-		 localMessage == MESSAGE_GETATTRIBUTE_S || \
-		 localMessage == MESSAGE_SETATTRIBUTE || \
-		 localMessage == MESSAGE_SETATTRIBUTE_S );
+	REQUIRES( localMessage == MESSAGE_GETATTRIBUTE || \
+			  localMessage == MESSAGE_GETATTRIBUTE_S || \
+			  localMessage == MESSAGE_SETATTRIBUTE || \
+			  localMessage == MESSAGE_SETATTRIBUTE_S );
 
 	/* Safety check for invalid pointers passed from an internal function */
 	if( attributeACL->valueType != ATTRIBUTE_VALUE_SPECIAL && \
@@ -1039,12 +1138,13 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 	switch( attributeACL->valueType )
 		{
 		case ATTRIBUTE_VALUE_BOOLEAN:
-			/* Inner precondition: If it's an internal message, it must be
-			   a numeric value */
-			PRE( !isInternalMessage || \
-				 localMessage == MESSAGE_GETATTRIBUTE || \
-				 localMessage == MESSAGE_SETATTRIBUTE );
-			PRE( isReadPtr( messageDataPtr, sizeof( int ) ) );
+			/* Inner precondition: If it's an internal message then it must 
+			   be a numeric value */
+			assert( isReadPtr( messageDataPtr, sizeof( int ) ) );
+
+			REQUIRES( !isInternalMessage || \
+					  localMessage == MESSAGE_GETATTRIBUTE || \
+					  localMessage == MESSAGE_SETATTRIBUTE );
 
 			/* Must be a numeric value */
 			if( localMessage != MESSAGE_GETATTRIBUTE && \
@@ -1065,12 +1165,13 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 			{
 			const int *valuePtr = messageDataPtr;
 
-			/* Inner precondition: If it's an internal message, it must be
-			   a numeric value */
-			PRE( !isInternalMessage || \
-				 localMessage == MESSAGE_GETATTRIBUTE || \
-				 localMessage == MESSAGE_SETATTRIBUTE );
-			PRE( isReadPtr( messageDataPtr, sizeof( int ) ) );
+			/* Inner precondition: If it's an internal message then it must 
+			   be a numeric value */
+			assert( isReadPtr( messageDataPtr, sizeof( int ) ) );
+
+			REQUIRES( !isInternalMessage || \
+					  localMessage == MESSAGE_GETATTRIBUTE || \
+					  localMessage == MESSAGE_SETATTRIBUTE );
 
 			/* Must be a numeric value */
 			if( localMessage != MESSAGE_GETATTRIBUTE && \
@@ -1088,7 +1189,7 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				}
 
 			/* Inner precondition: We're sending data to the object */
-			PRE( localMessage == MESSAGE_SETATTRIBUTE );
+			REQUIRES( localMessage == MESSAGE_SETATTRIBUTE );
 
 			/* If it's a standard range check, make sure that the attribute
 			   value is within the allowed range */
@@ -1101,7 +1202,7 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				}
 
 			/* It's a special-case range check */
-			assert( isSpecialRange( attributeACL ) );
+			REQUIRES( isSpecialRange( attributeACL ) );
 			switch( getSpecialRangeType( attributeACL ) )
 				{
 				case RANGEVAL_ANY:
@@ -1133,12 +1234,13 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 			const int *valuePtr = messageDataPtr;
 			int objectParamHandle, objectParamSubType;
 
-			/* Inner precondition: If it's an internal message, it must be
-			   a numeric value */
-			PRE( !isInternalMessage || \
-				 localMessage == MESSAGE_GETATTRIBUTE || \
-				 localMessage == MESSAGE_SETATTRIBUTE );
-			PRE( isReadPtr( messageDataPtr, sizeof( int ) ) );
+			/* Inner precondition: If it's an internal message then it must 
+			   be a numeric value */
+			assert( isReadPtr( messageDataPtr, sizeof( int ) ) );
+
+			REQUIRES( !isInternalMessage || \
+					  localMessage == MESSAGE_GETATTRIBUTE || \
+					  localMessage == MESSAGE_SETATTRIBUTE );
 
 			/* Must be a numeric value */
 			if( localMessage != MESSAGE_GETATTRIBUTE && \
@@ -1156,7 +1258,7 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				}
 
 			/* Inner precondition: We're sending data to the object */
-			PRE( localMessage == MESSAGE_SETATTRIBUTE );
+			REQUIRES( localMessage == MESSAGE_SETATTRIBUTE );
 
 			/* Must contain a valid object handle */
 			if( !fullObjectCheck( *valuePtr, message ) || \
@@ -1165,8 +1267,10 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 
 			/* Object must be of the correct type */
 			if( objectACL->flags & ACL_FLAG_ROUTE_TO_CTX )
+				{
 				objectParamHandle = findTargetType( *valuePtr,
 													OBJECT_TYPE_CONTEXT );
+				}
 			else
 				{
 				if( objectACL->flags & ACL_FLAG_ROUTE_TO_CERT )
@@ -1187,12 +1291,15 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 
 			/* Postcondition: Object parameter is valid and accessible,
 			   object is of the correct type and state */
-			POST( fullObjectCheck( *valuePtr, message ) && \
-				  isSameOwningObject( objectHandle, *valuePtr ) );
-			POST( isValidSubtype( objectACL->subTypeA, objectParamSubType ) || \
-				  isValidSubtype( objectACL->subTypeB, objectParamSubType ) );
-			POST( !( objectACL->flags & ACL_FLAG_STATE_MASK ) || \
-				  checkObjectState( objectACL->flags, objectParamHandle ) );
+			ENSURES( fullObjectCheck( *valuePtr, message ) && \
+					 isSameOwningObject( objectHandle, *valuePtr ) );
+			ENSURES( isValidSubtype( objectACL->subTypeA, \
+									 objectParamSubType ) || \
+					 isValidSubtype( objectACL->subTypeB, \
+									 objectParamSubType ) );
+			ENSURES( !( objectACL->flags & ACL_FLAG_STATE_MASK ) || \
+					 checkObjectState( objectACL->flags, \
+									   objectParamHandle ) );
 			break;
 			}
 
@@ -1201,22 +1308,38 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 			{
 			const MESSAGE_DATA *msgData = messageDataPtr;
 
-			/* Inner precondition: If it's an internal message, it must be
-			   a valid string value or a null value if we're obtaining a
-			   length.  Polled entropy data can be arbitrarily large so we
+			/* Inner precondition: If it's an internal message then it must 
+			   be a valid string value or a null value if we're obtaining a 
+			   length.  Polled entropy data can be arbitrarily large so we 
 			   don't check its length */
-			PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
-			PRE( !isInternalMessage || \
-				 ( ( localMessage == MESSAGE_GETATTRIBUTE_S && \
-					 ( ( msgData->data == NULL && msgData->length == 0 ) || \
-					   ( msgData->length >= 1 && \
-					     msgData->length < MAX_INTLENGTH && \
-						 isWritePtr( msgData->data, msgData->length ) ) ) ) || \
-				   ( localMessage == MESSAGE_SETATTRIBUTE_S && \
-					 isReadPtr( msgData->data, msgData->length ) && \
-					 ( ( msgData->length > 0 && \
-						 msgData->length < MAX_INTLENGTH_SHORT ) || \
-					   messageValue == CRYPT_IATTRIBUTE_ENTROPY ) ) ) );
+			assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
+			assert( !isInternalMessage || \
+					( ( localMessage == MESSAGE_GETATTRIBUTE_S && \
+						( ( msgData->data == NULL && msgData->length == 0 ) || \
+						  ( msgData->length >= 1 && \
+							msgData->length < MAX_INTLENGTH && \
+							isWritePtr( msgData->data, msgData->length ) ) ) ) || \
+					  ( localMessage == MESSAGE_SETATTRIBUTE_S && \
+						isReadPtr( msgData->data, msgData->length ) && \
+						( ( msgData->length > 0 && \
+							msgData->length < MAX_INTLENGTH_SHORT ) || \
+						  messageValue == CRYPT_IATTRIBUTE_ENTROPY ) ) ) );
+
+			/* Note that the assert()/REQUIRES() appears to be duplicated 
+			   but differs in some minor details, we use isReadPtr() in the 
+			   debug version with assert() but only a more basic check for 
+			   NULL in all versions with REQUIRES() */
+			REQUIRES( !isInternalMessage || \
+					  ( ( localMessage == MESSAGE_GETATTRIBUTE_S && \
+						  ( ( msgData->data == NULL && msgData->length == 0 ) || \
+							( msgData->data != NULL && \
+							  msgData->length >= 1 && \
+							  msgData->length < MAX_INTLENGTH ) ) ) || \
+						( localMessage == MESSAGE_SETATTRIBUTE_S && \
+						  msgData->data != NULL && \
+						  ( ( msgData->length > 0 && \
+							  msgData->length < MAX_INTLENGTH_SHORT ) || \
+							messageValue == CRYPT_IATTRIBUTE_ENTROPY ) ) ) );
 
 			/* Must be a string value */
 			if( localMessage != MESSAGE_GETATTRIBUTE_S && \
@@ -1238,7 +1361,7 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				}
 
 			/* Inner precondition: We're sending data to the object */
-			PRE( localMessage == MESSAGE_SETATTRIBUTE_S );
+			REQUIRES( localMessage == MESSAGE_SETATTRIBUTE_S );
 
 			/* Make sure that the string length is within the allowed
 			   range */
@@ -1277,14 +1400,20 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 			{
 			const MESSAGE_DATA *msgData = messageDataPtr;
 
-			/* Inner precondition: If it's an internal message, it must be
-			   a string value corresponding to a time_t */
-			PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
-			PRE( !isInternalMessage || \
-				 ( ( localMessage == MESSAGE_GETATTRIBUTE_S || \
-					 localMessage == MESSAGE_SETATTRIBUTE_S ) && \
-				   isReadPtr( msgData->data, msgData->length ) && \
-				   msgData->length == sizeof( time_t ) ) );
+			/* Inner precondition: If it's an internal message then it must 
+			   be a string value corresponding to a time_t */
+			assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
+			assert( !isInternalMessage || \
+					( ( localMessage == MESSAGE_GETATTRIBUTE_S || \
+						localMessage == MESSAGE_SETATTRIBUTE_S ) && \
+					  isReadPtr( msgData->data, msgData->length ) && \
+					  msgData->length == sizeof( time_t ) ) );
+
+			REQUIRES( !isInternalMessage || \
+					  ( ( localMessage == MESSAGE_GETATTRIBUTE_S || \
+						  localMessage == MESSAGE_SETATTRIBUTE_S ) && \
+						msgData->data != NULL && \
+						msgData->length == sizeof( time_t ) ) );
 
 			/* Must be a string value */
 			if( localMessage != MESSAGE_GETATTRIBUTE_S && \
@@ -1311,7 +1440,7 @@ int preDispatchCheckAttributeAccess( IN_HANDLE const int objectHandle,
 				break;
 
 			/* Inner precondition: We're sending data to the object */
-			PRE( localMessage == MESSAGE_SETATTRIBUTE_S );
+			REQUIRES( localMessage == MESSAGE_SETATTRIBUTE_S );
 
 			/* Must contain a time_t in a sensible range */
 			if( !isReadPtrConst( msgData->data, sizeof( time_t ) ) || \
@@ -1366,10 +1495,10 @@ int preDispatchCheckCompareParam( IN_HANDLE const int objectHandle,
 	const COMPARE_ACL *compareACL = NULL;
 
 	/* Precondition: It's a valid compare message type */
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
-	PRE( fullObjectCheck( objectHandle, message ) );
-	PRE( messageValue > MESSAGE_COMPARE_NONE && \
-		 messageValue < MESSAGE_COMPARE_LAST );
+	REQUIRES( isValidMessage( message & MESSAGE_MASK ) );
+	REQUIRES( fullObjectCheck( objectHandle, message ) );
+	REQUIRES( messageValue > MESSAGE_COMPARE_NONE && \
+			  messageValue < MESSAGE_COMPARE_LAST );
 
 	/* Find the appropriate ACL for this compare type */
 	if( messageValue > MESSAGE_COMPARE_NONE && \
@@ -1379,7 +1508,7 @@ int preDispatchCheckCompareParam( IN_HANDLE const int objectHandle,
 
 	/* Inner precondition: We have the correct ACL, and the full object
 	   check has been performed by the kernel */
-	PRE( compareACL->compareType == messageValue );
+	REQUIRES( compareACL->compareType == messageValue );
 
 	/* Check the message target.  The full object check has already been
 	   performed by the message dispatcher so all we need to check is the
@@ -1401,28 +1530,37 @@ int preDispatchCheckCompareParam( IN_HANDLE const int objectHandle,
 		STDC_UNUSED \
 		const CRYPT_HANDLE iCryptHandle = *( ( CRYPT_HANDLE * ) messageDataPtr );
 
-		PRE( fullObjectCheck( iCryptHandle, message ) && \
-			 isSameOwningObject( objectHandle, iCryptHandle ) );
-		PRE( checkParamObject( paramInfo( compareACL, 0 ), iCryptHandle ) );
+		REQUIRES( fullObjectCheck( iCryptHandle, message ) && \
+				  isSameOwningObject( objectHandle, iCryptHandle ) );
+		REQUIRES( checkParamObject( paramInfo( compareACL, 0 ), \
+				  iCryptHandle ) );
 		}
 	else
 		{
 		STDC_UNUSED \
 		const MESSAGE_DATA *msgData = messageDataPtr;
 
-		PRE( checkParamString( paramInfo( compareACL, 0 ),
-							   msgData->data, msgData->length ) );
+		REQUIRES( checkParamString( paramInfo( compareACL, 0 ),
+									msgData->data, msgData->length ) );
 		}
 
 	/* Postconditions: The compare parameters are valid, either an object
 	   handle or a string value at least as big as a minimal-length DN */
-	POST( ( messageValue == MESSAGE_COMPARE_CERTOBJ && \
-			isValidHandle( *( ( CRYPT_HANDLE * ) messageDataPtr ) ) ) || \
-		  ( messageValue != MESSAGE_COMPARE_CERTOBJ && \
-			isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) && \
-			( ( MESSAGE_DATA * ) messageDataPtr )->length >= 2 && \
-			isReadPtr( ( ( MESSAGE_DATA * ) messageDataPtr )->data, \
-					   ( ( MESSAGE_DATA * ) messageDataPtr )->length ) ) );
+	assert( ( messageValue == MESSAGE_COMPARE_CERTOBJ && \
+			  isValidHandle( *( ( CRYPT_HANDLE * ) messageDataPtr ) ) ) || \
+			( messageValue != MESSAGE_COMPARE_CERTOBJ && \
+			  isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) && \
+			  ( ( MESSAGE_DATA * ) messageDataPtr )->length >= 2 && \
+			  isReadPtr( ( ( MESSAGE_DATA * ) messageDataPtr )->data, \
+						 ( ( MESSAGE_DATA * ) messageDataPtr )->length ) ) );
+
+	ENSURES( ( messageValue == MESSAGE_COMPARE_CERTOBJ && \
+			   isValidHandle( *( ( CRYPT_HANDLE * ) messageDataPtr ) ) ) || \
+			 ( messageValue != MESSAGE_COMPARE_CERTOBJ && \
+			   messageDataPtr != NULL && \
+			  ( ( ( MESSAGE_DATA * ) messageDataPtr )->data != NULL && \
+				( ( MESSAGE_DATA * ) messageDataPtr )->length >= 2 && \
+				( ( MESSAGE_DATA * ) messageDataPtr )->length < MAX_INTLENGTH ) ) );
 
 	return( CRYPT_OK );
 	}
@@ -1442,10 +1580,10 @@ int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
 	int status;
 
 	/* Precondition: It's a valid check message type */
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
-	PRE( fullObjectCheck( objectHandle, message ) );
-	PRE( messageValue > MESSAGE_CHECK_NONE && \
-		 messageValue < MESSAGE_CHECK_LAST );
+	REQUIRES( isValidMessage( message & MESSAGE_MASK ) );
+	REQUIRES( fullObjectCheck( objectHandle, message ) );
+	REQUIRES( messageValue > MESSAGE_CHECK_NONE && \
+			  messageValue < MESSAGE_CHECK_LAST );
 
 	/* Find the ACL information for the message type */
 	status = findCheckACL( messageValue, objectInfoPtr->type,
@@ -1497,9 +1635,9 @@ int preDispatchCheckCheckParam( IN_HANDLE const int objectHandle,
 		}
 
 	/* Postconditions: The object being checked is valid */
-	POST( fullObjectCheck( objectHandle, message ) && \
-		  ( isValidSubtype( checkACL->objectACL.subTypeA, \
-						    objectInfoPtr->subType ) ) );
+	ENSURES( fullObjectCheck( objectHandle, message ) && \
+			 ( isValidSubtype( checkACL->objectACL.subTypeA, \
+							   objectInfoPtr->subType ) ) );
 
 	return( CRYPT_OK );
 	}
@@ -1518,8 +1656,8 @@ int preDispatchCheckActionAccess( IN_HANDLE const int objectHandle,
 	int status;
 
 	/* Precondition: It's a valid access */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isActionMessage( localMessage ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isActionMessage( localMessage ) );
 
 	/* If the object is in the low state, it can't be used for any action */
 	if( !isInHighState( objectHandle ) )
@@ -1538,9 +1676,9 @@ int preDispatchCheckActionAccess( IN_HANDLE const int objectHandle,
 
 	/* Inner precondition: Object is in the high state and can process the
 	   action message */
-	PRE( isInHighState( objectHandle ) );
-	POST( objectInfoPtr->usageCount == CRYPT_UNUSED || \
-		  objectInfoPtr->usageCount > 0 );
+	REQUIRES( isInHighState( objectHandle ) );
+	REQUIRES( objectInfoPtr->usageCount == CRYPT_UNUSED || \
+			  objectInfoPtr->usageCount > 0 );
 
 	/* Check that the requested action is permitted for this object */
 	status = checkActionPermitted( objectInfoPtr, message );
@@ -1548,11 +1686,12 @@ int preDispatchCheckActionAccess( IN_HANDLE const int objectHandle,
 		return( status );
 
 	/* Postcondition */
-	POST( localMessage != MESSAGE_CTX_GENKEY );
-	POST( isInHighState( objectHandle ) );
-	POST( objectInfoPtr->usageCount == CRYPT_UNUSED || \
-		  objectInfoPtr->usageCount > 0 );
-	POST( cryptStatusOK( checkActionPermitted( objectInfoPtr, message ) ) );
+	ENSURES( localMessage != MESSAGE_CTX_GENKEY );
+	ENSURES( isInHighState( objectHandle ) );
+	ENSURES( objectInfoPtr->usageCount == CRYPT_UNUSED || \
+			 objectInfoPtr->usageCount > 0 );
+	ENSURES( cryptStatusOK( \
+				checkActionPermitted( objectInfoPtr, message ) ) );
 
 	return( CRYPT_OK );
 	}
@@ -1570,8 +1709,8 @@ int preDispatchCheckState( IN_HANDLE const int objectHandle,
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 
 	/* Precondition: It's a valid access */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isValidMessage( localMessage ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isValidMessage( localMessage ) );
 
 	if( isInHighState( objectHandle ) )
 		return( CRYPT_ERROR_PERMISSION );
@@ -1591,7 +1730,7 @@ int preDispatchCheckState( IN_HANDLE const int objectHandle,
 
 	/* Postcondition: Object is in the low state so a state change message
 	   is valid */
-	POST( !isInHighState( objectHandle ) );
+	ENSURES( !isInHighState( objectHandle ) );
 
 	return( CRYPT_OK );
 	}
@@ -1611,15 +1750,16 @@ int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	int subType;
 
+	assert( isReadPtr( messageACL, sizeof( MESSAGE_ACL ) ) );
+
 	/* Preconditions: The access is valid and we've been supplied a valid
 	   check ACL */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
-	PRE( isReadPtr( messageACL, sizeof( MESSAGE_ACL ) ) && \
-		 messageACL->type == ( message & MESSAGE_MASK ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isValidMessage( message & MESSAGE_MASK ) );
+	REQUIRES( messageACL->type == ( message & MESSAGE_MASK ) );
 
 	/* If the object parameter is CRYPT_UNUSED (for example for a self-signed
-	   cert), we're OK */
+	   certificate), we're OK */
 	if( messageValue == CRYPT_UNUSED )
 		return( CRYPT_OK );
 
@@ -1636,10 +1776,10 @@ int preDispatchCheckParamHandleOpt( IN_HANDLE const int objectHandle,
 
 	/* Postcondition: Object parameter is valid, accessible, and of the
 	   correct type */
-	POST( fullObjectCheck( messageValue, message ) && \
-		  isSameOwningObject( objectHandle, messageValue ) );
-	POST( isValidSubtype( objectACL->subTypeA, subType ) || \
-		  isValidSubtype( objectACL->subTypeB, subType ) );
+	ENSURES( fullObjectCheck( messageValue, message ) && \
+			 isSameOwningObject( objectHandle, messageValue ) );
+	ENSURES( isValidSubtype( objectACL->subTypeA, subType ) || \
+			 isValidSubtype( objectACL->subTypeB, subType ) );
 
 	return( CRYPT_OK );
 	}
@@ -1659,12 +1799,13 @@ int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	int subType;
 
+	assert( isReadPtr( messageACL, sizeof( MESSAGE_ACL ) ) );
+
 	/* Preconditions: The access is valid and we've been supplied a valid
 	   check ACL */
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
-	PRE( fullObjectCheck( objectHandle, message ) );
-	PRE( isReadPtr( messageACL, sizeof( MESSAGE_ACL ) ) && \
-		 messageACL->type == ( message & MESSAGE_MASK ) );
+	REQUIRES( isValidMessage( message & MESSAGE_MASK ) );
+	REQUIRES( fullObjectCheck( objectHandle, message ) );
+	REQUIRES( messageACL->type == ( message & MESSAGE_MASK ) );
 
 	if( isInHighState( objectHandle ) )
 		return( CRYPT_ERROR_PERMISSION );
@@ -1683,17 +1824,17 @@ int preDispatchCheckStateParamHandle( IN_HANDLE const int objectHandle,
 	/* Postcondition: Object is in the low state so a state change message
 	   is valid and the object parameter is valid, accessible, and of the
 	   correct type */
-	POST( !isInHighState( objectHandle ) );
-	POST( fullObjectCheck( messageValue, message ) && \
-		  isSameOwningObject( objectHandle, messageValue ) );
-	POST( isValidSubtype( objectACL->subTypeA, subType ) || \
-		  isValidSubtype( objectACL->subTypeB, subType ) );
+	ENSURES( !isInHighState( objectHandle ) );
+	ENSURES( fullObjectCheck( messageValue, message ) && \
+			 isSameOwningObject( objectHandle, messageValue ) );
+	ENSURES( isValidSubtype( objectACL->subTypeA, subType ) || \
+			 isValidSubtype( objectACL->subTypeB, subType ) );
 
 	return( CRYPT_OK );
 	}
 
 /* We're exporting a certificate, make sure that the format is valid for
-   this cert type */
+   this certificate type */
 
 CHECK_RETVAL \
 int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
@@ -1706,11 +1847,11 @@ int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
 	int i;
 
 	/* Precondition */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isValidMessage( message & MESSAGE_MASK ) );
-	PRE( messageDataPtr != NULL );
-	PRE( messageValue > CRYPT_CERTFORMAT_NONE && \
-		 messageValue < CRYPT_CERTFORMAT_LAST );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isValidMessage( message & MESSAGE_MASK ) );
+	REQUIRES( messageDataPtr != NULL );
+	REQUIRES( messageValue > CRYPT_CERTFORMAT_NONE && \
+			  messageValue < CRYPT_CERTFORMAT_LAST );
 
 	/* Make sure that the export format is valid */
 	if( messageValue <= CRYPT_CERTFORMAT_NONE || \
@@ -1728,7 +1869,8 @@ int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
 	/* The easiest way to handle this check is to use an ACL, treating the
 	   format type as a pseudo-attribute type */
 	formatACL = ( ATTRIBUTE_ACL * ) &formatPseudoACL[ i ];
-	POST( formatACL->attribute == messageValue );
+	assert( formatACL->attribute == messageValue );
+			/* Only in debug build, see comment in attr_acl.c */
 
 	return( preDispatchCheckAttributeAccess( objectHandle,
 							isInternalMessage( message ) ? \
@@ -1742,7 +1884,7 @@ int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckData( IN_HANDLE const int objectHandle,
 						  IN_MESSAGE const MESSAGE_TYPE message,
-						  IN_BUFFER( MESSAGE_DATA ) \
+						  IN_BUFFER_C( sizeof( MESSAGE_DATA ) ) \
 								const void *messageDataPtr,
 						  STDC_UNUSED const int dummy1,
 						  STDC_UNUSED const void *dummy2 )
@@ -1750,10 +1892,11 @@ int preDispatchCheckData( IN_HANDLE const int objectHandle,
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 	const MESSAGE_DATA *msgData = messageDataPtr;
 
+	assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
+
 	/* Precondition */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isValidMessage( localMessage ) );
-	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isValidMessage( localMessage ) );
 
 	/* Make sure that it's either a flush (buffer = NULL, length = 0)
 	   or valid data */
@@ -1773,9 +1916,9 @@ int preDispatchCheckData( IN_HANDLE const int objectHandle,
 		}
 
 	/* Postcondition: It's a flush or it's valid data */
-	POST( ( localMessage == MESSAGE_ENV_PUSHDATA && \
-			msgData->data == NULL && msgData->length == 0 ) || \
-		  ( msgData->data != NULL && msgData->length > 0 ) );
+	ENSURES( ( localMessage == MESSAGE_ENV_PUSHDATA && \
+			   msgData->data == NULL && msgData->length == 0 ) || \
+			 ( msgData->data != NULL && msgData->length > 0 ) );
 
 	return( CRYPT_OK );
 	}
@@ -1787,7 +1930,7 @@ int preDispatchCheckData( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 							IN_MESSAGE const MESSAGE_TYPE message,
-							IN_BUFFER( MESSAGE_CREATEOBJECT_INFO ) \
+							IN_BUFFER_C( sizeof( MESSAGE_CREATEOBJECT_INFO ) ) \
 								const void *messageDataPtr,
 							IN_ENUM( OBJECT ) const int messageValue,
 							STDC_UNUSED const void *dummy )
@@ -1805,22 +1948,23 @@ int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 					( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr;
 	int i;
 
+	assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
+
 	/* Precondition */
-	PRE( fullObjectCheck( objectHandle, message ) && \
-		 objectTable[ objectHandle ].type == OBJECT_TYPE_DEVICE );
-	PRE( localMessage == MESSAGE_DEV_CREATEOBJECT || \
-		 localMessage == MESSAGE_DEV_CREATEOBJECT_INDIRECT );
-	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
-	PRE( isValidType( messageValue ) );
-	PRE( createInfo->cryptHandle == CRYPT_ERROR );
-	PRE( createInfo->cryptOwner == CRYPT_ERROR || \
-		 createInfo->cryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
-		 isHandleRangeValid( createInfo->cryptOwner ) );
+	REQUIRES( fullObjectCheck( objectHandle, message ) && \
+			  objectTable[ objectHandle ].type == OBJECT_TYPE_DEVICE );
+	REQUIRES( localMessage == MESSAGE_DEV_CREATEOBJECT || \
+			  localMessage == MESSAGE_DEV_CREATEOBJECT_INDIRECT );
+	REQUIRES( isValidType( messageValue ) );
+	REQUIRES( createInfo->cryptHandle == CRYPT_ERROR );
+	REQUIRES( createInfo->cryptOwner == CRYPT_ERROR || \
+			  createInfo->cryptOwner == DEFAULTUSER_OBJECT_HANDLE || \
+			  isHandleRangeValid( createInfo->cryptOwner ) );
 	
 	/* Find the appropriate ACL for this object create type */
-	for( i = 0; createACL[ i ].type != messageValue && 
-				createACL[ i ].type != CRYPT_CERTFORMAT_NONE && \
-				i < createAclSize; i++ );
+	for( i = 0; i < createAclSize && \
+				createACL[ i ].type != messageValue && 
+				createACL[ i ].type != CRYPT_CERTFORMAT_NONE; i++ );
 	ENSURES( i < createAclSize );
 	ENSURES( createACL[ i ].type != OBJECT_TYPE_NONE );
 	createACL = &createACL[ i ];
@@ -1867,8 +2011,8 @@ int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 			const int ownerObject = objectTable[ objectHandle ].owner;
 
 			/* Inner precondition: The owner is a valid user object */
-			PRE( isValidObject( ownerObject ) && \
-				 objectTable[ ownerObject ].type == OBJECT_TYPE_USER );
+			REQUIRES( isValidObject( ownerObject ) && \
+					  objectTable[ ownerObject ].type == OBJECT_TYPE_USER );
 	
 			createInfo->cryptOwner = ownerObject;
 			}
@@ -1877,10 +2021,10 @@ int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 	/* Postcondition: The new object's owner will be the user object it's
 	   being created through or the default user if it's being done via the
 	   system object */
-	POST( ( objectHandle == SYSTEM_OBJECT_HANDLE && \
-			createInfo->cryptOwner == DEFAULTUSER_OBJECT_HANDLE ) || \
-		  ( objectHandle != SYSTEM_OBJECT_HANDLE && \
-			createInfo->cryptOwner == objectTable[ objectHandle ].owner ) );
+	ENSURES( ( objectHandle == SYSTEM_OBJECT_HANDLE && \
+			   createInfo->cryptOwner == DEFAULTUSER_OBJECT_HANDLE ) || \
+			( objectHandle != SYSTEM_OBJECT_HANDLE && \
+			  createInfo->cryptOwner == objectTable[ objectHandle ].owner ) );
 
 	return( CRYPT_OK );
 	}
@@ -1899,11 +2043,11 @@ int preDispatchCheckUserMgmtAccess( IN_HANDLE const int objectHandle,
 	STDC_UNUSED \
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 
-	PRE( fullObjectCheck( objectHandle, message ) && \
-		 objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
-	PRE( localMessage == MESSAGE_USER_USERMGMT );
-	PRE( messageValue > MESSAGE_USERMGMT_NONE && \
-		 messageValue < MESSAGE_USERMGMT_LAST );
+	REQUIRES( fullObjectCheck( objectHandle, message ) && \
+			  objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
+	REQUIRES( localMessage == MESSAGE_USER_USERMGMT );
+	REQUIRES( messageValue > MESSAGE_USERMGMT_NONE && \
+			  messageValue < MESSAGE_USERMGMT_LAST );
 
 	/* At the moment with only minimal user management available it's 
 	   easiest to hardcode the checks */
@@ -1939,15 +2083,16 @@ int preDispatchCheckTrustMgmtAccess( IN_HANDLE const int objectHandle,
 	STDC_UNUSED \
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 
-	PRE( fullObjectCheck( objectHandle, message ) && \
-		 objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
-	PRE( localMessage == MESSAGE_USER_TRUSTMGMT );
-	PRE( ( messageValue == MESSAGE_TRUSTMGMT_GETISSUER && \
-		   isWritePtr( ( void * ) messageDataPtr, \
-					   sizeof( CRYPT_HANDLE ) ) ) || \
-		  ( isReadPtr( messageDataPtr, sizeof( CRYPT_HANDLE ) ) ) );
-	PRE( messageValue > MESSAGE_TRUSTMGMT_NONE && \
-		 messageValue < MESSAGE_TRUSTMGMT_LAST );
+	assert( ( messageValue == MESSAGE_TRUSTMGMT_GETISSUER && \
+			  isWritePtr( ( void * ) messageDataPtr, \
+						  sizeof( CRYPT_HANDLE ) ) ) || \
+			( isReadPtr( messageDataPtr, sizeof( CRYPT_HANDLE ) ) ) );
+
+	REQUIRES( fullObjectCheck( objectHandle, message ) && \
+			  objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
+	REQUIRES( localMessage == MESSAGE_USER_TRUSTMGMT );
+	REQUIRES( messageValue > MESSAGE_TRUSTMGMT_NONE && \
+			  messageValue < MESSAGE_TRUSTMGMT_LAST );
 
 	/* The easiest way to handle this check is to use an ACL, treating the
 	   trust management operation type as a pseudo-attribute type */
@@ -1982,13 +2127,13 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 	int status;
 
 	/* Preconditions */
-	PRE( localMessage == MESSAGE_GETATTRIBUTE || \
-		 localMessage == MESSAGE_DEV_CREATEOBJECT || \
-		 localMessage == MESSAGE_DEV_CREATEOBJECT_INDIRECT || \
-		 localMessage == MESSAGE_KEY_GETKEY || \
-		 localMessage == MESSAGE_KEY_GETNEXTCERT || \
-		 localMessage == MESSAGE_KEY_CERTMGMT );
-	PRE( messageDataPtr != NULL );
+	REQUIRES( localMessage == MESSAGE_GETATTRIBUTE || \
+			  localMessage == MESSAGE_DEV_CREATEOBJECT || \
+			  localMessage == MESSAGE_DEV_CREATEOBJECT_INDIRECT || \
+			  localMessage == MESSAGE_KEY_GETKEY || \
+			  localMessage == MESSAGE_KEY_GETNEXTCERT || \
+			  localMessage == MESSAGE_KEY_CERTMGMT );
+	REQUIRES( messageDataPtr != NULL );
 
 	/* If it's an internal message, there are no problems with object
 	   visibility.  In addition most messages are internal, so performing
@@ -2003,26 +2148,29 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 			{
 			const ATTRIBUTE_ACL *attributeACL = ( ATTRIBUTE_ACL * ) auxInfo;
 
+			assert( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+
 			/* Inner precondition: Since it's an external message, we must
 			   be reading a standard attribute */
-			PRE( isAttribute( messageValue ) );
-			PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) || \
-				 attributeACL->attribute == messageValue );
+			REQUIRES( isAttribute( messageValue ) );
+			assert( attributeACL->attribute == messageValue );
+					/* Only in debug build, see comment in attr_acl.c */
 
 			/* If it's not an object attribute read, we're done */
 			if( attributeACL->valueType == ATTRIBUTE_VALUE_SPECIAL )
 				{
 				attributeACL = getSpecialRangeInfo( attributeACL );
-				POST( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+				assert( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+				ENSURES( attributeACL != NULL );
 				}
 			if( attributeACL->valueType != ATTRIBUTE_VALUE_OBJECT )
 				return( CRYPT_OK );
 
 			/* Inner precondition: We're reading an object attribute and
 			   sending the response to an external caller */
-			PRE( attributeACL->valueType == ATTRIBUTE_VALUE_OBJECT );
-			PRE( isValidObject( *( ( int * ) messageDataPtr ) ) );
-			PRE( !isInternalMessage );
+			REQUIRES( attributeACL->valueType == ATTRIBUTE_VALUE_OBJECT );
+			REQUIRES( isValidObject( *( ( int * ) messageDataPtr ) ) );
+			REQUIRES( !isInternalMessage );
 
 			objectHandle = *( ( int * ) messageDataPtr );
 			break;
@@ -2034,7 +2182,8 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 			MESSAGE_CREATEOBJECT_INFO *createInfo = \
 							( MESSAGE_CREATEOBJECT_INFO * ) messageDataPtr;
 
-			PRE( isReadPtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
+			assert( isReadPtr( createInfo, \
+							   sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
 
 			objectHandle = createInfo->cryptHandle;
 			break;
@@ -2046,11 +2195,12 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 			MESSAGE_KEYMGMT_INFO *getkeyInfo = \
 							( MESSAGE_KEYMGMT_INFO * ) messageDataPtr;
 
-			PRE( isReadPtr( getkeyInfo, sizeof( MESSAGE_KEYMGMT_INFO ) ) );
+			assert( isReadPtr( getkeyInfo, \
+							   sizeof( MESSAGE_KEYMGMT_INFO ) ) );
 
 			objectHandle = getkeyInfo->cryptHandle;
 
-			POST( isInHighState( objectHandle ) );
+			ENSURES( isInHighState( objectHandle ) );
 			break;
 			}
 
@@ -2059,10 +2209,11 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 			MESSAGE_CERTMGMT_INFO *certMgmtInfo = \
 							( MESSAGE_CERTMGMT_INFO * ) messageDataPtr;
 
-			PRE( isReadPtr( certMgmtInfo, sizeof( MESSAGE_CERTMGMT_INFO ) ) );
+			assert( isReadPtr( certMgmtInfo, \
+							   sizeof( MESSAGE_CERTMGMT_INFO ) ) );
 
-			/* If it's not a cert management action that can return an
-			   object, there's no object to make visible */
+			/* If it's not a certificate management action that can return 
+			   an object, there's no object to make visible */
 			if( messageValue != CRYPT_CERTACTION_ISSUE_CERT && \
 				messageValue != CRYPT_CERTACTION_CERT_CREATION && \
 				messageValue != CRYPT_CERTACTION_ISSUE_CRL )
@@ -2076,14 +2227,14 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 
 			/* Inner precondition: It's an action that can return an object,
 			   and there's an object present */
-			PRE( messageValue == CRYPT_CERTACTION_ISSUE_CERT || \
-				 messageValue == CRYPT_CERTACTION_CERT_CREATION || \
-				 messageValue == CRYPT_CERTACTION_ISSUE_CRL );
-			PRE( certMgmtInfo->cryptCert != CRYPT_UNUSED );
+			REQUIRES( messageValue == CRYPT_CERTACTION_ISSUE_CERT || \
+					  messageValue == CRYPT_CERTACTION_CERT_CREATION || \
+					  messageValue == CRYPT_CERTACTION_ISSUE_CRL );
+			REQUIRES( certMgmtInfo->cryptCert != CRYPT_UNUSED );
 
 			objectHandle = certMgmtInfo->cryptCert;
 
-			POST( isInHighState( objectHandle ) );
+			ENSURES( isInHighState( objectHandle ) );
 			break;
 			}
 
@@ -2093,8 +2244,8 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 
 	/* Postcondition: We've got a valid internal object to make externally
 	   visible */
-	POST( isValidObject( objectHandle ) && \
-		  isInternalObject( objectHandle ) );
+	ENSURES( isValidObject( objectHandle ) && \
+			 isInternalObject( objectHandle ) );
 
 	/* Make the object externally visible.  In theory we should make this
 	   attribute read-only, but it's currently still needed in init.c (the
@@ -2111,16 +2262,16 @@ int postDispatchMakeObjectExternal( STDC_UNUSED const int dummy,
 		return( status );
 
 	/* Postcondition: The object is now externally visible */
-	POST( isValidObject( objectHandle ) && \
-		  !isInternalObject( objectHandle ) );
+	ENSURES( isValidObject( objectHandle ) && \
+			 !isInternalObject( objectHandle ) );
 
 	return( CRYPT_OK );
 	}
 
 /* If there's a dependent object with a given relationship to the controlling
    object, forward the message.  In practice the only dependencies are those
-   of PKC contexts paired with certs, for which a message sent to one (e.g. a
-   check message such as "is this suitable for signing?") needs to be
+   of PKC contexts paired with certificates, for which a message sent to one 
+   (e.g. a check message such as "is this suitable for signing?") needs to be
    forwarded to the other */
 
 CHECK_RETVAL \
@@ -2138,15 +2289,15 @@ int postDispatchForwardToDependentObject( IN_HANDLE const int objectHandle,
 	const CHECK_ALT_ACL *checkAltACL;
 	MESSAGE_CHECK_TYPE localMessageValue = messageValue;
 	int status;
-	TEMP_VAR( const MESSAGE_TYPE localMessage = message & MESSAGE_MASK );
 
 	/* Precondition: It's an appropriate message type being forwarded to a
 	   dependent object */
-	PRE( isValidObject( objectHandle ) );
-	PRE( localMessage == MESSAGE_CHECK );
-	PRE( messageValue > MESSAGE_CHECK_NONE && \
-		 messageValue < MESSAGE_CHECK_LAST );
-	PRE( isValidObject( dependentObject ) || dependentObject == CRYPT_ERROR );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( ( message & MESSAGE_MASK ) == MESSAGE_CHECK );
+	REQUIRES( messageValue > MESSAGE_CHECK_NONE && \
+			  messageValue < MESSAGE_CHECK_LAST );
+	REQUIRES( isValidObject( dependentObject ) || \
+			  dependentObject == CRYPT_ERROR );
 
 	/* Find the ACL information for the message type */
 	status = findCheckACL( messageValue, objectInfoPtr->type, NULL,
@@ -2165,8 +2316,8 @@ int postDispatchForwardToDependentObject( IN_HANDLE const int objectHandle,
 		}
 	else
 		{
-		/* If there's no context : cert relationship between the objects,
-		   don't do anything */
+		/* If there's no context : certificate relationship between the 
+		   objects, don't do anything */
 		if( !isValidObject( dependentObject ) || \
 			( !( objectType == OBJECT_TYPE_CONTEXT && \
 				 dependentType == OBJECT_TYPE_CERTIFICATE ) && \
@@ -2176,8 +2327,8 @@ int postDispatchForwardToDependentObject( IN_HANDLE const int objectHandle,
 		}
 
 	/* Postcondition */
-	POST( isValidObject( dependentObject ) );
-	POST( isSameOwningObject( objectHandle, dependentObject ) );
+	ENSURES( isValidObject( dependentObject ) );
+	ENSURES( isSameOwningObject( objectHandle, dependentObject ) );
 
 	/* Forward the message to the dependent object.  We have to make the
 	   message internal since the dependent object may be internal-only.
@@ -2204,10 +2355,10 @@ int postDispatchUpdateUsageCount( IN_HANDLE const int objectHandle,
 	ORIGINAL_INT_VAR( usageCt, objectInfoPtr->usageCount );
 
 	/* Precondition: It's a context with a nonzero usage count */
-	PRE( isValidObject( objectHandle ) && \
-		 objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
-	PRE( objectInfoPtr->usageCount == CRYPT_UNUSED || \
-		 objectInfoPtr->usageCount > 0 );
+	REQUIRES( isValidObject( objectHandle ) && \
+			  objectInfoPtr->type == OBJECT_TYPE_CONTEXT );
+	REQUIRES( objectInfoPtr->usageCount == CRYPT_UNUSED || \
+			  objectInfoPtr->usageCount > 0 );
 
 	/* If there's an active usage count present, update it */
 	if( objectInfoPtr->usageCount > 0 )
@@ -2215,9 +2366,9 @@ int postDispatchUpdateUsageCount( IN_HANDLE const int objectHandle,
 
 	/* Postcondition: If there was a usage count it's been decremented and
 	   is >= 0 (the ground state) */
-	POST( objectInfoPtr->usageCount == CRYPT_UNUSED || \
-		  ( objectInfoPtr->usageCount == ORIGINAL_VALUE( usageCt ) - 1 && \
-			objectInfoPtr->usageCount >= 0 ) );
+	ENSURES( objectInfoPtr->usageCount == CRYPT_UNUSED || \
+			 ( objectInfoPtr->usageCount == ORIGINAL_VALUE( usageCt ) - 1 && \
+			   objectInfoPtr->usageCount >= 0 ) );
 	return( CRYPT_OK );
 	}
 
@@ -2239,15 +2390,15 @@ int postDispatchChangeState( IN_HANDLE const int objectHandle,
 	{
 	/* Precondition: Object is in the low state so a state change message is
 	   valid */
-	PRE( isValidObject( objectHandle ) );
-	PRE( !isInHighState( objectHandle ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( !isInHighState( objectHandle ) );
 
 	/* The state change message was successfully processed, the object is now
 	   in the high state */
 	krnlData->objectTable[ objectHandle ].flags |= OBJECT_FLAG_HIGH;
 
 	/* Postcondition: Object is in the high state */
-	POST( isInHighState( objectHandle ) );
+	ENSURES( isInHighState( objectHandle ) );
 	return( CRYPT_OK );
 	}
 
@@ -2260,14 +2411,15 @@ int postDispatchChangeStateOpt( IN_HANDLE const int objectHandle,
 	{
 	const ATTRIBUTE_ACL *attributeACL = ( ATTRIBUTE_ACL * ) auxInfo;
 
+	assert( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+
 	/* Precondition.  If we're closing down then a background polling thread
 	   may still be trying to send entropy data to the system object, so we
 	   don't complain if this is the case */
-	PRE( ( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_THREADS && \
-		   objectHandle == SYSTEM_OBJECT_HANDLE && \
-		   messageValue == CRYPT_IATTRIBUTE_ENTROPY ) || \
-		 isValidObject( objectHandle ) );
-	PRE( isReadPtr( attributeACL, sizeof( ATTRIBUTE_ACL ) ) );
+	REQUIRES( ( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_THREADS && \
+			    objectHandle == SYSTEM_OBJECT_HANDLE && \
+			    messageValue == CRYPT_IATTRIBUTE_ENTROPY ) || \
+			  isValidObject( objectHandle ) );
 
 	/* If it's an attribute that triggers a state change, change the state */
 	if( attributeACL->flags & ATTRIBUTE_FLAG_TRIGGER )
@@ -2278,18 +2430,19 @@ int postDispatchChangeStateOpt( IN_HANDLE const int objectHandle,
 		   the low and high state, with the first add in the low state
 		   triggering a transition into the high state and subsequent
 		   additions augmenting the existing data) */
-		PRE( !isInHighState( objectHandle ) || \
-			 ( ( attributeACL->access & ACCESS_INT_xWx_xWx ) == ACCESS_INT_xWx_xWx ) );
+		REQUIRES( !isInHighState( objectHandle ) || \
+				  ( ( attributeACL->access & ACCESS_INT_xWx_xWx ) == \
+													ACCESS_INT_xWx_xWx ) );
 
 		krnlData->objectTable[ objectHandle ].flags |= OBJECT_FLAG_HIGH;
 
 		/* Postcondition: Object is in the high state */
-		POST( isInHighState( objectHandle ) );
+		ENSURES( isInHighState( objectHandle ) );
 		return( CRYPT_OK );
 		}
 
 	/* Postcondition: It wasn't a trigger message */
-	POST( !( attributeACL->flags & ATTRIBUTE_FLAG_TRIGGER ) );
+	ENSURES( !( attributeACL->flags & ATTRIBUTE_FLAG_TRIGGER ) );
 	return( CRYPT_OK );
 	}
 
@@ -2308,11 +2461,11 @@ int postDispatchHandleZeroise( IN_HANDLE const int objectHandle,
 	STDC_UNUSED \
 	const MESSAGE_TYPE localMessage = message & MESSAGE_MASK;
 
-	PRE( fullObjectCheck( objectHandle, message ) && \
-		 objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
-	PRE( localMessage == MESSAGE_USER_USERMGMT );
-	PRE( messageValue > MESSAGE_USERMGMT_NONE && \
-		 messageValue < MESSAGE_USERMGMT_LAST );
+	REQUIRES( fullObjectCheck( objectHandle, message ) && \
+			  objectTable[ objectHandle ].type == OBJECT_TYPE_USER );
+	REQUIRES( localMessage == MESSAGE_USER_USERMGMT );
+	REQUIRES( messageValue > MESSAGE_USERMGMT_NONE && \
+			  messageValue < MESSAGE_USERMGMT_LAST );
 
 	/* If it's not a zeroise operation, we're done */
 	if( messageValue != MESSAGE_USERMGMT_ZEROISE )

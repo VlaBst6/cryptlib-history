@@ -39,8 +39,8 @@ RSC=rc.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 0
-# PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\release_vc6"
+# PROP Output_Dir ".\binaries32_vc6"
+# PROP Intermediate_Dir ".\release32_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -58,7 +58,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /machine:I386
-# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /machine:I386 /out:".\binaries/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /machine:I386 /out:".\binaries32_vc6/cl32.dll"
 
 !ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
 
@@ -69,8 +69,8 @@ LINK32=link.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\debug_vc6"
+# PROP Output_Dir ".\binaries32_vc6"
+# PROP Intermediate_Dir ".\debug32_vc6"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -89,7 +89,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /debug /machine:I386
-# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries32_vc6/cl32.dll"
 
 !ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
 
@@ -101,8 +101,8 @@ LINK32=link.exe
 # PROP BASE Target_Dir ""
 # PROP Use_MFC 0
 # PROP Use_Debug_Libraries 1
-# PROP Output_Dir ".\binaries"
-# PROP Intermediate_Dir ".\debug_purify"
+# PROP Output_Dir ".\binaries32_vc6"
+# PROP Intermediate_Dir ".\debug32_purify"
 # PROP Ignore_Export_Lib 0
 # PROP Target_Dir ""
 F90=fl32.exe
@@ -123,7 +123,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
-# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries/cl32.dll"
+# ADD LINK32 kernel32.lib user32.lib advapi32.lib /nologo /subsystem:windows /dll /pdb:none /debug /machine:I386 /out:".\binaries32_vc6/cl32.dll"
 
 !ENDIF 
 
@@ -416,6 +416,10 @@ SOURCE=.\context\ctx_elg.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\context\ctx_generic.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\context\ctx_hmd5.c
 # End Source File
 # Begin Source File
@@ -577,6 +581,14 @@ SOURCE=.\crypt\desenc.c
 # Begin Source File
 
 SOURCE=.\crypt\desskey.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\gcm.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\crypt\gf128mul.c
 # End Source File
 # Begin Source File
 
@@ -828,11 +840,55 @@ SOURCE=.\device\pkcs11_pkc.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\device\pkcs11_rw.c
+SOURCE=.\device\pkcs11_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\pkcs11_wr.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\device\system.c
+# End Source File
+# End Group
+# Begin Group "Encode/Decode"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_algid.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_chk.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_ext.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_wr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\base64.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\base64_id.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\misc_rw.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\pgp_rw.c
 # End Source File
 # End Group
 # Begin Group "Envelopes"
@@ -1000,6 +1056,42 @@ SOURCE=.\kernel\sendmsg.c
 # PROP Default_Filter ""
 # Begin Source File
 
+SOURCE=.\keyset\http.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\key_attr.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\ldap.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pgp.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pgp_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs12.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs12_rd.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs12_wr.c
+# End Source File
+# End Group
+# Begin Group "Keysets - DBMS"
+
+# PROP Default_Filter ""
+# Begin Source File
+
 SOURCE=.\keyset\ca_add.c
 # End Source File
 # Begin Source File
@@ -1036,32 +1128,12 @@ SOURCE=.\keyset\dbx_wr.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\keyset\http.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\key_attr.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\ldap.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\keyset\odbc.c
 # End Source File
-# Begin Source File
+# End Group
+# Begin Group "Keysets - PKCS15"
 
-SOURCE=.\keyset\pgp.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\pgp_rd.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\pkcs12.c
-# End Source File
+# PROP Default_Filter ""
 # Begin Source File
 
 SOURCE=.\keyset\pkcs15.c
@@ -1089,6 +1161,10 @@ SOURCE=.\keyset\pkcs15_atwr.c
 # Begin Source File
 
 SOURCE=.\keyset\pkcs15_get.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15_getp.c
 # End Source File
 # Begin Source File
 
@@ -1176,34 +1252,6 @@ SOURCE=.\mechs\sign_x509.c
 # PROP Default_Filter ""
 # Begin Source File
 
-SOURCE=.\misc\asn1_algid.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1_chk.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1_ext.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1_rd.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1_wr.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\base64.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\base64_id.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\crypt32.def
 # End Source File
 # Begin Source File
@@ -1248,19 +1296,11 @@ SOURCE=.\bindings\java_jni.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\misc\misc_rw.c
-# End Source File
-# Begin Source File
-
 SOURCE=.\misc\os_spec.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\misc\pgp_misc.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\pgp_rw.c
 # End Source File
 # Begin Source File
 
@@ -1380,6 +1420,14 @@ SOURCE=.\session\session.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\tsp.c
+# End Source File
+# End Group
+# Begin Group "Sessions - SSH"
+
+# PROP Default_Filter ""
+# Begin Source File
+
 SOURCE=.\session\ssh.c
 # End Source File
 # Begin Source File
@@ -1434,6 +1482,10 @@ SOURCE=.\session\ssh2_svr.c
 
 SOURCE=.\session\ssh2_wr.c
 # End Source File
+# End Group
+# Begin Group "Sessions - SSL"
+
+# PROP Default_Filter ""
 # Begin Source File
 
 SOURCE=.\session\ssl.c
@@ -1445,6 +1497,10 @@ SOURCE=.\session\ssl_cli.c
 # Begin Source File
 
 SOURCE=.\session\ssl_cry.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssl_ext.c
 # End Source File
 # Begin Source File
 
@@ -1464,15 +1520,15 @@ SOURCE=.\session\ssl_rd.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\session\ssl_suites.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\session\ssl_svr.c
 # End Source File
 # Begin Source File
 
 SOURCE=.\session\ssl_wr.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\session\tsp.c
 # End Source File
 # End Group
 # Begin Group "Zlib"
@@ -1485,10 +1541,6 @@ SOURCE=.\zlib\adler32.c
 # Begin Source File
 
 SOURCE=.\zlib\deflate.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\zlib\gvmat32c.c
 # End Source File
 # Begin Source File
 
@@ -1512,35 +1564,11 @@ SOURCE=.\zlib\zutil.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\zlib\gvmat32.obj
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
+SOURCE=.\zlib\match686.obj
 # End Source File
 # Begin Source File
 
-SOURCE=.\zlib\inffas32y.obj
-
-!IF  "$(CFG)" == "Crypt32 - Win32 Release"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Debug"
-
-!ELSEIF  "$(CFG)" == "Crypt32 - Win32 Purify"
-
-# PROP BASE Exclude_From_Build 1
-# PROP Exclude_From_Build 1
-
-!ENDIF 
-
+SOURCE=.\zlib\inffas32.obj
 # End Source File
 # End Group
 # Begin Source File
@@ -1583,22 +1611,9 @@ SOURCE=.\cryptusr.c
 # Begin Group "Header Files"
 
 # PROP Default_Filter "h;hpp;hxx;hm;inl;fi;fd"
-# Begin Source File
+# Begin Group "Certificates - Headers"
 
-SOURCE=.\kernel\acl.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\analyse.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\asn1_ext.h
-# End Source File
+# PROP Default_Filter ""
 # Begin Source File
 
 SOURCE=.\cert\cert.h
@@ -1610,6 +1625,167 @@ SOURCE=.\cert\certattr.h
 # Begin Source File
 
 SOURCE=.\cert\certfn.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\dn.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\cert\trustmgr.h
+# End Source File
+# End Group
+# Begin Group "Devices - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\device\capabil.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\device.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\hardware.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\device\pkcs11_api.h
+# End Source File
+# End Group
+# Begin Group "Encode/Decode - Folder"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_ext.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\asn1_oids.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\misc_rw.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\enc_dec\pgp_rw.h
+# End Source File
+# End Group
+# Begin Group "I/O - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\io\file.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\http.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\stream.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\stream_int.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\io\tcp.h
+# End Source File
+# End Group
+# Begin Group "Kernel - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\kernel\acl.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\kernel\acl_perm.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\cryptkrn.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\kernel\kernel.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\kernel\thread.h
+# End Source File
+# End Group
+# Begin Group "Keysets - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\keyset\dbms.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\keyset.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pgp_key.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs12.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\keyset\pkcs15.h
+# End Source File
+# End Group
+# Begin Group "Sessions - Headers"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=.\session\certstore.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\cmp.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\scep.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\session.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssh_dhkeys.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\session\ssl.h
+# End Source File
+# End Group
+# Begin Source File
+
+SOURCE=.\misc\analyse.h
 # End Source File
 # Begin Source File
 
@@ -1629,19 +1805,11 @@ SOURCE=.\crypt.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\cryptkrn.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\cryptlib.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\keyset\dbms.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\device\device.h
+SOURCE=.\misc\debug.h
 # End Source File
 # Begin Source File
 
@@ -1653,19 +1821,7 @@ SOURCE=.\misc\int_api.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\kernel\kernel.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\keyset.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\mechs\mech.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\misc_rw.h
 # End Source File
 # Begin Source File
 
@@ -1674,38 +1830,6 @@ SOURCE=.\misc\os_spec.h
 # Begin Source File
 
 SOURCE=.\misc\pgp.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\misc\pgp_rw.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\keyset\pkcs15.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\session\session.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\session\ssh.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\session\ssl.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\io\stream.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\io\stream_int.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\kernel\thread.h
 # End Source File
 # Begin Source File
 

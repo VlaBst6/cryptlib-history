@@ -276,7 +276,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int openUser( OUT_HANDLE_OPT CRYPT_USER *iCryptUser, 
 					 IN_HANDLE const CRYPT_USER iCryptOwner,
 					 const USER_FILE_INFO *userInfoTemplate,
-					 OUT_PTR USER_INFO **userInfoPtrPtr )
+					 OUT_OPT_PTR USER_INFO **userInfoPtrPtr )
 	{
 	USER_INFO *userInfoPtr;
 	USER_FILE_INFO *userFileInfo;
@@ -331,6 +331,7 @@ static int openUser( OUT_HANDLE_OPT CRYPT_USER *iCryptUser,
 							   ACTION_PERM_NONE_ALL, userMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( userInfoPtr != NULL );
 	*userInfoPtrPtr = userInfoPtr;
 	userInfoPtr->objectHandle = *iCryptUser;
 	userFileInfo = &userInfoPtr->userFileInfo;
@@ -565,12 +566,19 @@ CHECK_RETVAL \
 int userManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 								const MANAGEMENT_ACTION_TYPE action )
 	{
+	int status;
+
 	REQUIRES( action == MANAGEMENT_ACTION_INIT );
 
 	switch( action )
 		{
 		case MANAGEMENT_ACTION_INIT:
-			return( createDefaultUserObject() );
+			status = createDefaultUserObject();
+			if( cryptStatusError( status ) )
+				{
+				DEBUG_DIAG(( "User object creation failed" ));
+				}
+			return( status );
 		}
 
 	retIntError();

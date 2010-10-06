@@ -13,7 +13,7 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -118,7 +118,7 @@ static const FAILURE_INFO FAR_BSS failureInfo[] = {
 /* Map a PKI failure information value to an error string */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-static int getFailureInfo( OUT_BUFFER_ALLOC( *stringLength ) \
+static int getFailureInfo( OUT_BUFFER_ALLOC_OPT( *stringLength ) \
 								const char **stringPtrPtr, 
 						   OUT_LENGTH_SHORT_Z int *stringLength,
 						   OUT_ERROR int *failureStatus,
@@ -467,7 +467,7 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 	const char *failureString;
 	long endPos, value;
 	int bitString = 0, bitPos, failureStringLength, failureStatus;
-	int length, status;
+	int errorCode, length, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
@@ -490,7 +490,7 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 				( status, errorInfo,
 				  "Invalid PKI status value" ) );
 		}
-	errorInfo->errorCode = ( int ) value;
+	errorCode = ( int ) value;
 
 	/* Read the failure information, skipping any intervening junk that may 
 	   precede it */
@@ -506,7 +506,7 @@ int readPkiStatusInfo( INOUT STREAM *stream,
 		}
 
 	/* If everything's OK, we're done */
-	if( cmpStatusOK( errorInfo->errorCode ) )
+	if( cmpStatusOK( errorCode ) )
 		return( CRYPT_OK );
 
 	/* Convert the failure code into a message string and report the result 

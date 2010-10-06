@@ -13,7 +13,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -211,11 +211,11 @@ static int sendChannelResponse( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Indicate that the request succeeded/was denied:
 
-		byte	type = SSH2_MSG_CHANNEL/GLOBAL_SUCCESS/FAILURE
+		byte	type = SSH_MSG_CHANNEL/GLOBAL_SUCCESS/FAILURE
 		uint32	channel_no */
 	status = enqueueResponse( sessionInfoPtr,
-				isSuccessful ? SSH2_MSG_CHANNEL_SUCCESS : \
-							   SSH2_MSG_CHANNEL_FAILURE, 1,
+				isSuccessful ? SSH_MSG_CHANNEL_SUCCESS : \
+							   SSH_MSG_CHANNEL_FAILURE, 1,
 				( channelNo == CRYPT_USE_DEFAULT ) ? \
 					getCurrentChannelNo( sessionInfoPtr, CHANNEL_READ ) : \
 					channelNo,
@@ -235,10 +235,10 @@ static int sendGlobalResponse( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Indicate that the request succeeded/was denied:
 
-		byte	type = SSH2_MSG_CHANNEL/GLOBAL_SUCCESS/FAILURE */
+		byte	type = SSH_MSG_CHANNEL/GLOBAL_SUCCESS/FAILURE */
 	status = enqueueResponse( sessionInfoPtr,
-				isSuccessful ? SSH2_MSG_GLOBAL_SUCCESS : \
-							   SSH2_MSG_GLOBAL_FAILURE, 0,
+				isSuccessful ? SSH_MSG_GLOBAL_SUCCESS : \
+							   SSH_MSG_GLOBAL_FAILURE, 0,
 				CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_UNUSED,
 				CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
@@ -277,7 +277,7 @@ static int sendOpenResponseFailed( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Indicate that the request was denied:
 
-		byte	SSH2_MSG_CHANNEL_OPEN_FAILURE
+		byte	SSH_MSG_CHANNEL_OPEN_FAILURE
 		uint32	recipient_channel
 		uint32	reason_code = SSH_OPEN_ADMINISTRATIVELY_PROHIBITED
 		string	additional_text = ""
@@ -286,7 +286,7 @@ static int sendOpenResponseFailed( INOUT SESSION_INFO *sessionInfoPtr,
 	   We always send the same reason code to avoid giving away anything
 	   to an attacker */
 	status = enqueueResponse( sessionInfoPtr,
-							  SSH2_MSG_CHANNEL_OPEN_FAILURE, 4,
+							  SSH_MSG_CHANNEL_OPEN_FAILURE, 4,
 							  channelNo,
 							  SSH_OPEN_ADMINISTRATIVELY_PROHIBITED,
 							  0, 0 );
@@ -314,7 +314,7 @@ int processChannelOpen( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Read the channel open request (the type has already been read by the
 	   caller):
 
-	  [	byte	type = SSH2_MSG_CHANNEL_OPEN ]
+	  [	byte	type = SSH_MSG_CHANNEL_OPEN ]
 		string	channel_type = "session" | "direct-tcpip"
 		uint32	sender_channel
 		uint32	initial_window_size
@@ -427,7 +427,7 @@ int processChannelOpen( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send back the open confirmation:
 
-		byte	type = SSH2_MSG_CHANNEL_OPEN_CONFIRMATION
+		byte	type = SSH_MSG_CHANNEL_OPEN_CONFIRMATION
 		uint32	recipient_channel = prev. sender_channel
 		uint32	sender_channel
 		uint32	initial_window_size = MAX_WINDOW_SIZE
@@ -446,7 +446,7 @@ int processChannelOpen( INOUT SESSION_INFO *sessionInfoPtr,
 	   See the comments in the client-side channel-open code for the reason
 	   for the window size */
 	status = enqueueResponse( sessionInfoPtr,
-							  SSH2_MSG_CHANNEL_OPEN_CONFIRMATION, 4,
+							  SSH_MSG_CHANNEL_OPEN_CONFIRMATION, 4,
 							  channelNo, channelNo,
 							  getWindowSize( sessionInfoPtr ), 
 							  maxPacketSize );
@@ -524,7 +524,7 @@ int processChannelRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	SSH_INFO *sshInfo = sessionInfoPtr->sessionSSH;
 	const REQUEST_TYPE_INFO *requestInfoPtr = NULL;
 	const BOOLEAN isChannelRequest = \
-			( sshInfo->packetType == SSH2_MSG_CHANNEL_REQUEST ) ? TRUE : FALSE;
+			( sshInfo->packetType == SSH_MSG_CHANNEL_REQUEST ) ? TRUE : FALSE;
 	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
 	BOOLEAN wantReply, requestOK = TRUE;
 	int stringLength, i, status;
@@ -537,7 +537,7 @@ int processChannelRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Process the channel/global request (the type and channel number
 	   have already been read by the caller):
 
-	  [	byte	type = SSH2_MSG_CHANNEL_REQUEST / SSH2_MSG_GLOBAL_REQUEST ]
+	  [	byte	type = SSH_MSG_CHANNEL_REQUEST / SSH_MSG_GLOBAL_REQUEST ]
 	  [	uint32	recipient_channel	- For channel reqs ]
 		string	request_type
 		boolean	want_reply

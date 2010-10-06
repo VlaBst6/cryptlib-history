@@ -1,5 +1,5 @@
 /* adler32.c -- compute the Adler-32 checksum of a data stream
- * Copyright (C) 1995-2004 Mark Adler
+ * Copyright (C) 1995-2007 Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
 
@@ -24,12 +24,16 @@
   #pragma csect( TEST, "adler32T" )
 #endif /* __MVS__ */
 
-#define ZLIB_INTERNAL
+#define ZLIB_INTERNAL	/* pcg */
 #if defined( INC_ALL )
-  #include "zlib.h"
+  #include "zutil.h"
 #else
-  #include "zlib/zlib.h"
+  #include "zlib/zutil.h"
 #endif /* Compiler-specific includes */
+
+#define local static
+
+local uLong adler32_combine_(uLong adler1, uLong adler2, z_off64_t len2);
 
 #define BASE 65521UL    /* largest prime smaller than 65536 */
 #define NMAX 5552
@@ -77,7 +81,7 @@
 #endif
 
 /* ========================================================================= */
-uLong ZEXPORT adler32(uLong adler, const Bytef *buf, uInt len)
+uLong ZEXPORT adler32(uLong adler, const Bytef *buf, uInt len)	/* pcg */
 {
     unsigned long sum2;
     unsigned n;
@@ -145,7 +149,7 @@ uLong ZEXPORT adler32(uLong adler, const Bytef *buf, uInt len)
 }
 
 /* ========================================================================= */
-uLong ZEXPORT adler32_combine(uLong adler1, uLong adler2, z_off_t len2)
+local uLong adler32_combine_(uLong adler1, uLong adler2, z_off_t len2)	/* pcg */
 {
     unsigned long sum1;
     unsigned long sum2;
@@ -158,9 +162,20 @@ uLong ZEXPORT adler32_combine(uLong adler1, uLong adler2, z_off_t len2)
     MOD(sum2);
     sum1 += (adler2 & 0xffff) + BASE - 1;
     sum2 += ((adler1 >> 16) & 0xffff) + ((adler2 >> 16) & 0xffff) + BASE - rem;
-    if (sum1 > BASE) sum1 -= BASE;
-    if (sum1 > BASE) sum1 -= BASE;
-    if (sum2 > (BASE << 1)) sum2 -= (BASE << 1);
-    if (sum2 > BASE) sum2 -= BASE;
+    if (sum1 >= BASE) sum1 -= BASE;
+    if (sum1 >= BASE) sum1 -= BASE;
+    if (sum2 >= (BASE << 1)) sum2 -= (BASE << 1);
+    if (sum2 >= BASE) sum2 -= BASE;
     return sum1 | (sum2 << 16);
+}
+
+/* ========================================================================= */
+uLong ZEXPORT adler32_combine(uLong adler1, uLong adler2, z_off_t len2)	/* pcg */
+{
+    return adler32_combine_(adler1, adler2, len2);
+}
+
+uLong ZEXPORT adler32_combine64(uLong adler1, uLong adler2, z_off64_t len2)	/* pcg */
+{
+    return adler32_combine_(adler1, adler2, len2);
 }

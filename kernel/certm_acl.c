@@ -174,7 +174,7 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Perform a consistency check on the cert management ACLs */
 	for( i = 0; certMgmtACLTbl[ i ].action != MECHANISM_NONE && \
@@ -205,7 +205,10 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 					~( ST_CERT_CERTREQ | ST_CERT_REQ_CERT | \
 					   ST_CERT_REQ_REV | ST_CERT_CERT ) ) || \
 				paramInfo( certMgmtACL, 1 ).subTypeB != ST_NONE )
+				{
+				DEBUG_DIAG(( "Certificate management ACLs inconsistent" ));
 				retIntError();
+				}
 			}
 
 		/* If it requires a CA key parameter, it must be a private-key
@@ -219,7 +222,10 @@ int initCertMgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 					~( ST_CERT_CERT | ST_CERT_CERTCHAIN ) ) || \
 				secParamInfo( certMgmtACL, 0 ).subTypeB != ST_NONE || \
 				secParamInfo( certMgmtACL, 0 ).flags != ACL_FLAG_HIGH_STATE )
+				{
+				DEBUG_DIAG(( "Certificate management ACLs inconsistent" ));
 				retIntError();
+				}
 			continue;
 			}
 		ENSURES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
@@ -248,7 +254,7 @@ void endCertMgmtACL( void )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 									IN_MESSAGE const MESSAGE_TYPE message,
-									IN_BUFFER( MESSAGE_CERTMGMT_INFO ) \
+									IN_BUFFER_C( sizeof( MESSAGE_CERTMGMT_INFO ) ) \
 										const void *messageDataPtr,
 									IN_ENUM( CRYPT_CERTACTION ) \
 										const int messageValue,
@@ -260,12 +266,13 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 	const OBJECT_INFO *objectTable = krnlData->objectTable;
 	int i;
 
+	assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_CERTMGMT_INFO ) ) );
+
 	/* Precondition */
-	PRE( isValidObject( objectHandle ) );
-	PRE( message == MESSAGE_KEY_CERTMGMT || message == IMESSAGE_KEY_CERTMGMT );
-	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_CERTMGMT_INFO ) ) );
-	PRE( messageValue > CRYPT_CERTACTION_NONE && \
-		 messageValue < CRYPT_CERTACTION_LAST );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( message == MESSAGE_KEY_CERTMGMT || message == IMESSAGE_KEY_CERTMGMT );
+	REQUIRES( messageValue > CRYPT_CERTACTION_NONE && \
+			  messageValue < CRYPT_CERTACTION_LAST );
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; certMgmtACL[ i ].action != messageValue && \
@@ -331,7 +338,7 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 		}
 	else
 		{
-		PRE( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
+		REQUIRES( paramInfo( certMgmtACL, 0 ).valueType == PARAM_VALUE_UNUSED );
 
 		if( mechanismInfo->caKey != CRYPT_UNUSED )
 			return( CRYPT_ARGERROR_NUM1 );
@@ -347,7 +354,7 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 		}
 	else
 		{
-		PRE( paramInfo( certMgmtACL, 1 ).valueType == PARAM_VALUE_UNUSED );
+		REQUIRES( paramInfo( certMgmtACL, 1 ).valueType == PARAM_VALUE_UNUSED );
 
 		if( mechanismInfo->request != CRYPT_UNUSED )
 			return( CRYPT_ARGERROR_NUM2 );

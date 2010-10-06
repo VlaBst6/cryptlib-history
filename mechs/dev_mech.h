@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Device Mechanism Header File 					*
-*					  Copyright Peter Gutmann 1992-2007						*
+*					  Copyright Peter Gutmann 1992-2009						*
 *																			*
 ****************************************************************************/
 
@@ -28,11 +28,18 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int deriveTLS( STDC_UNUSED void *dummy, 
 			   INOUT MECHANISM_DERIVE_INFO *mechanismInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int deriveTLS12( STDC_UNUSED void *dummy, 
+				 INOUT MECHANISM_DERIVE_INFO *mechanismInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int deriveCMP( STDC_UNUSED void *dummy, 
 			   INOUT MECHANISM_DERIVE_INFO *mechanismInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int derivePGP( STDC_UNUSED void *dummy, 
 			   INOUT MECHANISM_DERIVE_INFO *mechanismInfo );
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int kdfPKCS5( STDC_UNUSED void *dummy, 
+			  INOUT MECHANISM_KDF_INFO *mechanismInfo );
 
 /* Signature mechanisms */
 

@@ -49,9 +49,9 @@
    presents a more or less intractable problem.  To avoid this minefield we
    require a minimum exponent of at 17, the next generally-used value above 
    3.  However even this is only used by PGP 2.x, the next minimum is 33 (a
-   weird value used by OpenSSH, see the comment further down), 41 (another
-   weird value used by GPG until mid-2006), and then 257 or (in practice) 
-   65537 by everything else */
+   weird value used by OpenSSH until mid-2010, see the comment further 
+   down), 41 (another weird value used by GPG until mid-2006), and then 257 
+   or (in practice) F4 / 65537 by everything else */
 
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
   #define MIN_PUBLIC_EXPONENT		17
@@ -60,6 +60,10 @@
 #else
   #define MIN_PUBLIC_EXPONENT		257
 #endif /* Smallest exponents used by various crypto protocols */
+#if ( MIN_PUBLIC_EXPONENT <= 0xFF && RSAPARAM_MIN_E > 1 ) || \
+	( MIN_PUBLIC_EXPONENT <= 0xFFFF && RSAPARAM_MIN_E > 2 )
+  #error RSAPARAM_MIN_E is too large for MIN_PUBLIC_EXPONENT
+#endif /* MIN_PUBLIC_EXPONENT size > RSAPARAM_MIN_E value */
 
 /****************************************************************************
 *																			*
@@ -68,6 +72,10 @@
 ****************************************************************************/
 
 /* Enable various side-channel protection mechanisms */
+
+#if defined( __WINCE__ ) && defined( ARMV4 ) && defined( NDEBUG )
+  #pragma optimize( "g", off )
+#endif /* eVC++ 4.0 ARMv4 optimiser bug */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int enableSidechannelProtection( INOUT PKC_INFO *pkcInfo, 
@@ -129,6 +137,10 @@ static int enableSidechannelProtection( INOUT PKC_INFO *pkcInfo,
 
 	return( CRYPT_OK );
 	}
+
+#if defined( __WINCE__ ) && defined( ARMV4 ) && defined( NDEBUG )
+  #pragma optimize( "g", on )
+#endif /* eVC++ 4.0 ARMv4 optimiser bug */
 
 /* Adjust p and q if necessary to ensure that the CRT decrypt works */
 
@@ -240,14 +252,16 @@ static int checkRSAPublicKeyComponents( INOUT PKC_INFO *pkcInfo )
 	   perfect but it'll catch obvious non-primes */
 	if( eWord != 17 && eWord != 257 && eWord != 65537L && !primeSieve( e ) )
 		{
-		/* OpenSSH hardcodes e = 35 which is both a suboptimal exponent 
-		   (it's less efficient that a safer value like 257 or F4) and non-
-		   prime.  The reason for this was that the original SSH used an e 
-		   relatively prime to (p-1)(q-1), choosing odd (in both senses of 
-		   the word) numbers > 31.  33 or 35 probably ended up being chosen 
-		   frequently so it was hardcoded into OpenSSH.  In order to use 
-		   OpenSSH keys that use this odd value we make a special-case 
-		   exception for SSH use */
+		/* OpenSSH versions up to 5.4 (released in 2010) hardcoded e = 35, 
+		   which is both a suboptimal exponent (it's less efficient that a 
+		   safer value like 257 or F4) and non-prime.  The reason for this 
+		   was that the original SSH used an e relatively prime to 
+		   (p-1)(q-1), choosing odd (in both senses of the word) 
+		   numbers > 31.  33 or 35 probably ended up being chosen frequently 
+		   so it was hardcoded into OpenSSH for cargo-cult reasons, finally 
+		   being fixed after more than a decade to use F4.  In order to use 
+		   pre-5.4 OpenSSH keys that use this odd value we make a special-
+		   case exception for SSH use */
 #ifdef USE_SSH
 		if( eWord == 33 || eWord == 35 )
 			return( CRYPT_OK );

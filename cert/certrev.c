@@ -11,8 +11,8 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* The maximum length of ID that can be stored in a REVOCATION_INFO entry.
@@ -60,7 +60,7 @@ enum { OCSP_STATUS_NOTREVOKED, OCSP_STATUS_REVOKED, OCSP_STATUS_UNKNOWN };
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int findRevocationEntry( const REVOCATION_INFO *listPtr,
-								OUT_PTR REVOCATION_INFO **insertPoint,
+								OUT_OPT_PTR REVOCATION_INFO **insertPoint,
 								IN_BUFFER( valueLength ) const void *value, 
 								IN_LENGTH_SHORT const int valueLength,
 								const BOOLEAN sortEntries )
@@ -126,7 +126,7 @@ static int findRevocationEntry( const REVOCATION_INFO *listPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int addRevocationEntry( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-						OUT_PTR REVOCATION_INFO **newEntryPosition,
+						OUT_OPT_PTR REVOCATION_INFO **newEntryPosition,
 						IN_KEYID const CRYPT_KEYID_TYPE valueType,
 						IN_BUFFER( valueLength ) const void *value, 
 						IN_LENGTH_SHORT const int valueLength,
@@ -218,7 +218,7 @@ void deleteRevocationEntries( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 6 ) ) \
 int prepareRevocationEntries( INOUT_OPT REVOCATION_INFO *listPtr, 
 							  const time_t defaultTime,
-							  OUT_PTR REVOCATION_INFO **errorEntry,
+							  OUT_OPT_PTR REVOCATION_INFO **errorEntry,
 							  const BOOLEAN isSingleEntry,
 							  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
@@ -411,6 +411,7 @@ int checkCRL( INOUT CERT_INFO *certInfoPtr,
 		krnlReleaseObject( crlInfoPtr->objectHandle );
 		return( CRYPT_ERROR_NOTINITED );
 		}
+	ANALYSER_HINT( crlInfoPtr != NULL );
 
 	/* Check the base certificate against the CRL.  If it's been revoked or 
 	   there's only a single certificate present, exit */
@@ -618,7 +619,7 @@ int checkRevocationOCSP( const CERT_INFO *certInfoPtr,
 	   indirectly since it's computed on demand and may not have been 
 	   evaluated yet */
 	status = getCertComponentString( ( CERT_INFO * ) certInfoPtr,
-									 CRYPT_CERTINFO_FINGERPRINT_SHA,
+									 CRYPT_CERTINFO_FINGERPRINT_SHA1,
 									 certHash, CRYPT_MAX_HASHSIZE, 
 									 &certHashLength );
 	if( cryptStatusOK( status ) )
@@ -897,7 +898,7 @@ static int readOcspID( INOUT STREAM *stream,
 
 	REQUIRES( idMaxLen >= 16 && idMaxLen < MAX_INTLENGTH_SHORT );
 
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 
 	/* Clear return values */
 	*idType = CRYPT_KEYID_NONE;

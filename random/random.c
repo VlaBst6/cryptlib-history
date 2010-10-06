@@ -181,7 +181,8 @@ static int mixRandomPool( INOUT RANDOM_INFO *randomInfo )
 
 	REQUIRES( sanityCheck( randomInfo ) );
 
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+							 &hashSize );
 
 	/* Stir up the entire pool.  We can't check the return value of the
 	   hashing call because there isn't one, however the hashing code has 
@@ -255,8 +256,8 @@ static int mixRandomPool( INOUT RANDOM_INFO *randomInfo )
 
 	/* Postconditions for the status update: We mixed the pool at least
 	   once, and we're back at the start of the pool */
-	POST( randomInfo->randomPoolMixes == RANDOMPOOL_MIXES || \
-		  randomInfo->randomPoolMixes == \
+	ENSURES( randomInfo->randomPoolMixes == RANDOMPOOL_MIXES || \
+			 randomInfo->randomPoolMixes == \
 							ORIGINAL_VALUE( randomPoolMixes ) + 1 );
 	ENSURES( randomInfo->randomPoolPos == 0 );
 
@@ -460,7 +461,7 @@ static int getRandomOutput( INOUT RANDOM_INFO *randomInfo,
 
 	/* Precondition for output quantity: We're being asked for a valid output
 	   length and we're not trying to use more than half the pool contents */
-	PRE( RANDOM_OUTPUTSIZE == RANDOMPOOL_SIZE / 2 );
+	assert( RANDOM_OUTPUTSIZE == RANDOMPOOL_SIZE / 2 );
 	REQUIRES( sanityCheck( randomInfo ) );
 	REQUIRES( length > 0 && length <= RANDOM_OUTPUTSIZE && \
 			  length <= RANDOMPOOL_SIZE / 2 );
@@ -541,9 +542,9 @@ static int getRandomOutput( INOUT RANDOM_INFO *randomInfo,
 								  RANDOMPOOL_SAMPLES;
 	memcpy( randomInfo->x917OuputSample, exportedRandomInfo.randomPool,
 			RANDOMPOOL_SAMPLE_SIZE );
-	POST( randomInfo->prevOutputIndex != ORIGINAL_VALUE( prevOutputIndex ) );
-	POST( randomInfo->prevOutputIndex == 0 || \
-		  randomInfo->prevOutputIndex == ORIGINAL_VALUE( prevOutputIndex ) + 1 );
+	ENSURES( randomInfo->prevOutputIndex != ORIGINAL_VALUE( prevOutputIndex ) );
+	ENSURES( randomInfo->prevOutputIndex == 0 || \
+			 randomInfo->prevOutputIndex == ORIGINAL_VALUE( prevOutputIndex ) + 1 );
 	ENSURES( randomInfo->prevOutputIndex >= 0 && \
 			 randomInfo->prevOutputIndex < RANDOMPOOL_SAMPLES );
 
@@ -701,8 +702,9 @@ restartPoint:
 			krnlExitMutex( MUTEX_RANDOM );
 			return( status );
 			}
-		POST( randomInfo->randomPoolMixes == RANDOMPOOL_MIXES || \
-			  randomInfo->randomPoolMixes == ORIGINAL_VALUE( randomPoolMixes ) + 1 );
+		ENSURES( randomInfo->randomPoolMixes == RANDOMPOOL_MIXES || \
+				 randomInfo->randomPoolMixes == \
+								ORIGINAL_VALUE( randomPoolMixes ) + 1 );
 
 		/* If the pool is sufficiently mixed, we're done */
 		if( randomInfo->randomPoolMixes >= RANDOMPOOL_MIXES )
@@ -734,9 +736,9 @@ restartPoint:
 
 		/* Postcondition: We're filling the output buffer and we wrote the
 		   output to the correct portion of the output buffer */
-		POST( ( bufPtr > ( BYTE * ) buffer ) && \
-			  ( bufPtr <= ( BYTE * ) buffer + length ) );
-		POST( bufPtr == ORIGINAL_VALUE( bufPtr ) + outputBytes );
+		ENSURES( ( bufPtr > ( BYTE * ) buffer ) && \
+				 ( bufPtr <= ( BYTE * ) buffer + length ) );
+		ENSURES( bufPtr == ORIGINAL_VALUE( bufPtr ) + outputBytes );
 		}
 
 	/* Postcondition: We filled the output buffer with the required amount
@@ -768,7 +770,7 @@ restartPoint:
 /* Initialise the randomness subsystem */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initRandomInfo( OUT_PTR TYPECAST( RANDOM_INFO ** ) void **randomInfoPtrPtr )
+int initRandomInfo( OUT_OPT_PTR TYPECAST( RANDOM_INFO ** ) void **randomInfoPtrPtr )
 	{
 	RANDOM_INFO testRandomInfo, *randomInfoPtr;
 	BYTE buffer[ 16 + 8 ];
@@ -971,13 +973,13 @@ int addEntropyData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 		   GPG/add_randomness.  Note that in this case we can use a non-XOR
 		   operation to check that the XOR succeeded, unlike the pool mixing
 		   code which requires an XOR to check the original XOR */
-		POST( randomInfo->randomPoolPos == \
-			  ORIGINAL_VALUE( poolPos ) + 1 );
-		POST( ( ( ORIGINAL_VALUE( newPoolVal ) == \
-				  ORIGINAL_VALUE( bufVal ) ) && \
-				( ORIGINAL_VALUE( poolVal ) == 0 ) ) || \
-			  ( ORIGINAL_VALUE( newPoolVal ) != \
-			    ORIGINAL_VALUE( bufVal ) ) );
+		ENSURES( randomInfo->randomPoolPos == \
+						ORIGINAL_VALUE( poolPos ) + 1 );
+		ENSURES( ( ( ORIGINAL_VALUE( newPoolVal ) == \
+						ORIGINAL_VALUE( bufVal ) ) && \
+				   ( ORIGINAL_VALUE( poolVal ) == 0 ) ) || \
+				 ( ORIGINAL_VALUE( newPoolVal ) != \
+						ORIGINAL_VALUE( bufVal ) ) );
 		}
 
 #if 0	/* See comment in addEntropyQuality */
@@ -986,10 +988,10 @@ int addEntropyData( INOUT TYPECAST( RANDOM_INFO * ) void *randomInfoPtr,
 #endif /* 0 */
 
 	/* Postcondition: We processed all of the data */
-	POST( count == length );
+	ENSURES( count == length );
 #if 0	/* See comment in addEntropyQuality */
-	POST( randomInfo->entropyByteCount == \
-		  ORIGINAL_VALUE( entropyByteCount ) + length );
+	ENSURES( randomInfo->entropyByteCount == \
+			 ORIGINAL_VALUE( entropyByteCount ) + length );
 #endif /* 0 */
 
 	ENSURES_MUTEX( sanityCheck( randomInfo ) );
@@ -1115,8 +1117,9 @@ static void addStoredSeedData( INOUT RANDOM_INFO *randomInfo )
 		}
 
 	/* Read up to 1K of data from the stored seed */
-	sioctl( &stream, STREAM_IOCTL_IOBUFFER, streamBuffer, STREAM_BUFSIZE );
-	sioctl( &stream, STREAM_IOCTL_PARTIALREAD, NULL, 1 );
+	sioctlSetString( &stream, STREAM_IOCTL_IOBUFFER, streamBuffer, 
+					 STREAM_BUFSIZE );
+	sioctlSet( &stream, STREAM_IOCTL_PARTIALREAD, TRUE );
 	status = length = sread( &stream, seedBuffer, 1024 );
 	sFileClose( &stream );
 	zeroise( streamBuffer, STREAM_BUFSIZE );
@@ -1228,6 +1231,8 @@ int addRandomData( INOUT TYPECAST( RANDOM_STATE_INFO * ) void *statePtr,
 	if( bytesToCopy > 0 )
 		{
 		ENSURES( state->bufPos + bytesToCopy <= state->bufSize );
+		
+		ANALYSER_HINT( bytesToCopy > 0 && bytesToCopy <= valueLength );
 
 		memcpy( ( BYTE * ) state->buffer + state->bufPos, valuePtr, bytesToCopy );
 		state->bufPos += bytesToCopy;

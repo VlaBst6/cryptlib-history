@@ -11,7 +11,7 @@
   #include "pgp.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -73,7 +73,7 @@ static const PGP_ALGOMAP_INFO FAR_BSS pgpAlgoMap[] = {
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo, 
 					   IN_ENUM( PGP_ALGOCLASS ) \
-						const PGP_ALGOCLASS_TYPE pgpAlgoClass,
+							const PGP_ALGOCLASS_TYPE pgpAlgoClass,
 					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo )
 	{
 	int i;
@@ -103,7 +103,8 @@ int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) const int pgpAlgo,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
-					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) int *pgpAlgo )
+					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) \
+							int *pgpAlgo )
 	{
 	int i;
 
@@ -131,7 +132,8 @@ int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readPgpAlgo( INOUT STREAM *stream, 
 				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
-				 IN_ENUM( PGP_ALGOCLASS ) const PGP_ALGOCLASS_TYPE pgpAlgoClass )
+				 IN_ENUM( PGP_ALGOCLASS ) \
+						const PGP_ALGOCLASS_TYPE pgpAlgoClass )
 	{
 	CRYPT_ALGO_TYPE algo;
 	int value, status;
@@ -188,8 +190,7 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	REQUIRES( ( optKeyLength == CRYPT_UNUSED ) || \
 			  ( optKeyLength >= MIN_KEYSIZE && \
 				optKeyLength <= CRYPT_MAX_KEYSIZE ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( ( salt == NULL && saltSize == 0 ) || \
 			  ( saltSize > 0 && saltSize <= CRYPT_MAX_HASHSIZE ) );
 	REQUIRES( iterations >= 0 && iterations < MAX_INTLENGTH );
@@ -257,7 +258,7 @@ int pgpPasswordToKey( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 		{
 		HASHFUNCTION_ATOMIC hashFunctionAtomic;
 
-		getHashAtomicParameters( hashAlgo, &hashFunctionAtomic, NULL );
+		getHashAtomicParameters( hashAlgo, 0, &hashFunctionAtomic, NULL );
 		hashFunctionAtomic( hashedKey, CRYPT_MAX_KEYSIZE, password, 
 							passwordLength );
 		}

@@ -55,7 +55,7 @@ void fastPoll( void )
 	POINT point;
 	RANDOM_STATE randomState;
 	BYTE buffer[ RANDOM_BUFSIZE ];
-	int bufIndex = 0, length;
+	int length;
 
 	if( krnlIsExiting() )
 		return;
@@ -230,7 +230,7 @@ static void slowPollWinCE( void )
 	HANDLE hSnapshot;
 	RANDOM_STATE randomState;
 	BYTE buffer[ BIG_RANDOM_BUFSIZE ];
-	int bufIndex = 0, listCount = 0, iterationCount;
+	int listCount = 0, iterationCount;
 
 	/* Initialize the Toolhelp32 function pointers if necessary.  The
 	   Toolhelp DLL isn't always present (some OEMs omit it) so we have to

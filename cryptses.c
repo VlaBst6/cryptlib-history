@@ -13,7 +13,7 @@
   #include "stream.h"
   #include "session.h"
 #else
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "io/stream.h"
   #include "session/session.h"
 #endif /* Compiler-specific includes */
@@ -300,7 +300,7 @@ static int openSession( OUT_HANDLE_OPT CRYPT_SESSION *iCryptSession,
 						IN_HANDLE const CRYPT_USER iCryptOwner,
 						IN_ENUM( CRYPT_SESSION ) \
 							const CRYPT_SESSION_TYPE sessionType,
-						OUT_PTR SESSION_INFO **sessionInfoPtrPtr )
+						OUT_OPT_PTR SESSION_INFO **sessionInfoPtrPtr )
 	{
 	CRYPT_SESSION_TYPE sessionBaseType;
 	SESSION_INFO *sessionInfoPtr;
@@ -408,6 +408,7 @@ static int openSession( OUT_HANDLE_OPT CRYPT_SESSION *iCryptSession,
 							   ACTION_PERM_NONE_ALL, sessionMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( sessionInfoPtr != NULL );
 	*sessionInfoPtrPtr = sessionInfoPtr;
 	sessionInfoPtr->objectHandle = *iCryptSession;
 	sessionInfoPtr->ownerHandle = iCryptOwner;

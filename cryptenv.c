@@ -43,8 +43,7 @@
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
-						 INOUT_BUFFER_OPT( length, *bytesCopied ) \
-							const void *buffer,
+						 IN_BUFFER_OPT( length ) const void *buffer,
 						 IN_LENGTH_Z const int length, 
 						 OUT_LENGTH_Z int *bytesCopied )
 	{
@@ -134,7 +133,8 @@ static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	ENSURES( envelopeInfoPtr->state == STATE_POSTDATA );
 
 	/* We're past the main data-processing state, emit the postamble */
-	status = envelopeInfoPtr->processPostambleFunction( envelopeInfoPtr );
+	status = envelopeInfoPtr->processPostambleFunction( envelopeInfoPtr, 
+														FALSE );
 	if( cryptStatusError( status ) )
 		{
 		if( !isRecoverableError( status ) )
@@ -148,8 +148,7 @@ static int envelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
-						   INOUT_BUFFER_OPT( length, *bytesCopied ) \
-							const void *buffer,
+						   IN_BUFFER_OPT( length ) const void *buffer,
 						   IN_LENGTH_Z const int length, 
 						   OUT_LENGTH_Z int *bytesCopied )
 	{
@@ -353,31 +352,34 @@ static int deenvelopePush( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		   need more data to continue) or OK_SPECIAL (we processed all of 
 		   the data but there's out-of-band information still to go), if 
 		   it's one of these then we don't treat it as a standard error */
-		status = envelopeInfoPtr->processPostambleFunction( envelopeInfoPtr );
+		status = envelopeInfoPtr->processPostambleFunction( envelopeInfoPtr,
+										( bytesIn <= 0 ) ? TRUE : FALSE );
 		if( cryptStatusError( status ) && status != OK_SPECIAL )
 			{
 			if( !isRecoverableError( status ) )
 				{
 				envelopeInfoPtr->errorState = status;
 
-				/* MACd envelopes differ somewhat from signed envelopes in 
-				   that the integrity check results are available 
-				   immediately that payload processing is complete rather
-				   than afterwards as the result of user action with 
-				   signature metadata.  As a result the postamble 
-				   processing can return a CRYPT_ERROR_SIGNATURE to indicate
-				   that although all data was processed successfully (which
-				   would normally produce a CRYPT_OK result) the integrity 
-				   check for the data failed.  To reconcile the two status
-				   values we treat the envelope as if a CRYPT_OK had been
-				   returned (by marking processing as being complete) while 
-				   recording a CRYPT_ERROR_SIGNATURE.  However we do return
-				   the signature error since the user may be using 
-				   authenticated encryption and not even be aware that they
-				   should perform an explicit check for a signature 
-				   failure */
+				/* MACd and authenticated-encrypted envelopes differ 
+				   somewhat from signed envelopes in that the integrity 
+				   check results are available immediately that payload 
+				   processing is complete rather than afterwards as the 
+				   result of user action with signature metadata.  As a 
+				   result the postamble processing can return a 
+				   CRYPT_ERROR_SIGNATURE to indicate that although all data 
+				   was processed successfully (which would normally produce 
+				   a CRYPT_OK result) the integrity check for the data 
+				   failed.  To reconcile the two status values we treat the 
+				   envelope as if a CRYPT_OK had been returned (by marking 
+				   processing as being complete) while recording a 
+				   CRYPT_ERROR_SIGNATURE.  However we do return the 
+				   signature error since the user may be using authenticated 
+				   encryption and not even be aware that they should perform 
+				   an explicit check for a signature failure */
 				if( status == CRYPT_ERROR_SIGNATURE && \
-					envelopeInfoPtr->usage == ACTION_MAC )
+					( envelopeInfoPtr->usage == ACTION_MAC || \
+					  ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+						( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) ) )
 					envelopeInfoPtr->state = STATE_FINISHED;
 				}
 			return( status );
@@ -559,21 +561,40 @@ static int envelopeMessageFunction( INOUT TYPECAST( ENVELOPE_INFO * ) \
 		   data */
 		if( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE )
 			{
+			const BOOLEAN isAuthEnvelope = \
+					( envelopeInfoPtr->usage == ACTION_MAC || \
+					  ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+						( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) ) ? \
+					TRUE : FALSE;
+
 			/* If we've got to the point of processing data in the envelope
 			   and there's either more to come or some left to pop, we
-			   shouldn't be destroying it yet.  The one exception occurs 
-			   when we're MACing data and the integrity checks fails, in
-			   which case the integrity-check-failed status prevents the
-			   user from popping the (corrupted) data and so there may be
-			   data left in the envelope */
+			   shouldn't be destroying it yet.  This straightforward check 
+			   is complicated by the integrity check performed with 
+			   authenticated envelopes, leading to two special cases:
+			   
+			   1. If the integrity checks fails then the integrity-check-
+				  failed status prevents the user from popping the 
+				  (corrupted) data so that there may be data left in the 
+				  envelope through no fault of the user.  In this case we 
+				  don't treat the data-left status as an error.
+				  
+				2. If an attacker truncates the data in an attempt to 
+				   convert a fatal CRYPT_ERROR_SIGNATURE into a more benign 
+				   CRYPT_ERROR_UNDERFLOW then we want to try and alert the 
+				   caller to the fact that there's a problem, so we convert 
+				   a non-finished state for an authenticated envelope into 
+				   an integrity-check failure */
 			if( envelopeInfoPtr->state == STATE_DATA )
 				status = CRYPT_ERROR_INCOMPLETE;
 			if( ( envelopeInfoPtr->state == STATE_POSTDATA || \
 				  envelopeInfoPtr->state == STATE_FINISHED ) && \
 				envelopeInfoPtr->dataLeft > 0 && \
-				( !( envelopeInfoPtr->usage == ACTION_MAC && \
-					 envelopeInfoPtr->errorState == CRYPT_ERROR_SIGNATURE ) ) )
+				!( isAuthEnvelope && \
+				   envelopeInfoPtr->errorState == CRYPT_ERROR_SIGNATURE ) )
 				status = CRYPT_ERROR_INCOMPLETE;
+			if( status == CRYPT_ERROR_INCOMPLETE && isAuthEnvelope )
+				status = CRYPT_ERROR_SIGNATURE;
 			}
 		else
 			{
@@ -812,7 +833,7 @@ static int initEnvelope( OUT_HANDLE_OPT CRYPT_ENVELOPE *iCryptEnvelope,
 						 IN_HANDLE const CRYPT_USER iCryptOwner,
 						 IN_ENUM( CRYPT_FORMAT ) \
 							const CRYPT_FORMAT_TYPE formatType,
-						 OUT_PTR ENVELOPE_INFO **envelopeInfoPtrPtr )
+						 OUT_OPT_PTR ENVELOPE_INFO **envelopeInfoPtrPtr )
 	{
 	ENVELOPE_INFO *envelopeInfoPtr;
 	const BOOLEAN isDeenvelope = ( formatType == CRYPT_FORMAT_AUTO ) ? \
@@ -850,6 +871,7 @@ static int initEnvelope( OUT_HANDLE_OPT CRYPT_ENVELOPE *iCryptEnvelope,
 							   ACTION_PERM_NONE_ALL, envelopeMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( envelopeInfoPtr != NULL );
 	*envelopeInfoPtrPtr = envelopeInfoPtr;
 	envelopeInfoPtr->objectHandle = *iCryptEnvelope;
 	envelopeInfoPtr->ownerHandle = iCryptOwner;

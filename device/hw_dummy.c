@@ -1,6 +1,6 @@
 /****************************************************************************
 *																			*
-*					  cryptlib Dummy Crypto HAL Routines					*
+*						cryptlib Dummy Crypto HAL Routines					*
 *						Copyright Peter Gutmann 1998-2009					*
 *																			*
 ****************************************************************************/
@@ -10,9 +10,6 @@
    cryptographic operations that are provided by the custom hardware.  See
    the inline comments for what's needed at each stage */
 
-#ifdef USE_OLD_INTERFACE
-  #define PKC_CONTEXT	/* Needed for keyID access in direct-access version */
-#endif /* USE_OLD_INTERFACE */
 #if defined( INC_ALL )
   #include "crypt.h"
   #include "context.h"
@@ -25,11 +22,6 @@
 
 #ifdef USE_HARDWARE
 
-/* Define the following to use the old-style interface in which this module
-   is responsible for handling key ID information and whatnot */
-
-/* #define USE_OLD_INTERFACE */
-
 /****************************************************************************
 *																			*
 *								Personality Storage							*
@@ -39,8 +31,8 @@
 /* Each key, along with its associated identifiers, certificates, and other
    metadata, constitutes a personality.  cryptlib manages most of this 
    information externally, the only data that's stored here is the keying
-   information, in whatever format the cryptgraphic hardware uses, and a 
-   short binary unique-ID value, the storageID, that cryptlib uses to look
+   information in whatever format the cryptographic hardware uses and a 
+   short binary unique-ID value, the storageID, that cryptlib uses to look 
    up a personality.  
    
    Externally, cryptlib maintains a 160-bit value as a storageID but this 
@@ -48,7 +40,7 @@
    positive match.  In this case we use 64 bits of the storageID to look up
    a personality */
 
-#define STORAGEID_SIZE	8
+#define STORAGEID_SIZE		8
 
 /* Private key data will generally be stored in a hardware-specific internal
    format.  For demonstration purposes we assume that this consists of 
@@ -89,14 +81,6 @@ typedef struct {
 	BOOLEAN inUse;				/* Whether this personality is in use */
 	BYTE storageID[ STORAGEID_SIZE ];/* ID used to look up this personality */
 
-#ifdef USE_OLD_INTERFACE
-	/* Identification information */
-	CRYPT_ALGO_TYPE cryptAlgo;	/* Algorithm type */
-	char label[ CRYPT_MAX_TEXTSIZE ];
-	int labelSize;				/* Label for this personality */
-	BYTE keyID[ KEYID_SIZE ];	/* Key ID for this personality */
-#endif /* USE_OLD_INTERFACE */
-
 	/* Key data storage */
 	union {
 		BYTE convKeyInfo[ CRYPT_MAX_KEYSIZE ];
@@ -107,7 +91,9 @@ typedef struct {
 /* Storage for each personality.  This would typically be held either in 
    internal protected memory (for example battery-backed device-internal 
    SRAM) or encrypted external memory that's transparently accessed as 
-   standard memory */
+   standard memory.  The memory doesn't explicitly have to be zeroed since
+   cryptlib does this on device initialisation, it's done here merely as
+   a convenience during debugging */
 
 #define NO_PERSONALITIES	8
 
@@ -119,8 +105,8 @@ static PERSONALITY_INFO personalityInfo[ NO_PERSONALITIES ] = { 0 };
 *																			*
 ****************************************************************************/
 
-/* The following routines manage access to the personality storage, and 
-   represent an example implementation matching the example PERSONALITY_INFO
+/* The following routines manage access to the personality storage and 
+   represent an example implementation matching the sample PERSONALITY_INFO
    structure defined earlier.  The routines look up a personality given its
    storageID, find a free personality slot to use when instantiating a new
    personality (or in more high-level terms when loading or generating a
@@ -128,21 +114,15 @@ static PERSONALITY_INFO personalityInfo[ NO_PERSONALITIES ] = { 0 };
 
 /* Look up a personality given a key ID */
 
-static int lookupPersonality( const CRYPT_KEYID_TYPE keyIDtype,
-							  const void *keyID, const int keyIDlength,
+static int lookupPersonality( const void *keyID, const int keyIDlength,
 							  int *keyHandle )
 	{
 	const int storageIDlength = min( keyIDlength, STORAGEID_SIZE );
 	int i;
 
-#ifdef USE_OLD_INTERFACE
-	assert( keyIDtype == CRYPT_KEYID_NAME || \
-			keyIDtype == CRYPT_IKEYID_KEYID );
-#else
-	assert( keyIDtype == CRYPT_KEYID_NONE );
-#endif /* USE_OLD_INTERFACE */
 	assert( isReadPtr( keyID, keyIDlength ) );
 	assert( isWritePtr( keyHandle, sizeof( int ) ) );
+	assert( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
 
 	/* Clear return value */
 	*keyHandle = CRYPT_ERROR;
@@ -160,25 +140,6 @@ static int lookupPersonality( const CRYPT_KEYID_TYPE keyIDtype,
 			*keyHandle = i;
 			return( CRYPT_OK );
 			}
-#ifdef USE_OLD_INTERFACE
-		if( keyIDtype == CRYPT_KEYID_NAME )
-			{
-			if( !memcmp( personalityInfoPtr->keyID, keyID, keyIDlength ) )
-				{
-				*keyHandle = i;
-				return( CRYPT_OK );
-				}
-			}
-		else
-			{
-			if( personalityInfoPtr->labelSize == keyIDlength && \
-				!memcmp( personalityInfoPtr->label, keyID, keyIDlength ) )
-				{
-				*keyHandle = i;
-				return( CRYPT_OK );
-				}
-			}
-#endif /* USE_OLD_INTERFACE */
 		}
 	return( CRYPT_ERROR_NOTFOUND );
 	}
@@ -272,7 +233,7 @@ static void bignumToExternal( BYTE *outData, int *outDataLength,
 	*outDataLength = outIndex * sizeof( LONG );
 	}
 
-/* Dummy functions used to "encrypt" data and generate random data in the 
+/* Dummy functions used to "encrypt" data and generate "random" data in the 
    absence of any actual hardware functionality */
 
 static void dummyEncrypt( const PERSONALITY_INFO *personalityInfoPtr,
@@ -284,11 +245,11 @@ static void dummyEncrypt( const PERSONALITY_INFO *personalityInfoPtr,
 
 	assert( isReadPtr( personalityInfoPtr, sizeof( PERSONALITY_INFO ) ) );
 	assert( isWritePtr( data, length ) );
-	assert( cryptAlgo > CRYPT_ALGO_NONE && cryptAlgo < CRYPT_ALGO_LAST );
+	assert( cryptAlgo > CRYPT_ALGO_NONE && \
+			cryptAlgo < CRYPT_ALGO_LAST_EXTERNAL );
 	assert( cryptMode >= CRYPT_MODE_NONE && cryptMode < CRYPT_MODE_LAST );
 
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-		cryptAlgo < CRYPT_ALGO_LAST_PKC )
+	if( isPkcAlgo( cryptAlgo ) )
 		{
 		BYTE bignumData[ CRYPT_MAX_PKCSIZE + 8 ];
 		int bignumDataLength;
@@ -303,14 +264,16 @@ static void dummyEncrypt( const PERSONALITY_INFO *personalityInfoPtr,
 		}
 
 	/* We have to be a bit careful with the conventional encryption because 
-	   the self-tests encrypt in variable-length quantities to check for 
-	   things like chaining problems, which means that for stream ciphers we
-	   really can't do anything more than repeatedly XOR with the first key
-	   byte */
+	   the self-tests encrypt data in variable-length quantities to check 
+	   for things like chaining problems, which means that for stream 
+	   ciphers we really can't do anything more than repeatedly XOR with a
+	   fixed key byte */
 	if( cryptMode == CRYPT_MODE_CFB || cryptMode == CRYPT_MODE_OFB )
 		{
+		const int keyDataOffset = CRYPT_MODE_CFB ? 0 : 1;
+
 		for( i = 0; i < length; i++ )
-			data[ i ] ^= personalityInfoPtr->keyInfo.convKeyInfo[ 0 ];
+			data[ i ] ^= personalityInfoPtr->keyInfo.convKeyInfo[ keyDataOffset ];
 		}
 	else
 		{
@@ -329,11 +292,14 @@ static void dummyGenRandom( void *buffer, const int length )
 	static int counter = 0;
 	int hashSize, i;
 
+	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length < MAX_INTLENGTH );
+
 	/* Fill the buffer with random-ish data.  This gets a bit tricky because
 	   we need to fool the entropy tests so we can't just fill it with a 
 	   fixed (or even semi-random) pattern but have to set up a somewhat
 	   kludgy PRNG */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
 							 &hashSize );
 	memset( hashBuffer, counter, hashSize );
 	counter++;
@@ -359,6 +325,8 @@ static void dummyGenRandom( void *buffer, const int length )
 static int aesSelfTest( void )
 	{
 	/* Perform the self-test */
+	/* ... */
+
 	return( CRYPT_OK );
 	}
 
@@ -375,7 +343,9 @@ static int completeInitKeyAES( CONTEXT_INFO *contextInfoPtr,
 	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
 	assert( keySize >= MIN_KEYSIZE && keySize <= CRYPT_MAX_KEYSIZE );
 
-	/* This personality is now active and in use */
+	/* This personality is now active and in use, initialise the metadata 
+	   and set up the mapping from the crypto hardware personality to the
+	   context using the helper function in hardware.c */
 	status = setConvInfo( contextInfoPtr->objectHandle, keySize );
 	if( cryptStatusOK( status ) )
 		{
@@ -401,6 +371,7 @@ static int aesInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isReadPtr( key, keyLength ) );
+	assert( keyLength >= 1 && keyLength <= CRYPT_MAX_KEYSIZE );
 
 	/* Find a free personality slot to store the key */
 	status = findFreePersonality( &keyHandle );
@@ -420,7 +391,7 @@ static int aesGenerateKey( CONTEXT_INFO *contextInfoPtr,
 						   const int keySizeBits )
 	{
 	PERSONALITY_INFO *personalityInfoPtr;
-	const int length = bitsToBytes( keySizeBits );
+	const int keyLength = bitsToBytes( keySizeBits );
 	int keyHandle, status;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
@@ -434,14 +405,14 @@ static int aesGenerateKey( CONTEXT_INFO *contextInfoPtr,
 	personalityInfoPtr = &personalityInfo[ keyHandle ];
 
 	/* Use the hardware RNG to generate the encryption key */
-	status = hwGetRandom( personalityInfoPtr->keyInfo.convKeyInfo, length );
+	status = hwGetRandom( personalityInfoPtr->keyInfo.convKeyInfo, keyLength );
 	if( cryptStatusError( status ) )
 		{
 		deletePersonality( keyHandle );
 		return( status );
 		}
 	return( completeInitKeyAES( contextInfoPtr, personalityInfoPtr, 
-								keyHandle, bitsToBytes( keySizeBits ) ) );
+								keyHandle, keyLength ) );
 	}
 
 /* Encrypt/decrypt data */
@@ -454,6 +425,7 @@ static int aesEncryptECB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES, 
 				  CRYPT_MODE_ECB );
@@ -467,6 +439,7 @@ static int aesDecryptECB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES, 
 				  CRYPT_MODE_ECB );
@@ -481,6 +454,7 @@ static int aesEncryptCBC( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CBC );
@@ -494,6 +468,7 @@ static int aesDecryptCBC( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CBC );
@@ -508,6 +483,7 @@ static int aesEncryptCFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CFB );
@@ -521,6 +497,7 @@ static int aesDecryptCFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_CFB );
@@ -535,6 +512,7 @@ static int aesEncryptOFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_OFB );
@@ -548,6 +526,7 @@ static int aesDecryptOFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length <= MAX_INTLENGTH );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_AES,
 				  CRYPT_MODE_OFB );
@@ -565,6 +544,8 @@ static int aesDecryptOFB( CONTEXT_INFO *contextInfoPtr, void *buffer,
 static int rsaSelfTest( void )
 	{
 	/* Perform the self-test */
+	/* ... */
+
 	return( CRYPT_OK );
 	}
 
@@ -580,7 +561,9 @@ static int completeInitKeyRSA( CONTEXT_INFO *contextInfoPtr,
 	assert( isWritePtr( personalityInfoPtr, sizeof( PERSONALITY_INFO ) ) );
 	assert( keyHandle >= 0 && keyHandle < NO_PERSONALITIES );
 
-	/* This personality is now active and in use, remember the details */
+	/* This personality is now active and in use, set up the mapping from 
+	   the crypto hardware personality to the context using the helper 
+	   function in hardware.c */
 	status = setPersonalityMapping( contextInfoPtr, keyHandle,
 									personalityInfoPtr->storageID, 
 									STORAGEID_SIZE );
@@ -590,15 +573,6 @@ static int completeInitKeyRSA( CONTEXT_INFO *contextInfoPtr,
 		return( status );
 		}
 	personalityInfoPtr->inUse = TRUE;
-#ifdef USE_OLD_INTERFACE
-	personalityInfoPtr->cryptAlgo = CRYPT_ALGO_RSA;
-	memcpy( personalityInfoPtr->label, contextInfoPtr->label, 
-			contextInfoPtr->labelSize );
-	personalityInfoPtr->labelSize = contextInfoPtr->labelSize;
-	contextInfoPtr->deviceObject = keyHandle;
-	memcpy( personalityInfoPtr->keyID, contextInfoPtr->ctxPKC->keyID, 
-			KEYID_SIZE );
-#endif /* USE_OLD_INTERFACE */
 
 	return( CRYPT_OK );
 	}
@@ -719,6 +693,7 @@ static int rsaEncrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA, 
 				  CRYPT_MODE_NONE );
@@ -733,6 +708,7 @@ static int rsaDecrypt( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA, 
 				  CRYPT_MODE_NONE );
@@ -749,6 +725,7 @@ static int rsaSign( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA,
 				  CRYPT_MODE_NONE );
@@ -763,6 +740,7 @@ static int rsaSigCheck( CONTEXT_INFO *contextInfoPtr, void *buffer,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	dummyEncrypt( personalityInfoPtr, buffer, length, CRYPT_ALGO_RSA,
 				  CRYPT_MODE_NONE );
@@ -780,25 +758,31 @@ static int rsaSigCheck( CONTEXT_INFO *contextInfoPtr, void *buffer,
 static int shaSelfTest( void )
 	{
 	/* Perform the self-test */
+	/* ... */
+
 	return( CRYPT_OK );
 	}
 
 /* Return context subtype-specific information */
 
-static int shaGetInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					   const int intParam, int *result )
+static int shaGetInfo( const CAPABILITY_INFO_TYPE type,
+					   CONTEXT_INFO *contextInfoPtr, 
+					   void *data, const int length )
 	{
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
+		int *valuePtr = ( int * ) data;
+
 		/* Return the amount of hash-state storage needed by the SHA-1 
 		   routines.  This will be allocated by cryptlib and made available
 		   as contextInfoPtr->ctxHash->hashInfo */
-		*result = 0;
+		/* ... */
+		*valuePtr = 0;	/* Dummy version doesn't need storage */
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /* Hash data */
@@ -848,18 +832,19 @@ static const CAPABILITY_INFO capabilities[] = {
 	{ CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA", 3,
 		MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE,
 		rsaSelfTest, getDefaultInfo, cleanupHardwareContext, NULL, rsaInitKey, rsaGenerateKey, 
-		rsaEncrypt, rsaDecrypt, NULL, NULL, NULL, NULL, NULL, NULL, 
+		rsaEncrypt, rsaDecrypt, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
 		rsaSign, rsaSigCheck },
 
 	/* The AES capabilities */
 	{ CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 		bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ),
-		aesSelfTest, getDefaultInfo, cleanupHardwareContext, initKeyParams, aesInitKey, aesGenerateKey,
+		aesSelfTest, getDefaultInfo, cleanupHardwareContext, initGenericParams, aesInitKey, aesGenerateKey,
 		aesEncryptECB, aesDecryptECB, aesEncryptCBC, aesDecryptCBC,
-		aesEncryptCFB, aesDecryptCFB, aesEncryptOFB, aesDecryptOFB },
+		aesEncryptCFB, aesDecryptCFB, aesEncryptOFB, aesDecryptOFB,
+		NULL, NULL /* For GCM */ },
 
 	/* The SHA-1 capabilities */
-	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 5,
+	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA-1", 5,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
 		shaSelfTest, shaGetInfo, NULL, NULL, NULL, NULL, shaHash, shaHash },
 
@@ -887,6 +872,7 @@ int hwGetCapabilities( const CAPABILITY_INFO **capabilityInfo,
 int hwGetRandom( void *buffer, const int length )
 	{
 	assert( isWritePtr( buffer, length ) );
+	assert( length >= 1 && length < MAX_INTLENGTH );
 
 	/* Fill the buffer with random-ish data */
 	dummyGenRandom( buffer, length );
@@ -896,93 +882,19 @@ int hwGetRandom( void *buffer, const int length )
 
 /* Look up an item held in the hardware */
 
-int hwLookupItem( const CRYPT_KEYID_TYPE keyIDtype,
-				  const void *keyID, const int keyIDlength,
-				  int *keyHandle, HW_KEYINFO *keyInfo )
+int hwLookupItem( const void *keyID, const int keyIDlength, int *keyHandle )
 	{
-#ifndef USE_OLD_INTERFACE
-	assert( keyIDtype == CRYPT_KEYID_NONE );
 	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( keyInfo == NULL );
+	assert( keyIDlength >= 4 && keyIDlength <= KEYID_SIZE );
+	assert( isWritePtr( keyHandle, sizeof( int ) ) );
 
 	/* Clear return value */
 	*keyHandle = CRYPT_ERROR;
 
-	return( lookupPersonality( keyIDtype, keyID, keyIDlength, keyHandle ) );
-#else
-	PERSONALITY_INFO *personalityInfoPtr;
-	int status;
-
-	assert( keyIDtype == CRYPT_KEYID_NONE || \
-			keyIDtype == CRYPT_KEYID_NAME || \
-			keyIDtype == CRYPT_IKEYID_KEYID );
-	assert( isReadPtr( keyID, keyIDlength ) );
-	assert( keyInfo == NULL || \
-			isWritePtr( keyInfo, sizeof( HW_KEYINFO ) ) );
-
-	/* Clear return value */
-	*keyHandle = CRYPT_ERROR;
-	if( keyInfo != NULL )
-		memset( keyInfo, 0, sizeof( HW_KEYINFO ) );
-
-	/* Try and find the personality using the given keyID */
-	status = lookupPersonality( keyIDtype, keyID, keyIDlength, keyHandle );
-	if( cryptStatusError( status ) )
-		return( status );
-	personalityInfoPtr = &personalityInfo[ *keyHandle ];
-
-	/* Copy any further required information back to the caller */
-	if( keyInfo != NULL )
-		{
-		keyInfo->cryptAlgo = personalityInfoPtr->cryptAlgo;
-		memcpy( keyInfo->label, personalityInfoPtr->label, 
-				personalityInfoPtr->labelSize );
-		keyInfo->labelLength = personalityInfoPtr->labelSize;
-		switch( personalityInfoPtr->cryptAlgo )
-			{
-			case CRYPT_ALGO_RSA:
-				{
-				CRYPT_PKCINFO_RSA *destKeyInfo = \
-						&keyInfo->publicKeyInfo.rsaKeyInfo;
-				CRYPT_PKCINFO_RSA *srcKeyInfo = \
-						&personalityInfoPtr->keyInfo.rsaKeyInfo;
-
-				memcpy( destKeyInfo->n, srcKeyInfo->n, srcKeyInfo->nLen );
-				destKeyInfo->nLen = srcKeyInfo->nLen;
-				memcpy( destKeyInfo->e, srcKeyInfo->e, srcKeyInfo->eLen );
-				destKeyInfo->eLen = srcKeyInfo->eLen;
-				break;
-				}
-
-			case CRYPT_ALGO_DSA:
-				{
-				CRYPT_PKCINFO_DLP *destKeyInfo = \
-						&keyInfo->publicKeyInfo.dlpKeyInfo;
-				CRYPT_PKCINFO_DLP *srcKeyInfo = \
-						&personalityInfoPtr->keyInfo.dlpKeyInfo;
-
-				memcpy( destKeyInfo->p, srcKeyInfo->p, srcKeyInfo->pLen );
-				destKeyInfo->pLen = srcKeyInfo->pLen;
-				if( srcKeyInfo->qLen > 0 )
-					{
-					memcpy( destKeyInfo->q, srcKeyInfo->q, srcKeyInfo->qLen );
-					destKeyInfo->qLen = srcKeyInfo->qLen;
-					}
-				memcpy( destKeyInfo->g, srcKeyInfo->g, srcKeyInfo->gLen );
-				destKeyInfo->gLen = srcKeyInfo->gLen;
-				memcpy( destKeyInfo->y, srcKeyInfo->y, srcKeyInfo->yLen );
-				destKeyInfo->yLen = srcKeyInfo->yLen;
-				break;
-				}
-			}
-		}
-
-	return( CRYPT_OK );
-#endif /* USE_OLD_INTERFACE */
+	return( lookupPersonality( keyID, keyIDlength, keyHandle ) );
 	}
 
-/* Delete an item held in the hardware, and delete all items held in the 
-   hardware (used for an initialise/zeroise) */
+/* Delete an item held in the hardware */
 
 int hwDeleteItem( const int keyHandle )
 	{
@@ -992,7 +904,10 @@ int hwDeleteItem( const int keyHandle )
 	return( CRYPT_OK );
 	}
 
-int hwDeleteAllItems( void )
+/* Initialise/zeroise the hardware, which for this device just consists of 
+   clearing the hardware personalities */
+
+int hwInitialise( void )
 	{
 	int i;
 

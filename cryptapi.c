@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						 cryptlib External API Interface					*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2008					*
 *																			*
 ****************************************************************************/
 
@@ -125,7 +125,7 @@ static int cmdCreateObject( void *stateInfo, COMMAND_INFO *cmd )
 			assert( cmd->noArgs == 3 );
 			assert( cmd->noStrArgs == 0 );
 			if( ( cmd->arg[ 2 ] <= CRYPT_ALGO_NONE || \
-				  cmd->arg[ 2 ] >= CRYPT_ALGO_LAST ) && \
+				  cmd->arg[ 2 ] >= CRYPT_ALGO_LAST_EXTERNAL ) && \
 				cmd->arg[ 2 ] != CRYPT_USE_DEFAULT )
 				return( CRYPT_ARGERROR_NUM1 );
 			break;
@@ -391,11 +391,12 @@ static int cmdDecrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	status = krnlSendMessage( cmd->arg[ 0 ],
-							  ( cryptAlgo >= CRYPT_ALGO_FIRST_HASH ) ? \
+							  ( isHashAlgo( cryptAlgo ) || \
+							    isMacAlgo( cryptAlgo ) ) ? \
 								MESSAGE_CTX_HASH : MESSAGE_CTX_DECRYPT,
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
+	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
 		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
@@ -545,7 +546,7 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 				return( status );
 			}
 		}
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
+	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
 		{
 		/* For hash and MAC operations a length of zero is valid since this
 		   is an indication to wrap up the hash operation */
@@ -587,11 +588,12 @@ static int cmdEncrypt( void *stateInfo, COMMAND_INFO *cmd )
 		}
 
 	status = krnlSendMessage( cmd->arg[ 0 ],
-							  ( cryptAlgo >= CRYPT_ALGO_FIRST_HASH ) ? \
+							  ( isHashAlgo( cryptAlgo ) || \
+								isMacAlgo( cryptAlgo ) ) ? \
 								MESSAGE_CTX_HASH : MESSAGE_CTX_ENCRYPT,
 							  cmd->strArgLen[ 0 ] ? cmd->strArg[ 0 ] : "",
 							  cmd->strArgLen[ 0 ] );
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH )
+	if( isHashAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
 		{
 		/* There's no data to return since the hashing doesn't change it */
 		cmd->strArgLen[ 0 ] = 0;
@@ -963,7 +965,8 @@ static int cmdQueryCapability( void *stateInfo, COMMAND_INFO *cmd )
 	if( !isHandleRangeValid( cmd->arg[ 0 ] ) && \
 		cmd->arg[ 0 ] != SYSTEM_OBJECT_HANDLE )
 		return( CRYPT_ARGERROR_OBJECT );
-	if( cmd->arg[ 1 ] < CRYPT_ALGO_NONE || cmd->arg[ 1 ] >= CRYPT_ALGO_LAST )
+	if( cmd->arg[ 1 ] < CRYPT_ALGO_NONE || \
+		cmd->arg[ 1 ] >= CRYPT_ALGO_LAST_EXTERNAL )
 		return( CRYPT_ARGERROR_NUM1 );
 
 	/* Query the device for information on the given algorithm and mode.
@@ -1662,7 +1665,7 @@ static BOOLEAN needsTranslation( const CRYPT_ATTRIBUTE_TYPE attribute )
 		{
 		if( attribute < CRYPT_OPTION_LAST )
 			{
-			return( ( attribute == CRYPT_ATTRIBUTE_INT_ERRORMESSAGE || \
+			return( ( attribute == CRYPT_ATTRIBUTE_ERRORMESSAGE || \
 					  attribute == CRYPT_OPTION_INFO_DESCRIPTION || \
 					  attribute == CRYPT_OPTION_INFO_COPYRIGHT || \
 					  attribute == CRYPT_OPTION_KEYS_LDAP_OBJECTCLASS || \
@@ -1929,7 +1932,8 @@ C_RET cryptCreateContext( C_OUT CRYPT_CONTEXT C_PTR cryptContext,
 	*cryptContext = CRYPT_ERROR;
 	if( cryptUser != CRYPT_UNUSED && !isHandleRangeValid( cryptUser ) )
 		return( CRYPT_ERROR_PARAM2 );
-	if( ( cryptAlgo <= CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST ) && \
+	if( ( cryptAlgo <= CRYPT_ALGO_NONE || \
+		  cryptAlgo >= CRYPT_ALGO_LAST_EXTERNAL ) && \
 		cryptAlgo != CRYPT_USE_DEFAULT )
 		return( CRYPT_ERROR_PARAM3 );
 
@@ -1972,7 +1976,8 @@ C_RET cryptDeviceCreateContext( C_IN CRYPT_DEVICE device,
 	if( !isWritePtrConst( cryptContext, sizeof( CRYPT_CONTEXT ) ) )
 		return( CRYPT_ERROR_PARAM2 );
 	*cryptContext = CRYPT_ERROR;
-	if( ( cryptAlgo <= CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST ) && \
+	if( ( cryptAlgo <= CRYPT_ALGO_NONE || \
+		  cryptAlgo >= CRYPT_ALGO_LAST_EXTERNAL ) && \
 		cryptAlgo != CRYPT_USE_DEFAULT )
 		return( CRYPT_ERROR_PARAM3 );
 
@@ -2055,7 +2060,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 #else
 	const char *namePtr = name;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int nameLen = 0, status;
 
 	/* Perform basic error checking */
 	if( !isReadPtrConst( device, sizeof( CRYPT_DEVICE ) ) )
@@ -2082,6 +2087,14 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	if( namePtr != NULL )
+		{
+		nameLen = strStripWhitespace( &namePtr, namePtr, strlen( namePtr ) );
+		if( nameLen <= 0 )
+			return( CRYPT_ERROR_PARAM4 );
+		}
+
 	/* Make sure that the user has remembered to initialise cryptlib */
 	if( !initCalled )
 		return( CRYPT_ERROR_NOTINITED );
@@ -2092,8 +2105,7 @@ C_RET cryptDeviceOpen( C_OUT CRYPT_DEVICE C_PTR device,
 		cmd.arg[ 0 ] = cryptUser;
 	cmd.arg[ 2 ] = deviceType;
 	cmd.strArg[ 0 ] = ( void * ) namePtr;
-	if( namePtr != NULL )
-		cmd.strArgLen[ 0 ] = strlen( namePtr );
+	cmd.strArgLen[ 0 ] = nameLen;
 	status = DISPATCH_COMMAND( cmdCreateObject, cmd );
 	if( cryptStatusOK( status ) )
 		{
@@ -2165,7 +2177,7 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 #else
 	const char *namePtr = name;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int nameLen, status;
 
 	/* Perform basic error checking */
 	if( !isReadPtrConst( keyset, sizeof( CRYPT_KEYSET ) ) )
@@ -2192,6 +2204,11 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 		return( CRYPT_ERROR_PARAM4 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	nameLen = strStripWhitespace( &namePtr, namePtr, strlen( namePtr ) );
+	if( nameLen <= 0 )
+		return( CRYPT_ERROR_PARAM4 );
+
 	/* Make sure that the user has remembered to initialise cryptlib */
 	if( !initCalled )
 		return( CRYPT_ERROR_NOTINITED );
@@ -2203,7 +2220,7 @@ C_RET cryptKeysetOpen( C_OUT CRYPT_KEYSET C_PTR keyset,
 	cmd.arg[ 2 ] = keysetType;
 	cmd.arg[ 3 ] = options;
 	cmd.strArg[ 0 ] = ( void * ) namePtr;
-	cmd.strArgLen[ 0 ] = strlen( namePtr );
+	cmd.strArgLen[ 0 ] = nameLen;
 	status = DISPATCH_COMMAND( cmdCreateObject, cmd );
 	if( cryptStatusOK( status ) )
 		{
@@ -2274,7 +2291,7 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 #else
 	const char *namePtr = name, *passwordPtr = password;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int nameLen, passwordLen, status;
 
 	/* Perform basic error checking */
 	if( !isReadPtrConst( user, sizeof( CRYPT_USER ) ) )
@@ -2299,6 +2316,15 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 		return( CRYPT_ERROR_PARAM3 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	nameLen = strStripWhitespace( &namePtr, namePtr, strlen( namePtr ) );
+	if( nameLen <= 0 )
+		return( CRYPT_ERROR_PARAM2 );
+	passwordLen = strStripWhitespace( &passwordPtr, passwordPtr, 
+									  strlen( passwordPtr ) );
+	if( passwordLen <= 0 )
+		return( CRYPT_ERROR_PARAM3 );
+
 	/* Make sure that the user has remembered to initialise cryptlib */
 	if( !initCalled )
 		return( CRYPT_ERROR_NOTINITED );
@@ -2306,9 +2332,9 @@ C_RET cryptLogin( C_OUT CRYPT_USER C_PTR user,
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.strArg[ 0 ] = ( void * ) namePtr;
-	cmd.strArgLen[ 0 ] = strlen( namePtr );
+	cmd.strArgLen[ 0 ] = nameLen;
 	cmd.strArg[ 1 ] = ( void * ) passwordPtr;
-	cmd.strArgLen[ 1 ] = strlen( passwordPtr );
+	cmd.strArgLen[ 1 ] = passwordLen;
 	status = DISPATCH_COMMAND( cmdCreateObject, cmd );
 	if( cryptStatusOK( status ) )
 		{
@@ -2511,16 +2537,6 @@ C_RET cryptSetAttribute( C_IN CRYPT_HANDLE cryptHandle,
 		cmd.arg[ 0 ] = cryptHandle;
 	cmd.arg[ 1 ] = attributeType;
 	cmd.arg[ 2 ] = value;
-#if !defined( NDEBUG )	/* Don't transparently rewrite in debug mode */
-	if( ( attributeType == CRYPT_CERTINFO_SUBJECTNAME || \
-		  attributeType == CRYPT_CERTINFO_ISSUERNAME ) && \
-		value == CRYPT_UNUSED )
-		{
-		/* Rewrite the pre-3.3.3 DN-selection method to the current form */
-		cmd.arg[ 1 ] = CRYPT_ATTRIBUTE_CURRENT;
-		cmd.arg[ 2 ] = attributeType;
-		}
-#endif /* Debug mode */
 	status = DISPATCH_COMMAND( cmdSetAttribute, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
@@ -2582,16 +2598,17 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
-#if defined( __WINDOWS__ ) && defined( __WIN32__ )
-	/* In Vista/VS 2008 Microsoft switched time_t from 32 to 64 bits, a
-	   theoretically commendable move but one that makes it impossible to
-	   create a single DLL that works with code compiled with different
-	   versions of Visual Studio or with different languages.  To get 
-	   around this we try and detect a mismatch of time_t types and 
-	   transparently convert them.  We first check that it's within the 
-	   range where it could be a time attribute to avoid having to iterate 
-	   through the whole list on every attribute-set operation, and only 
-	   then check for an exact match */
+#if defined( __WINDOWS__ ) && defined( __WIN32__ ) && !defined( __WIN64__ )
+	/* In Vista/VS 2008 Microsoft switched the Win32 time_t from 32 to 64 
+	   bits, a theoretically commendable move but one that makes it 
+	   impossible to create a single DLL that works with code compiled with 
+	   different versions of Visual Studio or with different languages (it's
+	   not a problem with Win64 since the time_t there is always 64 bits).  
+	   To get around the Win32 issue we try and detect a mismatch of time_t 
+	   types and transparently convert them.  We first check that it's 
+	   within the range where it could be a time attribute to avoid having 
+	   to iterate through the whole list on every attribute-set operation, 
+	   and only then check for an exact match */
 	if( attributeType >= CRYPT_CERTINFO_VALIDFROM && \
 		attributeType <= CRYPT_CERTINFO_CMS_MLEXP_TIME )
 		{
@@ -2610,8 +2627,9 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 			length != sizeof( time_t ) )
 			{
 			void *timeValuePtr;
+			time_t time64, time32;
 
-			/* It looks like we have a time_t size mismatch, try and correct 
+			/* It looks like we have a time_t size mismatch, try and correct
 			   it */
 			if( length != 4 && length != 8 )
 				{
@@ -2620,19 +2638,19 @@ C_RET cryptSetAttributeString( C_IN CRYPT_HANDLE cryptHandle,
 				}
 			if( length == 4 )
 				{
-				/* time_t is 64 bits and we've been given 32, convert to a 
+				/* time_t is 64 bits and we've been given 32, convert to a
 				   64-bit value */
-				time_t time64 = *( ( unsigned int * ) value );
+				time64 = *( ( unsigned int * ) value );
 				timeValuePtr = &time64;
 				}
 			else
 				{
 				/* time_t is 32 bits and we've been given 64, convert to a
 				   32-bit value */
-				time_t time32 = *( ( time_t * ) value );
-				__int64 timeValue = *( ( __int64 * ) value );
+				const __int64 timeValue = *( ( __int64 * ) value );
 				if( timeValue < MIN_TIME_VALUE || timeValue >= ULONG_MAX )
 					return( CRYPT_ERROR_PARAM3 );
+				time32 = *( ( time_t * ) value );
 				timeValuePtr = &time32;
 				}
 			memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
@@ -2724,45 +2742,6 @@ C_RET cryptGenerateKey( C_IN CRYPT_CONTEXT cryptContext )
 		return( CRYPT_OK );
 	return( mapError( errorMap, FAILSAFE_ARRAYSIZE( errorMap, ERRORMAP ), 
 					  status ) );
-	}
-
-/* Asynchronous key generate operations (deprecated September 2007) */
-
-C_RET cryptGenerateKeyAsync( C_IN CRYPT_CONTEXT cryptContext )
-	{
-	/* Perform basic client-side error checking */
-	if( !isHandleRangeValid( cryptContext ) )
-		return( CRYPT_ERROR_PARAM1 );
-
-	/* Dispatch the command */
-	return( cryptGenerateKey( cryptContext ) );
-	}
-
-/* Query the status of an asynchronous operation.  This has more or less the
-   same effect as calling any other operation (both will return
-   CRYPT_ERROR_TIMEOUT if the context is busy), but this is a pure query
-   function with no other side effects (deprecated September 2007) */
-
-C_RET cryptAsyncQuery( C_IN CRYPT_CONTEXT cryptContext )
-	{
-	/* Perform basic client-side error checking */
-	if( !isHandleRangeValid( cryptContext ) )
-		return( CRYPT_ERROR_PARAM1 );
-
-	/* Dispatch the command */
-	return( CRYPT_OK );
-	}
-
-/* Cancel an asynchronous operation on a context */
-
-C_RET cryptAsyncCancel( C_IN CRYPT_CONTEXT cryptContext )
-	{
-	/* Perform basic client-side error checking */
-	if( !isHandleRangeValid( cryptContext ) )
-		return( CRYPT_ERROR_PARAM1 );
-
-	/* Dispatch the command */
-	return( CRYPT_OK );
 	}
 
 /* Encrypt/decrypt data */
@@ -3081,7 +3060,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 	const char *keyIDPtr = keyID;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 	BOOLEAN isCert = FALSE;
-	int status;
+	int keyIDlen = 0, status;
 
 	/* Perform basic client-side error checking.  Because of keyset queries
 	   we have to accept CRYPT_KEYID_NONE and a null keyID as well as
@@ -3130,6 +3109,14 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	if( keyIDPtr != NULL )
+		{
+		keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+		if( keyIDlen <= 0 )
+			return( CRYPT_ERROR_PARAM5 );
+		}
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
@@ -3152,8 +3139,7 @@ C_RET cryptCAGetItem( C_IN CRYPT_KEYSET keyset,
 		}
 	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	if( keyIDPtr != NULL )
-		cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen ;
 	status = DISPATCH_COMMAND( cmdGetKey, cmd );
 	if( cryptStatusOK( status ) )
 		{
@@ -3179,7 +3165,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 #else
 	const char *keyIDPtr = keyID;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int keyIDlen, status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
@@ -3205,6 +3191,11 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 		return( CRYPT_ERROR_PARAM4 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+	if( keyIDlen <= 0 )
+		return( CRYPT_ERROR_PARAM4 );
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
@@ -3221,7 +3212,7 @@ C_RET cryptCADeleteItem( C_IN CRYPT_KEYSET keyset,
 					   CRYPT_CERTTYPE_PKIUSER : CRYPT_CERTTYPE_REQUEST_CERT;
 		}
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen;
 	status = DISPATCH_COMMAND( cmdDeleteKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
@@ -3415,7 +3406,7 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 #else
 	const char *keyIDPtr = keyID;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int keyIDlen = 0, status;
 
 	/* Perform basic client-side error checking.  Because of keyset queries
 	   we have to accept CRYPT_KEYID_NONE and a null keyID as well as
@@ -3452,14 +3443,21 @@ C_RET cryptGetPublicKey( C_IN CRYPT_KEYSET keyset,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	if( keyIDPtr != NULL )
+		{
+		keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+		if( keyIDlen <= 0 )
+			return( CRYPT_ERROR_PARAM4 );
+		}
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = KEYMGMT_ITEM_PUBLICKEY;
 	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	if( keyIDPtr != NULL )
-		cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen;
 	status = DISPATCH_COMMAND( cmdGetKey, cmd );
 	if( cryptStatusOK( status ) )
 		{
@@ -3486,7 +3484,7 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 #else
 	const char *keyIDPtr = keyID, *passwordPtr = password;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int keyIDlen, passwordLen = 0, status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
@@ -3522,16 +3520,27 @@ C_RET cryptGetPrivateKey( C_IN CRYPT_HANDLE keyset,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+	if( keyIDlen <= 0 )
+		return( CRYPT_ERROR_PARAM4 );
+	if( passwordPtr != NULL )
+		{
+		passwordLen = strStripWhitespace( &passwordPtr, passwordPtr, 
+										  strlen( passwordPtr ) );
+		if( passwordLen <= 0 )
+			return( CRYPT_ERROR_PARAM5 );
+		}
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = KEYMGMT_ITEM_PRIVATEKEY;
 	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen;
 	cmd.strArg[ 1 ] = ( void * ) passwordPtr;
-	if( passwordPtr != NULL )
-		cmd.strArgLen[ 1 ] = strlen( passwordPtr );
+	cmd.strArgLen[ 1 ] = passwordLen;
 	status = DISPATCH_COMMAND( cmdGetKey, cmd );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	zeroise( passwordBuffer, MAX_ATTRIBUTE_SIZE + 1 );
@@ -3561,7 +3570,7 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 #else
 	const char *keyIDPtr = keyID, *passwordPtr = password;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int keyIDlen, passwordLen = 0, status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
@@ -3597,16 +3606,27 @@ C_RET cryptGetKey( C_IN CRYPT_HANDLE keyset,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+	if( keyIDlen <= 0 )
+		return( CRYPT_ERROR_PARAM4 );
+	if( passwordPtr != NULL )
+		{
+		passwordLen = strStripWhitespace( &passwordPtr, passwordPtr, 
+										  strlen( passwordPtr ) );
+		if( passwordLen <= 0 )
+			return( CRYPT_ERROR_PARAM5 );
+		}
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = KEYMGMT_ITEM_SECRETKEY;
 	cmd.arg[ 2 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen;
 	cmd.strArg[ 1 ] = ( void * ) passwordPtr;
-	if( passwordPtr != NULL )
-		cmd.strArgLen[ 1 ] = strlen( passwordPtr );
+	cmd.strArgLen[ 1 ] = passwordLen;
 	status = DISPATCH_COMMAND( cmdGetKey, cmd );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	zeroise( passwordBuffer, MAX_ATTRIBUTE_SIZE + 1 );
@@ -3663,7 +3683,7 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 #else
 	const char *passwordPtr = password;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int passwordLen = 0, status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
@@ -3688,13 +3708,21 @@ C_RET cryptAddPrivateKey( C_IN CRYPT_KEYSET keyset,
 		}
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	if( passwordPtr != NULL )
+		{
+		passwordLen = strStripWhitespace( &passwordPtr, passwordPtr, 
+										  strlen( passwordPtr ) );
+		if( passwordLen <= 0 )
+			return( CRYPT_ERROR_PARAM3 );
+		}
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = cryptKey;
 	cmd.strArg[ 0 ] = ( void * ) passwordPtr;
-	if( passwordPtr != NULL )
-		cmd.strArgLen[ 0 ] = strlen( passwordPtr );
+	cmd.strArgLen[ 0 ] = passwordLen;
 	status = DISPATCH_COMMAND( cmdSetKey, cmd );
 #if defined( EBCDIC_CHARS ) || defined( UNICODE_CHARS )
 	zeroise( passwordBuffer, MAX_ATTRIBUTE_SIZE + 1 );
@@ -3721,7 +3749,7 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 #else
 	const char *keyIDPtr = keyID;
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
-	int status;
+	int keyIDlen, status;
 
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( keyset ) )
@@ -3741,12 +3769,17 @@ C_RET cryptDeleteKey( C_IN CRYPT_KEYSET keyset,
 		return( CRYPT_ERROR_PARAM3 );
 #endif /* EBCDIC_CHARS || UNICODE_CHARS */
 
+	/* Check and clean up any string parameters if required */
+	keyIDlen = strStripWhitespace( &keyIDPtr, keyIDPtr, strlen( keyIDPtr ) );
+	if( keyIDlen <= 0 )
+		return( CRYPT_ERROR_PARAM3 );
+
 	/* Dispatch the command */
 	memcpy( &cmd, &cmdTemplate, sizeof( COMMAND_INFO ) );
 	cmd.arg[ 0 ] = keyset;
 	cmd.arg[ 1 ] = keyIDtype;
 	cmd.strArg[ 0 ] = ( void * ) keyIDPtr;
-	cmd.strArgLen[ 0 ] = strlen( keyIDPtr );
+	cmd.strArgLen[ 0 ] = keyIDlen;
 	status = DISPATCH_COMMAND( cmdDeleteKey, cmd );
 	if( cryptStatusOK( status ) )
 		return( CRYPT_OK );
@@ -3780,7 +3813,8 @@ C_RET cryptQueryCapability( C_IN CRYPT_ALGO_TYPE cryptAlgo,
 	int status;
 
 	/* Perform basic client-side error checking */
-	if( cryptAlgo < CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST )
+	if( cryptAlgo < CRYPT_ALGO_NONE || \
+		cryptAlgo >= CRYPT_ALGO_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM1 );
 	if( cryptQueryInfo != NULL )
 		{
@@ -3840,7 +3874,8 @@ C_RET cryptDeviceQueryCapability( C_IN CRYPT_DEVICE device,
 	/* Perform basic client-side error checking */
 	if( !isHandleRangeValid( device ) )
 		return( CRYPT_ERROR_PARAM1 );
-	if( cryptAlgo < CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST )
+	if( cryptAlgo < CRYPT_ALGO_NONE || \
+		cryptAlgo >= CRYPT_ALGO_LAST_EXTERNAL )
 		return( CRYPT_ERROR_PARAM2 );
 	if( cryptQueryInfo != NULL )
 		{
@@ -3902,6 +3937,10 @@ C_RET cryptAddRandom( C_IN void C_PTR randomData, C_IN int randomDataLength )
 		if( !isReadPtr( randomData, randomDataLength ) )
 			return( CRYPT_ERROR_PARAM1 );
 		}
+
+	/* Make sure that the user has remembered to initialise cryptlib */
+	if( !initCalled )
+		return( CRYPT_ERROR_NOTINITED );
 
 	/* If we're adding data to the pool, add it now and exit.  Since the data
 	   is of unknown provenance (and empirical evidence indicates that it

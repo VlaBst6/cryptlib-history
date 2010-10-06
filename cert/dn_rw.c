@@ -12,8 +12,10 @@
 #else
   #include "cert/cert.h"
   #include "cert/dn.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -23,6 +25,67 @@
 
 /* Parse an AVA.  This determines the AVA type and leaves the stream pointer
    at the start of the data value */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readAVABitstring( INOUT STREAM *stream, 
+							 OUT_LENGTH_SHORT_Z int *length, 
+							 OUT_TAG_ENCODED_Z int *stringTag )
+	{
+	long streamPos;
+	int bitStringLength, innerTag, innerLength = DUMMY_INIT, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( length, sizeof( int ) ) );
+	assert( isWritePtr( stringTag, sizeof( int ) ) );
+
+	/* Bitstrings are used for uniqueIdentifiers, however these usually 
+	   encapsulate something else:
+
+		BIT STRING {
+			IA5String 'xxxxx'
+			}
+
+	   so we try and dig one level deeper to find the encapsulated string if 
+	   there is one.  This gets a bit complicated because we have to 
+	   speculatively try and decode the inner content and if that fails 
+	   assume that it's raw bitstring data.  First we read the bitstring 
+	   wrapper and remember where the bitstring data starts */
+	status = readBitStringHole( stream, &bitStringLength, 2, DEFAULT_TAG );
+	if( cryptStatusError( status ) )
+		return( status );
+	streamPos = stell( stream );
+
+	/* Then we try and read any inner content */
+	status = innerTag = peekTag( stream );
+	if( !cryptStatusError( status ) )
+		status = readGenericHole( stream, &innerLength, 1, innerTag );
+	if( !cryptStatusError( status ) && \
+		bitStringLength == sizeofObject( innerLength ) )
+		{
+		/* There was inner content present, treat it as the actual type and 
+		   value of the bitstring.  This assumes that the inner content is
+		   a string data type, which always seems to be the case (in any 
+		   event it's not certain what we should be returning to the user if
+		   we find, for example, a SEQUENCE with further encapsulated 
+		   content at this point) */
+		*stringTag = innerTag;
+		*length = innerLength;
+
+		return( CRYPT_OK );
+		}
+
+	/* We couldn't identify any (obvious) inner content, it must be raw
+	   bitstring data.  Unfortunately we have no idea what format this is
+	   in, it could in fact really be raw binary data but never actually 
+	   seems to be this, it's usually ASCII text so we mark it as such and 
+	   let the string-read routines sort it out */
+	sClearError( stream );
+	sseek( stream, streamPos );
+	*stringTag = BER_STRING_IA5;
+	*length = bitStringLength;
+
+	return( CRYPT_OK );
+	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
 static int readAVA( INOUT STREAM *stream, 
@@ -71,15 +134,7 @@ static int readAVA( INOUT STREAM *stream,
 	if( cryptStatusError( tag ) )
 		return( tag );
 	if( tag == BER_BITSTRING )
-		{
-		/* Bitstrings are used for uniqueIdentifiers, however these usually
-		   encapsulate something else so we dig one level deeper to find the
-		   encapsulated string */
-		readBitStringHole( stream, NULL, 2, DEFAULT_TAG );
-		tag = peekTag( stream );
-		if( cryptStatusError( tag ) )
-			return( tag );
-		}
+		return( readAVABitstring( stream, length, stringTag ) );
 	*stringTag = tag;
 	return( readGenericHole( stream, length, 0, tag ) );
 	}
@@ -118,6 +173,7 @@ static int readRDNcomponent( INOUT STREAM *stream,
 		status = sSkip( stream, valueLength );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( value != NULL );
 
 	/* If there's room for another AVA, mark this one as being continued.  The
 	   +10 value is the minimum length for an AVA: SEQUENCE { OID, value } 
@@ -181,7 +237,7 @@ static int readDNComponent( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readDN( INOUT STREAM *stream, 
-			OUT_PTR DN_PTR **dnComponentListPtrPtr )
+			OUT_OPT_PTR DN_PTR **dnComponentListPtrPtr )
 	{
 	DN_COMPONENT *dnComponentListPtr = NULL;
 	int length, iterationCount, status;
@@ -298,6 +354,12 @@ static int preEncodeDN( INOUT DN_COMPONENT *dnComponentPtr,
 
 		/* Calculate the overall size of the RDN */
 		size += ( int ) sizeofObject( rdnStartPtr->encodedRDNdataSize );
+
+		/* If the inner loop terminated because it reached the end of the DN 
+		   then we need to explicitly exit the outer loop as well before it
+		   tries to follow the 'next' link in the dnComponentPtr */
+		if( dnComponentPtr == NULL )
+			break;
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	*length = size;
@@ -414,6 +476,10 @@ int writeDN( INOUT STREAM *stream,
    intending to use it in */
 
 #ifdef USE_CERT_DNSTRING 
+
+#if defined( _MSC_VER )
+  #pragma message( "  Building with string-form DNs enabled." )
+#endif /* Warn with VC++ */
 
 /* Check whether a string can be represented as a textual DN string */
 
@@ -568,11 +634,11 @@ static BOOLEAN parseDNString( INOUT_ARRAY( MAX_DNSTRING_COMPONENTS ) \
 
 		/* Strip leading and trailing whitespace on the label and text */
 		dnStringInfoPtr->labelLen = \
-				strStripWhitespace( ( char ** ) &dnStringInfoPtr->label,
+				strStripWhitespace( ( const char ** ) &dnStringInfoPtr->label,
 									dnStringInfoPtr->label, 
 									dnStringInfoPtr->labelLen );
 		dnStringInfoPtr->textLen = \
-				strStripWhitespace( ( char ** ) &dnStringInfoPtr->text,
+				strStripWhitespace( ( const char ** ) &dnStringInfoPtr->text,
 									dnStringInfoPtr->text, 
 									dnStringInfoPtr->textLen );
 		if( dnStringInfoPtr->labelLen < 1 || \
@@ -871,3 +937,4 @@ int writeDNstring( INOUT STREAM *stream,
 	return( CRYPT_OK );
 	}
 #endif /* USE_CERT_DNSTRING */
+#endif /* USE_CERTIFICATES */

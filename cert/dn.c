@@ -12,8 +12,10 @@
 #else
   #include "cert/cert.h"
   #include "cert/dn.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -175,7 +177,7 @@ static const DN_COMPONENT_INFO FAR_BSS certInfoOIDs[] = {
 #define xZ	( 1 << 25 )
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-static BOOLEAN checkCountryCode( IN_BUFFER( 2 ) const BYTE *countryCode )
+static BOOLEAN checkCountryCode( IN_BUFFER_C( 2 ) const BYTE *countryCode )
 	{
 	static const long countryCodes[] = {	/* ISO 3166 code table */
 	/*	 A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z */
@@ -252,6 +254,44 @@ static int dnSortOrder( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 *								Utility Functions							*
 *																			*
 ****************************************************************************/
+
+/* Check whether a DN component is valid.  This is used because outside this 
+   module DN components are referenced via opaque pointers, and the 
+   following provides a sanity-check in case the wrong ponter value is
+   passed in */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+static BOOLEAN isDNComponentValid( const DN_COMPONENT *dnComponent )
+	{
+	assert( isReadPtr( dnComponent, sizeof( DN_COMPONENT ) ) );
+
+	/* Check that various fields with fixed-range values are within bounds.
+	   This isn't an infallible check, but the chances of an arbitrary 
+	   pointer being that's passed to us passing this check is pretty
+	   miniscule */
+	if( dnComponent->type < 1 || \
+		( dnComponent->type > 50 && \
+		  dnComponent->type < CRYPT_CERTINFO_FIRST_DN ) ||
+		dnComponent->type > CRYPT_CERTINFO_LAST_DN )
+		return( FALSE );
+	if( dnComponent->typeInfo == NULL )
+		return( FALSE );
+	if( dnComponent->flags < DN_FLAG_NONE || 
+		dnComponent->flags > DN_FLAG_MAX )
+		return( FALSE );
+	if( dnComponent->valueLength < 0 || \
+		dnComponent->valueLength > MAX_INTLENGTH_SHORT )
+		return( FALSE );
+	if( dnComponent->asn1EncodedStringType < 0 || \
+		dnComponent->asn1EncodedStringType > 0xFF || \
+		dnComponent->encodedRDNdataSize < 0 || \
+		dnComponent->encodedRDNdataSize > MAX_INTLENGTH_SHORT || \
+		dnComponent->encodedAVAdataSize < 0 || \
+		dnComponent->encodedAVAdataSize > MAX_INTLENGTH_SHORT )
+		return( FALSE );
+	
+	return( TRUE );
+	}
 
 /* Find a DN component in a DN component list by type and by OID.  This also
    takes a count parameter to return the n'th occurrence of a DN component.
@@ -437,7 +477,7 @@ CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
 static int findDNInsertPoint( const DN_COMPONENT *listHeadPtr,
 							  IN_INT const int type,
 							  const BOOLEAN fromExternalSource,
-							  OUT_PTR DN_COMPONENT **insertPointPtrPtr,
+							  OUT_OPT_PTR DN_COMPONENT **insertPointPtrPtr,
 							  OUT_ENUM_OPT( CRYPT_ERRTYPE_TYPE ) \
 									CRYPT_ERRTYPE_TYPE *errorType )	
 	{
@@ -535,6 +575,7 @@ int insertDNstring( INOUT DN_COMPONENT **dnComponentListPtrPtr,
 	assert( isReadPtr( value, valueLength ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 
+	REQUIRES( listHeadPtr == NULL || isDNComponentValid( listHeadPtr ) ); 
 	REQUIRES( ( type >= CRYPT_CERTINFO_FIRST_DN && \
 				type <= CRYPT_CERTINFO_LAST_DN ) || \
 			  ( type > 0 && type < 50 ) );
@@ -726,14 +767,19 @@ int deleteDNComponent( INOUT_PTR DN_PTR **dnComponentListPtrPtr,
 			isReadPtr( value, valueLength ) );
 			/* We may be doing the delete purely by type */
 
+	REQUIRES( listHeadPtr == NULL || isDNComponentValid( listHeadPtr ) ); 
 	REQUIRES( type > CRYPT_CERTINFO_FIRST && type < CRYPT_CERTINFO_LAST );
 	REQUIRES( ( value == NULL && valueLength == 0 ) || \
 			  ( value != NULL && \
 				valueLength >= 0 && valueLength < MAX_INTLENGTH_SHORT ) );
 
-	/* If the DN is locked against modification we can't make any further
-	   updates */
-	if( listHeadPtr != NULL && ( listHeadPtr->flags & DN_FLAG_LOCKED ) )
+	/* Trying to delete from an empty DN always fails */
+	if( listHeadPtr == NULL )
+		return( CRYPT_ERROR_NOTFOUND );
+
+	/* If the DN is locked against modification then we can't make any 
+	   further updates */
+	if( listHeadPtr->flags & DN_FLAG_LOCKED )
 		return( CRYPT_ERROR_PERMISSION );
 
 	/* Find the component in the list and delete it */
@@ -797,7 +843,7 @@ void deleteDN( DN_PTR **dnComponentListPtrPtr )
 /* Get DN component information */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int getDNComponentInfo( INOUT_PTR const DN_PTR *dnComponentList,
+int getDNComponentInfo( INOUT const DN_PTR *dnComponentList,
 						OUT_ATTRIBUTE_Z CRYPT_ATTRIBUTE_TYPE *type,
 						OUT_BOOL BOOLEAN *dnContinues )
 	{
@@ -806,6 +852,8 @@ int getDNComponentInfo( INOUT_PTR const DN_PTR *dnComponentList,
 	assert( isReadPtr( dnComponentList, sizeof( DN_COMPONENT ) ) );
 	assert( isWritePtr( type, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	assert( isWritePtr( dnContinues, sizeof( BOOLEAN ) ) );
+
+	REQUIRES( isDNComponentValid( dnComponent ) ); 
 
 	/* Clear return values */
 	*type = CRYPT_ATTRIBUTE_NONE;
@@ -844,6 +892,7 @@ int getDNComponentValue( const DN_PTR *dnComponentList,
 			( isWritePtr( value, valueMaxLength ) ) );
 	assert( isWritePtr( valueLength, sizeof( int ) ) );
 
+	REQUIRES( isDNComponentValid( dnComponentList ) ); 
 	REQUIRES( type >= CRYPT_CERTINFO_FIRST_DN && \
 			  type <= CRYPT_CERTINFO_LAST_DN );
 	REQUIRES( count >= 0 && count <= 100 );
@@ -889,6 +938,10 @@ BOOLEAN compareDN( IN_OPT const DN_PTR *dnComponentList1,
 
 	REQUIRES_B( !( dn1substring == FALSE && \
 				   mismatchPointPtrPtr != NULL ) );
+	REQUIRES_B( dnComponentList1 == NULL || \
+				isDNComponentValid( dnComponentList1 ) ); 
+	REQUIRES_B( dnComponentList2 == NULL || \
+				isDNComponentValid( dnComponentList2 ) ); 
 
 	/* Clear return value */
 	if( mismatchPointPtrPtr )
@@ -949,7 +1002,7 @@ BOOLEAN compareDN( IN_OPT const DN_PTR *dnComponentList1,
 /* Copy a DN */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int copyDN( OUT_PTR DN_PTR **dnDest, IN_OPT const DN_PTR *dnSrc )
+int copyDN( OUT_OPT_PTR DN_PTR **dnDest, IN_OPT const DN_PTR *dnSrc )
 	{
 	const DN_COMPONENT *srcPtr;
 	DN_COMPONENT **dnDestPtrPtr = ( DN_COMPONENT ** ) dnDest;
@@ -958,6 +1011,8 @@ int copyDN( OUT_PTR DN_PTR **dnDest, IN_OPT const DN_PTR *dnSrc )
 
 	assert( isWritePtr( dnDest, sizeof( DN_COMPONENT * ) ) );
 	assert( dnSrc == NULL || isReadPtr( dnSrc, sizeof( DN_COMPONENT * ) ) );
+
+	REQUIRES( dnSrc == NULL || isDNComponentValid( dnSrc ) ); 
 
 	/* Clear return value */
 	*dnDest = NULL;
@@ -1024,6 +1079,8 @@ int checkDN( IN_OPT const DN_PTR *dnComponentList,
 
 	REQUIRES( checkFlags > CHECKDN_FLAG_NONE && \
 			  checkFlags <= CHECKDN_FLAG_MAX );
+	REQUIRES( dnComponentList == NULL || \
+			  isDNComponentValid( dnComponentList ) ); 
 
 	/* Perform a special-case check for a null DN */
 	if( dnComponentList == NULL )
@@ -1183,3 +1240,4 @@ int convertEmail( INOUT CERT_INFO *certInfoPtr,
 
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

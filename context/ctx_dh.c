@@ -49,6 +49,68 @@
 *																			*
 ****************************************************************************/
 
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+	{
+	CONTEXT_INFO checkContextInfo;
+	PKC_INFO *sourcePkcInfo = contextInfoPtr->ctxPKC;
+	PKC_INFO contextData, *pkcInfo = &contextData;
+	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
+	const CAPABILITY_INFO *capabilityInfoPtr;
+	int bnStatus = BN_STATUS, status;
+
+	/* The DH pairwise check is a bit more complex than the one for the
+	   other algorithms because there's no matched public/private key pair,
+	   so we have to load a second DH key to use for key agreement with
+	   the first one */
+	status = staticInitContext( &checkContextInfo, CONTEXT_PKC, 
+								getDHCapability(), &contextData, 
+								sizeof( PKC_INFO ), NULL );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	CKPTR( BN_copy( &pkcInfo->dlpParam_p, &sourcePkcInfo->dlpParam_p ) );
+	CKPTR( BN_copy( &pkcInfo->dlpParam_g, &sourcePkcInfo->dlpParam_g ) );
+	CKPTR( BN_copy( &pkcInfo->dlpParam_q, &sourcePkcInfo->dlpParam_q ) );
+	CKPTR( BN_copy( &pkcInfo->dlpParam_y, &sourcePkcInfo->dlpParam_y ) );
+	CKPTR( BN_copy( &pkcInfo->dlpParam_x, &sourcePkcInfo->dlpParam_x ) );
+	if( bnStatusError( bnStatus ) )
+		{
+		staticDestroyContext( &checkContextInfo );
+		return( getBnStatus( bnStatus ) );
+		}
+
+	/* Perform the pairwise test using the check key */
+	capabilityInfoPtr = checkContextInfo.capabilityInfo;
+	memset( &keyAgreeParams1, 0, sizeof( KEYAGREE_PARAMS ) );
+	memset( &keyAgreeParams2, 0, sizeof( KEYAGREE_PARAMS ) );
+	status = capabilityInfoPtr->initKeyFunction( &checkContextInfo, NULL, 0 );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
+					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->encryptFunction( &checkContextInfo,
+					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
+					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->decryptFunction( &checkContextInfo,
+					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusError( status ) || \
+		keyAgreeParams1.wrappedKeyLen != keyAgreeParams2.wrappedKeyLen || \
+		memcmp( keyAgreeParams1.wrappedKey, keyAgreeParams2.wrappedKey, 
+				keyAgreeParams1.wrappedKeyLen ) )
+		status = CRYPT_ERROR_FAILED;
+
+	/* Clean up */
+	staticDestroyContext( &checkContextInfo );
+
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
+
 /* Test the Diffie-Hellman implementation using a sample key.  Because a lot 
    of the high-level encryption routines don't exist yet, we cheat a bit and 
    set up a dummy encryption context with just enough information for the 
@@ -133,103 +195,6 @@ static const DLP_KEY FAR_BSS dlpTestKey = {
 	  0xDC, 0xCE, 0xA4, 0xD5, 0xA5, 0x4F, 0x08, 0x0F }
 	};
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
-										const BOOLEAN isGeneratedKey )
-	{
-	CONTEXT_INFO checkContextInfo;
-	PKC_INFO contextData, *pkcInfo = &contextData;
-	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
-	const CAPABILITY_INFO *capabilityInfoPtr;
-	int status;
-
-	/* The DH pairwise check is a bit more complex than the one for the
-	   other algorithms because there's no matched public/private key pair,
-	   so we have to load a second DH key to use for key agreement with
-	   the first one */
-	status = staticInitContext( &checkContextInfo, CONTEXT_PKC, 
-								getDHCapability(), &contextData, 
-								sizeof( PKC_INFO ), NULL );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-	if( isGeneratedKey )
-		{
-		PKC_INFO *sourcePkcInfo = contextInfoPtr->ctxPKC;
-		int bnStatus = BN_STATUS;
-
-		/* If it's a generated key with random p and g parameters rather
-		   than the fixed test values, we have to make the parameters for
-		   the check context match the ones for the generated key */
-		CKPTR( BN_copy( &pkcInfo->dlpParam_p, &sourcePkcInfo->dlpParam_p ) );
-		CKPTR( BN_copy( &pkcInfo->dlpParam_g, &sourcePkcInfo->dlpParam_g ) );
-		CKPTR( BN_copy( &pkcInfo->dlpParam_q, &sourcePkcInfo->dlpParam_q ) );
-		CKPTR( BN_copy( &pkcInfo->dlpParam_y, &sourcePkcInfo->dlpParam_y ) );
-		if( bnStatusError( bnStatus ) )
-			{
-			staticDestroyContext( &checkContextInfo );
-			return( getBnStatus( bnStatus ) );
-			}
-		}
-	else
-		{
-		status = importBignum( &pkcInfo->dlpParam_p, dlpTestKey.p, 
-							   dlpTestKey.pLen, DLPPARAM_MIN_P, 
-							   DLPPARAM_MAX_P, NULL, SHORTKEY_CHECK_PKC );
-		if( cryptStatusOK( status ) )
-			status = importBignum( &pkcInfo->dlpParam_g, dlpTestKey.g, 
-								   dlpTestKey.gLen, DLPPARAM_MIN_G, 
-								   DLPPARAM_MAX_G, &pkcInfo->dlpParam_p, 
-								   SHORTKEY_CHECK_NONE );
-		if( cryptStatusOK( status ) )
-			status = importBignum( &pkcInfo->dlpParam_q, dlpTestKey.q, 
-								   dlpTestKey.qLen, DLPPARAM_MIN_Q, 
-								   DLPPARAM_MAX_Q, &pkcInfo->dlpParam_p,
-								   SHORTKEY_CHECK_NONE );
-		if( cryptStatusOK( status ) )
-			status = importBignum( &pkcInfo->dlpParam_y, dlpTestKey.y, 
-								   dlpTestKey.yLen, DLPPARAM_MIN_Y, 
-								   DLPPARAM_MAX_Y, &pkcInfo->dlpParam_p,
-								   SHORTKEY_CHECK_NONE );
-		if( cryptStatusOK( status ) )
-			status = importBignum( &pkcInfo->dlpParam_x, dlpTestKey.x, 
-								   dlpTestKey.xLen, DLPPARAM_MIN_X, 
-								   DLPPARAM_MAX_X, &pkcInfo->dlpParam_p,
-								   SHORTKEY_CHECK_NONE );
-		if( cryptStatusError( status ) )
-			{
-			staticDestroyContext( &checkContextInfo );
-			return( status );
-			}
-		}
-
-	/* Perform the pairwise test using the check key */
-	capabilityInfoPtr = checkContextInfo.capabilityInfo;
-	memset( &keyAgreeParams1, 0, sizeof( KEYAGREE_PARAMS ) );
-	memset( &keyAgreeParams2, 0, sizeof( KEYAGREE_PARAMS ) );
-	status = capabilityInfoPtr->initKeyFunction( &checkContextInfo, NULL, 0 );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
-					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->encryptFunction( &checkContextInfo,
-					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
-					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->decryptFunction( &checkContextInfo,
-					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusError( status ) || \
-		keyAgreeParams1.wrappedKeyLen != keyAgreeParams2.wrappedKeyLen || \
-		memcmp( keyAgreeParams1.wrappedKey, keyAgreeParams2.wrappedKey, 
-				keyAgreeParams1.wrappedKeyLen ) )
-		status = CRYPT_ERROR_FAILED;
-
-	/* Clean up */
-	staticDestroyContext( &checkContextInfo );
-
-	return( cryptStatusOK( status ) ? TRUE : FALSE );
-	}
-
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -274,7 +239,7 @@ static int selfTest( void )
 	/* Perform the test key exchange on a block of data */
 	status = contextInfo.capabilityInfo->initKeyFunction( &contextInfo, NULL, 0 );
 	if( cryptStatusOK( status ) && \
-		!pairwiseConsistencyTest( &contextInfo, FALSE ) )
+		!pairwiseConsistencyTest( &contextInfo ) )
 		status = CRYPT_ERROR_FAILED;
 
 	/* Clean up */
@@ -282,6 +247,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -448,7 +416,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 #ifndef USE_FIPS140
 		( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) &&
 #endif /* USE_FIPS140 */
-		!pairwiseConsistencyTest( contextInfoPtr, TRUE ) )
+		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
 		DEBUG_DIAG(( "Consistency check of freshly-generated DH key "
 					 "failed" ));

@@ -122,6 +122,20 @@
 	#define DES_RISC1
 	#define DES_UNROLL
 	#define RC4_INDEX
+  #elif defined( __arm ) || defined( __arm__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define DES_RISC1
+  #elif defined( __mips__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_RISC2
+	#define DES_PTR
+	#define DES_UNROLL
+	#define RC4_INDEX
+	#define RC4_CHAR
+	#define RC4_CHUNK
   #elif defined( __ppc__ ) || defined( __powerpc__ )
 	#define B_ENDIAN
 	#define BN_LLONG
@@ -130,12 +144,24 @@
 	#define DES_UNROLL
 	#define RC4_CHAR
 	#define RC4_CHUNK
-  #elif defined( __arm ) || defined( __arm__ )
-	#define L_ENDIAN
+  #elif defined( __hppa__ )
+	#define B_ENDIAN
+	#define BN_DIV2W
 	#define BN_LLONG
+	#define DES_PTR
+	#define DES_UNROLL
 	#define DES_RISC1
+	#define MD32_XARRAY
+  #elif defined( __sparc__ )
+	#define B_ENDIAN
+	#define BN_DIV2W
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_UNROLL
+	#define RC4_CHAR
+	#define RC4_CHUNK
   #else
-	#error Need to define CPU type for non-x86/non-PPC Linux
+	#error Need to define CPU type for non-x86/Arm/MIPS/PA-Risc/PPC/Sparc Linux
   #endif /* *BSD/Linux variants */
 #endif /* *BSD/Linux */
 #if defined( __LINUX__ ) && defined( __WATCOMC__ )
@@ -400,12 +426,19 @@
   #endif /* Solaris Sparc vs x86 */
 #endif /* Slowaris */
 
-/* Symbian OS: ARM */
+/* Symbian OS: Usually ARM, but we may be running under the x86 emulator */
 #if defined( __SYMBIAN32__ )
-  #ifdef __MARM__
+  #if defined( __MARM__ )
 	#define L_ENDIAN
 	#define BN_LLONG
 	#define DES_RISC1
+  #elif defined( __EMU_SYMBIAN_OS__ )
+	#define L_ENDIAN
+	#define BN_LLONG
+	#define BF_PTR
+	#define DES_PTR
+	#define DES_UNROLL
+	#define RC4_INDEX
   #else
 	#error Need to define architecture-specific values for crypto code
   #endif /* Symbian OS variants */
@@ -439,19 +472,28 @@
 
 /* Windows */
 #if ( defined( _WINDOWS ) || defined( WIN32 ) || defined( _WIN32 ) )
+  #define L_ENDIAN
 
   /* VC++ */
   #if defined( _MSC_VER )
 
+	/* VS 64-bit */
+	#if defined( _M_X64 )
+	  /* Win64's ULONG_MAX (via limits.h) is 32 bits so the system isn't
+	     detected as a 64-bit one, to fix this we manually override the
+	     detected machine word size here */
+	  #undef THIRTY_TWO_BIT
+	  #define SIXTY_FOUR_BIT 
+	  #define RC4_CHUNK_LL 
+	  #define DES_INT 
+
 	/* VC++ 32-bit */
-	#if ( _MSC_VER >= 1000 )
-	  #define L_ENDIAN
+	#elif ( _MSC_VER >= 1000 )
 	  #define BN_LLONG
 	  #define RC4_INDEX
 
 	/* VC++ 16-bit */
 	#else
-	  #define L_ENDIAN
 	  #define BN_LLONG
 	  #define MD2_CHAR
 	  #define DES_UNROLL
@@ -463,14 +505,12 @@
 
   /* BC++ */
   #elif defined( __BORLANDC__ )
-	#define L_ENDIAN
 	#define BN_LLONG
 	#define DES_PTR
 	#define RC4_INDEX
 
   /* gcc */
   #else
-	#define L_ENDIAN
 	#define BN_LLONG
 	#define DES_PTR
 	#define DES_RISC1
@@ -547,8 +587,8 @@
   #define RC4_CHUNK	unsigned long
 #endif /* RC4_CHUNK */
 
-/* Make sure we weren't missed out.  See the comment in the Cray section
-   for the exception for Crays */
+/* Make sure that we weren't missed out.  See the comment in the Cray 
+   section for the exception for Crays */
 
 #if !defined( _CRAY ) && !defined( L_ENDIAN ) && !defined( B_ENDIAN )
   #error You need to add system-specific configuration settings to osconfig.h

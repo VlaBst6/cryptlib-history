@@ -30,13 +30,13 @@ int insertDNComponent( INOUT_PTR DN_PTR **dnComponentListPtrPtr,
 							CRYPT_ERRTYPE_TYPE *errorType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int deleteDNComponent( INOUT_PTR DN_PTR **dnComponentListPtrPtr, 
-					   const CRYPT_ATTRIBUTE_TYPE type,
-					   IN_BUFFER_OPT( valueLength ) \
-					   const void *value, const int valueLength );
+					   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
+					   IN_BUFFER_OPT( valueLength ) const void *value, 
+					   IN_LENGTH_SHORT const int valueLength );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void deleteDN( INOUT_PTR DN_PTR **dnComponentListPtrPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int getDNComponentInfo( INOUT_PTR const DN_PTR *dnComponentList,
+int getDNComponentInfo( INOUT const DN_PTR *dnComponentList,
 						OUT_ATTRIBUTE_Z CRYPT_ATTRIBUTE_TYPE *type,
 						OUT_BOOL BOOLEAN *dnContinues );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 6 ) ) \
@@ -51,12 +51,12 @@ int getDNComponentValue( const DN_PTR *dnComponentList,
 /* Copy and compare a DN */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int copyDN( OUT_PTR DN_PTR **dnDest, IN_OPT const DN_PTR *dnSrc );
+int copyDN( OUT_OPT_PTR DN_PTR **dnDest, IN_OPT const DN_PTR *dnSrc );
 CHECK_RETVAL_BOOL \
 BOOLEAN compareDN( IN_OPT const DN_PTR *dnComponentList1,
 				   IN_OPT const DN_PTR *dnComponentList2,
 				   const BOOLEAN dn1substring,
-				   OUT_OPT_PTR DN_PTR **mismatchPointPtrPtr );
+				   OUT_OPT_PTR_OPT DN_PTR **mismatchPointPtrPtr );
 
 /* Select DN/GeneralName components */
 
@@ -87,7 +87,7 @@ int sizeofDN( INOUT_OPT DN_PTR *dnComponentList );
 			  /* Non-const because it performs a pre-encoding pass */
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readDN( INOUT STREAM *stream, 
-			OUT_PTR DN_PTR **dnComponentListPtrPtr );
+			OUT_OPT_PTR DN_PTR **dnComponentListPtrPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int writeDN( INOUT STREAM *stream, 
 			 IN_OPT const DN_PTR *dnComponentList,
@@ -113,8 +113,7 @@ int writeDNstring( INOUT STREAM *stream,
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 ATTRIBUTE_PTR *findAttributeByOID( const ATTRIBUTE_PTR *attributePtr,
 								   IN_BUFFER( oidLength ) const BYTE *oid, 
-								   IN_RANGE( 1, MAX_OID_SIZE ) \
-										const int oidLength );
+								   IN_LENGTH_OID const int oidLength );
 CHECK_RETVAL_PTR \
 ATTRIBUTE_PTR *findAttribute( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 							  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
@@ -219,7 +218,7 @@ int getAttributeDataDN( IN const ATTRIBUTE_PTR *attributePtr,
 						OUT_PTR DN_PTR ***dnPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int getAttributeDataPtr( IN const ATTRIBUTE_PTR *attributePtr,
-						 OUT_BUFFER_ALLOC( *Length ) void **dataPtrPtr, 
+						 OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 
 						 OUT_LENGTH_SHORT_Z int *dataLength );
 
 /* The pattern { findAttributeField(), getAttributeDataXYZ() } is used 
@@ -261,7 +260,7 @@ typedef struct {
 	} ATTRIBUTE_ENUM_INFO;
 
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 1 ) ) \
-const ATTRIBUTE_PTR *getFirstAttribute( INOUT ATTRIBUTE_ENUM_INFO *attrEnumInfo,
+const ATTRIBUTE_PTR *getFirstAttribute( OUT ATTRIBUTE_ENUM_INFO *attrEnumInfo,
 										IN_OPT const ATTRIBUTE_PTR *attributePtr,
 										IN_ENUM( ATTRIBUTE_ENUM ) \
 											const ATTRIBUTE_ENUM_TYPE enumType );
@@ -294,7 +293,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 6 ) ) \
 int addAttribute( IN_ATTRIBUTE const ATTRIBUTE_TYPE attributeType,
 				  INOUT ATTRIBUTE_PTR **listHeadPtr, 
 				  IN_BUFFER( oidLength ) const BYTE *oid, 
-				  IN_RANGE( 5, MAX_OID_SIZE ) const int oidLength,
+				  IN_LENGTH_OID const int oidLength,
 				  const BOOLEAN critical, 
 				  IN_BUFFER( dataLength ) const void *data, 
 				  IN_LENGTH_SHORT const int dataLength, 
@@ -440,12 +439,12 @@ int writeRtcsResponseEntry( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int addValidityEntry( INOUT_PTR VALIDITY_INFO **listHeadPtrPtr,
-					  OUT_OPT_PTR VALIDITY_INFO **newEntryPosition,
+					  OUT_OPT_PTR_OPT VALIDITY_INFO **newEntryPosition,
 					  IN_BUFFER( valueLength ) const void *value, 
-					  IN_LENGTH_SHORT const int valueLength );
+					  IN_LENGTH_FIXED( KEYID_SIZE ) const int valueLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3, 4 ) ) \
 int prepareValidityEntries( IN_OPT const VALIDITY_INFO *listPtr, 
-							OUT_PTR VALIDITY_INFO **errorEntry,
+							OUT_OPT_PTR VALIDITY_INFO **errorEntry,
 							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
 							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
@@ -514,7 +513,7 @@ int writeOcspResponseEntry( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int addRevocationEntry( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
-						OUT_PTR REVOCATION_INFO **newEntryPosition,
+						OUT_OPT_PTR REVOCATION_INFO **newEntryPosition,
 						IN_KEYID const CRYPT_KEYID_TYPE valueType,
 						IN_BUFFER( valueLength ) const void *value, 
 						IN_LENGTH_SHORT const int valueLength,
@@ -523,7 +522,7 @@ int addRevocationEntry( INOUT_PTR REVOCATION_INFO **listHeadPtrPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 6 ) ) \
 int prepareRevocationEntries( INOUT_OPT REVOCATION_INFO *listPtr, 
 							  const time_t defaultTime,
-							  OUT_PTR REVOCATION_INFO **errorEntry,
+							  OUT_OPT_PTR REVOCATION_INFO **errorEntry,
 							  const BOOLEAN isSingleEntry,
 							  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
@@ -557,6 +556,8 @@ int checkOCSPResponse( INOUT CERT_INFO *certInfoPtr,
 
 /* Check a certificate object */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkCertBasic( INOUT CERT_INFO *subjectCertInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
 int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 			   IN_OPT const CERT_INFO *issuerCertInfoPtr,
@@ -598,10 +599,15 @@ int checkNameConstraints( const CERT_INFO *subjectCertInfoPtr,
 							CRYPT_ATTRIBUTE_TYPE *errorLocus,
 						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
 							CRYPT_ERRTYPE_TYPE *errorType );
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN isAnyPolicy( const ATTRIBUTE_PTR *attributePtr );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 7, 8 ) ) \
 int checkPolicyConstraints( const CERT_INFO *subjectCertInfoPtr,
 							const ATTRIBUTE_PTR *issuerAttributes,
 							IN_ENUM_OPT( POLICY ) const POLICY_TYPE policyType,
+							IN_OPT const POLICY_INFO *policyInfo,
+							IN_RANGE( 0, MAX_CHAINLENGTH ) const int policyLevel,
+							const BOOLEAN allowMappedPolicies,
 							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
 							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
@@ -682,7 +688,7 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 /* Create a certificate object ready for further initialisation */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int createCertificateInfo( OUT_PTR CERT_INFO **certInfoPtrPtr, 
+int createCertificateInfo( OUT_OPT_PTR CERT_INFO **certInfoPtrPtr, 
 						   IN_HANDLE const CRYPT_USER iCryptOwner,
 						   IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType );
@@ -769,10 +775,10 @@ BOOLEAN compareSerialNumber( IN_BUFFER( canonSerialNumberLength ) \
 /* Convert a text-form OID to its binary form */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int textToOID( IN_BUFFER( oidLength ) const char *textOID, 
+int textToOID( IN_BUFFER( textOidLength ) const char *textOID, 
 			   IN_RANGE( MIN_ASCII_OIDSIZE, CRYPT_MAX_TEXTSIZE ) \
-					const int textOIDlength, 
-			   OUT_BUFFER( binaryOidMaxLen, binaryOidLen ) BYTE *binaryOID, 
+					const int textOidLength, 
+			   OUT_BUFFER( binaryOidMaxLen, *binaryOidLen ) BYTE *binaryOID, 
 			   IN_LENGTH_SHORT const int binaryOidMaxLen, 
 			   OUT_LENGTH_SHORT_Z int *binaryOidLen );
 

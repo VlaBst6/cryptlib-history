@@ -1,3 +1,69 @@
+Changes in 3.4 release
+======================
+
+This version of cryptlib is a minor-version stepping from the 3.3.x code base
+to the 3.4.x code base.  Minor-version steppings are source-code compatible
+with previous versions but not binary compatible.  This means that you need to
+rebuild the application calling cryptlib when you move to cryptlib 3.4.0 in
+order to to add support for new attributes introduced for the post-3.3 API.
+In addition the cryptGenerateKeyAsync()/cryptAsyncQuery()/cryptAsyncCancel()
+functions, deprecated since 2007, have been removed for the 3.4 API change,
+and the transparent rewriting of CRYPT_CERTINFO_SUBJECTNAME and
+CRYPT_CERTINFO_ISSUERNAME selection commands to the pre-2007 form has been
+disabled.
+
+This release features the usual ongoing updates for new OS and compiler
+versions.  One significant update is direct support for x86-64 under 64-bit
+versions of Windows (this previously required a custom build), with the 64-bit
+target in the project file building a cl64.dll that's analogous to the 32-bit
+cl32.dll.
+
+The TLS code has been updated to add support for TLS 1.2.  Since TLS 1.2 uses
+cryptographic mechanisms that are gratuitously incompatible with any other
+version of SSL or TLS, the default version that cryptlib will advertise in a
+handshake remains TLS 1.1.  If you want to use TLS 1.2 you need to explicitly
+enable it as described in the manual.  Note that because of the incompatible
+changes made in TLS 1.2 there is (two years after its introduction) still very
+little support for it among vendors.  Expect interoperability problems.
+
+This version of cryptlib implements RFC 5083 authenticated encryption.  PKCS
+#15 private keys are now protected in this manner (private-key data from older
+versions of cryptlib can still be read, but newer keys will be protected with
+full authenticated encryption).  In addition data enveloped using
+CRYPT_FORMAT_CRYPTLIB will automatically use authenticated encryption while
+other formats (CRYPT_FORMAT_CMS, CRYPT_FORMAT_SMIME) will stay with
+unauthenticated encryption for compatibility with existing implementations.
+You can enable authenticated encryption for the other formats (or turn it off
+for the cryptlib format) as described in the manual.
+
+Elliptic-curve cryptography is now supported, both at the low-level crypto
+mechanism level and in high-level protocols like X.509, SSL/TLS, S/MIME, and
+SSH.  To enable it, define USE_ECDH and/or USE_ECDSA in misc/config.h when you
+build cryptlib.
+
+Certificate fingerprints using SHA-2 and the future SHA-3 (when it's
+finalised) is now supported with CRYPT_CERTINFO_FINGERPRINT_SHA2 and
+CRYPT_CERTINFO_FINGERPRINT_SHAng (use of the latter will return a
+CRYPT_ERROR_NOTAVAIL, it's only present as a placeholder for future releases).
+
+Support for the Internet routing resource PKI (RPKI) has been added, see the
+manual for details.
+
+cryptlib 3.4.0 has been updated to use zlib 1.2.4, the first zlib update in
+five years.  As always, users concerned about security issues should disable
+the compression code (undefine USE_COMPRESSION in misc/config.h) unless it's
+actually required.
+
+Several ambiguous attributes have been removed or renamed to make their role
+clearer.  For the keyset types, CRYPT_KEYSET_PLUGIN and
+CRYPT_KEYSET_PLUGIN_STORE have been removed since these have always been
+handled identically to CRYPT_KEYSET_DATABASE and CRYPT_KEYSET_DATABASE_STORE.
+For the error attributes, CRYPT_ATTRIBUTE_INT_ERRORCODE has been removed since
+this wasn't very useful outside of cryptlib and
+CRYPT_ATTRIBUTE_INT_ERRORMESSAGE has been renamed CRYPT_ATTRIBUTE_ERRORMESSAGE
+to reflect its role alongside CRYPT_ATTRIBUTE_ERRORTYPE and
+CRYPT_ATTRIBUTE_ERRORLOCUS.
+
 Changes in 3.3.3 release
 ========================
 

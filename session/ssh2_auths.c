@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -212,11 +212,11 @@ static const METHOD_INFO methodInfoTbl[] = {
 
 /* Send a succeeded/failed-authentication response to the client:
 
-	byte	type = SSH2_MSG_USERAUTH_SUCCESS
+	byte	type = SSH_MSG_USERAUTH_SUCCESS
 
    or
 
-	byte	type = SSH2_MSG_USERAUTH_FAILURE
+	byte	type = SSH_MSG_USERAUTH_FAILURE
 	string	allowed_authent = "password" | empty
 	boolean	partial_success = FALSE */
 
@@ -229,7 +229,7 @@ static int sendResponseSuccess( INOUT SESSION_INFO *sessionInfoPtr )
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_SUCCESS );
+								  SSH_MSG_USERAUTH_SUCCESS );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = sendPacketSSH2( sessionInfoPtr, &stream, FALSE );
@@ -248,7 +248,7 @@ static int sendResponseFailure( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_FAILURE );
+								  SSH_MSG_USERAUTH_FAILURE );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( allowFurtherAuth )
@@ -287,7 +287,7 @@ static int checkCredentialsConsistent( INOUT SSH_INFO *sshInfo,
 
 	/* Hash the user name so that we only need to store the fixed-length 
 	   hash rather than the variable-length user name */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 	hashFunctionAtomic( userNameHash, KEYID_SIZE, userName, userNameLength );
 
 	/* If this is the first message remember the user name and 
@@ -374,7 +374,7 @@ static int processUserAuth( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Get the userAuth packet from the client:
 
-		byte	type = SSH2_MSG_USERAUTH_REQUEST
+		byte	type = SSH_MSG_USERAUTH_REQUEST
 		string	user_name
 		string	service_name = "ssh-connection"
 		string	method_name = "none" | "password"
@@ -386,7 +386,7 @@ static int processUserAuth( INOUT SESSION_INFO *sessionInfoPtr,
 		allowed authentication types, if we get a packet of this kind and 
 		the initialAuth flag is set then we return our allowed types list */
 	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_USERAUTH_REQUEST,
+		readHSPacketSSH2( sessionInfoPtr, SSH_MSG_USERAUTH_REQUEST,
 						  ID_SIZE + sizeofString32( "", 1 ) + \
 							sizeofString32( "", 8 ) + \
 							sizeofString32( "", 4 ) );

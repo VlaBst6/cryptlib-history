@@ -13,18 +13,22 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Define the following to print a trace of the certificate fields being 
    parsed, useful for debugging broken certificates */
 
 #if !defined( NDEBUG ) && 0
+  #if defined( _MSC_VER )
+	#pragma warning( disable: 4127 )	/* 'stackPos' may be hardcoded */
+  #endif /* VC++ */
   #define TRACE_FIELDTYPE( attributeInfoPtr, stackPos ) \
 		  { \
 		  int i; \
 		  \
+		  DEBUG_PRINT(( "%4d:", stell( stream ) )); \
 		  for( i = 0; i < stackPos; i++ ) \
 			  DEBUG_PRINT(( "  " )); \
 		  if( ( attributeInfoPtr ) != NULL && \
@@ -32,6 +36,10 @@
 			  { \
 			  DEBUG_PRINT(( ( attributeInfoPtr )->description )); \
 			  DEBUG_PRINT(( "\n" )); \
+			  } \
+		  else \
+			  { \
+			  DEBUG_PRINT(( "<Unknown field>\n" )); \
 			  } \
 		  }
   #define TRACE_DEBUG( message ) \
@@ -41,6 +49,8 @@
   #define TRACE_FIELDTYPE( attributeInfoPtr, stackPos )
   #define TRACE_DEBUG( message )
 #endif /* NDEBUG */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -57,7 +67,7 @@ static int getFieldTag( INOUT STREAM *stream,
 	{
 	int status, value;
 
-	assert( isReadPtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 	assert( isWritePtr( tag, sizeof( int ) ) );
 
@@ -119,11 +129,55 @@ static int getFieldTag( INOUT STREAM *stream,
 			}
 		ENSURES( i < FAILSAFE_ARRAYSIZE( allowedStringTypes, int ) );
 		}
+	if( value == FIELDTYPE_BLOB_BITSTRING || \
+		value == FIELDTYPE_BLOB_SEQUENCE )
+		{
+		/* This is a typed blob that's read as a blob but still has a type
+		   for type-checking purposes */
+		value = ( value == FIELDTYPE_BLOB_BITSTRING ) ? \
+				BER_BITSTRING : BER_SEQUENCE;
+		}
 
-	ENSURES( ( ( value == FIELDTYPE_BLOB || value == FIELDTYPE_DN ) && \
+	ENSURES( ( ( value == FIELDTYPE_BLOB_ANY || value == FIELDTYPE_DN ) && \
 			   !( attributeInfoPtr->encodingFlags & FL_OPTIONAL ) ) || \
 			 ( value > 0 && value <= MAX_TAG ) );
+			 /* A FIELDTYPE_BLOB_ANY or FIELDTYPE_DN can't be optional 
+			    fields because with no type information for them available 
+				there's no way to check whether we've encountered them or 
+				not */
 	*tag = value;
+
+	return( CRYPT_OK );
+	}
+
+/* Read an explicit tag that wraps the actual item that we're after */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readExplicitTag( INOUT STREAM *stream, 
+							const ATTRIBUTE_INFO *attributeInfoPtr, 
+							OUT_TAG_Z int *tag )
+	{
+	int status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
+	assert( isWritePtr( tag, sizeof( int ) ) );
+
+	REQUIRES( attributeInfoPtr->encodingFlags & FL_EXPLICIT );
+	REQUIRES( attributeInfoPtr->fieldEncodedType >= 0 && \
+			  attributeInfoPtr->fieldEncodedType < MAX_TAG );
+
+	/* Clear return value */
+	*tag = 0;
+
+	/* Read the explicit wrapper */
+	status = readConstructed( stream, NULL, 
+							  attributeInfoPtr->fieldEncodedType );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* We've processed the explicit wrappper, we're now on the actual tag */
+	*tag = attributeInfoPtr->fieldType;
 
 	return( CRYPT_OK );
 	}
@@ -277,11 +331,12 @@ static int beginSetof( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( setofStack, sizeof( SETOF_STACK ) ) );
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
-	
-	REQUIRES( !( attributeInfoPtr->encodingFlags & FL_EXPLICIT ) );
 
-	/* Determine the length and start position of the SET OF items */
-	if( attributeInfoPtr->fieldEncodedType >= 0 )
+	/* Determine the length and start position of the SET OF items.  If the
+	   tag is an explicit tag then we don't have to process it since it's
+	   already been handled by the caller */
+	if( attributeInfoPtr->fieldEncodedType >= 0 && \
+		!( attributeInfoPtr->encodingFlags & FL_EXPLICIT ) )
 		{
 		status = readConstructed( stream, &setofLength,
 								  attributeInfoPtr->fieldEncodedType );
@@ -456,7 +511,7 @@ static const ATTRIBUTE_INFO *findIdentifiedItem( INOUT STREAM *stream,
 			   the last in a series of type-and-value pairs) which ensures 
 			   that { type }s added after the encoding table was defined 
 			   don't get processed as errors, skip the field and continue */
-			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB )
+			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB_ANY )
 				{
 				/* If there's a { value } attached to the type, skip it */
 				if( sequenceLength > 0 )
@@ -513,7 +568,7 @@ static int processIdentifiedItem( INOUT STREAM *stream,
 									CRYPT_ERRTYPE_TYPE *errorType )
 	{
 	const SETOF_STATE_INFO *setofInfoPtr = setofTOS( setofStack );
-	const ATTRIBUTE_INFO *attributeInfoPtr = *attributeInfoPtrPtr;
+	const ATTRIBUTE_INFO *attributeInfoPtr;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( attributeListPtrPtr, sizeof( ATTRIBUTE_LIST * ) ) );
@@ -563,7 +618,7 @@ assert( ( flags & ~( ATTR_FLAG_CRITICAL ) ) == 0 );
 	   we ignore data duplicate errors and continue.  If we're processing a 
 	   blob field type then we've ended up at a generic catch-any value and 
 	   can't do much with it */
-	if( attributeInfoPtr->fieldType != FIELDTYPE_BLOB )
+	if( attributeInfoPtr->fieldType != FIELDTYPE_BLOB_ANY )
 		{
 		int status;
 
@@ -655,7 +710,7 @@ assert( ( flags == ATTR_FLAG_NONE ) || ( flags == ATTR_FLAG_CRITICAL ) );
 			   ensures that { type }s added after the encoding table was 
 			   defined don't get processed as errors, skip the field and 
 			   continue */
-			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB )
+			if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB_ANY )
 				{
 				addField = FALSE;
 				break;
@@ -715,7 +770,6 @@ assert( ( flags == ATTR_FLAG_NONE ) || ( flags == ATTR_FLAG_CRITICAL ) );
 	   Unfortunately we can't use the attributeInfoSize bounds check limit 
 	   here because we don't know how far through the attribute table we 
 	   already are, so we have to use a generic value */
-	iterationCount = 0;
 	for( attributeInfoPtr = *attributeInfoPtrPtr, iterationCount = 0;
 		 !( attributeInfoPtr->encodingFlags & FL_SEQEND_MASK ) && \
 			!( attributeInfoPtr->typeInfoFlags & FL_ATTR_ATTREND ) && \
@@ -932,7 +986,9 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED
 		case BER_STRING_T61:
 		case BER_STRING_UTF8:
 		case BER_OCTETSTRING:
-		case FIELDTYPE_BLOB:
+		case FIELDTYPE_BLOB_ANY:
+		case FIELDTYPE_BLOB_BITSTRING:
+		case FIELDTYPE_BLOB_SEQUENCE:
 		case FIELDTYPE_TEXTSTRING:
 			{
 			/* If it's a string type or a blob read it in as a blob (the 
@@ -941,7 +997,7 @@ assert( ( flags & ~( ATTR_FLAG_NONE | ATTR_FLAG_CRITICAL | ATTR_FLAG_MULTIVALUED
 			BYTE buffer[ 256 + 8 ];
 
 			/* Read in the string to a maximum length of 256 bytes */
-			if( fieldType == FIELDTYPE_BLOB )
+			if( isBlobField( fieldType ) )
 				{
 				int tag;
 				
@@ -1057,6 +1113,12 @@ static int readAttribute( INOUT STREAM *stream,
 	{
 	SETOF_STACK setofStack;
 	SETOF_STATE_INFO *setofInfoPtr;
+	const int maxAttributeFields = \
+		( attributeInfoPtr->fieldID == CRYPT_CERTINFO_AUTONOMOUSSYSIDS || \
+		  attributeInfoPtr->fieldID == CRYPT_CERTINFO_IPADDRESSBLOCKS ) ? \
+		5 + ( attributeLength / 3 ) : min( 5 + ( attributeLength / 3 ), 256 );
+		/* The RPKI extensions can contain vast lists of 3-4 byte entries 
+		   that exceed the normal sanity-check limit */
 	const int endPos = stell( stream ) + attributeLength;
 	BOOLEAN attributeContinues = TRUE;
 	int flags = criticalFlag ? ATTR_FLAG_CRITICAL : ATTR_FLAG_NONE;
@@ -1236,6 +1298,13 @@ static int readAttribute( INOUT STREAM *stream,
 			status = findItemEnd( &attributeInfoPtr, 0 );
 			if( cryptStatusError( status ) )
 				return( status );
+			
+			/* Since this was a (non-present) optional attribute it 
+			   shouldn't be counted in the total when we continue decoding,
+			   so we adjust the fields-processed value to account for this */
+			if( attributeFieldsProcessed > 0 )
+				attributeFieldsProcessed--;
+
 			goto continueDecoding;
 			}
 
@@ -1249,26 +1318,19 @@ static int readAttribute( INOUT STREAM *stream,
 		   that it matches what we're expecting */
 		if( attributeInfoPtr->encodingFlags & FL_EXPLICIT )
 			{
-			ENSURES( attributeInfoPtr->fieldEncodedType >= 0 && \
-					 attributeInfoPtr->fieldEncodedType < MAX_TAG );
-			ENSURES( tag == MAKE_CTAG( attributeInfoPtr->fieldEncodedType ) ); 
-					 /* Always constructed */
+			REQUIRES( tag == MAKE_CTAG( attributeInfoPtr->fieldEncodedType ) );
+					  /* Always constructed */
 
-			status = readConstructed( stream, NULL, 
-									  attributeInfoPtr->fieldEncodedType );
+			status = readExplicitTag( stream, attributeInfoPtr, &tag );
 			if( cryptStatusError( status ) )
 				return( fieldErrorReturn( errorLocus, errorType, status,
 										  attributeInfoPtr->fieldID ) );
-
-			/* We've processed the explicit wrappper, we're now on the actual
-			   tag */
-			tag = attributeInfoPtr->fieldType;
 			}
 
 		/* Blob field or DN: We don't try and interpret blobs in any way, 
 		   and DNs are a composite structure read as a complete unit by the 
 		   lower-level code */
-		if( attributeInfoPtr->fieldType == FIELDTYPE_BLOB || \
+		if( isBlobField( attributeInfoPtr->fieldType ) || \
 			attributeInfoPtr->fieldType == FIELDTYPE_DN )
 			{
 			status = readAttributeField( stream, attributeListPtrPtr,
@@ -1378,17 +1440,22 @@ continueDecoding:
 		}
 	while( ( attributeContinues || setofStack.stackPos > 1 ) && \
 		   stell( stream ) < endPos && \
-		   attributeFieldsProcessed++ < 256 );
+		   attributeFieldsProcessed++ < maxAttributeFields );
 
 	/* If we got stuck in a loop trying to decode an attribute, complain and 
 	   exit.  At this point we could have encountered either a certificate-
 	   parsing error or a CRYPT_ERROR_INTERNAL internal error, since we 
 	   can't tell without human intervention we treat it as a certificate 
-	   error rather than throwing a retIntError() exception */
-	if( attributeFieldsProcessed >= 256 )
+	   error rather than throwing a retIntError() exception.  This is 
+	   particularly important for the CRYPT_CERTINFO_IPADDRESSBLOCKS and
+	   CRYPT_CERTINFO_AUTONOMOUSSYSIDS extensions, which are an end-run 
+	   around the nonexistence of attribute certificates but turn standard
+	   certificates into arbitrary-length capability lists that exceed 
+	   normal sanity-check limits */
+	if( attributeFieldsProcessed >= maxAttributeFields )
 		{
-		DEBUG_DIAG(( "Processed more than 256 fields in attribute, decoder "
-					 "may be stuck" ));
+		DEBUG_DIAG(( "Processed more than %d fields in attribute, decoder "
+					 "may be stuck", maxAttributeFields ));
 		assert( DEBUG_WARN );
 		return( CRYPT_ERROR_BADDATA );
 		}
@@ -1801,6 +1868,7 @@ int readAttributes( INOUT STREAM *stream,
 								   attributeDataLength );
 		if( cryptStatusOK( status ) )
 			{
+			ANALYSER_HINT( attributeDataPtr != NULL );
 			status = addAttribute( attributeType, attributeListPtrPtr, 
 								   oid, oidLength, criticalFlag, 
 								   attributeDataPtr, attributeDataLength, 
@@ -1831,3 +1899,4 @@ int readAttributes( INOUT STREAM *stream,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTIFICATES */

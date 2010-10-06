@@ -11,9 +11,11 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -56,7 +58,8 @@ static int certErrorReturn( INOUT CERT_INFO *certInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readVersion( INOUT STREAM *stream, 
 						INOUT CERT_INFO *certInfoPtr,
-						IN_TAG const int tag )
+						IN_TAG const int tag,
+						IN_RANGE( 1, 5 ) const int maxVersion )
 	{
 	long version;
 	int status;
@@ -65,6 +68,7 @@ static int readVersion( INOUT STREAM *stream,
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
 	REQUIRES( tag == DEFAULT_TAG || ( tag >= 0 && tag < MAX_TAG_VALUE ) );
+	REQUIRES( maxVersion >= 1 && maxVersion <= 5 );
 
 	/* Versions can be represented in one of three ways:
 
@@ -86,8 +90,7 @@ static int readVersion( INOUT STREAM *stream,
 			}
 		else
 			{
-			/* [tag ] INTEGER DEFAULT (1), if we don't find this we're 
-			   done */
+			/* [tag] INTEGER DEFAULT (1), if we don't find this we're done */
 			if( peekTag( stream ) != MAKE_CTAG( tag ) )
 				return( CRYPT_OK );
 			status = readConstructed( stream, NULL, tag );
@@ -100,6 +103,8 @@ static int readVersion( INOUT STREAM *stream,
 	status = readShortInteger( stream, &version );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( version < 0 || version > maxVersion )
+		return( CRYPT_ERROR_BADDATA );
 	certInfoPtr->version = version + 1;	/* Zero-based */
 
 	return( CRYPT_OK );
@@ -223,22 +228,33 @@ static int readPublicKeyInfo( INOUT STREAM *stream,
 								 status ) );
 		}
 
-	/* Import or read the (for a data-only certificate) public key 
+	/* Import or read (for a data-only certificate) the public key 
 	   information */
 	if( certInfoPtr->flags & CERT_FLAG_DATAONLY )
 		{
+		int parameterLength;
+
 		/* We're doing deferred handling of the public key, skip it for now.
 		   Because of weird tagging in things like CRMF objects we have to
 		   read the information as a generic hole rather than a normal
-		   SEQUENCE.  In addition because readAlgoID() can return non-stream
-		   errors (for example an algorithm not-available status) we have to
-		   explicitly check the return status rather than relying on it to
-		   be carried along in the stream state */
+		   SEQUENCE.
+		   
+		   Unlike a standard read via iCryptReadSubjectPublicKey() this
+		   doesn't catch the use of too-short key parameters because we'd
+		   have to duplicate most of the code that 
+		   iCryptReadSubjectPublicKey() calls in order to read the key
+		   components, however data-only certificates are only created for 
+		   use in conjunction with encryption contexts so the context create 
+		   will catch the use of too-short parameters */
 		readGenericHole( stream, NULL, 4, DEFAULT_TAG );
-		status = readAlgoID( stream, &certInfoPtr->publicKeyAlgo, 
-							 ALGOID_CLASS_PKC );
+		status = readAlgoIDparams( stream, &certInfoPtr->publicKeyAlgo, 
+								   &parameterLength, ALGOID_CLASS_PKC );
 		if( cryptStatusOK( status ) )
+			{
+			if( parameterLength > 0 )
+				sSkip( stream, parameterLength );
 			status = readUniversal( stream );
+			}
 		}
 	else
 		{
@@ -383,7 +399,7 @@ static int readCertInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, CTAG_CE_VERSION );
+	status = readVersion( stream, certInfoPtr, CTAG_CE_VERSION, 3 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -398,9 +414,11 @@ static int readCertInfo( INOUT STREAM *stream,
 	   messages (!!) */
 	status = readSerialNumber( stream, certInfoPtr, DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
+		{
 		status = readAlgoIDext( stream, &dummy, \
 								&certInfoPtr->cCertCert->hashAlgo,
 								ALGOID_CLASS_PKCSIG );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -457,15 +475,44 @@ static int readCertInfo( INOUT STREAM *stream,
 	return( fixAttributes( certInfoPtr ) );
 	}
 
-/* Read attribute certificate information:
+/* Read attribute certificate information.  There are two variants of this, 
+   v1 attributes certificates that were pretty much never used (the fact 
+   that no-one had bothered to define any attributes to be used with them
+   didn't help here) and v2 attribute certificates that are also almost
+   never used but are newer, we read v2 certificates.  The original v1
+   attribute certificate format was:
 
 	AttributeCertificateInfo ::= SEQUENCE {
-		version					INTEGER DEFAULT(1),
+		version					INTEGER DEFAULT(0),
 		owner			  [ 1 ]	Name,
 		issuer					Name,
 		signature				AlgorithmIdentifier,
 		serialNumber			INTEGER,
 		validity				Validity,
+		attributes				SEQUENCE OF Attribute,
+		extensions				Extensions OPTIONAL
+		} 
+
+   In v2 this changed to:
+
+	AttributeCertificateInfo ::= SEQUENCE {
+		version					INTEGER (1),
+		holder					SEQUENCE {
+			entityNames	  [ 1 ]	SEQUENCE OF {
+				entityName[ 4 ]	EXPLICIT Name
+								},
+							}
+		issuer			  [ 0 ]	SEQUENCE {
+			issuerNames			SEQUENCE OF {
+				issuerName[ 4 ]	EXPLICIT Name
+								},
+							}
+		signature				AlgorithmIdentifier,
+		serialNumber			INTEGER,
+		validity				SEQUENCE {
+			notBefore			GeneralizedTime,
+			notAfter			GeneralizedTime
+								},
 		attributes				SEQUENCE OF Attribute,
 		extensions				Extensions OPTIONAL
 		} */
@@ -474,7 +521,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readAttributeCertInfo( INOUT STREAM *stream, 
 								  INOUT CERT_INFO *certInfoPtr )
 	{
-	int length, endPos, status;
+	int length, endPos, innerEndPos, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
@@ -484,26 +531,68 @@ static int readAttributeCertInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, BER_INTEGER );
+	status = readVersion( stream, certInfoPtr, BER_INTEGER, 2 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
 
-	/* Read the subject and issuer names */
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_AC_BASECERTIFICATEID ) )
+	/* Read the owner and issuer names */
+	status = readSequence( stream, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	innerEndPos = stell( stream ) + length;
+	if( peekTag( stream ) == MAKE_CTAG( CTAG_AC_HOLDER_BASECERTIFICATEID ) )
 		{
-		return( CRYPT_ERROR_NOTAVAIL );	/* Not handled yet */
+		status = readUniversal( stream );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
-	if( peekTag( stream ) == MAKE_CTAG( CTAG_AC_ENTITYNAME ) )
+	if( stell( stream ) < innerEndPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_AC_HOLDER_ENTITYNAME ) )
 		{
-		readConstructed( stream, NULL, CTAG_AC_ENTITYNAME );
+		readConstructed( stream, NULL, CTAG_AC_HOLDER_ENTITYNAME );
+		readConstructed( stream, NULL, 4 );
 		status = readSubjectDN( stream, certInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
-	status = readIssuerDN( stream, certInfoPtr );
+	if( stell( stream ) < innerEndPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_AC_HOLDER_OBJECTDIGESTINFO ) )
+		{
+		/* This is a complicated structure that in effect encodes a generic 
+		   hole reference to "other", for now we just skip it until we can
+		   find an example of something that actually use it */
+		status = readUniversal( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	status = readConstructed( stream, &length, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
+	innerEndPos = stell( stream ) + length;
+	if( peekTag( stream ) == BER_SEQUENCE )
+		{
+		readSequence( stream, NULL );
+		readConstructed( stream, NULL, 4 );
+		status = readIssuerDN( stream, certInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	if( stell( stream ) < innerEndPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_AC_ISSUER_BASECERTIFICATEID ) )
+		{
+		status = readUniversal( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	if( stell( stream ) < innerEndPos && \
+		peekTag( stream ) == MAKE_CTAG( CTAG_AC_ISSUER_OBJECTDIGESTINFO ) )
+		{
+		/* See the comment for the owner objectDigectInfo above */
+		status = readUniversal( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Skip the signature algorithm information.  This was included to avert
 	   a somewhat obscure attack that isn't possible anyway because of the
@@ -599,7 +688,7 @@ static int readCRLInfo( INOUT STREAM *stream,
 		return( CRYPT_ERROR_BADDATA );
 		}
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, BER_INTEGER );
+	status = readVersion( stream, certInfoPtr, BER_INTEGER, 2 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -848,7 +937,7 @@ static int readCertRequestInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, DEFAULT_TAG );
+	status = readVersion( stream, certInfoPtr, DEFAULT_TAG, 1 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -1250,6 +1339,7 @@ static int readRtcsResponseInfo( INOUT STREAM *stream,
 /* Read an OCSP request:
 
 	OCSPRequest ::= SEQUENCE {				-- Write, v1
+		version		[0]	EXPLICIT INTEGER DEFAULT(0),
 		reqName		[1]	EXPLICIT [4] EXPLICIT DirectoryName OPTIONAL,
 		reqList			SEQUENCE OF SEQUENCE {
 						SEQUENCE {			-- certID
@@ -1283,7 +1373,7 @@ static int readOcspRequestInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, CTAG_OR_VERSION );
+	status = readVersion( stream, certInfoPtr, CTAG_OR_VERSION, 1 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -1339,7 +1429,7 @@ static int readOcspRequestInfo( INOUT STREAM *stream,
 /* Read an OCSP response:
 
 	OCSPResponse ::= SEQUENCE {
-		version		[0]	EXPLICIT INTEGER (1),
+		version		[0]	EXPLICIT INTEGER DEFAULT (0),
 		respID		[1]	EXPLICIT Name,
 		producedAt		GeneralizedTime,
 		responses		SEQUENCE OF Response
@@ -1362,7 +1452,7 @@ static int readOcspResponseInfo( INOUT STREAM *stream,
 	if( cryptStatusError( status ) )
 		return( status );
 	endPos = stell( stream ) + length;
-	status = readVersion( stream, certInfoPtr, CTAG_OP_VERSION );
+	status = readVersion( stream, certInfoPtr, CTAG_OP_VERSION, 1 );
 	if( cryptStatusError( status ) )
 		return( certErrorReturn( certInfoPtr, CRYPT_CERTINFO_VERSION,
 								 status ) );
@@ -1657,3 +1747,4 @@ READCERT_FUNCTION getCertReadFunction( IN_ENUM( CRYPT_CERTTYPE ) \
 
 	return( NULL );
 	}
+#endif /* USE_CERTIFICATES */

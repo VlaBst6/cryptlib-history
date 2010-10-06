@@ -7,17 +7,17 @@
 
 #ifdef INC_ALL
   #include "crypt.h"
-  #include "stream.h"
-  #include "mech_int.h"
   #include "asn1.h"
   #include "misc_rw.h"
+  #include "stream.h"
+  #include "mech_int.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/misc_rw.h"
   #include "io/stream.h"
   #include "mechs/mech_int.h"
-  #include "misc/asn1.h"
-  #include "misc/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -249,7 +249,8 @@ static int checkOpenPgpKeyIntegrity( IN_BUFFER( dataLength ) const void *data,
 
 	/* Get the hash algorithm info and make sure that there's room for 
 	   minimal-length data and the checksum */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+							 &hashSize );
 	if( dataLength < bitsToBytes( 155 ) + hashSize )
 		return( CRYPT_ERROR_BADDATA );
 	hashValuePtr = ( const BYTE * ) data + dataLength - hashSize; 
@@ -326,6 +327,8 @@ static int privateKeyWrap( STDC_UNUSED void *dummy,
 		mechanismInfo->wrappedDataLength = payloadSize + padSize;
 		return( CRYPT_OK );
 		}
+	ANALYSER_HINT( mechanismInfo->wrappedDataLength > MIN_PKCSIZE && \
+				   mechanismInfo->wrappedDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Make sure that the wrapped key fits in the output buffer */
 	if( payloadSize + padSize > mechanismInfo->wrappedDataLength )

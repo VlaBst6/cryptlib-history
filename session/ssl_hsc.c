@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *			cryptlib SSL v3/TLS Handshake Completion Management				*
-*					Copyright Peter Gutmann 1998-2008						*
+*					Copyright Peter Gutmann 1998-2009						*
 *																			*
 ****************************************************************************/
 
@@ -12,34 +12,58 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_SSL
 
+/* Pre-encoded finished message header that we can use for message hashing:
+
+	byte		ID = SSL_HAND_FINISHED
+	uint24		len = 16 + 20 (SSL), 12 (TLS) */
+
+#define FINISHED_TEMPLATE_SIZE				4
+
+static const BYTE finishedTemplateSSL[] = \
+		{ SSL_HAND_FINISHED, 0, 0, MD5MAC_SIZE + SHA1MAC_SIZE };
+static const BYTE finishedTemplateTLS[] = \
+		{ SSL_HAND_FINISHED, 0, 0, TLS_HASHEDMAC_SIZE };
+
+/****************************************************************************
+*																			*
+*								Utility Functions							*
+*																			*
+****************************************************************************/
+
+/* Destroy cloned hash contexts, used to clean up dual-hash (SSL, TLS 1.0-1.1)
+   or single-hash (TLS 1.2+) contexts */
+
+static void destroyHashContexts( IN_HANDLE const CRYPT_CONTEXT hashContext1,
+								 IN_HANDLE const CRYPT_CONTEXT hashContext2,
+								 IN_HANDLE const CRYPT_CONTEXT hashContext3 )
+	{
+	REQUIRES_V( ( isHandleRangeValid( hashContext1 ) && \
+				  isHandleRangeValid( hashContext2 ) && \
+				  hashContext3 == CRYPT_ERROR ) || \
+				( hashContext1 == CRYPT_ERROR && \
+				  hashContext2 == CRYPT_ERROR && \
+				  isHandleRangeValid( hashContext3 ) ) );
+
+	if( hashContext1 != CRYPT_ERROR )
+		krnlSendNotifier( hashContext1, IMESSAGE_DECREFCOUNT );
+	if( hashContext2 != CRYPT_ERROR )
+		krnlSendNotifier( hashContext2, IMESSAGE_DECREFCOUNT );
+	if( hashContext3 != CRYPT_ERROR )
+		krnlSendNotifier( hashContext3, IMESSAGE_DECREFCOUNT );
+	}
+
 /****************************************************************************
 *																			*
 *					Read/Write Handshake Completion Messages				*
 *																			*
 ****************************************************************************/
-
-/* Pre-encoded finished message templates that we can hash when we're
-   creating our own finished message */
-
-#define FINISHED_TEMPLATE_SIZE				4
-
-typedef BYTE SSL_MESSAGE_TEMPLATE[ FINISHED_TEMPLATE_SIZE ];
-
-static const SSL_MESSAGE_TEMPLATE FAR_BSS finishedTemplate[] = {
-	/*	byte		ID = SSL_HAND_FINISHED
-		uint24		len = 16 + 20 (SSL), 12 (TLS) */
-	{ SSL_HAND_FINISHED, 0, 0, MD5MAC_SIZE + SHA1MAC_SIZE },
-	{ SSL_HAND_FINISHED, 0, 0, TLS_HASHEDMAC_SIZE },
-	{ SSL_HAND_FINISHED, 0, 0, TLS_HASHEDMAC_SIZE },
-	{ SSL_HAND_FINISHED, 0, 0, TLS_HASHEDMAC_SIZE }
-	};
 
 /* Read/write the handshake completion data (change cipherspec + finished) */
 
@@ -52,7 +76,7 @@ static int readHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 	STREAM stream;
 	BYTE macBuffer[ MD5MAC_SIZE + SHA1MAC_SIZE + 8 ];
 	const int macValueLength = \
-					( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL ) ? \
+					( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL ) ? \
 					MD5MAC_SIZE + SHA1MAC_SIZE : TLS_HASHEDMAC_SIZE;
 	int length, value, status;
 
@@ -84,7 +108,7 @@ static int readHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Change cipher spec was the last message not subject to security
 	   encapsulation so we turn on security for the read channel after
-	   seeing it.  In addition if we're using TLS 1.1 explicit IVs the
+	   seeing it.  In addition if we're using TLS 1.1+ explicit IVs the
 	   effective header size changes because of the extra IV data, so we
 	   record the size of the additional IV data and update the receive
 	   buffer start offset to accomodate it */
@@ -93,14 +117,26 @@ static int readHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->cryptBlocksize > 1 )
 		{
 		sessionInfoPtr->sessionSSL->ivSize = sessionInfoPtr->cryptBlocksize;
-		sessionInfoPtr->receiveBufStartOfs += sessionInfoPtr->cryptBlocksize;
+		sessionInfoPtr->receiveBufStartOfs += sessionInfoPtr->sessionSSL->ivSize;
+		}
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		/* If we're using GCM then the IV is partially explicit and 
+		   partially implicit, and unrelated to the cipher block size */
+		sessionInfoPtr->sessionSSL->ivSize = \
+					GCM_IV_SIZE - sessionInfoPtr->sessionSSL->gcmSaltSize;
+		sessionInfoPtr->receiveBufStartOfs += sessionInfoPtr->sessionSSL->ivSize;
 		}
 
 	/* Process the other side's finished message.  Since this is the first 
 	   chance that we have to test whether our crypto keys are set up 
-	   correctly, we report problems with decryption or MAC'ing or a failure 
+	   correctly, we report problems with decryption or MACing or a failure 
 	   to find any recognisable header as a wrong key rather than a bad data 
-	   error:
+	   error.  In addition we signal the fact that the other side may 
+	   respond unexpectedly because of the use of encryption to 
+	   readHSPacketSSL() by specifying a special-case packet type, see the 
+	   comment in readHSPacketSSL() for how this is handled and why it's 
+	   necessary:
 
 		byte		ID = SSL_HAND_FINISHED
 		uint24		len
@@ -108,7 +144,7 @@ static int readHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 		byte[16]	MD5 MAC			byte[12]	hashedMAC
 		byte[20]	SHA-1 MAC */
 	status = readHSPacketSSL( sessionInfoPtr, NULL, &length, 
-							  SSL_MSG_HANDSHAKE );
+							  SSL_MSG_FIRST_ENCRHANDSHAKE );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = unwrapPacketSSL( sessionInfoPtr, sessionInfoPtr->receiveBuffer, 
@@ -220,7 +256,7 @@ static int writeHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Change cipher spec was the last message not subject to security
 	   encapsulation so we turn on security for the write channel after
-	   seeing it.  In addition if we're using TLS 1.1 explicit IVs the
+	   seeing it.  In addition if we're using TLS 1.1+ explicit IVs the
 	   effective header size changes because of the extra IV data, so we
 	   record the size of the additional IV data and update the receive
 	   buffer start offset to accomodate it */
@@ -229,7 +265,15 @@ static int writeHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 		sessionInfoPtr->cryptBlocksize > 1 )
 		{
 		sessionInfoPtr->sessionSSL->ivSize = sessionInfoPtr->cryptBlocksize;
-		sessionInfoPtr->sendBufStartOfs += sessionInfoPtr->cryptBlocksize;
+		sessionInfoPtr->sendBufStartOfs += sessionInfoPtr->sessionSSL->ivSize;
+		}
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		/* If we're using GCM then the IV is partially explicit and 
+		   partially implicit, and unrelated to the cipher block size */
+		sessionInfoPtr->sessionSSL->ivSize = \
+					GCM_IV_SIZE - sessionInfoPtr->sessionSSL->gcmSaltSize;
+		sessionInfoPtr->sendBufStartOfs += sessionInfoPtr->sessionSSL->ivSize;
 		}
 
 	/* Build the finished packet.  The initiator sends the MAC of the
@@ -249,11 +293,9 @@ static int writeHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 		status = continueHSPacketStream( stream, SSL_HAND_FINISHED, 
 										 &offset );
 	if( cryptStatusOK( status ) )
-		{
 		status = swrite( stream, hashValues, hashValuesLength );
-		if( cryptStatusOK( status ) )
-			status = completeHSPacketStream( stream, offset );
-		}
+	if( cryptStatusOK( status ) )
+		status = completeHSPacketStream( stream, offset );
 	if( cryptStatusOK( status ) )
 		status = wrapPacketSSL( sessionInfoPtr, stream, ccsEndPos );
 	if( cryptStatusOK( status ) )
@@ -279,6 +321,7 @@ static int writeHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
 	------		------		------		------
 		   <--- ...			Hello  --->
 	KeyEx  --->					   <---	Hello
+	------------------------------------------ completeHandshakeSSL()
 	CCS	   --->					   <--- CCS
 	Fin	   --->					   <--- Fin
 		   <---	CCS			CCS	   --->
@@ -288,10 +331,10 @@ static int writeHandshakeCompletionData( INOUT SESSION_INFO *sessionInfoPtr,
    initiator and responder rather than client and server.  The overall flow
    is then:
 
-	dualMAC( initiator );
+	dualMAC/MAC( initiator );
 	if( !initiator )
 		read initiator CCS + Fin;
-	dualMAC( responder );
+	dualMAC/MAC( responder );
 	send initiator/responder CCS + Fin;
 	if( initiator )
 		read responder CCS + Fin; */
@@ -302,10 +345,13 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 						  const BOOLEAN isClient,
 						  const BOOLEAN isResumedSession )
 	{
-	CRYPT_CONTEXT initiatorMD5context, initiatorSHA1context;
-	CRYPT_CONTEXT responderMD5context, responderSHA1context;
+	const CRYPT_CONTEXT initiatorMD5context = handshakeInfo->md5context;
+	const CRYPT_CONTEXT initiatorSHA1context = handshakeInfo->sha1context;
+	const CRYPT_CONTEXT initiatorSHA2context = handshakeInfo->sha2context;
+	CRYPT_CONTEXT responderMD5context = CRYPT_ERROR;
+	CRYPT_CONTEXT responderSHA1context = CRYPT_ERROR;
+	CRYPT_CONTEXT responderSHA2context = CRYPT_ERROR;
 	BYTE masterSecret[ SSL_SECRET_SIZE + 8 ];
-	BYTE keyBlock[ MAX_KEYBLOCK_SIZE + 8 ];
 	BYTE initiatorHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
 	BYTE responderHashes[ ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
 	const void *sslInitiatorString, *sslResponderString;
@@ -331,10 +377,6 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	if( isResumedSession )
 		{
 		/* Resumed session, initiator = server, responder = client */
-		initiatorMD5context = handshakeInfo->serverMD5context;
-		initiatorSHA1context = handshakeInfo->serverSHA1context;
-		responderMD5context = handshakeInfo->clientMD5context;
-		responderSHA1context = handshakeInfo->clientSHA1context;
 		sslInitiatorString = SSL_SENDER_SERVERLABEL;
 		sslResponderString = SSL_SENDER_CLIENTLABEL;
 		tlsInitiatorString = "server finished";
@@ -343,10 +385,6 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	else
 		{
 		/* Normal session, initiator = client, responder = server */
-		initiatorMD5context = handshakeInfo->clientMD5context;
-		initiatorSHA1context = handshakeInfo->clientSHA1context;
-		responderMD5context = handshakeInfo->serverMD5context;
-		responderSHA1context = handshakeInfo->serverSHA1context;
 		sslInitiatorString = SSL_SENDER_CLIENTLABEL;
 		sslResponderString = SSL_SENDER_SERVERLABEL;
 		tlsInitiatorString = "client finished";
@@ -355,88 +393,69 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	sslLabelLength = SSL_SENDERLABEL_SIZE;
 	tlsLabelLength = 15;
 
-	/* Create the security contexts required for the session */
-	status = initSecurityContextsSSL( sessionInfoPtr );
+	/* Initialise and load cryptovariables into all encryption contexts */
+	status = initCryptoSSL( sessionInfoPtr, handshakeInfo, masterSecret,
+							SSL_SECRET_SIZE, isClient, isResumedSession );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* If it's a fresh (i.e. non-cached) session, convert the premaster 
-	   secret into the master secret */
-	if( !isResumedSession )
+	/* At this point the hashing of the initiator and responder diverge.
+	   The initiator sends its change cipherspec and finished messages 
+	   first, so the hashing stops there, while the responder has to keep 
+	   hasing the initiator's messages until it's its turn to send its 
+	   change cipherspec and finished messages.  To handle this we clone 
+	   the initiator's hash context(s) so that we can contine the hashing 
+	   after the initiator has wrapped things up */
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
 		{
-		status = premasterToMaster( sessionInfoPtr, handshakeInfo,
-									masterSecret, SSL_SECRET_SIZE );
-		if( cryptStatusError( status ) )
-			return( status );
-
-		/* Everything is OK so far, if we're the server (which caches 
-		   sessions) add the master secret to the session cache */
-		if( !isClient )
+		status = cloneHashContext( initiatorMD5context, 
+								   &responderMD5context );
+		if( cryptStatusOK( status ) )
 			{
-			int cachedID;
-
-			status = cachedID = \
-				addScoreboardEntry( sessionInfoPtr->sessionSSL->scoreboardInfoPtr,
-									handshakeInfo->sessionID,
-									handshakeInfo->sessionIDlength,
-									masterSecret, SSL_SECRET_SIZE );
+			status = cloneHashContext( initiatorSHA1context, 
+									   &responderSHA1context );
 			if( cryptStatusError( status ) )
-				{
-				zeroise( masterSecret, SSL_SECRET_SIZE );
-				return( status );
-				}
-			sessionInfoPtr->sessionSSL->sessionCacheID = cachedID;
+				krnlSendNotifier( responderMD5context, IMESSAGE_DECREFCOUNT );
 			}
 		}
 	else
 		{
-		/* We've already got the master secret present from the session that
-		   we're resuming from, reuse that */
-		ENSURES( rangeCheckZ( 0, handshakeInfo->premasterSecretSize, 
-							  SSL_SECRET_SIZE ) );
-		memcpy( masterSecret, handshakeInfo->premasterSecret,
-				handshakeInfo->premasterSecretSize );
+		status = cloneHashContext( initiatorSHA2context, 
+								   &responderSHA2context );
 		}
-
-	/* Convert the master secret into keying material.  Unfortunately we
-	   can't delete the master secret at this point because it's still 
-	   needed to calculate the MAC for the handshake messages */
-	status = masterToKeys( sessionInfoPtr, handshakeInfo, masterSecret,
-						   SSL_SECRET_SIZE, keyBlock, MAX_KEYBLOCK_SIZE );
 	if( cryptStatusError( status ) )
 		{
 		zeroise( masterSecret, SSL_SECRET_SIZE );
 		return( status );
 		}
 
-	/* Load the keys and secrets */
-	status = loadKeys( sessionInfoPtr, handshakeInfo, keyBlock, 
-					   MAX_KEYBLOCK_SIZE, isClient );
-	zeroise( keyBlock, MAX_KEYBLOCK_SIZE );
-	if( cryptStatusError( status ) )
-		{
-		zeroise( masterSecret, SSL_SECRET_SIZE );
-		return( status );
-		}
-
-	/* Complete the dual-MAC hashing of the initiator-side messages and, if
+	/* Complete the dual-MAC/MAC of the initiator-side messages and, if 
 	   we're the responder, check that the MACs match the ones supplied by
 	   the initiator */
-	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
+	if( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL )
 		{
 		status = completeSSLDualMAC( initiatorMD5context, initiatorSHA1context,
-									 initiatorHashes, CRYPT_MAX_HASHSIZE * 2,
-									 &initiatorHashLength, sslInitiatorString, 
-									 sslLabelLength, masterSecret, 
-									 SSL_SECRET_SIZE );
+							initiatorHashes, CRYPT_MAX_HASHSIZE * 2,
+							&initiatorHashLength, sslInitiatorString, 
+							sslLabelLength, masterSecret, SSL_SECRET_SIZE );
 		}
 	else
 		{
-		status = completeTLSHashedMAC( initiatorMD5context, initiatorSHA1context,
-									   initiatorHashes, CRYPT_MAX_HASHSIZE * 2,
-									   &initiatorHashLength, tlsInitiatorString, 
-									   tlsLabelLength, masterSecret, 
-									   SSL_SECRET_SIZE );
+		if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+			{
+			status = completeTLSHashedMAC( initiatorMD5context, 
+							initiatorSHA1context, initiatorHashes, 
+							CRYPT_MAX_HASHSIZE * 2, &initiatorHashLength, 
+							tlsInitiatorString, tlsLabelLength, masterSecret, 
+							SSL_SECRET_SIZE );
+			}
+		else
+			{
+			status = completeTLS12HashedMAC( initiatorSHA2context,
+							initiatorHashes, CRYPT_MAX_HASHSIZE,
+							&initiatorHashLength, tlsInitiatorString, 
+							tlsLabelLength, masterSecret, SSL_SECRET_SIZE );
+			}
 		}
 	if( cryptStatusOK( status ) && !isInitiator )
 		{
@@ -447,51 +466,79 @@ int completeHandshakeSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		{
 		zeroise( masterSecret, SSL_SECRET_SIZE );
+		destroyHashContexts( responderMD5context, responderSHA1context,
+							 responderSHA2context );
 		return( status );
 		}
 
-	/* Now that we have the initiator MACs, complete the dual-MAC hashing of
-	   the responder-side messages and destroy the master secret.  We 
-	   haven't created the full message yet at this point so we manually 
-	   hash the individual pieces so that we can finally get rid of the 
-	   master secret */
-	status = krnlSendMessage( responderMD5context, IMESSAGE_CTX_HASH,
-				( MESSAGE_CAST ) finishedTemplate[ sessionInfoPtr->version ],
-				FINISHED_TEMPLATE_SIZE );
-	if( cryptStatusOK( status ) )
+	/* Now that we have the initiator MACs, complete the dual-hashing/
+	   hashing and dual-MAC/MAC of the responder-side messages and destroy 
+	   the master secret.  We haven't created the full message yet at this 
+	   point so we manually hash the individual pieces so that we can 
+	   finally get rid of the master secret */
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
 		{
-		status = krnlSendMessage( responderSHA1context, IMESSAGE_CTX_HASH,
-				( MESSAGE_CAST ) finishedTemplate[ sessionInfoPtr->version ],
-				FINISHED_TEMPLATE_SIZE );
-		}
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( responderMD5context, IMESSAGE_CTX_HASH, 
-								  initiatorHashes, initiatorHashLength );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( responderSHA1context, IMESSAGE_CTX_HASH,
-								  initiatorHashes, initiatorHashLength );
-	if( cryptStatusError( status ) )
-		{
-		zeroise( masterSecret, SSL_SECRET_SIZE );
-		return( status );
-		}
-	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
-		{
-		status = completeSSLDualMAC( responderMD5context, responderSHA1context,
-									 responderHashes, CRYPT_MAX_HASHSIZE * 2,
-									 &responderHashLength, sslResponderString, 
-									 sslLabelLength, masterSecret, 
-									 SSL_SECRET_SIZE );
+		status = krnlSendMessage( responderSHA2context, IMESSAGE_CTX_HASH,
+				( MESSAGE_CAST ) finishedTemplateTLS, FINISHED_TEMPLATE_SIZE );
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( responderSHA2context, IMESSAGE_CTX_HASH, 
+									  initiatorHashes, initiatorHashLength );
 		}
 	else
 		{
-		status = completeTLSHashedMAC( responderMD5context, responderSHA1context,
-									   responderHashes, CRYPT_MAX_HASHSIZE * 2,
-									   &responderHashLength, tlsResponderString, 
-									   tlsLabelLength, masterSecret, 
-									   SSL_SECRET_SIZE );
+		const BYTE *finishedTemplate = \
+			( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL ) ? \
+			finishedTemplateSSL : finishedTemplateTLS;
+
+		status = krnlSendMessage( responderMD5context, IMESSAGE_CTX_HASH,
+				( MESSAGE_CAST ) finishedTemplate, FINISHED_TEMPLATE_SIZE );
+		if( cryptStatusOK( status ) )
+			{
+			status = krnlSendMessage( responderSHA1context, IMESSAGE_CTX_HASH,
+				( MESSAGE_CAST ) finishedTemplate, FINISHED_TEMPLATE_SIZE );
+			}
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( responderMD5context, IMESSAGE_CTX_HASH, 
+									  initiatorHashes, initiatorHashLength );
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( responderSHA1context, IMESSAGE_CTX_HASH,
+									  initiatorHashes, initiatorHashLength );
+		}
+	if( cryptStatusError( status ) )
+		{
+		zeroise( masterSecret, SSL_SECRET_SIZE );
+		destroyHashContexts( responderMD5context, responderSHA1context,
+							 responderSHA2context );
+		return( status );
+		}
+	if( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL )
+		{
+		status = completeSSLDualMAC( responderMD5context, responderSHA1context,
+							responderHashes, CRYPT_MAX_HASHSIZE * 2,
+							&responderHashLength, sslResponderString, 
+							sslLabelLength, masterSecret, SSL_SECRET_SIZE );
+		}
+	else
+		{
+		if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+			{
+			status = completeTLSHashedMAC( responderMD5context, 
+							responderSHA1context, responderHashes, 
+							CRYPT_MAX_HASHSIZE * 2, &responderHashLength, 
+							tlsResponderString, tlsLabelLength, masterSecret, 
+							SSL_SECRET_SIZE );
+			}
+		else
+			{
+			status = completeTLS12HashedMAC( responderSHA2context, 
+							responderHashes, CRYPT_MAX_HASHSIZE * 2, 
+							&responderHashLength, tlsResponderString, 
+							tlsLabelLength, masterSecret, SSL_SECRET_SIZE );
+			}
 		}
 	zeroise( masterSecret, SSL_SECRET_SIZE );
+	destroyHashContexts( responderMD5context, responderSHA1context,
+						 responderSHA2context );
 	if( cryptStatusError( status ) )
 		return( status );
 

@@ -5,7 +5,7 @@ Option Explicit
 '*****************************************************************************
 '*                                                                           *
 '*                        cryptlib External API Interface                    *
-'*                       Copyright Peter Gutmann 1997-2009                   *
+'*                       Copyright Peter Gutmann 1997-2010                   *
 '*                                                                           *
 '*                 adapted for Visual Basic Version 6  by W. Gothier         *
 '*****************************************************************************
@@ -15,7 +15,7 @@ Option Explicit
 
 'This file has been created automatically by a perl script from the file:
 '
-'"cryptlib.h" dated Sun Jul  5 01:39:06 2009, filesize = 91488.
+'"cryptlib.h" dated Tue Nov 30 16:05:00 2010, filesize = 97720.
 '
 'Please check twice that the file matches the version of cryptlib.h
 'in your cryptlib source! If this is not the right version, try to download an
@@ -29,7 +29,7 @@ Option Explicit
 
 '-----------------------------------------------------------------------------
 
-  Public Const CRYPTLIB_VERSION As Long = 3320
+  Public Const CRYPTLIB_VERSION As Long = 3400
 
 '****************************************************************************
 '*                                                                           *
@@ -73,6 +73,7 @@ Public Enum CRYPT_ALGO_TYPE
         CRYPT_ALGO_SHA = CRYPT_ALGO_SHA1    ' Older form 
     CRYPT_ALGO_RIPEMD160            ' RIPE-MD 160 
     CRYPT_ALGO_SHA2                 ' SHA-256 
+        CRYPT_ALGO_SHA256 = CRYPT_ALGO_SHA2 ' Alternate name 
     CRYPT_ALGO_SHAng                ' Future SHA-nextgen standard 
 
     ' MAC's 
@@ -82,6 +83,7 @@ Public Enum CRYPT_ALGO_TYPE
     CRYPT_ALGO_HMAC_RIPEMD160       ' HMAC-RIPEMD-160 
     CRYPT_ALGO_HMAC_SHA2            ' HMAC-SHA2 
     CRYPT_ALGO_HMAC_SHAng           ' HMAC-future-SHA-nextgen 
+
 
 '      Vendors may want to use their own algorithms that aren't part of the
 '      general cryptlib suite.  The following values are for vendor-defined
@@ -113,6 +115,7 @@ Public Enum CRYPT_MODE_TYPE
     CRYPT_MODE_CBC                  ' CBC 
     CRYPT_MODE_CFB                  ' CFB 
     CRYPT_MODE_OFB                  ' OFB 
+    CRYPT_MODE_GCM                  ' GCM 
     CRYPT_MODE_LAST                 ' Last possible crypt mode value 
     
 
@@ -129,10 +132,8 @@ Public Enum CRYPT_KEYSET_TYPE
     CRYPT_KEYSET_LDAP               ' LDAP directory service 
     CRYPT_KEYSET_ODBC               ' Generic ODBC interface 
     CRYPT_KEYSET_DATABASE           ' Generic RDBMS interface 
-    CRYPT_KEYSET_PLUGIN             ' Generic database plugin 
     CRYPT_KEYSET_ODBC_STORE         ' ODBC certificate store 
     CRYPT_KEYSET_DATABASE_STORE     ' Database certificate store 
-    CRYPT_KEYSET_PLUGIN_STORE       ' Database plugin certificate store 
     CRYPT_KEYSET_LAST               ' Last possible keyset type 
 
     
@@ -275,8 +276,7 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     ' Extended error information 
     CRYPT_ATTRIBUTE_ERRORTYPE       ' Type of last error 
     CRYPT_ATTRIBUTE_ERRORLOCUS      ' Locus of last error 
-    CRYPT_ATTRIBUTE_INT_ERRORCODE   ' Low-level software-specific 
-    CRYPT_ATTRIBUTE_INT_ERRORMESSAGE  '   error code and message 
+    CRYPT_ATTRIBUTE_ERRORMESSAGE    ' Detailed error description 
 
     ' Generic information 
     CRYPT_ATTRIBUTE_CURRENT_GROUP   ' Cursor mgt: Group in attribute list 
@@ -411,7 +411,10 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_CERTTYPE         ' Certificate object type 
     CRYPT_CERTINFO_FINGERPRINT      ' Certificate fingerprints 
         CRYPT_CERTINFO_FINGERPRINT_MD5 = CRYPT_CERTINFO_FINGERPRINT
-    CRYPT_CERTINFO_FINGERPRINT_SHA
+    CRYPT_CERTINFO_FINGERPRINT_SHA1
+        CRYPT_CERTINFO_FINGERPRINT_SHA = CRYPT_CERTINFO_FINGERPRINT_SHA1
+    CRYPT_CERTINFO_FINGERPRINT_SHA2
+    CRYPT_CERTINFO_FINGERPRINT_SHAng
     CRYPT_CERTINFO_CURRENT_CERTIFICATE ' Cursor mgt: Rel.pos in chain/CRL/OCSP 
     CRYPT_CERTINFO_TRUSTED_USAGE    ' Usage that cert is trusted for 
     CRYPT_CERTINFO_TRUSTED_IMPLICIT ' Whether cert is implicitly trusted 
@@ -512,6 +515,21 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_QCSTATEMENT_REGISTRATIONAUTHORITY
                     ' qcStatement.statementInfo.nameRegistrationAuthorities 
 
+    ' 1 3 6 1 5 5 7 1 7 ipAddrBlocks 
+    CRYPT_CERTINFO_IPADDRESSBLOCKS
+    CRYPT_CERTINFO_IPADDRESSBLOCKS_ADDRESSFAMILY    ' addressFamily 
+'  CRYPT_CERTINFO_IPADDRESSBLOCKS_INHERIT, // ipAddress.inherit 
+    CRYPT_CERTINFO_IPADDRESSBLOCKS_PREFIX   ' ipAddress.addressPrefix 
+    CRYPT_CERTINFO_IPADDRESSBLOCKS_MIN      ' ipAddress.addressRangeMin 
+    CRYPT_CERTINFO_IPADDRESSBLOCKS_MAX      ' ipAddress.addressRangeMax 
+
+    ' 1 3 6 1 5 5 7 1 8 autonomousSysIds 
+    CRYPT_CERTINFO_AUTONOMOUSSYSIDS
+'  CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_INHERIT,// asNum.inherit 
+    CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_ID    ' asNum.id 
+    CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MIN   ' asNum.min 
+    CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MAX   ' asNum.max 
+
     ' 1 3 6 1 5 5 7 48 1 2 ocspNonce 
     CRYPT_CERTINFO_OCSP_NONCE               ' nonce 
 
@@ -527,8 +545,11 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
 
     ' 1 3 6 1 5 5 7 48 1 11 subjectInfoAccess 
     CRYPT_CERTINFO_SUBJECTINFOACCESS
-    CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY ' accessDescription.accessLocation 
     CRYPT_CERTINFO_SUBJECTINFO_TIMESTAMPING ' accessDescription.accessLocation 
+    CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY ' accessDescription.accessLocation 
+    CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECTREPOSITORY ' accessDescription.accessLocation 
+    CRYPT_CERTINFO_SUBJECTINFO_RPKIMANIFEST ' accessDescription.accessLocation 
+    CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECT ' accessDescription.accessLocation 
 
     ' 1 3 36 8 3 1 siggDateOfCertGen 
     CRYPT_CERTINFO_SIGG_DATEOFCERTGEN
@@ -539,14 +560,34 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_SIGG_PROCURE_TYPEOFSUBSTITUTION  ' typeOfSubstitution 
     CRYPT_CERTINFO_SIGG_PROCURE_SIGNINGFOR  ' signingFor.thirdPerson 
 
+    ' 1 3 36 8 3 3 siggAdmissions 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_AUTHORITY    ' authority 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHID     ' namingAuth.iD 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHURL    ' namingAuth.uRL 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHTEXT   ' namingAuth.text 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_PROFESSIONITEM   ' professionItem 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_PROFESSIONOID    ' professionOID 
+    CRYPT_CERTINFO_SIGG_ADMISSIONS_REGISTRATIONNUMBER   ' registrationNumber 
+
     ' 1 3 36 8 3 4 siggMonetaryLimit 
     CRYPT_CERTINFO_SIGG_MONETARYLIMIT
     CRYPT_CERTINFO_SIGG_MONETARY_CURRENCY   ' currency 
     CRYPT_CERTINFO_SIGG_MONETARY_AMOUNT     ' amount 
     CRYPT_CERTINFO_SIGG_MONETARY_EXPONENT   ' exponent 
 
+    ' 1 3 36 8 3 5 siggDeclarationOfMajority 
+    CRYPT_CERTINFO_SIGG_DECLARATIONOFMAJORITY
+    CRYPT_CERTINFO_SIGG_DECLARATIONOFMAJORITY_COUNTRY   ' fullAgeAtCountry 
+
     ' 1 3 36 8 3 8 siggRestriction 
     CRYPT_CERTINFO_SIGG_RESTRICTION
+
+    ' 1 3 36 8 3 13 siggCertHash 
+    CRYPT_CERTINFO_SIGG_CERTHASH
+
+    ' 1 3 36 8 3 15 siggAdditionalInformation 
+    CRYPT_CERTINFO_SIGG_ADDITIONALINFORMATION
 
     ' 1 3 101 1 4 1 strongExtranet 
     CRYPT_CERTINFO_STRONGEXTRANET
@@ -668,14 +709,55 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_EXTKEY_NS_SERVERGATEDCRYPTO  ' serverGatedCrypto 
     CRYPT_CERTINFO_EXTKEY_VS_SERVERGATEDCRYPTO_CA   ' serverGatedCrypto CA 
 
+    ' 2 5 29 40 crlStreamIdentifier 
+    CRYPT_CERTINFO_CRLSTREAMIDENTIFIER
+
     ' 2 5 29 46 freshestCRL 
     CRYPT_CERTINFO_FRESHESTCRL
     CRYPT_CERTINFO_FRESHESTCRL_FULLNAME     ' distributionPointName.fullName 
     CRYPT_CERTINFO_FRESHESTCRL_REASONS      ' reasons 
     CRYPT_CERTINFO_FRESHESTCRL_CRLISSUER    ' cRLIssuer 
 
+    ' 2 5 29 47 orderedList 
+    CRYPT_CERTINFO_ORDEREDLIST
+
+    ' 2 5 29 51 baseUpdateTime 
+    CRYPT_CERTINFO_BASEUPDATETIME
+
+    ' 2 5 29 53 deltaInfo 
+    CRYPT_CERTINFO_DELTAINFO
+    CRYPT_CERTINFO_DELTAINFO_LOCATION       ' deltaLocation 
+    CRYPT_CERTINFO_DELTAINFO_NEXTDELTA      ' nextDelta 
+
     ' 2 5 29 54 inhibitAnyPolicy 
     CRYPT_CERTINFO_INHIBITANYPOLICY
+
+    ' 2 5 29 58 toBeRevoked 
+    CRYPT_CERTINFO_TOBEREVOKED
+    CRYPT_CERTINFO_TOBEREVOKED_CERTISSUER   ' certificateIssuer 
+    CRYPT_CERTINFO_TOBEREVOKED_REASONCODE   ' reasonCode 
+    CRYPT_CERTINFO_TOBEREVOKED_REVOCATIONTIME   ' revocationTime 
+    CRYPT_CERTINFO_TOBEREVOKED_CERTSERIALNUMBER ' certSerialNumber 
+
+    ' 2 5 29 59 revokedGroups 
+    CRYPT_CERTINFO_REVOKEDGROUPS
+    CRYPT_CERTINFO_REVOKEDGROUPS_CERTISSUER ' certificateIssuer 
+    CRYPT_CERTINFO_REVOKEDGROUPS_REASONCODE ' reasonCode 
+    CRYPT_CERTINFO_REVOKEDGROUPS_INVALIDITYDATE ' invalidityDate 
+    CRYPT_CERTINFO_REVOKEDGROUPS_STARTINGNUMBER ' startingNumber 
+    CRYPT_CERTINFO_REVOKEDGROUPS_ENDINGNUMBER   ' endingNumber 
+
+    ' 2 5 29 60 expiredCertsOnCRL 
+    CRYPT_CERTINFO_EXPIREDCERTSONCRL
+
+    ' 2 5 29 63 aaIssuingDistributionPoint 
+    CRYPT_CERTINFO_AAISSUINGDISTRIBUTIONPOINT
+    CRYPT_CERTINFO_AAISSUINGDIST_FULLNAME   ' distributionPointName.fullName 
+    CRYPT_CERTINFO_AAISSUINGDIST_SOMEREASONSONLY ' onlySomeReasons 
+    CRYPT_CERTINFO_AAISSUINGDIST_INDIRECTCRL    ' indirectCRL 
+    CRYPT_CERTINFO_AAISSUINGDIST_USERATTRCERTS  ' containsUserAttributeCerts 
+    CRYPT_CERTINFO_AAISSUINGDIST_AACERTS    ' containsAACerts 
+    CRYPT_CERTINFO_AAISSUINGDIST_SOACERTS   ' containsSOAPublicKeyCerts 
 
     ' 2 16 840 1 113730 1 x Netscape extensions 
     CRYPT_CERTINFO_NS_CERTTYPE              ' netscape-cert-type 
@@ -745,8 +827,24 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_CMS_SMIMECAP_RC5         ' RC5 encryption (w.128 key) 
     CRYPT_CERTINFO_CMS_SMIMECAP_SKIPJACK    ' Skipjack encryption 
     CRYPT_CERTINFO_CMS_SMIMECAP_DES         ' DES encryption 
+    CRYPT_CERTINFO_CMS_SMIMECAP_SHAng       ' SHA2-ng hash 
+    CRYPT_CERTINFO_CMS_SMIMECAP_SHA2        ' SHA2-256 hash 
+    CRYPT_CERTINFO_CMS_SMIMECAP_SHA1        ' SHA1 hash 
+    CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHAng  ' HMAC-SHA2-ng MAC 
+    CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA2   ' HMAC-SHA2-256 MAC 
+    CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA1   ' HMAC-SHA1 MAC 
+    CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC256  ' AuthEnc w.256-bit key 
+    CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC128  ' AuthEnc w.128-bit key 
+    CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHAng   ' RSA with SHA-ng signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA2    ' RSA with SHA2-256 signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA1    ' RSA with SHA1 signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_DSA_SHA1    ' DSA with SHA-1 signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHAng ' ECDSA with SHA-ng signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA2  ' ECDSA with SHA2-256 signing 
+    CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA1  ' ECDSA with SHA-1 signing 
     CRYPT_CERTINFO_CMS_SMIMECAP_PREFERSIGNEDDATA    ' preferSignedData 
     CRYPT_CERTINFO_CMS_SMIMECAP_CANNOTDECRYPTANY    ' canNotDecryptAny 
+    CRYPT_CERTINFO_CMS_SMIMECAP_PREFERBINARYINSIDE  ' preferBinaryInside 
 
     ' 1 2 840 113549 1 9 16 2 1 receiptRequest 
     CRYPT_CERTINFO_CMS_RECEIPTREQUEST
@@ -787,6 +885,11 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_CERTINFO_CMS_SIGNINGCERTIFICATE
     CRYPT_CERTINFO_CMS_SIGNINGCERT_ESSCERTID  ' certs.essCertID 
     CRYPT_CERTINFO_CMS_SIGNINGCERT_POLICIES ' policies.policyInformation.policyIdentifier 
+
+    ' 1 2 840 113549 1 9 16 2 47 signingCertificateV2 
+    CRYPT_CERTINFO_CMS_SIGNINGCERTIFICATEV2
+    CRYPT_CERTINFO_CMS_SIGNINGCERTV2_ESSCERTIDV2  ' certs.essCertID 
+    CRYPT_CERTINFO_CMS_SIGNINGCERTV2_POLICIES ' policies.policyInformation.policyIdentifier 
 
     ' 1 2 840 113549 1 9 16 2 15 signaturePolicyID 
     CRYPT_CERTINFO_CMS_SIGNATUREPOLICYID
@@ -939,15 +1042,15 @@ Public Enum CRYPT_ATTRIBUTE_TYPE
     CRYPT_SESSINFO_CACERTIFICATE    ' Issuing CA certificate 
 
     ' Protocol-specific information 
-    CRYPT_SESSINFO_TSP_MSGIMPRINT   ' TSP message imprint 
     CRYPT_SESSINFO_CMP_REQUESTTYPE  ' Request type 
-    CRYPT_SESSINFO_CMP_PKIBOOT      ' Unused, to be removed in 3.4 
     CRYPT_SESSINFO_CMP_PRIVKEYSET   ' Private-key keyset 
     CRYPT_SESSINFO_SSH_CHANNEL      ' SSH current channel 
     CRYPT_SESSINFO_SSH_CHANNEL_TYPE ' SSH channel type 
     CRYPT_SESSINFO_SSH_CHANNEL_ARG1 ' SSH channel argument 1 
     CRYPT_SESSINFO_SSH_CHANNEL_ARG2 ' SSH channel argument 2 
     CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE ' SSH channel active 
+    CRYPT_SESSINFO_SSL_OPTIONS      ' SSL/TLS protocol options 
+    CRYPT_SESSINFO_TSP_MSGIMPRINT   ' TSP message imprint 
 
     ' Used internally 
     CRYPT_SESSINFO_LAST
@@ -1253,6 +1356,17 @@ Public Enum CRYPT_CERTACTION_TYPE
 
 End Enum
 
+'  SSL/TLS protocol options.  CRYPT_SSLOPTION_MINVER_SSLV3 is the same as 
+'  CRYPT_SSLOPTION_NONE since this is the default 
+
+  Public Const CRYPT_SSLOPTION_NONE As Long = &H00
+  Public Const CRYPT_SSLOPTION_MINVER_SSLV3 As Long = &H00    ' Min.protocol version 
+  Public Const CRYPT_SSLOPTION_MINVER_TLS10 As Long = &H01
+  Public Const CRYPT_SSLOPTION_MINVER_TLS11 As Long = &H02
+  Public Const CRYPT_SSLOPTION_MINVER_TLS12 As Long = &H03
+  Public Const CRYPT_SSLOPTION_SUITEB_128 As Long = &H04    ' SuiteB security levels 
+  Public Const CRYPT_SSLOPTION_SUITEB_256 As Long = &H08
+
 '****************************************************************************
 '*                                                                           *
 '*                               General Constants                           *
@@ -1273,9 +1387,10 @@ End Enum
   Public Const CRYPT_MAX_PKCSIZE As Long = 512
   Public Const CRYPT_MAX_PKCSIZE_ECC As Long = 72
 
-' The maximum hash size - 256 bits 
+'  The maximum hash size - 512 bits.  Before 3.4 this was 256 bits, in the 
+'  3.4 release it was increased to 512 bits to accommodate SHA-3 
 
-  Public Const CRYPT_MAX_HASHSIZE As Long = 32
+  Public Const CRYPT_MAX_HASHSIZE As Long = 64
 
 ' The maximum size of a text string (e.g.key owner name) 
 
@@ -1434,10 +1549,10 @@ End Type
 
 Public Enum CRYPT_ECCCURVE_TYPE
 
-'      Named ECC curves.  When updating these remember to also update the 
-'      ECC fieldSizeInfo table in context/kg_ecc.c, the eccOIDinfo table and 
-'      sslEccCurveInfo table in context/key_rd.c, and the curveIDTbl in 
-'      session/ssl.c 
+'      Named ECC curves.  Since these need to be mapped to all manner of
+'      protocol- and mechanism-specific identifiers, when updating this list 
+'      grep for occurrences of CRYPT_ECCCURVE_P256 (the most common one) and
+'      check whether any related mapping tables need to be updated 
     CRYPT_ECCCURVE_NONE         ' No ECC curve type 
     CRYPT_ECCCURVE_P192         ' NIST P192/X9.62 P192r1/SECG p192r1 curve 
     CRYPT_ECCCURVE_P224         ' NIST P224/X9.62 P224r1/SECG p224r1 curve 

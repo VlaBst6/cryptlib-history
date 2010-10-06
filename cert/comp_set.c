@@ -13,9 +13,11 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -490,6 +492,10 @@ int addCertComponent( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_OK );
 #endif /* USE_CERTREV */
 
+		case CRYPT_CERTINFO_VERSION:
+			certInfoPtr->version = certInfo;
+			return( CRYPT_OK );
+
 		case CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO:
 			return( copyPublicKeyInfo( certInfoPtr, certInfo, NULL ) );
 
@@ -803,6 +809,7 @@ int addCertComponentString( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_OK );
 			}
 
+#ifdef USE_CERTREV
 		case CRYPT_CERTINFO_REVOCATIONDATE:
 			{
 			time_t certTime = *( ( time_t * ) certInfo );
@@ -817,6 +824,7 @@ int addCertComponentString( INOUT CERT_INFO *certInfoPtr,
 			*revocationTimePtr = certTime;
 			return( CRYPT_OK );
 			}
+#endif /* USE_CERTREV */
 
 #ifdef USE_CERT_DNSTRING
 		case CRYPT_CERTINFO_DN:
@@ -853,3 +861,4 @@ int addCertComponentString( INOUT CERT_INFO *certInfoPtr,
 
 	retIntError();
 	}
+#endif /* USE_CERTIFICATES */

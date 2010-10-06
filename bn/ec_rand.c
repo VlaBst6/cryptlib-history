@@ -115,7 +115,7 @@
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 #if 1	/* pcg */
 
@@ -319,4 +319,4 @@ int	BN_pseudo_rand_range(BIGNUM *r, const BIGNUM *range)
 	{
 	return bn_rand_range(1, r, range);
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

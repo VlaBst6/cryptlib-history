@@ -65,6 +65,8 @@ static BOOLEAN sanityCheckFunction( const STREAM *stream )
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_B( netStream != NULL );
+
 	/* Make sure that it's an initialised network stream with valid 
 	   parameters */
 	if( stream->type != STREAM_TYPE_NETWORK || \
@@ -91,6 +93,8 @@ static BOOLEAN sanityCheckBufferedFunction( const STREAM *stream )
 
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( netStream, sizeof( NET_STREAM_INFO ) ) );
+
+	REQUIRES_B( netStream != NULL );
 
 	/* Make sure that it's an initialised network stream with valid 
 	   parameters */
@@ -153,6 +157,7 @@ static int transportDirectReadFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 
@@ -163,7 +168,7 @@ static int transportDirectReadFunction( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int transportDirectWriteFunction( INOUT STREAM *stream, 
-										 IN_BUFFER( length ) const void *buffer, 
+										 IN_BUFFER( maxLength ) const void *buffer, 
 										 IN_LENGTH const int maxLength,
 										 OUT_LENGTH_Z int *length )
 	{
@@ -174,6 +179,7 @@ static int transportDirectWriteFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 
@@ -219,6 +225,7 @@ static int transportSessionConnectFunction( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( host == NULL && hostLen == 0 );
 	REQUIRES_S( port == 0 );
@@ -249,6 +256,7 @@ static void transportSessionDisconnectFunction( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_V( netStream != NULL );
 	REQUIRES_V( netStream->sanityCheckFunction( stream ) );
 
 	krnlSendNotifier( netStream->iTransportSession, IMESSAGE_DECREFCOUNT );
@@ -277,6 +285,7 @@ static int transportSessionReadFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( stream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 	REQUIRES_S( flags >= TRANSPORT_FLAG_NONE && \
@@ -335,6 +344,7 @@ static int transportSessionWriteFunction( INOUT STREAM *stream,
 	assert( isReadPtr( buffer, maxLength ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 	REQUIRES_S( flags >= TRANSPORT_FLAG_NONE && \
@@ -366,6 +376,7 @@ void setAccessMethodTransportSession( INOUT STREAM *stream )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_V( netStream != NULL );
 	REQUIRES_V( stream->type == STREAM_TYPE_NETWORK );
 
 	netStream->transportConnectFunction = transportSessionConnectFunction;
@@ -409,7 +420,7 @@ void setAccessMethodTransportSession( INOUT STREAM *stream )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int bufferedTransportReadFunction( INOUT STREAM *stream, 
-										  OUT_BUFFER( maxLength, length ) \
+										  OUT_BUFFER( maxLength, *length ) \
 											BYTE *buffer, 
 										  IN_LENGTH const int maxLength, 
 										  OUT_LENGTH_Z int *length, 
@@ -425,6 +436,7 @@ static int bufferedTransportReadFunction( INOUT STREAM *stream,
 	assert( isWritePtr( length, sizeof( int ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 	REQUIRES_S( bytesLeft >= 0 && bytesLeft < MAX_INTLENGTH_SHORT );
@@ -650,7 +662,7 @@ static int processIncompleteWrite( INOUT NET_STREAM_INFO *netStream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int bufferedTransportWriteFunction( INOUT STREAM *stream, 
-										   IN_BUFFER( length ) const BYTE *buffer, 
+										   IN_BUFFER( maxLength ) const BYTE *buffer, 
 										   IN_LENGTH const int maxLength, 
 										   OUT_LENGTH_Z int *length, 
 										   IN_FLAGS_Z( TRANSPORT ) \
@@ -664,6 +676,7 @@ static int bufferedTransportWriteFunction( INOUT STREAM *stream,
 	assert( isReadPtr( buffer, maxLength ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
 	REQUIRES_S( flags >= TRANSPORT_FLAG_NONE && \

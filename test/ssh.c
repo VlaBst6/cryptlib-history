@@ -46,6 +46,7 @@ typedef enum {
 	SSH_TEST_NORMAL,			/* Standard SSHv2 test */
 	SSH_TEST_SSH1,				/* SSHv1 test */
 	SSH_TEST_DSAKEY,			/* DSA server key instead of RSA */
+	SSH_TEST_ECCKEY,			/* ECDSA server key instead of RSA */
 	SSH_TEST_CLIENTCERT,		/* Use client public-key for auth */
 	SSH_TEST_SUBSYSTEM,			/* Test SFTP subsystem */
 	SSH_TEST_PORTFORWARDING,	/* Test port forwarding */
@@ -79,13 +80,15 @@ static const FAR_BSS URL_PARSE_INFO urlParseInfo[] = {
 	{ TEXT( "1.2.3.4" ), TEXT( "1.2.3.4" ), 0, NULL },
 	{ TEXT( "1.2.3.4:80" ), TEXT( "1.2.3.4" ), 80, NULL },
 	{ TEXT( "user@1.2.3.4" ), TEXT( "1.2.3.4" ), 0, TEXT( "user" ) },
-	{ TEXT( "[1:2:3:4]" ), TEXT( "1:2:3:4" ), 0, NULL },
-	{ TEXT( "[1:2:3:4]:80" ), TEXT( "1:2:3:4" ), 80, NULL },
-	{ TEXT( "user@[1:2:3:4]" ), TEXT( "1:2:3:4" ), 0, TEXT( "user" ) },
+	{ TEXT( "[1:2:3:4]" ), TEXT( "[1:2:3:4]" ), 0, NULL },
+	{ TEXT( "[1:2:3:4]:80" ), TEXT( "[1:2:3:4]" ), 80, NULL },
+	{ TEXT( "user@[1:2:3:4]" ), TEXT( "[1:2:3:4]" ), 0, TEXT( "user" ) },
+	{ TEXT( "[::1]" ), TEXT( "[::1]" ), 0, NULL },
 
 	/* General URI forms */
 	{ TEXT( "www.server.com" ), TEXT( "www.server.com" ), 0, NULL },
 	{ TEXT( "www.server.com:80" ), TEXT( "www.server.com" ), 80, NULL },
+	{ TEXT( "http://www.server.com/" ), TEXT( "www.server.com" ), 0, NULL },
 	{ TEXT( "http://www.server.com:80" ), TEXT( "www.server.com" ), 80, NULL },
 	{ TEXT( "http://user@www.server.com:80" ), TEXT( "www.server.com" ), 80, TEXT( "user" ) },
 	{ TEXT( "http://www.server.com/location.php" ), TEXT( "www.server.com/location.php" ), 0, NULL },
@@ -138,7 +141,7 @@ int testSessionUrlParse( void )
 	for( i = 0; urlParseInfo[ i ].url != NULL; i++ )
 		{
 		C_CHR nameBuffer[ 256 ], userInfoBuffer[ 256 ];
-		int nameLength, userInfoLength, port;
+		int nameLength, userInfoLength = DUMMY_INIT, port = DUMMY_INIT;
 
 		/* Clear any leftover attributes from previous tests */
 		memset( nameBuffer, 0, 16 );
@@ -154,8 +157,8 @@ int testSessionUrlParse( void )
 										  paramStrlen( urlParseInfo[ i ].url ) );
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't set URL '%s', line %d.\n",
-					urlParseInfo[ i ].url, __LINE__ );
+			printf( "Couldn't set URL '%s', status %d, line %d.\n",
+					urlParseInfo[ i ].url, status, __LINE__ );
 			return( FALSE );
 			}
 
@@ -175,8 +178,8 @@ int testSessionUrlParse( void )
 			}
 		if( cryptStatusError( status ) )
 			{
-			printf( "Couldn't get parsed URL info for '%s', line %d.\n",
-					urlParseInfo[ i ].url, __LINE__ );
+			printf( "Couldn't get parsed URL info for '%s', status %d, "
+					"line %d.\n", urlParseInfo[ i ].url, status, __LINE__ );
 			return( FALSE );
 			}
 		if( paramStrlen( urlParseInfo[ i ].name ) != ( size_t ) nameLength || \
@@ -694,7 +697,11 @@ static BOOLEAN printAuthInfo( CRYPT_SESSION cryptSession )
 			  that it's being used here).
 	Server 3: Reference ssh.com implementation.
 	Server 4: Reference OpenSSH implementation.
-	Server 5: Generic embedded device implementation.
+	Server 5: OpenSSH with ECC support.  There are two aliases for the same 
+			  server, anoncvs is a somewhat nonstandard config that only 
+			  allows access via the 'anoncvs' account and is rather abrupt
+			  about disconnecting clients, and natsu, which is a more 
+			  standard config that behaves more normally.
 
    To test local -> remote/remote -> local forwarding:
 
@@ -708,8 +715,8 @@ static BOOLEAN printAuthInfo( CRYPT_SESSION cryptSession )
   self-test and we never get past the initial handshake phase so it shouldn't
   be a big deal.  Testing SSHv1 is a bit tricky since there are few of these
   servers still around, in the absence of a convenient test server we just
-  try a local connect, which either times out or goes through an SSHv2
-  handshake if there's a server there */
+  try a local connect, but in any case it's been disabled by default for 
+  some years so there really isn't anything to test */
 
 static const C_STR FAR_BSS ssh1Info[] = {
 	NULL,
@@ -722,6 +729,8 @@ static const C_STR FAR_BSS ssh2Info[] = {
 	TEXT( "sorrel.humboldt.edu:222" ),
 	TEXT( "www.ssh.com" ),
 	TEXT( "www.openssh.com" ),
+/*	TEXT( "anoncvs.mindrot.org" ),	See comment above */
+	TEXT( "natsu.mindrot.org" ),
 	NULL
 	};
 
@@ -796,6 +805,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 			localSession ? "local " : "",
 			( testType == SSH_TEST_SSH1 ) ? "v1" : "v2",
 			( testType == SSH_TEST_DSAKEY ) ? " with DSA server key" : \
+			( testType == SSH_TEST_ECCKEY ) ? " with ECDSA server key" : \
 			( testType == SSH_TEST_SUBSYSTEM ) ? " SFTP" : \
 			( testType == SSH_TEST_PORTFORWARDING ) ? " port-forwarding" : \
 			( testType == SSH_TEST_EXEC ) ? " remote exec" : \
@@ -835,6 +845,7 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 		if( !setLocalConnect( cryptSession, 22 ) )
 			return( FALSE );
 		filenameFromTemplate( filenameBuffer, SSH_PRIVKEY_FILE_TEMPLATE, 
+							  ( testType == SSH_TEST_ECCKEY ) ? 3 : \
 							  ( testType == SSH_TEST_DSAKEY ) ? 2 : 1 );
 #ifdef UNICODE_STRINGS
 		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
@@ -974,6 +985,14 @@ static int connectSSH( const CRYPT_SESSION_TYPE sessionType,
 	   band signalling such as channel control messages, we set a non-zero
 	   timeout for reads */
 	cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_READTIMEOUT, 5 );
+	if( localSession )
+		{
+		/* For the loopback test we also increase the connection timeout to 
+		   a higher-than-normal level, since this gives us more time for
+		   tracing through the code when debugging */
+		cryptSetAttribute( cryptSession, CRYPT_OPTION_NET_CONNECTTIMEOUT, 
+						   120 );
+		}
 	if( localSession && isServer )
 		{
 		/* Tell the client that we're ready to go */
@@ -1116,7 +1135,7 @@ dualThreadContinue:
 	/* Report the session security info.  In standard SSH usage 
 	   channel == session so we only try and report channel details if the
 	   SSH extended capabilities are enabled */
-	if( !printSecurityInfo( cryptSession, isServer, TRUE ) )
+	if( !printSecurityInfo( cryptSession, isServer, TRUE, FALSE, FALSE ) )
 		return( FALSE );
 #ifdef USE_SSH_EXTENDED
 	status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_SSH_CHANNEL,
@@ -1431,19 +1450,37 @@ int testSessionSSH_SFTP( void )
 int testSessionSSHv1Server( void )
 	{
 #ifdef USE_SSH1
-	return( connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SSH1, FALSE ) );
+	int status;
+
+	createMutex();
+	status = connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SSH1, FALSE );
+	destroyMutex();
+
+	return( status );
 #else
 	return( TRUE );
 #endif /* USE_SSH1 */
 	}
 int testSessionSSHServer( void )
 	{
-	return( connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_CONFIRMAUTH, FALSE ) );
+	int status;
+
+	createMutex();
+	status = connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_CONFIRMAUTH, FALSE );
+	destroyMutex();
+
+	return( status );
 	}
 int testSessionSSH_SFTPServer( void )
 	{
 #ifdef USE_SSH_EXTENDED
-	return( connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SUBSYSTEM, FALSE ) );
+	int status;
+
+	createMutex();
+	status = connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_SUBSYSTEM, FALSE );
+	destroyMutex();
+
+	return( status );
 #else
 	return( TRUE );
 #endif /* USE_SSH_EXTENDED */
@@ -1468,6 +1505,12 @@ unsigned __stdcall ssh2ServerThread( void *dummy )
 unsigned __stdcall ssh2ServerDsaKeyThread( void *dummy )
 	{
 	connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_DSAKEY, TRUE );
+	_endthreadex( 0 );
+	return( 0 );
+	}
+unsigned __stdcall ssh2ServerEccKeyThread( void *dummy )
+	{
+	connectSSH( CRYPT_SESSION_SSH_SERVER, SSH_TEST_ECCKEY, TRUE );
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -1517,6 +1560,8 @@ static int sshClientServer( const SSH_TEST_TYPE testType )
 								ssh1ServerThread : \
 							( testType == SSH_TEST_DSAKEY ) ? \
 								ssh2ServerDsaKeyThread : \
+							( testType == SSH_TEST_ECCKEY ) ? \
+								ssh2ServerEccKeyThread : \
 							( testType == SSH_TEST_FINGERPRINT ) ? \
 								ssh2ServerFingerprintThread : \
 							( testType == SSH_TEST_MULTICHANNEL ) ? \
@@ -1549,6 +1594,16 @@ int testSessionSSHClientServer( void )
 int testSessionSSHClientServerDsaKey( void )
 	{
 	return( sshClientServer( SSH_TEST_DSAKEY ) );
+	}
+int testSessionSSHClientServerEccKey( void )
+	{
+	/* ECC algorithms may not be available so we only run this test if 
+	   they've been enabled */
+	if( cryptQueryCapability( CRYPT_ALGO_ECDSA, \
+							  NULL ) == CRYPT_ERROR_NOTAVAIL )
+		return( TRUE );
+
+	return( sshClientServer( SSH_TEST_ECCKEY ) );
 	}
 int testSessionSSHClientServerFingerprint( void )
 	{
@@ -1623,7 +1678,7 @@ int testSessionSSHClientServerDualThread( void )
   #undef BOOLEAN	/* May be a typedef or a #define */
 #endif /* BOOLEAN */
 #ifndef STATIC_LIB
-  #include "misc/misc_rw.c"
+  #include "enc_dec/misc_rw.c"
 #endif /* Non-static lib cryptlib */
 #undef BYTE
 #define BYTE	unsigned char

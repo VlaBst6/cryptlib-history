@@ -15,9 +15,9 @@
   #include "pgp.h"
 #else
   #include "context/context.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -201,7 +201,7 @@ static int readDlpSubjectPublicKey( INOUT STREAM *stream,
 							   &dlpKey->dlpParam_p ) );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 static const OID_INFO FAR_BSS eccOIDinfo[] = {
 	/* NIST P-192, X9.62 p192r1, SECG p192r1, 1 2 840 10045 3 1 1 */
@@ -317,7 +317,7 @@ static int readEccSubjectPublicKey( INOUT STREAM *stream,
 	zeroise( buffer, length );
 	return( status );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 #ifdef USE_SSH1
 
@@ -376,12 +376,21 @@ static int readSsh1RsaPublicKey( INOUT STREAM *stream,
 
 /* Read SSHv2 public keys:
 
-	string	certificate
+   RSA/DSA:
+
+	string		[ server key/certificate ]
 		string	"ssh-rsa"	"ssh-dss"
 		mpint	e			p
 		mpint	n			q
 		mpint				g
-		mpint				y */
+		mpint				y
+
+   ECDSA:
+
+	string		[ server key/certificate ]
+		string	"ecdsa-sha2-*"
+		string	"*"				-- The "*" portion from the above field
+		string	Q */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int readSshRsaPublicKey( INOUT STREAM *stream, 
@@ -508,6 +517,113 @@ static int readSshDlpPublicKey( INOUT STREAM *stream,
 									  &dsaKey->dlpParam_p );
 	return( status );
 	}
+
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readSshEccPublicKey( INOUT STREAM *stream, 
+								INOUT CONTEXT_INFO *contextInfoPtr,
+								OUT_FLAGS_Z( ACTION_PERM ) int *actionFlags )
+	{
+	PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	const BOOLEAN isECDH = \
+			( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH );
+	BYTE buffer[ MAX_PKCSIZE_ECCPOINT + 8 ];
+	int length, fieldSize, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( isWritePtr( actionFlags, sizeof( int ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
+			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
+
+	/* Clear return value */
+	*actionFlags = ACTION_PERM_NONE;
+
+	/* Set the maximum permitted actions.  SSH keys are only used 
+	   internally so we restrict the usage to internal-only.  Since ECDH 
+	   keys can be both public and private keys we allow both usage 
+	   types even though technically it's a public key */
+	if( isECDH )
+		{
+		*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, \
+									   ACTION_PERM_NONE_EXTERNAL ) | \
+					   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, \
+									   ACTION_PERM_NONE_EXTERNAL );
+		}
+	else
+		{
+		*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, \
+									   ACTION_PERM_NONE_EXTERNAL );
+		}
+
+	/* Read the wrapper and make sure that it's OK.  The key parameter
+	   information is repeated twice, so for the overall wrapper we only
+	   check for the ECDH/ECDSA algorithm indication, and get the parameter
+	   information from the second version, which contains only the
+	   parameter string */
+	readUint32( stream );
+	status = readString32( stream, buffer, CRYPT_MAX_TEXTSIZE, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length < 18 )		/* "ecdh-sha2-nistXXXX" */
+		return( CRYPT_ERROR_BADDATA );
+	if( isECDH )
+		{
+		if( memcmp( buffer, "ecdh-sha2-", 10 ) )
+			return( CRYPT_ERROR_BADDATA );
+		}
+	else
+		{
+		if( memcmp( buffer, "ecdsa-sha2-", 11 ) )
+			return( CRYPT_ERROR_BADDATA );
+		}
+
+	/* Read and process the parameter information.  At this point we know 
+	   that we've got valid ECC key data, so if we find anything unexpected 
+	   we report it as an unavailable ECC field size rather than bad data */
+	status = readString32( stream, buffer, CRYPT_MAX_TEXTSIZE, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length != 8 )		/* "nistXXXX" */
+		return( CRYPT_ERROR_NOTAVAIL );
+	if( !memcmp( buffer, "nistp256", 8 ) )
+		eccKey->curveType = CRYPT_ECCCURVE_P256;
+	else
+		{
+		if( !memcmp( buffer, "nistp384", 8 ) )
+			eccKey->curveType = CRYPT_ECCCURVE_P384;
+		else
+			{
+			if( !memcmp( buffer, "nistp521", 8 ) )
+				eccKey->curveType = CRYPT_ECCCURVE_P521;
+			else
+				return( CRYPT_ERROR_NOTAVAIL );
+			}
+		}
+	status = getECCFieldSize( eccKey->curveType, &fieldSize );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Read the ECC public key.  See the comments in 
+	   readEccSubjectPublicKey() for why the checks are done the way they 
+	   are */
+	status = readString32( stream, buffer, MAX_PKCSIZE_ECCPOINT, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length < MIN_PKCSIZE_ECCPOINT_THRESHOLD || \
+		length > MAX_PKCSIZE_ECCPOINT )
+		return( CRYPT_ERROR_BADDATA );
+	status = importECCPoint( &eccKey->eccParam_qx, &eccKey->eccParam_qy,
+							 buffer, length, MIN_PKCSIZE_ECC_THRESHOLD, 
+							 CRYPT_MAX_PKCSIZE_ECC, fieldSize, NULL, 
+							 SHORTKEY_CHECK_ECC );
+	zeroise( buffer, length );
+	return( status );
+	}
+#endif /* USE_ECDH || USE_ECDSA */
+
 #endif /* USE_SSH */
 
 #ifdef USE_SSL
@@ -569,7 +685,7 @@ static int readSslDlpPublicKey( INOUT STREAM *stream,
 	return( status );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH )
 
 static const MAP_TABLE sslCurveInfo[] = {
 	{ 19, CRYPT_ECCCURVE_P192 },
@@ -582,7 +698,7 @@ static const MAP_TABLE sslCurveInfo[] = {
 	};
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int getECCSslInfoTbl( OUT const MAP_TABLE **sslInfoTblPtr,
+static int getEccSslInfoTbl( OUT const MAP_TABLE **sslInfoTblPtr,
 							 OUT_INT_Z int *noSslInfoTblEntries )
 	{
 	assert( isReadPtr( sslInfoTblPtr, sizeof( MAP_TABLE * ) ) );
@@ -614,7 +730,7 @@ static int readSslEccPublicKey( INOUT STREAM *stream,
 	*actionFlags = ACTION_PERM_NONE;
 
 	/* Set the maximum permitted actions.  SSL keys are only used 
-	   internally so we restrict the usage to internal-only.  Since DH 
+	   internally so we restrict the usage to internal-only.  Since ECDH 
 	   keys can be both public and private keys we allow both usage 
 	   types even though technically it's a public key */
 	*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, \
@@ -633,7 +749,7 @@ static int readSslEccPublicKey( INOUT STREAM *stream,
 		return( status );
 
 	/* Look up the curve ID based on the SSL NamedCurve ID */
-	status = getECCSslInfoTbl( &sslCurveInfoPtr, &sslCurveInfoNoEntries );
+	status = getEccSslInfoTbl( &sslCurveInfoPtr, &sslCurveInfoNoEntries );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = mapValue( value, &curveID, sslCurveInfoPtr, 
@@ -643,7 +759,7 @@ static int readSslEccPublicKey( INOUT STREAM *stream,
 	eccKey->curveType = curveID;
 	return( CRYPT_OK );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH */
 
 #endif /* USE_SSL */
 
@@ -708,13 +824,21 @@ static int readPgpRsaPublicKey( INOUT STREAM *stream,
 	if( value != PGP_ALGO_RSA && value != PGP_ALGO_RSA_ENCRYPT && \
 		value != PGP_ALGO_RSA_SIGN )
 		return( CRYPT_ERROR_BADDATA );
-	*actionFlags = 0;
+	*actionFlags = ACTION_PERM_NONE;
 	if( value != PGP_ALGO_RSA_SIGN )
-		*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, ACTION_PERM_ALL ) | \
-					   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, ACTION_PERM_ALL );
+		{
+		*actionFlags = MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, \
+									   ACTION_PERM_ALL ) | \
+					   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, \
+									   ACTION_PERM_ALL );
+		}
 	if( value != PGP_ALGO_RSA_ENCRYPT )
-		*actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, ACTION_PERM_ALL ) | \
-						MK_ACTION_PERM( MESSAGE_CTX_SIGN, ACTION_PERM_ALL );
+		{
+		*actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, \
+										ACTION_PERM_ALL ) | \
+						MK_ACTION_PERM( MESSAGE_CTX_SIGN, \
+										ACTION_PERM_ALL );
+		}
 	if( value != PGP_ALGO_RSA )
 		*actionFlags = MK_ACTION_PERM_NONE_EXTERNAL( *actionFlags );
 
@@ -827,7 +951,8 @@ static int completePubkeyRead( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	/* Set the action permissions for the context */
 	return( krnlSendMessage( contextInfoPtr->objectHandle, 
-							 IMESSAGE_SETATTRIBUTE, ( void * ) &actionFlags, 
+							 IMESSAGE_SETATTRIBUTE, 
+							 ( MESSAGE_CAST ) &actionFlags, 
 							 CRYPT_IATTRIBUTE_ACTIONPERMS ) );
 	}
 
@@ -935,7 +1060,7 @@ static int readPublicKeyDlpFunction( INOUT STREAM *stream,
 	return( completePubkeyRead( contextInfoPtr, actionFlags ) );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPublicKeyEccFunction( INOUT STREAM *stream, 
@@ -951,7 +1076,8 @@ static int readPublicKeyEccFunction( INOUT STREAM *stream,
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
 			  ( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA || \
 				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH ) );
-	REQUIRES( formatType == KEYFORMAT_CERT || formatType == KEYFORMAT_SSL );
+	REQUIRES( formatType == KEYFORMAT_CERT || formatType == KEYFORMAT_SSL || \
+			  formatType == KEYFORMAT_SSH );
 
 	switch( formatType )
 		{
@@ -967,6 +1093,13 @@ static int readPublicKeyEccFunction( INOUT STREAM *stream,
 			break;
 #endif /* USE_SSL */
 
+#ifdef USE_SSH
+		case KEYFORMAT_SSH:
+			status = readSshEccPublicKey( stream, contextInfoPtr, 
+										  &actionFlags );
+			break;
+#endif /* USE_SSH */
+
 		default:
 			retIntError();
 		}
@@ -974,7 +1107,7 @@ static int readPublicKeyEccFunction( INOUT STREAM *stream,
 		return( status );
 	return( completePubkeyRead( contextInfoPtr, actionFlags ) );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 /****************************************************************************
 *																			*
@@ -1070,12 +1203,17 @@ static int readRsaPrivateKey( INOUT STREAM *stream,
 	return( status );
 	}
 
+#ifdef USE_PKCS12
+
+#define OID_X509_KEYUSAGE	MKOID( "\x06\x03\x55\x1D\x0F" )
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readRsaPrivateKeyOld( INOUT STREAM *stream, 
 								 INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	PKC_INFO *rsaKey = contextInfoPtr->ctxPKC;
-	int status;
+	const int startPos = stell( stream );
+	int length, endPos, iterationCount, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
@@ -1083,13 +1221,26 @@ static int readRsaPrivateKeyOld( INOUT STREAM *stream,
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
 			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_RSA );
 
+	/* Skip the PKCS #8 wrapper.  When we read the OCTET STRING 
+	   encapsulation we use MIN_PKCSIZE_THRESHOLD rather than MIN_PKCSIZE
+	   so that a too-short key will get to readBignumChecked(), which
+	   returns an appropriate error code */
+	readSequence( stream, &length );	/* Outer SEQUENCE */
+	readShortInteger( stream, NULL );	/* Version */
+	readUniversal( stream );			/* AlgorithmIdentifier */
+	status = readOctetStringHole( stream, NULL, 
+								  ( 2 * MIN_PKCSIZE_THRESHOLD ) + \
+									( 5 * ( MIN_PKCSIZE_THRESHOLD / 2 ) ), 
+								  DEFAULT_TAG );
+	if( cryptStatusError( status ) )	/* OCTET STRING encapsulation */
+		return( status );
+
 	/* Read the header and key components */
-	readOctetStringHole( stream, NULL, 7 * MIN_PKCSIZE, DEFAULT_TAG );
 	readSequence( stream, NULL );
 	readShortInteger( stream, NULL );
-	status = readBignum( stream, &rsaKey->rsaParam_n,
-						 RSAPARAM_MIN_N, RSAPARAM_MAX_N, 
-						 NULL );
+	status = readBignumChecked( stream, &rsaKey->rsaParam_n,
+								RSAPARAM_MIN_N, RSAPARAM_MAX_N, 
+								NULL );
 	if( cryptStatusOK( status ) )
 		status = readBignum( stream, &rsaKey->rsaParam_e,
 							 RSAPARAM_MIN_E, RSAPARAM_MAX_E,
@@ -1118,8 +1269,86 @@ static int readRsaPrivateKeyOld( INOUT STREAM *stream,
 		status = readBignum( stream, &rsaKey->rsaParam_u,
 							 RSAPARAM_MIN_U, RSAPARAM_MAX_U,
 							 &rsaKey->rsaParam_n );
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Check whether there are any attributes present */
+	if( stell( stream ) >= startPos + length )
+		return( CRYPT_OK );
+
+	/* Read the attribute wrapper */
+	status = readConstructed( stream, &length, 0 );
+	if( cryptStatusError( status ) )
+		return( status );
+	endPos = stell( stream ) + length;
+
+	/* Read the collection of attributes.  Unlike any other key-storage 
+	   format, PKCS #8 stores the key usage information as an X.509 
+	   attribute alongside the encrypted private key data, so we have to
+	   process whatever attributes may be present in order to find the
+	   keyUsage (if there is any) in order to set the object action 
+	   permissions */
+	for( iterationCount = 0;
+		 stell( stream ) < endPos && \
+			iterationCount < FAILSAFE_ITERATIONS_MED;
+		 iterationCount++ )
+		{
+		BYTE oid[ MAX_OID_SIZE + 8 ];
+		int oidLength, actionFlags, value;
+
+		/* Read the attribute.  Since there's only one attribute type that 
+		   we can use, we hardcode the read in here rather than performing a 
+		   general-purpose attribute read */
+		readSequence( stream, NULL );
+		status = readEncodedOID( stream, oid, MAX_OID_SIZE, &oidLength, 
+								 BER_OBJECT_IDENTIFIER );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* If it's not a key-usage attribute, we can't do much with it */
+		if( oidLength != sizeofOID( OID_X509_KEYUSAGE ) || \
+			memcmp( oid, OID_X509_KEYUSAGE, oidLength ) )
+			{
+			status = readUniversal( stream );
+			if( cryptStatusError( status ) )
+				return( status );
+			continue;
+			}
+
+		/* Read the keyUsage attribute and convert it into cryptlib action 
+		   permissions */
+		readSet( stream, NULL );
+		status = readBitString( stream, &value );
+		if( cryptStatusError( status ) )
+			return( status );
+		actionFlags = ACTION_PERM_NONE;
+		if( value & ( KEYUSAGE_SIGN | KEYUSAGE_CA ) )
+			{
+			actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_SIGN, \
+										   ACTION_PERM_ALL ) | \
+						   MK_ACTION_PERM( MESSAGE_CTX_SIGCHECK, \
+										   ACTION_PERM_ALL );
+			}
+		if( value & KEYUSAGE_CRYPT )
+			{
+			actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT, \
+										   ACTION_PERM_ALL ) | \
+						   MK_ACTION_PERM( MESSAGE_CTX_DECRYPT, \
+										   ACTION_PERM_ALL );
+			}
+		if( actionFlags == ACTION_PERM_NONE )
+			return( CRYPT_ERROR_NOTAVAIL );
+		status = krnlSendMessage( contextInfoPtr->objectHandle, 
+								  IMESSAGE_SETATTRIBUTE, &actionFlags, 
+								  CRYPT_IATTRIBUTE_ACTIONPERMS );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+
+	return( CRYPT_OK );
 	}
+#endif /* USE_PKCS12 */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readDlpPrivateKey( INOUT STREAM *stream, 
@@ -1149,7 +1378,7 @@ static int readDlpPrivateKey( INOUT STREAM *stream,
 						&dlpKey->dlpParam_p ) );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readEccPrivateKey( INOUT STREAM *stream, 
@@ -1169,7 +1398,9 @@ static int readEccPrivateKey( INOUT STREAM *stream,
 	return( readBignum( stream, &eccKey->eccParam_d,
 						ECCPARAM_MIN_D, ECCPARAM_MAX_D, NULL ) );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
+
+#ifdef USE_PGP 
 
 /* Read PGP private key components.  This function assumes that the public
    portion of the context has already been set up */
@@ -1229,6 +1460,7 @@ static int readPgpDlpPrivateKey( INOUT STREAM *stream,
 									  bytesToBits( DLPPARAM_MAX_X ),
 									  &dlpKey->dlpParam_p ) );
 	}
+#endif /* USE_PGP */
 
 /* Umbrella private-key read functions */
 
@@ -1250,8 +1482,10 @@ static int readPrivateKeyRsaFunction( INOUT STREAM *stream,
 		case KEYFORMAT_PRIVATE:
 			return( readRsaPrivateKey( stream, contextInfoPtr ) );
 
+#ifdef USE_PKCS12
 		case KEYFORMAT_PRIVATE_OLD:
 			return( readRsaPrivateKeyOld( stream, contextInfoPtr ) );
+#endif /* USE_PKCS12 */
 
 #ifdef USE_PGP
 		case KEYFORMAT_PGP:
@@ -1291,7 +1525,7 @@ static int readPrivateKeyDlpFunction( INOUT STREAM *stream,
 	retIntError();
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int readPrivateKeyEccFunction( INOUT STREAM *stream, 
@@ -1314,7 +1548,7 @@ static int readPrivateKeyEccFunction( INOUT STREAM *stream,
 
 	retIntError();
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 /****************************************************************************
 *																			*
@@ -1335,7 +1569,7 @@ static int decodeDLValuesFunction( IN_BUFFER( bufSize ) const BYTE *buffer,
 								   OUT BIGNUM *value2, 
 								   const BIGNUM *maxRange,
 								   IN_ENUM( CRYPT_FORMAT )  \
-									const CRYPT_FORMAT_TYPE formatType )
+										const CRYPT_FORMAT_TYPE formatType )
 	{
 	STREAM stream;
 	int status;
@@ -1403,6 +1637,48 @@ static int decodeDLValuesFunction( IN_BUFFER( bufSize ) const BYTE *buffer,
 	return( status );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
+static int decodeECDLValuesFunction( IN_BUFFER( bufSize ) const BYTE *buffer, 
+									 IN_LENGTH_SHORT_MIN( 32 ) const int bufSize, 
+									 OUT BIGNUM *value1, 
+									 OUT BIGNUM *value2, 
+									 const BIGNUM *maxRange,
+									 IN_ENUM( CRYPT_FORMAT )  \
+										const CRYPT_FORMAT_TYPE formatType )
+	{
+	STREAM stream;
+	int status;
+
+	assert( isReadPtr( buffer, bufSize ) );
+	assert( isWritePtr( value1, sizeof( BIGNUM ) ) );
+	assert( isWritePtr( value2, sizeof( BIGNUM ) ) );
+	assert( isReadPtr( maxRange, sizeof( BIGNUM ) ) );
+
+	REQUIRES( bufSize >= 32 && bufSize < MAX_INTLENGTH_SHORT );
+	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
+			  formatType < CRYPT_FORMAT_LAST );
+
+	/* In most cases the DLP and ECDLP formats are identical and we can just
+	   pass the call on to the DLP form, however SSH uses totally different 
+	   signature formats depending on whether the signature is DSA or ECDSA, 
+	   so we handle the SSH format explicitly here */
+	if( formatType != CRYPT_IFORMAT_SSH )
+		{
+		return( decodeDLValuesFunction( buffer, bufSize, value1, value2, 
+										maxRange, formatType ) );
+		}
+	sMemConnect( &stream, buffer, bufSize );
+	status = readBignumInteger32( &stream, value1, ECCPARAM_MIN_SIG_R,
+								  CRYPT_MAX_PKCSIZE_ECC, maxRange );
+	if( cryptStatusOK( status ) )
+		{
+		status = readBignumInteger32( &stream, value2, ECCPARAM_MIN_SIG_S,
+									  CRYPT_MAX_PKCSIZE_ECC, maxRange );
+		}
+	sMemDisconnect( &stream );
+	return( status );
+	}
+
 /****************************************************************************
 *																			*
 *							Context Access Routines							*
@@ -1428,16 +1704,16 @@ void initKeyRead( INOUT CONTEXT_INFO *contextInfoPtr )
 
 		return;
 		}
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( isEccAlgo( cryptAlgo ) )
 		{
 		pkcInfo->readPublicKeyFunction = readPublicKeyEccFunction;
 		pkcInfo->readPrivateKeyFunction = readPrivateKeyEccFunction;
-		pkcInfo->decodeDLValuesFunction = decodeDLValuesFunction;
+		pkcInfo->decodeDLValuesFunction = decodeECDLValuesFunction;
 		
 		return;
 		}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	pkcInfo->readPublicKeyFunction = readPublicKeyRsaFunction;
 	pkcInfo->readPrivateKeyFunction = readPrivateKeyRsaFunction;
 	}

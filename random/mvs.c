@@ -22,36 +22,42 @@ int readRandom( int length, unsigned char *buffer );
 
 /* The size of the intermediate buffer used to accumulate polled data */
 
-#define RANDOM_BUFSIZE	4096
+#define RANDOM_BUFSIZE	512
 
-/* Slow and fast polling routines.  Since we require MVS system access
-   to get anything useful, the fast poll is really just a subset of the
-   slow poll, although it's kept distinct in case there's a need to add
-   poll-specific facilities at a later date */
+/* Slow and fast polling routines.  There really isn't much that we can
+   get under MVS, and we have to be careful how much we do with readRandom()
+   since it can become quite resource-intensive on some systems so we can't
+   call it from fastPoll() and only get a small amount of data with a slow
+   poll */
 
 void fastPoll( void )
 	{
 	MESSAGE_DATA msgData;
-	BYTE buffer[ RANDOM_BUFSIZE ];
-	int quality = 10, status;
+	hreport_t heapReport;
+	const clock_t timeStamp = clock();
+	int quality = 5;
 
-	/* For the sake of speed we only get 256 bytes for the fast poll */
-	status = readRandom( 256, buffer );
-	assert( status == 0 );
-	setMessageData( &msgData, buffer, 256 );
-	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S, &msgData,
-					 CRYPT_IATTRIBUTE_ENTROPY );
-	zeroise( buffer, sizeof( buffer ) );
-	if( status == 0 )
-		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
-						 &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
+	/* There really isn't much available under MVS, it would be nice if we
+	   could get output from DISPLAY but this requires a level of plumbing
+	   that isn't easily managed from C */
+	setMessageData( &msgData, &timeStamp, sizeof( clock_t ) );
+	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+					 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+	if( __heaprpt( &heapReport ) != -1 )
+		{
+		setMessageData( &msgData, &heapReport, sizeof( hreport_t ) );
+		krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE_S,
+						 &msgData, CRYPT_IATTRIBUTE_ENTROPY );
+		}
+	krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_SETATTRIBUTE,
+					 &quality, CRYPT_IATTRIBUTE_ENTROPY_QUALITY );
 	}
 
 void slowPoll( void )
 	{
 	MESSAGE_DATA msgData;
 	BYTE buffer[ RANDOM_BUFSIZE ];
-	int quality = 90, status;
+	int quality = 95, status;
 
 	status = readRandom( RANDOM_BUFSIZE, buffer );
 	assert( status == 0 );

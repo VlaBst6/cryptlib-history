@@ -6,11 +6,11 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "pgp_rw.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/pgp_rw.h"
   #include "envelope/envelope.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGP
@@ -61,15 +61,14 @@ BOOLEAN pgpCheckAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 	int dummy;
 
 	REQUIRES_B( cryptAlgo > CRYPT_ALGO_NONE && \
-				cryptAlgo < CRYPT_ALGO_LAST );
+				cryptAlgo < CRYPT_ALGO_LAST_EXTERNAL );
 	REQUIRES_B( ( cryptMode == CRYPT_MODE_NONE ) || \
 				( cryptMode > CRYPT_MODE_NONE && \
 				  cryptMode < CRYPT_MODE_LAST ) );
 
 	if( cryptStatusError( cryptlibToPgpAlgo( cryptAlgo, &dummy ) ) )
 		return( FALSE );
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-		cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( isConvAlgo( cryptAlgo ) )
 		{
 		if( cryptMode != CRYPT_MODE_CFB )
 			return( FALSE );
@@ -622,7 +621,9 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		/* Delete any orphaned actions such as automatically-added hash 
 		   actions that were overridden with user-supplied alternate 
 		   actions */
-		deleteUnusedActions( envelopeInfoPtr );
+		status = deleteUnusedActions( envelopeInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* We're ready to go, prepare to emit the outer header */
 		envelopeInfoPtr->envState = ENVSTATE_HEADER;
@@ -737,7 +738,8 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 /* Output as much of the postamble as possible into the envelope buffer */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						  STDC_UNUSED const BOOLEAN dummy )
 	{
 	SIGPARAMS sigParams;
 	int sigBufSize, sigSize, status;
@@ -751,7 +753,7 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	if( envelopeInfoPtr->envState == ENVSTATE_NONE )
 		{
 		status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr, 
-														  ( BYTE * ) "", 0 );
+														  NULL, 0 );
 		if( cryptStatusError( status ) )
 			{
 			retExt( status,

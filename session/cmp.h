@@ -433,14 +433,14 @@ typedef struct {
 
 /* CMP message read/write methods for the different message types */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 		int ( *READMESSAGE_FUNCTION )( INOUT STREAM *stream, 
 									   INOUT SESSION_INFO *sessionInfoPtr,
 									   INOUT CMP_PROTOCOL_INFO *protocolInfo,
 									   IN_ENUM_OPT( CMP_MESSAGE ) \
 											const CMP_MESSAGE_TYPE messageType,
 									   IN_LENGTH_SHORT const int messageLength );
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 		int ( *WRITEMESSAGE_FUNCTION )( INOUT STREAM *stream, 
 										const SESSION_INFO *sessionInfoPtr,
 										const CMP_PROTOCOL_INFO *protocolInfo );
@@ -464,7 +464,7 @@ int setCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo,
 						IN_FLAGS_Z( CMP_INIT ) const int flags,
 						const BOOLEAN isCryptlib );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void initCMPprotocolInfo( INOUT CMP_PROTOCOL_INFO *protocolInfo, 
+void initCMPprotocolInfo( OUT CMP_PROTOCOL_INFO *protocolInfo, 
 						  const BOOLEAN isCryptlib,
 						  const BOOLEAN isServer );
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -491,8 +491,8 @@ int hashMessageContents( IN_HANDLE const CRYPT_CONTEXT iHashContext,
 						 IN_LENGTH_SHORT const int length );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4 ) ) \
 int initMacInfo( IN_HANDLE const CRYPT_CONTEXT iMacContext, 
-				 IN_BUFFER( userPasswordLength ) const void *userPassword, 
-				 IN_LENGTH_SHORT const int userPasswordLength, 
+				 IN_BUFFER( passwordLength ) const void *password, 
+				 IN_LENGTH_SHORT const int passwordLength, 
 				 IN_BUFFER( saltLength ) const void *salt, 
 				 IN_LENGTH_SHORT const int saltLength, 
 				 IN_RANGE( 1, CMP_MAX_PASSWORD_ITERATIONS ) const int iterations );

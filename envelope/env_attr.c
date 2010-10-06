@@ -87,7 +87,7 @@ static void resetVirtualCursor( INOUT CONTENT_LIST *contentListPtr )
 	{
 	assert( isWritePtr( contentListPtr, sizeof( CONTENT_LIST ) ) );
 
-	if( !( contentListPtr->flags & CONTENTLIST_ISSIGOBJ ) )
+	if( contentListPtr->type != CONTENT_SIGNATURE )
 		return;
 	contentListPtr->clSigInfo.attributeCursorEntry = \
 									CRYPT_ENVINFO_SIGNATURE_RESULT;
@@ -230,7 +230,7 @@ static const void *getAttrFunction( IN_OPT TYPECAST( CONTENT_LIST * ) \
 		return( NULL );
 	subGroupMove = ( ( attrGetType == ATTR_PREV || \
 					   attrGetType == ATTR_NEXT ) && \
-					 ( contentListPtr->flags & CONTENTLIST_ISSIGOBJ ) ) ? \
+					 ( contentListPtr->type == CONTENT_SIGNATURE ) ) ? \
 				   TRUE : FALSE;
 	if( subGroupMove )
 		subGroupMove = moveVirtualCursor( contentListPtr, attrGetType );
@@ -260,8 +260,7 @@ static const void *getAttrFunction( IN_OPT TYPECAST( CONTENT_LIST * ) \
 	   PREV */
 	if( groupID != NULL && ( attrGetType == ATTR_CURRENT || subGroupMove ) )
 		*groupID = contentListPtr->envInfo;
-	if( attributeID != NULL && \
-		( contentListPtr->flags & CONTENTLIST_ISSIGOBJ ) )
+	if( attributeID != NULL && contentListPtr->type == CONTENT_SIGNATURE )
 		*attributeID = contentListPtr->clSigInfo.attributeCursorEntry;
 	return( contentListPtr );
 	}
@@ -281,7 +280,7 @@ static int instantiateCertChain( INOUT CONTENT_LIST *contentListItem,
 	assert( isWritePtr( contentListItem, sizeof( CONTENT_LIST ) ) );
 	assert( isReadPtr( certChainData, certChainDataLength ) );
 
-	REQUIRES( contentListItem->flags & CONTENTLIST_ISSIGOBJ );
+	REQUIRES( contentListItem->type == CONTENT_SIGNATURE );
 	REQUIRES( certChainDataLength >= MIN_CRYPT_OBJECTSIZE && \
 			  certChainDataLength < MAX_INTLENGTH_SHORT );
 
@@ -453,21 +452,26 @@ static int getSignatureResult( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	assert( isWritePtr( valuePtr, sizeof( int ) ) );
 
 	REQUIRES( envelopeInfoPtr->usage == ACTION_MAC || \
+			  ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+				( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) || \
 			  contentListItem != NULL );
 
 	/* Clear return value */
 	*valuePtr = 0;
 
-	/* If it's a MACd envelope then the signature result isn't held in a 
-	   content list as for the other signatures since the "signature" is 
-	   just a MAC tag appended to the data.  The appropriate value to return 
-	   here is a bit tricky since an attacker could corrupt the MAC tag and 
-	   force a less severe error like CRYPT_ERROR_UNDERFLOW (by truncating 
-	   the data).  However we can only get here once we've reached the 
-	   finished state, which means that all of the data (including the MAC 
-	   tag) has been successfully processed.  This means that any persistent 
-	   error state is regarded as the equivalent of a signature error */
-	if( envelopeInfoPtr->usage == ACTION_MAC )
+	/* If it's a MACd or authenticated-encrypted envelope then the signature 
+	   result isn't held in a content list as for the other signatures since 
+	   the "signature" is just a MAC tag appended to the data.  The 
+	   appropriate value to return here is a bit tricky since an attacker 
+	   could corrupt the MAC tag and force a less severe error like 
+	   CRYPT_ERROR_UNDERFLOW (by truncating the data).  However we can only 
+	   get here once we've reached the finished state, which means that all 
+	   of the data (including the MAC tag) has been successfully processed.  
+	   This means that any persistent error state is regarded as the 
+	   equivalent of a signature error */
+	if( envelopeInfoPtr->usage == ACTION_MAC || \
+		( envelopeInfoPtr->usage == ACTION_CRYPT && \
+		  ( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) )
 		{
 		*valuePtr = ( envelopeInfoPtr->errorState != CRYPT_OK ) ? \
 					CRYPT_ERROR_SIGNATURE : CRYPT_OK;
@@ -888,17 +892,20 @@ int getEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			if( envelopeInfoPtr->usage == ACTION_SIGN && \
 				envelopeInfoPtr->state != STATE_FINISHED )
 				return( CRYPT_ERROR_INCOMPLETE );
-			if( envelopeInfoPtr->usage == ACTION_MAC && \
+			if( ( envelopeInfoPtr->usage == ACTION_MAC || \
+				  ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+					( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) ) && \
 				attribute == CRYPT_ENVINFO_SIGNATURE_RESULT )
 				{
 				if( envelopeInfoPtr->state != STATE_FINISHED )
 					return( CRYPT_ERROR_INCOMPLETE );
 
-				/* If it's a MACd envelope then the signature result isn't 
-				   held in a content list as for the other signatures since 
-				   the "signature" is just a MAC tag appended to the data, 
-				   so there's no need to check for the presence of a content 
-				   list */
+				/* If it's a MACd envelope (either by being directly MACed 
+				   or as as side-effect of using authenticated encryption) 
+				   then the signature result isn't held in a content list as 
+				   for the other signatures since the "signature" is just a 
+				   MAC tag appended to the data, so there's no need to check 
+				   for the presence of a content list */
 				break;
 				}
 
@@ -992,7 +999,10 @@ int getEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 		case CRYPT_ENVINFO_INTEGRITY:
 			*valuePtr = ( envelopeInfoPtr->usage == ACTION_MAC ) ? \
-						CRYPT_INTEGRITY_MACONLY : CRYPT_INTEGRITY_NONE;
+							CRYPT_INTEGRITY_MACONLY : \
+						( envelopeInfoPtr->usage == ACTION_CRYPT && \
+						  ( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) ? \
+							CRYPT_INTEGRITY_FULL : CRYPT_INTEGRITY_NONE;
 			return( CRYPT_OK );
 
 		case CRYPT_ENVINFO_SIGNATURE:
@@ -1067,6 +1077,23 @@ int getEnvelopeAttributeS( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		}
 
 	/* Generic attributes are valid for all envelope types */
+	if( attribute == CRYPT_ATTRIBUTE_ERRORMESSAGE )
+		{
+#ifdef USE_ERRMSGS
+		ERROR_INFO *errorInfo = &envelopeInfoPtr->errorInfo;
+
+		if( errorInfo->errorStringLength > 0 )
+			{
+			return( attributeCopy( msgData, errorInfo->errorString,
+								   errorInfo->errorStringLength ) );
+			}
+#endif /* USE_ERRMSGS */
+
+		/* We don't set extended error information for this atribute because 
+		   it's usually read in response to an existing error, which would 
+		   overwrite the existing error information */
+		return( CRYPT_ERROR_NOTFOUND );
+		}
 	if( attribute == CRYPT_ENVINFO_PRIVATEKEY_LABEL )
 		{
 		MESSAGE_KEYMGMT_INFO getkeyInfo;
@@ -1411,6 +1438,17 @@ int setEnvelopeAttribute( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		/* The action was successfully added, update the usage if 
 		   necessary */
 		envelopeInfoPtr->usage = usage;
+
+		/* If we're encrypting the content and using the cryptlib native 
+		   format, enabled authenticated encryption by default unless we're
+		   using raw session-key based encryption, which precludes using
+		   authenticated encryption.  Unfortunately we can't do this for 
+		   CMS / S/MIME because of backwards-compatibility considerations 
+		   with other implementations */
+		if( usage == ACTION_CRYPT && \
+			envelopeInfoPtr->type == CRYPT_FORMAT_CRYPTLIB && \
+			attribute != CRYPT_ENVINFO_SESSIONKEY )
+			envelopeInfoPtr->flags |= ENVELOPE_AUTHENC;
 		}
 	return( CRYPT_OK );
 	}

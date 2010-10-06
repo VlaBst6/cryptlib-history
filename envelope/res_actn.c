@@ -40,12 +40,13 @@ ACTION_LIST *findAction( IN_OPT const ACTION_LIST *actionListPtr,
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
-	REQUIRES_N( actionType == ACTION_KEYEXCHANGE || \
-				actionType == ACTION_KEYEXCHANGE_PKC || \
-				actionType == ACTION_SIGN || \
-				actionType == ACTION_HASH || \
+	REQUIRES_N( actionType == ACTION_KEYEXCHANGE_PKC || \
+				actionType == ACTION_KEYEXCHANGE || \
+				actionType == ACTION_xxx || \
+				actionType == ACTION_CRYPT || \
 				actionType == ACTION_MAC || \
-				actionType == ACTION_CRYPT );
+				actionType == ACTION_HASH || \
+				actionType == ACTION_SIGN );
 
 	for( iterationCount = 0;
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED;
@@ -68,12 +69,12 @@ ACTION_LIST *findLastAction( const ACTION_LIST *actionListPtr,
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
-	REQUIRES_N( actionType == ACTION_KEYEXCHANGE || \
-				actionType == ACTION_KEYEXCHANGE_PKC || \
-				actionType == ACTION_SIGN || \
-				actionType == ACTION_HASH || \
+	REQUIRES_N( actionType == ACTION_KEYEXCHANGE_PKC || \
+				actionType == ACTION_KEYEXCHANGE || \
+				actionType == ACTION_CRYPT || \
 				actionType == ACTION_MAC || \
-				actionType == ACTION_CRYPT );
+				actionType == ACTION_HASH || \
+				actionType == ACTION_SIGN );
 
 	/* Find the start of the action group */
 	actionListPtr = findAction( actionListPtr, actionType );
@@ -149,8 +150,8 @@ BOOLEAN moreActionsPossible( IN_OPT const ACTION_LIST *actionListPtr )
 /* Add a new action to the end of an action group in an action list */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
-static int createNewAction( OUT_OPT_PTR ACTION_LIST **newActionPtrPtr,
-							OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
+static int createNewAction( OUT_OPT_PTR_OPT ACTION_LIST **newActionPtrPtr,
+							INOUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 							INOUT MEMPOOL_STATE memPoolState,
 							IN_ENUM( ACTION ) const ACTION_TYPE actionType,
 							IN_HANDLE const CRYPT_HANDLE cryptHandle )							
@@ -164,12 +165,13 @@ static int createNewAction( OUT_OPT_PTR ACTION_LIST **newActionPtrPtr,
 	assert( isWritePtr( actionListHeadPtrPtr, sizeof( ACTION_LIST * ) ) );
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
 
-	REQUIRES( actionType == ACTION_KEYEXCHANGE || \
-			  actionType == ACTION_KEYEXCHANGE_PKC || \
-			  actionType == ACTION_SIGN || \
-			  actionType == ACTION_HASH || \
+	REQUIRES( actionType == ACTION_KEYEXCHANGE_PKC || \
+			  actionType == ACTION_KEYEXCHANGE || \
+			  actionType == ACTION_xxx || \
+			  actionType == ACTION_CRYPT || \
 			  actionType == ACTION_MAC || \
-			  actionType == ACTION_CRYPT );
+			  actionType == ACTION_HASH || \
+			  actionType == ACTION_SIGN );
 	REQUIRES( isHandleRangeValid( cryptHandle ) );
 
 	/* Clear return value */
@@ -197,15 +199,7 @@ static int createNewAction( OUT_OPT_PTR ACTION_LIST **newActionPtrPtr,
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	/* Append the new action */
-#if 0	/* 1/4/08 Changed to use insertSingleListElement() */
-	if( prevActionPtr == NULL )
-		*actionListHeadPtrPtr = newItem;
-	else
-		prevActionPtr->next = newItem;
-	newItem->next = actionListPtr;
-#else
 	insertSingleListElement( actionListHeadPtrPtr, prevActionPtr, newItem );
-#endif /* 0 */
 	if( newActionPtrPtr != NULL )
 		*newActionPtrPtr = newItem;
 
@@ -213,7 +207,7 @@ static int createNewAction( OUT_OPT_PTR ACTION_LIST **newActionPtrPtr,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int addActionEx( OUT_PTR ACTION_LIST **newActionPtrPtr,
+int addActionEx( OUT_OPT_PTR_OPT ACTION_LIST **newActionPtrPtr,
 				 OUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 				 INOUT MEMPOOL_STATE memPoolState,
 				 IN_ENUM( ACTION ) const ACTION_TYPE actionType,
@@ -258,9 +252,9 @@ static void deleteActionListItem( INOUT MEMPOOL_STATE memPoolState,
 	}
 
 STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-void deleteAction( INOUT_PTR ACTION_LIST **actionListHeadPtrPtr, 
-				   INOUT MEMPOOL_STATE memPoolState,	
-				   INOUT ACTION_LIST *actionListItem )
+static int deleteAction( INOUT_PTR ACTION_LIST **actionListHeadPtrPtr, 
+						 INOUT MEMPOOL_STATE memPoolState,	
+						 INOUT ACTION_LIST *actionListItem )
 	{
 	ACTION_LIST *listPrevPtr;
 	int iterationCount;
@@ -269,18 +263,14 @@ void deleteAction( INOUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 	assert( isWritePtr( memPoolState, sizeof( MEMPOOL_STATE ) ) );
 	assert( isWritePtr( actionListItem, sizeof( ACTION_LIST ) ) );
 
-	REQUIRES_V( *actionListHeadPtrPtr != NULL );
-	REQUIRES_V( actionListItem != NULL );
-				/* Without this explicit assertion static analysers may 
-				   assume that deleteSingleListElement() will dereference a 
-				   NULL pointer */
+	REQUIRES( *actionListHeadPtrPtr != NULL );
 
 	/* Find the previons entry in the list */
 	for( listPrevPtr = *actionListHeadPtrPtr, iterationCount = 0;
 		 listPrevPtr != NULL && listPrevPtr->next != actionListItem && \
 			iterationCount < FAILSAFE_ITERATIONS_MED;
 		 listPrevPtr = listPrevPtr->next, iterationCount++ );
-	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MED );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 
 	/* Remove the item from the list */
 	deleteSingleListElement( actionListHeadPtrPtr, listPrevPtr, 
@@ -288,6 +278,8 @@ void deleteAction( INOUT_PTR ACTION_LIST **actionListHeadPtrPtr,
 
 	/* Clear all data in the list item and free the memory */
 	deleteActionListItem( memPoolState, actionListItem );
+	
+	return( CRYPT_OK );
 	}
 
 /* Delete an action list */
@@ -318,14 +310,15 @@ void deleteActionList( INOUT MEMPOOL_STATE memPoolState,
    that were overridden by user-supplied alternate actions */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void deleteUnusedActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+int deleteUnusedActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	ACTION_LIST *actionListPtr;
-	int iterationCount;
+	int iterationCount, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
-	/* Check for unattached hash/MAC or encryption actions and delete them */
+	/* Check for unattached encryption, hash/MAC, or generic-secret actions 
+	   and delete them */
 	for( actionListPtr = envelopeInfoPtr->actionList, iterationCount = 0;
 		 actionListPtr != NULL && \
 			iterationCount < FAILSAFE_ITERATIONS_MED;
@@ -334,16 +327,22 @@ void deleteUnusedActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		ACTION_LIST *actionListCurrent = actionListPtr;
 
 		actionListPtr = actionListPtr->next;
-		if( ( actionListCurrent->action == ACTION_HASH || \
+		if( ( actionListCurrent->action == ACTION_CRYPT || \
+			  actionListCurrent->action == ACTION_HASH || \
 			  actionListCurrent->action == ACTION_MAC || \
-			  actionListCurrent->action == ACTION_CRYPT ) && \
+			  actionListCurrent->action == ACTION_xxx ) && \
 			( actionListCurrent->flags & ACTION_NEEDSCONTROLLER ) )
 			{
-			deleteAction( &envelopeInfoPtr->actionList,
-						  envelopeInfoPtr->memPoolState, actionListCurrent );
+			status = deleteAction( &envelopeInfoPtr->actionList,
+								   envelopeInfoPtr->memPoolState, 
+								   actionListCurrent );
+			if( cryptStatusError( status ) )
+				return( status );
 			}
 		}
-	ENSURES_V( iterationCount < FAILSAFE_ITERATIONS_MED );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+	
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************
@@ -369,12 +368,12 @@ ACTION_RESULT checkAction( IN_OPT const ACTION_LIST *actionListStart,
 	assert( actionListPtr == NULL || \
 			isReadPtr( actionListPtr, sizeof( ACTION_LIST ) ) );
 
-	REQUIRES_EXT( ( actionType == ACTION_KEYEXCHANGE || \
-					actionType == ACTION_KEYEXCHANGE_PKC || \
-					actionType == ACTION_SIGN || \
-					actionType == ACTION_HASH || \
+	REQUIRES_EXT( ( actionType == ACTION_KEYEXCHANGE_PKC || \
+					actionType == ACTION_KEYEXCHANGE || \
+					actionType == ACTION_CRYPT || \
 					actionType == ACTION_MAC || \
-					actionType == ACTION_CRYPT ), ACTION_RESULT_ERROR );
+					actionType == ACTION_HASH || \
+					actionType == ACTION_SIGN ), ACTION_RESULT_ERROR );
 	REQUIRES_EXT( isHandleRangeValid( cryptHandle ), ACTION_RESULT_ERROR );
 
 	/* If the action list is empty, there's nothing to check */
@@ -583,7 +582,8 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   encryption or MAC actions */
 	if( envelopeInfoPtr->preActionList != NULL )
 		{
-		int actionCount = 0;
+		int cryptActionCount = 0, macActionCount = 0;
+		int genericSecretActionCount = 0;
 
 		/* Make sure that the envelope has the appropriate usage for these 
 		   actions */
@@ -617,28 +617,64 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			return( FALSE );
 		ENSURES_B( envelopeInfoPtr->actionList != NULL );
 
-		/* Key exchange must be followed by a single crypt or one or more
-		   MAC actions */
+		/* Key exchange must be followed by a single crypt, one or more
+		   MAC actions, or a sequence of { generic-secret, crypt, MAC }
+		   actions.  First we count the actions present */
 		for( actionListPtr = envelopeInfoPtr->actionList, iterationCount = 0;
 			 actionListPtr != NULL && \
 				iterationCount < FAILSAFE_ITERATIONS_MED; 
 			 actionListPtr = actionListPtr->next, iterationCount++ )
 			{
-			if( actionListPtr->action == ACTION_CRYPT )
-				actionCount++;
-			else
+			switch( actionListPtr->action )
 				{
-				if( actionListPtr->action != ACTION_MAC )
+				case ACTION_xxx:
+					genericSecretActionCount++;
+					break;
+				
+				case ACTION_CRYPT:
+					cryptActionCount++;
+					break;
+
+				case ACTION_MAC:
+					macActionCount++;
+					break;
+
+				default:
 					return( FALSE );
-				if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP )
-					{
-					/* PGP doesn't support MAC'd envelopes */
-					return( FALSE );
-					}
 				}
 			}
 		ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_MED );
-		if( actionCount > 1 )
+
+		/* Then we make sure that what's present follows the requirements 
+		   given above */
+		if( genericSecretActionCount > 0 )
+			{
+			/* AuthEnc envelope, we need a sequence of { generic-secret, 
+			   crypt, MAC } */
+			if( genericSecretActionCount != 1 || \
+				cryptActionCount != 1 || macActionCount != 1 )
+				return( FALSE );
+			}
+		else
+			{
+			if( cryptActionCount > 0 )
+				{
+				/* Encrypted envelope, we need a single encryption action */
+				if( cryptActionCount > 1 || \
+					genericSecretActionCount != 0 || macActionCount != 0 )
+					return( FALSE );
+				}
+			else
+				{
+				/* MACed envelope, we need one or more MAC actions */
+				if( genericSecretActionCount != 0 || cryptActionCount != 0 )
+					return( FALSE );
+				}
+			}
+
+		/* PGP doesn't support MACed envelopes or AuthEnc encryption */
+		if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP && \
+			( macActionCount != 0 || genericSecretActionCount != 0 ) )
 			return( FALSE );
 
 		/* There can't be any post-actions */
@@ -712,6 +748,32 @@ BOOLEAN checkActions( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		   actions */
 		if( envelopeInfoPtr->usage != ACTION_CRYPT )
 			return( FALSE );
+
+		/* If we're performing authenticated encryption then the encryption
+		   action has to be followed by a MAC action */
+		if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+			{
+			actionListPtr = actionListPtr->next;
+			if( actionListPtr == NULL || \
+				actionListPtr->action != ACTION_MAC || \
+				actionListPtr->next != NULL )
+				return( FALSE );
+
+			return( TRUE );
+			}
+
+		/* PGP can optionally follow an encryption action with a hash action
+		   for encryption with MDC */
+		if( envelopeInfoPtr->type == CRYPT_FORMAT_PGP && \
+			actionListPtr->next != NULL )
+			{
+			actionListPtr = actionListPtr->next;
+			if( actionListPtr->action != ACTION_HASH || \
+				actionListPtr->next != NULL )
+				return( FALSE );
+
+			return( TRUE );
+			}
 
 		/* There can only be one encryption action present */
 		if( actionListPtr->next != NULL )

@@ -10,11 +10,13 @@
   #include "context.h"
   #include "aes.h"
   #include "aesopt.h"
+  #include "gcm.h"
 #else
   #include "crypt.h"
   #include "context/context.h"
   #include "crypt/aes.h"
   #include "crypt/aesopt.h"
+  #include "crypt/gcm.h"
 #endif /* Compiler-specific includes */
 
 /* The AES code separates encryption and decryption to make it easier to
@@ -36,12 +38,26 @@
 #define AES_BLOCKSIZE	16
 #define AES_EXPANDED_KEYSIZE sizeof( AES_CTX )
 
+/* The size of the equivalent AES-GCM keying information */
+
+#define AES_GCM_CTX		gcm_ctx
+#define AES_GSM_EXPANDED_KEYSIZE	sizeof( AES_GCM_CTX )
+
 /* The scheduled AES key and key schedule control and function return 
    codes */
 
 #define AES_EKEY	aes_encrypt_ctx
 #define AES_DKEY	aes_decrypt_ctx
 #define AES_2KEY	AES_CTX
+
+/* AES-GCM can make use of various sizes of lookup tables for the GF-
+   multiplication, by default 4K tables are used (the best tradeoff between
+   speed and memory), in case the default is changed in the future we warn
+   the user that this will consume quite a bit of memory */
+
+#if defined( TABLES_8K ) || defined( TABLES_64K )
+  #error AES-GCM is configured to use unusually large GF-mult tables, is this deliberate?
+#endif /* Unusually large GF-mult table sizes */
 
 /* The following macros are from the AES implementation, and aren't cryptlib
    code.
@@ -84,12 +100,15 @@ typedef struct {
 
 #define	ENC_KEY( x )		EKEY( ( x )->key )
 #define	DEC_KEY( x )		DKEY( ( x )->key )
+#define GCM_KEY( x )		( x )->key 
 
 /****************************************************************************
 *																			*
 *								AES Self-test Routines						*
 *																			*
 ****************************************************************************/
+
+#ifndef CONFIG_NO_SELFTEST
 
 /* AES FIPS test vectors */
 
@@ -309,6 +328,9 @@ static int selfTest( void )
 
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -318,17 +340,49 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+	REQUIRES( ( type == CAPABILITY_INFO_STATESIZE && \
+				contextInfoPtr == NULL ) || \
+			  ( type == CAPABILITY_INFO_ICV && \
+				contextInfoPtr != NULL ) );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = AES_EXPANDED_KEYSIZE;
+		int *valuePtr = ( int * ) data;
+		
+#ifdef USE_GCM
+		*valuePtr = max( AES_EXPANDED_KEYSIZE, AES_GSM_EXPANDED_KEYSIZE );
+#else
+		*valuePtr = AES_EXPANDED_KEYSIZE;
+#endif /* USE_GCM */
 
 		return( CRYPT_OK );
 		}
+#ifdef USE_GCM
+	if( type == CAPABILITY_INFO_ICV )
+		{
+		CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+		REQUIRES( convInfo->mode == CRYPT_MODE_GCM );
+
+		return( ( gcm_compute_tag( data, length, 
+								   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
+				CRYPT_OK : CRYPT_ERROR_FAILED );
+		}
+#endif /* USE_GCM */
+
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -421,11 +475,76 @@ static int decryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 			CRYPT_OK : CRYPT_ERROR_FAILED );
 	}
 
+#ifdef USE_GCM
+
+static int encryptGCM( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
+					   int noBytes )
+	{
+	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+
+	return( ( gcm_encrypt( buffer, noBytes, 
+						   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
+			CRYPT_OK : CRYPT_ERROR_FAILED );
+	}
+
+static int decryptGCM( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, 
+					   int noBytes )
+	{
+	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+
+	return( ( gcm_decrypt( buffer, noBytes, 
+							   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
+			CRYPT_OK : CRYPT_ERROR_FAILED );
+	}
+#endif /* USE_GCM */
+
 /****************************************************************************
 *																			*
 *							AES Key Management Routines						*
 *																			*
 ****************************************************************************/
+
+/* Initialise crypto parameters such as the IV and encryption mode */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initParams( INOUT CONTEXT_INFO *contextInfoPtr, 
+					   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
+					   IN_OPT const void *data, 
+					   IN_INT const int dataLength )
+	{
+#ifdef USE_GCM
+	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+#endif /* USE_GCM */
+
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
+	REQUIRES( paramType > KEYPARAM_NONE && paramType < KEYPARAM_LAST );
+
+#ifdef USE_GCM
+	/* Handling of crypto parameters is normally done by a global generic
+	   function, however for AES-GCM we have to provide special handling
+	   for IV loading */
+	if( paramType == KEYPARAM_IV && convInfo->mode == CRYPT_MODE_GCM )
+		{
+		if( gcm_init_message( data, dataLength, 
+							  GCM_KEY( convInfo ) ) != RETURN_GOOD )
+			return( CRYPT_ERROR_FAILED );
+		}
+	if( paramType == KEYPARAM_AAD )
+		{
+		REQUIRES( convInfo->mode == CRYPT_MODE_GCM );
+
+		return( ( gcm_auth_header( data, dataLength, 
+								   GCM_KEY( convInfo ) ) == RETURN_GOOD ) ? \
+				CRYPT_OK : CRYPT_ERROR_FAILED );
+		}
+#endif /* USE_GCM */
+
+	/* Pass the call on down to the global parameter-handling function */	
+	return( initGenericParams( contextInfoPtr, paramType, data, 
+							   dataLength ) );
+	}
 
 /* Key schedule an AES key */
 
@@ -440,11 +559,23 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	convInfo->userKeyLength = keyLength;
 
 	/* Call the AES key schedule code */
-	if( aes_encrypt_key( convInfo->userKey, keyLength, 
-						 ENC_KEY( convInfo ) ) != EXIT_SUCCESS || \
-		aes_decrypt_key( convInfo->userKey, keyLength, 
-						 DEC_KEY( convInfo ) ) != EXIT_SUCCESS )
-		return( CRYPT_ERROR_FAILED );
+#ifdef USE_GCM
+	if( convInfo->mode == CRYPT_MODE_GCM )
+		{
+		if( gcm_init_and_key( convInfo->userKey, keyLength, 
+							  GCM_KEY( convInfo ) ) != RETURN_GOOD ) 
+			return( CRYPT_ERROR_FAILED );
+		}
+	else
+#endif /* USE_GCM */
+		{
+		if( aes_encrypt_key( convInfo->userKey, keyLength, 
+							 ENC_KEY( convInfo ) ) != EXIT_SUCCESS )
+			return( CRYPT_ERROR_FAILED );
+		if( aes_decrypt_key( convInfo->userKey, keyLength, 
+							 DEC_KEY( convInfo ) ) != EXIT_SUCCESS )
+			return( CRYPT_ERROR_FAILED );
+		}
 	return( CRYPT_OK );
 	}
 
@@ -457,9 +588,12 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_AES, bitsToBytes( 128 ), "AES", 3,
 	bitsToBytes( 128 ), bitsToBytes( 128 ), bitsToBytes( 256 ),
-	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
+	selfTest, getInfo, NULL, initParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
-	encryptCFB, decryptCFB, encryptOFB, decryptOFB
+	encryptCFB, decryptCFB, encryptOFB, decryptOFB,
+#ifdef USE_GCM
+	encryptGCM, decryptGCM
+#endif /* USE_GCM */
 	};
 
 const CAPABILITY_INFO *getAESCapability( void )

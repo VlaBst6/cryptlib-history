@@ -3,7 +3,7 @@
 # Copyright (C) 2003-2004 Wolfgang Gothier
 
 #####
-#       G E N P A S . P L   $Id: GenPas.pl,v 1.3 2009/07/13 20:27:20 wogo Exp $
+#       G E N P A S . P L   $Id: GenPas.pl 39 2010-10-21 16:28:47Z wogo $
 #       -----------------------------------------------------------------------
 #
 #       PERL script for translation of the cryptlib header file
@@ -389,7 +389,7 @@ sub typelist {
     my $tmp = "";
     foreach  (@_) {
     		# handle comment at start of splitted line
-        while ($_ =~ s!^(\s*)/\*(.+)\*/!!) {
+        while ($_ =~ s!^(\s*)/\*(.+)\*/!!s) {
             $tmp .= $1.'{'.$2.'}';
         }
         # translate fields into arrays 

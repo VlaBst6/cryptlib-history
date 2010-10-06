@@ -34,6 +34,10 @@
 
 #ifdef USE_LDAP
 
+#if defined( _MSC_VER )
+  #pragma message( "  Building with LDAP enabled." )
+#endif /* Warn with VC++ */
+
 /* LDAP requires us to set up complicated structures to handle DN's.  The
    following values define the upper limit for DN string data and the
    maximum number of attributes we write to a directory */
@@ -338,44 +342,40 @@ static void getErrorInfo( KEYSET_INFO *keysetInfoPtr, int ldapStatus )
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
 #endif /* !__WINDOWS__ */
 	char *errorMessage;
+	int errorCode;
 
 #if defined( __WINDOWS__ )
-	errorInfo->errorCode = LdapGetLastError();
-	if( errorInfo->errorCode == LDAP_SUCCESS )
+	errorCode = LdapGetLastError();
+	if( errorCode == LDAP_SUCCESS )
 		{
 		/* In true Microsoft fashion LdapGetLastError() can return
 		   LDAP_SUCCESS with the error string set to "Success." so if we
 		   get this we use the status value returned by the original LDAP
 		   function call instead */
-		errorInfo->errorCode = ldapStatus;
+		errorCode = ldapStatus;
 		}
-	errorMessage = ldap_err2string( errorInfo->errorCode );
+	errorMessage = ldap_err2string( errorCode );
   #if 0
 	/* The exact conditions under which ldap_err2string() does something
 	   useful are somewhat undefined, it may be necessary to use the
 	   following which works with general Windows error codes rather than
 	   special-case LDAP function result codes */
-	errorInfo->errorCode = GetLastError();
+	errorCode = GetLastError();
 	FormatMessage( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-				   NULL, errorInfo->errorCode,
-				   MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
+				   NULL, errorCode, MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ),
 				   ldapInfo->errorMessage, MAX_ERRMSG_SIZE - 1, NULL );
   #endif /* 0 */
 #elif defined( NETSCAPE_CLIENT )
-	errorInfo->errorCode = ldap_get_lderrno( ldapInfo->ld, NULL,
-											 &errorMessage );
+	ldap_get_lderrno( ldapInfo->ld, NULL, &errorMessage );
 #else
   /* As usual there are various incompatible ways of getting the necessary
 	 information, we use whatever's available */
   #ifdef LDAP_OPT_ERROR_NUMBER
-	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_NUMBER, 
-					 &errorInfo->errorCode );
+	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_NUMBER, &errorCode );
   #else
-	ldap_get_option( ldapInfo->ld, LDAP_OPT_RESULT_CODE, 
-					 &errorInfo->errorCode );
+	ldap_get_option( ldapInfo->ld, LDAP_OPT_RESULT_CODE, &errorCode );
   #endif /* Various ways of getting the error information */
-	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_STRING, 
-					 &errorMessage );
+	ldap_get_option( ldapInfo->ld, LDAP_OPT_ERROR_STRING, &errorMessage );
 #endif /* Different LDAP client types */
 	if( errorMessage != NULL )
 		{
@@ -766,8 +766,8 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 							IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 							IN_BUFFER( keyIDlength ) const void *keyID, 
 							IN_LENGTH_KEYID const int keyIDlength,
-							IN_OPT void *auxInfo, 
-							INOUT_OPT int *auxInfoLength,
+							STDC_UNUSED void *auxInfo, 
+							STDC_UNUSED int *auxInfoLength,
 							IN_FLAGS_Z( KEYMGMT ) const int flags )
 	{
 	LDAP_INFO *ldapInfo = keysetInfoPtr->keysetLDAP;
@@ -1053,8 +1053,8 @@ static int addCert( KEYSET_INFO *keysetInfoPtr,
 	   possibly because it's trying to free the mod_values[] entries
 	   which are statically allocated, and for the MS client the
 	   function doesn't exist */
-	for( ldapModIndex = 0; ldapMod[ ldapModIndex ] != NULL && \
-						   ldapModIndex < MAX_LDAP_ATTRIBUTES;
+	for( ldapModIndex = 0; ldapModIndex < MAX_LDAP_ATTRIBUTES && \
+						   ldapMod[ ldapModIndex ] != NULL;
 		 ldapModIndex++ )
 		{
 		if( ldapMod[ ldapModIndex ]->mod_op & LDAP_MOD_BVALUES )
@@ -1185,6 +1185,13 @@ static int deleteItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	return( CRYPT_OK );
 	}
 
+#if 0	/* 5/7/10 getItemFunction() hasn't supported this functionality 
+				  since 3.3.2, and it was removed there because the kernel 
+				  had never allowed this type of access at all, which means
+				  that these functions could never have been called.  Since
+				  no-one had ever noticed this, there's no point in 
+				  continuing to support them */
+
 /* Perform a getFirst/getNext query on the LDAP directory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
@@ -1232,6 +1239,7 @@ static int getNextItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 							 KEYMGMT_ITEM_PUBLICKEY, CRYPT_KEYID_NONE, 
 							 NULL, 0, NULL, 0, 0 ) );
 	}
+#endif /* 0 */
 
 /* Return status information for the keyset */
 
@@ -1278,7 +1286,7 @@ static void *getAttributeDataPtr( KEYSET_INFO *keysetInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getAttributeFunction( INOUT KEYSET_INFO *keysetInfoPtr, 
-								 OUT void *data,
+								 INOUT void *data,
 								 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type )
 	{
 	const void *attributeDataPtr;
@@ -1338,8 +1346,6 @@ int setAccessMethodLDAP( INOUT KEYSET_INFO *keysetInfoPtr )
 	keysetInfoPtr->getItemFunction = getItemFunction;
 	keysetInfoPtr->setItemFunction = setItemFunction;
 	keysetInfoPtr->deleteItemFunction = deleteItemFunction;
-	keysetInfoPtr->getFirstItemFunction = getFirstItemFunction;
-	keysetInfoPtr->getNextItemFunction = getNextItemFunction;
 	keysetInfoPtr->isBusyFunction = isBusyFunction;
 
 	return( CRYPT_OK );

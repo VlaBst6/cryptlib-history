@@ -67,7 +67,7 @@
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /* functions for EC_GROUP objects */
 
@@ -1161,4 +1161,4 @@ int EC_GROUP_have_precompute_mult(const EC_GROUP *group)
 		return 0; /* cannot tell whether precomputation has been performed */
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

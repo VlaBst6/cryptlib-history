@@ -211,19 +211,19 @@ typedef enum {
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int pgpToCryptlibAlgo( IN_RANGE( PGP_ALGO_NONE, 0xFF ) \
-					   const int pgpAlgo, 
+							const int pgpAlgo, 
 					   IN_ENUM( PGP_ALGOCLASS ) \
-					   const PGP_ALGOCLASS_TYPE pgpAlgoClass,
+							const PGP_ALGOCLASS_TYPE pgpAlgoClass,
 					   OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
-int cryptlibToPgpAlgo( const CRYPT_ALGO_TYPE cryptlibAlgo,
+int cryptlibToPgpAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptlibAlgo,
 					   OUT_RANGE( PGP_ALGO_NONE, PGP_ALGO_LAST ) \
-					   int *pgpAlgo );
+							int *pgpAlgo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readPgpAlgo( INOUT STREAM *stream, 
 				 OUT_ALGO_Z CRYPT_ALGO_TYPE *cryptAlgo, 
 				 IN_ENUM( PGP_ALGOCLASS ) \
-				 const PGP_ALGOCLASS_TYPE pgpAlgoClass );
+					const PGP_ALGOCLASS_TYPE pgpAlgoClass );
 
 /* Prototypes for functions in pgp_misc.c */
 

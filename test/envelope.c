@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Enveloping Test Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2009					*
 *																			*
 ****************************************************************************/
 
@@ -206,7 +206,8 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 									const int numericEnvInfo,
 									BOOLEAN *isRestartable )
 	{
-	int cryptEnvInfo, cryptAlgo, keySize, integrityLevel, status;
+	int cryptEnvInfo, cryptAlgo, keySize = DUMMY_INIT;
+	int integrityLevel, status;
 
 	/* Clear return value */
 	*isRestartable = FALSE;
@@ -344,7 +345,9 @@ static int processEnvelopeResource( const CRYPT_ENVELOPE envelope,
 		{
 		printf( "Data is integrity-proteced using %s authentication.\n",
 				( integrityLevel == CRYPT_INTEGRITY_MACONLY ) ? \
-					"MAC" : "MAC+encrypt" );
+					"MAC" : \
+				( integrityLevel == CRYPT_INTEGRITY_FULL ) ? \
+					"MAC+encrypt" : "unknown" );
 		}
 
 	/* If we're not using encryption, we're done */
@@ -412,9 +415,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 		{
 		if( cryptStatusError( status ) )
 			{
-			printf( "cryptPushData() failed with error code %d, line %d.\n",
-					status, __LINE__ );
-			printErrorAttributeInfo( envelope );
+			printExtError( envelope, "cryptPushData()", status, __LINE__ );
 			return( status );
 			}
 		}
@@ -442,9 +443,8 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 								length - bytesIn, &bytesIn2 );
 		if( cryptStatusError( status ) )
 			{
-			printf( "cryptPushData() of remaining data failed with error "
-					"code %d, line %d.\n", status, __LINE__ );
-			printErrorAttributeInfo( envelope );
+			printExtError( envelope, "cryptPushData() of remaining data", 
+						   status, __LINE__ );
 			return( status );
 			}
 		bytesIn += bytesIn2;
@@ -460,9 +460,7 @@ static int pushData( const CRYPT_ENVELOPE envelope, const BYTE *buffer,
 	status = cryptFlushData( envelope );
 	if( cryptStatusError( status ) && status != CRYPT_ERROR_COMPLETE )
 		{
-		printf( "cryptFlushData() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		printErrorAttributeInfo( envelope );
+		printExtError( envelope, "cryptFlushData()", status, __LINE__ );
 		return( status );
 		}
 
@@ -503,9 +501,7 @@ static int popData( CRYPT_ENVELOPE envelope, BYTE *buffer, int bufferSize )
 	status = cryptPopData( envelope, buffer, bufferSize, &bytesOut );
 	if( cryptStatusError( status ) )
 		{
-		printf( "cryptPopData() failed with error code %d, line %d.\n",
-				status, __LINE__ );
-		printErrorAttributeInfo( envelope );
+		printExtError( envelope, "cryptPopData()", status, __LINE__ );
 		return( status );
 		}
 
@@ -1952,7 +1948,7 @@ static int envelopeSign( const void *data, const int dataLength,
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	CRYPT_KEYSET cryptKeyset;
-	CRYPT_CONTEXT cryptContext;
+	CRYPT_CONTEXT cryptContext = DUMMY_INIT;
 	int count, status;
 
 	if( !keyReadOK )
@@ -2414,10 +2410,11 @@ int testEnvelopeSignOverflow( void )
 static int envelopeAuthent( const void *data, const int dataLength,
 							const BOOLEAN useAuthEnc, 
 							const BOOLEAN useDatasize,
-							const BOOLEAN doCorruptData )
+							const int corruptDataLocation )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
-	int count;
+	BOOLEAN corruptionDetected = FALSE;
+	int count, integrityLevel;
 
 	printf( "Testing authenticated%s enveloping", 
 			useAuthEnc ? "+encrypted" : "" );
@@ -2453,14 +2450,15 @@ static int envelopeAuthent( const void *data, const int dataLength,
 
 	/* Tell them what happened */
 	printf( "Enveloped data has size %d bytes.\n", count );
-	debugDump( useDatasize ? "env_mac" : "env_macn", globalBuffer, count );
+	debugDump( useAuthEnc ? "env_authenc" : \
+			   useDatasize ? "env_mac" : "env_macn", globalBuffer, count );
 
 	/* If we're testing sig.verification, corrupt one of the payload bytes.  
 	   This is a bit tricky because we have to hardcode the location of the
 	   payload byte, if we change the format at (for example by using a 
-	   different algorithm somewhere) this location will change */
-	if( doCorruptData )
-		globalBuffer[ 175 ]++;
+	   different algorithm somewhere) then this location will change */
+	if( corruptDataLocation > 0 )
+		globalBuffer[ corruptDataLocation ]++;
 
 	/* Create the envelope */
 	if( !createDeenvelope( &cryptEnvelope ) )
@@ -2472,10 +2470,11 @@ static int envelopeAuthent( const void *data, const int dataLength,
 					  paramStrlen( TEXT( "Password" ) ) );
 	if( cryptStatusError( count ) )
 		{
-		if( doCorruptData && count == CRYPT_ERROR_SIGNATURE )
+		if( corruptDataLocation && count == CRYPT_ERROR_SIGNATURE )
 			{
 			puts( "  (This is an expected result since this test verifies "
 				  "handling of\n   corrupted authenticated data)." );
+			corruptionDetected = TRUE;
 			}
 		else
 			return( FALSE );
@@ -2487,19 +2486,40 @@ static int envelopeAuthent( const void *data, const int dataLength,
 			return( FALSE );
 		}
 
+	/* Make sure that the envelope is reported as being authenticated */
+	if( cryptStatusError( \
+			cryptGetAttribute( cryptEnvelope, CRYPT_ENVINFO_INTEGRITY, 
+							   &integrityLevel ) ) || \
+		integrityLevel <= CRYPT_INTEGRITY_NONE )
+		{
+		printf( "Integrity-protected envelope is reported as having no "
+				"integrity protection,\n  line %d.\n", __LINE__ );
+		return( FALSE );
+		}
+
 	/* Determine the result of the MAC check */
 	if( !getSigCheckResult( cryptEnvelope, CRYPT_UNUSED, FALSE, TRUE ) && \
-		!doCorruptData )
+		corruptDataLocation == 0 )
 		return( FALSE );
 	if( !destroyEnvelope( cryptEnvelope ) )
 		return( FALSE );
 
-	/* Make sure that the result matches what we pushed */
-	if( !doCorruptData && \
-		( count != dataLength || memcmp( globalBuffer, data, dataLength ) ) )
+	/* Make sure that we got what we were expecting */
+	if( corruptDataLocation == 0 )
 		{
-		puts( "De-enveloped data != original data." );
-		return( FALSE );
+		if( count != dataLength || memcmp( globalBuffer, data, dataLength ) )
+			{
+			puts( "De-enveloped data != original data." );
+			return( FALSE );
+			}
+		}
+	else
+		{
+		if( !corruptionDetected )
+			{
+			puts( "Corruption of encrypted data wasn't detected." );
+			return( FALSE );
+			}
 		}
 
 	/* Clean up */
@@ -2513,16 +2533,19 @@ int testEnvelopeAuthenticate( void )
 		return( FALSE );	/* Indefinite length */
 	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, FALSE, TRUE, FALSE ) )
 		return( FALSE );	/* Datasize */
-	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, FALSE, TRUE, TRUE ) );
+	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, FALSE, TRUE, 175 ) );
 	}						/* Datasize, corrupt data to check sig.verification */
 
 int testEnvelopeAuthEnc( void )
 	{
-	return( TRUE );	/* Currently not implemented */
-#if 0
-	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, TRUE, TRUE ) );
-#endif /* 0 */
-	}
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, TRUE, FALSE, FALSE ) )
+		return( FALSE );	/* Indefinite length */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, TRUE, TRUE, FALSE ) )
+		return( FALSE );	/* Datasize */
+	if( !envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, TRUE, TRUE, 192 ) )
+		return( FALSE );	/* Datasize, corrupt payload data to check sig.verification */
+	return( envelopeAuthent( ENVELOPE_TESTDATA, ENVELOPE_TESTDATA_SIZE, TRUE, TRUE, 170 ) );
+	}						/* Datasize, corrupt metadata to check sig.verification */
 
 /****************************************************************************
 *																			*
@@ -2599,7 +2622,8 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 								const BOOLEAN detachedSig,
 								const BOOLEAN hasTimestamp,
 								const BOOLEAN checkData,
-								const BOOLEAN mustHaveAttributes )
+								const BOOLEAN mustHaveAttributes,
+								const BOOLEAN checkWrongKey )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	int count, status;
@@ -2653,6 +2677,28 @@ static int cmsEnvelopeSigCheck( const void *signedData,
 		}
 	if( cryptStatusError( count ) )
 		return( FALSE );
+
+	/* If we're checking for the ability to reject an incorrect key, fetch
+	   a bogus signature key and try and add that */
+	if( checkWrongKey )
+		{
+		CRYPT_CERTIFICATE cryptWrongCert;
+
+		status = getPublicKey( &cryptWrongCert, DUAL_PRIVKEY_FILE, 
+							   DUAL_SIGNKEY_LABEL );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		status = cryptSetAttribute( cryptEnvelope, CRYPT_ENVINFO_SIGNATURE,
+									cryptWrongCert );
+		cryptDestroyCert( cryptWrongCert );
+		if( status != CRYPT_ERROR_WRONGKEY )
+			{
+			printf( "Use of incorrect key wasn't detected, got %d, should "
+					"have been %d, line %d.\n", status, 
+					CRYPT_ERROR_WRONGKEY, __LINE__ );
+			return( FALSE );
+			}
+		}
 
 	/* Display the details of the envelope signature and check whether
 	   there's more information such as a timestamp or a second signature
@@ -2954,11 +3000,14 @@ static int cmsEnvelopeSign( const BOOLEAN useDatasize,
 			}
 		}
 
-	/* Make sure that the signature is valid */
+	/* Make sure that the signature is valid.  The somewhat redundant mapping
+	   of useNonDataContent is because we're performing an additional check
+	   of envelope key-handling as part of this particular operation */
 	status = cmsEnvelopeSigCheck( globalBuffer, count,
 								  isPGP ? cryptContext : CRYPT_UNUSED,
 								  hashContext, detachedSig, FALSE, TRUE,
-								  useAttributes );
+								  useAttributes, useNonDataContent ? \
+												 TRUE : FALSE );
 	if( hashContext != CRYPT_UNUSED )
 		cryptDestroyContext( hashContext );
 	if( isPGP )
@@ -3055,7 +3104,7 @@ static int cmsImportSignedData( const char *fileName, const int fileNo )
 	/* Check the signature on the data */
 	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED,
 								  FALSE, FALSE, FALSE, 
-								  ( fileNo == 1 ) ? FALSE : TRUE );
+								  ( fileNo == 1 ) ? FALSE : TRUE, FALSE );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );
 	if( status )
@@ -3078,7 +3127,8 @@ static int cmsImportSignedData( const char *fileName, const int fileNo )
 static int cmsEnvelopeDecrypt( const void *envelopedData,
 							   const int envelopedDataLength,
 							   const CRYPT_HANDLE externalKeyset,
-							   const C_STR externalPassword )
+							   const C_STR externalPassword,
+							   const BOOLEAN checkDataMatch )
 	{
 	CRYPT_ENVELOPE cryptEnvelope;
 	int count, status;
@@ -3109,12 +3159,18 @@ static int cmsEnvelopeDecrypt( const void *envelopedData,
 					  ( externalPassword == NULL ) ? TEST_PRIVKEY_PASSWORD :
 					  externalPassword, 0 );
 	if( cryptStatusError( count ) )
-		return( ( externalPassword != NULL ) ? count : FALSE );
+		return( FALSE );
 	count = popData( cryptEnvelope, globalBuffer, BUFFER_SIZE );
 	if( cryptStatusError( count ) )
 		return( FALSE );
 	if( !destroyEnvelope( cryptEnvelope ) )
 		return( FALSE );
+
+	/* If we're not checking for a match of the decrypted data (done when 
+	   the data is coming from an external source rather than being 
+	   something that we generated ourselves), we're done */
+	if( !checkDataMatch )
+		return( TRUE );
 
 	/* Make sure that the result matches what we pushed */
 	if( count != ENVELOPE_TESTDATA_SIZE || \
@@ -3284,9 +3340,9 @@ static int cmsEnvelopeCrypt( const char *dumpFileName,
 
 	/* Make sure that the enveloped data is valid */
 	status = cmsEnvelopeDecrypt( globalBuffer, count, externalKeyset,
-								 externalPassword );
+								 externalPassword, TRUE );
 	if( status <= 0 )	/* Can be FALSE or an error code */
-		return( status );
+		return( FALSE );
 
 	/* Clean up */
 	puts( "Enveloping of CMS public-key encrypted data succeeded.\n" );
@@ -3540,6 +3596,52 @@ int testCMSEnvelopePKCCryptImport( void )
 		}
 
 	puts( "Import of S/MIME EnvelopedData succeeded.\n" );
+	return( TRUE );
+	}
+
+/* Import CMS password-encrypted/authenticated data */
+
+int testEnvelopePasswordCryptImport( void )
+	{
+	FILE *filePtr;
+	BYTE fileName[ BUFFER_SIZE ];
+	int i;
+
+	/* Make sure that the test data is present so that we can return a
+	   useful error message */
+	filenameFromTemplate( fileName, CMS_ENC_FILE_TEMPLATE, 1 );
+	if( ( filePtr = fopen( fileName, "rb" ) ) == NULL )
+		{
+		puts( "Couldn't find CMS EnvelopedData file, skipping test of "
+			  "EnvelopedData/AuthentcatedData import..." );
+		return( TRUE );
+		}
+	fclose( filePtr );
+
+	/* Process the password-protected data.  The files are:
+
+		File 1: CMS Authenticated data, AES-256 key wrap with HMAC-SHA1.
+
+		File 2: CMS Enveloped data, AES-128 key wrap with AES-128
+
+	   Currently only File 1 is processed because File 2 produces a
+	   wrong-key error */
+	for( i = 1; i <= 1; i++ )
+		{
+		int count;
+
+		filenameFromTemplate( fileName, CMS_ENC_FILE_TEMPLATE, i );
+		count = readFileData( fileName, "CMS password-encrypted/authd data",
+							  globalBuffer, BUFFER_SIZE );
+		if( count <= 0 )
+			return( FALSE );
+		if( !cmsEnvelopeDecrypt( globalBuffer, count, CRYPT_UNUSED, 
+								 "password", FALSE ) )
+			return( FALSE );
+		}
+
+	puts( "Import of CMS password-encrypted/authenticated data "
+		  "succeeded.\n" );
 	return( TRUE );
 	}
 
@@ -3956,7 +4058,7 @@ void xxxDataImport( const char *fileName )
 		return;
 		}
 	count = readFileData( fileName, "Generic test data", bufPtr, count );
-	assert( count );
+	assert( count > 0 );
 	dataImport( bufPtr, count, FALSE );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );
@@ -3973,7 +4075,7 @@ void xxxEnvTest( void )
 		sprintf( fileName, "/tmp/oct_odd_%d.der", i );
 		sprintf( text, "odd test file %d", i );
 		count = readFileData( fileName, text, globalBuffer, BUFFER_SIZE );
-		assert( count );
+		assert( count > 0 );
 		dataImport( globalBuffer, count, FALSE );
 		}
 #endif /* 0 */
@@ -3983,7 +4085,7 @@ void xxxEnvTest( void )
 		sprintf( fileName, "/tmp/oct_bad_%d.der", i );
 		sprintf( text, "bad test file %d", i );
 		count = readFileData( fileName, text, globalBuffer, BUFFER_SIZE );
-		assert( count );
+		assert( count > 0 );
 		dataImport( globalBuffer, count, TRUE );
 		}
 #endif /* 0 */
@@ -4002,10 +4104,10 @@ void xxxSignedDataImport( const char *fileName )
 		return;
 		}
 	count = readFileData( fileName, "S/MIME test data", bufPtr, count );
-	assert( count );
+	assert( count > 0 );
 	status = cmsEnvelopeSigCheck( bufPtr, count, CRYPT_UNUSED, CRYPT_UNUSED, 
-								  FALSE, FALSE, FALSE, FALSE );
-	assert( status );
+								  FALSE, FALSE, FALSE, FALSE, FALSE );
+	assert( status > 0 );
 	if( bufPtr != globalBuffer )
 		free( bufPtr );
 	}
@@ -4017,10 +4119,11 @@ void xxxEncryptedDataImport( const char *fileName )
 	count = getFileSize( fileName ) + 10;
 	if( count >= BUFFER_SIZE )
 		assert( 0 );
-	count = readFileData( fileName, "S/MIME test data", globalBuffer, count );
-	assert( count );
-	status = cmsEnvelopeDecrypt( globalBuffer, count, CRYPT_UNUSED, NULL );
-	assert( status );
+	count = readFileData( fileName, "S/MIME test data", globalBuffer, 
+						  count );
+	assert( count > 0 );
+	status = cmsEnvelopeDecrypt( globalBuffer, count, CRYPT_UNUSED, NULL, 
+								 FALSE );
+	assert( status > 0 );
 	}
-
 #endif /* TEST_ENVELOPE || TEST_SESSION */

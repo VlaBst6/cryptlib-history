@@ -25,7 +25,12 @@
 /* The tests that use databases and certificate stores require that the user 
    set up a suitable ODBC data source (at least when running under Windows), 
    to automate this process we try and create the data source if it isn't 
-   present */
+   present.
+   
+   This is complicated by the fact that the universal default MSJET database 
+   driver doesn't have a 64-bit version so it's not possible to use it under 
+   Vista/Windows 7 x64.  To work around this we fall back to the SQL Server
+   driver, which replaces MSJET on x64 systems */
 
 #if defined( _MSC_VER ) && defined( _WIN32 ) && !defined( _WIN32_WCE )
 
@@ -33,37 +38,35 @@
 
 #include <odbcinst.h>
 
-#ifdef USE_SQLSERVER
-  #define DRIVER_NAME			TEXT( "SQL Server" )
-  #define DATABASE_ATTR_NAME	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
+#define DRIVER_NAME				TEXT( "Microsoft Access Driver (*.MDB)" )
+#define DATABASE_ATTR_NAME		"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
+								"DESCRIPTION=cryptlib test key database#" \
+								"DBQ="
+#define DATABASE_ATTR_CREATE	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
+								"DESCRIPTION=cryptlib test key database#" \
+								"CREATE_DB="
+#define DATABASE_ATTR_TAIL		DATABASE_KEYSET_NAME_ASCII ".mdb#"
+#define CERTSTORE_ATTR_NAME		"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
+								"DESCRIPTION=cryptlib test key database#" \
+								"DBQ="
+#define CERTSTORE_ATTR_CREATE	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
+								"DESCRIPTION=cryptlib test key database#" \
+								"CREATE_DB="
+#define CERTSTORE_ATTR_TAIL		CERTSTORE_KEYSET_NAME_ASCII ".mdb#"
+
+#define DRIVER_NAME_ALT			TEXT( "SQL Server" )
+#define DATABASE_ATTR_NAME_ALT	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
 								"DESCRIPTION=cryptlib test key database#" \
 								"Server=localhost#" \
 								"Database="
-  #define DATABASE_ATTR_CREATE	""
-  #define DATABASE_ATTR_TAIL	DATABASE_KEYSET_NAME_ASCII "#"
-  #define CERTSTORE_ATTR_NAME	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
+#define DATABASE_ATTR_CREATE_ALT ""
+#define DATABASE_ATTR_TAIL_ALT	DATABASE_KEYSET_NAME_ASCII "#"
+#define CERTSTORE_ATTR_NAME_ALT	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
 								"DESCRIPTION=cryptlib test key database#" \
 								"Server=localhost#" \
 								"Database="
-  #define CERTSTORE_ATTR_CREATE	""
-  #define CERTSTORE_ATTR_TAIL	CERTSTORE_KEYSET_NAME_ASCII "#"
-#else
-  #define DRIVER_NAME			TEXT( "Microsoft Access Driver (*.MDB)" )
-  #define DATABASE_ATTR_NAME	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"DBQ="
-  #define DATABASE_ATTR_CREATE	"DSN=" DATABASE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"CREATE_DB="
-  #define DATABASE_ATTR_TAIL	DATABASE_KEYSET_NAME_ASCII ".mdb#"
-  #define CERTSTORE_ATTR_NAME	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"DBQ="
-  #define CERTSTORE_ATTR_CREATE	"DSN=" CERTSTORE_KEYSET_NAME_ASCII "#" \
-								"DESCRIPTION=cryptlib test key database#" \
-								"CREATE_DB="
-  #define CERTSTORE_ATTR_TAIL	CERTSTORE_KEYSET_NAME_ASCII ".mdb#"
-#endif /* USE_SQLSERVER */
+#define CERTSTORE_ATTR_CREATE_ALT ""
+#define CERTSTORE_ATTR_TAIL_ALT	CERTSTORE_KEYSET_NAME_ASCII "#"
 
 static void buildDBString( char *buffer, const char *attrName,
 						   const char *attrTail, const char *path )
@@ -87,14 +90,18 @@ static void buildDBString( char *buffer, const char *attrName,
 	   required by SQLConfigDataSource() */
 	dbStringLen = strlen( buffer );
 	for( i = 0; i < dbStringLen; i++ )
+		{
 		if( buffer[ i ] == '#' )
 			buffer[ i ] = '\0';
+		}
 	}
 
-static BOOLEAN createDatabaseKeyset( const char *keysetName, 
-									 const char *nameString, 
-									 const char *createString, 
-									 const char *trailerString )
+static BOOLEAN createDatabase( const char *driverName,
+							   const char *keysetName, 
+							   const char *nameString, 
+							   const char *createString, 
+							   const char *trailerString,
+							   const BOOLEAN isSqlServer )
 	{
 	char tempPathBuffer[ 512 ];
 	char attrBuffer[ 1024 ];
@@ -113,32 +120,112 @@ static BOOLEAN createDatabaseKeyset( const char *keysetName,
 	   step process, first we create the DSN and then the underlying file 
 	   that contains the database.  For SQL Server it's simpler, the database
 	   server already exists so all we have to do is create the database */
-	printf( "Database keyset '%s' not found, attempting to create data "
-			"source...\n", keysetName );
+	if( isSqlServer )
+		{
+		printf( "Attempting to create keyset '%s' using alternative data "
+				"source...\n", keysetName );
+		}
+	else
+		{
+		printf( "Database keyset '%s' not found, attempting to create data "
+				"source...\n", keysetName );
+		}
 	buildDBString( attrBuffer, nameString, trailerString, tempPathBuffer );
 #ifdef UNICODE_STRINGS
 	mbstowcs( wcAttrBuffer, attrBuffer, strlen( attrBuffer ) + 1 );
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
+	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, driverName, 
 								  wcAttrBuffer );
 #else
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
+	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, driverName, 
 								  attrBuffer );
 #endif /* UNICODE_STRINGS */
 	if( status != 1 )
+		{
+		DWORD dwErrorCode;
+		WORD errorMessageLen;
+		char errorMessage[ 256 ];
+		
+		if( SQLInstallerError( 1, &dwErrorCode, errorMessage, 256, 
+							   &errorMessageLen ) != SQL_NO_DATA )
+			{
+			printf( "SQLConfigDataSource() returned error code %d,\n  "
+					"message '%s'.\n", dwErrorCode, errorMessage );
+#if defined( _M_X64 )
+			if( !isSqlServer )
+				{
+				puts( "  (This is probably because there's no appropriate "
+					  "64-bit driver present,\n  retrying the create with "
+					  "an alternative driver...)." );
+				}
+#endif /* _M_X64 */
+			}
 		return( FALSE );
-#ifndef USE_SQLSERVER
+		}
+	if( isSqlServer )
+		{
+		/* The server already exists and we're done */
+		return( TRUE );
+		}
 	buildDBString( attrBuffer, createString, trailerString, tempPathBuffer );
 #ifdef UNICODE_STRINGS
 	mbstowcs( wcAttrBuffer, attrBuffer, strlen( attrBuffer ) + 1 );
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
+	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, driverName, 
 								  wcAttrBuffer );
 #else
-	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, DRIVER_NAME, 
+	status = SQLConfigDataSource( NULL, ODBC_ADD_DSN, driverName, 
 								  attrBuffer );
 #endif /* UNICODE_STRINGS */
-#endif /* !USE_SQLSERVER */
 
 	return( ( status == 1 ) ? TRUE : FALSE );
+	}
+
+static BOOLEAN createDatabaseKeyset( void )
+	{
+	int status;
+
+	status = createDatabase( DRIVER_NAME, DATABASE_KEYSET_NAME_ASCII,
+							 DATABASE_ATTR_NAME, DATABASE_ATTR_CREATE, 
+							 DATABASE_ATTR_TAIL, FALSE );
+	if( status == FALSE )
+		{
+		/* The create with the default (MS Access) driver failed, fall back
+		   to the SQL server alternative */
+		status = createDatabase( DRIVER_NAME_ALT, DATABASE_KEYSET_NAME_ASCII,
+								 DATABASE_ATTR_NAME_ALT, 
+								 DATABASE_ATTR_CREATE_ALT, 
+								 DATABASE_ATTR_TAIL_ALT, TRUE );
+		}
+	puts( ( status == TRUE ) ? "Data source creation succeeded." : \
+		  "Data source creation failed.\n\nYou need to create the "
+		  "keyset data source as described in the cryptlib manual\n"
+		  "for the database keyset tests to run." );
+
+	return( status );
+	}
+
+static BOOLEAN createDatabaseCertstore( void )
+	{
+	int status;
+
+	status = createDatabase( DRIVER_NAME, CERTSTORE_KEYSET_NAME_ASCII,
+							 CERTSTORE_ATTR_NAME, CERTSTORE_ATTR_CREATE, 
+							 CERTSTORE_ATTR_TAIL, FALSE );
+	if( status == FALSE )
+		{
+		/* The create with the default (MS Access) driver failed, fall back
+		   to the SQL server alternative */
+		status = createDatabase( DRIVER_NAME_ALT, CERTSTORE_KEYSET_NAME_ASCII,
+								 CERTSTORE_ATTR_NAME_ALT, 
+								 CERTSTORE_ATTR_CREATE_ALT, 
+								 CERTSTORE_ATTR_TAIL_ALT, TRUE );
+		}
+	puts( ( status == TRUE ) ? "Data source creation succeeded.\n" : \
+		  "Data source creation failed.\n\nYou need to create the "
+		  "certificate store data source as described in the\n"
+		  "cryptlib manual for the certificate management tests to "
+		  "run.\n" );
+
+	return( status );
 	}
 
 static void checkCreateDatabaseKeysets( void )
@@ -155,16 +242,7 @@ static void checkCreateDatabaseKeysets( void )
 	else
 		{
 		if( status == CRYPT_ERROR_OPEN )
-			{
-			status = createDatabaseKeyset( DATABASE_KEYSET_NAME_ASCII,
-										   DATABASE_ATTR_NAME, 
-										   DATABASE_ATTR_CREATE, 
-										   DATABASE_ATTR_TAIL );
-			puts( ( status == TRUE ) ? "Data source creation succeeded." : \
-				  "Data source creation failed.\n\nYou need to create the "
-				  "keyset data source as described in the cryptlib manual\n"
-				  "for the database keyset tests to run." );
-			}
+			createDatabaseKeyset();
 		}
 
 	/* Try and open the test certificate store.  This can return a
@@ -179,17 +257,7 @@ static void checkCreateDatabaseKeysets( void )
 	else
 		{
 		if( status == CRYPT_ERROR_OPEN )
-			{
-			status = createDatabaseKeyset( CERTSTORE_KEYSET_NAME_ASCII,
-										   CERTSTORE_ATTR_NAME, 
-										   CERTSTORE_ATTR_CREATE, 
-										   CERTSTORE_ATTR_TAIL );
-			puts( ( status == TRUE ) ? "Data source creation succeeded.\n" : \
-				  "Data source creation failed.\n\nYou need to create the "
-				  "certificate store data source as described in the\n"
-				  "cryptlib manual for the certificate management tests to "
-				  "run.\n" );
-			}
+			createDatabaseCertstore();
 		}
 	}
 #endif /* Win32 with VC++ */
@@ -732,7 +800,7 @@ BOOLEAN testKeyset( void )
 		return( FALSE );
 	if( !testReadWriteFileKey() )
 		return( FALSE );
-	if( !testReadBigFileKey() )
+	if( !testImportFileKey() )
 		return( FALSE );
 	if( !testReadFilePublicKey() )
 		return( FALSE );
@@ -779,10 +847,6 @@ BOOLEAN testKeyset( void )
 				return( FALSE );
 			if( !testKeysetQuery() )
 				return( FALSE );
-
-			/* The database plugin test will usually fail unless the user has
-			   set up a plugin, so we don't check the return value */
-			testWriteCertDbx();
 			}
 		}
 	/* For the following tests we may have read access but not write access,
@@ -861,6 +925,8 @@ BOOLEAN testEnveloping( void )
 	if( !testEnvelopeCrypt() )
 		return( FALSE );
 	if( !testEnvelopePasswordCrypt() )
+		return( FALSE );
+	if( !testEnvelopePasswordCryptImport() )
 		return( FALSE );
 	if( !testPGPEnvelopePasswordCryptImport() )
 		return( FALSE );
@@ -959,8 +1025,14 @@ BOOLEAN testSessions( void )
 		return( FALSE );
 	if( !testSessionTLS11() )
 		return( FALSE );
-#if 0	/* Nothing to test against yet */
 	if( !testSessionTLS12() )
+		return( FALSE );
+#if 0	/* The MS test server used for the general TLS 1.2 tests requires 
+		   fairly extensive custom configuration of client certs and the
+		   ability to do rehandshakes due to the oddball way that schannel
+		   handles client-auth, so we disable this test until another
+		   server that actually does TLS 1.2 client auth appears */
+	if( !testSessionTLS12ClientCert() )
 		return( FALSE );
 #endif /* 0 */
 	if( !testSessionOCSP() )
@@ -995,11 +1067,16 @@ BOOLEAN testSessions( void )
 
 BOOLEAN testSessionsLoopback( void )
 	{
+  #ifdef DATABASE_AUTOCONFIG
+	checkCreateDatabaseKeysets();	/* Needed for PKI tests */
+  #endif /* DATABASE_AUTOCONFIG */
 	if( !testSessionSSHv1ClientServer() )
 		return( FALSE );
 	if( !testSessionSSHClientServer() )
 		return( FALSE );
 	if( !testSessionSSHClientServerDsaKey() )
+		return( FALSE );
+	if( !testSessionSSHClientServerEccKey() )
 		return( FALSE );
 	if( !testSessionSSHClientServerFingerprint() )
 		return( FALSE );
@@ -1017,11 +1094,15 @@ BOOLEAN testSessionsLoopback( void )
 		return( FALSE );
 	if( !testSessionTLSSharedKeyClientServer() )
 		return( FALSE );
-	if( !testSessionTLSNoSharedKeyClientServer() )	// NB: Check TEST_PSK_CLIONLY
+	if( !testSessionTLSNoSharedKeyClientServer() )
 		return( FALSE );
 	if( !testSessionTLSBulkTransferClientServer() )
 		return( FALSE );
 	if( !testSessionTLS11ClientServer() )
+		return( FALSE );
+	if( !testSessionTLS12ClientServer() )
+		return( FALSE );
+	if( !testSessionTLS12ClientCertClientServer() )
 		return( FALSE );
 	if( !testSessionHTTPCertstoreClientServer() )
 		return( FALSE );
@@ -1084,7 +1165,7 @@ BOOLEAN testSessionsLoopback( void )
 
 /****************************************************************************
 *																			*
-*								Test Sessions								*
+*								Test Users									*
 *																			*
 ****************************************************************************/
 

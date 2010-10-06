@@ -13,8 +13,8 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Define the following to print a trace of the certificate fields being 
@@ -36,6 +36,8 @@
   #define TRACE_FIELDTYPE( attributeInfoPtr )
   #define TRACE_DEBUG( message )
 #endif /* NDEBUG */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -150,7 +152,7 @@ typedef struct {
    positions */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int updateStackedInfo( INOUT_ARRAY( ATTRIBUTE_STACKSIZE ) \
+static int updateStackedInfo( INOUT_ARRAY_C( ATTRIBUTE_STACKSIZE ) \
 								ATTRIBUTE_STACK *stack, 
 							  IN_RANGE( 0, ATTRIBUTE_STACKSIZE - 1 ) \
 								const int stackPos,
@@ -381,8 +383,7 @@ typedef struct {
 	} ATTRIBUTE_CHECK_INFO;
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int stackInfo( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
-						ATTRIBUTE_CHECK_INFO *attributeCheckInfo,
+static int stackInfo( INOUT ATTRIBUTE_CHECK_INFO *attributeCheckInfo,
 					  IN_OPT ATTRIBUTE_LIST *attributeListPtr,
 					  const ATTRIBUTE_INFO *attributeInfoPtr )
 	{
@@ -405,13 +406,11 @@ static int stackInfo( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
-								ATTRIBUTE_CHECK_INFO *attributeCheckInfo );
+static int checkAttribute( INOUT ATTRIBUTE_CHECK_INFO *attributeCheckInfo );
 						   /* Forward declaration for function */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
-									ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
+static int checkAttributeEntry( INOUT ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
 	{
 	ATTRIBUTE_LIST *attributeListPtr = attributeCheckInfo->attributeListPtr;
 	const ATTRIBUTE_INFO *attributeInfoPtr = attributeCheckInfo->attributeInfoPtr;
@@ -659,8 +658,7 @@ static int checkAttributeEntry( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
 /* Check an individual attribute */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int checkAttribute( INOUT_ARRAY( ATTRIBUTE_CHECK_INFO ) \
-								ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
+static int checkAttribute( INOUT ATTRIBUTE_CHECK_INFO *attributeCheckInfo )
 	{
 	ATTRIBUTE_LIST *restartEntry = NULL;
 	const ATTRIBUTE_INFO *restartPoint = NULL;
@@ -888,4 +886,4 @@ int checkAttributes( IN_ENUM( ATTRIBUTE ) const ATTRIBUTE_TYPE attributeType,
 
 	return( CRYPT_OK );
 	}
-
+#endif /* USE_CERTIFICATES */

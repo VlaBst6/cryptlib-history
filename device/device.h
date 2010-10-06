@@ -35,7 +35,7 @@
    mechanisms to speed things up, although the overhead is vanishingly small 
    anyway */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 2 ) ) \
 		int ( *MECHANISM_FUNCTION )( IN_OPT void *deviceInfoPtr,
 									 INOUT void *mechanismInfo );
 typedef struct {
@@ -47,7 +47,7 @@ typedef struct {
 /* Devices can also be used to create further objects.  Most can only create
    contexts, but the system object can create any kind of object */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 		int ( *CREATEOBJECT_FUNCTION )( INOUT \
 										MESSAGE_CREATEOBJECT_INFO *objectInfo,
 										const void *auxDataPtr,
@@ -212,19 +212,19 @@ typedef struct DI {
 		} deviceInfo;
 
 	/* Pointers to device access methods */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *initFunction )( INOUT struct DI *deviceInfo, 
 						   STDC_UNUSED const char *name,
 						   STDC_UNUSED const int nameLength );
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	void ( *shutdownFunction )( INOUT struct DI *deviceInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *controlFunction )( INOUT struct DI *deviceInfo,
 							  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type,
 							  IN_BUFFER_OPT( dataLength ) void *data, 
 							  IN_LENGTH_SHORT_Z const int dataLength,
 							  INOUT_OPT MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *selftestFunction )( INOUT struct DI *deviceInfo,
 							   INOUT \
 							   MESSAGE_FUNCTION_EXTINFO *messageExtInfo );
@@ -260,7 +260,7 @@ typedef struct DI {
 								  OUT CRYPT_CERTIFICATE *iCertificate,
 								  INOUT int *stateInfo, const int options ) \
 								  STDC_NONNULL_ARG( ( 1, 2, 3 ) );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *getRandomFunction)( INOUT struct DI *deviceInfo, 
 							   OUT_BUFFER_FIXED( length ) \
 							   void *buffer, IN_LENGTH_SHORT const int length,

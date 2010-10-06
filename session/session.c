@@ -58,7 +58,7 @@ static void cleanupReqResp( INOUT SESSION_INFO *sessionInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
-							   INOUT NET_CONNECT_INFO *connectInfo )
+							   OUT NET_CONNECT_INFO *connectInfo )
 	{
 	const ATTRIBUTE_LIST *clientNamePtr, *serverNamePtr, *portInfoPtr;
 
@@ -215,6 +215,70 @@ BOOLEAN checkAttributesConsistent( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	
 	return( TRUE );
+	}
+
+/* Check that a server's certificate is currently valid.  This self-check 
+   avoids ugly silent failures where everything appears to work just fine on 
+   the server side but the client gets invalid data back */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+int checkServerCertValid( const CRYPT_CERTIFICATE iServerCert,
+						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							CRYPT_ATTRIBUTE_TYPE *errorLocus,
+						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+							CRYPT_ERRTYPE_TYPE *errorType )
+	{
+	static const int complianceLevelStandard = CRYPT_COMPLIANCELEVEL_STANDARD;
+	int complianceLevel, value, status;
+
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( isHandleRangeValid( iServerCert ) );
+
+	status = krnlSendMessage( iServerCert, IMESSAGE_GETATTRIBUTE, 
+							  &complianceLevel, 
+							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
+	if( cryptStatusError( status ) )
+		{
+		/* We can't do much more if we can't even get the initial compliance 
+		   level */
+		return( CRYPT_OK );
+		}
+
+	/* Check whether the certificate is valid at a standard level of 
+	   compliance, which catches expired certificates and other obvious
+	   problems */
+	krnlSendMessage( iServerCert, IMESSAGE_SETATTRIBUTE, 
+					 ( MESSAGE_CAST ) &complianceLevelStandard, 
+					 CRYPT_OPTION_CERT_COMPLIANCELEVEL );
+	status = krnlSendMessage( iServerCert, IMESSAGE_CHECK, NULL, 
+							  MESSAGE_CHECK_CERT );
+	krnlSendMessage( iServerCert, IMESSAGE_SETATTRIBUTE, 
+					 ( MESSAGE_CAST ) &complianceLevel, 
+					 CRYPT_OPTION_CERT_COMPLIANCELEVEL );
+	if( cryptStatusOK( status ) )
+		return( CRYPT_OK );
+
+	/* The certificate isn't valid, copy the extended error information up 
+	   from the certificate if possible.  This leads to rather odd extended 
+	   error information for the session since the error information is 
+	   pointing at certificate attributes for a session object, but it's 
+	   unlikely that users will think of checking the certificate for error 
+	   details and the presence of certificate-related error information 
+	   should make it obvious what it pertains to */
+	status = krnlSendMessage( iServerCert, IMESSAGE_GETATTRIBUTE, &value, 
+							  CRYPT_ATTRIBUTE_ERRORLOCUS );
+	if( cryptStatusOK( status ) )
+		{
+		*errorLocus = value;
+		status = krnlSendMessage( iServerCert, IMESSAGE_GETATTRIBUTE, &value, 
+								  CRYPT_ATTRIBUTE_ERRORTYPE );
+		}
+	if( cryptStatusOK( status ) )
+		*errorType = value;
+
+	return( CRYPT_ERROR_INVALID );
 	}
 
 /****************************************************************************
@@ -481,16 +545,14 @@ static int activateConnection( INOUT SESSION_INFO *sessionInfoPtr )
 		/* For data transport sessions, partial reads and writes (that is,
 		   sending and receiving partial packets in the presence of 
 		   timeouts) are permitted */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALREAD, NULL, 
-				TRUE );
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALWRITE, NULL, 
-				TRUE );
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALREAD, TRUE );
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_PARTIALWRITE, TRUE );
 		}
 
 	/* The handshake has been completed, switch from the handshake timeout
 	   to the data transfer timeout and remember that the session has been
 	   successfully established */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HANDSHAKECOMPLETE, NULL, 0 );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HANDSHAKECOMPLETE, TRUE );
 	sessionInfoPtr->flags &= ~SESSION_PARTIALOPEN;
 	sessionInfoPtr->flags |= SESSION_ISOPEN;
 
@@ -547,9 +609,9 @@ int activateSession( INOUT SESSION_INFO *sessionInfoPtr )
 	/* Check whether the other side has indicated that it's closing the 
 	   stream and if it has, shut down our side as well and record the fact
 	   that the session is now closed */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE,
-			&streamState, 0 );
-	if( !streamState )
+	status = sioctlGet( &sessionInfoPtr->stream, STREAM_IOCTL_CONNSTATE,
+						&streamState, sizeof( int ) );
+	if( cryptStatusError( status ) || !streamState )
 		{
 		sessionInfoPtr->flags &= ~SESSION_ISOPEN;
 		sessionInfoPtr->shutdownFunction( sessionInfoPtr );
@@ -605,8 +667,7 @@ int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		/* It's a cryptlib-wide shutdown, try and get out as quickly as
 		   possible */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
-				NULL, 2 );
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 2 );
 		}
 	else
 		{
@@ -614,17 +675,18 @@ int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
 
 		/* It's a standard session shutdown, wait around for at least five
 		   seconds, but not more than fifteen */
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
-				&timeout, 0 );
-		if( timeout < 5 )
+		status = sioctlGet( &sessionInfoPtr->stream, 
+							STREAM_IOCTL_WRITETIMEOUT, &timeout, 
+							sizeof( int ) );
+		if( cryptStatusError( status ) || timeout < 5 )
 			timeout = 5;
 		else
 			{
 			if( timeout > 15 )
 				timeout = 15;
 			}
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
-				NULL, timeout );
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
+				   timeout );
 		}
 
 	/* Send the close notification to the peer */
@@ -641,8 +703,10 @@ int sendCloseNotification( INOUT SESSION_INFO *sessionInfoPtr,
 	   FIN is fairly rare we choose this as the less problematic of the two 
 	   options */
 	if( sessionInfoPtr->networkSocket == CRYPT_ERROR )
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_CLOSESENDCHANNEL, 
-				NULL, 0 );
+		{
+		sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_CLOSESENDCHANNEL, 
+				   TRUE );
+		}
 
 	return( ( data == NULL || !cryptStatusError( status ) ) ? \
 			CRYPT_OK : status );
@@ -745,11 +809,16 @@ static int defaultServerStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 
 	/* Save the client details for the caller, using the (always-present)
 	   receive buffer as the intermediate store */
-	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAMELEN,
-					 &nameLen, 0 );
+	status = sioctlGet( &sessionInfoPtr->stream, 
+						STREAM_IOCTL_GETCLIENTNAMELEN, 
+						&nameLen, sizeof( int ) );
 	if( cryptStatusOK( status ) )
-		status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTNAME,
-						 sessionInfoPtr->receiveBuffer, CRYPT_MAX_TEXTSIZE );
+		{
+		status = sioctlGet( &sessionInfoPtr->stream, 
+							STREAM_IOCTL_GETCLIENTNAME,
+							sessionInfoPtr->receiveBuffer, 
+							CRYPT_MAX_TEXTSIZE );
+		}
 	if( cryptStatusError( status ) )
 		{
 		/* No client information available, exit */
@@ -760,8 +829,8 @@ static int defaultServerStartupFunction( INOUT SESSION_INFO *sessionInfoPtr )
 							  sessionInfoPtr->receiveBuffer, nameLen );
 	if( cryptStatusError( status ) )
 		return( status );
-	status = sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, 
-					 &port, 0 );
+	status = sioctlGet( &sessionInfoPtr->stream, STREAM_IOCTL_GETCLIENTPORT, 
+						&port, sizeof( int ) );
 	if( cryptStatusError( status ) )
 		{
 		/* No port information available, exit */

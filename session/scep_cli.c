@@ -12,7 +12,7 @@
   #include "scep.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/scep.h"
 #endif /* Compiler-specific includes */
@@ -45,8 +45,8 @@ static int createAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	REQUIRES( sessionInfoPtr->iAuthInContext == CRYPT_ERROR );
 
 	/* Perform an HTTP GET with arguments "operation=GetCACert&message=*" */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-			STREAM_HTTPREQTYPE_GET );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_GET );
 	initHttpDataInfoEx( &httpDataInfo, sessionInfoPtr->receiveBuffer,
 						sessionInfoPtr->receiveBufSize, &httpReqInfo );
 	memcpy( httpReqInfo.attribute, "operation", 9 );
@@ -57,8 +57,8 @@ static int createAdditionalScepRequest( INOUT SESSION_INFO *sessionInfoPtr )
 	httpReqInfo.extraDataLen = 9;
 	status = sread( &sessionInfoPtr->stream, &httpDataInfo,
 					sizeof( HTTP_DATA_INFO ) );
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-			STREAM_HTTPREQTYPE_POST );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_POST );
 	if( cryptStatusError( status ) )
 		return( status );
 	length = httpDataInfo.bytesAvail;
@@ -131,19 +131,35 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 	CRYPT_CERTIFICATE iNewCert;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
+	time_t currentTime = getTime();
 	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
 
+#if 0	/* 20/9/10 This is problematic because if the certificate request 
+				   contains attributes then setting the 
+				   CRYPT_CERTINFO_CERTREQUEST copies them across to the 
+				   certificate, making it an X.509v3 certificate rather than 
+				   an X.509v1 one.  To avoid this problem for now we stay 
+				   with X.509v3 certificates.
+
+				   To re-enable this, change the ACL entry for
+				   CRYPT_CERTINFO_VERSION to
+				   'MKPERM_SPECIAL_CERTIFICATES( Rxx_RWx_Rxx_Rxx )',
+				   with the comment 'We have to be able to set the version 
+				   to 1 for SCEP, which creates a self-signed certificate as 
+				   part of the certificate-request process' */
 	/* Create a certificate, add the certificate request and other 
-	   information required by SCEP to it, and sign it.  SCEP requires that 
-	   the certificate serial number match the user name/transaction ID, the 
-	   spec actually says that the transaction ID should be a hash of the 
-	   public key but since it never specifies exactly what is hashed ("MD5 
-	   hash on [sic] public key") this can probably be anything.  We use the 
-	   user name, which is required to identify the pkiUser entry in the CA 
-	   certificate store */
+	   information required by SCEP to it, and sign it.  To avoid 
+	   complications over extension processing we make it an X.509v1 
+	   certificate, and to limit the exposure from having it floating around 
+	   out there we give it a validity of a day, which is somewhat longer 
+	   than required but may be necessary to get around time-zone issues in 
+	   which the CA checks the expiry time relative to the time zone that 
+	   it's in rather than GMT (although given some of the broken 
+	   certificates used with SCEP it seems likely that many CAs do little 
+	   to no checking at all) */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_CERTTYPE_CERTIFICATE );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
@@ -152,6 +168,43 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
 							  &sessionInfoPtr->iCertRequest,
 							  CRYPT_CERTINFO_CERTREQUEST );
+	if( cryptStatusOK( status ) )
+		{
+		static const int version = 1;
+
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &version, 
+								  CRYPT_CERTINFO_VERSION );
+		}
+#else
+	/* Create a certificate, add the certificate request and other 
+	   information required by SCEP to it, and sign it.  To limit the 
+	   exposure from having it floating around out there we give it a 
+	   validity of a day, which is somewhat longer than required but may be 
+	   necessary to get around time-zone issues in which the CA checks the 
+	   expiry time relative to the time zone that it's in rather than GMT 
+	   (although given some of the broken certificates used with SCEP it 
+	   seems likely that many CAs do little to no checking at all) 
+	   
+	   SCEP requires that the certificate serial number match the user name/
+	   transaction ID, the spec actually says that the transaction ID should 
+	   be a hash of the public key but since it never specifies exactly what 
+	   is hashed ("MD5 hash on [sic] public key") this can probably be 
+	   anything.  We use the user name, which is required to identify the 
+	   pkiUser entry in the CA certificate store */
+	setMessageCreateObjectInfo( &createInfo, CRYPT_CERTTYPE_CERTIFICATE );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
+							  &createInfo, OBJECT_TYPE_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( createInfo.cryptHandle, IMESSAGE_SETATTRIBUTE,
+							  &sessionInfoPtr->iCertRequest,
+							  CRYPT_CERTINFO_CERTREQUEST );
+#if 0	/* 3/8/10 This seems to have vanished from SCEP drafts after about 
+				  draft 16.  When restoring this functionality the special-
+				  case attribute handling for SCEP in attr_acl.c has to be 
+				  restored as well */
 	if( cryptStatusOK( status ) )
 		{
 		const ATTRIBUTE_LIST *userNamePtr = \
@@ -170,6 +223,7 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
 								  CRYPT_CERTINFO_SERIALNUMBER );
 		}
+#endif /* 0 */
 	if( cryptStatusOK( status ) )
 		{
 		static const int keyUsage = CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
@@ -188,6 +242,22 @@ static int createScepCert( INOUT SESSION_INFO *sessionInfoPtr,
 								  IMESSAGE_SETATTRIBUTE, 
 								  ( MESSAGE_CAST ) &keyUsage, 
 								  CRYPT_CERTINFO_KEYUSAGE );
+		}
+#endif /* 1 */
+	if( cryptStatusOK( status ) )
+		{
+		setMessageData( &msgData, ( MESSAGE_CAST ) &currentTime, 
+						sizeof( time_t ) );
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
+								  CRYPT_CERTINFO_VALIDFROM );
+		}
+	if( cryptStatusOK( status ) )
+		{
+		currentTime += 86400;	/* 24 hours */
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE_S, &msgData, 
+								  CRYPT_CERTINFO_VALIDTO );
 		}
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( createInfo.cryptHandle,
@@ -300,7 +370,8 @@ static int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Couldn't get PKCS #10 request data from SCEP request "
 				  "object" ) );
 		}
-	DEBUG_DUMP( "scep_req0", sessionInfoPtr->receiveBuffer, msgData.length );
+	DEBUG_DUMP_FILE( "scep_req0", sessionInfoPtr->receiveBuffer, 
+					 msgData.length );
 
 	/* Phase 1: Encrypt the data using the CA's key */
 	status = envelopeWrap( sessionInfoPtr->receiveBuffer, msgData.length,
@@ -314,7 +385,8 @@ static int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Couldn't encrypt SCEP request data with CA key" ) );
 		}
-	DEBUG_DUMP( "scep_req1", sessionInfoPtr->receiveBuffer, dataLength );
+	DEBUG_DUMP_FILE( "scep_req1", sessionInfoPtr->receiveBuffer, 
+					 dataLength );
 
 	/* Create the SCEP signing attributes */
 	status = createScepAttributes( sessionInfoPtr, protocolInfo,  
@@ -342,8 +414,8 @@ static int createScepRequest( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Couldn't sign request data with ephemeral SCEP "
 				  "certificate" ) );
 		}
-	DEBUG_DUMP( "scep_req2", sessionInfoPtr->receiveBuffer, 
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "scep_req2", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 
 	return( CRYPT_OK );
 	}
@@ -370,8 +442,8 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
 
 	/* Phase 1: Sig-check the data using the CA's key */
-	DEBUG_DUMP( "scep_resp2", sessionInfoPtr->receiveBuffer, 
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "scep_resp2", sessionInfoPtr->receiveBuffer, 
+					 sessionInfoPtr->receiveBufEnd );
 	status = envelopeSigCheck( sessionInfoPtr->receiveBuffer, 
 							   sessionInfoPtr->receiveBufEnd,
 							   sessionInfoPtr->receiveBuffer, 
@@ -384,7 +456,8 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Invalid CMS signed data in CA response" ) );
 		}
-	DEBUG_DUMP( "scep_res1", sessionInfoPtr->receiveBuffer, dataLength );
+	DEBUG_DUMP_FILE( "scep_res1", sessionInfoPtr->receiveBuffer, 
+					 dataLength );
 	if( cryptStatusError( sigResult ) )
 		{
 		/* The signed data was valid but the signature on it wasn't, this is
@@ -421,13 +494,12 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 									 CRYPT_CERTINFO_SCEP_PKISTATUS, &value );
 	if( cryptStatusOK( status ) && value != MESSAGESTATUS_SUCCESS_VALUE )
 		{
-		ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
+		int extValue;
 
-		errorInfo->errorCode = value;
 		status = getScepStatusValue( iCmsAttributes,
-									 CRYPT_CERTINFO_SCEP_FAILINFO, &value );
+									 CRYPT_CERTINFO_SCEP_FAILINFO, &extValue );
 		if( cryptStatusOK( status ) )
-			errorInfo->errorCode = value;
+			value = extValue;
 		status = CRYPT_ERROR_FAILED;
 		}
 	krnlSendNotifier( iCmsAttributes, IMESSAGE_DECREFCOUNT );
@@ -450,7 +522,8 @@ static int checkScepResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				( status,  SESSION_ERRINFO, 
 				  "Couldn't decrypt CMS enveloped data in CA response" ) );
 		}
-	DEBUG_DUMP( "scep_res0", sessionInfoPtr->receiveBuffer, dataLength );
+	DEBUG_DUMP_FILE( "scep_res0", sessionInfoPtr->receiveBuffer, 
+					 dataLength );
 
 	/* Finally, import the returned certificate(s) as a PKCS #7 chain */
 	setMessageCreateObjectIndirectInfo( &createInfo,
@@ -508,12 +581,10 @@ static int clientTransact( INOUT SESSION_INFO *sessionInfoPtr )
 	status = createScepRequest( sessionInfoPtr, &protocolInfo );
 	if( cryptStatusOK( status ) )
 		{
-/*///////////////////////////////////////////////////////////////*/
-#if 0
-		sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_QUERY,
-				"operation=PKIOperation", 22 );
+#if 0	/* 7/9/10 Why is this commented out? */
+		sioctlSetString( &sessionInfoPtr->stream, STREAM_IOCTL_QUERY,
+						 "operation=PKIOperation", 22 );
 #endif
-/*///////////////////////////////////////////////////////////////*/
 		status = writePkiDatagram( sessionInfoPtr, SCEP_CONTENT_TYPE,
 								   SCEP_CONTENT_TYPE_LEN );
 		}

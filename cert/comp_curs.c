@@ -84,6 +84,8 @@
 
    This code is cursed */
 
+#ifdef USE_CERTIFICATES
+
 /****************************************************************************
 *																			*
 *								Utility Routines							*
@@ -299,7 +301,11 @@ BOOLEAN isGeneralNameSelectionComponent( IN_ATTRIBUTE \
 		CRYPT_CERTINFO_QCSTATEMENT_REGISTRATIONAUTHORITY,
 		CRYPT_CERTINFO_SUBJECTINFO_TIMESTAMPING,
 		CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY,
+		CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECTREPOSITORY,
+		CRYPT_CERTINFO_SUBJECTINFO_RPKIMANIFEST,
+		CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECT,
 		CRYPT_CERTINFO_SIGG_PROCURE_SIGNINGFOR,
+		CRYPT_CERTINFO_SIGG_ADMISSIONS_AUTHORITY,
 		CRYPT_CERTINFO_SUBJECTALTNAME,
 		CRYPT_CERTINFO_ISSUERALTNAME,
 		CRYPT_CERTINFO_ISSUINGDIST_FULLNAME,
@@ -311,6 +317,10 @@ BOOLEAN isGeneralNameSelectionComponent( IN_ATTRIBUTE \
 		CRYPT_CERTINFO_AUTHORITY_CERTISSUER,
 		CRYPT_CERTINFO_FRESHESTCRL_FULLNAME,
 		CRYPT_CERTINFO_FRESHESTCRL_CRLISSUER,
+		CRYPT_CERTINFO_DELTAINFO_LOCATION,
+		CRYPT_CERTINFO_TOBEREVOKED_CERTISSUER,
+		CRYPT_CERTINFO_REVOKEDGROUPS_CERTISSUER,
+		CRYPT_CERTINFO_AAISSUINGDIST_FULLNAME,
 		CRYPT_ATTRIBUTE_NONE, CRYPT_ATTRIBUTE_NONE 
 		};
 	static const CRYPT_ATTRIBUTE_TYPE cmsGeneralNameTbl[] = {
@@ -353,8 +363,8 @@ BOOLEAN isGeneralNameSelectionComponent( IN_ATTRIBUTE \
 	/* Check for membership in the GeneralName set.  In theory we could 
 	   divide this further via binary search but we're really reaching the 
 	   law of diminishing returns here */
-	for( i = 0; generalNameTbl[ i ] != CRYPT_ATTRIBUTE_NONE && \
-				i < generalNameTblSize; i++ )
+	for( i = 0; i < generalNameTblSize && \
+				generalNameTbl[ i ] != CRYPT_ATTRIBUTE_NONE; i++ )
 		{
 		if( generalNameTbl[ i ] == certInfoType )
 			return( TRUE );
@@ -1180,3 +1190,4 @@ int setAttributeCursor( INOUT CERT_INFO *certInfoPtr,
 	/* It's a standard attribute field, try and locate it */
 	return( moveCursorToField( certInfoPtr, value ) );
 	}
+#endif /* USE_CERTIFICATES */

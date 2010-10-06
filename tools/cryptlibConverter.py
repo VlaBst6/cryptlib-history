@@ -327,9 +327,12 @@ static int getPointerWrite(PyObject* objPtr, unsigned char** bytesPtrPtr, int* l
         return 1;
     }
 
+    Py_ssize_t size = 0;
+
     /*See if it's an array object*/
-    if (PyObject_AsWriteBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+    if (PyObject_AsWriteBuffer(objPtr, (void **)bytesPtrPtr, &size) == -1)
         return 0;
+    *lengthPtr = size;
     return 1;
 }
 
@@ -342,16 +345,19 @@ static int getPointerRead(PyObject* objPtr, unsigned char** bytesPtrPtr, int* le
         return 1;
     }
 
+    Py_ssize_t size = 0;
+
     /*See if it's an array object*/
-    if (PyObject_AsWriteBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+    if (PyObject_AsWriteBuffer(objPtr, (void **)bytesPtrPtr, &size) == -1)
     {
         PyErr_Clear();
         /*See if it's a string object*/
         /*This returns the length excluding the NULL if it's a string,
           which is what we want*/
-        if (PyObject_AsCharBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+        if (PyObject_AsCharBuffer(objPtr, (const char **)bytesPtrPtr, &size) == -1)
             return 0;
     }
+    *lengthPtr = size;
     return 1;
 }
 
@@ -379,7 +385,7 @@ static int getPointerWriteCheckIndices(PyObject* objPtr, unsigned char** bytesPt
 
 static int getPointerReadString(PyObject* objPtr, char** charPtrPtr)
 {
-    int length = 0;
+    Py_ssize_t length = 0;
     char* newPtr = NULL;
 
     if (objPtr == Py_None)

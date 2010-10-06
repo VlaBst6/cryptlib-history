@@ -712,7 +712,7 @@ static BOOLEAN setLabel( const CRYPT_CONTEXT cryptContext, const C_STR label )
 typedef struct {
 	void *data;							/* Data */
 	int length;							/* Length */
-	} xRESOURCE_DATA;
+	} xMESSAGE_DATA;
 
 #define xsetMessageData( msgDataPtr, dataPtr, dataLength ) \
 	{ \
@@ -745,21 +745,12 @@ BOOLEAN loadDHKey( const CRYPT_DEVICE cryptDevice,
 		}
 	if( cryptStatusOK( status ) )
 		{
-#if 1	/* Undefine to test DH keygen */
-		status = cryptGenerateKey( *cryptContext );
-#else
-		xRESOURCE_DATA msgData;
+		xMESSAGE_DATA msgData;
 
 		xsetMessageData( &msgData, ( void * ) dh1024SPKI,
 						 sizeof( dh1024SPKI ) );
-  #if 0
 		status = krnlSendMessage( *cryptContext, IMESSAGE_SETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_KEY_SPKI );
-  #else
-		status = cryptDeviceQueryCapability( *cryptContext, 1000,
-									( CRYPT_QUERY_INFO * ) &msgData );
-  #endif /* 0 */
-#endif /* 0 */
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -840,7 +831,10 @@ BOOLEAN loadRSAContextsEx( const CRYPT_DEVICE cryptDevice,
 		status = cryptDeviceQueryCapability( cryptDevice, CRYPT_ALGO_RSA,
 											 &cryptQueryInfo );
 		if( cryptStatusError( status ) )
+			{
+			free( rsaKey );
 			return( FALSE );
+			}
 		if( cryptQueryInfo.keySize != ( rsa1024TestKey.nLen >> 3 ) )
 			{
 			if( cryptQueryInfo.keySize != ( rsa2048TestKey.nLen >> 3 ) )
@@ -1195,8 +1189,10 @@ BOOLEAN loadElgamalContexts( CRYPT_CONTEXT *cryptContext,
 	free( elgamalKey );
 	if( cryptStatusError( status ) )
 		{
-		cryptDestroyContext( *cryptContext );
-		cryptDestroyContext( *decryptContext );
+		if( cryptContext != NULL )
+			cryptDestroyContext( *cryptContext );
+		if( decryptContext != NULL )
+			cryptDestroyContext( *decryptContext );
 		printf( "Private key load failed with error code %d, line %d.\n", 
 				status, __LINE__ );
 		return( FALSE );

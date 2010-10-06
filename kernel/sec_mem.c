@@ -95,19 +95,24 @@ static int checkInitAlloc( OUT void **allocPtrPtr,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-static int checkInitFree( void **freePtrPtr, OUT_PTR BYTE **memPtrPtr, 
-						  OUT_PTR MEMLOCK_INFO **memBlockPtrPtr )
+static int checkInitFree( const void **freePtrPtr, 
+						  OUT_OPT_PTR BYTE **memPtrPtr, 
+						  OUT_OPT_PTR MEMLOCK_INFO **memBlockPtrPtr )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 
-	PRE( isWritePtr( memPtrPtr, sizeof( BYTE * ) ) );
-	PRE( isWritePtr( memBlockPtrPtr, sizeof( MEMLOCK_INFO * ) ) );
+	assert( isWritePtr( memPtrPtr, sizeof( BYTE * ) ) );
+	assert( isWritePtr( memBlockPtrPtr, sizeof( MEMLOCK_INFO * ) ) );
 
 	/* Make sure that the parameters are in order */
 	if( !isReadPtrConst( freePtrPtr, sizeof( void * ) ) || \
 		!isReadPtrConst( *freePtrPtr, MIN_ALLOC_SIZE ) )
 		retIntError();
+
+	/* Clear return values */
+	*memPtrPtr = NULL;
+	*memBlockPtrPtr = NULL;
 
 	/* Recover the actual allocated memory block data from the pointer */
 	memPtr = ( ( BYTE * ) *freePtrPtr ) - MEMLOCK_HEADERSIZE;
@@ -144,6 +149,11 @@ static void insertMemBlock( INOUT MEMLOCK_INFO **allocatedListHeadPtr,
 	assert( allocatedListTail == NULL || \
 			isWritePtr( allocatedListTail, sizeof( MEMLOCK_INFO ) ) );
 	assert( isWritePtr( memBlockPtr, sizeof( MEMLOCK_INFO * ) ) );
+
+	REQUIRES_V( ( allocatedListHead == NULL && \
+				  allocatedListTail == NULL ) || \
+				( allocatedListHead != NULL && \
+				  allocatedListTail != NULL ) );
 
 	/* If it's a new list, set up the head and tail pointers and return */
 	if( allocatedListHead == NULL )
@@ -264,7 +274,7 @@ int initAllocation( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int status;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -323,7 +333,8 @@ void endAllocation( void )
 /* A safe malloc function that performs page locking if possible */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
+int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
+				  IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -406,12 +417,13 @@ int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 									  "The Hunting of the Snark" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( OUT_PTR void **pointer )
+void krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 	int status;
 
+	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
 		return;
@@ -551,7 +563,8 @@ void krnlMemfree( OUT_PTR void **pointer )
 /* A safe malloc function that performs page locking if possible */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
+int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
+				  IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -631,7 +644,7 @@ int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 									  "The Hunting of the Snark" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( OUT_PTR void **pointer )
+void krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -640,7 +653,9 @@ void krnlMemfree( OUT_PTR void **pointer )
 #endif /* __BEOS__ && BeOS areas */
 	int status;
 
-	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
+	/* Check the function preconditions */
+	status = checkInitFree( ( const void ** ) pointer, &memPtr, 
+							&memBlockPtr );
 	if( cryptStatusError( status ) )
 		return;
 
@@ -687,7 +702,8 @@ void krnlMemfree( OUT_PTR void **pointer )
 /* A safe malloc function that performs page locking if possible */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
+int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
+				  IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -730,13 +746,14 @@ int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 									  "The Hunting of the Snark" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( OUT_PTR void **pointer )
+void krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 	KnRgnDesc rgnDesc = { K_ANYWHERE, 0, 0 };
 	int status;
 
+	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
 		return;
@@ -770,7 +787,8 @@ void krnlMemfree( OUT_PTR void **pointer )
 /* A safe malloc function that performs page locking if possible */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
+int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
+				  IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -822,12 +840,13 @@ int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 									  "The Hunting of the Snark" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( OUT_PTR void **pointer )
+void krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 	int status;
 
+	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
 		return;
@@ -868,7 +887,8 @@ void krnlMemfree( OUT_PTR void **pointer )
 /* A safe malloc function that performs page locking if possible */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
+int krnlMemalloc( OUT_BUFFER_ALLOC_OPT( size ) void **pointer, 
+				  IN_LENGTH int size )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
@@ -916,12 +936,13 @@ int krnlMemalloc( OUT_PTR void **pointer, IN_LENGTH int size )
 									  "The Hunting of the Snark" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void krnlMemfree( OUT_PTR void **pointer )
+void krnlMemfree( INOUT_PTR void **pointer )
 	{
 	MEMLOCK_INFO *memBlockPtr;
 	BYTE *memPtr;
 	int status;
 
+	/* Check the function preconditions */
 	status = checkInitFree( pointer, &memPtr, &memBlockPtr );
 	if( cryptStatusError( status ) )
 		return;

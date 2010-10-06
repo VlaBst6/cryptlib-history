@@ -15,9 +15,9 @@
   #include "pgp.h"
 #else
   #include "context/context.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -109,7 +109,7 @@ static int calculateFlatKeyID( IN_BUFFER( keyInfoSize ) const void *keyInfo,
 	REQUIRES( keyIdMaxLen == KEYID_SIZE );
 
 	/* Hash the key info to get the key ID */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 	hashFunctionAtomic( keyID, keyIdMaxLen, keyInfo, keyInfoSize );
 
 	return( CRYPT_OK );
@@ -128,8 +128,7 @@ static int calculateKeyIDFromEncoded( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
 
 	/* Calculate the keyID for the pre-encoded key data */
 	status = calculateFlatKeyID( publicKey->publicKeyInfo, 
@@ -188,12 +187,14 @@ static int calculateKeyIDFromEncoded( INOUT CONTEXT_INFO *contextInfoPtr,
 	   public-key context just for this purpose */
 	switch( cryptAlgo )
 		{
+#ifdef USE_DH
 		case CRYPT_ALGO_DH:
 			status = initStaticContext( &staticContextInfo, &staticContextData, 
 										getDHCapability(), 
 										publicKey->publicKeyInfo, 
 										publicKey->publicKeyInfoSize );
 			break;
+#endif /* USE_DH */
 
 		case CRYPT_ALGO_RSA:
 			status = initStaticContext( &staticContextInfo, &staticContextData, 
@@ -202,19 +203,23 @@ static int calculateKeyIDFromEncoded( INOUT CONTEXT_INFO *contextInfoPtr,
 										publicKey->publicKeyInfoSize );
 			break;
 
+#ifdef USE_DSA
 		case CRYPT_ALGO_DSA:
 			status = initStaticContext( &staticContextInfo, &staticContextData, 
 										getDSACapability(), 
 										publicKey->publicKeyInfo, 
 										publicKey->publicKeyInfoSize );
 			break;
+#endif /* USE_DSA */
 
+#ifdef USE_ELGAMAL
 		case CRYPT_ALGO_ELGAMAL:
 			status = initStaticContext( &staticContextInfo, &staticContextData, 
 										getElgamalCapability(), 
 										publicKey->publicKeyInfo, 
 										publicKey->publicKeyInfoSize );
 			break;
+#endif /* USE_ELGAMAL */
 
 		default:
 			retIntError();
@@ -276,8 +281,7 @@ static int calculateOpenPGPKeyID( INOUT CONTEXT_INFO *contextInfoPtr,
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
 
 	/* Generate an OpenPGP key ID.  Note that the creation date isn't 
 	   necessarily present if the key came from a non-PGP source, in which 
@@ -315,7 +319,7 @@ static int calculateOpenPGPKeyID( INOUT CONTEXT_INFO *contextInfoPtr,
 	packetHeader[ 2 ] = length & 0xFF;
 
 	/* Hash the data needed to generate the OpenPGP keyID */
-	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, &hashSize );
+	getHashParameters( CRYPT_ALGO_SHA1, 0, &hashFunction, &hashSize );
 	hashFunction( hashInfo, NULL, 0, packetHeader, 1 + 2, 
 				  HASH_STATE_START );
 	hashFunction( hashInfo, hash, CRYPT_MAX_HASHSIZE, buffer, length, 

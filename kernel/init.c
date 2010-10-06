@@ -49,8 +49,10 @@ THREADFUNC_DEFINE( threadServiceFunction, threadInfoPtr )
 	ORIGINAL_INT_VAR( intParam, threadInfo->threadParams.intParam );
 	ORIGINAL_INT_VAR( semaphore, threadInfo->semaphore );
 
-	PRE( threadServiceFunction != NULL );
-	PRE( isReadPtr( threadInfoPtr, sizeof( THREAD_INFO ) ) );
+	assert( isReadPtr( threadInfoPtr, sizeof( THREAD_INFO ) ) );
+	assert( threadServiceFunction != NULL );
+			/* We can't use a REQUIRES() because of the polymorphic return 
+			   type */
 
 	/* We're running as a thread, call the thread service function and clear
 	   the associated semaphore (if there is one) when we're done.  We check
@@ -76,17 +78,18 @@ int krnlDispatchThread( THREAD_FUNCTION threadFunction,
 	THREAD_INFO *threadInfo = \
 			( threadState == NULL ) ? &krnlData->threadInfo : \
 									  ( THREAD_INFO * ) threadState;
-	THREAD_HANDLE dummy;
+	THREAD_HANDLE dummy = THREAD_INITIALISER;
 	int status;
+
+	assert( sizeof( THREAD_STATE ) >= sizeof( THREAD_INFO ) );
+	assert( threadState == NULL || \
+			isWritePtr( threadState, sizeof( THREAD_STATE ) ) );
 
 	/* Preconditions: The parameters appear valid, and it's a valid
 	   semaphore (SEMAPHORE_NONE is valid since it indicates that the caller
 	   doesn't want a semaphore set) */
-	PRE( sizeof( THREAD_STATE ) >= sizeof( THREAD_INFO ) );
-	PRE( threadFunction != NULL );
-	PRE( threadState == NULL || \
-		 isWritePtr( threadState, sizeof( THREAD_STATE ) ) );
-	PRE( semaphore >= SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
+	REQUIRES( threadFunction != NULL );
+	REQUIRES( semaphore >= SEMAPHORE_NONE && semaphore < SEMAPHORE_LAST );
 
 	/* Initialise the thread parameters */
 	memset( threadInfo, 0, sizeof( THREAD_INFO ) );
@@ -355,7 +358,7 @@ int krnlBeginShutdown( void )
 	MUTEX_LOCK( initialisation );
 
 	/* We can only begin a shutdown if we're fully initialised */
-	PRE( krnlData->initLevel == INIT_LEVEL_FULL );
+	REQUIRES( krnlData->initLevel == INIT_LEVEL_FULL );
 
 	/* If we're already shut down, don't to anything */
 	if( krnlData->initLevel <= INIT_LEVEL_NONE )
@@ -383,12 +386,12 @@ int krnlCompleteShutdown( void )
 	   state in which no more messages are processed.  There are a few 
 	   special-case situations such as a shutdown that occurs because of a
 	   failure to initialise that we also need to handle */
-	PRE( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
-		 ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
-		   krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
-		 ( krnlData->initLevel == INIT_LEVEL_FULL && \
-		   krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
+	REQUIRES( ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				krnlData->shutdownLevel == SHUTDOWN_LEVEL_NONE ) || \
+			  ( krnlData->initLevel == INIT_LEVEL_KRNLDATA && \
+				krnlData->shutdownLevel == SHUTDOWN_LEVEL_MESSAGES ) || \
+			  ( krnlData->initLevel == INIT_LEVEL_FULL && \
+				krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MESSAGES ) );
 
 	/* Shut down all of the kernel modules */
 	endAllocation();
@@ -404,7 +407,7 @@ int krnlCompleteShutdown( void )
 	endSendMessage();
 
 	/* At this point all kernel services have been shut down */
-	POST( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES );
+	ENSURES( krnlData->shutdownLevel >= SHUTDOWN_LEVEL_MUTEXES );
 
 	/* Turn off the lights on the way out.  Note that the kernel data-
 	   clearing operation leaves the shutdown level set to handle any
@@ -462,20 +465,29 @@ static BOOLEAN testGeneralAlgorithms( void )
 	capabilityInfo = getMD5Capability();
 	status = capabilityInfo->selfTestFunction();
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "MD5 self-test failed" ));
 		return( FALSE );
+		}
 #endif /* USE_MD5 */
 
 	/* Test the SHA-1 functionality */
 	capabilityInfo = getSHA1Capability();
 	status = capabilityInfo->selfTestFunction();
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "SHA-1 self-test failed" ));
 		return( FALSE );
+		}
 
 	/* Test the 3DES (and DES) functionality */
 	capabilityInfo = get3DESCapability();
 	status = capabilityInfo->selfTestFunction();
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "3DES self-test failed" ));
 		return( FALSE );
+		}
 
 	return( TRUE );
 	}
@@ -570,13 +582,16 @@ static BOOLEAN checkStringRange( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
 	/* Verify kernel range checking of string values.  We have to disable 
 	   the more outrageous out-of-bounds values in the debug version since 
 	   they'll cause the debug kernel to throw an exception if it sees 
-	   them */
+	   them.  In addition for internal messages this results in an internal-
+	   error status rather than a argument-error status since the values are
+	   so far out of their allowed range that it's reported as a problem 
+	   with the caller rather than with the parameters used */
 	memset( buffer, '*', CRYPT_MAX_HASHSIZE + 1 );
 #ifdef NDEBUG
 	/* Below (negative) */
 	setMessageData( &msgData, buffer, -10 );
 	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ERROR_INTERNAL )
 		return( FALSE );
 #endif /* NDEBUG */
 	/* Lower bound fencepost error */
@@ -612,7 +627,7 @@ static BOOLEAN checkStringRange( IN_HANDLE const CRYPT_CONTEXT iCryptContext )
 	/* High */
 	setMessageData( &msgData, buffer, 32767 );
 	if( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S, &msgData,
-						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ARGERROR_NUM1 )
+						 CRYPT_CTXINFO_KEYING_SALT ) != CRYPT_ERROR_INTERNAL )
 		return( FALSE );
 #endif /* NDEBUG */
 
@@ -885,7 +900,10 @@ static BOOLEAN testKernelMechanisms( void )
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "Object creation self-test failed" ));
 		return( FALSE );
+		}
 	iCryptHandle = createInfo.cryptHandle;
 
 	/* Verify the inability to access an internal object or attribute using
@@ -899,6 +917,7 @@ static BOOLEAN testKernelMechanisms( void )
 						 CRYPT_IATTRIBUTE_TYPE ) != CRYPT_ARGERROR_VALUE )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object internal/external self-test failed" ));
 		return( FALSE );
 		}
 
@@ -912,6 +931,7 @@ static BOOLEAN testKernelMechanisms( void )
 						 buffer, 8 ) != CRYPT_ERROR_NOTINITED )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object low/high state self-test failed" ));
 		return( FALSE );
 		}
 
@@ -920,6 +940,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkNumericRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel numeric range checking self-test failed" ));
 		return( FALSE );
 		}
 
@@ -928,6 +949,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkStringRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel string range checking self-test failed" ));
 		return( FALSE );
 		}
 
@@ -938,6 +960,7 @@ static BOOLEAN testKernelMechanisms( void )
 						 CRYPT_CTXINFO_KEY ) != CRYPT_OK )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object state transition self-test failed" ));
 		return( FALSE );
 		}
 
@@ -953,6 +976,7 @@ static BOOLEAN testKernelMechanisms( void )
 						 CRYPT_CTXINFO_MODE ) != CRYPT_ERROR_PERMISSION )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Attribute read/write self-test failed" ));
 		return( FALSE );
 		}
 
@@ -965,6 +989,7 @@ static BOOLEAN testKernelMechanisms( void )
 						  IMESSAGE_CTX_GENKEY ) != CRYPT_ERROR_PERMISSION )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object state access self-test failed" ));
 		return( FALSE );
 		}
 
@@ -990,12 +1015,14 @@ static BOOLEAN testKernelMechanisms( void )
 						 buffer, 8 ) != CRYPT_OK )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object internal/external action self-test failed" ));
 		return( FALSE );
 		}
 	if( krnlSendMessage( iCryptHandle, MESSAGE_GETATTRIBUTE, &value,
 						 CRYPT_IATTRIBUTE_TYPE ) != CRYPT_ARGERROR_VALUE )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object internal/external action self-test failed" ));
 		return( FALSE );
 		}
 	krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
@@ -1007,6 +1034,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkUsageCount( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object usage-count self-test failed" ));
 		return( FALSE );
 		}
 
@@ -1015,6 +1043,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkLocking( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Object locking self-test failed" ));
 		return( FALSE );
 		}
 	krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
@@ -1032,7 +1061,10 @@ static BOOLEAN testKernelMechanisms( void )
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
 							  &createInfo, OBJECT_TYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "Certificate object creation self-test failed" ));
 		return( FALSE );
+		}
 	iCryptHandle = createInfo.cryptHandle;
 
 	/* Verify functioning of the kernel range checking, phase 3: Boolean
@@ -1040,6 +1072,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkBooleanRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel boolean range checking self-test failed" ));
 		return( FALSE );
 		}
 
@@ -1048,6 +1081,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkTimeRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel time range checking self-test failed" ));
 		return( FALSE );
 		}
 
@@ -1056,6 +1090,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkAllowedValuesRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel allowed-values range checking self-test failed" ));
 		return( FALSE );
 		}
 
@@ -1064,6 +1099,7 @@ static BOOLEAN testKernelMechanisms( void )
 	if( !checkSubrangeRange( iCryptHandle ) )
 		{
 		krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );
+		DEBUG_DIAG(( "Kernel subranges range checking self-test failed" ));
 		return( FALSE );
 		}
 	krnlSendNotifier( iCryptHandle, IMESSAGE_DECREFCOUNT );

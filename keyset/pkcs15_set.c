@@ -214,7 +214,7 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   already have performed the basic type check.
 
 	   Note that we don't allow the addition of standalone public keys
-	   (without corresponding private keys) since file keysets are private-
+	   (without corresponding private keys) since these keysets are private-
 	   key keysets and not general-purpose public key exchange mechanisms.
 	   Without this safeguard some users would use them as a general public-
 	   key store in place of database keysets or (more rarely) as a type of 

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  Certificate Checking Routines						*
-*						Copyright Peter Gutmann 1997-2008					*
+*						Copyright Peter Gutmann 1997-2010					*
 *																			*
 ****************************************************************************/
 
@@ -12,9 +12,11 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -189,7 +191,6 @@ static BOOLEAN wildcardMatch( const ATTRIBUTE_PTR *constrainedAttribute,
 		case MATCH_URI:
 			{
 			URL_INFO urlInfo;
-			int status;
 
 			/* URIs can contain trailing location information that isn't 
 			   regarded as part of the URI for matching purposes so before 
@@ -245,7 +246,7 @@ static BOOLEAN wildcardMatch( const ATTRIBUTE_PTR *constrainedAttribute,
 			}
 		}
 	ENSURES_B( rangeCheckZ( startPos, constrainingStringLength, \
-							constrainingStringLength ) );
+							constrainedStringLength ) );
 
 	/* Check whether the constraining string is a suffix of the constrained
 	   string.  For DNS name constraints the rule for RFC 3280 became 
@@ -283,7 +284,7 @@ static BOOLEAN matchAltnameComponent( const ATTRIBUTE_PTR *constrainedAttribute,
 		status = getAttributeDataDN( constrainingAttribute, &constrainingDnPtr );
 		if( cryptStatusError( status ) )
 			return( FALSE );
-		return( compareDN( *constrainedDnPtr, *constrainingDnPtr, TRUE, 
+		return( compareDN( *constrainingDnPtr, *constrainedDnPtr, TRUE, 
 						   NULL ) );
 		}
 
@@ -410,10 +411,12 @@ int checkNameConstraints( const CERT_INFO *subjectCertInfoPtr,
 
 	/* Check the subject DN if constraints exist.  If it's an excluded 
 	   subtree then none can match, if it's a permitted subtree then at 
-	   least one must match */
+	   least one must match.  We also check for the special case of an
+	   empty subject DN, which acts as a wildcard that matches/doesn't
+	   match permitted/excluded as required */
 	attributePtr = findAttributeField( issuerAttributes, constraintType, 
 									   CRYPT_CERTINFO_DIRECTORYNAME );
-	if( attributePtr != NULL )
+	if( attributePtr != NULL && subjectCertInfoPtr->subjectName != NULL )
 		{
 		int iterationCount;
 
@@ -422,13 +425,21 @@ int checkNameConstraints( const CERT_INFO *subjectCertInfoPtr,
 				iterationCount < FAILSAFE_ITERATIONS_LARGE;
 			 iterationCount++ )
 			{
-			DN_PTR **dnPtr;
+			DN_PTR **dnPtrPtr;
 			int status;
 
-			status = getAttributeDataDN( attributePtr, &dnPtr );
-			isMatch = cryptStatusOK( status ) && \
-					  compareDN( subjectCertInfoPtr->subjectName,
-								 dnPtr, TRUE, NULL );
+			status = getAttributeDataDN( attributePtr, &dnPtrPtr );
+			if( cryptStatusOK( status ) )
+				{
+				/* Check whether the constraining DN is a substring of the 
+				   subject DN.  For example if the constraining DN is 
+				   C=US/O=Foo/OU=Bar and the subject DN is 
+				   C=US/O=Foo/OU=Bar/CN=Baz then compareDN() will return 
+				   TRUE to indicate that it's a substring */
+				isMatch = compareDN( *dnPtrPtr, 
+									 subjectCertInfoPtr->subjectName, TRUE, 
+									 NULL );
+				}
 			attributePtr = findNextFieldInstance( attributePtr );
 			}
 		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
@@ -483,7 +494,7 @@ int checkNameConstraints( const CERT_INFO *subjectCertInfoPtr,
 /* Check whether a policy is the wildcard anyPolicy */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
-static BOOLEAN isAnyPolicy( const ATTRIBUTE_PTR *attributePtr )
+BOOLEAN isAnyPolicy( const ATTRIBUTE_PTR *attributePtr )
 	{
 	void *policyOidPtr;
 	int policyOidLength, status;
@@ -578,13 +589,55 @@ static BOOLEAN checkPolicyType( IN_OPT const ATTRIBUTE_PTR *attributePtr,
 	return( TRUE );
 	}
 
+/* Check whether a given policy is present in a certificate */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+BOOLEAN isPolicyPresent( const ATTRIBUTE_PTR *subjectAttributes,
+						 IN_BUFFER( issuerPolicyValueLength ) \
+								const void *issuerPolicyValue,
+						 IN_LENGTH_OID const int issuerPolicyValueLength )
+	{
+	const ATTRIBUTE_PTR *attributeCursor;
+	int iterationCount, status;
+
+	assert( isReadPtr( subjectAttributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+	assert( isReadPtr( issuerPolicyValue, issuerPolicyValueLength ) );
+
+	REQUIRES_B( issuerPolicyValueLength > 0 && \
+				issuerPolicyValueLength < MAX_POLICY_SIZE );
+
+	for( attributeCursor = subjectAttributes, iterationCount = 0;
+		 attributeCursor != NULL && iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 attributeCursor = findNextFieldInstance( attributeCursor ), \
+			iterationCount++ )
+		{
+		void *subjectPolicyValuePtr;
+		int subjectPolicyValueLength;
+
+		status = getAttributeDataPtr( attributeCursor, &subjectPolicyValuePtr, 
+									  &subjectPolicyValueLength );
+		if( cryptStatusError( status ) )
+			continue;
+		if( issuerPolicyValueLength == subjectPolicyValueLength && \
+			!memcmp( issuerPolicyValue, subjectPolicyValuePtr, 
+					 issuerPolicyValueLength ) )
+			return( TRUE );
+			}
+	ENSURES_B( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+
+	return( FALSE );
+	}
+
 /* Check policy constraints placed by an issuer, checked if complianceLevel 
    >= CRYPT_COMPLIANCELEVEL_PKIX_FULL */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 7, 8 ) ) \
 int checkPolicyConstraints( const CERT_INFO *subjectCertInfoPtr,
 							const ATTRIBUTE_PTR *issuerAttributes,
 							IN_ENUM_OPT( POLICY ) const POLICY_TYPE policyType,
+							IN_OPT const POLICY_INFO *policyInfo,
+							IN_RANGE( 0, MAX_CHAINLENGTH ) const int policyLevel,
+							const BOOLEAN allowMappedPolicies,
 							OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
 								CRYPT_ATTRIBUTE_TYPE *errorLocus,
 							OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
@@ -598,17 +651,20 @@ int checkPolicyConstraints( const CERT_INFO *subjectCertInfoPtr,
 					findAttributeField( subjectCertInfoPtr->attributes, 
 										CRYPT_CERTINFO_CERTPOLICYID, 
 										CRYPT_ATTRIBUTE_NONE );
-	ATTRIBUTE_PTR *constrainingAttributeCursor;
 	BOOLEAN subjectHasPolicy, issuerHasPolicy;
 	BOOLEAN subjectHasAnyPolicy, issuerHasAnyPolicy;
 	int iterationCount;
 
 	assert( isReadPtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isReadPtr( issuerAttributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+	assert( ( policyInfo == NULL && policyLevel == 0 ) || \
+			( isReadPtr( policyInfo, sizeof( POLICY_INFO ) ) && \
+			  ( policyLevel >= 0 && policyLevel < MAX_CHAINLENGTH ) ) );
 	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE ) ) );
 	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
 
-	ENSURES( policyType >= POLICY_NONE && policyType < POLICY_LAST );
+	REQUIRES( policyType >= POLICY_NONE && policyType < POLICY_LAST );
+	REQUIRES( policyLevel >= 0 && policyLevel < MAX_CHAINLENGTH );
 
 	/* If there's a policy mapping present then neither the issuer nor 
 	   subject domain policies can be the wildcard anyPolicy (PKIX section 
@@ -673,48 +729,51 @@ int checkPolicyConstraints( const CERT_INFO *subjectCertInfoPtr,
 	   pesudocode but since that in turn contradicts the main text in a 
 	   number of places we take the main text as definitive, not the buggy 
 	   pseudocode */
-	for( constrainingAttributeCursor = \
-			( ATTRIBUTE_PTR * ) constrainingAttributePtr, \
-			iterationCount = 0;
-		 constrainingAttributeCursor != NULL && \
-			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
-		 constrainingAttributeCursor = \
-			findNextFieldInstance( constrainingAttributeCursor ), \
-			iterationCount++ )
+	if( policyInfo != NULL )
 		{
-		ATTRIBUTE_PTR *constrainedAttributeCursor;	
-		void *constrainingPolicyOidPtr;
-		int constrainingPolicyOidLength, innerIterationCount, status;
+		const POLICY_DATA *policyData = policyInfo->policies;
+		int i;
 
-		status = getAttributeDataPtr( constrainingAttributeCursor, 
-									  &constrainingPolicyOidPtr, 
-									  &constrainingPolicyOidLength );
-		if( cryptStatusError( status ) )
-			break;
-		for( constrainedAttributeCursor = \
-					( ATTRIBUTE_PTR * ) constrainedAttributePtr, \
-				innerIterationCount = 0;
-			 constrainedAttributeCursor != NULL && \
-				innerIterationCount < FAILSAFE_ITERATIONS_LARGE; 
-			 constrainedAttributeCursor = \
-					findNextFieldInstance( constrainedAttributeCursor ), \
-				innerIterationCount++ )
+		for( i = 0; i < policyInfo->noPolicies && \
+					i < FAILSAFE_ITERATIONS_MED; i++ )
 			{
-			void *constrainedPolicyOidPtr;
-			int constrainedPolicyOidLength;
-
-			status = getAttributeDataPtr( constrainedAttributeCursor, 
-										  &constrainedPolicyOidPtr, 
-										  &constrainedPolicyOidLength );
-			if( cryptStatusOK( status ) && \
-				constrainingPolicyOidLength == constrainedPolicyOidLength && \
-				!memcmp( constrainingPolicyOidPtr, constrainedPolicyOidPtr, 
-						 constrainingPolicyOidLength ) )
+			if( policyData[ i ].isMapped && !allowMappedPolicies )
+				continue;
+			if( isPolicyPresent( constrainedAttributePtr, 
+								 policyData[ i ].data, 
+								 policyData[ i ].length ) )
 				return( CRYPT_OK );
 			}
-		ENSURES( innerIterationCount < FAILSAFE_ITERATIONS_LARGE );
+		ENSURES( i < FAILSAFE_ITERATIONS_MED );
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	else
+		{
+		ATTRIBUTE_PTR *constrainingAttributeCursor;
+
+		for( constrainingAttributeCursor = \
+				( ATTRIBUTE_PTR * ) constrainingAttributePtr, \
+				iterationCount = 0;
+			 constrainingAttributeCursor != NULL && \
+				iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+			 constrainingAttributeCursor = \
+				findNextFieldInstance( constrainingAttributeCursor ), \
+				iterationCount++ )
+			{
+			void *constrainingPolicyValuePtr;
+			int constrainingPolicyValueLength, status;
+
+			status = getAttributeDataPtr( constrainingAttributeCursor, 
+										  &constrainingPolicyValuePtr, 
+										  &constrainingPolicyValueLength );
+			if( cryptStatusError( status ) )
+				break;
+			if( isPolicyPresent( constrainedAttributePtr, 
+								 constrainingPolicyValuePtr, 
+								 constrainingPolicyValueLength ) )
+				return( CRYPT_OK );
+			}
+		ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+		}
 
 	/* We couldn't find a matching policy, report an error */
 	setErrorValues( CRYPT_CERTINFO_CERTPOLICYID, CRYPT_ERRTYPE_CONSTRAINT );
@@ -789,6 +848,123 @@ int checkPathConstraints( const CERT_INFO *subjectCertInfoPtr,
 
 /****************************************************************************
 *																			*
+*							Check RPKI Attributes							*
+*																			*
+****************************************************************************/
+
+/* Check attributes for a resource RPKI (RPKI) certificate.  This is 
+   somewhat ugly in that it entails a number of implicit checks rather
+   than just applying constraints specified in the certificate itself,
+   but then again it's not much different to the range of checks
+   hardcoded into checkCert(), the only real difference is that the latter
+   is specified for all certificates while these are only for RPKI
+   certificates */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4, 5 ) ) \
+static int checkRPKIAttributes( const ATTRIBUTE_PTR *subjectAttributes,
+								const BOOLEAN isCA,
+								const BOOLEAN isSelfSigned,
+								OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+									CRYPT_ATTRIBUTE_TYPE *errorLocus,
+								OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+									CRYPT_ERRTYPE_TYPE *errorType )
+	{
+	const ATTRIBUTE_PTR *attributePtr;
+	void *policyOidPtr;
+	int policyOidLength, value, status;
+
+	assert( isReadPtr( subjectAttributes, sizeof( CERT_INFO ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE  ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	/* Check that there's a keyUsage present, and that for CA certificates 
+	   it's the CA usages and for EE certificates it's digital signature 
+	   (RPKI section 3.9.4) */
+	status = getAttributeFieldValue( subjectAttributes,
+									 CRYPT_CERTINFO_KEYUSAGE, 
+									 CRYPT_ATTRIBUTE_NONE, &value );
+	if( cryptStatusError( status ) )
+		{
+		setErrorValues( CRYPT_CERTINFO_KEYUSAGE, CRYPT_ERRTYPE_ATTR_ABSENT );
+		return( CRYPT_ERROR_INVALID );
+		}
+	if( isCA )
+		{
+		if( value != CRYPT_KEYUSAGE_DIGITALSIGNATURE )
+			status = CRYPT_ERROR_INVALID;
+		}
+	else
+		{
+		if( value != ( CRYPT_KEYUSAGE_KEYCERTSIGN | \
+					   CRYPT_KEYUSAGE_CRLSIGN ) )
+			status = CRYPT_ERROR_INVALID;
+		}
+	if( cryptStatusError( status ) )
+		{
+		setErrorValues( CRYPT_CERTINFO_KEYUSAGE, CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ERROR_INVALID );
+		}
+
+	/* If it's a CA, check that there's no extendedKeyUsage (RPKI section 
+	   3.9.5) and there's a caRepository SIA (RPKI section 3.9.8) */
+	if( isCA )
+		{
+		if( checkAttributePresent( subjectAttributes, 
+								   CRYPT_CERTINFO_EXTKEYUSAGE ) )
+			{
+			setErrorValues( CRYPT_CERTINFO_EXTKEYUSAGE, 
+							CRYPT_ERRTYPE_ATTR_PRESENT );
+			return( CRYPT_ERROR_INVALID );
+			}
+		if( !checkAttributeFieldPresent( subjectAttributes,
+								CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY ) )
+			{
+			setErrorValues( CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY, 
+							CRYPT_ERRTYPE_ATTR_ABSENT );
+			return( CRYPT_ERROR_INVALID );
+			}
+		}
+
+	/* If it's not self-signed (i.e. not a root certificate) check that
+	   there's a caIssuers AIA (RPKI section 3.9.7) */
+	if( !isSelfSigned )
+		{
+		if( !checkAttributeFieldPresent( subjectAttributes,
+								CRYPT_CERTINFO_AUTHORITYINFO_CAISSUERS ) )
+			{
+			setErrorValues( CRYPT_CERTINFO_AUTHORITYINFO_CAISSUERS, 
+							CRYPT_ERRTYPE_ATTR_ABSENT );
+			return( CRYPT_ERROR_INVALID );
+			}
+		}
+
+	/* Check that there's an RPKI policy present (RPKI section 3.9.9) */
+	attributePtr = findAttributeField( subjectAttributes,
+									   CRYPT_CERTINFO_CERTPOLICYID,
+									   CRYPT_ATTRIBUTE_NONE );
+	if( attributePtr == NULL )
+		{
+		setErrorValues( CRYPT_CERTINFO_CERTPOLICYID, 
+						CRYPT_ERRTYPE_ATTR_ABSENT );
+		return( CRYPT_ERROR_INVALID );
+		}
+	status = getAttributeDataPtr( attributePtr, &policyOidPtr, 
+								  &policyOidLength );
+	if( cryptStatusError( status ) || \
+		policyOidLength != sizeofOID( OID_RPKI_POLICY ) || \
+		memcmp( policyOidPtr, OID_RPKI_POLICY, 
+				sizeofOID( OID_RPKI_POLICY ) ) )
+		{
+		setErrorValues( CRYPT_CERTINFO_CERTPOLICYID, 
+						CRYPT_ERRTYPE_ATTR_VALUE );
+		return( CRYPT_ERROR_INVALID );
+		}
+
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
 *							Check a Certificate	Object						*
 *																			*
 ****************************************************************************/
@@ -856,6 +1032,76 @@ static int checkCrlConsistency( const CERT_INFO *crlInfoPtr,
 	}
 #endif /* USE_CERTREV */
 
+/* Perform basic checks on a certificate.  Apart from its use as part of the 
+   normal certificate-checking process this is also used to provide a quick
+   "is this certificate obviously invalid" check without having to check
+   signatures from issuing certificates and other paraphernalia, for example
+   when a full certificate check has been performed earlier and all we want
+   to do is make sure that the certificate hasn't expired or been declared
+   untrusted in the meantime */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int checkCertBasic( INOUT CERT_INFO *certInfoPtr )
+	{
+	CRYPT_ATTRIBUTE_TYPE *errorLocus = &certInfoPtr->errorLocus;
+	CRYPT_ERRTYPE_TYPE *errorType = &certInfoPtr->errorType;
+	const time_t currentTime = getTime();
+	int complianceLevel, status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( isWritePtr( errorLocus, sizeof( CRYPT_ATTRIBUTE_TYPE  ) ) );
+	assert( isWritePtr( errorType, sizeof( CRYPT_ERRTYPE_TYPE ) ) );
+
+	REQUIRES( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+			  certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+			  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
+
+	/* Determine how much checking we need to perform */
+	status = krnlSendMessage( certInfoPtr->ownerHandle, 
+							  IMESSAGE_GETATTRIBUTE, &complianceLevel, 
+							  CRYPT_OPTION_CERT_COMPLIANCELEVEL );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* There is one universal case in which a certificate is regarded as 
+	   invalid and that's when it's explicitly not trusted */
+	if( certInfoPtr->cCertCert->trustedUsage == 0 )
+		{
+		setErrorValues( CRYPT_CERTINFO_TRUSTED_USAGE,
+						CRYPT_ERRTYPE_CONSTRAINT );
+		return( CRYPT_ERROR_INVALID );
+		}
+
+	/* If we're running in oblivious mode, we're done */
+	if( complianceLevel < CRYPT_COMPLIANCELEVEL_REDUCED )
+		return( CRYPT_OK );
+
+	/* Check that the validity period is in order.  If we're checking an 
+	   existing certificate then the start time has to be valid, if we're 
+	   creating a new certificate then it doesn't have to be valid since the 
+	   certificate could be created for use in the future */
+	if( currentTime <= MIN_TIME_VALUE )
+		{
+		/* Time is broken, we can't reliably check for expiry times */
+		setErrorValues( CRYPT_CERTINFO_VALIDFROM, CRYPT_ERRTYPE_CONSTRAINT );
+		return( CRYPT_ERROR_INVALID );
+		}
+	if( certInfoPtr->startTime >= certInfoPtr->endTime || \
+		( certInfoPtr->certificate != NULL && \
+		  currentTime < certInfoPtr->startTime ) )
+		{
+		setErrorValues( CRYPT_CERTINFO_VALIDFROM, CRYPT_ERRTYPE_CONSTRAINT );
+		return( CRYPT_ERROR_INVALID );
+		}
+	if( currentTime > certInfoPtr->endTime )
+		{
+		setErrorValues( CRYPT_CERTINFO_VALIDTO, CRYPT_ERRTYPE_CONSTRAINT );
+		return( CRYPT_ERROR_INVALID );
+		}
+
+	return( CRYPT_OK );
+	}
+
 /* Check the validity of a subject certificate based on an issuer 
    certificate with the level of checking performed depending on the 
    complianceLevel setting.  If the shortCircuitCheck flag is set (used for 
@@ -881,7 +1127,6 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 					( subjectCertInfoPtr->flags & CERT_FLAG_SELFSIGNED ) ? \
 					TRUE : FALSE;
 	BOOLEAN subjectIsCA = FALSE, issuerIsCA = FALSE;
-	const time_t currentTime = getTime();
 	int value, complianceLevel, status;
 
 	assert( isWritePtr( subjectCertInfoPtr, sizeof( CERT_INFO ) ) );
@@ -972,10 +1217,15 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 			 subjectCertInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
 			 subjectCertInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
 
+	/* Perform a basic check for obvious invalidity issues */
+	status = checkCertBasic( subjectCertInfoPtr );
+	if( cryptStatusError( status ) )
+		return( status );
+
 	/* There is one universal case in which a certificate is regarded as 
-	   invalid and that's when it's explicitly not trusted for the purpose.  
-	   We perform the check at this point in oblivious mode to ensure that 
-	   only the basic trusted usage gets checked */
+	   invalid and that's when the issuing certificate isn't trusted as an 
+	   issuer.  We perform the check in oblivious mode to ensure that only 
+	   the basic trusted usage gets checked at this point */
 	if( issuerCertInfoPtr->cCertCert->trustedUsage != CRYPT_ERROR )
 		{
 		status = checkKeyUsage( issuerCertInfoPtr, CHECKKEY_FLAG_CA, 
@@ -983,40 +1233,12 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 								CRYPT_COMPLIANCELEVEL_OBLIVIOUS, 
 								errorLocus, errorType );
 		if( cryptStatusError( status ) )
-			{
-			/* There was a problem with the issuer certificate, convert the 
-			   error to an issuer constraint */
-			*errorType = CRYPT_ERRTYPE_ISSUERCONSTRAINT;
 			return( status );
-			}
 		}
 
 	/* If we're running in oblivious mode, we're done */
 	if( complianceLevel < CRYPT_COMPLIANCELEVEL_REDUCED )
 		return( CRYPT_OK );
-
-	/* Check that the validity period is in order.  If we're checking an 
-	   existing certificate then the start time has to be valid, if we're 
-	   creating a new certificate then it doesn't have to be valid since the 
-	   certificate could be created for use in the future */
-	if( currentTime <= MIN_TIME_VALUE )
-		{
-		/* Time is broken, we can't reliably check for expiry times */
-		setErrorValues( CRYPT_CERTINFO_VALIDFROM, CRYPT_ERRTYPE_CONSTRAINT );
-		return( CRYPT_ERROR_INVALID );
-		}
-	if( subjectCertInfoPtr->startTime >= subjectCertInfoPtr->endTime || \
-		( subjectCertInfoPtr->certificate != NULL && \
-		  currentTime < subjectCertInfoPtr->startTime ) )
-		{
-		setErrorValues( CRYPT_CERTINFO_VALIDFROM, CRYPT_ERRTYPE_CONSTRAINT );
-		return( CRYPT_ERROR_INVALID );
-		}
-	if( currentTime > subjectCertInfoPtr->endTime )
-		{
-		setErrorValues( CRYPT_CERTINFO_VALIDTO, CRYPT_ERRTYPE_CONSTRAINT );
-		return( CRYPT_ERROR_INVALID );
-		}
 
 	/* If it's a self-signed certificate or if we're doing a short-circuit 
 	   check of a certificate in a chain that's already been checked and 
@@ -1208,6 +1430,22 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 		return( CRYPT_ERROR_INVALID );
 		}
 
+	/* If this is a resource PKI (RPKI) certificate, apply RPKI-specific 
+	   checks */
+	if( checkAttributePresent( subjectAttributes, \
+							   CRYPT_CERTINFO_IPADDRESSBLOCKS ) || \
+		checkAttributePresent( subjectAttributes, \
+							   CRYPT_CERTINFO_AUTONOMOUSSYSIDS ) )
+		{
+		ANALYSER_HINT( subjectAttributes != NULL );
+
+		status = checkRPKIAttributes( subjectAttributes, subjectIsCA,
+									  subjectSelfSigned, errorLocus,
+									  errorType );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
 #ifdef USE_CERTLEVEL_PKIX_FULL
 	/* If we're not doing full PKIX checking, we're done.  In addition since 
 	   all of the remaining checks are constraint checks we can exit at this
@@ -1268,7 +1506,8 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 		/* Apply the appropriate policy constraint */
 		status = checkPolicyConstraints( subjectCertInfoPtr,
 										 issuerAttributes, policyType,
-										 errorLocus, errorType );
+										 NULL, 0, FALSE, errorLocus, 
+										 errorType );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -1279,3 +1518,4 @@ int checkCert( INOUT CERT_INFO *subjectCertInfoPtr,
 		subjectCertInfoPtr->cCertCert->maxCheckLevel = complianceLevel;
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTIFICATES */

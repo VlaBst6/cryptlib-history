@@ -10,8 +10,10 @@
   #include "asn1.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -24,7 +26,7 @@
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int decodeCertificate( IN_BUFFER( certObjectLength ) const void *certObject, 
 							  IN_LENGTH const int certObjectLength,
-							  OUT_PTR void **newObject, 
+							  OUT_OPT_PTR void **newObject, 
 							  OUT_LENGTH_Z int *newObjectLength )
 	{
 	void *decodedObjectPtr;
@@ -659,3 +661,4 @@ int exportCert( OUT_BUFFER_OPT( certObjectMaxLength, *certObjectLength ) \
 
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

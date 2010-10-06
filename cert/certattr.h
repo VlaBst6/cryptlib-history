@@ -213,9 +213,20 @@
 /* Some fields have no set value (these arise from ANY DEFINED BY
    definitions) or an opaque value (typically fixed parameters for type-and-
    value pairs).  To denote these fields the field type is set to
-   FIELDTYPE_BLOB */
+   FIELDTYPE_BLOB.  However this causes problems with type-checking since
+   now absolutely anything can be passed in as valid data.  To allow at
+   least some type-checking we provide a hint as to the general encoding of 
+   the blob, which can be one of SEQUENCE, BIT STRING, or a genuine blob 
+   used in ANY DEFINED BY constructions, for which we can at least check 
+   that it's some sort of ASN.1 object.  There are also two cases in which
+   an ANY blob is used where it'd be possible to use more specific blobs
+   for OBJECT IDENTIFIERs and GeneralNames and that's in { OID, value }
+   selection lists in which the ANY blob acts spefically as an end-of-
+   list marker as well as being just a catchall type */
 
-#define FIELDTYPE_BLOB			( -3 )
+#define FIELDTYPE_BLOB_ANY				( -3 )
+#define FIELDTYPE_BLOB_BITSTRING		( -4 )
+#define FIELDTYPE_BLOB_SEQUENCE			( -5 )
 
 /* When a field contains a CHOICE it can contain any one of the CHOICE 
    fields, as opposed to a FL_SETOF which can contain any of the fields that
@@ -224,14 +235,14 @@
    but the encoding is handled via a separate encoding table pointed to by
    extraData that maps the value to an OID */
 
-#define FIELDTYPE_CHOICE		( -4 )
+#define FIELDTYPE_CHOICE		( -6 )
 
 /* Some fields are composite fields that contain complete certificate data
    structures.  To denote these fields the field type is a special code that 
    specifies the type and the value member contains the handle or the data 
    member contains a pointer to the composite object */
 
-#define FIELDTYPE_DN			( -5 )
+#define FIELDTYPE_DN			( -7 )
 
 /* As an extension of the above, some fields are complex enough to require
    complete alternative encoding tables.  The most obvious one is
@@ -240,7 +251,7 @@
    this case the extraData member is a pointer to the alternative encoding
    table */
 
-#define FIELDTYPE_SUBTYPED		( -6 )
+#define FIELDTYPE_SUBTYPED		( -8 )
 
 /* Another variant of FIELDTYPE_DN is one where the field can contain one of
    a number of string types chosen from the ASN.1 string menagerie.  The two
@@ -254,7 +265,7 @@
    custom decoding routine that makes the appropriate choice between the 
    union of all of the above types */
 
-#define FIELDTYPE_TEXTSTRING	( -7 )
+#define FIELDTYPE_TEXTSTRING	( -9 )
 
 /* Usually the field ID for the first field in an entry (the one containing
    the OID) is the overall attribute ID, however there are one or two
@@ -268,7 +279,16 @@
    later point, with the first field that isn't a FIELDID_FOLLOWS code being 
    treated as the attribute ID */
 
-#define FIELDID_FOLLOWS			( -8 )
+#define FIELDID_FOLLOWS			( -10 )
+
+/* Since there are multiple blob fields (due to the use of typing hints) we
+   need a macro to determine whether a field is a blob of any form.  The 
+   odd-looking range comparison below is because the fields have negative
+   values */
+
+#define isBlobField( field ) \
+		( ( field ) <= FIELDTYPE_BLOB_ANY && \
+		  ( field ) >= FIELDTYPE_BLOB_SEQUENCE )
 
 /****************************************************************************
 *																			*
@@ -443,16 +463,16 @@ typedef struct AL {
 
 /* The validation function used to perform additional validation on fields */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 		int ( *VALIDATION_FUNCTION )( const ATTRIBUTE_LIST *attributeListPtr );
 
 /* Look up an ATTRIBUTE_INFO entry based on an OID */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
 const ATTRIBUTE_INFO *oidToAttribute( IN_ENUM( ATTRIBUTE ) \
 										const ATTRIBUTE_TYPE attributeType,
 									  IN_BUFFER( oidLength ) const BYTE *oid, 
-									  IN_LENGTH const int oidLength );
+									  IN_LENGTH_OID const int oidLength );
 
 /* Select the appropriate attribute info table for encoding/type checking */
 
@@ -489,6 +509,6 @@ ATTRIBUTE_LIST *findAttributeStart( IN_OPT const ATTRIBUTE_LIST *attributeListPt
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int writeAttributeField( INOUT_OPT STREAM *stream, 
 						 INOUT ATTRIBUTE_LIST *attributeListPtr,
-						 IN_RANGE( 0, 5 ) const int complianceLevel );
+						 IN_RANGE( 0, 4 ) const int complianceLevel );
 
 #endif /* _CERTATTR_DEFINED */

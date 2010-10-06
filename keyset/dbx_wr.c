@@ -244,7 +244,7 @@ static int extractCertIdData( IN_HANDLE const CRYPT_CERTIFICATE iCryptHandle,
 	/* Get general ID information */
 	status = getKeyID( certIdData->certID, ENCODED_DBXKEYID_SIZE, 
 					   &certIdData->certIDlength, iCryptHandle,
-					   CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -332,7 +332,7 @@ static int extractCrlIdData( IN_HANDLE const CRYPT_CERTIFICATE iCryptCRL,
 	   certificate being revoked */
 	status = getKeyID( crlIdData->certID, ENCODED_DBXKEYID_SIZE, 
 					   &crlIdData->certIDlength, iCryptRevokeCert,
-					   CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		status = getKeyID( crlIdData->nameID, ENCODED_DBXKEYID_SIZE, 
 						   &crlIdData->nameIDlength, iCryptRevokeCert,
@@ -718,12 +718,18 @@ static int setItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   to allow others access */
 	status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
 							  MESSAGE_VALUE_TRUE, CRYPT_IATTRIBUTE_LOCKED );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
-								  MESSAGE_VALUE_CURSORFIRST,
-								  CRYPT_CERTINFO_CURRENT_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		return( status );
+	status = krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
+							  MESSAGE_VALUE_CURSORFIRST,
+							  CRYPT_CERTINFO_CURRENT_CERTIFICATE );
+	if( cryptStatusError( status ) )
+		{
+		( void ) krnlSendMessage( iCryptHandle, IMESSAGE_SETATTRIBUTE,
+								  MESSAGE_VALUE_FALSE, 
+								  CRYPT_IATTRIBUTE_LOCKED );
+		return( status );
+		}
 	do
 		{
 		/* Add the certificate or CRL */

@@ -16,7 +16,7 @@
   #include "asn1.h"
 #else
   #include "context/context.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 /* The number of bytes of data that we check to make sure that the 
@@ -63,6 +63,10 @@ static int initContextStorage( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CONTEXT_PKC:
 			contextInfoPtr->ctxPKC = ( PKC_INFO * ) contextInfoPtr->storage;
+			break;
+
+		case CONTEXT_GENERIC:
+			contextInfoPtr->ctxGeneric = ( GENERIC_INFO * ) contextInfoPtr->storage;
 			break;
 		}
 
@@ -152,6 +156,7 @@ static int checkContext( INOUT CONTEXT_INFO *contextInfoPtr,
 			  checkType == MESSAGE_CHECK_PKC_DECRYPT || \
 			  checkType == MESSAGE_CHECK_PKC_SIGCHECK || \
 			  checkType == MESSAGE_CHECK_PKC_SIGN || \
+			  checkType == MESSAGE_CHECK_CERT || \
 			  checkType == MESSAGE_CHECK_CA );
 
 	/* Check that it's a private key if this is required */
@@ -489,6 +494,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 		assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_DATA ) ) );
 
 		REQUIRES( messageValue == MESSAGE_COMPARE_HASH || \
+				  messageValue == MESSAGE_COMPARE_ICV || \
 				  messageValue == MESSAGE_COMPARE_KEYID || \
 				  messageValue == MESSAGE_COMPARE_KEYID_PGP || \
 				  messageValue == MESSAGE_COMPARE_KEYID_OPENPGP );
@@ -496,6 +502,9 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 		switch( messageValue )
 			{
 			case MESSAGE_COMPARE_HASH:
+				REQUIRES( contextInfoPtr->type == CONTEXT_HASH || \
+						  contextInfoPtr->type == CONTEXT_MAC  );
+
 				/* If it's a hash or MAC context, compare the hash value */
 				if( !( contextInfoPtr->flags & CONTEXT_FLAG_HASH_DONE ) )
 					return( CRYPT_ERROR_INCOMPLETE );
@@ -513,19 +522,39 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 					return( CRYPT_OK );
 				break;
 
+			case MESSAGE_COMPARE_ICV:
+				{
+				BYTE icv[ CRYPT_MAX_HASHSIZE + 8 ];
+
+				REQUIRES( contextInfoPtr->type == CONTEXT_CONV );
+
+				if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_GCM )
+					return( CRYPT_ERROR_NOTAVAIL );
+				status = capabilityInfo->getInfoFunction( CAPABILITY_INFO_ICV, 
+									contextInfoPtr, icv, msgData->length );
+				if( cryptStatusError( status ) )
+					return( status );
+				if( compareDataConstTime( msgData->data, icv, 
+										  msgData->length ) )
+					return( CRYPT_OK );
+				break;
+				}
+
 			case MESSAGE_COMPARE_KEYID:
+				REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
+
 				/* If it's a PKC context, compare the key ID */
-				if( contextInfoPtr->type == CONTEXT_PKC && \
-					msgData->length == KEYID_SIZE && \
+				if( msgData->length == KEYID_SIZE && \
 					!memcmp( msgData->data, contextInfoPtr->ctxPKC->keyID,
 							 KEYID_SIZE ) )
 					return( CRYPT_OK );
 				break;
 
 			case MESSAGE_COMPARE_KEYID_PGP:
+				REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
+
 				/* If it's a PKC context, compare the PGP key ID */
-				if( contextInfoPtr->type == CONTEXT_PKC && \
-					( contextInfoPtr->flags & CONTEXT_FLAG_PGPKEYID_SET ) && \
+				if( ( contextInfoPtr->flags & CONTEXT_FLAG_PGPKEYID_SET ) && \
 					msgData->length == PGP_KEYID_SIZE && \
 					!memcmp( msgData->data, contextInfoPtr->ctxPKC->pgp2KeyID,
 							 PGP_KEYID_SIZE ) )
@@ -533,9 +562,10 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				break;
 
 			case MESSAGE_COMPARE_KEYID_OPENPGP:
+				REQUIRES( contextInfoPtr->type == CONTEXT_PKC );
+
 				/* If it's a PKC context, compare the OpenPGP key ID */
-				if( contextInfoPtr->type == CONTEXT_PKC && \
-					( contextInfoPtr->flags & CONTEXT_FLAG_OPENPGPKEYID_SET ) && \
+				if( ( contextInfoPtr->flags & CONTEXT_FLAG_OPENPGPKEYID_SET ) && \
 					msgData->length == PGP_KEYID_SIZE && \
 					!memcmp( msgData->data, contextInfoPtr->ctxPKC->openPgpKeyID,
 							 PGP_KEYID_SIZE ) )
@@ -611,8 +641,9 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 				MK_ACTION_PERM( MESSAGE_CTX_HASH, ACTION_PERM_ALL );
 
 		REQUIRES( contextInfoPtr->type == CONTEXT_CONV || \
-				  contextInfoPtr->type == CONTEXT_MAC ||
-				  contextInfoPtr->type == CONTEXT_PKC );
+				  contextInfoPtr->type == CONTEXT_MAC || \
+				  contextInfoPtr->type == CONTEXT_PKC || \
+				  contextInfoPtr->type == CONTEXT_GENERIC );
 		REQUIRES( needsKey( contextInfoPtr ) );
 
 		/* If it's a private key context or a persistent context we need to 
@@ -656,7 +687,7 @@ static int contextMessageFunction( INOUT TYPECAST( CONTEXT_INFO * ) \
 		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_GETATTRIBUTE_S,
 								  &msgData, CRYPT_IATTRIBUTE_RANDOM_NONCE );
 		if( cryptStatusOK( status ) )
-			status = capabilityInfo->initKeyParamsFunction( contextInfoPtr,
+			status = capabilityInfo->initParamsFunction( contextInfoPtr,
 												KEYPARAM_IV, iv, ivSize );
 		return( status );
 		}
@@ -676,12 +707,12 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	{
 	const CRYPT_ALGO_TYPE cryptAlgo = capabilityInfoPtr->cryptAlgo;
 	const CONTEXT_TYPE contextType = \
-		( ( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL ) && \
-		  ( cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL ) ) ? CONTEXT_CONV : \
-		( ( cryptAlgo >= CRYPT_ALGO_FIRST_PKC ) && \
-		  ( cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ) ? CONTEXT_PKC : \
-		( ( cryptAlgo >= CRYPT_ALGO_FIRST_HASH ) && \
-		  ( cryptAlgo <= CRYPT_ALGO_LAST_HASH ) ) ? CONTEXT_HASH : CONTEXT_MAC;
+				( isConvAlgo( cryptAlgo ) ) ? CONTEXT_CONV : \
+				( isPkcAlgo( cryptAlgo ) ) ? CONTEXT_PKC : \
+				( isHashAlgo( cryptAlgo ) ) ? CONTEXT_HASH : \
+				( isMacAlgo( cryptAlgo ) ) ? CONTEXT_MAC : \
+				( isSpecialAlgo( cryptAlgo ) ) ? CONTEXT_GENERIC : \
+				CONTEXT_NONE;
 	CONTEXT_INFO *contextInfoPtr;
 	OBJECT_SUBTYPE subType;
 	const int createFlags = objectFlags | \
@@ -699,7 +730,8 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	REQUIRES( objectFlags >= CREATEOBJECT_FLAG_NONE && \
 			  objectFlags <= CREATEOBJECT_FLAG_MAX );
 	REQUIRES( cryptAlgo > CRYPT_ALGO_NONE && \
-			  cryptAlgo < CRYPT_ALGO_LAST_MAC );
+			  cryptAlgo < CRYPT_ALGO_LAST );
+	REQUIRES( contextType > CONTEXT_NONE && contextType < CONTEXT_LAST );
 
 	/* Clear return value */
 	*iCryptContext = CRYPT_ERROR;
@@ -713,7 +745,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	if( contextType != CONTEXT_PKC )
 		{
 		status = capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_STATESIZE,
-												NULL, 0, &stateStorageSize );
+												NULL, &stateStorageSize, 0 );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -727,13 +759,15 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 			if( capabilityInfoPtr->encryptFunction != NULL || \
 				capabilityInfoPtr->encryptCBCFunction != NULL || \
 				capabilityInfoPtr->encryptCFBFunction != NULL || \
-				capabilityInfoPtr->encryptOFBFunction != NULL )
+				capabilityInfoPtr->encryptOFBFunction != NULL || \
+				capabilityInfoPtr->encryptGCMFunction != NULL )
 				actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_ENCRYPT,
 											   ACTION_PERM_ALL );
 			if( capabilityInfoPtr->decryptFunction != NULL || \
 				capabilityInfoPtr->decryptCBCFunction != NULL || \
 				capabilityInfoPtr->decryptCFBFunction != NULL || \
-				capabilityInfoPtr->decryptOFBFunction != NULL )
+				capabilityInfoPtr->decryptOFBFunction != NULL || \
+				capabilityInfoPtr->decryptGCMFunction != NULL )
 				actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_DECRYPT,
 											   ACTION_PERM_ALL );
 			actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_GENKEY, ACTION_PERM_ALL );
@@ -777,6 +811,12 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 						  MK_ACTION_PERM( MESSAGE_CTX_GENKEY, ACTION_PERM_ALL );
 			break;
 
+		case CONTEXT_GENERIC:
+			subType = SUBTYPE_CTX_GENERIC;
+			storageSize = sizeof( GENERIC_INFO );
+			actionFlags |= MK_ACTION_PERM( MESSAGE_CTX_GENKEY, ACTION_PERM_NONE_EXTERNAL );
+			break;
+
 		default:
 			retIntError();
 		}
@@ -797,6 +837,7 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 							   contextMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( contextInfoPtr != NULL );
 	contextInfoPtr->objectHandle = *iCryptContext;
 	contextInfoPtr->ownerHandle = iCryptOwner;
 	contextInfoPtr->capabilityInfo = capabilityInfoPtr;
@@ -852,7 +893,9 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 			   sub-optimal choices of mode.  For stream ciphers the only 
 			   available mode is OFB so this isn't a problem, but for 
 			   block ciphers it'll cause problems because most crypto 
-			   protocols only allow CBC mode */
+			   protocols only allow CBC mode.  In addition we don't fall
+			   back to GCM, which is a sufficiently unusual mode that we
+			   require it to be explicitly enabled by the user */
 			if( capabilityInfoPtr->encryptCFBFunction != NULL )
 				{
 				contextInfoPtr->ctxConv->mode = CRYPT_MODE_CFB;
@@ -905,7 +948,8 @@ int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 			  ( contextInfoPtr->loadKeyFunction != NULL && \
 				contextInfoPtr->generateKeyFunction != NULL ) );
 	REQUIRES( ( cryptAlgo == CRYPT_ALGO_DSA || \
-				cryptAlgo == CRYPT_ALGO_ECDSA ) || \
+				cryptAlgo == CRYPT_ALGO_ECDSA || \
+				isSpecialAlgo( cryptAlgo ) ) || \
 			  ( contextInfoPtr->encryptFunction != NULL && \
 				contextInfoPtr->decryptFunction != NULL ) );
 	REQUIRES( contextInfoPtr->type != CONTEXT_PKC || \

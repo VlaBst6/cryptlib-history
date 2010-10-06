@@ -86,7 +86,7 @@ int checkHTTPID( IN_BUFFER( dataLength ) const char *data,
 				 IN_LENGTH_SHORT const int dataLength, 
 				 INOUT STREAM *stream );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int parseUriInfo( OUT_BUFFER( dataInLength, *dataOutLength ) char *data, 
+int parseUriInfo( INOUT_BUFFER( dataInLength, *dataOutLength ) char *data, 
 				  IN_LENGTH_SHORT const int dataInLength, 
 				  OUT_LENGTH_SHORT_Z int *dataOutLength, 
 				  INOUT HTTP_URI_INFO *uriInfo );

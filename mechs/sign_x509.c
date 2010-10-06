@@ -7,16 +7,16 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
+  #include "mech.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -72,8 +72,7 @@ int createX509signature( OUT_BUFFER_OPT( signedObjectMaxLength, \
 				signedObjectMaxLength < MAX_INTLENGTH ) );
 	REQUIRES( objectLength > 0 && objectLength < MAX_INTLENGTH );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( formatInfo == NULL || \
 			  ( ( formatInfo->tag >= 0 && \
 				  formatInfo->tag < MAX_CTAG_VALUE ) && \
@@ -255,6 +254,7 @@ int checkX509signature( IN_BUFFER( signedObjectLength ) const void *signedObject
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( sigPtr != NULL );
 
 	/* If the signature algorithm isn't what we expected the best that we 
 	   can do is report a signature error */

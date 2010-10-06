@@ -51,8 +51,17 @@ static BOOLEAN sanityCheck( const STREAM *stream )
 			break;
 
 		case STREAM_TYPE_MEMORY:
-			if( stream->flags & ~STREAM_MFLAG_MASK )
-				return( FALSE );
+			if( stream->flags & STREAM_MFLAG_VFILE )
+				{
+				if( stream->flags & ~( STREAM_FLAG_MASK | STREAM_MFLAG_VFILE | \
+									   STREAM_FFLAG_MASK ) )
+					return( FALSE );
+				}
+			else
+				{
+				if( stream->flags & ~STREAM_MFLAG_MASK )
+					return( FALSE );
+				}
 			break;
 
 		case STREAM_TYPE_FILE:
@@ -439,6 +448,8 @@ int sread( INOUT STREAM *stream,
 				REQUIRES_S( sIsVirtualFileStream( stream ) );
 
 				localLength = stream->bufEnd - stream->bufPos;
+				if( localLength > length )
+					localLength = length;
 				}
 #endif /* VIRTUAL_FILE_STREAM */
 			
@@ -552,7 +563,7 @@ int sread( INOUT STREAM *stream,
 				   cryptographically protected close (in which case any 
 				   non-OK status indicates a problem).  The most sensible 
 				   status is probably a read error */
-				sioctl( stream, STREAM_IOCTL_CONNSTATE, NULL, FALSE );
+				sioctlSet( stream, STREAM_IOCTL_CONNSTATE, FALSE );
 				return( CRYPT_ERROR_READ );
 				}
 			if( bytesRead < length && \
@@ -895,7 +906,8 @@ int sflush( STREAM *stream )
 		retIntError_Stream( stream );
 
 	REQUIRES_S( sanityCheck( stream ) && \
-				stream->flags & STREAM_FFLAG_BUFFERSET );
+				( ( stream->flags & STREAM_FFLAG_BUFFERSET ) || \
+				  sIsVirtualFileStream( stream ) ) );
 	REQUIRES_S( stream->type == STREAM_TYPE_FILE || \
 				sIsVirtualFileStream( stream ) );
 	REQUIRES_S( !( stream->flags & STREAM_FLAG_READONLY ) );
@@ -956,7 +968,7 @@ int sSetError( INOUT STREAM *stream, IN_ERROR const int status )
 	}
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void sClearError( STREAM *stream )
+void sClearError( INOUT STREAM *stream )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
@@ -1192,12 +1204,60 @@ int sPeek( INOUT STREAM *stream )
 *																			*
 ****************************************************************************/
 
-/* Perform an IOCTL on a stream */
+/* Perform an IOCTL on a stream.  There are two variations of this, a get and
+   a set form, which helps with type-checking compared to the usual do-anything
+   ioctl() */
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sioctl( INOUT STREAM *stream, \
-			IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
-			IN_OPT void *data, IN_INT const int dataLen )
+static int setStreamBuffer( INOUT STREAM *stream, 
+							IN_BUFFER_OPT( dataLen ) const void *data, 
+							IN_LENGTH_Z const int dataLen )
+	{
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( ( data == NULL && dataLen == 0 ) || \
+			isReadPtr( data, dataLen ) );
+
+	REQUIRES_S( ( data == NULL && dataLen == 0 ) || \
+				( data != NULL && dataLen > 0 && dataLen < MAX_INTLENGTH ) );
+	REQUIRES_S( dataLen == 0 || \
+				dataLen == 512 || dataLen == 1024 || \
+				dataLen == 2048 || dataLen == 4096 || \
+				dataLen == 8192 || dataLen == 16384 );
+
+#ifdef VIRTUAL_FILE_STREAM 
+	/* If it's a virtual file stream emulated in memory, don't do anything */
+	if( sIsVirtualFileStream( stream ) )
+		return( CRYPT_OK );
+#endif /* VIRTUAL_FILE_STREAM */
+
+	/* Set up the buffer variables.  File streams don't make use of the 
+	   bufEnd indicator so we set it to the same value as bufSize to ensure 
+	   that the stream passes the sanity checks */
+	stream->buffer = ( void * ) data;
+	stream->bufSize = stream->bufEnd = dataLen;
+
+	/* We've switched to a new I/O buffer, reset all buffer- and stream-
+	   state related variables and remember that we have to reset the stream 
+	   position since there may be a position-change pending that hasn't 
+	   been reflected down to the underlying file yet (if the position 
+	   change was within the same buffer then the POSCHANGED flag won't have 
+	   been set since only the bufPos will have changed) */
+	stream->bufPos = stream->bufCount = 0;
+	sClearError( stream );
+	stream->flags &= ~( STREAM_FFLAG_BUFFERSET | \
+						STREAM_FFLAG_EOF | \
+						STREAM_FFLAG_POSCHANGED_NOSKIP );
+	stream->flags |= STREAM_FFLAG_POSCHANGED;
+	if( data != NULL )
+		stream->flags |= STREAM_FFLAG_BUFFERSET;
+
+	return( CRYPT_OK );
+	}
+
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sioctlSet( INOUT STREAM *stream, 
+			   IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+			   IN_INT const int value )
 	{
 #ifdef USE_TCP
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
@@ -1217,57 +1277,19 @@ int sioctl( INOUT STREAM *stream, \
 				  type == STREAM_IOCTL_PARTIALREAD ) ) || \
 				( stream->type == STREAM_TYPE_NETWORK ) );
 	REQUIRES_S( type > STREAM_IOCTL_NONE && type < STREAM_IOCTL_LAST );
+	REQUIRES_S( value >= 0 && value < MAX_INTLENGTH );
 
 	switch( type )
 		{
 		case STREAM_IOCTL_IOBUFFER:
-			assert( ( data == NULL && dataLen == 0 ) || \
-					isWritePtr( data, dataLen ) );
+			REQUIRES_S( value == 0 );
 
-			REQUIRES_S( ( data == NULL && dataLen == 0 ) || \
-						( data != NULL && \
-						  dataLen > 0 && dataLen < MAX_INTLENGTH ) );
-			REQUIRES_S( dataLen == 0 || \
-						dataLen == 512 || dataLen == 1024 || \
-						dataLen == 2048 || dataLen == 4096 || \
-						dataLen == 8192 || dataLen == 16384 );
-
-#ifdef VIRTUAL_FILE_STREAM 
-			/* If it's a virtual file stream emulated in memory, don't do
-			   anything */
-			if( sIsVirtualFileStream( stream ) )
-				return( CRYPT_OK );
-#endif /* VIRTUAL_FILE_STREAM */
-
-			/* Set up the buffer variables.  File streams don't make use of
-			   the bufEnd indicator so we set it to the same value as 
-			   bufSize to ensure that the stream passes the sanity checks */
-			stream->buffer = data;
-			stream->bufSize = stream->bufEnd = dataLen;
-
-			/* We've switched to a new I/O buffer, reset all buffer- and 
-			   stream-state related variables and remember that we have to 
-			   reset the stream position since there may be a position-
-			   change pending that hasn't been reflected down to the 
-			   underlying file yet (if the position change was within the 
-			   same buffer then the POSCHANGED flag won't have been set 
-			   since only the bufPos will have changed) */
-			stream->bufPos = stream->bufCount = 0;
-			sClearError( stream );
-			stream->flags &= ~( STREAM_FFLAG_BUFFERSET | \
-								STREAM_FFLAG_EOF | \
-								STREAM_FFLAG_POSCHANGED_NOSKIP );
-			stream->flags |= STREAM_FFLAG_POSCHANGED;
-			if( data != NULL )
-				stream->flags |= STREAM_FFLAG_BUFFERSET;
-
-			return( CRYPT_OK );
+			return( setStreamBuffer( stream, NULL, 0 ) );
 
 		case STREAM_IOCTL_PARTIALREAD:
-			REQUIRES_S( data == NULL );
-			REQUIRES_S( dataLen == FALSE || dataLen == TRUE );
+			REQUIRES_S( value == FALSE || value == TRUE );
 
-			if( dataLen )
+			if( value )
 				stream->flags |= STREAM_FLAG_PARTIALREAD;
 			else
 				stream->flags &= ~STREAM_FLAG_PARTIALREAD;
@@ -1275,64 +1297,35 @@ int sioctl( INOUT STREAM *stream, \
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_PARTIALWRITE:
-			REQUIRES_S( data == NULL );
-			REQUIRES_S( dataLen == FALSE || dataLen == TRUE );
+			REQUIRES_S( value == FALSE || value == TRUE );
 
-			if( dataLen )
+			if( value )
 				stream->flags |= STREAM_FLAG_PARTIALWRITE;
 			else
 				stream->flags &= ~STREAM_FLAG_PARTIALWRITE;
 
 			return( CRYPT_OK );
 
-		case STREAM_IOCTL_ERRORINFO:
-			assert( isReadPtr( data, sizeof( ERROR_INFO ) ) );
-
-			REQUIRES( data != NULL && dataLen == 0 );
-
-			/* If this stream type doesn't record extended error information,
-			   there's nothing to do */
-			if( stream->type != STREAM_TYPE_NETWORK )
-				return( CRYPT_OK );
-
-#ifdef USE_TCP
-			/* Copy the error information to the stream */
-			copyErrorInfo( NETSTREAM_ERRINFO, data );
-#endif /* USE_TCP */
-
-			return( CRYPT_OK );
 #ifdef USE_TCP
 		case STREAM_IOCTL_READTIMEOUT:
 		case STREAM_IOCTL_WRITETIMEOUT:
-			/* These two values are stored as a shared timeout value
-			   which is updated on each data read or write by the
-			   caller so there's no need to maintain distinct values */
-			if( data != NULL )
-				{
-				REQUIRES_S( dataLen == 0 );
+			REQUIRES_S( value >= 0 && value < MAX_INTLENGTH );
 
-				*( ( int * ) data ) = netStream->timeout;
-				}
-			else
+			netStream->timeout = value;
+			if( netStream->iTransportSession != CRYPT_ERROR )
 				{
-				REQUIRES_S( dataLen >= 0 && dataLen < MAX_INTLENGTH );
-
-				netStream->timeout = dataLen;
-				if( netStream->iTransportSession != CRYPT_ERROR )
-					{
-					status = krnlSendMessage( netStream->iTransportSession,
-									IMESSAGE_SETATTRIBUTE, &netStream->timeout,
-									( type == STREAM_IOCTL_READTIMEOUT ) ? \
-										CRYPT_OPTION_NET_READTIMEOUT : \
-										CRYPT_OPTION_NET_WRITETIMEOUT );
-					if( cryptStatusError( status ) )
-						return( status );
-					}
+				status = krnlSendMessage( netStream->iTransportSession,
+								IMESSAGE_SETATTRIBUTE, &netStream->timeout,
+								( type == STREAM_IOCTL_READTIMEOUT ) ? \
+									CRYPT_OPTION_NET_READTIMEOUT : \
+									CRYPT_OPTION_NET_WRITETIMEOUT );
+				if( cryptStatusError( status ) )
+					return( status );
 				}
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_HANDSHAKECOMPLETE:
-			REQUIRES_S( data == NULL && dataLen == 0 );
+			REQUIRES_S( value == TRUE );
 			REQUIRES_S( netStream->timeout > 0 && \
 						netStream->timeout < MAX_INTLENGTH );
 			REQUIRES_S( netStream->savedTimeout >= 0 && \
@@ -1354,66 +1347,21 @@ int sioctl( INOUT STREAM *stream, \
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_CONNSTATE:
-			if( data != NULL )
-				{
-				REQUIRES_S( dataLen == 0 );
+			REQUIRES_S( value == TRUE || value == FALSE );
 
-				*( ( int * ) data ) = \
-					( netStream->nFlags & STREAM_NFLAG_LASTMSG ) ? FALSE : TRUE;
-				}
+			if( value )
+				netStream->nFlags &= ~STREAM_NFLAG_LASTMSG;
 			else
-				{
-				REQUIRES_S( dataLen == TRUE || dataLen == FALSE );
-
-				if( dataLen )
-					netStream->nFlags &= ~STREAM_NFLAG_LASTMSG;
-				else
-					netStream->nFlags |= STREAM_NFLAG_LASTMSG;
-				}
-			return( CRYPT_OK );
-
-		case STREAM_IOCTL_GETCLIENTNAME:
-			{
-			assert( isWritePtr( data, dataLen ) );
-
-			REQUIRES_S( data != NULL && \
-						dataLen > 8 && dataLen < MAX_INTLENGTH );
-
-			if( netStream->clientAddressLen <= 0 )
-				return( CRYPT_ERROR_NOTFOUND );
-			if( netStream->clientAddressLen > dataLen )
-				return( CRYPT_ERROR_OVERFLOW );
-			memcpy( data, netStream->clientAddress, netStream->clientAddressLen );
-
-			return( CRYPT_OK );
-			}
-
-		case STREAM_IOCTL_GETCLIENTNAMELEN:
-			REQUIRES_S( data != NULL && dataLen == 0 );
-
-			if( netStream->clientAddressLen <= 0 )
-				return( CRYPT_ERROR_NOTFOUND );
-			*( ( int * ) data ) = netStream->clientAddressLen;
-
-			return( CRYPT_OK );
-
-		case STREAM_IOCTL_GETCLIENTPORT:
-			REQUIRES_S( data != NULL && dataLen == 0 );
-
-			if( netStream->clientPort <= 0 )
-				return( CRYPT_ERROR_NOTFOUND );
-			*( ( int * ) data ) = netStream->clientPort;
-
+				netStream->nFlags |= STREAM_NFLAG_LASTMSG;
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_HTTPREQTYPES:
+			REQUIRES_S( value > STREAM_HTTPREQTYPE_NONE && \
+						value < STREAM_HTTPREQTYPE_LAST );
 			REQUIRES_S( netStream->protocol == STREAM_PROTOCOL_HTTP );
-			REQUIRES_S( data == NULL );
-			REQUIRES_S( dataLen > STREAM_HTTPREQTYPE_NONE && \
-						dataLen < STREAM_HTTPREQTYPE_LAST );
 
 			netStream->nFlags &= ~STREAM_NFLAG_HTTPREQMASK;
-			switch( dataLen )
+			switch( value )
 				{
 				case STREAM_HTTPREQTYPE_GET:
 					netStream->nFlags |= STREAM_NFLAG_HTTPGET;
@@ -1434,7 +1382,7 @@ int sioctl( INOUT STREAM *stream, \
 
 			/* If only an HTTP GET is possible and it's a client-side 
 			   stream, it's read-only */
-			if( dataLen == STREAM_HTTPREQTYPE_GET && \
+			if( value == STREAM_HTTPREQTYPE_GET && \
 				!( netStream->nFlags & STREAM_NFLAG_ISSERVER ) )
 				stream->flags = STREAM_FLAG_READONLY;
 			else
@@ -1446,15 +1394,15 @@ int sioctl( INOUT STREAM *stream, \
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_LASTMESSAGE:
+			REQUIRES_S( value == TRUE );
 			REQUIRES_S( netStream->protocol == STREAM_PROTOCOL_HTTP || \
 						netStream->protocol == STREAM_PROTOCOL_CMP );
-			REQUIRES_S( data == NULL && dataLen == TRUE );
 
 			netStream->nFlags |= STREAM_NFLAG_LASTMSG;
 			return( CRYPT_OK );
 
 		case STREAM_IOCTL_CLOSESENDCHANNEL:
-			REQUIRES_S( data == NULL && dataLen == 0 );
+			REQUIRES_S( value == TRUE );
 			REQUIRES_S( !( netStream->nFlags & STREAM_NFLAG_USERSOCKET ) );
 
 			/* If this is a user-supplied socket we can't perform a partial 
@@ -1465,6 +1413,140 @@ int sioctl( INOUT STREAM *stream, \
 				netStream->transportDisconnectFunction( netStream, FALSE );
 
 			return( CRYPT_OK );
+#endif /* USE_TCP */
+		}
+
+	retIntError_Stream( stream );
+	}
+
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sioctlSetString( INOUT STREAM *stream, 
+					 IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+					 IN_BUFFER( dataLen ) const void *data, 
+					 IN_LENGTH const int dataLen )
+	{
+#ifdef USE_TCP
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+#endif /* USE_TCP */
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( data, dataLen ) );
+
+	/* Check that the input parameters are in order */
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
+		retIntError();
+
+	REQUIRES_S( sanityCheck( stream ) );
+	REQUIRES_S( ( ( stream->type == STREAM_TYPE_FILE || \
+					sIsVirtualFileStream( stream ) ) && \
+				  ( type == STREAM_IOCTL_ERRORINFO || \
+					type == STREAM_IOCTL_IOBUFFER ) ) || \
+				( stream->type == STREAM_TYPE_NETWORK ) );
+	REQUIRES_S( type > STREAM_IOCTL_NONE && type < STREAM_IOCTL_LAST );
+	REQUIRES_S( dataLen > 0 && dataLen < MAX_INTLENGTH );
+
+	switch( type )
+		{
+		case STREAM_IOCTL_ERRORINFO:
+			REQUIRES_S( dataLen == sizeof( ERROR_INFO ) );
+
+			/* If this stream type doesn't record extended error information,
+			   there's nothing to do */
+			if( stream->type != STREAM_TYPE_NETWORK )
+				return( CRYPT_OK );
+
+#ifdef USE_TCP
+			/* Copy the error information to the stream */
+			copyErrorInfo( NETSTREAM_ERRINFO, data );
+#endif /* USE_TCP */
+			return( CRYPT_OK );
+
+#ifdef USE_TCP
+		case STREAM_IOCTL_IOBUFFER:
+			REQUIRES_S( dataLen == 0 || \
+						dataLen == 512 || dataLen == 1024 || \
+						dataLen == 2048 || dataLen == 4096 || \
+						dataLen == 8192 || dataLen == 16384 );
+
+			return( setStreamBuffer( stream, data, dataLen ) );
+#endif /* USE_TCP */
+		}
+
+	retIntError_Stream( stream );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sioctlGet( INOUT STREAM *stream, 
+			   IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+			   OUT_BUFFER_FIXED( dataMaxLen ) void *data, 
+			   IN_LENGTH_SHORT const int dataMaxLen )
+	{
+#ifdef USE_TCP
+	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
+#endif /* USE_TCP */
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( data, dataMaxLen ) );
+
+	/* Check that the input parameters are in order */
+	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
+		retIntError();
+
+	REQUIRES_S( sanityCheck( stream ) );
+	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
+	REQUIRES_S( type > STREAM_IOCTL_NONE && type < STREAM_IOCTL_LAST );
+	REQUIRES_S( data != NULL );
+	REQUIRES_S( dataMaxLen > 0 && dataMaxLen < MAX_INTLENGTH_SHORT );
+
+	switch( type )
+		{
+#ifdef USE_TCP
+		case STREAM_IOCTL_READTIMEOUT:
+		case STREAM_IOCTL_WRITETIMEOUT:
+			REQUIRES_S( dataMaxLen == sizeof( int ) );
+
+			/* These two values are stored as a shared timeout value
+			   which is updated on each data read or write by the
+			   caller so there's no need to maintain distinct values */
+			*( ( int * ) data ) = netStream->timeout;
+			return( CRYPT_OK );
+
+		case STREAM_IOCTL_CONNSTATE:
+			REQUIRES_S( dataMaxLen == sizeof( int ) );
+
+			*( ( int * ) data ) = \
+					( netStream->nFlags & STREAM_NFLAG_LASTMSG ) ? FALSE : TRUE;
+			return( CRYPT_OK );
+
+		case STREAM_IOCTL_GETCLIENTNAME:
+			REQUIRES_S( dataMaxLen > 8 && dataMaxLen < MAX_INTLENGTH );
+
+			if( netStream->clientAddressLen <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			if( netStream->clientAddressLen > dataMaxLen )
+				return( CRYPT_ERROR_OVERFLOW );
+			memcpy( data, netStream->clientAddress, netStream->clientAddressLen );
+
+			return( CRYPT_OK );
+
+		case STREAM_IOCTL_GETCLIENTNAMELEN:
+			REQUIRES_S( dataMaxLen == sizeof( int ) );
+
+			if( netStream->clientAddressLen <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			*( ( int * ) data ) = netStream->clientAddressLen;
+
+			return( CRYPT_OK );
+
+		case STREAM_IOCTL_GETCLIENTPORT:
+			REQUIRES_S( dataMaxLen == sizeof( int ) );
+
+			if( netStream->clientPort <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			*( ( int * ) data ) = netStream->clientPort;
+
+			return( CRYPT_OK );
+
 #endif /* USE_TCP */
 		}
 
@@ -1483,8 +1565,8 @@ int sioctl( INOUT STREAM *stream, \
    memory */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int sFileToMemStream( INOUT STREAM *memStream, INOUT STREAM *fileStream,
-					  OUT_BUFFER_ALLOC( length ) void **bufPtrPtr, 
+int sFileToMemStream( OUT STREAM *memStream, INOUT STREAM *fileStream,
+					  OUT_BUFFER_ALLOC_OPT( length ) void **bufPtrPtr, 
 					  IN_LENGTH const int length )
 	{
 	void *bufPtr;
@@ -1498,7 +1580,11 @@ int sFileToMemStream( INOUT STREAM *memStream, INOUT STREAM *fileStream,
 	if( !isWritePtrConst( memStream, sizeof( STREAM ) ) || \
 		!isWritePtrConst( fileStream, sizeof( STREAM ) ) || \
 		!isWritePtrConst( bufPtrPtr, sizeof( void * ) ) )
-		retIntError_Stream( memStream );
+		{
+		/* Since memStream() is an OUT parameter we can't use it with a
+		   retIntError_Stream() but have to use a plain retIntError() */
+		retIntError();
+		}
 
 	/* We have to use REQUIRES() here rather than REQUIRES_S() since it's 
 	   not certain which of the two streams to set the status for */

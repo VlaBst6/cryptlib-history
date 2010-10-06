@@ -235,6 +235,12 @@ int writeRequestHeader( INOUT STREAM *stream,
 		char lengthString[ 8 + 8 ];
 		int lengthStringLength;
 
+		/* About 5% of connections have HTTP caches present, and of those 
+		   about half get cacheing wrong, i.e. they'll cache even if the 
+		   "no-cache" value is set (from the ISCI Netalyzr result data), so 
+		   in the presence of cacheing there's a coin-toss probability of 
+		   the "Cache-Control" indicator below actually doing what it's 
+		   supposed to */
 		swrite( &headerStream, "Content-Type: ", 14 );
 		swrite( &headerStream, contentType, contentTypeLen );
 		swrite( &headerStream, "\r\nContent-Length: ", 18 );
@@ -287,7 +293,7 @@ static int writeResponseHeader( INOUT STREAM *stream,
 									contentLength );
 	swrite( &headerStream, lengthString, lengthStringLength );
 	swrite( &headerStream, "\r\nCache-Control: no-cache\r\n", 27 );
-	if( isHTTP10( stream ) )
+	if( isHTTP10( stream ) )	/* See note above on "no-cache" */
 		swrite( &headerStream, "Pragma: no-cache\r\n", 18 );
 	status = swrite( &headerStream, "\r\n", 2 );
 	if( cryptStatusOK( status ) )
@@ -308,7 +314,7 @@ static int writeResponseHeader( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int writeFunction( INOUT STREAM *stream, 
-						  IN_BUFFER( length ) const void *buffer, 
+						  IN_BUFFER( maxLength ) const void *buffer, 
 						  IN_LENGTH_FIXED( sizeof( HTTP_DATA_INFO ) ) \
 							const int maxLength, 
 						  OUT_LENGTH_Z int *length )

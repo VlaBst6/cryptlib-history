@@ -54,7 +54,7 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 	   name one shorter than the maximum because as returned to an external
 	   caller it's an ASCIZ string so we need to allow room for the
 	   terminator */
-	if( cryptAlgo <= CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST_MAC || \
+	if( cryptAlgo <= CRYPT_ALGO_NONE || cryptAlgo >= CRYPT_ALGO_LAST || \
 		capabilityInfoPtr->algoName == NULL || \
 		capabilityInfoPtr->algoNameLen < 3 || \
 		capabilityInfoPtr->algoNameLen > CRYPT_MAX_TEXTSIZE - 1 )
@@ -86,19 +86,24 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			}
 		else
 			{
-			/* We need at least one mechanism pair to be able to do anything
-			   useful with the capability */
-			if( ( capabilityInfoPtr->encryptFunction == NULL || \
-				  capabilityInfoPtr->decryptFunction == NULL ) && \
-				( capabilityInfoPtr->encryptCBCFunction == NULL || \
-				  capabilityInfoPtr->decryptCBCFunction == NULL ) && \
-				( capabilityInfoPtr->encryptCFBFunction == NULL || \
-				  capabilityInfoPtr->decryptCFBFunction == NULL ) && \
-				( capabilityInfoPtr->encryptOFBFunction == NULL || \
-				  capabilityInfoPtr->decryptOFBFunction == NULL ) && \
-				( capabilityInfoPtr->signFunction == NULL || \
-				  capabilityInfoPtr->sigCheckFunction == NULL ) )
-				return( FALSE );
+			if( !isSpecialAlgo( cryptAlgo ) )
+				{
+				/* We need at least one mechanism pair to be able to do 
+				   anything useful with the capability */
+				if( ( capabilityInfoPtr->encryptFunction == NULL || \
+					  capabilityInfoPtr->decryptFunction == NULL ) && \
+					( capabilityInfoPtr->encryptCBCFunction == NULL || \
+					  capabilityInfoPtr->decryptCBCFunction == NULL ) && \
+					( capabilityInfoPtr->encryptCFBFunction == NULL || \
+					  capabilityInfoPtr->decryptCFBFunction == NULL ) && \
+					( capabilityInfoPtr->encryptOFBFunction == NULL || \
+					  capabilityInfoPtr->decryptOFBFunction == NULL ) && \
+					( capabilityInfoPtr->encryptGCMFunction == NULL || \
+					  capabilityInfoPtr->decryptGCMFunction == NULL ) && \
+					( capabilityInfoPtr->signFunction == NULL || \
+					  capabilityInfoPtr->sigCheckFunction == NULL ) )
+					return( FALSE );
+				}
 			}
 		}
 
@@ -107,15 +112,14 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 	if( capabilityInfoPtr->minKeySize > capabilityInfoPtr->keySize || \
 		capabilityInfoPtr->maxKeySize < capabilityInfoPtr->keySize )
 		return( FALSE );
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-		cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( isConvAlgo( cryptAlgo ) )
 		{
 		if( ( capabilityInfoPtr->blockSize < bitsToBytes( 8 ) || \
         	  capabilityInfoPtr->blockSize > CRYPT_MAX_IVSIZE ) || \
 			( capabilityInfoPtr->minKeySize < MIN_KEYSIZE || \
 			  capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE ) )
 			return( FALSE );
-		if( capabilityInfoPtr->initKeyParamsFunction == NULL || \
+		if( capabilityInfoPtr->initParamsFunction == NULL || \
 			capabilityInfoPtr->initKeyFunction == NULL )
 			return( FALSE );
 		if( !isStreamCipher( cryptAlgo ) && \
@@ -136,9 +140,29 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			( capabilityInfoPtr->encryptOFBFunction == NULL && \
 			  capabilityInfoPtr->decryptOFBFunction != NULL ) )
 			return( FALSE );
+		if( ( capabilityInfoPtr->encryptGCMFunction != NULL && \
+			  capabilityInfoPtr->decryptGCMFunction == NULL ) || \
+			( capabilityInfoPtr->encryptGCMFunction == NULL && \
+			  capabilityInfoPtr->decryptGCMFunction != NULL ) )
+			return( FALSE );
+
+		return( TRUE );
 		}
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-		cryptAlgo <= CRYPT_ALGO_LAST_PKC )
+
+	/* We've checked the conventional algorithms, beyond this point there
+	   shouldn't be any conventional encryption modes present */
+	if( capabilityInfoPtr->encryptCBCFunction != NULL || \
+		capabilityInfoPtr->decryptCBCFunction != NULL || \
+		capabilityInfoPtr->encryptCFBFunction != NULL || \
+		capabilityInfoPtr->decryptCFBFunction != NULL || \
+		capabilityInfoPtr->encryptOFBFunction != NULL || \
+		capabilityInfoPtr->decryptOFBFunction != NULL || \
+		capabilityInfoPtr->encryptGCMFunction != NULL || \
+		capabilityInfoPtr->decryptGCMFunction != NULL )
+		return( FALSE );
+
+	/* Check any remaining algorithm types */
+	if( isPkcAlgo( cryptAlgo ) )
 		{
 		const int minKeySize = isEccAlgo( cryptAlgo ) ? \
 							   MIN_PKCSIZE_ECC : MIN_PKCSIZE;
@@ -150,9 +174,10 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 		if( capabilityInfoPtr->initKeyFunction == NULL || \
 			capabilityInfoPtr->generateKeyFunction == NULL )
 			return( FALSE );
+
+		return( TRUE );
 		}
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_HASH && \
-		cryptAlgo <= CRYPT_ALGO_LAST_HASH )
+	if( isHashAlgo( cryptAlgo ) )
 		{
 		if( ( capabilityInfoPtr->blockSize < bitsToBytes( 128 ) || \
 			  capabilityInfoPtr->blockSize > CRYPT_MAX_HASHSIZE ) || \
@@ -160,9 +185,10 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			  capabilityInfoPtr->keySize != 0 || \
 			  capabilityInfoPtr->maxKeySize != 0 ) )
 			return( FALSE );
+
+		return( TRUE );
 		}
-	if( cryptAlgo >= CRYPT_ALGO_FIRST_MAC && \
-		cryptAlgo <= CRYPT_ALGO_LAST_MAC )
+	if( isMacAlgo( cryptAlgo ) )
 		{
 		if( ( capabilityInfoPtr->blockSize < bitsToBytes( 128 ) || \
 			  capabilityInfoPtr->blockSize > CRYPT_MAX_HASHSIZE ) || \
@@ -171,9 +197,25 @@ BOOLEAN sanityCheckCapability( const CAPABILITY_INFO *capabilityInfoPtr,
 			return( FALSE );
 		if( capabilityInfoPtr->initKeyFunction == NULL )
 			return( FALSE );
+
+		return( TRUE );
+		}
+	if( isSpecialAlgo( cryptAlgo ) )
+		{
+		if( capabilityInfoPtr->blockSize != 0 || \
+			capabilityInfoPtr->minKeySize < bitsToBytes( 128 ) || \
+			capabilityInfoPtr->maxKeySize > CRYPT_MAX_KEYSIZE )
+			return( FALSE );
+		if( capabilityInfoPtr->encryptFunction != NULL || \
+			capabilityInfoPtr->decryptFunction != NULL )
+			return( FALSE );
+		if( capabilityInfoPtr->initKeyFunction == NULL )
+			return( FALSE );
+
+		return( TRUE );
 		}
 
-	return( TRUE );
+	retIntError_Boolean();
 	}
 
 /* Get information from a capability record */
@@ -230,27 +272,32 @@ const CAPABILITY_INFO FAR_BSS *findCapabilityInfo(
    fallback function is called if the object-specific primary get-info 
    handler doesn't want to handle the query */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 4 ) )  \
-int getDefaultInfo( IN_ENUM( CAPABILITY_INFO ) \
-						const CAPABILITY_INFO_TYPE type, 
-					IN_OPT const void *ptrParam, 
-					const int intParam,
-					OUT_INT_Z int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int getDefaultInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
+
 	{
-	assert( isWritePtr( result, sizeof( int ) ) );
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
 
 	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
-
-	/* Clear return value */
-	*result = 0;
 
 	switch( type )
 		{
 		case CAPABILITY_INFO_STATESIZE:
-			REQUIRES( ptrParam == NULL && intParam == 0 );
+			{
+			int *valuePtr = ( int * ) data;
 
-			/* Result is already set to zero from earlier code */
+			/* If we're falling through to a default handler for this then 
+			   it's because the context has no state information */
+			*valuePtr = 0;
+
 			return( CRYPT_OK );
+			}
 		}
 
 	retIntError();
@@ -274,13 +321,13 @@ void clearTempBignums( INOUT PKC_INFO *pkcInfo )
 	BN_clear( &pkcInfo->tmp1 );
 	BN_clear( &pkcInfo->tmp2 );
 	BN_clear( &pkcInfo->tmp3 );
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( pkcInfo->isECC )
 		{
 		BN_clear( &pkcInfo->tmp4 );
 		BN_clear( &pkcInfo->tmp5 );
 		}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	BN_CTX_clear( pkcInfo->bnCTX );
 	}
 
@@ -320,7 +367,7 @@ int initContextBignums( INOUT PKC_INFO *pkcInfo,
 	BN_init( &pkcInfo->tmp1 );
 	BN_init( &pkcInfo->tmp2 );
 	BN_init( &pkcInfo->tmp3 );
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( isECC )
 		{
 		pkcInfo->isECC = TRUE;
@@ -342,7 +389,7 @@ int initContextBignums( INOUT PKC_INFO *pkcInfo,
 			return( CRYPT_ERROR_MEMORY );
 			}
 		}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	pkcInfo->bnCTX = bnCTX;
 	BN_MONT_CTX_init( &pkcInfo->montCTX1 );
 	BN_MONT_CTX_init( &pkcInfo->montCTX2 );
@@ -378,7 +425,7 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 		BN_clear_free( &pkcInfo->tmp1 );
 		BN_clear_free( &pkcInfo->tmp2 );
 		BN_clear_free( &pkcInfo->tmp3 );
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 		if( pkcInfo->isECC )
 			{
 			BN_clear_free( &pkcInfo->tmp4 );
@@ -387,7 +434,7 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
 			EC_POINT_free( pkcInfo->ecPoint );
 			EC_GROUP_free( pkcInfo->ecCTX );
 			}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 		BN_MONT_CTX_free( &pkcInfo->montCTX1 );
 		BN_MONT_CTX_free( &pkcInfo->montCTX2 );
 		BN_MONT_CTX_free( &pkcInfo->montCTX3 );
@@ -407,11 +454,10 @@ int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo,
 
 	assert( isWritePtr( pkcInfo, sizeof( PKC_INFO ) ) );
 
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo < CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
 
 	/* Calculate the key data checksum */
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( isEccAlgo( cryptAlgo ) )
 		{
 		BN_checksum( &pkcInfo->eccParam_p, &checksum );
@@ -432,7 +478,7 @@ int calculateBignumChecksum( INOUT PKC_INFO *pkcInfo,
 		BN_checksum( &pkcInfo->eccParam_mont_n.Ni, &checksum );
 		}
 	else
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	if( isDlpAlgo( cryptAlgo ) )
 		{
 		BN_checksum( &pkcInfo->dlpParam_p, &checksum );
@@ -610,7 +656,7 @@ int exportBignum( OUT_BUFFER( dataMaxLength, *dataLength ) void *data,
 	return( CRYPT_OK );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /* Convert a byte string to and from an ECC point */
 
@@ -744,7 +790,7 @@ int exportECCPoint( OUT_BUFFER_OPT( dataMaxLength, *dataLength ) void *data,
 
 	return( CRYPT_OK );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 #else
 
@@ -775,10 +821,10 @@ void freeContextBignums( INOUT PKC_INFO *pkcInfo,
    encoded key data where no context is available */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int staticInitContext( INOUT CONTEXT_INFO *contextInfoPtr, 
+int staticInitContext( OUT CONTEXT_INFO *contextInfoPtr, 
 					   IN_ENUM( CONTEXT_TYPE ) const CONTEXT_TYPE type, 
 					   const CAPABILITY_INFO *capabilityInfoPtr,
-					   INOUT_BUFFER_FIXED( contextDataSize ) void *contextData, 
+					   OUT_BUFFER_FIXED( contextDataSize ) void *contextData, 
 					   IN_LENGTH_SHORT_MIN( 32 ) const int contextDataSize,
 					   IN_OPT void *keyData )
 	{
@@ -1006,20 +1052,21 @@ int testMAC( const CAPABILITY_INFO *capabilityInfo,
 
 /* Determine the parameters for a particular hash algorithm */
 
-typedef struct {
+typedef struct HI {
 	const CRYPT_ALGO_TYPE cryptAlgo;
 	const int hashSize;
 	const HASHFUNCTION function;
 	} HASHFUNCTION_INFO;
 
-typedef struct {
+typedef struct HAI {
 	const CRYPT_ALGO_TYPE cryptAlgo;
 	const int hashSize;
 	const HASHFUNCTION_ATOMIC function;
 	} HASHFUNCTION_ATOMIC_INFO;
 
-STDC_NONNULL_ARG( ( 2 ) ) \
+STDC_NONNULL_ARG( ( 3 ) ) \
 void getHashParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
+						IN_INT_SHORT_Z const int hashParam,
 						OUT_PTR HASHFUNCTION *hashFunction, 
 						OUT_OPT_LENGTH_SHORT_Z int *hashOutputSize )
 	{
@@ -1033,32 +1080,46 @@ void getHashParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
 		{ CRYPT_ALGO_SHA1, SHA_DIGEST_LENGTH, shaHashBuffer },
 #ifdef USE_SHA2
 		{ CRYPT_ALGO_SHA2, SHA256_DIGEST_SIZE, sha2HashBuffer },
-  #ifdef USE_SHA2_512
-		/* SHA2-512 is only available on systems with 64-bit data type 
-		   support, at the moment this is only used internally for some PRFs 
-		   so we have to handle it via a kludge on SHA2 */
-		{ CRYPT_ALGO_SHA2 + 1, SHA512_DIGEST_SIZE, sha2_512HashBuffer },
-  #endif /* USE_SHA2_512 */
+  #ifdef USE_SHA2_EXT
+		/* The extended SHA2 variants are only available on systems with 64-
+		   bit data type support */
+	#if defined( CONFIG_SUITEB )
+		{ CRYPT_ALGO_SHA2, SHA384_DIGEST_SIZE, sha2_ExtHashBuffer },
+	#else
+		{ CRYPT_ALGO_SHA2, SHA512_DIGEST_SIZE, sha2_ExtHashBuffer },
+	#endif /* Suite B vs. generic use */
+  #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 		{ CRYPT_ALGO_NONE, SHA_DIGEST_LENGTH, shaHashBuffer },
 			{ CRYPT_ALGO_NONE, SHA_DIGEST_LENGTH, shaHashBuffer }
 		};
 	int i;
 
-	assert( hashAlgorithm >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgorithm <= CRYPT_ALGO_LAST_HASH );
+	assert( isHashAlgo( hashAlgorithm ) );
+	assert( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 			/* We don't use REQUIRES() for this for the reason given in the
 			   comments below */
 	assert( isWritePtr( hashFunction, sizeof( HASHFUNCTION ) ) );
 	assert( ( hashOutputSize == NULL ) || \
 			isWritePtr( hashOutputSize, sizeof( int ) ) );
 
-	/* Find the info for the requested hash algorithm */
-	for( i = 0; 
-		 hashFunctions[ i ].cryptAlgo != hashAlgorithm && \
-			hashFunctions[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
-			i < FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_INFO ); 
-		 i++ );
+	/* Find the information for the requested hash algorithm */
+	for( i = 0; hashFunctions[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_INFO ); 
+		 i++ )
+		{
+		/* If this isn't the algorithm that we're looking for, continue */
+		if( hashFunctions[ i ].cryptAlgo != hashAlgorithm )
+			continue;
+
+		/* If we're looking for a specific hash-size match and this isn't
+		   it, continue */
+		if( hashParam != 0 && hashFunctions[ i ].hashSize != hashParam )
+			continue;
+
+		/* We've found what we're after */
+		break;
+		}
 	if( i >= FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_INFO ) || \
 		hashFunctions[ i ].cryptAlgo == CRYPT_ALGO_NONE )
 		{
@@ -1077,8 +1138,9 @@ void getHashParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
 		*hashOutputSize = hashFunctions[ i ].hashSize;
 	}
 
-STDC_NONNULL_ARG( ( 2 ) ) \
+STDC_NONNULL_ARG( ( 3 ) ) \
 void getHashAtomicParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
+							  IN_INT_SHORT_Z const int hashParam,
 							  OUT_PTR HASHFUNCTION_ATOMIC *hashFunctionAtomic, 
 							  OUT_OPT_LENGTH_SHORT_Z int *hashOutputSize )
 	{
@@ -1092,33 +1154,47 @@ void getHashAtomicParameters( IN_ALGO const CRYPT_ALGO_TYPE hashAlgorithm,
 		{ CRYPT_ALGO_SHA1, SHA_DIGEST_LENGTH, shaHashBufferAtomic },
 #ifdef USE_SHA2
 		{ CRYPT_ALGO_SHA2, SHA256_DIGEST_SIZE, sha2HashBufferAtomic },
-  #ifdef USE_SHA2_512
-		/* SHA2-512 is only available on systems with 64-bit data type 
-		   support, at the moment this is only used internally for some PRFs 
-		   so we have to handle it via a kludge on SHA2 */
-		{ CRYPT_ALGO_SHA2 + 1, SHA512_DIGEST_SIZE, sha2_512HashBufferAtomic },
-  #endif /* USE_SHA2_512 */
+  #ifdef USE_SHA2_EXT
+		/* The extended SHA2 variants are only available on systems with 64-
+		   bit data type support */
+	#if defined( CONFIG_SUITEB )
+		{ CRYPT_ALGO_SHA2, SHA384_DIGEST_SIZE, sha2_ExtHashBufferAtomic },
+	#else
+		{ CRYPT_ALGO_SHA2, SHA512_DIGEST_SIZE, sha2_ExtHashBufferAtomic },
+	#endif /* Suite B vs. generic use */
+  #endif /* USE_SHA2_EXT */
 #endif /* USE_SHA2 */
 		{ CRYPT_ALGO_NONE, SHA_DIGEST_LENGTH, shaHashBufferAtomic },
 			{ CRYPT_ALGO_NONE, SHA_DIGEST_LENGTH, shaHashBufferAtomic }
 		};
 	int i;
 
-	assert( hashAlgorithm >= CRYPT_ALGO_FIRST_HASH && \
-			hashAlgorithm <= CRYPT_ALGO_LAST_HASH );
+	assert( isHashAlgo( hashAlgorithm ) );
+	assert( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 			/* We don't use REQUIRES() for this for the reason given in the
 			   comments below */
 	assert( isWritePtr( hashFunctionAtomic, sizeof( HASHFUNCTION_ATOMIC ) ) );
 	assert( ( hashOutputSize == NULL ) || \
 			isWritePtr( hashOutputSize, sizeof( int ) ) );
 
-	/* Find the info for the requested hash algorithm */
-	for( i = 0; 
-		 hashFunctions[ i ].cryptAlgo != hashAlgorithm && \
-			hashFunctions[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
-			i < FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_INFO ); 
-		 i++ );
-	if( i >= FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_INFO ) || \
+	/* Find the information for the requested hash algorithm */
+	for( i = 0; hashFunctions[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
+				i < FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_ATOMIC_INFO ); 
+		 i++ )
+		{
+		/* If this isn't the algorithm that we're looking for, continue */
+		if( hashFunctions[ i ].cryptAlgo != hashAlgorithm )
+			continue;
+
+		/* If we're looking for a specific hash-size match and this isn't
+		   it, continue */
+		if( hashParam != 0 && hashFunctions[ i ].hashSize != hashParam )
+			continue;
+
+		/* We've found what we're after */
+		break;
+		}
+	if( i >= FAILSAFE_ARRAYSIZE( hashFunctions, HASHFUNCTION_ATOMIC_INFO ) || \
 		hashFunctions[ i ].cryptAlgo == CRYPT_ALGO_NONE )
 		{
 		/* Make sure that we always get some sort of hash function rather 

@@ -16,7 +16,7 @@
   #include "context/context.h"
   #include "device/device.h"
   #include "device/pkcs11_api.h"
-  #include "misc/asn1.h"
+  #include "enc_dec//asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS11
@@ -38,11 +38,6 @@
 
 /* #define USE_EXPLICIT_LINKING */
 
-/* Prototypes for functions in pkcs11.c */
-
-time_t getTokenTime( CK_TOKEN_INFO *tokenInfo );
-int genericEndFunction( CONTEXT_INFO *contextInfoPtr );
-
 /****************************************************************************
 *																			*
 *						 		Utility Routines							*
@@ -62,7 +57,7 @@ static int getRandomFunction( DEVICE_INFO *deviceInfo, void *buffer,
 	assert( isWritePtr( buffer, length ) );
 
 	status = C_GenerateRandom( pkcs11Info->hSession, buffer, length );
-	return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+	return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 	}
 
 /* Perform a self-test */
@@ -410,6 +405,7 @@ void deviceEndPKCS11( void )
 	int i;
 
 	if( pkcs11Initialised )
+		{
 		for( i = 0; i < MAX_PKCS11_DRIVERS; i++ )
 			{
 			if( pkcs11InfoTbl[ i ].hPKCS11 != NULL_INSTANCE )
@@ -425,6 +421,7 @@ void deviceEndPKCS11( void )
 				}
 			pkcs11InfoTbl[ i ].hPKCS11 = NULL_INSTANCE;
 			}
+		}
 	pkcs11Initialised = FALSE;
 	}
 
@@ -593,10 +590,10 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	{ CRYPT_ALGO_MD5, bitsToBytes( 128 ), "MD5", 3,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 #endif /* USE_MD5 */
-	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA1", 3,
+	{ CRYPT_ALGO_SHA1, bitsToBytes( 160 ), "SHA-1", 5,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 #ifdef USE_SHA2
-	{ CRYPT_ALGO_SHA2, bitsToBytes( 256 ), "SHA2", 4,
+	{ CRYPT_ALGO_SHA2, bitsToBytes( 256 ), "SHA-2", 5,
 		bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ) },
 #endif /* USE_SHA2 */
 
@@ -605,12 +602,16 @@ static CAPABILITY_INFO FAR_BSS capabilityTemplates[] = {
 	{ CRYPT_ALGO_HMAC_MD5, bitsToBytes( 128 ), "HMAC-MD5", 8,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
 #endif /* USE_HMAC_MD5 */
-	{ CRYPT_ALGO_HMAC_SHA, bitsToBytes( 160 ), "HMAC-SHA", 8,
+	{ CRYPT_ALGO_HMAC_SHA1, bitsToBytes( 160 ), "HMAC-SHA1", 9,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
 #ifdef USE_HMAC_RIPEMD160
 	{ CRYPT_ALGO_HMAC_RIPEMD160, bitsToBytes( 160 ), "HMAC-RIPEMD160", 14,
 	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
 #endif /* USE_HMAC_RIPEMD160 */
+#ifdef USE_HMAC_SHA2
+	{ CRYPT_ALGO_HMAC_SHA2, bitsToBytes( 256 ), "HMAC-SHA2", 9,
+	  bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE },
+#endif /* USE_HMAC_SHA2 */
 
 	/* Public-key capabilities */
 #ifdef USE_DH
@@ -639,8 +640,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	CK_MECHANISM_INFO pMechanism;
 	CK_RV status;
 	const CRYPT_ALGO_TYPE cryptAlgo = mechanismInfoPtr->cryptAlgo;
-	const BOOLEAN isPKC = ( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-							cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ? TRUE : FALSE;
+	const BOOLEAN isPKC = isPkcAlgo( cryptAlgo ) ? TRUE : FALSE;
 	const CK_FLAGS keyGenFlag = isPKC ? CKF_GENERATE_KEY_PAIR : CKF_GENERATE;
 	PKCS11_INFO *pkcs11Info = deviceInfo->devicePKCS11;
 	int hardwareOnly, i, iterationCount;
@@ -721,7 +721,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 	capabilityInfo->getInfoFunction = getDefaultInfo;
 	if( cryptAlgo != CRYPT_ALGO_DH && cryptAlgo != CRYPT_ALGO_RSA && \
 		cryptAlgo != CRYPT_ALGO_DSA )
-		capabilityInfo->initKeyParamsFunction = initKeyParams;
+		capabilityInfo->initParamsFunction = initGenericParams;
 	capabilityInfo->endFunction = mechanismInfoPtr->endFunction;
 	capabilityInfo->initKeyFunction = mechanismInfoPtr->initKeyFunction;
 	if( pMechanism.flags & keyGenFlag )
@@ -764,6 +764,10 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 				capabilityInfo->encryptOFBFunction = mechanismInfoPtr->encryptFunction;
 				break;
 
+			case CRYPT_MODE_GCM:
+				capabilityInfo->encryptGCMFunction = mechanismInfoPtr->encryptFunction;
+				break;
+
 			default:	/* ECB or a PKC */
 				capabilityInfo->encryptFunction = mechanismInfoPtr->encryptFunction;
 				break;
@@ -785,6 +789,10 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 
 			case CRYPT_MODE_OFB:
 				capabilityInfo->decryptOFBFunction = mechanismInfoPtr->decryptFunction;
+				break;
+
+			case CRYPT_MODE_GCM:
+				capabilityInfo->decryptGCMFunction = mechanismInfoPtr->decryptFunction;
 				break;
 
 			default:	/* ECB or a PKC */
@@ -823,10 +831,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		}
 
 	/* Record mechanism-specific parameters if required */
-	if( ( cryptAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-		  cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL ) || \
-		( cryptAlgo >= CRYPT_ALGO_FIRST_MAC && \
-		  cryptAlgo <= CRYPT_ALGO_LAST_MAC ) )
+	if( isConvAlgo( cryptAlgo ) || isMacAlgo( cryptAlgo ) )
 		{
 		capabilityInfo->paramKeyType = mechanismInfoPtr->keyType;
 		capabilityInfo->paramKeyGen = mechanismInfoPtr->keygenMechanism;
@@ -834,8 +839,7 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 		}
 
 	/* If it's not a conventional encryption algo, we're done */
-	if( cryptAlgo < CRYPT_ALGO_FIRST_CONVENTIONAL || \
-		cryptAlgo > CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( !isConvAlgo( cryptAlgo ) )
 		return( ( CAPABILITY_INFO * ) capabilityInfo );
 
 	/* PKCS #11 handles encryption modes by defining a separate mechanism for
@@ -880,6 +884,14 @@ static CAPABILITY_INFO *getCapability( const DEVICE_INFO *deviceInfo,
 										mechanismInfoPtr->encryptFunction;
 				if( pMechanism.flags & CKF_DECRYPT )
 					capabilityInfo->decryptOFBFunction = \
+										mechanismInfoPtr->decryptFunction;
+				break;
+			case CRYPT_MODE_GCM:
+				if( pMechanism.flags & CKF_ENCRYPT )
+					capabilityInfo->encryptGCMFunction = \
+										mechanismInfoPtr->encryptFunction;
+				if( pMechanism.flags & CKF_DECRYPT )
+					capabilityInfo->decryptGCMFunction = \
 										mechanismInfoPtr->decryptFunction;
 				break;
 
@@ -944,8 +956,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 		}
 
 	/* Add capability information for each recognised mechanism type */
-	for( i = 0; mechanismInfoPtr[ i ].mechanism != CKM_NONE && \
-				i < maxMechanisms; i++ )
+	for( i = 0; i < maxMechanisms && \
+				mechanismInfoPtr[ i ].mechanism != CKM_NONE; i++ )
 		{
 		CAPABILITY_INFO_LIST *newCapabilityList;
 		CAPABILITY_INFO *newCapability;
@@ -966,9 +978,8 @@ static int getCapabilities( DEVICE_INFO *deviceInfo,
 		if( newCapability == NULL )
 			continue;
 		REQUIRES( sanityCheckCapability( newCapability, 
-					( newCapability->cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-					  newCapability->cryptAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
-					  TRUE : FALSE ) );
+								isPkcAlgo( newCapability->cryptAlgo ) ? \
+								TRUE : FALSE ) );
 		if( ( newCapabilityList = \
 						clAlloc( "getCapabilities", \
 								 sizeof( CAPABILITY_INFO_LIST ) ) ) == NULL )
@@ -1050,7 +1061,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	memset( slotList, 0, sizeof( slotList ) );
 	status = C_GetSlotList( TRUE, slotList, &slotCount );
 	if( status != CKR_OK )
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_OPEN ) );
 	if( slotCount <= 0 )
 		{
 		/* There are token slots present but no tokens in the slots */
@@ -1110,7 +1121,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( status != CKR_OK )
 		{
 		shutdownFunction( deviceInfo );
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_OPEN ) );
 		}
 	if( slotInfo.flags & CKF_REMOVABLE_DEVICE )
 		{
@@ -1121,7 +1132,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( status != CKR_OK )
 		{
 		shutdownFunction( deviceInfo );
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_OPEN ) );
 		}
 	if( tokenInfo.flags & CKF_RNG )
 		{
@@ -1268,7 +1279,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 								&hSession );
 	if( status != CKR_OK )
 		{
-		cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_OPEN );
+		cryptStatus = pkcs11MapError( status, CRYPT_ERROR_OPEN );
 		if( cryptStatus == CRYPT_ERROR_OPEN && \
 			!( tokenInfo.flags & CKF_USER_PIN_INITIALIZED ) )
 			{

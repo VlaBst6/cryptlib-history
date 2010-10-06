@@ -14,8 +14,8 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -160,6 +160,7 @@ static int readUserID( INOUT STREAM *stream,
 							  CRYPT_MAX_HASHSIZE );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( userIDsize >= 8 && userIDsize <= CRYPT_MAX_HASHSIZE );
 
 	/* If there's already been a previous transaction (which means that we 
 	   have PKI user information present) and the current transaction 
@@ -170,8 +171,8 @@ static int readUserID( INOUT STREAM *stream,
 		{
 		DEBUG_PRINT(( "%s: Skipped repeated userID.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI" ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->userID, protocolInfo->userIDsize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->userID, protocolInfo->userIDsize );
 		return( CRYPT_OK );
 		}
 
@@ -188,8 +189,8 @@ static int readUserID( INOUT STREAM *stream,
 		}
 	DEBUG_PRINT(( "%s: Read new userID.\n",
 				  protocolInfo->isServer ? "SVR" : "CLI" ));
-	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-				   protocolInfo->userID, protocolInfo->userIDsize );
+	DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					protocolInfo->userID, protocolInfo->userIDsize );
 
 	return( CRYPT_OK );
 	}
@@ -218,8 +219,8 @@ static int readTransactionID( INOUT STREAM *stream,
 			return( status );
 		DEBUG_PRINT(( "%s: Read initial transID.\n",
 					  protocolInfo->isServer ? "SVR" : "CLI" ));
-		DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-					   protocolInfo->transID, protocolInfo->transIDsize );
+		DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+						protocolInfo->transID, protocolInfo->transIDsize );
 		return( CRYPT_OK );
 		}
 
@@ -230,10 +231,11 @@ static int readTransactionID( INOUT STREAM *stream,
 							  CRYPT_MAX_HASHSIZE );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length >= 4 && length <= CRYPT_MAX_HASHSIZE );
 	DEBUG_PRINT(( "%s: Read transID.\n",
 				  protocolInfo->isServer ? "SVR" : "CLI" ));
-	DEBUG_DUMPHEX( protocolInfo->isServer ? "SVR" : "CLI", 
-				   protocolInfo->transID, protocolInfo->transIDsize );
+	DEBUG_DUMP_HEX( protocolInfo->isServer ? "SVR" : "CLI", 
+					protocolInfo->transID, protocolInfo->transIDsize );
 	if( protocolInfo->transIDsize != length || \
 		memcmp( protocolInfo->transID, buffer, length ) )
 		return( CRYPT_ERROR_SIGNATURE );
@@ -970,6 +972,7 @@ int readPkiMessage( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_SIGNATURE, errorInfo, 
 				  "Received MAC'd rr, should be signed" ) );
 		}
+	ANALYSER_HINT( integrityInfoPtr != NULL );
 
 	/* Verify the message integrity.  We convert any error that we encounter 
 	   during this check to a CRYPT_ERROR_SIGNATURE, this is somewhat 

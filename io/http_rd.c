@@ -9,12 +9,12 @@
 #include <stdio.h>
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "http.h"
   #include "misc_rw.h"
+  #include "http.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/misc_rw.h"
   #include "io/http.h"
-  #include "misc/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_HTTP
@@ -114,8 +114,11 @@ static int readRequestHeader( INOUT STREAM *stream,
 		/* If it's an HTTP-level error (e.g. line too long), send back an
 		   HTTP-level error response */
 		if( status != CRYPT_ERROR_COMPLETE )
+			{
 			sendHTTPError( stream, lineBuffer, lineBufSize,
-						   ( status == CRYPT_ERROR_OVERFLOW ) ? 414 : 400 );
+						   ( status == CRYPT_ERROR_OVERFLOW ) ? \
+						   414 : 400 );
+			}
 
 		return( retTextLineError( stream, status, isTextDataError, 
 								  "Invalid HTTP request header line 1: ", 
@@ -143,6 +146,13 @@ static int readRequestHeader( INOUT STREAM *stream,
 		char reqNameBuffer[ 16 + 8 ];
 
 		/* Return the extended error information */
+		if( length <= 0 )
+			{
+			sendHTTPError( stream, lineBuffer, lineBufSize, 501 );
+			retExt( CRYPT_ERROR_BADDATA,
+					( CRYPT_ERROR_BADDATA, NETSTREAM_ERRINFO, 
+					  "Invalid empty HTTP request" ) );
+			}
 		if( ( offset = strSkipNonWhitespace( lineBuffer, length ) ) > 0 )
 			length = offset;
 		memcpy( reqNameBuffer, lineBuffer, min( 16, length ) );

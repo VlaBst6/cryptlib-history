@@ -10,14 +10,14 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "stream.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "stream.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "io/stream.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Perform the FIPS-140 statistical checks that are feasible on a byte
@@ -150,6 +150,15 @@ BOOLEAN algoAvailable( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
 	REQUIRES_B( cryptAlgo > CRYPT_ALGO_NONE && \
 				cryptAlgo < CRYPT_ALGO_LAST );
 
+	/* Short-circuit check for always-available algorithms.  The kernel 
+	   won't initialise without the first two being present (and SHA-1
+	   implies HMAC-SHA1) so it's safe to hardcode them in here */
+	if( cryptAlgo == CRYPT_ALGO_3DES || \
+		cryptAlgo == CRYPT_ALGO_SHA1 || \
+		cryptAlgo == CRYPT_ALGO_HMAC_SHA1 || \
+		cryptAlgo == CRYPT_ALGO_RSA )
+		return( TRUE );
+
 	return( cryptStatusOK( krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 									IMESSAGE_DEV_QUERYCAPABILITY, &queryInfo,
 									cryptAlgo ) ) ? TRUE : FALSE );
@@ -169,10 +178,8 @@ BOOLEAN isStrongerHash( IN_ALGO const CRYPT_ALGO_TYPE algorithm1,
 		CRYPT_ALGO_SHA1, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE };
 	int algo1index, algo2index;
 
-	REQUIRES_B( algorithm1 >= CRYPT_ALGO_FIRST_HASH && \
-				algorithm1 <= CRYPT_ALGO_LAST_HASH );
-	REQUIRES_B( algorithm2 >= CRYPT_ALGO_FIRST_HASH && \
-				algorithm2 <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES_B( isHashAlgo( algorithm1 ) );
+	REQUIRES_B( isHashAlgo( algorithm2 ) );
 
 	/* Find the relative positions on the scale of the two algorithms */
 	for( algo1index = 0; 
@@ -205,6 +212,46 @@ BOOLEAN isStrongerHash( IN_ALGO const CRYPT_ALGO_TYPE algorithm1,
 	return( ( algo1index < algo2index ) ? TRUE : FALSE );
 	}
 
+/* Return a random small integer.  This is used to perform lightweight 
+   randomisation of various algorithms in order to make DoS attacks harder.  
+   Because of this the values don't have to be cryptographically strong, so 
+   all that we do is cache the data from CRYPT_IATTRIBUTE_RANDOM_NONCE and 
+   pull out a small integer's worth on each call */
+
+#define RANDOM_BUFFER_SIZE	8
+
+CHECK_RETVAL_RANGE( 0, 32767 ) \
+int getRandomInteger( void )
+	{
+	static BYTE nonceData[ RANDOM_BUFFER_SIZE + 8 ];
+	static int nonceIndex = 0;
+	int returnValue, status;
+
+	/* Initialise/reinitialise the nonce data if necessary.  See the long 
+	   coment for getNonce() in system.c for the reason why we don't bail 
+	   out on error but continue with a lower-quality generator */
+	if( nonceIndex <= 0 )
+		{
+		MESSAGE_DATA msgData;
+
+		setMessageData( &msgData, nonceData, RANDOM_BUFFER_SIZE );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
+								  IMESSAGE_GETATTRIBUTE_S, &msgData,
+								  CRYPT_IATTRIBUTE_RANDOM_NONCE );
+		if( cryptStatusError( status ) )
+			return( ( int ) getTime() & 0x7FFF );
+		}
+
+	/* Extract the next random integer value from the buffered data */
+	returnValue = ( nonceData[ nonceIndex ] << 8 ) | \
+					nonceData[ nonceIndex + 1 ];
+	nonceIndex = ( nonceIndex + 2 ) % RANDOM_BUFFER_SIZE;
+	ENSURES( nonceIndex >= 0 && nonceIndex < RANDOM_BUFFER_SIZE );
+
+	/* Return the value constrained to lie within the range 0...32767 */
+	return( returnValue & 0x7FFF );
+	}
+
 /* Map one value to another, used to map values from one representation 
    (e.g. PGP algorithms or HMAC algorithms) to another (cryptlib algorithms
    or the underlying hash used for the HMAC algorithm) */
@@ -228,8 +275,8 @@ int mapValue( IN_INT_SHORT_Z const int srcValue,
 	*destValue = 0;
 
 	/* Convert the hash algorithm into the equivalent HMAC algorithm */
-	for( i = 0; mapTbl[ i ].source != CRYPT_ERROR && \
-				i < mapTblSize && i < FAILSAFE_ITERATIONS_LARGE; i++ )
+	for( i = 0; i < mapTblSize && mapTbl[ i ].source != CRYPT_ERROR && \
+				i < FAILSAFE_ITERATIONS_LARGE; i++ )
 		{
 		if( mapTbl[ i ].source == srcValue )
 			{
@@ -303,8 +350,10 @@ void hashData( OUT_BUFFER_FIXED( hashMaxLength ) BYTE *hash,
 
 	/* Get the hash algorithm information if necessary */
 	if( hashFunctionAtomic == NULL )
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+		{
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
 								 &hashSize );
+		}
 
 	/* Error handling: If there's a problem, return a zero hash.  We use 
 	   this strategy since this is a void function and so the usual 
@@ -562,8 +611,7 @@ static int checkKeyLength( INOUT STREAM *stream,
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo < CRYPT_ALGO_LAST_PKC );
+	REQUIRES( isPkcAlgo( cryptAlgo ) );
 
 	/* ECC algorithms are a complete mess to handle because of the arbitrary
 	   manner in which the algorithm parameters can be represented.  To deal
@@ -757,8 +805,8 @@ static int formatTextLineError( OUT ERROR_INFO *errorInfo,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
 int readTextLine( READCHARFUNCTION readCharFunction, 
 				  INOUT void *streamPtr,
-				  OUT_BUFFER( lineBufferMaxLen, \
-							  lineBufferSize ) char *lineBuffer, 
+				  OUT_BUFFER( lineBufferMaxLen, *lineBufferSize ) \
+						char *lineBuffer,
 				  IN_LENGTH_SHORT_MIN( 16 ) const int lineBufferMaxLen, 
 				  OUT_LENGTH_SHORT_Z int *lineBufferSize, 
 				  OUT_OPT_BOOL BOOLEAN *localError )
@@ -840,7 +888,8 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 					*localError = TRUE;
 				formatTextLineError( &errorInfo, "Invalid character 0x%02X "
 									 "at position %d", ch, totalChars );
-				sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+				sioctlSetString( streamPtr, STREAM_IOCTL_ERRORINFO, 
+								 &errorInfo, sizeof( ERROR_INFO ) );
 
 				return( CRYPT_ERROR_BADDATA );
 				}
@@ -867,9 +916,10 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 
 			if( localError != NULL )
 				*localError = TRUE;
-			formatTextLineError( streamPtr, "Invalid character 0x%02X at "
+			formatTextLineError( &errorInfo, "Invalid character 0x%02X at "
 								 "position %d", ch, totalChars );
-			sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+			sioctlSetString( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 
+							 sizeof( ERROR_INFO ) );
 
 			return( CRYPT_ERROR_BADDATA );
 			}
@@ -895,8 +945,9 @@ int readTextLine( READCHARFUNCTION readCharFunction,
 
 		if( localError != NULL )
 			*localError = TRUE;
-		formatTextLineError( streamPtr, "Text line too long", 0, 0 );
-		sioctl( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 0 );
+		formatTextLineError( &errorInfo, "Text line too long", 0, 0 );
+		sioctlSetString( streamPtr, STREAM_IOCTL_ERRORINFO, &errorInfo, 
+						 sizeof( ERROR_INFO ) );
 
 		return( CRYPT_ERROR_OVERFLOW );
 		}

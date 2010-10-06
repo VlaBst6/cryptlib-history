@@ -25,7 +25,7 @@
 #else
   #include "cert/cert.h"
   #include "cert/trustmgr.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 /* The size of the table of trust information.  This must be a power of 2 */
@@ -59,6 +59,8 @@ typedef struct TI {
 	/* Pointer to the next entry */
 	struct TI *next;				/* Next trustInfo record in the chain */
 	} TRUST_INFO;
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -302,6 +304,24 @@ CRYPT_CERTIFICATE getTrustedCert( INOUT TYPECAST( TRUST_INFO ** ) \
 	return( trustInfo->iCryptCert );
 	}
 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN trustedCertsPresent( TYPECAST( TRUST_INFO ** ) const void *trustInfoPtrPtr )
+	{
+	const TRUST_INFO **trustInfoIndex = ( const TRUST_INFO ** ) trustInfoPtrPtr;
+	int i;
+
+	assert( isReadPtr( trustInfoPtrPtr, \
+					   sizeof( TRUST_INFO * ) * TRUSTINFO_SIZE ) );
+
+	for( i = 0; i < TRUSTINFO_SIZE; i++ )
+		{
+		if( trustInfoIndex[ i ] != NULL )
+			return( TRUE );
+		}
+
+	return( FALSE );
+	}
+
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int enumTrustedCerts( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr, 
 					  IN_HANDLE_OPT const CRYPT_CERTIFICATE iCryptCtl,
@@ -314,24 +334,9 @@ int enumTrustedCerts( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr,
 						sizeof( TRUST_INFO * ) * TRUSTINFO_SIZE ) );
 
 	REQUIRES( ( iCryptCtl == CRYPT_UNUSED && \
-				iCryptKeyset == CRYPT_UNUSED ) || \
-			  ( iCryptCtl == CRYPT_UNUSED && \
 				isHandleRangeValid( iCryptKeyset ) ) || \
 			  ( isHandleRangeValid( iCryptCtl ) && \
 				iCryptKeyset == CRYPT_UNUSED ) );
-
-	/* If there's no destination for the trusted certificates supplied, it's 
-	   a presence check only */
-	if( iCryptCtl == CRYPT_UNUSED && iCryptKeyset == CRYPT_UNUSED )
-		{
-		for( i = 0; i < TRUSTINFO_SIZE; i++ )
-			{
-			if( trustInfoIndex[ i ] != NULL )
-				return( CRYPT_OK );
-			}
-
-		return( CRYPT_ERROR_NOTFOUND );
-		}
 
 	/* Send each trusted certificate to the given object, either a 
 	   certificate trust list or a keyset */
@@ -769,3 +774,4 @@ void endTrustInfo( INOUT TYPECAST( TRUST_INFO ** ) void *trustInfoPtrPtr )
 	memset( trustInfoIndex, 0, TRUSTINFO_SIZE * sizeof( TRUST_INFO * ) );
 	clFree( "endTrustInfo", trustInfoIndex );
 	}
+#endif /* USE_CERTIFICATES */

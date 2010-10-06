@@ -149,10 +149,10 @@ typedef struct ST {
 	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
   #endif /* __TESTIO__ */
 #elif defined( __AMX__ ) || defined( __BEOS__ ) || defined( __ECOS__ ) || \
-	  defined( __MVS__ ) || defined( __RTEMS__ ) || \
-	  defined( __SYMBIAN32__ ) || defined( __TANDEM_NSK__ ) || \
-	  defined( __TANDEM_OSS__ ) || defined( __UNIX__ ) || \
-	  defined( __VXWORKS__ ) || defined( __XMK__ )
+	  ( defined( __MVS__ ) && !defined( CONFIG_NO_STDIO ) ) || \
+	  defined( __RTEMS__ ) || defined( __SYMBIAN32__ ) || \
+	  defined( __TANDEM_NSK__ ) || defined( __TANDEM_OSS__ ) || \
+	  defined( __UNIX__ ) || defined( __VXWORKS__ ) || defined( __XMK__ )
 	int fd;						/* Backing file for the stream */
   #ifdef __TESTIO__
 	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
@@ -171,7 +171,7 @@ typedef struct ST {
   #if defined( __IBM4758__ )
 	char name[ 8 + 1 ];			/* Data item associated with stream */
 	BOOLEAN isSensitive;		/* Whether stream contains sensitive data */
-  #elif defined( __VMCMS__ ) || defined( __TESTIO__ )
+  #elif defined( __MVS__ ) || defined( __VMCMS__ ) || defined( __TESTIO__ )
 	char name[ MAX_PATH_LENGTH + 8 ];/* Data item associated with stream */
   #endif /* Nonstandard I/O enviroments */
 #else
@@ -361,9 +361,19 @@ int sseek( INOUT STREAM *stream, IN_LENGTH_Z const long position );
 CHECK_RETVAL_RANGE( 0, MAX_INTLENGTH ) STDC_NONNULL_ARG( ( 1 ) ) \
 int stell( const STREAM *stream );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sioctl( INOUT STREAM *stream, \
-			IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
-			IN_OPT void *data, IN_INT const int dataLen );
+int sioctlSet( INOUT STREAM *stream, 
+			   IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+			   IN_INT const int value );
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sioctlSetString( INOUT STREAM *stream, 
+					 IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+					 IN_BUFFER( dataLen ) const void *data, 
+					 IN_LENGTH const int dataLen );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int sioctlGet( INOUT STREAM *stream, 
+			   IN_ENUM( STREAM_IOCTL ) const STREAM_IOCTL_TYPE type, 
+			   OUT_BUFFER_FIXED( dataMaxLen ) void *data, 
+			   IN_LENGTH_SHORT const int dataMaxLen );
 
 /* Nonstandard functions: Skip a number of bytes in a stream, peek at the
    next value in the stream */
@@ -386,7 +396,7 @@ int sPeek( INOUT STREAM *stream );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sSetError( INOUT STREAM *stream, IN_ERROR const int status );
 STDC_NONNULL_ARG( ( 1 ) ) \
-void sClearError( STREAM *stream );
+void sClearError( INOUT STREAM *stream );
 
 /* Stream query functions to determine whether a stream is a null stream,
    a memory-mapped file stream, or a virtual file stream.  The null stream 
@@ -409,19 +419,19 @@ BOOLEAN sIsNullStream( const STREAM *stream );
    NULL */ 
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sMemOpen( INOUT STREAM *stream, 
-			  IN_BUFFER( length ) void *buffer, 
+int sMemOpen( OUT STREAM *stream, 
+			  OUT_BUFFER_FIXED( length ) void *buffer, 
 			  IN_LENGTH const int length );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sMemOpenOpt( INOUT STREAM *stream, 
-				 IN_BUFFER_OPT( length ) void *buffer, 
+int sMemOpenOpt( OUT STREAM *stream, 
+				 OUT_BUFFER_OPT_FIXED( length ) void *buffer, 
 				 IN_LENGTH_Z const int length );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sMemNullOpen( INOUT STREAM *stream );
+int sMemNullOpen( OUT STREAM *stream );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sMemClose( INOUT STREAM *stream );
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sMemConnect( INOUT STREAM *stream, 
+int sMemConnect( OUT STREAM *stream, 
 				 IN_BUFFER( length ) const void *buffer, 
 				 IN_LENGTH const int length );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -441,22 +451,22 @@ CHECK_RETVAL_RANGE( 0, MAX_INTLENGTH ) STDC_NONNULL_ARG( ( 1 ) ) \
 int sMemDataLeft( const STREAM *stream );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sMemGetDataBlock( INOUT STREAM *stream, 
-					  OUT_BUFFER_ALLOC( dataSize ) void **dataPtrPtr, 
+					  OUT_BUFFER_ALLOC_OPT( dataSize ) void **dataPtrPtr, 
 					  IN_LENGTH const int dataSize );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int sMemGetDataBlockAbs( INOUT STREAM *stream, 
 						 IN_LENGTH_Z const int position, 
-						 OUT_BUFFER_ALLOC( dataSize ) void **dataPtrPtr, 
+						 OUT_BUFFER_ALLOC_OPT( dataSize ) void **dataPtrPtr, 
 						 IN_LENGTH const int dataSize );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int sMemGetDataBlockRemaining( INOUT STREAM *stream, 
-							   OUT_BUFFER_ALLOC( *length ) void **dataPtrPtr, 
+							   OUT_BUFFER_ALLOC_OPT( *length ) void **dataPtrPtr, 
 							   OUT_LENGTH_Z int *length );
 
 /* Functions to work with file streams */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sFileOpen( INOUT STREAM *stream, IN_STRING const char *fileName, 
+int sFileOpen( OUT STREAM *stream, IN_STRING const char *fileName, 
 			   IN_FLAGS( FILE ) const int mode );
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sFileClose( INOUT STREAM *stream );
@@ -464,25 +474,25 @@ int sFileClose( INOUT STREAM *stream );
 /* Convert a file stream to a memory stream */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int sFileToMemStream( INOUT STREAM *memStream, INOUT STREAM *fileStream,
-					  OUT_BUFFER_ALLOC( length ) void **bufPtrPtr, 
+int sFileToMemStream( OUT STREAM *memStream, INOUT STREAM *fileStream,
+					  OUT_BUFFER_ALLOC_OPT( length ) void **bufPtrPtr, 
 					  IN_LENGTH const int length );
 
 /* Functions to work with network streams */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sNetParseURL( INOUT URL_INFO *urlInfo, 
+int sNetParseURL( OUT URL_INFO *urlInfo, 
 				  IN_BUFFER( urlLen ) const char *url, 
 				  IN_LENGTH_SHORT const int urlLen, 
 				  IN_ENUM_OPT( URL_TYPE ) const URL_TYPE urlTypeHint );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetConnect( INOUT STREAM *stream, 
+int sNetConnect( OUT STREAM *stream, 
 				 IN_ENUM( STREAM_PROTOCOL ) \
 				 const STREAM_PROTOCOL_TYPE protocol,
 				 const NET_CONNECT_INFO *connectInfo, 
 				 INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetListen( INOUT STREAM *stream, 
+int sNetListen( OUT STREAM *stream, 
 				IN_ENUM( STREAM_PROTOCOL ) \
 				const STREAM_PROTOCOL_TYPE protocol,
 				const NET_CONNECT_INFO *connectInfo, 
@@ -490,7 +500,7 @@ int sNetListen( INOUT STREAM *stream,
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int sNetDisconnect( INOUT STREAM *stream );
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void sNetGetErrorInfo( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo );
+void sNetGetErrorInfo( INOUT STREAM *stream, OUT ERROR_INFO *errorInfo );
 
 /* Special-case file I/O calls */
 
@@ -501,7 +511,7 @@ void fileClearToEOF( const STREAM *stream );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void fileErase( IN_STRING const char *fileName );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, pathLen ) char *path, 
+int fileBuildCryptlibPath( OUT_BUFFER( pathMaxLen, *pathLen ) char *path, 
 						   IN_LENGTH_SHORT const int pathMaxLen, 
 						   OUT_LENGTH_SHORT_Z int *pathLen,
 						   IN_BUFFER( fileNameLen ) const char *fileName, 

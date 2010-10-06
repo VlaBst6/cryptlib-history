@@ -481,8 +481,15 @@ void HASH_UPDATE (HASH_CTX *c, const void *data_, unsigned long len)
 		/*
 		 * Note that HASH_BLOCK_DATA_ORDER_ALIGNED gets defined
 		 * only if sizeof(HASH_LONG)==4.
+		 *
+		 * Masking is needed to suppress warnings from VS in 64-bit 
+		 * mode - pcg
 		 */
+	#if defined( _WIN32 ) && defined( _M_X64 )
+		if ((((__int64)data)%4) == 0)
+	#else
 		if ((((unsigned long)data)%4) == 0)
+	#endif /* Win64 vs. standard */
 			{
 			/* data is properly aligned so that we can cast it: */
 			HASH_BLOCK_DATA_ORDER_ALIGNED (c,(HASH_LONG *)data,sw);

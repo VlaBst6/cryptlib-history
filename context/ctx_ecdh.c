@@ -41,13 +41,74 @@
    have to set x(A) on export and x(B) on import, which is tricky since the 
    ECDH code doesn't know whether it's working with A or B */
 
-#ifdef USE_ECC
+#ifdef USE_ECDH
 
 /****************************************************************************
 *																			*
 *								Algorithm Self-test							*
 *																			*
 ****************************************************************************/
+
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+	{
+	CONTEXT_INFO checkContextInfo;
+	PKC_INFO contextData, *pkcInfo = &contextData;
+	PKC_INFO *sourcePkcInfo = contextInfoPtr->ctxPKC;
+	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
+	const CAPABILITY_INFO *capabilityInfoPtr;
+	int bnStatus = BN_STATUS, status;
+
+	/* The ECDH pairwise check is a bit more complex than the one for the 
+	   other algorithms because there's no matched public/private key pair, 
+	   so we have to load a second ECDH key to use for key agreement with 
+	   the first one */
+	status = staticInitContext( &checkContextInfo, CONTEXT_PKC, 
+								getECDHCapability(), &contextData, 
+								sizeof( PKC_INFO ), NULL );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	pkcInfo->curveType = CRYPT_ECCCURVE_P256;
+	CKPTR( BN_copy( &pkcInfo->eccParam_qx, &sourcePkcInfo->eccParam_qx ) );
+	CKPTR( BN_copy( &pkcInfo->eccParam_qy, &sourcePkcInfo->eccParam_qy ) );
+	CKPTR( BN_copy( &pkcInfo->eccParam_d, &sourcePkcInfo->eccParam_d ) );
+	if( bnStatusError( bnStatus ) )
+		{
+		staticDestroyContext( &checkContextInfo );
+		return( getBnStatus( bnStatus ) );
+		}
+
+	/* Perform the pairwise test using the check key */
+	capabilityInfoPtr = checkContextInfo.capabilityInfo;
+	memset( &keyAgreeParams1, 0, sizeof( KEYAGREE_PARAMS ) );
+	memset( &keyAgreeParams2, 0, sizeof( KEYAGREE_PARAMS ) );
+	status = capabilityInfoPtr->initKeyFunction( &checkContextInfo, NULL, 0 );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
+					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->encryptFunction( &checkContextInfo,
+					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
+					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) )
+		status = capabilityInfoPtr->decryptFunction( &checkContextInfo,
+					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusError( status ) || \
+		keyAgreeParams1.wrappedKeyLen != keyAgreeParams2.wrappedKeyLen || \
+		memcmp( keyAgreeParams1.wrappedKey, keyAgreeParams2.wrappedKey, 
+				keyAgreeParams1.wrappedKeyLen ) )
+		status = CRYPT_ERROR_FAILED;
+
+	/* Clean up */
+	staticDestroyContext( &checkContextInfo );
+
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
 
 /* Test the ECDH implementation (re-)using the test key for the ECDSA test, 
    which comes from from X9.62-2005 section L.4.2.  Because a lot of the 
@@ -82,71 +143,6 @@ static const FAR_BSS ECC_KEY ecdhTestKey = {
 	  0xB9, 0x7D, 0xF1, 0x49, 0x8D, 0x50, 0xD2, 0xC8 }
 	};
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr,
-										const BOOLEAN isGeneratedKey )
-	{
-	CONTEXT_INFO checkContextInfo;
-	PKC_INFO contextData, *pkcInfo = &contextData;
-	KEYAGREE_PARAMS keyAgreeParams1, keyAgreeParams2;
-	const CAPABILITY_INFO *capabilityInfoPtr;
-	int status;
-
-	/* The ECDH pairwise check is a bit more complex than the one for the 
-	   other algorithms because there's no matched public/private key pair, 
-	   so we have to load a second ECDH key to use for key agreement with 
-	   the first one */
-	status = staticInitContext( &checkContextInfo, CONTEXT_PKC, 
-								getECDHCapability(), &contextData, 
-								sizeof( PKC_INFO ), NULL );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-	pkcInfo->curveType = CRYPT_ECCCURVE_P256;
-	status = importBignum( &pkcInfo->eccParam_qx, ecdhTestKey.qx, 
-						   ecdhTestKey.qxLen, ECCPARAM_MIN_QX, 
-						   ECCPARAM_MAX_QX, NULL, SHORTKEY_CHECK_ECC );
-	if( cryptStatusOK( status ) ) 
-		status = importBignum( &pkcInfo->eccParam_qy, ecdhTestKey.qy, 
-							   ecdhTestKey.qyLen, ECCPARAM_MIN_QY, 
-							   ECCPARAM_MAX_QY, NULL, SHORTKEY_CHECK_NONE );
-	if( cryptStatusOK( status ) ) 
-		status = importBignum( &pkcInfo->eccParam_d, ecdhTestKey.d, 
-							   ecdhTestKey.dLen, ECCPARAM_MIN_D, 
-							   ECCPARAM_MAX_D, NULL, SHORTKEY_CHECK_NONE );
-	if( cryptStatusError( status ) ) 
-		{
-		staticDestroyContext( &checkContextInfo );
-		retIntError();
-		}
-
-	/* Perform the pairwise test using the check key */
-	capabilityInfoPtr = checkContextInfo.capabilityInfo;
-	memset( &keyAgreeParams1, 0, sizeof( KEYAGREE_PARAMS ) );
-	memset( &keyAgreeParams2, 0, sizeof( KEYAGREE_PARAMS ) );
-	status = capabilityInfoPtr->initKeyFunction( &checkContextInfo, NULL, 0 );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->encryptFunction( contextInfoPtr,
-					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->encryptFunction( &checkContextInfo,
-					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->decryptFunction( contextInfoPtr,
-					( BYTE * ) &keyAgreeParams2, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusOK( status ) )
-		status = capabilityInfoPtr->decryptFunction( &checkContextInfo,
-					( BYTE * ) &keyAgreeParams1, sizeof( KEYAGREE_PARAMS ) );
-	if( cryptStatusError( status ) || \
-		keyAgreeParams1.wrappedKeyLen != keyAgreeParams2.wrappedKeyLen || \
-		memcmp( keyAgreeParams1.wrappedKey, keyAgreeParams2.wrappedKey, 
-				keyAgreeParams1.wrappedKeyLen ) )
-		status = CRYPT_ERROR_FAILED;
-
-	/* Clean up */
-	staticDestroyContext( &checkContextInfo );
-
-	return( cryptStatusOK( status ) ? TRUE : FALSE );
-	}
-
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -180,7 +176,7 @@ static int selfTest( void )
 	/* Perform the test key exchange on a block of data */
 	status = contextInfo.capabilityInfo->initKeyFunction( &contextInfo,  NULL, 0 );
 	if( cryptStatusOK( status ) && \
-		!pairwiseConsistencyTest( &contextInfo, FALSE ) )
+		!pairwiseConsistencyTest( &contextInfo ) )
 		status = CRYPT_ERROR_FAILED;
 
 	/* Clean up */
@@ -188,6 +184,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -434,7 +433,7 @@ static int generateKey( CONTEXT_INFO *contextInfoPtr, const int keySizeBits )
 #ifndef USE_FIPS140
 		( contextInfoPtr->flags & CONTEXT_FLAG_SIDECHANNELPROTECTION ) &&
 #endif /* USE_FIPS140 */
-		!pairwiseConsistencyTest( contextInfoPtr, TRUE ) )
+		!pairwiseConsistencyTest( contextInfoPtr ) )
 		{
 		DEBUG_DIAG(( "Consistency check of freshly-generated ECDH key "
 					 "failed" ));
@@ -461,4 +460,4 @@ const CAPABILITY_INFO *getECDHCapability( void )
 	return( &capabilityInfo );
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH */

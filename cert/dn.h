@@ -115,14 +115,14 @@ int getAsn1StringInfo( IN_BUFFER( stringLen ) const void *string,
 					   int *asn1StringType,
 					   OUT_LENGTH_SHORT_Z int *asn1StringLen );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int copyToAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest, 
+int copyToAsn1String( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
 					  IN_LENGTH_SHORT const int destMaxLen, 
 					  OUT_LENGTH_SHORT_Z int *destLen, 
 					  IN_BUFFER( sourceLen ) const void *source, 
 					  IN_LENGTH_SHORT const int sourceLen,
 					  IN_RANGE( 0, 20 ) const int stringType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
-int copyFromAsn1String( OUT_BUFFER( destMaxLen, destLen ) void *dest, 
+int copyFromAsn1String( OUT_BUFFER( destMaxLen, *destLen ) void *dest, 
 						IN_LENGTH_SHORT const int destMaxLen, 
 						OUT_LENGTH_SHORT_Z int *destLen, 
 						OUT_RANGE( 0, 20 ) int *destStringType,

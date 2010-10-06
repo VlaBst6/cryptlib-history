@@ -82,7 +82,7 @@ typedef struct {
 /* Prototypes for functions in scep.c */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void initSCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo );
+void initSCEPprotocolInfo( OUT SCEP_PROTOCOL_INFO *protocolInfo );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void destroySCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo );
 CHECK_RETVAL_BOOL \

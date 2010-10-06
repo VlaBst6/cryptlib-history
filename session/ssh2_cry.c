@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -124,26 +124,26 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 		switch( actualKeySize )
 			{
 			case bitsToBytes( 1024 ):
-					keyData = dh1024SPKI;
-					keyLength = sizeof( dh1024SPKI );
-					keyType = CRYPT_IATTRIBUTE_KEY_SPKI;
-					break;
+				keyData = dh1024SPKI;
+				keyLength = sizeof( dh1024SPKI );
+				keyType = CRYPT_IATTRIBUTE_KEY_SPKI;
+				break;
 
-				case bitsToBytes( 1536 ):
-					keyData = dh1536SSH,
-					keyLength = sizeof( dh1536SSH );
-					break;
+			case bitsToBytes( 1536 ):
+				keyData = dh1536SSH,
+				keyLength = sizeof( dh1536SSH );
+				break;
 
-				case bitsToBytes( 2048 ):
-					keyData = dh2048SSH,
-					keyLength = sizeof( dh2048SSH );
-					break;
+			case bitsToBytes( 2048 ):
+				keyData = dh2048SSH,
+				keyLength = sizeof( dh2048SSH );
+				break;
 
-				case bitsToBytes( 3072 ):
-				default:		/* Hier ist der mast zu ende */
-					keyData = dh3072SSH,
-					keyLength = sizeof( dh3072SSH );
-					break;
+			case bitsToBytes( 3072 ):
+			default:		/* Hier ist der mast zu ende */
+				keyData = dh3072SSH,
+				keyLength = sizeof( dh3072SSH );
+				break;
 			}
 		}
 	setMessageData( &msgData, ( MESSAGE_CAST ) keyData, keyLength );
@@ -165,14 +165,117 @@ int initDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
 	return( CRYPT_OK );
 	}
 
+#ifdef USE_ECDH
+
+/* Load one of the fixed SSH ECDH keys into a context.  Since there's no SSH
+   format defined for this, we use the SSL format.  Note that this creates a
+   somewhat ugly sideways dependency where USE_SSH also required USE_SSL, to
+   handlet his we warn if it's not defined */
+
+#ifndef USE_SSL
+  #error SSH with ECC support requires USE_SSL to be defined
+#endif /* !USE_SSL */
+
+static const BYTE FAR_BSS ecdh256SSL[] = {
+	0x03,		/* NamedCurve */
+	0x00, 0x17	/* P256 */
+	};
+static const BYTE FAR_BSS ecdh384SSL[] = {
+	0x03,		/* NamedCurve */
+	0x00, 0x18	/* P384 */
+	};
+static const BYTE FAR_BSS ecdh521SSL[] = {
+	0x03,		/* NamedCurve */
+	0x00, 0x19	/* P521 */
+	};
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int initECDHcontextSSH( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext, 
+						OUT_LENGTH_SHORT_Z int *keySize,
+						IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo )
+	{
+	CRYPT_CONTEXT iECDHContext;
+	MESSAGE_CREATEOBJECT_INFO createInfo;
+	MESSAGE_DATA msgData;
+	const void *keyData;
+	int length, status;
+
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+	assert( isWritePtr( keySize, sizeof( int ) ) );
+
+	REQUIRES( cryptAlgo == CRYPT_ALGO_ECDH || \
+			  cryptAlgo == CRYPT_PSEUDOALGO_ECDH_P384 ||
+			  cryptAlgo == CRYPT_PSEUDOALGO_ECDH_P521 );
+
+	/* Clear return values */
+	*iCryptContext = CRYPT_ERROR;
+	*keySize = 0;
+
+	/* Create the ECDH context to contain the key */
+	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_ECDH );
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_CREATEOBJECT,
+							  &createInfo, OBJECT_TYPE_CONTEXT );
+	if( cryptStatusError( status ) )
+		return( status );
+	iECDHContext = createInfo.cryptHandle;
+	setMessageData( &msgData, "SSH ECDH key", 12 );
+	status = krnlSendMessage( iECDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
+							  CRYPT_CTXINFO_LABEL );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iECDHContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+
+	/* Load the appropriate static ECDH key parameters */
+	switch( cryptAlgo )
+		{
+		case CRYPT_ALGO_ECDH:
+			keyData = ecdh256SSL;
+			length = bitsToBytes( 256 );
+			break;
+
+		case CRYPT_PSEUDOALGO_ECDH_P384:
+			keyData = ecdh384SSL;
+			length = bitsToBytes( 384 );
+			break;
+
+		case CRYPT_PSEUDOALGO_ECDH_P521:
+			keyData = ecdh521SSL;
+			length = bitsToBytes( 521 );
+			break;
+
+		default:
+			retIntError();
+		}
+	setMessageData( &msgData, ( MESSAGE_CAST ) keyData, 3 );
+	status = krnlSendMessage( iECDHContext, IMESSAGE_SETATTRIBUTE_S, &msgData, 
+							  CRYPT_IATTRIBUTE_KEY_SSL );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iECDHContext, IMESSAGE_DECREFCOUNT );
+
+		/* We got an error loading a known-good, fixed-format key, report 
+		   the problem as an internal error rather than (say) a bad-data 
+		   error */
+		retIntError();
+		}
+	*iCryptContext = iECDHContext;
+	*keySize = length;
+
+	return( CRYPT_OK );
+	}
+#endif /* USE_ECDH */
+
 /* Complete the hashing necessary to generate a cryptovariable and send it
    to a context */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 4, 5, 6, 8 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 4, 6, 7, 9 ) ) \
 static int loadCryptovariable( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 							   IN_RANGE( 8, 40 ) const int attributeSize, 
 							   const HASHFUNCTION hashFunction,
+							   IN_RANGE( 20, 32 ) const int hashSize,
 							   const HASHINFO initialHashInfo, 
 							   IN_BUFFER( nonceLen ) const BYTE *nonce, 
 							   IN_RANGE( 1, 4 ) const int nonceLen,
@@ -193,6 +296,7 @@ static int loadCryptovariable( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			  attribute == CRYPT_CTXINFO_KEY );
 	REQUIRES( attributeSize >= 8 && attributeSize <= 40 );
 	REQUIRES( hashFunction != NULL );
+	REQUIRES( hashSize == 20 || hashSize == 32 );
 	REQUIRES( nonceLen >= 1 && nonceLen <= 4 );
 	REQUIRES( dataLen > 0 && dataLen < MAX_INTLENGTH_SHORT );
 
@@ -201,7 +305,7 @@ static int loadCryptovariable( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	hashFunction( hashInfo, NULL, 0, nonce, nonceLen, HASH_STATE_CONTINUE );
 	hashFunction( hashInfo, buffer, CRYPT_MAX_KEYSIZE, data, dataLen, 
 				  HASH_STATE_END );
-	if( attributeSize > 20 )
+	if( attributeSize > hashSize )
 		{
 		/* If we need more data than the hashing will provide in one go,
 		   generate a second block as:
@@ -212,8 +316,9 @@ static int loadCryptovariable( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 		   precomputed data in the initial hash information and the data 
 		   part is the output of the hash step above */
 		memcpy( hashInfo, initialHashInfo, sizeof( HASHINFO ) );
-		hashFunction( hashInfo, buffer + 20, CRYPT_MAX_KEYSIZE - 20,
-					  buffer, 20, HASH_STATE_END );
+		hashFunction( hashInfo, buffer + hashSize, 
+					  CRYPT_MAX_KEYSIZE - hashSize, buffer, hashSize, 
+					  HASH_STATE_END );
 		}
 	zeroise( hashInfo, sizeof( HASHINFO ) );
 
@@ -356,7 +461,7 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 	HASHFUNCTION hashFunction;
 	HASHINFO initialHashInfo;
 	const BOOLEAN isClient = isServer( sessionInfoPtr ) ? FALSE : TRUE;
-	int keySize, ivSize = DUMMY_INIT, status;
+	int keySize, ivSize = DUMMY_INIT, hashSize, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
@@ -405,7 +510,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 	   Before we can hash the shared secret we have to convert it into MPI
 	   form, which we do by generating a pseudo-header and hashing that
 	   separately.  The nonce is "A", "B", "C", ... */
-	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, NULL );
+	getHashParameters( handshakeInfo->exchangeHashAlgo, 0, &hashFunction, 
+					   &hashSize );
 	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_NOHASHSECRET )
 		{
 		/* Some implementations erroneously omit the shared secret when
@@ -463,7 +569,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptOutContext : \
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_IV, ivSize,
-									 hashFunction, initialHashInfo, "A", 1,
+									 hashFunction, hashSize, 
+									 initialHashInfo, "A", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 		if( cryptStatusOK( status ) )
@@ -471,7 +578,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 											sessionInfoPtr->iCryptInContext : \
 											sessionInfoPtr->iCryptOutContext,
 										 CRYPT_CTXINFO_IV, ivSize,
-										 hashFunction, initialHashInfo, "B", 1,
+										 hashFunction, hashSize,
+										 initialHashInfo, "B", 1,
 										 handshakeInfo->sessionID,
 										 handshakeInfo->sessionIDlength );
 		}
@@ -480,7 +588,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptOutContext : \
 										sessionInfoPtr->iCryptInContext,
 									 CRYPT_CTXINFO_KEY, keySize,
-									 hashFunction, initialHashInfo, "C", 1,
+									 hashFunction, hashSize,
+									 initialHashInfo, "C", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -488,7 +597,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 										sessionInfoPtr->iCryptInContext : \
 										sessionInfoPtr->iCryptOutContext,
 									 CRYPT_CTXINFO_KEY, keySize,
-									 hashFunction, initialHashInfo, "D", 1,
+									 hashFunction, hashSize,
+									 initialHashInfo, "D", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -500,7 +610,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 									   SSH_PFLAG_HMACKEYSIZE ) ? \
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
-									 hashFunction, initialHashInfo, "E", 1,
+									 hashFunction, hashSize,
+									 initialHashInfo, "E", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	if( cryptStatusOK( status ) )
@@ -512,7 +623,8 @@ int initSecurityInfo( INOUT SESSION_INFO *sessionInfoPtr,
 									   SSH_PFLAG_HMACKEYSIZE ) ? \
 										SSH2_FIXED_KEY_SIZE : \
 										sessionInfoPtr->authBlocksize,
-									 hashFunction, initialHashInfo, "F", 1,
+									 hashFunction, hashSize,
+									 initialHashInfo, "F", 1,
 									 handshakeInfo->sessionID,
 									 handshakeInfo->sessionIDlength );
 	zeroise( initialHashInfo, sizeof( HASHINFO ) );
@@ -853,7 +965,7 @@ int createMacSSH( IN_HANDLE const CRYPT_CONTEXT iMacContext,
 *																			*
 ****************************************************************************/
 
-/* Complete the DH key agreement */
+/* Complete the DH/ECDH key agreement */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
@@ -879,25 +991,71 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 	else
 		sMemConnect( &stream, handshakeInfo->serverKeyexValue,
 					 handshakeInfo->serverKeyexValueLength );
-	status = readInteger32( &stream, keyAgreeParams.publicValue,
-							&keyAgreeParams.publicValueLen, MIN_PKCSIZE,
-							CRYPT_MAX_PKCSIZE );
+	if( handshakeInfo->isECDH )
+		{
+		/* This is actually a String32 and not an Integer32, however the
+		   formats are identical and we need to read the value as an integer
+		   to take advantage of the range-checking */
+		status = readInteger32( &stream, keyAgreeParams.publicValue,
+								&keyAgreeParams.publicValueLen, 
+								MIN_PKCSIZE_ECCPOINT, MAX_PKCSIZE_ECCPOINT );
+		}
+	else
+		{
+		status = readInteger32( &stream, keyAgreeParams.publicValue,
+								&keyAgreeParams.publicValueLen, 
+								MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+		}
 	sMemDisconnect( &stream );
-	if( cryptStatusOK( status ) && \
-		!isValidDHsize( keyAgreeParams.publicValueLen,
-						handshakeInfo->serverKeySize, 0 ) )
-		status = CRYPT_ERROR_BADDATA;
+	if( cryptStatusOK( status ) )
+		{
+		if( handshakeInfo->isECDH )
+			{
+			if( !isValidECDHsize( keyAgreeParams.publicValueLen,
+								  handshakeInfo->serverKeySize, 0 ) )
+				status = CRYPT_ERROR_BADDATA;
+			}
+		else
+			{
+			if( !isValidDHsize( keyAgreeParams.publicValueLen,
+								handshakeInfo->serverKeySize, 0 ) )
+				status = CRYPT_ERROR_BADDATA;
+			}
+		}
 	if( cryptStatusError( status ) )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid DH phase 1 MPI" ) );
+				  "Invalid %s phase 1 MPI",
+				  handshakeInfo->isECDH ? "ECDH" : "DH" ) );
 		}
 
-	/* Perform phase 2 of the DH key agreement */
+	/* Perform phase 2 of the DH/ECDH key agreement */
 	status = krnlSendMessage( handshakeInfo->iServerCryptContext,
 							  IMESSAGE_CTX_DECRYPT, &keyAgreeParams,
 							  sizeof( KEYAGREE_PARAMS ) );
+	if( cryptStatusOK( status ) && handshakeInfo->isECDH )
+		{
+		const int xCoordLen = ( keyAgreeParams.wrappedKeyLen - 1 ) / 2;
+
+		/* The output of the ECDH operation is an ECC point, but for some
+		   unknown reason SSH only uses the x coordinate and not the full
+		   point.  To work around this we have to rewrite the point as a
+		   standalone x coordinate, which is relatively easy because we're
+		   using an "uncompressed" point format:
+
+			+---+---------------+---------------+
+			|04	|		qx		|		qy		|
+			+---+---------------+---------------+
+				|<- fldSize --> |<- fldSize --> | */
+		REQUIRES( keyAgreeParams.wrappedKeyLen >= MIN_PKCSIZE_ECCPOINT && \
+				  keyAgreeParams.wrappedKeyLen <= MAX_PKCSIZE_ECCPOINT && \
+				  ( keyAgreeParams.wrappedKeyLen & 1 ) == 1 && \
+				  keyAgreeParams.wrappedKey[ 0 ] == 0x04 );
+		memmove( keyAgreeParams.wrappedKey,
+				 keyAgreeParams.wrappedKey + 1, xCoordLen );
+		keyAgreeParams.wrappedKeyLen = xCoordLen;
+		}
 	if( cryptStatusOK( status ) )
 		{
 		ENSURES( rangeCheckZ( 0, keyAgreeParams.wrappedKeyLen, 
@@ -920,7 +1078,7 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 		BYTE keyexBuffer[ 128 + ( CRYPT_MAX_PKCSIZE * 2 ) + 8 ];
 		const int extraLength = LENGTH_SIZE + sizeofString32( "ssh-dh", 6 );
 
-		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+		status = krnlSendMessage( handshakeInfo->iExchangeHashContext,
 								  IMESSAGE_CTX_HASH,
 								  handshakeInfo->encodedReqKeySizes,
 								  handshakeInfo->encodedReqKeySizesLength );
@@ -933,7 +1091,7 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 								  CRYPT_IATTRIBUTE_KEY_SSH );
 		if( cryptStatusOK( status ) )
 			{
-			status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+			status = krnlSendMessage( handshakeInfo->iExchangeHashContext,
 									  IMESSAGE_CTX_HASH, 
 									  keyexBuffer + extraLength,
 									  msgData.length - extraLength );
@@ -942,18 +1100,18 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 			return( status );
 		}
 
-	/* Hash the client and server DH values and shared secret */
-	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+	/* Hash the client and server DH/ECDH values and shared secret */
+	status = krnlSendMessage( handshakeInfo->iExchangeHashContext, 
 							  IMESSAGE_CTX_HASH,
 							  handshakeInfo->clientKeyexValue,
 							  handshakeInfo->clientKeyexValueLength );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+		status = krnlSendMessage( handshakeInfo->iExchangeHashContext, 
 								  IMESSAGE_CTX_HASH,
 								  handshakeInfo->serverKeyexValue,
 								  handshakeInfo->serverKeyexValueLength );
 	if( cryptStatusOK( status ) )
-		status = hashAsMPI( handshakeInfo->iExchangeHashcontext,
+		status = hashAsMPI( handshakeInfo->iExchangeHashContext,
 							handshakeInfo->secretValue,
 							handshakeInfo->secretValueLength );
 	if( cryptStatusError( status ) )
@@ -973,8 +1131,12 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 	 [[	uint32	max, max.preferred keyex key size for ephemeral DH ]]
 	  [	mpint	p, DH p for ephemeral DH ]
 	  [	mpint	g, DH g for ephemeral DH ]
+	   DH:
 		mpint	e, client DH keyex value
 		mpint	f, server DH keyex value
+	   ECDH:
+		string	Q_C, client ECDH keyex value
+		string	Q_S, server ECDH keyex value
 		mpint	K, the shared secret
 
 	   The client and server version string ahd hellos and the host key were
@@ -983,13 +1145,13 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 	   double-optional parameters are for the revised version of the DH
 	   negotiation mechanism, the original only had n, the revised version
 	   allowed a { min, n, max } range */
-	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext, 
+	status = krnlSendMessage( handshakeInfo->iExchangeHashContext, 
 							  IMESSAGE_CTX_HASH, "", 0 );
 	if( cryptStatusOK( status ) )
 		{
 		setMessageData( &msgData, handshakeInfo->sessionID, 
 						CRYPT_MAX_HASHSIZE );
-		status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+		status = krnlSendMessage( handshakeInfo->iExchangeHashContext,
 								  IMESSAGE_GETATTRIBUTE_S, &msgData,
 								  CRYPT_CTXINFO_HASHVALUE );
 		if( cryptStatusOK( status ) )
@@ -997,13 +1159,29 @@ int completeKeyex( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
-	krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+
+	/* At this point we continue the hash-algorithm dance, switching back to 
+	   SHA-1 if we've been using a different algorithm for the hashing so 
+	   far, unless we're using an ECC cipher suite in which case we stick 
+	   with SHA-2.  The switch back is required because while the exchange 
+	   hash is calculated using the alternative algorithm that was 
+	   negotiated earlier but what gets signed is a SHA-1 hash of that */
+	if( handshakeInfo->exchangeHashAlgo == CRYPT_ALGO_SHA2 && \
+		!isEccAlgo( handshakeInfo->pubkeyAlgo ) )
+		{
+		const CRYPT_CONTEXT tempContext = handshakeInfo->iExchangeHashContext;
+
+		handshakeInfo->iExchangeHashContext = \
+				handshakeInfo->iExchangeHashAltContext;
+		handshakeInfo->iExchangeHashAltContext = tempContext;
+		}
+	krnlSendMessage( handshakeInfo->iExchangeHashContext,
 					 IMESSAGE_DELETEATTRIBUTE, NULL,
 					 CRYPT_CTXINFO_HASHVALUE );
-	krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+	krnlSendMessage( handshakeInfo->iExchangeHashContext,
 					 IMESSAGE_CTX_HASH, handshakeInfo->sessionID,
 					 handshakeInfo->sessionIDlength );
-	return( krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+	return( krnlSendMessage( handshakeInfo->iExchangeHashContext,
 							 IMESSAGE_CTX_HASH, "", 0 ) );
 	}
 #endif /* USE_SSH */

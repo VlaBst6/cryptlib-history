@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -33,7 +33,7 @@
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int streamBookmarkComplete( INOUT STREAM *stream, 
-							OUT_PTR void **dataPtrPtr, 
+							OUT_OPT_PTR void **dataPtrPtr, 
 							OUT_LENGTH_Z int *length, 
 							IN_LENGTH const int position )
 	{
@@ -59,17 +59,17 @@ int streamBookmarkComplete( INOUT STREAM *stream,
    the storage for the packet header, and writes the packet type */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int openPacketStreamSSH( INOUT STREAM *stream, 
+int openPacketStreamSSH( OUT STREAM *stream, 
 						 const SESSION_INFO *sessionInfoPtr,
-						 IN_RANGE( SSH2_MSG_DISCONNECT, \
-								   SSH2_MSG_CHANNEL_FAILURE ) 
+						 IN_RANGE( SSH_MSG_DISCONNECT, \
+								   SSH_MSG_CHANNEL_FAILURE ) 
 							const int packetType )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	
-	REQUIRES( packetType >= SSH2_MSG_DISCONNECT && \
-			  packetType <= SSH2_MSG_CHANNEL_FAILURE );
+	REQUIRES( packetType >= SSH_MSG_DISCONNECT && \
+			  packetType <= SSH_MSG_CHANNEL_FAILURE );
 
 	sMemOpen( stream, sessionInfoPtr->sendBuffer, 
 			  sessionInfoPtr->sendBufSize - EXTRA_PACKET_SIZE );
@@ -78,11 +78,11 @@ int openPacketStreamSSH( INOUT STREAM *stream,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int openPacketStreamSSHEx( INOUT STREAM *stream, 
+int openPacketStreamSSHEx( OUT STREAM *stream, 
 						   const SESSION_INFO *sessionInfoPtr,
 						   IN_LENGTH const int bufferSize, 
-						   IN_RANGE( SSH2_MSG_DISCONNECT, \
-									 SSH2_MSG_CHANNEL_FAILURE ) 
+						   IN_RANGE( SSH_MSG_DISCONNECT, \
+									 SSH_MSG_CHANNEL_FAILURE ) 
 							const int packetType )
 	{
 	const int streamSize = bufferSize + SSH2_HEADER_SIZE;
@@ -92,8 +92,8 @@ int openPacketStreamSSHEx( INOUT STREAM *stream,
 	assert( isWritePtr( sessionInfoPtr->sendBuffer, streamSize ) );
 	
 	REQUIRES( bufferSize > 0 && bufferSize < MAX_INTLENGTH );
-	REQUIRES( packetType >= SSH2_MSG_DISCONNECT && \
-			  packetType <= SSH2_MSG_CHANNEL_FAILURE );
+	REQUIRES( packetType >= SSH_MSG_DISCONNECT && \
+			  packetType <= SSH_MSG_CHANNEL_FAILURE );
 	REQUIRES( streamSize > SSH2_HEADER_SIZE && \
 			  streamSize <= sessionInfoPtr->sendBufSize - EXTRA_PACKET_SIZE );
 
@@ -104,8 +104,8 @@ int openPacketStreamSSHEx( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int continuePacketStreamSSH( INOUT STREAM *stream, 
-							 IN_RANGE( SSH2_MSG_DISCONNECT, \
-									   SSH2_MSG_CHANNEL_FAILURE ) \
+							 IN_RANGE( SSH_MSG_DISCONNECT, \
+									   SSH_MSG_CHANNEL_FAILURE ) \
 								const int packetType,
 							 OUT_LENGTH_Z int *packetOffset )
 	{
@@ -115,8 +115,8 @@ int continuePacketStreamSSH( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( packetOffset, sizeof( int ) ) );
 
-	REQUIRES( packetType >= SSH2_MSG_DISCONNECT && \
-			  packetType <= SSH2_MSG_CHANNEL_FAILURE );
+	REQUIRES( packetType >= SSH_MSG_DISCONNECT && \
+			  packetType <= SSH_MSG_CHANNEL_FAILURE );
 	REQUIRES( stell( stream ) == 0 || \
 			  ( stell( stream ) > SSH2_HEADER_SIZE + 1 && \
 				stell( stream ) < MAX_INTLENGTH ) );
@@ -245,11 +245,12 @@ int wrapPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &headerStream );
 		ENSURES( cryptStatusOK( status ) );
 		}
-	DEBUG_PRINT(( "Wrote %s packet, length %d.\n", 
+	DEBUG_PRINT(( "Wrote %s (%d) packet, length %d.\n", 
 				  getSSHPacketName( ( ( BYTE * ) bufStartPtr )[ LENGTH_SIZE + 1 ] ), 
+				  ( ( BYTE * ) bufStartPtr )[ LENGTH_SIZE + 1 ],
 				  length - ( LENGTH_SIZE + 1 + ID_SIZE + padLength ) ));
-	DEBUG_DUMPDATA( ( BYTE * ) bufStartPtr + LENGTH_SIZE + 1 + ID_SIZE, 
-					length - ( LENGTH_SIZE + 1 + ID_SIZE + padLength ) );
+	DEBUG_DUMP_DATA( ( BYTE * ) bufStartPtr + LENGTH_SIZE + 1 + ID_SIZE, 
+					 length - ( LENGTH_SIZE + 1 + ID_SIZE + padLength ) );
 	if( sessionInfoPtr->flags & SESSION_ISSECURE_WRITE )
 		{
 		MESSAGE_DATA msgData;
@@ -317,9 +318,8 @@ int sendPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 					INOUT STREAM *stream,
 					const BOOLEAN sendOnly )
 	{
-	int length = stell( stream );
 	void *dataPtr;
-	int status;
+	int length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -338,6 +338,7 @@ int sendPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	status = sMemGetDataBlockAbs( stream, 0, &dataPtr, length );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( dataPtr != NULL );
 	status = swrite( &sessionInfoPtr->stream, dataPtr, length );
 	if( cryptStatusError( status ) )
 		{

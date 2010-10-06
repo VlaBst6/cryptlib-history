@@ -100,6 +100,70 @@
 
 /****************************************************************************
 *																			*
+*						 			ThreadX									*
+*																			*
+****************************************************************************/
+
+#elif defined( __THREADX__ )
+
+/* ThreadX doesn't have native socket support, there is a ThreadX component
+   called NetX but everyone seems to use assorted non-ThreadX network 
+   stacks.  The following is a representative entry for Treck's network 
+   stack */
+
+#include "r:/temp/trsocket.h"
+
+#undef USE_DNSSRV
+#undef __WINDOWS__
+
+/* Some versions of the Treck stack don't support all IPv6 options */
+
+#ifndef NI_NUMERICSERV
+  #define NI_NUMERICSERV	0	/* Unnecessary for Treck stack */
+#endif /* !NI_NUMERICSERV */
+
+/* The Treck stack doesn't implement IPV6_V6ONLY (needed for getsockopt()), 
+   the following define gives it an out-of-range value that results in 
+   getsockopt() failing, so the operation is skipped */
+
+#ifndef IPV6_V6ONLY
+  #define IPV6_V6ONLY		5000
+#endif /* !IPV6_V6ONLY */
+
+/* Like Windows, Treck uses special names for close() and ioctl() to avoid
+   conflicts with standard system calls, and defines special functions for
+   obtaining error information rather than using a static errno-type
+   value */
+
+#define closesocket			tfClose
+#define ioctlsocket			tfIoctl
+#define getErrorCode()		tfGetSocketError( netStream->netSocket )
+#define getHostErrorCode()	tfGetSocketError( netStream->netSocket )
+
+/* Map Treck's nonstandard error names to more standard ones */
+
+#ifndef EADDRNOTAVAIL
+  #define EADDRNOTAVAIL		TM_EADDRNOTAVAIL
+  #define EAGAIN			TM_EAGAIN
+  #define ECONNABORTED		TM_ECONNABORTED
+  #define ECONNREFUSED		TM_ECONNREFUSED
+  #define ECONNRESET		TM_ECONNRESET
+  #define EINPROGRESS		TM_EINPROGRESS
+  #define EINTR				TM_EINTR
+  #define EMFILE			TM_EMFILE
+  #define EMSGSIZE			TM_EMSGSIZE
+  #define ENETUNREACH		TM_ENETUNREACH
+  #define ENOBUFS			TM_ENOBUFS
+  #define ENOTCONN			TM_ENOTCONN
+  #define ETIMEDOUT			TM_ETIMEDOUT
+  #define HOST_NOT_FOUND	TM_DNS_ENAME_ERROR
+  #define NO_ADDRESS		TM_DNS_EANSWER
+  #define NO_DATA			TM_DNS_EANSWER	/* No equivalent in Treck stack */
+  #define TRY_AGAIN			TM_EAGAIN
+#endif /* Standard error names not defined */
+
+/****************************************************************************
+*																			*
 *						 			uITRON									*
 *																			*
 ****************************************************************************/
@@ -270,7 +334,7 @@
 
 #elif defined( __WINDOWS__ )
 
-/* Winsock2 wasn't available until VC++/eVC++ 4.0, so if we're running an
+/* Winsock2 wasn't available until VC++/eVC++ 4.0 so if we're running an
    older version we have to use the Winsock1 interface */
 
 #if defined( _MSC_VER ) && ( _MSC_VER <= 800 ) || \
@@ -522,10 +586,10 @@
 
 /* Error code handling */
 
-#ifdef __WINDOWS__
+#if defined( __WINDOWS__ )
   #define getErrorCode()			WSAGetLastError()
   #define getHostErrorCode()		WSAGetLastError()
-#else
+#elif !defined( getErrorCode )
   #define getErrorCode()			errno
   #if ( defined( __MVS__ ) && defined( _OPEN_THREADS ) )
 	/* MVS converts this into a hidden function in the presence of threads,
@@ -545,7 +609,7 @@
   #undef SOCKET
 #endif /* SOCKET */
 #define SOCKET						int
-#ifndef __WINDOWS__
+#if !defined( __WINDOWS__ ) && !defined( closesocket )
   #if !defined( __BEOS__ ) || \
 	  ( defined( __BEOS__ ) && defined( BONE_VERSION ) )
 	#define closesocket				close
@@ -576,11 +640,24 @@
   #endif /* in_addr_t */
 #endif /* Older Unixen without in_*_t's */
 
-/* Some systems use int for size parameters to socket functions and some use
-   size_t (and just to be difficult some use socklen_t, which we use if we
-   can get it).  The following is required to distinguish the different ones
-   to avoid compiler warnings on systems that insist on having it one
-   particular way */
+/* The handling of size parameters to socket functions is, as with most
+   things Unix, subject to random portability problems.  The traditional
+   BSD sockets API used int for size parameters to socket functions, Posix 
+   decided it'd be better to use size_t, but then people complained that 
+   this wasn't binary-compatible with existing usage because on 64-bit
+   systems size_t != int.  Instead of changing it back to int, Posix defined
+   a new type, socklen_t, which may or may not be an int.  So some systems
+   have int, some have size_t, some have socklen_t defined to int, and some
+   have socklen_t defined to something else.  PHUX, as usual, is 
+   particularly bad, defaulting to the BSD form with int unless you define 
+   _XOPEN_SOURCE_EXTENDED, in which case you get socklen_t but it's mapped 
+   to size_t without any change in the sockets API, which still expects int
+   (the PHUX select() has a similar problem, see the comment in 
+   random/unix.c).
+   
+   To resolve this, we try and use socklen_t if we detect its presence,
+   otherwise we use int where we know it's safe to do so, and failing that 
+   we fall back to size_t */
 
 #if defined( socklen_t ) || defined( __socklen_t_defined )
   #define SIZE_TYPE					socklen_t
@@ -725,6 +802,15 @@
 	#define NI_NUMERICSERV	0x2		/* Return numeric form of host port */
   #endif /* __WINDOWS__ */
 
+  /* get/setsockopt() flags and values.  Again, we have to use slightly
+     different values for Windows in some cases */
+  #define IPPROTO_IPV6		41		/* IPv6 */
+  #ifdef __WINDOWS__
+	#define IPV6_V6ONLY		27		/* Force dual stack to use only IPv6 */
+  #else
+	#define IPV6_V6ONLY		26		/* Force dual stack to use only IPv6 */
+  #endif /* __WINDOWS__ */
+
   /* If there's no getaddrinfo() available and we're not using dynamic
      linking, use an emulation of the function */
   #ifndef __WINDOWS__
@@ -746,6 +832,16 @@
 	   systems */
 	#define SOCKET_API
   #endif /* __WINDOWS__ */
+#else
+  /* IPV6_V6ONLY isn't universally defined under Windows even if IPv6
+     support is available.  This occurs for some x86-64 builds (although 
+	 strangely it is present for straight x86 builds), and also for older 
+	 WinCE builds, in which case we have to explicitly define it 
+	 ourselves */
+  #if defined( __WINDOWS__ ) && !defined( IPV6_V6ONLY ) && \
+	  ( defined( _M_X64 ) || defined( __WINCE__ ) )
+	#define IPV6_V6ONLY		27		/* Force dual stack to use only IPv6 */
+  #endif /* Some Windows build environments */
 #endif /* IPv6 */
 
 /* A subset of the above for BeOS with the BONE network stack.  See the
@@ -973,11 +1069,11 @@
 
 /* Prototypes for functions in dns.c */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getAddressInfo( INOUT NET_STREAM_INFO *netStream, 
 					OUT_PTR struct addrinfo **addrInfoPtrPtr,
-					IN_BUFFER( nameLen ) const char *name, 
-					IN_LENGTH_DNS const int nameLen, 
+					IN_BUFFER_OPT( nameLen ) const char *name, 
+					IN_LENGTH_Z const int nameLen, 
 					IN_PORT const int port, const BOOLEAN isServer );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void freeAddressInfo( struct addrinfo *addrInfoPtr );

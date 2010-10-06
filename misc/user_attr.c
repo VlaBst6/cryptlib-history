@@ -9,9 +9,11 @@
 #include "crypt.h"
 #ifdef INC_ALL
   #include "trustmgr.h"
+  #include "stream.h"
   #include "user.h"
 #else
   #include "cert/trustmgr.h"
+  #include "io/stream.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
 
@@ -79,18 +81,17 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int twoPhaseConfigUpdate( INOUT USER_INFO *userInfoPtr, 
 								 IN_INT_Z const int value )
 	{
-	const CRYPT_USER iCryptUser = userInfoPtr->objectHandle;
+	CRYPT_USER iTrustedCertUserObject = CRYPT_UNUSED;
+	CONFIG_DISPOSITION_TYPE disposition;
 	char userFileName[ 16 + 8 ];
-	void *data;
-	int length, commitStatus, refCount, status;
+	void *data = NULL;
+	int length = 0, commitStatus, refCount, status;
 
 	assert( isWritePtr( userInfoPtr, sizeof( USER_INFO ) ) );
 
 	REQUIRES( value == FALSE );
 
-	/* The configuration option write is performed in two phases, a first 
-	   phase that encodes the configuration data and a second phase that 
-	   writes the data to disk */
+	/* Set up the filename that we want to access */
 	if( userInfoPtr->userFileInfo.fileRef == CRYPT_UNUSED )
 		strlcpy_s( userFileName, 16, "cryptlib" );
 	else
@@ -98,25 +99,69 @@ static int twoPhaseConfigUpdate( INOUT USER_INFO *userInfoPtr,
 		sprintf_s( userFileName, 16, "u%06x", 
 				   userInfoPtr->userFileInfo.fileRef );
 		}
-	status = prepareConfigData( userInfoPtr->configOptions, 
-								userInfoPtr->configOptionsCount, 
-								userFileName, userInfoPtr->trustInfoPtr, 
-								&data, &length );
-	if( status != OK_SPECIAL )
+
+	/* Determine what we have to do with the configuation information */
+	status = getConfigDisposition( userInfoPtr->configOptions, 
+								   userInfoPtr->configOptionsCount, 
+								   userInfoPtr->trustInfoPtr, 
+								   &disposition );
+	if( cryptStatusError( status ) )
 		return( status );
+	switch( disposition )
+		{
+		case CONFIG_DISPOSITION_NO_CHANGE:
+			/* There's nothing to do, we're done */
+			return( CRYPT_OK );
 
-	/* If nothing in the configuration data has changed, we're done */
-	if( length <= 0 && !userInfoPtr->trustInfoChanged )
-		return( CRYPT_OK );
+		case CONFIG_DISPOSITION_EMPTY_CONFIG_FILE:
+			/* There's nothing to write, delete the configuration file */
+			return( deleteConfig( userFileName ) );
 
-	/* We've got the configuration data in a memory buffer, we can unlock 
-	   the user object to allow external access while we commit the in-
-	   memory data to disk */
-	status = krnlSuspendObject( iCryptUser, &refCount );
+		case CONFIG_DISPOSITION_TRUSTED_CERTS_ONLY:
+			/* There are only trusted certificates present, if they're 
+			   unchanged from earlier then there's nothing to do */
+			if( !userInfoPtr->trustInfoChanged )
+				return( CRYPT_OK );
+
+			/* Remember where the trusted certificates are coming from */
+			iTrustedCertUserObject = userInfoPtr->objectHandle;
+			break;
+
+		case CONFIG_DISPOSITION_DATA_ONLY:
+		case CONFIG_DISPOSITION_BOTH:
+			/* There's configuration data to write, prepare it */
+			status = prepareConfigData( userInfoPtr->configOptions, 
+										userInfoPtr->configOptionsCount, 
+										&data, &length );
+			if( cryptStatusError( status ) )
+				return( status );
+			if( disposition == CONFIG_DISPOSITION_BOTH )
+				{
+				/* There are certificates present as well, remember where 
+				   they're coming from */
+				iTrustedCertUserObject = userInfoPtr->objectHandle;
+				}
+			break;
+
+		default:
+			retIntError();
+		}
+
+
+
+	/* We've got the configuration data (if there is any) in a memory 
+	   buffer, we can unlock the user object to allow external access while 
+	   we commit the in-memory data to disk.  This also sends any trusted
+	   certificates in the user object to the configuration file alongside
+	   the data */
+	status = krnlSuspendObject( iTrustedCertUserObject, &refCount );
 	ENSURES( cryptStatusOK( status ) );
-	commitStatus = commitConfigData( iCryptUser, userFileName, data, length );
-	clFree( "userMessageFunction", data );
-	status = krnlResumeObject( iCryptUser, refCount );
+	commitStatus = commitConfigData( userFileName, data, length, 
+									 iTrustedCertUserObject );
+	if( disposition == CONFIG_DISPOSITION_DATA_ONLY || \
+		disposition == CONFIG_DISPOSITION_BOTH )
+		clFree( "userMessageFunction", data );
+	status = krnlResumeObject( iTrustedCertUserObject, refCount );
 	if( cryptStatusError( status ) )
 		{
 		/* Handling errors at this point is rather tricky because an error 
@@ -126,13 +171,13 @@ static int twoPhaseConfigUpdate( INOUT USER_INFO *userInfoPtr,
 		   due to the inconsistent object state.  On the other hand we can 
 		   only get to this point because of an exception condition anyway 
 		   so it's just going to propagate the exception back */
-			retIntError();
-			}
-		if( cryptStatusOK( commitStatus ) )
-			userInfoPtr->trustInfoChanged = FALSE;
-
-		return( commitStatus );
+		retIntError();
 		}
+	if( cryptStatusOK( commitStatus ) )
+		userInfoPtr->trustInfoChanged = FALSE;
+
+	return( commitStatus );
+	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int twoPhaseSelftest( INOUT USER_INFO *userInfoPtr, 
@@ -231,11 +276,9 @@ int getUserAttribute( INOUT USER_INFO *userInfoPtr,
 			{
 			MESSAGE_CREATEOBJECT_INFO createInfo;
 
-			/* Check whether there are trusted certs present */
-			status = enumTrustedCerts( userInfoPtr->trustInfoPtr,
-									   CRYPT_UNUSED, CRYPT_UNUSED );
-			if( cryptStatusError( status ) )
-				return( status );
+			/* Check whether there are actually trusted certs present */
+			if( !trustedCertsPresent( userInfoPtr->trustInfoPtr ) )
+				return( CRYPT_ERROR_NOTFOUND );
 
 			/* Create a cert chain meta-object to hold the overall set of
 			   certs */
@@ -389,8 +432,10 @@ int setUserAttribute( INOUT USER_INFO *userInfoPtr,
 		case CRYPT_IATTRUBUTE_CERTKEYSET:
 			/* If it's a presence check, handle it specially */
 			if( value == CRYPT_UNUSED )
-				return( enumTrustedCerts( userInfoPtr->trustInfoPtr,
-										  CRYPT_UNUSED, CRYPT_UNUSED ) );
+				{
+				return( trustedCertsPresent( userInfoPtr->trustInfoPtr ) ? \
+						CRYPT_OK : CRYPT_ERROR_NOTFOUND );
+				}
 
 			/* Send all trusted certs to the keyset */
 			return( enumTrustedCerts( userInfoPtr->trustInfoPtr, 

@@ -15,9 +15,9 @@
   #include "pgp.h"
 #else
   #include "context/context.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -194,7 +194,7 @@ static int writeDlpSubjectPublicKey( INOUT STREAM *stream,
 	return( writeBignum( stream, &dlpKey->dlpParam_y ) );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeEccSubjectPublicKey( INOUT STREAM *stream, 
@@ -223,7 +223,7 @@ static int writeEccSubjectPublicKey( INOUT STREAM *stream,
 		status = getECCFieldSize( eccKey->curveType, &fieldSize );
 	if( cryptStatusError( status ) )
 		return( status );
-	for( i = 0; oidTbl[ i ].oid != NULL && i < oidTblSize; i++ )
+	for( i = 0; i < oidTblSize && oidTbl[ i ].oid != NULL; i++ )
 		{
 		if( oidTbl[ i ].selectionID == eccKey->curveType )
 			{
@@ -234,17 +234,19 @@ static int writeEccSubjectPublicKey( INOUT STREAM *stream,
 	ENSURES( i < oidTblSize );
 	ENSURES( oid != NULL );
 
-	/* Determine the size of the AlgorithmIdentifier and the BIT STRING-
-	   encapsulated public-key data (the final +1 is for the bitstring).  
-	   ECC algorithms are a bit strange because there's no specific type
-	   of "ECDSA key" or "ECDH key" or whatever, just a generic "ECC key",
-	   so if we're given an ECDH key we write it as a generic ECC key,
-	   denoted using the generic identifier CRYPT_ALGO_ECDSA */
-	status = exportECCPoint( NULL, 0, &encodedPointSize, 
+	/* Get the encoded point data */
+	status = exportECCPoint( buffer, MAX_PKCSIZE_ECCPOINT, &encodedPointSize, 
 							 &eccKey->eccParam_qx, &eccKey->eccParam_qy, 
 							 fieldSize );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* Determine the size of the AlgorithmIdentifier and the BIT STRING-
+	   encapsulated public-key data (the final +1 is for the bitstring),
+	   ECC algorithms are a bit strange because there's no specific type of 
+	   "ECDSA key" or "ECDH key" or whatever, just a generic "ECC key", so 
+	   if we're given an ECDH key we write it as a generic ECC key, denoted 
+	   using the generic identifier CRYPT_ALGO_ECDSA */
 	totalSize = sizeofAlgoIDex( CRYPT_ALGO_ECDSA, CRYPT_ALGO_NONE, 
 								sizeofOID( oid ) ) + \
 				( int ) sizeofObject( encodedPointSize + 1 );
@@ -259,19 +261,19 @@ static int writeEccSubjectPublicKey( INOUT STREAM *stream,
 
 	/* Write the BIT STRING wrapper and the PKC information */
 	writeBitStringHole( stream, encodedPointSize, DEFAULT_TAG );
-	status = exportECCPoint( buffer, MAX_PKCSIZE_ECCPOINT, &encodedPointSize, 
-							 &eccKey->eccParam_qx, &eccKey->eccParam_qy, 
-							 fieldSize );
-	if( cryptStatusOK( status ) )
-		status = swrite( stream, buffer, encodedPointSize );
+	status = swrite( stream, buffer, encodedPointSize );
 	zeroise( buffer, MAX_PKCSIZE_ECCPOINT );
 	return( status );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 #ifdef USE_SSH1
 
-/* Write SSH public keys */
+/* Write SSHv1 public keys:
+
+	uint32		keysize_bits
+	mpint		exponent
+	mpint		modulus */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeSsh1RsaPublicKey( INOUT STREAM *stream, 
@@ -292,6 +294,24 @@ static int writeSsh1RsaPublicKey( INOUT STREAM *stream,
 #endif /* USE_SSH1 */
 
 #ifdef USE_SSH
+
+/* Write SSHv2 public keys:
+
+   RSA/DSA:
+
+	string		[ server key/certificate ]
+		string	"ssh-rsa"	"ssh-dss"
+		mpint	e			p
+		mpint	n			q
+		mpint				g
+		mpint				y
+
+   ECDSA:
+
+	string		[ server key/certificate ]
+		string	"ecdsa-sha2-*"
+		string	"*"				-- The "*" portion from the above field
+		string	Q */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeSshRsaPublicKey( INOUT STREAM *stream, 
@@ -349,11 +369,102 @@ static int writeSshDlpPublicKey( INOUT STREAM *stream,
 	writeBignumInteger32( stream, &dsaKey->dlpParam_g );
 	return( writeBignumInteger32( stream, &dsaKey->dlpParam_y ) );
 	}
+
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeSshEccPublicKey( INOUT STREAM *stream, 
+								 const CONTEXT_INFO *contextInfoPtr )
+	{
+	const PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	const char *algoName, *paramName;
+	BYTE buffer[ MAX_PKCSIZE_ECCPOINT + 8 ];
+	int fieldSize, encodedPointSize = DUMMY_INIT;
+	int algoNameLen, paramNameLen, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
+			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA );
+
+	/* Get the string form of the curve parameters */
+	switch( eccKey->curveType )
+		{
+		case CRYPT_ECCCURVE_P256:
+			algoName = "ecdsa-sha2-nistp256";
+			algoNameLen = 19;
+			paramName = "nistp256";
+			paramNameLen = 8;
+			break;
+
+		case CRYPT_ECCCURVE_P384:
+			algoName = "ecdsa-sha2-nistp384";
+			algoNameLen = 19;
+			paramName = "nistp384";
+			paramNameLen = 8;
+			break;
+
+		case CRYPT_ECCCURVE_P521:
+			algoName = "ecdsa-sha2-nistp521";
+			algoNameLen = 19;
+			paramName = "nistp521";
+			paramNameLen = 8;
+			break;
+
+		default:
+			retIntError();
+		}
+
+	/* Get the information that we'll need to encode the key and the encoded
+	   point data.  Note that this assumes that we'll be using a known 
+	   (named) curve rather than arbitrary curve parameters, which has been 
+	   enforced by the higher-level code */
+	status = getECCFieldSize( eccKey->curveType, &fieldSize );
+	if( cryptStatusOK( status ) )
+		{
+		status = exportECCPoint( buffer, MAX_PKCSIZE_ECCPOINT, 
+								 &encodedPointSize, &eccKey->eccParam_qx, 
+								 &eccKey->eccParam_qy, fieldSize );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Write the PKC information */
+	writeUint32( stream, sizeofString32( algoName, algoNameLen ) + \
+						 sizeofString32( paramName, paramNameLen ) + \
+						 sizeofString32( buffer, encodedPointSize ) );
+	writeString32( stream, algoName, algoNameLen );
+	writeString32( stream, paramName, paramNameLen );
+	status = writeString32( stream, buffer, encodedPointSize );
+	zeroise( buffer, MAX_PKCSIZE_ECCPOINT );
+	return( status );
+	}
+#endif /* USE_ECDH || USE_ECDSA */
+
 #endif /* USE_SSH */
 
 #ifdef USE_SSL
 
-/* Write SSL public keys */
+/* Write SSL public keys:
+
+	DH:
+		uint16		dh_pLen
+		byte[]		dh_p
+		uint16		dh_gLen
+		byte[]		dh_g
+	  [	uint16		dh_YsLen ]
+	  [	byte[]		dh_Ys	 ]
+
+	ECDH:
+		byte		curveType
+		uint16		namedCurve
+	  [	uint8		ecPointLen	-- NB uint8 not uint16 ]
+	  [	byte[]		ecPoint ]
+
+   The DH y value is nominally attached to the DH p and g values but isn't 
+   processed at this level since this is a pure PKCS #3 DH key and not a 
+   generic DLP key.  The same holds for the ECDH Q value */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeSslDlpPublicKey( INOUT STREAM *stream, 
@@ -370,11 +481,74 @@ static int writeSslDlpPublicKey( INOUT STREAM *stream,
 	writeBignumInteger16U( stream, &dhKey->dlpParam_p );
 	return( writeBignumInteger16U( stream, &dhKey->dlpParam_g ) );
 	}
+
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
+
+static const MAP_TABLE sslCurveInfo[] = {
+	{ CRYPT_ECCCURVE_P192, 19 },
+	{ CRYPT_ECCCURVE_P224, 21 },
+	{ CRYPT_ECCCURVE_P256, 23 },
+	{ CRYPT_ECCCURVE_P384, 24 },
+	{ CRYPT_ECCCURVE_P521, 25 },
+	{ CRYPT_ERROR, 0 }, 
+		{ CRYPT_ERROR, 0 }
+	};
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getEccSslInfoTbl( OUT const MAP_TABLE **sslInfoTblPtr,
+							 OUT_INT_Z int *noSslInfoTblEntries )
+	{
+	assert( isReadPtr( sslInfoTblPtr, sizeof( MAP_TABLE * ) ) );
+	assert( isWritePtr( noSslInfoTblEntries, sizeof( int ) ) );
+
+	*sslInfoTblPtr = sslCurveInfo;
+	*noSslInfoTblEntries = FAILSAFE_ARRAYSIZE( sslCurveInfo, MAP_TABLE );
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeSslEccPublicKey( INOUT STREAM *stream, 
+								 const CONTEXT_INFO *contextInfoPtr )
+	{
+	const PKC_INFO *eccKey = contextInfoPtr->ctxPKC;
+	const MAP_TABLE *sslCurveInfoPtr;
+	int curveID, sslCurveInfoNoEntries, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
+			  contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH );
+
+	/* Look up the SSL NamedCurve ID based on the curve ID */
+	status = getEccSslInfoTbl( &sslCurveInfoPtr, &sslCurveInfoNoEntries );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = mapValue( eccKey->curveType, &curveID, sslCurveInfoPtr, 
+					   sslCurveInfoNoEntries );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	sputc( stream, 0x03 );	/* NamedCurve */
+	return( writeUint16( stream, curveID ) );
+	}
+#endif /* USE_ECDH || USE_ECDSA */
+
 #endif /* USE_SSL */
 
 #ifdef USE_PGP
 
-/* Write PGP public keys */
+/* Write PGP public keys:
+
+	byte		version
+	uint32		creationTime
+	[ uint16	validity - version 2 or 3 only ]
+	byte		RSA		DSA		Elgamal
+	mpi			n		p		p
+	mpi			e		q		g
+	mpi					g		y
+	mpi					y */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writePgpRsaPublicKey( INOUT STREAM *stream, 
@@ -525,7 +699,7 @@ static int writePublicKeyDlpFunction( INOUT STREAM *stream,
 	retIntError();
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int writePublicKeyEccFunction( INOUT STREAM *stream, 
@@ -544,23 +718,33 @@ static int writePublicKeyEccFunction( INOUT STREAM *stream,
 	REQUIRES( contextInfoPtr->type == CONTEXT_PKC && \
 			  ( contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDSA || \
 				contextInfoPtr->capabilityInfo->cryptAlgo == CRYPT_ALGO_ECDH ) );
-	REQUIRES( formatType == KEYFORMAT_CERT );
+	REQUIRES( formatType == KEYFORMAT_CERT || formatType == KEYFORMAT_SSL || \
+			  formatType == KEYFORMAT_SSH );
 	REQUIRES( accessKeyLen == 10 );
 
 	/* Make sure that we really intended to call this function */
-	if( accessKeyLen != 10 || memcmp( accessKey, "public_key", 10 ) || \
-		formatType != KEYFORMAT_CERT )
+	if( accessKeyLen != 10 || memcmp( accessKey, "public_key", 10 ) )
 		retIntError();
 
 	switch( formatType )
 		{
 		case KEYFORMAT_CERT:
 			return( writeEccSubjectPublicKey( stream, contextInfoPtr ) );
+
+#ifdef USE_SSL
+		case KEYFORMAT_SSL:
+			return( writeSslEccPublicKey( stream, contextInfoPtr ) );
+#endif /* USE_SSL */
+
+#ifdef USE_SSH
+		case KEYFORMAT_SSH:
+			return( writeSshEccPublicKey( stream, contextInfoPtr ) );
+#endif /* USE_SSH */
 		}
 
 	retIntError();
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 /****************************************************************************
 *																			*
@@ -602,6 +786,8 @@ static int writeRsaPrivateKey( INOUT STREAM *stream,
 	writeBignumTag( stream, &rsaKey->rsaParam_exponent2, 6 );
 	return( writeBignumTag( stream, &rsaKey->rsaParam_u, 7 ) );
 	}
+
+#ifdef USE_PKCS12
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeRsaPrivateKeyOld( INOUT STREAM *stream, 
@@ -654,6 +840,7 @@ static int writeRsaPrivateKeyOld( INOUT STREAM *stream,
 	writeBignum( stream, &rsaKey->rsaParam_exponent2 );
 	return( writeBignum( stream, &rsaKey->rsaParam_u ) );
 	}
+#endif /* USE_PKCS12 */
 
 /* Umbrella private-key write functions */
 
@@ -687,8 +874,10 @@ static int writePrivateKeyRsaFunction( INOUT STREAM *stream,
 		case KEYFORMAT_PRIVATE:
 			return( writeRsaPrivateKey( stream, contextInfoPtr ) );
 
+#ifdef USE_PKCS12
 		case KEYFORMAT_PRIVATE_OLD:
 			return( writeRsaPrivateKeyOld( stream, contextInfoPtr ) );
+#endif /* USE_PKCS12 */
 		}
 
 	retIntError();
@@ -732,7 +921,7 @@ static int writePrivateKeyDlpFunction( INOUT STREAM *stream,
 	return( writeBignum( stream, &dlpKey->dlpParam_x ) );
 	}
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 static int writePrivateKeyEccFunction( INOUT STREAM *stream, 
@@ -763,7 +952,7 @@ static int writePrivateKeyEccFunction( INOUT STREAM *stream,
 	/* Write the key components */
 	return( writeBignum( stream, &eccKey->eccParam_d ) );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 
 /****************************************************************************
 *																			*
@@ -870,8 +1059,7 @@ int writeFlatPublicKey( OUT_BUFFER_OPT( bufMaxSize, *bufSize ) void *buffer,
 	REQUIRES( ( buffer == NULL && bufMaxSize == 0 ) || \
 			  ( buffer != NULL && \
 			    bufMaxSize > 64 && bufMaxSize < MAX_INTLENGTH_SHORT ) );
-	REQUIRES( cryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-			  cryptAlgo <= CRYPT_ALGO_LAST_PKC && !isEccAlgo( cryptAlgo ) );
+	REQUIRES( isPkcAlgo( cryptAlgo ) && !isEccAlgo( cryptAlgo ) );
 	REQUIRES( component1Length >= MIN_PKCSIZE && \
 			  component1Length <= CRYPT_MAX_PKCSIZE );
 	REQUIRES( component2Length >= 1 && component2Length <= CRYPT_MAX_PKCSIZE );
@@ -1081,6 +1269,55 @@ static int encodeDLValuesFunction( OUT_BUFFER( bufMaxSize, \
 	return( CRYPT_OK );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
+static int encodeECDLValuesFunction( OUT_BUFFER( bufMaxSize, \
+												 *bufSize ) BYTE *buffer, 
+									 IN_LENGTH_SHORT_MIN( 20 + 20 ) \
+										const int bufMaxSize, 
+									 OUT_LENGTH_SHORT_Z int *bufSize, 
+									 const BIGNUM *value1, 
+									 const BIGNUM *value2, 
+									 IN_ENUM( CRYPT_FORMAT ) \
+										const CRYPT_FORMAT_TYPE formatType )
+	{
+	STREAM stream;
+	int length = DUMMY_INIT, status;
+
+	assert( isWritePtr( buffer, bufMaxSize ) );
+	assert( isWritePtr( bufSize, sizeof( int ) ) );
+	assert( isReadPtr( value1, sizeof( BIGNUM ) ) );
+	assert( isReadPtr( value2, sizeof( BIGNUM ) ) );
+
+	REQUIRES( bufMaxSize >= 40 && bufMaxSize < MAX_INTLENGTH_SHORT );
+	REQUIRES( formatType > CRYPT_FORMAT_NONE && \
+			  formatType < CRYPT_FORMAT_LAST );
+
+	/* Clear return values */
+	memset( buffer, 0, min( 16, bufMaxSize ) );
+	*bufSize = 0;
+
+	/* In most cases the DLP and ECDLP formats are identical and we can just
+	   pass the call on to the DLP form, however SSH uses totally different 
+	   signature formats depending on whether the signature is DSA or ECDSA, 
+	   so we handle the SSH format explicitly here */
+	if( formatType != CRYPT_IFORMAT_SSH )
+		{
+		return( encodeDLValuesFunction( buffer, bufMaxSize, bufSize, 
+										value1, value2, formatType ) );
+		}
+	sMemOpen( &stream, buffer, bufMaxSize );
+	writeBignumInteger32( &stream, value1 );
+	status = writeBignumInteger32( &stream, value2 );
+	if( cryptStatusOK( status ) )
+		length = stell( &stream );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+	*bufSize = length;
+
+	return( CRYPT_OK );
+	}
+
 /****************************************************************************
 *																			*
 *							Context Access Routines							*
@@ -1105,16 +1342,16 @@ void initKeyWrite( INOUT CONTEXT_INFO *contextInfoPtr )
 
 		return;
 		}
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 	if( isEccAlgo( cryptAlgo ) )
 		{
 		pkcInfo->writePublicKeyFunction = writePublicKeyEccFunction;
 		pkcInfo->writePrivateKeyFunction = writePrivateKeyEccFunction;
-		pkcInfo->encodeDLValuesFunction = encodeDLValuesFunction;
+		pkcInfo->encodeDLValuesFunction = encodeECDLValuesFunction;
 
 		return;
 		}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	pkcInfo->writePublicKeyFunction = writePublicKeyRsaFunction;
 	pkcInfo->writePrivateKeyFunction = writePrivateKeyRsaFunction;
 	}

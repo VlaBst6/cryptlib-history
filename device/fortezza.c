@@ -22,8 +22,8 @@
   #include "crypt.h"
   #include "context/context.h"
   #include "device/device.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Uncomment the following to fake out writes to the card.  This makes 
@@ -140,6 +140,10 @@ typedef struct {
 #endif /* TR 24731 safe stdlib extensions */
 
 #ifdef USE_FORTEZZA
+
+#if defined( _MSC_VER )
+  #pragma message( "  Building with Fortezza device interface enabled." )
+#endif /* Warn with VC++ */
 
 /* Return a pointer to the n-th personality in a personality list */
 
@@ -631,8 +635,9 @@ static void getCertificateInfo( FORTEZZA_INFO *fortezzaInfo )
 	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	int certIndex, certSize;
 
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
-	memset( hashList, 0, fortezzaInfo->personalityCount * sizeof( CI_HASHVALUE ) );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
+	memset( hashList, 0, 
+			fortezzaInfo->personalityCount * sizeof( CI_HASHVALUE ) );
 	for( certIndex = 0; certIndex < fortezzaInfo->personalityCount && \
 						certIndex < FAILSAFE_ITERATIONS_MED; certIndex++ )
 		{
@@ -699,7 +704,8 @@ static void updateCertificateInfo( FORTEZZA_INFO *fortezzaInfo,
 		{
 		HASHFUNCTION_ATOMIC hashFunctionAtomic;
 
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+								 NULL );
 		hashFunctionAtomic( hashList[ certIndex ], sizeof( CI_HASHVALUE ),
 							certificate, certSize );
 		}
@@ -789,7 +795,9 @@ static int updateRawKey( FORTEZZA_INFO *fortezzaInfo, const int certIndex,
 	{
 	CI_CERT_STR label;
 	CI_CERTIFICATE certificate;
+#ifndef NO_UPDATE
 	int status;
+#endif /* NO_UPDATE */
 
 	/* Set the SDN.605 related certificate locator to indicate that no 
 	   parent or sibling certificates are present for this key, and use the 
@@ -880,7 +888,7 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 		setMessageData( &msgData, &hash, sizeof( CI_HASHVALUE ) );
 		if( cryptStatusError( \
 			krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
-							 &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA ) ) )
+							 &msgData, CRYPT_CERTINFO_FINGERPRINT_SHA1 ) ) )
 			return( CRYPT_ARGERROR_NUM1 );
 		certIndex = findCertFromHash( fortezzaInfo, hash );
 		if( !cryptStatusError( certIndex ) )
@@ -941,7 +949,8 @@ static int updateCertChain( FORTEZZA_INFO *fortezzaInfo,
 		int certIndex;
 
 		/* Get the keyID for the leaf certificate */
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+								 NULL );
 		setMessageData( &msgData, keyDataBuffer, 1024 );
 		if( cryptStatusError( \
 			krnlSendMessage( iCryptCert, IMESSAGE_GETATTRIBUTE_S,
@@ -1204,10 +1213,7 @@ static int initFunction( DEVICE_INFO *deviceInfo, const char *name,
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
 		retIntError();
 	if( cryptStatusError( status ) )
-		{
-		fortezzaInfo->errorInfo.errorCode = fortezzaStatus;
 		return( status );
-		}
 
 	/* Since the onboard clock could be arbitrarily inaccurate (and even 
 	   nonfunctional by now on older cards, since the design life was only
@@ -1345,7 +1351,6 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		if( status != CI_OK )
 			{
 			pCI_Reset();	/* Log off */
-			fortezzaInfo->errorInfo.errorCode = status;
 
 			return( CRYPT_ERROR_FAILED );
 			}
@@ -2854,7 +2859,7 @@ static const CAPABILITY_INFO capabilities[] = {
 	{ CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 		bitsToBytes( 1024 ), bitsToBytes( 1024 ), bitsToBytes( 1024 ), 
 		selfTestFunction, getDefaultInfo, NULL, NULL, initKeyFunction, generateKeyFunction, 
-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
 		signFunction, sigCheckFunction },
 
 	/* The Skipjack capabilities.  Note that we're using a LEAF-suppressed IV */

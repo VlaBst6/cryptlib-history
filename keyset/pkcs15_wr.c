@@ -7,16 +7,16 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
-  #include "pkcs15.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "keyset.h"
+  #include "pkcs15.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS15

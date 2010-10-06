@@ -720,16 +720,60 @@ int bcVsnprintf( char *buffer, const int bufSize, const char *format, va_list ar
   #define SHGFP_TYPE_CURRENT	0
 #endif /* !SHGFP_TYPE_CURRENT */
 
+HMODULE WINAPI loadExistingLibrary( IN_STRING LPCTSTR lpFileName )
+	{
+	HANDLE hFile;
+
+	/* Determine whether the DLL is present and accessible */
+	hFile = CreateFile( lpFileName, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+						FILE_ATTRIBUTE_NORMAL, NULL );
+	if( hFile == INVALID_HANDLE_VALUE )
+		return( NULL );
+	CloseHandle( hFile );
+
+	return( LoadLibrary( lpFileName ) );
+	}
+
+HMODULE WINAPI loadFromSystemDirectory( IN_STRING LPCTSTR lpFileName )
+	{
+	char path[ MAX_PATH + 8 ];
+	const int fileNameLength = strlen( lpFileName ) + 1;
+	int pathLength;
+
+	/* Get the path to a DLL in the system directory */
+	pathLength = \
+		GetSystemDirectory( path, MAX_PATH - ( fileNameLength + 8 ) );
+	if( pathLength < 1 || pathLength > MAX_PATH - ( fileNameLength + 8 ) )
+		return( NULL );
+	path[ pathLength++ ] = '\\';
+	memcpy( path + pathLength, lpFileName, fileNameLength );
+
+	return( loadExistingLibrary( path ) );
+	}
+
 HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	{
 	typedef HRESULT ( WINAPI *SHGETFOLDERPATH )( HWND hwndOwner,
 										int nFolder, HANDLE hToken,
 										DWORD dwFlags, LPTSTR lpszPath );
+	typedef struct {
+		const char *dllName; const int dllNameLen; 
+		} DLL_NAME_INFO;
+	static const DLL_NAME_INFO dllNameInfoTbl[] = {
+		{ "Crypt32.dll", 11 }, { "ComCtl32.dll", 12 },
+		{ "dnsapi.dll", 10 }, { "Mpr.dll", 7 },
+		{ "NetAPI32.dll", 12 }, { "ODBC32.dll", 10 },
+		{ "SetupAPI.dll", 12 }, { "SHFolder.dll", 12 },
+		{ "Shell32.dll", 11 }, { "WinHTTP.dll", 11 },
+		{ "wldap32.dll", 11 }, { "ws2_32.dll", 10 },
+		{ "wsock32.dll", 11 }, 
+		{ NULL, 0 }, { NULL, 0 }
+		};
 	SHGETFOLDERPATH pSHGetFolderPath;
 	HINSTANCE hShell32;
 	char path[ MAX_PATH + 8 ];
 	const int fileNameLength = strlen( lpFileName ) + 1;
-	int pathLength;
+	int pathLength, i;
 	BOOLEAN gotPath = FALSE;
 
 	/* If it's Win98 or NT4, just call LoadLibrary directly.  In theory
@@ -744,7 +788,22 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	if( lpFileName[ 0 ] == '/' || \
 		( fileNameLength > 3 && isAlpha( lpFileName[ 0 ] ) && \
 		  lpFileName[ 1 ] == ':' && lpFileName[ 2 ] == '/' ) )
-		return( LoadLibrary( lpFileName ) );
+		return( loadExistingLibrary( lpFileName ) );
+
+	/* If it's a well-known DLL, load it from the system directory */
+	for( i = 0; dllNameInfoTbl[ i ].dllName != NULL && \
+				i < FAILSAFE_ARRAYSIZE( dllNameInfoTbl, DLL_NAME_INFO ); i++ )
+		{
+		if( dllNameInfoTbl[ i ].dllNameLen == fileNameLength - 1 && \
+			!strCompare( dllNameInfoTbl[ i ].dllName, lpFileName, 
+						 fileNameLength - 1 ) )
+			{
+			/* It's a standard system DLL, load it from the system 
+			   directory */
+			return( loadFromSystemDirectory( lpFileName ) );
+			}
+		}
+	ENSURES_N( i < FAILSAFE_ARRAYSIZE( dllNameInfoTbl, DLL_NAME_INFO ) );
 
 	/* It's a system new enough to support SHGetFolderPath(), get the path
 	   to the system directory.  Unfortunately at this point we're in a 
@@ -759,7 +818,7 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	   directly we can't influence the paths over which further DLLs get 
 	   loaded.  So unfortunately the best that we can do is make the 
 	   attacker work a little harder rather than providing a full fix */
-	hShell32 = LoadLibrary( "Shell32.dll" );
+	hShell32 = loadFromSystemDirectory( "Shell32.dll" );
 	if( hShell32 != NULL )
 		{
 		pSHGetFolderPath = ( SHGETFOLDERPATH ) \
@@ -773,26 +832,30 @@ HMODULE WINAPI SafeLoadLibrary( IN_STRING LPCTSTR lpFileName )
 	if( !gotPath )
 		{
 		/* If for some reason we couldn't get the path to the Windows system
-		   directory (which would indicate there's something drastically 
-		   wrong), fall back to the default load */
-		return( LoadLibrary( lpFileName ) );
+		   directory this means that there's something drastically wrong,
+		   don't try and go any further */
+		return( NULL );
 		}
 	pathLength = strlen( path );
 	if( pathLength < 3 || pathLength + 1 + fileNameLength > MAX_PATH )
 		{
 		/* Under WinNT and Win2K the LocalSystem account doesn't have its 
 		   own profile so SHGetFolderPath() will report success but return a 
-		   zero-length path if we're running as a service so we have to 
-		   check for a valid-looking path as well as performing a general 
-		   check on the return status.  In effect prepending a zero-length
-		   path to the DLL name just turns the call into a standard 
-		   LoadLibrary() call, but we make the action explicit */
+		   zero-length path if we're running as a service.  To detect this 
+		   we have to check for a valid-looking path as well as performing a 
+		   general check on the return status.
+		   
+		   In effect prepending a zero-length path to the DLL name just 
+		   turns the call into a standard LoadLibrary() call, but we make 
+		   the action explicit here.  Unfortunately this reintroduces the
+		   security hole that we were trying to fix, and what's worse it's
+		   for the LocalSystem account (sigh). */
 		return( LoadLibrary( lpFileName ) );
 		}
 	path[ pathLength++ ] = '\\';
 	memcpy( path + pathLength, lpFileName, fileNameLength );
 
-	return( LoadLibrary( lpFileName ) );
+	return( loadExistingLibrary( path ) );
 	}
 
 /* Windows NT/2000/XP/Vista support ACL-based access control mechanisms for 
@@ -1027,34 +1090,6 @@ BOOL WINAPI DllEntryPoint( HINSTANCE hinstDLL, DWORD fdwReason, \
 	return( DllMain( hinstDLL, fdwReason, lpvReserved ) );
 	}
 #endif /* BC++ */
-
-/* When running in debug mode we provide a debugging printf() that sends its 
-   output to the debug console, this is normally done via a macro in a header
-   file that remaps the debug-output macros to the appropriate function but 
-   Windows only provides a puts()-equivalent and not a printf()-equivalent, 
-   so we have to provide our own */
-
-#if !defined( NDEBUG )
-
-int debugPrintf( const char *format, ... )
-	{
-	va_list argPtr;
-	char buffer[ 1024 ];
-	int length;
-
-	va_start( argPtr, format );
-
-#if VC_GE_2005( _MSC_VER )
-	length = vsnprintf_s( buffer, 1024, _TRUNCATE, format, argPtr );
-#else
-	length = vsprintf( buffer, format, argPtr );
-#endif /* VC++ 2005 or newer */
-	va_end( argPtr );
-	OutputDebugString( buffer );
-
-	return( length );
-	}
-#endif /* Debug build */
 
 #elif defined( __WIN16__ )
 
@@ -1483,15 +1518,16 @@ static int getHWInfo( void )
 	{
 	BOOLEAN hasAdvFeatures = 0;
 	char vendorID[ 12 + 8 ];
-	unsigned long processorID;
+	unsigned long processorID, featureFlags;
 	int sysCaps = 0;
 
-	/* Check whether the CPU supports extended features like CPUID and
-	   RDTSC, and get any info we need related to this.  There is an
-	   IsProcessorFeaturePresent() function, but all that this provides is
-	   an indication of the availability of rdtsc (alongside some stuff we
-	   don't care about, like MMX and 3DNow).  Since we still need to check
-	   for the presence of other features, we do the whole thing ourselves */
+	/* Check whether the CPU supports extended features like CPUID and 
+	   RDTSC, and get any info that we need related to this.  There is an 
+	   IsProcessorFeaturePresent() function, but all that this provides is 
+	   an indication of the availability of rdtsc (alongside some stuff that 
+	   we don't care about, like MMX and 3DNow).  Since we still need to 
+	   check for the presence of other features, we do the whole thing 
+	   ourselves */
 	__asm {
 		/* Detect the CPU type */
 		pushfd
@@ -1520,9 +1556,7 @@ static int getHWInfo( void )
 		mov eax, 1			/* CPUID function 1: Get processor info */
 		cpuid
 		mov [processorID], eax	/* Save processor ID */
-#if 0	/* No crypto-related features are reported in these flags */
-		mov [featureFlags], edx	/* Save processor feature info */
-#endif /* 0 */
+		mov [featureFlags], ecx	/* Save processor feature info */
 	noCPUID:
 		}
 
@@ -1533,7 +1567,7 @@ static int getHWInfo( void )
 
 	/* If there's a vendor ID present, check for vendor-specific special
 	   features */
-	if( hasAdvFeatures && !memcmp( vendorID, "CentaurHauls", 12 ) )
+	if( !memcmp( vendorID, "CentaurHauls", 12 ) )
 		{
 	__asm {
 		xor ebx, ebx
@@ -1544,9 +1578,9 @@ static int getHWInfo( void )
 		jb endCheck			/* No extended info available */
 		mov eax, 0xC0000001	/* Centaur extended feature flags */
 		cpuid
-		mov eax, edx		/* Save a copy of the feature flags */
-		and edx, 01100b
-		cmp edx, 01100b		/* Check for RNG present + enabled flags */
+		mov eax, edx		/* Work with saved copy of feature flags */
+		and eax, 01100b
+		cmp eax, 01100b		/* Check for RNG present + enabled flags */
 		jz noRNG			/* No, RNG not present or enabled */
 		or [sysCaps], HWCAP_FLAG_XSTORE	/* Remember that we have a HW RNG */
 	noRNG:
@@ -1570,11 +1604,115 @@ static int getHWInfo( void )
 	endCheck:
 		}
 		}
-	if( hasAdvFeatures && !memcmp( vendorID, "AuthenticAMD", 12 ) )
+	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
 		{
 		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
 		if( ( processorID & 0x05A0 ) == 0x05A0 )
 			sysCaps |= HWCAP_FLAG_TRNG;
+		}
+	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
+		{
+		/* Check for hardware AES support */
+		if( featureFlags & ( 1 << 25 ) )
+			sysCaps = HWCAP_FLAG_AES;
+
+		/* Check for the return of a hardware RNG */
+		if( featureFlags & ( 1 << 31 ) )
+			sysCaps = HWCAP_FLAG_RDRAND;
+		}
+
+	return( sysCaps );
+	}
+
+#elif defined( __WIN32__ )  && defined( _M_X64 )
+
+/* 64-bit VC++ doesn't allow inline asm, but does provide the __cpuid() 
+   builtin to perform the operation above.  We don't guard this with the 
+   NO_ASM check because it's not (technically) done with inline asm, 
+   although it's a bit unclear whether an intrinsic qualifies as asm or
+   C */
+
+#pragma intrinsic( __cpuid )
+
+typedef struct { unsigned int eax, ebx, ecx, edx; } CPUID_INFO;
+
+STDC_NONNULL_ARG( ( 1 ) ) \
+static void cpuID( OUT CPUID_INFO *result, const int type )
+	{
+	int intResult[ 4 ];	/* That's what the function prototype says */
+
+	/* Clear return value */
+	memset( result, 0, sizeof( CPUID_INFO ) );
+
+	/* Get the CPUID data and copy it back to the caller */
+	__cpuid( intResult, type );
+	result->eax = intResult[ 0 ];
+	result->ebx = intResult[ 1 ];
+	result->ecx = intResult[ 2 ];
+	result->edx = intResult[ 3 ];
+	}
+
+CHECK_RETVAL \
+static int getHWInfo( void )
+	{
+	CPUID_INFO cpuidInfo;
+	char vendorID[ 12 + 8 ];
+	int *vendorIDptr = ( int * ) vendorID;
+	unsigned long processorID, featureFlags;
+	int sysCaps = HWCAP_FLAG_RDTSC;	/* x86-64 always has RDTSC */
+
+	/* Get any CPU info that we need.  There is an 
+	   IsProcessorFeaturePresent() function, but all that this provides is 
+	   an indication of the availability of rdtsc (alongside some stuff that 
+	   we don't care about, like MMX and 3DNow).  Since we still need to 
+	   check for the presence of other features, we do the whole thing 
+	   ourselves */
+	cpuID( &cpuidInfo, 0 );
+	vendorIDptr[ 0 ] = cpuidInfo.ebx;
+	vendorIDptr[ 1 ] = cpuidInfo.edx;
+	vendorIDptr[ 2 ] = cpuidInfo.ecx;
+	cpuID( &cpuidInfo, 1 );
+	processorID = cpuidInfo.eax;
+	featureFlags = cpuidInfo.ecx;
+
+	/* Check for vendor-specific special features */
+	if( !memcmp( vendorID, "CentaurHauls", 12 ) )
+		{
+		/* Get the Centaur extended CPUID info and check whether the feature-
+		   flags read capability is present.  VIA only announced their 64-
+		   bit CPUs in mid-2010 and availability is limited so it's 
+		   uncertain whether this code will ever be exercised, but we provide 
+		   it anyway for compatibility with the 32-bit equivalent */
+		cpuID( &cpuidInfo, 0xC0000000 );
+		if( cpuidInfo.eax >= 0xC0000001 )
+			{
+			/* Get the Centaur extended feature flags */
+			cpuID( &cpuidInfo, 0xC0000000 );
+			if( ( cpuidInfo.edx & 0x000C ) == 0x000C )
+				sysCaps |= HWCAP_FLAG_XSTORE;
+			if( ( cpuidInfo.edx & 0x00C0 ) == 0x00C0 )
+				sysCaps |= HWCAP_FLAG_XCRYPT;
+			if( ( cpuidInfo.edx & 0x0C00 ) == 0x0C00 )
+				sysCaps |= HWCAP_FLAG_XSHA;
+			if( ( cpuidInfo.edx & 0x3000 ) == 0x3000 )
+				sysCaps |= HWCAP_FLAG_MONTMUL;
+			}
+		}
+	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
+		{
+		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
+		if( ( processorID & 0x05A0 ) == 0x05A0 )
+			sysCaps |= HWCAP_FLAG_TRNG;
+		}
+	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
+		{
+		/* Check for hardware AES support */
+		if( featureFlags & ( 1 << 25 ) )
+			sysCaps = HWCAP_FLAG_AES;
+
+		/* Check for the return of a hardware RNG */
+		if( featureFlags & ( 1 << 31 ) )
+			sysCaps = HWCAP_FLAG_RDRAND;
 		}
 
 	return( sysCaps );
@@ -1590,19 +1728,19 @@ CHECK_RETVAL \
 static int getHWInfo( void )
 	{
 	char vendorID[ 12 + 8 ];
-	unsigned long processorID;
+	unsigned long processorID, featureFlags;
 	int hasAdvFeatures = 0, sysCaps = 0;
 
-	/* Check whether the CPU supports extended features like CPUID and
-	   RDTSC, and get any info we need related to this.  The use of ebx is a
-	   bit problematic because gcc (via the IA32 ABI) uses ebx to store the
-	   address of the global offset table and gets rather upset if it gets
-	   changed, so we have to save/restore it around the cpuid call.  We
-	   have to be particularly careful here because ebx is used implicitly
-	   in references to sysCaps (which is a static int), so we save it as
-	   close to the cpuid instruction as possible and restore it immediately
-	   afterwards, away from any memory-referencing instructions that 
-	   implicitly use ebx */
+	/* Check whether the CPU supports extended features like CPUID and 
+	   RDTSC, and get any info that we need related to this.  The use of ebx 
+	   is a bit problematic because gcc (via the IA32 ABI) uses ebx to store 
+	   the address of the global offset table and gets rather upset if it 
+	   gets changed, so we have to save/restore it around the cpuid call.  
+	   We have to be particularly careful here because ebx is used 
+	   implicitly in references to sysCaps (which is a static int), so we 
+	   save it as close to the cpuid instruction as possible and restore it 
+	   immediately afterwards, away from any memory-referencing instructions 
+	   that implicitly use ebx */
 	asm volatile( "pushf\n\t"
 		"popl %%eax\n\t"
 		"movl %%eax, %%ecx\n\t"
@@ -1626,8 +1764,10 @@ static int getHWInfo( void )
 		"movl %%ecx, 8(%%eax)\n\t"
 		"movl $1, %%eax\n\t"	/* CPUID function 1: Get processor info */
 		"cpuid\n\t"
-		"leal %3, %%ecx\n\t"
-		"movl %%eax, (%%ecx)\n\t"	/* processorID */
+		"leal %3, %%ebx\n\t"
+		"movl %%eax, (%%ebx)\n\t"	/* processorID */
+		"leal %4, %%ebx\n\t"
+		"movl %%ecx, (%%ebx)\n\t"	/* featureFlags */
 		"popl %%ebx\n"		/* Restore PIC register */
 	"noCPUID:\n\n"
 #if 0	/* See comment in tools/ccopts.sh for why this is disabled */
@@ -1641,7 +1781,8 @@ static int getHWInfo( void )
 		: [hasAdvFeatures] "=m"(hasAdvFeatures),/* Output */
 			[sysCaps] "=m"(sysCaps),
 			[vendorID] "=m"(vendorID), 
-			[processorID] "=m"(processorID)
+			[processorID] "=m"(processorID),
+			[featureFlags] "=m"(featureFlags)
 		: [HW_FLAG_RDTSC] "i"(HWCAP_FLAG_RDTSC)/* Input */
 		: "%eax", "%ecx", "%edx"				/* Registers clobbered */
 		);
@@ -1653,7 +1794,7 @@ static int getHWInfo( void )
 
 	/* If there's a vendor ID present, check for vendor-specific special
 	   features.  Again, we have to be extremely careful with ebx */
-	if( hasAdvFeatures && !memcmp( vendorID, "CentaurHauls", 12 ) )
+	if( !memcmp( vendorID, "CentaurHauls", 12 ) )
 		{
 	asm volatile( "pushl %%ebx\n\t"	/* Save PIC register */
 		"movl $0xC0000000, %%eax\n\t"
@@ -1697,11 +1838,21 @@ static int getHWInfo( void )
 		 : "%eax", "%ecx", "%edx"	/* Registers clobbered */
 		);
 		}
-	if( hasAdvFeatures && !memcmp( vendorID, "AuthenticAMD", 12 ) )
+	if( !memcmp( vendorID, "AuthenticAMD", 12 ) )
 		{
 		/* Check for AMD Geode LX, family 0x5 = Geode, model 0xA = LX */
 		if( ( processorID & 0x05A0 ) == 0x05A0 )
 			sysCaps |= HWCAP_FLAG_TRNG;
+		}
+	if( !memcmp( vendorID, "GenuineIntel", 12 ) )
+		{
+		/* Check for hardware AES support */
+		if( featureFlags & ( 1 << 25 ) )
+			sysCaps = HWCAP_FLAG_AES;
+
+		/* Check for the return of a hardware RNG */
+		if( featureFlags & ( 1 << 31 ) )
+			sysCaps = HWCAP_FLAG_RDRAND;
 		}
 
 	return( sysCaps );

@@ -14,7 +14,11 @@
   #include "context/context.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#ifdef USE_ECDSA
+
+/* ECDSA has the same problem with parameters that DSA does (see the comment
+   in the DSA code for details), see "Digital Signature Schemes with Domain 
+   Parameters", Serge Vaudenay, ACISP'04, p.188 */
 
 /****************************************************************************
 *																			*
@@ -83,6 +87,48 @@ static int hashToBignum( BIGNUM *bigNum, const void *hash,
 *																			*
 ****************************************************************************/
 
+/* The SHA-256 hash of the string "Example of ECDSA with ansip256r1 and 
+   SHA-256".  Note that X9.62-2005 contains both the message text and its 
+   hash value, but the text (as given in X9.62) is wrong since it uses 
+   'ansix9p256r1' instead of 'ansip256r1'.  The text above matches the given 
+   hash value, and the rest of the test vector */
+
+static const FAR_BSS BYTE shaM[] = {
+	0x1B, 0xD4, 0xED, 0x43, 0x0B, 0x0F, 0x38, 0x4B,
+	0x4E, 0x8D, 0x45, 0x8E, 0xFF, 0x1A, 0x8A, 0x55,
+	0x32, 0x86, 0xD7, 0xAC, 0x21, 0xCB, 0x2F, 0x68,
+	0x06, 0x17, 0x2E, 0xF5, 0xF9, 0x4A, 0x06, 0xAD
+	};
+
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	DLP_PARAMS dlpParams;
+	BYTE buffer[ 128 + 8 ];
+	int sigSize, status;
+
+	/* Generate a signature with the private key */
+	setDLPParams( &dlpParams, shaM, 32, buffer, 128 );
+	dlpParams.inLen2 = -999;
+	status = capabilityInfoPtr->signFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Verify the signature with the public key */
+	sigSize = dlpParams.outLen;
+	setDLPParams( &dlpParams, shaM, 32, NULL, 0 );
+	dlpParams.inParam2 = buffer;
+	dlpParams.inLen2 = sigSize;
+	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
+
 /* Test the ECDSA implementation using the test vectors from ANSI
    X9.62-2005, in this case from section L.4.2, which uses P-256.  Note that
    the test vector contains the Q point in compressed format only.  Qy can 
@@ -124,19 +170,6 @@ static const FAR_BSS ECC_KEY ecdsaTestKey = {
 	  0xB9, 0x7D, 0xF1, 0x49, 0x8D, 0x50, 0xD2, 0xC8 }
 	};
 
-/* The SHA-256 hash of the string "Example of ECDSA with ansip256r1 and 
-   SHA-256".  Note that X9.62-2005 contains both the message text and its 
-   hash value, but the text (as given in X9.62) is wrong since it uses 
-   'ansix9p256r1' instead of 'ansip256r1'.  The text above matches the given 
-   hash value, and the rest of the test vector */
-
-static const FAR_BSS BYTE shaM[] = {
-	0x1B, 0xD4, 0xED, 0x43, 0x0B, 0x0F, 0x38, 0x4B,
-	0x4E, 0x8D, 0x45, 0x8E, 0xFF, 0x1A, 0x8A, 0x55,
-	0x32, 0x86, 0xD7, 0xAC, 0x21, 0xCB, 0x2F, 0x68,
-	0x06, 0x17, 0x2E, 0xF5, 0xF9, 0x4A, 0x06, 0xAD
-	};
-
 /* If we're doing a self-test using the X9.62 values we use the following
    fixed k data rather than a randomly-generated value.  The corresponding
    signature value for the fixed k should be:
@@ -150,31 +183,6 @@ static const FAR_BSS BYTE kVal[] = {
 	0xE5, 0xAC, 0x2B, 0xB2, 0x83, 0xED, 0x52, 0x84,
 	0xA5, 0x67, 0x47, 0x58, 0xB1, 0x2F, 0x08, 0xDF
 	};
-
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	DLP_PARAMS dlpParams;
-	BYTE buffer[ 128 + 8 ];
-	int sigSize, status;
-
-	/* Generate a signature with the private key */
-	setDLPParams( &dlpParams, shaM, 32, buffer, 128 );
-	dlpParams.inLen2 = -999;
-	status = capabilityInfoPtr->signFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-
-	/* Verify the signature with the public key */
-	sigSize = dlpParams.outLen;
-	setDLPParams( &dlpParams, shaM, 32, NULL, 0 );
-	dlpParams.inParam2 = buffer;
-	dlpParams.inLen2 = sigSize;
-	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	return( cryptStatusOK( status ) ? TRUE : FALSE );
-	}
 
 static int selfTest( void )
 	{
@@ -217,6 +225,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -591,11 +602,12 @@ static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_ECDSA, bitsToBytes( 0 ), "ECDSA", 5,
 	MIN_PKCSIZE_ECC, bitsToBytes( 256 ), CRYPT_MAX_PKCSIZE_ECC,
 	selfTest, getDefaultInfo, NULL, NULL, initKey, generateKey,
-	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, sign, sigCheck
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+	sign, sigCheck
 	};
 
 const CAPABILITY_INFO *getECDSACapability( void )
 	{
 	return( &capabilityInfo );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDSA */

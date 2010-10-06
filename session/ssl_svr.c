@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Server Management					*
-*					   Copyright Peter Gutmann 1998-2008					*
+*					   Copyright Peter Gutmann 1998-2010					*
 *																			*
 ****************************************************************************/
 
@@ -12,77 +12,12 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_SSL
-
-/****************************************************************************
-*																			*
-*								Legacy SSLv2 Functions						*
-*																			*
-****************************************************************************/
-
-#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox.  In practice Firefox *still* sends SSLv2 hellos (up to
-		   at least version 3.x) although the developers claim that it 
-		   doesn't, so if they say it doesn't then we don't have to handle
-		   them */
-
-/* Process an SSLv2 client hello:
-
-	uint16		suiteLen
-	uint16		sessIDlen
-	uint16		nonceLen
-	uint24[]	suites
-	byte[]		sessID
-	byte[]		nonce
-
-   The v2 type and version have already been processed in readHSPacketSSL() 
-   since this information, which is moved into the header in v3, is part of 
-   the body in v2.  What's left for the v2 hello is the remainder of the 
-   payload */
-
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
-static int processHelloSSLv2( INOUT SESSION_INFO *sessionInfoPtr, 
-							  INOUT SSL_HANDSHAKE_INFO *handshakeInfo, 
-							  INOUT STREAM *stream, 
-							  OUT int *resumedSessionID )
-	{
-	int suiteLength, sessionIDlength, nonceLength, status;
-
-	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
-	assert( isWritePtr( handshakeInfo, sizeof( HANDSHAKE_INFO ) ) );
-	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( isWritePtr( resumedSessionID, sizeof( int ) ) );
-
-	/* Clear return values */
-	*resumedSessionID = CRYPT_ERROR;
-
-	/* Read the SSLv2 hello */
-	suiteLength = readUint16( stream );
-	sessionIDlength = readUint16( stream );
-	nonceLength = readUint16( stream );
-	if( suiteLength < 3 || ( suiteLength % 3 ) != 0 || \
-		sessionIDlength < 0 || sessionIDlength > MAX_SESSIONID_SIZE || \
-		nonceLength < 16 || nonceLength > SSL_NONCE_SIZE )
-		{
-		retExt( CRYPT_ERROR_BADDATA,
-				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid legacy SSLv2 hello packet" ) );
-		}
-	status = processCipherSuite( sessionInfoPtr, handshakeInfo, stream, 
-								 suiteLength / 3 );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( sessionIDlength > 0 )
-		sSkip( stream, sessionIDlength );
-	return( sread( stream, handshakeInfo->clientNonce + \
-						   SSL_NONCE_SIZE - nonceLength, nonceLength ) );
-	}
-#endif /* 0 */
 
 /****************************************************************************
 *																			*
@@ -104,26 +39,13 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 
-	/* Read the hello packet from the client */
+	/* Read and process the client hello */
 	status = readHSPacketSSL( sessionInfoPtr, handshakeInfo, &length,
 							  SSL_MSG_FIRST_HANDSHAKE );
 	if( cryptStatusError( status ) )
 		return( status );
-
-	/* Process the client hello.  Although this should be a v3 hello, 
-	   Netscape always sends a v2 hello (even if SSLv2 is disabled) and
-	   in any case both MSIE 6 and Mozilla still have SSLv2 enabled by
-	   default (!!) so we have to process both types */
 	sMemConnect( stream, sessionInfoPtr->receiveBuffer, length );
-#if 0	/* 28/01/08 Disabled since it's now finally removed in MSIE and 
-		   Firefox (but see the comment for processHelloSSLv2() above) */
-	if( handshakeInfo->isSSLv2 )
-		status = processHelloSSLv2( sessionInfoPtr, handshakeInfo, 
-									stream, &resumedSessionID );
-	else
-#endif /* 0 */
-		status = processHelloSSL( sessionInfoPtr, handshakeInfo, stream, 
-								  TRUE );
+	status = processHelloSSL( sessionInfoPtr, handshakeInfo, stream, TRUE );
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
 		{
@@ -174,12 +96,15 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		byte		ID = SSL_HAND_SERVER_HELLO
 		uint24		len
 		byte[2]		version = { 0x03, 0x0n }
-		uint32		time			| Server nonce
-		byte[28]	nonce			|
+		byte[32]	nonce
 		byte		sessIDlen
 		byte[]		sessID
 		uint16		suite
 		byte		copr = 0
+	  [	uint16	extListLen		-- RFC 3546/RFC 4366
+			byte	extType
+			uint16	extLen
+			byte[]	extData ] 
 		...
 
 	   We have to be careful how we handle extensions because the RFC makes 
@@ -207,21 +132,7 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	writeUint16( stream, handshakeInfo->cipherSuite ); 
 	status = sputc( stream, 0 );	/* No compression */
 	if( handshakeInfo->hasExtensions )
-		{
-		/* If the client sent ECC extensions and we've negotiated an ECC 
-		   cipher suite, send back the appropriate response.  We don't have 
-		   to send back the curve ID that we've chosen because this is
-		   communicated explicitly in the server keyex */
-		if( isEccAlgo( handshakeInfo->keyexAlgo ) && \
-			handshakeInfo->sendECCPointExtn )
-			{
-			writeUint16( stream, ID_SIZE + UINT16_SIZE + 1 + 1 );
-			writeUint16( stream, TLS_EXT_EC_POINT_FORMATS );
-			writeUint16( stream, 1 + 1 );	/* Extn. length */
-			sputc( stream, 1 );				/* Point-format list len.*/
-			status = sputc( stream, 0 );	/* Uncompressed points */
-			}
-		}
+		status = writeServerExtensions( stream, handshakeInfo );
 	if( cryptStatusOK( status ) )
 		status = completeHSPacketStream( stream, packetOffset );
 	if( cryptStatusError( status ) )
@@ -237,7 +148,7 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		status = completePacketStreamSSL( stream, 0 );
 		if( cryptStatusOK( status ) )
-			status = dualMacDataWrite( handshakeInfo, stream );
+			status = hashHSPacketWrite( handshakeInfo, stream, 0 );
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
@@ -279,13 +190,17 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		byte[]		dh_g
 		uint16		dh_YsLen
 		byte[]		dh_Ys
+	  [	byte		hashAlgoID		-- TLS 1.2 ]
+	  [	byte		sigAlgoID		-- TLS 1.2 ]
 		uint16		signatureLen
 		byte[]		signature
 	   ECDH:
 		byte		curveType
 		uint16		namedCurve
-		uint8		ecPointLen	-- NB uint8 not uint16
-		uint16		ecPoint
+		uint8		ecPointLen		-- NB uint8 not uint16
+		byte[]		ecPoint
+	  [	byte		hashAlgoID		-- TLS 1.2 ]
+	  [	byte		sigAlgoID		-- TLS 1.2 ]
 		uint16		signatureLen
 		byte[]		signature */
 	if( isKeyxAlgo( handshakeInfo->keyexAlgo ) )
@@ -311,6 +226,7 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 										 &packetOffset );
 		if( cryptStatusError( status ) )
 			{
+			zeroise( &keyAgreeParams, sizeof( KEYAGREE_PARAMS ) );
 			sMemDisconnect( stream );
 			return( status );
 			}
@@ -318,8 +234,19 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		status = exportAttributeToStream( stream, handshakeInfo->dhContext,
 										  CRYPT_IATTRIBUTE_KEY_SSL );
 		if( cryptStatusOK( status ) )
-			status = writeInteger16U( stream, keyAgreeParams.publicValue, 
-									  keyAgreeParams.publicValueLen );
+			{
+			if( isEccAlgo( handshakeInfo->keyexAlgo ) )
+				{
+				sputc( stream, keyAgreeParams.publicValueLen );
+				swrite( stream, keyAgreeParams.publicValue,
+						keyAgreeParams.publicValueLen );
+				}
+			else
+				{
+				status = writeInteger16U( stream, keyAgreeParams.publicValue, 
+										  keyAgreeParams.publicValueLen );
+				}
+			}
 		if( cryptStatusOK( status ) )
 			{
 			keyDataLength = stell( stream ) - keyDataOffset;
@@ -341,15 +268,32 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
-	/*	...			(optional client certificate request)
+	/*	...			(optional request for client certificate authentication)
 		byte		ID = SSL_HAND_SERVER_CERTREQUEST
 		uint24		len
 		byte		certTypeLen
-		byte[2]		certType = { 1, 2, 64 } (RSA,DSA,ECDSA)
+		byte[]		certType = { RSA, DSA, ECDSA }
+	  [	uint16	sigHashListLen		-- TLS 1.2
+			byte	hashAlgoID
+			byte	sigAlgoID ]
 		uint16		caNameListLen = 4
 			uint16	caNameLen = 2
 			byte[]	caName = { 0x30, 0x00 }
-		... */
+		... 
+
+	   This message is a real mess, it originally had a rather muddled
+	   certificate-type indicator (which included things like "Ephemeral DH
+	   signed with RSA") and an equally ambiguous CA list that many 
+	   implementations either left empty or filled with the name of every
+	   CA that they'd ever heard of.  TLS 1.2 added a means of indicating 
+	   which signature and hash algorithms were acceptable, which is kind of 
+	   essential because the explosion of hash algorithms in 1.2 means
+	   that a server would have to run parallel hashes of every handshake
+	   message for every possible hash algorithm until the client sends
+	   their certificate-verify message (!!).  In other words although it 
+	   was planned as a means of indicating the server's capabilities, it 
+	   actually acts as a mechanism for keeping the client-auth process
+	   manageable */
 	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
 		{
 		const BOOLEAN dsaAvailable = algoAvailable( CRYPT_ALGO_DSA );
@@ -364,12 +308,33 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		sputc( stream, 1 + ( dsaAvailable ? 1 : 0 ) + \
 					   ( ecdsaAvailable ? 1 : 0 ) );
-		sputc( stream, 1 );			/* RSA */
+		sputc( stream, TLS_CERTTYPE_RSA );
 		if( dsaAvailable )
-			sputc( stream, 2 );		/* DSA */
+			sputc( stream, TLS_CERTTYPE_DSA );
 		if( ecdsaAvailable )
-			sputc( stream, 64 );	/* ECDSA */
-		writeUint16( stream, 4 );
+			sputc( stream, TLS_CERTTYPE_ECDSA );
+		if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+			{
+			/* Write the list of accepted signature and hash algorithms.  In
+			   theory we could write the full list of algorithms, but thanks
+			   to SSL/TLS' braindamaged way of handling certificate-based 
+			   authentication (see the comment above) this would make the 
+			   certificate-authentication process unmanageable.  To get 
+			   around this we only allow one single algorithm, the SHA-2 
+			   default for TLS 1.2+.  In addition we can't allow DSA because 
+			   it's only defined for use with SHA-1 (unless we go for 
+			   "DSA-2" / FIPS 186-3 key sizes like 2048 bits, which nothing 
+			   seems to support) */
+			writeUint16( stream, 2 + ( ecdsaAvailable ? 2 : 0 ) );
+			sputc( stream, TLS_HASHALGO_SHA2 );
+			sputc( stream, TLS_SIGALGO_RSA );
+			if( ecdsaAvailable )
+				{
+				sputc( stream, TLS_HASHALGO_SHA2 );
+				sputc( stream, TLS_SIGALGO_ECDSA );
+				}
+			}
+		writeUint16( stream, UINT16_SIZE + 2 );
 		writeUint16( stream, 2 );
 		status = swrite( stream, "\x30\x00", 2 );
 		if( cryptStatusOK( status ) )
@@ -394,12 +359,12 @@ int beginServerHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 
-	/* Send the combined server packets to the client.  We perform the dual 
-	   MAC'ing of the packets in between the network ops where it's 
-	   effectively free */
+	/* Send the combined server packets to the client.  We perform the 
+	   assorted hashing of the packets in between the network ops where 
+	   it's effectively free */
 	status = sendPacketSSL( sessionInfoPtr, stream, FALSE );
 	if( cryptStatusOK( status ) )
-		status = dualMacDataWrite( handshakeInfo, stream );
+		status = hashHSPacketWrite( handshakeInfo, stream, 0 );
 	sMemDisconnect( stream );
 	return( status );
 	}
@@ -446,7 +411,7 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		setMessageData( &msgData, certID, KEYID_SIZE );
 		status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
 								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
-								  CRYPT_CERTINFO_FINGERPRINT_SHA );
+								  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 		if( cryptStatusOK( status ) )
 			{
 			setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_CERTID, certID, 
@@ -464,6 +429,34 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 					  "Client certificate is not trusted for "
 					  "authentication purposes" ) );
 			}
+
+		/* Make sure that the key is of the appropriate size for the Suite B
+		   security level */
+#ifdef CONFIG_SUITEB
+		status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext, 
+								  IMESSAGE_GETATTRIBUTE, &length,
+								  CRYPT_CTXINFO_KEYSIZE );
+		if( cryptStatusOK( status ) )
+			{
+			const int suiteBtype = \
+						sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB;
+
+			if( ( suiteBtype == SSL_PFLAG_SUITEB_128 && \
+				  length != bitsToBytes( 256 ) ) || \
+				( suiteBtype == SSL_PFLAG_SUITEB_256 && \
+				  length != bitsToBytes( 384 ) ) )
+				{
+				sMemDisconnect( stream );
+				retExt( CRYPT_ERROR_INVALID,
+						( CRYPT_ERROR_INVALID, SESSION_ERRINFO, 
+						  "Client Suite B certificate uses %d-bit key at "
+						  "%d-bit security level, should use %d-bit key", 
+						  bytesToBits( length ), 
+						  ( suiteBtype == SSL_PFLAG_SUITEB_128 ) ? 128 : 256,
+						  ( suiteBtype == SSL_PFLAG_SUITEB_128 ) ? 256 : 384 ) );
+				}
+			}
+#endif /* CONFIG_SUITEB */
 
 		/* Read the next packet(s) if necessary */
 		status = refreshHSStream( sessionInfoPtr, handshakeInfo );
@@ -485,7 +478,7 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		uint16		userIDLen
 		byte[]		userID 
 	   RSA:
-	  [ uint16		encKeyLen - Omitted in SSL ]
+	  [ uint16		encKeyLen		-- TLS 1.x ]
 		byte[]		rsaPKCS1( byte[2] { 0x03, 0x0n } || byte[46] random ) */
 	status = checkHSPacketHeader( sessionInfoPtr, stream, &length,
 								  SSL_HAND_CLIENT_KEYEXCHANGE, 
@@ -498,18 +491,29 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	if( isKeyxAlgo( handshakeInfo->keyexAlgo ) )
 		{
 		KEYAGREE_PARAMS keyAgreeParams;
+		const BOOLEAN isECC = isEccAlgo( handshakeInfo->keyexAlgo );
 
 		memset( &keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
-		status = readInteger16UChecked( stream, keyAgreeParams.publicValue,
-										&keyAgreeParams.publicValueLen,
-										MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+		if( isECC )
+			{
+			status = readEcdhValue( stream, keyAgreeParams.publicValue,
+									CRYPT_MAX_PKCSIZE, 
+									&keyAgreeParams.publicValueLen );
+			}
+		else
+			{
+			status = readInteger16UChecked( stream, 
+											keyAgreeParams.publicValue,
+											&keyAgreeParams.publicValueLen,
+											MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+			}
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( stream );
 
 			/* Some misconfigured clients may use very short keys, we 
 			   perform a special-case check for these and return a more 
-			   specific message than the generic bad-data */
+			   specific message than the generic bad-data error */
 			if( status == CRYPT_ERROR_NOSECURE )
 				{
 				retExt( CRYPT_ERROR_NOSECURE,
@@ -519,7 +523,7 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 
 			retExt( CRYPT_ERROR_BADDATA,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-					  "Invalid DH phase 2 key agreement data" ) );
+					  "Invalid DH/ECDH phase 2 key agreement data" ) );
 			}
 
 		/* Perform phase 2 of the DH/ECDH key agreement */
@@ -532,7 +536,29 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			sMemDisconnect( stream );
 			retExt( status,
 					( status, SESSION_ERRINFO, 
-					  "Invalid DH phase 2 key agreement value" ) );
+					  "Invalid DH/ECDH phase 2 key agreement value" ) );
+			}
+		if( isECC )
+			{
+			const int xCoordLen = ( keyAgreeParams.wrappedKeyLen - 1 ) / 2;
+
+			/* The output of the ECDH operation is an ECC point, but for
+			   some unknown reason TLS only uses the x coordinate and not 
+			   the full point.  To work around this we have to rewrite the
+			   point as a standalone x coordinate, which is relatively
+			   easy because we're using an "uncompressed" point format: 
+
+				+---+---------------+---------------+
+				|04	|		qx		|		qy		|
+				+---+---------------+---------------+
+					|<- fldSize --> |<- fldSize --> | */
+			REQUIRES( keyAgreeParams.wrappedKeyLen >= MIN_PKCSIZE_ECCPOINT && \
+					  keyAgreeParams.wrappedKeyLen <= MAX_PKCSIZE_ECCPOINT && \
+					  ( keyAgreeParams.wrappedKeyLen & 1 ) == 1 && \
+					  keyAgreeParams.wrappedKey[ 0 ] == 0x04 );
+			memmove( keyAgreeParams.wrappedKey, 
+					 keyAgreeParams.wrappedKey + 1, xCoordLen );
+			keyAgreeParams.wrappedKeyLen = xCoordLen;
 			}
 		ENSURES( rangeCheckZ( 0, keyAgreeParams.wrappedKeyLen,
 							  CRYPT_MAX_PKCSIZE + CRYPT_MAX_TEXTSIZE ) );
@@ -615,11 +641,11 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			{
 			BYTE wrappedKey[ CRYPT_MAX_PKCSIZE + 8 ];
 
-			if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
+			if( sessionInfoPtr->version <= SSL_MINOR_VERSION_SSL )
 				{
 				/* The original Netscape SSL implementation didn't provide a 
 				   length for the encrypted key and everyone copied that so 
-				   it became the de facto standard way to do it (Sic faciunt 
+				   it became the de facto standard way to do it (sic faciunt 
 				   omnes.  The spec itself is ambiguous on the topic).  This 
 				   was fixed in TLS (although the spec is still ambigous) so 
 				   the encoding differs slightly between SSL and TLS.  To 
@@ -674,6 +700,15 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	   certificate verify */
 	if( sessionInfoPtr->cryptKeyset != CRYPT_ERROR )
 		{
+		const BOOLEAN isECC = isEccAlgo( handshakeInfo->keyexAlgo );
+
+		/* Since the client certificate-verify message requires the hash of
+		   all handshake packets up to this point, we have to interrupt the
+		   processing to calculate the hash before we continue */
+		status = createCertVerifyHash( sessionInfoPtr, handshakeInfo );
+		if( cryptStatusError( status ) )
+			return( status );
+
 		/* Read the next packet(s) if necessary */
 		status = refreshHSStream( sessionInfoPtr, handshakeInfo );
 		if( cryptStatusError( status ) )
@@ -686,7 +721,8 @@ int exchangeServerKeys( INOUT SESSION_INFO *sessionInfoPtr,
 			byte[]		signature */
 		status = checkHSPacketHeader( sessionInfoPtr, stream, &length,
 									  SSL_HAND_CLIENT_CERTVERIFY, 
-									  MIN_PKCSIZE );
+									  isECC ? MIN_PKCSIZE_ECCPOINT : \
+											  MIN_PKCSIZE );
 		if( cryptStatusOK( status ) )
 			status = checkCertVerify( sessionInfoPtr, handshakeInfo, stream, 
 									  length );

@@ -10,8 +10,10 @@
   #include "asn1.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -370,8 +372,10 @@ static int setCertTimeinfo( INOUT CERT_INFO *certInfoPtr,
 									   ( ( time_t ) updateInterval * 86400L );
 				}
 			}
+#ifdef USE_CERTREV
 		if( certInfoPtr->cCertRev->revocationTime <= MIN_TIME_VALUE )
 			certInfoPtr->cCertRev->revocationTime = currentTime;
+#endif /* USE_CERTREV */
 		}
 
 	return( CRYPT_OK );
@@ -480,11 +484,13 @@ static int initSignatureInfo( INOUT CERT_INFO *certInfoPtr,
 		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN || \
 		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT )
 		certInfoPtr->cCertCert->hashAlgo = *hashAlgo;
+#ifdef USE_CERTREV
 	else
 		{
 		if( certInfoPtr->type == CRYPT_CERTTYPE_CRL )
 			certInfoPtr->cCertRev->hashAlgo = *hashAlgo;
 		}
+#endif /* USE_CERTREV */
 
 	return( CRYPT_OK );
 	}
@@ -670,8 +676,7 @@ int signCertInfo( OUT_BUFFER( signedObjectMaxLength, *signedObjectLength ) \
 			  objectLength <= signedObjectMaxLength && \
 			  objectLength < MAX_INTLENGTH_SHORT );
 	REQUIRES( isHandleRangeValid( iSignContext ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( signatureLevel >= CRYPT_SIGNATURELEVEL_NONE && \
 			  signatureLevel < CRYPT_SIGNATURELEVEL_LAST );
 	REQUIRES( extraDataLength >= 0 && \
@@ -772,10 +777,14 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	CERT_INFO *issuerCertInfoPtr = NULL;
 	STREAM stream;
 	WRITECERT_FUNCTION writeCertFunction;
+#ifdef USE_CERTREV
 	const CRYPT_SIGNATURELEVEL_TYPE signatureLevel = \
 				( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST ) ? \
 					certInfoPtr->cCertRev->signatureLevel : \
 					CRYPT_SIGNATURELEVEL_NONE;
+#else
+	const CRYPT_SIGNATURELEVEL_TYPE signatureLevel = CRYPT_SIGNATURELEVEL_NONE;
+#endif /* USE_CERTREV */
 	const BOOLEAN isCertificate = \
 			( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
 			  certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
@@ -936,11 +945,13 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 		zeroise( certObjectPtr, certObjectLength );
 		if( certObjectPtr != certObjectBuffer )
 			clFree( "signCert", certObjectPtr );
-		ENSURES( cryptStatusError( status ) || \
-				!cryptStatusError( \
+		if( cryptStatusError( status ) )
+			return( status );
+		ANALYSER_HINT( certInfoPtr->certificate != NULL );
+		ENSURES( !cryptStatusError( \
 					checkObjectEncoding( certInfoPtr->certificate, \
 										 certInfoPtr->certificateSize ) ) );
-		return( status );
+		return( CRYPT_OK );
 		}
 #endif /* USE_CERTREQ || USE_CERTREV || USE_CERTVAL || USE_PKIUSER */
 
@@ -998,3 +1009,4 @@ int signCert( INOUT CERT_INFO *certInfoPtr,
 	return( recoverCertData( certInfoPtr, certInfoPtr->type, 
 							 signedCertObject, signedCertObjectLength ) );
 	}
+#endif /* USE_CERTIFICATES */

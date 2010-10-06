@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -45,7 +45,8 @@ static int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr,
 
 	REQUIRES( keyDataLength > 0 && keyDataLength < MAX_INTLENGTH_SHORT );
 
-	getHashAtomicParameters( CRYPT_ALGO_MD5, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_MD5, 0, &hashFunctionAtomic, 
+							 &hashSize );
 	hashFunctionAtomic( fingerPrint, CRYPT_MAX_HASHSIZE, 
 						keyData, keyDataLength );
 	if( attributeListPtr == NULL )
@@ -63,7 +64,7 @@ static int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr,
 	   fingerprint), calculate that instead */
 	if( attributeListPtr->valueLength == 20 )
 		{
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, 
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
 								 &hashSize );
 		hashFunctionAtomic( fingerPrint, CRYPT_MAX_HASHSIZE, 
 							keyData, keyDataLength );
@@ -121,22 +122,22 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
 
 	/*	...
-		byte	type = SSH2_MSG_KEXDH_GEX_REQUEST_OLD
+		byte	type = SSH_MSG_KEXDH_GEX_REQUEST_OLD
 		uint32	n = 1024 bits
 
 	   There's an alternative format that allows the client to specify a
 	   range of key sizes:
 
-		byte	type = SSH2_MSG_KEXDH_GEX_REQUEST_NEW
+		byte	type = SSH_MSG_KEXDH_GEX_REQUEST_NEW
 		uint32	min = 1024 bits
-		uint32	n = SSH2_DEFAULT_KEYSIZE (as bits)
+		uint32	n = SSH_DEFAULT_KEYSIZE (as bits)
 		uint32	max = CRYPT_MAX_PKCSIZE (as bits)
 
 	   but a number of implementations never really got around to supporting
 	   this properly, with some servers just dropping the connection without 
 	   any error response if they encounter the newer packet type */
 #if 1
-	status = continuePacketStreamSSH( stream, SSH2_MSG_KEXDH_GEX_REQUEST_OLD,
+	status = continuePacketStreamSSH( stream, SSH_MSG_KEXDH_GEX_REQUEST_OLD,
 									  &packetOffset );
 	if( cryptStatusOK( status ) )
 		{
@@ -144,7 +145,7 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 		status = writeUint32( stream, bytesToBits( SSH2_DEFAULT_KEYSIZE ) );
 		}
 #else
-	status = continuePacketStreamSSH( stream, SSH2_MSG_KEXDH_GEX_REQUEST_NEW,
+	status = continuePacketStreamSSH( stream, SSH_MSG_KEXDH_GEX_REQUEST_NEW,
 									  &packetOffset );
 	if( cryptStatusOK( status ) )
 		{
@@ -165,6 +166,7 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 	sMemDisconnect( stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( keyexInfoPtr != NULL );
 
 	/* Remember the encoded key size information for later when we generate 
 	   the exchange hash */
@@ -175,11 +177,11 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Process the ephemeral DH key:
 
-		byte	type = SSH2_MSG_KEXDH_GEX_GROUP
+		byte	type = SSH_MSG_KEXDH_GEX_GROUP
 		mpint	p
 		mpint	g */
 	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_KEXDH_GEX_GROUP,
+		readHSPacketSSH2( sessionInfoPtr, SSH_MSG_KEXDH_GEX_GROUP,
 						  ID_SIZE + sizeofString32( "", MIN_PKCSIZE ) + \
 							sizeofString32( "", 1 ) );
 	if( cryptStatusError( status ) )
@@ -214,6 +216,7 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 				  "Invalid DH ephemeral key data packet" ) );
 		}
+	ANALYSER_HINT( keyexInfoPtr != NULL );
 
 	/* Since this phase of the key negotiation exchanges raw key components
 	   rather than the standard SSH public-key format we have to rewrite the 
@@ -260,6 +263,39 @@ static int processDHE( INOUT SESSION_INFO *sessionInfoPtr,
 	return( CRYPT_OK );
 	}
 
+#ifdef USE_ECDH 
+
+/* Switch from using DH contexts and a DH exchange to the equivalent ECDH 
+   contexts and values */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int switchToECDH( INOUT SESSION_INFO *sessionInfoPtr,
+						 INOUT SSH_HANDSHAKE_INFO *handshakeInfo,
+						 INOUT KEYAGREE_PARAMS *keyAgreeParams )
+	{
+	int status;
+
+	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
+	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( keyAgreeParams, sizeof( KEYAGREE_PARAMS ) ) );
+
+	/* Destroy the existing DH context, replace it with an ECDH one, and 
+	   re-perform phase 1 of the ECDH key agreement process */
+	krnlSendNotifier( handshakeInfo->iServerCryptContext,
+					  IMESSAGE_DECREFCOUNT );
+	handshakeInfo->iServerCryptContext = CRYPT_ERROR;
+	status = initECDHcontextSSH( &handshakeInfo->iServerCryptContext,
+								 &handshakeInfo->serverKeySize, 
+								 handshakeInfo->keyexAlgo );
+	if( cryptStatusError( status ) )
+		return( status );
+	memset( keyAgreeParams, 0, sizeof( KEYAGREE_PARAMS ) );
+	return( krnlSendMessage( handshakeInfo->iServerCryptContext,
+							 IMESSAGE_CTX_ENCRYPT, keyAgreeParams,
+							 sizeof( KEYAGREE_PARAMS ) ) );
+	}
+#endif /* USE_ECDH */
+
 /****************************************************************************
 *																			*
 *						Client-side Connect Functions						*
@@ -297,13 +333,26 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   purposes so we hash the ID strings (first our client string, then the
 	   server string that we read previously) encoded as SSH string values 
 	   and without the CRLF terminator that we sent above, which isn't part
-	   of the hashed data */
-	status = hashAsString( handshakeInfo->iExchangeHashcontext, 
+	   of the hashed data.  In addition since the handshake can 
+	   retroactively switch to a different hash algorithm mid-exchange we 
+	   have to speculatively hash the messages with alternative algorithms
+	   in case the other side decides to switch */
+	status = hashAsString( handshakeInfo->iExchangeHashContext, 
 						   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
 	if( cryptStatusOK( status ) )
-		status = hashAsString( handshakeInfo->iExchangeHashcontext,
+		status = hashAsString( handshakeInfo->iExchangeHashContext,
 							   sessionInfoPtr->receiveBuffer,
 							   strlen( sessionInfoPtr->receiveBuffer ) );
+	if( cryptStatusOK( status ) && \
+		handshakeInfo->iExchangeHashAltContext != CRYPT_ERROR )
+		{
+		status = hashAsString( handshakeInfo->iExchangeHashAltContext, 
+							   SSH2_ID_STRING, SSH_ID_STRING_SIZE );
+		if( cryptStatusOK( status ) )
+			status = hashAsString( handshakeInfo->iExchangeHashAltContext,
+								   sessionInfoPtr->receiveBuffer,
+								   strlen( sessionInfoPtr->receiveBuffer ) );
+		}
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -328,11 +377,11 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Build the client hello and DH phase 1 keyex packet:
+	/* Build the client hello and DH/ECDH phase 1 keyex packet:
 
-		byte		type = SSH2_MSG_KEXINIT
+		byte		type = SSH_MSG_KEXINIT
 		byte[16]	cookie
-		string		keyex algorithms = DH/DHE
+		string		keyex algorithms = DH/DHE/ECDH
 		string		pubkey algorithms
 		string		client_crypto algorithms
 		string		server_crypto algorithms
@@ -367,7 +416,7 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   To avoid this problem we set keyex_follows to false to make it clear
 	   to the server that the keyex is the real thing and shouldn't be
 	   discarded */
-	status = openPacketStreamSSH( &stream, sessionInfoPtr, SSH2_MSG_KEXINIT );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, SSH_MSG_KEXINIT );
 	if( cryptStatusError( status ) )
 		return( status );
 	streamBookmarkSetFullPacket( &stream, clientHelloLength );
@@ -379,9 +428,7 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		return( status );
 		}
-	status = writeAlgoString( &stream, 
-							  ( handshakeInfo->requestedServerKeySize > 0 ) ? \
-							  CRYPT_PSEUDOALGO_DHE : CRYPT_ALGO_DH );
+	status = writeAlgoString( &stream, handshakeInfo->keyexAlgo );
 	if( cryptStatusOK( status ) )
 		status = writeAlgoString( &stream, handshakeInfo->pubkeyAlgo );
 	if( cryptStatusOK( status ) )
@@ -415,6 +462,7 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		return( status );
 		}
+	ANALYSER_HINT( clientHelloPtr != NULL );
 
 	/* Hash the client and server hello messages.  We have to do this now
 	   (rather than deferring it until we're waiting on network traffic from
@@ -422,7 +470,7 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   data if we're using a non-builtin DH key value.  In addition since the
 	   entire encoded packet (including the type value) is hashed we have to
 	   reconstruct this at the start of the packet */
-	status = hashAsString( handshakeInfo->iExchangeHashcontext, 
+	status = hashAsString( handshakeInfo->iExchangeHashContext, 
 						   clientHelloPtr, clientHelloLength );
 	if( cryptStatusOK( status ) )
 		{
@@ -430,8 +478,8 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 							  sessionInfoPtr->receiveBufSize ) );
 		memmove( sessionInfoPtr->receiveBuffer + 1, 
 				 sessionInfoPtr->receiveBuffer, serverHelloLength );
-		sessionInfoPtr->receiveBuffer[ 0 ] = SSH2_MSG_KEXINIT;
-		status = hashAsString( handshakeInfo->iExchangeHashcontext,
+		sessionInfoPtr->receiveBuffer[ 0 ] = SSH_MSG_KEXINIT;
+		status = hashAsString( handshakeInfo->iExchangeHashContext,
 							   sessionInfoPtr->receiveBuffer, 
 							   serverHelloLength + 1 );
 		}
@@ -457,24 +505,52 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 			}
 		}
 
+#ifdef USE_ECDH 
+	/* If we're using ECDH rather than DH we have to switch from DH contexts
+	   and a DH exchange to the equivalent ECDH contexts and values */
+	if( handshakeInfo->isECDH )
+		{
+		status = switchToECDH( sessionInfoPtr, handshakeInfo, 
+							   &keyAgreeParams );
+		if( cryptStatusError( status ) )
+			{
+			sMemDisconnect( &stream );
+			return( status );
+			}
+		}
+#endif /* USE_ECDH */
+
 	/*	...
-		byte	type = SSH2_MSG_KEXDH_INIT / SSH2_MSG_KEXDH_GEX_INIT
-		mpint	y */
+	   DH:
+		byte	type = SSH_MSG_KEXDH_INIT / SSH_MSG_KEXDH_GEX_INIT
+		mpint	y
+	   ECDH:
+		byte	type = SSH_MSG_KEX_ECDH_INIT
+		string	q_c */
 	if( handshakeInfo->requestedServerKeySize > 0 )
 		{
 		/* processDHE() has disconnected the stream as part of the ephemeral 
 		   DH packet exchange so we need to create a new stream */
 		status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-									  SSH2_MSG_KEXDH_GEX_INIT );
+									  SSH_MSG_KEXDH_GEX_INIT );
 		}
 	else
-		status = continuePacketStreamSSH( &stream, SSH2_MSG_KEXDH_INIT,
+		{
+		/* It's a DH/ECDH exchange with static keys, we specify the 
+		   SSH_MSG_KEXDH_INIT packet type which has the same value
+		   as SSH_MSG_KEX_ECDH_INIT */
+		status = continuePacketStreamSSH( &stream, SSH_MSG_KEXDH_INIT,
 										  &packetOffset );
+		}
 	if( cryptStatusOK( status ) )
 		{
 		streamBookmarkSet( &stream, keyexLength );
-		status = writeInteger32( &stream, keyAgreeParams.publicValue,
-								 keyAgreeParams.publicValueLen );
+		if( handshakeInfo->isECDH )
+			status = writeString32( &stream, keyAgreeParams.publicValue,
+									keyAgreeParams.publicValueLen );
+		else
+			status = writeInteger32( &stream, keyAgreeParams.publicValue,
+									 keyAgreeParams.publicValueLen );
 		}
 	if( cryptStatusOK( status ) )
 		status = streamBookmarkComplete( &stream, &keyexPtr, &keyexLength, 
@@ -494,9 +570,10 @@ static int beginClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( keyexPtr != NULL );
 
-	/* Save the MPI-encoded client DH keyex value for later, when we need to
-	   hash it */
+	/* Save the MPI-encoded client DH keyex value/octet string-encoded client 
+	   ECDH keyex value for later, when we need to hash it */
 	ENSURES( rangeCheckZ( 0, keyexLength, MAX_ENCODED_KEYEXSIZE ) );
 	memcpy( handshakeInfo->clientKeyexValue, keyexPtr, keyexLength );
 	handshakeInfo->clientKeyexValueLength = keyexLength;
@@ -529,12 +606,13 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSH_HANDSHAKE_INFO ) ) );
 
-	/* Process the DH phase 2 keyex packet:
+	/* Process the DH/ECDH phase 2 keyex packet:
 
-		byte		type = SSH2_MSG_KEXDH_REPLY / SSH2_MSG_KEXDH_GEX_REPLY
+	  DH + RSA/DSA
+		byte		type = SSH_MSG_KEXDH_REPLY / SSH_MSG_KEXDH_GEX_REPLY 
 		string		[ server key/certificate ]
 			string	"ssh-rsa"	"ssh-dss"
-			mpint	e			p
+			mpint	e			p			
 			mpint	n			q
 			mpint				g
 			mpint				y
@@ -542,6 +620,17 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		string		[ signature of handshake data ]
 			string	"ssh-rsa"	"ssh-dss"
 			string	signature	signature
+
+	   ECDH + ECDSA
+		byte		SSH_MSG_KEX_ECDH_REPLY
+		string		[ server key/certificate ]
+			string	"ecdsa-sha2-*"
+			string	"*"				-- The "*" portion from the above field
+			string	Q
+		string		q_s
+		string		[ signature of handshake data ]
+			string	"ecdsa-sha2-*"
+			string	signature
 
 	   First, we read and hash the server key/certificate.  Since this is
 	   already encoded as an SSH string we can hash it directly.
@@ -553,7 +642,7 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	status = length = \
 		readHSPacketSSH2( sessionInfoPtr,
 						  ( handshakeInfo->requestedServerKeySize > 0 ) ? \
-							SSH2_MSG_KEXDH_GEX_REPLY : SSH2_MSG_KEXDH_REPLY,
+							SSH_MSG_KEXDH_GEX_REPLY : SSH_MSG_KEXDH_REPLY,
 						  ID_SIZE + LENGTH_SIZE + sizeofString32( "", 6 ) + \
 							sizeofString32( "", 1 ) + \
 							sizeofString32( "", bitsToBytes( 512 ) - 4 ) + \
@@ -580,29 +669,41 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid DH phase 2 public key algorithm %d, expected %d",
-				  pubkeyAlgo, handshakeInfo->pubkeyAlgo ) );
+				  "Invalid %s phase 2 public key algorithm %d, expected %d",
+				  handshakeInfo->isECDH ? "ECDH" : "DH", pubkeyAlgo, 
+				  handshakeInfo->pubkeyAlgo ) );
 		}
 	streamBookmarkSet( &stream, keyBlobLength );
-	if( pubkeyAlgo == CRYPT_ALGO_RSA )
+	switch( pubkeyAlgo )
 		{
-		/* RSA e, n */
-		readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
-		status = readInteger32Checked( &stream, NULL, &dummy, 
-									   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
-		}
-	else
-		{
-		/* DSA p, q, g, y */
-		status = readInteger32Checked( &stream, NULL, &dummy, 
-									   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
-		if( cryptStatusOK( status ) )
-			{
+		case CRYPT_ALGO_RSA:
+			/* RSA e, n */
+			readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
+			status = readInteger32Checked( &stream, NULL, &dummy, 
+										   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+			break;
+
+		case CRYPT_ALGO_DSA:
+			/* DSA p, q, g, y */
+			status = readInteger32Checked( &stream, NULL, &dummy, 
+										   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
+			if( cryptStatusError( status ) )
+				break;
 			readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
 			readInteger32( &stream, NULL, &dummy, 1, CRYPT_MAX_PKCSIZE );
 			status = readInteger32Checked( &stream, NULL, &dummy, 
 										   MIN_PKCSIZE, CRYPT_MAX_PKCSIZE );
-			}
+			break;
+
+		case CRYPT_ALGO_ECDSA:
+			readUniversal32( &stream );		/* Skip field size */
+			status = readInteger32Checked( &stream, NULL, &dummy, 
+										   MIN_PKCSIZE_ECCPOINT, 
+										   MAX_PKCSIZE_ECCPOINT );
+			break;
+
+		default:
+			retIntError();
 		}
 	if( cryptStatusOK( status ) )
 		status = streamBookmarkComplete( &stream, &keyBlobPtr, 
@@ -626,7 +727,8 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid DH phase 2 server public key data" ) );
+				  "Invalid %s phase 2 server public key data",
+				  handshakeInfo->isECDH ? "ECDH" : "DH" ) );
 		}
 	setMessageData( &msgData, keyPtr, keyLength );
 	status = krnlSendMessage( sessionInfoPtr->iKeyexAuthContext,
@@ -639,9 +741,11 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 				CRYPT_ERROR_BADDATA : status,
 				( cryptArgError( status ) ? \
 				  CRYPT_ERROR_BADDATA : status, SESSION_ERRINFO, 
-				  "Invalid DH phase 2 server public key value" ) );
+				  "Invalid %s phase 2 server public key value",
+				  handshakeInfo->isECDH ? "ECDH" : "DH" ) );
 		}
-	status = krnlSendMessage( handshakeInfo->iExchangeHashcontext,
+	ANALYSER_HINT( keyBlobPtr != NULL );
+	status = krnlSendMessage( handshakeInfo->iExchangeHashContext,
 							  IMESSAGE_CTX_HASH, keyPtr, keyLength );
 	if( cryptStatusOK( status ) )
 		{
@@ -661,18 +765,35 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 		}
 
-	/* Read the server DH keyex value and complete the DH key agreement */
+	/* Read the server DH/ECDH keyex value and complete the DH/ECDH key 
+	   agreement */
 	status = readRawObject32( &stream, handshakeInfo->serverKeyexValue,
 							  MAX_ENCODED_KEYEXSIZE,
 							  &handshakeInfo->serverKeyexValueLength );
-	if( cryptStatusError( status ) || \
-		!isValidDHsize( handshakeInfo->clientKeyexValueLength,
-						handshakeInfo->serverKeySize, LENGTH_SIZE ) )
+	if( cryptStatusOK( status ) )
+		{
+		if( handshakeInfo->isECDH )
+			{
+			if( !isValidECDHsize( handshakeInfo->clientKeyexValueLength,
+								  handshakeInfo->serverKeySize, 
+								  LENGTH_SIZE ) )
+				status = CRYPT_ERROR_BADDATA;
+			}
+		else
+			{
+			if( !isValidDHsize( handshakeInfo->clientKeyexValueLength,
+								handshakeInfo->serverKeySize, 
+								LENGTH_SIZE ) )
+				status = CRYPT_ERROR_BADDATA;
+			}
+		}
+	if( cryptStatusError( status ) )
 		{
 		sMemDisconnect( &stream );
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid DH phase 2 keyex value" ) );
+				  "Invalid %s phase 2 keyex value",
+				  handshakeInfo->isECDH ? "ECDH" : "DH" ) );
 		}
 	status = completeKeyex( sessionInfoPtr, handshakeInfo, FALSE );
 	if( cryptStatusError( status ) )
@@ -694,8 +815,10 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid DH phase 2 packet signature data" ) );
+				  "Invalid %s phase 2 packet signature data",
+				  handshakeInfo->isECDH ? "ECDH" : "DH" ) );
 		}
+	ANALYSER_HINT( sigPtr != NULL );
 
 	/* Some implementations incorrectly format the signature packet,
 	   omitting the algorithm name and signature blob length for DSA sigs
@@ -757,7 +880,7 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Finally, verify the server's signature on the exchange hash */
 	status = iCryptCheckSignature( sigPtr, sigLength, CRYPT_IFORMAT_SSH,
 								   sessionInfoPtr->iKeyexAuthContext,
-								   handshakeInfo->iExchangeHashcontext, 
+								   handshakeInfo->iExchangeHashContext, 
 								   CRYPT_UNUSED, NULL );
 	if( cryptStatusError( status ) )
 		{
@@ -766,10 +889,16 @@ static int exchangeClientKeys( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Invalid handshake data signature" ) );
 		}
 
-	/* We don't need the hash context any more, get rid of it */
-	krnlSendNotifier( handshakeInfo->iExchangeHashcontext,
+	/* We don't need the exchange hash contexts any more, get rid of them */
+	krnlSendNotifier( handshakeInfo->iExchangeHashContext,
 					  IMESSAGE_DECREFCOUNT );
-	handshakeInfo->iExchangeHashcontext = CRYPT_ERROR;
+	handshakeInfo->iExchangeHashContext = CRYPT_ERROR;
+	if( handshakeInfo->iExchangeHashAltContext != CRYPT_ERROR )
+		{
+		krnlSendNotifier( handshakeInfo->iExchangeHashAltContext,
+						  IMESSAGE_DECREFCOUNT );
+		handshakeInfo->iExchangeHashAltContext = CRYPT_ERROR;
+		}
 
 	return( CRYPT_OK );
 	}
@@ -795,11 +924,11 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	/* Build our change cipherspec message and request authentication with
 	   the server:
 
-		byte	type = SSH2_MSG_NEWKEYS
+		byte	type = SSH_MSG_NEWKEYS
 		...
 
 	   After this point the write channel is in the secure state */
-	status = openPacketStreamSSH( &stream, sessionInfoPtr, SSH2_MSG_NEWKEYS );
+	status = openPacketStreamSSH( &stream, sessionInfoPtr, SSH_MSG_NEWKEYS );
 	if( cryptStatusOK( status ) )
 		status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, FALSE, TRUE );
 	if( cryptStatusError( status ) )
@@ -810,14 +939,14 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	sessionInfoPtr->flags |= SESSION_ISSECURE_WRITE;
 
 	/*	...
-		byte	type = SSH2_MSG_SERVICE_REQUEST
+		byte	type = SSH_MSG_SERVICE_REQUEST
 		string	service_name = "ssh-userauth".
 		
 	   For some reason SSH requires the use of two authentication messages, 
 	   an "I'm about to authenticate" packet and an "I'm authenticating" 
 	   packet, so we have to perform the authentication in two parts (dum 
 	   loquimur, fugerit invida aetas) */
-	status = continuePacketStreamSSH( &stream, SSH2_MSG_SERVICE_REQUEST,
+	status = continuePacketStreamSSH( &stream, SSH_MSG_SERVICE_REQUEST,
 									  &packetOffset );
 	if( cryptStatusOK( status ) )
 		status = writeString32( &stream, "ssh-userauth", 12 );
@@ -880,22 +1009,35 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Wait for the server's change cipherspec message.  From this point
 	   on the read channel is also in the secure state */
-	status = readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_NEWKEYS, ID_SIZE );
+	status = readHSPacketSSH2( sessionInfoPtr, SSH_MSG_NEWKEYS, ID_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );
 	sessionInfoPtr->flags |= SESSION_ISSECURE_READ;
 
 	/* Wait for the server's service-accept message that should follow in
-	   response to our change cipherspec */
-	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SERVICE_ACCEPT,
-						  ID_SIZE + sizeofString32( "", 8 ) );
-	if( cryptStatusError( status ) )
-		return( status );
-	if( !( sessionInfoPtr->protocolFlags & SSH_PFLAG_EMPTYSVCACCEPT ) )
+	   response to our change cipherspec.  Some buggy versions send an empty 
+	   service-accept packet so we only check the contents if it's a 
+	   correctly-formatted packet */
+	if( sessionInfoPtr->protocolFlags & SSH_PFLAG_EMPTYSVCACCEPT )
 		{
-		/* Some buggy versions send an empty service-accept packet so we
-		   only check the contents if it's a correctly-formatted packet */
+		/* It's a buggy implementation, just check for the presence of a 
+		   packet without looking at the contents */
+		status = readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SERVICE_ACCEPT, 
+								   ID_SIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	else
+		{
+		/* Check the service-accept packet:
+
+			byte	type = SSH_MSG_SERVICE_ACCEPT
+			string	service_name = "ssh-userauth" */
+		status = length = \
+			readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SERVICE_ACCEPT,
+							  ID_SIZE + sizeofString32( "", 8 ) );
+		if( cryptStatusError( status ) )
+			return( status );
 		sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
 		status = readString32( &stream, stringBuffer, CRYPT_MAX_TEXTSIZE,
 							   &stringLength );
@@ -939,7 +1081,7 @@ static int completeClientHandshake( INOUT SESSION_INFO *sessionInfoPtr,
 	   string	request_name = "no-more-sessions@openssh.com"
 	   boolean	want_reply = FALSE */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, CRYPT_USE_DEFAULT,
-								  SSH2_MSG_GLOBAL_REQUEST );
+								  SSH_MSG_GLOBAL_REQUEST );
 	writeString32( &stream, "no-more-sessions@openssh.com", 29 );
 	sputc( &stream, 0 );
 	status = wrapPacketSSH2( sessionInfoPtr, &stream, 0, TRUE, TRUE );

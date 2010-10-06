@@ -14,8 +14,8 @@
   #include "user.h"
 #else
   #include "cert/trustmgr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
 
@@ -340,7 +340,7 @@ static USER_FILE_INFO *findFreeEntry( IN_ARRAY( noUserIndexEntries ) \
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
-static int createUserEntry( OUT_PTR USER_FILE_INFO **userIndexPtrPtr,
+static int createUserEntry( OUT_OPT_PTR USER_FILE_INFO **userIndexPtrPtr,
 							IN_ARRAY( noUserIndexEntries ) \
 								USER_FILE_INFO *userIndex, 
 							IN_RANGE( 1, MAX_USER_OBJECTS ) \
@@ -570,7 +570,7 @@ static int readUserData( INOUT USER_FILE_INFO *userFileInfoPtr,
 	REQUIRES( userDataLength > 0 && userDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
-	memset( userFileInfoPtr, 0, sizeof( userFileInfoPtr ) );
+	memset( userFileInfoPtr, 0, sizeof( USER_FILE_INFO ) );
 
 	/* Read the user info */
 	sMemConnect( &stream, userData, userDataLength );
@@ -1058,7 +1058,8 @@ static int createPrimarySoUser( INOUT USER_INFO *userInfoPtr,
 
 /* Check whether a supplied password is the zeroise password */
 
-BOOLEAN isZeroisePassword( IN_BUFFER( passwordLength ) const char *password, 
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
+BOOLEAN isZeroisePassword( IN_BUFFER( passwordLen ) const char *password,
 						   IN_LENGTH_SHORT const int passwordLen )
 	{
 	assert( isReadPtr( password, passwordLen ) );
@@ -1076,6 +1077,7 @@ BOOLEAN isZeroisePassword( IN_BUFFER( passwordLength ) const char *password,
 
 /* Perform a zeroise */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int zeroiseUsers( INOUT USER_INFO *userInfoPtr )
 	{
 	USER_INDEX_INFO *userIndexInfo = userInfoPtr->userIndexPtr;
@@ -1179,7 +1181,8 @@ static int createUserKeyset( INOUT USER_INFO *defaultUserInfoPtr,
 
 /* Set/change the password for a user object */
 
-int setUserPassword( USER_INFO *userInfoPtr, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int setUserPassword( INOUT USER_INFO *userInfoPtr,
 					 IN_BUFFER( passwordLength ) const char *password, 
 					 IN_LENGTH_SHORT const int passwordLength )
 	{
@@ -1196,7 +1199,7 @@ int setUserPassword( USER_INFO *userInfoPtr,
 /*!!!!!! Dummy references to keep the compiler happy !!!!!*/
 /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 {
-USER_FILE_INFO *userFileInfoPtr = NULL;
+USER_FILE_INFO dummyUserInfo = { 0 }, *userFileInfoPtr = &dummyUserInfo;
 USER_INFO userInfo;
 
 ( void ) readUserData( userFileInfoPtr, "", 0 );
@@ -1249,12 +1252,11 @@ USER_INFO userInfo;
    and clean up after we're done with it */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initUserIndex( OUT_PTR void **userIndexPtrPtr )
+int initUserIndex( OUT_OPT_PTR void **userIndexPtrPtr )
 	{
 	CRYPT_KEYSET iIndexKeyset;
 	USER_INDEX_INFO *userIndexInfo;
-	char userFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
-	int userFilePathLen, noEntries, status;
+	int noEntries, status;
 
 	assert( isWritePtr( userIndexPtrPtr, sizeof( void * ) ) );
 
@@ -1263,7 +1265,13 @@ int initUserIndex( OUT_PTR void **userIndexPtrPtr )
 
 	/* Open the index file and read the index entries from it.  We open it
 	   in exclusive mode since nothing else should be accessing it at this
-	   point */
+	   point.
+
+	   What to do if this fails is a bit tricky (see the comment in
+	   createDefaultUserObject() for the config file read), however for the 
+	   index keyset it's a bit more clear-cut, we shouldn't fail if the
+	   access fails so we just skip it and continue, making it look as if
+	   we're in the zeroised state */
 	status = openIndexKeyset( &iIndexKeyset, CRYPT_IKEYOPT_EXCLUSIVEACCESS );
 	if( cryptStatusError( status ) )
 		{
@@ -1272,10 +1280,27 @@ int initUserIndex( OUT_PTR void **userIndexPtrPtr )
 		if( status == CRYPT_ERROR_NOTFOUND )
 			return( CRYPT_OK );
 
+		/* If keysets are disabled, we fall back to the hardwired 
+		   configuration parameters */
+		if( status == CRYPT_ERROR_NOTAVAIL )
+			return( CRYPT_OK );
+
+		/* Warn the user (in debug mode) that something went wrong */
+		DEBUG_DIAG(( "Couldn't read user index, assuming zeroised state" ));
+		assert( DEBUG_WARN );
+		DEBUG_PRINT(( "User index read failed with status %d.\n", status ));
+
+#if 0	/* Another problematic choice, should we potentially destroy a 
+		   damaged index or leave it for the user to fix up?  Since this 
+		   situation would never normally occur we leave it as a user-to-fix
+		   for now */
 		/* If there's something there but it's damaged, delete it so that we 
 		   can start again */
 		if( status == CRYPT_ERROR_BADDATA )
 			{
+			char userFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
+			int userFilePathLen;
+
 			status = fileBuildCryptlibPath( userFilePath, MAX_PATH_LENGTH, 
 											&userFilePathLen, "index", 5,
 											BUILDPATH_GETPATH );
@@ -1284,11 +1309,10 @@ int initUserIndex( OUT_PTR void **userIndexPtrPtr )
 				userFilePath[ userFilePathLen ] = '\0';
 				fileErase( userFilePath );
 				}
-
-			return( CRYPT_OK );
 			}
+#endif /* 0 */
 
-		return( status );
+		return( CRYPT_OK );
 		}
 
 	/* Allocate room for the user index and read it into the default user 

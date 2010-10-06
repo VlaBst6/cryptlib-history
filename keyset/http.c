@@ -7,12 +7,12 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
   #include "asn1.h"
+  #include "keyset.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_HTTP
@@ -230,8 +230,8 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	/* Since this isn't a general-purpose HTTP stream (of the kind used for 
 	   the HTTP-as-a-substrate PKI protocols) but is only being used for 
 	   HTTP 'GET' operations, we restrict the usage to just this operation */
-	sioctl( &httpInfo->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-			STREAM_HTTPREQTYPE_GET );
+	sioctlSet( &httpInfo->stream, STREAM_IOCTL_HTTPREQTYPES,  
+			   STREAM_HTTPREQTYPE_GET );
 	return( CRYPT_OK );
 	}
 

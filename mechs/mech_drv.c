@@ -1,19 +1,19 @@
 /****************************************************************************
 *																			*
 *				cryptlib Key Derivation Mechanism Routines					*
-*					Copyright Peter Gutmann 1992-2007						*
+*					Copyright Peter Gutmann 1992-2009						*
 *																			*
 ****************************************************************************/
 
 #ifdef INC_ALL
   #include "crypt.h"
-  #include "mech_int.h"
   #include "asn1.h"
+  #include "mech_int.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "mechs/mech_int.h"
-  #include "misc/asn1.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -263,8 +263,10 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 	   has specified the algorithm in terms of an HMAC we're synthesising it 
 	   from the underlying hash algorithm since this allows us to perform the
 	   PRF setup once and reuse the initial value for any future hashing */
-	getHashAtomicParameters( hashAlgo, &hashFunctionAtomic, &hashSize );
-	getHashParameters( hashAlgo, &hashFunction, NULL );
+	getHashAtomicParameters( hashAlgo, mechanismInfo->hashParam, 
+							 &hashFunctionAtomic, &hashSize );
+	getHashParameters( hashAlgo, mechanismInfo->hashParam, &hashFunction, 
+					   NULL );
 	status = prfInit( hashFunction, hashFunctionAtomic, initialHashInfo, 
 					  hashSize, processedKey, HMAC_DATASIZE, 
 					  &processedKeyLength, mechanismInfo->dataIn, 
@@ -303,6 +305,66 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 	return( CRYPT_OK );
 	}
 
+/* Apply PKCS #5v2 as a pure (single-round) KDF */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int kdfPKCS5( STDC_UNUSED void *dummy, 
+			  INOUT MECHANISM_KDF_INFO *mechanismInfo )
+	{
+	MECHANISM_DERIVE_INFO mechanismDeriveInfo;
+	MESSAGE_DATA msgData;
+	BYTE masterSecretBuffer[ CRYPT_MAX_KEYSIZE + 8 ];
+	BYTE keyBuffer[ CRYPT_MAX_KEYSIZE + 8 ];
+	int masterSecretSize, keySize = DUMMY_INIT, status;
+
+	UNUSED_ARG( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
+
+	/* Get the key payload details from the key contexts */
+	status = krnlSendMessage( mechanismInfo->masterKeyContext, 
+							  IMESSAGE_GETATTRIBUTE, &masterSecretSize,
+							  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusOK( status ) )
+		{
+		status = krnlSendMessage( mechanismInfo->keyContext, 
+								  IMESSAGE_GETATTRIBUTE, &keySize,
+								  CRYPT_CTXINFO_KEYSIZE );
+		}
+	if( cryptStatusError( status ) )
+		return( status );
+	ENSURES( masterSecretSize > 0 && \
+			 masterSecretSize <= CRYPT_MAX_KEYSIZE );
+
+	/* Extract the master secret value from the generic-secret context and 
+	   derive the key from it using PBKDF2 as the KDF */
+	status = extractKeyData( mechanismInfo->masterKeyContext,
+							 masterSecretBuffer, CRYPT_MAX_KEYSIZE, 
+							 "keydata", 7 );
+	if( cryptStatusError( status ) )
+		return( status );
+	setMechanismDeriveInfo( &mechanismDeriveInfo, keyBuffer, keySize,
+							masterSecretBuffer, masterSecretSize,
+							mechanismInfo->hashAlgo, mechanismInfo->salt,
+							mechanismInfo->saltLength, 1 );
+	mechanismDeriveInfo.hashParam = mechanismInfo->hashParam;
+	status = derivePKCS5( NULL, &mechanismDeriveInfo );
+	zeroise( masterSecretBuffer, CRYPT_MAX_KEYSIZE );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( keyBuffer, CRYPT_MAX_KEYSIZE );
+		return( status );
+		}
+
+	/* Load the derived key into the context */
+	setMessageData( &msgData, keyBuffer, keySize );
+	status = krnlSendMessage( mechanismInfo->keyContext, 
+							  IMESSAGE_SETATTRIBUTE_S, &msgData,
+							  CRYPT_CTXINFO_KEY );
+	zeroise( keyBuffer, CRYPT_MAX_KEYSIZE );
+
+	return( status );
+	}
+
 /****************************************************************************
 *																			*
 *							PKCS #12 Key Derivation 						*
@@ -311,65 +373,174 @@ int derivePKCS5( STDC_UNUSED void *dummy,
 
 #ifdef USE_PKCS12
 
-/* Concantenate enough copies of input data together to fill an output
+/* The nominal block size for PKCS #12 derivation, based on the MD5/SHA-1 
+   input size of 512 bits */
+
+#define P12_BLOCKSIZE		64
+
+/* The maximum size of the expanded diversifier, salt, and password (DSP),
+   one block for the expanded diversifier, one block for the expanded salt,
+   and up to three blocks for the password converted to Unicode with a
+   terminating \x00 appended, which for a maximum password length of
+   CRYPT_MAX_TEXTSIZE can be ( 64 + 1 ) * 2, rounded up to a multiple of
+   P12_BLOCKSIZE */
+
+#define P12_DSPSIZE			( P12_BLOCKSIZE + P12_BLOCKSIZE + \
+							  ( P12_BLOCKSIZE * 3 ) )
+
+/* Add two P12_BLOCKSIZE-byte blocks as 64-byte big-endian values:
+
+	dest = (dest + src + 1) mod 2^P12_BLOCKSIZE */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int add64( INOUT_BUFFER_FIXED( destLen ) BYTE *dest,
+				  IN_LENGTH_FIXED( P12_BLOCKSIZE ) const int destLen,
+				  IN_BUFFER( srcLen ) const BYTE *src,
+				  IN_LENGTH_FIXED( P12_BLOCKSIZE ) const int srcLen )
+	{
+	int destIndex, srcIndex, carry = 1;
+
+	assert( isWritePtr( dest, destLen ) );
+	assert( isReadPtr( src, srcLen ) );
+
+	REQUIRES( destLen == P12_BLOCKSIZE );
+	REQUIRES( srcLen == P12_BLOCKSIZE );
+
+	/* dest = (dest + src + 1) mod 2^P12_BLOCKSIZE */
+	for( destIndex = P12_BLOCKSIZE - 1, srcIndex = P12_BLOCKSIZE - 1;
+		 destIndex >= 0; destIndex--, srcIndex-- )
+		{
+		const int value = dest[ destIndex ] + src[ srcIndex ] + carry;
+		dest[ destIndex ] = intToByte( value & 0xFF );
+		carry = value >> 8;
+		}
+
+	return( CRYPT_OK );
+	}
+
+/* Concantenate enough copies of the input data together to fill an output 
    buffer */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-static int expandData( OUT_BUFFER_FIXED( outLen ) BYTE *outPtr, 
-					   IN_LENGTH_SHORT const int outLen, 
-					   IN_BUFFER( inLen ) const BYTE *inPtr, 
-					   IN_LENGTH_SHORT const int inLen )
+static int expandData( OUT_BUFFER_FIXED( destLen ) BYTE *dest, 
+					   IN_LENGTH_SHORT const int destLen, 
+					   IN_BUFFER( srcLen ) const BYTE *src, 
+					   IN_LENGTH_SHORT const int srcLen )
 	{
-	int remainder, iterationCount;
+	int index, iterationCount;
 
-	assert( isWritePtr( outPtr, outLen ) );
-	assert( isReadPtr( inPtr, inLen ) );
+	assert( isWritePtr( dest, destLen ) );
+	assert( isReadPtr( src, srcLen ) );
 
-	REQUIRES_V( outLen > 0 && outLen < MAX_INTLENGTH_SHORT );
-	REQUIRES_V( inLen > 0 && inLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( destLen > 0 && destLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( srcLen > 0 && srcLen < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
-	memset( outPtr, 0, min( 16, outLen ) );
+	memset( dest, 0, min( 16, destLen ) );
 
-	for( remainder = outLen, iterationCount = 0;
-		 remainder > 0 && iterationCount < FAILSAFE_ITERATIONS_SMALL;
+	for( index = 0, iterationCount = 0;
+		 index < destLen && iterationCount < FAILSAFE_ITERATIONS_MED;
 		 iterationCount++ )
 		{
-		const int bytesToCopy = min( inLen, remainder );
+		const int bytesToCopy = min( srcLen, destLen - index );
 
-		memcpy( outPtr, inPtr, bytesToCopy );
-		outPtr += bytesToCopy;
-		remainder -= bytesToCopy;
+		memcpy( dest, src, bytesToCopy );
+		dest += bytesToCopy;
+		index += bytesToCopy;
 		}
-	ENSURES( iterationCount < FAILSAFE_ITERATIONS_SMALL );
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+
+	return( CRYPT_OK );
 	}
 
-/* Perform PKCS #12 derivation.  This code is disabled by default with 
-   warnings against enabling it, it's only present here for completeness.
-   Note that it needs more evaluation as to its safety before it's ever 
-   enabled and used, the PKCS #12 derivation operations are extremely 
-   awkward and complex to audit */
+/* Build the diversifier/salt/password (DSP) string to use as the initial 
+   input to the hash function:
 
-#define P12_BLOCKSIZE	64
+	<---- 64 bytes ----><------- 64 bytes -------><-- Mult.64 bytes ->
+	[ ID | ID | ID ... ][ salt | salt | salt ... ][ pw | pw | pw ... ] */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 6 ) ) \
+static int initDSP( OUT_BUFFER( dspMaxLen, *dspLen ) BYTE *dsp,
+					IN_RANGE( P12_DSPSIZE, 512 ) const int dspMaxLen,
+					OUT_RANGE( 0, 512 ) int *dspLen,
+					IN_BUFFER( keyLength ) const BYTE *key,
+					IN_LENGTH_NAME const int keyLength,
+					IN_BUFFER( saltLength ) const BYTE *salt,
+					IN_RANGE( 1, P12_BLOCKSIZE ) const int saltLength,
+					IN_RANGE( 1, 3 ) const int diversifier )
+	{
+	BYTE bmpString[ ( ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 ) + 8 ];
+	BYTE *dspPtr = dsp;
+	int keyIndex, bmpIndex, i, status;
+
+	assert( isWritePtr( dsp, dspMaxLen ) );
+	assert( isWritePtr( dspLen, sizeof( int ) ) );
+	assert( isReadPtr( key, keyLength ) );
+	assert( isReadPtr( salt, saltLength ) );
+
+	REQUIRES( dspMaxLen >= P12_DSPSIZE && dspMaxLen <= 512 );
+	REQUIRES( diversifier >= 1 && diversifier <= 3 );
+	REQUIRES( saltLength >= 1 && saltLength <= P12_BLOCKSIZE );
+	REQUIRES( keyLength >= MIN_NAME_LENGTH && \
+			  keyLength <= CRYPT_MAX_TEXTSIZE );
+
+	/* Clear return values */
+	memset( dsp, 0, min( 16, dspMaxLen ) );
+	*dspLen = 0;
+
+	/* Set up the diversifier in the first P12_BLOCKSIZE bytes */
+	for( i = 0; i < P12_BLOCKSIZE; i++ )
+		dsp[ i ] = intToByte( diversifier );
+	dspPtr += P12_BLOCKSIZE;
+
+	/* Set up the salt in the next P12_BLOCKSIZE bytes */
+	status = expandData( dspPtr, P12_BLOCKSIZE, salt, saltLength );
+	if( cryptStatusError( status ) )
+		return( status );
+	dspPtr += P12_BLOCKSIZE;
+
+	/* Convert the password to a null-terminated Unicode string, a Microsoft
+	   bug that was made part of the standard */
+	for( keyIndex = 0, bmpIndex = 0; 
+		 keyIndex < keyLength && keyIndex < CRYPT_MAX_TEXTSIZE; 
+		 keyIndex++, bmpIndex += 2 )
+		{
+		bmpString[ bmpIndex ] = '\0';
+		bmpString[ bmpIndex + 1 ] = key[ keyIndex ];
+		}
+	ENSURES( keyIndex < CRYPT_MAX_TEXTSIZE );
+	bmpString[ bmpIndex++ ] = '\0';
+	bmpString[ bmpIndex++ ] = '\0';
+	ENSURES( dspMaxLen >= P12_BLOCKSIZE + P12_BLOCKSIZE + \
+						  roundUp( bmpIndex, P12_BLOCKSIZE ) );
+
+	/* Set up the Unicode password string as the remaining bytes */
+	status = expandData( dspPtr, roundUp( bmpIndex, P12_BLOCKSIZE ),
+						 bmpString, bmpIndex );
+	zeroise( bmpString, ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( dsp, dspMaxLen );
+		return( status );
+		}
+	*dspLen = P12_BLOCKSIZE + P12_BLOCKSIZE + \
+			  roundUp( bmpIndex, P12_BLOCKSIZE );
+	
+	return( CRYPT_OK );
+	}
+
+/* Perform PKCS #12 derivation */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int derivePKCS12( STDC_UNUSED void *dummy, 
 				  INOUT MECHANISM_DERIVE_INFO *mechanismInfo )
 	{
 	HASHFUNCTION_ATOMIC hashFunctionAtomic;
-	BYTE p12_DSP[ P12_BLOCKSIZE + P12_BLOCKSIZE + \
-				  ( ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 ) + 8 ];
-	BYTE p12_Ai[ P12_BLOCKSIZE + 8 ], p12_B[ P12_BLOCKSIZE + 8 ];
-	BYTE *bmpPtr = p12_DSP + P12_BLOCKSIZE + P12_BLOCKSIZE;
+	BYTE p12_DSP[ P12_DSPSIZE + 8 ];
+	BYTE p12_Ai[ CRYPT_MAX_HASHSIZE + 8 ], p12_B[ P12_BLOCKSIZE + 8 ];
 	BYTE *dataOutPtr = mechanismInfo->dataOut;
-	const BYTE *dataInPtr = mechanismInfo->dataIn;
 	const BYTE *saltPtr = mechanismInfo->salt;
-	const int bmpLen = ( mechanismInfo->dataInLength * 2 ) + 2;
-	const int p12_PLen = ( mechanismInfo->dataInLength <= 30 ) ? \
-							P12_BLOCKSIZE : \
-						 ( mechanismInfo->dataInLength <= 62 ) ? \
-							( P12_BLOCKSIZE * 2 ) : ( P12_BLOCKSIZE * 3 );
-	int hashSize, keyIndex, i, iterationCount, status;
+	int dspLen, hashSize, keyIndex, i, iterationCount, status;
 
 	UNUSED_ARG( dummy );
 	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
@@ -377,29 +548,15 @@ int derivePKCS12( STDC_UNUSED void *dummy,
 	/* Clear return value */
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
 
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( mechanismInfo->hashAlgo, 0, &hashFunctionAtomic, 
+							 &hashSize );
 
-	/* Set up the diversifier in the first P12_BLOCKSIZE bytes, the salt in
-	   the next P12_BLOCKSIZE bytes, and the password as a Unicode null-
-	   terminated string in the final bytes */
-	for( i = 0; i < P12_BLOCKSIZE; i++ )
-		p12_DSP[ i ] = saltPtr[ 0 ];
-	status = expandData( p12_DSP + P12_BLOCKSIZE, P12_BLOCKSIZE, 
-						 saltPtr + 1, mechanismInfo->saltLength - 1 );
-	if( cryptStatusError( status ) )
-		return( status );
-	for( i = 0; i < mechanismInfo->dataInLength && \
-				i < CRYPT_MAX_TEXTSIZE; i++ )
-		{
-		*bmpPtr++ = '\0';
-		*bmpPtr++ = dataInPtr[ i ];
-		}
-	ENSURES( i < CRYPT_MAX_TEXTSIZE );
-	*bmpPtr++ = '\0';
-	*bmpPtr++ = '\0';
-	status = expandData( p12_DSP + ( P12_BLOCKSIZE * 2 ) + bmpLen, 
-						 p12_PLen - bmpLen, p12_DSP + ( P12_BLOCKSIZE * 2 ), 
-						 bmpLen );
+	/* Set up the diversifier/salt/password (DSP) string.  The first byte of 
+	   the PKCS #12 salt acts as a diversifier so we separate this out from 
+	   the rest of the salt data */
+	status = initDSP( p12_DSP, P12_DSPSIZE, &dspLen, mechanismInfo->dataIn,
+					  mechanismInfo->dataInLength, saltPtr + 1,
+					  mechanismInfo->saltLength - 1, byteToInt( *saltPtr ) );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -407,63 +564,62 @@ int derivePKCS12( STDC_UNUSED void *dummy,
 	for( keyIndex = 0, iterationCount = 0; 
 		 keyIndex < mechanismInfo->dataOutLength && \
 			iterationCount < FAILSAFE_ITERATIONS_MED; 
-		 keyIndex += hashSize, dataOutPtr += hashSize, iterationCount++ )
+		 keyIndex += hashSize, iterationCount++ )
 		{
 		const int noKeyBytes = \
 			( mechanismInfo->dataOutLength - keyIndex > hashSize ) ? \
 			hashSize : mechanismInfo->dataOutLength - keyIndex;
-		BYTE *p12_DSPj;
+		int dspIndex;
 
 		/* Hash the keying material the required number of times to obtain the
 		   output value */
-		hashFunctionAtomic( p12_Ai, P12_BLOCKSIZE, p12_DSP,
-							P12_BLOCKSIZE + P12_BLOCKSIZE + p12_PLen );
+		hashFunctionAtomic( p12_Ai, CRYPT_MAX_HASHSIZE, p12_DSP, dspLen );
 		for( i = 1; i < mechanismInfo->iterations && \
 					i < FAILSAFE_ITERATIONS_MAX; i++ )
-			hashFunctionAtomic( p12_Ai, P12_BLOCKSIZE, p12_Ai, hashSize );
+			{
+			hashFunctionAtomic( p12_Ai, CRYPT_MAX_HASHSIZE, 
+								p12_Ai, hashSize );
+			}
 		ENSURES( i < FAILSAFE_ITERATIONS_MAX );
-		memcpy( dataOutPtr, p12_Ai, noKeyBytes );
-		if( noKeyBytes <= hashSize)
-			break;
+		memcpy( dataOutPtr + keyIndex, p12_Ai, noKeyBytes );
 
-		/* Update the input keying material for the next iteration */
+		/* Update the input keying material for the next iteration by 
+		   adding the output value expanded to P12_BLOCKSIZE, to 
+		   P12_BLOCKSIZE-sized blocks of the salt/password portion of the 
+		   DSP string */
 		status = expandData( p12_B, P12_BLOCKSIZE, p12_Ai, hashSize );
 		if( cryptStatusError( status ) )
-			return( status );
-		for( p12_DSPj = p12_DSP + P12_BLOCKSIZE; 
-			 p12_DSPj < p12_DSP + ( 2 * P12_BLOCKSIZE ) + p12_PLen; 
-			 p12_DSPj += P12_BLOCKSIZE )
+			break;
+		for( dspIndex = P12_BLOCKSIZE; dspIndex < dspLen; 
+			 dspIndex += P12_BLOCKSIZE )
 			{
-			int dspIndex = P12_BLOCKSIZE - 1, bIndex = P12_BLOCKSIZE - 1;
-			int carry = 1;
-
-			/* Ij = (Ij + B + 1) mod 2^BLOCKSIZE */
-			for( dspIndex = P12_BLOCKSIZE - 1, bIndex = P12_BLOCKSIZE - 1;
-				 dspIndex >= 0; dspIndex--, bIndex-- )
-				{
-				const int value = p12_DSPj[ dspIndex ] + p12_B[ bIndex ] + carry;
-				p12_DSPj[ dspIndex ] = value & 0xFF;
-				carry = value >> 8;
-				}
+			status = add64( p12_DSP + dspIndex, P12_BLOCKSIZE,
+							p12_B, P12_BLOCKSIZE );
+			if( cryptStatusError( status ) )
+				break;
 			}
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
-	zeroise( p12_DSP, P12_BLOCKSIZE + P12_BLOCKSIZE + \
-					  ( ( CRYPT_MAX_TEXTSIZE + 1 ) * 2 ) );
-	zeroise( p12_Ai, P12_BLOCKSIZE );
+	zeroise( p12_DSP, P12_DSPSIZE );
+	zeroise( p12_Ai, CRYPT_MAX_HASHSIZE );
 	zeroise( p12_B, P12_BLOCKSIZE );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( mechanismInfo->dataOut, mechanismInfo->dataOutLength );
+		return( status );
+		}
 
 	return( CRYPT_OK );
 	}
 #endif /* USE_PKCS12 */
-
-#ifdef USE_SSL
 
 /****************************************************************************
 *																			*
 *							SSL/TLS Key Derivation 							*
 *																			*
 ****************************************************************************/
+
+#ifdef USE_SSL
 
 /* Structure used to store TLS PRF state information */
 
@@ -502,8 +658,8 @@ int deriveSSL( STDC_UNUSED void *dummy,
 	/* Clear return value */
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
 
-	getHashParameters( CRYPT_ALGO_MD5, &md5HashFunction, &md5HashSize );
-	getHashParameters( CRYPT_ALGO_SHA1, &shaHashFunction, &shaHashSize );
+	getHashParameters( CRYPT_ALGO_MD5, 0, &md5HashFunction, &md5HashSize );
+	getHashParameters( CRYPT_ALGO_SHA1, 0, &shaHashFunction, &shaHashSize );
 
 	/* Produce enough blocks of output to fill the key */
 	for( keyIndex = 0, iterationCount = 0; 
@@ -671,13 +827,13 @@ int deriveTLS( STDC_UNUSED void *dummy,
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
 
 	memset( &md5Info, 0, sizeof( TLS_PRF_INFO ) );
-	getHashAtomicParameters( CRYPT_ALGO_MD5, &md5Info.hashFunctionAtomic, 
+	getHashAtomicParameters( CRYPT_ALGO_MD5, 0, &md5Info.hashFunctionAtomic, 
 							 &md5Info.hashSize );
-	getHashParameters( CRYPT_ALGO_MD5, &md5Info.hashFunction, NULL );
+	getHashParameters( CRYPT_ALGO_MD5, 0, &md5Info.hashFunction, NULL );
 	memset( &shaInfo, 0, sizeof( TLS_PRF_INFO ) );
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &shaInfo.hashFunctionAtomic, 
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &shaInfo.hashFunctionAtomic, 
 							 &shaInfo.hashSize );
-	getHashParameters( CRYPT_ALGO_SHA1, &shaInfo.hashFunction, NULL );
+	getHashParameters( CRYPT_ALGO_SHA1, 0, &shaInfo.hashFunction, NULL );
 
 	/* Find the start of the two halves of the keying info used for the
 	   HMACing.  The size of each half is given by ceil( dataInLength / 2 ) 
@@ -750,6 +906,67 @@ int deriveTLS( STDC_UNUSED void *dummy,
 
 	return( CRYPT_OK );
 	}
+
+/* Perform TLS 1.2 key derivation using a gratuitously incompatible PRF 
+   invented for TLS 1.2 */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
+int deriveTLS12( STDC_UNUSED void *dummy, 
+				 INOUT MECHANISM_DERIVE_INFO *mechanismInfo )
+	{
+	TLS_PRF_INFO shaInfo;
+	BYTE *dataOutPtr = mechanismInfo->dataOut;
+	const int dataOutLength = mechanismInfo->dataOutLength;
+	int keyIndex, iterationCount, status;
+
+	UNUSED_ARG( dummy );
+	assert( isWritePtr( mechanismInfo, sizeof( MECHANISM_DERIVE_INFO ) ) );
+
+	/* Clear return value */
+	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
+
+	memset( &shaInfo, 0, sizeof( TLS_PRF_INFO ) );
+	getHashAtomicParameters( mechanismInfo->hashAlgo, 
+							 mechanismInfo->hashParam,
+							 &shaInfo.hashFunctionAtomic, 
+							 &shaInfo.hashSize );
+	getHashParameters( mechanismInfo->hashAlgo, mechanismInfo->hashParam,
+					   &shaInfo.hashFunction, NULL );
+
+	/* Initialise the TLS PRF and calculate A1 = HMAC( salt ) */
+	status = tlsPrfInit( &shaInfo, mechanismInfo->dataIn, 
+						 mechanismInfo->dataInLength, mechanismInfo->salt,
+						 mechanismInfo->saltLength );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( &shaInfo, sizeof( TLS_PRF_INFO ) );
+		return( status );
+		}
+
+	/* Produce enough blocks of output to fill the key */
+	for( keyIndex = 0, iterationCount = 0; 
+		 keyIndex < dataOutLength && \
+			iterationCount < FAILSAFE_ITERATIONS_MED; 
+		 keyIndex += shaInfo.hashSize, iterationCount++ )
+		{
+		const int noKeyBytes = min( dataOutLength - keyIndex, \
+									shaInfo.hashSize );
+
+		status = tlsPrfHash( dataOutPtr + keyIndex, noKeyBytes, &shaInfo, 
+							 mechanismInfo->salt, mechanismInfo->saltLength );
+		if( cryptStatusError( status ) )
+			break;
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
+	zeroise( &shaInfo, sizeof( TLS_PRF_INFO ) );
+	if( cryptStatusError( status ) )
+		{
+		zeroise( mechanismInfo->dataOut, mechanismInfo->dataOutLength );
+		return( status );
+		}
+
+	return( CRYPT_OK );
+	}
 #endif /* USE_SSL */
 
 /****************************************************************************
@@ -760,7 +977,7 @@ int deriveTLS( STDC_UNUSED void *dummy,
 
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
 
-/* Implement one round of the TLS PRF */
+/* Implement one round of the OpenPGP PRF */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 6, 8, 10 ) ) \
 static int pgpPrfHash( OUT_BUFFER_FIXED( outLength ) BYTE *out, 
@@ -856,7 +1073,8 @@ int derivePGP( STDC_UNUSED void *dummy,
 	/* Clear return value */
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
 
-	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, &hashSize );
+	getHashParameters( mechanismInfo->hashAlgo, 0, &hashFunction, 
+					   &hashSize );
 
 	REQUIRES( mechanismInfo->dataOutLength < 2 * hashSize );
 
@@ -946,9 +1164,9 @@ int deriveCMP( STDC_UNUSED void *dummy,
 	memset( mechanismInfo->dataOut, 0, mechanismInfo->dataOutLength );
 
 	/* Calculate SHA1( password || salt ) */
-	getHashAtomicParameters( mechanismInfo->hashAlgo, &hashFunctionAtomic, 
-							 &hashSize );
-	getHashParameters( mechanismInfo->hashAlgo, &hashFunction, NULL );
+	getHashAtomicParameters( mechanismInfo->hashAlgo, 0, 
+							 &hashFunctionAtomic, &hashSize );
+	getHashParameters( mechanismInfo->hashAlgo, 0, &hashFunction, NULL );
 	hashFunction( hashInfo, NULL, 0, mechanismInfo->dataIn,
 				  mechanismInfo->dataInLength, HASH_STATE_START );
 	hashFunction( hashInfo, mechanismInfo->dataOut, 

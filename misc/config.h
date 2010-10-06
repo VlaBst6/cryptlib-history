@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Configuration Settings  					*
-*						Copyright Peter Gutmann 1992-2008					*
+*						Copyright Peter Gutmann 1992-2010					*
 *																			*
 ****************************************************************************/
 
@@ -9,11 +9,38 @@
 
 #define _CONFIG_DEFINED
 
-/* Note that VC 7.1 allows selective inheritance of defines set at the top
+/* The following defines can be used to enable specific specific cryptlib 
+   profiles that only enable the functionality needed for one particular
+   application:
+
+	#define CONFIG_PROFILE_SMIME
+	#define CONFIG_PROFILE_SSL
+	#define CONFIG_PROFILE_SSH
+
+   The configuration is set up in the section "Application Profiles" at the
+   end of this file.
+
+   Note that VC 7.1 allows selective inheritance of defines set at the top
    level into source files within projects.  For some bizarre reason this
    defaults to 'none' so that setting USE_xxx values at the project level
    doesn't filter down to any of the source files unless it's manually
-   enabled in the compiler config options */
+   enabled in the compiler config options.
+
+   In addition to the above profile defines, the following can be used to
+   remove entire blocks of cryptlib functionality.  Note that this sort of
+   thing would normally be done by the build command (e.g. in a makefile), 
+   the following is mostly intended for debugging */
+
+#if 0
+  #define CONFIG_NO_CERTIFICATES
+  #define CONFIG_NO_DEVICES
+  #define CONFIG_NO_ENVELOPES
+  #define CONFIG_NO_KEYSETS
+  #define CONFIG_NO_SESSIONS
+  #if defined( _WIN32 ) && defined( _MSC_VER ) && ( _MSC_VER == 1200 )
+	#define NO_OBSCURE_FEATURES
+  #endif /* Exception for testing rarely-used facilities under VC++ 6.0 */
+#endif /* 0 */
 
 /* General capabilities that affect further config options */
 
@@ -91,6 +118,11 @@
   #define USE_RC4
   #define USE_SKIPJACK
 #endif /* Obsolete and/or weak algorithms */
+#ifdef USE_PKCS12
+  /* If we use PKCS #12 then we have to enable RC2 in order to handle 
+	 Microsoft's continuing use of RC2-40 */
+  #define USE_RC2
+#endif /* USE_PKCS12 */
 
 /* Obscure algorithms */
 
@@ -102,11 +134,14 @@
   #define USE_RIPEMD160
 #endif /* Obscure algorithms */
 
-/* Algorithms not supported by most implementations.  At the moment we only 
-   enable these for the debug build for testing purposes */
+/* Obscure algorithms and modes not supported by most other implementations.  
+   Note that AES-GCM uses eight times as much memory as straight AES, and 
+   that's for the variant with the small lookup tables */
 
 #if !defined( NDEBUG ) && 0
-  #define USE_ECC
+  #define USE_ECDH
+  #define USE_ECDSA
+  #define USE_GCM
 #endif /* Win32 debug */
 
 /* Other algorithms.  Note that DES/3DES and SHA1 are always enabled as
@@ -139,20 +174,11 @@
   /* Remove further algorithms to save space */
   #undef USE_DSA
 #endif /* DOS */
-#if defined( __WIN32__ )
-  /* The slew of SHA-2 variants are still in a rather indeterminate state, 
-     it's uncertain (and probably very unlikely for the more obscure 
-	 versions) that they'll ever see much uptake so we only support SHA2-512 
-	 on systems where there's guaranteed standard 64-bit data type support.  
-	 In addition this algorithm isn't externally visible, it's only used 
-	 internally for one PRF that requires it as an optional algorithm */
-  #define USE_SHA2_512
-#endif /* __WIN32__ */
 
 /* General PKC context usage */
 
 #if defined( USE_DH ) || defined( USE_DSA ) || defined( USE_ELGAMAL ) || \
-	defined( USE_RSA ) || defined( USE_ECC )
+	defined( USE_RSA ) || defined( USE_ECDH ) || defined( USE_ECDSA )
   #define USE_PKC
 #endif /* PKC types */
 
@@ -200,10 +226,11 @@
    that can be quite counterintuitive unless you really understand the
    peculiarities in the standards */
 
-#define USE_CERTLEVEL_PKIX_PARTIAL
-#if 0
-  #define USE_CERTLEVEL_PKIX_FULL
-#endif /* 0 */
+#if !defined( USE_CERTLEVEL_PKIX_FULL ) && \
+	!defined( USE_CERTLEVEL_PKIX_PARTIAL ) && \
+	!defined( USE_CERTLEVEL_STANDARD )
+  #define USE_CERTLEVEL_PKIX_PARTIAL	/* Default level is PKIX_PARTIAL */
+#endif /* PKIX compliance level */
 #if defined( USE_CERTLEVEL_PKIX_FULL ) && !defined( USE_CERTLEVEL_PKIX_PARTIAL )
   /* USE_CERTLEVEL_PKIX_FULL implies USE_CERTLEVEL_PKIX_PARTIAL */
   #define USE_CERTLEVEL_PKIX_PARTIAL
@@ -217,7 +244,7 @@
 
 #if 0
   #define USE_CERT_OBSCURE
-  #define USE_CMS_OBSCURE
+  #define USE_CMSATTR_OBSCURE
   #define USE_CERT_OBSOLETE
 #endif /* 0 */
 
@@ -294,9 +321,9 @@
   #define USE_ENVELOPES
 #endif /* Enveloping types */
 
-#if defined( USE_ENVELOPE ) && !defined( USE_PKC )
+#if defined( USE_ENVELOPES ) && !defined( USE_PKC )
   #error Use of envelopes requires use of PKC algorithms to be enabled
-#endif /* USE_ENVELOPE && !USE_PKC */
+#endif /* USE_ENVELOPES && !USE_PKC */
 
 #endif /* CONFIG_NO_ENVELOPES */
 
@@ -532,26 +559,175 @@
 
 /****************************************************************************
 *																			*
-*							Anti-defines for Testing						*
+*							Application Profiles							*
+*																			*
+****************************************************************************/
+
+/* The following profiles can be used to enable specific functionality for
+   applications like SSL, SSH, and S/MIME */
+
+#if defined( CONFIG_PROFILE_SMIME ) || defined( CONFIG_PROFILE_SSH ) || \
+	defined( CONFIG_PROFILE_SSL )
+
+	/* Contexts */
+	#undef USE_BLOWFISH
+	#undef USE_CAST
+	#undef USE_ELGAMAL
+	#undef USE_HMAC_MD5
+	#undef USE_HMAC_RIPEMD160
+	#undef USE_IDEA
+	#undef USE_MD2
+	#undef USE_RC2
+	#undef USE_RC4
+	#undef USE_RC5
+	#undef USE_RIPEMD160
+	#undef USE_SKIPJACK
+
+	/* Certificates */
+	#undef USE_CERTREV
+	#undef USE_CERTVAL
+	#undef USE_CERTREQ
+	#undef USE_PKIUSER
+
+	/* Devices */
+	#undef USE_CRYPTOAPI
+	#undef USE_FORTEZZA
+	#undef USE_HARDWARE
+	#undef USE_PKCS11
+	#undef USE_DEVICES
+
+	/* Keysets */
+	#undef USE_DBMS
+	#undef USE_HTTP
+	#undef USE_LDAP
+	#undef USE_ODBC
+
+	/* Sessions */
+	#undef USE_CERTSTORE
+	#undef USE_CMP
+	#undef USE_OCSP
+	#undef USE_RTCS
+	#undef USE_SCEP
+	#undef USE_SSH1
+	#undef USE_TSP
+	#undef USE_DNSSRV
+
+#endif /* Application-specific profiles */
+
+#ifdef CONFIG_PROFILE_SSL
+	/* Contexts */
+	#undef USE_DSA
+
+	/* Certificates */
+	#undef USE_CMSATTR
+
+	/* Envelopes */
+	#undef USE_PGP
+	#undef USE_COMPRESSION
+
+	/* Keysets */
+	#undef USE_PGPKEYS
+
+	/* Sessions */
+	#undef USE_SSH
+
+#endif /* CONFIG_PROFILE_SSL */
+
+#ifdef CONFIG_PROFILE_SSH
+	/* Contexts */
+	#undef USE_DSA
+
+	/* Certificates */
+	#undef USE_CERTIFICATES
+	#undef USE_CMSATTR
+
+	/* Envelopes */
+	#undef USE_PGP
+	#undef USE_COMPRESSION
+
+	/* Keysets */
+	#undef USE_PGPKEYS
+
+	/* Sessions */
+	#undef USE_SSL
+
+#endif /* CONFIG_PROFILE_SSH */
+
+#ifdef CONFIG_PROFILE_SMIME
+
+	/* Contexts */
+	#undef USE_DH
+	#undef USE_DSA
+	#undef USE_HMAC_SHA2
+	#undef USE_SHA2
+
+	/* Envelopes */
+	#undef USE_PGP
+
+	/* Keysets */
+	#undef USE_PGPKEYS
+
+	/* Sessions */
+	#undef USE_SSH
+	#undef USE_SSL
+	#undef USE_TCP
+	#undef USE_SESSIONS
+
+#endif /* CONFIG_PROFILE_SSH */
+
+/****************************************************************************
+*																			*
+*						Defines for Testing and Custom Builds				*
 *																			*
 ****************************************************************************/
 
 /* Unsafe or obsolete facilities that are disabled by default, except in the 
    Win32 debug build under VC++ 6.0.  We have to be careful with the 
-   preprocessor checks because the MSC version check is only present if 
-   osspec.h is included */
+   preprocessor checks because the high-level feature-checking defines and
+   macros are only available if osspec.h is included, which it won't be at
+   this level */
 
-#if defined( __WINDOWS__ ) && !defined( __WINCE__ ) && !defined( NDEBUG ) && \
-	defined( _OSSPEC_DEFINED ) 
-  #if VC_LT_2005( _MSC_VER )
-	#define USE_CRYPTOAPI
-	#define USE_DNSSRV
-	#define USE_FORTEZZA
-	#define USE_LDAP
-	#define USE_CERT_DNSTRING
-	#define USE_SSH_EXTENDED
-  #endif /* Files that need the USE_xxx defines */
+#if defined( _WIN32 ) && defined( _MSC_VER ) && ( _MSC_VER == 1200 ) && \
+	!defined( NDEBUG ) && !defined( NO_OBSCURE_FEATURES ) && \
+	!( defined( __WINCE__ ) || defined( CONFIG_PROFILE_SMIME ) || \
+	   defined( CONFIG_PROFILE_SSH ) || defined( CONFIG_PROFILE_SSL ) )
+  #define USE_CERT_DNSTRING
+  #define USE_CRYPTOAPI
+  #define USE_DNSSRV
+  #define USE_ECDH
+  #define USE_ECDSA
+  #define USE_FORTEZZA
+  #define USE_GCM
+  #define USE_LDAP
+  #define USE_OAEP
+  #define USE_SSH_EXTENDED
 #endif /* Win32 debug build under VC++ 6.0 */
+
+/* If we're using a static analyser then we also enable some additional 
+   functionality to allow the analyser to check it */
+
+#if ( defined( _MSC_VER ) && defined( _PREFAST_ ) ) || \
+	( defined( __clang_analyzer__ ) )
+  #define USE_CERT_DNSTRING
+  #define USE_DNSSRV
+  #define USE_ECDH
+  #define USE_ECDSA
+  #define USE_GCM
+  #define USE_LDAP
+  #define USE_OAEP
+  #define USE_PKCS12
+  #define USE_SSH_EXTENDED
+#endif /* Static analyser builds */
+
+/* If we're using Suite B we have to explicitly enable certain algorithms, 
+   including extended forms of SHA-2 */
+
+#if defined( CONFIG_SUITEB )
+  #define USE_ECDH
+  #define USE_ECDSA
+  #define USE_GCM
+  #define USE_SHA2_EXT
+#endif /* Suite B */
 
 /* Rather than making everything even more complex and conditional than it
    already is, it's easier to undefine the features that we don't want in

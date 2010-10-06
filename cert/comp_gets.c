@@ -12,9 +12,11 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -81,7 +83,7 @@ static int oidToText( IN_BUFFER( binaryOidLen ) const BYTE *binaryOID,
 			if( length >= maxOidLen - 20 )
 				return( CRYPT_ERROR_BADDATA );
 
-			if( i == 2 )
+			if( length == 0 )
 				{
 				long x, y;
 
@@ -176,23 +178,23 @@ static int scanValue( IN_BUFFER( strMaxLength ) const char *string,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
-int textToOID( IN_BUFFER( oidLength ) const char *textOID, 
+int textToOID( IN_BUFFER( textOidLength ) const char *textOID, 
 			   IN_RANGE( MIN_ASCII_OIDSIZE, CRYPT_MAX_TEXTSIZE ) \
-					const int textOIDlength, 
+					const int textOidLength, 
 			   OUT_BUFFER( binaryOidMaxLen, *binaryOidLen ) BYTE *binaryOID, 
 			   IN_LENGTH_SHORT const int binaryOidMaxLen, 
 			   OUT_LENGTH_SHORT_Z int *binaryOidLen )
 	{
-	char *textOidPtr;
+	const char *textOidPtr;
 	long value, value2;
 	int length = 3, subLen, dataLeft, iterationCount, status;
 
-	assert( isReadPtr( textOID, textOIDlength ) );
+	assert( isReadPtr( textOID, textOidLength ) );
 	assert( isWritePtr( binaryOID, binaryOidMaxLen ) );
 	assert( isWritePtr( binaryOidLen, sizeof( int ) ) );
 
-	REQUIRES( textOIDlength >= MIN_ASCII_OIDSIZE && \
-			  textOIDlength <= CRYPT_MAX_TEXTSIZE );
+	REQUIRES( textOidLength >= MIN_ASCII_OIDSIZE && \
+			  textOidLength <= CRYPT_MAX_TEXTSIZE );
 	REQUIRES( binaryOidMaxLen >= 5 && \
 			  binaryOidMaxLen < MAX_INTLENGTH_SHORT );
 
@@ -202,7 +204,7 @@ int textToOID( IN_BUFFER( oidLength ) const char *textOID,
 
 	/* Perform some basic checks on the OID data */
 	status = dataLeft = strStripWhitespace( &textOidPtr, textOID, 
-											textOIDlength );
+											textOidLength );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_BADDATA );
 
@@ -369,9 +371,9 @@ static int getCertHash( INOUT CERT_INFO *certInfoPtr,
 	{
 	static const MAP_TABLE hashAlgoMapTbl[] = {
 		{ CRYPT_CERTINFO_FINGERPRINT_MD5, CRYPT_ALGO_MD5 },
-		{ CRYPT_CERTINFO_FINGERPRINT_SHA, CRYPT_ALGO_SHA1 },
-		{ CRYPT_IATTRIBUTE_FINGERPRINT_SHA2, CRYPT_ALGO_SHA2 },
-		{ CRYPT_IATTRIBUTE_FINGERPRINT_SHAng, CRYPT_ALGO_SHAng },
+		{ CRYPT_CERTINFO_FINGERPRINT_SHA1, CRYPT_ALGO_SHA1 },
+		{ CRYPT_CERTINFO_FINGERPRINT_SHA2, CRYPT_ALGO_SHA2 },
+		{ CRYPT_CERTINFO_FINGERPRINT_SHAng, CRYPT_ALGO_SHAng },
 		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
 	HASHFUNCTION_ATOMIC hashFunctionAtomic;
@@ -384,9 +386,9 @@ static int getCertHash( INOUT CERT_INFO *certInfoPtr,
 	assert( isWritePtr( certInfoLength, sizeof( int ) ) );
 
 	REQUIRES( certInfoType == CRYPT_CERTINFO_FINGERPRINT_MD5 || \
-			  certInfoType == CRYPT_CERTINFO_FINGERPRINT_SHA || \
-			  certInfoType == CRYPT_IATTRIBUTE_FINGERPRINT_SHA2 || \
-			  certInfoType == CRYPT_IATTRIBUTE_FINGERPRINT_SHAng );
+			  certInfoType == CRYPT_CERTINFO_FINGERPRINT_SHA1 || \
+			  certInfoType == CRYPT_CERTINFO_FINGERPRINT_SHA2 || \
+			  certInfoType == CRYPT_CERTINFO_FINGERPRINT_SHAng );
 	REQUIRES( ( certInfo == NULL && certInfoMaxLength == 0 ) || \
 			  ( certInfo != NULL && \
 				certInfoMaxLength > 0 && \
@@ -401,7 +403,7 @@ static int getCertHash( INOUT CERT_INFO *certInfoPtr,
 	status = mapValue( certInfoType, &hashAlgo, hashAlgoMapTbl, 
 					   FAILSAFE_ARRAYSIZE( hashAlgoMapTbl, MAP_TABLE ) );
 	ENSURES( cryptStatusOK( status ) );
-	getHashAtomicParameters( hashAlgo, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( hashAlgo, 0, &hashFunctionAtomic, &hashSize );
 	*certInfoLength = hashSize;
 	if( certInfo == NULL )
 		return( CRYPT_OK );
@@ -458,7 +460,7 @@ static int getESSCertID( INOUT CERT_INFO *certInfoPtr,
 	*certInfoLength = 0;
 
 	/* Get the certificate ID */
-	status = getCertHash( certInfoPtr, CRYPT_CERTINFO_FINGERPRINT_SHA, 
+	status = getCertHash( certInfoPtr, CRYPT_CERTINFO_FINGERPRINT_SHA1, 
 						  certHash, CRYPT_MAX_HASHSIZE, &certHashSize );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -1087,6 +1089,7 @@ int getCertComponentString( INOUT CERT_INFO *certInfoPtr,
 		restoreSelectionState( selectionState, certInfoPtr );
 		if( cryptStatusError( status ))
 			return( status );
+		ENSURES( attributePtr != NULL );
 
 		/* Get the attribute component data */
 		status = getAttributeDataPtr( attributePtr, &dataPtr, &dataLength );
@@ -1129,9 +1132,9 @@ int getCertComponentString( INOUT CERT_INFO *certInfoPtr,
 	switch( certInfoType )
 		{
 		case CRYPT_CERTINFO_FINGERPRINT_MD5:
-		case CRYPT_CERTINFO_FINGERPRINT_SHA:
-		case CRYPT_IATTRIBUTE_FINGERPRINT_SHA2:
-		case CRYPT_IATTRIBUTE_FINGERPRINT_SHAng:
+		case CRYPT_CERTINFO_FINGERPRINT_SHA1:
+		case CRYPT_CERTINFO_FINGERPRINT_SHA2:
+		case CRYPT_CERTINFO_FINGERPRINT_SHAng:
 			return( getCertHash( certInfoPtr, certInfoType, certInfo, 
 								 certInfoMaxLength, certInfoLength ) );
 
@@ -1355,6 +1358,7 @@ int getCertComponentString( INOUT CERT_INFO *certInfoPtr,
 				}
 #endif /* USE_CERTREV || USE_CERTVAL */
 
+#ifdef USE_CERTREQ
 		case CRYPT_IATTRIBUTE_AUTHCERTID:
 			/* An authorising certificate identifier will be present if
 			   the request was handled by cryptlib but not if it came from
@@ -1367,6 +1371,7 @@ int getCertComponentString( INOUT CERT_INFO *certInfoPtr,
 										 certInfoLength, 
 										 certInfoPtr->cCertReq->authCertID, 
 										 KEYID_SIZE ) );
+#endif /* USE_CERTREQ */
 
 		case CRYPT_IATTRIBUTE_ESSCERTID:
 			return( getESSCertID( certInfoPtr, certInfo, certInfoMaxLength, 
@@ -1375,3 +1380,4 @@ int getCertComponentString( INOUT CERT_INFO *certInfoPtr,
 
 	retIntError();
 	}
+#endif /* USE_CERTIFICATES */

@@ -67,7 +67,7 @@
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 #if 0	/* pcg */
 
@@ -319,4 +319,4 @@ int ec_GFp_mont_field_set_to_one(const EC_GROUP *group, BIGNUM *r, BN_CTX *ctx)
 	return 1;
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

@@ -503,10 +503,7 @@ void filenameParamFromTemplate( wchar_t *buffer,
 								const wchar_t *fileTemplate,
 								const int count )
 	{
-	int length;
-
-	length = _snwprintf( buffer, FILENAME_BUFFER_SIZE, fileTemplate,
-						 count );
+	_snwprintf( buffer, FILENAME_BUFFER_SIZE, fileTemplate, count );
 	}
 #endif /* UNICODE_STRINGS */
 
@@ -731,8 +728,7 @@ int multiThreadDispatch( THREAD_FUNC clientFunction,
 
 void printErrorAttributeInfo( const CRYPT_HANDLE cryptHandle )
 	{
-	int errorType, errorLocus;
-	int status;
+	int errorType, errorLocus, status;
 
 	status = cryptGetAttribute( cryptHandle, CRYPT_ATTRIBUTE_ERRORTYPE,
 								&errorType );
@@ -751,39 +747,22 @@ void printExtError( const CRYPT_HANDLE cryptHandle,
 					const int lineNo )
 	{
 	char errorMessage[ 512 ];
-	int errorCode = 0, errorMessageLength, status, msgStatus;
+	int errorMessageLength, status;
 
 	printf( "%s failed with error code %d, line %d.\n", functionName,
 			functionStatus, lineNo );
-	status = cryptGetAttribute( cryptHandle, CRYPT_ATTRIBUTE_INT_ERRORCODE,
-								&errorCode );
+	status = cryptGetAttributeString( cryptHandle, CRYPT_ATTRIBUTE_ERRORMESSAGE,
+									  errorMessage, &errorMessageLength );
 	if( cryptStatusError( status ) )
-		{
-		printf( "Read of error attributes failed with error code %d, "
-				"line %d.\n", status, __LINE__ );
-		return;
-		}
-	msgStatus = cryptGetAttributeString( cryptHandle,
-										 CRYPT_ATTRIBUTE_INT_ERRORMESSAGE,
-										 errorMessage, &errorMessageLength );
-	if( errorCode == 0 && cryptStatusError( msgStatus ) )
 		{
 		puts( "  No extended error information available." );
 		printErrorAttributeInfo( cryptHandle );
 		return;
 		}
-	if( errorCode != 0 )
-		printf( "  Extended error code = %d (0x%X).\n", errorCode, 
-				errorCode );
-	if( cryptStatusOK( msgStatus ) )
-		{
-		errorMessage[ errorMessageLength ] = '\0';
-		printf( "  Error message = %s'%s'.\n",
-				( errorMessageLength > ( 80 - 21 ) ) ? "\n  " : "", 
-				errorMessage );
-		}
-	else
-		puts( "." );
+	errorMessage[ errorMessageLength ] = '\0';
+	printf( "  Error message = %s'%s'.\n",
+			( errorMessageLength > ( 80 - 21 ) ) ? "\n  " : "", 
+			errorMessage );
 	printErrorAttributeInfo( cryptHandle );
 	}
 
@@ -1109,9 +1088,11 @@ int printConnectInfo( const CRYPT_SESSION cryptSession )
 
 int printSecurityInfo( const CRYPT_SESSION cryptSession,
 					   const BOOLEAN isServer,
-					   const BOOLEAN showFingerprint )
+					   const BOOLEAN showFingerprint,
+					   const BOOLEAN showServerKeyInfo,
+					   const BOOLEAN showClientCertInfo )
 	{
-	int cryptAlgo, keySize, version, status;
+	int cryptAlgo, keySize = DUMMY_INIT, version = DUMMY_INIT, status;
 
 	/* Print general security info */
 	status = cryptGetAttribute( cryptSession, CRYPT_CTXINFO_ALGO,
@@ -1131,6 +1112,31 @@ int printSecurityInfo( const CRYPT_SESSION cryptSession,
 	printf( "%sSession is protected using algorithm %d with a %d bit key,\n"
 			"  protocol version %d.\n", isServer ? "SVR: " : "",
 			cryptAlgo, keySize * 8, version );
+	if( showServerKeyInfo || showClientCertInfo ) 
+		{
+		CRYPT_CONTEXT serverKey;
+
+		status = cryptGetAttribute( cryptSession, CRYPT_SESSINFO_RESPONSE,
+									&serverKey );
+		if( cryptStatusOK( status ) )
+			{
+			status = cryptGetAttribute( serverKey, CRYPT_CTXINFO_ALGO,
+										&cryptAlgo );
+			if( cryptStatusOK( status ) )
+				status = cryptGetAttribute( serverKey, CRYPT_CTXINFO_KEYSIZE,
+											&keySize );
+			cryptDestroyContext( serverKey );
+			}
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't get server security parameters, status %d, line "
+					"%d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		printf( "%s key uses algorithm %d, key size %d bits.\n", 
+				showClientCertInfo ? "SVR: Client authentication" : "Server", 
+				cryptAlgo, keySize * 8 );
+		}
 	fflush( stdout );
 	if( isServer || !showFingerprint )
 		return( TRUE );
@@ -1156,9 +1162,13 @@ int printFingerprint( const CRYPT_SESSION cryptSession,
 				"%d, line %d.\n", status, __LINE__ );
 		return( FALSE );
 		}
-	printf( "%sServer key fingerprint =", isServer ? "SVR: " : "" );
+	printf( "%sServer key fingerprint =\n  ", isServer ? "SVR: " : "" );
 	for( i = 0; i < length; i++ )
-		printf( " %02X", fingerPrint[ i ] );
+		{
+		if( i > 0 )
+			putchar( ' ' );
+		printf( "%02X", fingerPrint[ i ] );
+		}
 	puts( "." );
 	fflush( stdout );
 
@@ -1167,21 +1177,36 @@ int printFingerprint( const CRYPT_SESSION cryptSession,
 
 /* Set up a client/server to connect locally.  For the client his simply
    tells it where to connect, for the server this binds it to the local
-   address so we don't inadvertently open up outside ports (admittedly
-   they can't do much except run the hardcoded self-test, but it's better
-   not to do this at all) */
+   (loopback) address so we don't inadvertently open up outside ports 
+   (admittedly they can't do much except run the hardcoded self-test, but 
+   it's better not to do this at all).
+
+   In order to allow testing against outside clients we optionally allow it
+   to be set to an external interface, but make it a compile-time option to
+   ensure that it can't be enabled by accident */
+
+#if 1
+  #define LOCAL_HOST_NAME		"localhost"
+#else
+  #define LOCAL_HOST_NAME		"192.168.1.45"
+#endif /* 0 */
 
 BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port )
 	{
 	int status;
 
+	if( LOCAL_HOST_NAME[ 0 ] != 'l' )
+		{
+		puts( "Warning: Enabling server on non-local interface '" 
+			  LOCAL_HOST_NAME "'." );
+		}
 	status = cryptSetAttributeString( cryptSession,
 									  CRYPT_SESSINFO_SERVER_NAME,
-									  TEXT( "localhost" ),
-									  paramStrlen( TEXT( "localhost" ) ) );
+									  TEXT( LOCAL_HOST_NAME ),
+									  paramStrlen( TEXT( LOCAL_HOST_NAME ) ) );
 #ifdef __UNIX__
 	/* If we're running under Unix, set the port to a nonprivileged one so
-	   we don't have to run as root.  For anything other than very low-
+	   that we don't have to run as root.  For anything other than very low-
 	   numbered ports (e.g. SSH), the way we determine the port is to repeat
 	   the first digit, so e.g. TSA on 318 becomes 3318, this seems to be
 	   the method most commonly used */
@@ -1223,7 +1248,7 @@ static void printOperationType( const CRYPT_SESSION cryptSession )
 		{ -1, "(Unknown)" }
 		};
 	char userID[ CRYPT_MAX_TEXTSIZE ];
-	int userIDsize, requestType, i, status;
+	int userIDsize = DUMMY_INIT, requestType, i, status;
 
 	status = cryptGetAttribute( cryptSession,
 								CRYPT_SESSINFO_CMP_REQUESTTYPE,
@@ -1350,7 +1375,7 @@ int displayAttributes( const CRYPT_HANDLE cryptHandle )
 
 static BOOLEAN isUnicode( const BYTE *value, const int length )
 	{
-	const wchar_t *wcValue = ( wchar_t * ) value;
+	wchar_t wcValue[ 8 + 4 ];
 
 	/* If it's an odd length or too short to reliably guess, report it as 
 	   non-Unicode */
@@ -1362,6 +1387,10 @@ static BOOLEAN isUnicode( const BYTE *value, const int length )
 	if( isprint( value[ 0 ] ) && isprint( value[ 1 ] ) && \
 		isprint( value[ 2 ] ) && isprint( value[ 3 ] ) )
 		return( FALSE );
+
+	/* Copy the byte-aligned value into a local wchar_t-aligned buffer for
+	   analysis */
+	memcpy( wcValue, value, min( 8, length ) );
 
 	/* Check whether the first 3 widechars have identical high bytes.  This
 	   isn't totally reliable (e.g. "tanaka" will give a false positive, 
@@ -1415,8 +1444,7 @@ static int printComponent( const CRYPT_CERTIFICATE certificate,
 	char buffer[ 1024 + 1 ];
 	int length, status;
 
-	status = cryptGetAttributeString( certificate, component, 
-									  buffer, &length );
+	status = cryptGetAttributeString( certificate, component, NULL, &length );
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_NOTAVAIL && \
@@ -1428,10 +1456,22 @@ static int printComponent( const CRYPT_CERTIFICATE certificate,
 			}
 		return( FALSE );
 		}
+	if( length > 1024 )
+		{
+		/* This should never happen since the longest permitted component 
+		   string has 128 characters, but we check for it just in case */
+		puts( "  (Name is too long to display, > 1K characters)." ); 
+		return( FALSE );
+		}
+	status = cryptGetAttributeString( certificate, component, buffer, 
+									  &length );
 	if( isUnicode( buffer, length ) )
 		{
-		wchar_t *wcBuffer = ( wchar_t * ) buffer;
+		wchar_t wcBuffer[ 1024 + 1 ];
 
+		/* Copy the byte-aligned value into a local wchar_t-aligned buffer 
+		   for display */
+		memcpy( wcBuffer, buffer, length );
 		wcBuffer[ length / sizeof( wchar_t ) ] = TEXT( '\0' );
 		printf( "  %s = %S.\n", prefixString, wcBuffer ); 
 		return( TRUE );

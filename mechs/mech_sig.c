@@ -7,14 +7,14 @@
 
 #ifdef INC_ALL
   #include "crypt.h"
-  #include "mech_int.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "mech_int.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "mechs/mech_int.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -104,8 +104,7 @@ static int compareHashInfo( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isReadPtr( hash, hashSize ) );
 
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 	REQUIRES( hashSize >= 16 && hashSize <= CRYPT_MAX_HASHSIZE );
 
 	/* Read the encoded hash data as a blob */
@@ -167,7 +166,7 @@ static int checkRecoveredSignature( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_FAILED );
 
-	/* Make sure that recovered data matches the original data */
+	/* Make sure that the recovered data matches the original data */
 	if( sigDataLen != sigLen || \
 		!compareDataConstTime( sigData, recoveredSignature, sigLen ) )
 		{
@@ -177,7 +176,7 @@ static int checkRecoveredSignature( IN_HANDLE const CRYPT_CONTEXT iSignContext,
 		}
 	zeroise( recoveredSignature, CRYPT_MAX_PKCSIZE );
 
-	return( CRYPT_OK );
+	return( status );
 	}
 
 /****************************************************************************
@@ -231,6 +230,7 @@ static int sign( INOUT MECHANISM_SIGN_INFO *mechanismInfo,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* If this is just a length check, we're done */
 	if( mechanismInfo->signature == NULL )
@@ -374,6 +374,7 @@ static int sigcheck( INOUT MECHANISM_SIGN_INFO *mechanismInfo,
 		}
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* Format the input data as required for the signatue check to work */
 	status = adjustPKCS1Data( decryptedSignature, CRYPT_MAX_PKCSIZE,

@@ -1,18 +1,18 @@
 /****************************************************************************
 *																			*
 *						cryptlib CMS Enveloping Routines					*
-*					    Copyright Peter Gutmann 1996-2008					*
+*					    Copyright Peter Gutmann 1996-2010					*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_ENVELOPES
@@ -73,12 +73,51 @@ BOOLEAN cmsCheckAlgo( IN_ALGO const CRYPT_ALGO_TYPE cryptAlgo,
 					  IN_MODE_OPT const CRYPT_MODE_TYPE cryptMode )
 	{
 	REQUIRES_B( cryptAlgo > CRYPT_ALGO_NONE && \
-				cryptAlgo < CRYPT_ALGO_LAST );
+				cryptAlgo < CRYPT_ALGO_LAST_EXTERNAL );
 	REQUIRES_B( ( cryptMode == CRYPT_MODE_NONE ) || \
 				( cryptMode > CRYPT_MODE_NONE && \
 				  cryptMode < CRYPT_MODE_LAST ) );
 
 	return( checkAlgoID( cryptAlgo, cryptMode ) );
+	}
+
+/* Retrieve the principal context type from the envelope's action list */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int getActionContext( const ENVELOPE_INFO *envelopeInfoPtr,
+							 OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext )
+	{
+	const ACTION_LIST *actionListPtr;
+
+	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+	assert( isWritePtr( iCryptContext, sizeof( CRYPT_CONTEXT ) ) );
+
+	/* Clear return value */
+	*iCryptContext = CRYPT_ERROR;
+
+	switch( envelopeInfoPtr->usage )
+		{
+		case ACTION_CRYPT:
+			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+				actionListPtr = findAction( envelopeInfoPtr->actionList, 
+											ACTION_xxx );
+			else
+				actionListPtr = findAction( envelopeInfoPtr->actionList, 
+											ACTION_CRYPT );
+			break;
+
+		case ACTION_MAC:
+			actionListPtr = findAction( envelopeInfoPtr->actionList, 
+										ACTION_MAC );
+			break;
+
+		default:
+			retIntError();
+		}
+	REQUIRES( actionListPtr != NULL );
+	*iCryptContext = actionListPtr->iCryptHandle;
+
+	return( CRYPT_OK );
 	}
 
 /* Get the OID for a CMS content type.  If no type is explicitly given, we
@@ -142,11 +181,11 @@ static int copyFromAuxBuffer( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			envelopeInfoPtr->auxBuffer, bytesCopied );
 	envelopeInfoPtr->bufPos += bytesCopied;
 
-	/* Since we're in the post-data state any necessary payload data
+	/* Since we're in the post-data state any necessary payload data 
 	   segmentation has been completed, however, the caller can't copy out 
-	   any post-payload data because it's past the end-of-segment position.
-	   In order to allow the buffer to be emptied to make room for new data
-	   from the auxBuffer we set the end-of-segment position to the end of
+	   any post-payload data because it's past the end-of-segment position. 
+	   In order to allow the buffer to be emptied to make room for new data 
+	   from the auxBuffer we set the end-of-segment position to the end of 
 	   the new data */
 	envelopeInfoPtr->segmentDataEnd = envelopeInfoPtr->bufPos;
 
@@ -360,12 +399,13 @@ static int writeEncryptedContentHeader( INOUT STREAM *stream,
 /* EncryptedData, EnvelopedData */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-static int getEncrypedContentSize( const ENVELOPE_INFO *envelopeInfoPtr,
-								   IN_BUFFER( contentOIDlength ) const BYTE *contentOID, 
-								   IN_LENGTH_OID const int contentOIDlength,
-								   OUT_LENGTH_INDEF long *blockedPayloadSize,
-								   OUT_LENGTH_Z long *encrContentInfoSize )
+static int getEncryptedContentSize( const ENVELOPE_INFO *envelopeInfoPtr,
+									IN_BUFFER( contentOIDlength ) const BYTE *contentOID, 
+									IN_LENGTH_OID const int contentOIDlength,
+									OUT_LENGTH_INDEF long *blockedPayloadSize,
+									OUT_LENGTH_Z long *encrContentInfoSize )
 	{
+	CRYPT_CONTEXT iCryptContext;
 	long length;
 	int status;
 
@@ -388,9 +428,11 @@ static int getEncrypedContentSize( const ENVELOPE_INFO *envelopeInfoPtr,
 		return( status );
 
 	/* Calculate the size of the CMS ContentInfo header */
+	status = getActionContext( envelopeInfoPtr, &iCryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
 	length = sizeofCMSencrHeader( contentOID, contentOIDlength, 
-								  *blockedPayloadSize, 
-								  envelopeInfoPtr->iCryptContext );
+								  *blockedPayloadSize, iCryptContext );
 	if( cryptStatusError( length ) )
 		return( ( int ) length );
 	*encrContentInfoSize = length;
@@ -449,10 +491,10 @@ static int writeEncryptedDataHeader( INOUT STREAM *stream,
 
 	/* Calculate the size of the payload due to blocking and the ContentInfo
 	   header */
-	status = getEncrypedContentSize( envelopeInfoPtr, contentOID,
-									 sizeofOID( contentOID ), 
-									 &blockedPayloadSize, 
-									 &encrContentInfoSize );
+	status = getEncryptedContentSize( envelopeInfoPtr, contentOID,
+									  sizeofOID( contentOID ), 
+									  &blockedPayloadSize, 
+									  &encrContentInfoSize );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -487,15 +529,18 @@ static int writeEnvelopedDataHeader( INOUT STREAM *stream,
 
 	/* Calculate the size of the payload due to blocking and the ContentInfo
 	   header */
-	status = getEncrypedContentSize( envelopeInfoPtr, contentOID,
-									 sizeofOID( contentOID ), 
-									 &blockedPayloadSize, 
-									 &encrContentInfoSize );
+	status = getEncryptedContentSize( envelopeInfoPtr, contentOID,
+									  sizeofOID( contentOID ), 
+									  &blockedPayloadSize, 
+									  &encrContentInfoSize );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Write the EnvelopedData header and version number and start of the 
-	   SET OF RecipientInfo/EncryptionKeyInfo */
+	   SET OF RecipientInfo/EncryptionKeyInfo.  Technically we need to jump 
+	   through all sorts of hoops based on the contents and versions of 
+	   encapsulated RecipientInfo structures but nothing seems to care about 
+	   this so we just use a version of 0 */
 #ifndef USE_KEA
 	status = writeEncryptionHeader( stream, OID_CMS_ENVELOPEDDATA, 
 						sizeofOID( OID_CMS_ENVELOPEDDATA ), 0, 
@@ -547,7 +592,7 @@ static int writeEnvelopedDataHeader( INOUT STREAM *stream,
 			writeSet( stream, envelopeInfoPtr->cryptActionSize ) );
 	}
 
-/* AuthenticatedData */
+/* AuthenticatedData, AuthEnvData */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeAuthenticatedDataHeader( INOUT STREAM *stream,
@@ -613,6 +658,118 @@ static int writeAuthenticatedDataHeader( INOUT STREAM *stream,
 			writeSet( stream, envelopeInfoPtr->cryptActionSize ) );
 	}
 
+CHECK_RETVAL \
+static int setAlgoParams( IN_HANDLE const CRYPT_CONTEXT iGenericSecret,
+						  IN_HANDLE const CRYPT_CONTEXT iCryptContext,
+						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute )
+	{
+	MESSAGE_DATA msgData;
+	STREAM stream;
+	BYTE algorithmParamData[ CRYPT_MAX_TEXTSIZE + 8 ];
+	int algorithmParamDataSize = DUMMY_INIT, status;
+
+	REQUIRES( isHandleRangeValid( iGenericSecret ) );
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( attribute == CRYPT_IATTRIBUTE_ENCPARAMS || \
+			  attribute == CRYPT_IATTRIBUTE_MACPARAMS );
+
+	/* Get the algorithm parameter data from the encryption or MAC
+	   context */
+	sMemOpen( &stream, algorithmParamData, CRYPT_MAX_TEXTSIZE );
+	if( attribute == CRYPT_IATTRIBUTE_ENCPARAMS )
+		status = writeCryptContextAlgoID( &stream, iCryptContext );
+	else
+		status = writeContextAlgoID( &stream, iCryptContext, 0 );
+	if( cryptStatusOK( status ) )
+		algorithmParamDataSize = stell( &stream );
+	sMemDisconnect( &stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Send the encoded parameter information to the generic-secret 
+	   context */
+	setMessageData( &msgData, algorithmParamData, algorithmParamDataSize );
+	return( krnlSendMessage( iGenericSecret, IMESSAGE_SETATTRIBUTE_S, 
+							 &msgData, attribute ) );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int writeAuthEncDataHeader( INOUT STREAM *stream,
+								   const ENVELOPE_INFO *envelopeInfoPtr )
+	{
+	CRYPT_CONTEXT iGenericSecret;
+	const ACTION_LIST *actionListPtr;
+	const BYTE *contentOID = getContentOID( envelopeInfoPtr->contentType );
+	long blockedPayloadSize, encrContentInfoSize;
+	int macSize = 0, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES_S( contentOID != NULL );
+
+	/* Authenticated encryption derives the encryption and MAC keys from the
+	   generic-secret value, with the encryption and MAC algorithm 
+	   parameters being provided in the generic-secret's AlgorithmIdentifier
+	   value.  In order to work with the generic secret we therefore have to
+	   send the encryption and MAC parameter data to the generic-secret
+	   context */
+	actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_xxx ); 
+	REQUIRES( actionListPtr != NULL );
+	iGenericSecret = actionListPtr->iCryptHandle;
+	actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_CRYPT ); 
+	REQUIRES( actionListPtr != NULL );
+	status = setAlgoParams( iGenericSecret, actionListPtr->iCryptHandle,
+							CRYPT_IATTRIBUTE_ENCPARAMS );
+	if( cryptStatusError( status ) )
+		return( status );
+	actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_MAC ); 
+	REQUIRES( actionListPtr != NULL );
+	status = setAlgoParams( iGenericSecret, actionListPtr->iCryptHandle,
+							CRYPT_IATTRIBUTE_MACPARAMS );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Calculate the size of the payload due to blocking and the ContentInfo
+	   header */
+	status = getEncryptedContentSize( envelopeInfoPtr, contentOID,
+									  sizeofOID( contentOID ), 
+									  &blockedPayloadSize, 
+									  &encrContentInfoSize );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* If it's definite-length content we have to determine the size of the
+	   MAC at the end of the data as well */
+	if( blockedPayloadSize != CRYPT_UNUSED )
+		{
+		actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_MAC ); 
+		REQUIRES( actionListPtr != NULL );
+		status = krnlSendMessage( actionListPtr->iCryptHandle, 
+								  IMESSAGE_GETATTRIBUTE, &macSize, 
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* Write the EnvelopedData header and version number and start of the 
+	   SET OF RecipientInfo/EncryptionKeyInfo */
+	status = writeEncryptionHeader( stream, OID_CMS_AUTHENVDATA, 
+						sizeofOID( OID_CMS_AUTHENVDATA ), 0, 
+						blockedPayloadSize,
+						( envelopeInfoPtr->cryptActionSize == CRYPT_UNUSED ) ? \
+							CRYPT_UNUSED : \
+							sizeofObject( envelopeInfoPtr->cryptActionSize ) + \
+								encrContentInfoSize + \
+								sizeofObject( macSize ) );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	return( ( envelopeInfoPtr->cryptActionSize == CRYPT_UNUSED ) ? \
+			writeSetIndef( stream ) : \
+			writeSet( stream, envelopeInfoPtr->cryptActionSize ) );
+	}
+
 /* CompressedData */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -664,11 +821,14 @@ static int writeEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	/* If we're encrypting, set up the encryption-related information */
 	if( envelopeInfoPtr->usage == ACTION_CRYPT )
 		{
-		REQUIRES( envelopeInfoPtr->actionList != NULL );
+		const ACTION_LIST *actionListPtr = \
+					findAction( envelopeInfoPtr->actionList, ACTION_CRYPT );
+
+		REQUIRES( actionListPtr != NULL );
 		status = initEnvelopeEncryption( envelopeInfoPtr,
-								envelopeInfoPtr->actionList->iCryptHandle,
-								CRYPT_ALGO_NONE, CRYPT_MODE_NONE, NULL, 0,
-								FALSE );
+										 actionListPtr->iCryptHandle,
+										 CRYPT_ALGO_NONE, CRYPT_MODE_NONE, 
+										 NULL, 0, FALSE );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -682,6 +842,17 @@ static int writeEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	switch( envelopeInfoPtr->usage )
 		{
 		case ACTION_CRYPT:
+			/* If we're using authenticated encryption then we have to use
+			   a special-form AuthEnc CMS header even though technically
+			   it's just an encrypted envelope */
+			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+				{
+				status = writeAuthEncDataHeader( &stream,
+												 envelopeInfoPtr );
+				break;
+				}
+
+			/* It's standard encrypted data */
 			if( envelopeInfoPtr->preActionList == NULL )
 				status = writeEncryptedDataHeader( &stream,
 												   envelopeInfoPtr );
@@ -758,14 +929,17 @@ static int writeEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeKeyex( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
-	const CRYPT_CONTEXT iCryptContext = \
-							( envelopeInfoPtr->usage == ACTION_CRYPT ) ? \
-							envelopeInfoPtr->iCryptContext : \
-							envelopeInfoPtr->actionList->iCryptHandle;
+	CRYPT_CONTEXT iCryptContext;
 	ACTION_LIST *actionListPtr;
 	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	/* Get the appropriate encryption, MAC, or generic-secret context to 
+	   export via the keyex actions */
+	status = getActionContext( envelopeInfoPtr, &iCryptContext );
+	if( cryptStatusError( status ) )
+		return( status );
 
 	/* Export the session key/MAC using each of the PKC or conventional 
 	   keys.  If it's a conventional key exchange we force the use of the 
@@ -993,7 +1167,34 @@ static int writeSignatures( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	envelopeInfoPtr->lastAction = actionListPtr;
 
-	return( status );
+	/* The possibilities for problems when creating a signature are complex 
+	   enough that we provide special-case reporting for specific types of
+	   problems.  In particular we pull up lower-level information from 
+	   signature-creation related objects if they're being used, and if 
+	   there are multiple signatures being created we identify the 
+	   individual signature that caused the problem */
+	if( cryptStatusError( status ) )
+		{
+		if( actionListPtr->iTspSession != CRYPT_ERROR )
+			{
+			retExtObj( status, 
+					   ( status, ENVELOPE_ERRINFO,
+					     actionListPtr->iTspSession,
+						 "Couldn't emit signature to envelope trailer" ) );
+			}
+		if( iterationCount <= 0 )
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't emit signature to envelope trailer" ) );
+			}
+		retExt( status,
+				( status, ENVELOPE_ERRINFO,
+				  "Couldn't emit signature #%d to envelope trailer",
+				  iterationCount + 1 ) );
+		}
+
+	return( CRYPT_OK );
 	}
 
 /* Write MAC value */
@@ -1001,6 +1202,8 @@ static int writeSignatures( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int writeMAC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	{
+	const ACTION_LIST *actionListPtr = \
+				findAction( envelopeInfoPtr->actionList, ACTION_MAC );
 	STREAM stream;
 	MESSAGE_DATA msgData;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
@@ -1009,6 +1212,10 @@ static int writeMAC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	const int dataLeft = min( envelopeInfoPtr->bufSize - \
 							  envelopeInfoPtr->bufPos, 512 );
 	int length = DUMMY_INIT, status;
+
+	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
+
+	REQUIRES( actionListPtr != NULL );
 
 	/* Make sure that there's room for the MAC data in the buffer */
 	if( dataLeft < eocSize + sizeofObject( CRYPT_MAX_HASHSIZE ) )
@@ -1025,7 +1232,7 @@ static int writeMAC( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* Get the MAC value and write it to the buffer */
 	setMessageData( &msgData, hash, CRYPT_MAX_HASHSIZE );
-	status = krnlSendMessage( envelopeInfoPtr->actionList->iCryptHandle,
+	status = krnlSendMessage( actionListPtr->iCryptHandle,
 							  IMESSAGE_GETATTRIBUTE_S, &msgData,
 							  CRYPT_CTXINFO_HASHVALUE );
 	if( cryptStatusError( status ) )
@@ -1102,7 +1309,9 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		/* Delete any orphaned actions such as automatically-added hash
 		   actions that were overridden with user-supplied alternate
 		   actions */
-		deleteUnusedActions( envelopeInfoPtr );
+		status = deleteUnusedActions( envelopeInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
 
 		/* Make sure that we start a new segment when we add the first lot
 		   of payload data after we've emitted the header info */
@@ -1163,6 +1372,7 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		{
 		STREAM stream;
 		const BYTE *contentOID = getContentOID( envelopeInfoPtr->contentType );
+		const int originalBufPos = envelopeInfoPtr->bufPos;
 		const int dataLeft = min( envelopeInfoPtr->bufSize - \
 								  envelopeInfoPtr->bufPos, \
 								  MAX_INTLENGTH_SHORT - 1 );
@@ -1196,16 +1406,57 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			}
 		else
 			{
+			CRYPT_CONTEXT iCryptContext;
+
 			/* It's encrypted data, it's EncrContent */
+			status = getActionContext( envelopeInfoPtr, &iCryptContext );
+			if( cryptStatusError( status ) )
+				return( status );
 			status = writeEncryptedContentHeader( &stream, contentOID,
-										sizeofOID( contentOID ),
-										envelopeInfoPtr->iCryptContext, 
-										envelopeInfoPtr->payloadSize, 
-										envelopeInfoPtr->blockSize );
+									sizeofOID( contentOID ), iCryptContext, 
+									envelopeInfoPtr->payloadSize, 
+									envelopeInfoPtr->blockSize );
 			}
 		if( cryptStatusOK( status ) )
 			envelopeInfoPtr->bufPos += stell( &stream );
 		sMemDisconnect( &stream );
+		if( cryptStatusOK( status ) && \
+			envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+			{
+			const ACTION_LIST *actionListPtr = \
+					findAction( envelopeInfoPtr->actionList, ACTION_MAC );
+			const void *macData = DUMMY_INIT_PTR;
+			int macDataLength = DUMMY_INIT;
+
+			REQUIRES( actionListPtr != NULL );
+
+			/* For AuthEnc data we have to MAC the 
+			   EncryptedContentInfo.ContentEncryptionAlgorithmIdentifier 
+			   information alongside the payload data to prevent an attacker 
+			   from manipulating the algorithm parameters to cause 
+			   corruption that won't be detected by the MAC on the payload 
+			   data.  This requires digging down into the encrypted content
+			   header to locate the AlgoID data and MACing that */
+			sMemConnect( &stream, envelopeInfoPtr->buffer + originalBufPos,
+						 envelopeInfoPtr->bufPos - originalBufPos );
+			readSequenceI( &stream, NULL );		/* Outer encapsulation */
+			status = readUniversal( &stream );	/* Content-type OID */
+			if( cryptStatusOK( status ) )
+				status = getStreamObjectLength( &stream, &macDataLength );
+			if( cryptStatusOK( status ) )		/* AlgoID */
+				{
+				status = sMemGetDataBlock( &stream, ( void ** ) &macData, 
+										   macDataLength );
+				}
+			if( cryptStatusOK( status ) )
+				{
+				status = krnlSendMessage( actionListPtr->iCryptHandle,
+										  IMESSAGE_CTX_HASH, 
+										  ( MESSAGE_CAST ) macData, 
+										  macDataLength );
+				}
+			sMemDisconnect( &stream );
+			}
 		if( cryptStatusError( status ) )
 			{
 			retExt( status,
@@ -1232,7 +1483,8 @@ static int emitPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 /* Output as much of the postamble as possible into the envelope buffer */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+						  STDC_UNUSED const BOOLEAN dummy )
 	{
 	int status;
 
@@ -1245,7 +1497,7 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	if( envelopeInfoPtr->envState == ENVSTATE_NONE )
 		{
 		status = envelopeInfoPtr->copyToEnvelopeFunction( envelopeInfoPtr,
-													( BYTE * ) "", 0 );
+														  NULL, 0 );
 		if( cryptStatusError( status ) )
 			{
 			retExt( status,
@@ -1260,8 +1512,10 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* The only message type that has a trailer is signed or authenticated 
 	   data so if we're not signing/authenticating data we can exit now */
-	if( envelopeInfoPtr->usage != ACTION_SIGN && \
-		envelopeInfoPtr->usage != ACTION_MAC )
+	if( !( envelopeInfoPtr->usage == ACTION_SIGN || \
+		   envelopeInfoPtr->usage == ACTION_MAC || \
+		   ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+			 ( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) ) )
 		{
 		/* Emit the various end-of-contents octets if necessary */
 		if( envelopeInfoPtr->payloadSize == CRYPT_UNUSED || \
@@ -1346,18 +1600,24 @@ static int emitPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	/* Handle signing actions */
 	REQUIRES( envelopeInfoPtr->envState == ENVSTATE_SIGNATURE );
 
-	/* Write the signatures/MACs */
+	/* Write the signatures/MACs.  The process of writing signatures is 
+	   complex enough that the function itself sets the extended error
+	   information */
 	if( envelopeInfoPtr->usage == ACTION_SIGN )
-		status = writeSignatures( envelopeInfoPtr );
-	else
-		status = writeMAC( envelopeInfoPtr );
-	if( cryptStatusError( status ) )
 		{
-		retExt( status,
-				( status, ENVELOPE_ERRINFO,
-				  "Couldn't emit %s to envelope trailer", 
-				  ( envelopeInfoPtr->usage == ACTION_SIGN ) ? \
-					"signatures" : "MAC" ) );
+		status = writeSignatures( envelopeInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	else
+		{
+		status = writeMAC( envelopeInfoPtr );
+		if( cryptStatusError( status ) )
+			{
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Couldn't emit MAC to envelope trailer" ) );
+			}
 		}
 
 	/* Write the end-of-contents octets for the OCTET STRING/SEQUENCE, [0],
@@ -1412,11 +1672,11 @@ void initCMSEnveloping( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	/* Set up the processing state information */
 	envelopeInfoPtr->envState = ENVSTATE_NONE;
 
-	/* Remember the current default settings for use with the envelope.
-	   We force the use of the CBC encryption mode because this is the
-	   safest and most efficient encryption mode, and the only mode defined
-	   for many CMS algorithms.  Since the CMS algorithms represent only a
-	   subset of what's available we have to drop back to fixed values if
+	/* Remember the current default settings for use with the envelope. 
+	   We force the use of the CBC encryption mode because this is the 
+	   safest and most efficient encryption mode, and the only mode defined 
+	   for many CMS algorithms.  Since the CMS algorithms represent only a 
+	   subset of what's available we have to drop back to fixed values if 
 	   the caller has selected something exotic */
 	status = krnlSendMessage( envelopeInfoPtr->ownerHandle, 
 							  IMESSAGE_GETATTRIBUTE,

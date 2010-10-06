@@ -12,7 +12,7 @@
   #include "asn1.h"
 #else
   #include "context/context.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -147,6 +147,10 @@ int getContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 
 				case CONTEXT_MAC:
 					value = contextInfoPtr->ctxMAC->userKeyLength;
+					break;
+
+				case CONTEXT_GENERIC:
+					value = contextInfoPtr->ctxGeneric->genericSecretLength;
 					break;
 
 				default:
@@ -439,6 +443,33 @@ int getContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 									   KEYID_SIZE ) );
 #endif /* USE_HARDWARE */
 			return( CRYPT_ERROR_NOTFOUND );
+
+		case CRYPT_IATTRIBUTE_ENCPARAMS:
+			REQUIRES( contextType == CONTEXT_GENERIC );
+
+			if( contextInfoPtr->ctxGeneric->encAlgoParamSize <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			return( attributeCopy( msgData, 
+								   contextInfoPtr->ctxGeneric->encAlgoParams, 
+								   contextInfoPtr->ctxGeneric->encAlgoParamSize ) );
+
+		case CRYPT_IATTRIBUTE_MACPARAMS:
+			REQUIRES( contextType == CONTEXT_GENERIC );
+
+			if( contextInfoPtr->ctxGeneric->macAlgoParamSize <= 0 )
+				return( CRYPT_ERROR_NOTFOUND );
+			return( attributeCopy( msgData, 
+								   contextInfoPtr->ctxGeneric->macAlgoParams, 
+								   contextInfoPtr->ctxGeneric->macAlgoParamSize ) );
+
+		case CRYPT_IATTRIBUTE_ICV:
+			REQUIRES( contextType == CONTEXT_CONV );
+
+			if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_GCM )
+				return( CRYPT_ERROR_NOTAVAIL );
+			return( capabilityInfoPtr->getInfoFunction( CAPABILITY_INFO_ICV, 
+											contextInfoPtr, msgData->data,
+											msgData->length ) );
 		}
 
 	retIntError();
@@ -481,14 +512,47 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 
 			/* If the mode for the context isn't set to the initial default 
 			   value, it's already been explicitly set and we can't change 
-			   it again */
-			if( contextInfoPtr->ctxConv->mode != \
-						( isStreamCipher( capabilityInfoPtr->cryptAlgo ) ? \
-						CRYPT_MODE_OFB : CRYPT_MODE_CBC ) )
-				return( exitErrorInited( contextInfoPtr, CRYPT_CTXINFO_MODE ) );
+			   it again.  This isn't quite as straightforward as it seems
+			   because the definition of "initial default mode" is a bit
+			   vague, for stream ciphers it's OFB, for block ciphers it's
+			   usually CBC unless we're working with specific hardware 
+			   crypto that only supports one mode and that mode isn't CBC.
+			   For now this only seems to be ECB so we add a special-case
+			   check for ECB-only operation */
+			if( isStreamCipher( capabilityInfoPtr->cryptAlgo ) )
+				{
+				/* It's a stream cipher, the only possible mode is an
+				   implicit OFB so any attempt to change it isn't valid */
+				return( exitErrorInited( contextInfoPtr, 
+										 CRYPT_CTXINFO_MODE ) );
+				}
+			else
+				{
+#if 1			/* So far no devices without CBC support have been 
+				   encountered, so we always assume a default of CBC */
+				if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_CBC )
+					return( exitErrorInited( contextInfoPtr, 
+											 CRYPT_CTXINFO_MODE ) );
+#else
+				if( capabilityInfoPtr->encryptCBCFunction != NULL )
+					{
+					if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_CBC )
+						return( exitErrorInited( contextInfoPtr, 
+												 CRYPT_CTXINFO_MODE ) );
+					}
+				else
+					{
+					/* This algorithm isn't available in CBC mode, the 
+					   default will be ECB */
+					if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_ECB )
+						return( exitErrorInited( contextInfoPtr, 
+												 CRYPT_CTXINFO_MODE ) );
+					}
+#endif
+				}
 
 			/* Set the en/decryption mode */
-			return( capabilityInfoPtr->initKeyParamsFunction( contextInfoPtr,
+			return( capabilityInfoPtr->initParamsFunction( contextInfoPtr,
 											KEYPARAM_MODE, NULL, value ) );
 
 		case CRYPT_CTXINFO_KEYSIZE:
@@ -509,6 +573,10 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 					valuePtr = &contextInfoPtr->ctxMAC->userKeyLength;
 					break;
 
+				case CONTEXT_GENERIC:
+					valuePtr = &contextInfoPtr->ctxGeneric->genericSecretLength;
+					break;
+
 				default:
 					retIntError();
 				}
@@ -527,6 +595,18 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 						bytesToBits( keySize ) : keySize;
 			return( CRYPT_OK );
 			}
+
+		case CRYPT_CTXINFO_BLOCKSIZE:
+			REQUIRES( contextType == CONTEXT_HASH || \
+					  contextType == CONTEXT_MAC );
+
+			/* Some hash (and corresponding MAC) algorithms have variable-
+			   length outputs, in which case the blocksize is user-
+			   definable */
+			if( capabilityInfoPtr->initParamsFunction == NULL )
+				return( CRYPT_ERROR_NOTAVAIL );
+			return( capabilityInfoPtr->initParamsFunction( contextInfoPtr,
+										KEYPARAM_BLOCKSIZE, NULL, value ) );
 
 		case CRYPT_CTXINFO_KEYING_ALGO:
 		case CRYPT_OPTION_KEYING_ALGO:
@@ -629,6 +709,10 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 					contextInfoPtr->ctxMAC->userKeyLength = value;
 					break;
 
+				case CONTEXT_GENERIC:
+					contextInfoPtr->ctxGeneric->genericSecretLength = value;
+					break;
+
 				default:
 					retIntError();
 				}
@@ -648,6 +732,8 @@ int setContextAttribute( INOUT CONTEXT_INFO *contextInfoPtr,
 						contextInfoPtr->ctxPKC->publicKeyInfo != NULL ) || \
 					  ( contextType == CONTEXT_MAC && \
 						contextInfoPtr->ctxMAC->userKeyLength > 0 ) || \
+					  ( contextType == CONTEXT_GENERIC && \
+						contextInfoPtr->ctxGeneric->genericSecretLength > 0 ) || \
 					  ( contextType == CONTEXT_HASH ) );
 
 			/* Remember the reference to the associated crypto functionality
@@ -708,7 +794,8 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 
 		case CRYPT_CTXINFO_KEY:
 			REQUIRES( contextType == CONTEXT_CONV || \
-					  contextType == CONTEXT_MAC );
+					  contextType == CONTEXT_MAC || \
+					  contextType == CONTEXT_GENERIC );
 			REQUIRES( needsKey( contextInfoPtr ) );
 
 			/* If it's a persistent context we need to have a key label set 
@@ -746,12 +833,23 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 				isStreamCipher( contextInfoPtr->capabilityInfo->cryptAlgo ) )
 				return( CRYPT_ERROR_NOTAVAIL );
 
-			/* Make sure that the data size is valid */
-			if( dataLength != capabilityInfoPtr->blockSize )
-				return( CRYPT_ARGERROR_NUM1 );
+			/* Make sure that the data size is valid.  GCM is handled 
+			   specially because the default IV size is somewhat smaller 
+			   than the cipher block size */
+			if( contextInfoPtr->ctxConv->mode == CRYPT_MODE_GCM )
+				{
+				if( dataLength < 8 || \
+					dataLength > capabilityInfoPtr->blockSize )
+					return( CRYPT_ARGERROR_NUM1 );
+				}
+			else
+				{
+				if( dataLength != capabilityInfoPtr->blockSize )
+					return( CRYPT_ARGERROR_NUM1 );
+				}
 
 			/* Load the IV */
-			return( capabilityInfoPtr->initKeyParamsFunction( contextInfoPtr,
+			return( capabilityInfoPtr->initParamsFunction( contextInfoPtr,
 										KEYPARAM_IV, data, dataLength ) );
 
 		case CRYPT_CTXINFO_LABEL:
@@ -883,6 +981,34 @@ int setContextAttributeS( INOUT CONTEXT_INFO *contextInfoPtr,
 			contextInfoPtr->deviceStorageIDset = TRUE;
 #endif /* USE_HARDWARE */
 			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_ENCPARAMS:
+			REQUIRES( dataLength > 0 && dataLength <= CRYPT_MAX_TEXTSIZE );
+
+			memcpy( contextInfoPtr->ctxGeneric->encAlgoParams, data, 
+					dataLength );
+			contextInfoPtr->ctxGeneric->encAlgoParamSize = dataLength;
+
+			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_MACPARAMS:
+			REQUIRES( dataLength > 0 && dataLength <= CRYPT_MAX_TEXTSIZE );
+
+			memcpy( contextInfoPtr->ctxGeneric->macAlgoParams, data, 
+					dataLength );
+			contextInfoPtr->ctxGeneric->macAlgoParamSize = dataLength;
+
+			return( CRYPT_OK );
+
+		case CRYPT_IATTRIBUTE_AAD:
+			REQUIRES( contextType == CONTEXT_CONV );
+
+			if( contextInfoPtr->ctxConv->mode != CRYPT_MODE_GCM )
+				return( CRYPT_ERROR_NOTAVAIL );
+
+			/* Process the AAD */
+			return( capabilityInfoPtr->initParamsFunction( contextInfoPtr,
+											KEYPARAM_AAD , data, dataLength ) );
 		}
 
 	retIntError();

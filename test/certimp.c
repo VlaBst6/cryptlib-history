@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Certificate Handling Test Routines				*
-*						Copyright Peter Gutmann 1997-2005					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
@@ -100,6 +100,19 @@ static BOOLEAN handleCertError( const CRYPT_CERTIFICATE cryptCert,
 		return( FALSE );
 		}
 
+	/* Certificate #31 has an invalid keyUsage for the key it contains, it's
+	   used in order to check for the ability to handle a non-hole BIT 
+	   STRING in a location where a hole encoding is normally used so we 
+	   don't care about this particular problem */
+	if( certNo == 31 && errorLocus == CRYPT_CERTINFO_KEYUSAGE )
+		{
+		puts( "Warning: Validity check failed due to CA certificate with "
+			  "incorrect\n         key usage field (this will be ignored "
+			  "since the certificate\n         is used to test for other "
+			  "error handling conditions)." );
+		return( TRUE );
+		}
+
 	return( FALSE );
 	}
 
@@ -181,8 +194,10 @@ static int certImport( const int certNo, const BOOLEAN isECC,
 		if( cryptStatusError( status ) )
 			{
 			if( !handleCertError( cryptCert, certNo, status ) )
+				{
 				return( attrErrorExit( cryptCert, "cryptCheckCert()", 
 									   status, __LINE__ ) );
+				}
 			}
 		else
 			puts( "signature verified." );
@@ -234,7 +249,7 @@ int testCertImport( void )
 	{
 	int i;
 
-	for( i = 1; i <= 29; i++ )
+	for( i = 1; i <= 35; i++ )
 		{
 		if( !certImport( i, FALSE, FALSE ) )
 			return( FALSE );
@@ -407,28 +422,67 @@ int testCRLImport( void )
 	return( TRUE );
 	}
 
+static BOOLEAN isSingleCert( const CRYPT_CERTIFICATE cryptCertChain )
+	{
+	int value, status;
+
+	/* Check whether a certificate chain contains a single non-self-signed 
+	   certificate, which means that we can't perform a signature check on 
+	   it */
+	status = cryptGetAttribute( cryptCertChain, CRYPT_CERTINFO_SELFSIGNED, 
+								&value );
+	if( cryptStatusOK( status ) && value )
+		{
+		/* It's a self-signed certificate, we should be able to check this 
+		   chain */
+		return( FALSE );
+		}
+	cryptSetAttribute( cryptCertChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+					   CRYPT_CURSOR_FIRST );
+	if( cryptSetAttribute( cryptCertChain,
+						   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
+						   CRYPT_CURSOR_NEXT ) == CRYPT_ERROR_NOTFOUND )
+		{
+		/* There's only a single certificate in the chain and it's not self-
+		   signed, we can't check it */
+		return( TRUE );
+		}
+
+	return( FALSE );
+	}
+
+static int checkExpiredCertChain( const CRYPT_CERTIFICATE cryptCertChain )
+	{
+	int complianceValue, status;
+
+	printf( "Warning: The certificate chain didn't verify because one or "
+			"more\n         certificates in it have expired.  Trying again "
+			"in oblivious\n         mode... " );
+	cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   &complianceValue );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+	status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
+	cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+					   complianceValue );
+
+	return( status );
+	}
+
 static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain, 
 									 const int certNo, const int errorCode )
 	{
-	int trustValue = CRYPT_UNUSED, complianceValue = CRYPT_UNUSED;
-	int errorLocus, status;
+	int trustValue = CRYPT_UNUSED, errorLocus, status;
 
 	/* If the chain contains a single non-CA certificate, we'll get a 
 	   parameter error since we haven't supplied a signing certificate */
-	if( errorCode == CRYPT_ERROR_PARAM2 )
+	if( errorCode == CRYPT_ERROR_PARAM2 && isSingleCert( cryptCertChain ) )
 		{
-		cryptSetAttribute( cryptCertChain, CRYPT_CERTINFO_CURRENT_CERTIFICATE,
-						   CRYPT_CURSOR_FIRST );
-		if( cryptSetAttribute( cryptCertChain,
-							   CRYPT_CERTINFO_CURRENT_CERTIFICATE,
-							   CRYPT_CURSOR_NEXT ) == CRYPT_ERROR_NOTFOUND )
-			{
-			/* There's only a single certificate present, we can't do much 
-			   with it */
-			puts( "\nCertificate chain contains only a single standalone "
-				  "certificate, skipping\nsignature check..." );
-			return( TRUE );
-			}
+		/* There's only a single certificate present, we can't do much with 
+		   it */
+		puts( "\nCertificate chain contains only a single standalone "
+			  "certificate, skipping\nsignature check..." );
+		return( TRUE );
 		}
 
 	/* If it's not a problem with validity, we can't go any further */
@@ -459,14 +513,14 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 			printf( "\nWarning: The certificate chain didn't verify "
 					"because it didn't end in a\n         trusted root "
 					"certificate.  Checking again using an "
-					"implicitly\n         trusted root..." );
+					"implicitly\n         trusted root... " );
 			}
 		else
 			{
 			printf( "\nWarning: The certificate chain didn't verify "
 					"because the root certificate's\n         key isn't "
 					"enabled for this usage.  Checking again using "
-					"an\n         implicitly trusted root..." );
+					"an\n         implicitly trusted root... " );
 			}
 		if( cryptStatusError( \
 				setRootTrust( cryptCertChain, &trustValue, 1 ) ) )
@@ -484,27 +538,29 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 		{
 		/* One (or more) certs in the chain have expired, try again with the 
 		   compliance level wound down to nothing */
-		puts( "\nThe certificate chain didn't verify because one or more "
-			  "certificates in it\nhave expired.  Trying again in oblivious "
-			  "mode..." );
-		cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   &complianceValue );
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
-		status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
+		putchar( '\n' );
+		status = checkExpiredCertChain( cryptCertChain );
+		if( status == CRYPT_ERROR_PARAM2 && isSingleCert( cryptCertChain ) )
+			{
+			/* There's only a single certificate present, we can't do much 
+			   with it */
+			puts( "\nCertificate chain contains only a single standalone "
+				  "certificate, skipping\nsignature check..." );
+			return( TRUE );
+			}
 		}
 
 	/* If we changed settings, restore their original values */
 	if( trustValue != CRYPT_UNUSED )
 		setRootTrust( cryptCertChain, NULL, trustValue );
-	if( complianceValue != CRYPT_UNUSED )
-		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
-						   complianceValue );
 
 	/* If we've got a long-enough chain, try again with the next-to-last 
 	   certificate marked as trusted */
 	if( cryptStatusOK( status ) && certNo == 5 )
 		{
+		puts( "signatures verified." );
+		puts( "Checking again with an intermediate certificate marked as "
+			  "trusted... " );
 		status = cryptSetAttribute( cryptCertChain,
 									CRYPT_CERTINFO_CURRENT_CERTIFICATE,
 									CRYPT_CURSOR_LAST );
@@ -519,12 +575,22 @@ static BOOLEAN handleCertChainError( const CRYPT_CERTIFICATE cryptCertChain,
 			return( status );
 		status = cryptCheckCert( cryptCertChain, CRYPT_UNUSED );
 		if( status == CRYPT_ERROR_INVALID )
+			{
 			cryptGetAttribute( cryptCertChain, CRYPT_ATTRIBUTE_ERRORLOCUS,
 							   &errorLocus );
+			if( errorLocus == CRYPT_CERTINFO_VALIDTO )
+				{
+				/* One (or more) certs in the chain have expired, try again 
+				   with the compliance level wound down to nothing */
+				status = checkExpiredCertChain( cryptCertChain );
+				}
+			}
 		if( trustValue != CRYPT_UNUSED )
+			{
 			cryptSetAttribute( cryptCertChain,
 							   CRYPT_CERTINFO_TRUSTED_IMPLICIT, 
 							   trustValue );
+			}
 		}
 
 	/* Some old certs use deprecated or now-broken algorithms which will 
@@ -736,9 +802,11 @@ int testBase64CertImport( void )
 	return( TRUE );
 #endif /* EBCDIC system */
 
-	for( i = 1; i <= 1; i++ )
+	for( i = 1; i <= 2; i++ )
+		{
 		if( !certImport( i, FALSE, TRUE ) )
 			return( FALSE );
+		}
 	return( TRUE );
 	}
 
@@ -874,7 +942,7 @@ int testNonchainCert( void )
 
 int testCertComplianceLevel( void )
 	{
-	CRYPT_CERTIFICATE cryptCert, cryptCaCert;
+	CRYPT_CERTIFICATE cryptCert, cryptCaCert = DUMMY_INIT;
 	FILE *filePtr;
 	BYTE buffer[ BUFFER_SIZE ];
 	int count, value, status;
@@ -978,6 +1046,12 @@ int testCertComplianceLevel( void )
 	return( TRUE );
 	}
 
+/****************************************************************************
+*																			*
+*							NIST Path-processing Test						*
+*																			*
+****************************************************************************/
+
 /* Test path processing using the NIST PKI test suite.  This doesn't run all
    of the tests since some are somewhat redundant (e.g. path length 
    constraints ending at certificate n in a chain vs.cert n+1 in a chain 
@@ -993,84 +1067,107 @@ typedef struct {
 
 static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	/* Signature verification */
-	/*  0 */ { 1, 1, TRUE },
-	/*  1 */ { 1, 2, FALSE },
-	/*  2 */ { 1, 3, FALSE },
-	/*  3 */ { 1, 4, TRUE },
-	/*  4 */ { 1, 6, FALSE },
+	/*   0 */ { 1, 1, TRUE },
+	/*   1 */ { 1, 2, FALSE },
+	/*   2 */ { 1, 3, FALSE },
+	/*   3 */ { 1, 4, TRUE },
+	/*   4 */ { 1, 6, FALSE },
 
 	/* Validity periods */
-	/*  5 */ { 2, 1, FALSE },
-	/*  6 */ { 2, 2, FALSE },
+	/*   5 */ { 2, 1, FALSE },
+	/*   6 */ { 2, 2, FALSE },
 	/* The second certificate in test 4.2.3 has a validFrom date of 1950 
 	   which cryptlib rejects on import as being not even remotely valid (it 
 	   can't even be represented in the ANSI/ISO C date format).  Supposedly 
 	   half-century-old certs are symptomatic of severely broken software so
 	   rejecting this certificate is justified */
-/*	{ 2, 3, TRUE }, */
-	/*  7 */ { 2, 4, TRUE },
-	/*  8 */ { 2, 5, FALSE },
-	/*  9 */ { 2, 6, FALSE },
-	/* 10 */ { 2, 7, FALSE },
-	/* 11 */ { 2, 8, TRUE },
+/*	**  X ** { 2, 3, TRUE }, */
+	/*   7 */ { 2, 4, TRUE },
+	/*   8 */ { 2, 5, FALSE },
+	/*   9 */ { 2, 6, FALSE },
+	/*  10 */ { 2, 7, FALSE },
+	/*  11 */ { 2, 8, TRUE },
 
 	/* Name chaining */
-	/* 12 */ { 3, 1, FALSE },
-	/* 13 */ { 3, 6, TRUE },
-	/* 14 */ { 3, 8, TRUE },
-	/* 15 */ { 3, 9, TRUE },
+	/*  12 */ { 3, 1, FALSE },
+	/*  13 */ { 3, 2, FALSE },
+	/*  14 */ { 3, 6, TRUE },
+	/*  15 */ { 3, 7, TRUE },
+	/*  16 */ { 3, 8, TRUE },
+	/*  17 */ { 3, 9, TRUE },
 
 	/* 4 = CRLs */
 
 	/* oldWithNew / newWithOld */
-	/* 16 */ { 5, 1, TRUE },
-	/* 17 */ { 5, 3, TRUE },
+	/*  18 */ { 5, 1, TRUE },
+	/*  19 */ { 5, 3, TRUE },
 
 	/* Basic constraints */
-	/* 18 */ { 6, 1, FALSE },
-	/* 19 */ { 6, 2, FALSE },
-	/* 20 */ { 6, 5, FALSE },
-	/* 21 */ { 6, 6, FALSE },
-	/* 22 */ { 6, 7, TRUE },
+	/*  20 */ { 6, 1, FALSE },
+	/*  21 */ { 6, 2, FALSE },
+	/*  22 */ { 6, 3, FALSE },
+	/*  23 */ { 6, 4, TRUE },
+	/*  24 */ { 6, 5, FALSE },
+	/*  25 */ { 6, 6, FALSE },
+	/*  26 */ { 6, 7, TRUE },
 	/* The second-to-last certificate in the path sets a pathLenConstraint of 
 	   zero with the next certificate being a CA certificate (there's no EE 
 	   certificate present).  cryptlib treats this as invalid since it can 
 	   never lead to a valid path once the EE certificate is added */
-	/* 23 */ { 6, 8, FALSE /* TRUE */ },
-	/* 24 */ { 6, 9, FALSE },
-	/* 25 */ { 6, 11, FALSE },
-	/* 26 */ { 6, 12, FALSE },
-	/* 27 */ { 6, 13, TRUE },
-	/* As for 4.6.8 */
-	/* 28 */ { 6, 14, FALSE /* TRUE */ },
+	/*  27 */ { 6, 8, FALSE /* TRUE */ },
+	/*  28 */ { 6, 9, FALSE },
+	/*  29 */ { 6, 10, FALSE },
+
+	/*  30 */ { 6, 11, FALSE },
+	/*  31 */ { 6, 12, FALSE },
+	/*  32 */ { 6, 13, TRUE },
+	/* This has the same problem as 4.6.8 */
+	/*  33 */ { 6, 14, FALSE /* TRUE */ },
 	/* The following are 4.5.x-style oldWithNew / newWithOld but with path
 	   constraints */
-	/* 29 */ { 6, 15, TRUE },
-	/* 30 */ { 6, 16, FALSE },
-	/* 31 */ { 6, 17, TRUE },
+	/*  34 */ { 6, 15, TRUE },
+	/*  35 */ { 6, 16, FALSE },
+	/*  36 */ { 6, 17, TRUE },
 
 	/* Key usage */
-	/* 32 */ { 7, 1, FALSE },
-	/* 33 */ { 7, 2, FALSE },
+	/*  37 */ { 7, 1, FALSE },
+	/*  38 */ { 7, 2, FALSE },
+	/*  39 */ { 7, 3, TRUE },
 
 	/* Policies */
+	/*  40 */ { 8, 1, TRUE },
+	/*  41 */ { 8, 2, TRUE },
 	/* The first certificate asserts a policy that differs from that of all 
 	   other certificates in the path.  If no explicit policy is required 
 	   (by setting CRYPT_OPTION_REQUIREPOLICY to FALSE) it will verify, 
 	   otherwise it won't */
-	/* 34 */ { 8, 3, TRUE, TRUE },	/* Policy optional */
-	/* 35 */ { 8, 3, FALSE },
-	/* 36 */ { 8, 4, FALSE },
-	/* 37 */ { 8, 6, TRUE },
-	/* 38 */ { 8, 10, TRUE },
-	/* 39 */ { 8, 11, TRUE },
-	/* 40 */ { 8, 14, TRUE },
-	/* 41 */ { 8, 15, TRUE },
-	/* 42 */ { 8, 20, TRUE },
+	/*  42 */ { 8, 3, TRUE, TRUE },	/* Policy optional */
+	/*  43 */ { 8, 3, FALSE },
+	/*  44 */ { 8, 4, FALSE },
+	/*  45 */ { 8, 5, FALSE },
+	/*  46 */ { 8, 6, TRUE },
+	/* The false -> true changes below (4.8.7, 4.8.8, 4.8.9) occur because 
+	   cryptlib takes its initial policy from the first CA certificate with 
+	   a policy that it finds.  This is due to real-world issues where re-
+	   parented certificate chains due to re-sold CA root keys end up with 
+	   different policies in the root and the next-level-down pseudo-root 
+	   and problems where the root is an extension-less X.509v1 certificate.
+	   The same issue crops up in the 4.10.* / 4.11.* tests further down */
+	/*  47 */ { 8, 7, /* FALSE */ TRUE },
+	/*  48 */ { 8, 8, /* FALSE */ TRUE },
+	/*  49 */ { 8, 9, /* FALSE */ TRUE },
+	/*  50 */ { 8, 10, TRUE },
+	/*  51 */ { 8, 11, TRUE },
+	/*  52 */ { 8, 12, FALSE },
+	/*  53 */ { 8, 13, TRUE },
+	/*  54 */ { 8, 14, TRUE },
+	/*  55 */ { 8, 15, TRUE },
+	/*  56 */ { 8, 20, TRUE },
 
 	/* Policy constraints.  For these tests policy handling is dictated by
 	   policy constraints so we don't require explicit policies */
-	/* 43 */ { 9, 2, TRUE, TRUE },
+	/*  57 */ { 9, 1, TRUE },
+	/*  58 */ { 9, 2, TRUE, TRUE },
 	/* The NIST test value for this one is wrong.  RFC 3280 section 4.2.1.12
 	   says:
 
@@ -1085,24 +1182,75 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	   Test 4.9.3 has requireExplicitPolicy = 4 in a chain of 4 certs for
 	   which the last one has no policy.  NIST claims this shouldn't
 	   validate, which is incorrect */
-	/* 44 */ { 9, 3, TRUE /* FALSE */, TRUE },
-	/* 45 */ { 9, 4, TRUE, TRUE },
-	/* 46 */ { 9, 5, FALSE, TRUE },
-	/* 47 */ { 9, 6, TRUE, TRUE },
-	/* 48 */ { 9, 7, FALSE, TRUE },
+	/*  59 */ { 9, 3, TRUE /* FALSE */, TRUE },
+	/*  60 */ { 9, 4, TRUE, TRUE },
+	/*  61 */ { 9, 5, FALSE, TRUE },
+	/*  62 */ { 9, 6, TRUE, TRUE },
+	/*  63 */ { 9, 7, FALSE, TRUE },
+	/*  64 */ { 9, 8, FALSE, TRUE },
 
-	/* 10, 11 = Policy mappings */
-	/* 49 */ { 10, 7, FALSE },
-	/* 50 */ { 10, 8, FALSE },
+	/* 10, 11 = Policy mappings.  The false -> true changes below (4.10.2,
+	   4.10.4) occur because cryptlib takes its initial policy from the 
+	   first CA certificate with a policy that it finds.  This is due to 
+	   real-world issues where re-parented certificate chains due to re-sold 
+	   CA root keys end up with different policies in the root and the next-
+	   level-down pseudo-root and problems where the root is an extension-
+	   less X.509v1 certificate */
+	/*  65 */ { 10, 1, TRUE },
+	/*  66 */ { 10, 2, /* FALSE */ TRUE },
+	/*  67 */ { 10, 3, TRUE },
+	/*  68 */ { 10, 4, /* FALSE */ TRUE },
+	/*  69 */ { 10, 5, TRUE },
+	/*  70 */ { 10, 6, TRUE },
+	/*  71 */ { 10, 7, FALSE },
+	/*  72 */ { 10, 8, FALSE },
+	/*  73 */ { 10, 9, TRUE },
+	/* The test for 4.10.10 is a special case because it contains  the 
+	   retroactively triggered requireExplicitPolicy extension, see the long 
+	   comment in chk_chn.c for a discussion of this, for now we just 
+	   disable the check by recording it as a value-true check because even 
+	   the standards committee can't explain why it does what it does */
+	/*  74 */ { 10, 10, /* FALSE */ TRUE },
+	/*  75 */ { 10, 11, TRUE },
+	/*  76 */ { 10, 12, TRUE },
+	/*  77 */ { 10, 13, TRUE },
+	/*  78 */ { 10, 14, TRUE },
+
+	/* Policy inhibitPolicy.  The false -> true changes below (4.11.1) are 
+	   as for the 10.x tests */
+	/*  79 */ { 11, 1, /* FALSE */ TRUE },
+	/* The NIST test value for 4.11.2 is wrong, the top-level CA 
+	   certificate sets inhibitPolicyMapping to 1, the mid-level CA 
+	   certificate maps policy 1 to policy 3, and the EE certificte asserts
+	   policy 3, however at this point inhibitPolicyMapping is in effect
+	   and policy 3 is no longer valid */
+	/*  80 */ { 11, 2, /* TRUE */ FALSE },
+	/*  81 */ { 11, 3, FALSE },
+	/* The NIST test value for 4.11.4 is wrong for the same reason as for 
+	   4.11.2, except that the point of failure is a second sub-CA rather 
+	   than the EE */
+	/*  82 */ { 11, 4, /* TRUE */ FALSE },
+	/*  83 */ { 11, 5, FALSE },
+	/*  84 */ { 11, 6, FALSE },
+	/* The NIST test value for 4.11.7 is wrong for the same reason as for 
+	   4.11.2, except that the mapping is from policy 1 to policy 2 instead 
+	   of policy 3 */
+	/*  85 */ { 11, 7, /* TRUE */ FALSE },
+	/*  86 */ { 11, 8, FALSE },
+	/*  87 */ { 11, 9, FALSE },
+	/*  88 */ { 11, 10, FALSE },
+	/*  89 */ { 11, 11, FALSE },
 
 	/* Policy inhibitAny */
-	/* 51 */ { 12, 1, FALSE },
-	/* 52 */ { 12, 2, TRUE },
-	/* 53 */ { 12, 3, TRUE },
-	/* 54 */ { 12, 4, FALSE },
-	/* The NIST test results for 4.12.7 and 4.12.9 are wrong or more
-	   specifically the PKIX spec is wrong, contradicting itself in the body
-	   of the spec and the path-processing pseudocode in that there's no
+	/*  90 */ { 12, 1, FALSE },
+	/*  91 */ { 12, 2, TRUE },
+	/*  92 */ { 12, 3, TRUE },
+	/*  93 */ { 12, 4, FALSE },
+	/*  94 */ { 12, 5, FALSE },
+	/*  95 */ { 12, 6, FALSE },
+	/* The NIST test results for 4.12.7 and 4.12.9 are wrong or more 
+	   specifically the PKIX spec is wrong, contradicting itself in the body 
+	   of the spec and the path-processing pseudocode in that there's no 
 	   path-kludge exception for policy constraints in the body but there is 
 	   one in the pseudocode.  Since these chains contain path-kludge certs 
 	   the paths are invalid - they would only be valid if there was a path-
@@ -1111,47 +1259,49 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	   NIST test results go the other way.  So although the PKIX spec is 
 	   wrong the NIST test is also wrong in that it applies an inconsistent 
 	   interpretation of the contradictions in the PKIX spec */
-	/* 55 */ { 12, 7, FALSE /* TRUE */ },
-	/* 56 */ { 12, 8, FALSE },
-	/* 57 */ { 12, 9, FALSE /* TRUE */ },
+	/*  96 */ { 12, 7, FALSE /* TRUE */ },
+	/*  97 */ { 12, 8, FALSE },
+	/*  98 */ { 12, 9, FALSE /* TRUE */ },
+	/*  99 */ { 12, 10, FALSE },
 
 	/* Name constraints */
-	/* 58 */ { 13, 1, TRUE },
-	/* 59 */ { 13, 2, FALSE },
-	/* 60 */ { 13, 3, FALSE },
-	/* 61 */ { 13, 4, TRUE },
-	/* 62 */ { 13, 5, TRUE },
-	/* 63 */ { 13, 6, TRUE },
-	/* 64 */ { 13, 7, FALSE },
-	/* 65 */ { 13, 8, FALSE },
-	/* 66 */ { 13, 9, FALSE },
-	/* 67 */ { 13, 10, FALSE },
-	/* 68 */ { 13, 11, TRUE },
-	/* 69 */ { 13, 12, FALSE },
-	/* 70 */ { 13, 13, FALSE },
-	/* 71 */ { 13, 14, TRUE },
-	/* 72 */ { 13, 15, FALSE },
-	/* 73 */ { 13, 17, FALSE },
-	/* 74 */ { 13, 18, TRUE },
-	/* 75 */ { 13, 19, TRUE },
-	/* 76 */ { 13, 20, FALSE },
-	/* 77 */ { 13, 21, TRUE },
-	/* 78 */ { 13, 22, FALSE },
-	/* 79 */ { 13, 23, TRUE },
-	/* 80 */ { 13, 24, FALSE },
-	/* 81 */ { 13, 25, TRUE },
-	/* 82 */ { 13, 26, FALSE },
-	/* 83 */ { 13, 27, TRUE },
-	/* 84 */ { 13, 28, FALSE },
-	/* 85 */ { 13, 29, FALSE },
-	/* 86 */ { 13, 30, TRUE },
-	/* 87 */ { 13, 31, FALSE },
-	/* 88 */ { 13, 32, TRUE },
-	/* 89 */ { 13, 33, FALSE },
-	/* 90 */ { 13, 34, TRUE },
-	/* 91 */ { 13, 35, FALSE },
-	/* 92 */ { 13, 36, TRUE },
-	/* 93 */ { 13, 37, FALSE },
+	/* 100 */ { 13, 1, TRUE },
+	/* 101 */ { 13, 2, FALSE },
+	/* 102 */ { 13, 3, FALSE },
+	/* 103 */ { 13, 4, TRUE },
+	/* 104 */ { 13, 5, TRUE },
+	/* 105 */ { 13, 6, TRUE },
+	/* 106 */ { 13, 7, FALSE },
+	/* 107 */ { 13, 8, FALSE },
+	/* 108 */ { 13, 9, FALSE },
+	/* 109 */ { 13, 10, FALSE },
+	/* 110 */ { 13, 11, TRUE },
+	/* 111 */ { 13, 12, FALSE },
+	/* 112 */ { 13, 13, FALSE },
+	/* 113 */ { 13, 14, TRUE },
+	/* 114 */ { 13, 15, FALSE },
+	/* 115 */ { 13, 16, FALSE },
+	/* 116 */ { 13, 17, FALSE },
+	/* 117 */ { 13, 18, TRUE },
+	/* 118 */ { 13, 19, TRUE },
+	/* 119 */ { 13, 20, FALSE },
+	/* 120 */ { 13, 21, TRUE },
+	/* 121 */ { 13, 22, FALSE },
+	/* 122 */ { 13, 23, TRUE },
+	/* 123 */ { 13, 24, FALSE },
+	/* 124 */ { 13, 25, TRUE },
+	/* 125 */ { 13, 26, FALSE },
+	/* 126 */ { 13, 27, TRUE },
+	/* 127 */ { 13, 28, FALSE },
+	/* 188 */ { 13, 29, FALSE },
+	/* 129 */ { 13, 30, TRUE },
+	/* 130 */ { 13, 31, FALSE },
+	/* 131 */ { 13, 32, TRUE },
+	/* 132 */ { 13, 33, FALSE },
+	/* 133 */ { 13, 34, TRUE },
+	/* 134 */ { 13, 35, FALSE },
+	/* 135 */ { 13, 36, TRUE },
+	/* 136 */ { 13, 37, FALSE },
 	/* The NIST test results for 4.13.38 are wrong.  PKIX section 4.2.1.11
 	   says:
 
@@ -1164,13 +1314,13 @@ static const PATH_TEST_INFO FAR_BSS pathTestInfo[] = {
 	   The permitted subtree is testcertificates.gov and the altName is
 	   mytestcertificates.gov which satisfies the above rule so the path
 	   should be valid and not invalid */
-	/* 94 */ { 13, 38, TRUE /* FALSE */ },
+	/* 137 */ { 13, 38, TRUE /* FALSE */ },
 
 	/* 14, 15 = CRLs */
 
 	/* Private certificate extensions */
-	/* 95 */ { 16, 1, TRUE },
-	/* 96 */ { 16, 2, FALSE },
+	/* 138 */ { 16, 1, TRUE },
+	/* 139 */ { 16, 2, FALSE },
 	{ 0, 0 }
 	};
 
@@ -1193,8 +1343,8 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 									 PATHTEST_FILE_TEMPLATE, pathNo );
 	if( cryptStatusError( status ) )
 		{
-		printf( "Certificate import for test path %s failed, line %d.\n",
-				pathName, __LINE__ );
+		printf( "Certificate import for test path %s failed, status %d, "
+				"line %d.\n", pathName, status, __LINE__ );
 		return( FALSE );
 		}
 	if( pathInfo->policyOptional )
@@ -1209,8 +1359,10 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 		}
 	status = cryptCheckCert( cryptCertPath, CRYPT_UNUSED );
 	if( pathInfo->policyOptional )
+		{
 		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_REQUIREPOLICY,
 						   requirePolicy );
+		}
 	if( pathInfo->isValid )
 		{
 		if( cryptStatusError( status ) )
@@ -1237,7 +1389,7 @@ static int testPath( const PATH_TEST_INFO *pathInfo )
 int testPathProcessing( void )
 	{
 	CRYPT_CERTIFICATE cryptRootCert;
-	int certTrust, complianceLevel, i, status;
+	int certTrust = DUMMY_INIT, complianceLevel, i, status;
 
 	puts( "Testing path processing..." );
 
@@ -1270,7 +1422,7 @@ int testPathProcessing( void )
 
 	/* Process each certificate path and make sure that it succeeds or fails 
 	   as required */
-	for( i = 0; pathTestInfo[ i ].fileMajor; i++ )
+	for( i = 0; pathTestInfo[ i ].fileMajor != 0; i++ )
 		{
 		if( !testPath( &pathTestInfo[ i ] ) )
 			break;
@@ -1285,6 +1437,12 @@ int testPathProcessing( void )
 	puts( "Path processing succeeded." );
 	return( TRUE );
 	}
+
+/****************************************************************************
+*																			*
+*							Miscellaneous Tests								*
+*																			*
+****************************************************************************/
 
 /* Test handling of invalid PKCS #1 padding in certificate signatures.  Note 
    that running this test properly requires disabling the PKCS#1 padding 
@@ -1362,6 +1520,7 @@ void xxxCertImport( const char *fileName )
 	if( bufPtr != buffer )
 		free( bufPtr );
 	printCertInfo( cryptCert );
+	cryptCheckCert( cryptCert, CRYPT_UNUSED );	/* Opportunistic only */
 	cryptDestroyCert( cryptCert );
 	}
 

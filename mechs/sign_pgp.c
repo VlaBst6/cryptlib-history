@@ -7,12 +7,12 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "pgp_rw.h"
+  #include "mech.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/pgp_rw.h"
   #include "mechs/mech.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGP
@@ -417,7 +417,6 @@ int checkSignaturePGP( IN_BUFFER( signatureLength ) const void *signature,
 
 	/* Determine whether there are any authenticated attributes attached to
 	   the signature */
-	memset( &queryInfo, 0, sizeof( QUERY_INFO ) );
 	sMemConnect( &stream, signature, signatureLength );
 	status = readSigFunction( &stream, &queryInfo );
 	sMemDisconnect( &stream );

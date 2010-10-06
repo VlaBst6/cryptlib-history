@@ -44,6 +44,51 @@
 *																			*
 ****************************************************************************/
 
+/* Since we're doing the self-test using the FIPS 186 values we use the 
+   following fixed k and hash values rather than a randomly-generated 
+   value */
+
+static const BYTE FAR_BSS shaM[] = {
+	0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
+	0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
+	0x9C, 0xD0, 0xD8, 0x9D
+	};
+
+static const BYTE FAR_BSS kVal[] = {
+	0x35, 0x8D, 0xAD, 0x57, 0x14, 0x62, 0x71, 0x0F,
+	0x50, 0xE2, 0x54, 0xCF, 0x1A, 0x37, 0x6B, 0x2B,
+	0xDE, 0xAA, 0xDF, 0xBF
+	};
+
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
+	DLP_PARAMS dlpParams;
+	BYTE buffer[ 128 + 8 ];
+	int sigSize, status;
+
+	/* Generate a signature with the private key */
+	setDLPParams( &dlpParams, shaM, 20, buffer, 128 );
+	dlpParams.inLen2 = -999;
+	status = capabilityInfoPtr->signFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Verify the signature with the public key */
+	sigSize = dlpParams.outLen;
+	setDLPParams( &dlpParams, shaM, 20, NULL, 0 );
+	dlpParams.inParam2 = buffer;
+	dlpParams.inLen2 = sigSize;
+	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr,
+						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
+	return( cryptStatusOK( status ) ? TRUE : FALSE );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
+
 /* Test the DSA implementation using the sample key and hash from FIPS 186
    (we actually use a generated 1024-bit key because the FIPS 186 key at
    512 bits is too short to load).  Because a lot of the high-level 
@@ -176,46 +221,6 @@ static const DLP_KEY FAR_BSS dlpTestKey = {
 	  0xDC, 0xCE, 0xA4, 0xD5, 0xA5, 0x4F, 0x08, 0x0F }
 	};
 
-static const BYTE FAR_BSS shaM[] = {
-	0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A,
-	0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C,
-	0x9C, 0xD0, 0xD8, 0x9D
-	};
-
-/* If we're doing a self-test using the FIPS 186 values we use the following
-   fixed k data rather than a randomly-generated value */
-
-static const BYTE FAR_BSS kVal[] = {
-	0x35, 0x8D, 0xAD, 0x57, 0x14, 0x62, 0x71, 0x0F,
-	0x50, 0xE2, 0x54, 0xCF, 0x1A, 0x37, 0x6B, 0x2B,
-	0xDE, 0xAA, 0xDF, 0xBF
-	};
-
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = contextInfoPtr->capabilityInfo;
-	DLP_PARAMS dlpParams;
-	BYTE buffer[ 128 + 8 ];
-	int sigSize, status;
-
-	/* Generate a signature with the private key */
-	setDLPParams( &dlpParams, shaM, 20, buffer, 128 );
-	dlpParams.inLen2 = -999;
-	status = capabilityInfoPtr->signFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-
-	/* Verify the signature with the public key */
-	sigSize = dlpParams.outLen;
-	setDLPParams( &dlpParams, shaM, 20, NULL, 0 );
-	dlpParams.inParam2 = buffer;
-	dlpParams.inLen2 = sigSize;
-	status = capabilityInfoPtr->sigCheckFunction( contextInfoPtr,
-						( BYTE * ) &dlpParams, sizeof( DLP_PARAMS ) );
-	return( cryptStatusOK( status ) ? TRUE : FALSE );
-	}
-
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -265,6 +270,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -337,7 +345,18 @@ static int sign( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		   slight bias in k that leaks a small amount of the private key in
 		   each signature.  Because of this we start with a value which is
 		   32 bits larger than q and then do the reduction, eliminating the
-		   bias */
+		   bias.
+		   
+		   In theory we could also add (meaning "mix in" rather than 
+		   strictly "arithmetically add") the message hash to k to curtail 
+		   problems where the RNG value repeats, but the heavy-duty self-
+		   checking of the RNG makes it somewhat unlikely that this 
+		   condition would go undetected.  The one time when this can occur 
+		   is when we're running in a VM and get rolled back, but it seems a 
+		   bit uncertain how far down we want to chase this: at how many 
+		   other locations in the code do we need to include Rube Goldberg 
+		   protections against rollback?  Under what conditions can rollback 
+		   occur?  When can rollback occur? */
 		status = generateBignum( k, bytesToBits( DSA_SIGPART_SIZE ) + 32,
 								 0x80, 0 );
 		}
@@ -591,7 +610,8 @@ static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_DSA, bitsToBytes( 0 ), "DSA", 3,
 	MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE,
 	selfTest, getDefaultInfo, NULL, NULL, initKey, generateKey,
-	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, sign, sigCheck
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+	sign, sigCheck
 	};
 
 const CAPABILITY_INFO *getDSACapability( void )

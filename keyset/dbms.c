@@ -28,8 +28,7 @@
 ****************************************************************************/
 
 /* Dispatch functions for various database types.  ODBC is the native keyset
-   for Windows and (frequently) Unix, a cryptlib-native plugin is the 
-   fallback for Unix, and the rest are only accessible via database network
+   for Windows and (frequently) Unix, the rest are accessible via database 
    plugins */
 
 #ifdef USE_ODBC
@@ -42,11 +41,6 @@
 #else
   #define initDispatchDatabase( dbmsInfo )	CRYPT_ERROR
 #endif /* General database interface */
-#ifdef USE_DATABASE_PLUGIN
-  int initDispatchNet( DBMS_INFO *dbmsInfo );
-#else
-  #define initDispatchNet( dbmsInfo )		CRYPT_ERROR
-#endif /* USE_DATABASE_PLUGIN */
 
 /* Database access functions */
 
@@ -98,7 +92,7 @@ static void closeDatabase( INOUT DBMS_INFO *dbmsInfo )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int performUpdate( INOUT DBMS_INFO *dbmsInfo, 
 						  IN_STRING_OPT const char *command,
-						  IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
+						  IN_ARRAY_OPT_C( BOUND_DATA_MAXITEMS ) \
 							TYPECAST( BOUND_DATA ) const void *boundData,
 						  IN_ENUM( DBMS_UPDATE ) \
 							const DBMS_UPDATE_TYPE updateType )
@@ -159,7 +153,7 @@ static int performQuery( INOUT DBMS_INFO *dbmsInfo,
 							void *data, 
 						 IN_LENGTH_SHORT_Z const int dataMaxLength, 
 						 OUT_OPT_LENGTH_SHORT_Z int *dataLength, 
-						 IN_ARRAY_OPT( BOUND_DATA_MAXITEMS ) \
+						 IN_ARRAY_OPT_C( BOUND_DATA_MAXITEMS ) \
 							TYPECAST( BOUND_DATA ) const void *boundData,
 						 IN_ENUM_OPT( DBMS_CACHEDQUERY ) \
 							const DBMS_CACHEDQUERY_TYPE queryEntry,
@@ -634,11 +628,6 @@ int initDbxSession( INOUT KEYSET_INFO *keysetInfoPtr,
 			status = initDispatchDatabase( dbmsInfo );
 			break;
 
-		case CRYPT_KEYSET_PLUGIN:
-		case CRYPT_KEYSET_PLUGIN_STORE:
-			status = initDispatchNet( dbmsInfo );
-			break;
-
 		default:
 			retIntError();
 		}
@@ -661,8 +650,7 @@ int initDbxSession( INOUT KEYSET_INFO *keysetInfoPtr,
 	keysetInfoPtr->keyDataSize = sizeof( DBMS_STATE_INFO );
 	dbmsInfo->stateInfo = keysetInfoPtr->keyData;
 	if( type == CRYPT_KEYSET_ODBC_STORE || \
-		type == CRYPT_KEYSET_DATABASE_STORE || \
-		type == CRYPT_KEYSET_PLUGIN_STORE )
+		type == CRYPT_KEYSET_DATABASE_STORE )
 		dbmsInfo->flags |= DBMS_FLAG_CERTSTORE | DBMS_FLAG_CERTSTORE_FIELDS;
 
 	return( CRYPT_OK );

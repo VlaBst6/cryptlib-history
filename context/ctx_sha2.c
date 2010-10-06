@@ -19,9 +19,9 @@
 
 #define HASH_STATE_SIZE		sizeof( sha2_ctx )
 
-#if defined( USE_SHA2_512 ) && !defined( SHA512_DIGEST_SIZE )
-  #error SHA2-512 can only be used on a system with 64-bit data type support
-#endif /* USE_SHA2_512 on system without 64-bit data type */
+#if defined( USE_SHA2_EXT ) && !defined( SHA512_DIGEST_SIZE )
+  #error SHA2-384/512 can only be used on a system with 64-bit data type support
+#endif /* Extended SHA-2 variants on system without 64-bit data type */
 
 #ifndef SHA384_DIGEST_SIZE
   /* These may not be defined on non 64-bit systems */
@@ -37,6 +37,8 @@
 *							SHA2 Self-test Routines							*
 *																			*
 ****************************************************************************/
+
+#ifndef CONFIG_NO_SELFTEST
 
 /* Test the SHA output against the test vectors given in FIPS 180-2.  We skip
    the third test since this takes several seconds to execute, which leads
@@ -135,6 +137,9 @@ static int selfTest( void )
 		}
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -144,17 +149,29 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = HASH_STATE_SIZE;
+		int *valuePtr = ( int * ) data;
+
+		*valuePtr = HASH_STATE_SIZE;
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -172,12 +189,16 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 	/* If the hash state was reset to allow another round of hashing,
 	   reinitialise things */
 	if( !( contextInfoPtr->flags & CONTEXT_FLAG_HASH_INITED ) )
-		sha2_begin( SHA256_DIGEST_SIZE, shaInfo );
+		sha2_begin( contextInfoPtr->capabilityInfo->blockSize, shaInfo );
 
 	if( noBytes > 0 )
+		{
 		sha2_hash( buffer, noBytes, shaInfo );
+		}
 	else
+		{
 		sha2_end( contextInfoPtr->ctxHash->hash, shaInfo );
+		}
 
 	return( CRYPT_OK );
 	}
@@ -243,10 +264,16 @@ void sha2HashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength,
 	zeroise( &shaInfo, sizeof( sha2_ctx ) );
 	}
 
-#ifdef USE_SHA2_512
+#ifdef USE_SHA2_EXT
 
-void sha2_512HashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
-						 const int outBufMaxLength, const BYTE *inBuffer, 
+#if defined( CONFIG_SUITEB )
+  #define SHA2EXT_DIGEST_SIZE	SHA384_DIGEST_SIZE
+#else
+  #define SHA2EXT_DIGEST_SIZE	SHA512_DIGEST_SIZE
+#endif /* Suite B vs. generic use */
+
+void sha2_ExtHashBuffer( HASHINFO hashInfo, BYTE *outBuffer, 
+						 const int outBufMaxLength, const void *inBuffer, 
 						 const int inLength, const HASH_STATE hashState )
 	{
 	sha2_ctx *shaInfo = ( sha2_ctx * ) hashInfo;
@@ -257,17 +284,18 @@ void sha2_512HashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 			  outBuffer == NULL && outBufMaxLength == 0 ) || \
 			( hashState == HASH_STATE_END && \
 			  isWritePtr( outBuffer, outBufMaxLength ) && \
-			  outBufMaxLength >= 64 ) );
+			  outBufMaxLength >= SHA2EXT_DIGEST_SIZE ) );
 	assert( inBuffer == NULL || isReadPtr( inBuffer, inLength ) );
 
-	if( ( hashState == HASH_STATE_END && outBufMaxLength < 64 ) || \
+	if( ( hashState == HASH_STATE_END && \
+		  outBufMaxLength < SHA2EXT_DIGEST_SIZE ) || \
 		( hashState != HASH_STATE_END && inLength <= 0 ) )
 		retIntError_Void();
 
 	switch( hashState )
 		{
 		case HASH_STATE_START:
-			if( sha2_begin( SHA512_DIGEST_SIZE, shaInfo ) != EXIT_SUCCESS )
+			if( sha2_begin( SHA2EXT_DIGEST_SIZE, shaInfo ) != EXIT_SUCCESS )
 				retIntError_Void()
 			/* Drop through */
 
@@ -286,8 +314,8 @@ void sha2_512HashBuffer( HASHINFO hashInfo, BYTE *outBuffer,
 		}
 	}
 
-void sha2_512HashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength, 
-							   const BYTE *inBuffer, const int inLength )
+void sha2_ExtHashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength, 
+							   const void *inBuffer, const int inLength )
 	{
 	sha2_ctx shaInfo;
 
@@ -298,7 +326,7 @@ void sha2_512HashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength,
 	if( outBufMaxLength < 64 || inLength <= 0 )
 		retIntError_Void();
 
-	if( sha2_begin( SHA512_DIGEST_SIZE, &shaInfo ) != EXIT_SUCCESS )
+	if( sha2_begin( SHA2EXT_DIGEST_SIZE, &shaInfo ) != EXIT_SUCCESS )
 		{
 		memset( outBuffer, 0, outBufMaxLength );
 		retIntError_Void();
@@ -307,7 +335,73 @@ void sha2_512HashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength,
 	sha2_end( outBuffer, &shaInfo );
 	zeroise( &shaInfo, sizeof( sha2_ctx ) );
 	}
-#endif /* USE_SHA2_512 */
+#endif /* USE_SHA2_EXT */
+
+/****************************************************************************
+*																			*
+*							SHA2 Key Management Routines					*
+*																			*
+****************************************************************************/
+
+/* Initialise algorithm parameters */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initParams( INOUT CONTEXT_INFO *contextInfoPtr, 
+					   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
+					   IN_OPT const void *data, 
+					   IN_INT const int dataLength )
+	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_HASH );
+	REQUIRES( paramType > KEYPARAM_NONE && paramType < KEYPARAM_LAST );
+
+	/* SHA-2 has a variable-length output, selectable by setting the 
+	   blocksize attribute */
+#ifdef USE_SHA2_EXT
+	if( paramType == KEYPARAM_BLOCKSIZE )
+		{
+  #ifdef CONFIG_SUITEB
+		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+				CRYPT_ALGO_SHA2, bitsToBytes( 384 ), "SHA-384", 7,
+				bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
+				selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
+				};
+  #else
+		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+				CRYPT_ALGO_SHA2, bitsToBytes( 512 ), "SHA-512", 7,
+				bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
+				selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
+				};
+  #endif /* CONFIG_SUITEB */
+
+		/* The default SHA-2 variant is SHA-256, so an attempt to set this 
+		   size is a no-op */
+		if( dataLength == SHA256_DIGEST_SIZE )
+			return( CRYPT_OK );
+
+		/* Switch to the appropriate variant of SHA-2.  Note that the 
+		   initParamsFunction pointer for this version is NULL rather than
+		   pointing to this function, so once the output size has been set 
+		   it can't be changed again */
+  #ifdef CONFIG_SUITEB
+		if( dataLength != SHA384_DIGEST_SIZE )
+			return( CRYPT_ARGERROR_NUM1 );
+		contextInfoPtr->capabilityInfo = &capabilityInfo;
+  #else
+		if( dataLength != SHA512_DIGEST_SIZE )
+			return( CRYPT_ARGERROR_NUM1 );
+		contextInfoPtr->capabilityInfo = &capabilityInfo;
+  #endif /* CONFIG_SUITEB */
+
+		return( CRYPT_OK );
+		}
+#endif /* USE_SHA2_EXT */
+
+	/* Pass the call on down to the global parameter-handling function */	
+	return( initGenericParams( contextInfoPtr, paramType, data, 
+							   dataLength ) );
+	}
 
 /****************************************************************************
 *																			*
@@ -318,12 +412,11 @@ void sha2_512HashBufferAtomic( BYTE *outBuffer, const int outBufMaxLength,
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_SHA2, bitsToBytes( 256 ), "SHA-2", 5,
 	bitsToBytes( 0 ), bitsToBytes( 0 ), bitsToBytes( 0 ),
-	selfTest, getInfo, NULL, NULL, NULL, NULL, hash, hash
+	selfTest, getInfo, NULL, initParams, NULL, NULL, hash, hash
 	};
 
 const CAPABILITY_INFO *getSHA2Capability( void )
 	{
 	return( &capabilityInfo );
 	}
-
 #endif /* USE_SHA2 */

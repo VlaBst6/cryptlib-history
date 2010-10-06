@@ -83,8 +83,7 @@ static int getHardwareReference( const CRYPT_CONTEXT iCryptContext,
 	status = krnlSendMessage( iCryptContext, IMESSAGE_GETATTRIBUTE_S,
 							  &msgData, CRYPT_IATTRIBUTE_DEVICESTORAGEID );
 	if( cryptStatusOK( status ) )
-		status = hwLookupItem( CRYPT_KEYID_NONE, storageID, KEYID_SIZE,
-							   keyHandle, NULL );
+		status = hwLookupItem( storageID, KEYID_SIZE, keyHandle );
 	if( cryptStatusError( status ) )
 		{
 		/* In theory this is an internal error but in practice we shouldn't
@@ -212,8 +211,8 @@ int deviceInitHardware( void )
 	/* Build the list of available capabilities */
 	memset( capabilityInfoList, 0, 
 			sizeof( CAPABILITY_INFO_LIST ) * MAX_DEVICE_CAPABILITIES );
-	for( i = 0; capabilityInfo[ i ].cryptAlgo != CRYPT_ALGO_NONE && \
-				i < noCapabilities; i++ )
+	for( i = 0; i < noCapabilities && \
+				capabilityInfo[ i ].cryptAlgo != CRYPT_ALGO_NONE; i++ )
 		{
 		REQUIRES( sanityCheckCapability( &capabilityInfo[ i ], FALSE ) );
 		
@@ -358,7 +357,7 @@ static int controlFunction( DEVICE_INFO *deviceInfo,
 		   all information cleared */
 		if( hardwareInfo->iCryptKeyset != CRYPT_ERROR )
 			shutdownFunction( deviceInfo );
-		hwDeleteAllItems();
+		hwInitialise();
 		deviceInfo->flags |= DEVICE_ACTIVE;
 
 		/* The only real difference between a zeroise and an initialise is

@@ -61,7 +61,7 @@
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx) 
 /* Returns 'ret' such that
@@ -396,4 +396,4 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 	return ret;
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

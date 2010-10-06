@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						  cryptlib Device Test Routines						*
-*						Copyright Peter Gutmann 1997-2006					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
@@ -854,6 +854,18 @@ static BOOLEAN testDeviceHighlevel( const CRYPT_DEVICE cryptDevice,
 			status = cryptGetPrivateKey( cryptDevice, &sigKeyContext,
 										 CRYPT_KEYID_NAME,
 										 TEXT( "Test CA key" ), NULL );
+			if( status == CRYPT_ERROR_NOTFOUND )
+				{
+				/* If we're using a PKCS #11 device that doesn't support
+				   object labels then we have to use the alternate read
+				   method via the certificate CN.  This requires enabling 
+				   PKCS11_FIND_VIA_CRYPTLIB in device/pkcs11_rw.c */
+				assert( cACertData[ 3 ].type == CRYPT_CERTINFO_COMMONNAME );
+				status = cryptGetPrivateKey( cryptDevice, &sigKeyContext, 
+											 CRYPT_KEYID_NAME, 
+											 cACertData[ 3 ].stringValue, 
+											 NULL );
+				}
 			}
 		else
 			{
@@ -1183,6 +1195,20 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 				deleteTestKey( cryptDevice, DSA_PUBKEY_LABEL, "DSA public" );
 				deleteTestKey( cryptDevice, DSA_PRIVKEY_LABEL, "DSA private" );
 				deleteTestKey( cryptDevice, SYMMETRIC_KEY_LABEL, "symmetric" );
+				assert( cACertData[ 3 ].type == CRYPT_CERTINFO_COMMONNAME );
+				deleteTestKey( cryptDevice, cACertData[ 3 ].stringValue,
+							   "CA-cert" );
+				assert( userCertData[ 2 ].type == CRYPT_CERTINFO_COMMONNAME );
+				deleteTestKey( cryptDevice, userCertData[ 2 ].stringValue,
+							   "user-cert" );
+				assert( userSigOnlyCertData[ 2 ].type == CRYPT_CERTINFO_COMMONNAME );
+				deleteTestKey( cryptDevice, 
+							   userSigOnlyCertData[ 2 ].stringValue,
+							   "sig-only-cert" );
+				assert( userKeyAgreeCertData[ 2 ].type == CRYPT_CERTINFO_COMMONNAME );
+				deleteTestKey( cryptDevice, 
+							   userKeyAgreeCertData[ 2 ].stringValue,
+							   "keyagree-only-cert" );
 				}
 			if( deviceType == CRYPT_DEVICE_FORTEZZA )
 				deleteTestKey( cryptDevice, "Test KEA key", "KEA" );
@@ -1243,12 +1269,6 @@ static int testCryptoDevice( const CRYPT_DEVICE_TYPE deviceType,
 int testDevices( void )
 	{
 	int i, status;
-
-////////////////////////////////////////////
-testCryptoDevice( CRYPT_DEVICE_HARDWARE, "generic crypto hardware",
-					&hardwareDeviceInfo[ 0 ] );
-return( FALSE );
-////////////////////////////////////////////
 
 	/* Test Fortezza devices */
 #if 0

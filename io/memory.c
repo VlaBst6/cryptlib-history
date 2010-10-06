@@ -78,30 +78,36 @@ static BOOLEAN sanityCheck( const STREAM *stream )
    parameter errors later in the code */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int initMemoryStream( INOUT STREAM *stream, 
-							 IN_BUFFER_OPT( length ) const void *buffer, 
-							 IN_LENGTH_Z const int length, 
-							 const BOOLEAN nullStreamOK )
+static int initMemoryStream( OUT STREAM *stream, 
+							 const BOOLEAN isNullStream )
 	{
 	/* We don't use a REQUIRES() predicate here for the reasons given in the 
 	   comments above */
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	assert( ( nullStreamOK && buffer == NULL && length == 0 ) || \
-			( !nullStreamOK && isReadPtr( buffer, length ) ) );
 
 	/* Check that the input parameters are in order */
 	if( !isWritePtrConst( stream, sizeof( STREAM ) ) )
 		retIntError();
 
-	/* Clear the stream data and make it a null stream if required.  Note 
-	   that we specifically check for length == 0, since the length < 0 case
-	   is handled below */
+	/* Clear the stream data and initialise the stream structure.  Further 
+	   initialisation of stream buffer parameters will be done by the 
+	   caller */
 	memset( stream, 0, sizeof( STREAM ) );
-	if( nullStreamOK && buffer == NULL && length == 0 )
-		{
-		stream->type = STREAM_TYPE_NULL;
-		return( CRYPT_OK );
-		}
+	stream->type = ( isNullStream ) ? STREAM_TYPE_NULL : STREAM_TYPE_MEMORY;
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int checkMemoryStreamParams( INOUT STREAM *stream, 
+									IN_BUFFER( length ) const void *buffer, 
+									IN_LENGTH_Z const int length )
+	{
+	/* We don't use a REQUIRES() predicate here for the reasons given in the 
+	   comments above */
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( length > 0 && length < MAX_INTLENGTH );
+	assert( isReadPtr( buffer, length ) );
 
 	/* If there's a problem with the parameters, return an error code but
 	   also make it a (non-readable, non-writeable) null stream with the 
@@ -114,12 +120,7 @@ static int initMemoryStream( INOUT STREAM *stream,
 		stream->flags = STREAM_FLAG_READONLY;
 		retIntError_Stream( stream );
 		}
-
-	/* Initialise the stream structure */
-	stream->type = STREAM_TYPE_MEMORY;
-	stream->buffer = ( void * ) buffer;
-	stream->bufSize = length;
-
+	
 	return( CRYPT_OK );
 	}
 
@@ -156,8 +157,8 @@ static int shutdownMemoryStream( INOUT STREAM *stream,
    given in the comments in initMemoryStream() */
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sMemOpen( INOUT STREAM *stream, 
-			  IN_BUFFER( length ) void *buffer, 
+int sMemOpen( OUT STREAM *stream, 
+			  OUT_BUFFER_FIXED( length ) void *buffer, 
 			  IN_LENGTH const int length )
 	{
 	int status;
@@ -167,10 +168,18 @@ int sMemOpen( INOUT STREAM *stream,
 	assert( isWritePtr( buffer, length ) );
 	assert( length > 0 && length < MAX_INTLENGTH );
 
-	/* Initialise the memory stream */
-	status = initMemoryStream( stream, buffer, length, FALSE );
+	/* Initialise the memory stream.  Static analysis tools may warn about
+	   the use of uninitialised memory in checkMemoryStreamParams(),
+	   unfortunately this can't be avoided because we need to be able to
+	   access it for isReadPtr() even though we aren't actually reading
+	   from it */
+	status = initMemoryStream( stream, FALSE );
+	if( cryptStatusOK( status ) )
+		status = checkMemoryStreamParams( stream, buffer, length );
 	if( cryptStatusError( status ) )
 		return( status );
+	stream->buffer = buffer;
+	stream->bufSize = length;
 
 	/* Clear the stream buffer.  Since this can be arbitrarily large we only 
 	   clear the entire buffer in the debug version */
@@ -191,7 +200,7 @@ int sMemNullOpen( STREAM *stream )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
 	/* Initialise the memory stream */
-	status = initMemoryStream( stream, NULL, 0, TRUE );
+	status = initMemoryStream( stream, TRUE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -199,15 +208,19 @@ int sMemNullOpen( STREAM *stream )
 	}
 
 RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int sMemOpenOpt( INOUT STREAM *stream, 
-				 IN_BUFFER_OPT( length ) void *buffer, 
+int sMemOpenOpt( OUT STREAM *stream, 
+				 OUT_BUFFER_OPT_FIXED( length ) void *buffer, 
 				 IN_LENGTH_Z const int length )
 	{
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( ( buffer == NULL && length == 0 ) || \
 			isReadPtr( buffer, length ) );
 
-	if( buffer == NULL && length == 0 )
+	/* Note that the following must be given as 'buffer == NULL' without an
+	   additional 'length == 0' because static-analysis tools can't make the
+	   connection between 'buffer' and 'length' and will warn that the value
+	   passed to sMemOpen() may be NULL */
+	if( buffer == NULL )
 		return( sMemNullOpen( stream ) );
 	return( sMemOpen( stream, buffer, length ) );
 	}
@@ -227,7 +240,7 @@ int sMemClose( STREAM *stream )
    contents */
 
 RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sMemConnect( INOUT STREAM *stream, 
+int sMemConnect( OUT STREAM *stream, 
 				 IN_BUFFER( length ) const void *buffer, 
 				 IN_LENGTH const int length )
 	{
@@ -239,9 +252,13 @@ int sMemConnect( INOUT STREAM *stream,
 
 	/* Initialise the memory stream.  We don't use a REQUIRES() predicate 
 	   for the reasons given in the comments in initMemoryStream() */
-	status = initMemoryStream( stream, buffer, length, FALSE );
+	status = initMemoryStream( stream, FALSE );
+	if( cryptStatusOK( status ) )
+		status = checkMemoryStreamParams( stream, buffer, length );
 	if( cryptStatusError( status ) )
 		return( status );
+	stream->buffer = ( void * ) buffer;
+	stream->bufSize = length;
 
 	/* Initialise further portions of the stream structure.  This is a read-
 	   only stream so what's in the buffer at the start is all we'll ever 
@@ -277,7 +294,7 @@ int sMemDisconnect( INOUT STREAM *stream )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getMemoryBlock( INOUT STREAM *stream, 
-						   OUT_BUFFER_ALLOC( length ) void **dataPtrPtr,
+						   OUT_BUFFER_ALLOC_OPT( length ) void **dataPtrPtr,
 						   IN_LENGTH_Z const int position, 
 						   IN_LENGTH const int length )
 	{
@@ -292,6 +309,9 @@ static int getMemoryBlock( INOUT STREAM *stream,
 			  stream->type == STREAM_TYPE_MEMORY );
 	REQUIRES_S( position >= 0 && position <= stream->bufSize );
 	REQUIRES_S( length > 0 && length < MAX_INTLENGTH );
+
+	/* Clear return value */
+	*dataPtrPtr = NULL;
 
 	/* If there's a problem with the stream don't try to do anything */
 	if( cryptStatusError( stream->status ) )
@@ -342,7 +362,7 @@ int sMemDataLeft( const STREAM *stream )
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int sMemGetDataBlock( INOUT STREAM *stream, 
-					  OUT_BUFFER_ALLOC( dataSize ) void **dataPtrPtr, 
+					  OUT_BUFFER_ALLOC_OPT( dataSize ) void **dataPtrPtr, 
 					  IN_LENGTH const int dataSize )
 	{
 	/* REQUIRES() checking done in getMemoryBlock() */
@@ -360,7 +380,7 @@ int sMemGetDataBlock( INOUT STREAM *stream,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int sMemGetDataBlockAbs( INOUT STREAM *stream, 
 						 IN_LENGTH_Z const int position, 
-						 OUT_BUFFER_ALLOC( dataSize ) void **dataPtrPtr, 
+						 OUT_BUFFER_ALLOC_OPT( dataSize ) void **dataPtrPtr, 
 						 IN_LENGTH const int dataSize )
 	{
 	/* REQUIRES() checking done in getMemoryBlock() */
@@ -378,7 +398,7 @@ int sMemGetDataBlockAbs( INOUT STREAM *stream,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int sMemGetDataBlockRemaining( INOUT STREAM *stream, 
-							   OUT_BUFFER_ALLOC( *length ) void **dataPtrPtr, 
+							   OUT_BUFFER_ALLOC_OPT( *length ) void **dataPtrPtr, 
 							   OUT_LENGTH_Z int *length )
 	{
 	const int dataLeft = sMemDataLeft( stream );
@@ -395,6 +415,8 @@ int sMemGetDataBlockRemaining( INOUT STREAM *stream,
 	*length = 0;
 
 	/* If there's no data remaining, return an underflow error */
+	if( cryptStatusError( dataLeft ) )
+		return( dataLeft );
 	if( dataLeft <= 0 )
 		return( CRYPT_ERROR_UNDERFLOW );
 

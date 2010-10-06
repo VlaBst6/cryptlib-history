@@ -1,9 +1,11 @@
 /****************************************************************************
 *																			*
 *								cryptlib Test Code							*
-*						Copyright Peter Gutmann 1995-2009					*
+*						Copyright Peter Gutmann 1995-2010					*
 *																			*
 ****************************************************************************/
+
+#include <ctype.h>	/* For toupper() */
 
 #include "cryptlib.h"
 #include "test/test.h"
@@ -59,6 +61,8 @@ int keyReadOK = TRUE, doubleCertOK = FALSE;
 
 void xxxCertImport( const char *fileName );
 void xxxCertCheck( const char *certFileName, const char *caFileNameOpt );
+void xxxPubKeyRead( const char *fileName, const char *keyName );
+void xxxPrivKeyRead( const char *fileName, const char *keyName, const char *password );
 void xxxDataImport( const char *fileName );
 void xxxSignedDataImport( const char *fileName );
 void xxxEncryptedDataImport( const char *fileName );
@@ -95,8 +99,12 @@ void smokeTest( void );
 static void updateConfig( void )
 	{
 #if 0
+	const char *driverPath = "c:/winnt/system32/acospkcs11.dll";/* ACOS */
 	const char *driverPath = "c:/winnt/system32/aetpkss1.dll";	/* AET */
+	const char *driverPath = "c:/winnt/system32/aloaha_pkcs11.dll";	/* Aloaha */
 	const char *driverPath = "c:/winnt/system32/etpkcs11.dll";  /* Aladdin eToken */
+	const char *driverPath = "c:/winnt/system32/psepkcs11.dll";	/* A-Sign */
+	const char *driverPath = "c:/winnt/system32/asepkcs.dll";	/* Athena */
 	const char *driverPath = "c:/winnt/system32/cryst32.dll";	/* Chrysalis */
 	const char *driverPath = "c:/program files/luna/cryst201.dll";	/* Chrysalis */
 	const char *driverPath = "c:/winnt/system32/pkcs201n.dll";	/* Datakey */
@@ -105,18 +113,27 @@ static void updateConfig( void )
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
 	const char *driverPath = "c:/program files/eracom/cprov runtime/cryptoki.dll";	/* Eracom (new, doesn't work) */
 	const char *driverPath = "c:/winnt/system32/sadaptor.dll";	/* Eutron */
+	const char *driverPath = "c:/winnt/system32/ngp11v211.dll";	/* Feitain Technology */
 	const char *driverPath = "c:/winnt/system32/pk2priv.dll";	/* Gemplus */
 	const char *driverPath = "c:/program files/gemplus/gclib.dll";	/* Gemplus */
 	const char *driverPath = "c:/winnt/system32/cryptoki.dll";	/* IBM */
+	const char *driverPath = "c:/winnt/system32/csspkcs11.dll";	/* IBM */
+	const char *driverPath = "c:/winnt/system32/ibmpkcss.dll";	/* IBM */
+	const char *driverPath = "c:/winnt/system32/id2cbox.dll";	/* ID2 */
 	const char *driverPath = "c:/winnt/system32/cknfast.dll";	/* nCipher */
 	const char *driverPath = "/opt/nfast/toolkits/pkcs11/libcknfast.so";/* nCipher under Unix */
 	const char *driverPath = "/usr/lib/libcknfast.so";			/* nCipher under Unix */
 	const char *driverPath = "softokn3.dll";					/* Netscape */
 	const char *driverPath = "c:/winnt/system32/nxpkcs11.dll";	/* Nexus */
+	const char *driverPath = "c:/winnt/system32/AuCryptoki2-0.dll";	/* Oberthur */
+	const char *driverPath = "c:/winnt/system32/opensc-pkcs11.dll";	/* OpenSC */
 	const char *driverPath = "c:/winnt/system32/micardoPKCS11.dll";	/* Orga Micardo */
 	const char *driverPath = "c:/winnt/system32/cryptoki22.dll";/* Rainbow HSM (for USB use Datakey dvr) */
 	const char *driverPath = "c:/winnt/system32/p11card.dll";	/* Safelayer HSM (for USB use Datakey dvr) */
 	const char *driverPath = "c:/winnt/system32/slbck.dll";		/* Schlumberger */
+	const char *driverPath = "c:/winnt/system32/SetTokI.dll";	/* SeTec */
+	const char *driverPath = "c:/winnt/system32/siecap11.dll";	/* Siemens */
+	const char *driverPath = "c:/winnt/system32/smartp11.dll";	/* SmartTrust */
 	const char *driverPath = "c:/winnt/system32/SpyPK11.dll";	/* Spyrus */
 #endif /* 0 */
 	const char *driverPath = "c:/program files/eracom/cprov sw/cryptoki.dll";	/* Eracom (old, OK) */
@@ -196,8 +213,31 @@ static void updateConfigCert( void )
    before any of the other tests are run and can be used to handle special-
    case tests that aren't part of the main test suite */
 
-void testKludge( void )
+void testKludge( const char *argPtr )
 	{
+#if 0
+//	testGetBorkenKey();
+
+//	testKeyset();		/* For client-server tests */
+//	testWriteCert();	/* For client-server tests */
+	testSessionSuiteBClientServer();
+#endif
+
+#if 0
+//	testSessionTLS12();
+
+//	testKeyset();		/* For client-server tests */
+//	testWriteCert();	/* For client-server tests */
+//	testSessionSSLClientCertClientServer();
+
+//	testSessionTLS12ClientServerEccKey();
+//	testSessionTLS12ClientServerEcc384Key();
+
+//	testKeyset();		/* For client-server tests */
+//	testWriteCert();	/* For client-server tests */
+//	testSessionTLS12ClientCertClientServer();
+#endif
+
 #if 0
 	testReadCorruptedKey();
 #endif /* 0 */
@@ -240,6 +280,42 @@ void testKludge( void )
 *																			*
 ****************************************************************************/
 
+/* Show usage and exit */
+
+static void usageExit( void )
+	{
+	puts( "Usage: testlib [-bcefhiklmoprs] <file>" );
+
+	puts( "  Encryption function tests:" );
+	puts( "       -l = Test low-level functions" );
+	puts( "       -m = Test mid-level functions" );
+	puts( "       -i = Test high-level functions" );
+	puts( "" );
+
+	puts( "  Subsystem tests:" );
+	puts( "       -c = Test certificate subsystem" );
+	puts( "       -k = Test keyset subsystem" );
+	puts( "       -e = Test envelope subsystem" );
+	puts( "       -s = Test session subsystem" );
+	puts( "       -f = Test session subsystem via loopback interface" );
+	puts( "" );
+
+	puts( "  Miscellaneous tests:" );
+	puts( "       -r = Test entropy-gathering routines" );
+	puts( "       -b = Perform built-in self-test" );
+	puts( "       -o = Test configuration management routines" );
+	puts( "       -p = Test certificate processing" );
+	puts( "" );
+
+	puts( "  Other options:" );
+	puts( "       -h = Display this help text" );
+	puts( "       -- = End of arg list" );
+	puts( "" );
+
+	puts( "Default is to test all cryptlib subsystems." );
+	exit( EXIT_FAILURE );
+	}
+
 /* Comprehensive cryptlib stress test.  To get the following to run under
    WinCE as a native console app, it's necessary to change the entry point
    in Settings | Link | Output from WinMainCRTStartup to the undocumented
@@ -248,16 +324,115 @@ void testKludge( void )
 
 int main( int argc, char **argv )
 	{
+	const char *zargPtr = NULL;
+	BOOLEAN doSelftest = FALSE, doLowlevel = FALSE, doRandom = FALSE;
+	BOOLEAN doConfig = FALSE, doMidlevel = FALSE, doCert = FALSE;
+	BOOLEAN doKeyset = FALSE, doCertprocess = FALSE, doHighlevel = FALSE;
+	BOOLEAN doEnvelope = FALSE, doSession = FALSE, doSessionLoopback = FALSE;
+	BOOLEAN doAll = FALSE, moreArgs = TRUE;
+	BOOLEAN sessionTestError = FALSE, loopbackTestError = FALSE;
 	int status;
 	void testSystemSpecific1( void );
 	void testSystemSpecific2( void );
 
-	/* Get rid of compiler warnings */
-	if( argc || argv );
+	/* Print a general banner to let the user know what's going on */
+	printf( "testlib - cryptlib %d-bit self-test framework.\n", 
+			sizeof( long ) * 8 );
+	puts( "Copyright Peter Gutmann 1995 - 2010." );
+	puts( "" );
 
-	/* Print an initial message in case there's some problem at 
-	   startup */
-	puts( "Starting cryptlib self-tests...\n" );
+	/* Skip the program name */
+	argv++; argc--;
+
+	/* No args means test everything */
+	if( argc <= 0 )
+		doAll = TRUE;
+
+	/* Check for arguments */
+	while( argc > 0 && *argv[ 0 ] == '-' && moreArgs )
+		{
+		const char *argPtr = argv[ 0 ] + 1;
+
+		while( *argPtr )
+			{
+			switch( toupper( *argPtr ) )
+				{
+				case '-':
+					moreArgs = FALSE;	/* GNU-style end-of-args flag */
+					break;
+
+				case 'B':
+					doSelftest = TRUE;
+					break;
+
+				case 'C':
+					doCert = TRUE;
+					break;
+
+				case 'E':
+					doEnvelope = TRUE;
+					break;
+
+				case 'F':
+					doSessionLoopback = TRUE;
+					break;
+
+				case 'H':
+					usageExit();
+					break;
+
+				case 'I':
+					doHighlevel = TRUE;
+					break;
+
+				case 'K':
+					doKeyset = TRUE;
+					break;
+
+				case 'L':
+					doLowlevel = TRUE;
+					break;
+
+				case 'M':
+					doMidlevel = TRUE;
+					break;
+
+				case 'O':
+					doConfig = TRUE;
+					break;
+
+				case 'P':
+					doCertprocess = TRUE;
+					break;
+
+				case 'R':
+					doRandom = TRUE;
+					break;
+
+				case 'S':
+					doSession = TRUE;
+					break;
+
+				case 'Z':
+					zargPtr = argPtr + 1;
+					if( *zargPtr == '\0' )
+						{
+						puts( "Error: Missing argument for -z option." );
+						exit( EXIT_FAILURE );
+						}
+					while( argPtr[ 1 ] )
+						argPtr++;	/* Skip rest of arg */
+					break;
+
+				default:
+					printf( "Error: Unknown argument '%c'.\n", *argPtr );
+					return( EXIT_FAILURE );
+				}
+			argPtr++;
+			}
+		argv++;
+		argc--;
+		}
 
 #ifdef USE_TCHECK
 	THREAD_DEBUG_SUSPEND();
@@ -317,7 +492,7 @@ int main( int argc, char **argv )
 
 	/* For general testing purposes we can insert test code at this point to
 	   test special cases that aren't covered in the general tests below */
-	testKludge();
+	testKludge( zargPtr );
 
 #ifdef SMOKE_TEST
 	/* Perform a general smoke test of the kernel */
@@ -325,33 +500,39 @@ int main( int argc, char **argv )
 #endif /* SMOKE_TEST */
 
 	/* Test each block of cryptlib functionality */
-	if( !testSelfTest() )
+	if( ( doSelftest || doAll ) && !testSelfTest() )
 		goto errorExit;
-	if( !testLowLevel() )
+	if( ( doLowlevel || doAll ) && !testLowLevel() )
 		goto errorExit;
-	if( !testRandom() )
+	if( ( doRandom || doAll ) && !testRandom() )
 		goto errorExit;
-	if( !testConfig() )
+	if( ( doConfig || doAll ) && !testConfig() )
 		goto errorExit;
-	if( !testDevice() )
+	if( ( doSelftest || doAll ) && !testDevice() )
 		goto errorExit;
-	if( !testMidLevel() )
+	if( ( doMidlevel || doAll ) && !testMidLevel() )
 		goto errorExit;
-	if( !testCert() )
+	if( ( doCert || doAll ) && !testCert() )
 		goto errorExit;
-	if( !testKeyset() )
+	if( ( doKeyset || doAll ) && !testKeyset() )
 		goto errorExit;
-	if( !testCertMgmt() )
+	if( ( doCertprocess || doAll ) && !testCertMgmt() )
 		goto errorExit;
-	if( !testHighLevel() )
+	if( ( doHighlevel || doAll ) && !testHighLevel() )
 		goto errorExit;
-	if( !testEnveloping() )
+	if( ( doEnvelope || doAll ) && !testEnveloping() )
 		goto errorExit;
-	if( !testSessions() )
+	if( ( doSession || doAll ) && !testSessions() )
+		{
+		sessionTestError = TRUE;
 		goto errorExit;
-	if( !testSessionsLoopback() )
+		}
+	if( ( doSessionLoopback || doAll ) && !testSessionsLoopback() )
+		{
+		loopbackTestError = TRUE;
 		goto errorExit;
-	if( !testUsers() )
+		}
+	if( ( doAll ) && !testUsers() )
 		goto errorExit;
 
 	/* Shut down cryptlib */
@@ -359,6 +540,7 @@ int main( int argc, char **argv )
 	if( cryptStatusError( status ) )
 		{
 		if( status == CRYPT_ERROR_INCOMPLETE )
+			{
 			puts( "cryptEnd() failed with error code CRYPT_ERROR_INCOMPLETE, "
 				  "a code path in the\nself-test code resulted in an error "
 				  "return without a full cleanup of objects.\nIf you were "
@@ -367,9 +549,12 @@ int main( int argc, char **argv )
 				  "and exited without cleaning up\nits objects.  This "
 				  "happens occasionally due to network timing issues or\n"
 				  "thread scheduling differences." );
+			}
 		else
+			{
 			printf( "cryptEnd() failed with error code %d, line %d.\n", 
 					status, __LINE__ );
+			}
 		goto errorExit1;
 		}
 
@@ -385,19 +570,31 @@ errorExit1:
 		  "as possible to allow it to\nbe diagnosed, for example the call "
 		  "stack, the location inside cryptlib where\nthe problem occurred, "
 		  "and the values of any variables that might be\nrelevant." );
+	if( sessionTestError )
+		{
+		puts( "\nThe error occurred during one of the network session tests, "
+			  "if the error\nmessage indicates a network-level problem such "
+			  "as ECONNREFUSED, ECONNRESET,\nor a timeout or read error then "
+			  "this is either due to a transient\nnetworking problem or a "
+			  "firewall interfering with network connections.  This\nisn't a "
+			  "cryptlib error, and doesn't need to be reported." );
+		}
 #ifdef WINDOWS_THREADS
-	puts( "\nIf the error occurred during one of the multi-threaded network "
-		  "loopback\ntests, this was probably due to the different threads "
-		  "losing synchronisation.\nFor the secure sessions this usually "
-		  "results in read/write, timeout, or\nconnection-closed errors "
-		  "when one thread is pre-empted for too long.  For the\n"
-		  "certificate-management sessions it usually results in an error "
-		  "related to the\nserver being pre-empted for too long by database "
-		  "updates.  Since the self-\ntest exists only to exercise "
-		  "cryptlib's capabilities, it doesn't bother with\ncomplex thread "
-		  "synchronisation during the multi-threaded loopback tests.\nThis "
-		  "type of error is non-fatal, and should disappear if the test is "
-		  "re-run." );
+	if( loopbackTestError )
+		{
+		puts( "\nThe error occurred during one of the multi-threaded network "
+			  "loopback\ntests, this was probably due to the different threads "
+			  "losing synchronisation.\nFor the secure sessions this usually "
+			  "results in read/write, timeout, or\nconnection-closed errors "
+			  "when one thread is pre-empted for too long.  For the\n"
+			  "certificate-management sessions it usually results in an error "
+			  "related to the\nserver being pre-empted for too long by database "
+			  "updates.  Since the self-\ntest exists only to exercise "
+			  "cryptlib's capabilities, it doesn't bother with\ncomplex thread "
+			  "synchronisation during the multi-threaded loopback tests.\nThis "
+			  "type of error is non-fatal, and should disappear if the test is "
+			  "re-run." );
+		}
 #endif /* WINDOWS_THREADS */
 #if defined( __WINDOWS__ ) && !defined( NDEBUG )
 	/* The pseudo-CLI VC++ output windows are closed when the program exits
@@ -644,6 +841,13 @@ void testSystemSpecific2( void )
 							  CRYPT_CERTTYPE_CERTIFICATE );
 	if( cryptStatusError( status ) )
 		{
+		if( status == CRYPT_ERROR_NOTAVAIL )
+			{
+			puts( "Couldn't create certificate object for time sanity-check "
+				  "because certificate\n" "use has been disabled, skipping "
+				  "time sanity check...\n" );
+			return;
+			}
 		puts( "Couldn't create certificate object for time sanity-check." );
 		exit( EXIT_FAILURE );
 		}

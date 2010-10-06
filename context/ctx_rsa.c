@@ -24,6 +24,35 @@
 *																			*
 ****************************************************************************/
 
+/* Perform a pairwise consistency test on a public/private key pair */
+
+static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
+	{
+	const CAPABILITY_INFO *capabilityInfoPtr = getRSACapability();
+	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
+	int status;
+
+	/* Encrypt with the public key */
+	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
+	memcpy( buffer + 1, "abcde", 5 );
+	status = capabilityInfoPtr->encryptFunction( contextInfoPtr, buffer,
+						 bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Decrypt with the private key */
+	status = capabilityInfoPtr->decryptFunction( contextInfoPtr, buffer,
+						 bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ) );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+
+	/* Make sure that we're recovered the original, including correct
+	   handling of leading zeroes */
+	return( !memcmp( buffer, "\x00" "abcde" "\x00\x00\x00\x00", 10 ) );
+	}
+
+#ifndef CONFIG_NO_SELFTEST
+
 /* Test the RSA implementation using a sample key.  Because a lot of the
    high-level encryption routines don't exist yet, we cheat a bit and set
    up a dummy encryption context with just enough information for the
@@ -139,31 +168,6 @@ static const RSA_KEY FAR_BSS rsaTestKey = {
 	  0x4B, 0xAE, 0xF4, 0xAD, 0x35, 0x63, 0x37, 0x71 }
 	};
 
-static BOOLEAN pairwiseConsistencyTest( CONTEXT_INFO *contextInfoPtr )
-	{
-	const CAPABILITY_INFO *capabilityInfoPtr = getRSACapability();
-	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
-	int status;
-
-	/* Encrypt with the public key */
-	memset( buffer, 0, CRYPT_MAX_PKCSIZE );
-	memcpy( buffer + 1, "abcde", 5 );
-	status = capabilityInfoPtr->encryptFunction( contextInfoPtr, buffer,
-						 bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-
-	/* Decrypt with the private key */
-	status = capabilityInfoPtr->decryptFunction( contextInfoPtr, buffer,
-						 bitsToBytes( contextInfoPtr->ctxPKC->keySizeBits ) );
-	if( cryptStatusError( status ) )
-		return( FALSE );
-
-	/* Make sure that we're recovered the original, including correct
-	   handling of leading zeroes */
-	return( !memcmp( buffer, "\x00" "abcde" "\x00\x00\x00\x00", 10 ) );
-	}
-
 static int selfTest( void )
 	{
 	CONTEXT_INFO contextInfo;
@@ -265,6 +269,9 @@ static int selfTest( void )
 
 	return( status );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -612,7 +619,8 @@ static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RSA, bitsToBytes( 0 ), "RSA", 3,
 	MIN_PKCSIZE, bitsToBytes( 1024 ), CRYPT_MAX_PKCSIZE,
 	selfTest, getDefaultInfo, NULL, NULL, initKey, generateKey, encryptFn, decryptFn,
-	NULL, NULL, NULL, NULL, NULL, NULL, decryptFn, encryptFn
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+	decryptFn, encryptFn
 	};
 
 const CAPABILITY_INFO *getRSACapability( void )

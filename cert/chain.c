@@ -12,9 +12,9 @@
   #include "misc_rw.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 /* When matching by subjectKeyIdentifier we don't use values less than 40
@@ -74,6 +74,8 @@ typedef struct {
 				   ( chainInfo )->type##KeyIdentifier, \
 				   ( chainInfo )->type##KeyIDsize ) )
 
+#ifdef USE_CERTIFICATES
+
 /****************************************************************************
 *																			*
 *								Utility Routines							*
@@ -83,7 +85,7 @@ typedef struct {
 /* Copy subject or issuer chaining values from the chaining information */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static void getSubjectChainingInfo( INOUT CHAINING_INFO *chainingInfo,
+static void getSubjectChainingInfo( OUT CHAINING_INFO *chainingInfo,
 									const CHAIN_INFO *chainInfo )
 	{
 	assert( isWritePtr( chainingInfo, sizeof( CHAINING_INFO ) ) );
@@ -99,7 +101,7 @@ static void getSubjectChainingInfo( INOUT CHAINING_INFO *chainingInfo,
 	}
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static void getIssuerChainingInfo( INOUT CHAINING_INFO *chainingInfo,
+static void getIssuerChainingInfo( OUT CHAINING_INFO *chainingInfo,
 								   const CHAIN_INFO *chainInfo )
 	{
 	assert( isWritePtr( chainingInfo, sizeof( CHAINING_INFO ) ) );
@@ -198,7 +200,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int getChainingAttribute( INOUT CERT_INFO *certInfoPtr,
 								 IN_ATTRIBUTE \
 									const CRYPT_ATTRIBUTE_TYPE attributeType,
-								 OUT_BUFFER_ALLOC( *attributeLength ) \
+								 OUT_BUFFER_ALLOC_OPT( *attributeLength ) \
 									const void **attributePtrPtr, 
 								 OUT_LENGTH_SHORT_Z int *attributeLength )
 	{
@@ -238,10 +240,9 @@ static void freeCertChain( IN_ARRAY( certChainSize ) \
 	{
 	int i;
 
-	assert( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
 	assert( isWritePtr( iCertChain, sizeof( CRYPT_CERTIFICATE ) * certChainSize ) );
 
-	REQUIRES_V( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
+	REQUIRES_V( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
 
 	for( i = 0; i < certChainSize && i < MAX_CHAINLENGTH; i++ )
 		{
@@ -270,7 +271,7 @@ static int buildChainInfo( OUT_ARRAY( certChainSize ) CHAIN_INFO *chainInfo,
 	assert( isWritePtr( chainInfo, sizeof( CHAIN_INFO ) * certChainSize ) );
 	assert( isReadPtr( iCertChain, sizeof( CRYPT_CERTIFICATE ) * certChainSize ) );
 
-	REQUIRES( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
+	REQUIRES( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
 
 	/* Clear return value */
 	memset( chainInfo, 0, sizeof( CHAIN_INFO ) * certChainSize );
@@ -289,6 +290,7 @@ static int buildChainInfo( OUT_ARRAY( certChainSize ) CHAIN_INFO *chainInfo,
 									CRYPT_ERROR_SIGNALLED );
 		if( cryptStatusError( status ) )
 			return( status );
+		ANALYSER_HINT( certChainPtr != NULL );
 		chainInfo[ i ].subjectDN = certChainPtr->subjectDNptr;
 		chainInfo[ i ].subjectDNsize = certChainPtr->subjectDNsize;
 		chainInfo[ i ].issuerDN = certChainPtr->issuerDNptr;
@@ -339,7 +341,7 @@ static int findLeafNode( IN_ARRAY( certChainSize ) const CHAIN_INFO *chainInfo,
 
 	assert( isReadPtr( chainInfo, sizeof( CHAIN_INFO ) * certChainSize ) );
 
-	REQUIRES( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
+	REQUIRES( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
 
 	/* We start our search at the first certificate, which is often the leaf 
 	   certificate anyway */
@@ -407,7 +409,7 @@ static int findIdentifiedLeafNode( IN_ARRAY( certChainSize ) \
 	assert( isReadPtr( chainInfo, sizeof( CHAIN_INFO ) * certChainSize ) );
 	assert( isReadPtr( keyID, keyIDlength ) );
 
-	REQUIRES( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
+	REQUIRES( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
 	REQUIRES( keyIDtype == CRYPT_IKEYID_KEYID || \
 			  keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER );
 	REQUIRES( keyID != NULL && \
@@ -450,6 +452,8 @@ static int findIdentifiedLeafNode( IN_ARRAY( certChainSize ) \
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_NOTFOUND );
+	ANALYSER_HINT( issuerDNptr != NULL );
+	ANALYSER_HINT( serialNumber != NULL );
 
 	/* Walk down the chain looking for the one identified by the 
 	   issuerAndSerialNumber */
@@ -523,7 +527,7 @@ static int sortCertChain( INOUT_ARRAY( certChainSize ) CRYPT_CERTIFICATE *iCertC
 			( certChainStart == CRYPT_UNUSED && \
 			  isReadPtr( chainingInfo, sizeof( CHAINING_INFO ) ) ) );
 
-	REQUIRES( certChainSize > 0 && certChainSize < MAX_CHAINLENGTH );
+	REQUIRES( certChainSize > 0 && certChainSize <= MAX_CHAINLENGTH );
 	REQUIRES( leafCertEntry >= 0 && leafCertEntry <= certChainSize );
 	REQUIRES( ( isHandleRangeValid( certChainStart ) && \
 				chainingInfo == NULL ) || \
@@ -646,7 +650,7 @@ static int buildCertChain( OUT_HANDLE_OPT CRYPT_CERTIFICATE *iLeafCert,
 				keyIDtype == CRYPT_IKEYID_ISSUERANDSERIALNUMBER ) && \
 			  isReadPtr( keyID, keyIDlength ) ) );
 
-	REQUIRES( certChainEnd > 0 && certChainEnd < MAX_CHAINLENGTH );
+	REQUIRES( certChainEnd > 0 && certChainEnd <= MAX_CHAINLENGTH );
 	REQUIRES( ( keyIDtype == CRYPT_KEYID_NONE && \
 				keyID == NULL && keyIDlength == 0 ) || \
 			  ( ( keyIDtype == CRYPT_IKEYID_KEYID || \
@@ -781,7 +785,7 @@ static BOOLEAN isCertPresent( INOUT_ARRAY( certChainLen ) \
 	assert( isWritePtr( certChainHashes, \
 						MAX_CHAINLENGTH * CRYPT_MAX_HASHSIZE ) );
 
-	REQUIRES_B( certChainLen >= 0 && certChainLen < MAX_CHAINLENGTH );
+	REQUIRES_B( certChainLen >= 0 && certChainLen <= MAX_CHAINLENGTH );
 				/* Apparent length may be zero for a chain of size 1 since
 				   the leaf certificate has the effective index value -1 */
 	REQUIRES_B( isHandleRangeValid( iCryptCert ) );
@@ -1420,7 +1424,7 @@ int assembleCertChain( OUT CRYPT_CERTIFICATE *iCertificate,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int sizeofCertPath( const CERT_INFO *certInfoPtr,
 						   OUT_LENGTH_SHORT_Z int *certPathLength,
-						   OUT_ARRAY_OPT( MAX_CHAINLENGTH ) int *certSizeInfo )
+						   OUT_ARRAY_OPT_C( MAX_CHAINLENGTH ) int *certSizeInfo )
 	{
 	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
 	int length = 0, i;
@@ -1472,7 +1476,7 @@ static int sizeofCertPath( const CERT_INFO *certInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int writeCertPath( INOUT STREAM *stream, 
 						  const CERT_INFO *certInfoPtr,
-						  IN_ARRAY_OPT( MAX_CHAINLENGTH ) \
+						  IN_ARRAY_OPT_C( MAX_CHAINLENGTH ) \
 								const int *certSizeInfo )
 
 	{
@@ -1648,3 +1652,4 @@ int writeCertChain( INOUT STREAM *stream,
 		status = writeSet( stream, 0 );
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

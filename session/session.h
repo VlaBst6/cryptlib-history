@@ -108,6 +108,13 @@
 #define SESSION_NEEDS_KEYSET		0x0200	/* Must have certificate keyset */
 #define SESSION_NEEDS_CERTSTORE		0x0400	/* Keyset must be certificate store */
 
+/* The minimum- and maximum-length fixed headers that we should see in 
+   header-read code */
+
+#define FIXED_HEADER_MIN			5		/* SSL header */
+#define FIXED_HEADER_MAX			21		/* TLS 1.1+ header with explicit 
+											   AES IV */
+
 /* When reading packets for a secure session protocol, we need to 
    communicate read state information which is more complex than the usual 
    length or error code.  The following values modify the standard return
@@ -225,7 +232,7 @@ typedef struct {
 
 struct AL;	/* Forward declaration for attribute-list access function */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 3 ) ) \
 		int ( *ATTRACCESSFUNCTION )( INOUT struct AL *attributeListPtr,
 									 IN_ENUM( ATTR ) const ATTR_TYPE attrGetType,
 									 OUT_INT_Z int *value );
@@ -295,7 +302,8 @@ typedef struct {
 typedef struct {
 	/* Session state information */
 	int sessionCacheID;					/* Session cache ID for this session */
-	int ivSize;							/* Explicit IV size for TLS 1.1 */
+	int minVersion;						/* Minimum acceptable protocol version */
+	int ivSize;							/* Explicit IV size for TLS 1.1+ */
 
 	/* The incoming and outgoing packet sequence number, for detecting 
 	   insertion/deletion attacks */
@@ -309,6 +317,15 @@ typedef struct {
 	BYTE macReadSecret[ CRYPT_MAX_HASHSIZE + 8 ];
 	BUFFER_FIXED( CRYPT_MAX_HASHSIZE ) \
 	BYTE macWriteSecret[ CRYPT_MAX_HASHSIZE + 8 ];
+
+	/* TLS 1.2+ with GCM modes breaks the IV down into two parts, an 
+	   explicit portion that's sent with every packet and an implicit
+	   portion that's derived from the master secret.  To save space
+	   we store this in the data block for the SSL 3.0 MAC read/write 
+	   secrets */
+	#define gcmReadSalt		macReadSecret
+	#define gcmWriteSalt	macWriteSecret
+	int gcmSaltSize;
 
 	/* The session scoreboard, used for the SSL session cache */
 	SCOREBOARD_INFO *scoreboardInfoPtr;	/* Session scoreboard */
@@ -526,29 +543,29 @@ typedef struct SI {
 	   write functions, stateless ones use the transact function */
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	void ( *shutdownFunction )( INOUT struct SI *sessionInfoPtr );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *connectFunction )( INOUT struct SI *sessionInfoPtr );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *getAttributeFunction )( INOUT struct SI *sessionInfoPtr, 
 								   OUT void *data,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *setAttributeFunction )( INOUT struct SI *sessionInfoPtr, 
 								   IN const void *data,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *checkAttributeFunction )( INOUT struct SI *sessionInfoPtr,
 									 IN const void *data,
 									 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *transactFunction )( INOUT struct SI *sessionInfoPtr );
-	CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_LENGTH_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *readHeaderFunction )( INOUT struct SI *sessionInfoPtr,
 								 INOUT_ENUM( READSTATE ) READSTATE_INFO *readInfo );
-	CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_LENGTH_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *processBodyFunction )( INOUT struct SI *sessionInfoPtr,
 								  INOUT_ENUM( READSTATE ) READSTATE_INFO *readInfo );
-	CHECK_RETVAL_LENGTH STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_LENGTH_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *preparePacketFunction )( INOUT struct SI *sessionInfoPtr );
 
 	/* Error information */
@@ -648,7 +665,7 @@ int getSessionAttributeCursor( IN_OPT ATTRIBUTE_LIST *attributeListHead,
 							   OUT_ATTRIBUTE_Z CRYPT_ATTRIBUTE_TYPE *valuePtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int setSessionAttributeCursor( IN_OPT const ATTRIBUTE_LIST *attributeListHead,
-							   OUT_PTR ATTRIBUTE_LIST **attributeListCursorPtr, 
+							   INOUT_PTR ATTRIBUTE_LIST **attributeListCursorPtr, 
 							   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE sessionInfoType,
 							   IN_RANGE( CRYPT_CURSOR_LAST, \
 										 CRYPT_CURSOR_FIRST ) /* Values are -ve */
@@ -693,18 +710,20 @@ int addScoreboardEntry( INOUT SCOREBOARD_INFO *scoreboardInfo,
 						IN_LENGTH_SHORT const int valueLength );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void deleteScoreboardEntry( INOUT SCOREBOARD_INFO *scoreboardInfo, 
-							IN_INT const int uniqueID );
+							IN_INT_Z const int uniqueID );
 
 /* Prototypes for functions in sess_rw.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readFixedHeaderAtomic( INOUT SESSION_INFO *sessionInfoPtr, 
 						   OUT_BUFFER_FIXED( headerLength ) void *headerBuffer, 
-						   IN_LENGTH_SHORT_MIN( 5 ) const int headerLength );
+						   IN_LENGTH_SHORT_MIN( FIXED_HEADER_MIN ) \
+								const int headerLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readFixedHeader( INOUT SESSION_INFO *sessionInfoPtr, 
 					 OUT_BUFFER_FIXED( headerLength ) void *headerBuffer, 
-					 IN_LENGTH_SHORT_MIN( 5 ) const int headerLength );
+					 IN_LENGTH_SHORT_MIN( FIXED_HEADER_MIN ) \
+							const int headerLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int getSessionData( INOUT SESSION_INFO *sessionInfoPtr, 
 					OUT_BUFFER( dataMaxLength, *bytesCopied ) void *data, 
@@ -729,10 +748,16 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initSessionIO( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int initSessionNetConnectInfo( const SESSION_INFO *sessionInfoPtr,
-							   INOUT NET_CONNECT_INFO *connectInfo );
+							   OUT NET_CONNECT_INFO *connectInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 BOOLEAN checkAttributesConsistent( INOUT SESSION_INFO *sessionInfoPtr,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+int checkServerCertValid( const CRYPT_CERTIFICATE iServerCert,
+						  OUT_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							CRYPT_ATTRIBUTE_TYPE *errorLocus,
+						  OUT_ENUM_OPT( CRYPT_ERRTYPE ) \
+							CRYPT_ERRTYPE_TYPE *errorType );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int activateSession( INOUT SESSION_INFO *sessionInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \

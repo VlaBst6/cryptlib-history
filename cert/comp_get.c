@@ -11,9 +11,11 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -42,8 +44,10 @@ ATTRIBUTE_PTR *findAttributeComponent( const CERT_INFO *certInfoPtr,
 									   IN_ATTRIBUTE \
 										const CRYPT_ATTRIBUTE_TYPE certInfoType )
 	{
+#ifdef USE_CERTREV
 	ATTRIBUTE_PTR *attributePtr;
 	REVOCATION_INFO *currentRevocation;
+#endif /* USE_CERTREV */
 
 	assert( isReadPtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -485,6 +489,10 @@ int getCertComponent( INOUT CERT_INFO *certInfoPtr,
 			}
 #endif /* USE_CERTREV */
 
+		case CRYPT_IATTRIBUTE_CERTKEYALGO:
+			*certInfo = certInfoPtr->publicKeyAlgo;
+			return( CRYPT_OK );
+
 		case CRYPT_IATTRIBUTE_CERTHASHALGO:
 			*certInfo = certInfoPtr->cCertCert->hashAlgo;
 			return( CRYPT_OK );
@@ -513,3 +521,4 @@ int getCertComponent( INOUT CERT_INFO *certInfoPtr,
 
 	retIntError();
 	}
+#endif /* USE_CERTIFICATES */

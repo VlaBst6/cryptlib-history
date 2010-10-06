@@ -17,8 +17,9 @@
 
 #ifdef USE_SSH1
 
-#error The SSHv1 protocol is insecure and obsolete, and this code is unsupported.
-#error You should only enable this if absolutely necessary, and you use it at your own risk.
+#error The SSHv1 protocol is insecure and obsolete, and this code is completely 
+#error unsupported.  You should only enable this code if it's absolutely necessary, 
+#error and your warranty is void when you do so.  Use this code at your own risk.
 
 /* Determine the number of padding bytes required to make the packet size a
    multiple of 8 bytes */

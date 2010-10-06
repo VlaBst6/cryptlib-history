@@ -13,7 +13,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -103,9 +103,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 static int getOpenFailInfo( INOUT SESSION_INFO *sessionInfoPtr,
 							INOUT STREAM *stream )
 	{
-	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	BYTE stringBuffer[ CRYPT_MAX_TEXTSIZE + 8 ];
-	int stringLen, status;
+	int stringLen, errorCode, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
@@ -117,7 +116,7 @@ static int getOpenFailInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		uint32	reason_code
 		string	additional_text */
 	readUint32( stream );		/* Skip channel number */
-	errorInfo->errorCode = readUint32( stream );
+	errorCode = readUint32( stream );
 	status = readString32( stream, stringBuffer, CRYPT_MAX_TEXTSIZE, 
 						   &stringLen );
 	if( cryptStatusError( status ) || \
@@ -129,7 +128,7 @@ static int getOpenFailInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		retExt( CRYPT_ERROR_OPEN,
 				( CRYPT_ERROR_OPEN, SESSION_ERRINFO, 
 				  "Channel open failed, reason code %d", 
-				  errorInfo->errorCode ) );
+				  errorCode ) );
 		}
 	retExt( CRYPT_ERROR_OPEN,
 			( CRYPT_ERROR_OPEN, SESSION_ERRINFO, 
@@ -278,7 +277,7 @@ static int createOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		   Since this is a special-case request-only message we let the
 		   caller know that they don't have to proceed further with the
 		   channel-open */
-		status = openPacketStreamSSH( stream, SSH2_MSG_GLOBAL_REQUEST,
+		status = openPacketStreamSSH( stream, SSH_MSG_GLOBAL_REQUEST,
 									  &packetOffset );
 		if( cryptStatusError( status ) )
 			return( status );
@@ -292,7 +291,7 @@ static int createOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send a channel open:
 
-		byte	type = SSH2_MSG_CHANNEL_OPEN
+		byte	type = SSH_MSG_CHANNEL_OPEN
 		string	channel_type
 		uint32	sender_channel
 		uint32	initial_window_size = MAX_WINDOW_SIZE
@@ -316,7 +315,7 @@ static int createOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	   implementations, see the comments for the window handling in 
 	   ssh2_msg.c for details */
 	status = openPacketStreamSSH( stream, sessionInfoPtr, 
-								  SSH2_MSG_CHANNEL_OPEN );
+								  SSH_MSG_CHANNEL_OPEN );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( serviceType == SERVICE_SUBSYSTEM || serviceType == SERVICE_EXEC )
@@ -396,7 +395,7 @@ static int createOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send a channel open:
 
-		byte	type = SSH2_MSG_CHANNEL_OPEN
+		byte	type = SSH_MSG_CHANNEL_OPEN
 		string	channel_type
 		uint32	sender_channel
 		uint32	initial_window_size = MAX_WINDOW_SIZE
@@ -420,7 +419,7 @@ static int createOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	   implementations, see the comments for the window handling in 
 	   ssh2_msg.c for details */
 	status = openPacketStreamSSH( stream, sessionInfoPtr, 
-								  SSH2_MSG_CHANNEL_OPEN );
+								  SSH_MSG_CHANNEL_OPEN );
 	if( cryptStatusError( status ) )
 		return( status );
 	writeString32( stream, "session", 7 );
@@ -471,13 +470,13 @@ static int createSessionOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/*	byte	type = SSH2_MSG_CHANNEL_REQUEST
+		/*	byte	type = SSH_MSG_CHANNEL_REQUEST
 			uint32	recipient_channel
 			string	request_name = "subsystem"
 			boolean	want_reply = FALSE
 			string	subsystem_name */
 		status = openPacketStreamSSH( stream, sessionInfoPtr, 
-									  SSH2_MSG_CHANNEL_REQUEST );
+									  SSH_MSG_CHANNEL_REQUEST );
 		if( cryptStatusError( status ) )
 			return( status );
 		writeUint32( stream, channelNo );
@@ -505,13 +504,13 @@ static int createSessionOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 
-		/*	byte	type = SSH2_MSG_CHANNEL_REQUEST
+		/*	byte	type = SSH_MSG_CHANNEL_REQUEST
 			uint32	recipient_channel
 			string	request_name = "exec"
 			boolean	want_reply = FALSE
 			string	command */
 		status = openPacketStreamSSH( stream, sessionInfoPtr, 
-									  SSH2_MSG_CHANNEL_REQUEST );
+									  SSH_MSG_CHANNEL_REQUEST );
 		if( cryptStatusError( status ) )
 			return( status );
 		writeUint32( stream, channelNo );
@@ -528,7 +527,7 @@ static int createSessionOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* It's a standard channel open:
 
-		byte	type = SSH2_MSG_CHANNEL_REQUEST
+		byte	type = SSH_MSG_CHANNEL_REQUEST
 		uint32	recipient_channel
 		string	request_name = "pty-req"
 		boolean	want_reply = FALSE
@@ -540,7 +539,7 @@ static int createSessionOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		string	tty_mode_info = ""
 		... */
 	status = openPacketStreamSSH( stream, sessionInfoPtr, 
-								  SSH2_MSG_CHANNEL_REQUEST );
+								  SSH_MSG_CHANNEL_REQUEST );
 	if( cryptStatusError( status ) )
 		return( status );
 	writeUint32( stream, channelNo );
@@ -558,14 +557,14 @@ static int createSessionOpenRequest( INOUT SESSION_INFO *sessionInfoPtr,
 		return( status );
 
 	/*	...
-		byte	type = SSH2_MSG_CHANNEL_REQUEST
+		byte	type = SSH_MSG_CHANNEL_REQUEST
 		uint32	recipient_channel
 		string	request_name = "shell"
 		boolean	want_reply = FALSE
 
 	   This final request, once sent, moves the server into interactive
 	   session mode */
-	status = continuePacketStreamSSH( stream, SSH2_MSG_CHANNEL_REQUEST,
+	status = continuePacketStreamSSH( stream, SSH_MSG_CHANNEL_REQUEST,
 									  &packetOffset );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -657,13 +656,13 @@ int sendChannelOpen( INOUT SESSION_INFO *sessionInfoPtr )
 		uint32	maximum_packet_size
 		... */
 	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_CHANNEL,
+		readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SPECIAL_CHANNEL,
 						  ID_SIZE + UINT32_SIZE + UINT32_SIZE + \
 							UINT32_SIZE + UINT32_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );
 	sMemConnect( &stream, sessionInfoPtr->receiveBuffer, length );
-	if( sessionInfoPtr->sessionSSH->packetType == SSH2_MSG_CHANNEL_OPEN_FAILURE )
+	if( sessionInfoPtr->sessionSSH->packetType == SSH_MSG_CHANNEL_OPEN_FAILURE )
 		{
 		/* The open failed, report the details to the user */
 		status = getOpenFailInfo( sessionInfoPtr, &stream );

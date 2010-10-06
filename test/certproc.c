@@ -63,7 +63,7 @@ static int createCertRequest( void *certRequest,
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT cryptContext;
-	int length, status;
+	int length = DUMMY_INIT, status;
 
 	/* Create a new key */
 	status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, cryptAlgo );

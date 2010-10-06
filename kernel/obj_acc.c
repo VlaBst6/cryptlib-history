@@ -108,9 +108,10 @@ static int checkAccessValid( IN_HANDLE const int objectHandle,
 	{
 	OBJECT_INFO *objectTable = krnlData->objectTable, *objectInfoPtr;
 
-	PRE( isValidObject( objectHandle ) );
-	PRE( checkType > ACCESS_CHECK_NONE && checkType < ACCESS_CHECK_LAST );
-	PRE( errorCode < 0 );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( checkType > ACCESS_CHECK_NONE && \
+			  checkType < ACCESS_CHECK_LAST );
+	REQUIRES( cryptStatusError( errorCode ) );
 
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(): It's a valid object owned by the calling
@@ -132,7 +133,8 @@ static int checkAccessValid( IN_HANDLE const int objectHandle,
 				return( errorCode );
 			if( !isValidSubtype( objectInfoPtr->subType, SUBTYPE_CTX_CONV ) && \
 				!isValidSubtype( objectInfoPtr->subType, SUBTYPE_CTX_MAC ) && \
-				!isValidSubtype( objectInfoPtr->subType, SUBTYPE_CTX_PKC ) )
+				!isValidSubtype( objectInfoPtr->subType, SUBTYPE_CTX_PKC ) && \
+				!isValidSubtype( objectInfoPtr->subType, SUBTYPE_CTX_GENERIC ) )
 				return( errorCode );
 			break;
 
@@ -184,15 +186,14 @@ static int checkAccessValid( IN_HANDLE const int objectHandle,
 		}
 
 	/* Postcondition: The object is of the appropriate type for the access */
-	POST( ( ( checkType == ACCESS_CHECK_EXTACCESS ) && \
-			( objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE || \
-			  objectInfoPtr->type == OBJECT_TYPE_DEVICE ) ) || \
-		  ( checkType == ACCESS_CHECK_KEYACCESS && \
-		    objectInfoPtr->type == OBJECT_TYPE_CONTEXT ) || \
-		  ( checkType == ACCESS_CHECK_SUSPEND && \
-		    ( objectInfoPtr->type == OBJECT_TYPE_DEVICE || \
-			  objectInfoPtr->type == OBJECT_TYPE_USER ) ) );
-
+	ENSURES( ( checkType == ACCESS_CHECK_EXTACCESS && \
+			   ( objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE || \
+				  objectInfoPtr->type == OBJECT_TYPE_DEVICE ) ) || \
+			 ( checkType == ACCESS_CHECK_KEYACCESS && \
+			   objectInfoPtr->type == OBJECT_TYPE_CONTEXT ) || \
+			 ( checkType == ACCESS_CHECK_SUSPEND && \
+			   ( objectInfoPtr->type == OBJECT_TYPE_DEVICE || \
+				 objectInfoPtr->type == OBJECT_TYPE_USER ) ) );
 
 	return( CRYPT_OK );
 	}
@@ -203,27 +204,35 @@ CHECK_RETVAL \
 static int getObject( IN_HANDLE const int objectHandle, 
 					  IN_ENUM( OBJECT ) const OBJECT_TYPE type,
 					  IN_ENUM( ACCESS_CHECK ) const ACCESS_CHECK_TYPE checkType, 
-					  OUT_OPT_PTR void **objectPtr, 
+					  OUT_OPT_PTR_OPT void **objectPtr, 
 					  IN_INT_Z const int refCount, 
 					  IN_ERROR const int errorCode )
 	{
 	OBJECT_INFO *objectTable, *objectInfoPtr;
 	int status;
 
+	assert( ( ( objectHandle == SYSTEM_OBJECT_HANDLE || \
+				objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
+			  objectPtr == NULL && refCount > 0 ) || \
+			( !( objectHandle == SYSTEM_OBJECT_HANDLE || \
+				 objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
+			  isWritePtr( objectPtr, sizeof( void * ) ) && \
+			  refCount == CRYPT_UNUSED ) );
+
 	/* Preconditions: It's a valid object */
-	PRE( isValidHandle( objectHandle ) );
-	PRE( isValidType( type ) && \
-		 ( type == OBJECT_TYPE_CONTEXT || type == OBJECT_TYPE_CERTIFICATE || \
-		   type == OBJECT_TYPE_DEVICE || type == OBJECT_TYPE_USER ) );
-	PRE( checkType > ACCESS_CHECK_NONE && \
-		 checkType < ACCESS_CHECK_LAST );
-	PRE( ( ( objectHandle == SYSTEM_OBJECT_HANDLE || \
-			 objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
-		   objectPtr == NULL && refCount > 0 ) || \
-		 ( !( objectHandle == SYSTEM_OBJECT_HANDLE || \
-			  objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
-		   isWritePtr( objectPtr, sizeof( void * ) ) && \
-		   refCount == CRYPT_UNUSED ) );
+	REQUIRES( isValidHandle( objectHandle ) );
+	REQUIRES( isValidType( type ) && \
+			  ( type == OBJECT_TYPE_CONTEXT || \
+				type == OBJECT_TYPE_CERTIFICATE || \
+				type == OBJECT_TYPE_DEVICE || type == OBJECT_TYPE_USER ) );
+	REQUIRES( checkType > ACCESS_CHECK_NONE && \
+			  checkType < ACCESS_CHECK_LAST );
+	REQUIRES( ( ( objectHandle == SYSTEM_OBJECT_HANDLE || \
+				  objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
+				objectPtr == NULL && refCount > 0 ) || \
+			  ( !( objectHandle == SYSTEM_OBJECT_HANDLE || \
+				   objectHandle == DEFAULTUSER_OBJECT_HANDLE ) && \
+				objectPtr != NULL && refCount == CRYPT_UNUSED ) );
 
 	/* Clear the return value */
 	if( objectPtr != NULL )
@@ -259,11 +268,11 @@ static int getObject( IN_HANDLE const int objectHandle,
 	objectInfoPtr = &objectTable[ objectHandle ];
 
 	/* Inner precondition: The object is of the requested type */
-	PRE( objectInfoPtr->type == type && \
-		 ( objectInfoPtr->type == OBJECT_TYPE_CONTEXT || \
-		   objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE || \
-		   objectInfoPtr->type == OBJECT_TYPE_DEVICE || \
-		   objectInfoPtr->type == OBJECT_TYPE_USER ) );
+	REQUIRES( objectInfoPtr->type == type && \
+			 ( objectInfoPtr->type == OBJECT_TYPE_CONTEXT || \
+			   objectInfoPtr->type == OBJECT_TYPE_CERTIFICATE || \
+			   objectInfoPtr->type == OBJECT_TYPE_DEVICE || \
+			   objectInfoPtr->type == OBJECT_TYPE_USER ) );
 
 	/* If the object is busy, wait for it to become available */
 	if( isInUse( objectHandle ) && !isObjectOwner( objectHandle ) )
@@ -285,9 +294,9 @@ static int getObject( IN_HANDLE const int objectHandle,
 		{
 		/* If we're resuming use of an object that we suspended to allow 
 		   others access, reset the reference count */
-		PRE( checkType == ACCESS_CHECK_SUSPEND );
-		PRE( objectInfoPtr->lockCount == 0 );
-		PRE( refCount > 0 && refCount < 100 );
+		REQUIRES( checkType == ACCESS_CHECK_SUSPEND );
+		REQUIRES( objectInfoPtr->lockCount == 0 );
+		REQUIRES( refCount > 0 && refCount < 100 );
 
 		objectInfoPtr->lockCount = refCount;
 		}
@@ -316,13 +325,20 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 	int status;
 	DECLARE_ORIGINAL_INT( lockCount );
 
+	assert( ( ( checkType == ACCESS_CHECK_EXTACCESS || \
+				checkType == ACCESS_CHECK_KEYACCESS ) && \
+			  refCount == NULL ) || \
+			( checkType == ACCESS_CHECK_SUSPEND && \
+			  isWritePtr( refCount, sizeof( int ) ) ) );
+
 	/* Preconditions */
-	PRE( checkType > ACCESS_CHECK_NONE && \
-		 checkType < ACCESS_CHECK_LAST );
-	PRE( ( ( checkType == ACCESS_CHECK_EXTACCESS || \
-			 checkType == ACCESS_CHECK_KEYACCESS ) && refCount == NULL ) || \
-		 ( checkType == ACCESS_CHECK_SUSPEND && \
-		   isWritePtr( refCount, sizeof( int ) ) ) );
+	REQUIRES( checkType > ACCESS_CHECK_NONE && \
+			  checkType < ACCESS_CHECK_LAST );
+	REQUIRES( ( ( checkType == ACCESS_CHECK_EXTACCESS || \
+				  checkType == ACCESS_CHECK_KEYACCESS ) && \
+				refCount == NULL ) || \
+			  ( checkType == ACCESS_CHECK_SUSPEND && \
+				refCount != NULL ) );
 
 	THREAD_NOTIFY_PREPARE( objectHandle );
 	MUTEX_LOCK( objectTable );
@@ -331,8 +347,8 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 	/* Preconditions: It's a valid object in use by the caller.  Since these 
 	   checks require access to the object table we can only perform them 
 	   after we've locked it */
-	PRE( isValidObject( objectHandle ) );
-	PRE( isInUse( objectHandle ) && isObjectOwner( objectHandle ) );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( isInUse( objectHandle ) && isObjectOwner( objectHandle ) );
 
 	/* Perform similar access checks to the ones performed in
 	   krnlSendMessage(), as well as situation-specific additional checks 
@@ -372,21 +388,22 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 
 		/* Postcondition: The object's lock count has been decremented and 
 		   is non-negative */
-		POST( objectInfoPtr->lockCount == \
+		ENSURES( objectInfoPtr->lockCount == \
 								ORIGINAL_VALUE( lockCount ) - 1 );
-		POST( objectInfoPtr->lockCount >= 0 );
+		ENSURES( objectInfoPtr->lockCount >= 0 && \
+				 objectInfoPtr->lockCount < MAX_INTLENGTH );
 		}
 	else
 		{
 		/* It's an external access to free the object for access by others, 
 		   clear the reference count */
-		PRE( checkType == ACCESS_CHECK_SUSPEND );
+		REQUIRES( checkType == ACCESS_CHECK_SUSPEND );
 
 		*refCount = objectInfoPtr->lockCount;
 		objectInfoPtr->lockCount = 0;
 
 		/* Postcondition: The object has been completely released */
-		POST( !isInUse( objectHandle ) );
+		ENSURES( !isInUse( objectHandle ) );
 		}
 
 	MUTEX_UNLOCK( objectTable );
@@ -403,7 +420,7 @@ static int releaseObject( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int initObjectAltAccess( INOUT KERNEL_DATA *krnlDataPtr )
 	{
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Set up the reference to the kernel data block */
 	krnlData = krnlDataPtr;
@@ -427,9 +444,11 @@ void endObjectAltAccess( void )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int krnlAcquireObject( IN_HANDLE const int objectHandle, 
 					   IN_ENUM( OBJECT ) const OBJECT_TYPE type,
-					   OUT_PTR void **objectPtr, 
+					   OUT_OPT_PTR void **objectPtr, 
 					   IN_ERROR const int errorCode )
 	{
+	REQUIRES( objectPtr != NULL );	/* getObject() allows it to be NULL */
+	
 	return( getObject( objectHandle, type, ACCESS_CHECK_EXTACCESS, 
 					   objectPtr, CRYPT_UNUSED, errorCode ) );
 	}
@@ -440,7 +459,9 @@ int krnlReleaseObject( IN_HANDLE const int objectHandle )
 	}
 
 /* Temporarily suspend use of an object to allow other threads access, and
-   resume object use afterwards */
+   resume object use afterwards.  Note that PREfast will erroneously report 
+   'attributes inconsistent with previous declaration' for these two 
+   functions */
 
 STDC_NONNULL_ARG( ( 2 ) ) \
 int krnlSuspendObject( IN_HANDLE const int objectHandle, 
@@ -474,8 +495,8 @@ int krnlResumeObject( IN_HANDLE const int objectHandle,
    present in order to allow a key to be exported from an encryption action
    object.  The three functions that perform the necessary operations are:
 
-	extractKeyData: Extract a session key from a conventional/MAC context
-					prior to encryption with a KEK.
+	extractKeyData: Extract a session key from a conventional/MAC/generic-
+					secret context prior to encryption with a KEK.
 	exportPrivateKey: Write private key data to a stream prior to encryption
 					  with a KEK.
 	importPrivateKey: Read private key data from a stream after decryption
@@ -518,9 +539,10 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	/* Make sure that we really intended to call this function */
 	ENSURES( accessKeyLen == 7 && !memcmp( accessKey, "keydata", 7 ) );
 
-	/* Make sure that we've been given a conventional encryption or MAC 
-	   context with a key loaded.  This has already been checked at a higher 
-	   level, but we perform a sanity check here to be safe */
+	/* Make sure that we've been given a conventional encryption, MAC, or
+	   generic-secret context with a key loaded.  This has already been 
+	   checked at a higher level, but we perform a sanity check here to be 
+	   safe */
 	status = getObject( iCryptContext, OBJECT_TYPE_CONTEXT,
 						ACCESS_CHECK_KEYACCESS,
 						( void ** ) &contextInfoPtr, CRYPT_UNUSED, 
@@ -528,7 +550,8 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	if( cryptStatusError( status ) )
 		return( status );
 	if( ( contextInfoPtr->type != CONTEXT_CONV && \
-		  contextInfoPtr->type != CONTEXT_MAC ) || \
+		  contextInfoPtr->type != CONTEXT_MAC && \
+		  contextInfoPtr->type != CONTEXT_GENERIC ) || \
 		!( contextInfoPtr->flags & CONTEXT_FLAG_KEY_SET ) )
 		{
 		releaseObject( iCryptContext, ACCESS_CHECK_KEYACCESS, NULL );
@@ -539,7 +562,8 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 	switch( contextInfoPtr->type )
 		{
 		case CONTEXT_CONV:
-			if( contextInfoPtr->ctxConv->userKeyLength > keyDataLen )
+			if( contextInfoPtr->ctxConv->userKeyLength < MIN_KEYSIZE || \
+				contextInfoPtr->ctxConv->userKeyLength > keyDataLen )
 				{
 				DEBUG_DIAG(( "Key data is too long to export" ));
 				assert( DEBUG_WARN );
@@ -553,7 +577,8 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 			break;
 
 		case CONTEXT_MAC:
-			if( contextInfoPtr->ctxMAC->userKeyLength > keyDataLen )
+			if( contextInfoPtr->ctxMAC->userKeyLength < MIN_KEYSIZE || \
+				contextInfoPtr->ctxMAC->userKeyLength > keyDataLen )
 				{
 				DEBUG_DIAG(( "Key data is too long to export" ));
 				assert( DEBUG_WARN );
@@ -563,6 +588,21 @@ int extractKeyData( IN_HANDLE const CRYPT_CONTEXT iCryptContext,
 				{
 				memcpy( keyData, contextInfoPtr->ctxMAC->userKey,
 						contextInfoPtr->ctxMAC->userKeyLength );
+				}
+			break;
+
+		case CONTEXT_GENERIC:
+			if( contextInfoPtr->ctxGeneric->genericSecretLength < MIN_KEYSIZE || \
+				contextInfoPtr->ctxGeneric->genericSecretLength > keyDataLen )
+				{
+				DEBUG_DIAG(( "Key data is too long to export" ));
+				assert( DEBUG_WARN );
+				status = CRYPT_ERROR_OVERFLOW;
+				}
+			else
+				{
+				memcpy( keyData, contextInfoPtr->ctxGeneric->genericSecret,
+						contextInfoPtr->ctxGeneric->genericSecretLength );
 				}
 			break;
 
@@ -657,6 +697,17 @@ int importPrivateKeyData( INOUT STREAM *stream,
 		/* If everything went OK, perform an internal load that uses the
 		   values already present in the context */
 		status = contextInfoPtr->loadKeyFunction( contextInfoPtr, NULL, 0 );
+		if( cryptStatusOK( status ) && formatType == KEYFORMAT_PRIVATE_OLD )
+			{
+			/* This format is unusual in that it stores the public-key data 
+			   in encrypted form alongside the private-key data, so that the 
+			   public key is read as part of the private key rather than 
+			   being set as a CRYPT_IATTRIBUTE_KEY_xxx_PARTIAL attribute.  
+			   Because of this it bypasses the standard keyID-calculation
+			   process that occurs on public-key load, so we have to 
+			   explicitly calculate the keyID data here */
+			status = contextInfoPtr->ctxPKC->calculateKeyIDFunction( contextInfoPtr );
+			}
 		if( cryptStatusOK( status ) )
 			{
 			krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE, 

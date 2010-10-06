@@ -12,7 +12,7 @@
   #include "certstore.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/certstore.h"
 #endif /* Compiler-specific includes */
@@ -116,8 +116,8 @@ int processCertQuery( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Convert the search attribute type into a cryptlib key ID */
-	for( i = 0; queryReqInfo[ i ].attrName != NULL && \
-				i < queryReqInfoSize; i++ )
+	for( i = 0; i < queryReqInfoSize && \
+				queryReqInfo[ i ].attrName != NULL; i++ )
 		{
 		if( httpReqInfo->attributeLen == queryReqInfo[ i ].attrNameLen && \
 			queryReqInfo[ i ].attrName[ 0 ] == firstChar && \
@@ -220,8 +220,8 @@ static int serverTransact( INOUT SESSION_INFO *sessionInfoPtr )
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, NULL, 
-			STREAM_HTTPREQTYPE_GET );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_HTTPREQTYPES, 
+			   STREAM_HTTPREQTYPE_GET );
 
 	/* Read the request data from the client.  We do a direct read rather 
 	   than using readPkiDatagram() since we're reading an idempotent HTTP 

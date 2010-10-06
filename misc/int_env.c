@@ -10,9 +10,11 @@
   #if defined( INC_ALL )
 	#include "asn1.h"
   #else
-	#include "misc/asn1.h"
+	#include "enc_dec/asn1.h"
   #endif /* Compiler-specific includes */
 #endif /* NDEBUG */
+
+#ifdef USE_ENVELOPES
 
 /****************************************************************************
 *																			*
@@ -474,3 +476,4 @@ int envelopeSigCheck( IN_BUFFER( inDataLength ) const void *inData,
 	assert( !cryptArgError( status ) );
 	return( cryptArgError( status ) ? CRYPT_ERROR_BADDATA : status );
 	}
+#endif /* USE_ENVELOPES */

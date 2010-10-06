@@ -8,14 +8,14 @@
 #include <stdio.h>		/* For snprintf() */
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "keyset.h"
   #include "dbms.h"
-  #include "asn1.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
   #include "keyset/dbms.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_DBMS
@@ -616,7 +616,7 @@ static int certMgmtFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	   to issue a certificate for it.  Again, this will be checked later but 
 	   we can return a more meaningful error here */
 	status = getKeyID( reqCertID, ENCODED_DBXKEYID_SIZE, &reqCertIDlength, 
-					   request, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   request, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( CAMGMT_ARGERROR_REQUEST );
 	initBoundData( boundDataPtr );

@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -36,40 +36,40 @@ const char *getSSHPacketName( IN_RANGE( 0, 255 ) const int packetType )
 		const char *packetName;
 		} PACKET_NAME_INFO;
 	static const PACKET_NAME_INFO packetNameInfo[] = {
-		{ SSH2_MSG_DISCONNECT, "SSH_MSG_DISCONNECT" },
-		{ SSH2_MSG_IGNORE, "SSH_MSG_IGNORE" },
-		{ SSH2_MSG_DEBUG, "SSH_MSG_DEBUG" },
-		{ SSH2_MSG_SERVICE_REQUEST, "SSH_MSG_SERVICE_REQUEST" },
-		{ SSH2_MSG_SERVICE_ACCEPT, "SSH_MSG_SERVICE_ACCEPT" },
-		{ SSH2_MSG_KEXINIT, "SSH_MSG_KEXINIT" },
-		{ SSH2_MSG_NEWKEYS, "SSH_MSG_NEWKEYS" },
-		{ SSH2_MSG_KEXDH_INIT, "SSH_MSG_KEXDH_INIT" },
-		{ SSH2_MSG_KEXDH_REPLY,	"SSH_MSG_KEXDH_REPLY" },
-		{ SSH2_MSG_KEXDH_GEX_REQUEST_OLD, "SSH_MSG_KEXDH_GEX_REQUEST_OLD" },
-		{ SSH2_MSG_KEXDH_GEX_GROUP, "SSH_MSG_KEXDH_GEX_GROUP" },
-		{ SSH2_MSG_KEXDH_GEX_INIT, "SSH_MSG_KEXDH_GEX_INIT" },
-		{ SSH2_MSG_KEXDH_GEX_REPLY, "SSH_MSG_KEXDH_GEX_REPLY" },
-		{ SSH2_MSG_KEXDH_GEX_REQUEST_NEW, "SSH_MSG_KEXDH_GEX_REQUEST_NEW" },
-		{ SSH2_MSG_USERAUTH_REQUEST, "SSH_MSG_USERAUTH_REQUEST" },
-		{ SSH2_MSG_USERAUTH_FAILURE, "SSH_MSG_USERAUTH_FAILURE" },
-		{ SSH2_MSG_USERAUTH_SUCCESS, "SSH_MSG_USERAUTH_SUCCESS" },
-		{ SSH2_MSG_USERAUTH_BANNER, "SSH_MSG_USERAUTH_BANNER" },
-		{ SSH2_MSG_USERAUTH_INFO_REQUEST, "SSH_MSG_USERAUTH_INFO_REQUEST" },
-		{ SSH2_MSG_USERAUTH_INFO_RESPONSE, "SSH_MSG_USERAUTH_INFO_RESPONSE" },
-		{ SSH2_MSG_GLOBAL_REQUEST, "SSH_MSG_GLOBAL_REQUEST" },
-		{ SSH2_MSG_GLOBAL_SUCCESS, "SSH_MSG_GLOBAL_SUCCESS" },
-		{ SSH2_MSG_GLOBAL_FAILURE, "SSH_MSG_GLOBAL_FAILURE" },
-		{ SSH2_MSG_CHANNEL_OPEN, "SSH_MSG_CHANNEL_OPEN" },
-		{ SSH2_MSG_CHANNEL_OPEN_CONFIRMATION, "SSH_MSG_CHANNEL_OPEN_CONFIRMATION" },
-		{ SSH2_MSG_CHANNEL_OPEN_FAILURE, "SSH_MSG_CHANNEL_OPEN_FAILURE" },
-		{ SSH2_MSG_CHANNEL_WINDOW_ADJUST, "SSH_MSG_CHANNEL_WINDOW_ADJUST" },
-		{ SSH2_MSG_CHANNEL_DATA, "SSH_MSG_CHANNEL_DATA" },
-		{ SSH2_MSG_CHANNEL_EXTENDED_DATA, "SSH_MSG_CHANNEL_EXTENDED_DATA" },
-		{ SSH2_MSG_CHANNEL_EOF, "SSH_MSG_CHANNEL_EOF" },
-		{ SSH2_MSG_CHANNEL_CLOSE, "SSH_MSG_CHANNEL_CLOSE" },
-		{ SSH2_MSG_CHANNEL_REQUEST, "SSH_MSG_CHANNEL_REQUEST" },
-		{ SSH2_MSG_CHANNEL_SUCCESS, "SSH_MSG_CHANNEL_SUCCESS" },
-		{ SSH2_MSG_CHANNEL_FAILURE, "SSH_MSG_CHANNEL_FAILURE" },
+		{ SSH_MSG_DISCONNECT, "SSH_MSG_DISCONNECT" },
+		{ SSH_MSG_IGNORE, "SSH_MSG_IGNORE" },
+		{ SSH_MSG_DEBUG, "SSH_MSG_DEBUG" },
+		{ SSH_MSG_SERVICE_REQUEST, "SSH_MSG_SERVICE_REQUEST" },
+		{ SSH_MSG_SERVICE_ACCEPT, "SSH_MSG_SERVICE_ACCEPT" },
+		{ SSH_MSG_KEXINIT, "SSH_MSG_KEXINIT" },
+		{ SSH_MSG_NEWKEYS, "SSH_MSG_NEWKEYS" },
+		{ SSH_MSG_KEXDH_INIT, "SSH_MSG_KEXDH_INIT" },
+		{ SSH_MSG_KEXDH_REPLY,	"SSH_MSG_KEXDH_REPLY" },
+		{ SSH_MSG_KEXDH_GEX_REQUEST_OLD, "SSH_MSG_KEXDH_GEX_REQUEST_OLD" },
+		{ SSH_MSG_KEXDH_GEX_GROUP, "SSH_MSG_KEXDH_GEX_GROUP" },
+		{ SSH_MSG_KEXDH_GEX_INIT, "SSH_MSG_KEXDH_GEX_INIT" },
+		{ SSH_MSG_KEXDH_GEX_REPLY, "SSH_MSG_KEXDH_GEX_REPLY" },
+		{ SSH_MSG_KEXDH_GEX_REQUEST_NEW, "SSH_MSG_KEXDH_GEX_REQUEST_NEW" },
+		{ SSH_MSG_USERAUTH_REQUEST, "SSH_MSG_USERAUTH_REQUEST" },
+		{ SSH_MSG_USERAUTH_FAILURE, "SSH_MSG_USERAUTH_FAILURE" },
+		{ SSH_MSG_USERAUTH_SUCCESS, "SSH_MSG_USERAUTH_SUCCESS" },
+		{ SSH_MSG_USERAUTH_BANNER, "SSH_MSG_USERAUTH_BANNER" },
+		{ SSH_MSG_USERAUTH_INFO_REQUEST, "SSH_MSG_USERAUTH_INFO_REQUEST" },
+		{ SSH_MSG_USERAUTH_INFO_RESPONSE, "SSH_MSG_USERAUTH_INFO_RESPONSE" },
+		{ SSH_MSG_GLOBAL_REQUEST, "SSH_MSG_GLOBAL_REQUEST" },
+		{ SSH_MSG_GLOBAL_SUCCESS, "SSH_MSG_GLOBAL_SUCCESS" },
+		{ SSH_MSG_GLOBAL_FAILURE, "SSH_MSG_GLOBAL_FAILURE" },
+		{ SSH_MSG_CHANNEL_OPEN, "SSH_MSG_CHANNEL_OPEN" },
+		{ SSH_MSG_CHANNEL_OPEN_CONFIRMATION, "SSH_MSG_CHANNEL_OPEN_CONFIRMATION" },
+		{ SSH_MSG_CHANNEL_OPEN_FAILURE, "SSH_MSG_CHANNEL_OPEN_FAILURE" },
+		{ SSH_MSG_CHANNEL_WINDOW_ADJUST, "SSH_MSG_CHANNEL_WINDOW_ADJUST" },
+		{ SSH_MSG_CHANNEL_DATA, "SSH_MSG_CHANNEL_DATA" },
+		{ SSH_MSG_CHANNEL_EXTENDED_DATA, "SSH_MSG_CHANNEL_EXTENDED_DATA" },
+		{ SSH_MSG_CHANNEL_EOF, "SSH_MSG_CHANNEL_EOF" },
+		{ SSH_MSG_CHANNEL_CLOSE, "SSH_MSG_CHANNEL_CLOSE" },
+		{ SSH_MSG_CHANNEL_REQUEST, "SSH_MSG_CHANNEL_REQUEST" },
+		{ SSH_MSG_CHANNEL_SUCCESS, "SSH_MSG_CHANNEL_SUCCESS" },
+		{ SSH_MSG_CHANNEL_FAILURE, "SSH_MSG_CHANNEL_FAILURE" },
 		{ CRYPT_ERROR, "<Unknown type>" },
 			{ CRYPT_ERROR, "<Unknown type>" }
 		};
@@ -118,8 +118,8 @@ static int checkHandshakePacketStatus( INOUT SESSION_INFO *sessionInfoPtr,
 											const int headerStatus,
 									   IN_BUFFER( headerLength ) const BYTE *header, 
 									   IN_LENGTH_SHORT const int headerLength,
-									   IN_RANGE( SSH2_MSG_DISCONNECT, 
-												 SSH2_MSG_SPECIAL_REQUEST ) \
+									   IN_RANGE( SSH_MSG_DISCONNECT, 
+												 SSH_MSG_SPECIAL_REQUEST ) \
 											const int expectedType )
 	{
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
@@ -128,8 +128,8 @@ static int checkHandshakePacketStatus( INOUT SESSION_INFO *sessionInfoPtr,
 	REQUIRES( headerStatus == CRYPT_ERROR_READ || \
 			  cryptStatusOK( headerStatus ) );
 	REQUIRES( headerLength > 0 && headerLength < MAX_INTLENGTH_SHORT );
-	REQUIRES( expectedType >= SSH2_MSG_DISCONNECT && \
-			  expectedType < SSH2_MSG_SPECIAL_LAST );
+	REQUIRES( expectedType >= SSH_MSG_DISCONNECT && \
+			  expectedType < SSH_MSG_SPECIAL_LAST );
 
 	/* If the other side has simply dropped the connection, see if we can 
 	   get further details on what went wrong */
@@ -140,8 +140,8 @@ static int checkHandshakePacketStatus( INOUT SESSION_INFO *sessionInfoPtr,
 		   has occurred then we return a more informative error than the 
 		   low-level networking one */
 		if( !isServer( sessionInfoPtr ) && \
-			( expectedType == SSH2_MSG_SPECIAL_USERAUTH || \
-			  expectedType == SSH2_MSG_SPECIAL_USERAUTH_PAM ) )
+			( expectedType == SSH_MSG_SPECIAL_USERAUTH || \
+			  expectedType == SSH_MSG_SPECIAL_USERAUTH_PAM ) )
 			{
 			retExt( headerStatus,
 					( headerStatus, SESSION_ERRINFO, 
@@ -156,7 +156,7 @@ static int checkHandshakePacketStatus( INOUT SESSION_INFO *sessionInfoPtr,
 		   CuteFTP vendor about this */
 		if( isServer( sessionInfoPtr ) && \
 			( sessionInfoPtr->protocolFlags & SSH_PFLAG_CUTEFTP ) && \
-			expectedType == SSH2_MSG_NEWKEYS )
+			expectedType == SSH_MSG_NEWKEYS )
 			{
 			retExt( headerStatus,
 					( headerStatus, SESSION_ERRINFO, 
@@ -227,36 +227,36 @@ static int checkPacketValid( IN_BYTE const int packetType,
 	{
 	static const int validHSPacketTbl[] = {
 		/* General messages */
-		SSH2_MSG_DISCONNECT, SSH2_MSG_IGNORE, SSH2_MSG_DEBUG,
+		SSH_MSG_DISCONNECT, SSH_MSG_IGNORE, SSH_MSG_DEBUG,
 		/* Handshake-only messages */
-		SSH2_MSG_SERVICE_REQUEST, SSH2_MSG_SERVICE_ACCEPT, SSH2_MSG_KEXINIT,
-		SSH2_MSG_NEWKEYS, SSH2_MSG_KEXDH_INIT, SSH2_MSG_KEXDH_REPLY,
-		SSH2_MSG_KEXDH_GEX_REQUEST_OLD, SSH2_MSG_KEXDH_GEX_GROUP,
-		SSH2_MSG_KEXDH_GEX_INIT, SSH2_MSG_KEXDH_GEX_REPLY, 
-		SSH2_MSG_KEXDH_GEX_REQUEST_NEW, SSH2_MSG_USERAUTH_REQUEST,
-		SSH2_MSG_USERAUTH_FAILURE, SSH2_MSG_USERAUTH_SUCCESS, 
-		SSH2_MSG_USERAUTH_BANNER, SSH2_MSG_USERAUTH_INFO_REQUEST, 
-		SSH2_MSG_USERAUTH_INFO_RESPONSE,
+		SSH_MSG_SERVICE_REQUEST, SSH_MSG_SERVICE_ACCEPT, SSH_MSG_KEXINIT,
+		SSH_MSG_NEWKEYS, SSH_MSG_KEXDH_INIT, SSH_MSG_KEXDH_REPLY,
+		SSH_MSG_KEXDH_GEX_REQUEST_OLD, SSH_MSG_KEXDH_GEX_GROUP,
+		SSH_MSG_KEXDH_GEX_INIT, SSH_MSG_KEXDH_GEX_REPLY, 
+		SSH_MSG_KEXDH_GEX_REQUEST_NEW, SSH_MSG_USERAUTH_REQUEST,
+		SSH_MSG_USERAUTH_FAILURE, SSH_MSG_USERAUTH_SUCCESS, 
+		SSH_MSG_USERAUTH_BANNER, SSH_MSG_USERAUTH_INFO_REQUEST, 
+		SSH_MSG_USERAUTH_INFO_RESPONSE,
 		/* Dual-use messages */
-		SSH2_MSG_CHANNEL_OPEN, SSH2_MSG_CHANNEL_OPEN_CONFIRMATION, 
-		SSH2_MSG_CHANNEL_OPEN_FAILURE,
+		SSH_MSG_CHANNEL_OPEN, SSH_MSG_CHANNEL_OPEN_CONFIRMATION, 
+		SSH_MSG_CHANNEL_OPEN_FAILURE,
 		CRYPT_ERROR, CRYPT_ERROR };
 	static const int validDataPacketTbl[] = {
 		/* General messages */
-		SSH2_MSG_DISCONNECT, SSH2_MSG_IGNORE, SSH2_MSG_DEBUG,
+		SSH_MSG_DISCONNECT, SSH_MSG_IGNORE, SSH_MSG_DEBUG,
 		/* Special-case rehandshake message */
-		SSH2_MSG_KEXINIT,
+		SSH_MSG_KEXINIT,
 		/* Data-only messages */
-		SSH2_MSG_GLOBAL_REQUEST, SSH2_MSG_GLOBAL_SUCCESS, 
-		SSH2_MSG_GLOBAL_FAILURE,
+		SSH_MSG_GLOBAL_REQUEST, SSH_MSG_GLOBAL_SUCCESS, 
+		SSH_MSG_GLOBAL_FAILURE,
 		/* Dual-use messages */
-		SSH2_MSG_CHANNEL_OPEN, SSH2_MSG_CHANNEL_OPEN_CONFIRMATION, 
-		SSH2_MSG_CHANNEL_OPEN_FAILURE,
+		SSH_MSG_CHANNEL_OPEN, SSH_MSG_CHANNEL_OPEN_CONFIRMATION, 
+		SSH_MSG_CHANNEL_OPEN_FAILURE,
 		/* More data-only messages */
-		SSH2_MSG_CHANNEL_WINDOW_ADJUST, SSH2_MSG_CHANNEL_DATA,
-		SSH2_MSG_CHANNEL_EXTENDED_DATA, SSH2_MSG_CHANNEL_EOF,
-		SSH2_MSG_CHANNEL_CLOSE, SSH2_MSG_CHANNEL_REQUEST,
-		SSH2_MSG_CHANNEL_SUCCESS, SSH2_MSG_CHANNEL_FAILURE,
+		SSH_MSG_CHANNEL_WINDOW_ADJUST, SSH_MSG_CHANNEL_DATA,
+		SSH_MSG_CHANNEL_EXTENDED_DATA, SSH_MSG_CHANNEL_EOF,
+		SSH_MSG_CHANNEL_CLOSE, SSH_MSG_CHANNEL_REQUEST,
+		SSH_MSG_CHANNEL_SUCCESS, SSH_MSG_CHANNEL_FAILURE,
 		CRYPT_ERROR, CRYPT_ERROR };
 	const int *validPacketTbl = isHandshake ? validHSPacketTbl : \
 											  validDataPacketTbl;
@@ -268,9 +268,9 @@ static int checkPacketValid( IN_BYTE const int packetType,
 	ENSURES( packetType >= 0 && packetType <= 0xFF );
 
 	/* Make sure that the packet is valid */
-	for( i = 0; validPacketTbl[ i ] != packetType && \
-				validPacketTbl[ i ] != CRYPT_ERROR && \
-				i < validPacketTblSize; i++ );
+	for( i = 0; i < validPacketTblSize && \
+				validPacketTbl[ i ] != packetType && \
+				validPacketTbl[ i ] != CRYPT_ERROR; i++ );
 	ENSURES( i < validPacketTblSize );
 	if( validPacketTbl[ i ] == CRYPT_ERROR )
 		return( CRYPT_ERROR_BADDATA );
@@ -294,14 +294,13 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		/* A mapping of SSH error codes that have cryptlib equivalents to
 		   the equivalent cryptlib codes.  If there's no mapping available,
 		   we use a default of CRYPT_ERROR_READ */
-		{ SSH2_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT, CRYPT_ERROR_PERMISSION },
-		{ SSH2_DISCONNECT_MAC_ERROR, CRYPT_ERROR_SIGNATURE },
-		{ SSH2_DISCONNECT_SERVICE_NOT_AVAILABLE, CRYPT_ERROR_NOTAVAIL },
-		{ SSH2_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, CRYPT_ERROR_NOTAVAIL },
-		{ SSH2_DISCONNECT_HOST_KEY_NOT_VERIFIABLE, CRYPT_ERROR_WRONGKEY },
+		{ SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT, CRYPT_ERROR_PERMISSION },
+		{ SSH_DISCONNECT_MAC_ERROR, CRYPT_ERROR_SIGNATURE },
+		{ SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, CRYPT_ERROR_NOTAVAIL },
+		{ SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, CRYPT_ERROR_NOTAVAIL },
+		{ SSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE, CRYPT_ERROR_WRONGKEY },
 		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
-	ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
 	char errorString[ MAX_ERRMSG_SIZE + 8 ];
 	int errorCode, clibStatus, length, status;
 
@@ -310,7 +309,7 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Peer is disconnecting, find out why:
 
-	  [	byte	SSH2_MSG_DISCONNECT ]
+	  [	byte	SSH_MSG_DISCONNECT ]
 		uint32	reason
 		string	description
 		string	language_tag */
@@ -322,7 +321,6 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 				  "Invalid disconnect status information in disconnect "
 				  "message" ) );
 		}
-	errorInfo->errorCode = errorCode;
 	status = readString32( stream, errorString, MAX_ERRMSG_SIZE - 64, 
 						   &length );
 	if( cryptStatusOK( status ) && length > 0 )
@@ -337,7 +335,7 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* Try and map the SSH status to an equivalent cryptlib one */
-	status = mapValue( errorInfo->errorCode, &clibStatus, errorMapTbl,
+	status = mapValue( errorCode, &clibStatus, errorMapTbl,
 					   FAILSAFE_ARRAYSIZE( errorMapTbl, MAP_TABLE ) );
 	if( cryptStatusError( status ) )
 		{
@@ -354,8 +352,8 @@ int getDisconnectInfo( INOUT SESSION_INFO *sessionInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
-						  IN_RANGE( SSH2_MSG_DISCONNECT, \
-									SSH2_MSG_SPECIAL_REQUEST ) \
+						  IN_RANGE( SSH_MSG_DISCONNECT, \
+									SSH_MSG_SPECIAL_REQUEST ) \
 								const int expectedType, 
 						  OUT_LENGTH_Z long *packetLength,
 						  OUT_LENGTH_Z int *packetExtraLength,
@@ -376,8 +374,8 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( readInfo == NULL || \
 			isWritePtr( readInfo, sizeof( READSTATE_INFO ) ) );
 
-	REQUIRES( expectedType >= SSH2_MSG_DISCONNECT && \
-			  expectedType < SSH2_MSG_SPECIAL_LAST );
+	REQUIRES( expectedType >= SSH_MSG_DISCONNECT && \
+			  expectedType < SSH_MSG_SPECIAL_LAST );
 
 	/* Clear return values */
 	*packetLength = 0;
@@ -396,8 +394,6 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		byte[]		data */
 	if( isHandshake )
 		{
-		int localStatus;
-
 		/* Processing handshake data can run into a number of special-case
 		   conditions due to buggy SSH implementations, to handle these we
 		   check the return code as well as the returned data to see if we
@@ -406,9 +402,10 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 										MIN_PACKET_SIZE );
 		if( status == CRYPT_ERROR_READ || cryptStatusOK( status ) )
 			{
-			localStatus = checkHandshakePacketStatus( sessionInfoPtr, 
-									status, headerBufPtr, MIN_PACKET_SIZE, 
-									expectedType );
+			const int localStatus = \
+				checkHandshakePacketStatus( sessionInfoPtr, status, 
+											headerBufPtr, MIN_PACKET_SIZE, 
+											expectedType );
 			if( cryptStatusError( localStatus ) )
 				status = localStatus;
 			}
@@ -512,9 +509,10 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		sMemDisconnect( &stream );
 		retExt( status,
 				( status, SESSION_ERRINFO, 
-				  "Invalid%s packet %s, expected %d", 
+				  "Invalid%s packet %s (%d), expected %s (%d)", 
 				  isHandshake ? " handshake" : "", 
-				  getSSHPacketName( sshInfo->packetType ), expectedType ) );
+				  getSSHPacketName( sshInfo->packetType ), sshInfo->packetType,
+				  getSSHPacketName( expectedType ), expectedType ) );
 		}
 
 	/* Move the body of the header (excluding the length at the start) from 
@@ -546,8 +544,8 @@ int readPacketHeaderSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr, 
-					  IN_RANGE( SSH2_MSG_DISCONNECT, \
-								SSH2_MSG_SPECIAL_REQUEST ) \
+					  IN_RANGE( SSH_MSG_DISCONNECT, \
+								SSH_MSG_SPECIAL_REQUEST ) \
 							int expectedType,
 					  IN_RANGE( 1, 1024 ) const int minPacketSize )
 	{
@@ -557,21 +555,21 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 
-	REQUIRES( expectedType >= SSH2_MSG_DISCONNECT && \
-			  expectedType < SSH2_MSG_SPECIAL_LAST );
+	REQUIRES( expectedType >= SSH_MSG_DISCONNECT && \
+			  expectedType < SSH_MSG_SPECIAL_LAST );
 	REQUIRES( minPacketSize >= 1 && minPacketSize <= 1024 );
 
 	/* Alongside the expected handshake packets the server can send us all 
 	   sorts of no-op messages ranging from explicit no-ops 
-	   (SSH2_MSG_IGNORE) through to general chattiness (SSH2_MSG_DEBUG, 
-	   SSH2_MSG_USERAUTH_BANNER).  Because we can receive any quantity of 
+	   (SSH_MSG_IGNORE) through to general chattiness (SSH_MSG_DEBUG, 
+	   SSH_MSG_USERAUTH_BANNER).  Because we can receive any quantity of 
 	   these at any time we have to run the receive code in a (bounds-
 	   checked) loop to strip them out (Quo usque tandem abutere, Catilina, 
 	   patientia nostra?) */
-	for( sshInfo->packetType = SSH2_MSG_IGNORE, noPackets = 0;
-		 ( sshInfo->packetType  == SSH2_MSG_IGNORE || \
-		   sshInfo->packetType  == SSH2_MSG_DEBUG || \
-		   sshInfo->packetType  == SSH2_MSG_USERAUTH_BANNER ) && \
+	for( sshInfo->packetType = SSH_MSG_IGNORE, noPackets = 0;
+		 ( sshInfo->packetType  == SSH_MSG_IGNORE || \
+		   sshInfo->packetType  == SSH_MSG_DEBUG || \
+		   sshInfo->packetType  == SSH_MSG_USERAUTH_BANNER ) && \
 			noPackets < 5; 
 		 noPackets++ )
  		{
@@ -663,8 +661,8 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 				   that the problem is due to the wrong key being used than
 				   data corruption so we return a wrong key error instead of 
 				   bad data */
-				if( expectedType == SSH2_MSG_SERVICE_REQUEST || \
-					expectedType == SSH2_MSG_SERVICE_ACCEPT )
+				if( expectedType == SSH_MSG_SERVICE_REQUEST || \
+					expectedType == SSH_MSG_SERVICE_ACCEPT )
 					{
 					retExt( CRYPT_ERROR_WRONGKEY,
 							( CRYPT_ERROR_WRONGKEY, SESSION_ERRINFO, 
@@ -682,11 +680,12 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 				}
 			}
 		sshInfo->readSeqNo++;
-		DEBUG_PRINT(( "Read %s packet, length %ld.\n", 
+		DEBUG_PRINT(( "Read %s (%d) packet, length %ld.\n", 
 					  getSSHPacketName( sshInfo->packetType ), 
+					  sshInfo->packetType,
 					  length - ( 1 + ID_SIZE + sshInfo->padLength ) ));
-		DEBUG_DUMPDATA( sessionInfoPtr->receiveBuffer + 1 + ID_SIZE, 
-						length - ( 1 + ID_SIZE + sshInfo->padLength ) );
+		DEBUG_DUMP_DATA( sessionInfoPtr->receiveBuffer + 1 + ID_SIZE, 
+						 length - ( 1 + ID_SIZE + sshInfo->padLength ) );
 		}
 	if( noPackets >= 5 )
 		{
@@ -705,7 +704,7 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	   where the data starts, and make sure that there's some payload
 	   present (there should always be at least one byte, the packet type) */
 	length -= PADLENGTH_SIZE + sshInfo->padLength;
-	if( sshInfo->packetType == SSH2_MSG_DISCONNECT )
+	if( sshInfo->packetType == SSH_MSG_DISCONNECT )
 		{
 		/* If we're expecting a standard data packet and we instead get a 
 		   disconnect packet due to an error then the length can be less 
@@ -721,9 +720,9 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid length %ld for %s packet, should be %d...%d", 
+				  "Invalid length %ld for %s (%d) packet, should be %d...%d", 
 				  length, getSSHPacketName( sshInfo->packetType ), 
-				  minPacketLength,
+				  sshInfo->packetType, minPacketLength,
 				  sessionInfoPtr->receiveBufSize - EXTRA_PACKET_SIZE ) );
 		}
 
@@ -745,7 +744,7 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 
 	/* If the other side has gone away, report the details */
-	if( sshInfo->packetType == SSH2_MSG_DISCONNECT )
+	if( sshInfo->packetType == SSH_MSG_DISCONNECT )
 		{
 		STREAM stream;
 
@@ -759,74 +758,75 @@ int readHSPacketSSH2( INOUT SESSION_INFO *sessionInfoPtr,
 	   special-case packets */
 	switch( expectedType )
 		{
-		case SSH2_MSG_SPECIAL_USERAUTH_PAM:
+		case SSH_MSG_SPECIAL_USERAUTH_PAM:
 			/* PAM authentication can go through multiple iterations of back-
 			   and-forth negotiation, for this case an information-request is 
 			   also a valid response, otherwise the responses are as for
-			   SSH2_MSG_SPECIAL_USERAUTH below */
-			if( sshInfo->packetType == SSH2_MSG_USERAUTH_INFO_REQUEST )
+			   SSH_MSG_SPECIAL_USERAUTH below */
+			if( sshInfo->packetType == SSH_MSG_USERAUTH_INFO_REQUEST )
 				{
-				expectedType = SSH2_MSG_USERAUTH_INFO_REQUEST;
+				expectedType = SSH_MSG_USERAUTH_INFO_REQUEST;
 				break;
 				}
 			/* Fall through */
 
-		case SSH2_MSG_SPECIAL_USERAUTH:
+		case SSH_MSG_SPECIAL_USERAUTH:
 			/* If we're reading a response to a user authentication message
 			   then getting a failure response is valid (even if it's not
 			   what we're expecting) since it's an indication that an
 			   incorrect password was used rather than that there was some
 			   general type of failure */
 			expectedType = \
-				( sshInfo->packetType == SSH2_MSG_USERAUTH_FAILURE ) ? \
-					SSH2_MSG_USERAUTH_FAILURE : \
-					SSH2_MSG_USERAUTH_SUCCESS;
+				( sshInfo->packetType == SSH_MSG_USERAUTH_FAILURE ) ? \
+					SSH_MSG_USERAUTH_FAILURE : \
+					SSH_MSG_USERAUTH_SUCCESS;
 			break;
 
-		case SSH2_MSG_SPECIAL_CHANNEL:
+		case SSH_MSG_SPECIAL_CHANNEL:
 			/* If we're reading a response to a channel open message then
 			   getting a failure response is valid (even if it's not what
 			   we're expecting) since it's an indication that the channel
 			   open (for example a port-forwarding operation) failed rather
 			   than that there was some general type of failure */
 			expectedType = \
-				( sshInfo->packetType == SSH2_MSG_CHANNEL_OPEN_FAILURE ) ? \
-					SSH2_MSG_CHANNEL_OPEN_FAILURE : \
-					SSH2_MSG_CHANNEL_OPEN_CONFIRMATION;
+				( sshInfo->packetType == SSH_MSG_CHANNEL_OPEN_FAILURE ) ? \
+					SSH_MSG_CHANNEL_OPEN_FAILURE : \
+					SSH_MSG_CHANNEL_OPEN_CONFIRMATION;
 			break;
 
-		case SSH2_MSG_SPECIAL_REQUEST:
+		case SSH_MSG_SPECIAL_REQUEST:
 			/* If we're at the end of the handshake phase we can get either
 			   a global or a channel request to tell us what to do next */
-			if( sshInfo->packetType != SSH2_MSG_GLOBAL_REQUEST && \
-				sshInfo->packetType != SSH2_MSG_CHANNEL_REQUEST )
+			if( sshInfo->packetType != SSH_MSG_GLOBAL_REQUEST && \
+				sshInfo->packetType != SSH_MSG_CHANNEL_REQUEST )
 				{
 				retExt( CRYPT_ERROR_BADDATA,
 						( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-						  "Invalid handshake packet %s, expected "
-						  "SSH_MSG_GLOBAL_REQUEST or "
-						  "SSH_MSG_CHANNEL_REQUEST", 
-						  getSSHPacketName( sshInfo->packetType ) ) );
+						  "Invalid handshake packet %s (%d), expected "
+						  "SSH_MSG_GLOBAL_REQUEST (80) or "
+						  "SSH_MSG_CHANNEL_REQUEST (98)", 
+						  getSSHPacketName( sshInfo->packetType ),
+						  sshInfo->packetType ) );
 				}
 			expectedType = sshInfo->packetType;
 			break;
 
-		case SSH2_MSG_KEXDH_GEX_REQUEST_OLD:
+		case SSH_MSG_KEXDH_GEX_REQUEST_OLD:
 			/* The ephemeral DH key exchange spec was changed halfway
 			   through to try and work around problems with key negotiation,
 			   because of this we can see two different types of ephemeral
 			   DH request, although they're functionally identical */
-			if( sshInfo->packetType == SSH2_MSG_KEXDH_GEX_REQUEST_NEW )
-				expectedType = SSH2_MSG_KEXDH_GEX_REQUEST_NEW;
+			if( sshInfo->packetType == SSH_MSG_KEXDH_GEX_REQUEST_NEW )
+				expectedType = SSH_MSG_KEXDH_GEX_REQUEST_NEW;
 			break;
 		}
 	if( sshInfo->packetType != expectedType )
 		{
 		retExt( CRYPT_ERROR_BADDATA,
 				( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
-				  "Invalid handshake packet %s, expected %s", 
-				  getSSHPacketName( sshInfo->packetType ), 
-				  getSSHPacketName( expectedType ) ) );
+				  "Invalid handshake packet %s (%d), expected %s (%d)", 
+				  getSSHPacketName( sshInfo->packetType ), sshInfo->packetType,
+				  getSSHPacketName( expectedType ), expectedType ) );
 		}
 
 	return( length );

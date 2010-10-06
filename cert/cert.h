@@ -283,8 +283,9 @@ enum { CTAG_CE_VERSION, CTAG_CE_ISSUERUNIQUEID, CTAG_CE_SUBJECTUNIQUEID,
 
 /* Context-specific tags for attribute certificates */
 
-enum { CTAG_AC_BASECERTIFICATEID, CTAG_AC_ENTITYNAME,
-	   CTAG_AC_OBJECTDIGESTINFO };
+enum { CTAG_AC_HOLDER_BASECERTIFICATEID, CTAG_AC_HOLDER_ENTITYNAME,
+	   CTAG_AC_HOLDER_OBJECTDIGESTINFO };
+enum { CTAG_AC_ISSUER_BASECERTIFICATEID, CTAG_AC_ISSUER_OBJECTDIGESTINFO };
 
 /* Context-specific tags for certification requests */
 
@@ -393,6 +394,36 @@ typedef struct {
 	( certInfoPtr )->currentSelection = ( savedState ).savedSelectionInfo; \
 	( certInfoPtr )->attributeCursor = ( savedState ).savedAttributeCursor; \
 	}
+
+/* The structure used to store the current policy set if we're doing full
+   policy checking, enabled for CERTLEVEL_PKIX_FULL.  The MAX_POLICY_SIZE
+   value corresponds to MAX_OID_SIZE, unfortunately this define isn't 
+   visible at this level so we have to specify the value explicitly (the 
+   length is checked on read so there's no chance of an overflow).
+   
+   When we store the policy value (which is just the encoded policy OID) we
+   also store the level in the certificate chain at which it was added
+   (since a policy is only valid below the point at which it was added) and
+   an indication of whether the policy is explicit or mapped, since the 
+   latter can be disabled by the inhibitPolicyMapping value */
+
+#if defined( USE_CERTLEVEL_PKIX_FULL )
+
+#define MAX_POLICIES			16
+#define MAX_POLICY_SIZE			32
+
+typedef struct {
+	BYTE data[ MAX_POLICY_SIZE + 8 ];
+	int length;					/* Policy value and length */
+	int level;					/* Pos.in chain at which pol.becomes valid */
+	BOOLEAN isMapped;			/* Whether this is a mapped policy */
+	} POLICY_DATA;
+
+typedef struct {
+	POLICY_DATA policies[ MAX_POLICIES + 4 ];
+	int noPolicies;
+	} POLICY_INFO;
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 
 #ifdef USE_CERTVAL
 
@@ -775,10 +806,10 @@ typedef struct {
    the functions are polymorphic so we have to use the lowest common 
    denominator of all of the functions */
 
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 		int ( *READCERT_FUNCTION )( INOUT STREAM *stream, 
 									INOUT CERT_INFO *certInfoPtr );
-typedef CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+typedef CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 		int ( *WRITECERT_FUNCTION )( INOUT STREAM *stream, 
 									 INOUT CERT_INFO *subjectCertInfoPtr,
 									 IN_OPT const CERT_INFO *issuerCertInfoPtr,

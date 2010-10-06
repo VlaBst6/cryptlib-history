@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *				cryptlib Data Size and Crypto-related Constants 			*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2010					*
 *																			*
 ****************************************************************************/
 
@@ -53,7 +53,7 @@
    (actually for RC2 we have to limit the keysize to 128 bits for CMS/SMIME 
    compatibility) */
 
-#define MIN_KEYSIZE				bitsToBytes( 56 )
+#define MIN_KEYSIZE				bitsToBytes( 64 )
 #define MAX_WORKING_KEYSIZE		bitsToBytes( 256 )
 
 /* The minimum public key size (c.f. CRYPT_MAX_PKCSIZE).  This is a bit less 
@@ -183,7 +183,7 @@
 #elif defined( USE_CERTLEVEL_PKIX_PARTIAL )
   #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_PKIX_PARTIAL
 #else
-  #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_PKIX_STANDARD
+  #define MAX_COMPLIANCE_LEVEL	CRYPT_COMPLIANCELEVEL_STANDARD
 #endif /* Maximum compliance level */
 
 /* All non-constant loops contain a guard to prevent excessive looping.  
@@ -335,15 +335,15 @@ typedef enum {
 	MANAGEMENT_ACTION_LAST				/* Last possible management action */
 	} MANAGEMENT_ACTION_TYPE;
 
-/* Certificate key usage types.  SIGN is for data signing, CA is for 
-   certificate signing, and SIGN_GENERIC is for either type of signing */
+/* Certificate key usage types.  SIGN is for data signing and CA is for 
+   certificate signing.  we don't include CRYPT_KEYUSAGE_DATAENCIPHERMENT in 
+   KEYUSAGE_CRYPT since this is more or less never what's actually meant */
 
 #define KEYUSAGE_SIGN			( CRYPT_KEYUSAGE_DIGITALSIGNATURE | \
 								  CRYPT_KEYUSAGE_NONREPUDIATION )
 #define KEYUSAGE_CA				( CRYPT_KEYUSAGE_KEYCERTSIGN | \
 								  CRYPT_KEYUSAGE_CRLSIGN )
-#define KEYUSAGE_CRYPT			( CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
-								  CRYPT_KEYUSAGE_DATAENCIPHERMENT )
+#define KEYUSAGE_CRYPT			( CRYPT_KEYUSAGE_KEYENCIPHERMENT )
 #define KEYUSAGE_KEYAGREEMENT	( CRYPT_KEYUSAGE_KEYAGREEMENT | \
 								  CRYPT_KEYUSAGE_ENCIPHERONLY | \
 								  CRYPT_KEYUSAGE_DECIPHERONLY )

@@ -154,19 +154,18 @@ void endRandomPool( INOUT RANDOM_INFO *randomInfo );
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int setKeyX917( INOUT RANDOM_INFO *testRandomInfo, 
-				IN_BUFFER( X917_KEYSIZE ) const BYTE *key,
-				IN_BUFFER( X917_POOLSIZE ) const BYTE *state, 
-				IN_BUFFER_OPT( X917_POOLSIZE ) const BYTE *dateTime );
+				IN_BUFFER_C( X917_KEYSIZE ) const BYTE *key,
+				IN_BUFFER_C( X917_POOLSIZE ) const BYTE *state,
+				IN_BUFFER_OPT_C( X917_POOLSIZE ) const BYTE *dateTime );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int generateX917( INOUT RANDOM_INFO *testRandomInfo, 
-				  OUT_BUFFER_FIXED( length ) \
-				  BYTE *data, 
+				  INOUT_BUFFER_FIXED( length ) BYTE *data,
 				  IN_RANGE( 1, MAX_RANDOM_BYTES ) const int length );
 CHECK_RETVAL \
 int randomAlgorithmSelfTest( void );
 CHECK_RETVAL \
 int selfTestX917( INOUT RANDOM_INFO *randomInfo, 
-				  IN_BUFFER( X917_KEYSIZE ) const BYTE *key );
+				  IN_BUFFER_C( X917_KEYSIZE ) const BYTE *key );
 CHECK_RETVAL \
 int fipsTestX917( INOUT RANDOM_INFO *randomInfo );
 

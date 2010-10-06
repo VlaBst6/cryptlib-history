@@ -178,13 +178,14 @@ static int checkSchema( IN_BUFFER( schemaLen ) const void *schema,
    what it'll accept than a generic URL parser would be */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int parseURL( INOUT URL_INFO *urlInfo, 
+int parseURL( OUT URL_INFO *urlInfo, 
 			  IN_BUFFER( urlLen ) const char *url, 
 			  IN_LENGTH_SHORT const int urlLen,
 			  IN_PORT_OPT const int defaultPort, 
-			  IN_ENUM( URL_TYPE ) const URL_TYPE urlTypeHint )
+			  IN_ENUM( URL_TYPE ) const URL_TYPE urlTypeHint,
+			  const BOOLEAN preParseOnly )
 	{
-	char *strPtr, *hostName, *location;
+	const char *strPtr, *hostName, *location;
 	int strLen, hostNameLen, locationLen, offset, minLen, status;
 
 	assert( isWritePtr( urlInfo, sizeof( URL_INFO ) ) );
@@ -214,6 +215,7 @@ int parseURL( INOUT URL_INFO *urlInfo,
 	strLen = strStripWhitespace( &strPtr, url, urlLen );
 	if( strLen < MIN_DNS_SIZE || strLen >= MAX_URL_SIZE )
 		return( CRYPT_ERROR_BADDATA );
+	ANALYSER_HINT( strPtr != NULL );
 
 	/* Strip syntactic sugar */
 	if( ( offset = strFindStr( strPtr, strLen, "://", 3 ) ) >= 0 )
@@ -238,7 +240,7 @@ int parseURL( INOUT URL_INFO *urlInfo,
 	/* Check for user info before an '@' sign */
 	if( ( offset = strFindCh( strPtr, strLen, '@' ) ) >= 0 )
 		{
-		char *userInfo;
+		const char *userInfo;
 		int userInfoLen;
 
 		/* Extract the user info */
@@ -272,11 +274,26 @@ int parseURL( INOUT URL_INFO *urlInfo,
 		if( offset < 2 || offset > strLen - 1 || offset > CRYPT_MAX_TEXTSIZE )
 			return( CRYPT_ERROR_BADDATA );
 
-		/* Extract the IPv6 address starting at position 1 (past the '[') and
-		   ending at position offset (before the ']') with minimum length 2 */
-		hostNameLen = strExtract( &hostName, strPtr, 1, offset );
+		/* If we're only pre-parsing the IPv6 address for future use rather 
+		   than actually parsing it to pass to the network address-
+		   resolution functions then we have to leave the square-bracket 
+		   delimiters in place for when we perform the actual parse later 
+		   on */
+		if( preParseOnly )
+			{
+			hostName = strPtr;
+			hostNameLen = offset + 1;	/* Include ']' */
+			minLen = 4;
+			}
+		else
+			{
+			/* Extract the IPv6 address starting at position 1 (past the 
+			   '[') and ending at position 'offset' (before the ']') with 
+			   minimum length 2 */
+			hostNameLen = strExtract( &hostName, strPtr, 1, offset );
+			minLen = 2;
+			}
 		offset++;	/* Skip ']' */
-		minLen = 2;
 		}
 	else
 		{
@@ -317,13 +334,20 @@ int parseURL( INOUT URL_INFO *urlInfo,
 	urlInfo->hostLen = hostNameLen;
 
 	/* If there's nothing beyond the host name, we're done */
-	if( strLen == offset )
+	if( offset >= strLen )
 		{
 		ENSURES( sanityCheckURL( urlInfo ) );
 
 		return( CRYPT_OK );
 		}
 	strLen = strExtract( &strPtr, strPtr, offset, strLen );
+	if( strLen == 1 && *strPtr == '/' )
+		{
+		/* URLs may end in an optional no-op trailing '/' */
+		ENSURES( sanityCheckURL( urlInfo ) );
+
+		return( CRYPT_OK );
+		}
 	if( strLen < 3 || strLen > MAX_URL_SIZE )
 		return( CRYPT_ERROR_BADDATA );
 
@@ -358,6 +382,13 @@ int parseURL( INOUT URL_INFO *urlInfo,
 			return( CRYPT_OK );
 			}
 		strLen = strExtract( &strPtr, strPtr, portStrLen, strLen );
+		if( strLen == 1 && *strPtr == '/' )
+			{
+			/* URLs may end in an optional no-op trailing '/' */
+			ENSURES( sanityCheckURL( urlInfo ) );
+
+			return( CRYPT_OK );
+			}
 		if( strLen < 3 || strLen > MAX_URL_SIZE )
 			return( CRYPT_ERROR_BADDATA );
 		}

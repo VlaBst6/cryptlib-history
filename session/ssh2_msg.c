@@ -13,7 +13,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -91,7 +91,7 @@ static int handleWindowAdjust( INOUT SESSION_INFO *sessionInfoPtr,
 
 		/* Send the window adjust to the remote system:
 
-			byte	SSH2_MSG_CHANNEL_WINDOW_ADJUST
+			byte	SSH_MSG_CHANNEL_WINDOW_ADJUST
 			uint32	channel
 			uint32	bytes_to_add
 
@@ -114,7 +114,7 @@ static int handleWindowAdjust( INOUT SESSION_INFO *sessionInfoPtr,
 		ENSURES( adjustCount > windowSize / 2 && \
 				 adjustCount <= windowSize );
 		status = enqueueChannelData( sessionInfoPtr,
-									 SSH2_MSG_CHANNEL_WINDOW_ADJUST,
+									 SSH_MSG_CHANNEL_WINDOW_ADJUST,
 									 channelNo, adjustCount );
 		if( cryptStatusError( status ) )
 			{
@@ -193,14 +193,14 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 	   stream of window adjusts to implement the SSH performance handbrake */
 	switch( sshInfo->packetType )
 		{
-		case SSH2_MSG_GLOBAL_REQUEST:
+		case SSH_MSG_GLOBAL_REQUEST:
 			status = processChannelRequest( sessionInfoPtr, stream,
 											CRYPT_UNUSED );
 			if( cryptStatusError( status ) && status != OK_SPECIAL )
 				return( status );
 			return( OK_SPECIAL );
 
-		case SSH2_MSG_CHANNEL_OPEN:
+		case SSH_MSG_CHANNEL_OPEN:
 			/* Process the channel-open request.  In theory we could 
 			   immediately reject any attempts by the server to open a
 			   channel to the client at this point, but unfortunately we
@@ -215,27 +215,27 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 			   information before they can continue */
 			return( CRYPT_ENVELOPE_RESOURCE );
 
-		case SSH2_MSG_IGNORE:
-		case SSH2_MSG_DEBUG:
+		case SSH_MSG_IGNORE:
+		case SSH_MSG_DEBUG:
 			/* Nothing to see here, move along, move along:
 
-				byte	SSH2_MSG_IGNORE
+				byte	SSH_MSG_IGNORE
 				string	data
 
-				byte	SSH2_MSG_DEBUG
+				byte	SSH_MSG_DEBUG
 				boolean	always_display
 				string	message
 				string	language_tag */
 			return( OK_SPECIAL );
 
-		case SSH2_MSG_DISCONNECT:
+		case SSH_MSG_DISCONNECT:
 			/* This only really seems to be used during the handshake phase,
 			   once a channel is open it (and the session as a whole) is
 			   disconnected with a channel EOF/close, but we handle it here
 			   anyway just in case */
 			return( getDisconnectInfo( sessionInfoPtr, stream ) );
 
-		case SSH2_MSG_KEXINIT:
+		case SSH_MSG_KEXINIT:
 			/* The SSH spec is extremely vague about the sequencing of
 			   operations during a rehandshake.  Unlike SSL there's no real 
 			   indication of what happens to the connection-layer transfers 
@@ -270,12 +270,12 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 					( CRYPT_ERROR_BADDATA, SESSION_ERRINFO, 
 					  "Unexpected KEXINIT request received" ) );
 
-		case SSH2_MSG_CHANNEL_DATA:
-		case SSH2_MSG_CHANNEL_EXTENDED_DATA:
-		case SSH2_MSG_CHANNEL_REQUEST:
-		case SSH2_MSG_CHANNEL_WINDOW_ADJUST:
-		case SSH2_MSG_CHANNEL_EOF:
-		case SSH2_MSG_CHANNEL_CLOSE:
+		case SSH_MSG_CHANNEL_DATA:
+		case SSH_MSG_CHANNEL_EXTENDED_DATA:
+		case SSH_MSG_CHANNEL_REQUEST:
+		case SSH_MSG_CHANNEL_WINDOW_ADJUST:
+		case SSH_MSG_CHANNEL_EOF:
+		case SSH_MSG_CHANNEL_CLOSE:
 			/* All channel-specific messages end up here */
 			channelNo = readUint32( stream );
 			if( cryptStatusError( channelNo ) )
@@ -345,8 +345,8 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 	   to the currently selected channel */
 	switch( sshInfo->packetType )
 		{
-		case SSH2_MSG_CHANNEL_DATA:
-		case SSH2_MSG_CHANNEL_EXTENDED_DATA:
+		case SSH_MSG_CHANNEL_DATA:
+		case SSH_MSG_CHANNEL_EXTENDED_DATA:
 			{
 			int length;
 
@@ -367,7 +367,7 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 				return( status );
 
 			/* If it's a standard data packet, we're done */
-			if( sshInfo->packetType == SSH2_MSG_CHANNEL_DATA )
+			if( sshInfo->packetType == SSH_MSG_CHANNEL_DATA )
 				return( CRYPT_OK );
 
 			/* The extended data message is used for out-of-band data sent
@@ -386,26 +386,26 @@ int processChannelControlMessage( INOUT SESSION_INFO *sessionInfoPtr,
 			return( OK_SPECIAL );
 			}
 
-		case SSH2_MSG_CHANNEL_REQUEST:
+		case SSH_MSG_CHANNEL_REQUEST:
 			status = processChannelRequest( sessionInfoPtr, stream,
 											prevChannelNo );
 			if( cryptStatusError( status ) && status != OK_SPECIAL )
 				return( status );
 			return( OK_SPECIAL );
 
-		case SSH2_MSG_CHANNEL_WINDOW_ADJUST:
+		case SSH_MSG_CHANNEL_WINDOW_ADJUST:
 			/* Another noop-equivalent (but a very performance-affecting
 			   one) */
 			return( OK_SPECIAL );
 
-		case SSH2_MSG_CHANNEL_EOF:
+		case SSH_MSG_CHANNEL_EOF:
 			/* According to the SSH docs the EOF packet is mostly a courtesy
 			   notification, however many implementations seem to use a
 			   channel EOF in place of a close before sending a disconnect
 			   message */
 			return( OK_SPECIAL );
 
-		case SSH2_MSG_CHANNEL_CLOSE:
+		case SSH_MSG_CHANNEL_CLOSE:
 			/* The peer has closed their side of the channel, if our side
 			   isn't already closed (in other words if this message isn't
 			   a response to a close that we sent), close our side as well */
@@ -479,9 +479,9 @@ static int sendChannelClose( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Prepare the channel-close notification:
 
-		byte		SSH2_MSG_CHANNEL_CLOSE
+		byte		SSH_MSG_CHANNEL_CLOSE
 		uint32		channel_no */
-	status = enqueueResponse( sessionInfoPtr, SSH2_MSG_CHANNEL_CLOSE, 1,
+	status = enqueueResponse( sessionInfoPtr, SSH_MSG_CHANNEL_CLOSE, 1,
 							  channelNo, CRYPT_UNUSED, CRYPT_UNUSED,
 							  CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
@@ -540,13 +540,13 @@ int closeChannel( INOUT SESSION_INFO *sessionInfoPtr,
 	/* If there's no channel open, close the session with a session
 	   disconnect rather than a channel close:
 
-		byte		SSH2_MSG_DISCONNECT
-		uint32		reason_code = SSH2_DISCONNECT_CONNECTION_LOST
+		byte		SSH_MSG_DISCONNECT
+		uint32		reason_code = SSH_DISCONNECT_CONNECTION_LOST
 		string		description = ""
 		string		language_tag = ""
 
 	   The spec doesn't explain what the reason codes actually mean but
-	   SSH2_DISCONNECT_CONNECTION_LOST seems to be the least inappropriate
+	   SSH_DISCONNECT_CONNECTION_LOST seems to be the least inappropriate
 	   disconnect reason at this point */
 	if( currWriteChannelNo == UNUSED_CHANNEL_NO )
 		{
@@ -554,8 +554,8 @@ int closeChannel( INOUT SESSION_INFO *sessionInfoPtr,
 		   in the case of an error because the very next operation is to 
 		   shut down the network session, so we don't do anything if the 
 		   send fails */
-		status = enqueueResponse( sessionInfoPtr, SSH2_MSG_DISCONNECT, 3,
-								  SSH2_DISCONNECT_CONNECTION_LOST, 0, 0,
+		status = enqueueResponse( sessionInfoPtr, SSH_MSG_DISCONNECT, 3,
+								  SSH_DISCONNECT_CONNECTION_LOST, 0, 0,
 								  CRYPT_UNUSED );
 		if( cryptStatusOK( status ) )
 			( void ) sendEnqueuedResponse( sessionInfoPtr );
@@ -675,25 +675,27 @@ int closeChannel( INOUT SESSION_INFO *sessionInfoPtr,
 		 noChannels--, iterationCount++ )
 		{
 		status = sessionInfoPtr->readHeaderFunction( sessionInfoPtr, &readInfo );
-		if( !cryptStatusError( status ) )
-			{
-			/* Adjust the packet information for the packet header data that 
-			   was just read */
-			sessionInfoPtr->receiveBufEnd += status;
-			sessionInfoPtr->pendingPacketRemaining -= status;
-			if( sessionInfoPtr->pendingPacketRemaining <= 512 )
-				{
-				const int bytesLeft = sessionInfoPtr->receiveBufSize - \
-									  sessionInfoPtr->receiveBufEnd;
+		if( cryptStatusError( status ) )
+			break;
 
-				/* We got a packet and it's probably the channel close ack,
-				   read it */
-				status = sread( &sessionInfoPtr->stream,
-								sessionInfoPtr->receiveBuffer + \
-									sessionInfoPtr->receiveBufEnd,
-								min( sessionInfoPtr->pendingPacketRemaining, \
-									 bytesLeft ) );
-				}
+		/* Adjust the packet information for the packet header data that was 
+		   just read */
+		sessionInfoPtr->receiveBufEnd += status;
+		sessionInfoPtr->pendingPacketRemaining -= status;
+		if( sessionInfoPtr->pendingPacketRemaining <= 512 )
+			{
+			const int bytesLeft = sessionInfoPtr->receiveBufSize - \
+								  sessionInfoPtr->receiveBufEnd;
+
+			/* We got a packet and it's probably the channel close ack, read 
+			   it */
+			status = sread( &sessionInfoPtr->stream,
+							sessionInfoPtr->receiveBuffer + \
+								sessionInfoPtr->receiveBufEnd,
+							min( sessionInfoPtr->pendingPacketRemaining, \
+								 bytesLeft ) );
+			if( cryptStatusError( status ) )
+				break;
 			}
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_SMALL );

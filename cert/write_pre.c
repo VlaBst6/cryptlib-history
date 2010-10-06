@@ -11,8 +11,8 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Before we encode a certificate object we have to perform various final 
@@ -57,6 +57,8 @@
 	VALENTRIES	|	X	|		|		|		|		|		|
 	REVENTRIES	|		|		|	X	|	X	|		|		|
 	------------+-------+-------+-------+-------+-------+-------+ */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -358,6 +360,8 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	   certificate if necessary */
 	if( actions & PRE_SET_ISSUERATTR )
 		{
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
+
 		if( !( subjectCertInfoPtr->flags & CERT_FLAG_SELFSIGNED ) )
 			{
 			status = copyIssuerAttributes( &subjectCertInfoPtr->attributes,
@@ -373,6 +377,8 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	/* Copy the issuer DN if this isn't already present */
 	if( actions & PRE_SET_ISSUERDN )
 		{
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
+
 		if( subjectCertInfoPtr->issuerName == NULL )
 			{
 			status = copyDN( &subjectCertInfoPtr->issuerName,
@@ -386,12 +392,15 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	   validity period */
 	if( actions & PRE_SET_VALIDITYPERIOD )
 		{
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
+
 		if( subjectCertInfoPtr->startTime < issuerCertInfoPtr->startTime )
 			subjectCertInfoPtr->startTime = issuerCertInfoPtr->startTime;
 		if( subjectCertInfoPtr->endTime > issuerCertInfoPtr->endTime )
 			subjectCertInfoPtr->endTime = issuerCertInfoPtr->endTime;
 		}
 
+#ifdef USE_CERTVAL
 	/* If it's an RTCS response, prepare the certificate status list entries 
 	   prior to encoding them */
 	if( actions & PRE_SET_VALINFO )
@@ -403,7 +412,9 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+#endif /* USE_CERTVAL */
 
+#ifdef USE_CERTREV
 	/* If it's a CRL or OCSP response, prepare the revocation list entries 
 	   prior to encoding them */
 	if( actions & PRE_SET_REVINFO )
@@ -428,6 +439,7 @@ int preEncodeCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 			return( status );
 			}
 		}
+#endif /* USE_CERTREV */
 
 	return( CRYPT_OK );
 	}
@@ -540,6 +552,8 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	   certificates, and prepare the revocation entries */
 	if( actions & PRE_CHECK_ISSUERCERTDN )
 		{
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
+
 		if( !compareDN( subjectCertInfoPtr->issuerName,
 						issuerCertInfoPtr->subjectName, FALSE, NULL ) )
 			{
@@ -555,6 +569,8 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	   disallow it */
 	if( actions & PRE_CHECK_NONSELFSIGNED_DN )
 		{
+		ANALYSER_HINT( issuerCertInfoPtr != NULL );
+
 		if( compareDN( issuerCertInfoPtr->subjectName,
 					   subjectCertInfoPtr->subjectName, FALSE, NULL ) )
 			{
@@ -567,6 +583,7 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 	/* Check that the serial number is present */
 	if( actions & PRE_CHECK_SERIALNO )
 		{
+#ifdef USE_CERTREQ
 		if( subjectCertInfoPtr->type == CRYPT_CERTTYPE_REQUEST_REVOCATION )
 			{
 			if( subjectCertInfoPtr->cCertReq->serialNumberLength <= 0 )
@@ -577,6 +594,7 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 				}
 			}
 		else
+#endif /* USE_CERTREQ */
 			{
 			if( subjectCertInfoPtr->cCertCert->serialNumberLength <= 0 )
 				{
@@ -588,6 +606,7 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 		}
 
 	/* Check that the validity/revocation information is present */
+#ifdef USE_CERTVAL
 	if( actions & PRE_CHECK_VALENTRIES )
 		{
 		if( subjectCertInfoPtr->cCertVal->validityInfo == NULL )
@@ -597,6 +616,8 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 			return( CRYPT_ERROR_NOTINITED );
 			}
 		}
+#endif /* USE_CERTVAL */
+#ifdef USE_CERTREV
 	if( actions & PRE_CHECK_REVENTRIES )
 		{
 		if( subjectCertInfoPtr->cCertRev->revocations == NULL )
@@ -606,6 +627,7 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 			return( CRYPT_ERROR_NOTINITED );
 			}
 		}
+#endif /* USE_CERTREV */
 
 	/* Now that we've set up the attributes, perform the remainder of the
 	   checks.  Because RTCS is a CMS standard rather than PKIX the RTCS
@@ -641,3 +663,4 @@ int preCheckCertificate( INOUT CERT_INFO *subjectCertInfoPtr,
 
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

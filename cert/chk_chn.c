@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  Certificate Chain Checking Routines					*
-*						Copyright Peter Gutmann 1996-2008					*
+*						Copyright Peter Gutmann 1996-2009					*
 *																			*
 ****************************************************************************/
 
@@ -11,10 +11,7 @@
   #include "cert/cert.h"
 #endif /* Compiler-specific includes */
 
-/* This module and chk_cert.c implement the following PKIX checks (* =
-   unhandled, see the code comments.  Currently only policy mapping is
-   unhandled, this is optional in PKIX and given the nature of the
-   kitchenSink extension no-one really knows how to apply it anyway).  For
+/* This module and chk_cert.c implement the following PKIX checks.  For
    simplicity we use the more compact form of RFC 2459 rather than the 18
    page long one from RFC 3280.
 
@@ -44,7 +41,7 @@
 		(1) If the require explicit policy state variable is less than or 
 			equal to n, a policy identifier in the certificate must be in 
 			the initial policy set.
-*		(2) If the policy mapping state variable is less than or equal to n, 
+		(2) If the policy mapping state variable is less than or equal to n, 
 			the policy identifier may not be mapped.
 		(3) RFC 3280 addition: If the inhibitAnyPolicy state variable is 
 			less than or equal to n, the anyPolicy policy is no longer 
@@ -96,6 +93,8 @@
 
 	(m) If a key usage extension is marked critical, ensure that the 
 		keyCertSign bit is set */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -374,6 +373,320 @@ static int setTrustAnchorErrorInfo( INOUT CERT_INFO *certInfoPtr )
 
 /****************************************************************************
 *																			*
+*							Policy Management Functions						*
+*																			*
+****************************************************************************/
+
+#ifdef USE_CERTLEVEL_PKIX_FULL
+
+/* Check whether a policy is already present in the policy set */
+
+CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static BOOLEAN isPolicyPresent( const POLICY_DATA *policyData,
+								IN_RANGE( 0, MAX_POLICIES ) const int policyCount,
+								IN_BUFFER( policyValueLength ) const void *policyValue,
+								IN_LENGTH_OID const int policyValueLength )
+	{
+	int i;
+
+	assert( isReadPtr( policyData, sizeof( POLICY_DATA ) ) );
+	assert( isReadPtr( policyValue, policyValueLength ) );
+
+	REQUIRES_B( policyCount >= 0 && policyCount < MAX_POLICIES );
+	REQUIRES_B( policyValueLength > 0 && policyValueLength < MAX_POLICY_SIZE );
+
+	/* Check whether the given policy is already present in the set of 
+	   acceptable policies */
+	for( i = 0; i < policyCount && i < FAILSAFE_ITERATIONS_MED; i++ )
+		{
+		const POLICY_DATA *policyDataPtr = &policyData[ i ];
+
+		if( policyDataPtr->length == policyValueLength && \
+			!memcmp( policyDataPtr->data, policyValue, policyValueLength ) )
+			return( TRUE );
+		}
+	ENSURES_B( i < FAILSAFE_ITERATIONS_MED );
+
+	return( FALSE );
+	}
+
+/* Add a policy to the policy set */
+
+CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int addPolicy( INOUT POLICY_DATA *policyData,
+					  IN_RANGE( 0, MAX_POLICIES ) const int policyCount,
+					  const ATTRIBUTE_PTR *policyAttributePtr,
+					  IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+							const int certChainIndex,
+					  const BOOLEAN isMapped )
+	{
+	POLICY_DATA *policyDataPtr;
+	void *policyValuePtr;
+	int policyValueLength, status;
+
+	assert( isWritePtr( policyData, sizeof( POLICY_DATA ) ) );
+	assert( isReadPtr( policyAttributePtr, 
+					   sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+
+	REQUIRES( policyCount >= 0 && policyCount < MAX_POLICIES );
+	REQUIRES( certChainIndex >= -1 && certChainIndex < MAX_CHAINLENGTH );
+
+	/* Get the policy value */
+	status = getAttributeDataPtr( policyAttributePtr, &policyValuePtr,
+								  &policyValueLength );	
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Make sure that this policy isn't already present in the policy set.
+	   Since policies are asserted all the way up and down a chain we're
+	   going to find more copies in subsequent certificates so duplicates
+	   aren't a problem */
+	if( isPolicyPresent( policyData, policyCount, policyValuePtr, 
+						 policyValueLength ) )
+		return( OK_SPECIAL );
+
+	/* Copy the policy data to the next empty slot.  The policy level is 
+	   counted from 0 (the EE certificate) to n (the root certificate) so we 
+	   have to adjust the chain-position indicator by one since it denotes 
+	   the EE, the containing certificate, with the virtual position -1 and 
+	   the remainder of the certificates in the chain with positions 0...n */
+	policyDataPtr = &policyData[ policyCount ];
+	memset( policyDataPtr, 0, sizeof( POLICY_DATA ) );
+	policyDataPtr->level = certChainIndex + 1;
+	policyDataPtr->isMapped = isMapped;
+	return( attributeCopyParams( policyDataPtr->data, MAX_POLICY_SIZE,
+								 &policyDataPtr->length, policyValuePtr, 
+								 policyValueLength ) );
+	}
+
+/* Add explicit policies to the policy set */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int addExplicitPolicies( INOUT POLICY_INFO *policyInfo,
+								const ATTRIBUTE_PTR *attributes,
+								IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+									const int certChainIndex )
+	{
+	const ATTRIBUTE_PTR *attributeCursor;
+	int policyCount = policyInfo->noPolicies, iterationCount, status;
+
+	assert( isWritePtr( policyInfo, sizeof( POLICY_INFO ) ) );
+	assert( isReadPtr( attributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+
+	REQUIRES( certChainIndex >= -1 && certChainIndex < MAX_CHAINLENGTH );
+
+	/* Add all policies to the policy set */
+	for( attributeCursor = findAttributeField( attributes, 
+				CRYPT_CERTINFO_CERTPOLICYID, CRYPT_ATTRIBUTE_NONE ), 
+			iterationCount = 0;
+		 attributeCursor != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 attributeCursor = findNextFieldInstance( attributeCursor ), 
+			iterationCount++ )
+		{
+		if( policyCount >= MAX_POLICIES )
+			return( CRYPT_ERROR_OVERFLOW );
+		status = addPolicy( policyInfo->policies, policyCount,
+							attributeCursor, certChainIndex, FALSE );
+		if( status == OK_SPECIAL )
+			{
+			/* This policy is already present, there's nothing further to 
+			   do */
+			continue;
+			}
+		if( cryptStatusError( status ) )
+			return( status );
+		policyCount++;
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	policyInfo->noPolicies = policyCount;
+
+	return( CRYPT_OK );
+	}
+
+/* Add mapped policies to the policy set */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int addMappedPolicies( INOUT POLICY_INFO *policyInfo,
+							  const ATTRIBUTE_PTR *attributes,
+							  IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+									const int certChainIndex )
+	{
+	const ATTRIBUTE_PTR *sourcePolicyAttributeCursor = \
+					findAttributeField( attributes, 
+										CRYPT_CERTINFO_ISSUERDOMAINPOLICY,
+										CRYPT_ATTRIBUTE_NONE );
+	const ATTRIBUTE_PTR *destPolicyAttributeCursor = \
+					findAttributeField( attributes, 
+										CRYPT_CERTINFO_SUBJECTDOMAINPOLICY,
+										CRYPT_ATTRIBUTE_NONE );
+	int policyCount = policyInfo->noPolicies, iterationCount;
+	int status = CRYPT_OK;
+
+	assert( isWritePtr( policyInfo, sizeof( POLICY_INFO ) ) );
+	assert( isReadPtr( attributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+
+	REQUIRES( certChainIndex >= -1 && certChainIndex < MAX_CHAINLENGTH );
+
+	/* If there are no mapped policies, we're done */
+	if( sourcePolicyAttributeCursor == NULL )
+		return( CRYPT_OK );
+
+	/* Add all mapped policies to the policy set */
+	for( iterationCount = 0;
+		 sourcePolicyAttributeCursor != NULL && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE; 
+		 sourcePolicyAttributeCursor = \
+				findNextFieldInstance( sourcePolicyAttributeCursor ), \
+			destPolicyAttributeCursor = \
+				findNextFieldInstance( destPolicyAttributeCursor ), \
+			iterationCount++ )
+		{
+		void *policyValuePtr;
+		int policyValueLength;
+
+		REQUIRES( sourcePolicyAttributeCursor != NULL && \
+				  destPolicyAttributeCursor != NULL );
+
+		/* Make sure that we're not trying to map from or to the special-case 
+		   anyPolicy policy */
+		if( isAnyPolicy( sourcePolicyAttributeCursor ) || \
+			isAnyPolicy( destPolicyAttributeCursor ) )
+			return( CRYPT_ERROR_INVALID );
+
+		/* Get the source policy and check whether it's present in the 
+		   policy set */
+		status = getAttributeDataPtr( sourcePolicyAttributeCursor, &policyValuePtr,
+									  &policyValueLength );	
+		if( cryptStatusError( status ) )
+			continue;
+		if( !isPolicyPresent( policyInfo->policies, policyCount, 
+							  policyValuePtr, policyValueLength ) )
+			continue;
+
+		/* The source policy is present, add the corresponding destination
+		   policy to the policy set */
+		if( policyCount >= MAX_POLICIES )
+			return(  CRYPT_ERROR_OVERFLOW );
+		status = addPolicy( policyInfo->policies, policyCount,
+							destPolicyAttributeCursor, certChainIndex, TRUE );
+		if( status == OK_SPECIAL )
+			{
+			/* This destination policy is already present, there's nothing 
+			   further to do.  This can happen if there's two different 
+			   source policies mapped to a single destination policy */
+			continue;
+			}
+		if( cryptStatusError( status ) )
+			return( status );
+		policyCount++;
+		}
+	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
+	policyInfo->noPolicies = policyCount;
+
+	return( CRYPT_OK );
+	}
+
+/* Create a certificate policy set from a certificate chain */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int createPolicySet( OUT POLICY_INFO *policyInfo,
+							IN_OPT const ATTRIBUTE_PTR *trustAnchorAttributes,
+							INOUT CERT_INFO *certInfoPtr,
+							IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
+								const int startCertIndex )
+	{
+	BOOLEAN addImplicitPolicy = FALSE;
+	int certIndex = startCertIndex, iterationCount, status;
+
+	assert( isWritePtr( policyInfo, sizeof( POLICY_INFO ) ) );
+	assert( ( trustAnchorAttributes == NULL ) || \
+			isReadPtr( trustAnchorAttributes, 
+					   sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+
+	REQUIRES( startCertIndex >= -1 && startCertIndex < MAX_CHAINLENGTH );
+
+	/* Clear return value */
+	memset( policyInfo, 0, sizeof( POLICY_INFO ) );
+
+	/* Add trust anchor explicit and mapped policies if required */
+	if( trustAnchorAttributes != NULL && \
+		checkAttributeFieldPresent( trustAnchorAttributes, 
+									CRYPT_CERTINFO_CERTPOLICYID ) )
+		{
+		status = addExplicitPolicies( policyInfo, trustAnchorAttributes, 
+									  certIndex );
+		if( cryptStatusError( status ) )
+			return( status );
+		status = addMappedPolicies( policyInfo, trustAnchorAttributes,
+									certIndex );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
+	/* We've checked the trust anchor, move on to the next certificate */
+	certIndex--;
+
+	/* If there are no policies in the trust anchor, pick up the policies in
+	   the first certificate we get to that has any.  This is a bit of an
+	   ugly hack that's required to deal with things like self-signed CA 
+	   roots in X.509v1 format where the CA policy doesn't appear until the
+	   second certficiate in the chain */
+	if( policyInfo->noPolicies <= 0 )
+		addImplicitPolicy = TRUE;
+
+	/* Add mapped policies from the remainder of the certificate chain.  
+	   Note that we don't go all the way down to the EE certificate 
+	   (certIndex == -1) because any mapping at the end of the chain won't
+	   be used any more */
+	for( iterationCount = 0;
+		 certIndex >= 0 && iterationCount < MAX_CHAINLENGTH; 
+		 certIndex--, iterationCount++ )
+		{
+		CERT_INFO *subjectCertInfoPtr;
+
+		/* Get information for the current certificate in the chain */
+		status = getCertInfo( certInfoPtr, &subjectCertInfoPtr, certIndex );
+		if( cryptStatusError( status ) )
+			break;
+
+		if( addImplicitPolicy && \
+			checkAttributeFieldPresent( subjectCertInfoPtr->attributes, 
+										CRYPT_CERTINFO_CERTPOLICYID ) )
+			{
+			status = addExplicitPolicies( policyInfo, 
+										  subjectCertInfoPtr->attributes,
+										  certIndex );
+			if( cryptStatusError( status ) )
+				return( status );
+			if( policyInfo->noPolicies > 0 )
+				addImplicitPolicy = FALSE;
+			}
+
+		/* Add any mapped policies present in the current certificate */
+		status = addMappedPolicies( policyInfo, 
+									subjectCertInfoPtr->attributes, 
+									certIndex );
+		if( cryptStatusError( status ) )
+			{
+			krnlReleaseObject( subjectCertInfoPtr->objectHandle );
+			return( status );
+			}
+
+		/* Release the certificate again.  We don't have to check for it 
+		   being the chain certificate as we normally would because we never
+		   process the certificate at the end of the chain */
+		krnlReleaseObject( subjectCertInfoPtr->objectHandle );
+		}
+	ENSURES( iterationCount < MAX_CHAINLENGTH );
+
+	return( CRYPT_OK );
+	}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
+
+/****************************************************************************
+*																			*
 *					Verify Constraints on a Certificate Chain				*
 *																			*
 ****************************************************************************/
@@ -470,9 +783,10 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
 static int checkConstraints( INOUT CERT_INFO *certInfoPtr, 
 							 IN_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
 								const int startCertIndex,
-							 const CERT_INFO *issuerCertInfoPtr,
+							 const ATTRIBUTE_PTR *issuerAttributes,
 							 OUT_RANGE( -1, MAX_CHAINLENGTH - 1 ) \
 								int *errorCertIndex, 
+							 const POLICY_INFO *policyInfo,
 							 const BOOLEAN explicitPolicy )
 	{
 	const ATTRIBUTE_PTR *nameConstraintPtr = NULL, *policyConstraintPtr = NULL;
@@ -487,17 +801,17 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 	int value, iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
-	assert( isReadPtr( issuerCertInfoPtr, sizeof( CERT_INFO ) ) );
+	assert( isReadPtr( issuerAttributes, sizeof( ATTRIBUTE_PTR_STORAGE ) ) );
 	assert( isWritePtr( errorCertIndex, sizeof( int ) ) );
+	assert( isReadPtr( policyInfo, sizeof( POLICY_INFO ) ) );
 
 	REQUIRES( startCertIndex >= -1 && startCertIndex < MAX_CHAINLENGTH );
-	REQUIRES( certInfoPtr != issuerCertInfoPtr );
 
 	/* Clear return value */
 	*errorCertIndex = CRYPT_ERROR;
 
 	/* Check for path constraints */
-	status = getAttributeFieldValue( issuerCertInfoPtr->attributes,
+	status = getAttributeFieldValue( issuerAttributes,
 									 CRYPT_CERTINFO_PATHLENCONSTRAINT, 
 									 CRYPT_ATTRIBUTE_NONE, &value );
 	if( cryptStatusOK( status ) )
@@ -508,34 +822,34 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 
 	/* Check for policy constraints */
 	if( explicitPolicy && \
-		checkAttributePresent( issuerCertInfoPtr->attributes, 
+		checkAttributePresent( issuerAttributes, 
 							   CRYPT_CERTINFO_CERTIFICATEPOLICIES ) )
 		{
 		/* Policy chaining purely from the presence of a policy extension
 		   is only enforced if the explicit-policy option is set */
 		hasPolicy = TRUE;
 		}
-	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+	attributePtr = findAttribute( issuerAttributes, 
 								  CRYPT_CERTINFO_POLICYCONSTRAINTS, FALSE );
 	if( attributePtr != NULL )
 		policyConstraintPtr = attributePtr;
-	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+	attributePtr = findAttribute( issuerAttributes, 
 								  CRYPT_CERTINFO_INHIBITANYPOLICY, TRUE );
 	if( attributePtr != NULL )
 		inhibitPolicyPtr = attributePtr;
 
 	/* Check for name constraints */
-	attributePtr = findAttribute( issuerCertInfoPtr->attributes, \
+	attributePtr = findAttribute( issuerAttributes, 
 								  CRYPT_CERTINFO_NAMECONSTRAINTS, FALSE );
 	if( attributePtr != NULL )
 		{
 		nameConstraintPtr = attributePtr;
-		hasExcludedSubtrees = findAttributeField( nameConstraintPtr, \
-												  CRYPT_CERTINFO_EXCLUDEDSUBTREES, 
-												  CRYPT_ATTRIBUTE_NONE ) != NULL;
-		hasPermittedSubtrees = findAttributeField( nameConstraintPtr, \
-												   CRYPT_CERTINFO_PERMITTEDSUBTREES, 
-												   CRYPT_ATTRIBUTE_NONE ) != NULL;
+		hasExcludedSubtrees = \
+			checkAttributeFieldPresent( nameConstraintPtr, 
+										CRYPT_CERTINFO_EXCLUDEDSUBTREES );
+		hasPermittedSubtrees = \
+			checkAttributeFieldPresent( nameConstraintPtr, 
+										CRYPT_CERTINFO_PERMITTEDSUBTREES );
 		}
 
 	/* If there aren't any critical policies or constraints present (the 
@@ -573,6 +887,7 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 			return( status );
 		hasInhibitAnyPolicy = TRUE;
 		}
+	status = CRYPT_OK;
 
 	/* Walk down the chain checking each certificate against the issuer */
 	for( certIndex = startCertIndex, iterationCount = 0;
@@ -620,6 +935,7 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 				inhibitAnyPolicyLevel = policyLevel;
 			hasInhibitAnyPolicy = TRUE;
 			}
+		status = CRYPT_OK;
 
 		/* If any of the policy constraints have triggered then the policy 
 		   extension is now treated as critical even if it wasn't before */
@@ -658,30 +974,42 @@ static int checkConstraints( INOUT CERT_INFO *certInfoPtr,
 		/* Check that the current certificate in the chain obeys the 
 		   constraints set by the overall issuer, possibly modified by other 
 		   certificates in the chain */
-		if( hasExcludedSubtrees && \
-			cryptStatusError( checkNameConstraints( subjectCertInfoPtr,
-										nameConstraintPtr, TRUE,
-										&subjectCertInfoPtr->errorLocus, 
-										&subjectCertInfoPtr->errorType ) ) )
-			status = CRYPT_ERROR_INVALID;
-		if( cryptStatusOK( status ) && hasPermittedSubtrees && \
-			cryptStatusError( checkNameConstraints( subjectCertInfoPtr,
-										nameConstraintPtr, FALSE,
-										&subjectCertInfoPtr->errorLocus, 
-										&subjectCertInfoPtr->errorType ) ) )
-			status = CRYPT_ERROR_INVALID;
-		if( cryptStatusOK( status ) && hasPolicy && \
-			cryptStatusError( checkPolicyConstraints( subjectCertInfoPtr,
-										issuerCertInfoPtr->attributes, policyType,
-										&subjectCertInfoPtr->errorLocus, 
-										&subjectCertInfoPtr->errorType ) ) )
-			status = CRYPT_ERROR_INVALID;
-		if( cryptStatusOK( status ) && hasPathLength && \
-			cryptStatusError( checkPathConstraints( subjectCertInfoPtr, 
-										pathLength, 
-										&subjectCertInfoPtr->errorLocus, 
-										&subjectCertInfoPtr->errorType ) ) )
-			status = CRYPT_ERROR_INVALID;
+		if( hasExcludedSubtrees )
+			{
+			status = checkNameConstraints( subjectCertInfoPtr,
+										   nameConstraintPtr, TRUE,
+										   &subjectCertInfoPtr->errorLocus, 
+										   &subjectCertInfoPtr->errorType );
+			}
+		if( cryptStatusOK( status ) && hasPermittedSubtrees )
+			{
+			status = checkNameConstraints( subjectCertInfoPtr,
+										   nameConstraintPtr, FALSE,
+										   &subjectCertInfoPtr->errorLocus, 
+										   &subjectCertInfoPtr->errorType );
+			}
+		if( cryptStatusOK( status ) && hasPolicy )
+			{
+			/* When we specify the certificate position we have to add one
+			   to it because the policy level is counted from 0 (the EE 
+			   certificate) to n (the root certificate) while the chain-
+			   position indicator statrs from the virtual position -1 for 
+			   the EE certificate that contains the chain */
+			status = checkPolicyConstraints( subjectCertInfoPtr, 
+											 issuerAttributes, policyType, 
+											 policyInfo, certIndex + 1,
+											 ( hasInhibitPolicyMap && \
+											   inhibitPolicyMapLevel <= 0 ) ? \
+												FALSE : TRUE,
+											 &subjectCertInfoPtr->errorLocus, 
+											 &subjectCertInfoPtr->errorType );
+			}
+		if( cryptStatusOK( status ) && hasPathLength )
+			{
+			status = checkPathConstraints( subjectCertInfoPtr, pathLength, 
+										   &subjectCertInfoPtr->errorLocus, 
+										   &subjectCertInfoPtr->errorType );
+			}
 		if( cryptStatusError( status ) )
 			{
 			/* Remember which certificate caused the problem */
@@ -753,6 +1081,7 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 	CERT_CERT_INFO *certChainInfo = certInfoPtr->cCertCert;
 	CERT_INFO *issuerCertInfoPtr, *subjectCertInfoPtr;
 #ifdef USE_CERTLEVEL_PKIX_FULL
+	POLICY_INFO policyInfo;
 	BOOLEAN explicitPolicy = TRUE;
 #endif /* USE_CERTLEVEL_PKIX_FULL */
 	int certIndex, complianceLevel, iterationCount, status;
@@ -793,6 +1122,18 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 								CRYPT_ERROR_SIGNALLED );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* Add policies (both native and mapped) from the trust anchor to the 
+	   policy set */
+#ifdef USE_CERTLEVEL_PKIX_FULL
+	status = createPolicySet( &policyInfo, issuerCertInfoPtr->attributes,
+							  certInfoPtr, certIndex );
+	if( cryptStatusError( status ) )
+		{
+		krnlReleaseObject( issuerCertInfoPtr->objectHandle );
+		return( status );
+		}
+#endif /* USE_CERTLEVEL_PKIX_FULL */
 
 	/* Check the trust anchor.  Since this is the start of the chain there 
 	   aren't any constraints placed on it by higher-level certificates so 
@@ -850,27 +1191,35 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 							issuerCertInfoPtr->iPubkeyContext : CRYPT_UNUSED,
 						NULL, FALSE, TRUE, &subjectCertInfoPtr->errorLocus, 
 						&subjectCertInfoPtr->errorType );
-		if( cryptArgError( status ) )
+		if( cryptStatusError( status ) )
 			{
-			/* If there's a problem with the issuer's public key we'll get
-			   a parameter error, the most appropriate standard error code 
-			   that we can translate this to is a standard signature error */
-			status = CRYPT_ERROR_SIGNATURE;
+			if( cryptArgError( status ) )
+				{
+				/* If there's a problem with the issuer's public key we'll 
+				   get a parameter error, the most appropriate standard 
+				   error code that we can translate this to is a standard 
+				   signature error */
+				status = CRYPT_ERROR_SIGNATURE;
+				}
+			break;
 			}
 
 #ifdef USE_CERTLEVEL_PKIX_FULL
 		/* Check any constraints that the issuer certificate may place on 
 		   the rest of the chain */
-		if( cryptStatusOK( status ) && \
-			complianceLevel >= CRYPT_COMPLIANCELEVEL_PKIX_FULL )
+		if( complianceLevel >= CRYPT_COMPLIANCELEVEL_PKIX_FULL )
 			{
 			int errorCertIndex = DUMMY_INIT;	/* Needed for gcc */
 
 			status = checkConstraints( certInfoPtr, certIndex, 
-									   issuerCertInfoPtr, &errorCertIndex,
+									   issuerCertInfoPtr->attributes, 
+									   &errorCertIndex, &policyInfo, 
 									   explicitPolicy );
 			if( cryptStatusError( status ) )
+				{
 				certIndex = errorCertIndex;
+				break;
+				}
 			}
 #endif /* USE_CERTLEVEL_PKIX_FULL */
 
@@ -886,10 +1235,11 @@ int checkCertChain( INOUT CERT_INFO *certInfoPtr )
 	   which corresponds to the chain itself */
 	if( cryptStatusError( status ) )
 		{
-		certChainInfo->chainPos = certIndex + 1;
+		certChainInfo->chainPos = certIndex ;
 		if( issuerCertInfoPtr != certInfoPtr )
 			krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 		}
 
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

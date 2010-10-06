@@ -437,7 +437,7 @@ typedef struct {
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 									IN_MESSAGE const MESSAGE_TYPE message,
-									IN_BUFFER( MESSAGE_CERTMGMT_INFO ) \
+									IN_BUFFER_C( sizeof( MESSAGE_CERTMGMT_INFO ) ) \
 										const void *messageDataPtr,
 									IN_ENUM( CRYPT_CERTACTION ) \
 										const int messageValue,
@@ -448,7 +448,7 @@ int preDispatchCheckCertMgmtAccess( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 								  IN_MESSAGE const MESSAGE_TYPE message,
-								  IN_BUFFER( MESSAGE_KEYMGMT_INFO ) \
+								  IN_BUFFER_C( sizeof( MESSAGE_KEYMGMT_INFO ) ) \
 										const void *messageDataPtr,
 								  IN_ENUM( KEYMGMT_ITEM ) const int messageValue,
 								  STDC_UNUSED const void *dummy );
@@ -458,24 +458,35 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckMechanismWrapAccess( IN_HANDLE const int objectHandle,
 										 IN_MESSAGE const MESSAGE_TYPE message,
-										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
+										 IN_BUFFER_C( sizeof( MECHANISM_WRAP_INFO ) ) \
+											TYPECAST( MECHANISM_WRAP_INFO * ) \
 											const void *messageDataPtr,
 										 IN_ENUM( MECHANISM ) const int messageValue,
 										 STDC_UNUSED const void *dummy );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckMechanismSignAccess( IN_HANDLE const int objectHandle,
 										 IN_MESSAGE const MESSAGE_TYPE message,
-										 IN_BUFFER( MECHANISM_WRAP_INFO ) \
+										 IN_BUFFER_C( sizeof( MECHANISM_SIGN_INFO ) ) \
+											TYPECAST( MECHANISM_SIGN_INFO * ) \
 											const void *messageDataPtr,
 										 IN_ENUM( MECHANISM ) const int messageValue,
 										 STDC_UNUSED const void *dummy );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckMechanismDeriveAccess( IN_HANDLE const int objectHandle,
 										   IN_MESSAGE const MESSAGE_TYPE message,
-										   IN_BUFFER( MECHANISM_WRAP_INFO ) \
+										   IN_BUFFER_C( sizeof( MECHANISM_DERIVE_INFO ) ) \
+												TYPECAST( MECHANISM_DERIVE_INFO * ) \
 												const void *messageDataPtr,
 										   IN_ENUM( MECHANISM ) const int messageValue,
 										   STDC_UNUSED const void *dummy );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+int preDispatchCheckMechanismKDFAccess( IN_HANDLE const int objectHandle,
+										IN_MESSAGE const MESSAGE_TYPE message,
+										IN_BUFFER_C( sizeof( MECHANISM_KDF_INFO ) ) \
+											TYPECAST( MECHANISM_KDF_INFO * ) \
+											const void *messageDataPtr,
+										IN_ENUM( MECHANISM ) const int messageValue,
+										STDC_UNUSED const void *dummy );
 
 /* Prototypes for functions in msg_acl.c */
 
@@ -539,14 +550,14 @@ int preDispatchCheckExportAccess( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckData( IN_HANDLE const int objectHandle,
 						  IN_MESSAGE const MESSAGE_TYPE message,
-						  IN_BUFFER( MESSAGE_DATA ) \
+						  IN_BUFFER_C( sizeof( MESSAGE_DATA ) ) \
 								const void *messageDataPtr,
 						  STDC_UNUSED const int dummy1,
 						  STDC_UNUSED const void *dummy2 );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckCreate( IN_HANDLE const int objectHandle,
 							IN_MESSAGE const MESSAGE_TYPE message,
-							IN_BUFFER( MESSAGE_CREATEOBJECT_INFO ) \
+							IN_BUFFER_C( sizeof( MESSAGE_CREATEOBJECT_INFO ) ) \
 								const void *messageDataPtr,
 							IN_ENUM( OBJECT ) const int messageValue,
 							STDC_UNUSED const void *dummy );
@@ -616,11 +627,11 @@ const void *findAttributeACL( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int getPropertyAttribute( IN_HANDLE const int objectHandle,
 						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
-						  OUT_BUFFER_FIXED( sizeof( int ) ) void *messageDataPtr );
+						  OUT_BUFFER_FIXED_C( sizeof( int ) ) void *messageDataPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int setPropertyAttribute( IN_HANDLE const int objectHandle,
 						  IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
-						  IN_BUFFER( sizeof( int ) ) void *messageDataPtr );
+						  IN_BUFFER_C( sizeof( int ) ) void *messageDataPtr );
 CHECK_RETVAL \
 int incRefCount( IN_HANDLE const int objectHandle, 
 				 STDC_UNUSED const int dummy1,
@@ -634,13 +645,19 @@ int decRefCount( IN_HANDLE const int objectHandle,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int getDependentObject( IN_HANDLE const int objectHandle, 
 						const int targetType,
-						OUT_BUFFER_FIXED( sizeof( int ) ) \
+						IN_BUFFER_C( sizeof( int ) ) \
 								const void *messageDataPtr,
+							/* This is a bit of a lie since we actually 
+							   return the dependent object through this 
+							   pointer, however making it non-const means 
+							   that we'd have to also un-const every other 
+							   use of this parameter in all other functions 
+							   accessed via this function pointer */
 						STDC_UNUSED const BOOLEAN dummy );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int setDependentObject( IN_HANDLE const int objectHandle, 
 						IN_ENUM( SETDEP_OPTION ) const int option,
-						IN_BUFFER( sizeof( int ) ) \
+						IN_BUFFER_C( sizeof( int ) ) \
 								const void *messageDataPtr,
 						STDC_UNUSED const BOOLEAN dummy );
 CHECK_RETVAL \

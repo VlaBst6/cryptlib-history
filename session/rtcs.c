@@ -12,8 +12,8 @@
   #include "session.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
 #endif /* Compiler-specific includes */
 
@@ -86,7 +86,7 @@ static int checkRtcsHeader( IN_BUFFER( rtcsDataLength ) const void *rtcsData,
 	sMemConnect( &stream, rtcsData, rtcsDataLength );
 	status = readCMSheader( &stream, envelopeOIDinfo, 
 							FAILSAFE_ARRAYSIZE( envelopeOIDinfo, OID_INFO ), 
-							NULL, FALSE );
+							NULL, READCMS_FLAG_NONE );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -135,8 +135,8 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr )
 				( status, SESSION_ERRINFO, 
 				  "Couldn't CMS-envelope RTCS request data" ) );
 		}
-	DEBUG_DUMP( "rtcs_req", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "rtcs_req", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 	/* Send the request to the responder */
 	return( writePkiDatagram( sessionInfoPtr, RTCS_CONTENT_TYPE_REQ,
@@ -161,8 +161,8 @@ static int readServerResponse( INOUT SESSION_INFO *sessionInfoPtr )
 	status = readPkiDatagram( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
-	DEBUG_DUMP( "rtcs_resp", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "rtcs_resp", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 	status = checkRtcsHeader( sessionInfoPtr->receiveBuffer,
 							  sessionInfoPtr->receiveBufEnd, &actionType );
 	if( cryptStatusError( status ) )
@@ -274,8 +274,8 @@ static int readClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	status = readPkiDatagram( sessionInfoPtr );
 	if( cryptStatusError( status ) )
 		return( status );
-	DEBUG_DUMP( "rtcs_sreq", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "rtcs_sreq", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 	status = checkRtcsHeader( sessionInfoPtr->receiveBuffer,
 							  sessionInfoPtr->receiveBufEnd, &actionType );
 	if( cryptStatusError( status ) )
@@ -431,8 +431,8 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 				( status, SESSION_ERRINFO, 
 				  "Couldn't CMS-envelope RTCS response" ) );
 		}
-	DEBUG_DUMP( "rtcs_sresp", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "rtcs_sresp", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 	return( writePkiDatagram( sessionInfoPtr, RTCS_CONTENT_TYPE_RESP,
 							  RTCS_CONTENT_TYPE_RESP_LEN ) );
 	}

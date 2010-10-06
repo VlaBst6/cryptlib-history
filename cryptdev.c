@@ -45,8 +45,8 @@ static int processMechanismMessage( INOUT DEVICE_INFO *deviceInfoPtr,
 	if( deviceInfoPtr->mechanismFunctions != NULL )
 		{
 		for( i = 0;
-			 deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
-				i < deviceInfoPtr->mechanismFunctionCount && \
+			 i < deviceInfoPtr->mechanismFunctionCount && \
+				deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
 				i < FAILSAFE_ITERATIONS_LARGE; 
 			 i++ )
 			{
@@ -89,8 +89,8 @@ static int processMechanismMessage( INOUT DEVICE_INFO *deviceInfoPtr,
 			return( status );
 		assert( deviceInfoPtr->mechanismFunctions != NULL );
 		for( i = 0; 
-			 deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
-				i < deviceInfoPtr->mechanismFunctionCount && \
+			 i < deviceInfoPtr->mechanismFunctionCount && \
+				deviceInfoPtr->mechanismFunctions[ i ].action != MESSAGE_NONE && \
 				i < FAILSAFE_ITERATIONS_LARGE; 
 			 i++ )
 			{
@@ -245,8 +245,15 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 
 	/* Process object-specific messages */
 	if( message == MESSAGE_SELFTEST )
+		{
+		/* If the device doesn't have a self-test capability then there's 
+		   not much that we can do */
+		if( deviceInfoPtr->selftestFunction == NULL )
+			return( CRYPT_OK );
+
 		return( deviceInfoPtr->selftestFunction( deviceInfoPtr, 
 												 messageExtInfo ) );
+		}
 	if( message == MESSAGE_KEY_GETKEY )
 		{
 		MESSAGE_KEYMGMT_INFO *getkeyInfo = \
@@ -350,8 +357,8 @@ static int deviceMessageFunction( INOUT TYPECAST( MESSAGE_FUNCTION_EXTINFO * ) \
 			int i;
 			
 			for( i = 0;
-				 deviceInfoPtr->createObjectFunctions[ i ].type != OBJECT_TYPE_NONE && \
-					i < deviceInfoPtr->createObjectFunctionCount && \
+				 i < deviceInfoPtr->createObjectFunctionCount && \
+					deviceInfoPtr->createObjectFunctions[ i ].type != OBJECT_TYPE_NONE && \
 					i < FAILSAFE_ITERATIONS_MED; i++ )
 				{
 				if( deviceInfoPtr->createObjectFunctions[ i ].type == messageValue )
@@ -540,6 +547,7 @@ static int openDevice( OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice,
 							   ACTION_PERM_NONE_ALL, deviceMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( deviceInfoPtr != NULL );
 	*deviceInfoPtrPtr = deviceInfoPtr;
 	deviceInfoPtr->objectHandle = *iCryptDevice;
 	deviceInfoPtr->ownerHandle = iCryptOwner;
@@ -760,7 +768,7 @@ static int createSystemDeviceObject( void )
    logically independent so we set a flag for each device type that's
    successfully initialised rather than recording an init level */
 
-typedef CHECK_RETVAL int ( *DEVICEINIT_FUNCTION )( void );
+typedef CHECK_RETVAL_FNPTR int ( *DEVICEINIT_FUNCTION )( void );
 typedef void ( *DEVICEND_FUNCTION )( void );
 typedef struct {
 	DEVICEINIT_FUNCTION deviceInitFunction;
@@ -804,7 +812,12 @@ int deviceManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 	switch( action )
 		{
 		case MANAGEMENT_ACTION_PRE_INIT:
-			return( createSystemDeviceObject() );
+			status = createSystemDeviceObject();
+			if( cryptStatusError( status ) )
+				{
+				DEBUG_DIAG(( "System object creation failed" ));
+				}
+			return( status );
 
 		case MANAGEMENT_ACTION_INIT:
 			for( i = 0; deviceInitTbl[ i ].deviceInitFunction != NULL && \

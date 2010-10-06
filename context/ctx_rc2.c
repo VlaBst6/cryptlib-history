@@ -39,6 +39,8 @@
 *																			*
 ****************************************************************************/
 
+#ifndef CONFIG_NO_SELFTEST
+
 /* RC2 test vectors from RFC 2268 */
 
 static const struct RC2_TEST {
@@ -71,6 +73,9 @@ static int selfTest( void )
 
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -80,17 +85,29 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = RC2_EXPANDED_KEYSIZE;
+		int *valuePtr = ( int * ) data;
+
+		*valuePtr = RC2_EXPANDED_KEYSIZE;
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -397,6 +414,77 @@ static int decryptOFB( CONTEXT_INFO *contextInfoPtr, BYTE *buffer,
 *																			*
 ****************************************************************************/
 
+#if 1
+
+static int keyCrack( CONTEXT_INFO *contextInfoPtr )
+	{
+	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
+	RC2_KEY *rc2Key = ( RC2_KEY * ) convInfo->key;
+	BYTE data[ 32 ], key[ 32 ];
+#if 0	/* Test data, key = "\x13\x25\x0c\x1a\x60" */
+	static const BYTE *plaintext = "\x11\x1C\xDB\x36\xDC\x6E\x19\xF5";
+	static const BYTE *ciphertext = "\x9C\x4E\x66\x8A\xC7\x6B\x97\xF5";
+#else	/* Actual data */
+	static const BYTE *plaintext = "\x69\xAB\x54\x23\x2D\x86\x92\x61";
+	static const BYTE *ciphertext = "\x34\xAA\xF1\x83\xBD\x9C\xC0\x15";
+#endif /* 0 */
+	int i;
+
+	/* Test file: IV =  17 17 F1 B0 94 E8 EE F8		encData + 0
+				  PT =	06 0B 2A 86 48 86 F7 0D
+						-----------------------
+				  XOR:	11 1C DB 36 DC 6E 19 F5 
+
+	   So encr. above = CT block 2.
+					  =	9C 4E 66 8A C7 6B 97 F5		encData + 8
+
+	   Actual:    IV =  6F A0 7E A5 65 00 65 6C		encData + 0
+				  PT =	06 0B 2A 86 48 86 F7 0D
+						-----------------------
+				  XOR:	69 AB 54 23 2D 86 92 61 
+
+	   So encr. above = CT block 2.
+					  =	34 AA F1 83 BD 9C C0 15		encData + 8 */
+
+	memset( key, 0, 5 );
+//	memcpy( key, "\x13\x25\x0c\x1a\x60", 5 );
+	for( i = 0; i < 256; i++ )
+		{
+		int keyIndex;
+
+		printf( "Trying keys %02X xx.\n", i );
+		fflush( stdout );
+		while( key[ 0 ] == i )
+			{
+			RC2_set_key( rc2Key, 5, key, effectiveKeysizeBits( 5 ) );
+			RC2_ecb_encrypt( plaintext, data, rc2Key, RC2_ENCRYPT );
+			if( data[ 0 ] == ciphertext[ 0 ] && \
+				!memcmp( data, ciphertext, 8 ) )
+				{
+				printf( "Found at %02X %02X %02X %02X %02X.\n",
+						key[ 0 ], key[ 1 ], key[ 2 ], key[ 3 ], key[ 4 ] );
+				fflush( stdout );
+				return( CRYPT_OK );
+				}
+			for( keyIndex = 4; keyIndex >= 0; keyIndex-- )
+				{
+				key[ keyIndex ]++;
+				if( key[ keyIndex ] > 0 )
+					break;
+				}
+			if( keyIndex == 1 )
+				{
+				printf( "Trying keys %02X %02X %02X %02X %02X.\n", 
+						key[ 0 ], key[ 1 ], key[ 2 ], key[ 3 ], key[ 4 ] );
+				fflush( stdout );
+				}
+			}
+		}
+
+	return( CRYPT_OK );
+	}
+#endif /* 0 */
+
 /* Key schedule an RC2 key */
 
 static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
@@ -405,10 +493,36 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	CONV_INFO *convInfo = contextInfoPtr->ctxConv;
 	RC2_KEY *rc2Key = ( RC2_KEY * ) convInfo->key;
 
+#if 1
+if( !memcmp( key, "crackcrackcrack", 15 ) )
+	keyCrack( contextInfoPtr );
+#endif /* 1 */
+
 	/* Copy the key to internal storage */
 	if( convInfo->userKey != key )
 		memcpy( convInfo->userKey, key, keyLength );
 	convInfo->userKeyLength = keyLength;
+
+#ifdef USE_PKCS12
+	/* The only time that RC2 is ever likely to be used is as RC2-40 (since 
+	   it's disabled by default and is only enabled when PKCS #12 is 
+	   enabled), which is still universally used by Windows and possibly a 
+	   number of other implementations as well.  To allow the use of keys 
+	   this short, the caller gives them an oddball length and prefixes them 
+	   with two copies of the string "PKCS#12", if we find this then we 
+	   shorten the keys back down to 40 bits */
+	if( convInfo->userKeyLength == 14 + bitsToBytes( 40 ) && \
+		!memcmp( convInfo->userKey, "PKCS#12PKCS#12", 14 ) )
+		{
+		memmove( convInfo->userKey, convInfo->userKey + 14, 
+				 bitsToBytes( 40 ) );
+		convInfo->userKeyLength = bitsToBytes( 40 );
+
+		RC2_set_key( rc2Key, convInfo->userKeyLength, convInfo->userKey, 
+					 effectiveKeysizeBits( convInfo->userKeyLength ) );
+		return( CRYPT_OK );
+		}
+#endif /* USE_PKCS12 */
 
 	RC2_set_key( rc2Key, keyLength, key, effectiveKeysizeBits( keyLength ) );
 	return( CRYPT_OK );
@@ -423,7 +537,7 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_RC2, bitsToBytes( 64 ), "RC2", 3,
 	MIN_KEYSIZE, bitsToBytes( 128 ), bitsToBytes( 1024 ),
-	selfTest, getInfo, NULL, initKeyParams, initKey, NULL,
+	selfTest, getInfo, NULL, initGenericParams, initKey, NULL,
 	encryptECB, decryptECB, encryptCBC, decryptCBC,
 	encryptCFB, decryptCFB, encryptOFB, decryptOFB
 	};

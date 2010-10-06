@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Session Write Routines				*
-*					   Copyright Peter Gutmann 1998-2008					*
+*					   Copyright Peter Gutmann 1998-2010					*
 *																			*
 ****************************************************************************/
 
@@ -12,7 +12,7 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
@@ -75,11 +75,13 @@ static int startPacketStream( INOUT STREAM *stream,
 		byte		ID = packetType
 		byte[2]		version = { 0x03, 0x0n }
 		uint16		len = 0 (placeholder) 
-	  [ byte[]		iv	- TLS 1.1 only ] */
+	  [ byte[]		iv	- TLS 1.1+ only ] */
 	sputc( stream, packetType );
 	sputc( stream, SSL_MAJOR_VERSION );
 	sputc( stream, sessionInfoPtr->version );
 	status = writeUint16( stream, 0 );		/* Placeholder */
+	if( cryptStatusError( status ) )
+		return( status );
 	if( ( sessionInfoPtr->flags & SESSION_ISSECURE_WRITE ) && \
 		sslInfo->ivSize > 0 )
 		{
@@ -95,7 +97,7 @@ static int startPacketStream( INOUT STREAM *stream,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int openPacketStreamSSL( INOUT STREAM *stream, 
+int openPacketStreamSSL( OUT STREAM *stream, 
 						 const SESSION_INFO *sessionInfoPtr, 
 						 IN_LENGTH_OPT const int bufferSize, 
 						 IN_RANGE( SSL_HAND_FIRST, \
@@ -170,6 +172,7 @@ int completePacketStreamSSL( INOUT STREAM *stream,
 	status = writeUint16( stream, ( packetEndOffset - offset ) - \
 								  SSL_HEADER_SIZE );
 	sseek( stream, packetEndOffset );
+
 	return( status );
 	}
 
@@ -227,6 +230,13 @@ int completeHSPacketStream( INOUT STREAM *stream,
 	status = writeUint24( stream, packetEndOffset - \
 								  ( offset + ID_SIZE + LENGTH_SIZE ) );
 	sseek( stream, packetEndOffset );
+	DEBUG_PRINT(( "Wrote %s (%d) handshake packet, length %ld.\n", \
+				  getSSLHSPacketName( DEBUG_GET_STREAMBYTE( stream, offset ) ), 
+				  DEBUG_GET_STREAMBYTE( stream, offset ),
+				  ( packetEndOffset - offset ) - ( ID_SIZE + LENGTH_SIZE ) ));
+	DEBUG_DUMP_STREAM( stream, offset + ( ID_SIZE + LENGTH_SIZE ), 
+					   ( packetEndOffset - offset ) - ( ID_SIZE + LENGTH_SIZE ) );
+
 	return( status );
 	}
 
@@ -244,11 +254,21 @@ int completeHSPacketStream( INOUT STREAM *stream,
 		+-------+-----+-----+-------------------+-----+-----+
 		|///////| hdr | IV	|		data		| MAC | pad |
 		+-------+-----+-----+-------------------+-----+-----+
-				^<--------->|<- payloadLength ->^			|
+				^<----+---->|<- payloadLength ->^			|
 				|	  |		 <-------- bMaxLen -|---------->
-			 offset sBufStartOfs			stell( stream )
+			 offset sBufStartOfs		  stell( stream )
 
-   This MACs the data, adds the IV if necessary, pads and encrypts, and
+	sendBuffer hdrPtr	dataPtr
+		|		|			|
+		v		v			v============================== AuthEnc'd
+		+-------+-----+-----+-----------------------+-----+
+		|///////| hdr | IV	|		data			| ICV |
+		+-------+-----+-----+-----------------------+-----+
+				^<----+---->|<- payloadLength ----->^	  |
+				|	  |		 <-------- bMaxLen -----|---->
+			 offset sBufStartOfs			  stell( stream )
+
+   This MACs/ICVs the data, adds the IV if necessary, pads and encrypts, and
    updates the header */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -260,7 +280,7 @@ int wrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	STREAM lengthStream;
 	const int payloadLength = stell( stream ) - \
 							  ( offset + sessionInfoPtr->sendBufStartOfs );
-	const int bufMaxLen = payloadLength + sMemDataLeft( stream );
+	int bufMaxLen = payloadLength + sMemDataLeft( stream );
 	BYTE lengthBuffer[ UINT16_SIZE + 8 ];
 	BYTE *dataPtr, *headerPtr;
 	int length, status;
@@ -288,26 +308,84 @@ int wrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	dataPtr = headerPtr + SSL_HEADER_SIZE + sslInfo->ivSize;
 	ENSURES( *headerPtr >= SSL_MSG_FIRST && *headerPtr <= SSL_MSG_LAST );
 
-	/* MAC the payload */
-	if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
-		status = createMacSSL( sessionInfoPtr, dataPtr, bufMaxLen, &length, 
-							   payloadLength, *headerPtr );
+	/* MAC the payload if we're not using GCM, which combines the MAC with 
+	   the encryption */
+	if( !( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) )
+		{
+		if( sessionInfoPtr->version == SSL_MINOR_VERSION_SSL )
+			status = createMacSSL( sessionInfoPtr, dataPtr, bufMaxLen, 
+								   &length, payloadLength, *headerPtr );
+		else
+			status = createMacTLS( sessionInfoPtr, dataPtr, bufMaxLen, 
+								   &length, payloadLength, *headerPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 	else
-		status = createMacTLS( sessionInfoPtr, dataPtr, bufMaxLen, &length,
-							   payloadLength, *headerPtr );
-	if( cryptStatusError( status ) )
-		return( status );
+		{
+		/* GCM is a stream cipher so the length is the same as the payload 
+		   length */
+		length = payloadLength;
+		}
 
-	/* If it's TLS 1.1 or newer and we're using a block cipher, adjust for 
-	   the explicit IV that precedes the data.  We know that the resulting
-	   values are within bounds because dataPtr = headerPtr + hdr + IV */
-	if( sslInfo->ivSize > 0 )
+	/* If it's TLS 1.1+ and we're using a block cipher, adjust for the 
+	   explicit IV that precedes the data.  This is because the IV load is
+	   handled implicitly by encrypting it as part of the data.  We know 
+	   that the resulting values are within bounds because 
+	   dataPtr = headerPtr + hdr + IV */
+	if( sslInfo->ivSize > 0 && \
+		!( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM ) )
 		{
 		REQUIRES( sessionInfoPtr->sendBufStartOfs >= SSL_HEADER_SIZE + \
 													 sslInfo->ivSize ); 
 		dataPtr -= sslInfo->ivSize;
 		length += sslInfo->ivSize;
+		bufMaxLen += sslInfo->ivSize;
 		ENSURES( length > 0 && length <= bufMaxLen )
+		}
+	DEBUG_PRINT(( "Wrote %s (%d) packet, length %ld.\n", 
+				  getSSLPacketName( *headerPtr ), *headerPtr, length ));
+	DEBUG_DUMP_DATA( dataPtr, length );
+
+	/* If we're using GCM then the IV has to be assembled from implicit and 
+	   explicit components and set explicitly.  The reason why it's twelve 
+	   bytes is because AES-GCM preferentially uses 96 bits of IV followed 
+	   by 32 bits of 000...1, with other lengths being possible but then the
+	   data has to be cryptographically reduced to 96 bits before 
+	   processing, so TLS specifies a fixed length of 96 bits:
+
+		|<--- 12 bytes ---->|
+		+-------+-----------+
+		| Salt	|	Nonce	|
+		+-------+-----------+
+		|<- 4 ->|<--- 8 --->| 
+
+	   In addition we have to process the packet metadata that's normally
+	   MACed as GCM AAD */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		BYTE iv[ CRYPT_MAX_IVSIZE + 8 ];
+		MESSAGE_DATA msgData;
+
+		/* Set the GCM IV from a combination of the secret salt value and 
+		   the explicitly-communicated IV */
+		memcpy( iv, sslInfo->gcmWriteSalt, sslInfo->gcmSaltSize );
+		memcpy( iv + sslInfo->gcmSaltSize, dataPtr - sslInfo->ivSize, 
+				sslInfo->ivSize );
+		setMessageData( &msgData, iv, GCM_IV_SIZE );
+		status = krnlSendMessage( sessionInfoPtr->iCryptOutContext,
+								  IMESSAGE_SETATTRIBUTE_S,
+								  &msgData, CRYPT_CTXINFO_IV );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		/* Process the packet metadata as GCM AAD */
+		status = macDataTLSGCM( sessionInfoPtr->iCryptOutContext, 
+								sslInfo->writeSeqNo, sessionInfoPtr->version, 
+								length, *headerPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		sslInfo->writeSeqNo++;
 		}
 
 	/* Pad and encrypt the payload */
@@ -315,6 +393,12 @@ int wrapPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 						  length );
 	if( cryptStatusError( status ) )
 		return( status );
+
+	/* If we're using GCM then we have to adjust the length to account for 
+	   the IV data at the start (for non-GCM modes this is handled 
+	   implicitly by making the IV part of the data to encrypt) */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		length += sslInfo->ivSize;
 
 	/* Insert the final packet payload length into the packet header.  We 
 	   directly copy the data in because the stream may have been opened in 
@@ -358,8 +442,10 @@ int sendPacketSSL( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send the packet to the peer */
 	status = sMemGetDataBlockAbs( stream, 0, &dataPtr, length );
-	if( cryptStatusOK( status ) )
-		status = swrite( &sessionInfoPtr->stream, dataPtr, length );
+	if( cryptStatusError( status ) )
+		return( status );
+	ANALYSER_HINT( dataPtr != NULL );
+	status = swrite( &sessionInfoPtr->stream, dataPtr, length );
 	if( cryptStatusError( status ) )
 		{
 		sNetGetErrorInfo( &sessionInfoPtr->stream,
@@ -408,7 +494,7 @@ static void sendAlert( INOUT SESSION_INFO *sessionInfoPtr,
 	   that we don't complain about is an access permission problem, which 
 	   can occur when cryptlib is shutting down, for example when the 
 	   current thread is blocked waiting for network traffic and another 
-	   thread shuts cryptlib down */
+	   thread shuts things down */
 	status = openPacketStreamSSL( &stream, sessionInfoPtr, 
 								  CRYPT_USE_DEFAULT, SSL_MSG_ALERT );
 	if( cryptStatusOK( status ) )
@@ -432,7 +518,7 @@ static void sendAlert( INOUT SESSION_INFO *sessionInfoPtr,
 		}
 	/* Fall through with status passed on to the following code */
 
-	/* Send the alert.  Note that we don't exit on an error status in the
+	/* Send the alert.  Note that we didn't exit on an error status in the
 	   previous operation (for the reasons given in the comment earlier) 
 	   since we can at least perform a clean shutdown even if the creation
 	   of the close alert fails */

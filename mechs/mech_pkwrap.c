@@ -8,15 +8,15 @@
 #ifdef INC_ALL
   #include "crypt.h"
   #include "mech_int.h"
+  #include "pgp.h"
   #include "asn1.h"
   #include "misc_rw.h"
-  #include "pgp.h"
 #else
   #include "crypt.h"
   #include "mechs/mech_int.h"
-  #include "misc/asn1.h"
-  #include "misc/misc_rw.h"
   #include "misc/pgp.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/misc_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -459,6 +459,7 @@ static int pkcs1Wrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 							   &length );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* If this is just a length check, we're done */
 	if( mechanismInfo->wrappedData == NULL )
@@ -592,6 +593,7 @@ static int pkcs1Unwrap( INOUT MECHANISM_WRAP_INFO *mechanismInfo,
 							   &length );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* Decrypt the data */
 	status = pkcUnwrapData( mechanismInfo, decryptedData, CRYPT_MAX_PKCSIZE,
@@ -720,12 +722,7 @@ int importPKCS1PGP( STDC_UNUSED void *dummy,
 *																			*
 ****************************************************************************/
 
-/* If OAEP is used with SHA2-512 in the PRF then the standard 
-   CRYPT_MAX_HASHSIZE value isn't sufficient to contain the hash data any 
-   more so we have to define a special larger-than-normal maximum hash size 
-   to contain it */
-
-#define OAEP_MAX_HASHSIZE	64
+#ifdef USE_OAEP
 
 /* Get the lHash value used for OAEP.  In theory this should be a hash of a 
    label applied to the OAEP operation but this is never used so what ends
@@ -746,16 +743,14 @@ static const LHASH_INFO FAR_BSS lHashInfo[] = {
 	{ CRYPT_ALGO_SHA2, ( const BYTE * )		/* For pedantic compilers */
 	  "\xE3\xB0\xC4\x42\x98\xFC\x1C\x14\x9A\xFB\xF4\xC8\x99\x6F\xB9\x24"
 	  "\x27\xAE\x41\xE4\x64\x9B\x93\x4C\xA4\x95\x99\x1B\x78\x52\xB8\x55", 32 },
-#ifdef USE_SHA2_512
-	  /* SHA2-512 is only available on systems with 64-bit data type support, 
-	     at the moment this is only used internally for some PRFs so we have 
-		 to identify it via a kludge on the SHA2 algorithm ID */
-	{ CRYPT_ALGO_SHA2 + 1, ( const BYTE * )	/* For pedantic compilers */
+#ifdef USE_SHA2_EXT
+	/* SHA2-512 is only available on systems with 64-bit data type support */
+	{ CRYPT_ALGO_SHA2, ( const BYTE * )	/* For pedantic compilers */
 	  "\xCF\x83\xE1\x35\x7E\xEF\xB8\xBD\xF1\x54\x28\x50\xD6\x6D\x80\x07"
 	  "\xD6\x20\xE4\x05\x0B\x57\x15\xDC\x83\xF4\xA9\x21\xD3\x6C\xE9\xCE"
 	  "\x47\xD0\xD1\x3C\x5D\x85\xF2\xB0\xFF\x83\x18\xD2\x87\x7E\xEC\x2F"
 	  "\x63\xB9\x31\xBD\x47\x41\x7A\x81\xA5\x38\x32\x7A\xF9\x27\xDA\x3E", 64 },
-#endif /* USE_SHA2_512 */
+#endif /* USE_SHA2_EXT */
 	{ CRYPT_ALGO_NONE, NULL, 0 }, { CRYPT_ALGO_NONE, NULL, 0 }
 	};
 
@@ -763,7 +758,8 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 static int getOaepHash( OUT_BUFFER_OPT( lHashMaxLen, *lHashLen ) void *lHash, 
 						IN_LENGTH_SHORT_Z const int lHashMaxLen, 
 						OUT_LENGTH_SHORT_Z int *lHashLen,
-						IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
+						IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+						IN_INT_SHORT_Z const int hashParam )
 	{
 	int i;
 
@@ -771,10 +767,9 @@ static int getOaepHash( OUT_BUFFER_OPT( lHashMaxLen, *lHashLen ) void *lHash,
 			isWritePtr( lHash, lHashMaxLen ) );
 	
 	REQUIRES( ( lHash == NULL && lHashMaxLen == 0 ) || \
-			  ( lHashMaxLen >= OAEP_MAX_HASHSIZE && \
+			  ( lHashMaxLen >= CRYPT_MAX_HASHSIZE && \
 				lHashMaxLen < MAX_INTLENGTH_SHORT ) );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
 
 	/* Clear return value */
 	if( lHash != NULL )
@@ -784,17 +779,15 @@ static int getOaepHash( OUT_BUFFER_OPT( lHashMaxLen, *lHashLen ) void *lHash,
 	for( i = 0; lHashInfo[ i ].hashAlgo != CRYPT_ALGO_NONE && \
 				i < FAILSAFE_ARRAYSIZE( lHashInfo, LHASH_INFO ); i++ )
 		{
-		if( lHashInfo[ i ].hashAlgo == hashAlgo )
-			{
-			if( lHash != NULL )
-				{
-				memcpy( lHash, lHashInfo[ i ].lHash, 
-						lHashInfo[ i ].lHashSize );
-				}
-			*lHashLen = lHashInfo[ i ].lHashSize;
+		if( lHashInfo[ i ].hashAlgo != hashAlgo )
+			continue;
+		if( hashParam != 0 && lHashInfo[ i ].lHashSize != hashParam )
+			continue;
+		if( lHash != NULL )
+			memcpy( lHash, lHashInfo[ i ].lHash, lHashInfo[ i ].lHashSize );
+		*lHashLen = lHashInfo[ i ].lHashSize;
 
-			return( CRYPT_OK );
-			}
+		return( CRYPT_OK );
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( lHashInfo, LHASH_INFO ) );
 	if( lHash != NULL )
@@ -803,8 +796,8 @@ static int getOaepHash( OUT_BUFFER_OPT( lHashMaxLen, *lHashLen ) void *lHash,
 	return( CRYPT_ERROR_NOTAVAIL );
 	}
 
-#define getOaepHashSize( hashLen, hashAlgo ) \
-		getOaepHash( NULL, 0, hashLen, hashAlgo )
+#define getOaepHashSize( hashLen, hashAlgo, hashParam ) \
+		getOaepHash( NULL, 0, hashLen, hashAlgo, hashParam )
 
 /* OAEP mask generation function MGF1 */
 
@@ -813,11 +806,12 @@ static int mgf1( OUT_BUFFER_FIXED( maskLen ) void *mask,
 				 IN_LENGTH_PKC const int maskLen, 
 				 IN_BUFFER( seedLen ) const void *seed, 
 				 IN_LENGTH_PKC const int seedLen,
-				 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
+				 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+				 IN_INT_SHORT_Z const int hashParam )
 	{
 	HASHFUNCTION hashFunction;
 	HASHINFO hashInfo;
-	BYTE countBuffer[ 4 + 8 ], maskBuffer[ OAEP_MAX_HASHSIZE + 8 ];
+	BYTE countBuffer[ 4 + 8 ], maskBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE *maskOutPtr = mask;
 	int hashSize, maskIndex, blockCount = 0, iterationCount;
 
@@ -826,10 +820,10 @@ static int mgf1( OUT_BUFFER_FIXED( maskLen ) void *mask,
 
 	REQUIRES( maskLen >= 16 && maskLen <= CRYPT_MAX_PKCSIZE );
 	REQUIRES( seedLen >= 16 && seedLen <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 
-	getHashParameters( hashAlgo, &hashFunction, &hashSize );
+	getHashParameters( hashAlgo, hashParam, &hashFunction, &hashSize );
 
 	/* Set up the block counter buffer.  This will never have more than the
 	   last few bits set (8 bits = 5120 bytes of mask for the smallest hash,
@@ -853,7 +847,7 @@ static int mgf1( OUT_BUFFER_FIXED( maskLen ) void *mask,
 		}
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_MED );
 	zeroise( hashInfo, sizeof( HASHINFO ) );
-	zeroise( maskBuffer, OAEP_MAX_HASHSIZE );
+	zeroise( maskBuffer, CRYPT_MAX_HASHSIZE );
 
 	return( CRYPT_OK );
 	}
@@ -897,9 +891,10 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 									const int messageLen,
 								  IN_BUFFER( seedLen ) const void *seed, 
 								  IN_LENGTH_PKC const int seedLen,
-								  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
+								  IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+								  IN_INT_SHORT_Z const int hashParam )
 	{
-	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ OAEP_MAX_HASHSIZE + 8 ];
+	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE *maskedSeed, *db;
 	int dbLen, i, length, status;
 
@@ -913,9 +908,9 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 	REQUIRES( seedLen >= 16 && seedLen <= dataMaxLen && \
 			  seedLen <= CRYPT_MAX_PKCSIZE );
 	REQUIRES( cryptStatusOK( \
-				getOaepHashSize( &i, hashAlgo ) ) && seedLen == i );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && 
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+				getOaepHashSize( &i, hashAlgo, hashParam ) ) && seedLen == i );
+	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 
 	/* Make sure that the payload fits:
 
@@ -941,7 +936,8 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 
 	/* db = lHash || zeroes || 0x01 || message */
 	memset( db, 0, dbLen );
-	status = getOaepHash( db, CRYPT_MAX_PKCSIZE, &length, hashAlgo );
+	status = getOaepHash( db, CRYPT_MAX_PKCSIZE, &length, hashAlgo, 
+						  hashParam );
 	if( cryptStatusError( status ) )
 		return( status );
 	db[ dbLen - messageLen - 1 ] = 0x01;
@@ -950,7 +946,7 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 	ENSURES( length == seedLen );
 	
 	/* dbMask = MGF1( seed, dbLen ) */
-	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
+	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo, hashParam );
 	ENSURES( cryptStatusOK( status ) );
 
 	/* maskedDB = db ^ dbMask */
@@ -958,19 +954,21 @@ static int generateOaepDataBlock( OUT_BUFFER_FIXED( dataMaxLen ) BYTE *data,
 		db[ i ] ^= dbMask[ i ];
 
 	/* seedMask = MGF1( maskedDB, seedLen ) */
-	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
+	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo, hashParam );
 	ENSURES( cryptStatusOK( status ) );
 
 	/* maskedSeed = seed ^ seedMask */
 	for( i = 0; i < seedLen; i++ )
-		maskedSeed[ i ] = intToByte( ( ( const BYTE * ) seed )[ i ] ^ \
-									 seedMask[ i ] );
+		{
+		maskedSeed[ i ] = \
+			intToByte( ( ( const BYTE * ) seed )[ i ] ^ seedMask[ i ] );
+		}
 
 	/* data = 0x00 || maskedSeed || maskedDB */
 	data[ 0 ] = 0x00;
 
 	zeroise( dbMask, CRYPT_MAX_PKCSIZE );
-	zeroise( seedMask, OAEP_MAX_HASHSIZE );
+	zeroise( seedMask, CRYPT_MAX_HASHSIZE );
 
 	return( CRYPT_OK );
 	}
@@ -982,9 +980,10 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 								 OUT_LENGTH_PKC_Z int *messageLen, 
 								 IN_BUFFER( dataLen ) const void *data, 
 								 IN_LENGTH_PKC const int dataLen, 
-								 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo )
+								 IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+								 IN_INT_SHORT_Z const int hashParam )
 	{
-	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ OAEP_MAX_HASHSIZE + 8 ];
+	BYTE dbMask[ CRYPT_MAX_PKCSIZE + 8 ], seedMask[ CRYPT_MAX_HASHSIZE + 8 ];
 	BYTE dataBuffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE *seed, *db;
 	int seedLen, dbLen, length, i, dummy, status;
@@ -996,8 +995,8 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	REQUIRES( messageMaxLen >= MIN_PKCSIZE && \
 			  messageMaxLen <= CRYPT_MAX_PKCSIZE );
 	REQUIRES( dataLen >= MIN_PKCSIZE && dataLen <= CRYPT_MAX_PKCSIZE );
-	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
-			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( isHashAlgo( hashAlgo ) );
+	REQUIRES( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 
 	/* Clear return value */
 	memset( message, 0, min( 16, messageMaxLen ) );
@@ -1007,7 +1006,7 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	   has already been performed by the caller to avoid this being used as 
 	   a timing oracle, this is merely here to make the fact that the check 
 	   has been done explicit */
-	status = getOaepHashSize( &seedLen, hashAlgo );
+	status = getOaepHashSize( &seedLen, hashAlgo, hashParam );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1023,7 +1022,7 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	ENSURES( dbLen >= 16 && 1 + seedLen + dbLen <= dataLen );
 
 	/* seedMask = MGF1( maskedDB, seedLen ) */
-	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo );
+	status = mgf1( seedMask, seedLen, db, dbLen, hashAlgo, hashParam );
 	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* seed = maskedSeed ^ seedMask */
@@ -1031,7 +1030,7 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 		seed[ i ] ^= seedMask[ i ];
 
 	/* dbMask = MGF1( seed, dbLen ) */
-	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo );
+	status = mgf1( dbMask, dbLen, seed, seedLen, hashAlgo, hashParam );
 	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* db = maskedDB ^ dbMask */
@@ -1039,7 +1038,8 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 		db[ i ] ^= dbMask[ i ];
 
 	/* Get the (constant) lHash value */
-	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, &dummy, hashAlgo );
+	status = getOaepHash( dbMask, CRYPT_MAX_PKCSIZE, &dummy, hashAlgo, 
+						  hashParam );
 	ENSURES( cryptStatusOK( status ) );	/* Can only be an internal error */
 
 	/* Verify that:
@@ -1089,7 +1089,7 @@ static int recoverOaepDataBlock( OUT_BUFFER( messageMaxLen, *messageLen ) \
 	*messageLen = length;
 
 	zeroise( dbMask, CRYPT_MAX_PKCSIZE );
-	zeroise( seedMask, OAEP_MAX_HASHSIZE );
+	zeroise( seedMask, CRYPT_MAX_HASHSIZE );
 	zeroise( dataBuffer, CRYPT_MAX_PKCSIZE );
 
 	return( CRYPT_OK );
@@ -1102,7 +1102,7 @@ int exportOAEP( STDC_UNUSED void *dummy,
 				INOUT MECHANISM_WRAP_INFO *mechanismInfo )
 	{
 	CRYPT_ALGO_TYPE cryptAlgo;
-	BYTE payload[ CRYPT_MAX_KEYSIZE + 8 ], seed[ OAEP_MAX_HASHSIZE + 8 ];
+	BYTE payload[ CRYPT_MAX_KEYSIZE + 8 ], seed[ CRYPT_MAX_HASHSIZE + 8 ];
 	int seedLen, payloadSize, length, status;
 
 	UNUSED_ARG( dummy );
@@ -1116,7 +1116,7 @@ int exportOAEP( STDC_UNUSED void *dummy,
 		}
 
 	/* Make sure that the OAEP auxiliary algorithm requirements are met */
-	status = getOaepHashSize( &seedLen, mechanismInfo->auxInfo );
+	status = getOaepHashSize( &seedLen, mechanismInfo->auxInfo, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1125,6 +1125,7 @@ int exportOAEP( STDC_UNUSED void *dummy,
 							   &length );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* If this is just a length check, we're done */
 	if( mechanismInfo->wrappedData == NULL )
@@ -1168,10 +1169,10 @@ int exportOAEP( STDC_UNUSED void *dummy,
 		{
 		status = generateOaepDataBlock( mechanismInfo->wrappedData, length, 
 										payload, payloadSize, seed, seedLen,
-										mechanismInfo->auxInfo );
+										mechanismInfo->auxInfo, 0 );
 		}
 	zeroise( payload, bitsToBytes( CRYPT_MAX_KEYSIZE ) );
-	zeroise( seed, OAEP_MAX_HASHSIZE );
+	zeroise( seed, CRYPT_MAX_HASHSIZE );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1199,6 +1200,7 @@ int importOAEP( STDC_UNUSED void *dummy,
 							   &length );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( length > MIN_PKCSIZE && length <= CRYPT_MAX_PKCSIZE );
 
 	/* Make sure that the MGF requirements are met.  This check isn't 
 	   actually needed until the recoverOaepDataBlock() call but we perform 
@@ -1206,7 +1208,7 @@ int importOAEP( STDC_UNUSED void *dummy,
 	   since feeding in a non-usable hash function that causes the 
 	   processing to bail out right after the decrypt provides a reasonably 
 	   precise timer for the decryption */
-	status = getOaepHashSize( &length, mechanismInfo->auxInfo );
+	status = getOaepHashSize( &length, mechanismInfo->auxInfo, 0 );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1220,7 +1222,7 @@ int importOAEP( STDC_UNUSED void *dummy,
 	/* Recover the payload from the OAEP data block */
 	status = recoverOaepDataBlock( message, CRYPT_MAX_PKCSIZE, &messageLen, 
 								   decryptedData, length, 
-								   mechanismInfo->auxInfo );
+								   mechanismInfo->auxInfo, 0 );
 	zeroise( decryptedData, CRYPT_MAX_PKCSIZE );
 	if( cryptStatusError( status ) )
 		{
@@ -1256,16 +1258,18 @@ void testOAEP( void )
 	BYTE buffer[ 1024 ], outMessage[ 128 ];
 	int seedLen, outLen, status;
 
-	status = getOaepHashSize( &seedLen, CRYPT_ALGO_SHA1 );
+	status = getOaepHashSize( &seedLen, CRYPT_ALGO_SHA1, 0 );
 
 	memset( buffer, '*', 1024 );
 
 	status = generateOaepDataBlock( buffer, 128, message, 16, seed, seedLen, 
-									CRYPT_ALGO_SHA1 );
+									CRYPT_ALGO_SHA1, 0 );
 	status = recoverOaepDataBlock( outMessage, 128, &outLen, buffer, 128, 
-								   CRYPT_ALGO_SHA1 );
+								   CRYPT_ALGO_SHA1, 0 );
 	if( outLen != 16 || memcmp( message, outMessage, outLen ) )
 		puts( "Bang." );
 	puts( "Done." );
 	}
 #endif /* 0 */
+
+#endif /* USE_OAEP */

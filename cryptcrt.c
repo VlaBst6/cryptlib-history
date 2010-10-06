@@ -15,7 +15,7 @@
   #include "asn1.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 /* The minimum size for an OBJECT IDENTIFIER expressed as ASCII characters */
@@ -48,9 +48,11 @@ static BOOLEAN compareCertInfo( const CERT_INFO *certInfoPtr,
 
 	REQUIRES_B( compareType > MESSAGE_COMPARE_NONE && \
 				compareType < MESSAGE_COMPARE_LAST );
-	REQUIRES_B( ( data == NULL && dataLength == 0 && \
+	REQUIRES_B( ( compareType == MESSAGE_COMPARE_CERTOBJ && \
+				  data == NULL && dataLength == 0 && \
 				  isHandleRangeValid( iCryptCert ) ) || \
-				( data != NULL && \
+				( compareType != MESSAGE_COMPARE_CERTOBJ && \
+				  data != NULL && \
 				  dataLength > 0 && dataLength < MAX_INTLENGTH_SHORT && \
 				  iCryptCert == CRYPT_UNUSED ) );
 
@@ -80,14 +82,14 @@ static BOOLEAN compareCertInfo( const CERT_INFO *certInfoPtr,
 			   we compare the issuerName and serialNumber with corrections 
 			   for common encoding braindamage.  Note that even this 
 			   comparison can fail since older versions of the Entegrity 
-			   toolkit rewrote T61Strings in certificates as 
-			   PrintableStrings in recipientInfo which means that any kind 
-			   of straight comparison on these would fail.  We don't bother 
-			   handling this sort of thing,and it's likely that most other 
-			   software won't either (this situation only occurs when a 
-			   certificate issuerName contains PrintableString text 
-			   incorrectly encoded as T61String, which is rare enough that 
-			   it required artifically-created certificates just to 
+			   toolkit (from the early 1990s) rewrote T61Strings in 
+			   certificates as PrintableStrings in recipientInfo which means 
+			   that any kind of straight comparison on these would fail.  We 
+			   don't bother handling this sort of thing, and it's likely 
+			   that most other software won't either (this situation only 
+			   occurs when a certificate issuerName contains PrintableString 
+			   text incorrectly encoded as T61String, which is rare enough 
+			   that it required artifically-created certificates just to 
 			   reproduce the problem).  In addition the trivial reject check 
 			   can also fail since in an extreme encoding braindamage case a 
 			   BMPString rewritten as a PrintableString would experience a 
@@ -123,8 +125,13 @@ static BOOLEAN compareCertInfo( const CERT_INFO *certInfoPtr,
 				status = getObjectLength( dataPtr, dataLeft, &length );
 			if( cryptStatusOK( status ) )			
 				status = readUniversal( &stream );
-			if( cryptStatusError( status ) || \
-				length != certInfoPtr->issuerDNsize || \
+			if( cryptStatusError( status ) )
+				{
+				sMemDisconnect( &stream );
+				return( FALSE );
+				}
+			ANALYSER_HINT( dataPtr != NULL );
+			if( length != certInfoPtr->issuerDNsize || \
 				memcmp( dataPtr, certInfoPtr->issuerDNptr,
 						certInfoPtr->issuerDNsize ) )
 				{
@@ -159,10 +166,10 @@ static BOOLEAN compareCertInfo( const CERT_INFO *certInfoPtr,
 		case MESSAGE_COMPARE_CERTOBJ:
 			{
 			static const MAP_TABLE fingerprintMapTable[] = {
-				{ MESSAGE_COMPARE_CERTOBJ, CRYPT_CERTINFO_FINGERPRINT_SHA },
-				{ MESSAGE_COMPARE_FINGERPRINT_SHA1, CRYPT_CERTINFO_FINGERPRINT_SHA },
-				{ MESSAGE_COMPARE_FINGERPRINT_SHA2, CRYPT_IATTRIBUTE_FINGERPRINT_SHA2 },
-				{ MESSAGE_COMPARE_FINGERPRINT_SHAng, CRYPT_IATTRIBUTE_FINGERPRINT_SHAng },
+				{ MESSAGE_COMPARE_CERTOBJ, CRYPT_CERTINFO_FINGERPRINT_SHA1 },
+				{ MESSAGE_COMPARE_FINGERPRINT_SHA1, CRYPT_CERTINFO_FINGERPRINT_SHA1 },
+				{ MESSAGE_COMPARE_FINGERPRINT_SHA2, CRYPT_CERTINFO_FINGERPRINT_SHA2 },
+				{ MESSAGE_COMPARE_FINGERPRINT_SHAng, CRYPT_CERTINFO_FINGERPRINT_SHAng },
 				{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 				};
 			MESSAGE_DATA msgData;
@@ -287,6 +294,26 @@ static int checkCertUsage( INOUT CERT_INFO *certInfoPtr,
 			   any kind of usage is OK */
 			return( CRYPT_OK );
 
+		case MESSAGE_CHECK_CERTxx:
+			/* A generic check for certificate validity that doesn't require
+			   full certificate processing as a MESSAGE_CRT_SIGCHECK would,
+			   used when there's no signing certificate available but we 
+			   want to perform a generic check that the certificate is 
+			   generally OK, such as not being expired */
+			status = checkCertBasic( certInfoPtr );
+			if( cryptStatusError( status ) )
+				{
+				/* Convert the status value to the correct form */
+				return( CRYPT_ARGERROR_OBJECT );
+				}
+
+			/* Then check the validity.  Because this is a nonspecific check 
+			   we allow any key usage */
+			keyUsageValue = CRYPT_KEYUSAGE_KEYENCIPHERMENT | \
+							KEYUSAGE_SIGN | KEYUSAGE_CA;
+			checkKeyFlag = CHECKKEY_FLAG_GENCHECK;
+			break;	
+
 		default:
 			retIntError();
 		}
@@ -311,7 +338,7 @@ static int checkCertUsage( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_OK );
 		setErrorInfo( certInfoPtr, CRYPT_CERTINFO_TRUSTED_USAGE, 
 					  CRYPT_ERRTYPE_CONSTRAINT );
-		return( CRYPT_ERROR_INVALID );
+		return( CRYPT_ARGERROR_OBJECT );
 		}
 
 	/* Only certificate objects with associated public keys are valid for 
@@ -899,7 +926,7 @@ static int certificateMessageFunction( INOUT TYPECAST( CERT_INFO * ) \
    certificate info ready for further initialisation */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int createCertificateInfo( OUT_PTR CERT_INFO **certInfoPtrPtr, 
+int createCertificateInfo( OUT_OPT_PTR CERT_INFO **certInfoPtrPtr, 
 						   IN_HANDLE const CRYPT_USER iCryptOwner,
 						   IN_ENUM( CRYPT_CERTTYPE ) \
 							const CRYPT_CERTTYPE_TYPE certType )
@@ -1003,6 +1030,7 @@ int createCertificateInfo( OUT_PTR CERT_INFO **certInfoPtrPtr,
 							   certificateMessageFunction );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( certInfoPtr != NULL );
 	certInfoPtr->objectHandle = iCertificate;
 	certInfoPtr->ownerHandle = iCryptOwner;
 	certInfoPtr->type = certType;
@@ -1143,20 +1171,21 @@ int createCertificateIndirect( INOUT MESSAGE_CREATEOBJECT_INFO *createInfo,
 	int status;
 
 	assert( isWritePtr( createInfo, sizeof( MESSAGE_CREATEOBJECT_INFO ) ) );
-	assert( auxDataPtr == NULL && auxValue == 0 );
-	assert( createInfo->arg1 >= CRYPT_CERTTYPE_NONE && \
-			createInfo->arg1 < CRYPT_CERTTYPE_LAST );
-	assert( createInfo->strArg1 != NULL );
-	assert( createInfo->strArgLen1 > 16 && \
-			createInfo->strArgLen1 < MAX_INTLENGTH ); 
-			/* May be CMS attribute (short) or a mega-CRL (long ) */
-	assert( ( createInfo->arg2 == 0 && createInfo->strArg2 == NULL && \
-			  createInfo->strArgLen2 == 0 ) || \
-			( ( createInfo->arg2 == CRYPT_IKEYID_KEYID || \
-				createInfo->arg2 == CRYPT_IKEYID_ISSUERANDSERIALNUMBER ) && \
-			  createInfo->strArg2 != NULL && \
-			  createInfo->strArgLen2 > 2 && \
-			  createInfo->strArgLen2 < MAX_INTLENGTH_SHORT ) );
+
+	REQUIRES( auxDataPtr == NULL && auxValue == 0 );
+	REQUIRES( createInfo->arg1 >= CRYPT_CERTTYPE_NONE && \
+			  createInfo->arg1 < CRYPT_CERTTYPE_LAST );
+	REQUIRES( createInfo->strArg1 != NULL );
+	REQUIRES( createInfo->strArgLen1 > 16 && \
+			  createInfo->strArgLen1 < MAX_INTLENGTH ); 
+			  /* May be CMS attribute (short) or a mega-CRL (long ) */
+	REQUIRES( ( createInfo->arg2 == 0 && createInfo->strArg2 == NULL && \
+				createInfo->strArgLen2 == 0 ) || \
+			  ( ( createInfo->arg2 == CRYPT_IKEYID_KEYID || \
+				  createInfo->arg2 == CRYPT_IKEYID_ISSUERANDSERIALNUMBER ) && \
+				createInfo->strArg2 != NULL && \
+				createInfo->strArgLen2 > 2 && \
+				createInfo->strArgLen2 < MAX_INTLENGTH_SHORT ) );
 
 	/* Pass the call through to the low-level import function */
 	status = importCert( createInfo->strArg1, createInfo->strArgLen1,
@@ -1180,7 +1209,10 @@ int certManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 		{
 		case MANAGEMENT_ACTION_PRE_INIT:
 			if( !checkExtensionTables() )
+				{
+				DEBUG_DIAG(( "Certificate class initialisation failed" ));
 				retIntError();
+				}
 			return( CRYPT_OK );
 		}
 

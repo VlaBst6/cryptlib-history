@@ -10,8 +10,10 @@
   #include "asn1.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -30,10 +32,8 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 						   IN_BUFFER( serialNumberLength ) \
 								const void *serialNumber,
 						   IN_LENGTH_SHORT const int serialNumberLength, 
-						   OUT_BUFFER( certIdMaxLength, KEYID_SIZE ) \
-								BYTE *certID, 
-						   IN_LENGTH_SHORT_MIN( KEYID_SIZE ) \
-								const int certIdMaxLength )
+						   OUT_BUFFER_FIXED_C( KEYID_SIZE ) BYTE *certID, 
+						   IN_LENGTH_FIXED( KEYID_SIZE ) const int certIdLength )
 	{
 	HASHFUNCTION_ATOMIC hashFunctionAtomic;
 	HASHFUNCTION hashFunction;
@@ -46,19 +46,18 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 	assert( isReadPtr( serialNumber, serialNumberLength ) && \
 			serialNumberLength > 0 && \
 			serialNumberLength <= MAX_SERIALNO_SIZE );
-	assert( isWritePtr( certID, certIdMaxLength ) );
+	assert( isWritePtr( certID, certIdLength ) );
 
 	REQUIRES( serialNumberLength > 0 && \
 			  serialNumberLength <= MAX_SERIALNO_SIZE );
-	REQUIRES( certIdMaxLength >= KEYID_SIZE && \
-			  certIdMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( certIdLength == KEYID_SIZE );
 
 	/* Clear return value */
-	memset( certID, 0, min( 16, certIdMaxLength ) );
+	memset( certID, 0, min( 16, certIdLength ) );
 
 	/* Get the hash algorithm information */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
-	getHashParameters( CRYPT_ALGO_SHA1, &hashFunction, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
+	getHashParameters( CRYPT_ALGO_SHA1, 0, &hashFunction, NULL );
 
 	/* Write the relevant information to a buffer and hash the data to get
 	   the ID:
@@ -84,7 +83,7 @@ static int generateCertID( IN_BUFFER( dnLength ) const void *dn,
 						   DEFAULT_TAG );
 	if( cryptStatusOK( status ) )
 		{
-		hashFunction( hashInfo, certID, certIdMaxLength, buffer, 
+		hashFunction( hashInfo, certID, certIdLength, buffer, 
 					  stell( &stream ), HASH_STATE_END );
 		}
 	sMemClose( &stream );
@@ -174,6 +173,56 @@ static int checkResponder( INOUT CERT_INFO *certInfoPtr,
 
 	return( status );
 	}
+
+/* Check a certificate against a CRL stored in a keyset */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int checkKeyset( INOUT CERT_INFO *certInfoPtr,
+						IN_HANDLE const CRYPT_SESSION iCryptKeyset )
+	{
+	MESSAGE_KEYMGMT_INFO getkeyInfo;
+	BYTE issuerID[ KEYID_SIZE + 8 ];
+	int status;
+
+	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
+
+	REQUIRES( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+			  certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+			  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
+	REQUIRES( isHandleRangeValid( iCryptKeyset ) );
+
+	/* Generate the issuerID for the certificate */
+	status = generateCertID( certInfoPtr->issuerDNptr,
+							 certInfoPtr->issuerDNsize,
+							 certInfoPtr->cCertCert->serialNumber,
+							 certInfoPtr->cCertCert->serialNumberLength,
+							 issuerID, KEYID_SIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	
+	/* Check whether the object with this issuerID is present in the CRL.  
+	   Since all that we're interested in is a yes/no answer we tell the 
+	   keyset to perform a check only */
+	setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_ISSUERID, issuerID, 
+						   KEYID_SIZE, NULL, 0, KEYMGMT_FLAG_CHECK_ONLY );
+	status = krnlSendMessage( iCryptKeyset, IMESSAGE_KEY_GETKEY,
+							  &getkeyInfo, KEYMGMT_ITEM_REVOCATIONINFO );
+	if( cryptStatusOK( status ) )
+		{
+		/* The certificate is present in the blacklist so it's an invalid
+		   certificate */
+		return( CRYPT_ERROR_INVALID );
+		}
+	if( status == CRYPT_ERROR_NOTFOUND )
+		{
+		/* The certificate isn't present in the blacklist so it's not 
+		   revoked (although not necessarily valid either) */
+		return( CRYPT_OK );
+		}
+
+	/* Some other type of error occurred */
+	return( status );
+	}
 #endif /* USE_CERTREV || USE_CERTVAL */
 
 /****************************************************************************
@@ -213,6 +262,16 @@ int checkCertDetails( INOUT CERT_INFO *subjectCertInfoPtr,
 
 	REQUIRES( iIssuerPubKey == CRYPT_UNUSED || \
 			  isHandleRangeValid( iIssuerPubKey ) );
+
+	/* Perform a basic check for obvious invalidity issues */
+	if( subjectCertInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+		subjectCertInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+		subjectCertInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN )
+		{
+		status = checkCertBasic( subjectCertInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* If there's an issuer certificate present check the validity of the
 	   subject certificate based on it.  If it's not present all that we can 
@@ -362,6 +421,16 @@ static int checkSelfSignedCert( INOUT CERT_INFO *certInfoPtr,
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( formatInfo == NULL || \
 			isReadPtr( formatInfo, sizeof( X509SIG_FORMATINFO ) ) );
+
+	/* Perform a basic check for obvious invalidity issues */
+	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN )
+		{
+		status = checkCertBasic( certInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
 
 	/* Since there's no signer certificate provided it has to be either 
 	   explicitly self-signed or signed by a trusted certificate */
@@ -531,6 +600,16 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 			return( CRYPT_ARGERROR_VALUE );
 		}
 
+	/* Perform a basic check for obvious invalidity issues */
+	if( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
+		certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
+		certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN )
+		{
+		status = checkCertBasic( certInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+
 	/* If the checking key is a CRL, a keyset that may contain a CRL, or an
 	   RTCS or OCSP session then this is a validity/revocation check that 
 	   works rather differently from a straight signature check */
@@ -541,8 +620,6 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 #endif /* USE_CERTREV */
 	if( type == OBJECT_TYPE_KEYSET )
 		{
-		BYTE issuerID[ CRYPT_MAX_HASHSIZE + 8 ];
-
 		/* If it's an RTCS or OCSP response use the certificate store to fill
 		   in the status information fields */
 #if defined( USE_CERTVAL )
@@ -552,43 +629,13 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 #if defined( USE_CERTREV )
 		if( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_RESPONSE )
 			return( checkOCSPResponse( certInfoPtr, iSigCheckObject ) );
+
+		/* It's a keyset, check the certificate against the CRL blacklist in 
+		   the keyset */
+		return( checkKeyset( certInfoPtr, iSigCheckObject ) );
+#else
+		return( CRYPT_ARGERROR_VALUE );
 #endif /* USE_CERTREV */
-
-		ENSURES( certInfoPtr->type == CRYPT_CERTTYPE_CERTIFICATE || \
-				 certInfoPtr->type == CRYPT_CERTTYPE_ATTRIBUTE_CERT || \
-				 certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
-
-		/* Generate the issuerID for this certificate and check whether it's 
-		   present in the CRL.  Since all we're interested in is a yes/no 
-		   answer we tell the keyset to perform a check only */
-		status = generateCertID( certInfoPtr->issuerDNptr,
-								 certInfoPtr->issuerDNsize,
-								 certInfoPtr->cCertCert->serialNumber,
-								 certInfoPtr->cCertCert->serialNumberLength,
-								 issuerID, CRYPT_MAX_HASHSIZE );
-		if( cryptStatusOK( status ) )
-			{
-			MESSAGE_KEYMGMT_INFO getkeyInfo;
-
-			setMessageKeymgmtInfo( &getkeyInfo, CRYPT_IKEYID_ISSUERID,
-								   issuerID, KEYID_SIZE, NULL, 0,
-								   KEYMGMT_FLAG_CHECK_ONLY );
-			status = krnlSendMessage( iSigCheckObject, IMESSAGE_KEY_GETKEY,
-									  &getkeyInfo,
-									  KEYMGMT_ITEM_REVOCATIONINFO );
-
-			/* Reverse the results of the check: OK -> certificate revoked,
-			   not found -> certificate not revoked */
-			if( cryptStatusOK( status ) )
-				status = CRYPT_ERROR_INVALID;
-			else
-				{
-				if( status == CRYPT_ERROR_NOTFOUND )
-					status = CRYPT_OK;
-				}
-			}
-
-		return( status );
 		}
 #if defined( USE_CERTREV ) || defined( USE_CERTVAL )
 	if( type == OBJECT_TYPE_SESSION )
@@ -695,3 +742,4 @@ int checkCertValidity( INOUT CERT_INFO *certInfoPtr,
 		krnlReleaseObject( issuerCertInfoPtr->objectHandle );
 	return( cryptArgError( status ) ? CRYPT_ARGERROR_VALUE : status );
 	}
+#endif /* USE_CERTIFICATES */

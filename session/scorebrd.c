@@ -94,6 +94,8 @@ static void clearScoreboardEntry( SCOREBOARD_INDEX *scoreboardIndexEntry )
 						sizeof( SCOREBOARD_INDEX ) ) );
 	assert( isWritePtr( scoreboardIndexEntry->data, SCOREBOARD_DATA_SIZE ) );
 
+	REQUIRES_V( scoreboardIndexEntry->data != NULL );
+
 	zeroise( scoreboardIndexEntry->data, SCOREBOARD_DATA_SIZE );
 	memset( scoreboardIndexEntry, 0, sizeof( SCOREBOARD_INDEX ) );
 	scoreboardIndexEntry->data = savedDataPtr;

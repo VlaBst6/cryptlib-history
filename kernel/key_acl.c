@@ -263,7 +263,7 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 	{
 	int i;
 
-	PRE( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
+	assert( isWritePtr( krnlDataPtr, sizeof( KERNEL_DATA ) ) );
 
 	/* Perform a consistency check on the key management ACLs */
 	for( i = 0; keyManagementACL[ i ].itemType != KEYMGMT_ITEM_NONE && \
@@ -279,7 +279,10 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 									 ST_DEV_P11 | ST_DEV_CAPI | \
 									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetR_subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->keysetW_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetW_subTypeA & \
@@ -287,7 +290,10 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 									 ST_DEV_P11 | ST_DEV_CAPI | \
 									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetW_subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->keysetD_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetD_subTypeA & \
@@ -295,7 +301,10 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 									 ST_DEV_P11 | ST_DEV_CAPI | \
 									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetD_subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->keysetFN_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetFN_subTypeA & \
@@ -303,20 +312,29 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 									 ST_DEV_P11 | ST_DEV_CAPI | \
 									 ST_DEV_HW ) ) != 0 || \
 			keyMgmtACL->keysetFN_subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->keysetQ_subTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->keysetQ_subTypeA & \
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY ) ) != 0 || \
 			keyMgmtACL->keysetQ_subTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->objSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->objSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY | ST_CTX_PKC | \
 									 ST_CTX_CONV ) ) != 0 || \
 			keyMgmtACL->objSubTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		ENSURES( keyMgmtACL->allowedKeyIDs != NULL );
 		for( j = 0; keyMgmtACL->allowedKeyIDs[ j ] != CRYPT_KEYID_NONE && \
@@ -335,13 +353,19 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI ) ) != 0 || \
 			keyMgmtACL->specificKeysetSubTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 
 		if( ( keyMgmtACL->specificObjSubTypeA & SUBTYPE_CLASS_B ) || \
 			( keyMgmtACL->specificObjSubTypeA & \
 				~( SUBTYPE_CLASS_A | ST_CERT_ANY ) ) != 0 || \
 			keyMgmtACL->specificObjSubTypeB != ST_NONE )
+			{
+			DEBUG_DIAG(( "Key management ACLs inconsistent" ));
 			retIntError();
+			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( keyManagementACL, KEYMGMT_ACL ) );
 
@@ -360,7 +384,10 @@ int initKeymgmtACL( INOUT KERNEL_DATA *krnlDataPtr )
 				~( SUBTYPE_CLASS_A | ST_KEYSET_ANY | ST_DEV_FORT | \
 									 ST_DEV_P11 | ST_DEV_CAPI | \
 									 ST_DEV_HW ) ) != 0 )
+			{
+			DEBUG_DIAG(( "Key management supplementary ACLs inconsistent" ));
 			retIntError();
+			}
 		}
 	ENSURES( i < FAILSAFE_ARRAYSIZE( idTypeACL, IDTYPE_ACL ) );
 
@@ -387,7 +414,7 @@ void endKeymgmtACL( void )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
 int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 								  IN_MESSAGE const MESSAGE_TYPE message,
-								  IN_BUFFER( MESSAGE_KEYMGMT_INFO ) \
+								  IN_BUFFER_C( sizeof( MESSAGE_KEYMGMT_INFO ) ) \
 										const void *messageDataPtr,
 								  IN_ENUM( KEYMGMT_ITEM ) const int messageValue,
 								  STDC_UNUSED const void *dummy )
@@ -406,17 +433,18 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 	OBJECT_SUBTYPE subType;
 	int paramObjectHandle, i;
 
+	assert( isReadPtr( messageDataPtr, sizeof( MESSAGE_KEYMGMT_INFO ) ) );
+
 	/* Preconditions */
-	PRE( isValidObject( objectHandle ) );
-	PRE( localMessage == MESSAGE_KEY_GETKEY || \
-		 localMessage == MESSAGE_KEY_SETKEY || \
-		 localMessage == MESSAGE_KEY_DELETEKEY || \
-		 localMessage == MESSAGE_KEY_GETFIRSTCERT || \
-		 localMessage == MESSAGE_KEY_GETNEXTCERT );
-	PRE( isReadPtr( messageDataPtr, sizeof( MESSAGE_KEYMGMT_INFO ) ) );
-	PRE( messageValue > KEYMGMT_ITEM_NONE && \
-		 messageValue < KEYMGMT_ITEM_LAST );
-	PRE( accessType != 0 );
+	REQUIRES( isValidObject( objectHandle ) );
+	REQUIRES( localMessage == MESSAGE_KEY_GETKEY || \
+			  localMessage == MESSAGE_KEY_SETKEY || \
+			  localMessage == MESSAGE_KEY_DELETEKEY || \
+			  localMessage == MESSAGE_KEY_GETFIRSTCERT || \
+			  localMessage == MESSAGE_KEY_GETNEXTCERT );
+	REQUIRES( messageValue > KEYMGMT_ITEM_NONE && \
+			  messageValue < KEYMGMT_ITEM_LAST );
+	REQUIRES( accessType != 0 );
 
 	/* Find the appropriate ACL for this mechanism */
 	for( i = 0; keyManagementACL[ i ].itemType != messageValue && \
@@ -482,8 +510,9 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 				/* Inner precondition: The state information points to an
 				   integer value containing a reference to the currently
 				   fetched object */
-				PRE( isReadPtr( mechanismInfo->auxInfo, sizeof( int ) ) && \
-					 mechanismInfo->auxInfoLength == sizeof( int ) );
+				assert( isReadPtr( mechanismInfo->auxInfo, sizeof( int ) ) );
+
+				REQUIRES( mechanismInfo->auxInfoLength == sizeof( int ) );
 				}
 			break;
 
@@ -591,7 +620,7 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 			}
 		else
 			{
-			PRE( objectTable[ objectHandle ].type == OBJECT_TYPE_DEVICE );
+			REQUIRES( objectTable[ objectHandle ].type == OBJECT_TYPE_DEVICE );
 
 			if( ( mechanismInfo->flags != KEYMGMT_FLAG_LABEL_ONLY ) && \
 				( mechanismInfo->auxInfo != NULL || \
@@ -611,13 +640,13 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 	   the usage preference flags set, and the object handle to get/set is
 	   not present if not required (the presence and validity check when it
 	   is required is performed further down) */
-	PRE( !( ~keymgmtACL->allowedFlags & mechanismInfo->flags ) );
-	PRE( mechanismInfo->flags >= KEYMGMT_FLAG_NONE && \
-		 mechanismInfo->flags < KEYMGMT_FLAG_MAX );
-	PRE( ( mechanismInfo->flags & KEYMGMT_MASK_USAGEOPTIONS ) != \
-		 KEYMGMT_MASK_USAGEOPTIONS );
-	PRE( localMessage == MESSAGE_KEY_SETKEY || \
-		 mechanismInfo->cryptHandle == CRYPT_ERROR );
+	REQUIRES( !( ~keymgmtACL->allowedFlags & mechanismInfo->flags ) );
+	REQUIRES( mechanismInfo->flags >= KEYMGMT_FLAG_NONE && \
+			  mechanismInfo->flags < KEYMGMT_FLAG_MAX );
+	REQUIRES( ( mechanismInfo->flags & KEYMGMT_MASK_USAGEOPTIONS ) != \
+			  KEYMGMT_MASK_USAGEOPTIONS );
+	REQUIRES( localMessage == MESSAGE_KEY_SETKEY || \
+			  mechanismInfo->cryptHandle == CRYPT_ERROR );
 
 	/* Inner precondition: There's ID information and a password/aux.data
 	   present/not present as required.  For a private key read the password
@@ -625,28 +654,54 @@ int preDispatchCheckKeysetAccess( IN_HANDLE const int objectHandle,
 	   (a pointer to query state) is used when assembling a cert chain (state
 	   held in the cert) and not used when performing a general query (state
 	   held in the keyset) */
-	PRE( ( ( keymgmtACL->idUseFlags & accessType ) && \
-		   mechanismInfo->keyIDtype != CRYPT_KEYID_NONE && \
-		   isReadPtr( mechanismInfo->keyID, \
-					  mechanismInfo->keyIDlength ) ) ||
-		 ( !( keymgmtACL->idUseFlags & accessType ) && \
-		   mechanismInfo->keyIDtype == CRYPT_KEYID_NONE && \
-		   mechanismInfo->keyID == NULL && \
-		   mechanismInfo->keyIDlength == 0 ) );
-	PRE( ( ( messageValue == KEYMGMT_ITEM_PRIVATEKEY || \
-			 messageValue == KEYMGMT_ITEM_SECRETKEY ) && \
-		   localMessage == MESSAGE_KEY_GETKEY ) ||
-		 localMessage == MESSAGE_KEY_GETFIRSTCERT ||
-		 localMessage == MESSAGE_KEY_GETNEXTCERT ||
-		 ( ( keymgmtACL->pwUseFlags & accessType ) && \
-		   isReadPtr( mechanismInfo->auxInfo, \
-					  mechanismInfo->auxInfoLength ) ) ||
-		 ( !( keymgmtACL->pwUseFlags & accessType ) && \
-		   mechanismInfo->auxInfo == NULL && \
-		   mechanismInfo->auxInfoLength == 0 ) );
-	PRE( !( mechanismInfo->flags & KEYMGMT_FLAG_LABEL_ONLY ) || \
-		 isReadPtr( mechanismInfo->auxInfo, \
-					mechanismInfo->auxInfoLength ) );
+	assert( ( ( keymgmtACL->idUseFlags & accessType ) && \
+			  mechanismInfo->keyIDtype != CRYPT_KEYID_NONE && \
+			  isReadPtr( mechanismInfo->keyID, \
+						 mechanismInfo->keyIDlength ) ) ||
+			( !( keymgmtACL->idUseFlags & accessType ) && \
+			  mechanismInfo->keyIDtype == CRYPT_KEYID_NONE && \
+			  mechanismInfo->keyID == NULL && \
+			  mechanismInfo->keyIDlength == 0 ) );
+	assert( ( ( messageValue == KEYMGMT_ITEM_PRIVATEKEY || \
+				messageValue == KEYMGMT_ITEM_SECRETKEY ) && \
+			  localMessage == MESSAGE_KEY_GETKEY ) ||
+			  localMessage == MESSAGE_KEY_GETFIRSTCERT ||
+			  localMessage == MESSAGE_KEY_GETNEXTCERT ||
+			( ( keymgmtACL->pwUseFlags & accessType ) && \
+			  isReadPtr( mechanismInfo->auxInfo, \
+						 mechanismInfo->auxInfoLength ) ) ||
+			( !( keymgmtACL->pwUseFlags & accessType ) && \
+			  mechanismInfo->auxInfo == NULL && \
+			  mechanismInfo->auxInfoLength == 0 ) );
+	assert( !( mechanismInfo->flags & KEYMGMT_FLAG_LABEL_ONLY ) || \
+			isReadPtr( mechanismInfo->auxInfo, \
+					   mechanismInfo->auxInfoLength ) );
+
+	REQUIRES( ( ( keymgmtACL->idUseFlags & accessType ) && \
+				mechanismInfo->keyIDtype != CRYPT_KEYID_NONE && \
+				mechanismInfo->keyID != NULL && \
+				mechanismInfo->keyIDlength > 0 && \
+				mechanismInfo->keyIDlength < MAX_INTLENGTH ) ||
+			  ( !( keymgmtACL->idUseFlags & accessType ) && \
+				mechanismInfo->keyIDtype == CRYPT_KEYID_NONE && \
+				mechanismInfo->keyID == NULL && \
+				mechanismInfo->keyIDlength == 0 ) );
+	REQUIRES( ( ( messageValue == KEYMGMT_ITEM_PRIVATEKEY || \
+				messageValue == KEYMGMT_ITEM_SECRETKEY ) && \
+				localMessage == MESSAGE_KEY_GETKEY ) ||
+			  localMessage == MESSAGE_KEY_GETFIRSTCERT ||
+			  localMessage == MESSAGE_KEY_GETNEXTCERT ||
+			  ( ( keymgmtACL->pwUseFlags & accessType ) && \
+				mechanismInfo->auxInfo != NULL && \
+				mechanismInfo->auxInfoLength > 0 && \
+				mechanismInfo->auxInfoLength < MAX_INTLENGTH ) ||
+			  ( !( keymgmtACL->pwUseFlags & accessType ) && \
+				mechanismInfo->auxInfo == NULL && \
+				mechanismInfo->auxInfoLength == 0 ) );
+	REQUIRES( !( mechanismInfo->flags & KEYMGMT_FLAG_LABEL_ONLY ) || \
+			  ( mechanismInfo->auxInfo != NULL && \
+				mechanismInfo->auxInfoLength > 0 && \
+				mechanismInfo->auxInfoLength < MAX_INTLENGTH ) );
 
 	/* Perform message-type-specific checking of parameters */
 	switch( localMessage )

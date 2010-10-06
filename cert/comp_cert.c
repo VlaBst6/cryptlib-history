@@ -13,15 +13,19 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
 *								Utility Routines							*
 *																			*
 ****************************************************************************/
+
+#if defined( USE_CERTREQ ) || defined( USE_CERTREV )
 
 /* Copy the encoded issuer DN */
 
@@ -46,6 +50,7 @@ static int copyIssuerDnData( INOUT CERT_INFO *destCertInfoPtr,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTREQ || USE_CERTREV */
 
 #if defined( USE_CERTREV ) || defined( USE_CERTVAL )
 
@@ -822,7 +827,8 @@ static int writeOCSPID( INOUT STREAM *stream,
 	REQUIRES( certInfoPtr->cCertCert->serialNumber != NULL );
 
 	/* Get the issuerName hash */
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, &hashSize );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, 
+							 &hashSize );
 	hashFunctionAtomic( hashBuffer, CRYPT_MAX_HASHSIZE,
 						certInfoPtr->issuerDNptr,
 						certInfoPtr->issuerDNsize );
@@ -982,7 +988,7 @@ static int copyCaCertToOCSPReq( INOUT CERT_INFO *certInfoPtr,
 			  caCertInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
 	REQUIRES( caCertInfoPtr->publicKeyInfo != NULL );
 
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 
 	/* Dig down into the encoded key data to find the weird bits of key that
 	   OCSP requires us to hash.  We store the result as the certificate 
@@ -1065,7 +1071,7 @@ static int copyCertToRTCSRequest( INOUT CERT_INFO *rtcsRequestInfoPtr,
 			  certInfoPtr->type == CRYPT_CERTTYPE_CERTCHAIN );
 
 	status = getCertComponentString( certInfoPtr,
-									 CRYPT_CERTINFO_FINGERPRINT_SHA, 
+									 CRYPT_CERTINFO_FINGERPRINT_SHA1, 
 									 certHash, CRYPT_MAX_HASHSIZE, 
 									 &certHashLength );
 	if( cryptStatusOK( status ) )
@@ -1487,11 +1493,21 @@ static int copyPkiUserToCertReq( INOUT CERT_INFO *certInfoPtr,
 					  CRYPT_ERRTYPE_ISSUERCONSTRAINT );
 		return( CRYPT_ERROR_INVALID );
 		}
+	ANALYSER_HINT( requestDNSubset != NULL );
 
 	/* The request DN is a prefix (possibly an empty one) of the PKI user 
 	   DN, check that the mis-matching part is only a CN */
 	status = getDNComponentInfo( requestDNSubset, &dnComponentType, 
 								 &dnContinues );
+	if( cryptStatusError( status ) )
+		{
+		/* This is an even more problematic situation to report (since it's
+		   a shouldn't-occur type error), the best that we can do is report
+		   a generic issuer constraint */
+		setErrorInfo( certInfoPtr, CRYPT_CERTINFO_SUBJECTNAME,
+					  CRYPT_ERRTYPE_ISSUERCONSTRAINT );
+		return( CRYPT_ERROR_INVALID );
+		}
 	if( dnComponentType != CRYPT_CERTINFO_COMMONNAME || dnContinues )
 		{
 		/* Check for the special case of there being no CN at all present in 
@@ -1574,8 +1590,6 @@ static int copyUserCertInfo( INOUT CERT_INFO *certInfoPtr,
 							 INOUT CERT_INFO *userCertInfoPtr,
 							 IN_HANDLE const CRYPT_HANDLE iCryptHandle )
 	{
-	int status;
-
 	assert( isWritePtr( certInfoPtr, sizeof( CERT_INFO ) ) );
 	assert( isWritePtr( userCertInfoPtr, sizeof( CERT_INFO ) ) );
 
@@ -1588,15 +1602,28 @@ static int copyUserCertInfo( INOUT CERT_INFO *certInfoPtr,
 	   one present.  We can't leave it to be read out of the certificate 
 	   because authorityInfoAccess isn't a valid attribute for RTCS/OCSP 
 	   requests */
-	if( ( certInfoPtr->type == CRYPT_CERTTYPE_RTCS_REQUEST && \
-		  certInfoPtr->cCertVal->responderUrl == NULL ) || \
-		( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST && \
-		  certInfoPtr->cCertRev->responderUrl == NULL ) )
+#ifdef USE_CERTREV
+	if( certInfoPtr->type == CRYPT_CERTTYPE_OCSP_REQUEST && \
+		certInfoPtr->cCertRev->responderUrl == NULL )
 		{
+		int status;
+
 		status = copyResponderURL( certInfoPtr, userCertInfoPtr );
 		if( cryptStatusError( status ) )
 			return( status );
 		}
+#endif /* USE_CERTREV */
+#ifdef USE_CERTVAL
+	if( certInfoPtr->type == CRYPT_CERTTYPE_RTCS_REQUEST && \
+		certInfoPtr->cCertVal->responderUrl == NULL )
+		{
+		int status;
+
+		status = copyResponderURL( certInfoPtr, userCertInfoPtr );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+#endif /* USE_CERTVAL */
 
 	/* Copy the required information across to the certificate */
 	switch( certInfoPtr->type )
@@ -1660,18 +1687,25 @@ int copyCertObject( INOUT CERT_INFO *certInfoPtr,
 									   certInfo );
 			break;
 
+#ifdef USE_CERTREV
 		case CRYPT_CERTINFO_CACERTIFICATE:
 			status = copyCaCertToOCSPReq( certInfoPtr, addedCertInfoPtr );
 			break;
+#endif /* USE_CERTREV */
 
+#ifdef USE_CERTREQ
 		case CRYPT_CERTINFO_CERTREQUEST:
 			status = copyCertReqToCert( certInfoPtr, addedCertInfoPtr );
 			break;
+#endif /* USE_CERTREQ */
 
+#ifdef USE_CERTVAL
 		case CRYPT_IATTRIBUTE_RTCSREQUEST:
 			status = copyRtcsReqToResp( certInfoPtr, addedCertInfoPtr );
 			break;
+#endif /* USE_CERTVAL */
 
+#ifdef USE_CERTREV
 		case CRYPT_IATTRIBUTE_OCSPREQUEST:
 			status = copyOcspReqToResp( certInfoPtr, addedCertInfoPtr );
 			break;
@@ -1679,10 +1713,13 @@ int copyCertObject( INOUT CERT_INFO *certInfoPtr,
 		case CRYPT_IATTRIBUTE_REVREQUEST:
 			status = copyRevReqToCert( certInfoPtr, addedCertInfoPtr );
 			break;
+#endif /* USE_CERTREV */
 
+#ifdef USE_PKIUSER
 		case CRYPT_IATTRIBUTE_PKIUSERINFO:
 			status = copyPkiUserToCertReq( certInfoPtr, addedCertInfoPtr );
 			break;
+#endif /* USE_PKIUSER */
 
 		case CRYPT_IATTRIBUTE_BLOCKEDATTRS:
 			status = sanitiseCertAttributes( certInfoPtr,
@@ -1695,3 +1732,4 @@ int copyCertObject( INOUT CERT_INFO *certInfoPtr,
 	krnlReleaseObject( addedCertInfoPtr->objectHandle );
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

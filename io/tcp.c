@@ -565,6 +565,7 @@ static const SOCKETERROR_INFO FAR_BSS hostErrorInfo[] = {
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int mapError( NET_STREAM_INFO *netStream, 
+					 const int netStreamErrorCode,
 					 const BOOLEAN useHostErrorInfo, 
 					 IN_ERROR int status )
 	{
@@ -579,10 +580,16 @@ static int mapError( NET_STREAM_INFO *netStream,
 	assert( cryptStatusError( status ) );
 
 	clearErrorString( &netStream->errorInfo );
-	for( i = 0; errorInfo[ i ].errorCode != CRYPT_ERROR && \
-				i < errorInfoSize; i++ )
+	if( netStreamErrorCode == 0 )
 		{
-		if( errorInfo[ i ].errorCode == netStream->errorInfo.errorCode )
+		/* There's no further error information available, we can't report
+		   any more detail */
+		return( status );
+		}
+	for( i = 0; i < errorInfoSize && \
+				errorInfo[ i ].errorCode != CRYPT_ERROR; i++ )
+		{
+		if( errorInfo[ i ].errorCode == netStreamErrorCode )
 			{
 			REQUIRES( errorInfo[ i ].errorStringLength > 16 && \
 					  errorInfo[ i ].errorStringLength < 150 );
@@ -622,9 +629,8 @@ int getSocketError( NET_STREAM_INFO *netStream,
 	/* Get the low-level error code and map it to an error string if
 	   possible */
 	*socketErrorCode = errorCode;
-	netStream->errorInfo.errorCode = errorCode;
 
-	return( mapError( netStream, FALSE, status ) );
+	return( mapError( netStream, errorCode, FALSE, status ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -637,9 +643,7 @@ int getHostError( NET_STREAM_INFO *netStream,
 
 	/* Get the low-level error code and map it to an error string if
 	   possible */
-	netStream->errorInfo.errorCode = getHostErrorCode();
-
-	return( mapError( netStream, TRUE, status ) );
+	return( mapError( netStream, getHostErrorCode(), TRUE, status ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -655,9 +659,7 @@ int setSocketError( INOUT NET_STREAM_INFO *netStream,
 			  errorMessageLength < MAX_INTLENGTH );
 	REQUIRES( cryptStatusError( status ) );
 
-	/* Set a cryptlib-supplied socket error message.  Since this doesn't
-	   correspond to any system error, we clear the error code */
-	netStream->errorInfo.errorCode = 0;
+	/* Set a cryptlib-supplied socket error message */
 	setErrorString( NETSTREAM_ERRINFO, errorMessage, errorMessageLength );
 	if( isFatal )
 		{
@@ -1472,8 +1474,8 @@ static int ioWait( INOUT NET_STREAM_INFO *netStream,
 			   information (we already know what the actual error status
 			   is) we don't need to do anything with the mapError() return 
 			   value */
-			netStream->errorInfo.errorCode = TIMEOUT_ERROR;
-			( void ) mapError( netStream, FALSE, CRYPT_ERROR_TIMEOUT );
+			( void ) mapError( netStream, TIMEOUT_ERROR, FALSE, 
+							   CRYPT_ERROR_TIMEOUT );
 			}
 		return( status );
 		}
@@ -1517,7 +1519,7 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 	SOCKET netSocket = DUMMY_INIT;
 	struct addrinfo *addrInfoPtr, *addrInfoCursor;
 	BOOLEAN nonBlockWarning = FALSE;
-	int socketStatus, addressCount, status;
+	int addressCount, status;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( isReadPtr( host, hostNameLen ) );
@@ -1533,26 +1535,26 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 							 FALSE );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( addrInfoPtr != NULL );
 
 	/* Create a socket, make it nonblocking, and start the connect to the
 	   remote server, falling back through alternative addresses if the
 	   connect fails.  Since this is a nonblocking connect it could still
 	   fail during the second phase where we can no longer try to recover
 	   by falling back to an alternative address, but it's better than just
-	   giving up after the first address that we try */
+	   giving up after the first address that we try (this is actually what 
+	   happens in some cases under Vista/Win7 which, like most other IPv6-
+	   enabled systems preferentially tries to provide an IPv6 address for 
+	   "localhost" (see the long comment in openServerSocket()) and allows a 
+	   connect() to the IPv6 address, but then returns a WSAETIMEDOUT if the 
+	   target application is only listening on an IPv4 address) */
 	for( addrInfoCursor = addrInfoPtr, addressCount = 0;
 		 addrInfoCursor != NULL && addressCount < IP_ADDR_COUNT;
 		 addrInfoCursor = addrInfoCursor->ai_next, addressCount++ )
 		{
 		status = newSocket( &netSocket, addrInfoCursor, FALSE );
 		if( cryptStatusError( status ) )
-			{
-			/* We need to get the socket error code now because further
-			   calls to functions such as freeaddrinfo() will overwrite
-			   the global error value before we can read it later on */
-			socketStatus = getErrorCode();
 			continue;
-			}
 		setSocketNonblocking( netSocket );
 		status = connect( netSocket, addrInfoCursor->ai_addr,
 						  addrInfoCursor->ai_addrlen );
@@ -1562,7 +1564,6 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 			/* We've got a successfully-started connect, exit */
 			break;
 			}
-		socketStatus = getErrorCode();	/* Remember socket error code */
 		deleteSocket( netSocket );
 		}
 	if( addressCount >= IP_ADDR_COUNT )
@@ -1573,14 +1574,15 @@ static int preOpenSocket( INOUT NET_STREAM_INFO *netStream,
 		DEBUG_DIAG(( "Iterated through %d server addresses without being "
 					 "able to connect", IP_ADDR_COUNT ));
 		assert( DEBUG_WARN );
-		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
+		return( mapError( netStream, 0, FALSE, CRYPT_ERROR_OPEN ) );
 		}
 	freeAddressInfo( addrInfoPtr );
 	if( status < 0 && !nonBlockWarning )
 		{
 		/* There was an error condition other than a notification that the
 		   operation hasn't completed yet */
-		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
+		return( mapError( netStream, getErrorCode(), FALSE, 
+						  CRYPT_ERROR_OPEN ) );
 		}
 	if( status == 0 )
 		{
@@ -1647,7 +1649,7 @@ static int completeOpen( INOUT NET_STREAM_INFO *netStream )
 		/* Berkeley-derived implementation, error is in value variable */
 		if( value != 0 )
 			{
-			status = mapError( netStream, FALSE, CRYPT_ERROR_OPEN );
+			status = mapError( netStream, value, FALSE, CRYPT_ERROR_OPEN );
 			netStream->transportDisconnectFunction( netStream, TRUE );
 			return( status );
 			}
@@ -1681,7 +1683,7 @@ static int completeOpen( INOUT NET_STREAM_INFO *netStream )
 	return( CRYPT_OK );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int openServerSocket( INOUT NET_STREAM_INFO *netStream, 
 							 IN_BUFFER_OPT( hostNameLen ) const char *host, 
 							 IN_LENGTH_DNS const int hostNameLen,
@@ -1691,9 +1693,10 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 	SOCKADDR_STORAGE clientAddr;
 	struct addrinfo *addrInfoPtr, *addrInfoCursor;
 	static const int trueValue = 1;
+	static const int falseValue = 0;
 	SIZE_TYPE clientAddrLen = sizeof( SOCKADDR_STORAGE );
 	char hostNameBuffer[ MAX_DNS_SIZE + 1 + 8 ];
-	int socketStatus, addressCount, status = CRYPT_ERROR_OPEN;
+	int addressCount, status = CRYPT_ERROR_OPEN;
 
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 	assert( ( host == NULL && hostNameLen == 0 ) || \
@@ -1764,6 +1767,7 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 							 port, TRUE );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( addrInfoPtr != NULL );
 
 	/* Create a new server socket, falling back through alternative 
 	   interfaces if the initial socket creation fails.  This may seem less 
@@ -1779,6 +1783,9 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		 addrInfoCursor != NULL && addressCount < IP_ADDR_COUNT;
 		 addrInfoCursor = addrInfoCursor->ai_next, addressCount++ )
 		{
+		SIZE_TYPE valueLen = sizeof( int );
+		int value;
+
 		status = newSocket( &listenSocket, addrInfoCursor, TRUE );
 		if( status == CRYPT_OK )
 			{
@@ -1789,11 +1796,7 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		if( status != OK_SPECIAL )
 			{
 			/* There was a problem creating the socket, try again with 
-			   another interface.  We need to get the socket error code now 
-			   because further calls to functions such as freeaddrinfo() 
-			   will overwrite the global error value before we can read it 
-			   later on */
-			socketStatus = getErrorCode();
+			   another interface */
 			continue;
 			}
 		status = CRYPT_OK;
@@ -1801,6 +1804,30 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		/* At this point we still have the socket pool locked while we 
 		   complete initialisation so we need to call newSocketDone()
 		   before we break out of the loop at any point */
+
+		/* Now we run into some problems with IPv4/IPv6 dual stacks, see 
+		   the long comment about this in io/dns.c, in brief what happens 
+		   is that if there's a choice between using IPv4 or IPv6, most 
+		   systems will use IPv6 first.  This is typically encountered 
+		   through the first entry in the addrInfo list being an IPv6 
+		   interface and the second one being an IPv4 interface, which means 
+		   that the default first match will be to an IPv6 interface and not 
+		   an IPv4 one.  There's an option to listen on both IPv6 and IPv4 
+		   interfaces, but whether this is enabled is system-dependent, most 
+		   Unix systems enable it but Windows disables it.
+
+		   In order for things to work as expected we check for the use of 
+		   IPv6 and, if that's being used, check whether the dual-stack 
+		   option is enabled (indicated, somewhat counterintuitively, by 
+		   having the IPV6_V6ONLY socket option set to FALSE).  If it's not 
+		   enabled then we explicitly enable it for the socket */
+		if( addrInfoCursor->ai_family == PF_INET6 && \
+			getsockopt( listenSocket, IPPROTO_IPV6, IPV6_V6ONLY,
+						( char * ) &value, &valueLen ) == 0 && value == 1 )
+			{
+			setsockopt( listenSocket, IPPROTO_IPV6, IPV6_V6ONLY,
+						( char * ) &falseValue, sizeof( int ) );
+			}
 
 		/* This is a new socket, set SO_REUSEADDR to avoid TIME_WAIT 
 		   problems and prepare to accept connections (nemo surdior est 
@@ -1813,7 +1840,6 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 				  addrInfoCursor->ai_addrlen ) || \
 			listen( listenSocket, 5 ) )
 			{
-			socketStatus = getErrorCode();	/* Remember socket error code */
 			deleteSocket( listenSocket );
 			newSocketDone();
 			continue;
@@ -1833,13 +1859,14 @@ static int openServerSocket( INOUT NET_STREAM_INFO *netStream,
 		DEBUG_DIAG(( "Iterated through %d server addresses without being "
 					 "able to listen", IP_ADDR_COUNT ));
 		assert( DEBUG_WARN );
-		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
+		return( mapError( netStream, 0, FALSE, CRYPT_ERROR_OPEN ) );
 		}
 	if( cryptStatusError( status ) )
 		{
 		/* There was an error setting up the socket, don't try anything
 		   further */
-		return( mapError( netStream, FALSE, CRYPT_ERROR_OPEN ) );
+		return( mapError( netStream, getErrorCode(), FALSE, 
+						  CRYPT_ERROR_OPEN ) );
 		}
 
 	/* Wait for a connection.  At the moment this always waits forever
@@ -2172,7 +2199,10 @@ static int readSocketFunction( INOUT STREAM *stream,
 
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
-	REQUIRES_S( timeout >= 0 && timeout < MAX_INTLENGTH );
+	REQUIRES_S( ( ( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
+					timeout == 0 ) || \
+				( !( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
+					timeout >= 0 && timeout < MAX_INTLENGTH ) );
 	REQUIRES_S( flags == TRANSPORT_FLAG_NONE || \
 				flags == TRANSPORT_FLAG_NONBLOCKING || \
 				flags == TRANSPORT_FLAG_BLOCKING );
@@ -2289,8 +2319,8 @@ static int readSocketFunction( INOUT STREAM *stream,
 
 			/* "It said its piece, and then it sodded off" - Baldrick,
 			   Blackadder's Christmas Carol */
-			bytesToRead = 0;
-			break;
+			bytesToRead = 0;	/* Force exit from loop */
+			continue;
 			}
 		bufPtr += bytesRead;
 		bytesToRead -= bytesRead;
@@ -2302,20 +2332,30 @@ static int readSocketFunction( INOUT STREAM *stream,
 		   the long comment above) */
 		netStream->nFlags |= STREAM_NFLAG_FIRSTREADOK;
 
-		/* If this is a blocking read and we've been moving data at a
-		   reasonable rate (~1K/s) and we're about to time out, adjust the
-		   timeout to give us a bit more time.  This is an adaptive process
-		   that grants us more time for the read if data is flowing at
-		   a reasonable rate, but ensures that we don't hang around forever
+		/* If this is a blocking read and we've been moving data at a 
+		   reasonable rate (~1K/s) and we're about to time out, adjust the 
+		   timeout to give us a bit more time.  This is an adaptive process 
+		   that grants us more time for the read if data is flowing at 
+		   a reasonable rate, but ensures that we don't hang around forever 
 		   if data is trickling in at a few bytes a second */
-		if( ( flags & TRANSPORT_FLAG_BLOCKING ) && \
-			( byteCount / timeout ) >= 1000 && \
-			checkMonoTimerExpiryImminent( &timerInfo, 5 ) )
+		if( flags & TRANSPORT_FLAG_BLOCKING )
 			{
-			/* The timer expiry is imminent but data is still flowing in, 
-			   extend the timing duration to allow for further data to
-			   arrive */
-			extendMonoTimer( &timerInfo, 5 );
+			ENSURES( timeout > 0 );
+
+			/* If the timer expiry is imminent but data is still flowing in, 
+			   extend the timing duration to allow for further data to 
+			   arrive.  Because of the minimum flow-rate limit that's 
+			   imposed above this is unlikely to be subject to much of a DoS 
+			   problem (at worst an attacker can limit us to reading data 
+			   at 1K/s, which means 16s for SSL/TLS packets and 32s for SSH 
+			   packets), but to make things a bit less predictable we dither 
+			   the timeout a bit */
+			if( ( byteCount / timeout ) >= 1000 && \
+				checkMonoTimerExpiryImminent( &timerInfo, 5 ) )
+				{
+				extendMonoTimer( &timerInfo, 
+								 ( getRandomInteger() % 5 ) + 2 );
+				}
 			}
 		}
 	ENSURES_S( iterationCount < FAILSAFE_ITERATIONS_MAX );
@@ -2355,7 +2395,10 @@ static int writeSocketFunction( INOUT STREAM *stream,
 
 	REQUIRES_S( stream->type == STREAM_TYPE_NETWORK );
 	REQUIRES_S( maxLength > 0 && maxLength < MAX_INTLENGTH );
-	REQUIRES_S( timeout >= 0 && timeout < MAX_INTLENGTH );
+	REQUIRES_S( ( ( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
+					timeout == 0 ) || \
+				( !( flags & TRANSPORT_FLAG_NONBLOCKING ) && \
+					timeout >= 0 && timeout < MAX_INTLENGTH ) );
 	REQUIRES_S( flags == TRANSPORT_FLAG_NONE || \
 				flags == TRANSPORT_FLAG_NONBLOCKING || \
 				flags == TRANSPORT_FLAG_BLOCKING );

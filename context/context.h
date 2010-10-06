@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					  cryptlib Encryption Context Header File 				*
-*						Copyright Peter Gutmann 1992-2007					*
+*						Copyright Peter Gutmann 1992-2009					*
 *																			*
 ****************************************************************************/
 
@@ -28,13 +28,13 @@
 	  #include "bn/bn.h"
 	#endif /* Compiler-specific includes */
   #endif /* HEADER_BN_H */
-  #if defined( USE_ECC ) && !defined( HEADER_EC_H )
+  #if ( defined( USE_ECDH ) || defined( USE_ECDSA ) ) && !defined( HEADER_EC_H )
 	#if defined( INC_ALL )
 	  #include "ec_lcl.h"
 	#else
 	  #include "bn/ec_lcl.h"
 	#endif /* Compiler-specific includes */
-  #endif /* USE_ECC && HEADER_EC_H */
+  #endif /* ( USE_ECDH || USE_ECDSA ) && HEADER_EC_H */
 #endif /* Extra eaders needed only for PKC contexts */
 #ifndef _CRYPTCAP_DEFINED
   #if defined( INC_ALL )
@@ -119,11 +119,13 @@ typedef enum {
 	CONTEXT_PKC,					/* PKC context */
 	CONTEXT_HASH,					/* Hash context */
 	CONTEXT_MAC,					/* MAC context */
+	CONTEXT_GENERIC,				/* Generic-secret context */
 	CONTEXT_LAST					/* Last valid context type */
 	} CONTEXT_TYPE;
 
 #define needsSecureMemory( contextType ) \
-		( contextType == CONTEXT_CONV || contextType == CONTEXT_MAC )
+		( contextType == CONTEXT_CONV || contextType == CONTEXT_MAC || \
+		  contextType == CONTEXT_GENERIC )
 
 typedef struct {
 	/* General algorithm information */
@@ -188,19 +190,19 @@ typedef struct {
 	BIGNUM param6;
 	BIGNUM param7;
 	BIGNUM param8;
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA ) 
 	BIGNUM param9;
 	BIGNUM param10;
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	BN_MONT_CTX montCTX1;			/* Precomputed Montgomery values */
 	BN_MONT_CTX montCTX2;
 	BN_MONT_CTX montCTX3;
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA ) 
 	CRYPT_ECCCURVE_TYPE curveType;	/* Additional info.needed for ECC ctxs.*/
 	BOOLEAN isECC;
 	EC_GROUP *ecCTX;
 	EC_POINT *ecPoint;
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	BN_ULONG checksum;				/* Checksum for key value */
 
 	/* Temporary workspace values used to avoid having to allocate and
@@ -209,10 +211,10 @@ typedef struct {
 	   temporary vars also reuse the last three general-purpose bignums
 	   above, since they're not used for keying material */
 	BIGNUM tmp1, tmp2, tmp3;
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA ) 
 	BIGNUM tmp4, tmp5;
 	EC_POINT *tmpPoint;
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */
 	BN_CTX *bnCTX;
 	#define CONTEXT_FLAG_PBO 0x08
 
@@ -244,19 +246,19 @@ typedef struct {
 	/* Pointers to functions to public-key context access methods.  The
 	   functions to read and write public and private keys are kept distinct
 	   to enforce red/black separation */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *calculateKeyIDFunction )( INOUT struct CI *contextInfoPtr );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *readPublicKeyFunction )( INOUT STREAM *stream, 
 									INOUT struct CI *contextInfoPtr,
 									IN_ENUM( KEYFORMAT ) \
 										const KEYFORMAT_TYPE formatType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *readPrivateKeyFunction )( INOUT STREAM *stream, 
 									 INOUT struct CI *contextInfoPtr,
 									 IN_ENUM( KEYFORMAT ) \
 										const KEYFORMAT_TYPE formatType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *writePublicKeyFunction )( INOUT STREAM *stream,
 									 const struct CI *contextInfoPtr,
 									 IN_ENUM( KEYFORMAT ) \
@@ -265,7 +267,7 @@ typedef struct {
 										const char *accessKey, 
 									 IN_LENGTH_SHORT_MIN( 4 ) \
 										const int accessKeyLen );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 	int ( *writePrivateKeyFunction )( INOUT STREAM *stream,
 									  const struct CI *contextInfoPtr,
 									  IN_ENUM( KEYFORMAT ) \
@@ -274,7 +276,7 @@ typedef struct {
 										const char *accessKey,
 									  IN_LENGTH_SHORT_MIN( 4 ) \
 										const int accessKeyLen );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 	int ( *encodeDLValuesFunction )( OUT_BUFFER( bufMaxSize, \
 												 *bufSize ) BYTE *buffer, 
 									 IN_LENGTH_SHORT_MIN( 20 + 20 ) \
@@ -284,7 +286,7 @@ typedef struct {
 									 const BIGNUM *value2, 
 									 IN_ENUM( CRYPT_FORMAT ) \
 										const CRYPT_FORMAT_TYPE formatType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 3, 4, 5 ) ) \
 	int ( *decodeDLValuesFunction )( IN_BUFFER( bufSize ) const BYTE *buffer, 
 									 IN_LENGTH_SHORT_MIN( 32 ) const int bufSize, 
 									 OUT BIGNUM *value1, 
@@ -332,12 +334,29 @@ typedef struct {
 	CRYPT_ALGO_TYPE keySetupAlgorithm; /* Algorithm used for key setup */
 	} MAC_INFO;
 
+typedef struct {
+	/* Generic-secret information */
+	BUFFER( CRYPT_MAX_KEYSIZE, genericSecretLength ) \
+	BYTE genericSecret[ CRYPT_MAX_KEYSIZE + 8 ];
+	int genericSecretLength;
+
+	/* Parameter information for the encryption and MAC contexts that are
+	   derived from the generic-secret context */
+	BUFFER( CRYPT_MAX_TEXTSIZE, encAlgoParamSize ) \
+	BYTE encAlgoParams[ CRYPT_MAX_TEXTSIZE + 8 ];
+	int encAlgoParamSize;
+	BUFFER( CRYPT_MAX_TEXTSIZE, macAlgoParamSize ) \
+	BYTE macAlgoParams[ CRYPT_MAX_TEXTSIZE + 8 ];
+	int macAlgoParamSize;
+	} GENERIC_INFO;
+
 /* Defines to make access to the union fields less messy */
 
 #define ctxConv		keyingInfo.convInfo
 #define ctxPKC		keyingInfo.pkcInfo
 #define ctxHash		keyingInfo.hashInfo
 #define ctxMAC		keyingInfo.macInfo
+#define ctxGeneric	keyingInfo.genericInfo
 
 /* An encryption context */
 
@@ -355,6 +374,7 @@ typedef struct CI {
 #endif /* PKC_CONTEXT */
 		HASH_INFO *hashInfo;
 		MAC_INFO *macInfo;
+		GENERIC_INFO *genericInfo;
 		} keyingInfo;
 
 #ifdef USE_DEVICES
@@ -384,18 +404,18 @@ typedef struct CI {
 	/* Pointers to context access methods.  These are somewhat higher-level
 	   than the capability info methods and apply to entire classes of
 	   context rather than at a per-algorithm level */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *loadKeyFunction )( INOUT struct CI *contextInfoPtr, 
 							  IN_BUFFER_OPT( keyLength ) const void *key, 
 							  IN_LENGTH_SHORT_MIN( MIN_KEYSIZE ) \
 								const int keyLength );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *generateKeyFunction )( INOUT struct CI *contextInfoPtr );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *encryptFunction )( INOUT struct CI *contextInfoPtr, 
 							  INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 							  IN_LENGTH_Z int length );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *decryptFunction )( INOUT struct CI *contextInfoPtr, 
 							  INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 							  IN_LENGTH_Z int length );
@@ -515,6 +535,9 @@ typedef struct CI {
 #define ECCPARAM_MIN_D		MIN_PKCSIZE_ECC / 2
 #define ECCPARAM_MAX_D		CRYPT_MAX_PKCSIZE_ECC
 
+#define ECCPARAM_MIN_SIG_R	ECCPARAM_MIN_QX	/* For ECDSA sigs */
+#define ECCPARAM_MIN_SIG_S	ECCPARAM_MIN_QX	/* For ECDSA sigs */
+
 /* Because there's no really clean way to throw an exception in C and the
    bnlib routines don't carry around state information like cryptlib objects
    do, we need to perform an error check for most of the routines we call.
@@ -549,19 +572,19 @@ typedef struct CI {
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int checkCapability( const CAPABILITY_INFO FAR_BSS *capabilityInfoPtr );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
-int createContextFromCapability( OUT CRYPT_CONTEXT *cryptContext,
-						IN_HANDLE const CRYPT_USER cryptOwner,
-						const CAPABILITY_INFO FAR_BSS *capabilityInfoPtr,
-						IN_FLAGS( CREATEOBJECT ) const int objectFlags );
+int createContextFromCapability( OUT_HANDLE_OPT CRYPT_CONTEXT *iCryptContext,
+								 IN_HANDLE const CRYPT_USER iCryptOwner,
+								 const CAPABILITY_INFO *capabilityInfoPtr,
+								 IN_FLAGS_Z( CREATEOBJECT ) const int objectFlags );
 
 /* Statically init/destroy a context for the self-check, and perform various
    types of self-check */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int staticInitContext( INOUT CONTEXT_INFO *contextInfoPtr, 
+int staticInitContext( OUT CONTEXT_INFO *contextInfoPtr, 
 					   IN_ENUM( CONTEXT_TYPE ) const CONTEXT_TYPE type, 
 					   const CAPABILITY_INFO *capabilityInfoPtr,
-					   INOUT_BUFFER_FIXED( contextDataSize ) void *contextData, 
+					   OUT_BUFFER_FIXED( contextDataSize ) void *contextData, 
 					   IN_LENGTH_SHORT_MIN( 32 ) const int contextDataSize,
 					   IN_OPT void *keyData );
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -649,13 +672,14 @@ int initCheckECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 					 const BOOLEAN isECDH );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 int generateECCkey( INOUT CONTEXT_INFO *contextInfoPtr, 
-					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE * 8 ) const int keyBits );
+					IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC * 8 ) \
+						const int keyBits );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID,
 					 OUT_INT_Z int *fieldSize );
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int generateBignum( INOUT BIGNUM *bn, 
+int generateBignum( OUT BIGNUM *bn, 
 					IN_LENGTH_SHORT_MIN( 120 ) const int noBits, 
 					IN_BYTE const int high, IN_BYTE const int low );
 STDC_NONNULL_ARG( ( 1 ) ) \
@@ -695,59 +719,64 @@ CHECK_RETVAL \
 int attributeToFormatType( IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attribute,
 						   OUT_ENUM_OPT( KEYFORMAT ) KEYFORMAT_TYPE *keyformat );
 
+STDC_NONNULL_ARG( ( 1 ) ) \
 void md5HashBuffer( INOUT_OPT HASHINFO hashInfo, 
-					OUT_BUFFER_OPT( outBufMaxLength, 16 ) BYTE *outBuffer, 
+					OUT_BUFFER_OPT_C( outBufMaxLength, 16 ) BYTE *outBuffer, 
 					IN_LENGTH_SHORT_Z const int outBufMaxLength,
 					IN_BUFFER_OPT( inLength ) const void *inBuffer, 
 					IN_LENGTH_SHORT_Z const int inLength,
 					IN_ENUM( HASH_STATE ) const HASH_STATE hashState );
+STDC_NONNULL_ARG( ( 1 ) ) \
 void ripemd160HashBuffer( INOUT_OPT HASHINFO hashInfo, 
-						  OUT_BUFFER_OPT( outBufMaxLength, 20 ) BYTE *outBuffer, 
+						  OUT_BUFFER_OPT_C( outBufMaxLength, 20 ) BYTE *outBuffer, 
 						  IN_LENGTH_SHORT_Z const int outBufMaxLength,
 						  IN_BUFFER_OPT( inLength ) const void *inBuffer, 
 						  IN_LENGTH_SHORT_Z const int inLength,
 						  IN_ENUM( HASH_STATE ) const HASH_STATE hashState );
+STDC_NONNULL_ARG( ( 1 ) ) \
 void shaHashBuffer( INOUT_OPT HASHINFO hashInfo, 
-					OUT_BUFFER_OPT( outBufMaxLength, 20 ) BYTE *outBuffer, 
+					OUT_BUFFER_OPT_C( outBufMaxLength, 20 ) BYTE *outBuffer, 
 					IN_LENGTH_SHORT_Z const int outBufMaxLength,
 					IN_BUFFER_OPT( inLength ) const void *inBuffer, 
 					IN_LENGTH_SHORT_Z const int inLength,
 					IN_ENUM( HASH_STATE ) const HASH_STATE hashState );
+STDC_NONNULL_ARG( ( 1 ) ) \
 void sha2HashBuffer( INOUT_OPT HASHINFO hashInfo, 
-					 OUT_BUFFER_OPT( outBufMaxLength, 32 ) BYTE *outBuffer, 
+					 OUT_BUFFER_OPT_C( outBufMaxLength, 32 ) BYTE *outBuffer, 
 					 IN_LENGTH_SHORT_Z const int outBufMaxLength,
 					 IN_BUFFER_OPT( inLength ) const void *inBuffer, 
 					 IN_LENGTH_SHORT_Z const int inLength,
 					 IN_ENUM( HASH_STATE ) const HASH_STATE hashState );
-void sha2_512HashBuffer( INOUT_OPT HASHINFO hashInfo, 
-						 OUT_BUFFER_OPT( outBufMaxLength, 64 ) BYTE *outBuffer, 
+STDC_NONNULL_ARG( ( 1 ) ) \
+void sha2_ExtHashBuffer( INOUT_OPT HASHINFO hashInfo, 
+						 OUT_BUFFER_OPT_C( outBufMaxLength, 64 ) BYTE *outBuffer, 
 						 IN_LENGTH_SHORT_Z const int outBufMaxLength,
 						 IN_BUFFER_OPT( inLength ) const void *inBuffer, 
 						 IN_LENGTH_SHORT_Z const int inLength,
 						 IN_ENUM( HASH_STATE ) const HASH_STATE hashState );
 
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
-void md5HashBufferAtomic( OUT_BUFFER( outBufMaxLength, 16 ) BYTE *outBuffer, 
+void md5HashBufferAtomic( OUT_BUFFER_C( outBufMaxLength, 16 ) BYTE *outBuffer, 
 						  IN_LENGTH_SHORT_MIN( 16 ) const int outBufMaxLength,
 						  IN_BUFFER( inLength ) const void *inBuffer, 
 						  IN_LENGTH_SHORT const int inLength );
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
-void ripemd160HashBufferAtomic( OUT_BUFFER( outBufMaxLength, 20 ) BYTE *outBuffer, 
+void ripemd160HashBufferAtomic( OUT_BUFFER_C( outBufMaxLength, 20 ) BYTE *outBuffer, 
 								IN_LENGTH_SHORT_MIN( 20 ) const int outBufMaxLength,
 							    IN_BUFFER( inLength ) const void *inBuffer, 
 								IN_LENGTH_SHORT const int inLength );
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
-void shaHashBufferAtomic( OUT_BUFFER( outBufMaxLength, 20 ) BYTE *outBuffer, 
+void shaHashBufferAtomic( OUT_BUFFER_C( outBufMaxLength, 20 ) BYTE *outBuffer, 
 						  IN_LENGTH_SHORT_MIN( 20 ) const int outBufMaxLength,
 						  IN_BUFFER( inLength ) const void *inBuffer, 
 						  IN_LENGTH_SHORT const int inLength );
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
-void sha2HashBufferAtomic( OUT_BUFFER( outBufMaxLength, 32 ) BYTE *outBuffer, 
+void sha2HashBufferAtomic( OUT_BUFFER_C( outBufMaxLength, 32 ) BYTE *outBuffer, 
 						   IN_LENGTH_SHORT_MIN( 32 ) const int outBufMaxLength,
 						   IN_BUFFER( inLength ) const void *inBuffer, 
 						   IN_LENGTH_SHORT const int inLength );
 STDC_NONNULL_ARG( ( 1, 3 ) ) \
-void sha2_512HashBufferAtomic( OUT_BUFFER( outBufMaxLength, 64 ) BYTE *outBuffer, 
+void sha2_ExtHashBufferAtomic( OUT_BUFFER_C( outBufMaxLength, 64 ) BYTE *outBuffer, 
 							   IN_LENGTH_SHORT_MIN( 64 ) const int outBufMaxLength,
 							   IN_BUFFER( inLength ) const void *inBuffer, 
 							   IN_LENGTH_SHORT const int inLength );

@@ -60,7 +60,7 @@ static void testHttp( INOUT STREAM *stream )
 
 	stream->protocol = STREAM_PROTOCOL_HTTP;
 	stream->transportReadFunction = transportFileFunction;
-	sioctl( stream, STREAM_IOCTL_HTTPREQTYPES, STREAM_HTTPREQTYPE_GET );
+	sioctlSet( stream, STREAM_IOCTL_HTTPREQTYPES, STREAM_HTTPREQTYPE_GET );
 	if( ( buffer = clAlloc( "testHTTP", 16384 ) ) == NULL )
 		{
 		puts( "Out of memory." );
@@ -145,17 +145,11 @@ static int getSessionErrorInfo( INOUT NET_STREAM_INFO *netStream,
 
 	REQUIRES( cryptStatusError( errorStatus ) );
 
-	status = krnlSendMessage( netStream->iTransportSession,
-							  IMESSAGE_GETATTRIBUTE, 
-							  &netStream->errorInfo.errorCode,
-							  CRYPT_ATTRIBUTE_INT_ERRORCODE );
-	if( cryptStatusError( status ) )
-		netStream->errorInfo.errorCode = 0;
 	clearErrorString( &netStream->errorInfo );
 	setMessageData( &msgData, errorString, MAX_ERRMSG_SIZE );
 	status = krnlSendMessage( netStream->iTransportSession, 
 							  IMESSAGE_GETATTRIBUTE, &msgData, 
-							  CRYPT_ATTRIBUTE_INT_ERRORMESSAGE );
+							  CRYPT_ATTRIBUTE_ERRORMESSAGE );
 	if( cryptStatusOK( status ) )
 		setErrorString( NETSTREAM_ERRINFO, errorString, msgData.length );
 
@@ -301,7 +295,6 @@ static int openNetworkConnection( INOUT NET_STREAM_INFO *netStream,
 			{
 			/* The proxy URL was invalid, provide more information for the
 			   caller */
-			netStream->errorInfo.errorCode = CRYPT_ERROR_NOTFOUND;
 			retExt( CRYPT_ERROR_OPEN,
 					( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
 					  "Couldn't auto-detect HTTP proxy" ) );
@@ -311,12 +304,11 @@ static int openNetworkConnection( INOUT NET_STREAM_INFO *netStream,
 
 	/* Process the proxy details.  Since this is an HTTP proxy we specify 
 	   the default port as port 80 */
-	status = parseURL( &urlInfo, url, urlLen, 80, URL_TYPE_HTTP );
+	status = parseURL( &urlInfo, url, urlLen, 80, URL_TYPE_HTTP, FALSE );
 	if( cryptStatusError( status ) )
 		{
 		/* The proxy URL was invalid, provide more information for the
 		   caller */
-		netStream->errorInfo.errorCode = CRYPT_ERROR_BADDATA;
 		retExt( CRYPT_ERROR_OPEN,
 				( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
 				  "Invalid HTTP proxy URL" ) );
@@ -420,6 +412,7 @@ static void cleanupStream( INOUT STREAM *stream,
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_V( netStream != NULL );
 	REQUIRES_V( netStream->sanityCheckFunction( stream ) );
 
 	/* Clean up the transport system if necessary */
@@ -441,11 +434,12 @@ static void cleanupStream( INOUT STREAM *stream,
 
 /* Process network connect options */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
 static int processConnectOptions( INOUT STREAM *stream, 
 								  INOUT NET_STREAM_INFO *netStream,
 								  OUT_OPT URL_INFO *urlInfo,
-								  const NET_CONNECT_INFO *connectInfo )
+								  const NET_CONNECT_INFO *connectInfo,
+								  INOUT ERROR_INFO *errorInfo )
 	{
 	const void *name = connectInfo->name;
 	int nameLength = connectInfo->nameLength, status;
@@ -517,19 +511,20 @@ static int processConnectOptions( INOUT STREAM *stream,
 		nameLength = connectInfo->interfaceLength;
 		}
 	ENSURES( urlInfo != NULL );
+	ENSURES( name != NULL );
 
 	/* Parse the URI into its various components */
 	status = parseURL( urlInfo, name, nameLength, connectInfo->port,
 					   ( netStream->protocol == STREAM_PROTOCOL_HTTP ) ? \
 							URL_TYPE_HTTP : 
 					   ( netStream->protocol == STREAM_PROTOCOL_CMP ) ? \
-							URL_TYPE_HTTP : URL_TYPE_NONE );
+							URL_TYPE_HTTP : URL_TYPE_NONE, FALSE );
 	if( cryptStatusError( status ) )
 		{
 		/* There's an error in the URL format, provide more information to 
 		   the caller */
 		retExt( CRYPT_ERROR_OPEN,
-				( CRYPT_ERROR_OPEN, NETSTREAM_ERRINFO, 
+				( CRYPT_ERROR_OPEN, errorInfo, 
 				  "Invalid %s name/URL", 
 				  ( netStream->nFlags & STREAM_NFLAG_ISSERVER ) ? \
 				  "interface" : "host" ) );
@@ -743,6 +738,8 @@ static int completeConnect( INOUT STREAM *stream,
 		NET_STREAM_INFO *netStream = \
 				( NET_STREAM_INFO * ) stream->netStreamInfo;
 
+		REQUIRES_S( netStream != NULL );
+
 		/* Copy back the error information to the caller */
 		copyErrorInfo( errorInfo, NETSTREAM_ERRINFO );
 
@@ -763,6 +760,8 @@ static int completeConnect( INOUT STREAM *stream,
 		NET_STREAM_INFO *netStream = \
 				( NET_STREAM_INFO * ) stream->netStreamInfo;
 
+		REQUIRES_S( netStream != NULL );
+		
 		/* Copy back the error information to the caller */
 		copyErrorInfo( errorInfo, NETSTREAM_ERRINFO );
 
@@ -773,7 +772,7 @@ static int completeConnect( INOUT STREAM *stream,
 #else
 	cleanupStream( stream, FALSE );
 	retExt( CRYPT_ERROR_NOTAVAIL,
-			( CRYPT_ERROR_NOTAVAIL, NETSTREAM_ERRINFO, 
+			( CRYPT_ERROR_NOTAVAIL, errorInfo, 
 			  "HTTP proxy support not available" ) );
 #endif /* USE_HTTP */
 
@@ -786,7 +785,7 @@ static int completeConnect( INOUT STREAM *stream,
    protocols */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetConnect( INOUT STREAM *stream, 
+int sNetConnect( OUT STREAM *stream, 
 				 IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				 const NET_CONNECT_INFO *connectInfo, 
 				 INOUT ERROR_INFO *errorInfo )
@@ -851,13 +850,15 @@ int sNetConnect( INOUT STREAM *stream,
 		connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL )
 		urlInfoPtr = &urlInfo;
 	status = processConnectOptions( stream, &netStream, urlInfoPtr, 
-									connectInfo );
+									connectInfo, errorInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( connectInfo->options == NET_OPTION_HOSTNAME || \
 		connectInfo->options == NET_OPTION_HOSTNAME_TUNNEL )
 		{
 		int proxyUrlLength;
+
+		ANALYSER_HINT( urlInfoPtr != NULL );
 
 		/* Check for the use of a proxy to establish the connection.  This 
 		   function will return OK_SPECIAL if there's a proxy present */
@@ -884,7 +885,7 @@ int sNetConnect( INOUT STREAM *stream,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetListen( INOUT STREAM *stream, 
+int sNetListen( OUT STREAM *stream, 
 				IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				const NET_CONNECT_INFO *connectInfo, 
 				INOUT ERROR_INFO *errorInfo )
@@ -934,7 +935,7 @@ int sNetListen( INOUT STREAM *stream,
 		connectInfo->interface != NULL )
 		urlInfoPtr = &urlInfo;
 	status = processConnectOptions( stream, &netStream, urlInfoPtr, 
-									connectInfo );
+									connectInfo, errorInfo );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -952,6 +953,7 @@ int sNetDisconnect( INOUT STREAM *stream )
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( netStream, sizeof( NET_STREAM_INFO ) ) );
 
+	REQUIRES_S( netStream != NULL );
 	REQUIRES_S( netStream->sanityCheckFunction( stream ) );
 
 	cleanupStream( stream, TRUE );
@@ -962,7 +964,7 @@ int sNetDisconnect( INOUT STREAM *stream )
 /* Parse a URL into its various components */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int sNetParseURL( INOUT URL_INFO *urlInfo, 
+int sNetParseURL( OUT URL_INFO *urlInfo, 
 				  IN_BUFFER( urlLen ) const char *url, 
 				  IN_LENGTH_SHORT const int urlLen, 
 				  IN_ENUM_OPT( URL_TYPE ) const URL_TYPE urlTypeHint )
@@ -973,19 +975,21 @@ int sNetParseURL( INOUT URL_INFO *urlInfo,
 	REQUIRES( urlLen > 0 && urlLen < MAX_INTLENGTH_SHORT );
 	REQUIRES( urlTypeHint >= URL_TYPE_NONE && urlTypeHint < URL_TYPE_LAST );
 
-	return( parseURL( urlInfo, url, urlLen, CRYPT_UNUSED, urlTypeHint ) );
+	return( parseURL( urlInfo, url, urlLen, CRYPT_UNUSED, urlTypeHint, 
+					  TRUE ) );
 	}
 
 /* Get extended information about an error status on a network connection */
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void sNetGetErrorInfo( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
+void sNetGetErrorInfo( INOUT STREAM *stream, OUT ERROR_INFO *errorInfo )
 	{
 	NET_STREAM_INFO *netStream = ( NET_STREAM_INFO * ) stream->netStreamInfo;
 
 	assert( isReadPtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
 
+	REQUIRES_V( netStream != NULL );
 	REQUIRES_V( netStream->sanityCheckFunction( stream ) );
 
 	/* Remember the error code and message.  If we're running over a
@@ -1011,7 +1015,7 @@ void sNetGetErrorInfo( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
    routines with dummy ones that always return an error */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetConnect( INOUT STREAM *stream, 
+int sNetConnect( OUT STREAM *stream, 
 				 IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				 const NET_CONNECT_INFO *connectInfo, 
 				 INOUT ERROR_INFO *errorInfo )
@@ -1022,7 +1026,7 @@ int sNetConnect( INOUT STREAM *stream,
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
-int sNetListen( INOUT STREAM *stream, 
+int sNetListen( OUT STREAM *stream, 
 				IN_ENUM( STREAM_PROTOCOL ) const STREAM_PROTOCOL_TYPE protocol,
 				const NET_CONNECT_INFO *connectInfo, 
 				INOUT ERROR_INFO *errorInfo )
@@ -1052,7 +1056,7 @@ int sNetParseURL( INOUT URL_INFO *urlInfo,
 	}
 
 STDC_NONNULL_ARG( ( 1, 2 ) ) \
-void sNetGetErrorInfo( INOUT STREAM *stream, INOUT ERROR_INFO *errorInfo )
+void sNetGetErrorInfo( INOUT STREAM *stream, OUT ERROR_INFO *errorInfo )
 	{
 	UNUSED_ARG( stream );
 

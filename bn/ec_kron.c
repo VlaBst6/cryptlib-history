@@ -59,7 +59,7 @@
   #include "bn/ec_lcl.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /* least significant word */
 #define BN_lsw(n) (((n)->top == 0) ? (BN_ULONG) 0 : (n)->d[0])
@@ -188,4 +188,4 @@ end:
 		return ret;
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

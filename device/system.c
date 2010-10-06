@@ -30,8 +30,10 @@ static const MECHANISM_FUNCTION_INFO FAR_BSS mechanismFunctions[] = {
 	{ MESSAGE_DEV_SIGCHECK, MECHANISM_SIG_PKCS1, ( MECHANISM_FUNCTION ) sigcheckPKCS1 },
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_PKCS1_RAW, ( MECHANISM_FUNCTION ) exportPKCS1 },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_ENC_PKCS1_RAW, ( MECHANISM_FUNCTION ) importPKCS1 },
+  #ifdef USE_OAEP
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_OAEP, ( MECHANISM_FUNCTION ) exportOAEP },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_ENC_OAEP, ( MECHANISM_FUNCTION ) importOAEP },
+  #endif /* USE_OAEP */
 #endif /* USE_PKC */
 #ifdef USE_PGP
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_PKCS1_PGP, ( MECHANISM_FUNCTION ) exportPKCS1PGP },
@@ -40,12 +42,16 @@ static const MECHANISM_FUNCTION_INFO FAR_BSS mechanismFunctions[] = {
 	{ MESSAGE_DEV_EXPORT, MECHANISM_ENC_CMS, ( MECHANISM_FUNCTION ) exportCMS },
 	{ MESSAGE_DEV_IMPORT, MECHANISM_ENC_CMS, ( MECHANISM_FUNCTION ) importCMS },
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_PKCS5, ( MECHANISM_FUNCTION ) derivePKCS5 },
+#ifdef USE_ENVELOPES
+	{ MESSAGE_DEV_KDF, MECHANISM_DERIVE_PKCS5, ( MECHANISM_FUNCTION ) kdfPKCS5 },
+#endif /* USE_ENVELOPES */
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_PGP, ( MECHANISM_FUNCTION ) derivePGP },
 #endif /* USE_PGP || USE_PGPKEYS */
 #ifdef USE_SSL
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_SSL, ( MECHANISM_FUNCTION ) deriveSSL },
 	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_TLS, ( MECHANISM_FUNCTION ) deriveTLS },
+	{ MESSAGE_DEV_DERIVE, MECHANISM_DERIVE_TLS12, ( MECHANISM_FUNCTION ) deriveTLS12 },
 	{ MESSAGE_DEV_SIGN, MECHANISM_SIG_SSL, ( MECHANISM_FUNCTION ) signSSL },
 	{ MESSAGE_DEV_SIGCHECK, MECHANISM_SIG_SSL, ( MECHANISM_FUNCTION ) sigcheckSSL },
 #endif /* USE_SSL */
@@ -175,7 +181,7 @@ static int getNonce( INOUT SYSTEMDEV_INFO *systemInfo,
 		int status;
 
 		/* Get the 64-bit private portion of the nonce data */
-		getHashAtomicParameters( CRYPT_ALGO_SHA1, 
+		getHashAtomicParameters( CRYPT_ALGO_SHA1, 0,
 								 &systemInfo->hashFunctionAtomic,
 								 &systemInfo->hashSize );
 		setMessageData( &msgData, systemInfo->nonceData + \
@@ -225,13 +231,15 @@ static int getNonce( INOUT SYSTEMDEV_INFO *systemInfo,
 	return( CRYPT_OK );
 	}
 
+#ifndef CONFIG_NO_SELFTEST
+
 /* Perform the algorithm self-test */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int algorithmSelfTest( INOUT \
 								CAPABILITY_INFO_LIST **capabilityInfoListPtrPtr )
 	{
-	CAPABILITY_INFO_LIST *capabilityInfoListPtr = *capabilityInfoListPtrPtr;
+	CAPABILITY_INFO_LIST *capabilityInfoListPtr;
 	CAPABILITY_INFO_LIST *capabilityInfoListPrevPtr = NULL;
 	BOOLEAN algoTested = FALSE;
 	int iterationCount, status = CRYPT_OK;
@@ -247,7 +255,7 @@ static int algorithmSelfTest( INOUT \
 		const CAPABILITY_INFO *capabilityInfoPtr = capabilityInfoListPtr->info;
 		int localStatus;
 
-		assert( capabilityInfoPtr->selfTestFunction != NULL );
+		REQUIRES( capabilityInfoPtr->selfTestFunction != NULL );
 
 		/* Perform the self-test for this algorithm type */
 		localStatus = capabilityInfoPtr->selfTestFunction();
@@ -320,18 +328,26 @@ static const BYTE FAR_BSS saltValue[] = {
 	0x80, 0x91, 0xA2, 0xB3, 0xC4, 0xD5, 0xE6, 0xF7, 
 	0x08, 0x19, 0x2A, 0x3B, 0x4C, 0x5D, 0x6E, 0x7F
 	};
+#ifdef USE_PKCS12
+static const BYTE FAR_BSS pkcs12saltValue[] = {
+	/* PKCS #12 has a single-byte diversifier at the start of the salt */
+	0x01,
+	0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 
+	0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+	};
+#endif /* USE_PKCS12 */
 
 static const MECHANISM_TEST_INFO FAR_BSS mechanismTestInfo[] = {
 	{ MECHANISM_DERIVE_PKCS5,
 	  { "\x73\xF7\x8A\xBE\x3C\x9C\x65\x80\x97\x60\x56\xDE\x04\x2A\x0C\x97"
 		"\x99\xF5\x06\x0F\x43\x06\xA5\xD0\x74\xC9\xD5\xC5\xA5\x05\xB5\x7F", MECHANISM_OUTPUT_SIZE,
-		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_HMAC_SHA,
+		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_HMAC_SHA1, 0,
 		saltValue, MECHANISM_SALT_SIZE, 10 } },
 #if defined( USE_PGP ) || defined( USE_PGPKEYS )
 	{ MECHANISM_DERIVE_PGP,
 	  { "\x4A\x4B\x90\x09\x27\xF8\xD0\x93\x56\x16\xEA\xC1\x45\xCD\xEE\x05"
 		"\x67\xE1\x09\x38\x66\xEB\xB2\xB2\xB9\x1F\xD3\xF7\x48\x2B\xDC\xCA", MECHANISM_OUTPUT_SIZE,
-		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1,
+		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1, 0,
 		saltValue, 8, 10 } },
 #endif /* USE_PGP || USE_PGPKEYS */
 #ifdef USE_SSL
@@ -339,27 +355,42 @@ static const MECHANISM_TEST_INFO FAR_BSS mechanismTestInfo[] = {
 	  { "\x87\x46\xDD\x7D\xAD\x5F\x48\xB6\xFC\x8D\x92\xC4\xDB\x38\x79\x9A"
 		"\x3D\xEA\x22\xFA\xCD\x7E\x86\xD5\x23\x6E\x10\x4C\xBD\x84\x89\xDF"
 		"\x1C\x87\x60\xBF\xFA\x2B\xCA\xFE\xFE\x65\xC7\xA2\xCF\x04\xFF\xEB", MECHANISM_OUTPUT_SIZE_SSL,
-		inputValue, MECHANISM_INPUT_SIZE_SSL, CRYPT_USE_DEFAULT,
+		inputValue, MECHANISM_INPUT_SIZE_SSL, CRYPT_USE_DEFAULT, 0,
 		saltValue, MECHANISM_SALT_SIZE_SSL, 1 } },
 	{ MECHANISM_DERIVE_TLS,
 	  { "\xD3\xD4\x2F\xD6\xE3\x7D\xC0\x3C\xA6\x9F\x92\xDF\x3E\x40\x0A\x64"
 		"\x49\xB4\x0E\xC4\x14\x04\x2F\xC8\xDD\x27\xD5\x1C\x62\xD2\x2C\x97"
 		"\x90\xAE\x08\x4B\xEE\xF4\x8D\x22\xF0\x2A\x1E\x38\x2D\x31\xCB\x68", MECHANISM_OUTPUT_SIZE_SSL,
-		inputValue, MECHANISM_INPUT_SIZE_SSL, CRYPT_USE_DEFAULT,
+		inputValue, MECHANISM_INPUT_SIZE_SSL, CRYPT_USE_DEFAULT, 0,
 		saltValue, MECHANISM_SALT_SIZE_SSL, 1 } },
 #endif /* USE_SSL */
 #ifdef USE_CMP
 	{ MECHANISM_DERIVE_CMP,
 	  { "\x80\x0B\x95\x73\x74\x3B\xC1\x63\x6B\x28\x2B\x04\x47\xFD\xF0\x04"
 		"\x80\x40\x31\xB1", 20,
-		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1,
+		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1, 0,
 		saltValue, MECHANISM_SALT_SIZE, 10 } },
 #endif /* USE_CMP */
 #ifdef USE_PKCS12
+  #if 0		/* Additional check value from OpenSSL, this only uses 1 iteration */
 	{ MECHANISM_DERIVE_PKCS12,
-	  { "", MECHANISM_OUTPUT_SIZE,
-		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1,
-		saltValue, MECHANISM_SALT_SIZE, 10 } },
+	  { "\x8A\xAA\xE6\x29\x7B\x6C\xB0\x46\x42\xAB\x5B\x07\x78\x51\x28\x4E"
+		"\xB7\x12\x8F\x1A\x2A\x7F\xBC\xA3", 24,
+		"smeg", 4, CRYPT_ALGO_SHA1, 0,
+		"\x01\x0A\x58\xCF\x64\x53\x0D\x82\x3F", 1 + 8, 1 } },
+  #endif /* 0 */
+  #if 0		/* Additional check value from OpenSSL, now with 1,000 iterations */
+	{ MECHANISM_DERIVE_PKCS12,
+	  { "\xED\x20\x34\xE3\x63\x28\x83\x0F\xF0\x9D\xF1\xE1\xA0\x7D\xD3\x57"
+		"\x18\x5D\xAC\x0D\x4F\x9E\xB3\xD4", 24,
+		"queeg", 5, CRYPT_ALGO_SHA1, 0,
+		"\x01\x05\xDE\xC9\x59\xAC\xFF\x72\xF7", 1 + 8, 1000 } },
+  #endif /* 0 */
+	{ MECHANISM_DERIVE_PKCS12,
+	  { "\x8B\xFB\x1D\x77\xFE\x78\xFF\xE8\xE9\x69\x76\xE0\xC5\x0A\xB6\xD2"
+		"\x64\xEC\xA3\x01\xE9\xD2\xE0\xC0\xBC\x60\x3D\x63\xB2\x4A\xB2\x63", MECHANISM_OUTPUT_SIZE,
+		inputValue, MECHANISM_INPUT_SIZE, CRYPT_ALGO_SHA1, 0,
+		pkcs12saltValue, 1 + MECHANISM_SALT_SIZE, 10 } },
 #endif /* USE_PKCS12 */
 	{ MECHANISM_NONE }, { MECHANISM_NONE }
 	};
@@ -390,11 +421,11 @@ static int mechanismSelfTest( void )
 					mechanismTestInfoPtr->mechanismInfo.dataOutLength ) )
 			return( CRYPT_ERROR_FAILED );
 		}
-	if( i >= FAILSAFE_ARRAYSIZE( mechanismTestInfo, MECHANISM_TEST_INFO ) )
-		retIntError();
+	ENSURES( i < FAILSAFE_ARRAYSIZE( mechanismTestInfo, MECHANISM_TEST_INFO ) );
 
 	return( CRYPT_OK );
 	}
+#endif /* CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -443,6 +474,8 @@ static void shutdownFunction( INOUT DEVICE_INFO *deviceInfo )
 	endRandomInfo( &deviceInfo->randomInfo );
 	}
 
+#ifndef CONFIG_NO_SELFTEST
+
 /* Perform a self-test */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
@@ -487,6 +520,7 @@ static int selftestFunction( INOUT DEVICE_INFO *deviceInfo,
 	setMessageObjectUnlocked( messageExtInfo );
 	return( mechanismSelfTest() );
 	}
+#endif /* !CONFIG_NO_SELFTEST */
 
 /* Get random data.  We have to unlock the device around the randomness 
    fetch because background polling threads need to be able to send entropy
@@ -589,6 +623,16 @@ static int controlFunction( INOUT DEVICE_INFO *deviceInfo,
 			  type == CRYPT_IATTRIBUTE_RANDOM_POLL || \
 			  type == CRYPT_IATTRIBUTE_RANDOM_NONCE || \
 			  type == CRYPT_IATTRIBUTE_TIME );
+	REQUIRES( ( ( type == CRYPT_IATTRIBUTE_ENTROPY || \
+				  type == CRYPT_IATTRIBUTE_RANDOM_NONCE ) && \
+				( data != NULL && \
+				  dataLength > 0 && dataLength < MAX_INTLENGTH ) ) || \
+			  ( type == CRYPT_IATTRIBUTE_TIME && \
+				data != NULL && dataLength == sizeof( time_t ) ) || \
+			  ( ( type == CRYPT_IATTRIBUTE_ENTROPY_QUALITY || \
+				  type == CRYPT_IATTRIBUTE_RANDOM_POLL ) && \
+				( data == NULL && \
+				  dataLength >= 0 && dataLength < MAX_INTLENGTH_SHORT ) ) );
 
 	/* Handle entropy addition.  Since this can take awhile, we do it with
 	   the system object unlocked.  See the comment in getRandomFunction()
@@ -719,10 +763,14 @@ static const GETCAPABILITY_FUNCTION FAR_BSS getCapabilityTable[] = {
 #ifdef USE_RSA
 	getRSACapability,
 #endif /* USE_RSA */
-#ifdef USE_ECC
+#ifdef USE_ECDSA
 	getECDSACapability,
+#endif /* USE_ECDSA */
+#ifdef USE_ECDH
 	getECDHCapability,
-#endif /* USE_ECC */
+#endif /* USE_ECDH */
+
+	getGenericSecretCapability,
 
 	/* Vendors may want to use their own algorithms, which aren't part of the
 	   general cryptlib suite.  The following provides the ability to include
@@ -744,13 +792,6 @@ CHECK_RETVAL \
 static int initCapabilities( void )
 	{
 	int i;
-
-	/* Perform a consistency check on the encryption mode values, which
-	   are used to index a table of per-mode function pointers */
-	assert( CRYPT_MODE_CBC == CRYPT_MODE_ECB + 1 && \
-			CRYPT_MODE_CFB == CRYPT_MODE_CBC + 1 && \
-			CRYPT_MODE_OFB == CRYPT_MODE_CFB + 1 && \
-			CRYPT_MODE_LAST == CRYPT_MODE_OFB + 1 );
 
 	/* Build the list of available capabilities */
 	memset( capabilityInfoList, 0,
@@ -791,7 +832,9 @@ int setDeviceSystem( INOUT DEVICE_INFO *deviceInfo )
 	deviceInfo->initFunction = initFunction;
 	deviceInfo->shutdownFunction = shutdownFunction;
 	deviceInfo->controlFunction = controlFunction;
+#ifndef CONFIG_NO_SELFTEST
 	deviceInfo->selftestFunction = selftestFunction;
+#endif /* !CONFIG_NO_SELFTEST */
 	deviceInfo->getRandomFunction = getRandomFunction;
 	deviceInfo->capabilityInfoList = capabilityInfoList;
 	deviceInfo->createObjectFunctions = createObjectFunctions;

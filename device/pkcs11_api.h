@@ -138,27 +138,27 @@ typedef struct {
 	/* Function pointers */
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *endFunction )( INOUT CONTEXT_INFO *contextInfoPtr );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *initKeyFunction )( INOUT CONTEXT_INFO *contextInfoPtr, 
 							  IN_BUFFER( keyLength ) const void *key, 
 							  IN_LENGTH_SHORT const int keyLength );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *generateKeyFunction )( INOUT CONTEXT_INFO *contextInfoPtr, \
 								  IN_LENGTH_SHORT const int keySizeBits );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *encryptFunction )( INOUT CONTEXT_INFO *contextInfoPtr, 
 							  INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 							  IN_LENGTH_Z int length );
 							  /* Length may be zero for hash functions */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *decryptFunction )( INOUT CONTEXT_INFO *contextInfoPtr, 
 							  INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 							  IN_LENGTH int length );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *signFunction )( INOUT CONTEXT_INFO *contextInfoPtr, 
 						   INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 						   IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) int length );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *sigCheckFunction )( INOUT CONTEXT_INFO *contextInfoPtr, 
 							   INOUT_BUFFER_FIXED( length ) BYTE *buffer, 
 							   IN_LENGTH_SHORT_MIN( MIN_PKCSIZE ) int length );
@@ -186,12 +186,13 @@ typedef struct {
 #define CKA_NONE				( ( CK_ATTRIBUTE_TYPE ) CRYPT_ERROR )
 
 /* The HMAC mechanisms in PKCS #11 don't work because they have to be keyed 
-   with generic secret keys (rather than specific HMAC keys), but generic 
+   with generic secret keys (rather than specific HMAC keys) but generic 
    secret keys can't be used with HMAC operations.  There are two possible
    workarounds for this, either ignore the restrictions on generic secret 
-   keys so they can be used with HMAC objects or define vendor-specific HMAC 
-   mechanisms and keys.  The latter approach is used by nCipher, who define 
-   their own CKA/CKM/CKK values based around a custom magic ID value */
+   keys so that they can be used with HMAC objects or define vendor-specific 
+   HMAC mechanisms and keys.  The latter approach is used by nCipher, who 
+   define their own CKA/CKM/CKK values based around a custom magic ID 
+   value */
 
 #define VENDOR_NCIPHER			0xDE436972UL
 #define CKA_NCIPHER				( CKA_VENDOR_DEFINED | VENDOR_NCIPHER )
@@ -202,31 +203,37 @@ typedef struct {
   #define CKK_MD5_HMAC			( CKK_NCIPHER + 2 )
   #define CKK_SHA_1_HMAC		( CKK_NCIPHER + 1 )
   #define CKK_RIPEMD160_HMAC	CKK_GENERIC_SECRET
+  #define CKK_SHA256_HMAC		CKK_GENERIC_SECRET
   #define CKM_MD5_HMAC_KEY_GEN	( CKM_NCIPHER + 6 )
   #define CKM_SHA_1_HMAC_KEY_GEN ( CKM_NCIPHER + 3 )
   #define CKM_RIPEMD160_HMAC_KEY_GEN CKK_GENERIC_SECRET
+  #define CKM_SHA256_HMAC_KEY_GEN CKK_GENERIC_SECRET
 #else
   #define CKK_MD5_HMAC			CKK_GENERIC_SECRET
   #define CKK_SHA_1_HMAC		CKK_GENERIC_SECRET
   #define CKK_RIPEMD160_HMAC	CKK_GENERIC_SECRET
+  #define CKK_SHA256_HMAC		CKK_GENERIC_SECRET
   #define CKM_MD5_HMAC_KEY_GEN	CKM_GENERIC_SECRET_KEY_GEN
   #define CKM_SHA_1_HMAC_KEY_GEN CKM_GENERIC_SECRET_KEY_GEN
   #define CKM_RIPEMD160_HMAC_KEY_GEN CKK_GENERIC_SECRET
+  #define CKM_SHA256_HMAC_KEY_GEN CKM_GENERIC_SECRET_KEY_GEN
 #endif /* NCIPHER_PKCS11 */
 
 /* Prototypes for functions in pkcs11.c */
 
-int pkcs11MapError( INOUT PKCS11_INFO *pkcs11Info, const CK_RV errorCode,
-					const int defaultError ) \
-					STDC_NONNULL_ARG( ( 1 ) );
 CHECK_RETVAL \
-int getContextDeviceInfo( const CRYPT_HANDLE iCryptContext,
-						  OUT CRYPT_DEVICE *iCryptDevice, 
-						  OUT_PTR PKCS11_INFO **pkcs11InfoPtrPtr ) \
-						  STDC_NONNULL_ARG( ( 2, 3 ) );
-CHECK_RETVAL \
-const PKCS11_MECHANISM_INFO *getMechanismInfoConv( OUT int *mechanismInfoSize ) \
-												   STDC_NONNULL_ARG( ( 1 ) );
+int pkcs11MapError( const CK_RV errorCode,
+					IN_STATUS const int defaultError );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+int getContextDeviceInfo( IN_HANDLE const CRYPT_HANDLE iCryptContext,
+						  OUT_HANDLE_OPT CRYPT_DEVICE *iCryptDevice, 
+						  OUT_OPT_PTR PKCS11_INFO **pkcs11InfoPtrPtr );
+STDC_NONNULL_ARG( ( 1 ) ) \
+time_t getTokenTime( const CK_TOKEN_INFO *tokenInfo );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+const PKCS11_MECHANISM_INFO *getMechanismInfoConv( OUT_LENGTH_SHORT int *mechanismInfoSize );
+RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int genericEndFunction( const CONTEXT_INFO *contextInfoPtr );
 
 /* Prototypes for functions in pkcs11_init.c */
 
@@ -242,9 +249,32 @@ CHECK_RETVAL \
 const PKCS11_MECHANISM_INFO *getMechanismInfoPKC( OUT int *mechanismInfoSize ) \
 												  STDC_NONNULL_ARG( ( 1 ) );
 
-/* Prototypes for functions in pkcs11_rw.c */
+/* Prototypes for functions in pkcs11_rd/wr.c */
 
-void initPKCS11RW( INOUT DEVICE_INFO *deviceInfo ) \
-				   STDC_NONNULL_ARG( ( 1 ) );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int addIAndSToTemplate( INOUT_ARRAY_C( 2 ) CK_ATTRIBUTE *certTemplate, 
+						IN_BUFFER( iAndSLength ) const void *iAndSPtr, 
+						IN_LENGTH_SHORT const int iAndSLength );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int findObject( INOUT PKCS11_INFO *pkcs11Info, 
+				OUT CK_OBJECT_HANDLE *hObject,
+				IN_ARRAY( templateCount ) \
+					const CK_ATTRIBUTE *objectTemplate,
+				IN_RANGE( 1, 64 ) const CK_ULONG templateCount );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int findObjectEx( INOUT PKCS11_INFO *pkcs11Info, 
+				  OUT CK_OBJECT_HANDLE *hObject,
+				  IN_ARRAY( templateCount ) \
+					const CK_ATTRIBUTE *objectTemplate,
+				  IN_RANGE( 1, 64 ) const CK_ULONG templateCount );
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+int findObjectFromObject( INOUT PKCS11_INFO *pkcs11Info,
+						  const CK_OBJECT_HANDLE hSourceObject, 
+						  const CK_OBJECT_CLASS objectClass,
+						  OUT CK_OBJECT_HANDLE *hObject );
+void initPKCS11Read( INOUT DEVICE_INFO *deviceInfo ) \
+					 STDC_NONNULL_ARG( ( 1 ) );
+void initPKCS11Write( INOUT DEVICE_INFO *deviceInfo ) \
+					  STDC_NONNULL_ARG( ( 1 ) );
 
 #endif /* USE_PKCS11 */

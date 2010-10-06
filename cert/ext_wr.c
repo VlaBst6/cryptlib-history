@@ -13,9 +13,11 @@
 #else
   #include "cert/cert.h"
   #include "cert/certattr.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -25,8 +27,10 @@
 
 /* Get the encoding information needed to encode an attribute */
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int getAttributeEncodingInfo( const ATTRIBUTE_LIST *attributeListPtr,
-									 OUT ATTRIBUTE_INFO **attributeInfoPtrPtr,
+									 OUT_OPT_PTR \
+										ATTRIBUTE_INFO **attributeInfoPtrPtr,
 									 OUT_INT_Z int *attributeDataSize )
 	{
 	const ATTRIBUTE_INFO *attributeInfoPtr;
@@ -35,6 +39,9 @@ static int getAttributeEncodingInfo( const ATTRIBUTE_LIST *attributeListPtr,
 	assert( isReadPtr( attributeListPtr, sizeof( ATTRIBUTE_LIST ) ) );
 	assert( isWritePtr( attributeInfoPtrPtr, sizeof( ATTRIBUTE_INFO * ) ) );
 	assert( isWritePtr( attributeDataSize, sizeof( int ) ) );
+
+	/* Clear return value */
+	*attributeInfoPtrPtr = NULL;
 
 	/* If it's a constructed attribute then the encoding information for
 	   the outermost wrapper will be recorded in the encoding FIFO, 
@@ -47,6 +54,7 @@ static int getAttributeEncodingInfo( const ATTRIBUTE_LIST *attributeListPtr,
 		}
 	else
 		attributeInfoPtr = attributeListPtr->attributeInfoPtr;
+	ENSURES( attributeInfoPtr != NULL );
 
 	/* Determine the size of the attribute payload */
 	if( isConstructed && attributeInfoPtr->fieldType != FIELDTYPE_CHOICE )
@@ -284,8 +292,8 @@ static int calculateSpecialFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 	assert( isReadPtr( attributeInfoPtr, sizeof( ATTRIBUTE_INFO ) ) );
 	assert( isWritePtr( payloadSize, sizeof( int ) ) );
 
-	REQUIRES( fieldType == FIELDTYPE_BLOB || \
-			  fieldType == FIELDTYPE_IDENTIFIER || \
+	REQUIRES( isBlobField( fieldType ) || \
+			  ( fieldType == FIELDTYPE_IDENTIFIER ) || \
 			  ( fieldType > 0 && fieldType < MAX_TAG ) );
 
 	/* Determine the size of the data payload */
@@ -295,7 +303,9 @@ static int calculateSpecialFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 	   other than the user-supplied data */
 	switch( fieldType )
 		{
-		case FIELDTYPE_BLOB:
+		case FIELDTYPE_BLOB_ANY:
+		case FIELDTYPE_BLOB_BITSTRING:
+		case FIELDTYPE_BLOB_SEQUENCE:
 			/* Fixed-value blob (as opposed to user-supplied one) */
 			return( ( int ) attributeInfoPtr->defaultValue );
 
@@ -303,7 +313,7 @@ static int calculateSpecialFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 			return( sizeofOID( attributeInfoPtr->oid ) );
 
 #if 0	/* 28/9/08 This shouldn't ever occur, defaultValue is only used for
-				   FIELDTYPE_BLOB and BOOLEAN fields */
+				   FIELDTYPE_BLOB_ANY and BOOLEAN fields */
 		case BER_INTEGER:
 			return( sizeofShortInteger( attributeInfoPtr->defaultValue ) );
 #endif /* 0 */
@@ -330,7 +340,9 @@ static int calculateFieldSize( const ATTRIBUTE_LIST *attributeListPtr,
 
 	switch( fieldType )
 		{
-		case FIELDTYPE_BLOB:
+		case FIELDTYPE_BLOB_ANY:
+		case FIELDTYPE_BLOB_BITSTRING:
+		case FIELDTYPE_BLOB_SEQUENCE:
 		case BER_OBJECT_IDENTIFIER:
 			return( attributeListPtr->valueLength );
 
@@ -441,7 +453,9 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 		   other than the user-supplied data */
 		switch( fieldType )
 			{
-			case FIELDTYPE_BLOB:
+			case FIELDTYPE_BLOB_ANY:
+			case FIELDTYPE_BLOB_BITSTRING:
+			case FIELDTYPE_BLOB_SEQUENCE:
 				/* Fixed-value blob (as opposed to user-supplied one) */
 				return( swrite( stream, attributeInfoPtr->extraData, size ) );
 
@@ -469,7 +483,9 @@ int writeAttributeField( INOUT_OPT STREAM *stream,
 	/* It's a standard object, take the data from the user-supplied data */
 	switch( fieldType )
 		{
-		case FIELDTYPE_BLOB:
+		case FIELDTYPE_BLOB_ANY:
+		case FIELDTYPE_BLOB_BITSTRING:
+		case FIELDTYPE_BLOB_SEQUENCE:
 			if( tag != DEFAULT_TAG )
 				{
 				/* This gets a bit messy because the blob is stored in 
@@ -733,13 +749,17 @@ int writeCmsAttributes( INOUT STREAM *stream,
 													   ATTR_ENCODED_SIZE ),
 			iterationCount++ )
 		{
-		if( checkAttributeProperty( attributeListPtr,
+		if( checkAttributeProperty( currentAttributePtr,
 									ATTRIBUTE_PROPERTY_BLOBATTRIBUTE ) )
+			{
 			status = writeBlobAttribute( stream, &currentAttributePtr, TRUE, 
 										 complianceLevel );
+			}
 		else
+			{
 			status = writeAttribute( stream, &currentAttributePtr, TRUE, 
 									 complianceLevel );
+			}
 		if( cryptStatusError( status ) )
 			return( status );
 		}
@@ -888,3 +908,4 @@ int writeAttributes( INOUT STREAM *stream,
 	ENSURES( iterationCount < FAILSAFE_ITERATIONS_LARGE );
 	return( status );
 	}
+#endif /* USE_CERTIFICATES */

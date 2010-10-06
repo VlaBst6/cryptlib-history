@@ -12,7 +12,7 @@
   #include "ssh.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssh.h"
 #endif /* Compiler-specific includes */
@@ -85,7 +85,7 @@ static int sendDummyAuth( INOUT SESSION_INFO *sessionInfoPtr,
 						  IN_LENGTH_SHORT const int userNameLength )
 	{
 	STREAM stream;
-	int length, status;
+	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isReadPtr( userName, userNameLength ) );
@@ -94,7 +94,7 @@ static int sendDummyAuth( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send the dummy authentication request to the server */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_REQUEST );
+								  SSH_MSG_USERAUTH_REQUEST );
 	if( cryptStatusError( status ) )
 		return( status );
 	writeString32( &stream, userName, userNameLength );
@@ -117,12 +117,11 @@ static int sendDummyAuth( INOUT SESSION_INFO *sessionInfoPtr,
 	   level but instead ask for a password via the protocol being tunneled 
 	   over SSH, which means that we'll get a USERAUTH_SUCCESS at this point 
 	   even if we haven't actually authenticated ourselves */
-	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH, 
-						  ID_SIZE );
+	status = readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SPECIAL_USERAUTH, 
+							   ID_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( sessionInfoPtr->sessionSSH->packetType == SSH2_MSG_USERAUTH_SUCCESS )
+	if( sessionInfoPtr->sessionSSH->packetType == SSH_MSG_USERAUTH_SUCCESS )
 		{
 		/* We're (non-)authenticated, we don't have to do anything 
 		   further */
@@ -154,7 +153,7 @@ static int reportAuthFailure( INOUT SESSION_INFO *sessionInfoPtr,
 	/* The authentication failed, pick apart the response to see if we can
 	   return more meaningful error information:
 
-		byte	type = SSH2_MSG_USERAUTH_FAILURE
+		byte	type = SSH_MSG_USERAUTH_FAILURE
 		string	available_auth_types
 		boolean	partial_success
 
@@ -307,7 +306,7 @@ static int createPubkeyAuth( const SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/*	byte	type = SSH2_MSG_USERAUTH_REQUEST
+	/*	byte	type = SSH_MSG_USERAUTH_REQUEST
 		string	user_name
 		string	service_name = "ssh-connection"
 		string	method-name = "publickey"
@@ -348,7 +347,7 @@ static int createPubkeyAuth( const SESSION_INFO *sessionInfoPtr,
 	/* Hash the authentication request data, composed of:
 
 		string		exchange hash
-		[ SSH2_MSG_USERAUTH_REQUEST packet payload up to signature start ] */
+		[ SSH_MSG_USERAUTH_REQUEST packet payload up to signature start ] */
 	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
@@ -498,7 +497,7 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Process the PAM user-auth request:
 
-		byte	type = SSH2_MSG_USERAUTH_INFO_REQUEST
+		byte	type = SSH_MSG_USERAUTH_INFO_REQUEST
 		string	name
 		string	instruction
 		string	language = {}
@@ -518,7 +517,7 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 	   If the PAM authentication (from a previous iteration) fails or 
 	   succeeds the server is supposed to send back a standard user-auth 
 	   success or failure status but could also send another
-	   SSH2_MSG_USERAUTH_INFO_REQUEST even if it contains no payload (an 
+	   SSH_MSG_USERAUTH_INFO_REQUEST even if it contains no payload (an 
 	   OpenSSH bug) so we have to handle this as a special case */
 	sMemConnect( &stream, pamRequestData, pamRequestDataLength );
 	status = readString32( &stream, nameBuffer, CRYPT_MAX_TEXTSIZE,
@@ -577,7 +576,7 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Send back the PAM user-auth response:
 
-		byte	type = SSH2_MSG_USERAUTH_INFO_RESPONSE
+		byte	type = SSH_MSG_USERAUTH_INFO_RESPONSE
 		int		num_responses = num_prompts
 		string	response
 
@@ -587,7 +586,7 @@ static int pamAuthenticate( INOUT SESSION_INFO *sessionInfoPtr,
 	   there's more than one prompt then it's probably a request to confirm 
 	   the password so we just send it again for successive prompts */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_INFO_RESPONSE );
+								  SSH_MSG_USERAUTH_INFO_RESPONSE );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = writeUint32( &stream, noPrompts );
@@ -627,7 +626,7 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr )
 
 	/* Send a user-auth request asking for PAM authentication:
 
-		byte	type = SSH2_MSG_USERAUTH_REQUEST
+		byte	type = SSH_MSG_USERAUTH_REQUEST
 		string	user_name
 		string	service_name = "ssh-connection"
 		string	method_name = "keyboard-interactive"
@@ -639,7 +638,7 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr )
 	   specifying anything here is mostly wishful thinking, but we ask for
 	   password authentication anyway in case it helps */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_REQUEST );
+								  SSH_MSG_USERAUTH_REQUEST );
 	if( cryptStatusError( status ) )
 		return( status );
 	writeString32( &stream, userNamePtr->value, userNamePtr->valueLength );
@@ -669,7 +668,7 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr )
 		int type;
 
 		/* Read back the response to our last message.  Although the spec
-		   requires that the server not respond with a SSH2_MSG_USERAUTH_-
+		   requires that the server not respond with a SSH_MSG_USERAUTH_-
 		   FAILURE message if the request fails because of an invalid user
 		   name (done for cargo-cult reasons to prevent an attacker from 
 		   being able to determine valid user names by checking for error 
@@ -677,21 +676,21 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr )
 		   indicates that this actually reduces security while having little
 		   to no tangible benefit) some servers can return a failure 
 		   indication at this point so we have to allow for a failure 
-		   response as well as the expected SSH2_MSG_USERAUTH_INFO_REQUEST */
+		   response as well as the expected SSH_MSG_USERAUTH_INFO_REQUEST */
 		status = length = \
-			readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH_PAM,
+			readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SPECIAL_USERAUTH_PAM,
 							  ID_SIZE );
 		if( cryptStatusError( status ) )
 			return( status );
 		type = sessionInfoPtr->sessionSSH->packetType;
 
 		/* If we got a success status, we're done */
-		if( type == SSH2_MSG_USERAUTH_SUCCESS )
+		if( type == SSH_MSG_USERAUTH_SUCCESS )
 			return( CRYPT_OK );
 
 		/* If the authentication failed provide more specific details to the 
 		   caller */
-		if( type == SSH2_MSG_USERAUTH_FAILURE )
+		if( type == SSH_MSG_USERAUTH_FAILURE )
 			{
 			/* If we failed on the first attempt (before we even tried to
 			   send a password) it's probably because the user name is
@@ -717,9 +716,9 @@ static int processPamAuthentication( INOUT SESSION_INFO *sessionInfoPtr )
 			   report the details to the caller */
 			return( reportAuthFailure( sessionInfoPtr, length, TRUE ) );
 			}
-		ENSURES( type == SSH2_MSG_USERAUTH_INFO_REQUEST )
+		ENSURES( type == SSH_MSG_USERAUTH_INFO_REQUEST )
 				 /* Guaranteed by the packet read with type = 
-				    SSH2_MSG_SPECIAL_USERAUTH_PAM */
+				    SSH_MSG_SPECIAL_USERAUTH_PAM */
 
 		/* Perform the PAM authentication */
 		status = pamAuthenticate( sessionInfoPtr, 
@@ -794,12 +793,12 @@ int processClientAuth( INOUT SESSION_INFO *sessionInfoPtr,
 	   anyway so we don't gain much except extra RTT delays by adding this 
 	   question-and-answer facility */
 	status = openPacketStreamSSH( &stream, sessionInfoPtr, 
-								  SSH2_MSG_USERAUTH_REQUEST );
+								  SSH_MSG_USERAUTH_REQUEST );
 	if( cryptStatusError( status ) )
 		return( status );
 	if( passwordPtr != NULL )
 		{
-		/*	byte	type = SSH2_MSG_USERAUTH_REQUEST
+		/*	byte	type = SSH_MSG_USERAUTH_REQUEST
 			string	user_name
 			string	service_name = "ssh-connection"
 			string	method-name = "password"
@@ -834,11 +833,11 @@ int processClientAuth( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Wait for the server's ack of the authentication */
 	status = length = \
-		readHSPacketSSH2( sessionInfoPtr, SSH2_MSG_SPECIAL_USERAUTH, 
+		readHSPacketSSH2( sessionInfoPtr, SSH_MSG_SPECIAL_USERAUTH, 
 						  ID_SIZE );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( sessionInfoPtr->sessionSSH->packetType == SSH2_MSG_USERAUTH_SUCCESS )
+	if( sessionInfoPtr->sessionSSH->packetType == SSH_MSG_USERAUTH_SUCCESS )
 		{
 		/* We've successfully authenticated ourselves and we're done */
 		return( CRYPT_OK );

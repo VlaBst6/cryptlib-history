@@ -25,7 +25,7 @@
    process, dynamically allocating and freeing a larger buffer if required */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int getDynData( INOUT DYNBUF *dynBuf, 
+static int getDynData( OUT DYNBUF *dynBuf, 
 					   IN_HANDLE const CRYPT_HANDLE cryptHandle,
 					   IN_MESSAGE const MESSAGE_TYPE message, 
 					   IN_INT const int messageParam )
@@ -122,11 +122,14 @@ void dynDestroy( INOUT DYNBUF *dynBuf )
 	assert( isWritePtr( dynBuf, sizeof( DYNBUF ) ) );
 	assert( isWritePtr( dynBuf->data, dynBuf->length ) );
 
+	REQUIRES_V( dynBuf->data != NULL );
 	REQUIRES_V( dynBuf->length > 0 && dynBuf->length < MAX_INTLENGTH );
 
 	zeroise( dynBuf->data, dynBuf->length );
 	if( dynBuf->data != dynBuf->dataBuffer )
 		clFree( "dynDestroy", dynBuf->data );
+	dynBuf->data = NULL;
+	dynBuf->length = 0;
 	}
 
 /****************************************************************************

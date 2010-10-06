@@ -535,6 +535,8 @@ int testDeriveKey( void )
 	cryptDestroyContext( cryptContext );
 	if( cryptStatusError( status ) || value != 5 )
 		{
+		if( cryptStatusError( status ) )
+			value = -1;	/* Set dummy value if read failed */
 		printf( "Failed to get/set context attribute via equivalent global "
 				"attribute, error\ncode %d, value %d (should be 5), line "
 				"%d.\n", status, value, __LINE__ );
@@ -867,6 +869,8 @@ int testMACExportImport( void )
 	status = cryptSetAttributeString( cryptContext,
 									  CRYPT_CTXINFO_KEYING_VALUE,
 									  userKey, userKeyLength );
+	if( cryptStatusError( status ) )
+		return( FALSE );
 
 	/* Find out how big the exported key will be */
 	status = cryptExportKey( NULL, 0, &length1, cryptContext, macContext1 );
@@ -984,10 +988,15 @@ int testKeyExportImport( void )
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ELGAMAL, NULL ) ) && \
 		!keyExportImport( "Elgamal", CRYPT_ALGO_ELGAMAL, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* Elgamal */
+#ifdef USE_PGP
 	if( !keyExportImport( "RSA", CRYPT_ALGO_RSA, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* RSA, PGP format */
 	return( keyExportImport( "Elgamal", CRYPT_ALGO_ELGAMAL, CRYPT_UNUSED, CRYPT_UNUSED, CRYPT_FORMAT_PGP ) );
-	}						/* Elgamal, PGP format */
+							/* Elgamal, PGP format */
+#else
+	return( TRUE );
+#endif /* USE_PGP */
+	}
 
 int testSignData( void )
 	{
@@ -1002,10 +1011,15 @@ int testSignData( void )
 	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) && \
 		!signData( "ECDSA", CRYPT_ALGO_ECDSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_CRYPTLIB ) )
 		return( FALSE );	/* ECDSA */
+#ifdef USE_PGP
 	if( !signData( "RSA", CRYPT_ALGO_RSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_PGP ) )
 		return( FALSE );	/* RSA, PGP format */
 	return( signData( "DSA", CRYPT_ALGO_DSA, CRYPT_UNUSED, CRYPT_UNUSED, FALSE, FALSE, CRYPT_FORMAT_PGP ) );
-	}						/* DSA, PGP format */
+							/* DSA, PGP format */
+#else
+	return( TRUE );
+#endif /* USE_PGP */
+	}
 
 /* Test normal and asynchronous public-key generation */
 
@@ -1079,9 +1093,15 @@ static int keygen( const CRYPT_ALGO_TYPE cryptAlgo, const char *algoName )
 			/* Test the key exchange */
 			status = cryptCreateContext( &sessionKeyContext1, CRYPT_UNUSED,
 										 CRYPT_ALGO_DES );
-			if( cryptStatusOK( status ) )
-				status = cryptCreateContext( &sessionKeyContext2, 
-											 CRYPT_UNUSED, CRYPT_ALGO_DES );
+			if( cryptStatusError( status ) )
+				return( FALSE );
+			status = cryptCreateContext( &sessionKeyContext2, 
+										 CRYPT_UNUSED, CRYPT_ALGO_DES );
+			if( cryptStatusError( status ) )
+				{
+				cryptDestroyContext( sessionKeyContext1 );
+				return( FALSE );
+				}
 			if( cryptStatusOK( status ) )
 				status = cryptGenerateKey( sessionKeyContext1 );
 			if( cryptStatusError( status ) )
@@ -1204,6 +1224,8 @@ int testKeygenAsync( void )
 #if !defined( UNIX_THREADS ) && !defined( WINDOWS_THREADS ) && \
 	!defined( OS2_THREADS )
 	return( TRUE );
+#elif 1
+	return( TRUE );		/* Removed for the 3.4 release */
 #else
 	CRYPT_CONTEXT cryptContext, hashContext;
 	BYTE hashBuffer[] = "abcdefghijklmnopqrstuvwxyz";
@@ -1306,14 +1328,18 @@ int testKeygenAsync( void )
 		   arrives, to handle the entire spectrum of system types we just
 		   print a warning but don't abort if there's a problem */
 		if( cancelCount <= 1 )
+			{
 			puts( "The async keygen completed even though the operation was "
 				  "cancelled.  This was\nprobably because the CPU was fast "
 				  "enough that the keygen completed before the\ncancel could "
 				  "take effect." );
+			}
 		else
+			{
 			puts( "The async keygen completed even though the operation was "
 				  "cancelled.  The\ncancel should have stopped the keygen from "
 				  "completing.\n" );
+			}
 		}
 
 	/* Clean up */
@@ -1486,7 +1512,7 @@ static const CERT_DATA cmsAttributeData[] = {
 	/* We have to be careful when setting CMS attributes because most are 
 	   never used by anything so they're only available of use of obscure 
 	   attributes is enabled */
-#ifdef USE_CMS_OBSCURE
+#ifdef USE_CMSATTR_OBSCURE
 	/* Content type */
 	{ CRYPT_CERTINFO_CMS_CONTENTTYPE, IS_NUMERIC, CRYPT_CONTENT_SPCINDIRECTDATACONTEXT },
 
@@ -1500,13 +1526,14 @@ static const CERT_DATA cmsAttributeData[] = {
 #else
 	/* Content type */
 	{ CRYPT_CERTINFO_CMS_CONTENTTYPE, IS_NUMERIC, CRYPT_CONTENT_ENCRYPTEDDATA },
-#endif /* USE_CMS_OBSCURE */
+#endif /* USE_CMSATTR_OBSCURE */
 
 	{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
 	};
 
 static int signDataCMS( const char *description,
-						const CRYPT_CERTIFICATE signingAttributes )
+						const CRYPT_CERTIFICATE signingAttributes,
+						const BOOLEAN isCustomAttributes )
 	{
 	CRYPT_KEYSET cryptKeyset;
 	CRYPT_CERTIFICATE cmsAttributes = signingAttributes;
@@ -1567,7 +1594,9 @@ static int signDataCMS( const char *description,
 		return( FALSE );
 		}
 	debugDump( ( signingAttributes == CRYPT_USE_DEFAULT ) ? \
-			   "cms_sigd" : "cms_sig", buffer, length );
+					"cms_sigd" : \
+			   ( isCustomAttributes ) ? "cms_sigc" : "cms_sig", 
+			   buffer, length );
 
 	/* Check the signature on the hash */
 	status = cryptCheckSignatureEx( buffer, length, signContext, hashContext,
@@ -1596,11 +1625,12 @@ static int signDataCMS( const char *description,
 int testSignDataCMS( void )
 	{
 	CRYPT_CERTIFICATE cmsAttributes;
-	int status;
+    const BYTE *extensionData = "\x0C\x04Test";
+	int value, status;
 
 	/* First test the basic CMS signature with default attributes (content
 	   type, signing time, and message digest) */
-	if( !signDataCMS( "CMS signature", CRYPT_USE_DEFAULT ) )
+	if( !signDataCMS( "CMS signature", CRYPT_USE_DEFAULT, FALSE ) )
 		return( FALSE );
 
 	/* Create some CMS attributes and sign the data with the user-defined
@@ -1610,9 +1640,36 @@ int testSignDataCMS( void )
 	if( cryptStatusError( status ) || \
 		!addCertFields( cmsAttributes, cmsAttributeData, __LINE__ ) )
 		return( FALSE );
-	status = signDataCMS( "complex CMS signature", cmsAttributes );
+	status = signDataCMS( "complex CMS signature", cmsAttributes, FALSE );
 	cryptDestroyCert( cmsAttributes );
+	if( !status )
+		return( status );
 
+	/* Create some custom CMS attributes and sign those too.  In order to do
+	   this we have to set the CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES
+	   configuration option */
+	cryptGetAttribute( CRYPT_UNUSED, 
+					   CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES, &value );
+	status = cryptCreateCert( &cmsAttributes, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_CMS_ATTRIBUTES );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	status = cryptAddCertExtension( cmsAttributes, "1.2.3.4.5", 
+									CRYPT_UNUSED, extensionData, 6 );
+	if( cryptStatusOK( status ) )
+		{
+		status = cryptSetAttribute( CRYPT_UNUSED,
+									CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES, 
+									TRUE );
+		}
+	if( cryptStatusOK( status ) )
+		status = signDataCMS( "CMS signature with custom attributes", 
+							  cmsAttributes, TRUE );
+	cryptSetAttribute( CRYPT_UNUSED, 
+					   CRYPT_OPTION_CERT_SIGNUNRECOGNISEDATTRIBUTES, value );
+	cryptDestroyCert( cmsAttributes );
+	if( !status )
+		return( status );
 	return( status );
 	}
 

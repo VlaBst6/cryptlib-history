@@ -17,9 +17,12 @@ static int getPointerWrite(PyObject* objPtr, unsigned char** bytesPtrPtr, int* l
         return 1;
     }
 
+    Py_ssize_t size = 0;
+
     /*See if it's an array object*/
-    if (PyObject_AsWriteBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+    if (PyObject_AsWriteBuffer(objPtr, (void **)bytesPtrPtr, &size) == -1)
         return 0;
+    *lengthPtr = size;
     return 1;
 }
 
@@ -32,16 +35,19 @@ static int getPointerRead(PyObject* objPtr, unsigned char** bytesPtrPtr, int* le
         return 1;
     }
 
+    Py_ssize_t size = 0;
+
     /*See if it's an array object*/
-    if (PyObject_AsWriteBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+    if (PyObject_AsWriteBuffer(objPtr, (void **)bytesPtrPtr, &size) == -1)
     {
         PyErr_Clear();
         /*See if it's a string object*/
         /*This returns the length excluding the NULL if it's a string,
           which is what we want*/
-        if (PyObject_AsCharBuffer(objPtr, bytesPtrPtr, lengthPtr) == -1)
+        if (PyObject_AsCharBuffer(objPtr, (const char **)bytesPtrPtr, &size) == -1)
             return 0;
     }
+    *lengthPtr = size;
     return 1;
 }
 
@@ -69,7 +75,7 @@ static int getPointerWriteCheckIndices(PyObject* objPtr, unsigned char** bytesPt
 
 static int getPointerReadString(PyObject* objPtr, char** charPtrPtr)
 {
-    int length = 0;
+    Py_ssize_t length = 0;
     char* newPtr = NULL;
 
     if (objPtr == Py_None)
@@ -1659,6 +1665,10 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA2", v);
     Py_DECREF(v); /* SHA-256 */
 
+    v = Py_BuildValue("i", 205);
+    PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHA256", v);
+    Py_DECREF(v); /* Alternate name */
+
     v = Py_BuildValue("i", 206);
     PyDict_SetItemString(moduleDict, "CRYPT_ALGO_SHAng", v);
     Py_DECREF(v); /* Future SHA-nextgen standard */
@@ -1744,6 +1754,10 @@ class CryptHandle:\n\
     Py_DECREF(v); /* OFB */
 
     v = Py_BuildValue("i", 5);
+    PyDict_SetItemString(moduleDict, "CRYPT_MODE_GCM", v);
+    Py_DECREF(v); /* GCM */
+
+    v = Py_BuildValue("i", 6);
     PyDict_SetItemString(moduleDict, "CRYPT_MODE_LAST", v);
     Py_DECREF(v); /* Last possible crypt mode value */
 
@@ -1772,22 +1786,14 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Generic RDBMS interface */
 
     v = Py_BuildValue("i", 6);
-    PyDict_SetItemString(moduleDict, "CRYPT_KEYSET_PLUGIN", v);
-    Py_DECREF(v); /* Generic database plugin */
-
-    v = Py_BuildValue("i", 7);
     PyDict_SetItemString(moduleDict, "CRYPT_KEYSET_ODBC_STORE", v);
     Py_DECREF(v); /* ODBC certificate store */
 
-    v = Py_BuildValue("i", 8);
+    v = Py_BuildValue("i", 7);
     PyDict_SetItemString(moduleDict, "CRYPT_KEYSET_DATABASE_STORE", v);
     Py_DECREF(v); /* Database certificate store */
 
-    v = Py_BuildValue("i", 9);
-    PyDict_SetItemString(moduleDict, "CRYPT_KEYSET_PLUGIN_STORE", v);
-    Py_DECREF(v); /* Database plugin certificate store */
-
-    v = Py_BuildValue("i", 10);
+    v = Py_BuildValue("i", 8);
     PyDict_SetItemString(moduleDict, "CRYPT_KEYSET_LAST", v);
     Py_DECREF(v); /* Last possible keyset type */
 
@@ -2044,30 +2050,26 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Locus of last error */
 
     v = Py_BuildValue("i", 12);
-    PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_INT_ERRORCODE", v);
-    Py_DECREF(v); /* Low-level software-specific */
+    PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_ERRORMESSAGE", v);
+    Py_DECREF(v); /* Detailed error description */
 
     v = Py_BuildValue("i", 13);
-    PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_INT_ERRORMESSAGE", v);
-    Py_DECREF(v); /* error code and message */
-
-    v = Py_BuildValue("i", 14);
     PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_CURRENT_GROUP", v);
     Py_DECREF(v); /* Cursor mgt: Group in attribute list */
 
-    v = Py_BuildValue("i", 15);
+    v = Py_BuildValue("i", 14);
     PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_CURRENT", v);
     Py_DECREF(v); /* Cursor mgt: Entry in attribute list */
 
-    v = Py_BuildValue("i", 16);
+    v = Py_BuildValue("i", 15);
     PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_CURRENT_INSTANCE", v);
     Py_DECREF(v); /* Cursor mgt: Instance in attribute list */
 
-    v = Py_BuildValue("i", 17);
+    v = Py_BuildValue("i", 16);
     PyDict_SetItemString(moduleDict, "CRYPT_ATTRIBUTE_BUFFERSIZE", v);
     Py_DECREF(v); /* Internal data buffer size */
 
-    v = Py_BuildValue("i", 18);
+    v = Py_BuildValue("i", 17);
     PyDict_SetItemString(moduleDict, "CRYPT_GENERIC_LAST", v);
     Py_DECREF(v);
 
@@ -2360,110 +2362,122 @@ class CryptHandle:\n\
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 2006);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHA1", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2006);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHA", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 2007);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHA2", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2008);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FINGERPRINT_SHAng", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2009);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CURRENT_CERTIFICATE", v);
     Py_DECREF(v); /* Cursor mgt: Rel.pos in chain/CRL/OCSP */
 
-    v = Py_BuildValue("i", 2008);
+    v = Py_BuildValue("i", 2010);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_USAGE", v);
     Py_DECREF(v); /* Usage that cert is trusted for */
 
-    v = Py_BuildValue("i", 2009);
+    v = Py_BuildValue("i", 2011);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TRUSTED_IMPLICIT", v);
     Py_DECREF(v); /* Whether cert is implicitly trusted */
 
-    v = Py_BuildValue("i", 2010);
+    v = Py_BuildValue("i", 2012);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGNATURELEVEL", v);
     Py_DECREF(v); /* Amount of detail to include in sigs. */
 
-    v = Py_BuildValue("i", 2011);
+    v = Py_BuildValue("i", 2013);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VERSION", v);
     Py_DECREF(v); /* Cert.format version */
 
-    v = Py_BuildValue("i", 2012);
+    v = Py_BuildValue("i", 2014);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SERIALNUMBER", v);
     Py_DECREF(v); /* Serial number */
 
-    v = Py_BuildValue("i", 2013);
+    v = Py_BuildValue("i", 2015);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO", v);
     Py_DECREF(v); /* Public key */
 
-    v = Py_BuildValue("i", 2014);
+    v = Py_BuildValue("i", 2016);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTIFICATE", v);
     Py_DECREF(v); /* User certificate */
 
-    v = Py_BuildValue("i", 2014);
+    v = Py_BuildValue("i", 2016);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_USERCERTIFICATE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2015);
+    v = Py_BuildValue("i", 2017);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CACERTIFICATE", v);
     Py_DECREF(v); /* CA certificate */
 
-    v = Py_BuildValue("i", 2016);
+    v = Py_BuildValue("i", 2018);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERNAME", v);
     Py_DECREF(v); /* Issuer DN */
 
-    v = Py_BuildValue("i", 2017);
+    v = Py_BuildValue("i", 2019);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDFROM", v);
     Py_DECREF(v); /* Cert valid-from time */
 
-    v = Py_BuildValue("i", 2018);
+    v = Py_BuildValue("i", 2020);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_VALIDTO", v);
     Py_DECREF(v); /* Cert valid-to time */
 
-    v = Py_BuildValue("i", 2019);
+    v = Py_BuildValue("i", 2021);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTNAME", v);
     Py_DECREF(v); /* Subject DN */
 
-    v = Py_BuildValue("i", 2020);
+    v = Py_BuildValue("i", 2022);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERUNIQUEID", v);
     Py_DECREF(v); /* Issuer unique ID */
 
-    v = Py_BuildValue("i", 2021);
+    v = Py_BuildValue("i", 2023);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTUNIQUEID", v);
     Py_DECREF(v); /* Subject unique ID */
 
-    v = Py_BuildValue("i", 2022);
+    v = Py_BuildValue("i", 2024);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTREQUEST", v);
     Py_DECREF(v); /* Cert.request (DN + public key) */
 
-    v = Py_BuildValue("i", 2023);
+    v = Py_BuildValue("i", 2025);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_THISUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP current-update time */
 
-    v = Py_BuildValue("i", 2024);
+    v = Py_BuildValue("i", 2026);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NEXTUPDATE", v);
     Py_DECREF(v); /* CRL/OCSP next-update time */
 
-    v = Py_BuildValue("i", 2025);
+    v = Py_BuildValue("i", 2027);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONDATE", v);
     Py_DECREF(v); /* CRL/OCSP cert-revocation time */
 
-    v = Py_BuildValue("i", 2026);
+    v = Py_BuildValue("i", 2028);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOCATIONSTATUS", v);
     Py_DECREF(v); /* OCSP revocation status */
 
-    v = Py_BuildValue("i", 2027);
+    v = Py_BuildValue("i", 2029);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTSTATUS", v);
     Py_DECREF(v); /* RTCS certificate status */
 
-    v = Py_BuildValue("i", 2028);
+    v = Py_BuildValue("i", 2030);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DN", v);
     Py_DECREF(v); /* Currently selected DN in string form */
 
-    v = Py_BuildValue("i", 2029);
+    v = Py_BuildValue("i", 2031);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ID", v);
     Py_DECREF(v); /* PKI user ID */
 
-    v = Py_BuildValue("i", 2030);
+    v = Py_BuildValue("i", 2032);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_ISSUEPASSWORD", v);
     Py_DECREF(v); /* PKI user issue password */
 
-    v = Py_BuildValue("i", 2031);
+    v = Py_BuildValue("i", 2033);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PKIUSER_REVPASSWORD", v);
     Py_DECREF(v); /* PKI user revocation password */
 
@@ -2612,498 +2626,702 @@ class CryptHandle:\n\
     Py_DECREF(v); /* qcStatement.statementInfo.nameRegistrationAuthorities */
 
     v = Py_BuildValue("i", 2217);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2218);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS_ADDRESSFAMILY", v);
+    Py_DECREF(v); /* addressFamily */
+
+    v = Py_BuildValue("i", 2219);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS_INHERIT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2220);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS_PREFIX", v);
+    Py_DECREF(v); /* ipAddress.addressPrefix */
+
+    v = Py_BuildValue("i", 2221);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS_MIN", v);
+    Py_DECREF(v); /* ipAddress.addressRangeMin */
+
+    v = Py_BuildValue("i", 2222);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_IPADDRESSBLOCKS_MAX", v);
+    Py_DECREF(v); /* ipAddress.addressRangeMax */
+
+    v = Py_BuildValue("i", 2223);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTONOMOUSSYSIDS", v);
+    Py_DECREF(v); /* CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_INHERIT,// asNum.inherit */
+
+    v = Py_BuildValue("i", 2224);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_INHERIT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2225);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_ID", v);
+    Py_DECREF(v); /* asNum.id */
+
+    v = Py_BuildValue("i", 2226);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MIN", v);
+    Py_DECREF(v); /* asNum.min */
+
+    v = Py_BuildValue("i", 2227);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTONOMOUSSYSIDS_ASNUM_MAX", v);
+    Py_DECREF(v); /* asNum.max */
+
+    v = Py_BuildValue("i", 2228);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_OCSP_NONCE", v);
     Py_DECREF(v); /* nonce */
 
-    v = Py_BuildValue("i", 2218);
+    v = Py_BuildValue("i", 2229);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_OCSP_RESPONSE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2219);
+    v = Py_BuildValue("i", 2230);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_OCSP_RESPONSE_OCSP", v);
     Py_DECREF(v); /* OCSP standard response */
 
-    v = Py_BuildValue("i", 2220);
+    v = Py_BuildValue("i", 2231);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_OCSP_NOCHECK", v);
     Py_DECREF(v); /* 1 3 6 1 5 5 7 48 1 6 ocspArchiveCutoff */
 
-    v = Py_BuildValue("i", 2221);
+    v = Py_BuildValue("i", 2232);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_OCSP_ARCHIVECUTOFF", v);
     Py_DECREF(v); /* 1 3 6 1 5 5 7 48 1 11 subjectInfoAccess */
 
-    v = Py_BuildValue("i", 2222);
+    v = Py_BuildValue("i", 2233);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFOACCESS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2223);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY", v);
-    Py_DECREF(v); /* accessDescription.accessLocation */
-
-    v = Py_BuildValue("i", 2224);
+    v = Py_BuildValue("i", 2234);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_TIMESTAMPING", v);
     Py_DECREF(v); /* accessDescription.accessLocation */
 
-    v = Py_BuildValue("i", 2225);
+    v = Py_BuildValue("i", 2235);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_CAREPOSITORY", v);
+    Py_DECREF(v); /* accessDescription.accessLocation */
+
+    v = Py_BuildValue("i", 2236);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECTREPOSITORY", v);
+    Py_DECREF(v); /* accessDescription.accessLocation */
+
+    v = Py_BuildValue("i", 2237);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_RPKIMANIFEST", v);
+    Py_DECREF(v); /* accessDescription.accessLocation */
+
+    v = Py_BuildValue("i", 2238);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTINFO_SIGNEDOBJECT", v);
+    Py_DECREF(v); /* accessDescription.accessLocation */
+
+    v = Py_BuildValue("i", 2239);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_DATEOFCERTGEN", v);
     Py_DECREF(v); /* 1 3 36 8 3 2 siggProcuration */
 
-    v = Py_BuildValue("i", 2226);
+    v = Py_BuildValue("i", 2240);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_PROCURATION", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2227);
+    v = Py_BuildValue("i", 2241);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_PROCURE_COUNTRY", v);
     Py_DECREF(v); /* country */
 
-    v = Py_BuildValue("i", 2228);
+    v = Py_BuildValue("i", 2242);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_PROCURE_TYPEOFSUBSTITUTION", v);
     Py_DECREF(v); /* typeOfSubstitution */
 
-    v = Py_BuildValue("i", 2229);
+    v = Py_BuildValue("i", 2243);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_PROCURE_SIGNINGFOR", v);
     Py_DECREF(v); /* signingFor.thirdPerson */
 
-    v = Py_BuildValue("i", 2230);
+    v = Py_BuildValue("i", 2244);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2245);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_AUTHORITY", v);
+    Py_DECREF(v); /* authority */
+
+    v = Py_BuildValue("i", 2246);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHID", v);
+    Py_DECREF(v); /* namingAuth.iD */
+
+    v = Py_BuildValue("i", 2247);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHURL", v);
+    Py_DECREF(v); /* namingAuth.uRL */
+
+    v = Py_BuildValue("i", 2248);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_NAMINGAUTHTEXT", v);
+    Py_DECREF(v); /* namingAuth.text */
+
+    v = Py_BuildValue("i", 2249);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_PROFESSIONITEM", v);
+    Py_DECREF(v); /* professionItem */
+
+    v = Py_BuildValue("i", 2250);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_PROFESSIONOID", v);
+    Py_DECREF(v); /* professionOID */
+
+    v = Py_BuildValue("i", 2251);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADMISSIONS_REGISTRATIONNUMBER", v);
+    Py_DECREF(v); /* registrationNumber */
+
+    v = Py_BuildValue("i", 2252);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_MONETARYLIMIT", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2231);
+    v = Py_BuildValue("i", 2253);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_MONETARY_CURRENCY", v);
     Py_DECREF(v); /* currency */
 
-    v = Py_BuildValue("i", 2232);
+    v = Py_BuildValue("i", 2254);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_MONETARY_AMOUNT", v);
     Py_DECREF(v); /* amount */
 
-    v = Py_BuildValue("i", 2233);
+    v = Py_BuildValue("i", 2255);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_MONETARY_EXPONENT", v);
     Py_DECREF(v); /* exponent */
 
-    v = Py_BuildValue("i", 2234);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_RESTRICTION", v);
-    Py_DECREF(v); /* 1 3 101 1 4 1 strongExtranet */
-
-    v = Py_BuildValue("i", 2235);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2236);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET_ZONE", v);
-    Py_DECREF(v); /* sxNetIDList.sxNetID.zone */
-
-    v = Py_BuildValue("i", 2237);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET_ID", v);
-    Py_DECREF(v); /* sxNetIDList.sxNetID.id */
-
-    v = Py_BuildValue("i", 2238);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIRECTORYATTRIBUTES", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2239);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIR_TYPE", v);
-    Py_DECREF(v); /* attribute.type */
-
-    v = Py_BuildValue("i", 2240);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIR_VALUES", v);
-    Py_DECREF(v); /* attribute.values */
-
-    v = Py_BuildValue("i", 2241);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER", v);
-    Py_DECREF(v); /* 2 5 29 15 keyUsage */
-
-    v = Py_BuildValue("i", 2242);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_KEYUSAGE", v);
-    Py_DECREF(v); /* 2 5 29 16 privateKeyUsagePeriod */
-
-    v = Py_BuildValue("i", 2243);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEYUSAGEPERIOD", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2244);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEY_NOTBEFORE", v);
-    Py_DECREF(v); /* notBefore */
-
-    v = Py_BuildValue("i", 2245);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEY_NOTAFTER", v);
-    Py_DECREF(v); /* notAfter */
-
-    v = Py_BuildValue("i", 2246);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTALTNAME", v);
-    Py_DECREF(v); /* 2 5 29 18 issuerAltName */
-
-    v = Py_BuildValue("i", 2247);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERALTNAME", v);
-    Py_DECREF(v); /* 2 5 29 19 basicConstraints */
-
-    v = Py_BuildValue("i", 2248);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_BASICCONSTRAINTS", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2249);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CA", v);
-    Py_DECREF(v); /* cA */
-
-    v = Py_BuildValue("i", 2249);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITY", v);
-    Py_DECREF(v);
-
-    v = Py_BuildValue("i", 2250);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PATHLENCONSTRAINT", v);
-    Py_DECREF(v); /* pathLenConstraint */
-
-    v = Py_BuildValue("i", 2251);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLNUMBER", v);
-    Py_DECREF(v); /* 2 5 29 21 cRLReason */
-
-    v = Py_BuildValue("i", 2252);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLREASON", v);
-    Py_DECREF(v); /* 2 5 29 23 holdInstructionCode */
-
-    v = Py_BuildValue("i", 2253);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_HOLDINSTRUCTIONCODE", v);
-    Py_DECREF(v); /* 2 5 29 24 invalidityDate */
-
-    v = Py_BuildValue("i", 2254);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_INVALIDITYDATE", v);
-    Py_DECREF(v); /* 2 5 29 27 deltaCRLIndicator */
-
-    v = Py_BuildValue("i", 2255);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DELTACRLINDICATOR", v);
-    Py_DECREF(v); /* 2 5 29 28 issuingDistributionPoint */
-
     v = Py_BuildValue("i", 2256);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDISTRIBUTIONPOINT", v);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_DECLARATIONOFMAJORITY", v);
     Py_DECREF(v);
 
     v = Py_BuildValue("i", 2257);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_DECLARATIONOFMAJORITY_COUNTRY", v);
+    Py_DECREF(v); /* fullAgeAtCountry */
+
+    v = Py_BuildValue("i", 2258);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_RESTRICTION", v);
+    Py_DECREF(v); /* 1 3 36 8 3 13 siggCertHash */
+
+    v = Py_BuildValue("i", 2259);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_CERTHASH", v);
+    Py_DECREF(v); /* 1 3 36 8 3 15 siggAdditionalInformation */
+
+    v = Py_BuildValue("i", 2260);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SIGG_ADDITIONALINFORMATION", v);
+    Py_DECREF(v); /* 1 3 101 1 4 1 strongExtranet */
+
+    v = Py_BuildValue("i", 2261);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2262);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET_ZONE", v);
+    Py_DECREF(v); /* sxNetIDList.sxNetID.zone */
+
+    v = Py_BuildValue("i", 2263);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_STRONGEXTRANET_ID", v);
+    Py_DECREF(v); /* sxNetIDList.sxNetID.id */
+
+    v = Py_BuildValue("i", 2264);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIRECTORYATTRIBUTES", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2265);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIR_TYPE", v);
+    Py_DECREF(v); /* attribute.type */
+
+    v = Py_BuildValue("i", 2266);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDIR_VALUES", v);
+    Py_DECREF(v); /* attribute.values */
+
+    v = Py_BuildValue("i", 2267);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTKEYIDENTIFIER", v);
+    Py_DECREF(v); /* 2 5 29 15 keyUsage */
+
+    v = Py_BuildValue("i", 2268);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_KEYUSAGE", v);
+    Py_DECREF(v); /* 2 5 29 16 privateKeyUsagePeriod */
+
+    v = Py_BuildValue("i", 2269);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEYUSAGEPERIOD", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2270);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEY_NOTBEFORE", v);
+    Py_DECREF(v); /* notBefore */
+
+    v = Py_BuildValue("i", 2271);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PRIVATEKEY_NOTAFTER", v);
+    Py_DECREF(v); /* notAfter */
+
+    v = Py_BuildValue("i", 2272);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTALTNAME", v);
+    Py_DECREF(v); /* 2 5 29 18 issuerAltName */
+
+    v = Py_BuildValue("i", 2273);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERALTNAME", v);
+    Py_DECREF(v); /* 2 5 29 19 basicConstraints */
+
+    v = Py_BuildValue("i", 2274);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_BASICCONSTRAINTS", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2275);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CA", v);
+    Py_DECREF(v); /* cA */
+
+    v = Py_BuildValue("i", 2275);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITY", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2276);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PATHLENCONSTRAINT", v);
+    Py_DECREF(v); /* pathLenConstraint */
+
+    v = Py_BuildValue("i", 2277);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLNUMBER", v);
+    Py_DECREF(v); /* 2 5 29 21 cRLReason */
+
+    v = Py_BuildValue("i", 2278);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLREASON", v);
+    Py_DECREF(v); /* 2 5 29 23 holdInstructionCode */
+
+    v = Py_BuildValue("i", 2279);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_HOLDINSTRUCTIONCODE", v);
+    Py_DECREF(v); /* 2 5 29 24 invalidityDate */
+
+    v = Py_BuildValue("i", 2280);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_INVALIDITYDATE", v);
+    Py_DECREF(v); /* 2 5 29 27 deltaCRLIndicator */
+
+    v = Py_BuildValue("i", 2281);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DELTACRLINDICATOR", v);
+    Py_DECREF(v); /* 2 5 29 28 issuingDistributionPoint */
+
+    v = Py_BuildValue("i", 2282);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDISTRIBUTIONPOINT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2283);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDIST_FULLNAME", v);
     Py_DECREF(v); /* distributionPointName.fullName */
 
-    v = Py_BuildValue("i", 2258);
+    v = Py_BuildValue("i", 2284);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDIST_USERCERTSONLY", v);
     Py_DECREF(v); /* onlyContainsUserCerts */
 
-    v = Py_BuildValue("i", 2259);
+    v = Py_BuildValue("i", 2285);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDIST_CACERTSONLY", v);
     Py_DECREF(v); /* onlyContainsCACerts */
 
-    v = Py_BuildValue("i", 2260);
+    v = Py_BuildValue("i", 2286);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDIST_SOMEREASONSONLY", v);
     Py_DECREF(v); /* onlySomeReasons */
 
-    v = Py_BuildValue("i", 2261);
+    v = Py_BuildValue("i", 2287);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUINGDIST_INDIRECTCRL", v);
     Py_DECREF(v); /* indirectCRL */
 
-    v = Py_BuildValue("i", 2262);
+    v = Py_BuildValue("i", 2288);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTIFICATEISSUER", v);
     Py_DECREF(v); /* 2 5 29 30 nameConstraints */
 
-    v = Py_BuildValue("i", 2263);
+    v = Py_BuildValue("i", 2289);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NAMECONSTRAINTS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2264);
+    v = Py_BuildValue("i", 2290);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_PERMITTEDSUBTREES", v);
     Py_DECREF(v); /* permittedSubtrees */
 
-    v = Py_BuildValue("i", 2265);
+    v = Py_BuildValue("i", 2291);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXCLUDEDSUBTREES", v);
     Py_DECREF(v); /* excludedSubtrees */
 
-    v = Py_BuildValue("i", 2266);
+    v = Py_BuildValue("i", 2292);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLDISTRIBUTIONPOINT", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2267);
+    v = Py_BuildValue("i", 2293);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLDIST_FULLNAME", v);
     Py_DECREF(v); /* distributionPointName.fullName */
 
-    v = Py_BuildValue("i", 2268);
+    v = Py_BuildValue("i", 2294);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLDIST_REASONS", v);
     Py_DECREF(v); /* reasons */
 
-    v = Py_BuildValue("i", 2269);
+    v = Py_BuildValue("i", 2295);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLDIST_CRLISSUER", v);
     Py_DECREF(v); /* cRLIssuer */
 
-    v = Py_BuildValue("i", 2270);
+    v = Py_BuildValue("i", 2296);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTIFICATEPOLICIES", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2271);
+    v = Py_BuildValue("i", 2297);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTPOLICYID", v);
     Py_DECREF(v); /* policyInformation.policyIdentifier */
 
-    v = Py_BuildValue("i", 2272);
+    v = Py_BuildValue("i", 2298);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTPOLICY_CPSURI", v);
     Py_DECREF(v); /* policyInformation.policyQualifiers.qualifier.cPSuri */
 
-    v = Py_BuildValue("i", 2273);
+    v = Py_BuildValue("i", 2299);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTPOLICY_ORGANIZATION", v);
     Py_DECREF(v); /* policyInformation.policyQualifiers.qualifier.userNotice.noticeRef.organization */
 
-    v = Py_BuildValue("i", 2274);
+    v = Py_BuildValue("i", 2300);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTPOLICY_NOTICENUMBERS", v);
     Py_DECREF(v); /* policyInformation.policyQualifiers.qualifier.userNotice.noticeRef.noticeNumbers */
 
-    v = Py_BuildValue("i", 2275);
+    v = Py_BuildValue("i", 2301);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CERTPOLICY_EXPLICITTEXT", v);
     Py_DECREF(v); /* policyInformation.policyQualifiers.qualifier.userNotice.explicitText */
 
-    v = Py_BuildValue("i", 2276);
+    v = Py_BuildValue("i", 2302);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_POLICYMAPPINGS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2277);
+    v = Py_BuildValue("i", 2303);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ISSUERDOMAINPOLICY", v);
     Py_DECREF(v); /* policyMappings.issuerDomainPolicy */
 
-    v = Py_BuildValue("i", 2278);
+    v = Py_BuildValue("i", 2304);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SUBJECTDOMAINPOLICY", v);
     Py_DECREF(v); /* policyMappings.subjectDomainPolicy */
 
-    v = Py_BuildValue("i", 2279);
+    v = Py_BuildValue("i", 2305);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITYKEYIDENTIFIER", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2280);
+    v = Py_BuildValue("i", 2306);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITY_KEYIDENTIFIER", v);
     Py_DECREF(v); /* keyIdentifier */
 
-    v = Py_BuildValue("i", 2281);
+    v = Py_BuildValue("i", 2307);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITY_CERTISSUER", v);
     Py_DECREF(v); /* authorityCertIssuer */
 
-    v = Py_BuildValue("i", 2282);
+    v = Py_BuildValue("i", 2308);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AUTHORITY_CERTSERIALNUMBER", v);
     Py_DECREF(v); /* authorityCertSerialNumber */
 
-    v = Py_BuildValue("i", 2283);
+    v = Py_BuildValue("i", 2309);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_POLICYCONSTRAINTS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2284);
+    v = Py_BuildValue("i", 2310);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REQUIREEXPLICITPOLICY", v);
     Py_DECREF(v); /* policyConstraints.requireExplicitPolicy */
 
-    v = Py_BuildValue("i", 2285);
+    v = Py_BuildValue("i", 2311);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_INHIBITPOLICYMAPPING", v);
     Py_DECREF(v); /* policyConstraints.inhibitPolicyMapping */
 
-    v = Py_BuildValue("i", 2286);
+    v = Py_BuildValue("i", 2312);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEYUSAGE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2287);
+    v = Py_BuildValue("i", 2313);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_INDIVIDUALCODESIGNING", v);
     Py_DECREF(v); /* individualCodeSigning */
 
-    v = Py_BuildValue("i", 2288);
+    v = Py_BuildValue("i", 2314);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_COMMERCIALCODESIGNING", v);
     Py_DECREF(v); /* commercialCodeSigning */
 
-    v = Py_BuildValue("i", 2289);
+    v = Py_BuildValue("i", 2315);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_CERTTRUSTLISTSIGNING", v);
     Py_DECREF(v); /* certTrustListSigning */
 
-    v = Py_BuildValue("i", 2290);
+    v = Py_BuildValue("i", 2316);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_TIMESTAMPSIGNING", v);
     Py_DECREF(v); /* timeStampSigning */
 
-    v = Py_BuildValue("i", 2291);
+    v = Py_BuildValue("i", 2317);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_SERVERGATEDCRYPTO", v);
     Py_DECREF(v); /* serverGatedCrypto */
 
-    v = Py_BuildValue("i", 2292);
+    v = Py_BuildValue("i", 2318);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_MS_ENCRYPTEDFILESYSTEM", v);
     Py_DECREF(v); /* encrypedFileSystem */
 
-    v = Py_BuildValue("i", 2293);
+    v = Py_BuildValue("i", 2319);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_SERVERAUTH", v);
     Py_DECREF(v); /* serverAuth */
 
-    v = Py_BuildValue("i", 2294);
+    v = Py_BuildValue("i", 2320);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_CLIENTAUTH", v);
     Py_DECREF(v); /* clientAuth */
 
-    v = Py_BuildValue("i", 2295);
+    v = Py_BuildValue("i", 2321);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_CODESIGNING", v);
     Py_DECREF(v); /* codeSigning */
 
-    v = Py_BuildValue("i", 2296);
+    v = Py_BuildValue("i", 2322);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_EMAILPROTECTION", v);
     Py_DECREF(v); /* emailProtection */
 
-    v = Py_BuildValue("i", 2297);
+    v = Py_BuildValue("i", 2323);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_IPSECENDSYSTEM", v);
     Py_DECREF(v); /* ipsecEndSystem */
 
-    v = Py_BuildValue("i", 2298);
+    v = Py_BuildValue("i", 2324);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_IPSECTUNNEL", v);
     Py_DECREF(v); /* ipsecTunnel */
 
-    v = Py_BuildValue("i", 2299);
+    v = Py_BuildValue("i", 2325);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_IPSECUSER", v);
     Py_DECREF(v); /* ipsecUser */
 
-    v = Py_BuildValue("i", 2300);
+    v = Py_BuildValue("i", 2326);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_TIMESTAMPING", v);
     Py_DECREF(v); /* timeStamping */
 
-    v = Py_BuildValue("i", 2301);
+    v = Py_BuildValue("i", 2327);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_OCSPSIGNING", v);
     Py_DECREF(v); /* ocspSigning */
 
-    v = Py_BuildValue("i", 2302);
+    v = Py_BuildValue("i", 2328);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_DIRECTORYSERVICE", v);
     Py_DECREF(v); /* directoryService */
 
-    v = Py_BuildValue("i", 2303);
+    v = Py_BuildValue("i", 2329);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_ANYKEYUSAGE", v);
     Py_DECREF(v); /* anyExtendedKeyUsage */
 
-    v = Py_BuildValue("i", 2304);
+    v = Py_BuildValue("i", 2330);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_NS_SERVERGATEDCRYPTO", v);
     Py_DECREF(v); /* serverGatedCrypto */
 
-    v = Py_BuildValue("i", 2305);
+    v = Py_BuildValue("i", 2331);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXTKEY_VS_SERVERGATEDCRYPTO_CA", v);
     Py_DECREF(v); /* serverGatedCrypto CA */
 
-    v = Py_BuildValue("i", 2306);
+    v = Py_BuildValue("i", 2332);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CRLSTREAMIDENTIFIER", v);
+    Py_DECREF(v); /* 2 5 29 46 freshestCRL */
+
+    v = Py_BuildValue("i", 2333);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FRESHESTCRL", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2307);
+    v = Py_BuildValue("i", 2334);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FRESHESTCRL_FULLNAME", v);
     Py_DECREF(v); /* distributionPointName.fullName */
 
-    v = Py_BuildValue("i", 2308);
+    v = Py_BuildValue("i", 2335);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FRESHESTCRL_REASONS", v);
     Py_DECREF(v); /* reasons */
 
-    v = Py_BuildValue("i", 2309);
+    v = Py_BuildValue("i", 2336);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_FRESHESTCRL_CRLISSUER", v);
     Py_DECREF(v); /* cRLIssuer */
 
-    v = Py_BuildValue("i", 2310);
-    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_INHIBITANYPOLICY", v);
-    Py_DECREF(v); /* 2 16 840 1 113730 1 x Netscape extensions */
+    v = Py_BuildValue("i", 2337);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_ORDEREDLIST", v);
+    Py_DECREF(v); /* 2 5 29 51 baseUpdateTime */
 
-    v = Py_BuildValue("i", 2311);
+    v = Py_BuildValue("i", 2338);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_BASEUPDATETIME", v);
+    Py_DECREF(v); /* 2 5 29 53 deltaInfo */
+
+    v = Py_BuildValue("i", 2339);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DELTAINFO", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2340);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DELTAINFO_LOCATION", v);
+    Py_DECREF(v); /* deltaLocation */
+
+    v = Py_BuildValue("i", 2341);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_DELTAINFO_NEXTDELTA", v);
+    Py_DECREF(v); /* nextDelta */
+
+    v = Py_BuildValue("i", 2342);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_INHIBITANYPOLICY", v);
+    Py_DECREF(v); /* 2 5 29 58 toBeRevoked */
+
+    v = Py_BuildValue("i", 2343);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TOBEREVOKED", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2344);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TOBEREVOKED_CERTISSUER", v);
+    Py_DECREF(v); /* certificateIssuer */
+
+    v = Py_BuildValue("i", 2345);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TOBEREVOKED_REASONCODE", v);
+    Py_DECREF(v); /* reasonCode */
+
+    v = Py_BuildValue("i", 2346);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TOBEREVOKED_REVOCATIONTIME", v);
+    Py_DECREF(v); /* revocationTime */
+
+    v = Py_BuildValue("i", 2347);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_TOBEREVOKED_CERTSERIALNUMBER", v);
+    Py_DECREF(v); /* certSerialNumber */
+
+    v = Py_BuildValue("i", 2348);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2349);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS_CERTISSUER", v);
+    Py_DECREF(v); /* certificateIssuer */
+
+    v = Py_BuildValue("i", 2350);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS_REASONCODE", v);
+    Py_DECREF(v); /* reasonCode */
+
+    v = Py_BuildValue("i", 2351);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS_INVALIDITYDATE", v);
+    Py_DECREF(v); /* invalidityDate */
+
+    v = Py_BuildValue("i", 2352);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS_STARTINGNUMBER", v);
+    Py_DECREF(v); /* startingNumber */
+
+    v = Py_BuildValue("i", 2353);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_REVOKEDGROUPS_ENDINGNUMBER", v);
+    Py_DECREF(v); /* endingNumber */
+
+    v = Py_BuildValue("i", 2354);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_EXPIREDCERTSONCRL", v);
+    Py_DECREF(v); /* 2 5 29 63 aaIssuingDistributionPoint */
+
+    v = Py_BuildValue("i", 2355);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDISTRIBUTIONPOINT", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2356);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_FULLNAME", v);
+    Py_DECREF(v); /* distributionPointName.fullName */
+
+    v = Py_BuildValue("i", 2357);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_SOMEREASONSONLY", v);
+    Py_DECREF(v); /* onlySomeReasons */
+
+    v = Py_BuildValue("i", 2358);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_INDIRECTCRL", v);
+    Py_DECREF(v); /* indirectCRL */
+
+    v = Py_BuildValue("i", 2359);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_USERATTRCERTS", v);
+    Py_DECREF(v); /* containsUserAttributeCerts */
+
+    v = Py_BuildValue("i", 2360);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_AACERTS", v);
+    Py_DECREF(v); /* containsAACerts */
+
+    v = Py_BuildValue("i", 2361);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_AAISSUINGDIST_SOACERTS", v);
+    Py_DECREF(v); /* containsSOAPublicKeyCerts */
+
+    v = Py_BuildValue("i", 2362);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_CERTTYPE", v);
     Py_DECREF(v); /* netscape-cert-type */
 
-    v = Py_BuildValue("i", 2312);
+    v = Py_BuildValue("i", 2363);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_BASEURL", v);
     Py_DECREF(v); /* netscape-base-url */
 
-    v = Py_BuildValue("i", 2313);
+    v = Py_BuildValue("i", 2364);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_REVOCATIONURL", v);
     Py_DECREF(v); /* netscape-revocation-url */
 
-    v = Py_BuildValue("i", 2314);
+    v = Py_BuildValue("i", 2365);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_CAREVOCATIONURL", v);
     Py_DECREF(v); /* netscape-ca-revocation-url */
 
-    v = Py_BuildValue("i", 2315);
+    v = Py_BuildValue("i", 2366);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_CERTRENEWALURL", v);
     Py_DECREF(v); /* netscape-cert-renewal-url */
 
-    v = Py_BuildValue("i", 2316);
+    v = Py_BuildValue("i", 2367);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_CAPOLICYURL", v);
     Py_DECREF(v); /* netscape-ca-policy-url */
 
-    v = Py_BuildValue("i", 2317);
+    v = Py_BuildValue("i", 2368);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_SSLSERVERNAME", v);
     Py_DECREF(v); /* netscape-ssl-server-name */
 
-    v = Py_BuildValue("i", 2318);
+    v = Py_BuildValue("i", 2369);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_NS_COMMENT", v);
     Py_DECREF(v); /* netscape-comment */
 
-    v = Py_BuildValue("i", 2319);
+    v = Py_BuildValue("i", 2370);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_HASHEDROOTKEY", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2320);
+    v = Py_BuildValue("i", 2371);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_ROOTKEYTHUMBPRINT", v);
     Py_DECREF(v); /* rootKeyThumbPrint */
 
-    v = Py_BuildValue("i", 2321);
+    v = Py_BuildValue("i", 2372);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_CERTIFICATETYPE", v);
     Py_DECREF(v); /* 2 23 42 7 2 SET merchantData */
 
-    v = Py_BuildValue("i", 2322);
+    v = Py_BuildValue("i", 2373);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTDATA", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2323);
+    v = Py_BuildValue("i", 2374);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERID", v);
     Py_DECREF(v); /* merID */
 
-    v = Py_BuildValue("i", 2324);
+    v = Py_BuildValue("i", 2375);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERACQUIRERBIN", v);
     Py_DECREF(v); /* merAcquirerBIN */
 
-    v = Py_BuildValue("i", 2325);
+    v = Py_BuildValue("i", 2376);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTLANGUAGE", v);
     Py_DECREF(v); /* merNames.language */
 
-    v = Py_BuildValue("i", 2326);
+    v = Py_BuildValue("i", 2377);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTNAME", v);
     Py_DECREF(v); /* merNames.name */
 
-    v = Py_BuildValue("i", 2327);
+    v = Py_BuildValue("i", 2378);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTCITY", v);
     Py_DECREF(v); /* merNames.city */
 
-    v = Py_BuildValue("i", 2328);
+    v = Py_BuildValue("i", 2379);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTSTATEPROVINCE", v);
     Py_DECREF(v); /* merNames.stateProvince */
 
-    v = Py_BuildValue("i", 2329);
+    v = Py_BuildValue("i", 2380);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTPOSTALCODE", v);
     Py_DECREF(v); /* merNames.postalCode */
 
-    v = Py_BuildValue("i", 2330);
+    v = Py_BuildValue("i", 2381);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCHANTCOUNTRYNAME", v);
     Py_DECREF(v); /* merNames.countryName */
 
-    v = Py_BuildValue("i", 2331);
+    v = Py_BuildValue("i", 2382);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERCOUNTRY", v);
     Py_DECREF(v); /* merCountry */
 
-    v = Py_BuildValue("i", 2332);
+    v = Py_BuildValue("i", 2383);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_MERAUTHFLAG", v);
     Py_DECREF(v); /* merAuthFlag */
 
-    v = Py_BuildValue("i", 2333);
+    v = Py_BuildValue("i", 2384);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_CERTCARDREQUIRED", v);
     Py_DECREF(v); /* 2 23 42 7 4 SET tunneling */
 
-    v = Py_BuildValue("i", 2334);
+    v = Py_BuildValue("i", 2385);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELING", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2334);
+    v = Py_BuildValue("i", 2385);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELLING", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2335);
+    v = Py_BuildValue("i", 2386);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELINGFLAG", v);
     Py_DECREF(v); /* tunneling */
 
-    v = Py_BuildValue("i", 2335);
+    v = Py_BuildValue("i", 2386);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELLINGFLAG", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2336);
+    v = Py_BuildValue("i", 2387);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELINGALGID", v);
     Py_DECREF(v); /* tunnelingAlgID */
 
-    v = Py_BuildValue("i", 2336);
+    v = Py_BuildValue("i", 2387);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SET_TUNNELLINGALGID", v);
     Py_DECREF(v); /* S/MIME attributes */
 
@@ -3164,234 +3382,310 @@ class CryptHandle:\n\
     Py_DECREF(v); /* DES encryption */
 
     v = Py_BuildValue("i", 2514);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_SHAng", v);
+    Py_DECREF(v); /* SHA2-ng hash */
+
+    v = Py_BuildValue("i", 2515);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_SHA2", v);
+    Py_DECREF(v); /* SHA2-256 hash */
+
+    v = Py_BuildValue("i", 2516);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_SHA1", v);
+    Py_DECREF(v); /* SHA1 hash */
+
+    v = Py_BuildValue("i", 2517);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHAng", v);
+    Py_DECREF(v); /* HMAC-SHA2-ng MAC */
+
+    v = Py_BuildValue("i", 2518);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA2", v);
+    Py_DECREF(v); /* HMAC-SHA2-256 MAC */
+
+    v = Py_BuildValue("i", 2519);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_HMAC_SHA1", v);
+    Py_DECREF(v); /* HMAC-SHA1 MAC */
+
+    v = Py_BuildValue("i", 2520);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC256", v);
+    Py_DECREF(v); /* AuthEnc w.256-bit key */
+
+    v = Py_BuildValue("i", 2521);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_AUTHENC128", v);
+    Py_DECREF(v); /* AuthEnc w.128-bit key */
+
+    v = Py_BuildValue("i", 2522);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHAng", v);
+    Py_DECREF(v); /* RSA with SHA-ng signing */
+
+    v = Py_BuildValue("i", 2523);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA2", v);
+    Py_DECREF(v); /* RSA with SHA2-256 signing */
+
+    v = Py_BuildValue("i", 2524);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_RSA_SHA1", v);
+    Py_DECREF(v); /* RSA with SHA1 signing */
+
+    v = Py_BuildValue("i", 2525);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_DSA_SHA1", v);
+    Py_DECREF(v); /* DSA with SHA-1 signing */
+
+    v = Py_BuildValue("i", 2526);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHAng", v);
+    Py_DECREF(v); /* ECDSA with SHA-ng signing */
+
+    v = Py_BuildValue("i", 2527);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA2", v);
+    Py_DECREF(v); /* ECDSA with SHA2-256 signing */
+
+    v = Py_BuildValue("i", 2528);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_ECDSA_SHA1", v);
+    Py_DECREF(v); /* ECDSA with SHA-1 signing */
+
+    v = Py_BuildValue("i", 2529);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_PREFERSIGNEDDATA", v);
     Py_DECREF(v); /* preferSignedData */
 
-    v = Py_BuildValue("i", 2515);
+    v = Py_BuildValue("i", 2530);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_CANNOTDECRYPTANY", v);
     Py_DECREF(v); /* canNotDecryptAny */
 
-    v = Py_BuildValue("i", 2516);
+    v = Py_BuildValue("i", 2531);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SMIMECAP_PREFERBINARYINSIDE", v);
+    Py_DECREF(v); /* preferBinaryInside */
+
+    v = Py_BuildValue("i", 2532);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPTREQUEST", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2517);
+    v = Py_BuildValue("i", 2533);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_CONTENTIDENTIFIER", v);
     Py_DECREF(v); /* contentIdentifier */
 
-    v = Py_BuildValue("i", 2518);
+    v = Py_BuildValue("i", 2534);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_FROM", v);
     Py_DECREF(v); /* receiptsFrom */
 
-    v = Py_BuildValue("i", 2519);
+    v = Py_BuildValue("i", 2535);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_RECEIPT_TO", v);
     Py_DECREF(v); /* receiptsTo */
 
-    v = Py_BuildValue("i", 2520);
+    v = Py_BuildValue("i", 2536);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECURITYLABEL", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2521);
+    v = Py_BuildValue("i", 2537);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_POLICY", v);
     Py_DECREF(v); /* securityPolicyIdentifier */
 
-    v = Py_BuildValue("i", 2522);
+    v = Py_BuildValue("i", 2538);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CLASSIFICATION", v);
     Py_DECREF(v); /* securityClassification */
 
-    v = Py_BuildValue("i", 2523);
+    v = Py_BuildValue("i", 2539);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_PRIVACYMARK", v);
     Py_DECREF(v); /* privacyMark */
 
-    v = Py_BuildValue("i", 2524);
+    v = Py_BuildValue("i", 2540);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CATTYPE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.type */
 
-    v = Py_BuildValue("i", 2525);
+    v = Py_BuildValue("i", 2541);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SECLABEL_CATVALUE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.value */
 
-    v = Py_BuildValue("i", 2526);
+    v = Py_BuildValue("i", 2542);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXPANSIONHISTORY", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2527);
+    v = Py_BuildValue("i", 2543);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_ENTITYIDENTIFIER", v);
     Py_DECREF(v); /* mlData.mailListIdentifier.issuerAndSerialNumber */
 
-    v = Py_BuildValue("i", 2528);
+    v = Py_BuildValue("i", 2544);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_TIME", v);
     Py_DECREF(v); /* mlData.expansionTime */
 
-    v = Py_BuildValue("i", 2529);
+    v = Py_BuildValue("i", 2545);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_NONE", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.none */
 
-    v = Py_BuildValue("i", 2530);
+    v = Py_BuildValue("i", 2546);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_INSTEADOF", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.insteadOf.generalNames.generalName */
 
-    v = Py_BuildValue("i", 2531);
+    v = Py_BuildValue("i", 2547);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_MLEXP_INADDITIONTO", v);
     Py_DECREF(v); /* mlData.mlReceiptPolicy.inAdditionTo.generalNames.generalName */
 
-    v = Py_BuildValue("i", 2532);
+    v = Py_BuildValue("i", 2548);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINTS", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2533);
+    v = Py_BuildValue("i", 2549);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINT_DESCRIPTION", v);
     Py_DECREF(v); /* contentDescription */
 
-    v = Py_BuildValue("i", 2534);
+    v = Py_BuildValue("i", 2550);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_CONTENTHINT_TYPE", v);
     Py_DECREF(v); /* contentType */
 
-    v = Py_BuildValue("i", 2535);
+    v = Py_BuildValue("i", 2551);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQUIVALENTLABEL", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2536);
+    v = Py_BuildValue("i", 2552);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_POLICY", v);
     Py_DECREF(v); /* securityPolicyIdentifier */
 
-    v = Py_BuildValue("i", 2537);
+    v = Py_BuildValue("i", 2553);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CLASSIFICATION", v);
     Py_DECREF(v); /* securityClassification */
 
-    v = Py_BuildValue("i", 2538);
+    v = Py_BuildValue("i", 2554);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_PRIVACYMARK", v);
     Py_DECREF(v); /* privacyMark */
 
-    v = Py_BuildValue("i", 2539);
+    v = Py_BuildValue("i", 2555);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CATTYPE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.type */
 
-    v = Py_BuildValue("i", 2540);
+    v = Py_BuildValue("i", 2556);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_EQVLABEL_CATVALUE", v);
     Py_DECREF(v); /* securityCategories.securityCategory.value */
 
-    v = Py_BuildValue("i", 2541);
+    v = Py_BuildValue("i", 2557);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERTIFICATE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2542);
+    v = Py_BuildValue("i", 2558);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERT_ESSCERTID", v);
     Py_DECREF(v); /* certs.essCertID */
 
-    v = Py_BuildValue("i", 2543);
+    v = Py_BuildValue("i", 2559);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERT_POLICIES", v);
     Py_DECREF(v); /* policies.policyInformation.policyIdentifier */
 
-    v = Py_BuildValue("i", 2544);
+    v = Py_BuildValue("i", 2560);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERTIFICATEV2", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 2561);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERTV2_ESSCERTIDV2", v);
+    Py_DECREF(v); /* certs.essCertID */
+
+    v = Py_BuildValue("i", 2562);
+    PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNINGCERTV2_POLICIES", v);
+    Py_DECREF(v); /* policies.policyInformation.policyIdentifier */
+
+    v = Py_BuildValue("i", 2563);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGNATUREPOLICYID", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2545);
+    v = Py_BuildValue("i", 2564);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICYID", v);
     Py_DECREF(v); /* sigPolicyID */
 
-    v = Py_BuildValue("i", 2546);
+    v = Py_BuildValue("i", 2565);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICYHASH", v);
     Py_DECREF(v); /* sigPolicyHash */
 
-    v = Py_BuildValue("i", 2547);
+    v = Py_BuildValue("i", 2566);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_CPSURI", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.cPSuri */
 
-    v = Py_BuildValue("i", 2548);
+    v = Py_BuildValue("i", 2567);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_ORGANIZATION", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.noticeRef.organization */
 
-    v = Py_BuildValue("i", 2549);
+    v = Py_BuildValue("i", 2568);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_NOTICENUMBERS", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.noticeRef.noticeNumbers */
 
-    v = Py_BuildValue("i", 2550);
+    v = Py_BuildValue("i", 2569);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGPOLICY_EXPLICITTEXT", v);
     Py_DECREF(v); /* sigPolicyQualifiers.sigPolicyQualifier.userNotice.explicitText */
 
-    v = Py_BuildValue("i", 2551);
+    v = Py_BuildValue("i", 2570);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEIDENTIFIER", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2552);
+    v = Py_BuildValue("i", 2571);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_ORIGINATORSIG", v);
     Py_DECREF(v); /* originatorSig */
 
-    v = Py_BuildValue("i", 2553);
+    v = Py_BuildValue("i", 2572);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_DOMAINSIG", v);
     Py_DECREF(v); /* domainSig */
 
-    v = Py_BuildValue("i", 2554);
+    v = Py_BuildValue("i", 2573);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_ADDITIONALATTRIBUTES", v);
     Py_DECREF(v); /* additionalAttributesSig */
 
-    v = Py_BuildValue("i", 2555);
+    v = Py_BuildValue("i", 2574);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SIGTYPEID_REVIEWSIG", v);
     Py_DECREF(v); /* reviewSig */
 
-    v = Py_BuildValue("i", 2556);
+    v = Py_BuildValue("i", 2575);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_NONCE", v);
     Py_DECREF(v); /* randomNonce */
 
-    v = Py_BuildValue("i", 2557);
+    v = Py_BuildValue("i", 2576);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_MESSAGETYPE", v);
     Py_DECREF(v); /* messageType */
 
-    v = Py_BuildValue("i", 2558);
+    v = Py_BuildValue("i", 2577);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_PKISTATUS", v);
     Py_DECREF(v); /* pkiStatus */
 
-    v = Py_BuildValue("i", 2559);
+    v = Py_BuildValue("i", 2578);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_FAILINFO", v);
     Py_DECREF(v); /* failInfo */
 
-    v = Py_BuildValue("i", 2560);
+    v = Py_BuildValue("i", 2579);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_SENDERNONCE", v);
     Py_DECREF(v); /* senderNonce */
 
-    v = Py_BuildValue("i", 2561);
+    v = Py_BuildValue("i", 2580);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_RECIPIENTNONCE", v);
     Py_DECREF(v); /* recipientNonce */
 
-    v = Py_BuildValue("i", 2562);
+    v = Py_BuildValue("i", 2581);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_SCEP_TRANSACTIONID", v);
     Py_DECREF(v); /* transID */
 
-    v = Py_BuildValue("i", 2563);
+    v = Py_BuildValue("i", 2582);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCAGENCYINFO", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2564);
+    v = Py_BuildValue("i", 2583);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCAGENCYURL", v);
     Py_DECREF(v); /* spcAgencyInfo.url */
 
-    v = Py_BuildValue("i", 2565);
+    v = Py_BuildValue("i", 2584);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTATEMENTTYPE", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2566);
+    v = Py_BuildValue("i", 2585);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTMT_INDIVIDUALCODESIGNING", v);
     Py_DECREF(v); /* individualCodeSigning */
 
-    v = Py_BuildValue("i", 2567);
+    v = Py_BuildValue("i", 2586);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCSTMT_COMMERCIALCODESIGNING", v);
     Py_DECREF(v); /* commercialCodeSigning */
 
-    v = Py_BuildValue("i", 2568);
+    v = Py_BuildValue("i", 2587);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 2569);
+    v = Py_BuildValue("i", 2588);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO_NAME", v);
     Py_DECREF(v); /* spcOpusInfo.name */
 
-    v = Py_BuildValue("i", 2570);
+    v = Py_BuildValue("i", 2589);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_CMS_SPCOPUSINFO_URL", v);
     Py_DECREF(v); /* spcOpusInfo.url */
 
-    v = Py_BuildValue("i", 2571);
+    v = Py_BuildValue("i", 2590);
     PyDict_SetItemString(moduleDict, "CRYPT_CERTINFO_LAST", v);
     Py_DECREF(v);
 
@@ -3628,40 +3922,40 @@ class CryptHandle:\n\
     Py_DECREF(v); /* Issuing CA certificate */
 
     v = Py_BuildValue("i", 6019);
-    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_TSP_MSGIMPRINT", v);
-    Py_DECREF(v); /* TSP message imprint */
-
-    v = Py_BuildValue("i", 6020);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_CMP_REQUESTTYPE", v);
     Py_DECREF(v); /* Request type */
 
-    v = Py_BuildValue("i", 6021);
-    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_CMP_PKIBOOT", v);
-    Py_DECREF(v); /* Unused, to be removed in 3.4 */
-
-    v = Py_BuildValue("i", 6022);
+    v = Py_BuildValue("i", 6020);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_CMP_PRIVKEYSET", v);
     Py_DECREF(v); /* Private-key keyset */
 
-    v = Py_BuildValue("i", 6023);
+    v = Py_BuildValue("i", 6021);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSH_CHANNEL", v);
     Py_DECREF(v); /* SSH current channel */
 
-    v = Py_BuildValue("i", 6024);
+    v = Py_BuildValue("i", 6022);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSH_CHANNEL_TYPE", v);
     Py_DECREF(v); /* SSH channel type */
 
-    v = Py_BuildValue("i", 6025);
+    v = Py_BuildValue("i", 6023);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSH_CHANNEL_ARG1", v);
     Py_DECREF(v); /* SSH channel argument 1 */
 
-    v = Py_BuildValue("i", 6026);
+    v = Py_BuildValue("i", 6024);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSH_CHANNEL_ARG2", v);
     Py_DECREF(v); /* SSH channel argument 2 */
 
-    v = Py_BuildValue("i", 6027);
+    v = Py_BuildValue("i", 6025);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSH_CHANNEL_ACTIVE", v);
     Py_DECREF(v); /* SSH channel active */
+
+    v = Py_BuildValue("i", 6026);
+    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_SSL_OPTIONS", v);
+    Py_DECREF(v); /* SSL/TLS protocol options */
+
+    v = Py_BuildValue("i", 6027);
+    PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_TSP_MSGIMPRINT", v);
+    Py_DECREF(v); /* TSP message imprint */
 
     v = Py_BuildValue("i", 6028);
     PyDict_SetItemString(moduleDict, "CRYPT_SESSINFO_LAST", v);
@@ -4375,6 +4669,34 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_SET_CERTTYPE_LAST", v);
     Py_DECREF(v); /* Last possible value */
 
+    v = Py_BuildValue("i", 0x00);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_NONE", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0x00);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_MINVER_SSLV3", v);
+    Py_DECREF(v); /* Min.protocol version */
+
+    v = Py_BuildValue("i", 0x01);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_MINVER_TLS10", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0x02);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_MINVER_TLS11", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0x03);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_MINVER_TLS12", v);
+    Py_DECREF(v);
+
+    v = Py_BuildValue("i", 0x04);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_SUITEB_128", v);
+    Py_DECREF(v); /* SuiteB security levels */
+
+    v = Py_BuildValue("i", 0x08);
+    PyDict_SetItemString(moduleDict, "CRYPT_SSLOPTION_SUITEB_256", v);
+    Py_DECREF(v);
+
     v = Py_BuildValue("i", 256);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_KEYSIZE", v);
     Py_DECREF(v);
@@ -4391,7 +4713,7 @@ class CryptHandle:\n\
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_PKCSIZE_ECC", v);
     Py_DECREF(v);
 
-    v = Py_BuildValue("i", 32);
+    v = Py_BuildValue("i", 64);
     PyDict_SetItemString(moduleDict, "CRYPT_MAX_HASHSIZE", v);
     Py_DECREF(v);
 

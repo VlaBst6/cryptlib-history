@@ -16,6 +16,8 @@
   #include "context/keygen.h"
 #endif /* Compiler-specific includes */
 
+#if defined( USE_DH ) || defined( USE_DSA ) || defined( USE_ELGAMAL )
+
 /****************************************************************************
 *																			*
 *							Utility Functions								*
@@ -852,3 +854,4 @@ int initCheckDLPkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	return( enableSidechannelProtection( pkcInfo, 
 							contextInfoPtr->capabilityInfo->cryptAlgo ) );
 	}
+#endif /* USE_DH || USE_DSA || USE_ELGAMAL */

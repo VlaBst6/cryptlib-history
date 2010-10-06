@@ -3,7 +3,7 @@
 # Copyright (C) 2007 Alvaro Livraghi
 
 #####
-#       G E N P E R L . P L   Version 0.2 (last changes 2008-07-03)
+#       G E N P E R L . P L   Version 0.2 (last changes 2008-08-17)
 #       --------------------------------------------------------------------
 #       Based upon GenVB.pl by Wolfgang Gothier
 #
@@ -36,11 +36,17 @@ use warnings;
 
 use File::stat;
 use File::Basename;
+use Data::Dumper;
+#use Tie::IxHash;
 
+my $C = "C\t";
+my $PERL = "PERL\t";
+
+my $DEBUG = grep /^--debug$/, @ARGV;			# print debug info on STDERR
 my $inFileName  = shift @ARGV || 'cryptlib.h';	# default filename is "cryptlib.h"
 my %DEFINED = ( 1, 1,                     		# ifdef 1 is to be included
                 "USE_VENDOR_ALGOS", 0 );		# set to 1 to include #IFDEF USE_VENDOR_ALGOS
-my $Startline = qr{^#endif\s+\/\*\s+_CRYPTLIB_DEFINED\s+\*\/};	# ignore all lines before this one
+my $Startline = qr{^#define C_INOUT};			# ignore all lines before this one
 
 my ($inFileBase, $inPath, $inExt) = fileparse($inFileName, qr{\.[^.]*$});
 die("\"usage: $0 cryptlib.h\"\nParameter must be a C header file\nStop") unless ($inExt =~ m/^\.h$/i) && -r $inFileName;
@@ -55,6 +61,21 @@ open(INFILE, "<$Infile") or die "Open error on $Infile: $!";
 open (OUTFILE, ">$Outfile") or die "Open error on $Outfile: $!";
 print "Transforming \"$Infile\" into \"$Outfile\"\n";
 my $Default = select(OUTFILE);
+
+print STDERR qq[
+${C}#include <stdio.h>
+${C}#include <stdlib.h>
+${C}#include "$Infile"
+${C}int main(void) {
+] if $DEBUG;
+
+print STDERR qq[
+${PERL}#!/usr/bin/perl -W
+${PERL}use strict;
+${PERL}use warnings;
+${PERL}require "$Outfile";
+] if $DEBUG;
+
 
 
 # Ignore all input lines before (and including) $Startline
@@ -74,10 +95,6 @@ my $LEVEL = 0;
 my $COMMENT = 0;
 # handle conditionals, include conditional code only if definition agrees with %DEFINED
 while (<INFILE>) { 
-    # remove preprocessor symbols
-    s/C_CHECK_RETVAL//;
-    s/C_NONNULL_ARG\s*\(\s*\([ \t0-9,]+\s*\)\s*\)//;
-
 
 		# remove tabs
 		1 while s/\t/' ' x (length($&)*4 - length($`)%4)/e;
@@ -143,6 +160,12 @@ while ($_ = shift @source) {
         redo if @source;
     }
     
+    # continued function declaration
+    if (s/\,s*?$/,/) {
+        $_ .= shift @source;
+        redo if @source;
+    }
+    
     # incomplete typedef / enum lines
     if (/^\s*(typedef\s+enum|typedef\s+struct|enum)\s*\{[^}]*$/) {
         $_ .= shift @source;
@@ -161,7 +184,8 @@ while ($_ = shift @source) {
     
 	# constant definitions
 	#s/^\s*#define\s+(\w+)\s+(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)/  Public Const $1 As Long = $2/;
-	s/^\s*#define\s+(\w+)\s+(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)/\tsub $1 { $2 }/;
+	#s/^\s*#define\s+(\w+)\s+(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)/\tsub $1 { $2 }/;
+	s/^\s*#define\s+(\w+)\s+\(?\s*(\w+|[+\-0-9]+|&H[0-9a-fA-F]+)\s*\)?\s*/\tsub $1 { $2 }\n/;
 
     # typedef struct
     if (s!^(\s*)typedef\s+struct\s*{([^}]*)}\s*(\w+)\s*;!&typelist(split(/;/,$2))!e) {
@@ -188,6 +212,10 @@ while ($_ = shift @source) {
 	if ( s/(\bC_RET\s*\w+\s*\(\s*[^)]+\s*\)\s*;)/#$1/ ) {
 		s/\n/\n#/g;
 	}
+	
+	if ( s/^(\s*?)(C_CHECK_RETVAL|C_NONNULL_ARG)(.*?)/# $1$2$3/ ) {
+		s/\n/\n#/g;
+	}
 
 	# C-macro definitions are ignored
     if (s/\s*#define\s+(.*)/$1/) {
@@ -201,9 +229,18 @@ while ($_ = shift @source) {
 }
 print PERLFooter();
 
+print STDERR qq[
+${C}return 0;
+${C}}
+] if $DEBUG;
+
+print STDERR qq[
+${PERL}exit(0);
+] if $DEBUG;
+
 select($Default);
 
-exit;
+exit 0;
 
 # subroutine definitions follow:
 
@@ -272,10 +309,14 @@ sub enums {
         if (m/(\w+)\s*=\s*(\d+).*$/) {
         		# new value is being set, $index must be updated
             $_S .= "  sub $1 { $2 }\n";
+			print STDERR qq{${C}printf("$1: \%d\\n", $1);\n} if $DEBUG;
+			print STDERR qq{${PERL}print "$1: ", \&$1(), "\\n";\n} if $DEBUG;
             eval($Index = $2+1);
         }
         else {
             $_S .= "  sub $_ { ".$Index++." }\n";
+			print STDERR qq{${C}printf("$_: \%d\\n", $_);\n} if $DEBUG;
+			print STDERR qq{${PERL}print "$_: ", \&$_(), "\\n";\n} if $DEBUG;
         }
     }
     return $_S;
@@ -286,34 +327,58 @@ sub enumt {
     my $LINES = "";
     my $parval;
 	my $lastValue = 0;
-    foreach $parval (@_) {
-    	my ($val, $rem, $name, $value);
-		$parval =~ s/^\s*(.*?)\s*$/$1/;
-		($val, $rem) = split('#', $parval, 2);
-		$val = '' unless $val;
-		$val =~ s/^\s*(.*?)\s*$/$1/;
+	#tie my %values, 'Tie::IxHash', ();
+	my %values = ();
+	my @lines = @_;
+    foreach my $parval1 (@lines) {
+    	#my ($val, $rem, $name, $value);
+		my ($val1, $rem) = split('#', $parval1, 2);
 		$rem = '' unless $rem;
 		$rem =~ s/^\s*(.*?)\s*$/$1/;
-		if ( $val ne '' ) {
-			($name, $value) = split('=', $val, 2);
-			$name = '' unless $name;
-			$name =~ s/^\s*(.*?)[\s\,]*$/$1/;
-			$value = '' unless $value;
-			$value =~ s/^\s*(.*?)[\s\,]*$/$1/;
-			if ( $value eq ''  ||  $value =~ /^\d/ ) {
-				$value = $lastValue unless $value;
+		$LINES .= ($rem ? "\t# $rem" : '') . "\n";
+		$val1 = '' unless $val1;
+		$val1 =~ s/^\s*(.*?)\s*$/$1/;
+		next unless $val1;
+    	foreach $parval (split(',',$val1)) {
+    		last unless defined($parval);
+	    	my ($val, $name, $value);
+			($val = $parval) =~ s/^\s*(.*?)\s*$/$1/;
+			#$val = '' unless $val;
+			#$val =~ s/^\s*(.*?)\s*$/$1/;
+			if ( $val ne '' ) {
+				($name, $value) = split('=', $val, 2);
+				$name = '' unless $name;
+				$name =~ s/^\s*(.*?)[\s\,]*$/$1/;
+				$value = '' unless $value;
+				$value =~ s/^\s*(.*?)[\s\,]*$/$1/;
+				if ( $value eq ''  ||  $value =~ /^\d/ ) {
+					$value = $lastValue unless $value;
+					#$lastValue = $value + 1;
+				} else {
+					#$rem .= ' ==> ' . $value;
+					#$lastValue = 
+					$value = eval( join(' ', map { exists($values{$_}) ? $values{$_} : $_ } split(/\s+/,$value)) );
+				}
 				$lastValue = $value + 1;
 			}
-		}
-		if ( $name ) {
-			foreach my $curname (split(',', $name)) {
-				$curname =~ s/^\s*(.*?)\s*$/$1/;
-		        $LINES .= ($curname ? "\tsub $curname { $value }" : '') . ($rem ? "\t# $rem" : '') . "\n";
+			if ( $name ) {
+				#$lastValue = $value;
+				foreach my $curname (split(',', $name)) {
+					$curname =~ s/^\s*(.*?)\s*$/$1/;
+					$values{$curname} = $value;
+			        #$LINES .= ($curname ? "\tsub $curname { $value }" : '') . ($rem ? "\t# $rem" : '') . "\n";
+			        $LINES .= ($curname ? "\tsub $curname { $value }" : '') . "\n";
+					#++$lastValue;
+					#print STDERR "$curname = $value\n";
+					print STDERR qq{${C}printf("$curname: \%d\\n", $curname);\n} if $DEBUG;
+					print STDERR qq{${PERL}print "$curname: ", \&${curname}(), "\\n";\n} if $DEBUG;
+				}
+			} else {
+		        #$LINES .= ($rem ? "\t# $rem" : '') . "\n";
 			}
-		} else {
-	        $LINES .= ($rem ? "\t# $rem" : '') . "\n";
-		}
+    	}
     }
+    #print STDERR Dumper(\%values);
     return $LINES;
 }
 #   handle the lines of a "typedef struct { ... } structname"

@@ -303,14 +303,6 @@ int getSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 			*valuePtr = sessionInfoPtr->receiveBufSize;
 			return( CRYPT_OK );
 
-		case CRYPT_ATTRIBUTE_INT_ERRORCODE:
-			{
-			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
-
-			*valuePtr = errorInfo ->errorCode;
-			return( CRYPT_OK );
-			}
-
 		case CRYPT_SESSINFO_ACTIVE:
 			/* Only secure transport sessions can be persistently active,
 			   request/response sessions are only active while the 
@@ -380,7 +372,7 @@ int getSessionAttributeS( INOUT SESSION_INFO *sessionInfoPtr,
 			   they're almost never user */
 			return( exitErrorNotFound( sessionInfoPtr, attribute ) );
 
-		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
+		case CRYPT_ATTRIBUTE_ERRORMESSAGE:
 			{
 #ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo = &sessionInfoPtr->errorInfo;
@@ -630,6 +622,19 @@ int setSessionAttribute( INOUT SESSION_INFO *sessionInfoPtr,
 				{
 				status = krnlSendMessage( value, IMESSAGE_CHECK, NULL,
 										  MESSAGE_CHECK_CA );
+				if( cryptStatusError( status ) )
+					return( CRYPT_ARGERROR_NUM1 );
+				}
+
+			/* If we're using a certificate, make sure that it's currently 
+			   valid.  This self-check avoids ugly silent failures where 
+			   everything appears to work just fine on the server side but 
+			   the client gets invalid data back */
+			if( requiredAttributeFlags & ( SESSION_NEEDS_PRIVKEYCERT | \
+										   SESSION_NEEDS_PRIVKEYCACERT ) )
+				{
+				status = checkServerCertValid( value, &sessionInfoPtr->errorLocus, 
+											   &sessionInfoPtr->errorType );
 				if( cryptStatusError( status ) )
 					return( CRYPT_ARGERROR_NUM1 );
 				}

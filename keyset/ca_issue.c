@@ -48,7 +48,7 @@ static int getCertIssueType( INOUT DBMS_INFO *dbmsInfo,
 	/* Get the certID of the request that resulted in the certificate 
 	   creation */
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) && isCert )
 		{
 		/* If it's a certificate we have to apply an extra level of 
@@ -294,7 +294,7 @@ static int completeCert( INOUT DBMS_INFO *dbmsInfo,
 	REQUIRES( errorInfo != NULL );
 
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( status );
 	status = addCert( dbmsInfo, iCertificate, CRYPT_CERTTYPE_CERTIFICATE,
@@ -453,7 +453,7 @@ int caIssueCert( INOUT DBMS_INFO *dbmsInfo,
 	status = getCertIssueType( dbmsInfo, iCertRequest, &issueType, FALSE );
 	if( cryptStatusOK( status ) )
 		status = getKeyID( reqCertID, ENCODED_DBXKEYID_SIZE, &reqCertIDlength, 
-						   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+						   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		{
 		if( cryptArgError( status ) )
@@ -513,7 +513,7 @@ int caIssueCert( INOUT DBMS_INFO *dbmsInfo,
 	/* Extract the information that we need from the newly-created 
 	   certificate */
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iLocalCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iLocalCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		status = getKeyID( issuerID, ENCODED_DBXKEYID_SIZE, &issuerIDlength, 
 						   iLocalCertificate,
@@ -623,7 +623,7 @@ int caIssueCertComplete( INOUT DBMS_INFO *dbmsInfo,
 
 	/* Extract the information that we need from the certificate */
 	status = getKeyID( certID, ENCODED_DBXKEYID_SIZE, &certIDlength, 
-					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusError( status ) )
 		return( status );
 

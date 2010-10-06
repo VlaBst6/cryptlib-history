@@ -151,6 +151,8 @@
   #define CONTEXT_LAST			CONTEXT_LAST, CONTEXT_ENUM = -50000
   /* device/capabil.h */
   #define CAPABILITY_INFO_LAST	CAPABILITY_INFO_LAST, CAPABILITY_INFO_ENUM = -50000
+  /* enc_dec/asn1.h */
+  #define BER_ID_LAST			BER_ID_LAST, BER_ID_ENUM = -50000
   /* envelope/envelope.h */
   #define ACTION_LAST			ACTION_LAST, ACTION_ENUM = -50000
   #define ACTION_RESULT_LAST	ACTION_RESULT_LAST, ACTION_RESULT_ENUM = -50000
@@ -176,8 +178,6 @@
   #define PKCS15_SUBTYPE_LAST	PKCS15_SUBTYPE_LAST, PKCS15_SUBTYPE_ENUM = -50000
 //  #define PKCS15_OBJECT_LAST	PKCS15_OBJECT_LAST, PKCS15_OBJECT_ENUM = -50000
   #define PKCS15_KEYID_LAST		PKCS15_KEYID_LAST, PKCS15_KEYID_ENUM = -50000
-  /* misc/asn1.h */
-  #define BER_ID_LAST			BER_ID_LAST, BER_ID_ENUM = -50000
   /* misc/pgp.h */
   #define PGP_ALGOCLASS_LAST	PGP_ALGOCLASS_LAST, PGP_ALGOCLASS_ENUM = -50000
   /* misc/rpc.h */
@@ -384,12 +384,22 @@ typedef struct {
 	   encrypted keys */
 	CRYPT_ALGO_TYPE keySetupAlgo;	/* Key setup algorithm */
 	int keySetupIterations;			/* Key setup iteration count */
+	int keySize;					/* Key size (if not implicit) */
 	BUFFER( CRYPT_MAX_HASHSIZE, saltLength ) \
 	BYTE salt[ CRYPT_MAX_HASHSIZE + 8 ];/* Key setup salt */
 	int saltLength;
 
 	/* The hash algorithm for signatures */
 	CRYPT_ALGO_TYPE hashAlgo;		/* Hash algorithm */
+	int hashParam;					/* Optional algorithm parameter */
+
+	/* The encoded parameter data for authenticated encryption, and the
+	   encryption and MAC algorithm parameter data within that */
+	BUFFER( 128, authEncParamLength ) \
+	BYTE authEncParamData[ 128 + 8 ];
+	int authEncParamLength;			/* AuthEnc parameter data */
+	int encParamStart, encParamLength;	/* Position of enc.parameters */
+	int macParamStart, macParamLength;	/* Position of MAC parameters */
 
 	/* The start and length of the payload data, either the encrypted key or
 	   the signature data */
@@ -536,7 +546,8 @@ typedef struct {
 
 #define needsIV( mode )	( ( mode ) == CRYPT_MODE_CBC || \
 						  ( mode ) == CRYPT_MODE_CFB || \
-						  ( mode ) == CRYPT_MODE_OFB )
+						  ( mode ) == CRYPT_MODE_OFB || \
+						  ( mode ) == CRYPT_MODE_GCM )
 
 /* A macro to check whether an algorithm is a pure stream cipher (that is,
    a real stream cipher rather than just a block cipher run in a stream
@@ -554,7 +565,32 @@ typedef struct {
    database */
 
 #define isWeakCryptAlgo( algorithm )	( ( algorithm ) == CRYPT_ALGO_DES || \
-										  ( algorithm ) == CRYPT_ALGO_RC4 )
+										  ( algorithm ) == CRYPT_ALGO_RC2 || \
+										  ( algorithm ) == CRYPT_ALGO_RC4 || \
+										  ( algorithm ) == CRYPT_ALGO_SKIPJACK )
+#define isWeakHashAlgo( algorithm )		( ( algorithm ) == CRYPT_ALGO_MD2 || \
+										  ( algorithm ) == CRYPT_ALGO_MD4 || \
+										  ( algorithm ) == CRYPT_ALGO_MD5 )
+#define isWeakMacAlgo( algorithm )		( ( algorithm ) == CRYPT_ALGO_HMAC_MD5 )
+											/* Technically not weak, but somewhat
+											   tainted */
+
+/* Macros to check for membership in overall algorithm classes */
+
+#define isConvAlgo( algorithm ) \
+		( ( algorithm ) >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
+		  ( algorithm ) <= CRYPT_ALGO_LAST_CONVENTIONAL )
+#define isPkcAlgo( algorithm ) \
+		( ( algorithm ) >= CRYPT_ALGO_FIRST_PKC && \
+		  ( algorithm ) <= CRYPT_ALGO_LAST_PKC )
+#define isHashAlgo( algorithm ) \
+		( ( algorithm ) >= CRYPT_ALGO_FIRST_HASH && \
+		  ( algorithm ) <= CRYPT_ALGO_LAST_HASH )
+#define isMacAlgo( algorithm ) \
+		( ( algorithm ) >= CRYPT_ALGO_FIRST_MAC && \
+		  ( algorithm ) <= CRYPT_ALGO_LAST_MAC )
+#define isSpecialAlgo( algorithm ) \
+		( ( algorithm ) == CRYPT_IALGO_GENERIC_SECRET )
 
 /* Macros to check whether a PKC algorithm is useful for a certain purpose 
    or requires special-case handling.  Note that isDlpAlgo() doesn't include 
@@ -673,12 +709,16 @@ typedef struct {
    that takes as argument the object type that's pointed to and that
    avoids the size check.
    
-   The Unix version of the memory-checking using _etext is also problematic 
-   because with shared libraries the single shared image can be mapped 
-   pretty much anywhere into the process' address space and there can be 
-   multiple _etext's present, one per shared library.  Because of this we 
-   disable the check using _etext if we can detect that we're being built as 
-   a shared library */
+   Under Unix we could in theory check against _etext but this is too 
+   unreliable to use, with shared libraries the single shared image can be 
+   mapped pretty much anywhere into the process' address space and there can 
+   be multiple _etext's present, one per shared library, it fails with 
+   SELinux (which is something you'd expect to see used in combination with 
+   code that's been carefully written to do things like perform pointer 
+   checking), and who knows what it'll do in combination with different 
+   approaches to ASLR.  Because of its high level of nonportability (even on 
+   the same system it can break depending on whether something like SELinux 
+   is enabled or not) it's too dangerous to enable its use */
 
 #if defined( __WIN32__ ) || defined( __WINCE__ )
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && ( size ) > 0 && \
@@ -691,10 +731,7 @@ typedef struct {
   #define isWritePtrConst( ptr, type ) \
 									( ( ptr ) != NULL && \
 									  !IsBadWritePtr( ( ptr ), sizeof( type ) ) )
-#elif defined( __UNIX__ ) && \
-	  ( defined( _AIX ) || defined( __linux__ ) || \
-		( defined( sun ) && OSVERSION >= 5 ) ) && \
-	  !defined( __PIC__ )
+#elif defined( __UNIX__ ) && 0		/* See comment above */
   extern int _etext;
 
   #define isReadPtr( ptr, size )	( ( ptr ) != NULL && \
@@ -764,224 +801,12 @@ typedef struct {
 *																			*
 ****************************************************************************/
 
-/* When we encounter an internal consistency check failure, we usually want
-   to display some sort of message telling the user that something has gone
-   catastrophically wrong, however people probably don't want klaxons going
-   off when there's a problem in production code so we only enable it in
-   debug versions.  The command-line makefile by default builds release
-   versions, so in practice the warn-the-user action is only taken under
-   Windows unless the user explicitly enables the use of assertions */
+/* Pull in the debugging function definitions and prototypes */
 
-#if defined( __WINCE__ ) && _WIN32_WCE < 400
-#if 0
-  /* Older WinCE environments don't support assert() because there's no
-     console and no other support for it in the runtime (the documentation
-	 claims there's at least an _ASSERT available, but this isn't present
-	 in many systems such as PocketPC), so we use it if it's available and
-	 otherwise kludge it using NKDbgPrintfW() */
-  #ifndef _ASSERTE
-	#ifdef NDEBUG
-	  #define _ASSERTE( x )
-	#else
-	  #define _ASSERTE( expr )	( void )( ( expr ) || ( NKDbgPrintfW( #expr ) ) )
-	#endif /* Debug vs. non-debug builds */
-  #endif /* _ASSERTE available */
-  #define assert( expr )	_ASSERTE( expr )
+#if defined( INC_ALL )
+  #include "debug.h"
 #else
-  /* Older WinCE environments don't support assert() because there's no
-     console and no other support for it in the runtime (the documentation
-	 claims there's at least an _ASSERT available, but this isn't present
-	 in many systems such as PocketPC), so we build our own assert() from
-	 DEBUGMSG().  Note that (in theory) the version check isn't reliable
-	 since we should be checking for the development environment version
-	 rather than the target OS version, however in practice compiler/SDK
-	 version == OS version unless you seriously enjoy pain, and in any case
-	 it's not really possible to differentiate between eVC++ 3.0 and 4.0 -
-	 the SHx, MIPS, and ARM compilers at least report 120{1|2} for 3.0 and
-	 1200 for 3.0, but the x86 compiler reports 1200 for both 3.0 and 4.0
-	 even though it's a different build, 0.8168 vs. 0.8807 */
-  #ifdef NDEBUG
-	#define assert( x )
-  #else
-	#define assert( x )		\
-			DEBUGMSG( !( x ), ( TEXT( "Assert failed in %s line %d: %s" ), TEXT( __FILE__ ), __LINE__, TEXT( #x ) ) )
-  #endif /* Debug vs. non-debug builds */
-#endif /* 0 */
-#else
-  #include <assert.h>
-#endif /* Systems without assert() */
-
-/* Force an assertion failure via assert( DEBUG_WARN ) */
-
-#define DEBUG_WARN				0
-
-/* Debugging printf() that sends its output to the debug output, usually
-   stdout but we use system-specific debug facilities if they're present.  
-   In addition since we sometimes need to output per-formatted strings 
-   (which may contain '%' signs interpreted by printf()) we also provide an
-   alternative that just outputs a fixed text string */
-
-#if defined( NDEBUG )
-  #define DEBUG_PRINT( x )
-  #define DEBUG_OUT( string )
-#elif defined( __WIN32__ )
-  int debugPrintf( const char *format, ... );
-
-  #define DEBUG_PRINT( x )		debugPrintf x
-  #define DEBUG_OUT( string )	OutputDebugString( string )
-#elif defined( __WINCE__ )
-  int debugPrintf( const char *format, ... );
-
-  #define DEBUG_PRINT( x )		debugPrintf x
-  #define DEBUG_OUT( string )	NKDbgPrintfW( L"%s", string )
-#elif defined( __ECOS__ )
-  #define DEBUG_PRINT( x )		diag_printf x
-  #define DEBUG_OUT( string )	diag_printf( "%s", string )
-#else
-  #include <stdio.h>			/* Needed for printf() */
-  #define DEBUG_PRINT( x )		printf x
-  #define DEBUG_OUT( string )	printf( "%s", string )
-#endif /* OS-specific diagnostic functions */
-
-/* Output an I-am-here to the debugging outout (usually stdout), useful when 
-   tracing errors in code without debug symbols available */
-
-#if defined( __GNUC__ ) || ( defined( _MSC_VER ) && VC_GE_2005( _MSC_VER ) )
-  /* Older versions of gcc don't support the current syntax */
-  #if defined( __GNUC__ ) && ( __STDC_VERSION__ < 199901L )
-	#if __GNUC__ >= 2
-	  #define __FUNCTION__	__func__ 
-	#else
-	  #define __FUNCTION__	"<unknown>"
-	#endif /* gcc 2.x or newer */
-  #endif /* gcc without __func__ support */
-
-  #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
-  #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%s:%d.\n", __FILE__, __FUNCTION__, __LINE__ ))
-  #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%s:%d, status %d.\n", __FILE__, __FUNCTION__, __LINE__, status ))
-
-  #define DEBUG_DIAG( x )	DEBUG_PRINT(( "%s:%s:%d: ", __FILE__, __FUNCTION__, __LINE__ )); \
-							DEBUG_PRINT( x ); \
-							DEBUG_PRINT(( ".\n" ))
-#else
-  #define DEBUG_ENTER()	DEBUG_PRINT(( "Enter %s:%d.\n", __FILE__, __LINE__ ))
-  #define DEBUG_IN()	DEBUG_PRINT(( "In    %s:%d.\n", __FILE__, __LINE__ ))
-  #define DEBUG_EXIT()	DEBUG_PRINT(( "Exit  %s:%d, status %d.\n", __FILE__, __LINE__, status ))
-
-  #define DEBUG_DIAG( x )	DEBUG_PRINT(( "%s:%d: ", __FILE__, __LINE__ )); \
-							DEBUG_PRINT( x ); \
-							DEBUG_PRINT(( ".\n" ))
-#endif /* Compiler-specific diagnotics */
-
-/* Dump PDU to disk or screen.  As a safeguard these only work in the Win32 
-   debug version to prevent them from being accidentally enabled in any 
-   release version.  Note that the required support functions are present 
-   for non-Windows OSes, they're just disabled at this level for safety 
-   purposes because the cl32.dll with debug options safely disabled is 
-   included with the release while there's no control over which version 
-   gets built for other releases.  If you know what you're doing then you 
-   can enable the debug-dump options by removing the __WIN32__ check below */
-
-#if defined( __WIN32__ ) && !defined( NDEBUG )
-  #define DEBUG_DUMP		debugDumpFile
-  #define DEBUG_DUMP_CERT	debugDumpFileCert
-  #define DEBUG_DUMPHEX		debugDumpHex
-  #define DEBUG_DUMPDATA	debugDumpData
-
-  STDC_NONNULL_ARG( ( 1, 2 ) ) \
-  void debugDumpFile( IN_STRING const char *fileName, 
-					  IN_BUFFER( dataLength ) const void *data, 
-					  IN_LENGTH_SHORT const int dataLength );
-  STDC_NONNULL_ARG( ( 1 ) ) \
-  void debugDumpFileCert( IN_STRING const char *fileName, 
-						  IN_HANDLE const CRYPT_CERTIFICATE iCryptCert );
-  STDC_NONNULL_ARG( ( 1, 2 ) ) \
-  void debugDumpHex( IN_STRING const char *prefixString, 
-					 IN_BUFFER( dataLength ) const void *data, 
-					 IN_LENGTH_SHORT const int dataLength );
-  STDC_NONNULL_ARG( ( 1 ) ) \
-  void debugDumpData( IN_BUFFER( dataLength ) const void *data, 
-					  IN_LENGTH_SHORT const int dataLength );
-#else
-  #define DEBUG_DUMP( name, data, length )
-  #define DEBUG_DUMP_CERT( name, data, length )
-  #define DEBUG_DUMPHEX( dumpPrefix, dumpBuf, dumpLen )
-  #define DEBUG_DUMPDATA( dumpBuf, dumpLen )
-#endif /* Win32 debug */
-
-/* Dump a trace of a double-linked list.  This has to be done as a macro 
-   because it requires in-place substitution of code */
-
-#if defined( NDEBUG )
-  #define DEBUG_DUMP_LIST( label, listHead, listTail, listType )
-#else
-  #define DEBUG_DUMP_LIST( label, listHead, listTail, listType ) \
-		{ \
-		listType *listPtr; \
-		\
-		DEBUG_PRINT(( "%s: Walking list beginning at %lX.\n", \
-					  label, ( listHead ) )); \
-		for( listPtr = ( listHead ); \
-			 listPtr != NULL; listPtr = listPtr->next ) \
-			{ \
-			DEBUG_PRINT(( "  Ptr = %lX, prev = %lX, next = %lX.\n", \
-						  listPtr, listPtr->prev, listPtr->next )); \
-			} \
-		if( ( listHead ) != NULL ) \
-			DEBUG_PRINT(( "  List tail = %lX.\n", ( listTail ) )); \
-		DEBUG_PRINT(( "Finished walking list beginning at %lX.\n", ( listHead ) )); \
-		}
-#endif /* NDEBUG */
-
-/* In order to debug memory usage, we can define CONFIG_DEBUG_MALLOC to dump
-   memory usage diagnostics to stdout (this would usually be done in the
-   makefile).  Without this, the debug malloc just becomes a standard malloc.
-   Note that crypt/osconfig.h contains its own debug-malloc() handling for
-   the OpenSSL-derived code enabled via USE_BN_DEBUG_MALLOC in osconfig.h,
-   and zlib also has its own allocation code (which isn't instrumented for
-   diagnostic purposes).
-
-   In addition in order to control on-demand allocation of buffers for
-   larger-than-normal data items, we can define CONFIG_NO_DYNALLOC to
-   disable this allocation.  This is useful in memory-constrained
-   environments where we can't afford to grab chunks of memory at random */
-
-#ifdef CONFIG_DEBUG_MALLOC
-  #undef clAlloc
-  #undef clFree
-  #define clAlloc( string, size ) \
-		  clAllocFn( __FILE__, ( string ), __LINE__, ( size ) )
-  #define clFree( string, memblock ) \
-		  clFreeFn( __FILE__, ( string ), __LINE__, ( memblock ) )
-  void *clAllocFn( const char *fileName, const char *fnName,
-				   const int lineNo, size_t size );
-  void clFreeFn( const char *fileName, const char *fnName,
-				 const int lineNo, void *memblock );
-#else
-  #define clAlloc( string, size )		malloc( size )
-  #define clFree( string, memblock )	free( memblock )
-#endif /* !CONFIG_DEBUG_MALLOC */
-#ifdef CONFIG_NO_DYNALLOC
-  #define clDynAlloc( string, size )	NULL
-#else
-  #define clDynAlloc( string, size )	clAlloc( string, size )
-#endif /* CONFIG_NO_DYNALLOC */
-
-/* To provide fault-injection testing capabilities we can have memory 
-   allocations fail after a given count, thus exercising a large number of 
-   failure code paths that are normally never taken.  The following 
-   configuration define enables this fault-malloc(), with the first call 
-   setting the allocation call at which failure occurs */
-
-#ifdef CONFIG_FAULT_MALLOC
-  #undef clAlloc
-  #undef clFree
-  #define clAlloc( string, size ) \
-		  clFaultAllocFn( __FILE__, ( string ), __LINE__, ( size ) )
-  #define clFree( string, memblock )	free( memblock )
-  void *clFaultAllocFn( const char *fileName, const char *fnName, 
-						const int lineNo, size_t size );
-  void clFaultSet( const int number );
-#endif /* CONFIG_FAULT_MALLOC */
+  #include "misc/debug.h"
+#endif /* Compiler-specific includes */
 
 #endif /* _CRYPT_DEFINED */

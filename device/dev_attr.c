@@ -211,34 +211,6 @@ int getDeviceAttribute( INOUT DEVICE_INFO *deviceInfoPtr,
 			*valuePtr = deviceInfoPtr->errorLocus;
 			return( CRYPT_OK );
 
-		case CRYPT_ATTRIBUTE_INT_ERRORCODE:
-			{
-			ERROR_INFO *errorInfo;
-
-			switch( deviceInfoPtr->type )
-				{
-				case CRYPT_DEVICE_PKCS11:
-					errorInfo = &deviceInfoPtr->devicePKCS11->errorInfo;
-					break;
-
-				case CRYPT_DEVICE_FORTEZZA:
-					errorInfo = &deviceInfoPtr->deviceFortezza->errorInfo;
-					break;
-
-				case CRYPT_DEVICE_CRYPTOAPI:
-					errorInfo = &deviceInfoPtr->deviceCryptoAPI->errorInfo;
-					break;
-
-				default:
-					*valuePtr = CRYPT_OK;
-					
-					return( CRYPT_OK );
-				}
-			*valuePtr = errorInfo->errorCode;
-
-			return( CRYPT_OK );
-			}
-
 		case CRYPT_DEVINFO_LOGGEDIN:
 			if( deviceInfoPtr->flags & DEVICE_REMOVABLE )
 				{
@@ -279,7 +251,7 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 
 	switch( attribute )
 		{
-		case CRYPT_ATTRIBUTE_INT_ERRORMESSAGE:
+		case CRYPT_ATTRIBUTE_ERRORMESSAGE:
 			{
 #ifdef USE_ERRMSGS
 			ERROR_INFO *errorInfo;
@@ -300,7 +272,7 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 
 				default:
 					return( exitErrorNotFound( deviceInfoPtr,
-									CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
+										CRYPT_ATTRIBUTE_ERRORMESSAGE ) );
 				}
 
 			if( errorInfo->errorStringLength > 0 )
@@ -310,7 +282,7 @@ int getDeviceAttributeS( INOUT DEVICE_INFO *deviceInfoPtr,
 				}
 #endif /* USE_ERRMSGS */
 			return( exitErrorNotFound( deviceInfoPtr,
-								CRYPT_ATTRIBUTE_INT_ERRORMESSAGE ) );
+									   CRYPT_ATTRIBUTE_ERRORMESSAGE ) );
 			}
 
 		case CRYPT_DEVINFO_LABEL:

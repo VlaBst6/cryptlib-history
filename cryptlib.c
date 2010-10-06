@@ -145,7 +145,7 @@ CHECK_RETVAL \
 int userManagementFunction( IN_ENUM( MANAGEMENT_ACTION ) \
 								const MANAGEMENT_ACTION_TYPE action );
 
-typedef CHECK_RETVAL \
+typedef CHECK_RETVAL_FNPTR \
 		int ( *MANAGEMENT_FUNCTION )( IN_ENUM( MANAGEMENT_ACTION ) \
 										const MANAGEMENT_ACTION_TYPE action );
 
@@ -214,8 +214,8 @@ static int dispatchManagementAction( IN_ARRAY( mgmtFunctionCount ) \
 		return( CRYPT_ERROR_PERMISSION );
 
 	/* Dispatch each management action in turn */
-	for( i = 0; mgmtFunctions[ i ] != NULL && \
-				i < mgmtFunctionCount && \
+	for( i = 0; i < mgmtFunctionCount && \
+				mgmtFunctions[ i ] != NULL && \
 				i < FAILSAFE_ITERATIONS_MED; i++ )
 		{
 		const int localStatus = mgmtFunctions[ i ]( action );
@@ -307,24 +307,38 @@ int initCryptlib( void )
 	{
 	int initLevel = 0, status;
 
+	/* Let the user know that we're in the cryptlib startup code if they're in
+	   debug mode */
+	DEBUG_PRINT(( "\n\n" ));
+	DEBUG_PRINT(( "***************************\n" ));
+	DEBUG_PRINT(( "* Beginning cryptlib init *\n" ));
+	DEBUG_PRINT(( "***************************\n" ));
+	DEBUG_PRINT(( "\n\n" ));
+
 	/* Perform any required sanity checks on the build process.  This would
 	   be caught by the self-test but sometimes people don't run this so we
 	   perform a minimal sanity check here to avoid failing in the startup
 	   self-tests that follow */
 	if( !buildSanityCheck() )
+		{
+		DEBUG_DIAG(( "Build sanity-check failed" ));
 		retIntError();
+		}
 
 	/* Initiate the kernel startup */
 	status = krnlBeginInit();
 	if( cryptStatusError( status ) )
+		{
+		DEBUG_DIAG(( "Kernel init failed" ));
 		return( status );
+		}
 
 	/* Perform OS-specific additional initialisation inside the kernel init 
 	   lock */
 	status = initSysVars();
 	if( cryptStatusError( status ) )
 		{
-		DEBUG_DIAG(( "Couldn't perform OS-specific initialisation" ));
+		DEBUG_DIAG(( "OS-specific initialisation failed" ));
 		assert( DEBUG_WARN );
 		krnlCompleteShutdown();
 		return( CRYPT_ERROR_FAILED );
@@ -413,6 +427,15 @@ int initCryptlib( void )
 
 	/* Complete the kernel startup */
 	krnlCompleteInit();
+
+	/* Let the user know that the cryptlib startup has completed 
+	   successfully if they're in debug mode */
+	DEBUG_PRINT(( "\n\n" ));
+	DEBUG_PRINT(( "***************************\n" ));
+	DEBUG_PRINT(( "* cryptlib init completed *\n" ));
+	DEBUG_PRINT(( "***************************\n" ));
+	DEBUG_PRINT(( "\n\n" ));
+
 	return( CRYPT_OK );
 	}
 

@@ -266,6 +266,11 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CERTIFICATE cryptRTCSRequest;
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+	void *fileNamePtr = filenameBuffer;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_RTCS_SERVER ) ? \
 							   TRUE : FALSE;
 	int status;
@@ -300,7 +305,12 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 			return( FALSE );
 
 		/* Add the responder private key */
-		status = getPrivateKey( &cryptPrivateKey, SERVER_PRIVKEY_FILE,
+		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 1 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		status = getPrivateKey( &cryptPrivateKey, fileNamePtr, 
 								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusOK( status ) )
 			{
@@ -353,7 +363,7 @@ static int connectRTCS( const CRYPT_SESSION_TYPE sessionType,
 	else
 		{
 		CRYPT_KEYSET cryptKeyset;
-		CRYPT_CERTIFICATE cryptCert;
+		CRYPT_CERTIFICATE cryptCert = DUMMY_INIT;
 
 		/* Get the certificate whose status we're checking */
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
@@ -623,6 +633,11 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CERTIFICATE cryptOCSPRequest;
+	char filenameBuffer[ FILENAME_BUFFER_SIZE ];
+#ifdef UNICODE_STRINGS
+	wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+	void *fileNamePtr = filenameBuffer;
 	const BOOLEAN isServer = ( sessionType == CRYPT_SESSION_OCSP_SERVER ) ? \
 							   TRUE : FALSE;
 	int status;
@@ -657,7 +672,12 @@ static int connectOCSP( const CRYPT_SESSION_TYPE sessionType,
 			return( FALSE );
 
 		/* Add the responder private key */
-		status = getPrivateKey( &cryptPrivateKey, SERVER_PRIVKEY_FILE,
+		filenameFromTemplate( filenameBuffer, SERVER_PRIVKEY_FILE_TEMPLATE, 1 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		status = getPrivateKey( &cryptPrivateKey, fileNamePtr,
 								USER_PRIVKEY_LABEL, TEST_PRIVKEY_PASSWORD );
 		if( cryptStatusOK( status ) )
 			{

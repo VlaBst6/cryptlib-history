@@ -313,6 +313,68 @@ static const CERT_DATA FAR_BSS cmpRsaCaRequestData[] = {		/* For ir-CA */
 
 /* Create various CMP objects */
 
+static int createCmpNewKeyRequest( const CERT_DATA *requestData,
+								   const CRYPT_ALGO_TYPE cryptAlgo,
+								   const BOOLEAN useFixedKey,
+								   const CRYPT_KEYSET cryptKeyset )
+	{
+	CRYPT_CERTIFICATE cryptRequest;
+	CRYPT_CONTEXT cryptContext;
+	int status;
+
+	/* It's a new request, generate a private key and create a self-signed 
+	   request */
+	if( useFixedKey )
+		{
+		/* Use a fixed private key, for testing purposes */
+		if( cryptAlgo == CRYPT_ALGO_RSA )
+			loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
+							   USER_PRIVKEY_LABEL, FALSE, FALSE );
+		else
+			loadDSAContextsEx( CRYPT_UNUSED, &cryptContext, NULL,
+							   USER_PRIVKEY_LABEL, NULL );
+		status = CRYPT_OK;
+		}
+	else
+		{
+		status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, 
+									 cryptAlgo );
+		if( cryptStatusError( status ) )
+			return( FALSE );
+		cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
+								 USER_PRIVKEY_LABEL,
+								 paramStrlen( USER_PRIVKEY_LABEL ) );
+		status = cryptGenerateKey( cryptContext );
+		}
+	if( cryptStatusOK( status ) )
+		status = cryptCreateCert( &cryptRequest, CRYPT_UNUSED,
+								  CRYPT_CERTTYPE_REQUEST_CERT );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptRequest,
+					CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
+	if( cryptStatusOK( status ) && \
+		!addCertFields( cryptRequest, requestData, __LINE__ ) )
+		status = CRYPT_ERROR_FAILED;
+	if( cryptStatusOK( status ) )
+		status = cryptSignCert( cryptRequest, cryptContext );
+	if( cryptKeyset != CRYPT_UNUSED )
+		{
+		if( cryptStatusError( \
+				cryptAddPrivateKey( cryptKeyset, cryptContext,
+									TEST_PRIVKEY_PASSWORD ) ) )
+			return( FALSE );
+		}
+	cryptDestroyContext( cryptContext );
+	if( cryptStatusError( status ) )
+		{
+		printf( "Creation of CMP request failed with error code %d, line "
+				"%d.\n", status, __LINE__ );
+		return( FALSE );
+		}
+
+	return( cryptRequest );
+	}
+
 static int createCmpRequest( const CERT_DATA *requestData,
 							 const CRYPT_CONTEXT privateKey,
 							 const CRYPT_ALGO_TYPE cryptAlgo,
@@ -320,91 +382,42 @@ static int createCmpRequest( const CERT_DATA *requestData,
 							 const CRYPT_KEYSET cryptKeyset )
 	{
 	CRYPT_CERTIFICATE cryptRequest;
-	int status;
+	time_t startTime;
+	int dummy, status;
 
-	/* Create the CMP (CRMF) request */
-	if( privateKey != CRYPT_UNUSED )
-		{
-		time_t startTime;
-		int dummy;
+	/* If there's no existing private key available, generate a new key 
+	   along with the request */
+	if( privateKey == CRYPT_UNUSED )
+		return( createCmpNewKeyRequest( requestData, cryptAlgo, useFixedKey, 
+										cryptKeyset ) );
 
-		/* If we're updating an existing certificate we have to vary 
-		   something in the request to make sure that the result doesn't 
-		   duplicate an existing certificate, to do this we fiddle the start 
-		   time */
-		status = cryptGetAttributeString( privateKey, CRYPT_CERTINFO_VALIDFROM,
-										  &startTime, &dummy );
-		if( cryptStatusError( status ) )
-			return( FALSE );
-		startTime++;
+	/* We're updating an existing certificate we have to vary something in 
+	   the request to make sure that the result doesn't duplicate an existing 
+	   certificate, to do this we fiddle the start time */
+	status = cryptGetAttributeString( privateKey, CRYPT_CERTINFO_VALIDFROM,
+									  &startTime, &dummy );
+	if( cryptStatusError( status ) )
+		return( FALSE );
+	startTime++;
 
-		/* It's an update of existing information, sign the request with the
-		   given private key */
-		status = cryptCreateCert( &cryptRequest, CRYPT_UNUSED,
-								  CRYPT_CERTTYPE_REQUEST_CERT );
-		if( cryptStatusOK( status ) )
-			status = cryptSetAttribute( cryptRequest,
+	/* It's an update of existing information, sign the request with the 
+	   given private key */
+	status = cryptCreateCert( &cryptRequest, CRYPT_UNUSED,
+							  CRYPT_CERTTYPE_REQUEST_CERT );
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttribute( cryptRequest,
 						CRYPT_CERTINFO_CERTIFICATE, privateKey );
-		if( cryptStatusOK( status ) )
-			status = cryptSetAttributeString( cryptRequest,
+	if( cryptStatusOK( status ) )
+		status = cryptSetAttributeString( cryptRequest,
 						CRYPT_CERTINFO_VALIDFROM, &startTime, sizeof( time_t ) );
-		if( cryptStatusOK( status ) )
-			status = cryptSignCert( cryptRequest, privateKey );
-		if( cryptKeyset != CRYPT_UNUSED )
-			{
-			if( cryptStatusError( \
-					cryptAddPrivateKey( cryptKeyset, privateKey,
-										TEST_PRIVKEY_PASSWORD ) ) )
-				return( FALSE );
-			}
-		}
-	else
+	if( cryptStatusOK( status ) )
+		status = cryptSignCert( cryptRequest, privateKey );
+	if( cryptKeyset != CRYPT_UNUSED )
 		{
-		CRYPT_CONTEXT cryptContext;
-
-		/* It's a new request, generate a private key and create a self-
-		   signed request */
-		if( useFixedKey )
-			{
-			/* Use a fixed private key, for testing purposes */
-			if( cryptAlgo == CRYPT_ALGO_RSA )
-				loadRSAContextsEx( CRYPT_UNUSED, NULL, &cryptContext, NULL,
-								   USER_PRIVKEY_LABEL, FALSE, FALSE );
-			else
-				loadDSAContextsEx( CRYPT_UNUSED, &cryptContext, NULL,
-								   USER_PRIVKEY_LABEL, NULL );
-			status = CRYPT_OK;
-			}
-		else
-			{
-			status = cryptCreateContext( &cryptContext, CRYPT_UNUSED, 
-										 cryptAlgo );
-			if( cryptStatusError( status ) )
-				return( FALSE );
-			cryptSetAttributeString( cryptContext, CRYPT_CTXINFO_LABEL,
-									 USER_PRIVKEY_LABEL,
-									 paramStrlen( USER_PRIVKEY_LABEL ) );
-			status = cryptGenerateKey( cryptContext );
-			}
-		if( cryptStatusOK( status ) )
-			status = cryptCreateCert( &cryptRequest, CRYPT_UNUSED,
-									  CRYPT_CERTTYPE_REQUEST_CERT );
-		if( cryptStatusOK( status ) )
-			status = cryptSetAttribute( cryptRequest,
-						CRYPT_CERTINFO_SUBJECTPUBLICKEYINFO, cryptContext );
-		if( cryptStatusOK( status ) && \
-			!addCertFields( cryptRequest, requestData, __LINE__ ) )
-			status = CRYPT_ERROR_FAILED;
-		if( cryptStatusOK( status ) )
-			status = cryptSignCert( cryptRequest, cryptContext );
-		if( cryptKeyset != CRYPT_UNUSED )
-			{
-			if( cryptStatusError( \
-					cryptAddPrivateKey( cryptKeyset, cryptContext,
-										TEST_PRIVKEY_PASSWORD ) ) )
-				return( FALSE );
-			}
-		cryptDestroyContext( cryptContext );
+		if( cryptStatusError( \
+				cryptAddPrivateKey( cryptKeyset, privateKey,
+									TEST_PRIVKEY_PASSWORD ) ) )
+			return( FALSE );
 		}
 	if( cryptStatusError( status ) )
 		{
@@ -675,8 +688,9 @@ static int requestCert( const char *description, const CA_INFO *caInfoPtr,
 			   request, so we add a special-case check for this and don't 
 			   treat it as a fatal error */
 			status = cryptGetAttributeString( cryptSession,
-										CRYPT_ATTRIBUTE_INT_ERRORMESSAGE,
-										errorMessage, &errorMessageLength );
+											  CRYPT_ATTRIBUTE_ERRORMESSAGE,
+											  errorMessage, 
+											  &errorMessageLength );
 			cryptDestroySession( cryptSession );
 			if( cryptStatusOK( status ) && \
 				errorMessageLength > 13 && 
@@ -1273,7 +1287,9 @@ static int connectCMPFail( const int count )
 	static const CERT_DATA FAR_BSS cmpFailRequestData2[] = {
 		/* Fails when tested against the full-DN PKI user because there's 
 		   already an email address present in the PKI user data */
-//		{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
+#if 0
+		{ CRYPT_CERTINFO_RFC822NAME, IS_STRING, 0, TEXT( "dave@wetas-r-us.com" ) },
+#endif /* 0 */
 		{ CRYPT_CERTINFO_UNIFORMRESOURCEIDENTIFIER, IS_STRING, 0, TEXT( "http://www.wetas-r-us.com" ) },
 
 		{ CRYPT_ATTRIBUTE_NONE, IS_VOID }
@@ -1511,7 +1527,7 @@ static int connectPNPPKI( const BOOLEAN isCaUser, const BOOLEAN useDevice,
 	   allow it to be used with the standard PnP PKI test */
 	if( isCaUser )
 		{
-		CRYPT_CONTEXT cryptKey;
+		CRYPT_CONTEXT cryptKey = DUMMY_INIT;
 
 		/* Get the newly-issued key */
 		status = cryptKeysetOpen( &cryptKeyset, CRYPT_UNUSED,
@@ -1613,12 +1629,12 @@ static int cmpServerSingleIteration( const CRYPT_CONTEXT cryptPrivateKey,
 	return( TRUE );
 	}
 
-int testSessionCMPServer( void )
+static int cmpServer( void )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CONTEXT cryptCAKey;
 	CRYPT_KEYSET cryptCertStore;
-	int caCertTrusted, i, status;
+	int i, status;
 
 	/* Acquire the init mutex */
 	acquireMutex();
@@ -1645,11 +1661,6 @@ int testSessionCMPServer( void )
 						cmpPkiUserPartialDNData, cmpPkiUserCaData, 
 						"CMP" ) )
 		return( FALSE );
-
-	/* Make the CA key trusted for PKIBoot functionality */
-	cryptGetAttribute( cryptCAKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT,
-					   &caCertTrusted );
-	cryptSetAttribute( cryptCAKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
 
 	/* Tell the client that we're ready to go */
 	releaseMutex();
@@ -1722,15 +1733,24 @@ int testSessionCMPServer( void )
 		}
 
 	/* Clean up */
-	if( !caCertTrusted )
-		cryptSetAttribute( cryptCAKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT, 0 );
 	cryptKeysetClose( cryptCertStore );
 	cryptDestroyContext( cryptCAKey );
 	puts( "SVR: CMP session succeeded.\n" );
 	return( TRUE );
 	}
 
-int testSessionCMPServerFail( void )
+int testSessionCMPServer( void )
+	{
+	int status;
+
+	createMutex();
+	status = cmpServer();
+	destroyMutex();
+
+	return( status );
+	}
+
+static int cmpServerFail( void )
 	{
 	CRYPT_CONTEXT cryptCAKey;
 	CRYPT_KEYSET cryptCertStore;
@@ -1782,7 +1802,6 @@ static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
 	{
 	CRYPT_CONTEXT cryptCAKey;
 	CRYPT_KEYSET cryptCertStore;
-	int caCertTrusted;
 
 	/* Acquire the PNP PKI init mutex */
 	acquireMutex();
@@ -1812,11 +1831,6 @@ static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
 			return( FALSE );
 		}
 
-	/* Make the CA key trusted for PKIBoot functionality */
-	cryptGetAttribute( cryptCAKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT,
-					   &caCertTrusted );
-	cryptSetAttribute( cryptCAKey, CRYPT_CERTINFO_TRUSTED_IMPLICIT, 1 );
-
 	/* Tell the client that we're ready to go */
 	releaseMutex();
 
@@ -1825,11 +1839,6 @@ static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
 		return( FALSE );
 
 	/* Clean up */
-	if( !caCertTrusted )
-		{
-		cryptSetAttribute( cryptCAKey,
-						   CRYPT_CERTINFO_TRUSTED_IMPLICIT, 0 );
-		}
 	cryptKeysetClose( cryptCertStore );
 	cryptDestroyContext( cryptCAKey );
 
@@ -1839,7 +1848,7 @@ static int pnppkiServer( const BOOLEAN pkiBootOnly, const BOOLEAN isCaUser,
 
 unsigned __stdcall cmpServerThread( void *dummy )
 	{
-	testSessionCMPServer();
+	cmpServer();
 	_endthreadex( 0 );
 	return( 0 );
 	}
@@ -2056,7 +2065,7 @@ int testSessionPNPPKIIntermedCAClientServer( void )
 
 unsigned __stdcall cmpFailServerThread( void *dummy )
 	{
-	testSessionCMPServerFail();
+	cmpServerFail();
 	_endthreadex( 0 );
 	return( 0 );
 	}

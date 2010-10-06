@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib Prime Generation/Checking Routines				*
-*						Copyright Peter Gutmann 1997-2007					*
+*						Copyright Peter Gutmann 1997-2009					*
 *																			*
 ****************************************************************************/
 
@@ -200,8 +200,8 @@ BOOLEAN primeSieve( const BIGNUM *candidate )
 		{
 		const BN_ULONG candidateWord = BN_get_word( candidate );
 
-		for( i = 1; primes[ i ] < candidateWord && \
-					i < FAST_SIEVE_NUMPRIMES; i++ )
+		for( i = 1; i < FAST_SIEVE_NUMPRIMES && \
+					primes[ i ] < candidateWord; i++ )
 			{
 			if( candidateWord % primes[ i ] == 0 )
 				return( FALSE );
@@ -723,7 +723,7 @@ int generatePrime( INOUT PKC_INFO *pkcInfo,
    chance that it'll be swapped unless the system is already thrashing */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int generateBignum( INOUT BIGNUM *bn, 
+int generateBignum( OUT BIGNUM *bn, 
 					IN_LENGTH_SHORT_MIN( 120 ) const int noBits, 
 					IN_BYTE const int high, IN_BYTE const int low )
 	{

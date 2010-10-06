@@ -286,6 +286,7 @@ static void testDataProcessing( void )
 
 	for( cryptAlgo = CRYPT_ALGO_FIRST_CONVENTIONAL;
 		 cryptAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL; cryptAlgo++ )
+		{
 		if( cryptStatusOK( cryptQueryCapability( cryptAlgo,
 												 &cryptQueryInfo ) ) )
 			{
@@ -315,6 +316,14 @@ static void testDataProcessing( void )
 							"status %d.\n", cryptAlgo, status );
 					errorCount++;
 					}
+				status = testProcessing( cryptAlgo, CRYPT_MODE_GCM,
+										 cryptQueryInfo );
+				if( cryptStatusError( status ) )
+					{
+					printf( "\nAlgorithm %d GCM mode processing failed with "
+							"status %d.\n", cryptAlgo, status );
+					errorCount++;
+					}
 				}
 			status = testProcessing( cryptAlgo, CRYPT_MODE_OFB,
 									 cryptQueryInfo );
@@ -325,8 +334,10 @@ static void testDataProcessing( void )
 				errorCount++;
 				}
 			}
+		}
 	for( cryptAlgo = CRYPT_ALGO_FIRST_HASH;
 		 cryptAlgo <= CRYPT_ALGO_LAST_HASH; cryptAlgo++ )
+		{
 		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, &cryptQueryInfo ) ) )
 			{
 			status = testProcessing( cryptAlgo, CRYPT_UNUSED,
@@ -338,8 +349,10 @@ static void testDataProcessing( void )
 				errorCount++;
 				}
 			}
+		}
 	for( cryptAlgo = CRYPT_ALGO_FIRST_MAC;
 		 cryptAlgo <= CRYPT_ALGO_LAST_MAC; cryptAlgo++ )
+		{
 		if( cryptStatusOK( cryptQueryCapability( cryptAlgo, &cryptQueryInfo ) ) )
 			{
 			status = testProcessing( cryptAlgo, CRYPT_UNUSED,
@@ -351,6 +364,7 @@ static void testDataProcessing( void )
 				errorCount++;
 				}
 			}
+		}
 	if( errorCount )
 		printf( "%d errors detected.\n", errorCount );
 	}
@@ -386,24 +400,32 @@ static void testKernelChecks( void )
 
 	printf( "Running kernel smoke test:\n  Contexts" );
 	for( subType = 0; subType < 500; subType++ )
+		{
 		if( cryptStatusOK( cryptCreateContext( &cryptHandle, CRYPT_UNUSED,
 											   subType ) ) )
 			smokeTestAttributes( cryptHandle );
+		}
 	printf( "\n  Certs" );
 	for( subType = 0; subType < 500; subType++ )
+		{
 		if( cryptStatusOK( cryptCreateCert( &cryptHandle, CRYPT_UNUSED,
 											subType ) ) )
 			smokeTestAttributes( cryptHandle );
+		}
 	printf( "\n  Envelopes" );
 	for( subType = 0; subType < 500; subType++ )
+		{
 		if( cryptStatusOK( cryptCreateEnvelope( &cryptHandle, CRYPT_UNUSED,
 												subType ) ) )
 			smokeTestAttributes( cryptHandle );
+		}
 	printf( "\n  Sessions" );
 	for( subType = 0; subType < 500; subType++ )
+		{
 		if( cryptStatusOK( cryptCreateSession( &cryptHandle, CRYPT_UNUSED,
 											   subType ) ) )
 			smokeTestAttributes( cryptHandle );
+		}
 	printf( "\n" );
 	}
 

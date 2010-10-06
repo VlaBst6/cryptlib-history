@@ -11,8 +11,8 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 /* Oddball OIDs that may be used to wrap certificates */
@@ -41,11 +41,11 @@
 								UTCTime | GeneralizedTime
 
 	Attribute cert:	SEQUENCE { SEQUENCE {
-							INTEGER OPTIONAL,
-						[1]	Name,
-							Name,
-							AlgorithmID,
-							INTEGER
+							INTEGER,
+							SEQUENCE {
+								[1]	Name,
+								...
+								}
 
 	CRL:			SEQUENCE { SEQUENCE {
 							INTEGER OPTIONAL,
@@ -96,14 +96,12 @@
    by all objects.  In addition we can remove the [0] ... OPTIONAL and
    [1] ... OPTIONAL, which isn't useful in distinguishing anything.  Since 
    the standard OCSP response can also have [2] in place of the [1] and 
-   leaving it in isn't notably useful we strip this as well.  Note that 
-   attribute certificates can be left in one of two states depending on 
-   whether the initial INTEGER is present or not and PKI user information is 
-   also left in one of two states depending on whether there's a DN present.  
-   Rather than parse down into the rest of the PKI user object (the next 
-   element is an AlgorithmID that clashes with a certificate and CRL) we use 
-   the presence of a zero-length sequence to identify a PKI user object with 
-   an absent DN.  This leaves the following,
+   leaving it in isn't notably useful we strip this as well.  Note that PKI 
+   user information can be left in one of two states depending on whether 
+   there's a DN present.  Rather than parse down into the rest of the PKI 
+   user object (the next element is an AlgorithmID that clashes with a 
+   certificate and CRL) we use the presence of a zero-length sequence to 
+   identify a PKI user object with an absent DN.  This leaves the following:
 
 	Cert:					INTEGER,
 							AlgorithmID,
@@ -111,11 +109,11 @@
 							SEQUENCE {			-- Validity
 								UTCTime | GeneralizedTime
 
-	Attribute cert:			INTEGER OPTIONAL,
-						[1]	Name,
-							Name,					Name,
-							AlgorithmID,			AlgorithmID,
-							INTEGER					INTEGER
+	Attribute cert:			INTEGER,
+							SEQUENCE {
+								[1]	Name,
+								...
+								}
 
 	CRL:					INTEGER OPTIONAL,
 							AlgorithmID,
@@ -156,10 +154,10 @@
 							SEQUENCE {			-- Validity
 								UTCTime | GeneralizedTime
 
-	Attribute cert:		[1]	Name,
-							Name,					Name,
-							AlgorithmID,			AlgorithmID,
-							INTEGER					INTEGER
+	Attribute cert:			SEQUENCE {
+								[1]	Name,		-- Constructed tag
+								...
+								}
 
 	CRL:					AlgorithmID,
 							Name,
@@ -189,8 +187,8 @@
 
 	PKI user:				SET ...				-- RDN
 
-   We can now immediately identify the first attribute certificate variant 
-   by the [1] ..., a CRMF revocation request by the not-stripped [0] or [1] 
+   We can now immediately identify the attribute certificate by the [1] ...
+   constructed tag, a CRMF revocation request by the not-stripped [0] or [1] 
    primitive tags (implicitly tagged INTEGER) or [3]...[9] ..., an OCSP 
    response by the GeneralizedTime, an RTCS response by the OCTET STRING, 
    and the alternative PKI user variant by the SET ..., leaving:
@@ -203,10 +201,6 @@
 	CRL:					AlgorithmID,
 							Name,
 							UTCTime | GeneralizedTime
-
-	Attribute cert:			Name,
-							AlgorithmID,
-							INTEGER
 
 	Cert request:			Name,
 							SEQUENCE {			-- SubjectPublicKeyInfo
@@ -223,8 +217,8 @@
 								OCTET STRING	-- certHash
 
 
-   Expanding the complex types for certificate, attribute certificate, CRL, 
-   and certificate request, we get:
+   Expanding the complex types for certificate, CRL, and certificate 
+   request, we get:
 
 	Cert:					SEQUENCE {			-- AlgorithmID
 								OBJECT IDENTIFIER,
@@ -238,15 +232,6 @@
 								...
 							Name,
 							UTCTime | GeneralizedTime
-
-	Attribute cert:			SEQUENCE {			-- Name
-								SET {
-									...
-								...
-							SEQUENCE {			-- AlgorithmID
-								OBJECT IDENTIFIER,
-								...
-							INTEGER
 
 	Cert request:			SEQUENCE {			-- Name
 								SET {
@@ -278,14 +263,6 @@
 							Name,
 							UTCTime | GeneralizedTime
 
-	Attribute cert:				SET {
-									...
-								...
-							SEQUENCE {			-- AlgorithmID
-								OBJECT IDENTIFIER,
-								...
-							INTEGER
-
 	Cert request:				SET {
 									...
 								...
@@ -302,9 +279,8 @@
 
    which allows us to distinguish certificates and CRLs (the two are 
    themselves distinguished by what follows the second Name), certificate  
-   requests, the second attribute certificate variant (the two are also 
-   distinguished by what follows the Name), and RTCS requests.  What's left 
-   now are the tricky ones, the other request and response types:
+   requests, and RTCS requests.  What's left now are the tricky ones, the 
+   other request and response types:
 
 	CRMF request:			[3] ... [9]
 
@@ -321,6 +297,8 @@
    contxt of RTCS or OCSP transactions, however we make an exception for 
    CRMF certification requests and OCSP responses because they're used in 
    the self-test */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -654,19 +632,13 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		}
 #endif /* 0 */
 
-	/* If we've hit a [1] it's an attribute certificate, if we've hit a
-	   GeneralizedTime it's an OCSP response, if we've hit a SET it's PKI
-	   user information, and if we've hit a [0] or [1] primitive tag 
-	   (implicitly tagged INTEGER) or [3]...[9] it's a CRMF revocation 
-	   request */
+	/* If we've hit a GeneralizedTime it's an OCSP response, if we've hit 
+	   a SET it's PKI user information, and if we've hit a [0] or [1] 
+	   primitive tag (implicitly tagged INTEGER) or [3]...[9] it's a CRMF 
+	   revocation request */
 	tag = peekTag( stream );
 	if( cryptStatusError( tag ) )
 		return( tag );
-	if( tag == MAKE_CTAG( 1 ) )
-		{
-		*objectType = CRYPT_CERTTYPE_ATTRIBUTE_CERT;
-		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
-		}
 	if( tag == BER_TIME_GENERALIZED )
 		{
 		*objectType = CRYPT_CERTTYPE_OCSP_RESPONSE;
@@ -694,9 +666,9 @@ int getCertObjectInfo( INOUT STREAM *stream,
 
 	/* Read the next SEQUENCE.  If it's followed by an OID it's the 
 	   AlgorithmIdentifier in a certificate or CRL, if it's followed by a 
-	   SET it's the Name in a certificate request or attribute certificate,
-	   and if it's followed by a tag in the range [0]...[9] it's a horror 
-	   from CRMF */
+	   SET it's the Name in a certificate request, if it's followed by a
+	   [1] constructed tag it's an attribute certificate, and if it's 
+	   followed by a tag in the range [0]...[9] it's a horror from CRMF */
 	status = readSequence( stream, &length );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -739,6 +711,11 @@ int getCertObjectInfo( INOUT STREAM *stream,
 		return( isLongData ? CRYPT_ERROR_OVERFLOW : CRYPT_OK );
 		}
 #endif /* 0 */
+	if( tag == MAKE_CTAG( 1 ) )
+		{
+		*objectType = CRYPT_CERTTYPE_ATTRIBUTE_CERT;
+		return( CRYPT_OK );
+		}
 	if( tag == MAKE_CTAG_PRIMITIVE( 0 ) || \
 		tag == MAKE_CTAG_PRIMITIVE( 1 ) || \
 		( tag >= MAKE_CTAG( 2 ) && tag <= MAKE_CTAG( 9 ) ) )
@@ -784,3 +761,4 @@ int getCertObjectInfo( INOUT STREAM *stream,
 	/* It's nothing identifiable */
 	return( CRYPT_ERROR_BADDATA );
 	}
+#endif /* USE_CERTIFICATES */

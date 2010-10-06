@@ -302,7 +302,8 @@ static int SOCKET_API my_getaddrinfo( IN_STRING const char *nodename,
 	if( pHostent == NULL ) 
 		return( -1 );
 	ENSURES( pHostent->h_length == IP_ADDR_SIZE );
-	for( i = 0; pHostent->h_addr_list[ i ] != NULL && i < IP_ADDR_COUNT; i++ )
+	for( i = 0; i < IP_ADDR_COUNT && \
+				pHostent->h_addr_list[ i ] != NULL; i++ )
 		{
 		int status;
 
@@ -406,11 +407,11 @@ static int SOCKET_API my_getnameinfo( IN_BUFFER( salen ) \
 
 /* Get a host's IP address */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getAddressInfo( INOUT NET_STREAM_INFO *netStream, 
 					OUT_PTR struct addrinfo **addrInfoPtrPtr,
-					IN_BUFFER( nameLen ) const char *name, 
-					IN_LENGTH_DNS const int nameLen, 
+					IN_BUFFER_OPT( nameLen ) const char *name, 
+					IN_LENGTH_Z const int nameLen, 
 					IN_PORT const int port, const BOOLEAN isServer )
 	{
 	struct addrinfo hints;
@@ -424,7 +425,8 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 	REQUIRES( isServer || \
 			  ( !isServer && name != NULL ) );
 	REQUIRES( ( name == NULL && nameLen == 0 ) || \
-			  ( nameLen > 0 && nameLen < MAX_DNS_SIZE ) );
+			  ( name != NULL && \
+				nameLen > 0 && nameLen < MAX_DNS_SIZE ) );
 
 	/* Convert the name and port into the null-terminated text-string format 
 	   required by getaddrinfo().  The reason why the port is given as a 
@@ -495,6 +497,17 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 	   which is how it should have behaved in the first place).
 	   Unfortunately this flag isn't very widely supported yet, so it usually
 	   ends up being no-op'd out by the auto-config.
+	   
+	   In addition under Windows Vista/Windows 7 there are always IPv6 
+	   addresses in use by a bunch of Windows services that simultaneously 
+	   listen on IPv4 and IPv6 addresses, so that things regress back to the 
+	   pre-AI_ADDRCONFIG behaviour, although there seems to be some 
+	   optimisation in place to prevent the DNS-lookup issues from coming 
+	   back as well.  Unfortunately this also means that an attempt to look 
+	   up an address like "localhost" for a server-side socket will 
+	   preferentially return an IPv6 address [::1] rather than an IPv4 
+	   address 127.0.0.1, which works if the client also gets a IPv6 address 
+	   but not if it's expecting the more usual IPv4 one.
 
 	   Bounds Checker 6.x may crash in the getaddrinfo() call if maximum 
 	   checking is enabled.  To fix this, set the checking level to normal 
@@ -508,10 +521,46 @@ int getAddressInfo( INOUT NET_STREAM_INFO *netStream,
 		   any interface */
 		hints.ai_flags |= AI_PASSIVE;
 		}
+#if 1
 	hints.ai_family = PF_UNSPEC;
+#else
+	BOOLEAN forceIPv4 = FALSE;
+	int value;
+
+	status = krnlSendMessage( certInfoPtr->ownerHandle,
+							  IMESSAGE_GETATTRIBUTE, &value,
+							  CRYPT_OPTION_OPTION_PREFERIPV4 );
+	if( cryptStatusOK( status ) && value )
+		{
+		/* Override any potential defaulting to IPv6 by the local system 
+		   to force the use of IPv4, which is going to be far more probable 
+		   than IPv6 for the foreseeable future */
+		hints.ai_family = PF_INET;
+		forceIPv4 = TRUE;
+		}
+	else
+		{
+		/* Just use whatever the local system gives us */
+		hints.ai_family = PF_UNSPEC;
+		}
+#endif /* 1 */
 	hints.ai_socktype = SOCK_STREAM;
 	if( getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr ) )
+		{
+#if 0
+		if( !forceIPv4 )
+			return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
+
+		/* We overrode the protocol-type selection, which may have been the 
+		   cause of the failure, try again with whatever we can get rather 
+		   than forcing IPv4 */
+		hints.ai_family = PF_UNSPEC;
+		if( getaddrinfo( name, portBuffer, &hints, addrInfoPtrPtr ) )
+			return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
+#else
 		return( getHostError( netStream, CRYPT_ERROR_OPEN ) );
+#endif /* 0 */
+		}
 	return( CRYPT_OK );
 	}
 

@@ -11,9 +11,11 @@
   #include "asn1_ext.h"
 #else
   #include "cert/cert.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
 #endif /* Compiler-specific includes */
+
+#ifdef USE_CERTIFICATES
 
 /****************************************************************************
 *																			*
@@ -199,6 +201,7 @@ int deleteCertComponent( INOUT CERT_INFO *certInfoPtr,
 		restoreSelectionState( selectionState, certInfoPtr );
 		if( cryptStatusError( status ))
 			return( status );
+		ENSURES( attributePtr != NULL );
 
 		/* Delete the field within the GeneralName */
 		if( deleteAttributeField( &certInfoPtr->attributes,
@@ -305,6 +308,7 @@ int deleteCertComponent( INOUT CERT_INFO *certInfoPtr,
 			deleteDN( &certInfoPtr->subjectName );
 			return( CRYPT_OK );
 
+#ifdef USE_CERTREV
 		case CRYPT_CERTINFO_REVOCATIONDATE:
 			{
 			time_t *revocationTimePtr = ( time_t * ) \
@@ -315,7 +319,9 @@ int deleteCertComponent( INOUT CERT_INFO *certInfoPtr,
 			*revocationTimePtr = 0;
 			return( CRYPT_OK );
 			}
+#endif /* USE_CERTREV */
 		}
 
 	retIntError();
 	}
+#endif /* USE_CERTIFICATES */

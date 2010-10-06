@@ -16,7 +16,7 @@
   #include "context/keygen.h"
 #endif /* Compiler-specific includes */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /****************************************************************************
 *																			*
@@ -72,13 +72,13 @@ static int enableSidechannelProtection( INOUT PKC_INFO *pkcInfo,
 
 typedef struct {
 	CRYPT_ECCCURVE_TYPE paramType;
-	const int curveSize;
+	const int curveSizeBits;
 	const BYTE *p, *a, *b, *gx, *gy, *n, *h;
 	} ECC_DOMAIN_PARAMS;
 
 static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 	/* NIST P-192, X9.62 p192r1, SECG p192r1 */
-	{ CRYPT_ECCCURVE_P192, bitsToBytes( 192 ),
+	{ CRYPT_ECCCURVE_P192, 192,
 	  MKDATA( "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ),
@@ -100,7 +100,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 	  MKDATA( "\x01" ) },
 #if 0
 	/* X9.62 P192v2 */
-	{ CRYPT_ECCCURVE_P192v2, bitsToBytes( 192 ),
+	{ CRYPT_ECCCURVE_P192v2, 192,
 	  MKDATA( "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ),
@@ -120,7 +120,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 			  "\xFF\xFF\xFF\xFE\x5F\xB1\xA7\x24" \
 			  "\xDC\x80\x41\x86\x48\xD8\xDD\x31" ) },
 	/* X9.62 P192v3 */
-	{ CRYPT_ECCCURVE_P192v3, bitsToBytes( 192 ),
+	{ CRYPT_ECCCURVE_P192v3, 192,
 	  MKDATA( "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" ),
@@ -142,7 +142,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 #endif /* 0 */
 
 	/* NIST P-224, X9.62 P224r1, SECG p224r1 */
-	{ CRYPT_ECCCURVE_P224, bitsToBytes( 224 ),
+	{ CRYPT_ECCCURVE_P224, 224,
 	  MKDATA( "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\x00\x00\x00\x00\x00\x00\x00\x00" \
@@ -170,7 +170,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 	  MKDATA( "\x01" ) },
 #if 0
 	/* X9.62 P239v1 */
-	{ CRYPT_ECCCURVE_P239, bitsToBytes( 239 ),
+	{ CRYPT_ECCCURVE_P239, 239,
 	  MKDATA( "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\x7F\xFF\xFF\xFF" \
 			  "\xFF\xFF\x80\x00\x00\x00\x00\x00" \
@@ -196,7 +196,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 			  "\x5E\x9A\x9F\x5D\x90\x71\xFB\xD1" \
 			  "\x52\x26\x88\x90\x9D\x0B" ) },
 	/* X9.62 P239v2 */
-	{ CRYPT_ECCCURVE_P239v2, bitsToBytes( 239 ),
+	{ CRYPT_ECCCURVE_P239v2, 239,
 	  MKDATA( "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\x7F\xFF\xFF\xFF" \
 			  "\xFF\xFF\x80\x00\x00\x00\x00\x00" \
@@ -222,7 +222,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 			  "\xA7\xE8\x59\x43\x77\xD4\x14\xC0" \
 			  "\x38\x21\xBC\x58\x20\x63" ) },
 	/* X9.62 P239v3 */
-	{ CRYPT_ECCCURVE_P239v3, bitsToBytes( 239 ),
+	{ CRYPT_ECCCURVE_P239v3, 239,
 	  MKDATA( "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\x7F\xFF\xFF\xFF" \
 			  "\xFF\xFF\x80\x00\x00\x00\x00\x00" \
@@ -250,7 +250,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 #endif /* 0 */
 
 	/* NIST P-256, X9.62 p256r1, SECG p256r1 */
-	{ CRYPT_ECCCURVE_P256, bitsToBytes( 256 ),
+	{ CRYPT_ECCCURVE_P256, 256,
 	  MKDATA( "\xFF\xFF\xFF\xFF\x00\x00\x00\x01" \
 			  "\x00\x00\x00\x00\x00\x00\x00\x00" \
 			  "\x00\x00\x00\x00\xFF\xFF\xFF\xFF" \
@@ -278,7 +278,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 	  MKDATA( "\x01" ) },
 
 	/* NIST P-384, SECG p384r1 */
-	{ CRYPT_ECCCURVE_P384, bitsToBytes( 384 ),
+	{ CRYPT_ECCCURVE_P384, 384,
 	  MKDATA( "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
@@ -318,7 +318,7 @@ static const ECC_DOMAIN_PARAMS domainParamTbl[] = {
 	  MKDATA( "\x01" ) },
 
 	/* NIST P-521, SECG p521r1 */
-	{ CRYPT_ECCCURVE_P521, bitsToBytes( 521 ),
+	{ CRYPT_ECCCURVE_P521, 521,
 	  MKDATA( "\x01\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
 			  "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" \
@@ -390,7 +390,7 @@ static int loadECCparams( INOUT CONTEXT_INFO *contextInfoPtr )
 	{
 	PKC_INFO *pkcInfo = contextInfoPtr->ctxPKC;
 	const ECC_DOMAIN_PARAMS *eccParams = NULL;
-	int i, bnStatus = BN_STATUS;
+	int curveSize, i, bnStatus = BN_STATUS;
 
 	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
 
@@ -412,23 +412,18 @@ static int loadECCparams( INOUT CONTEXT_INFO *contextInfoPtr )
 	   on the curve type rather than being taken from the public-key value 
 	   (which in this case is the magnitude of the point Q on the curve), so 
 	   we set it explicitly based on the curve type */
-	pkcInfo->keySizeBits = bytesToBits( eccParams->curveSize );
+	pkcInfo->keySizeBits = eccParams->curveSizeBits;
+	curveSize = bitsToBytes( eccParams->curveSizeBits );
 
 	/* Load the parameters into the context bignums */
-	CKPTR( BN_bin2bn( eccParams->p, eccParams->curveSize, 
-					  &pkcInfo->eccParam_p ) );
-	CKPTR( BN_bin2bn( eccParams->a, eccParams->curveSize, 
-					  &pkcInfo->eccParam_a ) );
-	CKPTR( BN_bin2bn( eccParams->b, eccParams->curveSize, 
-					  &pkcInfo->eccParam_b ) );
-	CKPTR( BN_bin2bn( eccParams->gx, eccParams->curveSize, 
-					  &pkcInfo->eccParam_gx ) );
-	CKPTR( BN_bin2bn( eccParams->gy, eccParams->curveSize, 
-					  &pkcInfo->eccParam_gy ) );
-	CKPTR( BN_bin2bn( eccParams->n, eccParams->curveSize, 
-					  &pkcInfo->eccParam_n ) );
-	CKPTR( BN_bin2bn( eccParams->h, eccParams->curveSize, 
-					  &pkcInfo->eccParam_h ) );
+	CKPTR( BN_bin2bn( eccParams->p, curveSize, &pkcInfo->eccParam_p ) );
+	CKPTR( BN_bin2bn( eccParams->a, curveSize, &pkcInfo->eccParam_a ) );
+	CKPTR( BN_bin2bn( eccParams->b, curveSize, &pkcInfo->eccParam_b ) );
+	CKPTR( BN_bin2bn( eccParams->gx, curveSize, &pkcInfo->eccParam_gx ) );
+	CKPTR( BN_bin2bn( eccParams->gy, curveSize, &pkcInfo->eccParam_gy ) );
+	CKPTR( BN_bin2bn( eccParams->n, curveSize, &pkcInfo->eccParam_n ) );
+	CKPTR( BN_bin2bn( eccParams->h, curveSize, &pkcInfo->eccParam_h ) );
+
 	return( getBnStatus( bnStatus ) );
 	}
 
@@ -462,7 +457,7 @@ int getECCFieldSize( IN_ENUM( CRYPT_ECCCURVE ) const CRYPT_ECCCURVE_TYPE fieldID
 		{
 		if( domainParamTbl[ i ].paramType == fieldID )
 			{
-			*fieldSize = domainParamTbl[ i ].curveSize;
+			*fieldSize = bitsToBytes( domainParamTbl[ i ].curveSizeBits );
 			return( CRYPT_OK );
 			}
 		}
@@ -493,7 +488,7 @@ static int getECCFieldID( IN_LENGTH_SHORT_MIN( MIN_PKCSIZE_ECC ) const int field
 			i < FAILSAFE_ARRAYSIZE( domainParamTbl, ECC_DOMAIN_PARAMS ); 
 		 i++ )
 		{
-		if( domainParamTbl[ i ].curveSize >= fieldSize )
+		if( bitsToBytes( domainParamTbl[ i ].curveSizeBits ) >= fieldSize )
 			{
 			*fieldID = domainParamTbl[ i ].paramType;
 			return( CRYPT_OK );
@@ -1230,4 +1225,4 @@ int initCheckECCkey( INOUT CONTEXT_INFO *contextInfoPtr,
 	return( enableSidechannelProtection( pkcInfo, 
 							contextInfoPtr->capabilityInfo->cryptAlgo ) );
 	}
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

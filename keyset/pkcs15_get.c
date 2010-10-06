@@ -7,14 +7,14 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
+  #include "asn1.h"
   #include "keyset.h"
   #include "pkcs15.h"
-  #include "asn1.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS15
@@ -401,8 +401,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		if( cryptStatusError( status ) )
 			{
 			krnlSendNotifier( iCryptContext, IMESSAGE_DECREFCOUNT );
-			if( iDataCert != CRYPT_ERROR )
-				krnlSendNotifier( iDataCert, IMESSAGE_DECREFCOUNT );
+			krnlSendNotifier( iDataCert, IMESSAGE_DECREFCOUNT );
 			retExt( status, 
 					( status, KEYSET_ERRINFO, 
 					  "Couldn't attach certificate to key" ) );
@@ -630,6 +629,7 @@ static int getNextItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 	PKCS15_INFO *pkcs15info = keysetInfoPtr->keyData;
 	const int noPkcs15objects = keysetInfoPtr->keyDataNoObjects;
 	const int lastEntry = *stateInfo;
+	int status;
 
 	assert( isWritePtr( keysetInfoPtr, sizeof( KEYSET_INFO ) ) );
 	assert( isWritePtr( iCertificate, sizeof( CRYPT_CERTIFICATE ) ) );
@@ -670,11 +670,16 @@ static int getNextItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 
 	/* Find the certificate for which the subjectNameID matches this 
 	   certificate's issuerNameID */
-	return( getItem( pkcs15info, noPkcs15objects, iCertificate, stateInfo,
-					 CRYPT_KEYIDEX_SUBJECTNAMEID,
-					 pkcs15info[ lastEntry ].issuerNameID,
-					 pkcs15info[ lastEntry ].issuerNameIDlength,
-					 KEYMGMT_ITEM_PUBLICKEY, options, KEYSET_ERRINFO ) );
+	status = getItem( pkcs15info, noPkcs15objects, iCertificate, stateInfo,
+					  CRYPT_KEYIDEX_SUBJECTNAMEID,
+					  pkcs15info[ lastEntry ].issuerNameID,
+					  pkcs15info[ lastEntry ].issuerNameIDlength,
+					  KEYMGMT_ITEM_PUBLICKEY, options, KEYSET_ERRINFO );
+	if( cryptStatusError( status ) )
+		return( status );
+	ENSURES( lastEntry != *stateInfo );		/* Loop detection */
+
+	return( CRYPT_OK );
 	}
 
 /****************************************************************************

@@ -71,7 +71,7 @@
   #pragma warning( disable: 4267 )
 #endif /* _MSC_VER */
 
-#ifdef USE_ECC
+#if defined( USE_ECDH ) || defined( USE_ECDSA )
 
 /*
  * This file implements the wNAF-based interleaving multi-exponentation method
@@ -941,4 +941,4 @@ int ec_wNAF_have_precompute_mult(const EC_GROUP *group)
 		return 0;
 	}
 
-#endif /* USE_ECC */
+#endif /* USE_ECDH || USE_ECDSA */

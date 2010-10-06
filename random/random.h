@@ -107,10 +107,10 @@ int endRandomData( INOUT void *statePtr, \
 /* Prototypes for functions in random.c */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-int initRandomInfo( OUT_PTR void **randomInfoPtrPtr );
+int initRandomInfo( OUT_OPT_PTR void **randomInfoPtrPtr );
 STDC_NONNULL_ARG( ( 1 ) ) \
 void endRandomInfo( INOUT void **randomInfoPtrPtr );
-RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int addEntropyData( INOUT void *randomInfoPtr, 
 					IN_BUFFER( length ) const void *buffer, 
 					IN_LENGTH const int length );
@@ -119,8 +119,7 @@ int addEntropyQuality( INOUT void *randomInfoPtr,
 					   IN_RANGE( 1, 100 ) const int quality );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int getRandomData( INOUT void *randomInfoPtr, 
-				   OUT_BUFFER_FIXED( length ) \
-				   void *buffer, 
+				   OUT_BUFFER_FIXED( length ) void *buffer, 
 				   IN_RANGE( 1, MAX_RANDOM_BYTES ) const int length );
 
 #endif /* _RANDOM_DEFINED */

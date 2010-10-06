@@ -98,13 +98,13 @@ int strSkipNonWhitespace( IN_BUFFER( strLen ) const char *str,
 	}
 
 CHECK_RETVAL_STRINGOP( strLen ) STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int strStripWhitespace( OUT_PTR char **newStringPtr, 
+int strStripWhitespace( OUT_OPT_PTR const char **newStringPtr, 
 						IN_BUFFER( strLen ) const char *string, 
 						IN_LENGTH_SHORT const int strLen )
 	{
 	int startPos, endPos;
 
-	assert( isWritePtr( newStringPtr, sizeof( char * ) ) );
+	assert( isReadPtr( newStringPtr, sizeof( char * ) ) );
 	assert( isReadPtr( string, strLen ) );
 
 	REQUIRES( strLen > 0 && strLen < MAX_INTLENGTH_SHORT );
@@ -119,7 +119,7 @@ int strStripWhitespace( OUT_PTR char **newStringPtr,
 		 startPos++ );
 	if( startPos >= strLen )
 		return( -1 );
-	*newStringPtr = ( char * ) string + startPos;
+	*newStringPtr = string + startPos;
 	for( endPos = strLen;
 		 endPos > startPos && \
 			( string[ endPos - 1 ] == ' ' || string[ endPos - 1 ] == '\t' );
@@ -159,14 +159,14 @@ int strStripWhitespace( OUT_PTR char **newStringPtr,
    startOffset is { str, startOffset, strLen } */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int strExtract( OUT_PTR char **newStringPtr, 
-				IN_BUFFER( srcLen ) const char *string, 
+int strExtract( OUT_OPT_PTR const char **newStringPtr, 
+				IN_BUFFER( strLen ) const char *string,
 				IN_LENGTH_SHORT const int startOffset,
 				IN_LENGTH_SHORT const int strLen )
 	{
 	const int newLen = strLen - startOffset;
 
-	assert( isWritePtr( newStringPtr, sizeof( char * ) ) );
+	assert( isReadPtr( newStringPtr, sizeof( char * ) ) );
 	assert( isReadPtr( string, strLen ) );
 
 	REQUIRES( strLen > 0 && strLen < MAX_INTLENGTH_SHORT );
@@ -175,6 +175,9 @@ int strExtract( OUT_PTR char **newStringPtr,
 			  /* May be zero if we're extracting from the start of the 
 			     string; may be equal to strLen if it's the entire
 				 remaining string */
+
+	/* Clear return value */
+	*newStringPtr = NULL;
 
 	if( newLen < 1 || newLen > strLen || newLen >= MAX_INTLENGTH_SHORT )
 		return( -1 );
@@ -262,7 +265,7 @@ int strGetNumeric( IN_BUFFER( strLen ) const char *str,
    become "Error string [...]" */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-char *sanitiseString( INOUT_BUFFER_FIXED( strMaxLen ) BYTE *string, 
+char *sanitiseString( INOUT_BUFFER( strMaxLen, strLen ) BYTE *string, 
 					  IN_LENGTH_SHORT const int strMaxLen, 
 					  IN_LENGTH_SHORT const int strLen )
 	{

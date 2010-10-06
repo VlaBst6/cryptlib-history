@@ -1,7 +1,7 @@
 #****************************************************************************
 #*																			*
-#*							Makefile for cryptlib 3.3.x						*
-#*						Copyright Peter Gutmann 1995-2009					*
+#*							Makefile for cryptlib 3.4.x						*
+#*						Copyright Peter Gutmann 1995-2010					*
 #*																			*
 #****************************************************************************
 
@@ -28,14 +28,15 @@
 
 # Naming information: Major and minor version numbers and project and library
 # names (static lib, shared lib, and OS X dylib).  The patch level is always
-# zero because patches imply bugs and my code is perfect.
+# zero because patches imply bugs and my code is perfect (although sometimes
+# reality isn't).
 #
 # Note that when updating these values it'll also be necessary to update the
 # equivalents in tools/buildall.sh.
 
 MAJ		= 3
-MIN		= 3
-PLV		= 3
+MIN		= 4
+PLV		= 0
 PROJ	= cl
 LIBNAME	= lib$(PROJ).a
 SLIBNAME = lib$(PROJ).so.$(MAJ).$(MIN).$(PLV)
@@ -53,7 +54,11 @@ DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 # register on x86 (which desperately needs it), this may screw up some
 # versions of gdb if you try and debug a version (compile with '-g')
 # compiled with this option.  As a general comment, to build the debug
-# version remove the -DNDEBUG below and build with 'make CFLAGS="-g3 -ggdb"'.
+# version remove the -DNDEBUG below and build with 'make CFLAGS="-g3 -ggdb"',
+# or use the debug target "make debug".  This assumes a certain amount of
+# gnu-ishness in the debug environment (which seems to be the universal
+# default), if you're using something else then you'll have to modify
+# CFLAGS_DEBUG below.
 #
 # If the OS supports it, the multithreaded version of cryptlib will be built.
 # To specifically disable this add -DNO_THREADS.
@@ -62,6 +67,7 @@ DYLIBNAME = lib$(PROJ).$(MAJ).$(MIN).dylib
 # script.
 
 CFLAGS		= "-c -D__UNIX__ -DNDEBUG -I."
+CFLAGS_DEBUG = "-c -D__UNIX__ -I. -g3 -ggdb"
 
 # Paths and command names.  We have to be careful with comments attached to
 # path defines because some makes don't strip trailing spaces.
@@ -149,27 +155,34 @@ CRYPTOBJS	= $(OBJPATH)aes_modes.o $(OBJPATH)aescrypt.o $(OBJPATH)aeskey.o \
 			  $(OBJPATH)bfskey.o $(OBJPATH)castecb.o $(OBJPATH)castenc.o \
 			  $(OBJPATH)castskey.o $(OBJPATH)descbc.o $(OBJPATH)desecb.o \
 			  $(OBJPATH)desecb3.o $(OBJPATH)desenc.o $(OBJPATH)desskey.o \
-			  $(OBJPATH)icbc.o $(OBJPATH)iecb.o $(OBJPATH)iskey.o \
-			  $(OBJPATH)rc2cbc.o $(OBJPATH)rc2ecb.o $(OBJPATH)rc2skey.o \
-			  $(OBJPATH)rc4enc.o $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o \
-			  $(OBJPATH)rc5enc.o $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
+			  $(OBJPATH)gcm.o $(OBJPATH)gf128mul.o $(OBJPATH)icbc.o \
+			  $(OBJPATH)iecb.o $(OBJPATH)iskey.o $(OBJPATH)rc2cbc.o \
+			  $(OBJPATH)rc2ecb.o $(OBJPATH)rc2skey.o $(OBJPATH)rc4enc.o \
+			  $(OBJPATH)rc4skey.o $(OBJPATH)rc5ecb.o $(OBJPATH)rc5enc.o \
+			  $(OBJPATH)rc5skey.o $(OBJPATH)skipjack.o
 
 CTXOBJS		= $(OBJPATH)ctx_3des.o $(OBJPATH)ctx_aes.o $(OBJPATH)ctx_attr.o \
 			  $(OBJPATH)ctx_bf.o $(OBJPATH)ctx_cast.o $(OBJPATH)ctx_des.o \
 			  $(OBJPATH)ctx_dh.o $(OBJPATH)ctx_dsa.o $(OBJPATH)ctx_ecdh.o \
-			  $(OBJPATH)ctx_ecdsa.o $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_hmd5.o \
-			  $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o $(OBJPATH)ctx_hsha2.o \
-			  $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md2.o $(OBJPATH)ctx_md4.o \
-			  $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o $(OBJPATH)ctx_rc2.o \
-			  $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o $(OBJPATH)ctx_ripe.o \
-			  $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o $(OBJPATH)ctx_sha2.o \
-			  $(OBJPATH)ctx_skip.o $(OBJPATH)kg_dlp.o $(OBJPATH)kg_ecc.o \
-			  $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o $(OBJPATH)keyload.o \
-			  $(OBJPATH)key_id.o $(OBJPATH)key_rd.o $(OBJPATH)key_wr.o
+			  $(OBJPATH)ctx_ecdsa.o $(OBJPATH)ctx_elg.o $(OBJPATH)ctx_generic.o \
+			  $(OBJPATH)ctx_hmd5.o $(OBJPATH)ctx_hrmd.o $(OBJPATH)ctx_hsha.o \
+			  $(OBJPATH)ctx_hsha2.o $(OBJPATH)ctx_idea.o $(OBJPATH)ctx_md2.o \
+			  $(OBJPATH)ctx_md4.o $(OBJPATH)ctx_md5.o $(OBJPATH)ctx_misc.o \
+			  $(OBJPATH)ctx_rc2.o $(OBJPATH)ctx_rc4.o $(OBJPATH)ctx_rc5.o \
+			  $(OBJPATH)ctx_ripe.o $(OBJPATH)ctx_rsa.o $(OBJPATH)ctx_sha.o \
+			  $(OBJPATH)ctx_sha2.o $(OBJPATH)ctx_skip.o $(OBJPATH)kg_dlp.o \
+			  $(OBJPATH)kg_ecc.o $(OBJPATH)kg_prime.o $(OBJPATH)kg_rsa.o \
+			  $(OBJPATH)keyload.o $(OBJPATH)key_id.o $(OBJPATH)key_rd.o \
+			  $(OBJPATH)key_wr.o
 
 DEVOBJS		= $(OBJPATH)dev_attr.o $(OBJPATH)fortezza.o $(OBJPATH)hardware.o \
 			  $(OBJPATH)hw_dummy.o $(OBJPATH)pkcs11.o $(OBJPATH)pkcs11_init.o \
-			  $(OBJPATH)pkcs11_pkc.o $(OBJPATH)pkcs11_rw.o $(OBJPATH)system.o
+			  $(OBJPATH)pkcs11_pkc.o $(OBJPATH)pkcs11_rd.o \
+			  $(OBJPATH)pkcs11_wr.o $(OBJPATH)system.o
+
+ENCDECOBJS	= $(OBJPATH)asn1_algid.o $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o \
+			  $(OBJPATH)asn1_wr.o $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o \
+			  $(OBJPATH)base64_id.o $(OBJPATH)misc_rw.o $(OBJPATH)pgp_rw.o
 
 ENVOBJS		= $(OBJPATH)cms_denv.o $(OBJPATH)cms_env.o $(OBJPATH)cms_envpre.o \
 			  $(OBJPATH)decode.o $(OBJPATH)encode.o $(OBJPATH)env_attr.o \
@@ -190,11 +203,13 @@ KEYSETOBJS	= $(OBJPATH)dbms.o $(OBJPATH)ca_add.o $(OBJPATH)ca_clean.o \
 			  $(OBJPATH)dbx_misc.o $(OBJPATH)dbx_rd.o $(OBJPATH)dbx_wr.o \
 			  $(OBJPATH)http.o $(OBJPATH)key_attr.o $(OBJPATH)ldap.o \
 			  $(OBJPATH)odbc.o $(OBJPATH)pgp.o $(OBJPATH)pgp_rd.o \
-			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_add.o \
+			  $(OBJPATH)pkcs12.o $(OBJPATH)pkcs12_rd.o $(OBJPATH)pkcs12_wr.o \
+			  $(OBJPATH)pkcs15.o $(OBJPATH)pkcs15_add.o \
 			  $(OBJPATH)pkcs15_adpb.o $(OBJPATH)pkcs15_adpr.o \
 			  $(OBJPATH)pkcs15_atrd.o $(OBJPATH)pkcs15_atwr.o \
-			  $(OBJPATH)pkcs15_get.o $(OBJPATH)pkcs15_rd.o \
-			  $(OBJPATH)pkcs15_set.o $(OBJPATH)pkcs15_wr.o
+			  $(OBJPATH)pkcs15_get.o $(OBJPATH)pkcs15_getp.o \
+			  $(OBJPATH)pkcs15_rd.o $(OBJPATH)pkcs15_set.o \
+			  $(OBJPATH)pkcs15_wr.o
 
 KRNLOBJS	= $(OBJPATH)attr_acl.o $(OBJPATH)certm_acl.o $(OBJPATH)init.o \
 			  $(OBJPATH)int_msg.o $(OBJPATH)key_acl.o $(OBJPATH)mech_acl.o \
@@ -212,13 +227,10 @@ MECHOBJS	= $(OBJPATH)keyex.o $(OBJPATH)keyex_int.o $(OBJPATH)keyex_rw.o \
 			  $(OBJPATH)sign_cms.o $(OBJPATH)sign_int.o $(OBJPATH)sign_pgp.o \
 			  $(OBJPATH)sign_rw.o $(OBJPATH)sign_x509.o
 
-MISCOBJS	= $(OBJPATH)asn1_algid.o $(OBJPATH)asn1_chk.o $(OBJPATH)asn1_rd.o \
-			  $(OBJPATH)asn1_wr.o $(OBJPATH)asn1_ext.o $(OBJPATH)base64.o \
-			  $(OBJPATH)base64_id.o $(OBJPATH)int_api.o $(OBJPATH)int_attr.o \
-			  $(OBJPATH)int_debug.o $(OBJPATH)int_env.o $(OBJPATH)int_err.o \
-			  $(OBJPATH)int_mem.o $(OBJPATH)int_string.o $(OBJPATH)int_time.o \
-			  $(OBJPATH)java_jni.o $(OBJPATH)misc_rw.o $(OBJPATH)os_spec.o \
-			  $(OBJPATH)pgp_misc.o $(OBJPATH)pgp_rw.o $(OBJPATH)random.o \
+MISCOBJS	= $(OBJPATH)int_api.o $(OBJPATH)int_attr.o $(OBJPATH)int_debug.o \
+			  $(OBJPATH)int_env.o $(OBJPATH)int_err.o $(OBJPATH)int_mem.o \
+			  $(OBJPATH)int_string.o $(OBJPATH)int_time.o $(OBJPATH)java_jni.o \
+			  $(OBJPATH)os_spec.o $(OBJPATH)pgp_misc.o $(OBJPATH)random.o \
 			  $(OBJPATH)rand_x917.o $(OBJPATH)unix.o $(OBJPATH)user.o \
 			  $(OBJPATH)user_attr.o $(OBJPATH)user_cfg.o $(OBJPATH)user_rw.o
 
@@ -235,18 +247,19 @@ SESSOBJS	= $(OBJPATH)certstore.o $(OBJPATH)cmp.o $(OBJPATH)cmp_cli.o \
 			  $(OBJPATH)ssh2_msg.o $(OBJPATH)ssh2_msgc.o \
 			  $(OBJPATH)ssh2_msgs.o $(OBJPATH)ssh2_rd.o $(OBJPATH)ssh2_svr.o \
 			  $(OBJPATH)ssh2_wr.o $(OBJPATH)ssl.o $(OBJPATH)ssl_cli.o \
-			  $(OBJPATH)ssl_cry.o $(OBJPATH)ssl_hs.o $(OBJPATH)ssl_hsc.o \
-			  $(OBJPATH)ssl_kmgmt.o $(OBJPATH)ssl_rd.o $(OBJPATH)ssl_svr.o \
-			  $(OBJPATH)ssl_wr.o $(OBJPATH)tsp.o
+			  $(OBJPATH)ssl_cry.o $(OBJPATH)ssl_ext.o $(OBJPATH)ssl_hs.o \
+			  $(OBJPATH)ssl_hsc.o $(OBJPATH)ssl_kmgmt.o $(OBJPATH)ssl_rd.o \
+			  $(OBJPATH)ssl_suites.o $(OBJPATH)ssl_svr.o $(OBJPATH)ssl_wr.o \
+			  $(OBJPATH)tsp.o
 
 ZLIBOBJS	= $(OBJPATH)adler32.o $(OBJPATH)deflate.o $(OBJPATH)inffast.o \
 			  $(OBJPATH)inflate.o $(OBJPATH)inftrees.o $(OBJPATH)trees.o \
 			  $(OBJPATH)zutil.o
 
 OBJS		= $(BNOBJS) $(CERTOBJS) $(CRYPTOBJS) $(CTXOBJS) $(DEVOBJS) \
-			  $(ENVOBJS) $(HASHOBJS) $(IOOBJS) $(KEYSETOBJS) $(KRNLOBJS) \
-			  $(LIBOBJS) $(MECHOBJS) $(MISCOBJS) $(SESSOBJS) $(ZLIBOBJS) \
-			  $(OSOBJS)
+			  $(ENCDECOBJS) $(ENVOBJS) $(HASHOBJS) $(IOOBJS) $(KEYSETOBJS) \
+			  $(KRNLOBJS) $(LIBOBJS) $(MECHOBJS) $(MISCOBJS) $(SESSOBJS) \
+			  $(ZLIBOBJS) $(OSOBJS)
 
 # Object files for the self-test code
 
@@ -257,9 +270,9 @@ TESTOBJS	= certimp.o certproc.o certs.o devices.o envelope.o highlvl.o \
 # Various functions all make use of certain headers so we define the
 # dependencies once here
 
-IO_DEP = io/stream.h misc/misc_rw.h misc/pgp_rw.h
+IO_DEP = io/stream.h enc_dec/misc_rw.h enc_dec/pgp_rw.h
 
-ASN1_DEP = $(IO_DEP) misc/asn1.h misc/asn1_ext.h
+ASN1_DEP = $(IO_DEP) enc_dec/asn1.h enc_dec/asn1_ext.h
 
 CERT_DEP = cert/cert.h cert/certfn.h
 
@@ -325,6 +338,15 @@ shared:
 		exit 1; \
 	fi
 	@./tools/buildall.sh shared $(OSNAME) $(CC) $(CFLAGS)
+
+debug:
+	@make directories
+	@make toolscripts
+	@- if [ $(OSNAME) = 'OS/390' -a "$(_C89_CCMODE)" != "1" ] ; then \
+		echo "The c89 environment variable _C89_CCMODE must be set to 1." >&2 ; \
+		exit 1; \
+	fi
+	@./tools/buildall.sh $(OSNAME) $(CC) $(CFLAGS_DEBUG)
 
 directories:
 	@- if [ ! -d $(STATIC_OBJ_PATH) ] ; then mkdir $(STATIC_OBJ_DIR) ; fi
@@ -587,6 +609,9 @@ $(OBJPATH)ctx_ecdsa.o:	$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_ecdsa.
 $(OBJPATH)ctx_elg.o:	$(CRYPT_DEP) context/context.h bn/bn.h context/ctx_elg.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_elg.o context/ctx_elg.c
 
+$(OBJPATH)ctx_generic.o: $(CRYPT_DEP) context/context.h context/ctx_generic.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_generic.o context/ctx_generic.c
+
 $(OBJPATH)ctx_hmd5.o:	$(CRYPT_DEP) context/context.h crypt/md5.h context/ctx_hmd5.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ctx_hmd5.o context/ctx_hmd5.c
 
@@ -711,6 +736,14 @@ $(OBJPATH)desenc.o:		crypt/osconfig.h crypt/des.h crypt/deslocl.h crypt/desenc.c
 $(OBJPATH)desskey.o:	crypt/osconfig.h crypt/des.h crypt/deslocl.h crypt/desskey.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)desskey.o crypt/desskey.c
 
+$(OBJPATH)gcm.o:		$(CRYPT_DEP) crypt/gf128mul.h crypt/gcm.h crypt/mode_hdr.h \
+						crypt/gcm.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)gcm.o crypt/gcm.c
+
+$(OBJPATH)gf128mul.o:	$(CRYPT_DEP) crypt/gf128mul.h crypt/mode_hdr.h \
+						crypt/gf_mul_lo.h crypt/gf128mul.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)gf128mul.o crypt/gf128mul.c
+
 $(OBJPATH)icbc.o:		$(CRYPT_DEP) crypt/idea.h crypt/idealocl.h crypt/icbc.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)icbc.o crypt/icbc.c
 
@@ -796,12 +829,45 @@ $(OBJPATH)pkcs11_pkc.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
 						device/pkcs11_pkc.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs11_pkc.o device/pkcs11_pkc.c
 
-$(OBJPATH)pkcs11_rw.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
-						device/pkcs11_rw.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs11_rw.o device/pkcs11_rw.c
+$(OBJPATH)pkcs11_rd.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
+						device/pkcs11_rd.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs11_rd.o device/pkcs11_rd.c
+
+$(OBJPATH)pkcs11_wr.o:	$(CRYPT_DEP) device/device.h device/pkcs11_api.h \
+						device/pkcs11_wr.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs11_wr.o device/pkcs11_wr.c
 
 $(OBJPATH)system.o:		$(CRYPT_DEP) device/device.h device/capabil.h device/system.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)system.o device/system.c
+
+# enc_dec subdirectory
+
+$(OBJPATH)asn1_algid.o:	$(CRYPT_DEP) $(ASN1_DEP) enc_dec/asn1_algid.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_algid.o enc_dec/asn1_algid.c
+
+$(OBJPATH)asn1_chk.o:	$(CRYPT_DEP) $(ASN1_DEP) enc_dec/asn1_chk.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_chk.o enc_dec/asn1_chk.c
+
+$(OBJPATH)asn1_ext.o:	$(CRYPT_DEP) $(ASN1_DEP) enc_dec/asn1_oids.h enc_dec/asn1_ext.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_ext.o enc_dec/asn1_ext.c
+
+$(OBJPATH)asn1_rd.o:	$(CRYPT_DEP) $(ASN1_DEP) enc_dec/asn1_rd.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_rd.o enc_dec/asn1_rd.c
+
+$(OBJPATH)asn1_wr.o:	$(CRYPT_DEP) $(ASN1_DEP) enc_dec/asn1_wr.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_wr.o enc_dec/asn1_wr.c
+
+$(OBJPATH)base64.o:		$(CRYPT_DEP) enc_dec/base64.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)base64.o enc_dec/base64.c
+
+$(OBJPATH)base64_id.o:	$(CRYPT_DEP) enc_dec/base64_id.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)base64_id.o enc_dec/base64_id.c
+
+$(OBJPATH)misc_rw.o:	$(CRYPT_DEP) $(IO_DEP) enc_dec/misc_rw.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)misc_rw.o enc_dec/misc_rw.c
+
+$(OBJPATH)pgp_rw.o:		$(CRYPT_DEP) $(IO_DEP) enc_dec/pgp_rw.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pgp_rw.o enc_dec/pgp_rw.c
 
 # envelope subdirectory
 
@@ -972,8 +1038,14 @@ $(OBJPATH)pgp.o:		$(CRYPT_DEP) misc/pgp.h keyset/pgp.c
 $(OBJPATH)pgp_rd.o:		$(CRYPT_DEP) misc/pgp.h keyset/pgp_rd.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pgp_rd.o keyset/pgp_rd.c
 
-$(OBJPATH)pkcs12.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.c
+$(OBJPATH)pkcs12.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12.o keyset/pkcs12.c
+
+$(OBJPATH)pkcs12_rd.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12_rd.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12_rd.o keyset/pkcs12_rd.c
+
+$(OBJPATH)pkcs12_wr.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs12.h keyset/pkcs12_wr.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs12_wr.o keyset/pkcs12_wr.c
 
 $(OBJPATH)pkcs15.o:		$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs15.o keyset/pkcs15.c
@@ -995,6 +1067,9 @@ $(OBJPATH)pkcs15_atwr.o: $(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkc
 
 $(OBJPATH)pkcs15_get.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_get.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs15_get.o keyset/pkcs15_get.c
+
+$(OBJPATH)pkcs15_getp.o: $(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_getp.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs15_getp.o keyset/pkcs15_getp.c
 
 $(OBJPATH)pkcs15_rd.o:	$(CRYPT_DEP) keyset/keyset.h keyset/pkcs15.h keyset/pkcs15_rd.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pkcs15_rd.o keyset/pkcs15_rd.c
@@ -1057,27 +1132,6 @@ $(OBJPATH)sign_x509.o:	$(CRYPT_DEP) $(ASN1_DEP) mechs/mech.h mechs/sign_x509.c
 
 # misc subdirectory
 
-$(OBJPATH)asn1_algid.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_algid.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_algid.o misc/asn1_algid.c
-
-$(OBJPATH)asn1_chk.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_chk.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_chk.o misc/asn1_chk.c
-
-$(OBJPATH)asn1_ext.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_oids.h misc/asn1_ext.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_ext.o misc/asn1_ext.c
-
-$(OBJPATH)asn1_rd.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_rd.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_rd.o misc/asn1_rd.c
-
-$(OBJPATH)asn1_wr.o:	$(CRYPT_DEP) $(ASN1_DEP) misc/asn1_wr.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)asn1_wr.o misc/asn1_wr.c
-
-$(OBJPATH)base64.o:		$(CRYPT_DEP) misc/base64.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)base64.o misc/base64.c
-
-$(OBJPATH)base64_id.o:	$(CRYPT_DEP) misc/base64_id.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)base64_id.o misc/base64_id.c
-
 $(OBJPATH)int_api.o:	$(CRYPT_DEP) misc/int_api.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)int_api.o misc/int_api.c
 
@@ -1102,17 +1156,11 @@ $(OBJPATH)int_string.o:	$(CRYPT_DEP) misc/int_string.c
 $(OBJPATH)int_time.o:	$(CRYPT_DEP) misc/int_time.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)int_time.o misc/int_time.c
 
-$(OBJPATH)misc_rw.o:	$(CRYPT_DEP) $(IO_DEP) misc/misc_rw.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)misc_rw.o misc/misc_rw.c
-
 $(OBJPATH)os_spec.o: 	$(CRYPT_DEP) misc/os_spec.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)os_spec.o misc/os_spec.c
 
 $(OBJPATH)pgp_misc.o:	$(CRYPT_DEP) $(IO_DEP) misc/pgp.h misc/pgp_misc.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)pgp_misc.o misc/pgp_misc.c
-
-$(OBJPATH)pgp_rw.o:		$(CRYPT_DEP) $(IO_DEP) misc/pgp_rw.c
-						$(CC) $(CFLAGS) -o $(OBJPATH)pgp_rw.o misc/pgp_rw.c
 
 $(OBJPATH)random.o:		$(CRYPT_DEP) random/random.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)random.o random/random.c
@@ -1282,6 +1330,10 @@ $(OBJPATH)ssl_cry.o:	$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
 						session/ssl_cry.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ssl_cry.o session/ssl_cry.c
 
+$(OBJPATH)ssl_ext.o:	$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
+						session/ssl_ext.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)ssl_ext.o session/ssl_ext.c
+
 $(OBJPATH)ssl_hs.o:		$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
 						session/ssl_hs.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ssl_hs.o session/ssl_hs.c
@@ -1297,6 +1349,10 @@ $(OBJPATH)ssl_kmgmt.o:	$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
 $(OBJPATH)ssl_rd.o:		$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
 						session/ssl_rd.c
 						$(CC) $(CFLAGS) -o $(OBJPATH)ssl_rd.o session/ssl_rd.c
+
+$(OBJPATH)ssl_suites.o:	$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
+						session/ssl_suites.c
+						$(CC) $(CFLAGS) -o $(OBJPATH)ssl_suites.o session/ssl_suites.c
 
 $(OBJPATH)ssl_svr.o:	$(CRYPT_DEP) $(IO_DEP) session/session.h session/ssl.h \
 						session/ssl_svr.c
@@ -1526,9 +1582,19 @@ stestlib:		$(TESTOBJS)
 #		 increase it from the default 2048.  The roconst puts const data
 #		 into read-only memory (this may happen anyway on some versions of
 #		 the compiler).
+#
+#		 In theory we could also add:
+#
+#			@./tools/buildasm.sh $(AS) $(OBJPATH)
+#
+#		 as the first line of the build rules but this causes problems in
+#		 some cases, the most obvious symptom being that all of the self-
+#		 tests involving bignum algorithms fail.  This may be due to changes
+#		 in which registers get preserved across asm calls or who knows what,
+#		 the asm code dates from 2002 so it probably hasn't kept pace with
+#		 the compiler.
 
 AIX:
-	@./tools/buildasm.sh $(AS) $(OBJPATH)
 	@if [ $(CC) = "gcc" ] ; then \
 		make $(DEFINES) CFLAGS=3D"$(CFLAGS) -O3 -D_REENTRANT" ; \
 	else \
@@ -1732,8 +1798,7 @@ HP-UX:
 		fi
 	@rm -f a.out
 	@case `./tools/osversion.sh HP-UX` in \
-		8) \
-		9) \
+		8|9) \
 			make $(DEFINES) CFLAGS="$(CFLAGS) -Aa -D_HPUX_SOURCE +O3" ;; \
 		10) \
 			if [ $(CC) = "gcc" ] ; then \
@@ -1743,11 +1808,7 @@ HP-UX:
 			fi ;; \
 		11) \
 			if [ $(CC) = "gcc" ] ; then \
-				if [ `getconf CPU_VERSION` -ge 532 ] ; then \
-					make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -mpa-risc-2-0 -D_REENTRANT" ; \
-	  			else \
-					make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
-	  			fi ; \
+				make $(DEFINES) CFLAGS="$(CFLAGS) -O3 -D_REENTRANT" ; \
 			else \
 				if [ `getconf CPU_VERSION` -ge 532 ] ; then \
 					./tools/buildasm.sh $(AS) $(OBJPATH) ; \
@@ -1785,19 +1846,27 @@ Linux:
 	fi
 
 # Mac OS X: BSD variant.  Optimisation level is set via the ccopts.sh script.
-#			To build a universal binary, use the following command (with the
-#			path to your SDK install substituted for the one in the command-
-#			line below):
+#			If you want to build a universal binary you can use the a command
+#			a bit like the following (with the path to your SDK install
+#			substituted for the one in the command-lines below):
 #
 # make LDFLAGS='-isysroot /Developer/SDKs/MacOSX10.5.sdk' CFLAGS='-c -isysroot \
 # /Developer/SDKs/MacOSX10.5.sdk -Os -mmacosx-version-min=10.5 -arch ppc -arch \
 # ppc64 -arch i386 -arch x86_64 -DOSX_UNIVERSAL_BINARY -D__UNIX__ -DNDEBUG -I.'
 #
-#			Note that this build method isn't recommended since the low-level
-#			crypto code has to configure itself for CPU endianness for the
-#			algorithms that require low-level bit fiddling and uses different
-#			code strategies depending on the CPU architecture, so this
-#			single-pass build for multiple architectures can cause problems.
+# make LDFLAGS='-arch i386 -arch x86_64' CFLAGS='-c -O2 -mmacosx-version-min=10.5 \
+# -arch i386 -arch x86_64 -D__UNIX__ -DNDEBUG -I.'
+#
+#			This will also required adding $(LDFLAGS) to the dylib build rule,
+#			and removing LDFLAGS="-object -s" from the overall OS X build rule.
+#
+#			This build method is rather trouble-prone because the low-level
+#			crypto code has to configure itself for CPU endianness and word
+#			size for the algorithms that require low-level bit fiddling, and
+#			uses different code strategies depending on the CPU architecture
+#			and bit width.  This single-pass build for multiple architectures
+#			often causes problems, and you're more or less on your own if you
+#			decide to try it.
 
 Darwin:
 	@make $(DEFINES) CFLAGS="$(CFLAGS) -fomit-frame-pointer" LDFLAGS="-object -s"
@@ -1950,6 +2019,15 @@ itgoaway:
 #				returns a nonzero status somewhere that causes make to bail
 #				out, and the error suppression is necessary to avoid dozens of
 #				bogus warnings about signed vs.unsigned chars).
+#
+#				In addition we can only safely use -O2 (-xO2 in SUNwspro-
+#				speak) because -O3 introduces too many problems due to
+#				optimiser bugs, while it's possible to (eventually) eliminate
+#				them through the judicious sprinkling of 'asm("");' in
+#				appropriate locations to disable optimisation within that
+#				code block it becomes a pain having to track them down
+#				whenever the code changes, and -O2 isn't really much
+#				different than -O3 anyway.
 
 SunOS:
 	@./tools/buildasm.sh $(AS) $(OBJPATH)
@@ -1969,10 +2047,10 @@ SunOS:
 			if [ `uname -m` = 'i86pc' ] ; then \
 				make $(DEFINES) EXTRAOBJS="$(ASMOBJS)" \
 					CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
-					-xO3 -DUSE_ASM -D_REENTRANT" ; \
+					-xO2 -DUSE_ASM -D_REENTRANT" ; \
 			else \
 				make $(DEFINES) CFLAGS="$(CFLAGS) -erroff=E_ARG_INCOMPATIBLE_WITH_ARG \
-					-xO3 -D_REENTRANT" ; \
+					-xO2 -D_REENTRANT" ; \
 			fi ; \
 		fi ; \
 	fi
@@ -2025,7 +2103,9 @@ BeOS:
 
 # EPOC: Cross-compilation requires custom code paths to build using the
 #		Symbian SDK rather than the native compiler.  The following defines
-#		are for Symbian OS 7.x as the SDK and ARM as the architecture.
+#		are for Symbian OS 7.x as the SDK and ARM as the architecture.  A
+#		cross-compile config for a more modern toolset (Carbide) is given
+#		further down.
 #
 # EPOC		= /usr/local/symbian/7.0
 # CXX		= ${EPOC}/bin/arm-epoc-pe-g++
@@ -2218,6 +2298,18 @@ target-freertos-ppc:
 		-DCONFIG_DATA_BIGENDIAN -D__FREERTOS__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
 
+# Embedded Linux.  Note that we don't have to perform the 'make target-init'
+# as for the other systems since the target environment is the same as the
+# source environment, and we use $(CFLAGS) rather than $(XCFLAGS) for the
+# same reason.
+
+target-linux-ppc:
+	@make directories
+	make $(XDEFINES) OSNAME=Linux CFLAGS="$(CFLAGS) \
+		-DCONFIG_DATA_BIGENDIAN -fomit-frame-pointer -O2 \
+		-D_REENTRANT -DUSE_PKCS11"
+	make $(SLIBNAME) OBJPATH=$(OBJPATH) CROSSCOMPILE=1 OSNAME=Linux
+
 # MinGW: Gnu Win32 SDK hosted under Cygwin or non-Windows OS.  This is
 # effectively a cross-compile since although the host environment is Unix
 # (or at least emulated Unix), the target is Win32.
@@ -2308,6 +2400,33 @@ target-rtems-x86:
 	make $(XDEFINES) OSNAME=RTEMS CC=i386-elf-gcc CFLAGS="$(XCFLAGS) \
 		-DCONFIG_DATA_LITTLEENDIAN -D__RTEMS__ -O2 \
 		`./tools/ccopts-crosscompile.sh $(CC)`"
+
+# Symbian: Carbide toolchain under Windows or Unix.  This builds either for
+# the ARM target or for the x86 Symbian emulator, strictly speaking the
+# latter isn't really a cross-compile but we have to treat it as such
+# because we're building for an OS other than the native one.
+#
+# The handling of this is a bit of a mess, the emulator build is done using
+# the ex-Metrowerks CodeWarrior compiler (restricted to only produce x86
+# output) and the ARM builds are done using either gcc or the ARM compiler.
+# Since the only preprocessor indicator that the emulator compiler defines
+# is __EMU_SYMBIAN_OS__ (as well as __INTEL__, a Metrowerks define that's
+# hardcoded on because none of the other Metrowerks target types are
+# available any more) we have to manually define __SYMBIAN32__ ourselves
+# for the emulator build.
+
+CARBIDE_PATH			= "C:\Carbide.c++ v2.3"
+CARBIDE_INCLUDE_PATH	= "$(CARBIDE_PATH)\x86Build\Symbian_Support\MSL\MSL_C\MSL_Common\Include\"
+
+target-symbian:
+	@make OSNAME=symbian target-init
+	make $(XDEFINES) OSNAME=Symbian CC=arm-none-symbianelf-gcc CFLAGS="$(XCFLAGS) \
+		-O2 -I$(CARBIDE_INCLUDE_PATH)"
+
+target-symbian-emulator:
+	@make OSNAME=symbian target-init
+	make $(XDEFINES) OSNAME=Symbian CC=mwccsym2 CFLAGS="$(XCFLAGS) \
+		-D__SYMBIAN32__ -O2 -I$(CARBIDE_INCLUDE_PATH)"
 
 # ThreadX: Gnu toolchain under Cygwin or Unix.  The front-end is usually
 # Eclipse, but it's not really needed for building cryptlib.
@@ -2442,15 +2561,23 @@ target-xmk-ppc:
 #*																			*
 #****************************************************************************
 
-# The removal of the object file directories is silenced since the
-# directories may not exist and we don't want unnecessary error messages
-# arising from trying to remove them
+# The removal of the some files and directories is silenced since they
+# may not exist and we don't want unnecessary error messages arising from
+# trying to remove them
 
 clean:
 	rm -f *.o core testlib stestlib tools/endian $(LIBNAME) $(SLIBNAME)
-	@rm -f $(STATIC_OBJ_PATH)*.o
-	@if [ -d $(STATIC_OBJ_PATH) ] ; then rmdir $(STATIC_OBJ_DIR) ; fi
-	@rm -f $(SHARED_OBJ_PATH)*.o
-	@if [ -d $(SHARED_OBJ_DIR) ] ; then rmdir $(SHARED_OBJ_DIR) ; fi
+	@if [ -d $(STATIC_OBJ_PATH) ] ; then \
+		rm -f $(STATIC_OBJ_PATH)*.o ; \
+		rmdir $(STATIC_OBJ_DIR) ; \
+	fi
+	@if [ -d $(SHARED_OBJ_DIR) ] ; then \
+		rm -f $(SHARED_OBJ_PATH)*.o ; \
+		rmdir $(SHARED_OBJ_DIR) ; \
+	fi
+	@if [ -d ./clang_output ] ; then \
+		rm -r ./clang_output/* ; \
+		rmdir clang_output ; \
+	fi
 	@if [ `uname -s` = 'CYGWIN_NT-5.0' ] ; then rm -f *.exe; fi
 	@if [ `uname -s` = 'HP-UX' ] ; then rm -f lib$(PROJ).sl; fi

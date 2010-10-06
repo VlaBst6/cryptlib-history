@@ -15,6 +15,8 @@
   #include "crypt/sha2.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_SHA2
+
 /* A structure to hold the initial and current MAC state info.  Rather than
    redoing the key processing each time when we're calculating multiple MACs
    with the same key, we just copy the initial state into the current state */
@@ -39,6 +41,8 @@ typedef struct {
 *							HMAC-SHA2 Self-test Routines					*
 *																			*
 ****************************************************************************/
+
+#ifndef CONFIG_NO_SELFTEST
 
 /* Test the HMAC-SHA2 output against the test vectors given in RFC 4231 */
 
@@ -132,6 +136,9 @@ static int selfTest( void )
 
 	return( CRYPT_OK );
 	}
+#else
+	#define selfTest	NULL
+#endif /* !CONFIG_NO_SELFTEST */
 
 /****************************************************************************
 *																			*
@@ -141,17 +148,29 @@ static int selfTest( void )
 
 /* Return context subtype-specific information */
 
-static int getInfo( const CAPABILITY_INFO_TYPE type, const void *ptrParam, 
-					const int intParam, int *result )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
+static int getInfo( IN_ENUM( CAPABILITY_INFO ) const CAPABILITY_INFO_TYPE type, 
+					INOUT_OPT CONTEXT_INFO *contextInfoPtr,
+					OUT void *data, 
+					IN_INT_Z const int length )
 	{
+	assert( contextInfoPtr == NULL || \
+			isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+	assert( ( length == 0 && isWritePtr( data, sizeof( int ) ) ) || \
+			( length > 0 && isWritePtr( data, length ) ) );
+
+	REQUIRES( type > CAPABILITY_INFO_NONE && type < CAPABILITY_INFO_LAST );
+
 	if( type == CAPABILITY_INFO_STATESIZE )
 		{
-		*result = MAC_STATE_SIZE;
+		int *valuePtr = ( int * ) data;
+
+		*valuePtr = MAC_STATE_SIZE;
 
 		return( CRYPT_OK );
 		}
 
-	return( getDefaultInfo( type, ptrParam, intParam, result ) );
+	return( getDefaultInfo( type, contextInfoPtr, data, length ) );
 	}
 
 /****************************************************************************
@@ -181,8 +200,9 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 		sha2_hash( buffer, noBytes, shaInfo );
 	else
 		{
-		BYTE hashBuffer[ SHA256_BLOCK_SIZE + 8 ];
-		BYTE digestBuffer[ SHA256_DIGEST_SIZE + 8 ];
+		const int digestSize = contextInfoPtr->capabilityInfo->blockSize;
+		BYTE hashBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
+		BYTE digestBuffer[ CRYPT_MAX_HASHSIZE + 8 ];
 		int i;
 
 		/* Complete the inner hash and extract the digest */
@@ -195,11 +215,11 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 				macInfo->userKeyLength );
 		for( i = 0; i < macInfo->userKeyLength; i++ )
 			hashBuffer[ i ] ^= HMAC_OPAD;
-		sha2_begin( SHA256_DIGEST_SIZE, shaInfo );
+		sha2_begin( digestSize, shaInfo );
 		sha2_hash( hashBuffer, SHA256_BLOCK_SIZE, shaInfo );
 		memset( hashBuffer, 0, SHA256_BLOCK_SIZE );
-		sha2_hash( digestBuffer, SHA256_DIGEST_SIZE, shaInfo );
-		memset( digestBuffer, 0, SHA256_DIGEST_SIZE );
+		sha2_hash( digestBuffer, digestSize, shaInfo );
+		memset( digestBuffer, 0, digestSize );
 		sha2_end( macInfo->mac, shaInfo );
 		}
 
@@ -208,7 +228,7 @@ static int hash( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int noBytes )
 
 /****************************************************************************
 *																			*
-*							HMAC-SHA2 Key Management Routines				*
+*						HMAC-SHA2 Key Management Routines					*
 *																			*
 ****************************************************************************/
 
@@ -220,9 +240,10 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	MAC_INFO *macInfo = contextInfoPtr->ctxMAC;
 	sha2_ctx *shaInfo = &( ( MAC_STATE * ) macInfo->macInfo )->macState;
 	BYTE hashBuffer[ SHA256_BLOCK_SIZE + 8 ];
+	const int digestSize = contextInfoPtr->capabilityInfo->blockSize;
 	int i;
 
-	sha2_begin( SHA256_DIGEST_SIZE, shaInfo );
+	sha2_begin( digestSize, shaInfo );
 
 	/* If the key size is larger than tha SHA2 data size, reduce it to the
 	   SHA2 hash size before processing it (yuck.  You're required to do this
@@ -234,10 +255,10 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 		   of the key */
 		sha2_hash( ( void * ) key, keyLength, shaInfo );
 		sha2_end( macInfo->userKey, shaInfo );
-		macInfo->userKeyLength = SHA256_DIGEST_SIZE;
+		macInfo->userKeyLength = digestSize;
 
 		/* Reset the SHA2 state */
-		sha2_begin( SHA256_DIGEST_SIZE, shaInfo );
+		sha2_begin( digestSize, shaInfo );
 		}
 	else
 		{
@@ -265,6 +286,66 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	return( CRYPT_OK );
 	}
 
+/* Initialise algorithm parameters */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+static int initParams( INOUT CONTEXT_INFO *contextInfoPtr, 
+					   IN_ENUM( KEYPARAM ) const KEYPARAM_TYPE paramType,
+					   IN_OPT const void *data, 
+					   IN_INT const int dataLength )
+	{
+	assert( isWritePtr( contextInfoPtr, sizeof( CONTEXT_INFO ) ) );
+
+	REQUIRES( contextInfoPtr->type == CONTEXT_MAC );
+	REQUIRES( paramType > KEYPARAM_NONE && paramType < KEYPARAM_LAST );
+
+	/* SHA-2 has a variable-length output, selectable by setting the 
+	   blocksize attribute */
+#ifdef USE_SHA2_EXT
+	if( paramType == KEYPARAM_BLOCKSIZE )
+		{
+  #ifdef CONFIG_SUITEB
+		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+				CRYPT_ALGO_SHA2, bitsToBytes( 384 ), "HMAC-SHA384", 11,
+				bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
+				selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
+				};
+  #else
+		static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
+				CRYPT_ALGO_SHA2, bitsToBytes( 512 ), "HMAC-SHA512", 11,
+				bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
+				selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
+				};
+  #endif /* CONFIG_SUITEB */
+
+		/* The default SHA-2 variant is SHA-256, so an attempt to set this 
+		   size is a no-op */
+		if( dataLength == SHA256_DIGEST_SIZE )
+			return( CRYPT_OK );
+
+		/* Switch to the appropriate variant of SHA-2.  Note that the 
+		   initParamsFunction pointer for this version is NULL rather than
+		   pointing to this function, so once the output size has been set 
+		   it can't be changed again */
+  #ifdef CONFIG_SUITEB
+		if( dataLength != SHA384_DIGEST_SIZE )
+			return( CRYPT_ARGERROR_NUM1 );
+		contextInfoPtr->capabilityInfo = &capabilityInfo;
+  #else
+		if( dataLength != SHA512_DIGEST_SIZE )
+			return( CRYPT_ARGERROR_NUM1 );
+		contextInfoPtr->capabilityInfo = &capabilityInfo;
+  #endif /* CONFIG_SUITEB */
+
+		return( CRYPT_OK );
+		}
+#endif /* USE_SHA2_EXT */
+
+	/* Pass the call on down to the global parameter-handling function */	
+	return( initGenericParams( contextInfoPtr, paramType, data, 
+							   dataLength ) );
+	}
+
 /****************************************************************************
 *																			*
 *						Capability Access Routines							*
@@ -274,10 +355,12 @@ static int initKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 static const CAPABILITY_INFO FAR_BSS capabilityInfo = {
 	CRYPT_ALGO_HMAC_SHA2, bitsToBytes( 256 ), "HMAC-SHA2", 9,
 	bitsToBytes( 64 ), bitsToBytes( 128 ), CRYPT_MAX_KEYSIZE,
-	selfTest, getInfo, NULL, NULL, initKey, NULL, hash, hash
+	selfTest, getInfo, NULL, initParams, initKey, NULL, hash, hash
 	};
 
 const CAPABILITY_INFO *getHmacSHA2Capability( void )
 	{
 	return( &capabilityInfo );
 	}
+
+#endif /* USE_SHA2 */

@@ -47,10 +47,10 @@
 #define ONE_YEAR_TIME	( 365 * 86400L )
 #if defined( __MWERKS__ ) || defined( SYMANTEC_C ) || defined( __MRC__ )
   #define CERTTIME_DATETEST	( ( ( 2008 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
-  #define CERTTIME_Y2KTEST	( ( ( 2010 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
+  #define CERTTIME_Y2KTEST	( ( ( 2020 - 1970 ) * ONE_YEAR_TIME ) + 2082844800L )
 #else
   #define CERTTIME_DATETEST	( ( 2008 - 1970 ) * ONE_YEAR_TIME )
-  #define CERTTIME_Y2KTEST	( ( 2010 - 1970 ) * ONE_YEAR_TIME )
+  #define CERTTIME_Y2KTEST	( ( 2020 - 1970 ) * ONE_YEAR_TIME )
 #endif /* Macintosh-specific weird epoch */
 
 /****************************************************************************
@@ -232,8 +232,33 @@ int testBasicCert( void )
 		}
 	status = cryptCheckCert( cryptCert, CRYPT_UNUSED );
 	if( cryptStatusError( status ) )
-		return( attrErrorExit( cryptCert, "cryptCheckCert()", status,
-							   __LINE__ ) );
+		{
+		int errorType, errorLocus;
+
+		attrErrorExit( cryptCert, "cryptCheckCert()", status, __LINE__ );
+		status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_ERRORTYPE,
+									&errorType );
+		if( cryptStatusOK( status ) )
+			status = cryptGetAttribute( cryptCert, 
+										CRYPT_ATTRIBUTE_ERRORLOCUS, 
+										&errorLocus );
+		if( cryptStatusOK( status ) && \
+			errorType == CRYPT_ERRTYPE_CONSTRAINT && \
+			errorLocus == CRYPT_CERTINFO_VALIDFROM )
+			{
+			puts( "  (If this test was run within +/- 12 hours of a "
+				  "daylight savings time (DST)\n   switchover then this is "
+				  "a false positive caused by problems in\n   performing "
+				  "date calculations using the C standard libraries on days "
+				  "that\n   have 23 or 25 hours due to hours missing or "
+				  "being repeated.  This problem\n   will correct itself "
+				  "once the time is more than 12 hours away from the DST\n"
+				  "   switchover, and only affects the certificate-creation "
+				  "self-test)." );
+			}
+
+		return( FALSE );
+		}
 	cryptDestroyCert( cryptCert );
 
 	/* Clean up */
@@ -281,7 +306,7 @@ int testCACert( void )
 	{
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
-	time_t startTime, endTime;
+	time_t startTime, endTime = DUMMY_INIT;
 	int value, status;
 
 	puts( "Testing CA certificate creation/export..." );
@@ -300,9 +325,10 @@ int testCACert( void )
 		return( FALSE );
 		}
 
-#if defined( __WINDOWS__ ) && defined( _WIN32 ) && defined( _MSC_VER )
 	/* Test the ability to handle conversion of 32 <-> 64-bit time_t 
-	   values */
+	   values in Win32 (but not Win64, where they're always 64-bit) */
+#if defined( __WINDOWS__ ) && defined( _WIN32 ) && defined( _MSC_VER ) && \
+	!defined( _M_X64 )
 	{
 	const __int64 time64 = CERTTIME_DATETEST;
 	const unsigned int time32 = CERTTIME_DATETEST;
@@ -546,7 +572,7 @@ static const wchar_t FAR_BSS unicodeStr[] = {
 	0x0435, 0x0440, 0x044F, 0x0439, 0x0000 };
 static const wchar_t FAR_BSS unicode2Str[] = {
 	0x004D, 0x0061, 0x0072, 0x0074, 0x0069, 0x006E, 0x0061, 0x0020,
-	0x0160, 0x0069, 0x006B, 0x006F, 0x0076, 0x006E, 0x00E1 };
+	0x0160, 0x0069, 0x006B, 0x006F, 0x0076, 0x006E, 0x00E1, 0x0000 };
 
 static const CERT_DATA FAR_BSS textStringCertData[] = {
 	/* Identification information: A latin-1 string, an obviously Unicode 
@@ -717,7 +743,7 @@ int testComplexCert( void )
 	CRYPT_CERTIFICATE cryptCert;
 	CRYPT_CONTEXT pubKeyContext, privKeyContext;
 	C_CHR buffer1[ 64 ], buffer2[ 64 ];
-	int length1, length2, status;
+	int length1 = DUMMY_INIT, length2 = DUMMY_INIT, status;
 
 	puts( "Testing complex certificate creation/export..." );
 
@@ -2084,7 +2110,7 @@ int testComplexCRL( void )
 	CRYPT_CERTIFICATE cryptCRL, cryptRevokeCert;
 	CRYPT_CONTEXT cryptCAKey;
 	time_t revocationTime;
-	int revocationReason, dummy, status;
+	int revocationReason = DUMMY_INIT, dummy, status;
 
 	puts( "Testing complex CRL creation/export..." );
 
@@ -2658,7 +2684,7 @@ int initRTCS( CRYPT_CERTIFICATE *cryptRTCSRequest,
 	{
 	CRYPT_CERTIFICATE cryptErrorObject = *cryptRTCSRequest;
 	C_CHR rtcsURL[ 512 ];
-	int count, status;
+	int count = DUMMY_INIT, status;
 
 	/* Select the RTCS responder location from the EE certificate and read 
 	   the URL/FQDN value (this isn't used but is purely for display to the 
@@ -2799,7 +2825,7 @@ int initOCSP( CRYPT_CERTIFICATE *cryptOCSPRequest, const int number,
 	CRYPT_CERTIFICATE cryptOCSPCA, cryptOCSPEE;
 	CRYPT_CERTIFICATE cryptErrorObject;
 	C_CHR ocspURL[ 512 ];
-	int count, status;
+	int count = DUMMY_INIT, status;
 
 	assert( !ocspv2 );
 

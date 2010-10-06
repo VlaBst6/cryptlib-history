@@ -1,25 +1,20 @@
 /*
  ---------------------------------------------------------------------------
- Copyright (c) 1998-2006, Brian Gladman, Worcester, UK. All rights reserved.
+ Copyright (c) 1998-2008, Brian Gladman, Worcester, UK. All rights reserved.
 
  LICENSE TERMS
 
- The free distribution and use of this software in both source and binary
- form is allowed (with or without changes) provided that:
+ The redistribution and use of this software (with or without changes)
+ is allowed without the payment of fees or royalties provided that:
 
-   1. distributions of this source code include the above copyright
-      notice, this list of conditions and the following disclaimer;
+  1. source code distributions include the above copyright notice, this
+     list of conditions and the following disclaimer;
 
-   2. distributions in binary form include the above copyright
-      notice, this list of conditions and the following disclaimer
-      in the documentation and/or other associated materials;
+  2. binary distributions include the above copyright notice, this list
+     of conditions and the following disclaimer in their documentation;
 
-   3. the copyright holder's name is not used to endorse products
-      built using this software without specific written permission.
-
- ALTERNATIVELY, provided that this notice is retained in full, this product
- may be distributed under the terms of the GNU General Public License (GPL),
- in which case the provisions of the GPL apply INSTEAD OF those given above.
+  3. the name of the copyright holder is not used to endorse products
+     built using this software without specific written permission.
 
  DISCLAIMER
 
@@ -27,11 +22,11 @@
  in respect of its properties, including, but not limited to, correctness
  and/or fitness for purpose.
  ---------------------------------------------------------------------------
- Issue 20/10/2006
+ Issue Date: 20/12/2007
 */
 
-#ifndef BRG_ENDIAN_H
-#define BRG_ENDIAN_H
+#ifndef _BRG_ENDIAN_H
+#define _BRG_ENDIAN_H
 
 #define IS_BIG_ENDIAN      4321 /* byte 0 is most significant (mc68k) */
 #define IS_LITTLE_ENDIAN   1234 /* byte 0 is least significant (i386) */
@@ -129,13 +124,13 @@
       defined( __VMS )     || defined( _M_X64 )
 #  define PLATFORM_BYTE_ORDER IS_LITTLE_ENDIAN
 
-#elif defined( _AIX )    || defined( AMIGA )     || defined( applec )     || \
-      defined( __AS400__ ) || defined( _CRAY )   || defined( __hppa )     || \
-	  defined( __hp9000 ) || defined( ibm370 )   || defined( mc68000 )    || \
-	  defined( m68k )    || defined( __MRC__ )   || defined( __MVS__ )    || \
-	  defined( __MWERKS__ ) || defined( sparc )  || defined( __sparc)     || \
-	  defined( SYMANTEC_C ) || defined( __VOS__ ) || defined( __TIGCC__ ) || \
-	  defined( __TANDEM )   || defined( THINK_C ) || defined( __VMCMS__ )
+#elif defined( AMIGA )   || defined( applec )    || defined( __AS400__ )  || \
+      defined( _CRAY )   || defined( __hppa )    || defined( __hp9000 )   || \
+      defined( ibm370 )  || defined( mc68000 )   || defined( m68k )       || \
+      defined( __MRC__ ) || defined( __MVS__ )   || defined( __MWERKS__ ) || \
+      defined( sparc )   || defined( __sparc)    || defined( SYMANTEC_C ) || \
+      defined( __VOS__ ) || defined( __TIGCC__ ) || defined( __TANDEM )   || \
+      defined( THINK_C ) || defined( __VMCMS__ ) || defined( _AIX )
 #  define PLATFORM_BYTE_ORDER IS_BIG_ENDIAN
 
 #elif 0     /* **** EDIT HERE IF NECESSARY **** */

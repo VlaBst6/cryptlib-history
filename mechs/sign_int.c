@@ -7,13 +7,13 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
+  #include "mech.h"
   #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
   #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
@@ -26,8 +26,7 @@
 /* Create a DLP signature */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3 ) ) \
-static int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
-									void *buffer, 
+static int createDlpSignature( OUT_BUFFER_OPT( bufSize, *length ) void *buffer,
 							   IN_RANGE( 0, CRYPT_MAX_PKCSIZE ) const int bufSize, 
 							   OUT_LENGTH_Z int *length, 
 							   IN_HANDLE const CRYPT_CONTEXT iSignContext,
@@ -58,8 +57,8 @@ static int createDlpSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) 
 	*length = 0;
 
 	/* Extract the hash value from the context.  If we're doing a length 
-	   check there's no hash value present yet, so we just fill in the hash 
-	   length value from the blocksize attribute */
+	   check then there's no hash value present yet, so we just fill in the 
+	   hash length value from the blocksize attribute */
 	if( buffer == NULL )
 		{
 		memset( hash, 0, CRYPT_MAX_HASHSIZE );	/* Keep mem.checkers happy */
@@ -214,7 +213,7 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 	BYTE buffer[ CRYPT_MAX_PKCSIZE + 8 ];
 	BYTE *bufPtr = ( signature == NULL ) ? NULL : buffer;
 	const int bufSize = ( signature == NULL ) ? 0 : CRYPT_MAX_PKCSIZE;
-	int length = DUMMY_INIT, status;
+	int length = DUMMY_INIT, hashParam = 0, status;
 
 	assert( ( signature == NULL && sigMaxLength == 0 ) || \
 			isWritePtr( signature, sigMaxLength ) );
@@ -233,6 +232,7 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 				  signatureType == SIGNATURE_PGP || \
 				  signatureType == SIGNATURE_RAW || \
 				  signatureType == SIGNATURE_SSH || \
+				  signatureType == SIGNATURE_TLS12 || \
 				  signatureType == SIGNATURE_X509 ) && \
 				iHashContext2 == CRYPT_UNUSED ) );
 
@@ -247,6 +247,9 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && hashAlgo == CRYPT_ALGO_SHA2 )
+		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
+								  &hashParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
@@ -294,8 +297,8 @@ int createSignature( OUT_BUFFER_OPT( sigMaxLength, *signatureLength ) \
 
 	/* Write the signature record to the output */
 	sMemOpenOpt( &stream, signature, sigMaxLength );
-	status = writeSigFunction( &stream, iSignContext, hashAlgo, signAlgo,
-							   buffer, length );
+	status = writeSigFunction( &stream, iSignContext, hashAlgo, hashParam, 
+							   signAlgo, buffer, length );
 	if( cryptStatusOK( status ) )
 		*signatureLength = stell( &stream );
 	sMemDisconnect( &stream );
@@ -327,7 +330,7 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 	QUERY_INFO queryInfo;
 	STREAM stream;
 	void *signatureData;
-	int signatureDataLength, status;
+	int signatureDataLength, hashParam = 0, status;
 
 	assert( isReadPtr( signature, signatureLength ) );
 	
@@ -342,6 +345,7 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 				  signatureType == SIGNATURE_PGP || \
 				  signatureType == SIGNATURE_RAW || \
 				  signatureType == SIGNATURE_SSH || \
+				  signatureType == SIGNATURE_TLS12 || \
 				  signatureType == SIGNATURE_X509 ) && \
 				iHashContext2 == CRYPT_UNUSED ) );
 
@@ -356,13 +360,15 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM1 : status );
 	status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
 							  &hashAlgo, CRYPT_CTXINFO_ALGO );
+	if( cryptStatusOK( status ) && hashAlgo == CRYPT_ALGO_SHA2 )
+		status = krnlSendMessage( iHashContext, IMESSAGE_GETATTRIBUTE,
+								  &hashParam, CRYPT_CTXINFO_BLOCKSIZE );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ARGERROR_NUM2 : status );
 
 	/* Read and check the signature record */
-	memset( &queryInfo, 0, sizeof( QUERY_INFO ) );
 	sMemConnect( &stream, signature, signatureLength );
- 	status = readSigFunction( &stream, &queryInfo );
+	status = readSigFunction( &stream, &queryInfo );
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		{
@@ -377,9 +383,14 @@ int checkSignature( IN_BUFFER( signatureLength ) const void *signature,
 		{
 		if( signAlgo != queryInfo.cryptAlgo )
 			status = CRYPT_ERROR_SIGNATURE;
-		if( signatureType != SIGNATURE_SSH && \
-			hashAlgo != queryInfo.hashAlgo )
-			status = CRYPT_ERROR_SIGNATURE;
+		if( signatureType != SIGNATURE_SSH )
+			{
+			if( hashAlgo != queryInfo.hashAlgo )
+				status = CRYPT_ERROR_SIGNATURE;
+			if( hashAlgo == CRYPT_ALGO_SHA2 && hashParam != 32 && \
+				hashParam != queryInfo.hashParam )
+				status = CRYPT_ERROR_SIGNATURE;
+			}
 		if( cryptStatusError( status ) )
 			{
 			zeroise( &queryInfo, sizeof( QUERY_INFO ) );

@@ -273,7 +273,7 @@ static void sendErrorResponse( INOUT SESSION_INFO *sessionInfoPtr,
 	   header of the client's message was successfully read (indicated by 
 	   the headerRead flag in the protocolInfo being set), otherwise we 
 	   can't create our own header for the response */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, NULL, TRUE );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_LASTMESSAGE, TRUE );
 	if( !writeHttpResponseOnly )
 		{
 		status = writePkiMessage( sessionInfoPtr, protocolInfo, CMPBODY_ERROR );

@@ -258,7 +258,7 @@ int caRevokeCert( INOUT DBMS_INFO *dbmsInfo,
 
 		/* Get the certificate being revoked via the revocation request */
 		status = getKeyID( reqCertID, ENCODED_DBXKEYID_SIZE, &reqCertIDlength, 
-						   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA );
+						   iCertRequest, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 		if( cryptStatusOK( status ) )
 			status = getCertToRevoke( dbmsInfo, &iLocalCertificate,
 									  iCertRequest, errorInfo );
@@ -304,7 +304,7 @@ int caRevokeCert( INOUT DBMS_INFO *dbmsInfo,
 		reqCertIDlength = 0;
 		}
 	status = getKeyID( subjCertID, ENCODED_DBXKEYID_SIZE, &subjCertIDlength, 
-					   iLocalCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA );
+					   iLocalCertificate, CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		status = extractCertData( iLocalCRL, CRYPT_IATTRIBUTE_CRLENTRY,
 								  certData, MAX_CERT_SIZE, &certDataLength );

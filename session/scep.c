@@ -12,7 +12,7 @@
   #include "scep.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
   #include "session/scep.h"
 #endif /* Compiler-specific includes */
@@ -28,7 +28,7 @@
 /* Initialise and clean up protocol information */
 
 STDC_NONNULL_ARG( ( 1 ) ) \
-void initSCEPprotocolInfo( INOUT SCEP_PROTOCOL_INFO *protocolInfo )
+void initSCEPprotocolInfo( OUT SCEP_PROTOCOL_INFO *protocolInfo )
 	{
 	assert( isWritePtr( protocolInfo, sizeof( SCEP_PROTOCOL_INFO ) ) );
 
@@ -110,7 +110,7 @@ int processKeyFingerprint( INOUT SESSION_INFO *sessionInfoPtr )
 		setMessageData( &msgData, certFingerprint, CRYPT_MAX_HASHSIZE );
 		status = krnlSendMessage( sessionInfoPtr->iAuthInContext, 
 								  IMESSAGE_GETATTRIBUTE_S, &msgData, 
-								  CRYPT_CERTINFO_FINGERPRINT_SHA );
+								  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 		if( cryptStatusOK( status ) )
 			{
 			( void ) addSessionInfoS( &sessionInfoPtr->attributeList,

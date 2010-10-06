@@ -448,13 +448,16 @@ static int connectSCEP( const BOOLEAN localSession,
 						const BOOLEAN userSuppliesCACert )
 	{
 	CRYPT_SESSION cryptSession;
-	CRYPT_CERTIFICATE cryptRequest, cryptResponse, cryptCACert;
+	CRYPT_CERTIFICATE cryptRequest = DUMMY_INIT, cryptResponse, cryptCACert;
 	CRYPT_CONTEXT cryptContext;
 #if ( SCEP_NO == 1 )
 	C_CHR userID[ 64 ], password[ 64 ];
-#endif /* cryptlib SCEP_NO == 1 */
+	const C_STR userPtr;
+	const C_STR passwordPtr;
+#else
 	const C_STR userPtr = scepInfo[ SCEP_NO ].user;
 	const C_STR passwordPtr = scepInfo[ SCEP_NO ].password;
+#endif /* cryptlib SCEP_NO == 1 */
 	int status;
 
 	printf( "Testing %s SCEP session%s...\n", scepInfo[ SCEP_NO ].name,
@@ -536,7 +539,7 @@ static int connectSCEP( const BOOLEAN localSession,
 
 	/* Make sure that the SCEP client's checking for invalid transactionIDs
 	   works (this is an obscure problem caused by the SCEP protocol, see 
-	   the SCEP client code comments for more information */
+	   the SCEP client code comments for more information) */
 	status = cryptSetAttributeString( cryptSession,
 									  CRYPT_SESSINFO_USERNAME,
 									  TEXT( "abc@def" ), 
@@ -669,7 +672,8 @@ static int connectSCEP( const BOOLEAN localSession,
 
 	/* Clean up */
 	cryptDestroyCert( cryptResponse );
-	cryptDestroyCert( cryptCACert );
+	if( !userSuppliesCACert )
+		cryptDestroyCert( cryptCACert );
 	puts( "SCEP client session succeeded.\n" );
 	return( TRUE );
 	}
@@ -684,12 +688,15 @@ int testSessionSCEPCACert( void )
 	return( connectSCEP( FALSE, FALSE ) );
 	}
 
-int testSessionSCEPServer( void )
+static int scepServer( void )
 	{
 	CRYPT_SESSION cryptSession;
 	CRYPT_CONTEXT cryptCAKey;
 	CRYPT_KEYSET cryptCertStore;
 	int status;
+
+	/* Acquire the init mutex */
+	acquireMutex();
 
 	puts( "SVR: Testing SCEP server session ..." );
 
@@ -753,14 +760,24 @@ int testSessionSCEPServer( void )
 	return( TRUE );
 	}
 
+int testSessionSCEPServer( void )
+	{
+	int status;
+
+	createMutex();
+	status = scepServer();
+	destroyMutex();
+
+	return( status );
+	}
+
 /* Perform a client/server loopback test */
 
 #ifdef WINDOWS_THREADS
 
 unsigned __stdcall scepServerThread( void *dummy )
 	{
-	acquireMutex();
-	testSessionSCEPServer();
+	scepServer();
 	_endthreadex( 0 );
 	return( 0 );
 	}

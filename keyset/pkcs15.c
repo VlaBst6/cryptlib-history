@@ -7,21 +7,21 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
-  #include "pkcs15.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "keyset.h"
+  #include "pkcs15.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "keyset/keyset.h"
   #include "keyset/pkcs15.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
-/* Each PKCS #15 file can contain information for multiple personalities 
+/* Each PKCS #15 keyset can contain information for multiple personalities 
    (although it's extremely unlikely to contain more than one or two), we 
-   allow a maximum of MAX_PKCS15_OBJECTS per file in order to discourage 
+   allow a maximum of MAX_PKCS15_OBJECTS per keyset in order to discourage 
    them from being used as general-purpose public-key keysets, which they're 
    not supposed to be.  A setting of 16 objects consumes ~2K of memory 
    (16 x ~128) and seems like a sensible upper bound so we choose that as 
@@ -35,12 +35,24 @@
 
 #ifdef USE_PKCS15
 
-/* OID information used to read a PKCS #15 file */
+/* OID information used to read the header of a PKCS #15 keyset.  Since the 
+   PKCS #15 content can be further wrapped in CMS AuthData we have to check
+   for both types of content.  If we find AuthData we retry the read, this
+   time allowing only PKCS #15 content.  In addition since this is inner
+   content in an EncapsulatedContentInfo structure we don't specify any
+   version information because the additional OCTET STRING encapsulation 
+   used with EncapsulatedContentInfo means that we need to dig down further 
+   before we can find this field */
 
 static const CMS_CONTENT_INFO FAR_BSS oidInfoPkcs15Data = { 0, 0 };
 
 static const OID_INFO FAR_BSS keyFileOIDinfo[] = {
-	{ OID_PKCS15_CONTENTTYPE, CRYPT_OK, &oidInfoPkcs15Data },
+	{ OID_PKCS15_CONTENTTYPE, TRUE, &oidInfoPkcs15Data },
+	{ OID_CMS_AUTHDATA, FALSE, &oidInfoPkcs15Data },
+	{ NULL, 0 }, { NULL, 0 }
+	};
+static const OID_INFO FAR_BSS keyFilePKCS15OIDinfo[] = {
+	{ OID_PKCS15_CONTENTTYPE, CRYPT_OK, NULL },
 	{ NULL, 0 }, { NULL, 0 }
 	};
 
@@ -82,7 +94,7 @@ int getCertID( IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 	status = dynCreate( &idDB, iCryptHandle, nameType );
 	if( cryptStatusError( status ) )
 		return( status );
-	getHashAtomicParameters( CRYPT_ALGO_SHA1, &hashFunctionAtomic, NULL );
+	getHashAtomicParameters( CRYPT_ALGO_SHA1, 0, &hashFunctionAtomic, NULL );
 	hashFunctionAtomic( nameID, nameIdMaxLen, dynData( idDB ), 
 						dynLength( idDB ) );
 	dynDestroy( &idDB );
@@ -310,7 +322,7 @@ void pkcs15freeEntry( INOUT PKCS15_INFO *pkcs15info )
 
 STDC_NONNULL_ARG( ( 1 ) ) \
 static void pkcs15Free( INOUT_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info, 
-						IN_LENGTH_SHORT const int noPkcs15objects )
+						IN_RANGE( 1, MAX_PKCS15_OBJECTS ) const int noPkcs15objects )
 	{
 	int i;
 
@@ -318,7 +330,7 @@ static void pkcs15Free( INOUT_ARRAY( noPkcs15objects ) PKCS15_INFO *pkcs15info,
 						sizeof( PKCS15_INFO ) * noPkcs15objects ) );
 
 	REQUIRES_V( noPkcs15objects >= 1 && \
-				noPkcs15objects < MAX_INTLENGTH_SHORT );
+				noPkcs15objects <= MAX_PKCS15_OBJECTS );
 
 	for( i = 0; i < noPkcs15objects && i < FAILSAFE_ITERATIONS_MED; i++ )
 		pkcs15freeEntry( &pkcs15info[ i ] );
@@ -368,11 +380,11 @@ int getValidityInfo( INOUT PKCS15_INFO *pkcs15info,
 /* Read the header of a PKCS #15 keyset */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int readPkcs15header( INOUT STREAM *stream, 
-							 OUT_INT_Z long *endPosPtr )
+static int readPkcs15EncapsHeader( INOUT STREAM *stream,
+								   OUT long *endPosPtr )
 	{
-	long endPos, dataEndPos;
-	int value, status;
+	long length;
+	int tag, innerLength, status;
 
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 	assert( isWritePtr( endPosPtr, sizeof( long ) ) );
@@ -380,29 +392,117 @@ static int readPkcs15header( INOUT STREAM *stream,
 	/* Clear return value */
 	*endPosPtr = 0;
 
-	/* Read the outer header and make sure that the length information is 
-	   valid */
-	status = readCMSheader( stream, keyFileOIDinfo, 
-							FAILSAFE_ARRAYSIZE( keyFileOIDinfo, OID_INFO ), 
-							&dataEndPos, FALSE );
+	/* The outer header was a CMS AuthData wrapper, try again for an inner 
+	   PKCS #15 header.  First we skip the AuthData SET OF RECIPIENTINFO, 
+	   macAlgorithm AlgorithmIdentifier, and optional digestAlgorithm 
+	   AlgorithmIdentifier */
+	readUniversal( stream );
+	status = readUniversal( stream );
 	if( cryptStatusError( status ) )
 		return( status );
+	status = tag = peekTag( stream );
+	if( !cryptStatusError( status ) && tag == MAKE_CTAG( 1 ) )
+		status = readUniversal( stream );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* We've made our way past the AuthData information, try again for
+	   encapsulated PKCS #15 content */
+	status = readCMSheader( stream, keyFilePKCS15OIDinfo, 
+							FAILSAFE_ARRAYSIZE( keyFilePKCS15OIDinfo, OID_INFO ), 
+							&length, READCMS_FLAG_INNERHEADER );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Since this is EncapsulatedContentInfo the version information doesn't 
+	   immediately follow the header but is encapsulated inside an OCTET 
+	   STRING, so we have to skip an additional layer of wrapping and 
+	   manually read the version information.  In addition the OCTET STRING
+	   could be indefinite-length, in which case it acts as a constructed 
+	   value containing an inner OCTET STRING, so we have to skip the inner
+	   OCTET STRING before we get to the actual content */
+	if( length == CRYPT_UNUSED )
+		{
+		/* It's an indefinite-length OCTET STRING, skip the inner OCTET 
+		   STRING wrapper */
+		readOctetStringHole( stream, NULL, 16, DEFAULT_TAG );
+		}
+	status = readSequence( stream, &innerLength );
+	if( cryptStatusOK( status ) )
+		{
+		long value;
+
+		*endPosPtr = innerLength;
+		status = readShortInteger( stream, &value );
+		if( cryptStatusOK( status ) && value != 0 )
+			status = CRYPT_ERROR_BADDATA;
+		}
+
+	return( status );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int readPkcs15header( INOUT STREAM *stream, 
+							 OUT_INT_Z long *endPosPtr,
+							 INOUT ERROR_INFO *errorInfo )
+	{
+	long endPos, currentPos;
+	int value, status;
+
+	assert( isWritePtr( stream, sizeof( STREAM ) ) );
+	assert( isWritePtr( endPosPtr, sizeof( long ) ) );
+	assert( isWritePtr( errorInfo, sizeof( ERROR_INFO ) ) );
+
+	/* Clear return value */
+	*endPosPtr = 0;
+
+	/* Read the outer header and make sure that the length information is 
+	   valid */
+	status = value = readCMSheader( stream, keyFileOIDinfo, 
+						FAILSAFE_ARRAYSIZE( keyFileOIDinfo, OID_INFO ), 
+						&endPos, READCMS_FLAG_DEFINITELENGTH_OPT );
+	if( cryptStatusError( status ) )
+		{
+		retExt( CRYPT_ERROR_BADDATA, 
+				( CRYPT_ERROR_BADDATA, errorInfo, 
+				  "Invalid PKCS #15 keyset header" ) );
+		}
+	if( value == FALSE )
+		{
+		/* The outer header was a CMS AuthData wrapper, try again for an 
+		   inner PKCS #15 header */
+		status = readPkcs15EncapsHeader( stream, &endPos );
+		if( cryptStatusError( status ) )
+			{
+			retExt( CRYPT_ERROR_BADDATA, 
+					( CRYPT_ERROR_BADDATA, errorInfo, 
+					  "Invalid PKCS #15 content wrapped in AuthData" ) );
+			}
+		}
 
 	/* If it's indefinite-length data, don't try and go any further (the 
 	   general length check below will also catch this, but we make the 
 	   check explicit here) */
-	if( dataEndPos == CRYPT_UNUSED )
-		return( CRYPT_ERROR_BADDATA );
+	if( endPos == CRYPT_UNUSED )
+		{
+		retExt( CRYPT_ERROR_BADDATA, 
+				( CRYPT_ERROR_BADDATA, errorInfo, 
+				  "Can't process indefinite-length PKCS #15 content" ) );
+		}
 
 	/* Make sure that the length information is sensible.  readCMSheader() 
 	   reads the version number field at the start of the content so we have 
 	   to adjust the stream position for this when we calculate the data end 
 	   position */
-	endPos = ( stell( stream ) - sizeofShortInteger( 0 ) ) + dataEndPos;
-	if( dataEndPos < MIN_OBJECT_SIZE || dataEndPos >= MAX_INTLENGTH || \
-		endPos < 16 + MIN_OBJECT_SIZE || endPos >= MAX_INTLENGTH )
-		return( CRYPT_ERROR_BADDATA );
-	*endPosPtr = endPos;
+	currentPos = stell( stream ) - sizeofShortInteger( 0 );
+	if( endPos < 16 + MIN_OBJECT_SIZE || \
+		currentPos + endPos >= MAX_INTLENGTH )
+		{
+		retExt( CRYPT_ERROR_BADDATA, 
+				( CRYPT_ERROR_BADDATA, errorInfo, 
+				  "Invalid PKCS #15 keyset length information" ) );
+		}
+	*endPosPtr = currentPos + endPos;
 
 	/* Skip the key management information if there is any and read the 
 	   inner wrapper */
@@ -443,14 +543,12 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 
 	/* If we're opening an existing keyset skip the outer header, optional
 	   keyManagementInfo, and inner header.  We do this before we perform any
-	   setup operations to weed out potential problem files */
+	   setup operations to weed out potential problem keysets */
 	if( options != CRYPT_KEYOPT_CREATE )
 		{
-		status = readPkcs15header( stream, &endPos );
+		status = readPkcs15header( stream, &endPos, KEYSET_ERRINFO );
 		if( cryptStatusError( status ) )
-			retExt( status, 
-					( status, KEYSET_ERRINFO, 
-					  "Invalid PKCS #15 keyset header" ) );
+			return( status );
 		}
 
 	/* Allocate the PKCS #15 object information */
@@ -476,8 +574,9 @@ static int initFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 		return( CRYPT_OK );
 
 	/* Read all of the keys in the keyset */
-	status = readKeyset( &keysetInfoPtr->keysetFile->stream, pkcs15info,
-						 MAX_PKCS15_OBJECTS, endPos, KEYSET_ERRINFO );
+	status = readPkcs15Keyset( &keysetInfoPtr->keysetFile->stream, 
+							   pkcs15info, MAX_PKCS15_OBJECTS, endPos, 
+							   KEYSET_ERRINFO );
 	if( cryptStatusError( status ) )
 		{
 		pkcs15Free( pkcs15info, MAX_PKCS15_OBJECTS );
@@ -516,10 +615,11 @@ static int shutdownFunction( INOUT KEYSET_INFO *keysetInfoPtr )
 		BYTE buffer[ STREAM_BUFSIZE + 8 ];
 
 		sseek( stream, 0 );
-		sioctl( stream, STREAM_IOCTL_IOBUFFER, buffer, STREAM_BUFSIZE );
+		sioctlSetString( stream, STREAM_IOCTL_IOBUFFER, buffer, 
+						 STREAM_BUFSIZE );
 		status = pkcs15Flush( stream, keysetInfoPtr->keyData, 
 							  keysetInfoPtr->keyDataNoObjects );
-		sioctl( stream, STREAM_IOCTL_IOBUFFER, NULL, 0 );
+		sioctlSet( stream, STREAM_IOCTL_IOBUFFER, 0 );
 		if( status == OK_SPECIAL )
 			{
 			keysetInfoPtr->flags |= KEYSET_EMPTY;

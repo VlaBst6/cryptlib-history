@@ -34,6 +34,10 @@
 
 #if defined( USE_TCP ) && defined( USE_DNSSRV )
 
+#if defined( _MSC_VER )
+  #pragma message( "  Building with DNS SRV enabled." )
+#endif /* Warn with VC++ */
+
 /****************************************************************************
 *																			*
 *						 		Init/Shutdown Routines						*
@@ -239,7 +243,7 @@ static int getSrvFQDN( INOUT NET_STREAM_INFO *netStream,
 		int i;
 
 		for( i = 0; 
-			 hostInfo->h_addr_list[ i ] != NULL && i < IP_ADDR_COUNT; 
+			 i < IP_ADDR_COUNT && hostInfo->h_addr_list[ i ] != NULL; 
 			 i++ )
 			{
 			struct in_addr address;
@@ -437,8 +441,9 @@ static int getFQDN( INOUT NET_STREAM_INFO *netStream,
 	/* Now get the hostent info and walk through it looking for the FQDN */
 	if( ( hostInfo = gethostbyname( fqdn ) ) == NULL )
 		return( CRYPT_ERROR_NOTFOUND );
-	for( addressCount = 0; hostInfo->h_addr_list[ addressCount ] != NULL && \
-						   addressCount < IP_ADDR_COUNT; addressCount++ )
+	for( addressCount = 0; 
+		 addressCount < IP_ADDR_COUNT && \
+			hostInfo->h_addr_list[ addressCount ] != NULL; addressCount++ )
 		{
 		char **aliasPtrPtr;	
 		int i;

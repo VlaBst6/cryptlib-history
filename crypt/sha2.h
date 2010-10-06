@@ -35,10 +35,10 @@
 
 #include <stdlib.h>
 
-#include "crypt.h"	/* For USE_SHA2_512 define via config.h */
-#ifdef USE_SHA2_512	/* pcg */
+#include "crypt.h"	/* For USE_SHA2_EXT define via config.h */
+#ifdef USE_SHA2_EXT	/* pcg */
   #define SHA_64BIT
-#endif /* USE_SHA2_512 */
+#endif /* USE_SHA2_EXT */
 
 /* define the hash functions that you need  */
 #define SHA_2   /* for dynamic hash length  */

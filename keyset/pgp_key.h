@@ -9,6 +9,14 @@
 
 #define _PGPKEY_DEFINED
 
+#ifndef _PGP_DEFINED
+  #if defined( INC_ALL )
+	#include "pgp.h"
+  #else
+	#include "misc/pgp.h"
+  #endif /* Compiler-specific includes */
+#endif /* _PGP_DEFINED */
+
 /****************************************************************************
 *																			*
 *								PGP Keyring Constants						*

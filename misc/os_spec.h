@@ -132,13 +132,15 @@
 	Visual C++ 7.0 (VC++.NET/2002) _MSC_VER = 1300
 	Visual C++ 7.1 (VC++.NET/2003) _MSC_VER = 1310
 	Visual C++ 8.0 (VC2005) _MSC_VER = 1400 
-	Visual C++ 9.0 (VC2008) _MSC_VER = 1500 */
+	Visual C++ 9.0 (VC2008) _MSC_VER = 1500
+	Visual C++ 10.0 (VC2010) _MSC_VER = 1600 */
 
 #ifdef _MSC_VER
   #define VC_16BIT( version )		( version <= 800 )
   #define VC_GE_2002( version )		( version >= 1300 )
   #define VC_LT_2005( version )		( version < 1400 )
   #define VC_GE_2005( version )		( version >= 1400 )
+  #define VC_GE_2008( version )		( version >= 1500 )
 #else
   /* These aren't specifically required on non-VC++ systems, but some 
      preprocessors get confused if they aren't defined since they're used */
@@ -146,6 +148,7 @@
   #define VC_GE_2002( version )		0
   #define VC_LT_2005( version )		0
   #define VC_GE_2005( version )		0
+  #define VC_GE_2008( version )		0
 #endif /* Visual C++ */
 
 /* If we're compiling under VC++ with the maximum level of warnings, turn
@@ -190,23 +193,15 @@
 	 4206: Empty C module due to #ifdef'd out code.  Annoying noise caused 
 		   by empty modules due to disabled functionality.
 
-	 4244: int <-> unsigned char/short.  This leads to lots of false-
-		   positive warnings due to automatic promotion of expressions 
-		   involving chars to ints, e.g. 'ch x = ch y & 0x0F' produces a 
-		   warning because it's promoted to an int.  Currently these are
-		   all suppressed using casts.
-
-	 The only useful ones are 4057 and 4244, which can be turned off on a
-	 off-off basis to identify new true-positive issues before being 
-	 disabled again to avoid all of the false-positives, currently 100 for 
-	 4057 and 35 for 4244, of which 25-odd are in the AES code */
+	 The only useful ones are 4057, which can be turned off on a one-off 
+	 basis to identify new true-positive issues before being disabled again 
+	 to avoid all of the false-positives, currently 100 for 4057 */
   #pragma warning( disable: 4054 )	/* Cast from fn.ptr -> generic (data) ptr.*/
   #pragma warning( disable: 4055 )	/* Cast from generic (data) ptr. -> fn.ptr.*/
   #pragma warning( disable: 4057 )	/* Different types via indirection */
   #pragma warning( disable: 4204 )	/* Struct initialised with non-const value */
   #pragma warning( disable: 4206 )	/* Empty C module due to #ifdef'd out code */
   #pragma warning( disable: 4221 )	/* Struct initialised with addr.of auto.var */
-//  #pragma warning( disable: 4244 )	/* int <-> unsigned char/short */
   #if VC_GE_2005( _MSC_VER )
 	#pragma warning( disable: 4267 )/* int <-> size_t */
   #endif /* VC++ 2005 or newer */
@@ -220,7 +215,7 @@
 
   /* Code analysis generates even more warnings.  C6011 is particularly 
 	 problematic, it's issued whenever a pointer is derefenced without first
-	 checking that it's not NULL */
+	 checking that it's not NULL, which makes it more or less unusable */
   #if defined( _MSC_VER ) && defined( _PREFAST_ ) 
 	#pragma warning( disable: 6011 )/* Deferencing NULL pointer */
   #endif /* VC++ with source analysis enabled */
@@ -313,6 +308,22 @@
 #if defined( __QNX__ ) && defined( __WATCOMC__ )
   #pragma enum int
 #endif /* QNX and Watcom C */
+
+/* Symbian has rather inconsistent defines depending in which toolchain 
+   we're using, with the original ARM tools the define was __SYMBIAN32__
+   with __MARM__ for the ARM architecture, with the ex-Metrowerks Nokia
+   compiler the define is __EMU_SYMBIAN_OS__ for the emulated environment
+   and who knows what for the gcc toolchain.  To make checking easier we
+   require __SYMBIAN32__ for all environments, with __MARM__ vs.
+   __EMU_SYMBIAN_OS__ distinguishing between ARM and x86 emulator */
+
+#if defined( __EMU_SYMBIAN_OS__ ) && !defined( __SYMBIAN32__ )
+  #error Need to define '__SYMBIAN32__' for the Symbian build
+#endif /* __EMU_SYMBIAN_OS__ && !__SYMBIAN32__ */
+#if defined( __SYMBIAN32__ ) && \
+	!( defined( __MARM__ ) || defined( __EMU_SYMBIAN_OS__ ) )
+  #error Need to define a Symbian target architecture type, e.g. ARM or x86
+#endif /* __SYMBIAN32__ && !( __MARM__ || __EMU_SYMBIAN_OS__ ) */
 
 /* A few rare operations are word-size-dependant, which we detect via
    limits.h */
@@ -557,6 +568,26 @@ typedef unsigned char		BYTE;
   #define NO_ASM
 #endif /* Win64 */
 
+/* In some environments va_list is a scalar, so it can't be compared with 
+   NULL in order to verify its validity.  This was particularly problematic 
+   with the ARM ABI, which changed the type in late 2009 to 
+   'struct __va_list { void *__ap; }', breaking compatibility with all 
+   existing code.  We can detect this by taking advantage of the fact that 
+   support for the change was added in gcc 4.4, so any newer version with 
+   ARM_EABI defined will have a scalar va_list */
+
+#if defined( __GNUC__ ) && \
+	( ( __GNUC__ == 4 && __GNUC_MINOR__ >= 4 ) || ( __GNUC__ > 4 ) ) && \
+	defined( __ARM_EABI__ )
+	/* In theory we could check __ap but in practice it's too risky to rely 
+	   on the type and state of hidden internal fields, and in any case it's 
+	   only a sanity check, not a hard requirement, so we just no-op the 
+	   check out */
+  #define verifyVAList( x ) TRUE
+#else
+  #define verifyVAList( x ) ( ( x ) != NULL )
+#endif /* Nonstandard va_list types */
+
 /****************************************************************************
 *																			*
 *								Dynamic Loading Support						*
@@ -663,6 +694,9 @@ typedef unsigned char		BYTE;
 	#define DATA_BIGENDIAN		/* Tandem architecture always big-endian */
   #elif defined( __AS400__ ) || defined( __VMCMS__ ) || defined( __MVS__ )
 	#define DATA_BIGENDIAN		/* IBM big iron always big-endian */
+  #elif defined( __SYMBIAN32__ ) && \
+		( defined( __MARM__ ) || defined( __EMU_SYMBIAN_OS__ ) )
+	#define DATA_LITTLEENDIAN	/* Symbian on ARM/x86 always little-endian */
   #elif defined __GNUC__
 	#ifdef BYTES_BIG_ENDIAN
 	  #define DATA_BIGENDIAN	/* Big-endian byte order */

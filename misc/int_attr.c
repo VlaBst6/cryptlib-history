@@ -127,11 +127,9 @@ void *attributeFindEnd( IN_OPT const void *attributePtr,
 CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
 void *attributeFind( IN_OPT const void *attributePtr,
 					 IN GETATTRFUNCTION getAttrFunction,
-					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID,
-					 IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
-						const CRYPT_ATTRIBUTE_TYPE instanceID )
+					 IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE attributeID )
 	{
-	CRYPT_ATTRIBUTE_TYPE currAttributeID, currInstanceID;
+	CRYPT_ATTRIBUTE_TYPE currAttributeID;
 	int iterationCount;
 
 	assert( attributePtr == NULL || \
@@ -140,9 +138,6 @@ void *attributeFind( IN_OPT const void *attributePtr,
 	REQUIRES_N( getAttrFunction != NULL );
 	REQUIRES_N( isAttribute( attributeID ) || \
 				isInternalAttribute( attributeID ) );
-	REQUIRES_N( instanceID == CRYPT_ATTRIBUTE_NONE || \
-				isAttribute( instanceID ) || \
-				isInternalAttribute( instanceID ) );
 
 	if( attributePtr == NULL )
 		return( NULL );
@@ -162,12 +157,90 @@ void *attributeFind( IN_OPT const void *attributePtr,
 										ATTR_NEXT );
 		}
 	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
-	if( attributePtr == NULL || instanceID == CRYPT_ATTRIBUTE_NONE )
+
+	return( ( void * ) attributePtr );
+	}
+
+/* An extended form of the standard find-attribute function that searches 
+   either by attribute group or by attribute + attribute-instance (the
+   case of search-by-attribute is handled through findAttribute(), and the
+   other combinations aren't valid) */
+
+CHECK_RETVAL_PTR STDC_NONNULL_ARG( ( 2 ) ) \
+void *attributeFindEx( IN_OPT const void *attributePtr,
+					   IN GETATTRFUNCTION getAttrFunction,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE groupID,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE attributeID,
+					   IN_ENUM_OPT( CRYPT_ATTRIBUTE ) \
+							const CRYPT_ATTRIBUTE_TYPE instanceID )
+	{
+	CRYPT_ATTRIBUTE_TYPE currAttributeID, currInstanceID;
+	int iterationCount;
+
+	assert( attributePtr == NULL || \
+			isReadPtr( attributePtr, MIN_ATTRLIST_SIZE ) );
+
+	REQUIRES_N( getAttrFunction != NULL );
+	REQUIRES_N( groupID == CRYPT_ATTRIBUTE_NONE || \
+				isAttribute( groupID ) || \
+				isInternalAttribute( groupID ) );
+	REQUIRES_N( attributeID == CRYPT_ATTRIBUTE_NONE || \
+				isAttribute( attributeID ) || \
+				isInternalAttribute( attributeID ) );
+	REQUIRES_N( instanceID == CRYPT_ATTRIBUTE_NONE || \
+				isAttribute( instanceID ) || \
+				isInternalAttribute( instanceID ) );
+	REQUIRES_N( ( groupID != CRYPT_ATTRIBUTE_NONE && \
+				  attributeID == CRYPT_ATTRIBUTE_NONE && \
+				  instanceID == CRYPT_ATTRIBUTE_NONE ) || \
+				( groupID == CRYPT_ATTRIBUTE_NONE && \
+				  attributeID != CRYPT_ATTRIBUTE_NONE && \
+				  instanceID != CRYPT_ATTRIBUTE_NONE ) );
+
+	if( attributePtr == NULL )
+		return( NULL );
+
+	/* Find the attribute group if required */
+	if( groupID != CRYPT_ATTRIBUTE_NONE )
 		{
-		/* If the attribute isn't present or we're not looking for a 
-		   particular instance, we're done */
+		CRYPT_ATTRIBUTE_TYPE currGroupID;
+
+		if( getAttrFunction( attributePtr, &currGroupID, NULL, NULL, 
+							 ATTR_CURRENT ) == NULL )
+			return( NULL );
+		ENSURES_N( currGroupID != CRYPT_ATTRIBUTE_NONE );
+		for( iterationCount = 0; 
+			 attributePtr != NULL && currGroupID != groupID && \
+				iterationCount < FAILSAFE_ITERATIONS_MAX;
+			 iterationCount++ )
+			{
+			attributePtr = getAttrFunction( attributePtr, &currGroupID, 
+											NULL, NULL, ATTR_NEXT );
+			}
+		ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
+
 		return( ( void * ) attributePtr );
 		}
+
+	/* Find the attribute */
+	if( getAttrFunction( attributePtr, NULL, &currAttributeID, NULL, 
+						 ATTR_CURRENT ) == NULL )
+		return( NULL );
+	ENSURES_N( currAttributeID != CRYPT_ATTRIBUTE_NONE );
+	for( iterationCount = 0; 
+		 attributePtr != NULL && currAttributeID != attributeID && \
+			iterationCount < FAILSAFE_ITERATIONS_MAX;
+		 iterationCount++ )
+		{
+		attributePtr = getAttrFunction( attributePtr, NULL,
+										&currAttributeID, NULL,
+										ATTR_NEXT );
+		}
+	ENSURES_N( iterationCount < FAILSAFE_ITERATIONS_MAX );
+	if( attributePtr == NULL )
+		return( NULL );
 
 	/* Find the attribute instance */
 	if( getAttrFunction( attributePtr, NULL, &currAttributeID, 

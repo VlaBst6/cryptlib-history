@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *						cryptlib Test Routines Header File					*
-*						Copyright Peter Gutmann 1995-2009					*
+*						Copyright Peter Gutmann 1995-2010					*
 *																			*
 ****************************************************************************/
 
@@ -121,6 +121,13 @@
 
 #define SENTINEL		-1000
 
+/* A dummy initialistion value used to deal with false-positive compiler 
+   warnings */
+
+#ifndef DUMMY_INIT
+  #define DUMMY_INIT	0
+#endif /* DUMMY_INIT */
+
 /* There are a few OSes broken enough not to define the standard exit codes
    (SunOS springs to mind) so we define some sort of equivalent here just
    in case */
@@ -200,11 +207,14 @@
   #define FAR_BSS
 #endif /* Win16 */
 
-/* VC++ 2005 and newer warn if we use non-TR 24731 stdlib functions, since 
-   this is only for the test code we disable the warnings */
+/* VS 2005 and newer warn if we use non-TR 24731 stdlib functions, since 
+   this is only for the test code we disable the warnings.  In addition
+   VS in 64-bit mode warns about size_t (e.g. from calling strlen()) <-> 
+   int conversion */
 
 #if defined( _MSC_VER ) && ( _MSC_VER >= 1400 )
-  #pragma warning( disable: 4996 )
+  #pragma warning( disable: 4267 )	/* int <-> size_t */
+  #pragma warning( disable: 4996 )	/* Non-TR 24731 stdlib use */
 #endif /* VC++ 2005 or newer */
 
 /* Generic buffer size and dynamically-allocated file I/O buffer size.  The
@@ -519,7 +529,9 @@ void debugDump( const char *fileName, const void *data,
 int printConnectInfo( const CRYPT_SESSION cryptSession );
 int printSecurityInfo( const CRYPT_SESSION cryptSession,
 					   const BOOLEAN isServer,
-					   const BOOLEAN showFingerprint );
+					   const BOOLEAN showFingerprint,
+					   const BOOLEAN showServerKeyInfo,
+					   const BOOLEAN showClientCertInfo );
 int printFingerprint( const CRYPT_SESSION cryptSession,
 					  const BOOLEAN isServer );
 BOOLEAN setLocalConnect( const CRYPT_SESSION cryptSession, const int port );
@@ -668,7 +680,7 @@ int testGetPGPPrivateKey( void );
 int testGetBorkenKey( void );
 int testReadWriteFileKey( void );
 int testWriteAltFileKey( void );
-int testReadBigFileKey( void );
+int testImportFileKey( void );
 int testReadFilePublicKey( void );
 int testAddTrustedCert( void );
 int testAddGloballyTrustedCert( void );
@@ -708,6 +720,7 @@ int testEnvelopeSessionCrypt( void );
 int testEnvelopeSessionCryptLargeBuffer( void );
 int testEnvelopeCrypt( void );
 int testEnvelopePasswordCrypt( void );
+int testEnvelopePasswordCryptImport( void );
 int testPGPEnvelopePasswordCryptImport( void );
 int testEnvelopePKCCrypt( void );
 int testEnvelopePKCCryptAlgo( void );
@@ -817,6 +830,7 @@ int testSessionTLSServerSharedKey( void );
 int testSessionTLS11( void );
 int testSessionTLS11Server( void );
 int testSessionTLS12( void );
+int testSessionTLS12ClientCert( void );
 
 /* Functions to test local client/server sessions.  These require threading
    support since they run the client and server in different threads */
@@ -825,6 +839,7 @@ int testSessionTLS12( void );
   int testSessionSSHv1ClientServer( void );
   int testSessionSSHClientServer( void );
   int testSessionSSHClientServerDsaKey( void );
+  int testSessionSSHClientServerEccKey( void );
   int testSessionSSHClientServerFingerprint( void );
   int testSessionSSHClientServerSFTP( void );
   int testSessionSSHClientServerPortForward( void );
@@ -839,6 +854,10 @@ int testSessionTLS12( void );
   int testSessionTLSNoSharedKeyClientServer( void );
   int testSessionTLSBulkTransferClientServer( void );
   int testSessionTLS11ClientServer( void );
+  int testSessionTLS12ClientServer( void );
+  int testSessionTLS12ClientServerEccKey( void );
+  int testSessionTLS12ClientServerEcc384Key( void );
+  int testSessionTLS12ClientCertClientServer( void );
   int testSessionTLSClientServerDualThread( void );
   int testSessionTLSClientServerMultiThread( void );
   int testSessionHTTPCertstoreClientServer( void );
@@ -857,6 +876,7 @@ int testSessionTLS12( void );
   int testSessionPNPPKIDeviceClientServer( void );
   int testSessionPNPPKICAClientServer( void );
   int testSessionPNPPKIIntermedCAClientServer( void );
+  int testSessionSuiteBClientServer( void );
 #endif /* TEST_SESSION_LOOPBACK */
 
 /* Umbrella tests for the above functions */

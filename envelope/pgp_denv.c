@@ -6,11 +6,11 @@
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "pgp_rw.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/pgp_rw.h"
   #include "envelope/envelope.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGP
@@ -167,7 +167,8 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 		status = createContentListItem( &contentListItem, 
 										envelopeInfoPtr->memPoolState,
-										CRYPT_FORMAT_PGP, NULL, 0, FALSE );
+										CONTENT_CRYPT, CRYPT_FORMAT_PGP, 
+										NULL, 0 );
 		if( cryptStatusError( status ) )
 			return( status );
 		encrInfo = &contentListItem->clEncrInfo;
@@ -258,9 +259,9 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		   on the item across */
 		status = createContentListItem( &contentListItem, 
 							envelopeInfoPtr->memPoolState, 
-							CRYPT_FORMAT_PGP, object, objectSize,
 							( queryInfo.type == CRYPT_OBJECT_SIGNATURE ) ? \
-								TRUE : FALSE );
+								CONTENT_SIGNATURE : CONTENT_CRYPT, 
+							CRYPT_FORMAT_PGP, object, objectSize );
 		if( cryptStatusError( status ) )
 			{
 			if( object != NULL )
@@ -962,7 +963,7 @@ static int processEncryptedPacket( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	REQUIRES( state > PGP_DEENVSTATE_NONE && state < PGP_DEENVSTATE_LAST );
 
 	/* If there aren't any non-session-key keying resource objects present 
-	   we can't go any further until we get a session key */
+	   then we can't go any further until we get a session key */
 	if( envelopeInfoPtr->actionList == NULL )
 		{
 		/* There's no session key object present, add a pseudo-object that 
@@ -1372,7 +1373,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							 STDC_UNUSED const BOOLEAN dummy )
 	{
 	CONTENT_LIST *contentListPtr;
 	const BOOLEAN hasMDC = \
@@ -1382,7 +1384,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	int iterationCount, status = CRYPT_OK;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
-	
+
 	REQUIRES( sanityCheck( envelopeInfoPtr ) );
 
 	/* If that's all there is, return */

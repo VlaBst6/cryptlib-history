@@ -91,9 +91,22 @@
 *																			*
 ****************************************************************************/
 
-/* The maximum size of a certificate in binary and base64-encoded form */
+/* The maximum size of a certificate in binary and base64-encoded form.  For 
+   the first fifteen years of use this was 2048 bytes, but given the 
+   increasing tendency to shovel all manner of random junk into a 
+   certificate, bringing some dangerously close to 2048 bytes (and even 
+   larger in some rare cases for oddball certificates) it's now 4096 bytes.
 
-#define MAX_CERT_SIZE		2048
+   (Another reason for allowing the increase is that an original motivation
+   for capping the value at 2048 bytes was to deal with databases that 
+   didn't support BLOBs and/or didn't do VARCHARs (treating them as straight
+   CHARs), but both the massively-increased storage available to databases
+   since then and the high improbability of a PKI of any appreciable size 
+   ever being widely deployed (beyond the existing databases of commercial
+   CAs), combined with the near-universal supportof BLOBs in databases, 
+   means that we don't need to be so restrictive any more) */
+
+#define MAX_CERT_SIZE		4096
 #define MAX_ENCODED_CERT_SIZE ( ( MAX_CERT_SIZE * 4 ) / 3 )
 
 /* Keyset information flags */
@@ -247,7 +260,7 @@ typedef struct DI {
 #ifdef USE_RPCAPI
 	void ( *dispatchFunction )( void *stateInfo, BYTE *buffer );
 #else
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
 	int ( *openDatabaseBackend )( INOUT DBMS_STATE_INFO *dbmsStateInfo, 
 								  IN_BUFFER( nameLen ) const char *name, 
 								  IN_LENGTH_NAME const int nameLen, 
@@ -256,7 +269,7 @@ typedef struct DI {
 								  OUT_FLAGS_Z( DBMS_FEATURE ) int *featureFlags );
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	void ( *closeDatabaseBackend )( INOUT DBMS_STATE_INFO *dbmsStateInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *performUpdateBackend )( INOUT DBMS_STATE_INFO *dbmsStateInfo, 
 								   IN_BUFFER_OPT( commandLength ) \
 									const char *command,
@@ -265,7 +278,7 @@ typedef struct DI {
 									const void *boundData, 
 								   IN_ENUM( DBMS_UPDATE ) \
 									const DBMS_UPDATE_TYPE updateType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *performQueryBackend )( INOUT DBMS_STATE_INFO *dbmsStateInfo, 
 								  IN_BUFFER_OPT( commandLength ) \
 									const char *command,
@@ -284,7 +297,7 @@ typedef struct DI {
 
 	/* Database back-end access functions.  These use the dispatch function/
 	   function pointers above to communicate with the back-end */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
 	int ( *openDatabaseFunction )( INOUT struct DI *dbmsInfo, 
 								   IN_BUFFER( nameLen ) const char *name, 
 								   IN_LENGTH_NAME const int nameLen, 
@@ -293,16 +306,16 @@ typedef struct DI {
 								   OUT_FLAGS_Z( DBMS ) int *featureFlags );
 	STDC_NONNULL_ARG( ( 1 ) ) \
 	void ( *closeDatabaseFunction )( INOUT struct DI *dbmsInfo );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *performUpdateFunction )( INOUT struct DI *dbmsInfo, 
 									IN_STRING_OPT const char *command,
 									IN_OPT const void *boundData, 
 									IN_ENUM( DBMS_UPDATE ) \
 										const DBMS_UPDATE_TYPE updateType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *performStaticUpdateFunction )( INOUT struct DI *dbmsInfo, 
 										  IN_STRING const char *command );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *performQueryFunction )( INOUT struct DI *dbmsInfo, 
 								   IN_STRING_OPT const char *command,
 								   OUT_BUFFER_OPT( dataMaxLength, *dataLength ) \
@@ -314,7 +327,7 @@ typedef struct DI {
 									const DBMS_CACHEDQUERY_TYPE queryEntry, 
 								   IN_ENUM( DBMS_QUERY ) \
 									const DBMS_QUERY_TYPE queryType );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *performStaticQueryFunction )( INOUT struct DI *dbmsInfo, 
 										 IN_STRING_OPT const char *command,
 										 IN_ENUM_OPT( DBMS_CACHEDQUERY ) \
@@ -323,7 +336,7 @@ typedef struct DI {
 											const DBMS_QUERY_TYPE queryType );
 
 	/* Pointers to database-specific keyset access methods */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *certMgmtFunction )( INOUT struct KI *keysetInfo, 
 							   OUT_OPT_HANDLE_OPT CRYPT_CERTIFICATE *iCryptCert,
 							   IN_HANDLE_OPT const CRYPT_CERTIFICATE caKey,
@@ -399,25 +412,25 @@ typedef struct KI {
 		} keysetInfo;
 
 	/* Pointers to keyset access methods */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *initFunction )( INOUT struct KI *keysetInfo, 
 						   IN_BUFFER_OPT( nameLength ) const char *name, 
 						   IN_LENGTH_NAME_Z const int nameLength,
 						   IN_ENUM( CRYPT_KEYOPT ) \
 							const CRYPT_KEYOPT_TYPE options );
-	RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *shutdownFunction )( INOUT struct KI *keysetInfo );
 #ifdef USE_LDAP
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *getAttributeFunction )( INOUT struct KI *keysetInfo, 
 								   OUT void *data,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2 ) ) \
 	int ( *setAttributeFunction )( INOUT struct KI *keysetInfo, 
 								   const void *data,
 								   IN_ATTRIBUTE const CRYPT_ATTRIBUTE_TYPE type );
 #endif /* USE_LDAP */
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
 	int ( *getItemFunction )( INOUT struct KI *keysetInfo,
 							  OUT_HANDLE_OPT CRYPT_HANDLE *iCryptHandle,
 							  IN_ENUM( KEYMGMT_ITEM ) \
@@ -428,7 +441,7 @@ typedef struct KI {
 							  IN_OPT void *auxInfo, 
 							  INOUT_OPT int *auxInfoLength, 
 							  IN_FLAGS_Z( KEYMGMT ) const int flags );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 5 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 5 ) ) \
 	int ( *getSpecialItemFunction )( INOUT struct KI *keysetInfoPtr,
 									 IN_ATTRIBUTE \
 										const CRYPT_ATTRIBUTE_TYPE dataType,
@@ -436,7 +449,7 @@ typedef struct KI {
 										void *data,
 									 IN_LENGTH_SHORT const int dataMaxLength,
 									 OUT_LENGTH_SHORT_Z int *dataLength );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *setItemFunction )( INOUT struct KI *deviceInfo,
 							  IN_HANDLE const CRYPT_HANDLE iCryptHandle,
 							  IN_ENUM( KEYMGMT_ITEM ) \
@@ -444,20 +457,20 @@ typedef struct KI {
 							  IN_BUFFER_OPT( passwordLength ) const char *password, 
 							  IN_LENGTH_NAME_Z const int passwordLength,
 							  IN_FLAGS( KEYMGMT ) const int flags );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	int ( *setSpecialItemFunction )( INOUT struct KI *deviceInfo,
 									 IN_ATTRIBUTE \
 										const CRYPT_ATTRIBUTE_TYPE dataType,
 									 IN_BUFFER( dataLength ) const void *data, 
 									 IN_LENGTH_SHORT const int dataLength );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 4 ) ) \
 	int ( *deleteItemFunction )( INOUT struct KI *keysetInfo,
 								 IN_ENUM( KEYMGMT_ITEM ) \
 									const KEYMGMT_ITEM_TYPE itemType,
 								 IN_KEYID const CRYPT_KEYID_TYPE keyIDtype,
 								 IN_BUFFER( keyIDlength ) const void *keyID, 
 								 IN_LENGTH_KEYID const int keyIDlength );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3, 6 ) ) \
 	int ( *getFirstItemFunction )( INOUT struct KI *keysetInfo,
 								   OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
 								   OUT int *stateInfo,
@@ -467,12 +480,12 @@ typedef struct KI {
 								   IN_BUFFER( keyIDlength ) const void *keyID, 
 								   IN_LENGTH_KEYID const int keyIDlength,
 								   IN_FLAGS_Z( KEYMGMT ) const int options );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 	int ( *getNextItemFunction )( INOUT struct KI *keysetInfo,
 								  OUT_HANDLE_OPT CRYPT_CERTIFICATE *iCertificate,
 								  INOUT int *stateInfo, 
 								  IN_FLAGS_Z( KEYMGMT ) const int options );
-	CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+	CHECK_RETVAL_FNPTR STDC_NONNULL_ARG( ( 1 ) ) \
 	BOOLEAN ( *isBusyFunction )( INOUT struct KI *keysetInfo );
 
 	/* Some keysets require keyset-type-specific data storage, which is

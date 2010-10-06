@@ -7,28 +7,28 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "keyset.h"
   #include "misc_rw.h"
-  #include "pgp.h"
+  #include "keyset.h"
   #include "pgp_key.h"
+  #include "pgp.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/misc_rw.h"
   #include "keyset/keyset.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp.h"
   #include "keyset/pgp_key.h"
+  #include "misc/pgp.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PGPKEYS
 
-/* A PGP private key file can contain multiple key objects so before we do 
-   anything with the file we scan it and build an in-memory index of what's 
-   present.  When we perform an update we just flush the in-memory 
+/* A PGP private keyset can contain multiple key objects so before we do 
+   anything with the keyset we scan it and build an in-memory index of 
+   what's present.  When we perform an update we just flush the in-memory 
    information to disk.
 
-   Each file can contain information for multiple personalities (although 
+   Each keyset can contain information for multiple personalities (although 
    for private keys it's unlikely to contain more than a small number), we 
-   allow a maximum of MAX_PGP_OBJECTS per file.  A setting of 16 objects 
+   allow a maximum of MAX_PGP_OBJECTS per keyset.  A setting of 16 objects 
    consumes ~4K of memory (16 x ~256) so we choose that as the limit */
 
 #ifdef CONFIG_CONSERVE_MEMORY
@@ -321,7 +321,7 @@ static PGP_INFO *findEntry( const PGP_INFO *pgpInfo,
 							IN_BUFFER( keyIDlength ) const void *keyID, 
 							IN_LENGTH_KEYID const int keyIDlength,
 							IN_FLAGS_Z( KEYMGMT ) const int requestedUsage, 
-							OUT_OPT_PTR PGP_KEYINFO **keyInfo )
+							OUT_OPT_PTR_OPT PGP_KEYINFO **keyInfo )
 	{
 	CONST_INIT_STRUCT_4( KEY_MATCH_INFO keyMatchInfo, \
 						 keyIDtype, keyID, keyIDlength, requestedUsage );
@@ -453,7 +453,7 @@ static int getItemFunction( INOUT KEYSET_INFO *keysetInfoPtr,
 						  keyMatchInfo.keyIDlength = keyIDlength; \
 						  keyMatchInfo.flags = flags );
 
-		/* Try and find the required key in the file */
+		/* Try and find the required key in the keyset */
 		sseek( &keysetInfoPtr->keysetFile->stream, 0 );
 		status = pgpReadKeyring( &keysetInfoPtr->keysetFile->stream,
 								 pgpInfo, 1, &keyMatchInfo, &keyInfo, 

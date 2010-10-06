@@ -1,32 +1,26 @@
 /****************************************************************************
 *																			*
 *					  cryptlib De-enveloping Routines						*
-*					 Copyright Peter Gutmann 1996-2008						*
+*					 Copyright Peter Gutmann 1996-2009						*
 *																			*
 ****************************************************************************/
 
 #if defined( INC_ALL )
-  #include "envelope.h"
   #include "asn1.h"
   #include "asn1_ext.h"
+  #include "envelope.h"
 #else
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "envelope/envelope.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_ENVELOPES
 
-/****************************************************************************
-*																			*
-*								Utility Routines							*
-*																			*
-****************************************************************************/
-
 /* OID information used to read enveloped data */
 
 static const CMS_CONTENT_INFO FAR_BSS oidInfoSignedData = { 0, 3 };
-static const CMS_CONTENT_INFO FAR_BSS oidInfoEnvelopedData = { 0, 2 };
+static const CMS_CONTENT_INFO FAR_BSS oidInfoEnvelopedData = { 0, 4 };
 static const CMS_CONTENT_INFO FAR_BSS oidInfoDigestedData = { 0, 2 };
 static const CMS_CONTENT_INFO FAR_BSS oidInfoEncryptedData = { 0, 2 };
 static const CMS_CONTENT_INFO FAR_BSS oidInfoCompressedData = { 0, 0 };
@@ -41,7 +35,7 @@ static const OID_INFO FAR_BSS envelopeOIDinfo[] = {
 	{ OID_CMS_ENCRYPTEDDATA, ACTION_CRYPT, &oidInfoEncryptedData },
 	{ OID_CMS_COMPRESSEDDATA, ACTION_COMPRESS, &oidInfoCompressedData },
 	{ OID_CMS_AUTHDATA, ACTION_MAC, &oidInfoAuthData },
-	{ OID_CMS_AUTHENVDATA, ACTION_MAC, &oidInfoAuthEnvData },
+	{ OID_CMS_AUTHENVDATA, ACTION_xxx, &oidInfoAuthEnvData },
 	{ OID_CMS_TSTOKEN, ACTION_NONE },
 	{ OID_MS_SPCINDIRECTDATACONTEXT, ACTION_NONE },
 	{ OID_CRYPTLIB_RTCSREQ, ACTION_NONE },
@@ -66,6 +60,12 @@ static const OID_INFO FAR_BSS nestedContentOIDinfo[] = {
 	{ NULL, 0 }, { NULL, 0 }
 	};
 
+/****************************************************************************
+*																			*
+*								Utility Routines							*
+*																			*
+****************************************************************************/
+
 /* Sanity-check the envelope state */
 
 CHECK_RETVAL_BOOL STDC_NONNULL_ARG( ( 1 ) ) \
@@ -73,7 +73,7 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	{
 	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 
-	/* Make sure that general envelope state is in order */
+	/* Make sure that the general envelope state is in order */
 	if( !( envelopeInfoPtr->flags & ENVELOPE_ISDEENVELOPE ) )
 		return( FALSE );
 	if( envelopeInfoPtr->deenvState < DEENVSTATE_NONE || \
@@ -91,6 +91,171 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 	return( TRUE );
 	}
 
+/****************************************************************************
+*																			*
+*						Content-list Processing Routines					*
+*																			*
+****************************************************************************/
+
+
+/* Add information on different object types to a content-list entry */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int initExternalContentInfo( CONTENT_LIST *contentListItem,
+									IN_ENUM( CONTENT ) \
+										const CONTENT_TYPE contentType,
+									const QUERY_INFO *queryInfo )
+	{
+	CONTENT_ENCR_INFO *encrInfo = &contentListItem->clEncrInfo;
+
+	assert( isWritePtr( contentListItem, sizeof( CONTENT_LIST ) ) );
+	assert( isReadPtr( queryInfo, sizeof( QUERY_INFO ) ) );
+
+	REQUIRES( contentType == CONTENT_AUTHENC || \
+			  contentType == CONTENT_CRYPT );
+
+	contentListItem->envInfo = CRYPT_ENVINFO_SESSIONKEY;
+
+	/* If it's authenticated encrypted data, remember the encryption and MAC 
+	   algorithm parameters */
+	if( contentType == CONTENT_AUTHENC )
+		{
+		CONTENT_AUTHENC_INFO *authEncInfo = &contentListItem->clAuthEncInfo;
+
+		authEncInfo->authEncAlgo = queryInfo->cryptAlgo;
+		REQUIRES( queryInfo->authEncParamLength > 0 && \
+				  queryInfo->authEncParamLength <= 128 );
+		memcpy( authEncInfo->authEncParamData, queryInfo->authEncParamData,
+				queryInfo->authEncParamLength );
+		authEncInfo->authEncParamLength = queryInfo->authEncParamLength;
+		authEncInfo->encParamData = authEncInfo->authEncParamData + \
+									queryInfo->encParamStart;
+		authEncInfo->encParamDataLength = queryInfo->encParamLength;
+		authEncInfo->macParamData = authEncInfo->authEncParamData + \
+									queryInfo->macParamStart;
+		authEncInfo->macParamDataLength = queryInfo->macParamLength;
+
+		return( CRYPT_OK );
+		}
+
+	/* It's conventionally encrypted data, remember the encryption algorithm 
+	   parameters */
+	encrInfo->cryptAlgo = queryInfo->cryptAlgo;
+	encrInfo->cryptMode = queryInfo->cryptMode;
+	if( queryInfo->ivLength > 0 )
+		{
+		REQUIRES( queryInfo->ivLength > 0 && \
+				  queryInfo->ivLength <= CRYPT_MAX_IVSIZE );
+		memcpy( encrInfo->saltOrIV, queryInfo->iv, queryInfo->ivLength );
+		encrInfo->saltOrIVsize = queryInfo->ivLength;
+		}
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int initPkcContentInfo( CONTENT_LIST *contentListItem,
+							   const QUERY_INFO *queryInfo,
+							   IN_BUFFER( objectSize ) const void *object, 
+							   IN_LENGTH_SHORT const int objectSize )
+	{
+	const BYTE *objectPtr = object;	/* For pointer maths */
+
+	assert( isWritePtr( contentListItem, sizeof( CONTENT_LIST ) ) );
+	assert( isReadPtr( queryInfo, sizeof( QUERY_INFO ) ) );
+	assert( isReadPtr( object, objectSize ) );
+
+	REQUIRES( objectSize > 0 && objectSize < MAX_INTLENGTH_SHORT );
+
+	/* Remember the details of the enveloping information that we require 
+	   to continue */
+	if( queryInfo->type == CRYPT_OBJECT_PKCENCRYPTED_KEY )
+		contentListItem->envInfo = CRYPT_ENVINFO_PRIVATEKEY;
+	else
+		{
+		contentListItem->envInfo = CRYPT_ENVINFO_SIGNATURE;
+		contentListItem->clSigInfo.hashAlgo = queryInfo->hashAlgo;
+		}
+	if( queryInfo->formatType == CRYPT_FORMAT_CMS )
+		{
+		REQUIRES( rangeCheck( queryInfo->iAndSStart, queryInfo->iAndSLength, 
+							  objectSize ) );
+		contentListItem->issuerAndSerialNumber = objectPtr + queryInfo->iAndSStart;
+		contentListItem->issuerAndSerialNumberSize = queryInfo->iAndSLength;
+		}
+	else
+		{
+		REQUIRES( queryInfo->keyIDlength > 0 && \
+				  queryInfo->keyIDlength <= CRYPT_MAX_HASHSIZE );
+		memcpy( contentListItem->keyID, queryInfo->keyID,
+				queryInfo->keyIDlength );
+		contentListItem->keyIDsize = queryInfo->keyIDlength;
+		}
+	REQUIRES( rangeCheck( queryInfo->dataStart, queryInfo->dataLength, 
+						  objectSize ) );
+	contentListItem->payload = objectPtr + queryInfo->dataStart;
+	contentListItem->payloadSize = queryInfo->dataLength;
+	if( queryInfo->type == CRYPT_OBJECT_SIGNATURE && \
+		queryInfo->formatType == CRYPT_FORMAT_CMS && \
+		queryInfo->unauthAttributeStart > 0 )
+		{
+		CONTENT_SIG_INFO *sigInfo = &contentListItem->clSigInfo;
+
+		REQUIRES( rangeCheck( queryInfo->unauthAttributeStart,
+							  queryInfo->unauthAttributeLength, 
+							  objectSize ) );
+		sigInfo->extraData2 = objectPtr + queryInfo->unauthAttributeStart;
+		sigInfo->extraData2Length = queryInfo->unauthAttributeLength;
+		}
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+static int initEncKeyContentInfo( CONTENT_LIST *contentListItem,
+								  const QUERY_INFO *queryInfo,
+								  IN_BUFFER( objectSize ) const void *object, 
+								  IN_LENGTH_SHORT const int objectSize )
+	{
+	CONTENT_ENCR_INFO *encrInfo = &contentListItem->clEncrInfo;
+	const BYTE *objectPtr = object;	/* For pointer maths */
+
+	assert( isWritePtr( contentListItem, sizeof( CONTENT_LIST ) ) );
+	assert( isReadPtr( queryInfo, sizeof( QUERY_INFO ) ) );
+	assert( isReadPtr( object, objectSize ) );
+
+	REQUIRES( objectSize > 0 && objectSize < MAX_INTLENGTH_SHORT );
+
+	/* Remember the details of the enveloping information that we require 
+	   to continue */
+	if( queryInfo->keySetupAlgo != CRYPT_ALGO_NONE )
+		{
+		contentListItem->envInfo = CRYPT_ENVINFO_PASSWORD;
+		encrInfo->keySetupAlgo = queryInfo->keySetupAlgo;
+		encrInfo->keySetupIterations = queryInfo->keySetupIterations;
+		if( queryInfo->keySize > 0 )
+			encrInfo->keySize = queryInfo->keySize;
+		if( queryInfo->saltLength > 0 )
+			{
+			REQUIRES( queryInfo->saltLength > 0 && \
+					  queryInfo->saltLength <= CRYPT_MAX_HASHSIZE );
+			memcpy( encrInfo->saltOrIV, queryInfo->salt,
+					queryInfo->saltLength );
+			encrInfo->saltOrIVsize = queryInfo->saltLength;
+			}
+		}
+	else
+		contentListItem->envInfo = CRYPT_ENVINFO_KEY;
+	encrInfo->cryptAlgo = queryInfo->cryptAlgo;
+	encrInfo->cryptMode = queryInfo->cryptMode;
+	REQUIRES( rangeCheck( queryInfo->dataStart, queryInfo->dataLength, 
+						  objectSize ) );
+	contentListItem->payload = objectPtr + queryInfo->dataStart;
+	contentListItem->payloadSize = queryInfo->dataLength;
+
+	return( CRYPT_OK );
+	}
+
 /* Add information about an object to an envelope's content information list.  
    The content information can be supplied in one of two ways, either 
    implicitly via the data in the stream or explicitly via a QUERY_INFO
@@ -99,26 +264,28 @@ static BOOLEAN sanityCheck( const ENVELOPE_INFO *envelopeInfoPtr )
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 4 ) ) \
 static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 							   INOUT_OPT STREAM *stream, 
-							   OUT_OPT QUERY_INFO *externalQueryInfoPtr,
+							   IN_OPT const QUERY_INFO *externalQueryInfo,
 							   OUT_LENGTH_SHORT_Z int *itemSize )
 	{
-	QUERY_INFO queryInfo, *queryInfoPtr = ( externalQueryInfoPtr == NULL ) ? \
-										  &queryInfo : externalQueryInfoPtr;
+	QUERY_INFO queryInfo;
 	CONTENT_LIST *contentListItem;
-	BYTE *contentListObjectPtr = NULL;
+	void *contentListObjectPtr = NULL;
+	CONTENT_TYPE contentType;
+	const BOOLEAN infoProvidedExternally = \
+					( externalQueryInfo != NULL ) ? TRUE : FALSE;
 	int objectSize = 0, status;
 
 	assert( isWritePtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( ( stream == NULL && \
-			  isWritePtr( externalQueryInfoPtr, sizeof( QUERY_INFO ) ) ) || \
+			  isReadPtr( externalQueryInfo, sizeof( QUERY_INFO ) ) ) || \
 			( isWritePtr( stream, sizeof( STREAM ) ) && \
-			  externalQueryInfoPtr == NULL ) );
+			  externalQueryInfo == NULL ) );
 	assert( isWritePtr( itemSize, sizeof( int ) ) );
 
-	REQUIRES( ( stream == NULL && externalQueryInfoPtr != NULL ) || \
-			  ( stream != NULL && externalQueryInfoPtr == NULL ) );
+	REQUIRES( ( stream == NULL && externalQueryInfo != NULL ) || \
+			  ( stream != NULL && externalQueryInfo == NULL ) );
 
-	/* Clear return value */
+	/* Clear return values */
 	*itemSize = 0;
 
 	/* Make sure that there's room to add another list item */
@@ -127,15 +294,15 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 
 	/* Find the size of the object, allocate a buffer for it, and copy it
 	   across */
-	if( externalQueryInfoPtr == NULL )
+	if( !infoProvidedExternally )
 		{
 		/* See what we've got.  This call verifies that all of the object 
 		   data is present in the stream so in theory we don't have to check 
 		   the following reads, but we check them anyway just to be sure */
-		status = queryAsn1Object( stream, queryInfoPtr );
+		status = queryAsn1Object( stream, &queryInfo );
 		if( cryptStatusError( status ) )
 			return( status );
-		objectSize = ( int ) queryInfoPtr->size;
+		objectSize = ( int ) queryInfo.size;
 
 		/* If it's a valid but unrecognised object type (a new RecipientInfo 
 		   type that was added after this version of cryptlib was released), 
@@ -145,7 +312,7 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 		   the content list as an unrecognised object type, but this would 
 		   lead to confusion for the caller when non-object-types appear 
 		   when they query the current component */
-		if( queryInfoPtr->type == CRYPT_OBJECT_NONE )
+		if( queryInfo.type == CRYPT_OBJECT_NONE )
 			{
 			status = sSkip( stream, objectSize );
 			if( cryptStatusError( status ) )
@@ -166,130 +333,82 @@ static int addContentListItem( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			return( status );
 			}
 		}
-	ENSURES( ( externalQueryInfoPtr != NULL ) || \
-			 ( queryInfoPtr->size > 0 && \
-			   queryInfoPtr->size < MAX_INTLENGTH ) );
-			 /* If the query info is supplied externally it's a template that
-			    doesn't correspond to any actual data */
+	else
+		{
+		/* The query information has been provided externally, use that */
+		memcpy( &queryInfo, externalQueryInfo, sizeof( QUERY_INFO ) );
+		}
+	ENSURES( infoProvidedExternally || \
+			 ( queryInfo.size > 0 && \
+			   queryInfo.size < MAX_INTLENGTH ) );
+			 /* If the query information is supplied externally then it's a 
+			    template that doesn't correspond to any actual data */
+
+	/* Determine the type of content that we're working with */
+	if( queryInfo.type == CRYPT_OBJECT_SIGNATURE )
+		contentType = CONTENT_SIGNATURE;
+	else
+		{
+		if( isSpecialAlgo( queryInfo.cryptAlgo ) )
+			contentType = CONTENT_AUTHENC;
+		else
+			contentType = CONTENT_CRYPT;
+		}
 
 	/* Allocate memory for the new content list item and copy information on
 	   the item across */
 	status = createContentListItem( &contentListItem, 
-					envelopeInfoPtr->memPoolState, queryInfoPtr->formatType, 
-					contentListObjectPtr, objectSize,
-					( queryInfoPtr->type == CRYPT_OBJECT_SIGNATURE ) ? \
-						TRUE : FALSE );
+					envelopeInfoPtr->memPoolState, contentType, 
+					queryInfo.formatType, contentListObjectPtr, 
+					objectSize );
 	if( cryptStatusError( status ) )
 		{
-		if( contentListObjectPtr == NULL )
+		if( contentListObjectPtr != NULL )
 			clFree( "addContentListItem", contentListObjectPtr );
 		return( status );
 		}
-	if( externalQueryInfoPtr != NULL )
+	if( infoProvidedExternally )
 		{
-		CONTENT_ENCR_INFO *encrInfo = &contentListItem->clEncrInfo;
-
-		/* It's externally-supplied crypto algorithm details from an
-		   encrypted data header */
-		contentListItem->envInfo = CRYPT_ENVINFO_SESSIONKEY;
-		encrInfo->cryptAlgo = queryInfoPtr->cryptAlgo;
-		encrInfo->cryptMode = queryInfoPtr->cryptMode;
-		if( queryInfoPtr->ivLength > 0 )
-			{
-			REQUIRES( queryInfoPtr->ivLength > 0 && \
-					  queryInfoPtr->ivLength <= CRYPT_MAX_IVSIZE );
-			memcpy( encrInfo->saltOrIV, queryInfoPtr->iv, 
-					queryInfoPtr->ivLength );
-			encrInfo->saltOrIVsize = queryInfoPtr->ivLength;
-			}
+		/* It's externally-supplied encryption algorithm details from an
+		   encrypted data header, either standard encrypted data or 
+		   authenticated encrypted data */
+		status = initExternalContentInfo( contentListItem, contentType, 
+										  &queryInfo );
+		if( cryptStatusError( status ) )
+			return( status );
 		}
-	if( queryInfoPtr->type == CRYPT_OBJECT_PKCENCRYPTED_KEY || \
-		queryInfoPtr->type == CRYPT_OBJECT_SIGNATURE )
+	else
 		{
-		/* Remember the details of the enveloping info that we require to 
-		   continue */
-		if( queryInfoPtr->type == CRYPT_OBJECT_PKCENCRYPTED_KEY )
-			contentListItem->envInfo = CRYPT_ENVINFO_PRIVATEKEY;
-		else
+		if( queryInfo.type == CRYPT_OBJECT_PKCENCRYPTED_KEY || \
+			queryInfo.type == CRYPT_OBJECT_SIGNATURE )
 			{
-			contentListItem->envInfo = CRYPT_ENVINFO_SIGNATURE;
-			contentListItem->clSigInfo.hashAlgo = queryInfoPtr->hashAlgo;
+			/* Remember the details of the enveloping information that we 
+			   require to continue */
+			status = initPkcContentInfo( contentListItem, &queryInfo,
+										 contentListObjectPtr, objectSize );
+			if( cryptStatusError( status ) )
+				return( status );
 			}
-		if( queryInfoPtr->formatType == CRYPT_FORMAT_CMS )
+		if( queryInfo.type == CRYPT_OBJECT_ENCRYPTED_KEY )
 			{
-			REQUIRES( rangeCheck( queryInfoPtr->iAndSStart, 
-								  queryInfoPtr->iAndSLength, objectSize ) );
-			contentListItem->issuerAndSerialNumber = contentListObjectPtr + \
-													 queryInfoPtr->iAndSStart;
-			contentListItem->issuerAndSerialNumberSize = queryInfoPtr->iAndSLength;
+			/* Remember the details of the enveloping information that we 
+			   require to continue */
+			status = initEncKeyContentInfo( contentListItem, &queryInfo,
+											contentListObjectPtr, objectSize );
+			if( cryptStatusError( status ) )
+				return( status );
 			}
-		else
-			{
-			REQUIRES( queryInfoPtr->keyIDlength > 0 && \
-					  queryInfoPtr->keyIDlength <= CRYPT_MAX_HASHSIZE );
-			memcpy( contentListItem->keyID, queryInfoPtr->keyID,
-					queryInfoPtr->keyIDlength );
-			contentListItem->keyIDsize = queryInfoPtr->keyIDlength;
-			}
-		REQUIRES( rangeCheck( queryInfoPtr->dataStart, 
-							  queryInfoPtr->dataLength, objectSize ) );
-		contentListItem->payload = contentListObjectPtr + \
-								   queryInfoPtr->dataStart;
-		contentListItem->payloadSize = queryInfoPtr->dataLength;
-		if( queryInfoPtr->type == CRYPT_OBJECT_SIGNATURE && \
-			queryInfoPtr->formatType == CRYPT_FORMAT_CMS && \
-			queryInfoPtr->unauthAttributeStart > 0 )
-			{
-			CONTENT_SIG_INFO *sigInfo = &contentListItem->clSigInfo;
-
-			REQUIRES( rangeCheck( queryInfoPtr->unauthAttributeStart,
-								  queryInfoPtr->unauthAttributeLength, 
-								  objectSize ) );
-			sigInfo->extraData2 = contentListObjectPtr + \
-								  queryInfoPtr->unauthAttributeStart;
-			sigInfo->extraData2Length = queryInfoPtr->unauthAttributeLength;
-			}
-		}
-	if( queryInfoPtr->type == CRYPT_OBJECT_ENCRYPTED_KEY )
-		{
-		CONTENT_ENCR_INFO *encrInfo = &contentListItem->clEncrInfo;
-
-		/* Remember the details of the enveloping info that we require to 
-		   continue */
-		if( queryInfoPtr->keySetupAlgo != CRYPT_ALGO_NONE )
-			{
-			contentListItem->envInfo = CRYPT_ENVINFO_PASSWORD;
-			encrInfo->keySetupAlgo = queryInfoPtr->keySetupAlgo;
-			encrInfo->keySetupIterations = queryInfoPtr->keySetupIterations;
-			if( queryInfoPtr->saltLength > 0 )
-				{
-				REQUIRES( queryInfoPtr->saltLength > 0 && \
-						  queryInfoPtr->saltLength <= CRYPT_MAX_HASHSIZE );
-				memcpy( encrInfo->saltOrIV, queryInfoPtr->salt,
-						queryInfoPtr->saltLength );
-				encrInfo->saltOrIVsize = queryInfoPtr->saltLength;
-				}
-			}
-		else
-			contentListItem->envInfo = CRYPT_ENVINFO_KEY;
-		encrInfo->cryptAlgo = queryInfoPtr->cryptAlgo;
-		encrInfo->cryptMode = queryInfoPtr->cryptMode;
-		REQUIRES( rangeCheck( queryInfoPtr->dataStart, 
-							  queryInfoPtr->dataLength, objectSize ) );
-		contentListItem->payload = contentListObjectPtr + \
-								   queryInfoPtr->dataStart;
-		contentListItem->payloadSize = queryInfoPtr->dataLength;
 		}
 	status = appendContentListItem( envelopeInfoPtr, contentListItem );
 	if( cryptStatusError( status ) )
 		{
 		deleteContentList( envelopeInfoPtr->memPoolState, 
 						   &contentListItem );
-		if( contentListObjectPtr == NULL )
+		if( contentListObjectPtr != NULL )
 			clFree( "addContentListItem", contentListObjectPtr );
 		return( status );
 		}
-	*itemSize = ( int ) queryInfoPtr->size;
+	*itemSize = ( int ) queryInfo.size;
 
 	return( CRYPT_OK );
 	}
@@ -319,13 +438,21 @@ static int processEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Read the outer CMS header */
 	status = readCMSheader( stream, envelopeOIDinfo,
 							FAILSAFE_ARRAYSIZE( envelopeOIDinfo, OID_INFO ),
-							&envelopeInfoPtr->payloadSize, FALSE );
+							&envelopeInfoPtr->payloadSize, 
+							READCMS_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Determine the next state to continue processing */
 	switch( status )
 		{
+		case ACTION_NONE:
+			/* Since we're going straight to the data payload there's no 
+			   nested content type so we explicitly set it to "data" */
+			envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
+			*state = DEENVSTATE_DATA;
+			break;
+
 		case ACTION_KEYEXCHANGE:
 #ifdef USE_KEA
 			status = peekTag( stream );
@@ -345,20 +472,23 @@ static int processEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			*state = DEENVSTATE_SET_ENCR;
 			break;
 
+		case ACTION_xxx:
+			/* Authenticated encryption is a variant of a standard encrypted 
+			   envelope */
+			envelopeInfoPtr->usage = ACTION_CRYPT;
+			envelopeInfoPtr->flags |= ENVELOPE_AUTHENC;
+			*state = DEENVSTATE_SET_ENCR;
+			break;
+
 		case ACTION_CRYPT:
 			envelopeInfoPtr->usage = ACTION_CRYPT;
 			*state = DEENVSTATE_ENCRCONTENT;
 			break;
 
-		case ACTION_SIGN:
-			envelopeInfoPtr->usage = ACTION_SIGN;
-			*state = DEENVSTATE_SET_HASH;
-			break;
-
 		case ACTION_MAC:
 			/* MACd envelopes have key exchange information at the start 
 			   just like ACTION_KEYEXCHANGE but the later processing is 
-			   different, so we treat them as a special case here */
+			   different so we treat them as a special case here */
 			envelopeInfoPtr->usage = ACTION_MAC;
 			*state = DEENVSTATE_SET_ENCR;
 			break;
@@ -383,11 +513,9 @@ static int processEnvelopeHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 #endif /* USE_COMPRESSION */
 			break;
 
-		case ACTION_NONE:
-			/* Since we're going straight to the data payload there's no 
-			   nested content type so we explicitly set it to "data" */
-			envelopeInfoPtr->contentType = CRYPT_CONTENT_DATA;
-			*state = DEENVSTATE_DATA;
+		case ACTION_SIGN:
+			envelopeInfoPtr->usage = ACTION_SIGN;
+			*state = DEENVSTATE_SET_HASH;
 			break;
 
 		default:
@@ -412,7 +540,9 @@ static int processEncryptionHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Read the encrypted content header */
 	status = readCMSencrHeader( stream, nestedContentOIDinfo, 
 						FAILSAFE_ARRAYSIZE( nestedContentOIDinfo, OID_INFO ),
-						NULL, &queryInfo );
+						NULL, &queryInfo,
+						( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ? \
+							READCMS_FLAG_AUTHENC : READCMS_FLAG_NONE );
 	if( cryptStatusError( status ) )
 		return( status );
 	envelopeInfoPtr->contentType = status;
@@ -435,12 +565,13 @@ static int processEncryptionHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 			  envelopeInfoPtr->actionList->action == ACTION_CRYPT );
 
 	/* If the session key was recovered from a key exchange action but we 
-	   ran out of input data before we could read the encryptedContent info 
-	   it'll be present in the action list so we use it to set things up for 
-	   the decryption.  This can only happen if the caller pushes in just 
-	   enough data to get past the key exchange actions but not enough to 
-	   recover the encryptedContent info and then pushes in a key exchange 
-	   action in response to the CRYPT_ERROR_UNDERFLOW error */
+	   ran out of input data before we could read the encryptedContent 
+	   information it'll be present in the action list so we use it to set 
+	   things up for the decryption.  This can only happen if the caller 
+	   pushes in just enough data to get past the key exchange actions but 
+	   not enough to recover the encryptedContent information and then 
+	   pushes in a key exchange action in response to the 
+	   CRYPT_ERROR_UNDERFLOW error */
 	return( initEnvelopeEncryption( envelopeInfoPtr,
 							envelopeInfoPtr->actionList->iCryptHandle,
 							queryInfo.cryptAlgo, queryInfo.cryptMode,
@@ -471,9 +602,9 @@ static int processHashHeader( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Check whether an identical hash action is already present either 
+	/* Check whether an identical hash action is already present, either 
 	   through being supplied externally or from a duplicate entry in the 
-	   set */
+	   set of digest/MAC algorithms in the envelope header */
 	for( actionListPtr = envelopeInfoPtr->actionList, iterationCount = 0;
 		 actionListPtr != NULL && iterationCount < FAILSAFE_ITERATIONS_MED; 
 		 actionListPtr = actionListPtr->next, iterationCount++ )
@@ -552,7 +683,8 @@ static int processPayloadEOCs( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	return( CRYPT_OK );
 	}
 
-/* Complete processing of the authenticated payload */
+/* Complete processing of the authenticated payload for hashed, MACd, 
+   signed, and authenticated encrypted data */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
 static int completePayloadProcessing( INOUT ENVELOPE_INFO *envelopeInfoPtr )
@@ -563,7 +695,9 @@ static int completePayloadProcessing( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   buffer.  It won't have been hashed yet because the hashing is 
 	   performed when the data is copied out, after unwrapping and 
 	   deblocking and whatnot, so we hash it before we wrap up the 
-	   hashing */
+	   hashing (the exception to this is authenticated encrypted data which
+	   is MACd before decryption, but that's handled internally by the data-
+	   decoding process) */
 	if( envelopeInfoPtr->dataLeft > 0 )
 		{
 		int status;
@@ -605,7 +739,7 @@ static int processSignedTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	newState = ( tag == MAKE_CTAG( 0 ) ) ? \
 			   DEENVSTATE_CERTSET : DEENVSTATE_SET_SIG;
 
-	/* If we've seen all of the signed data complete the hashing */
+	/* If we've seen all of the signed data, complete the hashing */
 	if( !( envelopeInfoPtr->flags & ENVELOPE_DETACHED_SIG ) )
 		{
 		status = completePayloadProcessing( envelopeInfoPtr );
@@ -618,13 +752,17 @@ static int processSignedTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	return( CRYPT_OK );
 	}
 
-/* Process the MACd data trailer */
+/* Process the MACd data trailer.  Note that some data-formatting errors 
+   encountered at this level may be converted into an authentication-failure 
+   status by the calling code to avoid truncation attacks, see the comment
+   in processPostable() for more details */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr, 
 							  INOUT STREAM *stream, 
 							  OUT_BOOL BOOLEAN *failedMAC )
 	{
+	ACTION_LIST *actionListPtr;
 	MESSAGE_DATA msgData;
 	BYTE hash[ CRYPT_MAX_HASHSIZE + 8 ];
 	int hashSize, status;
@@ -636,7 +774,7 @@ static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	/* Clear return value */
 	*failedMAC = FALSE;
 
-	/* Read the AuthenticatedData EOC's if necessary */
+	/* Read the AuthenticatedData EOCs if necessary */
 	status = processPayloadEOCs( envelopeInfoPtr, stream );
 	if( cryptStatusError( status ) )
 		return( status );
@@ -653,9 +791,10 @@ static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	setMessageData( &msgData, hash, hashSize );
-	status = krnlSendMessage( envelopeInfoPtr->actionList->iCryptHandle, 
-							  IMESSAGE_COMPARE, &msgData, 
-							  MESSAGE_COMPARE_HASH );
+	actionListPtr = findAction( envelopeInfoPtr->actionList, ACTION_MAC );
+	ENSURES( actionListPtr != NULL );
+	status = krnlSendMessage( actionListPtr->iCryptHandle, IMESSAGE_COMPARE, 
+							  &msgData, MESSAGE_COMPARE_HASH );
 	if( cryptStatusError( status ) )
 		{
 		/* Unlike signatures a failed MAC check (reported as a CRYPT_ERROR
@@ -677,19 +816,14 @@ static int processMacTrailer( INOUT ENVELOPE_INFO *envelopeInfoPtr,
    indefinite encodings were used so we look for at least one EOC and at 
    most a number that depends on the data type being processed */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int processEOCTrailer( INOUT STREAM *stream, 
-							  IN_ENUM_OPT( ACTION ) const ACTION_TYPE usage )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+static int processEOCTrailer( const ENVELOPE_INFO *envelopeInfoPtr,
+							  INOUT STREAM *stream )
 	{
-	const int noEOCs = ( usage == ACTION_NONE ) ? 2 : \
-					   ( usage == ACTION_SIGN || \
-						 usage == ACTION_MAC ) ? 3 : \
-					   ( usage == ACTION_COMPRESS ) ? 5 : 4;
-	int i;
+	int noEOCs, i;
 
+	assert( isReadPtr( envelopeInfoPtr, sizeof( ENVELOPE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-
-	REQUIRES( usage >= ACTION_NONE && usage < ACTION_LAST );
 
 	/* Consume any EOCs up to the maximum amount possible.  In theory we 
 	   could be rather liberal with trailing EOCs since it's not really 
@@ -702,6 +836,35 @@ static int processEOCTrailer( INOUT STREAM *stream,
 	   when the remainder of the string of EOCs are pushed the next time
 	   round.  To avoid this problem we have to be pedantic and require
 	   that callers push all EOCs */
+	switch( envelopeInfoPtr->usage )
+		{
+		case ACTION_NONE:
+			noEOCs = 2;
+			break;
+
+		case ACTION_CRYPT:
+			/* Authenticated encryption is a special case since there's a 
+			   MAC value present after the data, which means that we've 
+			   already consumed two of the four EOCs present at the end of 
+			   encrypted data in getting to the MAC value */
+			if( envelopeInfoPtr->flags & ENVELOPE_AUTHENC )
+				noEOCs = 2;
+			else
+				noEOCs = 4;
+			break;
+
+		case ACTION_SIGN:
+		case ACTION_MAC:
+			noEOCs = 3;
+			break;
+
+		case ACTION_COMPRESS:
+			noEOCs = 5;
+			break;
+
+		default:
+			retIntError();
+		}
 	for( i = 0; i < noEOCs; i++ )
 		{
 		const int value = checkEOC( stream );
@@ -770,7 +933,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	   would never occur in any normal usage, but we have to allow for it for
 	   mailing-list use */
 	for( iterationCount = 0; 
-		 state != DEENVSTATE_DONE && iterationCount < FAILSAFE_ITERATIONS_LARGE;
+		 state != DEENVSTATE_DONE && \
+			iterationCount < FAILSAFE_ITERATIONS_LARGE;
 		 iterationCount++ )
 		{
 		/* Read the start of the SET OF RecipientInfo/SET OF 
@@ -904,7 +1068,7 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			if( cryptStatusError( status ) )
 				{
 				setErrorString( ENVELOPE_ERRINFO, 
-								"Invalid hashed/MACd content header", 34 );
+								"Invalid MACd content header", 27 );
 				break;
 				}
 
@@ -919,7 +1083,11 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			{
 			status = processHashHeader( envelopeInfoPtr, &stream );
 			if( cryptStatusError( status ) )
+				{
+				setErrorString( ENVELOPE_ERRINFO, 
+								"Invalid hashed content header", 29 );
 				break;
+				}
 
 			/* Remember where we are and move on to the next state if
 			   necessary */
@@ -958,7 +1126,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			status = contentType = \
 				readCMSheader( &stream, nestedContentOIDinfo,
 							   FAILSAFE_ARRAYSIZE( nestedContentOIDinfo, OID_INFO ),
-							   &envelopeInfoPtr->payloadSize, TRUE );
+							   &envelopeInfoPtr->payloadSize, 
+							   READCMS_FLAG_INNERHEADER );
 			if( cryptStatusError( status ) )
 				{
 				setErrorString( ENVELOPE_ERRINFO, 
@@ -1017,9 +1186,10 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 								"to data payload processing", 68 );
 				break;
 				}
-			streamPos = 0;	/* Data has been resync'd with start of stream */
 
-			/* We're done */
+			/* The data has now been resynchronised with the start of 
+			   stream, and we're done */
+			streamPos = 0;	
 			state = DEENVSTATE_DONE;
 
 			ENSURES( checkActions( envelopeInfoPtr ) );
@@ -1061,7 +1231,8 @@ static int processPreamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	}
 
 CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1 ) ) \
-static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
+static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr,
+							 const BOOLEAN isFlush )
 	{
 	DEENV_STATE state = envelopeInfoPtr->deenvState;
 	STREAM stream;
@@ -1074,8 +1245,10 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 
 	/* If that's all that there is, return */
 	if( state == DEENVSTATE_NONE && \
-		( envelopeInfoPtr->usage != ACTION_SIGN && \
-		  envelopeInfoPtr->usage != ACTION_MAC ) && \
+		!( envelopeInfoPtr->usage == ACTION_SIGN || \
+		   envelopeInfoPtr->usage == ACTION_MAC || \
+		   ( envelopeInfoPtr->usage == ACTION_CRYPT && \
+			 envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) ) && \
 		envelopeInfoPtr->payloadSize != CRYPT_UNUSED )
 		{
 		/* Definite-length data with no trailer, there's nothing left to 
@@ -1104,10 +1277,43 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 											   &state );
 				break;
 
+			case ACTION_CRYPT:
+				/* If it's conventional encrypted data, just look for EOCs */
+				if( !( envelopeInfoPtr->flags & ENVELOPE_AUTHENC ) )
+					{
+					state = DEENVSTATE_EOC;
+					break;
+					}
+
+				/* It's authenticated encrypted data, fall through */
+
 			case ACTION_MAC:
+				/* The error handling here gets a bit tricky in that an 
+				   attacker could truncate the data and turn a fatal
+				   CRYPT_ERROR_SIGNATURE into a more benign 
+				   CRYPT_ERROR_UNDERFLOW, which may be ignored by the caller
+				   if all of the payload data was successfully recovered.  
+				   On the other hand this could be a genuine underflow with
+				   the caller still to push in the MAC trailer data, so we
+				   can't just unconditionally convert an underflow error 
+				   into a CRYPT_ERROR_SIGNATURE.  At best we can convert a
+				   CRYPT_ERROR_BADDATA or an underflow (or indeed any kind
+				   of error) on an explicit flush into a signature error, 
+				   but unfortunately have to leave the CRYPT_ERROR_UNDERFLOW 
+				   on a non-flush because we don't know whether the caller 
+				   has more data to push.  Note that this differs from the 
+				   failedMAC == TRUE behaviour in that we return the 
+				   signature error immediately, since we can't go any 
+				   further as we could for a pure MAC failure with the data-
+				   processing state still OK */
 				status = processMacTrailer( envelopeInfoPtr, &stream, 
 											&failedMAC );
-				if( cryptStatusOK( status ) )
+				if( cryptStatusError( status ) )
+					{
+					if( isFlush || status == CRYPT_ERROR_BADDATA )
+						status = CRYPT_ERROR_SIGNATURE;
+					}
+				else
 					{
 					state = \
 						( envelopeInfoPtr->payloadSize == CRYPT_UNUSED ) ? \
@@ -1116,16 +1322,19 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				break;
 
 			default:
-				/* Just look for EOC's */
+				/* Just look for EOCs */
 				state = DEENVSTATE_EOC;
 				break;
 			}
 		if( cryptStatusError( status ) )
 			{
 			sMemDisconnect( &stream );
-			setErrorString( ENVELOPE_ERRINFO, 
-							"Invalid CMS signed/MACd data trailer", 36 );
+			retExt( status,
+					( status, ENVELOPE_ERRINFO,
+					  "Invalid CMS signed/MACd data trailer" ) );
 			}
+
+		/* Remember how far we got */
 		streamPos = stell( &stream );
 		}
 
@@ -1140,12 +1349,13 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 			{
 			int certSetLength;
 
-			/* Read the certificate chain into the aux.buffer.  We can't 
-			   import it yet at this point because we need the SignerInfo to 
-			   definitively identify the leaf certificate.  Usually there's 
-			   only one leaf but there will be more than one if there are 
-			   multiple signatures present or if the sending app decides to 
-			   shovel in assorted (non-relevant) certificates */
+			/* Read the certificate chain into the auxiliary buffer.  We 
+			   can't import it yet at this point because we need the 
+			   SignerInfo to definitively identify the leaf certificate.  
+			   Usually there's only one leaf but there will be more than one 
+			   if there are multiple signatures present or if the sending 
+			   application decides to shovel in assorted (non-relevant) 
+			   certificates */
 			status = getStreamObjectLength( &stream, &certSetLength );
 			if( cryptStatusError( status ) )
 				{
@@ -1159,7 +1369,8 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				/* Allocate a buffer for the certificate chain if necessary.  
 				   This may already be allocated if the previous attempt to 
 				   read the chain failed due to there being insufficient 
-				   data in the envelope buffer */
+				   data in the envelope buffer, so we make it conditional on
+				   the buffer being NULL */
 				if( ( envelopeInfoPtr->auxBuffer = \
 						clAlloc( "processPostamble", certSetLength ) ) == NULL )
 					{
@@ -1241,8 +1452,6 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 				if( cryptStatusError( value ) )
 					{
 					status = value;
-					setErrorString( ENVELOPE_ERRINFO, 
-									"Invalid CMS EOC trailer", 23 );
 					break;
 					}
 				if( value == TRUE )
@@ -1256,9 +1465,13 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 		/* Handle end-of-contents octets */
 		if( state == DEENVSTATE_EOC )
 			{
-			status = processEOCTrailer( &stream, envelopeInfoPtr->usage );
+			status = processEOCTrailer( envelopeInfoPtr, &stream );
 			if( cryptStatusError( status ) )
+				{
+				setErrorString( ENVELOPE_ERRINFO, 
+								"Invalid CMS EOC trailer", 23 );
 				break;
+				}
 
 			/* We're done */
 			streamPos = stell( &stream );
@@ -1269,7 +1482,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	sMemDisconnect( &stream );
 	if( iterationCount >= FAILSAFE_ITERATIONS_MED )
 		{
-		/* We can only go once through the loop on a MAC check, so we 
+		/* We can only go once through the loop on a MAC check so we 
 		   shouldn't get here with a failed MAC */
 		ENSURES( !failedMAC );
 
@@ -1315,7 +1528,7 @@ static int processPostamble( INOUT ENVELOPE_INFO *envelopeInfoPtr )
 	if( cryptStatusError( status ) )
 		{
 		/* If we got an underflow error but there's payload data left to be 
-		   copied out convert the status to OK since the caller can still
+		   copied out, convert the status to OK since the caller can still
 		   continue before they need to copy in more data.  Since there's
 		   more data left to process we return OK_SPECIAL to tell the 
 		   calling function not to perform any cleanup */

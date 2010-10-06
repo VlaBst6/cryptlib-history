@@ -17,7 +17,7 @@
   #include "context/context.h"
   #include "device/device.h"
   #include "device/pkcs11_api.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
 #endif /* Compiler-specific includes */
 
 #ifdef USE_PKCS11
@@ -58,7 +58,7 @@ static int readAttributeValue( PKCS11_INFO *pkcs11Info,
 		status = C_GetAttributeValue( pkcs11Info->hSession, hObject, 
 									  &attrTemplate, 1 );
 		}
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusOK( status ) )
 		*length = attrTemplate.ulValueLen;
 	return( cryptStatus );
@@ -101,7 +101,7 @@ static int genericSign( PKCS11_INFO *pkcs11Info,
 		status = C_Sign( pkcs11Info->hSession, ( CK_BYTE_PTR ) inBuffer, 
 						 inLength, outBuffer, &resultLen );
 	if( status != CKR_OK )
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 
 	return( CRYPT_OK );
 	}
@@ -133,7 +133,7 @@ static int genericVerify( PKCS11_INFO *pkcs11Info,
 		status = C_Verify( pkcs11Info->hSession, ( CK_BYTE_PTR ) inBuffer, 
 						   inLength, outBuffer, outLength );
 	if( status != CKR_OK )
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 
 	return( CRYPT_OK );
 	}
@@ -161,7 +161,7 @@ static int genericEncrypt( PKCS11_INFO *pkcs11Info,
 		status = C_Encrypt( pkcs11Info->hSession, buffer, length,
 							buffer, &resultLen );
 	if( status != CKR_OK )
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 
 	/* When performing RSA operations some buggy implementations perform 
 	   leading-zero trunction, so we restore leading zeroes if necessary */
@@ -239,7 +239,7 @@ static int genericDecrypt( PKCS11_INFO *pkcs11Info,
 			}
 		}
 	if( status != CKR_OK )
-		return( pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED ) );
+		return( pkcs11MapError( status, CRYPT_ERROR_FAILED ) );
 
 	/* When performing raw RSA operations some buggy implementations perform 
 	   leading-zero trunction, so we restore leading zeroes if necessary.  We
@@ -376,7 +376,7 @@ static int dhInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 								( CK_ATTRIBUTE_PTR ) publicKeyTemplate, 4,
 								( CK_ATTRIBUTE_PTR ) privateKeyTemplate, 3,
 								&hPublicKey, &hPrivateKey );
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		krnlReleaseObject( iCryptDevice );
@@ -519,7 +519,7 @@ static int dhEncrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 		}
 	if( status == CKR_OK )
 		keyAgreeParams->publicValueLen = yValueTemplate.ulValueLen;
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
@@ -577,7 +577,7 @@ static int dhDecrypt( CONTEXT_INFO *contextInfoPtr, BYTE *buffer, int length )
 			keyAgreeParams->wrappedKeyLen = valueTemplate[ 0 ].ulValueLen;
 		C_DestroyObject( pkcs11Info->hSession, hSymKey );
 		}
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	krnlReleaseObject( iCryptDevice );
 	return( cryptStatus );
 	}
@@ -756,7 +756,7 @@ static int rsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	status = C_CreateObject( pkcs11Info->hSession, rsaKeyTemplate, 
 							 templateCount, &hRsaKey );
 	zeroise( rsaKeyTemplate, sizeof( CK_ATTRIBUTE ) * templateCount );
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		/* If we're trying to set a public key and this is one of those
@@ -834,7 +834,7 @@ static int rsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 								( CK_MECHANISM_PTR ) &mechanism,
 								publicKeyTemplate, 6, privateKeyTemplate, 6,
 								&hPublicKey, &hPrivateKey );
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		krnlReleaseObject( iCryptDevice );
@@ -1297,7 +1297,7 @@ static int dsaInitKey( CONTEXT_INFO *contextInfoPtr, const void *key,
 	status = C_CreateObject( pkcs11Info->hSession, dsaKeyTemplate, 
 							 templateCount, &hDsaKey );
 	zeroise( dsaKeyTemplate, sizeof( CK_ATTRIBUTE ) * templateCount );
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		/* If we're trying to set a public key and this is one of those
@@ -1448,7 +1448,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 								( CK_ATTRIBUTE_PTR ) publicKeyTemplate, 6,
 								( CK_ATTRIBUTE_PTR ) privateKeyTemplate, 5,
 								&hPublicKey, &hPrivateKey );
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusError( cryptStatus ) )
 		{
 		krnlReleaseObject( iCryptDevice );
@@ -1467,7 +1467,7 @@ static int dsaGenerateKey( CONTEXT_INFO *contextInfoPtr, const int keysizeBits )
 		status = C_GetAttributeValue( pkcs11Info->hSession, hPublicKey, 
 									  &yValueTemplate, 1 );
 		}
-	cryptStatus = pkcs11MapError( pkcs11Info, status, CRYPT_ERROR_FAILED );
+	cryptStatus = pkcs11MapError( status, CRYPT_ERROR_FAILED );
 	if( cryptStatusOK( cryptStatus ) )
 		cryptStatus = dsaSetKeyInfo( pkcs11Info, contextInfoPtr->objectHandle, 
 			hPrivateKey, hPublicKey,

@@ -107,6 +107,8 @@ int exportCMS( STDC_UNUSED void *dummy,
 							CMS_KEYBLOCK_HEADERSIZE + keySize + padSize;
 		return( CRYPT_OK );
 		}
+	ANALYSER_HINT( mechanismInfo->wrappedDataLength > ( 2 * 8 ) && \
+				   mechanismInfo->wrappedDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Make sure that the wrapped key data fits in the output */
 	if( CMS_KEYBLOCK_HEADERSIZE + \
@@ -135,9 +137,7 @@ int exportCMS( STDC_UNUSED void *dummy,
 	keyBlockPtr[ 0 ] = intToByte( keySize );
 	status = extractKeyData( mechanismInfo->keyContext,
 							 keyBlockPtr + CMS_KEYBLOCK_HEADERSIZE,
-							 mechanismInfo->wrappedDataLength - \
-								( CMS_KEYBLOCK_HEADERSIZE + padSize ),
-							 "keydata", 7 );
+							 keySize, "keydata", 7 );
 	keyBlockPtr[ 1 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF );
 	keyBlockPtr[ 2 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF );
 	keyBlockPtr[ 3 ] = intToByte( keyBlockPtr[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF );
@@ -213,6 +213,8 @@ int importCMS( STDC_UNUSED void *dummy,
 		   encryption block size */
 		return( CRYPT_ERROR_OVERFLOW );
 		}
+	ANALYSER_HINT( mechanismInfo->wrappedDataLength >= 8 && \
+				   mechanismInfo->wrappedDataLength < CRYPT_MAX_KEYSIZE + 16 );
 
 	/* Save the current IV for the inner decryption */
 	setMessageData( &msgData, ivBuffer, CRYPT_MAX_IVSIZE );
@@ -289,7 +291,12 @@ int importCMS( STDC_UNUSED void *dummy,
 			buffer[ 1 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE ] ^ 0xFF ) || \
 			buffer[ 2 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 1 ] ^ 0xFF ) || \
 			buffer[ 3 ] != ( buffer[ CMS_KEYBLOCK_HEADERSIZE + 2 ] ^ 0xFF ) )
-			error; */
+			error; 
+
+	   If this check fails then it could be due to corruption of the wrapped
+	   data but is far more likely to be because the incorrect unwrap key was
+	   used, so we return a CRYPT_ERROR_WRONGKEY instead of a 
+	   CRYPT_ERROR_BADDATA */
 	value = ( buffer[ 0 ] < MIN_KEYSIZE ) | \
 			( buffer[ 0 ] > MAX_WORKING_KEYSIZE ) | \
 			( buffer[ 0 ] > mechanismInfo->wrappedDataLength - \
@@ -300,7 +307,7 @@ int importCMS( STDC_UNUSED void *dummy,
 	if( value != 0 )
 		{
 		zeroise( buffer, CRYPT_MAX_KEYSIZE + CRYPT_MAX_IVSIZE );
-		return( CRYPT_ERROR_BADDATA );
+		return( CRYPT_ERROR_WRONGKEY );
 		}
 
 	/* Load the recovered key into the session key context */

@@ -1,7 +1,7 @@
 /****************************************************************************
 *																			*
 *					cryptlib SSL v3/TLS Crypto Routines						*
-*					 Copyright Peter Gutmann 1998-2008						*
+*					 Copyright Peter Gutmann 1998-2010						*
 *																			*
 ****************************************************************************/
 
@@ -12,7 +12,7 @@
   #include "ssl.h"
 #else
   #include "crypt.h"
-  #include "misc/misc_rw.h"
+  #include "enc_dec/misc_rw.h"
   #include "session/session.h"
   #include "session/ssl.h"
 #endif /* Compiler-specific includes */
@@ -38,205 +38,54 @@
 
 /****************************************************************************
 *																			*
-*							Cipher Suite Information						*
+*								Utility Functions							*
 *																			*
 ****************************************************************************/
 
-/* cryptlib's SSL/TLS cipher suites, in preferred-suite order.  There are a 
-   pile of DH cipher suites, in practice only DHE is used, DH requires the 
-   use of X9.42 DH certificates (there aren't any) and DH_anon uses 
-   unauthenticated DH which implementers seem to have an objection to even 
-   though it's not much different in effect from the way RSA cipher suites 
-   are used in practice.
+/* Write packet metadata for input to the MAC/ICV authentication process:
 
-   To keep things simple for the caller we only allow RSA auth for DH key
-   agreement and not DSA, since the former also automatically works for the
-   far more common RSA key exchange that's usually used for key setup.
-   Similarly we only allow ECDSA for ECDH, since anyone who wants to make 
-   the ECC fashion statement isn't going to then fall back to RSA for the 
-   server authentication.  In both cases the actions for the unused suites
-   are present in the table but commented out.
+	seq_num || type || version || length */
 
-   We prefer AES-128 to AES-256 since -256 has a weaker key schedule than
-   -128, so if anyone's going to attack it they'll go for the key schedule
-   rather than the (mostly irrelevant) -128 vs. -256.
-
-   Some buggy older versions of IIS that only support crippled crypto drop 
-   the connection when they see a client hello advertising strong crypto 
-   rather than sending an alert as they should.  To work around this we 
-   advertise a dummy cipher suite SSL_RSA_EXPORT_WITH_RC4_40_MD5 as a canary 
-   to force IIS to send back a response that we can then turn into an error 
-   message.  The need to do this is somewhat unfortunate since it will 
-   appear to an observer that cryptlib will use crippled crypto (in fact it 
-   won't even load such a key) but there's no other way to detect the buggy 
-   IIS apart from completely restarting the session activation at the 
-   session level with crippled-crypto advertised in the restarted session */
-
-static const CIPHERSUITE_INFO cipherSuiteInfo[] = {
-	/* PSK suites */
-	{ TLS_PSK_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_PSK },
-	{ TLS_PSK_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_PSK },
-	{ TLS_PSK_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_PSK },
-	{ TLS_PSK_WITH_RC4_128_SHA,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_PSK },
-
-#ifdef USE_ECC
-	/* ECDH with ECDSA suites */
-	{ TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC },
-	{ TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC },
-	{ TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_ECDSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC },
-	{ TLS_ECDHE_RSA_WITH_RC4_128_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC },
-
-	/* ECDH with RSA suites */
-/*	{ TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC },
-	{ TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC }, 
-	{ TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 
-	  CRYPT_ALGO_ECDH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_ECC }, */
-#endif /* USE_ECC */
-
-#ifdef PREFER_DH_SUITES
-	/* 3DES with DH */
-	{ TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-
-	/* AES with DH */
-	{ TLS_DHE_RSA_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-	{ TLS_DHE_RSA_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-
-	/* 3DES with RSA */
-	{ SSL_RSA_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* AES with RSA */
-	{ TLS_RSA_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-	{ TLS_RSA_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-#else
-	/* 3DES with RSA */
-	{ SSL_RSA_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* AES with RSA */
-	{ TLS_RSA_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-	{ TLS_RSA_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* 3DES with DH */
-	{ TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_3DES,
-	  CRYPT_ALGO_HMAC_SHA, 24, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-
-	/* AES with DH */
-	{ TLS_DHE_RSA_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_AES_128_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-	{ TLS_DHE_RSA_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH },
-/*	{ TLS_DHE_DSS_WITH_AES_256_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_AES,
-	  CRYPT_ALGO_HMAC_SHA, 32, SHA1MAC_SIZE, CIPHERSUITE_FLAG_DH }, */
-#endif /* PREFER_DH_SUITES */
-
-	/* IDEA + RSA */
-	{ SSL_RSA_WITH_IDEA_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_IDEA,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* RC4 + RSA */
-	{ SSL_RSA_WITH_RC4_128_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_SHA, 16, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-	{ SSL_RSA_WITH_RC4_128_MD5,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_MD5, 16, MD5MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* DES + RSA */
-	{ SSL_RSA_WITH_DES_CBC_SHA,
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 8, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-	{ TLS_DHE_RSA_WITH_DES_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_RSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 8, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-/*	{ TLS_DHE_DSS_WITH_DES_CBC_SHA,
-	  CRYPT_ALGO_DH, CRYPT_ALGO_DSA, CRYPT_ALGO_DES,
-	  CRYPT_ALGO_HMAC_SHA, 8, SHA1MAC_SIZE, CIPHERSUITE_FLAG_NONE }, */
-
-	/* Canary used to detect the use of weak ciphers by the peer (where the
-	   peer in this case would be "older versions of IIS") */
-	{ SSL_RSA_EXPORT_WITH_RC4_40_MD5, 
-	  CRYPT_ALGO_RSA, CRYPT_ALGO_RSA, CRYPT_ALGO_RC4,
-	  CRYPT_ALGO_HMAC_MD5, 16, MD5MAC_SIZE, CIPHERSUITE_FLAG_NONE },
-
-	/* End-of-list marker */
-	{ SSL_NULL_WITH_NULL,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
-	  CRYPT_ALGO_NONE, 0, 0, CIPHERSUITE_FLAG_NONE },
-	{ SSL_NULL_WITH_NULL,
-	  CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, CRYPT_ALGO_NONE, 
-	  CRYPT_ALGO_NONE, 0, 0, CIPHERSUITE_FLAG_NONE }
-	};
-
-CHECK_RETVAL \
-int getCipherSuiteInfo( OUT const CIPHERSUITE_INFO **cipherSuiteInfoPtrPtr,
-						OUT_INT_Z int *noSuiteEntries )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
+static int writePacketMetadata( OUT_BUFFER( dataMaxLength, *dataLength ) \
+									void *data,
+								IN_LENGTH_SHORT_MIN( 16 ) const int dataMaxLength,
+								OUT_LENGTH_SHORT_Z int *dataLength,
+								IN_RANGE( 0, 255 ) const int type,
+								IN_INT_Z const long seqNo, 
+								IN_RANGE( SSL_MINOR_VERSION_TLS, \
+										  SSL_MINOR_VERSION_TLS12 ) const int version,
+								IN_LENGTH_Z const int payloadLength )
 	{
-	assert( isReadPtr( cipherSuiteInfoPtrPtr, \
-					   sizeof( CIPHERSUITE_INFO * ) ) );
-	assert( isWritePtr( noSuiteEntries, sizeof( int ) ) );
+	STREAM stream;
+	int status;
 
-	*cipherSuiteInfoPtrPtr = cipherSuiteInfo;
-	*noSuiteEntries = FAILSAFE_ARRAYSIZE( cipherSuiteInfo, CIPHERSUITE_INFO );
+	assert( isWritePtr( data, dataMaxLength ) );
+	assert( isWritePtr( dataLength, sizeof( int ) ) );
 
-	return( CRYPT_OK );
+	REQUIRES( dataMaxLength >= 16 && dataMaxLength < MAX_INTLENGTH_SHORT );
+	REQUIRES( type >= 0 && type <= 255 );
+	REQUIRES( seqNo >= 0 );
+	REQUIRES( version >= SSL_MINOR_VERSION_TLS && \
+			  version <= SSL_MINOR_VERSION_TLS12 );
+	REQUIRES( payloadLength > 0 && payloadLength <= MAX_PACKET_SIZE );
+
+	/* Clear return values */
+	memset( data, 0, min( 16, dataMaxLength ) );
+	*dataLength = 0;
+
+	/* Write the sequence number, packet type, version, and length 
+	  information to the output buffer */
+	sMemOpen( &stream, data, dataMaxLength );
+	writeUint64( &stream, seqNo );
+	sputc( &stream, type );
+	sputc( &stream, SSL_MAJOR_VERSION );
+	sputc( &stream, version );
+	status = writeUint16( &stream, payloadLength );
+	if( cryptStatusOK( status ) )
+		*dataLength = stell( &stream );
+	sMemDisconnect( &stream );
+	return( status );
 	}
 
 /****************************************************************************
@@ -245,12 +94,13 @@ int getCipherSuiteInfo( OUT const CIPHERSUITE_INFO **cipherSuiteInfoPtrPtr,
 *																			*
 ****************************************************************************/
 
-/* Encrypt/decrypt a data block (this includes the MAC, which has been added
-   to the data by the caller).  The handling of length arguments for these 
-   is a bit tricky, for encryption the input is { data, payloadLength } 
-   which is padded (if necessary) and the padded length returned in 
-   '*dataLength', for decryption the entire data block will be processed but 
-   only 'processedDataLength' bytes of result are valid output */
+/* Encrypt/decrypt a data block (in mose cases this also includes the MAC, 
+   which has been added to the data by the caller).  The handling of length 
+   arguments for these is a bit tricky, for encryption the input is { data, 
+   payloadLength } which is padded (if necessary) and the padded length 
+   returned in '*dataLength', for decryption the entire data block will be 
+   processed but only 'processedDataLength' bytes of result are valid 
+   output */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4 ) ) \
 int encryptData( const SESSION_INFO *sessionInfoPtr, 
@@ -275,7 +125,7 @@ int encryptData( const SESSION_INFO *sessionInfoPtr,
 	/* Clear return value */
 	*dataLength = 0;
 
-	/* If it's a block cipher, we need to add end-of-block padding */
+	/* If it's a block cipher then we need to add end-of-block padding */
 	if( sessionInfoPtr->cryptBlocksize > 1 )
 		{
 		const int padSize = ( sessionInfoPtr->cryptBlocksize - 1 ) - \
@@ -296,6 +146,23 @@ int encryptData( const SESSION_INFO *sessionInfoPtr,
 	if( cryptStatusError( status ) )
 		return( status );
 	*dataLength = length;
+
+	/* If we're using GCM then we have to append the ICV to the data */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		MESSAGE_DATA msgData;
+
+		REQUIRES( length + sessionInfoPtr->authBlocksize <= dataMaxLength );
+
+		setMessageData( &msgData, data + length, 
+						sessionInfoPtr->authBlocksize );
+		status = krnlSendMessage( sessionInfoPtr->iCryptOutContext,
+								  IMESSAGE_GETATTRIBUTE_S, &msgData,
+								  CRYPT_IATTRIBUTE_ICV );
+		if( cryptStatusError( status ) )
+			return( status );
+		*dataLength += sessionInfoPtr->authBlocksize;
+		}
 
 	return( CRYPT_OK );
 	}
@@ -330,7 +197,27 @@ int decryptData( SESSION_INFO *sessionInfoPtr,
 				  "Packet decryption failed" ) );
 		}
 
-	/* If it's a stream cipher there's no padding present */
+	/* If we're using GCM then we have to check the ICV that follows the 
+	   data */
+	if( sessionInfoPtr->protocolFlags & SSL_PFLAG_GCM )
+		{
+		MESSAGE_DATA msgData;
+
+		setMessageData( &msgData, data + length, 
+						sessionInfoPtr->authBlocksize );
+		status = krnlSendMessage( sessionInfoPtr->iCryptInContext, 
+								  IMESSAGE_COMPARE, &msgData, 
+								  MESSAGE_COMPARE_ICV );
+		if( cryptStatusError( status ) )
+			{
+			retExt( CRYPT_ERROR_SIGNATURE,
+					( CRYPT_ERROR_SIGNATURE, SESSION_ERRINFO, 
+					  "Bad message ICV for packet type %d, length %d",
+					  data[ 0 ], length ) );
+			}
+		}
+
+	/* If it's a stream cipher then there's no padding present */
 	if( sessionInfoPtr->cryptBlocksize <= 1 )
 		{
 		*processedDataLength = length;
@@ -566,7 +453,7 @@ int checkMacSSL( INOUT SESSION_INFO *sessionInfoPtr,
 	   payload, this can happen with some versions of OpenSSL that send 
 	   zero-length blocks as a kludge to work around pre-TLS 1.1 chosen-IV
 	   attacks */
-	if( payloadLength == 0 )
+	if( payloadLength <= 0 )
 		{
 		status = macDataSSL( sessionInfoPtr->iAuthInContext, 
 							 sessionInfoPtr->integrityAlgo,
@@ -630,48 +517,44 @@ int checkMacSSL( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL \
 static int macDataTLS( IN_HANDLE const CRYPT_CONTEXT iHashContext, 
 					   IN_INT_Z const long seqNo, 
-					   IN_RANGE( 1, 3 ) const int version,
+					   IN_RANGE( SSL_MINOR_VERSION_TLS, \
+								 SSL_MINOR_VERSION_TLS12 ) const int version,
 					   IN_BUFFER_OPT( dataLength ) const void *data, 
 					   IN_LENGTH_Z const int dataLength, 
 					   IN_RANGE( 0, 255 ) const int type )
 	{
-	STREAM stream;
 	BYTE buffer[ 64 + 8 ];
-	int length = DUMMY_INIT, status;
+	int length, status;
 
 	assert( ( data == NULL && dataLength == 0 ) || \
 			isReadPtr( data, dataLength ) );
 
 	REQUIRES( isHandleRangeValid( iHashContext ) );
 	REQUIRES( seqNo >= 0 );
-	REQUIRES( version >= 1 && version <= 3 );
+	REQUIRES( version >= SSL_MINOR_VERSION_TLS && \
+			  version <= SSL_MINOR_VERSION_TLS12 );
 	REQUIRES( ( data == NULL && dataLength == 0 ) || \
 			  ( data != NULL && \
 				dataLength > 0 && dataLength <= MAX_PACKET_SIZE ) );
 	REQUIRES( type >= 0 && type <= 255 );
 
-	/* Set up the sequence number, type, version, and length data */
-	sMemOpen( &stream, buffer, 64 );
-	writeUint64( &stream, seqNo );
-	sputc( &stream, type );
-	sputc( &stream, SSL_MAJOR_VERSION );
-	sputc( &stream, version );
-	status = writeUint16( &stream, dataLength );
-	if( cryptStatusOK( status ) )
-		length = stell( &stream );
-	sMemDisconnect( &stream );
+	/* Set up the packet metadata to be MACed */
+	status = writePacketMetadata( buffer, 64, &length, type, seqNo, version,
+								  dataLength );
 	if( cryptStatusError( status ) )
 		return( status );
 
 	/* Reset the hash context and generate the MAC:
 
-		HMAC( seq_num || type || version || length || data ) */
+		HMAC( metadata || data ) */
 	krnlSendMessage( iHashContext, IMESSAGE_DELETEATTRIBUTE, NULL,
 					 CRYPT_CTXINFO_HASHVALUE );
 	krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, buffer, length );
 	if( dataLength > 0 )
+		{
 		krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, 
 						 ( MESSAGE_CAST ) data, dataLength );
+		}
 	return( krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, "", 0 ) );
 	}
 
@@ -745,7 +628,7 @@ int checkMacTLS( INOUT SESSION_INFO *sessionInfoPtr,
 	   payload, this can happen with some versions of OpenSSL that send 
 	   zero-length blocks as a kludge to work around pre-TLS 1.1 chosen-IV
 	   attacks */
-	if( payloadLength == 0 )
+	if( payloadLength <= 0 )
 		{
 		status = macDataTLS( sessionInfoPtr->iAuthInContext, 
 							 sslInfo->readSeqNo, sessionInfoPtr->version, 
@@ -788,18 +671,77 @@ int checkMacTLS( INOUT SESSION_INFO *sessionInfoPtr,
 
 /****************************************************************************
 *																			*
-*								Dual-MAC Functions							*
+*								TLS GCM Functions							*
 *																			*
 ****************************************************************************/
 
-/* Perform a dual MAC of a data block.  Since this is part of an ongoing 
-   message exchange (in other words a failure potentially won't be detected
-   for some time) we check each return value */
+/* Perform a TLS GCM integrity check of a data block.  This differs somewhat
+   from the more conventional MACing routines because GCM combines the ICV
+   generation with encryption, so all that we're actually doing is 
+   generating the initial stage of the ICV over the packet metadata handled
+   as GCM AAD */
+
+CHECK_RETVAL \
+int macDataTLSGCM( IN_HANDLE const CRYPT_CONTEXT iCryptContext, 
+				   IN_INT_Z const long seqNo, 
+				   IN_RANGE( SSL_MINOR_VERSION_TLS, \
+							 SSL_MINOR_VERSION_TLS12 ) const int version,
+				   IN_LENGTH_Z const int payloadLength, 
+				   IN_RANGE( 0, 255 ) const int type )
+	{
+	MESSAGE_DATA msgData;
+	BYTE buffer[ 64 + 8 ];
+	int length, status;
+
+	REQUIRES( isHandleRangeValid( iCryptContext ) );
+	REQUIRES( seqNo >= 0 );
+	REQUIRES( version >= SSL_MINOR_VERSION_TLS && \
+			  version <= SSL_MINOR_VERSION_TLS12 );
+	REQUIRES( payloadLength >= 0 && payloadLength <= MAX_PACKET_SIZE );
+	REQUIRES( type >= 0 && type <= 255 );
+
+	/* Set up the packet metadata to be MACed */
+	status = writePacketMetadata( buffer, 64, &length, type, seqNo, 
+								  version, payloadLength );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Send the AAD to the GCM context for inclusion in the ICV 
+	   calculation */
+	setMessageData( &msgData, buffer, length );
+	return( krnlSendMessage( iCryptContext, IMESSAGE_SETATTRIBUTE_S,
+							 &msgData, CRYPT_IATTRIBUTE_AAD ) );
+	}
+
+/****************************************************************************
+*																			*
+*					Handshake Message Hash/MAC Functions					*
+*																			*
+****************************************************************************/
+
+/* Perform assorted hashing of a data block, a dual dual MD5+SHA-1 hash for 
+   SSL or straight SHA-2 hash for TLS 1.2+.  Since this is part of an 
+   ongoing message exchange (in other words a failure potentially won't be 
+   detected for some time) we check each return value.  This processing was 
+   originally done using a dual MD5+SHA-1 hash, however TLS 1.2+ switched to 
+   using a single SHA-2 hash, because of this we have to explicitly check 
+   which hashing option we're using (in some cases it might be both since we 
+   have to speculatively hash initial messages until we've agreed on a 
+   version) and only use that hash.
+   
+   In addition to the overall hashing we may also be running a separate hash 
+   of the messages that stops before the other hashing does if certificate-
+   based client authentication is being used.  This would add even more 
+   overhead to the whole process, however since it's only used with TLS 1.2+
+   and in that case is restricted to using SHA-2 via hashing preferences
+   sent in the hello messages, we can obtain the necessary hash value by
+   cloning the SHA-2 context when we have to generate or verify the client
+   signature */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int dualMacData( const SSL_HANDSHAKE_INFO *handshakeInfo,
-						IN_BUFFER( dataLength ) const void *data, 
-						IN_LENGTH const int dataLength )
+static int hashHSData( const SSL_HANDSHAKE_INFO *handshakeInfo,
+					   IN_BUFFER( dataLength ) const void *data, 
+					   IN_LENGTH const int dataLength )
 	{
 	int status;
 
@@ -808,27 +750,43 @@ static int dualMacData( const SSL_HANDSHAKE_INFO *handshakeInfo,
 
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
 
-	status = krnlSendMessage( handshakeInfo->clientMD5context,
-							  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data,
-							  dataLength );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( handshakeInfo->clientSHA1context,
+	if( handshakeInfo->md5context != CRYPT_ERROR )
+		{
+		status = krnlSendMessage( handshakeInfo->md5context,
 								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data,
 								  dataLength );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( handshakeInfo->serverMD5context,
+		if( cryptStatusOK( status ) )
+			status = krnlSendMessage( handshakeInfo->sha1context,
+									  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data,
+									  dataLength );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+	if( handshakeInfo->sha2context != CRYPT_ERROR )
+		{
+		status = krnlSendMessage( handshakeInfo->sha2context,
 								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data,
 								  dataLength );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( handshakeInfo->serverSHA1context,
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+#ifdef CONFIG_SUITEB
+	if( handshakeInfo->sha384context != CRYPT_ERROR )
+		{
+		status = krnlSendMessage( handshakeInfo->sha384context,
 								  IMESSAGE_CTX_HASH, ( MESSAGE_CAST ) data,
 								  dataLength );
-	return( status );
+		if( cryptStatusError( status ) )
+			return( status );
+		}
+#endif /* CONFIG_SUITEB */
+
+	return( CRYPT_OK );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int dualMacDataRead( const SSL_HANDSHAKE_INFO *handshakeInfo, 
-					 INOUT STREAM *stream )
+int hashHSPacketRead( const SSL_HANDSHAKE_INFO *handshakeInfo, 
+					  INOUT STREAM *stream )
 	{
 	const int dataLength = sMemDataLeft( stream );
 	void *data;
@@ -840,41 +798,56 @@ int dualMacDataRead( const SSL_HANDSHAKE_INFO *handshakeInfo,
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
 
 	/* On a read we've just processed the packet header and everything 
-	   that's left in the stream is the data to be MACd */
+	   that's left in the stream is the data to be MACd.  Note that we can't 
+	   use sMemGetDataBlockRemaining() for this because that returns the
+	   entire available buffer, not just the amount of data in the buffer */
 	status = sMemGetDataBlock( stream, &data, dataLength );
 	if( cryptStatusOK( status ) )
-		status = dualMacData( handshakeInfo, data, dataLength );
+		{
+		ANALYSER_HINT( data != NULL );
+		status = hashHSData( handshakeInfo, data, dataLength );
+		}
 	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-int dualMacDataWrite( const SSL_HANDSHAKE_INFO *handshakeInfo, 
-					  INOUT STREAM *stream )
+int hashHSPacketWrite( const SSL_HANDSHAKE_INFO *handshakeInfo, 
+					   INOUT STREAM *stream,
+					   IN_LENGTH_Z const int offset )
 	{
-	const int dataLength = stell( stream ) - SSL_HEADER_SIZE;
+	const int dataStart = offset + SSL_HEADER_SIZE;
+	const int dataLength = stell( stream ) - dataStart;
 	void *data;
 	int status;
 
 	assert( isReadPtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
-	
+
+	REQUIRES( offset >= 0 && offset < MAX_INTLENGTH );
 	REQUIRES( dataLength > 0 && dataLength < MAX_INTLENGTH );
 
 	/* On a write we've just finished writing the packet and everything but
 	   the header needs to be MACd */
-	status = sMemGetDataBlockAbs( stream, SSL_HEADER_SIZE, &data, 
-								  dataLength );
+	status = sMemGetDataBlockAbs( stream, dataStart, &data, dataLength );
 	if( cryptStatusOK( status ) )
-		status = dualMacData( handshakeInfo, data, dataLength );
+		{
+		ANALYSER_HINT( data != NULL );
+		status = hashHSData( handshakeInfo, data, dataLength );
+		}
 	return( status );
 	}
 
-/* Complete the dual MD5/SHA1 hash/MAC used in the finished message.  We 
-   don't check the return value of every single component MAC operation 
-   since it would lead to endless sequences of 
-   'status = x; if( cSOK( x ) ) ...' chains, on the remote chance that
-   there's some transient failure in a single component operation it'll be 
-   picked up at the end anyway when the overall MAC check fails */
+/* Complete the dual MD5/SHA1 hash/MAC or SHA2 MAC that's used in the 
+   finished message.  There are no less than three variations of this, one
+   for SSL's dual MAC, one for TLS 1.0 - 1.1's IPsec cargo cult 96-bit
+   PRF'd dual MAC, and one for TLS 1.2's similarly cargo-cult 96-bit PRF'd
+   single MAC.
+   
+   We don't check the return value of every single component MAC operation 
+   since it would lead to endless sequences of 'status = x; 
+   if( cSOK( x ) ) ...' chains, on the remote chance that there's some 
+   transient failure in a single component operation it'll be picked up at 
+   the end anyway when the overall MAC check fails */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 3, 5, 6, 8 ) ) \
 int completeSSLDualMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
@@ -909,7 +882,7 @@ int completeSSLDualMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
 
 	/* Generate the inner portion of the handshake message's MAC:
 
-		hash( handshake_messages || cl/svr_label || master_secret || pad1 ).
+		hash( handshake_messages || cl/svr_label || master_secret || pad1 )
 
 	   Note that the SHA-1 pad size is 40 bytes and not 44 (to get a total
 	   length of 64 bytes), this is due to an error in the spec */
@@ -1023,16 +996,16 @@ int completeTLSHashedMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Generate the TLS check value.  This isn't really a hash or a MAC, but
-	   is generated by feeding the MD5 and SHA1 hashes of the handshake
-	   messages into the TLS key derivation (PRF) function and truncating
-	   the result to 12 bytes (96 bits) for no adequately explored reason,
-	   most probably it's IPsec cargo cult protocol design:
+	/* Generate the TLS check value.  This isn't really a hash or a MAC but
+	   is generated by feeding the MD5 and SHA1 hashes of the handshake 
+	   messages into the TLS key derivation (PRF) function and truncating 
+	   the result to 12 bytes (96 bits) IPsec cargo cult protocol design
+	   purposes:
 
 		TLS_PRF( label || MD5_hash || SHA1_hash ) */
-	setMechanismDeriveInfo( &mechanismInfo, hashValues, TLS_HASHEDMAC_SIZE,
-							( MESSAGE_CAST ) masterSecret, masterSecretLen, 
-							CRYPT_USE_DEFAULT, hashBuffer, 
+	setMechanismDeriveInfo( &mechanismInfo, hashValues, 
+							TLS_HASHEDMAC_SIZE, ( MESSAGE_CAST ) masterSecret, 
+							masterSecretLen, CRYPT_USE_DEFAULT, hashBuffer, 
 							labelLength + MD5MAC_SIZE + SHA1MAC_SIZE, 1 );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
 							  &mechanismInfo, MECHANISM_DERIVE_TLS );
@@ -1041,9 +1014,75 @@ int completeTLSHashedMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
 	return( status );
 	}
 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 4, 5, 7 ) ) \
+int completeTLS12HashedMAC( IN_HANDLE const CRYPT_CONTEXT sha2context,
+							OUT_BUFFER( hashValuesMaxLen, *hashValuesLen ) \
+								BYTE *hashValues, 
+							IN_LENGTH_SHORT_MIN( TLS_HASHEDMAC_SIZE ) \
+								const int hashValuesMaxLen,
+							OUT_LENGTH_SHORT_Z int *hashValuesLen,
+							IN_BUFFER( labelLength ) const char *label, 
+							IN_RANGE( 1, 64 ) const int labelLength, 
+							IN_BUFFER( masterSecretLen ) const BYTE *masterSecret, 
+							IN_LENGTH_SHORT const int masterSecretLen )
+	{
+	MECHANISM_DERIVE_INFO mechanismInfo;
+	MESSAGE_DATA msgData;
+	BYTE hashBuffer[ 64 + ( CRYPT_MAX_HASHSIZE * 2 ) + 8 ];
+	int macSize, status;
+
+	assert( isWritePtr( hashValues, hashValuesMaxLen ) );
+	assert( isWritePtr( hashValuesLen, sizeof( int ) ) );
+	assert( isReadPtr( label, labelLength ) );
+	assert( isReadPtr( masterSecret, masterSecretLen ) );
+
+	REQUIRES( isHandleRangeValid( sha2context ) );
+	REQUIRES( hashValuesMaxLen >= TLS_HASHEDMAC_SIZE && \
+			  hashValuesMaxLen < MAX_INTLENGTH_SHORT );
+	REQUIRES( labelLength > 0 && labelLength <= 64 && \
+			  labelLength + CRYPT_MAX_HASHSIZE <= 64 + ( CRYPT_MAX_HASHSIZE ) );
+
+	/* Clear return value */
+	*hashValuesLen = 0;
+
+	memcpy( hashBuffer, label, labelLength );
+
+	/* Get the MAC size */
+	status = krnlSendMessage( sha2context, IMESSAGE_GETATTRIBUTE, &macSize,
+							  CRYPT_CTXINFO_BLOCKSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Complete the hashing and get the SHA-2 hash */
+	krnlSendMessage( sha2context, IMESSAGE_CTX_HASH, "", 0 );
+	setMessageData( &msgData, hashBuffer + labelLength, macSize );
+	status = krnlSendMessage( sha2context, IMESSAGE_GETATTRIBUTE_S,
+							  &msgData, CRYPT_CTXINFO_HASHVALUE );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	/* Generate the TLS check value.  This isn't really a hash or a MAC but
+	   is generated by feeding the SHA-2 hash of the handshake messages into 
+	   the TLS key derivation (PRF) function and truncating the result to 12 
+	   bytes (96 bits) for IPsec cargo cult protocol design purposes:
+
+		TLS_PRF( label || SHA2_hash ) */
+	setMechanismDeriveInfo( &mechanismInfo, hashValues, 
+							TLS_HASHEDMAC_SIZE, ( MESSAGE_CAST ) masterSecret, 
+							masterSecretLen, CRYPT_ALGO_SHA2, hashBuffer, 
+							labelLength + macSize, 1 );
+	if( macSize != bitsToBytes( 256 ) )
+		mechanismInfo.hashParam = macSize;
+	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, IMESSAGE_DEV_DERIVE,
+							  &mechanismInfo, MECHANISM_DERIVE_TLS12 );
+	if( cryptStatusOK( status ) )
+		*hashValuesLen = TLS_HASHEDMAC_SIZE;
+	return( status );
+	}
+
 /****************************************************************************
 *																			*
-*							Signature Functions								*
+*						Client-Auth Signature Functions						*
 *																			*
 ****************************************************************************/
 
@@ -1052,10 +1091,11 @@ int completeTLSHashedMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
    (TLS) all of the handshake messages exchanged to date (SSLv3 additionally 
    hashes in further data like the master secret), then signs them using 
    nonstandard PKCS #1 RSA without the ASN.1 wrapper (that is, it uses the 
-   private key to encrypt the raw concatenated SHA-1 and MD5 MAC or hash of 
-   the handshake messages with PKCS #1 padding prepended), unless we're 
-   using DSA in which case it drops the MD5 MAC/hash and uses only the SHA-1 
-   one.  This is an incredible pain to support because it requires running a 
+   raw concatenated SHA-1 and MD5 MAC (SSL) or hash (TLS) of the handshake 
+   messages with PKCS #1 padding prepended), unless we're using DSA in which 
+   case it drops the MD5 MAC/hash and uses only the SHA-1 one.  
+   
+   This is an incredible pain to support because it requires running a 
    parallel hash of handshake messages that terminates before the main 
    hashing does, further hashing/MAC'ing of additional data, and the use of 
    weird nonstandard data formats and signature mechanisms that aren't 
@@ -1066,32 +1106,45 @@ int completeTLSHashedMAC( IN_HANDLE const CRYPT_CONTEXT md5context,
    what we have to do is tunnel the nonstandard sig.format information down 
    through several cryptlib layers and then hope that the PKCS #11 
    implementation that we're using (a) supports this format and (b) gets it 
-   right.  Another problem (which only occurs for SSLv3) is that the MAC 
-   requires the use of the master secret, which isn't available for several 
-   hundred more lines of code, so we have to delay producing any more data 
-   packets until the master secret is available, which severely screws up 
-   the handshake processing flow.  TLS is slightly better here since it 
-   simply signs MD5-hash || SHA1-hash, but even then it requires 
-   speculatively running an MD5 and SHA-1 hash of all messages on every 
-   exchange on the remote chance that the client will be using client 
-   certificates.
+   right.
+   
+   Another problem (which only occurs for SSLv3) is that the MAC requires 
+   the use of the master secret, which isn't available for several hundred 
+   more lines of code, so we have to delay producing any more data packets 
+   until the master secret is available (either that or squirrel all packets
+   away in some buffer somewhere so that they can be hashed later), which 
+   severely screws up the handshake processing flow.  TLS is slightly better 
+   here since it simply signs MD5-hash || SHA1-hash without requiring the
+   use of the master secret, but even then it requires speculatively running 
+   an MD5 and SHA-1 hash of all messages on every exchange on the remote 
+   chance that the client will be using client certificates.  TLS 1.2
+   finally moved to using standard signatures (PKCS #1 for RSA, conventional
+   signatures for DSA/ECDSA), but still requires the speculative hashing of
+   handshake messages.
 
-   The chances of all of this working correctly are fairly low, and in any
-   case there's no advantage to the weird mechanism and format used in
-   SSL/TLS, all we actually need to do is sign the client and server nonces
-   to ensure signature freshness.  Because of this what we actually do is
-   just this, after which we create a standard PKCS #1 signature via the
-   normal cryptlib mechanisms, which guarantees that it'll work with native
-   cryptlib as well as any crypto hardware implementation.  Since client
-   certificates are hardly ever used and when they are it's in a closed 
-   environment, it's extremely unlikely that anyone will ever notice.  
-   There'll be far more problems in trying to use the nonstandard SSL/TLS 
-   signature mechanism than there are with using a standard (but not-in-the-
-   spec) one */
+   The chances of all of this custom data and signature handling working 
+   correctly are fairly low, and in any case there's no advantage to the 
+   weird mechanism and format used in SSL/TLS, all that we actually need to 
+   do is sign the client and server nonces to ensure signature freshness.  
+   Because of this what we actually do is just this, after which we create a 
+   standard PKCS #1 signature via the normal cryptlib mechanisms, which 
+   guarantees that it'll work with native cryptlib as well as any crypto 
+   hardware implementation.  Since client certificates are hardly ever used 
+   and when they are it's in a closed environment, it's extremely unlikely 
+   that anyone will ever notice.  There'll be far more problems in trying to 
+   use the nonstandard SSL/TLS signature mechanism than there are with using 
+   a standard (but not-in-the-spec) one.
+   
+   The one exception to this is, as already mentioned above, TLS 1.2+, for
+   which we can finally use a standard signature.  In this case we take
+   a clone of the SHA-2 context that's been used to hash the handshake
+   messages so far (the use of SHA-2 for this is enforced by the judicious
+   use of TLS extensions, see the comments in ssl_ext.c for more on this)
+   and sign that */
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
-static int createCertVerifyHash( const SSL_HANDSHAKE_INFO *handshakeInfo,
-								 OUT_HANDLE_OPT CRYPT_CONTEXT *iHashContext )
+static int createCertVerifyAltHash( const SSL_HANDSHAKE_INFO *handshakeInfo,
+									OUT_HANDLE_OPT CRYPT_CONTEXT *iHashContext )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	BYTE nonceBuffer[ 64 + SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
@@ -1130,12 +1183,41 @@ static int createCertVerifyHash( const SSL_HANDSHAKE_INFO *handshakeInfo,
 	return( CRYPT_OK );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
-int createCertVerify( const SESSION_INFO *sessionInfoPtr,
-					  const SSL_HANDSHAKE_INFO *handshakeInfo,
-					  INOUT STREAM *stream )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
+int createCertVerifyHash( const SESSION_INFO *sessionInfoPtr,
+						  INOUT SSL_HANDSHAKE_INFO *handshakeInfo )
 	{
 	CRYPT_CONTEXT iHashContext;
+	int status;
+
+	assert( isReadPtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+
+	/* SSL and TLS 1.0 and 1.1 use a different signature strategy than 
+	   TLS 1.2+ (see the long comment above) so this call is a no-op */
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		return( CRYPT_OK );
+
+	/* Clone the current hash state and complete the hashing for the cloned
+	   context */
+	status = cloneHashContext( handshakeInfo->sha2context, &iHashContext );
+	if( cryptStatusError( status ) )
+		return( status );
+	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH, "", 0 );
+	if( cryptStatusError( status ) )
+		{
+		krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
+		return( status );
+		}
+	handshakeInfo->certVerifyContext = iHashContext;
+
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
+int createCertVerify( const SESSION_INFO *sessionInfoPtr,
+					  INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
+					  INOUT STREAM *stream )
+	{
 	void *dataPtr;
 	int dataLength, length = DUMMY_INIT, status;
 
@@ -1143,8 +1225,8 @@ int createCertVerify( const SESSION_INFO *sessionInfoPtr,
 	assert( isReadPtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
 	assert( isWritePtr( stream, sizeof( STREAM ) ) );
 
-	/* Create the hash of the data to sign */
-	status = createCertVerifyHash( handshakeInfo, &iHashContext );
+	/* Get a pointer to the signature data block */
+	status = sMemGetDataBlockRemaining( stream, &dataPtr, &dataLength );
 	if( cryptStatusError( status ) )
 		return( status );
 
@@ -1152,30 +1234,43 @@ int createCertVerify( const SESSION_INFO *sessionInfoPtr,
 	   expression is that iCryptCreateSignature() gets suspicious of very
 	   large buffer sizes, for example when the user has specified the use
 	   of a huge send buffer */
-	status = sMemGetDataBlockRemaining( stream, &dataPtr, &dataLength );
-	if( cryptStatusOK( status ) )
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		{
+		CRYPT_CONTEXT iHashContext;
+
+		/* Create the hash of the data to sign if necessary */
+		status = createCertVerifyAltHash( handshakeInfo, &iHashContext );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		status = iCryptCreateSignature( dataPtr, 
+						min( dataLength, MAX_INTLENGTH_SHORT - 1 ), &length, 
+						CRYPT_FORMAT_CRYPTLIB, sessionInfoPtr->privateKey, 
+						iHashContext, NULL );
+		krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
+		}
+	else
 		{
 		status = iCryptCreateSignature( dataPtr, 
-										min( dataLength, \
-											 MAX_INTLENGTH_SHORT - 1 ),
-										&length, CRYPT_FORMAT_CRYPTLIB,
-										sessionInfoPtr->privateKey,
-										iHashContext, NULL );
+						min( dataLength, MAX_INTLENGTH_SHORT - 1 ), &length, 
+						CRYPT_IFORMAT_TLS12, sessionInfoPtr->privateKey, 
+						handshakeInfo->certVerifyContext, NULL );
+		krnlSendNotifier( handshakeInfo->certVerifyContext, 
+						  IMESSAGE_DECREFCOUNT );
+		handshakeInfo->certVerifyContext = CRYPT_ERROR;
 		}
 	if( cryptStatusOK( status ) )
 		status = sSkip( stream, length );
-	krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
 	return( status );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3 ) ) \
 int checkCertVerify( const SESSION_INFO *sessionInfoPtr,
-					 const SSL_HANDSHAKE_INFO *handshakeInfo,
+					 INOUT SSL_HANDSHAKE_INFO *handshakeInfo,
 					 INOUT STREAM *stream, 
 					 IN_LENGTH_SHORT_MIN( MIN_CRYPT_OBJECTSIZE ) \
 						const int sigLength )
 	{
-	CRYPT_CONTEXT iHashContext;
 	void *dataPtr;
 	int status;
 
@@ -1186,101 +1281,117 @@ int checkCertVerify( const SESSION_INFO *sessionInfoPtr,
 	REQUIRES( sigLength >= MIN_CRYPT_OBJECTSIZE && \
 			  sigLength < MAX_INTLENGTH_SHORT );
 
-	/* Create the hash of the data to sign */
-	status = createCertVerifyHash( handshakeInfo, &iHashContext );
+	/* Get a pointer to the signature data block */
+	status = sMemGetDataBlock( stream, &dataPtr, sigLength );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( dataPtr != NULL );
 
 	/* Verify the signature.  The reason for the min() part of the
 	   expression is that iCryptCheckSignature() gets suspicious of very
 	   large buffer sizes, for example when the user has specified the use
 	   of a huge send buffer */
-	status = sMemGetDataBlock( stream, &dataPtr, sigLength );
-	if( cryptStatusOK( status ) )
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		{
+		CRYPT_CONTEXT iHashContext;
+
+		/* Create the hash of the data to verify if necessary */
+		status = createCertVerifyAltHash( handshakeInfo, &iHashContext );
+		if( cryptStatusError( status ) )
+			return( status );
+
+		status = iCryptCheckSignature( dataPtr, 
+						min( sigLength, MAX_INTLENGTH_SHORT - 1 ), 
+						CRYPT_FORMAT_CRYPTLIB, sessionInfoPtr->iKeyexAuthContext, 
+						iHashContext, CRYPT_UNUSED, NULL );
+		krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
+		}
+	else
 		{
 		status = iCryptCheckSignature( dataPtr, 
-									   min( sigLength, \
-											MAX_INTLENGTH_SHORT - 1 ), 
-									   CRYPT_FORMAT_CRYPTLIB, 
-									   sessionInfoPtr->iKeyexAuthContext,
-									   iHashContext, CRYPT_UNUSED, NULL );
+						min( sigLength, MAX_INTLENGTH_SHORT - 1 ), 
+						CRYPT_IFORMAT_TLS12, sessionInfoPtr->iKeyexAuthContext, 
+						handshakeInfo->certVerifyContext, CRYPT_UNUSED, NULL );
+		krnlSendNotifier( handshakeInfo->certVerifyContext, 
+						  IMESSAGE_DECREFCOUNT );
+		handshakeInfo->certVerifyContext = CRYPT_ERROR;
 		}
-	krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
 	return( status );
 	}
 
+/****************************************************************************
+*																			*
+*						Keyex Signature Functions							*
+*																			*
+****************************************************************************/
+
 /* Create/check the signature on the server key data */
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 4, 5 ) ) \
-static int createKeyexHashes( const SSL_HANDSHAKE_INFO *handshakeInfo,
-							  IN_BUFFER( keyDataLength ) const void *keyData, 
-							  IN_LENGTH_SHORT const int keyDataLength,
-							  OUT_HANDLE_OPT CRYPT_CONTEXT *md5Context,
-							  OUT_HANDLE_OPT CRYPT_CONTEXT *shaContext )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 5 ) ) \
+static int createKeyexHash( const SSL_HANDSHAKE_INFO *handshakeInfo,
+							OUT_HANDLE_OPT CRYPT_CONTEXT *hashContext,
+							IN_ALGO const CRYPT_ALGO_TYPE hashAlgo,
+							IN_INT_SHORT_Z const int hashParam,
+							IN_BUFFER( keyDataLength ) const void *keyData, 
+							IN_LENGTH_SHORT const int keyDataLength )
 	{
+	CRYPT_CONTEXT iHashContext;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	BYTE nonceBuffer[ SSL_NONCE_SIZE + SSL_NONCE_SIZE + 8 ];
 	int status;
 
 	assert( isReadPtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
+	assert( isWritePtr( hashContext, sizeof( CRYPT_CONTEXT ) ) );
 	assert( isReadPtr( keyData, keyDataLength ) );
-	assert( isWritePtr( md5Context, sizeof( CRYPT_CONTEXT ) ) );
-	assert( isWritePtr( shaContext, sizeof( CRYPT_CONTEXT ) ) );
 
+	REQUIRES( hashAlgo >= CRYPT_ALGO_FIRST_HASH && \
+			  hashAlgo <= CRYPT_ALGO_LAST_HASH );
+	REQUIRES( hashParam >= 0 && hashParam < MAX_INTLENGTH_SHORT );
 	REQUIRES( keyDataLength > 0 && keyDataLength < MAX_INTLENGTH_SHORT );
 
-	/* Clear return values */
-	*md5Context = *shaContext = CRYPT_ERROR;
+	/* Clear return value */
+	*hashContext = CRYPT_ERROR;
 
-	/* Create the dual hash contexts */
-	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_MD5 );
+	/* Create the hash context */
+	setMessageCreateObjectInfo( &createInfo, hashAlgo );
 	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
 							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
 							  OBJECT_TYPE_CONTEXT );
 	if( cryptStatusError( status ) )
 		return( status );
-	*md5Context = createInfo.cryptHandle;
-	setMessageCreateObjectInfo( &createInfo, CRYPT_ALGO_SHA1 );
-	status = krnlSendMessage( SYSTEM_OBJECT_HANDLE,
-							  IMESSAGE_DEV_CREATEOBJECT, &createInfo,
-							  OBJECT_TYPE_CONTEXT );
-	if( cryptStatusError( status ) )
+	iHashContext = createInfo.cryptHandle;
+	if( hashParam != 0 )
 		{
-		krnlSendNotifier( *md5Context, IMESSAGE_DECREFCOUNT );
-		*md5Context = CRYPT_ERROR;
-		return( status );
+		status = krnlSendMessage( createInfo.cryptHandle, 
+								  IMESSAGE_SETATTRIBUTE, 
+								  ( MESSAGE_CAST ) &hashParam,
+								  CRYPT_CTXINFO_BLOCKSIZE );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
 		}
-	*shaContext = createInfo.cryptHandle;
 
 	/* Hash the client and server nonces and key data */
 	memcpy( nonceBuffer, handshakeInfo->clientNonce, SSL_NONCE_SIZE );
 	memcpy( nonceBuffer + SSL_NONCE_SIZE, handshakeInfo->serverNonce,
 			SSL_NONCE_SIZE );
-	status = krnlSendMessage( *md5Context, IMESSAGE_CTX_HASH,
+	status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
 							  nonceBuffer, SSL_NONCE_SIZE + SSL_NONCE_SIZE );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( *shaContext, IMESSAGE_CTX_HASH, nonceBuffer, 
-								  SSL_NONCE_SIZE + SSL_NONCE_SIZE );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( *md5Context, IMESSAGE_CTX_HASH,
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
 								  ( MESSAGE_CAST ) keyData, keyDataLength );
 	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( *shaContext, IMESSAGE_CTX_HASH,
-								  ( MESSAGE_CAST ) keyData, keyDataLength );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( *md5Context, IMESSAGE_CTX_HASH,
-								  nonceBuffer, 0 );
-	if( cryptStatusOK( status ) )
-		status = krnlSendMessage( *shaContext, IMESSAGE_CTX_HASH,
+		status = krnlSendMessage( iHashContext, IMESSAGE_CTX_HASH,
 								  nonceBuffer, 0 );
 	if( cryptStatusError( status ) )
 		{
-		krnlSendNotifier( *md5Context, IMESSAGE_DECREFCOUNT );
-		krnlSendNotifier( *shaContext, IMESSAGE_DECREFCOUNT );
-		*md5Context = *shaContext = CRYPT_ERROR;
+		krnlSendNotifier( iHashContext, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
 
+	*hashContext = iHashContext;
 	return( CRYPT_OK );
 	}
 
@@ -1291,7 +1402,7 @@ int createKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 						  IN_BUFFER( keyDataLength ) const void *keyData, 
 						  IN_LENGTH_SHORT const int keyDataLength )
 	{
-	CRYPT_CONTEXT md5Context, shaContext;
+	CRYPT_CONTEXT md5Context = DUMMY_INIT, shaContext;
 	void *dataPtr;
 	int dataLength, sigLength = DUMMY_INIT, status;
 
@@ -1303,10 +1414,22 @@ int createKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 	REQUIRES( keyDataLength > 0 && keyDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Hash the data to be signed */
-	status = createKeyexHashes( handshakeInfo, keyData, keyDataLength,
-								&md5Context, &shaContext );
+	status = createKeyexHash( handshakeInfo, &shaContext, 
+				( handshakeInfo->keyexSigHashAlgo != CRYPT_ALGO_NONE ) ? \
+					handshakeInfo->keyexSigHashAlgo : CRYPT_ALGO_SHA1,
+				handshakeInfo->keyexSigHashAlgoParam, keyData, keyDataLength );
 	if( cryptStatusError( status ) )
 		return( status );
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		{
+		status = createKeyexHash( handshakeInfo, &md5Context, 
+								  CRYPT_ALGO_MD5, 0, keyData, keyDataLength );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( shaContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		}
 
 	/* Sign the hashes.  The reason for the min() part of the expression is
 	   that iCryptCreateSignature() gets suspicious of very large buffer
@@ -1315,24 +1438,36 @@ int createKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 	status = sMemGetDataBlockRemaining( stream, &dataPtr, &dataLength );
 	if( cryptStatusOK( status ) )
 		{
-		SIGPARAMS sigParams;
+		if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+			{
+			status = iCryptCreateSignature( dataPtr, 
+											min( dataLength, \
+												 MAX_INTLENGTH_SHORT - 1 ), 
+											&sigLength, CRYPT_IFORMAT_TLS12, 
+											sessionInfoPtr->privateKey,
+											shaContext, NULL );
+			}
+		else
+			{
+			SIGPARAMS sigParams;
 
-		initSigParams( &sigParams );
-		sigParams.iSecondHash = shaContext;
-		status = iCryptCreateSignature( dataPtr, 
-										min( dataLength, \
-											 MAX_INTLENGTH_SHORT - 1 ), 
-										&sigLength, CRYPT_IFORMAT_SSL, 
-										sessionInfoPtr->privateKey,
-										md5Context, &sigParams );
+			initSigParams( &sigParams );
+			sigParams.iSecondHash = shaContext;
+			status = iCryptCreateSignature( dataPtr, 
+											min( dataLength, \
+												 MAX_INTLENGTH_SHORT - 1 ), 
+											&sigLength, CRYPT_IFORMAT_SSL, 
+											sessionInfoPtr->privateKey,
+											md5Context, &sigParams );
+			}
 		}
-	if( cryptStatusOK( status ) )
-		status = sSkip( stream, sigLength );
-
-	/* Clean up */
-	krnlSendNotifier( md5Context, IMESSAGE_DECREFCOUNT );
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		krnlSendNotifier( md5Context, IMESSAGE_DECREFCOUNT );
 	krnlSendNotifier( shaContext, IMESSAGE_DECREFCOUNT );
-	return( status );
+	if( cryptStatusError( status ) )
+		return( status );
+
+	return( sSkip( stream, sigLength ) );
 	}
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 4 ) ) \
@@ -1343,9 +1478,11 @@ int checkKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 						 IN_LENGTH_SHORT const int keyDataLength,
 						 const BOOLEAN isECC )
 	{
-	CRYPT_CONTEXT md5Context, shaContext;
+	CRYPT_CONTEXT md5Context = DUMMY_INIT, shaContext;
+	CRYPT_ALGO_TYPE hashAlgo = CRYPT_ALGO_SHA1;
 	void *dataPtr;
-	int dataLength, status;
+	int dataLength, keyexKeySize, sigKeySize = DUMMY_INIT, hashParam = 0;
+	int status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( handshakeInfo, sizeof( SSL_HANDSHAKE_INFO ) ) );
@@ -1355,37 +1492,127 @@ int checkKeyexSignature( INOUT SESSION_INFO *sessionInfoPtr,
 	REQUIRES( keyDataLength > 0 && keyDataLength < MAX_INTLENGTH_SHORT );
 
 	/* Make sure that there's enough data present for at least a minimal-
-	   length signature */
+	   length signature and get a pointer to the signature data */
 	if( sMemDataLeft( stream ) < ( isECC ? \
 								   MIN_PKCSIZE_ECCPOINT : MIN_PKCSIZE ) )
 		return( CRYPT_ERROR_BADDATA );
+	status = sMemGetDataBlockRemaining( stream, &dataPtr, &dataLength );
+	if( cryptStatusError( status ) )
+		return( status );
+	ANALYSER_HINT( dataPtr != NULL );
+
+	/* TLS 1.2+ precedes the signature itself with an indication of the hash
+	   and signature algorithm that's required to verify it, so if we're 
+	   using this format then we have to process the identifiers before we
+	   can create the signature-verification hashes */
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+		{
+		static const MAP_TABLE hashAlgoIDTbl[] = {
+#ifdef CONFIG_SUITEB
+			{ TLS_HASHALGO_SHA384, CRYPT_ALGO_SHA2 },
+#endif /* CONFIG_SUITEB */
+			{ TLS_HASHALGO_SHA2, CRYPT_ALGO_SHA2 },
+			{ TLS_HASHALGO_SHA1, CRYPT_ALGO_SHA1 },
+			{ TLS_HASHALGO_MD5, CRYPT_ALGO_MD5 },
+			{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
+			};
+		int cryptHashAlgo, tlsHashAlgo;
+
+		/* Get the hash algorithm that we need to use.  We don't care about
+		   the signature algorithm since we've already been given the public
+		   key for it */
+		status = tlsHashAlgo = sgetc( stream );
+		if( cryptStatusError( status ) )
+			return( status );
+		( void ) sgetc( stream );
+		status = mapValue( tlsHashAlgo, &cryptHashAlgo, hashAlgoIDTbl, 
+						   FAILSAFE_ARRAYSIZE( hashAlgoIDTbl, MAP_TABLE ) );
+		if( cryptStatusError( status ) )
+			return( CRYPT_ERROR_NOTAVAIL ); 
+		hashAlgo = cryptHashAlgo;	/* int vs.enum */
+		if( tlsHashAlgo == TLS_HASHALGO_SHA384 )
+			hashParam = bitsToBytes( 384 );
+		}
 
 	/* Hash the data to be signed */
-	status = createKeyexHashes( handshakeInfo, keyData, keyDataLength,
-								&md5Context, &shaContext );
+	status = createKeyexHash( handshakeInfo, &shaContext, hashAlgo, 
+							  hashParam, keyData, keyDataLength );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		{
+		status = createKeyexHash( handshakeInfo, &md5Context, 
+								  CRYPT_ALGO_MD5, 0, keyData, keyDataLength );
+		if( cryptStatusError( status ) )
+			{
+			krnlSendNotifier( shaContext, IMESSAGE_DECREFCOUNT );
+			return( status );
+			}
+		}
+
+	/* Check the signature on the hashes.  The reason for the min() part of
+	   the expression is that iCryptCheckSignature() gets suspicious of
+	   very large buffer sizes, for example when the user has specified the
+	   use of a huge send buffer */
+	if( sessionInfoPtr->version >= SSL_MINOR_VERSION_TLS12 )
+		{
+		status = iCryptCheckSignature( dataPtr, 
+								min( dataLength, MAX_INTLENGTH_SHORT - 1 ),
+								CRYPT_IFORMAT_TLS12, 
+								sessionInfoPtr->iKeyexCryptContext, 
+								shaContext, CRYPT_UNUSED, NULL );
+		}
+	else
+		{
+		status = iCryptCheckSignature( dataPtr, 
+								min( dataLength, MAX_INTLENGTH_SHORT - 1 ),
+								CRYPT_IFORMAT_SSL, 
+								sessionInfoPtr->iKeyexCryptContext, 
+								md5Context, shaContext, NULL );
+		}
+	if( sessionInfoPtr->version < SSL_MINOR_VERSION_TLS12 )
+		krnlSendNotifier( md5Context, IMESSAGE_DECREFCOUNT );
+	krnlSendNotifier( shaContext, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		return( status );
 
-	/* Check the signature on the hashes.  The reason for the min() part of
-	   the expression is that iCryptCreateSignature() gets suspicious of
-	   very large buffer sizes, for example when the user has specified the
-	   use of a huge send buffer */
-	status = sMemGetDataBlockRemaining( stream, &dataPtr, &dataLength );
+	/* Make sure that the relative strengths of the keyex and signature keys 
+	   match.  This is just a general precaution for RSA/DSA, but is 
+	   mandated for ECC with Suite B in order to make the appropriate 
+	   fashion statement (see the comment below).  When performing the check 
+	   we allow a small amount of wiggle room to deal with keygen 
+	   differences */
+	status = krnlSendMessage( handshakeInfo->dhContext, 
+							  IMESSAGE_GETATTRIBUTE, &keyexKeySize, 
+							  CRYPT_CTXINFO_KEYSIZE );
 	if( cryptStatusOK( status ) )
+		status = krnlSendMessage( sessionInfoPtr->iKeyexCryptContext,
+								  IMESSAGE_GETATTRIBUTE, &sigKeySize, 
+								  CRYPT_CTXINFO_KEYSIZE );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( isECC )
 		{
-		status = iCryptCheckSignature( dataPtr, 
-									   min( dataLength, \
-											MAX_INTLENGTH_SHORT - 1 ),
-									   CRYPT_IFORMAT_SSL,
-									   sessionInfoPtr->iKeyexCryptContext,
-									   md5Context, shaContext, NULL );
+		/* For ECC with Suite B the signature key size has to match the 
+		   keyex key size otherwise fashion dictums are violated (if you 
+		   could just sign size n with size n+1 then you wouldn't need 
+		   hashsize n/n+1 and keysize n/n+1 and whatnot) */
+		if( sigKeySize < keyexKeySize - bitsToBytes( 8 ) )
+			return( CRYPT_ERROR_NOSECURE );
+		if( ( sessionInfoPtr->protocolFlags & SSL_PFLAG_SUITEB ) && \
+			sigKeySize > keyexKeySize + bitsToBytes( 8 ) )
+			return( CRYPT_ERROR_NOSECURE );
 		}
-	if( cryptStatusOK( status ) )
-		status = readUniversal16( stream );
+	else
+		{
+		/* For conventional keyex/signatures the bounds are a bit looser 
+		   because non-ECC keygen mechanisms can result in a wider variation 
+		   of actual vs. nominal key size */
+		if( sigKeySize < keyexKeySize - bitsToBytes( 32 ) )
+			return( CRYPT_ERROR_NOSECURE );
+		}
 
-	/* Clean up */
-	krnlSendNotifier( md5Context, IMESSAGE_DECREFCOUNT );
-	krnlSendNotifier( shaContext, IMESSAGE_DECREFCOUNT );
-	return( status );
+	/* Skip the signature data */
+	return( readUniversal16( stream ) );
 	}
 #endif /* USE_SSL */

@@ -13,8 +13,8 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -281,9 +281,9 @@ static int writeConfBody( INOUT STREAM *stream,
 	{
 	static const MAP_TABLE fingerprintMapTable[] = {
 		{ CRYPT_ALGO_MD5, CRYPT_CERTINFO_FINGERPRINT_MD5 },
-		{ CRYPT_ALGO_SHA1, CRYPT_CERTINFO_FINGERPRINT_SHA },
-		{ CRYPT_ALGO_SHA2, CRYPT_IATTRIBUTE_FINGERPRINT_SHA2 },
-		{ CRYPT_ALGO_SHAng, CRYPT_IATTRIBUTE_FINGERPRINT_SHAng },
+		{ CRYPT_ALGO_SHA1, CRYPT_CERTINFO_FINGERPRINT_SHA1 },
+		{ CRYPT_ALGO_SHA2, CRYPT_CERTINFO_FINGERPRINT_SHA2 },
+		{ CRYPT_ALGO_SHAng, CRYPT_CERTINFO_FINGERPRINT_SHAng },
 		{ CRYPT_ERROR, 0 }, { CRYPT_ERROR, 0 }
 		};
 	MESSAGE_DATA msgData;
@@ -381,7 +381,23 @@ static int writeGenMsgResponseBody( INOUT STREAM *stream,
 							  IMESSAGE_GETATTRIBUTE, &iCTL,
 							  CRYPT_IATTRIBUTE_CTL );
 	if( cryptStatusError( status ) )
-		return( status );
+		{
+		MESSAGE_CREATEOBJECT_INFO createInfo;
+
+		if( status != CRYPT_ERROR_NOTFOUND )
+			return( status );
+
+		/* If there are no trusted certificates present then we won't be 
+		   able to assemble a CTL, so we explicitly create an empty CTL to 
+		   add the CA certificate to */
+		setMessageCreateObjectInfo( &createInfo, CRYPT_CERTTYPE_CERTCHAIN );
+		status = krnlSendMessage( SYSTEM_OBJECT_HANDLE, 
+								  IMESSAGE_DEV_CREATEOBJECT, &createInfo, 
+								  OBJECT_TYPE_CERTIFICATE );
+		if( cryptStatusError( status ) )
+			return( status );
+		iCTL = createInfo.cryptHandle;
+		}
 	status = krnlSendMessage( iCTL, IMESSAGE_SETATTRIBUTE,
 							  ( MESSAGE_CAST ) &sessionInfoPtr->privateKey,
 							  CRYPT_IATTRIBUTE_CERTCOLLECTION );

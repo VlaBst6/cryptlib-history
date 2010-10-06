@@ -82,6 +82,48 @@ static const CERT_DATA FAR_BSS sqlCertData[] = {
 
 enum { READ_OPTION_NORMAL, READ_OPTION_MULTIPLE };
 
+static int checkKeysetCRL( const CRYPT_KEYSET cryptKeyset,
+						   const CRYPT_CERTIFICATE cryptCert )
+	{
+	int errorLocus, status;
+
+	/* Perform a revocation check against the CRL in the keyset */
+	puts( "Checking certificate against CRL." );
+	status = cryptCheckCert( cryptCert, cryptKeyset );
+	if( cryptStatusOK( status ) )
+		return( TRUE );
+	if( status != CRYPT_ERROR_INVALID )
+		{
+		return( extErrorExit( cryptKeyset, "cryptCheckCert() (for CRL in "
+							  "keyset)", status, __LINE__ ) );
+		}
+
+	/* If the certificate has expired then it'll immediately be reported as 
+	   invalid without bothering to check the CRL, so we have to perform the 
+	   check in oblivious mode to avoid the expiry check */
+	status = cryptGetAttribute( cryptCert, CRYPT_ATTRIBUTE_ERRORLOCUS, 
+								&errorLocus );
+	if( cryptStatusOK( status ) && errorLocus == CRYPT_CERTINFO_VALIDTO )
+		{
+		int complianceValue;
+
+		puts( "  (Certificate has already expired, re-checking in oblivious "
+			  "mode)." );
+		cryptGetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   &complianceValue );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   CRYPT_COMPLIANCELEVEL_OBLIVIOUS );
+		status = cryptCheckCert( cryptCert, cryptKeyset );
+		cryptSetAttribute( CRYPT_UNUSED, CRYPT_OPTION_CERT_COMPLIANCELEVEL,
+						   complianceValue );
+		}
+	if( cryptStatusError( status ) )
+		return( extErrorExit( cryptKeyset, "cryptCheckCert() (for CRL in "
+							  "keyset)", status, __LINE__ ) );
+
+	return( TRUE );
+	}
+
 static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 						   const C_STR keysetName,
 						   const CRYPT_KEYID_TYPE keyType,
@@ -162,11 +204,8 @@ static int testKeysetRead( const CRYPT_KEYSET_TYPE keysetType,
 	if( keysetType != CRYPT_KEYSET_LDAP && \
 		keysetType != CRYPT_KEYSET_HTTP )
 		{
-		puts( "Checking certificate against CRL." );
-		status = cryptCheckCert( cryptCert, cryptKeyset );
-		if( cryptStatusError( status ) )
-			return( extErrorExit( cryptKeyset, "cryptCheckCert() (for CRL "
-								  "in keyset)", status, __LINE__ ) );
+		if( !checkKeysetCRL( cryptKeyset, cryptCert ) )
+			return( FALSE );
 		}
 	cryptDestroyCert( cryptCert );
 
@@ -468,6 +507,58 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 							  __LINE__ ) );
 	cryptDestroyCert( cryptCert );
 
+	/* Finally, if ECC is enabled we also add ECC certificates that are used
+	   later in other tests */
+	if( cryptStatusOK( cryptQueryCapability( CRYPT_ALGO_ECDSA, NULL ) ) )
+		{
+#ifdef UNICODE_STRINGS
+		wchar_t wcBuffer[ FILENAME_BUFFER_SIZE ];
+#endif /* UNICODE_STRINGS */
+		void *fileNamePtr = filenameBuffer;
+
+		/* Add the P256 certificate */
+		filenameFromTemplate( filenameBuffer, 
+							  SERVER_PRIVKEY_FILE_TEMPLATE, 2 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		status = getPublicKey( &cryptCert, fileNamePtr,
+							   USER_PRIVKEY_LABEL );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't read user certificate from file, status %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		status = cryptAddPublicKey( cryptKeyset, cryptCert );
+		if( cryptStatusError( status ) && status != CRYPT_ERROR_DUPLICATE )
+			return( extErrorExit( cryptKeyset, "cryptAddPublicKey()", status,
+								  __LINE__ ) );
+		cryptDestroyCert( cryptCert );
+
+		/* Add the P384 certificate */
+		filenameFromTemplate( filenameBuffer, 
+							  SERVER_PRIVKEY_FILE_TEMPLATE, 3 );
+#ifdef UNICODE_STRINGS
+		mbstowcs( wcBuffer, filenameBuffer, strlen( filenameBuffer ) + 1 );
+		fileNamePtr = wcBuffer;
+#endif /* UNICODE_STRINGS */
+		status = getPublicKey( &cryptCert, fileNamePtr,
+							   USER_PRIVKEY_LABEL );
+		if( cryptStatusError( status ) )
+			{
+			printf( "Couldn't read user certificate from file, status %d, "
+					"line %d.\n", status, __LINE__ );
+			return( FALSE );
+			}
+		status = cryptAddPublicKey( cryptKeyset, cryptCert );
+		if( cryptStatusError( status ) && status != CRYPT_ERROR_DUPLICATE )
+			return( extErrorExit( cryptKeyset, "cryptAddPublicKey()", status,
+								  __LINE__ ) );
+		cryptDestroyCert( cryptCert );
+		}
+
 	/* Make sure the deletion code works properly.  This is an artifact of
 	   the way RDBMS' work, the delete query can execute successfully but
 	   not delete anything so we make sure the glue code correctly
@@ -485,8 +576,10 @@ static int testKeysetWrite( const CRYPT_KEYSET_TYPE keysetType,
 	/* Close the keyset */
 	status = cryptKeysetClose( cryptKeyset );
 	if( cryptStatusError( status ) )
+		{
 		printf( "cryptKeysetClose() failed with error code %d, line %d.\n",
 				status, __LINE__ );
+		}
 
 	return( TRUE );
 	}
@@ -718,36 +811,6 @@ int testKeysetQuery( void )
 	if( !status )
 		return( FALSE );
 	puts( "Certificate database query succeeded.\n" );
-	return( TRUE );
-	}
-
-/* Read/write/query a certificate from a database keyset accessed via the
-   generic plugin interface */
-
-int testWriteCertDbx( void )
-	{
-	int status;
-
-	puts( "Testing certificate database write via plugin interface..." );
-	status = testKeysetWrite( CRYPT_KEYSET_PLUGIN,
-							  DATABASE_PLUGIN_KEYSET_NAME );
-	if( status == CRYPT_ERROR_NOTAVAIL )
-		{
-		/* Database plugin keyset access not available */
-		return( CRYPT_ERROR_NOTAVAIL );
-		}
-	if( status == CRYPT_ERROR_FAILED )
-		{
-		puts( "This may be because you haven't set up a database plugin "
-			  "available as\n'" DATABASE_PLUGIN_KEYSET_NAME_ASCII "' that "
-			  "can be used for the certificate store.\nYou can configure "
-			  "the plugin URL using the DATABASE_PLUGIN_KEYSET_xxx\nsettings "
-			  "in test/test.h.\n" );
-		return( FALSE );
-		}
-	if( !status )
-		return( FALSE );
-	puts( "Certificate database write succeeded.\n" );
 	return( TRUE );
 	}
 

@@ -13,7 +13,7 @@
   #include "user.h"
 #else
   #include "cert/trustmgr.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "misc/user_int.h"
   #include "misc/user.h"
 #endif /* Compiler-specific includes */
@@ -133,9 +133,10 @@ static int sizeofConfigData( IN_ARRAY( configOptionsCount ) \
 	/* Check each option to see whether it needs to be written to disk.  If 
 	   it does, determine its length */
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo != NULL && \
-			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
-			i < configOptionsCount; i++ )
+		 i < configOptionsCount && \
+			optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION; 
+		 i++ )
 		{
 		const BUILTIN_OPTION_INFO *builtinOptionInfoPtr = \
 									optionList[ i ].builtinOptionInfo;
@@ -200,9 +201,10 @@ static int writeConfigData( INOUT STREAM *stream,
 
 	/* Write each option that needs to be written to the stream */
 	for( i = 0; 
-		 optionList[ i ].builtinOptionInfo != NULL && \
-			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION && \
-			i < configOptionsCount; i++ )
+		 i < configOptionsCount && \
+			optionList[ i ].builtinOptionInfo != NULL && \
+			optionList[ i ].builtinOptionInfo->option <= LAST_STORED_OPTION; 
+		 i++ )
 		{
 		const BUILTIN_OPTION_INFO *builtinOptionInfoPtr = \
 									optionList[ i ].builtinOptionInfo;
@@ -309,9 +311,10 @@ static int readTrustedCerts( IN_HANDLE const CRYPT_KEYSET iCryptKeyset,
 	return( ( status == CRYPT_ERROR_NOTFOUND ) ? CRYPT_OK : status );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
+CHECK_RETVAL STDC_NONNULL_ARG( ( 2 ) ) \
 int readConfig( IN_HANDLE const CRYPT_USER iCryptUser, 
-				IN_STRING const char *fileName, INOUT void *trustInfoPtr )
+				IN_STRING const char *fileName, 
+				INOUT_OPT void *trustInfoPtr )
 	{
 	CRYPT_KEYSET iCryptKeyset;
 	MESSAGE_CREATEOBJECT_INFO createInfo;
@@ -321,7 +324,6 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
 	int configFilePathLen, iterationCount, status;
 
 	assert( fileName != NULL );
-	assert( trustInfoPtr != NULL );
 
 	REQUIRES( iCryptUser == DEFAULTUSER_OBJECT_HANDLE || \
 			  isHandleRangeValid( iCryptUser ) );
@@ -344,19 +346,24 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
 		return( CRYPT_OK );		/* No configuration data present */
 	iCryptKeyset = createInfo.cryptHandle;
 
-	/* Get the configuration info from the keyset */
+	/* Get the configuration information from the keyset.  We fetch the 
+	   overall configuration information into a dynbuf and then optionally
+	   read the trust information (trusted certificates) if certificate use
+	   is enabled, after which we close the keyset and read the 
+	   configuration data from the dynbuf */
 	status = dynCreate( &configDB, iCryptKeyset,
 						CRYPT_IATTRIBUTE_CONFIGDATA );
 	if( cryptStatusError( status ) )
 		{
 		/* If there were no configuration options present there may still be 
-		   trusted certs so we try and read those before exiting */
-		if( status == CRYPT_ERROR_NOTFOUND )
+		   trusted certificates so we try and read those before exiting */
+		if( status == CRYPT_ERROR_NOTFOUND && trustInfoPtr != NULL )
 			status = readTrustedCerts( iCryptKeyset, trustInfoPtr );
 		krnlSendNotifier( iCryptKeyset, IMESSAGE_DECREFCOUNT );
 		return( status );
 		}
-	status = readTrustedCerts( iCryptKeyset, trustInfoPtr );
+	if( trustInfoPtr != NULL )
+		status = readTrustedCerts( iCryptKeyset, trustInfoPtr );
 	krnlSendNotifier( iCryptKeyset, IMESSAGE_DECREFCOUNT );
 	if( cryptStatusError( status ) )
 		{
@@ -395,29 +402,82 @@ int readConfig( IN_HANDLE const CRYPT_USER iCryptUser,
    and can be a somewhat lengthy process due to disk accesses and other bits 
    and pieces, because of this the caller is expected to unlock the user 
    object between the two phases to ensure that the second phase doesn't 
-   stall all other operations that require it */
+   stall all other operations that require it.
+   
+   The prepare phase is further subdivided into two sub-phases, necessitated 
+   by the fact that we can have configuration data, trusted certificates, or 
+   both, present to write.  First we determine what's present using 
+   getConfigDisposition(), if there's configuration data present then we 
+   prepare it using prepareConfigData(), and finally we write the 
+   configuration data and/or trusted certificates using commitConfigData() */
 
-CHECK_RETVAL_SPECIAL STDC_NONNULL_ARG( ( 1, 3, 4, 5, 6 ) ) \
-int prepareConfigData( INOUT void *configOptions, 
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int getConfigDisposition( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
+						  IN_INT_SHORT const int configOptionsCount, 	
+						  const void *trustInfoPtr, 
+						  OUT_ENUM( CONFIG_DISPOSITION ) \
+							CONFIG_DISPOSITION_TYPE *disposition )
+	{
+	const BOOLEAN hasTrustedCerts = trustedCertsPresent( trustInfoPtr );
+	int length, status;
+
+	assert( isReadPtr( configOptions, 
+					   sizeof( OPTION_INFO ) * configOptionsCount ) );
+	assert( trustInfoPtr != NULL );
+	assert( isWritePtr( disposition, sizeof( CONFIG_DISPOSITION_TYPE ) ) );
+
+	REQUIRES( configOptionsCount > 0 && \
+			  configOptionsCount < MAX_INTLENGTH_SHORT );
+
+	/* Clear return value */
+	*disposition = CONFIG_DISPOSITION_NONE;
+
+	/* If neither the configuration options nor any cert trust settings have
+	   changed, there's nothing to do */
+	if( !checkConfigChanged( configOptions, configOptionsCount ) && \
+		!hasTrustedCerts )
+		{
+		*disposition = CONFIG_DISPOSITION_NO_CHANGE;
+
+		return( CRYPT_OK );
+		}
+
+	/* Determine the total encoded length of the configuration options */
+	status = sizeofConfigData( configOptions, configOptionsCount, &length );
+	if( cryptStatusError( status ) )
+		return( status );
+	if( length <= 0 )
+		{
+		/* There's no configuration data present, if there are trusted 
+		   certificates present then we need to write those, otherwise the
+		   configuration file will be empty and the caller can delete it */
+		*disposition = hasTrustedCerts ? \
+							CONFIG_DISPOSITION_TRUSTED_CERTS_ONLY : \
+							CONFIG_DISPOSITION_EMPTY_CONFIG_FILE;
+		return( CRYPT_OK );
+		}
+
+	/* There's configuration data present, report whether there are trusted
+	   certificates present as well */
+	*disposition = hasTrustedCerts ? CONFIG_DISPOSITION_BOTH : \
+									 CONFIG_DISPOSITION_DATA_ONLY;
+	return( CRYPT_OK );
+	}
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 4 ) ) \
+int prepareConfigData( INOUT_ARRAY( configOptionsCount ) TYPECAST( OPTION_INFO * ) \
+							void *configOptions, 
 					   IN_INT_SHORT const int configOptionsCount, 	
-					   IN_STRING const char *fileName,
-					   INOUT void *trustInfoPtr, 
-					   OUT_BUFFER_ALLOC( *dataLength ) void **dataPtrPtr, 
+					   OUT_BUFFER_ALLOC_OPT( *dataLength ) void **dataPtrPtr, 
 					   OUT_LENGTH_Z int *dataLength )
 	{
 	STREAM stream;
-	const BOOLEAN trustedCertsPresent = \
-						cryptStatusOK( \
-							enumTrustedCerts( trustInfoPtr, CRYPT_UNUSED,
-											  CRYPT_UNUSED ) ) ? \
-					TRUE : FALSE;
 	void *dataPtr;
 	int length, status;
 
 	assert( isReadPtr( configOptions, 
 					   sizeof( OPTION_INFO ) * configOptionsCount ) );
-	assert( fileName != NULL );
-	assert( trustInfoPtr != NULL );
 	assert( isWritePtr( dataPtrPtr, sizeof( void * ) ) );
 	assert( isWritePtr( dataLength, sizeof( int ) ) );
 
@@ -428,42 +488,10 @@ int prepareConfigData( INOUT void *configOptions,
 	*dataPtrPtr = NULL;
 	*dataLength = 0;
 
-	/* If neither the configuration options nor any cert trust settings have
-	   changed, there's nothing to do */
-	if( !checkConfigChanged( configOptions, configOptionsCount ) && \
-		!trustedCertsPresent )
-		return( CRYPT_OK );
-
 	/* Determine the total encoded length of the configuration options */
 	status = sizeofConfigData( configOptions, configOptionsCount, &length );
 	if( cryptStatusError( status ) )
 		return( status );
-
-	/* If we've gone back to all default values from having non-default ones
-	   stored, we either have to write only trusted certs or nothing at all */
-	if( length <= 0 )
-		{
-		char configFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
-		int configFilePathLen;
-
-		/* There's no data to write, if there are trusted certs present
-		   notify the caller */
-		if( trustedCertsPresent )
-			return( OK_SPECIAL );
-
-		/* There's nothing to write, delete the configuration file */
-		status = fileBuildCryptlibPath( configFilePath, MAX_PATH_LENGTH, 
-										&configFilePathLen, fileName, 
-										strlen( fileName ), 
-										BUILDPATH_GETPATH );
-		if( cryptStatusOK( status ) )
-			{
-			configFilePath[ configFilePathLen ] = '\0';
-			fileErase( configFilePath );
-			}
-		return( CRYPT_OK );
-		}
-
 	ENSURES( length > 0 && length < MAX_INTLENGTH );
 
 	/* Allocate a buffer to hold the encoded values */
@@ -483,20 +511,17 @@ int prepareConfigData( INOUT void *configOptions,
 		assert( DEBUG_WARN );
 		return( status );
 		}
-
-	/* We've written the configuration data to the memory buffer, let the 
-	   caller know that they can unlock it and commit it to permanent 
-	   storage */
 	*dataPtrPtr = dataPtr;
 	*dataLength = length;
-	return( OK_SPECIAL );
+
+	return( CRYPT_OK );
 	}
 
-CHECK_RETVAL STDC_NONNULL_ARG( ( 2, 3 ) ) \
-int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser, 
-					  IN_STRING const char *fileName,
-					  IN_BUFFER_OPT( length ) const void *data, 
-					  IN_LENGTH_Z const int dataLength )
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int commitConfigData( IN_STRING const char *fileName,
+					  IN_BUFFER_OPT( dataLength ) const void *data, 
+					  IN_LENGTH_Z const int dataLength,
+					  IN_HANDLE_OPT const CRYPT_USER iTrustedCertUserObject )
 	{
 	MESSAGE_CREATEOBJECT_INFO createInfo;
 	MESSAGE_DATA msgData;
@@ -507,8 +532,9 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 	assert( ( data == NULL && dataLength == 0 ) || \
 			isReadPtr( data, dataLength ) );
 
-	REQUIRES( cryptUser == DEFAULTUSER_OBJECT_HANDLE || \
-			  isHandleRangeValid( cryptUser ) );
+	REQUIRES( iTrustedCertUserObject == CRYPT_UNUSED || \
+			  ( iTrustedCertUserObject == DEFAULTUSER_OBJECT_HANDLE || \
+				isHandleRangeValid( iTrustedCertUserObject ) ) );
 	REQUIRES( ( data == NULL && dataLength == 0 ) || \
 			  ( dataLength > 0 && dataLength < MAX_INTLENGTH ) );
 
@@ -536,9 +562,9 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 		return( CRYPT_ERROR_OPEN );
 		}
 
-	/* Send the configuration data (if there is any) and any trusted certs 
-	   to the keyset.  dataLength can be zero if there are only trusted 
-	   certs to write */
+	/* Send the configuration data (if there is any) and any trusted 
+	   certificates to the keyset.  { data, dataLength } can be empty if 
+	   there are only trusted certificates to write */
 	if( dataLength > 0 )
 		{
 		setMessageData( &msgData, ( MESSAGE_CAST ) data, dataLength );
@@ -546,9 +572,11 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData,
 								  CRYPT_IATTRIBUTE_CONFIGDATA );
 		}
-	if( cryptStatusOK( status ) )
+	if( cryptStatusOK( status ) && \
+		iTrustedCertUserObject != CRYPT_UNUSED )
 		{
-		status = krnlSendMessage( cryptUser, IMESSAGE_SETATTRIBUTE,
+		status = krnlSendMessage( iTrustedCertUserObject, 
+								  IMESSAGE_SETATTRIBUTE,
 								  &createInfo.cryptHandle,
 								  CRYPT_IATTRUBUTE_CERTKEYSET );
 		}
@@ -557,6 +585,32 @@ int commitConfigData( IN_HANDLE const CRYPT_USER cryptUser,
 		{
 		fileErase( configFilePath );
 		return( CRYPT_ERROR_WRITE );
+		}
+	return( CRYPT_OK );
+	}
+
+/****************************************************************************
+*																			*
+*							Delete Configuration Options 					*
+*																			*
+****************************************************************************/
+
+/* Delete the configuration file.  This always returns an OK status even if
+   the delete fails since it's not certain what we should do in this case */
+
+CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \
+int deleteConfig( IN_STRING const char *fileName )
+	{
+	char configFilePath[ MAX_PATH_LENGTH + 1 + 8 ];
+	int configFilePathLen, status;
+
+	status = fileBuildCryptlibPath( configFilePath, MAX_PATH_LENGTH, 
+									&configFilePathLen, fileName, 
+									strlen( fileName ), BUILDPATH_GETPATH );
+	if( cryptStatusOK( status ) )
+		{
+		configFilePath[ configFilePathLen ] = '\0';
+		fileErase( configFilePath );
 		}
 	return( CRYPT_OK );
 	}

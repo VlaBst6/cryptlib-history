@@ -7,18 +7,18 @@
 
 #if defined( INC_ALL )
   #include "crypt.h"
-  #include "mech.h"
   #include "asn1.h"
   #include "asn1_ext.h"
   #include "misc_rw.h"
   #include "pgp_rw.h"
+  #include "mech.h"
 #else
   #include "crypt.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
+  #include "enc_dec/misc_rw.h"
+  #include "enc_dec/pgp_rw.h"
   #include "mechs/mech.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
-  #include "misc/misc_rw.h"
-  #include "misc/pgp_rw.h"
 #endif /* Compiler-specific includes */
 
 /****************************************************************************
@@ -138,8 +138,7 @@ static int checkWrapKey( IN_HANDLE int importKey,
 							  &localCryptAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( localCryptAlgo >= CRYPT_ALGO_FIRST_PKC && \
-		localCryptAlgo <= CRYPT_ALGO_LAST_PKC )
+	if( isPkcAlgo( localCryptAlgo ) )
 		{
 		/* The DLP algorithms have specialised data-formatting requirements
 		   and can't normally be directly accessed via external messages,
@@ -179,9 +178,7 @@ static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
 	{
 	CRYPT_ALGO_TYPE sessionKeyAlgo;
 	CRYPT_MODE_TYPE sessionKeyMode = DUMMY_INIT, exportMode;
-	const BOOLEAN exportIsPKC = ( exportAlgo >= CRYPT_ALGO_FIRST_PKC && \
-								  exportAlgo <= CRYPT_ALGO_LAST_PKC ) ? \
-								TRUE : FALSE;
+	const BOOLEAN exportIsPKC = isPkcAlgo( exportAlgo ) ? TRUE : FALSE;
 	BOOLEAN sessionIsMAC = FALSE;
 	int status;
 
@@ -196,8 +193,7 @@ static int checkContextsEncodable( IN_HANDLE const CRYPT_HANDLE exportKey,
 							  &sessionKeyAlgo, CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM3 );
-	if( sessionKeyAlgo >= CRYPT_ALGO_FIRST_MAC && \
-		sessionKeyAlgo <= CRYPT_ALGO_LAST_MAC )
+	if( isMacAlgo( sessionKeyAlgo ) )
 		sessionIsMAC = TRUE;
 	else
 		{
@@ -342,9 +338,9 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 		if( cryptStatusOK( status ) )
 			{
 			status = krnlSendMessage( sessionKeyContext, MESSAGE_CHECK, NULL,
-							( sessionKeyAlgo >= CRYPT_ALGO_FIRST_MAC ) ? \
-								MESSAGE_CHECK_MAC_READY : \
-								MESSAGE_CHECK_CRYPT_READY );
+									  isMacAlgo( sessionKeyAlgo ) ? \
+										MESSAGE_CHECK_MAC_READY : \
+										MESSAGE_CHECK_CRYPT_READY );
 			}
 		if( cryptStatusError( status ) )
 			return( cryptArgError( status ) ? CRYPT_ERROR_PARAM4 : status );
@@ -409,8 +405,7 @@ C_RET cryptImportKeyEx( C_IN void C_PTR encryptedKey,
 	/* If it's a PGP key import then the session key was recreated from 
 	   information stored with the wrapped key so we have to make it 
 	   externally visible before it can be used by the caller */
-	if( formatType == CRYPT_FORMAT_PGP && \
-		importAlgo >= CRYPT_ALGO_FIRST_PKC && importAlgo <= CRYPT_ALGO_LAST_PKC )
+	if( formatType == CRYPT_FORMAT_PGP && isPkcAlgo( importAlgo ) )
 		{
 		/* If the importing key is owned, set the imported key's owner */
 		if( originalOwner != CRYPT_ERROR )
@@ -515,9 +510,8 @@ C_RET cryptExportKeyEx( C_OUT_OPT void C_PTR encryptedKey,
 	if( cryptStatusError( status ) )
 		return( CRYPT_ERROR_PARAM6 );
 	status = krnlSendMessage( sessionKeyContext, MESSAGE_CHECK, NULL,
-							  ( sessionKeyAlgo >= CRYPT_ALGO_FIRST_MAC && \
-								sessionKeyAlgo <= CRYPT_ALGO_LAST_MAC ) ? \
-							  MESSAGE_CHECK_MAC : MESSAGE_CHECK_CRYPT );
+							  isMacAlgo( sessionKeyAlgo ) ? \
+								MESSAGE_CHECK_MAC : MESSAGE_CHECK_CRYPT );
 	if( cryptStatusError( status ) )
 		return( cryptArgError( status ) ? CRYPT_ERROR_PARAM6 : status );
 
@@ -603,8 +597,7 @@ int iCryptImportKey( IN_BUFFER( encryptedKeyLength ) const void *encryptedKey,
 							  CRYPT_CTXINFO_ALGO );
 	if( cryptStatusError( status ) )
 		return( status );
-	if( importAlgo >= CRYPT_ALGO_FIRST_CONVENTIONAL && \
-		importAlgo <= CRYPT_ALGO_LAST_CONVENTIONAL )
+	if( isConvAlgo( importAlgo ) )
 		{
 		return( importConventionalKey( encryptedKey, encryptedKeyLength,
 									   iSessionKeyContext, iImportKey,
@@ -648,6 +641,8 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 			  isHandleRangeValid( iSessionKeyContext ) );
 	REQUIRES( isHandleRangeValid( iExportKey ) );
 
+	ANALYSER_HINT( encryptedKeyLength != NULL );
+
 	/* Clear return value */
 	*encryptedKeyLength = 0;
 
@@ -659,7 +654,7 @@ int iCryptExportKey( OUT_BUFFER_OPT( encryptedKeyMaxLength, *encryptedKeyLength 
 
 	/* If it's a non-PKC export, pass the call down to the low-level export
 	   function */
-	if( exportAlgo < CRYPT_ALGO_FIRST_PKC || exportAlgo > CRYPT_ALGO_LAST_PKC )
+	if( !isPkcAlgo( exportAlgo ) )
 		{
 		return( exportConventionalKey( encryptedKey, encKeyMaxLength, 
 									   encryptedKeyLength, iSessionKeyContext, 

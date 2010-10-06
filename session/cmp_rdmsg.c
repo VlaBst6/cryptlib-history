@@ -14,8 +14,8 @@
   #include "cmp.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
   #include "session/cmp.h"
 #endif /* Compiler-specific includes */
@@ -382,7 +382,7 @@ static int readRequestBody( INOUT STREAM *stream,
 								cmpInfo->userInfo : \
 								sessionInfoPtr->iAuthInContext,
 							  IMESSAGE_GETATTRIBUTE_S, &msgData,
-							  CRYPT_CERTINFO_FINGERPRINT_SHA );
+							  CRYPT_CERTINFO_FINGERPRINT_SHA1 );
 	if( cryptStatusOK( status ) )
 		status = krnlSendMessage( sessionInfoPtr->iCertRequest,
 								  IMESSAGE_SETATTRIBUTE_S, &msgData,
@@ -501,6 +501,7 @@ static int readResponseBody( INOUT STREAM *stream,
 		status = sMemGetDataBlock( stream, &bodyInfoPtr, bodyLength );
 	if( cryptStatusError( status ) )
 		return( status );
+	ANALYSER_HINT( bodyInfoPtr != NULL );
 
 	/* Process the returned certificate as required */
 	switch( tag )
@@ -779,11 +780,12 @@ static int readErrorBody( INOUT STREAM *stream,
 			status = CRYPT_ERROR_BADDATA;
 		if( cryptStatusOK( status ) )
 			{
-			errorInfo->errorCode = ( int ) value;
+			const int errorCode = ( int ) value;
+
 			retExt( CRYPT_ERROR_FAILED,
 					( CRYPT_ERROR_FAILED, errorInfo,
 					  "%s returned nonspecific failure code %d",
-					  peerTypeString, errorInfo->errorCode ) );
+					  peerTypeString, errorCode ) );
 			}
 		}
 	if( stell( stream ) < endPos && peekTag( stream ) == BER_SEQUENCE )

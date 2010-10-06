@@ -11,7 +11,7 @@
   #include "session.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
+  #include "enc_dec/asn1.h"
   #include "session/session.h"
 #endif /* Compiler-specific includes */
 
@@ -74,8 +74,8 @@ static BOOLEAN sanityCheckRead( const SESSION_INFO *sessionInfoPtr )
 		sessionInfoPtr->receiveBufPos > sessionInfoPtr->receiveBufEnd )
 		return( FALSE );
 	if( sessionInfoPtr->partialHeaderRemaining < 0 || \
-		sessionInfoPtr->partialHeaderRemaining > 16 )
-		return( FALSE );	/* 16 = SSH header size */
+		sessionInfoPtr->partialHeaderRemaining > FIXED_HEADER_MAX )
+		return( FALSE );
 
 	/* If we haven't started processing data yet there's no packet 
 	   information present */
@@ -111,8 +111,8 @@ static BOOLEAN sanityCheckWrite( const SESSION_INFO *sessionInfoPtr )
 		sessionInfoPtr->sendBufSize >= MAX_INTLENGTH )
 		return( FALSE );
 	if( sessionInfoPtr->sendBufStartOfs < 0 || \
-		sessionInfoPtr->sendBufStartOfs > 16 )
-		return( FALSE );	/* 16 = SSH header size */
+		sessionInfoPtr->sendBufStartOfs > FIXED_HEADER_MAX )
+		return( FALSE );
 
 	/* Make sure that the buffer position values are within bounds */
 	if( sessionInfoPtr->sendBufPos < sessionInfoPtr->sendBufStartOfs || \
@@ -476,8 +476,7 @@ static int getData( INOUT SESSION_INFO *sessionInfoPtr,
 			sessionInfoPtr->pendingPacketRemaining <= \
 				sessionInfoPtr->receiveBufSize - sessionInfoPtr->receiveBufEnd )
 			{
-			sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, 
-					NULL, 1 );
+			sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, 1 );
 			}
 
 		ENSURES( sanityCheckRead( sessionInfoPtr ) );
@@ -498,7 +497,7 @@ static int getData( INOUT SESSION_INFO *sessionInfoPtr,
 	   necessary to avoid having the stream always block for the set timeout 
 	   value on the last read */
 	ENSURES( bytesRead > 0 && bytesRead < MAX_INTLENGTH );
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, NULL, 0 );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, 0 );
 
 	ENSURES( sanityCheckRead( sessionInfoPtr ) );
 
@@ -539,8 +538,8 @@ int getSessionData( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Update the stream read timeout to the current user-selected read 
 	   timeout in case the user has changed the timeout setting */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, NULL,
-			sessionInfoPtr->readTimeout );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_READTIMEOUT, 
+			   sessionInfoPtr->readTimeout );
 
 	for( iterationCount = 0;
 		 dataLength > 0 && iterationCount < FAILSAFE_ITERATIONS_MAX; 
@@ -606,15 +605,16 @@ int getSessionData( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readFixedHeaderAtomic( INOUT SESSION_INFO *sessionInfoPtr, 
 						   OUT_BUFFER_FIXED( headerLength ) void *headerBuffer, 
-						   IN_LENGTH_SHORT_MIN( 5 ) const int headerLength )
+						   IN_LENGTH_SHORT_MIN( FIXED_HEADER_MIN ) \
+								const int headerLength )
 	{
 	int length, status;
 
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( headerBuffer, sizeof( headerLength ) ) );
 
-	REQUIRES( headerLength >= 5 && headerLength <= 16 );
-			  /* SSL header size ... SSH header size */
+	REQUIRES( headerLength >= FIXED_HEADER_MIN && \
+			  headerLength <= FIXED_HEADER_MAX );
 	REQUIRES( sanityCheckRead( sessionInfoPtr ) );
 
 	/* Clear return value */
@@ -657,7 +657,8 @@ int readFixedHeaderAtomic( INOUT SESSION_INFO *sessionInfoPtr,
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2 ) ) \
 int readFixedHeader( INOUT SESSION_INFO *sessionInfoPtr, 
 					 OUT_BUFFER_FIXED( headerLength ) void *headerBuffer, 
-					 IN_LENGTH_SHORT_MIN( 5 ) const int headerLength )
+					 IN_LENGTH_SHORT_MIN( FIXED_HEADER_MIN ) \
+							const int headerLength )
 	{
 	BYTE *bufPtr = headerBuffer;
 	int bytesToRead, length, status;
@@ -665,8 +666,8 @@ int readFixedHeader( INOUT SESSION_INFO *sessionInfoPtr,
 	assert( isWritePtr( sessionInfoPtr, sizeof( SESSION_INFO ) ) );
 	assert( isWritePtr( headerBuffer, sizeof( headerLength ) ) );
 
-	REQUIRES( headerLength >= 5 && headerLength <= 16 );
-			  /* SSL header size ... SSH header size */
+	REQUIRES( headerLength >= FIXED_HEADER_MIN && \
+			  headerLength <= FIXED_HEADER_MAX );
 	REQUIRES( sanityCheckRead( sessionInfoPtr ) );
 
 	/* We can't clear the return value at this point because there may 
@@ -956,8 +957,8 @@ int putSessionData( INOUT SESSION_INFO *sessionInfoPtr,
 
 	/* Update the stream write timeout to the current user-selected write 
 	   timeout in case the user has changed the timeout setting */
-	sioctl( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, NULL,
-			sessionInfoPtr->writeTimeout );
+	sioctlSet( &sessionInfoPtr->stream, STREAM_IOCTL_WRITETIMEOUT, 
+			   sessionInfoPtr->writeTimeout );
 
 	/* If it's a flush, send the data through to the server.  If there's a 
 	   timeout error during an explicit flush (that is, some but not all of

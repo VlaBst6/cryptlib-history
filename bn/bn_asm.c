@@ -528,9 +528,9 @@ BN_ULONG bn_sub_words(BN_ULONG *r, const BN_ULONG *a, const BN_ULONG *b, int n)
 
 void bn_mul_comba8(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 	{
-#ifdef BN_LLONG
+#if defined( BN_LLONG )	/* pcg */
 	BN_ULLONG t;
-#else
+#elif !defined( BN_UMULT_HIGH )
 	BN_ULONG bl,bh;
 #endif
 	BN_ULONG t1,t2;
@@ -637,9 +637,9 @@ void bn_mul_comba8(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 
 void bn_mul_comba4(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 	{
-#ifdef BN_LLONG
+#if defined( BN_LLONG )	/* pcg */
 	BN_ULLONG t;
-#else
+#elif !defined( BN_UMULT_HIGH )
 	BN_ULONG bl,bh;
 #endif
 	BN_ULONG t1,t2;
@@ -682,9 +682,9 @@ void bn_mul_comba4(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 
 void bn_sqr_comba8(BN_ULONG *r, const BN_ULONG *a)
 	{
-#ifdef BN_LLONG
-	BN_ULLONG t,tt;
-#else
+#if defined( BN_LLONG )	/* pcg */
+	BN_ULLONG t, tt;
+#elif !defined( BN_UMULT_HIGH )
 	BN_ULONG bl,bh;
 #endif
 	BN_ULONG t1,t2;
@@ -763,9 +763,9 @@ void bn_sqr_comba8(BN_ULONG *r, const BN_ULONG *a)
 
 void bn_sqr_comba4(BN_ULONG *r, const BN_ULONG *a)
 	{
-#ifdef BN_LLONG
-	BN_ULLONG t,tt;
-#else
+#if defined( BN_LLONG )	/* pcg */
+	BN_ULLONG t, tt;
+#elif !defined( BN_UMULT_HIGH )
 	BN_ULONG bl,bh;
 #endif
 	BN_ULONG t1,t2;

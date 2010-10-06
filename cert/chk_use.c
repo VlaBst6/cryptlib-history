@@ -11,6 +11,8 @@
   #include "cert/cert.h"
 #endif /* Compiler-specific includes */
 
+#ifdef USE_CERTIFICATES
+
 /****************************************************************************
 *																			*
 *						ExtKeyUsage to Key Usage Routines					*
@@ -267,7 +269,8 @@ static int getNetscapeCertTypeFlags( const ATTRIBUTE_PTR *attributes,
 
 		/* If the usage is consistent with the algorithm type, add it */
 		if( algorithmType & ALGO_TYPE_SIGN )
-			nsUsage |= nsCertTypeInfo[ i ].keyUsageFlags & KEYUSAGE_SIGN_GENERIC;
+			nsUsage |= nsCertTypeInfo[ i ].keyUsageFlags & ( KEYUSAGE_SIGN | \
+															 KEYUSAGE_CA );
 		if( algorithmType & ALGO_TYPE_CRYPT )
 			nsUsage |= nsCertTypeInfo[ i ].keyUsageFlags & KEYUSAGE_CRYPT;
 		if( algorithmType & ALGO_TYPE_KEYAGREEMENT )
@@ -808,3 +811,4 @@ int checkKeyUsage( const CERT_INFO *certInfoPtr,
 
 	return( CRYPT_OK );
 	}
+#endif /* USE_CERTIFICATES */

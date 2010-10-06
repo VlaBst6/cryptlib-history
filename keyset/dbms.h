@@ -322,10 +322,10 @@ int initDBMSwrite( INOUT KEYSET_INFO *keysetInfoPtr );
 
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3, 5 ) ) \
 int makeKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID, 
-			   IN_LENGTH_SHORT const int keyIdMaxLen, 
+			   IN_LENGTH_SHORT_MIN( 16 ) const int keyIdMaxLen,
 			   OUT_LENGTH_SHORT_Z int *keyIdLen,
-			   IN_ENUM( CRYPT_KEYID ) const CRYPT_KEYID_TYPE iDtype, 
-			   IN_BUFFER( idValuelength ) const void *idValue, 
+			   IN_KEYID const CRYPT_KEYID_TYPE iDtype,
+			   IN_BUFFER( idValueLength ) const void *idValue,
 			   IN_LENGTH_SHORT const int idValueLength );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 3 ) ) \
 int getKeyID( OUT_BUFFER( keyIdMaxLen, *keyIdLen ) char *keyID, 
@@ -456,7 +456,7 @@ CHECK_RETVAL STDC_NONNULL_ARG( ( 1, 2, 3, 5 ) ) \
 int caGetIssuingUser( INOUT DBMS_INFO *dbmsInfo, 
 					  OUT_HANDLE_OPT CRYPT_CERTIFICATE *iPkiUser,
 					  IN_BUFFER( initialCertIDlength ) const char *initialCertID, 
-					  IN_LENGTH_SHORT_MIN( ENCODED_DBXKEYID_SIZE ) \
+					  IN_LENGTH_FIXED( ENCODED_DBXKEYID_SIZE ) \
 						const int initialCertIDlength, 
 					  INOUT ERROR_INFO *errorInfo );
 CHECK_RETVAL STDC_NONNULL_ARG( ( 1 ) ) \

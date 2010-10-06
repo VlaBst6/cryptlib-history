@@ -77,8 +77,10 @@ static int readHeader( STREAM *stream, BYTE *buffer, int *length,
 		*bufPtr++ != CMP_TCP_VERSION )
 		return( CRYPT_ERROR_BADDATA );
 	if( *bufPtr++ != 0 )
+		{
 		/* This is the last message, close the connection */
-		sioctl( stream, STREAM_IOCTL_CONNSTATE, NULL, FALSE );
+		sioctlSet( stream, STREAM_IOCTL_CONNSTATE, FALSE );
+		}
 	headerType = *bufPtr++;
 	if( headerType < CMPMSG_PKIREQ || headerType > CMPMSG_ERRORMSGREP )
 		return( CRYPT_ERROR_BADDATA );

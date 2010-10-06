@@ -12,8 +12,8 @@
   #include "session.h"
 #else
   #include "crypt.h"
-  #include "misc/asn1.h"
-  #include "misc/asn1_ext.h"
+  #include "enc_dec/asn1.h"
+  #include "enc_dec/asn1_ext.h"
   #include "session/session.h"
 #endif /* Compiler-specific includes */
 
@@ -123,6 +123,7 @@ static int readTSPRequest( INOUT STREAM *stream,
 				( CRYPT_ERROR_BADDATA, errorInfo, 
 				  "Invalid TSP message imprint data" ) );
 		}
+	ANALYSER_HINT( dataPtr != NULL );
 	memcpy( protocolInfo->msgImprint, dataPtr, length );
 	protocolInfo->msgImprintSize = length;
 
@@ -362,8 +363,8 @@ static int sendClientRequest( INOUT SESSION_INFO *sessionInfoPtr,
 	sMemDisconnect( &stream );
 	if( cryptStatusError( status ) )
 		return( status );
-	DEBUG_DUMP( "tsa_req", sessionInfoPtr->receiveBuffer,
-				sessionInfoPtr->receiveBufEnd );
+	DEBUG_DUMP_FILE( "tsa_req", sessionInfoPtr->receiveBuffer,
+					 sessionInfoPtr->receiveBufEnd );
 
 #ifdef USE_CMP_TRANSPORT
 	/* If we're using the socket protocol, add the TSP header:
@@ -755,9 +756,9 @@ static int sendServerResponse( INOUT SESSION_INFO *sessionInfoPtr,
 						  protocolInfo->includeSigCerts );
 	if( cryptStatusError( status ) )
 		return( sendErrorResponse( sessionInfoPtr, respBadGeneric, status ) );
-	DEBUG_DUMP( "tsa_token",
-				sessionInfoPtr->receiveBuffer + headerOfs + 9,
-				responseLength );
+	DEBUG_DUMP_FILE( "tsa_token",
+					 sessionInfoPtr->receiveBuffer + headerOfs + 9,
+					 responseLength );
 
 #ifdef USE_CMP_TRANSPORT
 	/* If we're using the socket protocol, add the TSP header:
